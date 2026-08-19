@@ -1,5 +1,7 @@
 use embassy_executor::Spawner;
-use embassy_futures::join::{join, join3, join4};
+use embassy_futures::join::{join, join4};
+#[cfg(feature = "board-mesh-tower-v2")]
+use embassy_futures::join::join3;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
@@ -341,7 +343,7 @@ pub async fn run(spawner: Spawner) -> ! {
             Timer::after(Duration::from_millis(100)).await;
             status_led.extinguish();
             Timer::after(Duration::from_millis(900)).await;
-            #[cfg(feature = "board-mesh-tower-v2")]
+            #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-t114"))]
             board::maintain().await;
         }
     };
