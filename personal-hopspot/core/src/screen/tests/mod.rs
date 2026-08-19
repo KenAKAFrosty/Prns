@@ -13,7 +13,7 @@ use personal_rns::storage::{DisplayedStorageLimits, StorageCapacity};
 use crate::battery::{BatteryPercent, BatteryState};
 use crate::PersistenceState;
 
-use super::limits::{build_limit_rows, LimitValue};
+use super::limits::{build_limit_rows, LimitRow, LimitValue};
 use super::model::InterfaceMenuDetailKind;
 use super::render::cards::{
     card_label_max_chars, connection_status_label, draw_card_with_selection,
@@ -31,10 +31,12 @@ use super::render::layout::{
 };
 use super::render::menus::lora::{LORA_DOT_X, LORA_EDITOR_TOP};
 use super::render::menus::{
-    draw_interface_menu, menu_item_text_right, station_uplink_action_label,
+    draw_interface_menu, limits_row_drawable, limits_row_text, menu_item_text_right,
+    station_uplink_action_label,
 };
 use super::render::metrics::{
-    compact_numeric_width, draw_compact_number, fmt_activity_age, fmt_count, fmt_rate_bytes_per_sec,
+    compact_numeric_width, draw_compact_number, fmt_activity_age, fmt_bytes, fmt_count,
+    fmt_rate_bytes_per_sec,
 };
 use super::state::lora::{
     region_index, step_custom_row, CustomRow, EditMode, FreqRow, LoRaScreen, PresetChoice,

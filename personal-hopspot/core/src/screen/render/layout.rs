@@ -53,6 +53,7 @@ pub(super) const MENU_TEXT_X: i32 = 12;
 pub(in crate::screen) const MENU_REASON_X: i32 = 2;
 pub(super) const MENU_DETAIL_STEP: i32 = 7;
 pub(in crate::screen) const FONT_5X8_CHAR_W: i32 = 5;
+pub(in crate::screen) const LIMITS_TEXT_X: i32 = 2;
 pub(in crate::screen) const FONT_4X6_CHAR_W: i32 = 4;
 pub(super) const GLOBAL_MENU_ITEM_STEP: i32 = 11;
 pub(in crate::screen) const SPLASH_TEXT_X: i32 = 2;

@@ -9,17 +9,28 @@ fn count_formatter_uses_blank_base_then_metric_suffixes() {
     assert_eq!(fmt_count(999_999).as_str(), "999K");
     assert_eq!(fmt_count(1_000_000).as_str(), "1.0M");
     assert_eq!(fmt_count(1_234_567_890).as_str(), "1.2B");
+    assert_eq!(fmt_count(u32::MAX).as_str(), "4.2B");
+}
+
+#[test]
+fn byte_formatter_uses_byte_base_then_metric_suffixes() {
+    assert_eq!(fmt_bytes(0).as_str(), "0B");
+    assert_eq!(fmt_bytes(999).as_str(), "999B");
+    assert_eq!(fmt_bytes(1_200).as_str(), "1.2K");
+    assert_eq!(fmt_bytes(1_234_567).as_str(), "1.2M");
+    assert_eq!(fmt_bytes(1_234_567_890).as_str(), "1.2G");
+    assert_eq!(fmt_bytes(u64::MAX).as_str(), "18E");
 }
 
 #[test]
 fn live_stat_formatters_stay_compact() {
-    assert_eq!(fmt_rate_bytes_per_sec(0).as_str(), "0B");
-    assert_eq!(fmt_rate_bytes_per_sec(999).as_str(), "999B");
-    assert_eq!(fmt_rate_bytes_per_sec(1_200).as_str(), "1.2K");
-    assert_eq!(fmt_rate_bytes_per_sec(12_000).as_str(), "12K");
-    assert_eq!(fmt_rate_bytes_per_sec(999_999).as_str(), "999K");
-    assert_eq!(fmt_rate_bytes_per_sec(1_234_567).as_str(), "1.2M");
-    assert_eq!(fmt_rate_bytes_per_sec(1_234_567_890).as_str(), "1.2G");
+    assert_eq!(fmt_rate_bytes_per_sec(0).as_str(), "0B/s");
+    assert_eq!(fmt_rate_bytes_per_sec(999).as_str(), "999B/s");
+    assert_eq!(fmt_rate_bytes_per_sec(1_200).as_str(), "1.2K/s");
+    assert_eq!(fmt_rate_bytes_per_sec(12_000).as_str(), "12K/s");
+    assert_eq!(fmt_rate_bytes_per_sec(999_999).as_str(), "999K/s");
+    assert_eq!(fmt_rate_bytes_per_sec(1_234_567).as_str(), "1.2M/s");
+    assert_eq!(fmt_rate_bytes_per_sec(1_234_567_890).as_str(), "1.2G/s");
 
     assert_eq!(fmt_activity_age(None).as_str(), "-");
     assert_eq!(fmt_activity_age(Some(0)).as_str(), "now");

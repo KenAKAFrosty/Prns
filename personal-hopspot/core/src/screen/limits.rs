@@ -134,7 +134,7 @@ pub(in crate::screen) fn build_limit_rows(
         &mut rows,
         LimitRow::rate("Fast", RATE_FAST_BYTES_PER_SECOND),
     );
-    push_limit_row(&mut rows, capacity_row("Receipts", limits.receipts));
+    push_limit_row(&mut rows, capacity_row("Rcpts", limits.receipts));
     push_limit_row(&mut rows, capacity_row("PktHash", limits.packet_hashes));
     push_limit_row(
         &mut rows,
