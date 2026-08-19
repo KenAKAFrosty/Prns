@@ -8,7 +8,15 @@ use embedded_hal_async::delay::DelayNs;
 use embedded_hal_async::digital::Wait;
 use embedded_hal_async::spi::{Operation, SpiDevice};
 
+use prns_core::interfaces::lora::{
+    CodingRate as ProfileCodingRate, LoRaNetwork, LoraBandwidth as ProfileBandwidth,
+    Modulation as ProfileModulation, RadioProfile, RadioProfileCompatibilityError,
+    SpreadingFactor as ProfileSpreadingFactor, RNODE_LORA_SYNC_WORD,
+};
 use prns_core::interfaces::{PacketPhyStats, RssiDbm, SnrQuarterDb};
+
+use super::{LoRaRadio, RadioRecovery};
+pub use super::{RadioEvent, ReceivedAirFrame};
 
 #[allow(dead_code)]
 mod op {
@@ -128,11 +136,12 @@ pub struct LoraPacket {
     pub invert_iq: bool,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct RadioConfig {
     pub frequency_hz: u32,
     pub modulation: Modulation,
     pub packet: LoraPacket,
-    pub sync_word: u16,
+    pub network: LoRaNetwork,
     pub tx_power_dbm: i8,
 }
 
@@ -140,6 +149,8 @@ pub struct RadioConfig {
 const MAX_LORA_PAYLOAD: usize = 255;
 
 const STATUS_NOP: u8 = 0x00;
+const MIN_TX_POWER_DBM: i8 = -9;
+const MAX_TX_POWER_DBM: i8 = 22;
 const SX126X_XTAL_HZ: u64 = 32_000_000;
 const SX126X_PLL_SHIFT: u32 = 25;
 const TCXO_STARTUP_TIMEOUT_TICKS: u32 = 640;
@@ -202,28 +213,6 @@ pub enum Error {
     Crc,
     Timeout,
     BufferTooSmall,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReceivedAirFrame {
-    pub len: usize,
-    pub phy: PacketPhyStats,
-}
-
-/// One receive-side IRQ observation from an SX126x in continuous RX.
-///
-/// Preamble and header events are channel evidence even before a complete
-/// frame exists. Callers implementing listen-before-talk must consume these
-/// events instead of waiting only for `RxDone`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RadioEvent {
-    PreambleDetected,
-    HeaderValid,
-    Frame(ReceivedAirFrame),
-    HeaderError,
-    CrcError,
-    Timeout,
-    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -431,7 +420,7 @@ where
             frequency_hz,
             modulation,
             packet,
-            sync_word,
+            network,
             tx_power_dbm,
         } = config;
         self.freq_hz = frequency_hz;
@@ -463,8 +452,11 @@ where
             self.command(&[op::CALIBRATE, 0x7F]).await?;
         }
         self.command(&[op::SET_PACKET_TYPE, 0x01]).await?;
-        self.write_register(reg::LORA_SYNC_WORD_MSB, &sync_word.to_be_bytes())
-            .await?;
+        self.write_register(
+            reg::LORA_SYNC_WORD_MSB,
+            &sync_word_for_network(network).to_be_bytes(),
+        )
+        .await?;
         self.command(&[op::SET_BUFFER_BASE_ADDRESS, 0x00, 0x00])
             .await?;
         let [image_cal_a, image_cal_b] = image_calibration_pair(frequency_hz);
@@ -611,7 +603,7 @@ where
             IrqEventKind::HeaderError => Ok(RadioEvent::HeaderError),
             IrqEventKind::CrcError => Ok(RadioEvent::CrcError),
             IrqEventKind::Timeout => Ok(RadioEvent::Timeout),
-            IrqEventKind::Other => Ok(RadioEvent::Other),
+            IrqEventKind::Other => Ok(RadioEvent::SpuriousInterrupt),
         }
     }
 
@@ -627,7 +619,7 @@ where
                 RadioEvent::PreambleDetected
                 | RadioEvent::HeaderValid
                 | RadioEvent::HeaderError
-                | RadioEvent::Other => {}
+                | RadioEvent::SpuriousInterrupt => {}
             }
         }
     }
@@ -728,6 +720,67 @@ where
     }
 }
 
+impl<SPI, BUSY, DIO1, RST, DLY> LoRaRadio for Sx126x<SPI, BUSY, DIO1, RST, DLY>
+where
+    SPI: SpiDevice,
+    BUSY: Wait,
+    DIO1: Wait,
+    RST: OutputPin,
+    DLY: DelayNs,
+{
+    type Error = Error;
+
+    fn validate_profile(
+        &self,
+        profile: RadioProfile,
+    ) -> Result<(), RadioProfileCompatibilityError> {
+        let power_dbm = profile.tx_power.dbm();
+        if !(MIN_TX_POWER_DBM..=MAX_TX_POWER_DBM).contains(&power_dbm) {
+            return Err(
+                RadioProfileCompatibilityError::TransmitPowerOutsideRadioRange {
+                    power_dbm,
+                    minimum_dbm: MIN_TX_POWER_DBM,
+                    maximum_dbm: MAX_TX_POWER_DBM,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn recovery(error: &Self::Error) -> RadioRecovery {
+        match error {
+            Error::Spi | Error::Busy | Error::Dio1 | Error::Reset | Error::Timeout => {
+                RadioRecovery::Reinitialize
+            }
+            Error::Crc | Error::BufferTooSmall => RadioRecovery::Continue,
+        }
+    }
+
+    async fn initialize(&mut self, profile: RadioProfile) -> Result<(), Self::Error> {
+        Sx126x::init(self, radio_config(profile)).await
+    }
+
+    async fn arm_rx(&mut self) -> Result<(), Self::Error> {
+        Sx126x::arm_rx(self).await
+    }
+
+    async fn transmit(&mut self, payload: &[u8]) -> Result<(), Self::Error> {
+        Sx126x::transmit(self, payload).await
+    }
+
+    async fn channel_rssi_dbm(&mut self) -> Result<i16, Self::Error> {
+        Sx126x::channel_rssi_dbm(self).await
+    }
+
+    async fn read_event(&mut self, buffer: &mut [u8]) -> Result<RadioEvent, Self::Error> {
+        Sx126x::read_event(self, buffer).await
+    }
+
+    async fn poll_event(&mut self, buffer: &mut [u8]) -> Result<Option<RadioEvent>, Self::Error> {
+        Sx126x::poll_event(self, buffer).await
+    }
+}
+
 fn lora_ldro(sf: SpreadingFactor, bw: Bandwidth) -> u8 {
     u8::from(matches!(
         (sf, bw),
@@ -736,6 +789,57 @@ fn lora_ldro(sf: SpreadingFactor, bw: Bandwidth) -> u8 {
             Bandwidth::Bw125
         ) | (SpreadingFactor::Sf12, Bandwidth::Bw250)
     ))
+}
+
+fn sync_word_for_network(network: LoRaNetwork) -> u16 {
+    match network {
+        LoRaNetwork::Reticulum => RNODE_LORA_SYNC_WORD,
+    }
+}
+
+fn radio_config(profile: RadioProfile) -> RadioConfig {
+    let ProfileModulation::Lora {
+        spreading_factor,
+        bandwidth,
+        coding_rate,
+    } = profile.modulation;
+    let spreading_factor = match spreading_factor {
+        ProfileSpreadingFactor::Sf5 => SpreadingFactor::Sf5,
+        ProfileSpreadingFactor::Sf6 => SpreadingFactor::Sf6,
+        ProfileSpreadingFactor::Sf7 => SpreadingFactor::Sf7,
+        ProfileSpreadingFactor::Sf8 => SpreadingFactor::Sf8,
+        ProfileSpreadingFactor::Sf9 => SpreadingFactor::Sf9,
+        ProfileSpreadingFactor::Sf10 => SpreadingFactor::Sf10,
+        ProfileSpreadingFactor::Sf11 => SpreadingFactor::Sf11,
+        ProfileSpreadingFactor::Sf12 => SpreadingFactor::Sf12,
+    };
+    let bandwidth = match bandwidth {
+        ProfileBandwidth::Bw125kHz => Bandwidth::Bw125,
+        ProfileBandwidth::Bw250kHz => Bandwidth::Bw250,
+        ProfileBandwidth::Bw500kHz => Bandwidth::Bw500,
+    };
+    let coding_rate = match coding_rate {
+        ProfileCodingRate::Cr45 => CodingRate::Cr4_5,
+        ProfileCodingRate::Cr46 => CodingRate::Cr4_6,
+        ProfileCodingRate::Cr47 => CodingRate::Cr4_7,
+        ProfileCodingRate::Cr48 => CodingRate::Cr4_8,
+    };
+    RadioConfig {
+        frequency_hz: profile.frequency.hz(),
+        modulation: Modulation::Lora {
+            spreading_factor,
+            bandwidth,
+            coding_rate,
+        },
+        packet: LoraPacket {
+            preamble_symbols: profile.preamble.count(),
+            explicit_header: true,
+            crc_on: true,
+            invert_iq: false,
+        },
+        network: LoRaNetwork::Reticulum,
+        tx_power_dbm: profile.tx_power.dbm(),
+    }
 }
 
 fn image_calibration_pair(frequency_hz: u32) -> [u8; 2] {
@@ -801,6 +905,7 @@ mod tests {
     use embedded_hal_async::delay::DelayNs;
     use embedded_hal_async::digital::Wait;
     use embedded_hal_async::spi::SpiDevice;
+    use prns_core::interfaces::lora::{TxPower, DEFAULT_915_PROFILE};
 
     #[derive(Debug)]
     struct MockErr;
@@ -930,6 +1035,21 @@ mod tests {
         async fn delay_ns(&mut self, _ns: u32) {}
     }
 
+    type MockRadio = Sx126x<MockSpi, MockWait, MockWait, MockOut, MockDelay>;
+
+    fn mock_radio() -> MockRadio {
+        Sx126x::new(
+            MockSpi {
+                log: Rc::new(RefCell::new(Vec::new())),
+            },
+            MockWait,
+            MockWait,
+            MockOut,
+            MockDelay,
+            board(),
+        )
+    }
+
     struct BusyNeverLow;
     impl DigErrorType for BusyNeverLow {
         type Error = MockErr;
@@ -1020,6 +1140,67 @@ mod tests {
     }
 
     #[test]
+    fn reticulum_profile_maps_to_the_existing_sx126x_configuration() {
+        assert_eq!(
+            radio_config(DEFAULT_915_PROFILE),
+            RadioConfig {
+                frequency_hz: 915_000_000,
+                modulation: Modulation::Lora {
+                    spreading_factor: SpreadingFactor::Sf9,
+                    bandwidth: Bandwidth::Bw250,
+                    coding_rate: CodingRate::Cr4_5,
+                },
+                packet: LoraPacket {
+                    preamble_symbols: 18,
+                    explicit_header: true,
+                    crc_on: true,
+                    invert_iq: false,
+                },
+                network: LoRaNetwork::Reticulum,
+                tx_power_dbm: 22,
+            }
+        );
+        assert_eq!(
+            sync_word_for_network(LoRaNetwork::Reticulum),
+            RNODE_LORA_SYNC_WORD
+        );
+    }
+
+    #[test]
+    fn sx126x_owns_its_transmit_power_compatibility() {
+        let radio = mock_radio();
+        let mut profile = DEFAULT_915_PROFILE;
+        profile.tx_power = TxPower::new(MIN_TX_POWER_DBM - 1);
+        assert_eq!(profile.validate(), Ok(()));
+        assert_eq!(
+            radio.validate_profile(profile),
+            Err(
+                RadioProfileCompatibilityError::TransmitPowerOutsideRadioRange {
+                    power_dbm: MIN_TX_POWER_DBM - 1,
+                    minimum_dbm: MIN_TX_POWER_DBM,
+                    maximum_dbm: MAX_TX_POWER_DBM,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn sx126x_recovery_classifies_every_error() {
+        for error in [
+            Error::Spi,
+            Error::Busy,
+            Error::Dio1,
+            Error::Reset,
+            Error::Timeout,
+        ] {
+            assert_eq!(MockRadio::recovery(&error), RadioRecovery::Reinitialize);
+        }
+        for error in [Error::Crc, Error::BufferTooSmall] {
+            assert_eq!(MockRadio::recovery(&error), RadioRecovery::Continue);
+        }
+    }
+
+    #[test]
     fn command_stream_matches_lora_phy_oracle() {
         let log: Log = Rc::new(RefCell::new(Vec::new()));
         let board = BoardConfig {
@@ -1055,7 +1236,7 @@ mod tests {
             frequency_hz: 915_000_000,
             modulation,
             packet,
-            sync_word: 0x1424,
+            network: LoRaNetwork::Reticulum,
             tx_power_dbm: 14,
         };
         block_on(radio.init(config)).expect("init");

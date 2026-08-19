@@ -1,6 +1,5 @@
 use embassy_executor::Spawner;
-use embassy_futures::join::join;
-use embassy_futures::join::join3;
+use embassy_futures::join::{join, join3, join4};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Timer};
@@ -54,11 +53,11 @@ use personal_rns::runtime::Fleet;
 const USB_CONFIG_DESCRIPTOR_BYTES: usize = 64;
 const USB_BOS_DESCRIPTOR_BYTES: usize = 64;
 const WINDOWS_MSOS_VENDOR_CODE: u8 = 0x20;
-#[cfg(feature = "board-t114")]
+#[cfg(any(feature = "board-t114", feature = "board-t1000e"))]
 const INTERFACE_CAPACITY: usize = 2;
 #[cfg(feature = "board-mesh-tower-v2")]
 const INTERFACE_CAPACITY: usize = 2 + MEMBERS;
-#[cfg(feature = "board-t114")]
+#[cfg(any(feature = "board-t114", feature = "board-t1000e"))]
 const LANE_COUNT: usize = INTERFACE_CAPACITY;
 #[cfg(feature = "board-mesh-tower-v2")]
 const LANE_COUNT: usize = 3;
@@ -132,7 +131,7 @@ async fn manifold_task(node: &'static mut Node) {
 
 #[allow(clippy::too_many_lines)]
 pub async fn run(spawner: Spawner) -> ! {
-    #[cfg(feature = "board-t114")]
+    #[cfg(any(feature = "board-t114", feature = "board-t1000e"))]
     let ((node_bootstrap, runtime_entropy_seed), hardware) = Board::initialize(|nvmc, rng| {
         let mut fill_entropy = |bytes: &mut [u8]| rng.blocking_fill_bytes(bytes);
         let node_bootstrap = board::bootstrap_node_identity(nvmc, &mut fill_entropy);
@@ -159,18 +158,18 @@ pub async fn run(spawner: Spawner) -> ! {
     let node_identity = node_bootstrap.into_identity();
     #[cfg(feature = "board-mesh-tower-v2")]
     let ble_identity = Some(ble_bootstrap.into_identity());
-    #[cfg(feature = "board-t114")]
+    #[cfg(any(feature = "board-t114", feature = "board-t1000e"))]
     let Hardware {
         usb: usb_driver,
         radio,
-        mut led,
+        mut status_led,
     } = hardware;
     #[cfg(feature = "board-mesh-tower-v2")]
     let Hardware {
         usb: usb_driver,
         vbus,
         radio,
-        mut led,
+        mut status_led,
         button,
     } = hardware;
 
@@ -198,7 +197,7 @@ pub async fn run(spawner: Spawner) -> ! {
     static USB_STATE: StaticCell<WebUsbAutoState> = StaticCell::new();
     let class = WebUsbAutoClass::new(
         &mut builder,
-        USB_STATE.init(WebUsbAutoState::new()),
+        USB_STATE.init(WebUsbAutoState::new(super::bootloader_entry::webusb_entry())),
         WEBUSB_AUTO_PACKET_SIZE,
     );
     let mut usb = builder.build();
@@ -338,15 +337,21 @@ pub async fn run(spawner: Spawner) -> ! {
     };
     let heartbeat = async move {
         loop {
-            led.set_low();
+            status_led.illuminate();
             Timer::after(Duration::from_millis(100)).await;
-            led.set_high();
+            status_led.extinguish();
             Timer::after(Duration::from_millis(900)).await;
+            #[cfg(feature = "board-mesh-tower-v2")]
             board::maintain().await;
         }
     };
-    let io = join3(usb.run(), usb_device.run(usb_seam), heartbeat);
-    #[cfg(feature = "board-t114")]
+    let io = join4(
+        usb.run(),
+        usb_device.run(usb_seam),
+        heartbeat,
+        super::bootloader_entry::wait(),
+    );
+    #[cfg(any(feature = "board-t114", feature = "board-t1000e"))]
     {
         join(io, lora.run(lora_seam)).await;
     }

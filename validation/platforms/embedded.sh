@@ -24,6 +24,7 @@ cargo build \
         --features board-t-echo,softdevice-s140-v7 \
         --target-dir target/s140-v7
 )
+./tools/prns build hopspot t1000e
 ./tools/prns build hopspot t114
 ./tools/prns build hopspot mesh-tower-v2
 

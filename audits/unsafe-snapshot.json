@@ -4662,7 +4662,8 @@
           "gpiote",
           "nrf52840",
           "rt",
-          "time-driver-rtc1"
+          "time-driver-rtc1",
+          "unstable-pac"
         ]
       },
       "name": "embassy-nrf",
@@ -13811,11 +13812,11 @@
       "name": "personal-hopspot-android",
       "source": "personal-hopspot/mobile/android/rust",
       "unsafe": {
-        "blocks": 22,
+        "blocks": 20,
         "externs": 0,
         "functions": 0,
         "impls": 0,
-        "tokens": 22
+        "tokens": 20
       },
       "version": "0.1.0"
     },
@@ -13992,7 +13993,8 @@
           "usb",
           "weave",
           "websocket",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-mdns"
         ],
         "daemon-macos": [
           "alloc",
@@ -14022,7 +14024,8 @@
           "usb",
           "weave",
           "websocket",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-mdns"
         ],
         "daemon-windows": [
           "alloc",
@@ -14052,7 +14055,8 @@
           "usb",
           "weave",
           "websocket",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-mdns"
         ],
         "desktop-linux": [
           "alloc",
@@ -14068,7 +14072,8 @@
           "tokio-host",
           "tracing",
           "usb",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-apple"
         ],
         "desktop-macos": [
           "alloc",
@@ -14084,7 +14089,8 @@
           "tokio-host",
           "tracing",
           "usb",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-apple"
         ],
         "desktop-windows": [
           "alloc",
@@ -14100,7 +14106,8 @@
           "tokio-host",
           "tracing",
           "usb",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-apple"
         ],
         "engine": [
           "alloc",
@@ -14243,7 +14250,8 @@
           "std",
           "tcp",
           "tokio-host",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-apple"
         ],
         "nrf52840": [
           "bluetooth-auto",
@@ -14889,7 +14897,7 @@
         "externs": 3,
         "functions": 0,
         "impls": 22,
-        "tokens": 177
+        "tokens": 180
       },
       "version": "0.3.6"
     },
@@ -15129,7 +15137,8 @@
           "usb",
           "weave",
           "websocket",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-mdns"
         ],
         "daemon-macos": [
           "ax25",
@@ -15152,7 +15161,8 @@
           "usb",
           "weave",
           "websocket",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-mdns"
         ],
         "daemon-windows": [
           "ax25",
@@ -15175,7 +15185,8 @@
           "usb",
           "weave",
           "websocket",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-mdns"
         ],
         "desktop-linux": [
           "bluetooth-auto",
@@ -15186,7 +15197,8 @@
           "tcp",
           "tracing",
           "usb",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-apple"
         ],
         "desktop-macos": [
           "bluetooth-auto",
@@ -15197,7 +15209,8 @@
           "tcp",
           "tracing",
           "usb",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-apple"
         ],
         "desktop-windows": [
           "bluetooth-auto",
@@ -15208,7 +15221,8 @@
           "tcp",
           "tracing",
           "usb",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-apple"
         ],
         "esp32-c6": [
           "bluetooth-auto",
@@ -15307,7 +15321,8 @@
           "bluetooth-auto",
           "network-device-selection",
           "tcp",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-apple"
         ],
         "nrf52840": [
           "bluetooth-auto",
@@ -22265,6 +22280,7 @@
           "Win32_Devices",
           "Win32_Devices_Communication",
           "Win32_Devices_DeviceAndDriverInstallation",
+          "Win32_Devices_Properties",
           "Win32_Foundation",
           "Win32_Security",
           "Win32_System",
@@ -22292,6 +22308,7 @@
           "Win32_Devices",
           "Win32_Devices_Communication",
           "Win32_Devices_DeviceAndDriverInstallation",
+          "Win32_Devices_Properties",
           "Win32_Foundation",
           "Win32_Security",
           "Win32_System",
@@ -22319,6 +22336,7 @@
           "Win32_Devices",
           "Win32_Devices_Communication",
           "Win32_Devices_DeviceAndDriverInstallation",
+          "Win32_Devices_Properties",
           "Win32_Foundation",
           "Win32_Security",
           "Win32_System",

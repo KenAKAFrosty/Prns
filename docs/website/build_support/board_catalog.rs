@@ -14,7 +14,7 @@ pub(crate) fn generate() {
          use super::{BoardFlashTarget, BoardTarget, PreparationProfile, Tier};\n\n\
          pub const SHIPPING_BOARD_TARGETS: &[BoardTarget] = &[\n",
     );
-    for board in catalog.boards {
+    for board in catalog.shipping_boards() {
         let preparation_profile = match board.preparation_profile.as_str() {
             "esp-usb-boot" => "PreparationProfile::EspUsbBoot",
             "techo-uf2" => "PreparationProfile::TechoUf2",
@@ -36,6 +36,9 @@ pub(crate) fn generate() {
                 "BoardFlashTarget::Uf2MassStorage {{ mount_label: {:?}, board_id_prefix: {:?} }}",
                 build.mount_label, build.board_id_prefix
             ),
+            (Transport::NrfSerialDfu, BoardBuild::NrfSerialDfu(_)) => {
+                panic!("qualification target entered the shipping website catalog")
+            }
             _ => panic!("validated catalog transport and build recipe disagree"),
         };
         generated.push_str("    BoardTarget {\n");
@@ -44,7 +47,7 @@ pub(crate) fn generate() {
         generated.push_str(&format!("        silicon: {:?},\n", board.silicon));
         generated.push_str("        tier: Tier::Flashable,\n");
         generated.push_str("        interfaces: &[\n");
-        for interface in board.interfaces {
+        for interface in &board.interfaces {
             generated.push_str(&format!("            {:?},\n", interface));
         }
         generated.push_str("        ],\n");

@@ -1834,6 +1834,7 @@ dependencies = [
  "espflash",
  "nusb",
  "prns-flash-manifest",
+ "prns-nrf-dfu",
  "serde",
  "serde_json",
  "serialport",
@@ -3036,6 +3037,7 @@ name = "prns-flash-manifest"
 version = "0.1.0"
 dependencies = [
  "minisign-verify",
+ "prns-core",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -3106,6 +3108,13 @@ dependencies = [
 [[package]]
 name = "prns-macros"
 version = "0.3.6"
+
+[[package]]
+name = "prns-nrf-dfu"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "prns-runtime"

@@ -272,6 +272,8 @@ pub(super) const fn part_kind(kind: FlashPartKind) -> &'static str {
         FlashPartKind::PartitionTable => "partition-table",
         FlashPartKind::Application => "application",
         FlashPartKind::Uf2 => "uf2",
+        FlashPartKind::DfuApplication => "dfu-application",
+        FlashPartKind::DfuInitPacket => "dfu-init-packet",
     }
 }
 

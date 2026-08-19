@@ -5,6 +5,7 @@ members = [
     "prns-macros",
     "prns-host/core",
     "prns-flash-manifest",
+    "prns-nrf-dfu",
     "prns-runtime/core",
     "personal-hopspot/core",
     "docs/command",

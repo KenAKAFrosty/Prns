@@ -65,13 +65,23 @@ fn validate_target_with_uf2_identity(
                 && target.flash_frequency.as_deref() == Some(build.flash_frequency.as_str())
                 && target.before_reset.as_deref() == Some(build.before_reset.as_str())
                 && target.after_reset.as_deref() == Some(build.after_reset.as_str())
-                && target.variants.is_empty() => {}
+                && target.variants.is_empty()
+                && target.nrf_serial_dfu.is_none() => {}
         BoardBuild::Uf2(_)
             if target.flash_mode.is_none()
                 && target.flash_frequency.is_none()
                 && target.before_reset.is_none()
                 && target.after_reset.is_none()
-                && target.parts.is_empty() => {}
+                && target.parts.is_empty()
+                && target.nrf_serial_dfu.is_none() => {}
+        BoardBuild::NrfSerialDfu(_)
+            if target.flash_mode.is_none()
+                && target.flash_frequency.is_none()
+                && target.before_reset.is_none()
+                && target.after_reset.is_none()
+                && target.parts.is_empty()
+                && target.variants.is_empty()
+                && target.nrf_serial_dfu.is_some() => {}
         _ => return Err(mismatch(target, "flash/reset parameters")),
     }
     if target.source.is_some() {
@@ -154,8 +164,17 @@ fn validate_payloads(
     version: &str,
     softdevice: Option<&SoftdeviceIdentity>,
 ) -> Result<(), ManifestError> {
-    if let BoardBuild::Uf2(build) = &board.build {
-        return validate_uf2_variants(target, build, version, softdevice);
+    match &board.build {
+        BoardBuild::Uf2(build) => {
+            return validate_uf2_variants(target, build, version, softdevice);
+        }
+        BoardBuild::NrfSerialDfu(build) => {
+            if softdevice.is_some() {
+                return Err(mismatch(target, "UF2 compatibility selection"));
+            }
+            return validate_nrf_serial_dfu(target, build, version);
+        }
+        BoardBuild::Esp(_) => {}
     }
     if softdevice.is_some() {
         return Err(mismatch(target, "UF2 compatibility selection"));
@@ -196,6 +215,7 @@ fn validate_payloads(
         match target.transport {
             Transport::EspSerial => validate_esp_part(target, part, &mut ranges)?,
             Transport::Uf2MassStorage => unreachable!(),
+            Transport::NrfSerialDfu => unreachable!(),
         }
     }
     if target.transport == Transport::EspSerial {
@@ -216,6 +236,95 @@ fn validate_payloads(
                 "ESP parts must be ordered bootloader, partition-table, application",
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_nrf_serial_dfu(
+    target: &TargetManifest,
+    build: &crate::NrfSerialDfuBuild,
+    version: &str,
+) -> Result<(), ManifestError> {
+    let manifest = target
+        .nrf_serial_dfu
+        .as_ref()
+        .ok_or_else(|| mismatch(target, "Nordic serial DFU artifact contract"))?;
+    if manifest.serial != build.serial
+        || manifest.compatibility != build.compatibility
+        || manifest.recovery.mount_label != build.recovery.mount_label
+        || manifest.recovery.board_id_prefix != build.recovery.board_id_prefix
+        || manifest.recovery.family_id != build.recovery.family_id
+    {
+        return Err(mismatch(target, "Nordic serial DFU compatibility"));
+    }
+    let expected_prefix = format!("firmware/hopspot/{}/{version}/", target.board_slug);
+    let expected = [
+        (
+            &manifest.application,
+            FlashPartKind::DfuApplication,
+            build.application_filename.as_str(),
+        ),
+        (
+            &manifest.init_packet,
+            FlashPartKind::DfuInitPacket,
+            build.init_packet_filename.as_str(),
+        ),
+        (
+            &manifest.recovery.artifact,
+            FlashPartKind::Uf2,
+            build.recovery.filename.as_str(),
+        ),
+    ];
+    let mut paths = BTreeSet::new();
+    for (part, kind, filename) in expected {
+        let expected_path = format!("{expected_prefix}{filename}");
+        if part.kind != kind || part.path != expected_path || part.offset.is_some() {
+            return Err(invalid_part(
+                target,
+                &part.path,
+                "Nordic serial DFU artifact role or path disagrees with the catalog",
+            ));
+        }
+        if part.size == 0 {
+            return Err(invalid_part(target, &part.path, "size must be nonzero"));
+        }
+        if ImmutableArtifactPath::parse(part.path.clone()).is_err() {
+            return Err(invalid_part(
+                target,
+                &part.path,
+                "path is not immutable and relative",
+            ));
+        }
+        if validate_sha256(&part.sha256).is_err() {
+            return Err(invalid_part(
+                target,
+                &part.path,
+                "SHA-256 must be lowercase hex",
+            ));
+        }
+        if !paths.insert(part.path.as_str()) {
+            return Err(invalid_part(
+                target,
+                &part.path,
+                "artifact path is duplicated",
+            ));
+        }
+    }
+    let application_base = parse_hex_u32(&manifest.compatibility.application_base)
+        .ok_or_else(|| mismatch(target, "Nordic serial DFU application base"))?;
+    let application_end = parse_hex_u32(&manifest.compatibility.application_end_exclusive)
+        .ok_or_else(|| mismatch(target, "Nordic serial DFU application end"))?;
+    let maximum_application_size = u64::from(
+        application_end
+            .checked_sub(application_base)
+            .ok_or_else(|| mismatch(target, "Nordic serial DFU application region"))?,
+    );
+    if manifest.application.size > maximum_application_size {
+        return Err(invalid_part(
+            target,
+            &manifest.application.path,
+            "application exceeds the serial DFU region",
+        ));
     }
     Ok(())
 }
@@ -372,6 +481,16 @@ fn validate_esp_part<'a>(
     }
     ranges.insert(offset, (erase_end, part.path.as_str()));
     Ok(())
+}
+
+fn parse_hex_u32(value: &str) -> Option<u32> {
+    let digits = value.strip_prefix("0x")?;
+    (digits.len() == 8
+        && digits
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()))
+    .then(|| u32::from_str_radix(digits, 16).ok())
+    .flatten()
 }
 
 fn release_domain_error(error: impl fmt::Display) -> ManifestError {

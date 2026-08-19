@@ -1,16 +1,13 @@
 use embassy_executor::Spawner;
 use embassy_futures::join::{join, join3, join5};
 use embassy_futures::select::{select3, Either3};
-use embassy_nrf::gpio::{Input, Output};
-use embassy_nrf::spim::Spim;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
-use embassy_time::{Delay, Duration, Timer};
+use embassy_time::{Duration, Timer};
 use embassy_usb::{Builder, Config as UsbConfig};
 use static_cell::{ConstStaticCell, StaticCell};
 
 use embedded_graphics::prelude::*;
-use embedded_hal_bus::spi::ExclusiveDevice;
 use epd_waveshare::color::Color as EpdColor;
 
 use nrf_softdevice::ble::l2cap;
@@ -32,7 +29,7 @@ use personal_rns::runtime::{
 use personal_rns::storage::StorageLayout;
 use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
 use personal_rns::usb_auto::{
-    WebUsbAutoClass, WebUsbAutoState, WEBUSB_AUTO_CONTROL_BUFFER_BYTES,
+    WebUsbAutoClass, WebUsbAutoState, WebUsbBootloaderEntry, WEBUSB_AUTO_CONTROL_BUFFER_BYTES,
     WEBUSB_AUTO_MSOS_DESCRIPTOR_BYTES, WEBUSB_AUTO_PACKET_SIZE,
 };
 
@@ -117,7 +114,7 @@ pub async fn run(spawner: Spawner) -> ! {
     static USB_STATE: StaticCell<WebUsbAutoState> = StaticCell::new();
     let class = WebUsbAutoClass::new(
         &mut builder,
-        USB_STATE.init(WebUsbAutoState::new()),
+        USB_STATE.init(WebUsbAutoState::new(WebUsbBootloaderEntry::Unsupported)),
         WEBUSB_AUTO_PACKET_SIZE,
     );
     let mut usb = builder.build();
@@ -184,13 +181,7 @@ pub async fn run(spawner: Spawner) -> ! {
     let node_page_destination = destination_hashes.node_page;
     let mut manifold_lanes = ManifoldLanes::new();
     let lora_profile = loaded_lora_profile.profile;
-    let lora_id = LoRaInterface::<
-        ExclusiveDevice<Spim<'static>, Output<'static>, Delay>,
-        Input<'static>,
-        Input<'static>,
-        Output<'static>,
-        Delay,
-    >::interface_id(&lora_profile);
+    let lora_id = LoRaInterface::<board::Radio>::interface_id(&lora_profile);
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
     let lora_status: &'static EmbassyInterfaceStatus = LORA_STATUS.init(
         EmbassyInterfaceStatus::new(lora_id, ConnectionState::Initializing),

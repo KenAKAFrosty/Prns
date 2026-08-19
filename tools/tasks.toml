@@ -61,7 +61,18 @@ domain = "build"
 effect = "workspace-write"
 platforms = ["linux", "macos"]
 audience = ["developer", "ci"]
-entrypoint = ["bash", "tools/build/hopspot-t114.sh"]
+entrypoint = ["bash", "tools/build/hopspot-nrf52840.sh", "t114"]
+requires = ["bash", "cargo", "python3", "rustc"]
+setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
+
+[[task]]
+id = "build.hopspot.t1000e"
+summary = "Build the headless T1000-E firmware and package its recovery-compatible developer UF2."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/hopspot-nrf52840.sh", "t1000e"]
 requires = ["bash", "cargo", "python3", "rustc"]
 setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
 

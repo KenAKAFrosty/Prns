@@ -18,6 +18,8 @@ use personal_rns::lora::LoRaInterface;
 use personal_rns::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
 use static_cell::StaticCell;
 
+use crate::boards::status_led::StatusLed;
+
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     TWISPI0 => spim::InterruptHandler<peripherals::TWISPI0>;
@@ -28,14 +30,7 @@ type MeshTowerV2SpiDevice = ExclusiveDevice<Spim<'static>, Output<'static>, Dela
 type MeshTowerV2Radio =
     Sx126x<MeshTowerV2SpiDevice, Input<'static>, Input<'static>, Output<'static>, Delay>;
 
-pub(crate) type MeshTowerV2LoraInterface = LoRaInterface<
-    'static,
-    MeshTowerV2SpiDevice,
-    Input<'static>,
-    Input<'static>,
-    Output<'static>,
-    Delay,
->;
+pub(crate) type MeshTowerV2LoraInterface = LoRaInterface<'static, MeshTowerV2Radio>;
 
 type MeshTowerV2UsbDriver = Driver<'static, &'static SoftwareVbusDetect>;
 
@@ -43,7 +38,7 @@ pub(crate) struct MeshTowerV2Hardware {
     pub(crate) usb: MeshTowerV2UsbDriver,
     pub(crate) vbus: &'static SoftwareVbusDetect,
     pub(crate) radio: MeshTowerV2Radio,
-    pub(crate) led: Output<'static>,
+    pub(crate) status_led: StatusLed,
     pub(crate) button: Input<'static>,
 }
 
@@ -154,7 +149,11 @@ impl MeshTowerV2Board {
             },
         );
 
-        let led = Output::new(peripherals.P1_15, Level::High, OutputDrive::Standard);
+        let status_led = StatusLed::active_low(Output::new(
+            peripherals.P1_15,
+            Level::High,
+            OutputDrive::Standard,
+        ));
         let button = Input::new(peripherals.P1_10, Pull::Up);
 
         (
@@ -163,7 +162,7 @@ impl MeshTowerV2Board {
                 usb,
                 vbus,
                 radio,
-                led,
+                status_led,
                 button,
             },
         )

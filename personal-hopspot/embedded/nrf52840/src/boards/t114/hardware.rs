@@ -13,6 +13,8 @@ use embedded_hal_bus::spi::ExclusiveDevice;
 use personal_rns::lora::LoRaInterface;
 use personal_rns::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
 
+use crate::boards::status_led::StatusLed;
+
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     CLOCK_POWER => usb::vbus_detect::InterruptHandler;
@@ -23,15 +25,14 @@ type T114SpiDevice = ExclusiveDevice<Spim<'static>, Output<'static>, Delay>;
 
 type T114Radio = Sx126x<T114SpiDevice, Input<'static>, Input<'static>, Output<'static>, Delay>;
 
-pub(crate) type T114LoraInterface =
-    LoRaInterface<'static, T114SpiDevice, Input<'static>, Input<'static>, Output<'static>, Delay>;
+pub(crate) type T114LoraInterface = LoRaInterface<'static, T114Radio>;
 
 type T114UsbDriver = Driver<'static, HardwareVbusDetect>;
 
 pub(crate) struct T114Hardware {
     pub(crate) usb: T114UsbDriver,
     pub(crate) radio: T114Radio,
-    pub(crate) led: Output<'static>,
+    pub(crate) status_led: StatusLed,
 }
 
 pub(crate) struct T114Board;
@@ -92,8 +93,19 @@ impl T114Board {
             },
         );
 
-        let led = Output::new(peripherals.P1_03, Level::High, OutputDrive::Standard);
+        let status_led = StatusLed::active_low(Output::new(
+            peripherals.P1_03,
+            Level::High,
+            OutputDrive::Standard,
+        ));
 
-        (identity, T114Hardware { usb, radio, led })
+        (
+            identity,
+            T114Hardware {
+                usb,
+                radio,
+                status_led,
+            },
+        )
     }
 }

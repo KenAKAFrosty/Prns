@@ -1,7 +1,8 @@
 {
-  "schema": 1,
+  "schema": 3,
   "boards": [
     {
+      "availability": "shipping",
       "slug": "heltec-v4",
       "display_name": "Heltec LoRa 32 V4 (S3R2)",
       "silicon": "ESP32-S3R2 + SX1262 (Quad PSRAM)",
@@ -40,6 +41,7 @@
       }
     },
     {
+      "availability": "shipping",
       "slug": "heltec-v4-r8",
       "display_name": "Heltec LoRa 32 V4 (S3R8)",
       "silicon": "ESP32-S3R8 + SX1262 (Octal PSRAM)",
@@ -78,6 +80,7 @@
       }
     },
     {
+      "availability": "shipping",
       "slug": "t-beam-supreme",
       "display_name": "LilyGO T-Beam Supreme",
       "silicon": "ESP32-S3 + SX1262 + AXP2101",
@@ -116,6 +119,7 @@
       }
     },
     {
+      "availability": "shipping",
       "slug": "xiao-esp32-c6",
       "display_name": "Seeed XIAO ESP32-C6",
       "silicon": "ESP32-C6",
@@ -141,6 +145,7 @@
       }
     },
     {
+      "availability": "shipping",
       "slug": "t-echo",
       "display_name": "LilyGO T-Echo",
       "silicon": "nRF52840 + SX1262",
@@ -179,6 +184,77 @@
             "filename": "t-echo-s140-7.3.0.uf2"
           }
         ]
+      }
+    },
+    {
+      "availability": "qualification",
+      "slug": "t1000-e",
+      "display_name": "Seeed SenseCAP T1000-E",
+      "silicon": "nRF52840 + LR1110",
+      "interfaces": ["LoRa", "USB Auto"],
+      "icon": "nordicsemiconductor",
+      "transport": "nrf-serial-dfu",
+      "expected_chip": null,
+      "flash_size": null,
+      "preparation_profile": "t1000e-nrf-dfu",
+      "provisioning": null,
+      "build": {
+        "kind": "nrf-serial-dfu",
+        "package": "t-echo",
+        "binary": "t1000e",
+        "rust_target": "thumbv7em-none-eabihf",
+        "cargo_feature": "board-t1000e",
+        "target_directory": "target/t1000e",
+        "application_filename": "t1000e.bin",
+        "init_packet_filename": "t1000e.dat",
+        "serial": {
+          "touch_application_and_bootloader": {
+            "usb": {
+              "vendor_id": "0x2886",
+              "product_id": "0x0057"
+            },
+            "touch_baud_rate": 1200,
+            "transfer_baud_rate": 115200
+          },
+          "recovery_bootloader": {
+            "usb": {
+              "vendor_id": "0x239a",
+              "product_id": "0x8029"
+            },
+            "manufacturer": "Seeed Studio",
+            "product": "T1000-E-BOOT"
+          },
+          "managed_application": {
+            "usb": {
+              "vendor_id": "0x1209",
+              "product_id": "0x0001"
+            },
+            "manufacturer": "Stay Personal",
+            "product": "Personal Hopspot (T1000-E)",
+            "serial_number": "PERSONAL-RNS-T1000E-HOP",
+            "interface_number": 0,
+            "request": "0x50",
+            "value": "0x5052",
+            "index": "0x4e53"
+          }
+        },
+        "compatibility": {
+          "softdevice_family": "s140",
+          "softdevice_version": "7.3.0",
+          "fwid": "0x0123",
+          "device_type": "0x0052",
+          "device_revision": 52840,
+          "application_version": "not-enforced",
+          "application_base": "0x00027000",
+          "application_end_exclusive": "0x000ea000",
+          "bank_layout": "single"
+        },
+        "recovery": {
+          "mount_label": "T1000-E",
+          "board_id_prefix": "nrf52840-t1000-e-v1",
+          "family_id": "0xada52840",
+          "filename": "t1000e.uf2"
+        }
       }
     }
   ]

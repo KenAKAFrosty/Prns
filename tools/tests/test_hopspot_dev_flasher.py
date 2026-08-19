@@ -110,7 +110,9 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(selection.port, 1234)
 
     def test_all_selects_every_shipping_board(self) -> None:
-        self.assertEqual(DEV.parse_selection(["--all"]).boards, DEV.shipping_boards())
+        boards = DEV.shipping_boards()
+        self.assertEqual(DEV.parse_selection(["--all"]).boards, boards)
+        self.assertNotIn("t1000-e", boards)
 
     def test_missing_duplicate_unknown_and_invalid_port_are_rejected(self) -> None:
         for arguments in (

@@ -4,6 +4,7 @@ mod cli;
 mod error;
 mod esp;
 mod events;
+mod nrf_serial_dfu;
 mod release;
 mod splash;
 mod toolchain;
@@ -234,6 +235,7 @@ fn execute_flash(
         let detected_uf2 = match board.transport {
             Transport::EspSerial => None,
             Transport::Uf2MassStorage => Some(uf2::detect_device(board, request.mount)?),
+            Transport::NrfSerialDfu => None,
         };
         let repo = repo_root()?;
         let prepared = match &detected_uf2 {
@@ -272,6 +274,7 @@ fn execute_flash(
         let detected_uf2 = match board.transport {
             Transport::EspSerial => None,
             Transport::Uf2MassStorage => Some(uf2::detect_device(board, request.mount)?),
+            Transport::NrfSerialDfu => None,
         };
         let prepared = verified.prepare(
             detected_uf2.as_ref().map(|device| device.softdevice()),
@@ -317,6 +320,20 @@ fn execute_flash(
             })?;
             uf2::flash(board, &prepared, device, reporter)
         }
+        (Transport::NrfSerialDfu, PreparedTarget::NrfSerialDfu(prepared)) => {
+            if !matches!(request.provisioning, ProvisioningAction::Preserve) {
+                return Err(AppError::unsupported_operation(format!(
+                    "{} does not support Wi-Fi provisioning",
+                    board.display_name
+                )));
+            }
+            if request.monitor {
+                return Err(AppError::unsupported_operation(
+                    "Nordic serial DFU does not provide a post-flash serial monitor",
+                ));
+            }
+            nrf_serial_dfu::flash(board, &prepared, request.port, reporter)
+        }
         _ => Err(AppError::trust_identity(
             "prepared artifact transport does not match the selected board",
         )),
@@ -330,8 +347,8 @@ fn guided(catalog: &BoardCatalog, reporter: Reporter) -> Result<(), AppError> {
         ));
     }
     ui::print_header();
-    let labels = catalog
-        .boards
+    let boards = catalog.shipping_boards().collect::<Vec<_>>();
+    let labels = boards
         .iter()
         .map(|board| {
             format!(
@@ -346,8 +363,7 @@ fn guided(catalog: &BoardCatalog, reporter: Reporter) -> Result<(), AppError> {
     else {
         return Ok(());
     };
-    let board = catalog
-        .boards
+    let board = boards
         .get(index)
         .ok_or_else(|| AppError::configuration("board selection is out of range"))?;
     println!();
@@ -449,13 +465,14 @@ fn confirm_pinned_version(
 }
 
 fn list_boards(catalog: &BoardCatalog, json: bool) -> Result<(), AppError> {
+    let boards = catalog.shipping_boards().collect::<Vec<_>>();
     if json {
         #[derive(Serialize)]
         struct BoardListEvent<'a> {
             schema: u8,
             event: &'static str,
             phase: &'static str,
-            boards: &'a [BoardCatalogEntry],
+            boards: &'a [&'a BoardCatalogEntry],
         }
         println!(
             "{}",
@@ -463,11 +480,11 @@ fn list_boards(catalog: &BoardCatalog, json: bool) -> Result<(), AppError> {
                 schema: 1,
                 event: "board_list",
                 phase: "complete",
-                boards: &catalog.boards,
+                boards: &boards,
             })?
         );
     } else {
-        for board in &catalog.boards {
+        for board in boards {
             println!(
                 "{:<20} {:<12} {}",
                 board.slug,
@@ -519,6 +536,13 @@ enum DoctorCheck {
         softdevice_version: String,
         compatibility_variant: String,
     },
+    #[serde(rename = "nrf-serial-dfu")]
+    NrfSerialDfu {
+        port: String,
+        mode: nrf_serial_dfu::DeviceMode,
+        vendor_id: u16,
+        product_id: u16,
+    },
 }
 
 fn doctor(
@@ -534,7 +558,7 @@ fn doctor(
         && requested_port.is_some()
     {
         return Err(AppError::unsupported_operation(
-            "--port applies only to ESP serial boards; UF2 boards use a bootloader drive",
+            "--port applies only to serial boards; UF2 boards use a bootloader drive",
         ));
     }
     if board.is_some() {
@@ -572,7 +596,7 @@ fn doctor(
                 note,
             })
         }
-        Some(board) => {
+        Some(board) if board.transport == Transport::Uf2MassStorage => {
             let device = uf2::detect_device(board, None)?;
             Some(DoctorCheck::Uf2MassStorage {
                 mount: device.mount().display().to_string(),
@@ -581,6 +605,15 @@ fn doctor(
                 softdevice_family: device.softdevice().family().as_str().to_string(),
                 softdevice_version: device.softdevice().version().as_str().to_string(),
                 compatibility_variant: device.compatibility_variant().to_string(),
+            })
+        }
+        Some(board) => {
+            let report = nrf_serial_dfu::doctor(board, detected_ports.clone(), requested_port)?;
+            Some(DoctorCheck::NrfSerialDfu {
+                port: report.port_name,
+                mode: report.mode,
+                vendor_id: report.vendor_id,
+                product_id: report.product_id,
             })
         }
         None => None,
@@ -628,7 +661,7 @@ fn human_doctor_output(
     if let Some(board) = output.board {
         rendered.push_str(&format!("board: {board}\n"));
     }
-    if board.is_none_or(|board| board.transport == Transport::EspSerial) {
+    if board.is_none_or(|board| board.transport != Transport::Uf2MassStorage) {
         rendered.push_str("serial ports:\n");
         let ports = human_serial_ports(&output.serial_ports, requested_port);
         if ports.is_empty() {
@@ -685,6 +718,19 @@ fn human_doctor_output(
             ));
             rendered.push_str(&format!(
                 "  compatibility variant: {compatibility_variant}\n"
+            ));
+        }
+        Some(DoctorCheck::NrfSerialDfu {
+            port,
+            mode,
+            vendor_id,
+            product_id,
+        }) => {
+            rendered.push_str("non-writing Nordic serial DFU preflight: passed\n");
+            rendered.push_str(&format!("  port: {port}\n"));
+            rendered.push_str(&format!("  device mode: {mode}\n"));
+            rendered.push_str(&format!(
+                "  USB identity: {vendor_id:04x}:{product_id:04x}\n"
             ));
         }
         None => {}
@@ -758,6 +804,7 @@ const fn transport_label(transport: Transport) -> &'static str {
     match transport {
         Transport::EspSerial => "ESP serial",
         Transport::Uf2MassStorage => "UF2",
+        Transport::NrfSerialDfu => "Nordic serial DFU",
     }
 }
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -105,6 +106,35 @@ class AcceptanceDocContractTests(unittest.TestCase):
             ),
             [],
         )
+
+    def test_physical_count_ignores_qualification_targets(self) -> None:
+        catalog = {
+            "boards": [
+                {
+                    "availability": "shipping",
+                    "slug": board,
+                    "transport": "uf2-mass-storage" if board == "t-echo" else "esp-serial",
+                }
+                for board in CHECKER.SHIPPING_BOARDS
+            ]
+            + [
+                {
+                    "availability": "qualification",
+                    "slug": "qualification-board",
+                    "transport": "nrf-serial-dfu",
+                }
+            ]
+        }
+        catalog_path = self.root / "release" / "flash" / "boards.json"
+        catalog_path.parent.mkdir(parents=True)
+        catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+
+        expected = len(CHECKER.SURFACES) * (
+            len(CHECKER.SHIPPING_BOARDS)
+            + len(CHECKER.T_ECHO_COMPATIBILITY_VARIANTS)
+            - 1
+        )
+        self.assertEqual(CHECKER.physical_row_count(self.root), expected)
 
     def test_installer_roster_count_tracks_published_targets(self) -> None:
         targets = dict(CHECKER.CLI_TARGETS)
