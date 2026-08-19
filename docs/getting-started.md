@@ -79,7 +79,7 @@ You've now seen a node born, announced, and heard. Where next depends on what yo
 
 - **Running a transport node for yourself or the ecosystem?** Take a look at [`prnsd`](../prnsd/README.md), the daemon. It owns the interfaces on a machine, and every Reticulum app on that machine shares its one instance.
 
-- **Putting it on hardware?** [Flash a Hopspot](https://prns.dev/flash) in minutes, or work through the [embedded guide](embedded.md) to build board firmware from source.
+- **Putting it on hardware?** [Flash a Hopspot](https://reticulum.rs/flash) in minutes, or work through the [embedded guide](embedded.md) to build board firmware from source.
 
 
 Want to help make Prns itself even better? See [CONTRIBUTING.md](../CONTRIBUTING.md)

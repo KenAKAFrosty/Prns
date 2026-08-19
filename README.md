@@ -1,7 +1,7 @@
 # Prns
 
 <p align="center">
-  <a href="https://prns.dev" target="_blank">
+  <a href="https://reticulum.rs" target="_blank">
   <img src="docs/website/public/assets/og.png" alt="Prns: high-performance Reticulum (RNS), built to run on any device." width="800" />
   </a>
 </p>
@@ -34,7 +34,7 @@ If one of these ecosystems is home for you, shaping its consumer API and packagi
 
 If you're already familiar with Reticulum, you can [jump to here](#coming-from-rns). 
 
-If you came here to put Reticulum on an embedded device, [flash a Hopspot here](https://prns.dev/flash).
+If you came here to put Reticulum on an embedded device, [flash a Hopspot here](https://reticulum.rs/flash).
 
 ## Wait, what's *Reticulum*?
 
@@ -155,7 +155,7 @@ Among what you gain: brand-new interfaces, a built-in operator CLI, observabilit
 #### Looking for something specific?
 
 - [Start prnsd](prnsd/README.md) for a high-performance shared instance on your machine, which works with Sideband, NomadNet, MeshChat, etc.
-- [Flash a Hopspot](https://prns.dev/flash) to get self-contained Reticulum running on your embedded devices.
+- [Flash a Hopspot](https://reticulum.rs/flash) to get self-contained Reticulum running on your embedded devices.
 - [Put your own high-performance backbone online](prnsd/README.md#deploy-it) with Docker or Railway.
 - [Measure both implementations side by side](benchmarks/README.md) with the benchmark suite.
 - [Verify the interoperability yourself](docs/validation.md), against real RNS nodes on your own machine.

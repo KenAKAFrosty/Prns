@@ -95,7 +95,7 @@ fn FlashExperience(selected_slug: Option<String>) -> Element {
                 if selected_slug.is_some() { {t!("flash-back-boards")} } else { {t!("flash-back")} }
             }
             p { class: "mt-6 text-xs font-semibold tracking-[0.22em] uppercase text-accent",
-                "Release flasher"
+                "Beta"
             }
             h1 { class: "mt-3 text-3xl md:text-4xl font-semibold tracking-tight text-paper",
                 "Flash a Personal Hopspot"

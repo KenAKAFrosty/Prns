@@ -98,6 +98,6 @@ Prns sits below all of this, at the Reticulum/RNS layer. Because LXMF rides enti
 
 - **LoRa**: long-range, low-power radio in unlicensed bands. Kilometers of range on milliwatts of power, at very modest bandwidth. The current workhorse medium for off-grid Reticulum.
 - **RNode**: the Reticulum community's open radio device design & accompanying firmware. Connect one to a computer or mobile device that runs Reticulum, and it becomes a LoRa interface.
-- **Hopspot**: Prns's ready-to-flash firmware for supported radio boards. One cheap board becomes a self-contained transport node that you can put on a windowsill, in a bag, or on a rooftop. [Flash one here](https://prns.dev/flash).
+- **Hopspot**: Prns's ready-to-flash firmware for supported radio boards. One cheap board becomes a self-contained transport node that you can put on a windowsill, in a bag, or on a rooftop. [Flash one here](https://reticulum.rs/flash).
 
 That's the working vocabulary! Next stop: [Getting Started](getting-started.md)
