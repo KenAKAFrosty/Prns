@@ -19,6 +19,9 @@ use personal_rns::routing::links::channel::table::impls::FixedArrayChannelTable;
 use personal_rns::routing::links::resources::assembly::{
     FixedIncomingAssemblyTable, FixedStaticOutgoingAssemblyTable,
 };
+use personal_rns::routing::links::resources::pending::{
+    NoPendingResourceOfferTable, PendingResourceOffers,
+};
 use personal_rns::routing::links::resources::table::{
     FixedResourceTable, IncomingResourceState, OutgoingResourceState,
 };
@@ -72,6 +75,10 @@ impl Nrf52840Storage {
 
 const _: () = assert!(Nrf52840Storage::LINK_SESSIONS > Nrf52840Storage::CHANNELS);
 const _: () = assert!(Nrf52840Storage::RESOURCE_ASSEMBLIES == 1);
+const _: () = assert!(core::mem::size_of::<NoPendingResourceOfferTable>() == 0);
+const _: () = assert!(core::mem::size_of::<
+    PendingResourceOffers<NoPendingResourceOfferTable>,
+>() == 0);
 
 impl StorageLayout for Nrf52840Storage {
     const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
@@ -153,6 +160,7 @@ impl StorageLayout for Nrf52840Storage {
         { Self::RESOURCE_TRANSFER_BYTES },
         { max_part_count(Self::RESOURCE_TRANSFER_BYTES) },
     >;
+    type PendingResourceOffers = NoPendingResourceOfferTable;
     type IncomingAssemblies = FixedIncomingAssemblyTable<{ Self::RESOURCE_ASSEMBLIES }>;
     type OutgoingAssemblies = FixedStaticOutgoingAssemblyTable<{ Self::RESOURCE_ASSEMBLIES }>;
     type Channels = FixedArrayChannelTable<

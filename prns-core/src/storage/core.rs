@@ -13,6 +13,7 @@ use crate::routing::delivery::receipts::ReceiptTable;
 use crate::routing::group_keys::GroupKeyTable;
 use crate::routing::links::channel::table::ChannelTable;
 use crate::routing::links::resources::assembly::{IncomingAssemblyTable, OutgoingAssemblyTable};
+use crate::routing::links::resources::pending::PendingResourceOfferTable;
 use crate::routing::links::resources::table::{
     IncomingResourceState, OutgoingResourceState, ResourceTable,
 };
@@ -125,6 +126,7 @@ pub trait StorageLayout {
     type Links: LinkTable + Default;
     type OutgoingResources: ResourceTable<OutgoingResourceState> + Default;
     type IncomingResources: ResourceTable<IncomingResourceState> + Default;
+    type PendingResourceOffers: PendingResourceOfferTable + Default;
     type IncomingAssemblies: IncomingAssemblyTable + Default;
     type OutgoingAssemblies: OutgoingAssemblyTable + Default;
     type Channels: ChannelTable + Default;

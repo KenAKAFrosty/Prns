@@ -5,6 +5,7 @@ pub mod assemble_incoming;
 pub mod assembly;
 pub mod build_outgoing;
 pub mod control;
+pub mod pending;
 pub mod receive;
 pub mod send;
 mod send_plan;
