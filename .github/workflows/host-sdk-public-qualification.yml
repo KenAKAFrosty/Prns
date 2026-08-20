@@ -115,8 +115,14 @@ jobs:
           cp prns-js/tests/native-consumer.test.mjs "$scratch/prns-js/tests/"
           cp prns-host/conformance/persistent-two-node-v1.json \
             "$scratch/prns-host/conformance/"
-          npm install --prefix "$scratch" --save-exact "personal-rns@$VERSION"
-          node --test "$scratch/prns-js/tests/native-consumer.test.mjs"
+          npm install --prefix "$scratch" --save-exact \
+            "personal-rns@$VERSION" "hopspot@$VERSION"
+          (
+            cd "$scratch"
+            node --test prns-js/tests/native-consumer.test.mjs
+            node --input-type=module --eval \
+              'import { Prns } from "personal-rns"; import { Prns as HopspotPrns } from "hopspot"; if (HopspotPrns !== Prns) throw new Error("facade mismatch");'
+          )
 
   python:
     needs: custody
@@ -179,6 +185,9 @@ jobs:
           cargo add \
             --manifest-path "$scratch/consumer/Cargo.toml" \
             "personal-rns@=$VERSION"
+          cargo add \
+            --manifest-path "$scratch/consumer/Cargo.toml" \
+            "hopspot@=$VERSION"
           cargo check --manifest-path "$scratch/consumer/Cargo.toml" --locked
 
   maven:

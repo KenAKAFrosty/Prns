@@ -75,6 +75,7 @@ cargo_manifests = [
     "personal-hopspot/flasher/Cargo.toml",
     "personal-hopspot/mobile/android/rust/Cargo.toml",
     "personal-hopspot/mobile/ios/rust/Cargo.toml",
+    "personal-hopspot/sdk/hopspot/Cargo.toml",
     "personal-rns/Cargo.toml",
     "prns-config/Cargo.toml",
     "prns-core/Cargo.toml",
@@ -231,7 +232,9 @@ inputs = [
   "prns-host/distribution/RUST_PACKAGE.md",
   "prns-host/distribution",
   "tools/release/check-host-sdk-distribution.py",
+  "personal-hopspot/sdk/hopspot",
   "personal-rns/Cargo.toml",
+  "prns-js/package.json",
   "prns-config/Cargo.toml",
   "prns-core/Cargo.toml",
   "prns-ffi/Cargo.toml",
@@ -767,6 +770,31 @@ inputs = [
   "prns-js/tests",
 ]
 artifacts = "validation-artifacts/results/javascript-contract"
+
+[[suite]]
+id = "hopspot-javascript-package"
+domain = "platform"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "node"
+timeout_seconds = 120
+command = ["npm", "--prefix", "personal-hopspot/sdk/hopspot", "run", "check"]
+inputs = [
+  "personal-hopspot/sdk/hopspot/package.json",
+  "personal-hopspot/sdk/hopspot/index.js",
+  "personal-hopspot/sdk/hopspot/index.cjs",
+  "personal-hopspot/sdk/hopspot/index.d.ts",
+  "personal-hopspot/sdk/hopspot/native.js",
+  "personal-hopspot/sdk/hopspot/native.cjs",
+  "personal-hopspot/sdk/hopspot/native.d.ts",
+  "personal-hopspot/sdk/hopspot/browser.js",
+  "personal-hopspot/sdk/hopspot/browser.d.ts",
+  "personal-hopspot/sdk/hopspot/casework.js",
+  "personal-hopspot/sdk/hopspot/casework.cjs",
+  "personal-hopspot/sdk/hopspot/casework.d.ts",
+  "personal-hopspot/sdk/hopspot/test",
+]
+artifacts = "validation-artifacts/results/hopspot-javascript-package"
 
 [[suite]]
 id = "javascript-browser-package"

@@ -8,6 +8,7 @@ members = [
     "prns-nrf-dfu",
     "prns-runtime/core",
     "personal-hopspot/core",
+    "personal-hopspot/sdk/hopspot",
     "docs/command",
     "tools/repo/cargo-tools-command",
     "personal-hopspot/flasher",

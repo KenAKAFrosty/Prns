@@ -709,6 +709,8 @@ def validate() -> list[str]:
         "release.host-sdk.python.smoke",
         "release.host-sdk.dotnet.smoke -- --public",
         '"personal-rns@=$VERSION"',
+        '"hopspot@=$VERSION"',
+        '"personal-rns@$VERSION" "hopspot@$VERSION"',
         "https://repo1.maven.org/maven2",
         "persistent-two-node-smoke.c",
         'go -C "$go_root" test ./...',
@@ -737,6 +739,12 @@ def validate() -> list[str]:
         "persistent-two-node-v1.json",
         'cp "$GITHUB_WORKSPACE/VERSION" VERSION',
         "node --test prns-js/tests/native-consumer.test.mjs",
+        "npm pack ./personal-hopspot/sdk/hopspot --pack-destination dist/npm",
+        '"$GITHUB_WORKSPACE/dist/npm/hopspot-$(cat "$GITHUB_WORKSPACE/VERSION").tgz"',
+        "publish alternate-name facade",
+        "wait for the canonical package dependency",
+        'npm view "personal-rns@$version" version',
+        "working-directory: personal-hopspot/sdk/hopspot",
     ):
         if package_gate not in napi_release:
             errors.append(f"napi.yml is missing package journey gate {package_gate!r}")

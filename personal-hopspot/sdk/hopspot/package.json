@@ -1,0 +1,93 @@
+{
+  "name": "hopspot",
+  "version": "0.3.6",
+  "description": "The Personal RNS JavaScript API under the alternate Hopspot package name.",
+  "license": "MIT OR Apache-2.0",
+  "homepage": "https://reticulum.rs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KenAKAFrosty/Prns.git",
+    "directory": "personal-hopspot/sdk/hopspot"
+  },
+  "bugs": {
+    "url": "https://github.com/KenAKAFrosty/Prns/issues"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "index.js",
+    "index.cjs",
+    "index.d.ts",
+    "native.js",
+    "native.cjs",
+    "native.d.ts",
+    "browser.js",
+    "browser.d.ts",
+    "casework.js",
+    "casework.cjs",
+    "casework.d.ts",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "exports": {
+    ".": {
+      "bun": {
+        "types": "./index.d.ts",
+        "import": "./index.js",
+        "require": "./index.cjs"
+      },
+      "node": {
+        "types": "./index.d.ts",
+        "import": "./index.js",
+        "require": "./index.cjs"
+      },
+      "browser": {
+        "types": "./browser.d.ts",
+        "import": "./browser.js"
+      },
+      "default": {
+        "types": "./browser.d.ts",
+        "import": "./browser.js"
+      }
+    },
+    "./native": {
+      "types": "./native.d.ts",
+      "import": "./native.js",
+      "require": "./native.cjs"
+    },
+    "./browser": {
+      "types": "./browser.d.ts",
+      "import": "./browser.js"
+    },
+    "./casework": {
+      "types": "./casework.d.ts",
+      "import": "./casework.js",
+      "require": "./casework.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "npm test && npm pack --dry-run --cache ./target/npm-cache"
+  },
+  "dependencies": {
+    "personal-rns": "0.3.6"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "reticulum",
+    "hopspot",
+    "personal-rns",
+    "rns",
+    "mesh",
+    "networking",
+    "napi",
+    "wasm"
+  ]
+}

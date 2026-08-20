@@ -184,6 +184,11 @@
       "name": "personal-rns",
       "manifest": "personal-rns/Cargo.toml",
       "order": 5
+    },
+    {
+      "name": "hopspot",
+      "manifest": "personal-hopspot/sdk/hopspot/Cargo.toml",
+      "order": 6
     }
   ],
   "packages": [
@@ -191,6 +196,11 @@
       "ecosystem": "npm",
       "name": "personal-rns",
       "manifest": "prns-js/package.json"
+    },
+    {
+      "ecosystem": "npm",
+      "name": "hopspot",
+      "manifest": "personal-hopspot/sdk/hopspot/package.json"
     },
     {
       "ecosystem": "pypi",

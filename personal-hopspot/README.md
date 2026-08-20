@@ -13,6 +13,14 @@ Personal Hopspot is also the board-backed embedded reference application. A
 screen is optional: headless boards run the node and expose their supported
 remote controls without compiling a display surface.
 
+## Public packages
+
+The `sdk/hopspot` directory is the shared home of the Rust crate and npm package
+named `hopspot`. Both are transparent, version-locked facades over the complete
+`personal-rns` Rust and JavaScript APIs. They provide an alternate package name
+without creating a second implementation, type system, protocol surface, or
+release line.
+
 ## The built-in NomadNet page
 
 Every hopspot serves small [micron](https://github.com/markqvist/NomadNet) pages about the project
