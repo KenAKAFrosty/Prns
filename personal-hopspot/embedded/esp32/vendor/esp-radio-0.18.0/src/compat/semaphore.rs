@@ -39,7 +39,10 @@ pub(crate) fn sem_take(semphr: *mut c_void, tick: u32) -> i32 {
     handle.take(timeout) as i32
 }
 
-pub(crate) fn sem_try_take_from_isr(semphr: *mut c_void, higher_prio_task_waken: *mut bool) -> i32 {
+pub(crate) fn sem_try_take_from_isr(
+    semphr: *mut c_void,
+    higher_prio_task_waken: *mut bool,
+) -> i32 {
     let ptr = unwrap!(SemaphorePtr::new(semphr.cast()), "semphr is null");
 
     let handle = unsafe { SemaphoreHandle::ref_from_ptr(&ptr) };
@@ -55,7 +58,10 @@ pub(crate) fn sem_give(semphr: *mut c_void) -> i32 {
     handle.give() as i32
 }
 
-pub(crate) fn sem_try_give_from_isr(semphr: *mut c_void, higher_prio_task_waken: *mut bool) -> i32 {
+pub(crate) fn sem_try_give_from_isr(
+    semphr: *mut c_void,
+    higher_prio_task_waken: *mut bool,
+) -> i32 {
     let ptr = unwrap!(SemaphorePtr::new(semphr.cast()), "semphr is null");
 
     let handle = unsafe { SemaphoreHandle::ref_from_ptr(&ptr) };

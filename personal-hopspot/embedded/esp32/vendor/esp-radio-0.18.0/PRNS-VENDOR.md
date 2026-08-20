@@ -7,10 +7,18 @@
 - Radio blobs: `esp-wifi-sys 0.2.0`, revision `fee9770fc96fa3bb753b2ce4bd968daa4f068a04`, generated from ESP-IDF 5.5.3
 - License: `MIT OR Apache-2.0`
 - Local changes:
-  - Return Wi-Fi transmit credit when an interface state change rejects a send.
-  - Prefer external memory for ESP-IDF Wi-Fi allocations when static TX buffers are selected, while retaining internal-only allocator paths.
-  - Align the ESP32-C3/S3 BLE controller OS adapter ABI with ESP-IDF 5.5.3.
+  - Match ESP-IDF 5.5.3's task-versus-ISR context reporting instead of reporting every Wi-Fi
+    adapter call as interrupt context.
+  - Align the ESP32-C3/S3 BLE coexistence adapter with ESP-IDF 5.5.3: leave the private dynamic
+    priority callback null and make both low-power wake-request callbacks no-ops while controller
+    sleep is disabled.
+  - Backport upstream esp-rs/esp-hal#5550's corrected BLE half-microsecond-to-low-power-clock
+    conversion used by the controller's radio timing.
   - Pair S3 Wi-Fi driver lifecycle with the ESP-IDF PHY receive-enable contract.
-  - Add typed data-path diagnostics, bounded radio event tracing, stalled-credit recovery, and a transmit-submission circuit breaker.
-  - Correct full Wi-Fi reinitialization teardown ordering, unregister receive callbacks, and drain admitted receive buffers before driver deinitialization.
+  - Treat `esp_wifi_internal_tx`'s synchronous result as transmit admission authority. Network TX
+    and RX-token availability no longer depend on best-effort TX-completion callbacks.
+  - Add typed data-path diagnostics, bounded radio event tracing, and a transmit-submission circuit
+    breaker.
+  - Correct Wi-Fi teardown ordering, unregister receive callbacks, drain admitted receive buffers
+    before stopping the driver, and use mode restart rather than reallocating the shared driver.
   - Isolate the package as its own Cargo workspace for repository validation.

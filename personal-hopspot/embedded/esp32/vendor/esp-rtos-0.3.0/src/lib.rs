@@ -35,7 +35,7 @@ esp_rtos::start_second_core(
 //! // let esp_radio_controller = esp_radio::init().unwrap();
 //! # }
 //! ```
-//! 
+//!
 //! To write `async` code, enable the `embassy` feature, and mark the main function with `#[esp_rtos::main]`.
 //! This will create a thread-mode executor on the main thread. Note that, to create async tasks, you will need
 //! the `task` macro from the `embassy-executor` crate. Do NOT enable any of the `arch-*` features on `embassy-executor`.
@@ -72,6 +72,23 @@ mod wait_queue;
 #[cfg(feature = "embassy")]
 #[cfg_attr(docsrs, doc(cfg(feature = "embassy")))]
 pub mod embassy;
+
+/// Cumulative activity at the esp-radio RTOS wait-queue boundary.
+#[cfg(feature = "esp-radio")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RadioWaitQueueDiagnostics {
+    waits: usize,
+    task_notifications: usize,
+    task_wakes: usize,
+    isr_notifications: usize,
+    isr_wakes: usize,
+}
+
+/// Captures the current esp-radio RTOS wait-queue counters.
+#[cfg(feature = "esp-radio")]
+pub fn radio_wait_queue_diagnostics() -> RadioWaitQueueDiagnostics {
+    wait_queue::diagnostics()
+}
 
 use core::mem::MaybeUninit;
 
@@ -322,7 +339,7 @@ pub fn start_with_idle_hook(
         let stack_bottom = (&raw const _stack_end_cpu0).cast::<MaybeUninit<u32>>();
         let stack_slice = core::ptr::slice_from_raw_parts_mut(
             stack_bottom.cast_mut(),
-            stack_top as usize - stack_bottom as usize,
+            (stack_top as usize - stack_bottom as usize) / 4,
         );
 
         task::allocate_main_task(
@@ -392,7 +409,7 @@ pub fn start_second_core_with_stack_guard_offset<const STACK_SIZE: usize>(
     let stack_ptrs = SecondCoreStack {
         stack: core::ptr::slice_from_raw_parts_mut(
             stack.bottom().cast::<MaybeUninit<u32>>(),
-            STACK_SIZE,
+            STACK_SIZE / 4,
         ),
     };
 

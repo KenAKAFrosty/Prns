@@ -61,12 +61,14 @@ pub unsafe extern "C" fn set_isr(n: i32, f: *mut c_void, arg: *mut c_void) {
 #[unsafe(no_mangle)]
 #[crate::hal::ram]
 extern "C" fn WIFI_MAC() {
+    super::WIFI_MAC_INTERRUPTS.fetch_add(1, portable_atomic::Ordering::Relaxed);
     ISR_INTERRUPT_1.dispatch();
 }
 
 #[unsafe(no_mangle)]
 #[crate::hal::ram]
 extern "C" fn WIFI_PWR() {
+    super::WIFI_POWER_INTERRUPTS.fetch_add(1, portable_atomic::Ordering::Relaxed);
     ISR_INTERRUPT_1.dispatch();
 }
 

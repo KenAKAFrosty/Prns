@@ -362,7 +362,10 @@ mod implementation {
                                     timer_task,
                                     semaphore.as_ptr().cast(),
                                     2,
-                                    None,
+                                    // Match ESP-IDF's esp_timer default. Radio callbacks enter
+                                    // the Wi-Fi/BLE libraries initialized on core 0 and must not
+                                    // migrate to the application core while the radios coexist.
+                                    Some(0),
                                     8192,
                                 );
                             }

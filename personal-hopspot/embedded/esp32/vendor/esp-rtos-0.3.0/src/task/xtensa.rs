@@ -50,7 +50,8 @@ extern "C" fn idle_entry() -> ! {
 // Exception mode. Setting this bit prevents interrupts below EXCMLEVEL. Cleared by `rfe` at the end
 // of the Level 1 interrupt handler.
 const PS_EXCM: u32 = 1 << 4;
-// User mode. This bit doesn't matter for us yet, we don't have separate kernel mode exceptions.
+// User mode. Selects the user exception vector, instead of the kernel one. Both vectors point at
+// the same handler, but tasks must run with this bit set, because the interrupt handlers do, too.
 const PS_UM: u32 = 1 << 5;
 // Windowed mode.
 const PS_WOE: u32 = 1 << 18;
@@ -143,6 +144,11 @@ pub(crate) fn setup_multitasking<const IRQ: u8>(mut _irq: SoftwareInterrupt<'sta
 
     #[cfg(multi_core)]
     {
+        // Core 0 may have requested a cross-core yield before this scheduler was initialized.
+        // Enabling the source with that request still asserted would enter the scheduler without
+        // a main task or saved context. Discard the stale request before installing the handler;
+        // scheduler-side gating prevents a new one until `allocate_main_task` marks this CPU live.
+        _irq.reset();
         _irq.set_interrupt_handler(InterruptHandler::new(
             unsafe {
                 core::mem::transmute::<*const (), extern "C" fn()>(

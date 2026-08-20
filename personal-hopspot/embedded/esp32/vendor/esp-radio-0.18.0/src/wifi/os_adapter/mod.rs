@@ -26,6 +26,10 @@ use crate::{
 };
 
 static WIFI_LOCK: RawMutex = RawMutex::new();
+pub(crate) static WIFI_MAC_INTERRUPTS: portable_atomic::AtomicUsize =
+    portable_atomic::AtomicUsize::new(0);
+pub(crate) static WIFI_POWER_INTERRUPTS: portable_atomic::AtomicUsize =
+    portable_atomic::AtomicUsize::new(0);
 
 pub(crate) fn shutdown_wifi_isr() {
     os_adapter_chip_specific::shutdown_wifi_isr();
@@ -140,7 +144,10 @@ pub unsafe extern "C" fn ints_off(mask: u32) {
 ///
 /// *************************************************************************
 pub unsafe extern "C" fn is_from_isr() -> bool {
-    true
+    // Match ESP-IDF's `!xPortCanYield()`: an interrupt or an interrupt-masked
+    // critical section must use the nonblocking ISR-safe path, while a normal
+    // radio worker task must be allowed to use the task/timeout path.
+    !crate::hal::interrupt::RunLevel::current().is_thread()
 }
 
 /// **************************************************************************
@@ -1296,9 +1303,6 @@ pub unsafe extern "C" fn zalloc_internal(size: usize) -> *mut c_void {
 ///
 /// *************************************************************************
 pub unsafe extern "C" fn wifi_malloc(size: usize) -> *mut c_void {
-    if crate::wifi::wifi_allocations_prefer_external() {
-        return unsafe { crate::compat::malloc::malloc(size).cast() };
-    }
     unsafe { malloc_internal(size) }
 }
 
@@ -1317,9 +1321,6 @@ pub unsafe extern "C" fn wifi_malloc(size: usize) -> *mut c_void {
 ///
 /// *************************************************************************
 pub unsafe extern "C" fn wifi_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
-    if crate::wifi::wifi_allocations_prefer_external() {
-        return unsafe { crate::compat::malloc::realloc(ptr.cast(), size).cast() };
-    }
     unsafe { realloc_internal(ptr, size) }
 }
 
@@ -1339,9 +1340,6 @@ pub unsafe extern "C" fn wifi_realloc(ptr: *mut c_void, size: usize) -> *mut c_v
 /// *************************************************************************
 pub unsafe extern "C" fn wifi_calloc(n: usize, size: usize) -> *mut c_void {
     trace!("wifi_calloc {} {}", n, size);
-    if crate::wifi::wifi_allocations_prefer_external() {
-        return unsafe { crate::compat::malloc::calloc(n as u32, size).cast() };
-    }
     unsafe { calloc_internal(n as u32, size) as *mut c_void }
 }
 

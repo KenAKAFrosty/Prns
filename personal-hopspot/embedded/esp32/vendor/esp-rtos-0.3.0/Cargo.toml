@@ -261,3 +261,5 @@ version = "0.15.0"
 
 [target.'cfg(target_arch = "xtensa")'.dependencies.xtensa-lx]
 version = "0.13.0"
+
+[workspace]

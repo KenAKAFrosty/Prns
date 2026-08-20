@@ -82,3 +82,5 @@ features = ["unsafe-assume-single-core"]
 
 [target.'cfg(target_has_atomic = "32")'.dependencies.portable-atomic]
 version = "1"
+
+[workspace]

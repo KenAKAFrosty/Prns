@@ -69,6 +69,8 @@ package = "xtensa-lx-rt-proc-macros"
 [dependencies.xtensa-lx]
 version = "0.13.0"
 
+[workspace]
+
 [build-dependencies]
 
 [lints.rust]

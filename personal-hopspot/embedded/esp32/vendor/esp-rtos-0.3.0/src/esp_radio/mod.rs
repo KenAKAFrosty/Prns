@@ -160,11 +160,24 @@ impl WaitQueueImplementation for WaitQueue {
     unsafe fn notify(queue: WaitQueuePtr) {
         let wait_queue = unsafe { Self::from_ptr(queue) };
 
-        wait_queue.notify()
+        _ = wait_queue.notify();
     }
 
-    unsafe fn notify_from_isr(queue: WaitQueuePtr, _higher_prio_task_waken: Option<&mut bool>) {
-        unsafe { <Self as WaitQueueImplementation>::notify(queue) };
+    unsafe fn notify_from_isr(
+        queue: WaitQueuePtr,
+        higher_prio_task_waken: Option<&mut bool>,
+    ) {
+        let wait_queue = unsafe { Self::from_ptr(queue) };
+        if wait_queue.notify_from_isr() != 0
+            && let Some(higher_prio_task_waken) = higher_prio_task_waken
+        {
+            // Match FreeRTOS's FromISR contract. The radio blobs use this flag to
+            // request a scheduler pass at ISR exit. `resume_task` already raises the
+            // scheduler interrupt, but reporting the wake is still required: the
+            // producer may perform more ISR-side work before returning, and the blob
+            // is the authority on when to call its yield hook.
+            *higher_prio_task_waken = true;
+        }
     }
 }
 
