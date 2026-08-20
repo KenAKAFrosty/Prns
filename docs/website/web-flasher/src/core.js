@@ -217,6 +217,9 @@ export function validateRequest(request) {
     }
   }
   if (transport === "esp-serial") {
+    if (!validSerialFilters(request.serialFilters)) {
+      throw new FlashBridgeError("invalid_request", "The ESP serial device filter is invalid.");
+    }
     if (request.parts.length !== ESP_PARTS.length) {
       throw new FlashBridgeError("invalid_request", "The ESP release must contain the three ordered sparse parts.");
     }
@@ -277,12 +280,30 @@ export function validateRequest(request) {
       || request.provisioning !== null
       || request.installMode !== undefined
       || request.eraseConfirmed !== undefined
+      || !Array.isArray(request.serialFilters)
+      || request.serialFilters.length !== 0
       || !validUf2Compatibility(request.uf2Compatibility)
     ) {
       throw new FlashBridgeError("invalid_request", "The UF2 target identity is incomplete.");
     }
   }
   return request;
+}
+
+function validSerialFilters(filters) {
+  if (!Array.isArray(filters) || filters.length === 0) return false;
+  const identities = new Set();
+  for (const filter of filters) {
+    if (!filter || typeof filter !== "object" || Array.isArray(filter)) return false;
+    const fields = Object.keys(filter).sort();
+    if (fields.join(",") !== "usbVendorId") return false;
+    if (!Number.isSafeInteger(filter.usbVendorId) || filter.usbVendorId <= 0 || filter.usbVendorId > 0xffff) {
+      return false;
+    }
+    if (identities.has(filter.usbVendorId)) return false;
+    identities.add(filter.usbVendorId);
+  }
+  return true;
 }
 
 function validUf2Compatibility(value) {

@@ -276,6 +276,7 @@ export async function prepare(request, emit = () => {}, dependencies = {}) {
       beforeReset: request.beforeReset,
       afterReset: request.afterReset,
       mountLabel: request.mountLabel,
+      serialFilters: request.serialFilters.map((filter) => ({ ...filter })),
       installMode: request.installMode,
       files,
     };
@@ -361,7 +362,7 @@ export async function flash(emit = () => {}, dependencies = {}) {
     events.emit({ phase: "requesting_port" });
     let port;
     try {
-      port = await serial.requestPort();
+      port = await serial.requestPort({ filters: prepared.serialFilters });
     } catch (error) {
       if (error?.name === "NotFoundError" || error?.name === "SecurityError") {
         throw error;

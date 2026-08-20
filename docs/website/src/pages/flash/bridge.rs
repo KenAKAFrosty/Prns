@@ -69,12 +69,26 @@ pub(super) struct BridgeRequest {
     after_reset: Option<String>,
     mount_label: Option<String>,
     uf2_compatibility: Option<BridgeUf2Compatibility>,
+    serial_filters: Vec<BridgeSerialFilter>,
     #[serde(skip_serializing_if = "Option::is_none")]
     install_mode: Option<InstallMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     erase_confirmed: Option<bool>,
     provisioning: Option<BridgeProvisioning>,
     parts: Vec<BridgePart>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeSerialFilter {
+    usb_vendor_id: u16,
+}
+
+struct BridgeEspOptions {
+    install_mode: InstallMode,
+    destructive_confirmation: DestructiveConfirmation,
+    provisioning: Option<BridgeProvisioning>,
+    web_serial_vendor_id: u16,
 }
 
 #[derive(Serialize)]
@@ -147,16 +161,23 @@ impl BridgeRequest {
         match (target, catalog_target, compatibility) {
             (
                 ReleaseTarget::EspSerial(esp),
-                BoardFlashTarget::EspSerial { expected_chip, .. },
+                BoardFlashTarget::EspSerial {
+                    expected_chip,
+                    web_serial_vendor_id,
+                    ..
+                },
                 ReleaseCompatibility::Esp,
             ) if esp.expected_chip().as_str() == expected_chip => Self::from_esp_target(
                 target.board_id().as_str(),
                 target.display_name(),
                 esp,
                 base_url,
-                install_mode,
-                destructive_confirmation,
-                provisioning,
+                BridgeEspOptions {
+                    install_mode,
+                    destructive_confirmation,
+                    provisioning,
+                    web_serial_vendor_id,
+                },
             ),
             (
                 ReleaseTarget::Uf2(uf2),
@@ -192,16 +213,17 @@ impl BridgeRequest {
         display_name: &str,
         target: &EspSerialTarget,
         base_url: &str,
-        install_mode: InstallMode,
-        destructive_confirmation: DestructiveConfirmation,
-        provisioning: Option<BridgeProvisioning>,
+        options: BridgeEspOptions,
     ) -> Result<Self, String> {
-        if !destructive_confirmation.permits(install_mode) {
+        if !options
+            .destructive_confirmation
+            .permits(options.install_mode)
+        {
             return Err(
                 "The ESP install mode does not have the required confirmation state.".to_string(),
             );
         }
-        match (&provisioning, target.provisioning()) {
+        match (&options.provisioning, target.provisioning()) {
             (Some(request), Some(slot))
                 if request.offset == slot.flash_offset()
                     && request.size == slot.reserved_size_bytes()
@@ -229,9 +251,12 @@ impl BridgeRequest {
             after_reset: Some(target.after_reset().as_str().to_string()),
             mount_label: None,
             uf2_compatibility: None,
-            install_mode: Some(install_mode),
-            erase_confirmed: Some(destructive_confirmation.is_confirmed()),
-            provisioning,
+            serial_filters: vec![BridgeSerialFilter {
+                usb_vendor_id: options.web_serial_vendor_id,
+            }],
+            install_mode: Some(options.install_mode),
+            erase_confirmed: Some(options.destructive_confirmation.is_confirmed()),
+            provisioning: options.provisioning,
             parts: target
                 .parts()
                 .iter()
@@ -287,6 +312,7 @@ impl BridgeRequest {
                 application_base: compatibility.application_base(),
                 family_id: compatibility.family_id(),
             }),
+            serial_filters: Vec::new(),
             install_mode: None,
             erase_confirmed: None,
             provisioning: None,
@@ -654,6 +680,7 @@ mod tests {
     ];
     const ESP_TARGET: BoardFlashTarget = BoardFlashTarget::EspSerial {
         expected_chip: "esp32s3",
+        web_serial_vendor_id: crate::platforms::ESPRESSIF_NATIVE_USB_VENDOR_ID,
         supports_provisioning: true,
         supports_tcp_client_provisioning: true,
     };
@@ -740,7 +767,7 @@ mod tests {
     #[test]
     fn typed_targets_preserve_the_javascript_request_shape(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        const UF2_REQUEST_FIELDS: [&str; 14] = [
+        const UF2_REQUEST_FIELDS: [&str; 15] = [
             "schema",
             "boardSlug",
             "displayName",
@@ -753,10 +780,11 @@ mod tests {
             "afterReset",
             "mountLabel",
             "uf2Compatibility",
+            "serialFilters",
             "provisioning",
             "parts",
         ];
-        const ESP_REQUEST_FIELDS: [&str; 16] = [
+        const ESP_REQUEST_FIELDS: [&str; 17] = [
             "schema",
             "boardSlug",
             "displayName",
@@ -769,6 +797,7 @@ mod tests {
             "afterReset",
             "mountLabel",
             "uf2Compatibility",
+            "serialFilters",
             "installMode",
             "eraseConfirmed",
             "provisioning",
@@ -847,6 +876,12 @@ mod tests {
                     assert_eq!(wire["flashFrequency"], esp.flash_frequency().as_str());
                     assert_eq!(wire["beforeReset"], esp.before_reset().as_str());
                     assert_eq!(wire["afterReset"], esp.after_reset().as_str());
+                    assert_eq!(
+                        wire["serialFilters"],
+                        serde_json::json!([{
+                            "usbVendorId": crate::platforms::ESPRESSIF_NATIVE_USB_VENDOR_ID
+                        }])
+                    );
                     assert!(wire["mountLabel"].is_null());
                     assert!(wire["uf2Compatibility"].is_null());
                     assert!(wire["parts"]
@@ -863,6 +898,7 @@ mod tests {
                     assert_eq!(wire["transport"], "uf2-mass-storage");
                     assert!(wire.get("installMode").is_none());
                     assert!(wire.get("eraseConfirmed").is_none());
+                    assert_eq!(wire["serialFilters"], serde_json::json!([]));
                     assert_eq!(wire["mountLabel"], "TECHOBOOT");
                     assert_eq!(wire["uf2Compatibility"]["softdeviceFamily"], "s140");
                     assert_eq!(wire["uf2Compatibility"]["softdeviceVersion"], "7.3.0");
@@ -952,6 +988,7 @@ mod tests {
             }),
             BoardFlashTarget::EspSerial {
                 expected_chip: "esp32c6",
+                web_serial_vendor_id: crate::platforms::ESPRESSIF_NATIVE_USB_VENDOR_ID,
                 supports_provisioning: false,
                 supports_tcp_client_provisioning: false,
             },

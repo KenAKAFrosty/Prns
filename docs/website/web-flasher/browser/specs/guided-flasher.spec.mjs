@@ -66,6 +66,7 @@ test("the exact staged production bundle performs a hardware-free sparse flash",
       afterReset: target.after_reset,
       mountLabel: null,
       uf2Compatibility: null,
+      serialFilters: [{ usbVendorId: 0x303a }],
       provisioning: null,
       parts: target.parts.map((part) => ({
         ...part,
@@ -76,6 +77,7 @@ test("the exact staged production bundle performs a hardware-free sparse flash",
     const writes = [];
     let disconnected = false;
     let requestedPorts = 0;
+    let serialPickerOptions;
     const reset = [];
     class FakeTransport {
       setDeviceLostCallback() {}
@@ -121,8 +123,9 @@ test("the exact staged production bundle performs a hardware-free sparse flash",
         removeEventListener() {},
       },
       serial: {
-        async requestPort() {
+        async requestPort(options) {
           requestedPorts += 1;
+          serialPickerOptions = options;
           return {};
         },
       },
@@ -131,11 +134,12 @@ test("the exact staged production bundle performs a hardware-free sparse flash",
       proveReset: async () => { throw new Error("C6 must not require browser reset evidence"); },
       resetSleep: async (milliseconds) => reset.push(["sleep", milliseconds]),
     });
-    return { bundleHash, disconnected, phases, requestedPorts, reset, writes };
+    return { bundleHash, disconnected, phases, requestedPorts, reset, serialPickerOptions, writes };
   }, expectedHash);
 
   expect(evidence.bundleHash).toBe(expectedHash);
   expect(evidence.requestedPorts).toBe(1);
+  expect(evidence.serialPickerOptions).toEqual({ filters: [{ usbVendorId: 0x303a }] });
   expect(evidence.disconnected).toBe(true);
   expect(evidence.reset).toEqual([
     ["dtr", false],
@@ -198,6 +202,7 @@ test("the exact staged production bundle traps same-document Back during an acti
       afterReset: target.after_reset,
       mountLabel: null,
       uf2Compatibility: null,
+      serialFilters: [{ usbVendorId: 0x303a }],
       provisioning: null,
       parts: target.parts.map((part) => ({
         ...part,
