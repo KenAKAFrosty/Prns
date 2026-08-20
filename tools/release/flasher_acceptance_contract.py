@@ -11,11 +11,14 @@ import re
 from flasher_manifest import require_schema, target_artifacts
 
 
-SHIPPING_BOARDS = (
+ESP_SERIAL_BOARDS = (
     "heltec-v4",
     "heltec-v4-r8",
     "t-beam-supreme",
     "xiao-esp32-c6",
+)
+SHIPPING_BOARDS = (
+    *ESP_SERIAL_BOARDS,
     "t-echo",
 )
 SURFACES = ("cli", "web")
@@ -33,42 +36,25 @@ CLI_TARGETS = {
     "aarch64-unknown-linux-gnu": ("linux", "aarch64"),
     "x86_64-pc-windows-msvc": ("windows", "x86_64"),
 }
-# The web flasher never asks which browser it is running in. It feature-detects
-# `window.isSecureContext && navigator.serial && navigator.serial.requestPort` and branches on
-# the answer, so a browser moves between these two sets by shipping the API, not by being renamed
-# here. Firefox 151 shipped Web Serial in May 2026 and stable Firefox has carried it since.
-WEB_SERIAL_FALLBACK_BROWSERS = {
-    ("safari", "macos"),
+WEB_SERIAL_HOSTS = {
+    "linux": {"aarch64", "x86_64"},
+    "macos": {"aarch64", "x86_64"},
+    "windows": {"x86_64"},
 }
-WEB_SERIAL_CAPABLE_BROWSERS = {
-    ("firefox", "macos"),
-    ("firefox", "windows"),
-    ("firefox", "linux"),
+WEB_SERIAL_SCENARIOS = {
+    "correct-board",
+    "fresh-install",
+    "one-device",
+    "permission-grant",
+    "post-flash-boot",
 }
-REQUIRED_FALLBACKS = WEB_SERIAL_FALLBACK_BROWSERS | WEB_SERIAL_CAPABLE_BROWSERS
-
-# These three describe the page a browser gets when it cannot reach a serial port at all: the
-# CLI is offered instead, ESP connect is absent, and nothing broken is left on screen in its
-# place. A browser that has Web Serial takes the supported branch and shows none of them.
-NO_WEB_SERIAL_SCENARIOS = {
+REQUIRED_FALLBACKS = {("safari", "macos")}
+FALLBACK_SCENARIOS = {
     "esp-cli-guidance",
     "esp-connect-unavailable",
     "no-broken-connect-action",
-}
-# The T-Echo route is a manual UF2 copy. It does not depend on Web Serial, so it is the one
-# point every fallback row can still prove whatever the browser supports.
-FALLBACK_COMMON_SCENARIOS = {
     "t-echo-uf2-route",
 }
-FALLBACK_SCENARIOS = NO_WEB_SERIAL_SCENARIOS | FALLBACK_COMMON_SCENARIOS
-
-
-def fallback_scenarios(browser: str, os_name: str) -> set[str]:
-    """Points a browser fallback row can actually observe on that browser."""
-
-    if (browser, os_name) in WEB_SERIAL_CAPABLE_BROWSERS:
-        return set(FALLBACK_COMMON_SCENARIOS)
-    return set(FALLBACK_SCENARIOS)
 
 ESP_COMMON_SCENARIOS = {
     "fresh-install",
@@ -130,7 +116,7 @@ UF2_CLI_SCENARIOS = {
 }
 
 PER_RUN_BASELINE_SCENARIOS = {"fresh-install", "post-flash-boot"}
-ACCEPTANCE_SCHEMA = 4
+ACCEPTANCE_SCHEMA = 5
 T_ECHO_COMPATIBILITY_VARIANTS = (
     "s140-6.1.1-fwid-0x00b6",
     "s140-7.3.0-fwid-0x0123",
@@ -270,6 +256,7 @@ def scaffold(
 
     runs = []
     physical_assignments = getattr(tester_roster, "physical", {})
+    web_serial_assignments = getattr(tester_roster, "web_serial", {})
     fallback_assignments = getattr(tester_roster, "fallbacks", {})
     installation_assignments = getattr(tester_roster, "installations", {})
     for board in SHIPPING_BOARDS:
@@ -313,6 +300,40 @@ def scaffold(
                     }
                 runs.append(run)
 
+    web_serial_smoke = []
+    for os_name in WEB_SERIAL_HOSTS:
+        assignment = web_serial_assignments.get(os_name)
+        if assignment is None:
+            raise ValueError(f"tester roster is missing Firefox Web Serial {os_name}")
+        target = targets[assignment.board]
+        web_serial_smoke.append(
+            {
+                "board": assignment.board,
+                "os": os_name,
+                "architecture": assignment.architecture,
+                "os_version": NOT_RUN,
+                "hardware_identity": NOT_RUN,
+                "hardware_model": target.get("display_name", NOT_RUN),
+                "hardware_revision": NOT_RUN,
+                "client": {
+                    "name": "prns-web-flasher",
+                    "version": version,
+                },
+                "browser": {
+                    "name": "firefox",
+                    "channel": "stable",
+                    "version": NOT_RUN,
+                },
+                "scenarios": {
+                    scenario: "not-run" for scenario in sorted(WEB_SERIAL_SCENARIOS)
+                },
+                "result": "not-run",
+                "tester": assignment.tester,
+                "completed_at": NOT_RUN,
+                "evidence": evidence_placeholder(),
+            }
+        )
+
     browser_fallbacks = []
     for browser, os_name in sorted(REQUIRED_FALLBACKS):
         assignment = fallback_assignments.get((browser, os_name))
@@ -333,8 +354,7 @@ def scaffold(
                     "version": NOT_RUN,
                 },
                 "scenarios": {
-                    scenario: "not-run"
-                    for scenario in sorted(fallback_scenarios(browser, os_name))
+                    scenario: "not-run" for scenario in sorted(FALLBACK_SCENARIOS)
                 },
                 "result": "not-run",
                 "tester": assignment.tester,
@@ -376,6 +396,7 @@ def scaffold(
             "prerelease_published_at": prerelease_published_at,
         },
         "runs": runs,
+        "web_serial_smoke": web_serial_smoke,
         "browser_fallbacks": browser_fallbacks,
         "installation_smoke": installation_smoke,
     }

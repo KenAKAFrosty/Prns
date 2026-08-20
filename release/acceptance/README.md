@@ -3,8 +3,8 @@
 The acceptance record is evidence for one exact signed candidate, not a checklist or a place to
 record intentions. Generate it only after the public prerelease exists. The generator binds the
 manifest, manifest signature, signed-candidate archive, and signed roster by exact identity and
-produces twelve physical rows, four unsupported-browser rows, and five native installer rows as
-`not-run`:
+produces twelve physical rows, three Firefox Web Serial rows, one unsupported-browser row, and
+five native installer rows as `not-run`:
 
 ```sh
 PUBLISHED_AT="$(gh release view vVERSION --json publishedAt --jq .publishedAt)"
@@ -87,19 +87,22 @@ be reused between the S140 6.1.1 and 7.3.0 rows.
 The authoritative scenario sets and roster-derived rows live in
 `qualification/flasher_acceptance_contract.py`, used by both generator and validator.
 
-## Browser fallbacks
+## Firefox Web Serial smoke
 
-`browser_fallbacks` records exact stable Firefox checks on macOS, Windows, and Linux plus stable
-Safari on macOS. What a row must prove depends on whether that browser has Web Serial, which the
-flasher itself decides by feature detection rather than by browser name.
+`web_serial_smoke` contains one hardware-backed stable Firefox result on each of macOS, Windows,
+and Linux. Each row uses the eligible shipping ESP-serial board and host from the signed roster,
+records the exact OS, architecture, hardware identity/model/revision, Firefox and flasher versions,
+tester, completion timestamp, and immutable evidence, and must pass exactly five scenarios:
+permission grant, one-device selection, correct-board selection, fresh signed-candidate install,
+and post-flash boot. UF2 boards and unsupported-page observations do not satisfy these smokes. Each
+OS row requires distinct evidence.
 
-A browser without Web Serial must prove all four points: the ESP CLI guidance is present, ESP
-connect is unavailable, no broken connect action is shown, and the T-Echo UF2 route remains
-available. A browser that has Web Serial takes the supported branch and shows none of the first
-three, so its row proves the T-Echo UF2 route only. Firefox has been in that second group since
-Firefox 151 shipped Web Serial in May 2026.
+## Browser fallback
 
-Fallback checks are separate from successful Web Serial flashing.
+`browser_fallbacks` records stable Safari on macOS. Every row must prove all four points: the ESP
+CLI guidance is present, ESP connect is unavailable, no broken connect action is shown, and the
+T-Echo UF2 route remains available. The fallback check is separate from successful Web Serial
+flashing.
 
 ## Native installation smoke
 

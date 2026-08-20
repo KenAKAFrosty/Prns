@@ -1,5 +1,5 @@
 {
-  "schema": 4,
+  "schema": 5,
   "candidate": {
     "version": "REPLACE_WITH_VERSION",
     "channel": "REPLACE_WITH_STABLE_OR_PREVIEW",
@@ -11,6 +11,7 @@
     "prerelease_published_at": "REPLACE_WITH_FULL_UTC_TIMESTAMP"
   },
   "runs": [],
+  "web_serial_smoke": [],
   "browser_fallbacks": [],
   "installation_smoke": []
 }

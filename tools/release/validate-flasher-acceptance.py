@@ -19,12 +19,15 @@ if str(SCRIPT_DIRECTORY) not in sys.path:
 from flasher_acceptance_contract import (  # noqa: E402
     ACCEPTANCE_SCHEMA,
     CLI_TARGETS,
+    ESP_SERIAL_BOARDS,
+    FALLBACK_SCENARIOS,
     OS_ARCHITECTURES,
     REQUIRED_FALLBACKS,
     SHIPPING_BOARDS,
     SURFACES,
+    WEB_SERIAL_HOSTS,
+    WEB_SERIAL_SCENARIOS,
     applicable_scenarios,
-    fallback_scenarios,
     parse_utc_timestamp,
     required_compatibilities,
     sha256,
@@ -34,11 +37,19 @@ from flasher_tester_roster import (  # noqa: E402
     InstallationAssignment,
     PhysicalAssignment,
     TesterRoster,
+    WebSerialAssignment,
     validate_roster,
 )
 from flasher_manifest import require_schema
 
-TOP_LEVEL_FIELDS = {"schema", "candidate", "runs", "browser_fallbacks", "installation_smoke"}
+TOP_LEVEL_FIELDS = {
+    "schema",
+    "candidate",
+    "runs",
+    "web_serial_smoke",
+    "browser_fallbacks",
+    "installation_smoke",
+}
 CANDIDATE_FIELDS = {
     "version",
     "channel",
@@ -81,6 +92,22 @@ FALLBACK_FIELDS = {
     "os",
     "architecture",
     "os_version",
+    "client",
+    "browser",
+    "scenarios",
+    "result",
+    "tester",
+    "completed_at",
+    "evidence",
+}
+WEB_SERIAL_FIELDS = {
+    "board",
+    "os",
+    "architecture",
+    "os_version",
+    "hardware_identity",
+    "hardware_model",
+    "hardware_revision",
     "client",
     "browser",
     "scenarios",
@@ -270,7 +297,13 @@ def validate_evidence(
 
 def validate_assignment(
     record: dict,
-    assignment: PhysicalAssignment | FallbackAssignment | InstallationAssignment | None,
+    assignment: (
+        PhysicalAssignment
+        | WebSerialAssignment
+        | FallbackAssignment
+        | InstallationAssignment
+        | None
+    ),
     label: str,
     errors: list[str],
 ) -> None:
@@ -581,22 +614,117 @@ def validate_fallbacks(
         expected_name = browser_name if key in REQUIRED_FALLBACKS else "unsupported-browser"
         validate_browser(browser, expected_name, label, errors)
         if key not in REQUIRED_FALLBACKS:
-            errors.append(f"{label} is not a required Safari/Firefox fallback")
+            errors.append(f"{label} is not the required Safari fallback")
         elif key in seen:
             errors.append(f"duplicate browser fallback for {key}")
         seen.add(key)
         if entry.get("result") != "pass":
             errors.append(f"{label} is not a passing fallback check")
-        required_scenarios = fallback_scenarios(browser_name, os_name)
         observed = validate_scenarios(
-            entry.get("scenarios"), required_scenarios, label, errors
+            entry.get("scenarios"), FALLBACK_SCENARIOS, label, errors
         )
-        missing_scenarios = sorted(required_scenarios - observed)
+        missing_scenarios = sorted(FALLBACK_SCENARIOS - observed)
         if missing_scenarios:
             errors.append(f"{label} is missing fallback scenarios: {missing_scenarios}")
     missing = sorted(REQUIRED_FALLBACKS - seen)
     if missing:
         errors.append(f"missing browser fallback checks: {missing}")
+
+
+def validate_web_serial_smokes(
+    acceptance: dict,
+    targets: dict[str, dict],
+    version: str,
+    roster: TesterRoster,
+    evidence_store: EvidenceStore,
+    prerelease_published_at: datetime,
+    now: datetime,
+    errors: list[str],
+) -> None:
+    entries = acceptance.get("web_serial_smoke")
+    if not isinstance(entries, list):
+        errors.append("acceptance web_serial_smoke must be an array")
+        return
+    seen: set[str] = set()
+    evidence_digests: set[str] = set()
+    for index, entry in enumerate(entries):
+        label = f"web_serial_smoke[{index}]"
+        if not isinstance(entry, dict):
+            errors.append(f"{label} must be an object")
+            continue
+        reject_unknown_fields(entry, WEB_SERIAL_FIELDS, label, errors)
+        board = entry.get("board")
+        os_name = entry.get("os")
+        architecture = entry.get("architecture")
+        if not all(isinstance(value, str) for value in (board, os_name, architecture)):
+            errors.append(f"{label} board, OS, and architecture must be strings")
+            continue
+        if board not in ESP_SERIAL_BOARDS:
+            errors.append(f"{label} board must be an eligible shipping ESP-serial board")
+        target = targets.get(board, {})
+        if target.get("transport") != "esp-serial":
+            errors.append(f"{label} cannot use a UF2 or unsupported board")
+        supported_architectures = WEB_SERIAL_HOSTS.get(os_name)
+        if supported_architectures is None:
+            errors.append(f"{label} OS is not a required Firefox Web Serial host")
+        elif architecture not in supported_architectures:
+            errors.append(f"{label} architecture does not match its Firefox Web Serial host")
+        if os_name in seen:
+            errors.append(f"duplicate Firefox Web Serial smoke for {os_name}")
+        seen.add(os_name)
+        assignment = roster.web_serial.get(os_name)
+        if assignment is not None and (
+            board,
+            os_name,
+            architecture,
+        ) != (assignment.board, assignment.os_name, assignment.architecture):
+            errors.append(
+                f"{label} board or host differs from the exact signed tester roster assignment"
+            )
+        validate_assignment(entry, assignment, label, errors)
+        require_text(
+            entry,
+            {
+                "os_version",
+                "hardware_identity",
+                "hardware_model",
+                "hardware_revision",
+                "tester",
+            },
+            label,
+            errors,
+        )
+        if entry.get("hardware_model") != target.get("display_name"):
+            errors.append(f"{label} hardware_model differs from the signed manifest")
+        validate_client(entry.get("client"), "prns-web-flasher", version, label, errors)
+        validate_browser(entry.get("browser"), "firefox", label, errors)
+        validate_completed_at(entry, label, prerelease_published_at, now, errors)
+        validate_evidence(entry.get("evidence"), label, evidence_store, errors)
+        evidence_value = entry.get("evidence")
+        evidence_digest = (
+            evidence_value.get("sha256")
+            if isinstance(evidence_value, dict)
+            else None
+        )
+        if isinstance(evidence_digest, str):
+            if evidence_digest in evidence_digests:
+                errors.append(f"{label} reuses Firefox Web Serial evidence")
+            evidence_digests.add(evidence_digest)
+        if entry.get("result") != "pass":
+            errors.append(f"{label} is not a passing Firefox Web Serial smoke")
+        observed = validate_scenarios(
+            entry.get("scenarios"), WEB_SERIAL_SCENARIOS, label, errors
+        )
+        missing_scenarios = sorted(WEB_SERIAL_SCENARIOS - observed)
+        if missing_scenarios:
+            errors.append(
+                f"{label} is missing Firefox Web Serial scenarios: {missing_scenarios}"
+            )
+    missing = sorted(set(WEB_SERIAL_HOSTS) - seen)
+    if missing:
+        errors.append(f"missing Firefox Web Serial smokes: {missing}")
+    if len(entries) != len(WEB_SERIAL_HOSTS):
+        errors.append("acceptance must contain exactly three Firefox Web Serial smokes")
 
 
 def validate_installation_smokes(
@@ -695,6 +823,16 @@ def validate(arguments: argparse.Namespace, now: datetime | None = None) -> list
         errors,
     )
     validate_runs(
+        acceptance,
+        targets,
+        version,
+        tester_roster,
+        evidence_store,
+        published_at,
+        current,
+        errors,
+    )
+    validate_web_serial_smokes(
         acceptance,
         targets,
         version,

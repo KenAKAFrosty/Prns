@@ -21,6 +21,8 @@ from flasher_acceptance_contract import (  # noqa: E402
     SHIPPING_BOARDS,
     SURFACES,
     T_ECHO_COMPATIBILITY_VARIANTS,
+    WEB_SERIAL_HOSTS,
+    WEB_SERIAL_SCENARIOS,
 )
 
 
@@ -71,12 +73,18 @@ COUNT_CONTRACTS = (
     CountContract(
         "release/acceptance/README.md",
         "physical rows, ",
-        "fallback",
-        " unsupported-browser rows",
+        "web_serial",
+        " Firefox Web Serial rows",
     ),
     CountContract(
         "release/acceptance/README.md",
-        "unsupported-browser rows, and ",
+        "Firefox Web Serial rows, ",
+        "fallback",
+        " unsupported-browser row",
+    ),
+    CountContract(
+        "release/acceptance/README.md",
+        "unsupported-browser row, and ",
         "installer",
         " native installer rows",
     ),
@@ -88,9 +96,15 @@ COUNT_CONTRACTS = (
     ),
     CountContract(
         "release/acceptance/README.md",
-        "A browser without Web Serial must prove all ",
+        "Every row must prove all ",
         "fallback_scenarios",
         " points:",
+    ),
+    CountContract(
+        "release/acceptance/README.md",
+        "must pass exactly ",
+        "web_serial_scenarios",
+        " scenarios:",
     ),
     CountContract(
         "release/acceptance/rosters/README.md",
@@ -101,12 +115,18 @@ COUNT_CONTRACTS = (
     CountContract(
         "release/acceptance/rosters/README.md",
         "physical board/surface assignments, ",
-        "fallback",
-        " Firefox/Safari fallback assignments",
+        "web_serial_roster",
+        " Firefox Web Serial assignments",
     ),
     CountContract(
         "release/acceptance/rosters/README.md",
-        "Firefox/Safari fallback assignments, and ",
+        "Firefox Web Serial assignments, ",
+        "fallback",
+        " Safari fallback assignment",
+    ),
+    CountContract(
+        "release/acceptance/rosters/README.md",
+        "Safari fallback assignment, and ",
         "installer_roster",
         " published-archive installer assignments.",
     ),
@@ -131,8 +151,14 @@ COUNT_CONTRACTS = (
     CountContract(
         "release/flash/README.md",
         "physical, ",
+        "web_serial_roster",
+        " Firefox Web Serial",
+    ),
+    CountContract(
+        "release/flash/README.md",
+        "Firefox Web Serial, ",
         "fallback",
-        " fallback",
+        " Safari fallback",
     ),
     CountContract(
         "release/flash/README.md",
@@ -149,12 +175,18 @@ COUNT_CONTRACTS = (
     CountContract(
         "release/flash/README.md",
         "physical rows, ",
-        "fallback",
-        " browser fallbacks",
+        "web_serial",
+        " Firefox Web Serial smokes",
     ),
     CountContract(
         "release/flash/README.md",
-        "browser fallbacks, and all ",
+        "Firefox Web Serial smokes, ",
+        "fallback",
+        " Safari fallback",
+    ),
+    CountContract(
+        "release/flash/README.md",
+        "Safari fallback, and all ",
         "installer",
         " installer/exact-version smokes",
     ),
@@ -196,6 +228,9 @@ def derived_counts(root: Path) -> dict[str, int]:
         "boards": len(SHIPPING_BOARDS),
         "fallback": len(REQUIRED_FALLBACKS),
         "fallback_scenarios": len(FALLBACK_SCENARIOS),
+        "web_serial": len(WEB_SERIAL_HOSTS),
+        "web_serial_roster": len(WEB_SERIAL_HOSTS),
+        "web_serial_scenarios": len(WEB_SERIAL_SCENARIOS),
         "installer": len(CLI_TARGETS),
         "installer_roster": len(CLI_TARGETS),
     }
@@ -281,7 +316,8 @@ def main() -> int:
         return 1
     print(
         f"acceptance documents state the derived {derived['physical']} physical,"
-        f" {derived['fallback']} fallback, and {derived['installer']} installer counts"
+        f" {derived['web_serial']} Firefox Web Serial, {derived['fallback']} fallback,"
+        f" and {derived['installer']} installer counts"
     )
     return 0
 

@@ -64,8 +64,11 @@ local after extraction; do not replace its manifest, firmware, website, or flash
 Test the assigned board/OS scenarios from `acceptance.json`. Each physical row must independently
 show a fresh install and expected post-flash boot. Preserve is the configuration default. For
 Heltec and T-Beam, explicitly confirm the board image/name because their shared ESP32-S3 identity
-cannot distinguish the products. Record Safari/Firefox fallback checks separately; do not count
-them as Web Serial flashes.
+cannot distinguish the products. Perform the three roster-assigned Firefox Web Serial smokes on
+macOS, Windows, and Linux with physical ESP-serial boards. Each smoke must show permission grant,
+one-device selection, correct-board selection, a fresh install from the exact signed candidate,
+and post-flash boot, with distinct immutable evidence for every OS. Record only Safari as the
+unsupported-browser fallback.
 
 ## 3. CLI qualification
 
