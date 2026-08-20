@@ -21,6 +21,32 @@ requirements = "validation/oracles/requirements.txt"
 version = "1.4.2"
 
 [registry]
+cargo_lock_workspaces = [
+    ".",
+    "benchmarks",
+    "docs/website",
+    "personal-hopspot/desktop",
+    "personal-hopspot/embedded/esp32",
+    "personal-hopspot/embedded/nrf52840",
+    "personal-hopspot/mobile/android/rust",
+    "personal-hopspot/mobile/ios/rust",
+    "prns-config",
+    "prns-ffi",
+    "prns-host/abi/c",
+    "prns-host/impls/cooperative",
+    "prns-host/impls/native",
+    "prns-host/impls/tokio",
+    "prns-interfaces/impls/embassy",
+    "prns-interfaces/impls/tokio",
+    "prns-napi",
+    "prns-runtime/impls/embassy",
+    "prns-runtime/impls/tokio",
+    "prns-wasm",
+    "prnsd",
+    "validation/fuzz",
+    "validation/integration",
+    "validation/oracles",
+]
 cargo_manifests = [
     "Cargo.toml",
     "benchmarks/Cargo.toml",
@@ -103,6 +129,17 @@ format_manifests = [
 [[registry.asset_exemptions]]
 path = "prns-wasm/smoke/smoke.ts"
 reason = "Interactive browser-and-device smoke page; the automatable TypeScript smokes are registered suites."
+
+[[suite]]
+id = "cargo-locks"
+domain = "hygiene"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "python"
+timeout_seconds = 600
+command = ["__RUNNER_PYTHON__", "validation/hygiene/cargo-locks.py"]
+inputs = ["validation/hygiene/cargo-locks.py", "validation/manifest.toml"]
+artifacts = "validation-artifacts/results/cargo-locks"
 
 [[suite]]
 id = "host-contract-generated"

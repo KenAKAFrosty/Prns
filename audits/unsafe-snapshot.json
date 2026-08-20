@@ -9441,7 +9441,9 @@
     },
     {
       "graphs": {
-        "desktop-macos": []
+        "daemon-macos": [],
+        "desktop-macos": [],
+        "host-c-macos": []
       },
       "name": "io-kit-sys",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -10066,6 +10068,7 @@
       "graphs": {
         "daemon-linux": [
           "auxvec",
+          "default",
           "elf",
           "errno",
           "general",
@@ -10075,6 +10078,7 @@
           "netlink",
           "no_std",
           "prctl",
+          "std",
           "xdp"
         ],
         "desktop-linux": [
@@ -10108,11 +10112,17 @@
         ],
         "host-c-linux": [
           "auxvec",
+          "default",
           "elf",
           "errno",
           "general",
+          "if_ether",
           "ioctl",
-          "no_std"
+          "net",
+          "netlink",
+          "no_std",
+          "std",
+          "xdp"
         ]
       },
       "name": "linux-raw-sys",
@@ -10432,7 +10442,13 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "default"
+        ],
         "desktop-macos": [
+          "default"
+        ],
+        "host-c-macos": [
           "default"
         ]
       },
@@ -11749,6 +11765,38 @@
         "tokens": 347
       },
       "version": "0.2.4"
+    },
+    {
+      "graphs": {
+        "daemon-linux": [
+          "tokio"
+        ],
+        "daemon-macos": [
+          "tokio"
+        ],
+        "daemon-windows": [
+          "tokio"
+        ],
+        "host-c-linux": [
+          "tokio"
+        ],
+        "host-c-macos": [
+          "tokio"
+        ],
+        "host-c-windows": [
+          "tokio"
+        ]
+      },
+      "name": "nusb",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 162,
+        "externs": 133,
+        "functions": 16,
+        "impls": 34,
+        "tokens": 345
+      },
+      "version": "0.2.7"
     },
     {
       "graphs": {
@@ -15327,6 +15375,7 @@
         "nrf52840": [
           "bluetooth-auto",
           "serial",
+          "tcp",
           "usb"
         ]
       },
@@ -16923,6 +16972,7 @@
           "default",
           "event",
           "fs",
+          "mm",
           "net",
           "pipe",
           "process",
@@ -16934,6 +16984,7 @@
           "default",
           "event",
           "fs",
+          "mm",
           "net",
           "pipe",
           "process",
@@ -16964,14 +17015,22 @@
         "host-c-linux": [
           "alloc",
           "default",
+          "event",
           "fs",
-          "std"
+          "mm",
+          "net",
+          "std",
+          "time"
         ],
         "host-c-macos": [
           "alloc",
           "default",
+          "event",
           "fs",
-          "std"
+          "mm",
+          "net",
+          "std",
+          "time"
         ],
         "ios": [
           "alloc",
@@ -18410,30 +18469,38 @@
           "std"
         ],
         "esp32-c6": [
+          "default",
           "std"
         ],
         "esp32-s3-heltec": [
+          "default",
           "std"
         ],
         "esp32-s3-heltec-r8": [
+          "default",
           "std"
         ],
         "esp32-s3-tbeam": [
+          "default",
           "std"
         ],
         "host-c-linux": [
+          "default",
           "std"
         ],
         "host-c-macos": [
+          "default",
           "std"
         ],
         "host-c-windows": [
+          "default",
           "std"
         ],
         "ios": [
           "std"
         ],
         "nrf52840": [
+          "default",
           "std"
         ],
         "wasm": [
@@ -22797,6 +22864,9 @@
           "Win32",
           "Win32_Devices",
           "Win32_Devices_Communication",
+          "Win32_Devices_DeviceAndDriverInstallation",
+          "Win32_Devices_Properties",
+          "Win32_Devices_Usb",
           "Win32_Foundation",
           "Win32_Globalization",
           "Win32_Graphics",
@@ -22898,6 +22968,9 @@
           "Win32",
           "Win32_Devices",
           "Win32_Devices_Communication",
+          "Win32_Devices_DeviceAndDriverInstallation",
+          "Win32_Devices_Properties",
+          "Win32_Devices_Usb",
           "Win32_Foundation",
           "Win32_NetworkManagement",
           "Win32_NetworkManagement_IpHelper",

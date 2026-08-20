@@ -385,11 +385,28 @@ class CandidateFixture:
                 }
             physical_assignments.append(assignment)
         roster = {
-            "schema": 2,
+            "schema": 3,
             "release": {"version": VERSION},
             "release_owner": "github:fixture-owner",
             "confirmed_on": "2025-01-01",
             "physical_assignments": physical_assignments,
+            "web_serial_assignments": [
+                {
+                    "board": board,
+                    "os": os_name,
+                    "architecture": architecture,
+                    "browser": {"name": "firefox", "channel": "stable"},
+                    "tester": "github:fixture",
+                    "cables_ready": True,
+                    "device_permissions_ready": True,
+                    "recovery_instructions_reviewed": True,
+                }
+                for board, os_name, architecture in (
+                    ("heltec-v4", "linux", "x86_64"),
+                    ("t-beam-supreme", "macos", "x86_64"),
+                    ("xiao-esp32-c6", "windows", "x86_64"),
+                )
+            ],
             "fallback_assignments": [
                 {
                     "browser": {"name": browser, "channel": "stable"},
@@ -398,12 +415,7 @@ class CandidateFixture:
                     "tester": "github:fixture",
                     "browser_ready": True,
                 }
-                for browser, os_name, architecture in (
-                    ("firefox", "linux", "x86_64"),
-                    ("firefox", "macos", "x86_64"),
-                    ("firefox", "windows", "x86_64"),
-                    ("safari", "macos", "aarch64"),
-                )
+                for browser, os_name, architecture in (("safari", "macos", "aarch64"),)
             ],
             "installation_assignments": [
                 {

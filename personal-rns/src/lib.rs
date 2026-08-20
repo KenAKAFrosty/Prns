@@ -123,7 +123,11 @@ pub use prns_runtime_embassy::runtime::{
 ))]
 pub use prns_interfaces_tokio::interface_menu::DefaultAutoInterfaces;
 
-#[cfg(all(feature = "usb", feature = "tokio-host"))]
+#[cfg(all(
+    feature = "usb",
+    feature = "tokio-host",
+    any(target_os = "linux", target_os = "macos", target_os = "windows")
+))]
 pub use usb_auto::AutoUsb;
 
 #[cfg(all(feature = "bluetooth-auto", feature = "tokio-host"))]

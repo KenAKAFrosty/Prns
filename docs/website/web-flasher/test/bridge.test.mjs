@@ -98,6 +98,7 @@ function request() {
       afterReset: "watchdog-reset",
       mountLabel: null,
       uf2Compatibility: null,
+      serialFilters: [{ usbVendorId: 0x303a }],
       provisioning: { action: "configure", offset: 0xd000, size: 0x1000, ssid: "local", password: "private" },
       parts: [
         { kind: "bootloader", path: "firmware/hopspot/heltec-v4/0.2.6/a.bin", url: "/releases/0.2.6/firmware/hopspot/heltec-v4/0.2.6/a.bin", offset: 0, size: 4, sha256: sha(payloads[0]) },
@@ -552,17 +553,19 @@ test("successful flash requires MD5 callback and cleans up", async () => {
     }
   }
   const events = [];
+  let serialPickerOptions;
   await flash((event) => {
     events.push(event);
     timeline.push(`event:${event.phase}`);
   }, {
     environment: { isSecureContext: true, addEventListener() {}, removeEventListener() {} },
-    serial: { requestPort: async () => ({}) },
+    serial: { requestPort: async (options) => { serialPickerOptions = options; return {}; } },
     TransportImpl: FakeTransport,
     LoaderImpl: FakeLoader,
     proveReset: async (_serial, _port, reset) => reset(),
   });
   assert.equal(disconnected, true);
+  assert.deepEqual(serialPickerOptions, { filters: [{ usbVendorId: 0x303a }] });
   assert.equal(events.at(-1).phase, "success");
   assert.ok(
     timeline.indexOf("event:verifying_target") < timeline.indexOf("flash-size-checked"),
@@ -1617,6 +1620,7 @@ test("UF2 completion reports delivery guidance without claiming device verificat
     beforeReset: null,
     afterReset: null,
     mountLabel: "TECHOBOOT",
+    serialFilters: [],
     uf2Compatibility: {
       softdeviceFamily: "s140",
       softdeviceVersion: "7.3.0",

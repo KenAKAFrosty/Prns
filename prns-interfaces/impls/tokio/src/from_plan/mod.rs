@@ -51,7 +51,10 @@ mod station_identification;
 mod tcp;
 #[cfg(feature = "udp")]
 mod udp;
-#[cfg(feature = "usb")]
+#[cfg(all(
+    feature = "usb",
+    any(target_os = "linux", target_os = "macos", target_os = "windows")
+))]
 mod usb_auto;
 #[cfg(feature = "weave")]
 mod weave;
@@ -462,11 +465,17 @@ async fn stand_up<'a>(
             }
         }
         PlannedMedium::PrnsUsbAuto => {
-            #[cfg(feature = "usb")]
+            #[cfg(all(
+                feature = "usb",
+                any(target_os = "linux", target_os = "macos", target_os = "windows")
+            ))]
             {
                 usb_auto::stand_up(construction)
             }
-            #[cfg(not(feature = "usb"))]
+            #[cfg(not(all(
+                feature = "usb",
+                any(target_os = "linux", target_os = "macos", target_os = "windows")
+            )))]
             {
                 Err(PlanFailure::InterfaceNotBuilt(
                     PlannedInterfaceKind::PrnsUsbAuto,

@@ -5,10 +5,12 @@ from datetime import date
 
 from flasher_acceptance_contract import (
     CLI_TARGETS,
+    ESP_SERIAL_BOARDS,
     OS_ARCHITECTURES,
     REQUIRED_FALLBACKS,
     SHIPPING_BOARDS,
     SURFACES,
+    WEB_SERIAL_HOSTS,
 )
 
 
@@ -18,6 +20,7 @@ TOP_LEVEL_FIELDS = {
     "release_owner",
     "confirmed_on",
     "physical_assignments",
+    "web_serial_assignments",
     "fallback_assignments",
     "installation_assignments",
 }
@@ -39,6 +42,16 @@ FALLBACK_FIELDS = {
     "architecture",
     "tester",
     "browser_ready",
+}
+WEB_SERIAL_FIELDS = {
+    "board",
+    "os",
+    "architecture",
+    "browser",
+    "tester",
+    "cables_ready",
+    "device_permissions_ready",
+    "recovery_instructions_reviewed",
 }
 INSTALLATION_FIELDS = {
     "target",
@@ -78,6 +91,14 @@ class FallbackAssignment:
 
 
 @dataclass(frozen=True)
+class WebSerialAssignment:
+    tester: str
+    board: str
+    os_name: str
+    architecture: str
+
+
+@dataclass(frozen=True)
 class InstallationAssignment:
     tester: str
     target: str
@@ -88,6 +109,7 @@ class InstallationAssignment:
 @dataclass(frozen=True)
 class TesterRoster:
     physical: dict[tuple[str, str], PhysicalAssignment]
+    web_serial: dict[str, WebSerialAssignment]
     fallbacks: dict[tuple[str, str], FallbackAssignment]
     installations: dict[str, InstallationAssignment]
 
@@ -259,7 +281,7 @@ def validate_fallback_assignments(
         )
         key = (browser_name, os_name)
         if key not in REQUIRED_FALLBACKS:
-            errors.append(f"{label} is not a required Firefox/Safari assignment")
+            errors.append(f"{label} is not the required Safari assignment")
         elif key in assignments:
             errors.append(f"duplicate fallback assignment for {key}")
         if isinstance(browser_name, str):
@@ -290,7 +312,68 @@ def validate_fallback_assignments(
     if missing:
         errors.append(f"tester roster is missing fallback assignments: {missing}")
     if len(value) != len(REQUIRED_FALLBACKS):
-        errors.append("tester roster must contain exactly four fallback assignments")
+        errors.append("tester roster must contain exactly one fallback assignment")
+    return assignments
+
+
+def validate_web_serial_assignments(
+    value: object,
+    errors: list[str],
+) -> dict[str, WebSerialAssignment]:
+    if not isinstance(value, list):
+        errors.append("tester roster web_serial_assignments must be an array")
+        return {}
+    assignments: dict[str, WebSerialAssignment] = {}
+    for index, assignment in enumerate(value):
+        label = f"web_serial_assignments[{index}]"
+        if not isinstance(assignment, dict):
+            errors.append(f"{label} must be an object")
+            continue
+        reject_unknown(assignment, WEB_SERIAL_FIELDS, label, errors)
+        board = assignment.get("board")
+        os_name = assignment.get("os")
+        architecture = assignment.get("architecture")
+        tester = assignment.get("tester")
+        if board not in ESP_SERIAL_BOARDS:
+            errors.append(f"{label} board must be an eligible shipping ESP-serial board")
+        if not isinstance(os_name, str) or os_name not in WEB_SERIAL_HOSTS:
+            errors.append(f"{label} OS must be a Firefox Web Serial host")
+        elif architecture not in WEB_SERIAL_HOSTS[os_name]:
+            errors.append(f"{label} architecture does not match its Firefox Web Serial host")
+        if os_name in assignments:
+            errors.append(f"duplicate Firefox Web Serial assignment for {os_name}")
+        validate_browser(assignment.get("browser"), "firefox", label, errors)
+        if not real_identity(tester):
+            errors.append(f"{label} must name a nonsecret tester identity")
+        readiness = (
+            "cables_ready",
+            "device_permissions_ready",
+            "recovery_instructions_reviewed",
+        )
+        incomplete = sorted(
+            field for field in readiness if assignment.get(field) is not True
+        )
+        if incomplete:
+            errors.append(f"{label} readiness is incomplete: {incomplete}")
+        if (
+            isinstance(os_name, str)
+            and os_name in WEB_SERIAL_HOSTS
+            and os_name not in assignments
+            and isinstance(board, str)
+            and isinstance(architecture, str)
+            and isinstance(tester, str)
+        ):
+            assignments[os_name] = WebSerialAssignment(
+                tester=tester,
+                board=board,
+                os_name=os_name,
+                architecture=architecture,
+            )
+    missing = sorted(set(WEB_SERIAL_HOSTS) - set(assignments))
+    if missing:
+        errors.append(f"tester roster is missing Firefox Web Serial assignments: {missing}")
+    if len(value) != len(WEB_SERIAL_HOSTS):
+        errors.append("tester roster must contain exactly three Firefox Web Serial assignments")
     return assignments
 
 
@@ -348,12 +431,12 @@ def validate_roster(
     expected_version: str,
 ) -> tuple[TesterRoster, list[str]]:
     errors: list[str] = []
-    empty = TesterRoster(physical={}, fallbacks={}, installations={})
+    empty = TesterRoster(physical={}, web_serial={}, fallbacks={}, installations={})
     if not isinstance(roster, dict):
         return empty, ["tester roster must be a JSON object"]
     reject_unknown(roster, TOP_LEVEL_FIELDS, "roster", errors)
-    if roster.get("schema") != 2:
-        errors.append("tester roster schema must be 2")
+    if roster.get("schema") != 3:
+        errors.append("tester roster schema must be 3")
     if not real_identity(roster.get("release_owner")):
         errors.append("tester roster must name a nonsecret release_owner identity")
     validate_date(roster.get("confirmed_on"), errors)
@@ -368,6 +451,10 @@ def validate_roster(
         roster.get("physical_assignments"),
         errors,
     )
+    web_serial = validate_web_serial_assignments(
+        roster.get("web_serial_assignments"),
+        errors,
+    )
     fallbacks = validate_fallback_assignments(
         roster.get("fallback_assignments"),
         errors,
@@ -379,6 +466,7 @@ def validate_roster(
     return (
         TesterRoster(
             physical=physical,
+            web_serial=web_serial,
             fallbacks=fallbacks,
             installations=installations,
         ),

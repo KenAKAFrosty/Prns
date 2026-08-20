@@ -151,6 +151,37 @@ def complete_acceptance(
                 }
             runs.append(run)
 
+    web_serial_smoke = []
+    for roster_assignment in roster["web_serial_assignments"]:
+        board = roster_assignment["board"]
+        os_name = roster_assignment["os"]
+        web_serial_smoke.append(
+            {
+                "board": board,
+                "os": os_name,
+                "architecture": roster_assignment["architecture"],
+                "os_version": f"{os_name}-fixture-1",
+                "hardware_identity": f"lab-{board}-firefox-01",
+                "hardware_model": MODELS[board],
+                "hardware_revision": "not-marked",
+                "client": {"name": "prns-web-flasher", "version": VERSION},
+                "browser": {
+                    "name": "firefox",
+                    "channel": "stable",
+                    "version": "126.0.1",
+                },
+                "scenarios": {
+                    name: "pass" for name in VALIDATOR.WEB_SERIAL_SCENARIOS
+                },
+                "result": "pass",
+                "tester": roster_assignment["tester"],
+                "completed_at": COMPLETED_AT,
+                "evidence": evidence(
+                    evidence_root, f"evidence://web-serial/{os_name}/{board}"
+                ),
+            }
+        )
+
     browser_fallbacks = []
     for roster_assignment in roster["fallback_assignments"]:
         browser = roster_assignment["browser"]["name"]
@@ -197,7 +228,7 @@ def complete_acceptance(
         )
 
     return {
-        "schema": 4,
+        "schema": 5,
         "candidate": {
             "version": VERSION,
             "channel": "stable",
@@ -209,6 +240,7 @@ def complete_acceptance(
             "prerelease_published_at": PUBLISHED_AT,
         },
         "runs": runs,
+        "web_serial_smoke": web_serial_smoke,
         "browser_fallbacks": browser_fallbacks,
         "installation_smoke": installation_smoke,
     }
@@ -246,11 +278,28 @@ def complete_roster() -> dict:
             }
         physical_assignments.append(assignment)
     return {
-        "schema": 2,
+        "schema": 3,
         "release": {"version": VERSION},
         "release_owner": "github:release-owner",
         "confirmed_on": "2026-07-20",
         "physical_assignments": physical_assignments,
+        "web_serial_assignments": [
+            {
+                "board": board,
+                "os": os_name,
+                "architecture": target_architecture,
+                "browser": {"name": "firefox", "channel": "stable"},
+                "tester": "github:solo-fixture",
+                "cables_ready": True,
+                "device_permissions_ready": True,
+                "recovery_instructions_reviewed": True,
+            }
+            for board, os_name, target_architecture in (
+                ("heltec-v4", "linux", "x86_64"),
+                ("t-beam-supreme", "macos", "x86_64"),
+                ("xiao-esp32-c6", "windows", "x86_64"),
+            )
+        ],
         "fallback_assignments": [
             {
                 "browser": {"name": browser, "channel": "stable"},
@@ -259,12 +308,7 @@ def complete_roster() -> dict:
                 "tester": "github:solo-fixture",
                 "browser_ready": True,
             }
-            for browser, os_name, target_architecture in (
-                ("firefox", "linux", "x86_64"),
-                ("firefox", "macos", "x86_64"),
-                ("firefox", "windows", "x86_64"),
-                ("safari", "macos", "aarch64"),
-            )
+            for browser, os_name, target_architecture in (("safari", "macos", "aarch64"),)
         ],
         "installation_assignments": [
             {
@@ -396,15 +440,64 @@ class AcceptanceValidatorTests(unittest.TestCase):
             any("claims scenarios that do not apply: ['configure']" in error for error in self.validate())
         )
 
-    def test_fallbacks_are_independent_browser_evidence(self) -> None:
-        self.acceptance["browser_fallbacks"] = [
-            entry
-            for entry in self.acceptance["browser_fallbacks"]
-            if not (entry["browser"]["name"] == "firefox" and entry["os"] == "linux")
-        ]
+    def test_firefox_web_serial_smokes_require_exact_os_coverage(self) -> None:
+        removed = self.acceptance["web_serial_smoke"].pop(0)
+        (self.evidence_root / removed["evidence"]["sha256"]).unlink()
         self.assertTrue(
-            any("missing browser fallback checks: [('firefox', 'linux')]" in error for error in self.validate())
+            any("missing Firefox Web Serial smokes: ['linux']" in error for error in self.validate())
         )
+
+    def test_firefox_web_serial_rejects_uf2_board_and_unsupported_page_evidence(self) -> None:
+        smoke = self.acceptance["web_serial_smoke"][0]
+        smoke["board"] = "t-echo"
+        smoke["hardware_model"] = MODELS["t-echo"]
+        smoke["scenarios"] = {
+            name: "pass" for name in VALIDATOR.FALLBACK_SCENARIOS
+        }
+        errors = self.validate()
+        self.assertTrue(any("cannot use a UF2 or unsupported board" in error for error in errors))
+        self.assertTrue(any("claims scenarios that do not apply" in error for error in errors))
+
+    def test_firefox_web_serial_requires_roster_hardware_and_unique_evidence(self) -> None:
+        first, second = self.acceptance["web_serial_smoke"][:2]
+        old_digest = second["evidence"]["sha256"]
+        second["board"] = "heltec-v4-r8"
+        second["hardware_model"] = "generic ESP board"
+        second["evidence"] = dict(first["evidence"])
+        (self.evidence_root / old_digest).unlink()
+        errors = self.validate()
+        self.assertTrue(any("board or host differs" in error for error in errors))
+        self.assertTrue(any("hardware_model differs" in error for error in errors))
+        self.assertTrue(any("reuses Firefox Web Serial evidence" in error for error in errors))
+
+    def test_firefox_web_serial_requires_stable_exact_browser_and_all_scenarios(self) -> None:
+        smoke = self.acceptance["web_serial_smoke"][0]
+        smoke["browser"]["channel"] = "beta"
+        smoke["browser"]["version"] = "Firefox/126"
+        smoke["client"]["version"] = "0.2.5"
+        smoke["scenarios"].pop("permission-grant")
+        errors = self.validate()
+        self.assertTrue(any("browser channel must be stable" in error for error in errors))
+        self.assertTrue(any("must record exact firefox browser version" in error for error in errors))
+        self.assertTrue(any("exact candidate version" in error for error in errors))
+        self.assertTrue(any("missing Firefox Web Serial scenarios" in error for error in errors))
+
+    def test_firefox_web_serial_rejects_duplicate_unsupported_host_and_failure(self) -> None:
+        first, second = self.acceptance["web_serial_smoke"][:2]
+        second["os"] = first["os"]
+        second["architecture"] = "riscv64"
+        second["result"] = "fail"
+        second["hardware_identity"] = "NOT_RUN"
+        errors = self.validate()
+        self.assertTrue(any("duplicate Firefox Web Serial smoke" in error for error in errors))
+        self.assertTrue(any("architecture does not match" in error for error in errors))
+        self.assertTrue(any("not a passing Firefox Web Serial smoke" in error for error in errors))
+        self.assertTrue(any("placeholder" in error for error in errors))
+
+    def test_firefox_cannot_appear_as_a_fallback(self) -> None:
+        self.acceptance["browser_fallbacks"][0]["browser"]["name"] = "firefox"
+        errors = self.validate()
+        self.assertTrue(any("not the required Safari fallback" in error for error in errors))
 
     def test_candidate_and_hardware_identity_must_match_signed_manifest(self) -> None:
         self.acceptance["candidate"]["source_commit"] = "b" * 40
@@ -543,16 +636,16 @@ class AcceptanceValidatorTests(unittest.TestCase):
 
     def test_malformed_identity_fields_fail_without_crashing(self) -> None:
         self.acceptance["runs"][0]["board"] = {"not": "a string"}
-        self.acceptance["browser_fallbacks"][0]["browser"]["name"] = ["firefox"]
+        self.acceptance["browser_fallbacks"][0]["browser"]["name"] = ["safari"]
         self.acceptance["installation_smoke"][0]["target"] = {"not": "a target"}
         errors = self.validate()
         self.assertTrue(any("must be strings" in error for error in errors))
-        self.assertTrue(any("not a required Safari/Firefox fallback" in error for error in errors))
+        self.assertTrue(any("not the required Safari fallback" in error for error in errors))
         self.assertTrue(any("unknown published target" in error for error in errors))
 
     def test_maintainer_override_cannot_replace_the_physical_matrix(self) -> None:
         record = {
-            "schema": 4,
+            "schema": 5,
             "candidate": self.acceptance["candidate"],
             "maintainer_override": {
                 "basis": "continuous development testing",

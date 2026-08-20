@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "release"
+ROOT = SCRIPTS.parents[1]
 
 
 def load_script(name: str, module_name: str):
@@ -62,11 +63,28 @@ def complete_roster() -> dict:
             }
         physical_assignments.append(assignment)
     return {
-        "schema": 2,
+        "schema": 3,
         "release": {"version": "0.2.6"},
         "release_owner": "github:release-owner",
         "confirmed_on": "2026-07-20",
         "physical_assignments": physical_assignments,
+        "web_serial_assignments": [
+            {
+                "board": board,
+                "os": os_name,
+                "architecture": architecture,
+                "browser": {"name": "firefox", "channel": "stable"},
+                "tester": "github:solo-tester",
+                "cables_ready": True,
+                "device_permissions_ready": True,
+                "recovery_instructions_reviewed": True,
+            }
+            for board, os_name, architecture in (
+                ("heltec-v4", "linux", "x86_64"),
+                ("t-beam-supreme", "macos", "x86_64"),
+                ("xiao-esp32-c6", "windows", "x86_64"),
+            )
+        ],
         "fallback_assignments": [
             {
                 "browser": {"name": browser, "channel": "stable"},
@@ -75,12 +93,7 @@ def complete_roster() -> dict:
                 "tester": "github:solo-tester",
                 "browser_ready": True,
             }
-            for browser, os_name, architecture in (
-                ("firefox", "linux", "x86_64"),
-                ("firefox", "macos", "x86_64"),
-                ("firefox", "windows", "x86_64"),
-                ("safari", "macos", "aarch64"),
-            )
+            for browser, os_name, architecture in (("safari", "macos", "aarch64"),)
         ],
         "installation_assignments": [
             {
@@ -182,10 +195,27 @@ class AcceptanceScaffoldTests(unittest.TestCase):
             hashlib.sha256(self.signed_bundle_path.read_bytes()).hexdigest(),
         )
         self.assertEqual(candidate["prerelease_published_at"], PUBLISHED_AT)
-        self.assertEqual(record["schema"], 4)
+        self.assertEqual(record["schema"], 5)
         self.assertEqual(len(record["runs"]), 12)
-        self.assertEqual(len(record["browser_fallbacks"]), 4)
+        self.assertEqual(len(record["web_serial_smoke"]), 3)
+        self.assertEqual(len(record["browser_fallbacks"]), 1)
         self.assertEqual(len(record["installation_smoke"]), 5)
+        self.assertEqual(
+            {smoke["os"] for smoke in record["web_serial_smoke"]},
+            set(CONTRACT.WEB_SERIAL_HOSTS),
+        )
+        self.assertTrue(
+            all(
+                smoke["board"] in CONTRACT.ESP_SERIAL_BOARDS
+                and smoke["browser"]["name"] == "firefox"
+                and set(smoke["scenarios"]) == CONTRACT.WEB_SERIAL_SCENARIOS
+                for smoke in record["web_serial_smoke"]
+            )
+        )
+        self.assertEqual(
+            record["browser_fallbacks"][0]["browser"]["name"],
+            "safari",
+        )
         self.assertTrue(
             all(
                 smoke["scenarios"] == {
@@ -198,6 +228,36 @@ class AcceptanceScaffoldTests(unittest.TestCase):
         encoded = json.dumps(record)
         self.assertNotIn('"pass"', encoded)
         self.assertIn('"not-run"', encoded)
+
+    def test_prospective_templates_advance_without_rewriting_published_custody(self) -> None:
+        acceptance_template = json.loads(
+            (ROOT / "release" / "acceptance" / "template.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        roster_template = json.loads(
+            (ROOT / "release" / "acceptance" / "roster-template.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(acceptance_template["schema"], 5)
+        self.assertEqual(roster_template["schema"], 3)
+        records = ROOT / "release" / "acceptance" / "records"
+        rosters = ROOT / "release" / "acceptance" / "rosters"
+        self.assertEqual(
+            {
+                json.loads(path.read_text(encoding="utf-8"))["schema"]
+                for path in records.glob("0.3.*.json")
+            },
+            {4},
+        )
+        self.assertEqual(
+            {
+                json.loads(path.read_text(encoding="utf-8"))["schema"]
+                for path in rosters.glob("0.3.*.json")
+            },
+            {2},
+        )
 
     def test_scaffold_assigns_complete_transport_aware_coverage(self) -> None:
         record = self.create()

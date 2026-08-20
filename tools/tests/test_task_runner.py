@@ -33,6 +33,10 @@ class TaskRegistryTests(unittest.TestCase):
     def test_live_registry_is_complete(self) -> None:
         self.assertEqual(runner.validate_manifest(self.manifest), [])
 
+    def test_developer_flasher_candidate_boundary_is_internal(self) -> None:
+        internal = {entry["path"] for entry in self.manifest["internal"]}
+        self.assertIn("tools/device/developer_flasher_candidate.py", internal)
+
     def test_duplicate_task_ids_are_rejected(self) -> None:
         manifest = copy.deepcopy(self.manifest)
         manifest["task"].append(copy.deepcopy(manifest["task"][0]))

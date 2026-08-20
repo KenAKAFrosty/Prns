@@ -1,5 +1,5 @@
 {
-  "schema": 2,
+  "schema": 3,
   "release": {
     "version": "REPLACE_WITH_VERSION"
   },
@@ -112,28 +112,39 @@
       "recovery_instructions_reviewed": true
     }
   ],
-  "fallback_assignments": [
+  "web_serial_assignments": [
     {
+      "board": "heltec-v4",
       "browser": {"name": "firefox", "channel": "stable"},
       "os": "linux",
       "architecture": "x86_64",
       "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
-      "browser_ready": true
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
     },
     {
+      "board": "t-beam-supreme",
       "browser": {"name": "firefox", "channel": "stable"},
       "os": "macos",
       "architecture": "x86_64",
       "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
-      "browser_ready": true
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
     },
     {
+      "board": "xiao-esp32-c6",
       "browser": {"name": "firefox", "channel": "stable"},
       "os": "windows",
       "architecture": "x86_64",
       "tester": "REPLACE_WITH_PUBLIC_TESTER_IDENTITY",
-      "browser_ready": true
-    },
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    }
+  ],
+  "fallback_assignments": [
     {
       "browser": {"name": "safari", "channel": "stable"},
       "os": "macos",

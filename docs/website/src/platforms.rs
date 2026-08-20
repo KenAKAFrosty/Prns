@@ -76,6 +76,8 @@ pub struct BoardImage {
     pub data_uri: &'static str,
 }
 
+pub const ESPRESSIF_NATIVE_USB_VENDOR_ID: u16 = 0x303a;
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum PreparationProfile {
     EspUsbBoot,
@@ -86,6 +88,7 @@ pub enum PreparationProfile {
 pub enum BoardFlashTarget {
     EspSerial {
         expected_chip: &'static str,
+        web_serial_vendor_id: u16,
         supports_provisioning: bool,
         supports_tcp_client_provisioning: bool,
     },

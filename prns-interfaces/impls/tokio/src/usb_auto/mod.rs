@@ -1,9 +1,13 @@
 mod candidate;
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 mod host;
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 mod native;
 
 pub use candidate::{UsbAutoCandidate, UsbAutoIncarnation};
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub use host::{AutoUsb, DEFAULT_USB_AUTO_ID, DEFAULT_USB_BAUD};
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub use native::{open_native_usb_auto_target, scan_native_usb_auto_targets, NativeUsbAutoStream};
 
 use std::collections::{HashMap, HashSet};

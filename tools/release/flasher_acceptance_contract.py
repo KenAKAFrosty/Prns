@@ -11,11 +11,14 @@ import re
 from flasher_manifest import require_schema, target_artifacts
 
 
-SHIPPING_BOARDS = (
+ESP_SERIAL_BOARDS = (
     "heltec-v4",
     "heltec-v4-r8",
     "t-beam-supreme",
     "xiao-esp32-c6",
+)
+SHIPPING_BOARDS = (
+    *ESP_SERIAL_BOARDS,
     "t-echo",
 )
 SURFACES = ("cli", "web")
@@ -33,12 +36,19 @@ CLI_TARGETS = {
     "aarch64-unknown-linux-gnu": ("linux", "aarch64"),
     "x86_64-pc-windows-msvc": ("windows", "x86_64"),
 }
-REQUIRED_FALLBACKS = {
-    ("firefox", "macos"),
-    ("firefox", "windows"),
-    ("firefox", "linux"),
-    ("safari", "macos"),
+WEB_SERIAL_HOSTS = {
+    "linux": {"aarch64", "x86_64"},
+    "macos": {"aarch64", "x86_64"},
+    "windows": {"x86_64"},
 }
+WEB_SERIAL_SCENARIOS = {
+    "correct-board",
+    "fresh-install",
+    "one-device",
+    "permission-grant",
+    "post-flash-boot",
+}
+REQUIRED_FALLBACKS = {("safari", "macos")}
 FALLBACK_SCENARIOS = {
     "esp-cli-guidance",
     "esp-connect-unavailable",
@@ -106,7 +116,7 @@ UF2_CLI_SCENARIOS = {
 }
 
 PER_RUN_BASELINE_SCENARIOS = {"fresh-install", "post-flash-boot"}
-ACCEPTANCE_SCHEMA = 4
+ACCEPTANCE_SCHEMA = 5
 T_ECHO_COMPATIBILITY_VARIANTS = (
     "s140-6.1.1-fwid-0x00b6",
     "s140-7.3.0-fwid-0x0123",
@@ -246,6 +256,7 @@ def scaffold(
 
     runs = []
     physical_assignments = getattr(tester_roster, "physical", {})
+    web_serial_assignments = getattr(tester_roster, "web_serial", {})
     fallback_assignments = getattr(tester_roster, "fallbacks", {})
     installation_assignments = getattr(tester_roster, "installations", {})
     for board in SHIPPING_BOARDS:
@@ -288,6 +299,40 @@ def scaffold(
                         "version": NOT_RUN,
                     }
                 runs.append(run)
+
+    web_serial_smoke = []
+    for os_name in WEB_SERIAL_HOSTS:
+        assignment = web_serial_assignments.get(os_name)
+        if assignment is None:
+            raise ValueError(f"tester roster is missing Firefox Web Serial {os_name}")
+        target = targets[assignment.board]
+        web_serial_smoke.append(
+            {
+                "board": assignment.board,
+                "os": os_name,
+                "architecture": assignment.architecture,
+                "os_version": NOT_RUN,
+                "hardware_identity": NOT_RUN,
+                "hardware_model": target.get("display_name", NOT_RUN),
+                "hardware_revision": NOT_RUN,
+                "client": {
+                    "name": "prns-web-flasher",
+                    "version": version,
+                },
+                "browser": {
+                    "name": "firefox",
+                    "channel": "stable",
+                    "version": NOT_RUN,
+                },
+                "scenarios": {
+                    scenario: "not-run" for scenario in sorted(WEB_SERIAL_SCENARIOS)
+                },
+                "result": "not-run",
+                "tester": assignment.tester,
+                "completed_at": NOT_RUN,
+                "evidence": evidence_placeholder(),
+            }
+        )
 
     browser_fallbacks = []
     for browser, os_name in sorted(REQUIRED_FALLBACKS):
@@ -351,6 +396,7 @@ def scaffold(
             "prerelease_published_at": prerelease_published_at,
         },
         "runs": runs,
+        "web_serial_smoke": web_serial_smoke,
         "browser_fallbacks": browser_fallbacks,
         "installation_smoke": installation_smoke,
     }

@@ -33,6 +33,7 @@ function request() {
     afterReset: "watchdog-reset",
     mountLabel: null,
     uf2Compatibility: null,
+    serialFilters: [{ usbVendorId: 0x303a }],
     provisioning: { action: "preserve", offset: 0xd000, size: 0x1000 },
     parts: [
       { kind: "bootloader", path: "firmware/hopspot/heltec-v4/0.2.6/bootloader.bin", url: "/releases/0.2.6/firmware/hopspot/heltec-v4/0.2.6/bootloader.bin", offset: 0, size: 32, sha256: "a".repeat(64) },
@@ -44,6 +45,21 @@ function request() {
 
 test("valid sparse request is accepted", () => {
   assert.equal(validateRequest(request()).boardSlug, "heltec-v4");
+});
+
+test("ESP serial filters are explicit, bounded, and unique", () => {
+  for (const serialFilters of [
+    undefined,
+    [],
+    [{ usbVendorId: 0 }],
+    [{ usbVendorId: 0x10000 }],
+    [{ usbVendorId: 0x303a, usbProductId: 0x1001 }],
+    [{ usbVendorId: 0x303a }, { usbVendorId: 0x303a }],
+  ]) {
+    const value = request();
+    value.serialFilters = serialFilters;
+    assert.throws(() => validateRequest(value), /serial device filter/);
+  }
 });
 
 test("transport-specific request identity is complete and bounded", () => {
@@ -61,6 +77,7 @@ test("transport-specific request identity is complete and bounded", () => {
     beforeReset: null,
     afterReset: null,
     mountLabel: "TECHOBOOT",
+    serialFilters: [],
     uf2Compatibility: {
       softdeviceFamily: "s140",
       softdeviceVersion: "7.3.0",
