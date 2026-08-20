@@ -10066,21 +10066,6 @@
     },
     {
       "graphs": {
-        "android": [
-          "auxvec",
-          "default",
-          "elf",
-          "errno",
-          "general",
-          "if_ether",
-          "ioctl",
-          "net",
-          "netlink",
-          "no_std",
-          "prctl",
-          "std",
-          "xdp"
-        ],
         "daemon-linux": [
           "auxvec",
           "default",
@@ -11783,9 +11768,6 @@
     },
     {
       "graphs": {
-        "android": [
-          "tokio"
-        ],
         "daemon-linux": [
           "tokio"
         ],
@@ -11795,18 +11777,6 @@
         "daemon-windows": [
           "tokio"
         ],
-        "esp32-c6": [
-          "tokio"
-        ],
-        "esp32-s3-heltec": [
-          "tokio"
-        ],
-        "esp32-s3-heltec-r8": [
-          "tokio"
-        ],
-        "esp32-s3-tbeam": [
-          "tokio"
-        ],
         "host-c-linux": [
           "tokio"
         ],
@@ -11814,9 +11784,6 @@
           "tokio"
         ],
         "host-c-windows": [
-          "tokio"
-        ],
-        "nrf52840": [
           "tokio"
         ]
       },
@@ -17000,18 +16967,6 @@
     },
     {
       "graphs": {
-        "android": [
-          "alloc",
-          "default",
-          "event",
-          "fs",
-          "mm",
-          "net",
-          "pipe",
-          "process",
-          "std",
-          "time"
-        ],
         "daemon-linux": [
           "alloc",
           "default",
