@@ -59,7 +59,7 @@ def safe_artifact_path(candidate: Path, wire_path: object) -> tuple[PurePosixPat
     ):
         raise DeveloperCandidateError(f"manifest contains unsafe artifact path: {wire_path!r}")
     root = candidate.resolve(strict=True)
-    path = candidate.joinpath(*relative.parts)
+    path = root.joinpath(*relative.parts)
     try:
         resolved = path.resolve(strict=True)
         resolved.relative_to(root)
