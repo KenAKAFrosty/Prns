@@ -100,7 +100,7 @@ RUST_LOG=debug,prns.runtime=info cargo prnsd restart
 $env:RUST_LOG = 'debug,prns.runtime=info'; cargo prnsd restart
 ```
 
-The built executable accepts the same lifecycle commands without Cargo. `prnsd run` is the explicit foreground mode for terminals and future native service managers. The portable managed session survives terminal exit, but does not start at login or boot and does not restart after a crash.
+The built executable accepts the same lifecycle commands without Cargo. `prnsd run` is the explicit foreground mode for terminals, and `prnsd run --service --config DIR` registers that process for native service operation. The portable managed session survives terminal exit, but does not start at login or boot and does not restart after a crash. The [deployment guide](deploy-prnsd.md#systemd) provides a hardened systemd unit.
 
 The default `tray` feature publishes the Prns mark after daemon readiness on macOS, Windows, and
 Linux. Its concise status menu reports the live logical-interface state and provides these

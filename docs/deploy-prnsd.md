@@ -1,8 +1,74 @@
 # Deploy prnsd
 
-The official `prnsd` container runs a persistent Prns backbone with ordinary Reticulum TCP access, WebSocket access for browser clients, the full operator CLI, and optional NomadNet page hosting. Run it anywhere Docker works, or use the Railway template when you would rather have the platform manage the container, storage, TLS, and public endpoints.
+`prnsd` can run as a native systemd service or in the official container. Each path runs the same foreground daemon with persistent configuration, transport identity, routing state, ratchets, and pages.
 
-Both paths run the same daemon and keep its configuration, transport identity, routing state, ratchets, pages, and control endpoint under `/var/lib/prnsd`.
+## systemd
+
+Install the release binary and create a dedicated service account:
+
+```sh
+sudo install -Dm0755 ./prnsd /usr/local/bin/prnsd
+sudo useradd --system --user-group --home-dir /var/lib/prnsd --shell /usr/sbin/nologin prnsd
+```
+
+Save the following unit as `/etc/systemd/system/prnsd.service`:
+
+```ini
+[Unit]
+Description=Prns daemon
+After=network.target
+
+[Service]
+Type=simple
+User=prnsd
+Group=prnsd
+
+StateDirectory=prnsd
+StateDirectoryMode=0700
+RuntimeDirectory=prnsd
+RuntimeDirectoryMode=0700
+Environment=PRNSD_STATE_DIR=/run/prnsd
+
+ExecStart=/usr/local/bin/prnsd run --service --config /var/lib/prnsd --persistence-policy required --log-format json
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+UMask=0077
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`StateDirectory` gives the service a persistent, private `/var/lib/prnsd`; `RuntimeDirectory` creates the private `/run/prnsd` control directory on each service start. `--service` registers the foreground process there so operator commands can find the routing owner, while systemd remains responsible for starting, stopping, and restarting it. Required persistence makes startup fail when the node cannot establish writable stable state, and JSON events go to journald.
+
+Load and start the service:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now prnsd
+sudo systemctl status prnsd
+sudo journalctl --unit prnsd --follow
+```
+
+The runtime directory is private to the service account. Run operator commands as that account and point them at the same control state and configuration:
+
+```sh
+sudo -u prnsd env PRNSD_STATE_DIR=/run/prnsd \
+  /usr/local/bin/prnsd status --config /var/lib/prnsd
+sudo -u prnsd env PRNSD_STATE_DIR=/run/prnsd \
+  /usr/local/bin/prnsd interfaces list --config /var/lib/prnsd
+```
+
+Use `systemctl restart prnsd` and `systemctl stop prnsd` for lifecycle operations. SIGTERM enters the daemon's graceful shutdown path, including the final persistence flush. Hardware interfaces may require distribution-specific device permissions for the `prnsd` account; the unit intentionally does not grant broad device access.
 
 ## Docker
 

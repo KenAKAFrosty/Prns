@@ -80,7 +80,7 @@ time. Build options such as `--target` or `--profile` can be supplied after
 | `prnsd restart [OPTIONS]` | Gracefully replace the managed daemon |
 | `prnsd logs` | Show recent output and follow the running daemon; return status 3 when stopped |
 | `prnsd stop` | Show recent output, request graceful shutdown, and follow the final logs |
-| `prnsd run [OPTIONS]` | Run in the foreground for a terminal or native service manager |
+| `prnsd run [OPTIONS]` | Run in the foreground; `--service --config DIR` registers with a native service manager context |
 | `prnsd i2p doctor` | Check I2P router and SAM 3.1 readiness without starting the managed daemon |
 | `prnsd i2p setup` | Print guided platform installation, SAM enablement, and a validated interface stanza |
 | `prnsd interfaces [COMMAND]` | Guided typed interface editing, grouped validation and repair, and explicit live apply |
@@ -134,8 +134,9 @@ user under the platform's normal permissions.
 
 This portable session survives the launching terminal, but it is not a
 boot/login service and does not restart itself after a machine reboot or a
-crash. A future launchd, systemd, or Windows Service definition should invoke
-`prnsd run` as its foreground process rather than nesting this session manager.
+crash. Native service definitions should invoke `prnsd run --service --config
+DIR` as their foreground process rather than nesting this session manager. The
+[deployment guide](deploy-prnsd.md#systemd) provides a hardened systemd unit.
 
 ## Release the daemon and container
 

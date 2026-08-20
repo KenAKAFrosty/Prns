@@ -48,7 +48,11 @@ pub struct DaemonArgs {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Args)]
 pub struct RunArgs {
-    #[arg(long, requires = "config", hide = true)]
+    #[arg(
+        long,
+        requires = "config",
+        help = "Register this foreground daemon for operator commands; requires --config DIR"
+    )]
     pub service: bool,
 
     #[command(flatten)]
@@ -214,6 +218,7 @@ pub enum Command {
     Restart(LaunchArgs),
     Stop,
     Logs,
+    #[command(about = "Run in the foreground for a terminal or native service manager")]
     Run(RunArgs),
     #[command(about = "Inspect I2P connectivity")]
     I2p(I2pArgs),
@@ -388,6 +393,19 @@ mod tests {
                 },
             })
         );
+    }
+
+    #[test]
+    fn foreground_service_is_visible_in_run_help() {
+        let mut command = Cli::command();
+        let run = command
+            .find_subcommand_mut("run")
+            .unwrap_or_else(|| panic!("run subcommand must exist"));
+        let help = run.render_long_help().to_string();
+        assert!(help.contains("--service"));
+        assert!(help.contains(
+            "Register this foreground daemon for operator commands; requires --config DIR"
+        ));
     }
 
     #[test]
