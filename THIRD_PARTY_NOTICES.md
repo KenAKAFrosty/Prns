@@ -3453,7 +3453,7 @@ SOFTWARE.
 
 License: MIT License
 
-Used by: `adler2 2.0.1`, `allocator-api2 0.3.1`, `anyhow 1.0.102`, `async-recursion 1.1.1`, `async-trait 0.1.89`, `async-trait 0.1.91`, `concurrent-queue 2.5.0`, `ctrlc 3.5.2`, `curve25519-dalek-derive 0.1.1`, `deku 0.18.1`, `displaydoc 0.2.6`, `displaydoc 0.2.7`, `docsplay 0.1.3`, `endi 1.1.1`, `event-listener 5.4.1`, `event-listener-strategy 0.5.4`, `fastrand 2.4.1`, `fastrand 2.5.0`, `flume 0.12.0`, `futures-lite 2.6.1`, `home 0.5.12`, `indoc 2.0.7`, `iter-read 1.1.0`, `itoa 1.0.18`, `linux-raw-sys 0.12.1`, `macro-string 0.1.4`, `num_enum 0.7.6`, `num_enum_derive 0.7.6`, `nusb 0.2.4`, `once_cell 1.21.4`, `ordered-stream 0.2.0`, `parking 2.2.1`, `paste 1.0.15`, `pastey 0.2.3`, `pin-project 1.1.13`, `pin-project-internal 1.1.13`, `pin-project-lite 0.2.17`, `portable-atomic 1.13.1`, `proc-macro-crate 3.5.0`, `proc-macro2 1.0.106`, `proc-macro2 1.0.107`, `quote 1.0.45`, `quote 1.0.46`, `quote 1.0.47`, `rtrb 0.3.4`, `rustc-hash 1.1.0`, `rustc-hash 2.1.2`, `rustc-hash 2.1.3`, `rustix 1.1.4`, `rustversion 1.0.22`, `rustversion 1.0.23`, `semver 1.0.28`, `send_wrapper 0.6.0`, `serde 1.0.228`, `serde 1.0.229`, `serde_core 1.0.228`, `serde_core 1.0.229`, `serde_derive 1.0.228`, `serde_derive 1.0.229`, `serde_json 1.0.150`, `serde_json 1.0.151`, `serde_repr 0.1.21`, `serde_yaml 0.9.34+deprecated`, `smol_str 0.2.2`, `syn 1.0.109`, `syn 2.0.117`, `syn 2.0.118`, `syn 2.0.119`, `syn 3.0.2`, `syn 3.0.3`, `thiserror 1.0.69`, `thiserror 2.0.18`, `thiserror 2.0.19`, `thiserror-impl 1.0.69`, `thiserror-impl 2.0.18`, `thiserror-impl 2.0.19`, `unic-langid 0.9.6`, `unic-langid-impl 0.9.6`, `unic-langid-macros 0.9.6`, `unic-langid-macros-impl 0.9.6`, `unicode-ident 1.0.24`, `unsafe-libyaml 0.2.11`, `utf-8 0.7.6`, `utf8-zero 0.8.1`, `wasm-streams 0.4.2`, `zmij 1.0.21`, `zmij 1.0.23`, `zvariant_utils 3.5.0`
+Used by: `adler2 2.0.1`, `allocator-api2 0.3.1`, `anyhow 1.0.102`, `async-recursion 1.1.1`, `async-trait 0.1.89`, `async-trait 0.1.91`, `concurrent-queue 2.5.0`, `ctrlc 3.5.2`, `curve25519-dalek-derive 0.1.1`, `deku 0.18.1`, `displaydoc 0.2.6`, `displaydoc 0.2.7`, `docsplay 0.1.3`, `endi 1.1.1`, `event-listener 5.4.1`, `event-listener-strategy 0.5.4`, `fastrand 2.4.1`, `fastrand 2.5.0`, `flume 0.12.0`, `futures-lite 2.6.1`, `home 0.5.12`, `indoc 2.0.7`, `iter-read 1.1.0`, `itoa 1.0.18`, `linux-raw-sys 0.12.1`, `macro-string 0.1.4`, `num_enum 0.7.6`, `num_enum_derive 0.7.6`, `nusb 0.2.4`, `nusb 0.2.7`, `once_cell 1.21.4`, `ordered-stream 0.2.0`, `parking 2.2.1`, `paste 1.0.15`, `pastey 0.2.3`, `pin-project 1.1.13`, `pin-project-internal 1.1.13`, `pin-project-lite 0.2.17`, `portable-atomic 1.13.1`, `proc-macro-crate 3.5.0`, `proc-macro2 1.0.106`, `proc-macro2 1.0.107`, `quote 1.0.45`, `quote 1.0.46`, `quote 1.0.47`, `rtrb 0.3.4`, `rustc-hash 1.1.0`, `rustc-hash 2.1.2`, `rustc-hash 2.1.3`, `rustix 1.1.4`, `rustversion 1.0.22`, `rustversion 1.0.23`, `semver 1.0.28`, `send_wrapper 0.6.0`, `serde 1.0.228`, `serde 1.0.229`, `serde_core 1.0.228`, `serde_core 1.0.229`, `serde_derive 1.0.228`, `serde_derive 1.0.229`, `serde_json 1.0.150`, `serde_json 1.0.151`, `serde_repr 0.1.21`, `serde_yaml 0.9.34+deprecated`, `smol_str 0.2.2`, `syn 1.0.109`, `syn 2.0.117`, `syn 2.0.118`, `syn 2.0.119`, `syn 3.0.2`, `syn 3.0.3`, `thiserror 1.0.69`, `thiserror 2.0.18`, `thiserror 2.0.19`, `thiserror-impl 1.0.69`, `thiserror-impl 2.0.18`, `thiserror-impl 2.0.19`, `unic-langid 0.9.6`, `unic-langid-impl 0.9.6`, `unic-langid-macros 0.9.6`, `unic-langid-macros-impl 0.9.6`, `unicode-ident 1.0.24`, `unsafe-libyaml 0.2.11`, `utf-8 0.7.6`, `utf8-zero 0.8.1`, `wasm-streams 0.4.2`, `zmij 1.0.21`, `zmij 1.0.23`, `zvariant_utils 3.5.0`
 
 Release graphs: Android, ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, Host SDK native, Node addon Linux, Node addon Windows, Node addon macOS, WASM, daemon Linux, daemon Windows, daemon macOS, desktop Linux, desktop Windows, desktop macOS, engine, flasher Linux arm64, flasher Linux x86_64, flasher Windows x86_64, flasher macOS arm64, flasher macOS x86_64, iOS, nRF52840, website Rust/WASM
 
@@ -6515,7 +6515,7 @@ License: MIT License
 
 Used by: `mach2 0.4.3`, `mach2 0.5.0`
 
-Release graphs: desktop macOS, flasher macOS arm64, flasher macOS x86_64
+Release graphs: Node addon macOS, daemon macOS, desktop macOS, flasher macOS arm64, flasher macOS x86_64
 
 ```text
 Copyright (c) 2019 Nick Fitzgerald, 2021 Yuki Okushi
@@ -7362,7 +7362,7 @@ License: MIT License
 
 Used by: `io-kit-sys 0.4.1`, `io-kit-sys 0.5.0`
 
-Release graphs: desktop macOS, flasher macOS arm64, flasher macOS x86_64
+Release graphs: Node addon macOS, daemon macOS, desktop macOS, flasher macOS arm64, flasher macOS x86_64
 
 ```text
 Copyright (c) 2017-2018 Junji Takakura
