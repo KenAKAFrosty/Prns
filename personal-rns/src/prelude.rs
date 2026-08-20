@@ -1,8 +1,8 @@
 pub use crate::{
     request_endpoints, CommandId, DestinationHash, Diagnostic, InterfaceStatus, ManuallyAttached,
     Message, NoPersistence, PacketReceiptDelivered, PreConfiguredDestination, PrnsCommand,
-    PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, ProofStrategy, RatchetPolicy, ResourceStrategy,
-    RuntimeHealth, SendError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
+    PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, ProofStrategy, RatchetPolicy, ResourceMemoryLimits,
+    ResourceStrategy, RuntimeHealth, SendError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
 };
 
 pub use crate::engine::{

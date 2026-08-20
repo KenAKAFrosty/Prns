@@ -56,6 +56,7 @@ pub fn outgoing_resource_buffer_shape(
     ResourceBufferShape::try_for_transfer(transfer_bytes, sdu).map_err(|error| match error {
         ResourceBufferShapeError::EmptyTransfer => BuildOutgoingResourceError::Seal(BufferTooShort),
         ResourceBufferShapeError::SduTooSmall => BuildOutgoingResourceError::SduTooSmall,
+        ResourceBufferShapeError::SizeOverflow => BuildOutgoingResourceError::DataTooLarge,
     })
 }
 

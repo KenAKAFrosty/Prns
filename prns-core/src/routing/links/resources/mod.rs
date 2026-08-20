@@ -145,6 +145,31 @@ pub const fn max_part_count(transfer_capacity: usize) -> usize {
     transfer_capacity.div_ceil(resource_sdu(BROADCAST_MTU))
 }
 
+/// Default active Resource bulk-buffer budget for each direction on heap hosts.
+pub const DEFAULT_RESOURCE_MEMORY_BYTES: usize = 64 * 1024 * 1024;
+
+/// Heap-host limits for the transfer, part-name, and part-state buffers owned by
+/// active Resources. Incoming and outgoing traffic have independent budgets;
+/// zero disables Resource buffers in that direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceMemoryLimits {
+    pub incoming_bytes: usize,
+    pub outgoing_bytes: usize,
+}
+
+impl ResourceMemoryLimits {
+    pub const DEFAULT_HOST: Self = Self {
+        incoming_bytes: DEFAULT_RESOURCE_MEMORY_BYTES,
+        outgoing_bytes: DEFAULT_RESOURCE_MEMORY_BYTES,
+    };
+}
+
+impl Default for ResourceMemoryLimits {
+    fn default() -> Self {
+        Self::DEFAULT_HOST
+    }
+}
+
 /// The bulk regions one active Resource row needs.
 ///
 /// Heap-backed tables allocate these lengths exactly. Fixed tables retain their
@@ -153,12 +178,25 @@ pub const fn max_part_count(transfer_capacity: usize) -> usize {
 pub struct ResourceBufferShape {
     transfer_bytes: usize,
     part_count: usize,
+    buffer_bytes: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceBufferShapeError {
     EmptyTransfer,
     SduTooSmall,
+    SizeOverflow,
+}
+
+pub(crate) const fn checked_resource_buffer_bytes(
+    transfer_bytes: usize,
+    part_count: usize,
+) -> Option<usize> {
+    let part_bytes = match part_count.checked_mul(MAP_HASH_LEN + core::mem::size_of::<bool>()) {
+        Some(part_bytes) => part_bytes,
+        None => return None,
+    };
+    transfer_bytes.checked_add(part_bytes)
 }
 
 impl ResourceBufferShape {
@@ -172,9 +210,15 @@ impl ResourceBufferShape {
         if sdu == 0 {
             return Err(ResourceBufferShapeError::SduTooSmall);
         }
+        let part_count = transfer_bytes.div_ceil(sdu);
+        let buffer_bytes = match checked_resource_buffer_bytes(transfer_bytes, part_count) {
+            Some(buffer_bytes) => buffer_bytes,
+            None => return Err(ResourceBufferShapeError::SizeOverflow),
+        };
         Ok(Self {
             transfer_bytes,
-            part_count: transfer_bytes.div_ceil(sdu),
+            part_count,
+            buffer_bytes,
         })
     }
 
@@ -186,6 +230,12 @@ impl ResourceBufferShape {
     #[must_use]
     pub const fn part_count(self) -> usize {
         self.part_count
+    }
+
+    /// Transfer bytes plus one map hash and one byte of part state per part.
+    #[must_use]
+    pub const fn buffer_bytes(self) -> usize {
+        self.buffer_bytes
     }
 }
 
@@ -226,6 +276,10 @@ mod reaction_capacity_tests {
         assert_eq!(
             ResourceBufferShape::try_for_transfer(928, 0),
             Err(ResourceBufferShapeError::SduTooSmall),
+        );
+        assert_eq!(
+            ResourceBufferShape::try_for_transfer(usize::MAX, 1),
+            Err(ResourceBufferShapeError::SizeOverflow),
         );
     }
 

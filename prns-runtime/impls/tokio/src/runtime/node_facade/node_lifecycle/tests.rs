@@ -6,7 +6,7 @@ use crate::engine::{InstantMillis, Journaled, PersistenceFlushCause, Persistence
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::AnnounceObservation;
-use crate::routing::links::resources::ResourceStrategy;
+use crate::routing::links::resources::{ResourceMemoryLimits, ResourceStrategy};
 use crate::routing::request_handlers::RequestHandlerError;
 use crate::runtime::{
     ManuallyAttached, NoPersistence, PreConfiguredDestination, PrnsNodeHandle, PrnsNodeRecipe,
@@ -349,6 +349,27 @@ fn new_with_handle_builds_state_from_the_nodes_handle() {
     });
 
     assert!(Arc::ptr_eq(&prns.handle.ids, &prns.node.state.ids));
+}
+
+#[test]
+fn host_resource_memory_limits_reach_the_engine_before_run() {
+    let limits = ResourceMemoryLimits {
+        incoming_bytes: 1_024,
+        outgoing_bytes: 2_048,
+    };
+    let prns = PrnsNode::new(PrnsNodeRecipe {
+        transport_identity: None,
+        pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+        app_state: (),
+        storage: crate::storage::GrowableHeap,
+        request_endpoints: crate::request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
+        on_event: |_event, _state: &()| {},
+    })
+    .with_resource_memory_limits(limits);
+
+    assert_eq!(prns.node.engine.resource_memory_limits(), limits);
 }
 
 #[test]

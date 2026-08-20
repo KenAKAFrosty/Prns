@@ -224,6 +224,7 @@ pub struct ResourceBuffers<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceTablePushError {
     TableFull,
+    MemoryLimit,
     TransferTooLarge,
     TooManyParts,
 }
@@ -276,7 +277,9 @@ pub enum TrackOutgoingResourceError {
 
 fn track_push_error(error: ResourceTablePushError) -> TrackOutgoingResourceError {
     match error {
-        ResourceTablePushError::TableFull => TrackOutgoingResourceError::TableFull,
+        ResourceTablePushError::TableFull | ResourceTablePushError::MemoryLimit => {
+            TrackOutgoingResourceError::TableFull
+        }
         ResourceTablePushError::TransferTooLarge => {
             TrackOutgoingResourceError::Build(BuildOutgoingResourceError::Seal(BufferTooShort))
         }
@@ -455,6 +458,9 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                     }
                     ResourceBufferShapeError::SduTooSmall => {
                         BuildOutgoingResourceError::SduTooSmall
+                    }
+                    ResourceBufferShapeError::SizeOverflow => {
+                        BuildOutgoingResourceError::DataTooLarge
                     }
                 })
             })?;
@@ -697,6 +703,7 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
             .map_err(|error| match error {
             ResourceBufferShapeError::EmptyTransfer => AcceptIncomingResourceError::EmptyTransfer,
             ResourceBufferShapeError::SduTooSmall => AcceptIncomingResourceError::SduTooSmall,
+            ResourceBufferShapeError::SizeOverflow => AcceptIncomingResourceError::TransferTooLarge,
         })?;
         if offer.part_count != shape.part_count() {
             return Err(AcceptIncomingResourceError::PartCountMismatch);
@@ -763,7 +770,9 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
                 shape,
             )
             .map_err(|error| match error {
-                ResourceTablePushError::TableFull => AcceptIncomingResourceError::TableFull,
+                ResourceTablePushError::TableFull | ResourceTablePushError::MemoryLimit => {
+                    AcceptIncomingResourceError::TableFull
+                }
                 ResourceTablePushError::TransferTooLarge => {
                     AcceptIncomingResourceError::TransferTooLarge
                 }
@@ -979,6 +988,28 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
     }
 }
 
+#[cfg(feature = "alloc")]
+impl OutgoingResources<super::HeapResourceTable<OutgoingResourceState>> {
+    pub(crate) fn set_memory_limit(&mut self, bytes: usize) {
+        self.table.set_memory_limit(bytes);
+    }
+
+    pub(crate) fn memory_limit(&self) -> usize {
+        self.table.memory_limit()
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl IncomingResources<super::HeapResourceTable<IncomingResourceState>> {
+    pub(crate) fn set_memory_limit(&mut self, bytes: usize) {
+        self.table.set_memory_limit(bytes);
+    }
+
+    pub(crate) fn memory_limit(&self) -> usize {
+        self.table.memory_limit()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::*;
@@ -1163,6 +1194,33 @@ mod tests {
         );
         assert!(outgoing.is_empty());
         track(&mut outgoing, 1, 0xAB).unwrap();
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn heap_budget_pressure_uses_the_existing_table_full_outcomes() {
+        let mut outgoing = OutgoingResources::<HeapResourceTable<OutgoingResourceState>>::default();
+        outgoing.set_memory_limit(0);
+        let refused = outgoing.track_built(
+            TrackedCommand {
+                link_id: link_id(1),
+                sdu: 464,
+                command_id: CommandId(7),
+                correlation: ResourceCorrelation::Unsolicited,
+                segment: ResourceSegment::whole(930),
+            },
+            TrackLane::Live,
+            shape(928, 464),
+            |_| unreachable!("budget pressure must refuse before building"),
+        );
+        assert_eq!(refused, Err(TrackOutgoingResourceError::TableFull));
+
+        let mut incoming = IncomingResources::<HeapResourceTable<IncomingResourceState>>::default();
+        incoming.set_memory_limit(0);
+        assert_eq!(
+            incoming.accept(link_id(1), offer(0xAB, &[])),
+            Err(AcceptIncomingResourceError::TableFull),
+        );
     }
 
     #[test]

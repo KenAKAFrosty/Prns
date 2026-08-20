@@ -22,9 +22,10 @@ use crate::manifold::driver::{
     TokioHost,
 };
 use crate::routing::announce::AnnounceObservation;
+use crate::routing::links::resources::ResourceMemoryLimits;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::{RequestHandlerError, RequestPolicy};
-use crate::storage::{StorageLayout, TablePushError};
+use crate::storage::{GrowableHeap, StorageLayout, TablePushError};
 use crate::units::RttMillis;
 use crate::wire::DestinationHash;
 
@@ -88,6 +89,20 @@ pub enum NonRoutingIdentityError {
 }
 
 pub type SharedInstanceIdentityError = NonRoutingIdentityError;
+
+impl<St, R, F> PrnsNode<St, R, F, GrowableHeap>
+where
+    R: RequestEndpointSet<St>,
+    F: FnMut(PrnsEvent<'_>, &St),
+{
+    /// Applies independent incoming and outgoing active Resource buffer budgets
+    /// before the node is run.
+    #[must_use]
+    pub fn with_resource_memory_limits(mut self, limits: ResourceMemoryLimits) -> Self {
+        self.node.engine.set_resource_memory_limits(limits);
+        self
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegisterRequestEndpointError {

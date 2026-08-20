@@ -13,6 +13,8 @@ use crate::routing::group_keys::GroupKeys;
 use crate::routing::links::resources::assembly::{IncomingAssemblies, OutgoingAssemblies};
 use crate::routing::links::resources::streamed_open::ResourceOpenLane;
 use crate::routing::links::resources::table::{IncomingResources, OutgoingResources};
+#[cfg(feature = "alloc")]
+use crate::routing::links::resources::ResourceMemoryLimits;
 use crate::routing::links::table::Links;
 use crate::routing::links::transported::TransportedLinks;
 use crate::routing::path_requests::interface_path_request_limit::InterfacePathRequestLimits;
@@ -27,6 +29,8 @@ use crate::routing::tunnel::Tunnels;
 use crate::routing::upstream_app_destinations::UpstreamAppDestinations;
 use crate::routing::warmth::{DepartedInterfaces, Departure};
 use crate::routing::RoutingTable;
+#[cfg(feature = "alloc")]
+use crate::storage::GrowableHeap;
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::wire::TransportId;
 use core::mem::MaybeUninit;
@@ -366,6 +370,28 @@ impl<S: StorageLayout> EngineState<S> {
     }
 }
 
+#[cfg(feature = "alloc")]
+impl EngineState<GrowableHeap> {
+    /// Replaces the independent incoming and outgoing active Resource buffer
+    /// budgets used by heap hosts. Existing transfers remain active if a limit
+    /// is lowered beneath their current usage; new rows wait for usage to fall
+    /// back within the new limit.
+    pub fn set_resource_memory_limits(&mut self, limits: ResourceMemoryLimits) {
+        self.incoming_resources
+            .set_memory_limit(limits.incoming_bytes);
+        self.outgoing_resources
+            .set_memory_limit(limits.outgoing_bytes);
+    }
+
+    #[must_use]
+    pub fn resource_memory_limits(&self) -> ResourceMemoryLimits {
+        ResourceMemoryLimits {
+            incoming_bytes: self.incoming_resources.memory_limit(),
+            outgoing_bytes: self.outgoing_resources.memory_limit(),
+        }
+    }
+}
+
 impl<S: StorageLayout> core::fmt::Debug for EngineState<S>
 where
     S::Routes: core::fmt::Debug,
@@ -529,6 +555,23 @@ mod tests {
             EngineProtocolPolicy::default().recursive_path_request_default,
             RecursivePathRequestDefault::Disabled,
         );
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn heap_resource_memory_limits_are_public_directional_configuration() {
+        let mut state = EngineState::<GrowableHeap>::default();
+        assert_eq!(
+            state.resource_memory_limits(),
+            ResourceMemoryLimits::DEFAULT_HOST,
+        );
+
+        let limits = ResourceMemoryLimits {
+            incoming_bytes: 123,
+            outgoing_bytes: 456,
+        };
+        state.set_resource_memory_limits(limits);
+        assert_eq!(state.resource_memory_limits(), limits);
     }
 
     #[test]
