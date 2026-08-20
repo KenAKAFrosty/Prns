@@ -6,15 +6,18 @@ use crate::routing::links::resources::table::{
     ResourceBuffers, ResourceRowState, ResourceTable, ResourceTablePushError,
 };
 use crate::routing::links::resources::{
-    max_part_count, sealed_transfer_bytes, ResourceHash, MAP_HASH_LEN, MAX_EFFICIENT_SIZE,
+    max_part_count, sealed_transfer_bytes, ResourceBufferShape, ResourceHash, MAP_HASH_LEN,
+    MAX_EFFICIENT_SIZE,
 };
 use crate::routing::links::LinkId;
 
-/// A deliberate bound where RNS 1.4.2 grows `Link.outgoing_resources` and `incoming_resources` without limit: Unlike the row-sized tables that take the unbounded-heap convention, each active slot here materializes its full transfer buffer, so an unbounded table would hand remote peers roughly a mebibyte of allocation per accepted offer.
+/// A deliberate bound where RNS 1.4.2 grows `Link.outgoing_resources` and `incoming_resources` without limit.
 /// Overflow refuses by name on both faces: `SendResourceRejection::TableFull` going out, `IgnoreReason::CapacityExhausted` coming in.
 pub const DEFAULT_MAX_RESOURCES: usize = 64;
 
-/// Heap table for a std host: every active slot can hold the largest transfer the protocol allows (a sealed [`MAX_EFFICIENT_SIZE`] stream), and retired slot buffers are kept for reuse by later transfers.
+/// Heap table for a std host: each active row owns only the transfer, part-name,
+/// and part-state lengths required by that Resource. Removing a row drops those
+/// bulk buffers immediately.
 #[derive(Debug, Default)]
 pub struct HeapResourceTable<State: ResourceRowState> {
     link_ids: Vec<LinkId>,
@@ -25,36 +28,10 @@ pub struct HeapResourceTable<State: ResourceRowState> {
     part_names: Vec<Vec<[u8; MAP_HASH_LEN]>>,
     part_flags: Vec<Vec<bool>>,
     streamed_opens: Vec<State::StreamedOpenSlot>,
-    free_transfers: Vec<Vec<u8>>,
-    free_part_names: Vec<Vec<[u8; MAP_HASH_LEN]>>,
-    free_part_flags: Vec<Vec<bool>>,
 }
 
 const HEAP_TRANSFER_CAPACITY: usize = sealed_transfer_bytes(MAX_EFFICIENT_SIZE);
 const HEAP_PART_CAPACITY: usize = max_part_count(HEAP_TRANSFER_CAPACITY);
-
-impl<State: ResourceRowState> HeapResourceTable<State> {
-    fn take_transfer(&mut self) -> Vec<u8> {
-        self.free_transfers
-            .pop()
-            .unwrap_or_else(|| vec![0u8; HEAP_TRANSFER_CAPACITY])
-    }
-
-    fn take_part_names(&mut self) -> Vec<[u8; MAP_HASH_LEN]> {
-        self.free_part_names
-            .pop()
-            .unwrap_or_else(|| vec![[0u8; MAP_HASH_LEN]; HEAP_PART_CAPACITY])
-    }
-
-    fn take_part_flags(&mut self) -> Vec<bool> {
-        let mut flags = self
-            .free_part_flags
-            .pop()
-            .unwrap_or_else(|| vec![false; HEAP_PART_CAPACITY]);
-        flags.fill(false);
-        flags
-    }
-}
 
 impl<State: ResourceRowState + Default> ResourceTable<State> for HeapResourceTable<State> {
     fn capacity(&self) -> usize {
@@ -124,20 +101,25 @@ impl<State: ResourceRowState + Default> ResourceTable<State> for HeapResourceTab
         link_id: LinkId,
         hash: ResourceHash,
         state: State,
+        shape: ResourceBufferShape,
     ) -> Result<usize, ResourceTablePushError> {
+        if shape.transfer_bytes() > HEAP_TRANSFER_CAPACITY {
+            return Err(ResourceTablePushError::TransferTooLarge);
+        }
+        if shape.part_count() > HEAP_PART_CAPACITY {
+            return Err(ResourceTablePushError::TooManyParts);
+        }
         if self.len() >= self.capacity() {
             return Err(ResourceTablePushError::TableFull);
         }
-        let transfer = self.take_transfer();
-        let part_names = self.take_part_names();
-        let part_flags = self.take_part_flags();
         self.link_ids.push(link_id);
         self.hashes.push(hash);
         self.timeout_ats.push(None);
         self.states.push(state);
-        self.transfers.push(transfer);
-        self.part_names.push(part_names);
-        self.part_flags.push(part_flags);
+        self.transfers.push(vec![0u8; shape.transfer_bytes()]);
+        self.part_names
+            .push(vec![[0u8; MAP_HASH_LEN]; shape.part_count()]);
+        self.part_flags.push(vec![false; shape.part_count()]);
         self.streamed_opens.push(Default::default());
         Ok(self.link_ids.len() - 1)
     }
@@ -148,17 +130,19 @@ impl<State: ResourceRowState + Default> ResourceTable<State> for HeapResourceTab
         self.timeout_ats.swap_remove(index);
         self.states.swap_remove(index);
         self.streamed_opens.swap_remove(index);
-        self.free_transfers.push(self.transfers.swap_remove(index));
-        self.free_part_names
-            .push(self.part_names.swap_remove(index));
-        self.free_part_flags
-            .push(self.part_flags.swap_remove(index));
+        self.transfers.swap_remove(index);
+        self.part_names.swap_remove(index);
+        self.part_flags.swap_remove(index);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn shape(transfer_bytes: usize, sdu: usize) -> ResourceBufferShape {
+        ResourceBufferShape::try_for_transfer(transfer_bytes, sdu).unwrap()
+    }
 
     fn link(byte: u8) -> LinkId {
         LinkId::new([byte; 16])
@@ -169,21 +153,53 @@ mod tests {
     }
 
     #[test]
-    fn swap_removed_slot_buffers_are_reused_with_cleared_part_flags() {
+    fn rows_allocate_their_exact_shapes_and_removal_drops_bulk_buffers() {
         let mut table = HeapResourceTable::<u8>::default();
-        let first = table.push(link(1), hash(1), 11).unwrap();
-        let transfer = table.transfer(first).as_ptr();
-        let names = table.part_names(first).as_ptr();
-        let flags = table.part_flags(first).as_ptr();
+        let first = table.push(link(1), hash(1), 11, shape(144, 464)).unwrap();
+        assert_eq!(table.transfer(first).len(), 144);
+        assert_eq!(table.part_names(first).len(), 1);
+        assert_eq!(table.part_flags(first).len(), 1);
         table.buffers_mut(first).part_flags[0] = true;
 
         table.swap_remove(first);
-        let second = table.push(link(2), hash(2), 22).unwrap();
+        assert!(table.transfers.is_empty());
+        assert!(table.part_names.is_empty());
+        assert!(table.part_flags.is_empty());
 
-        assert_eq!(table.transfer(second).as_ptr(), transfer);
-        assert_eq!(table.part_names(second).as_ptr(), names);
-        assert_eq!(table.part_flags(second).as_ptr(), flags);
+        let second = table.push(link(2), hash(2), 22, shape(1_568, 464)).unwrap();
+
+        assert_eq!(table.transfer(second).len(), 1_568);
+        assert_eq!(table.part_names(second).len(), 4);
+        assert_eq!(table.part_flags(second).len(), 4);
         assert!(!table.part_flags(second).iter().any(|flag| *flag));
         assert_eq!(table.states(), &[22]);
+    }
+
+    #[test]
+    fn small_rows_replace_the_former_maximum_sized_bulk_payload() {
+        let former_row_payload_bytes = HEAP_TRANSFER_CAPACITY
+            + HEAP_PART_CAPACITY * MAP_HASH_LEN
+            + HEAP_PART_CAPACITY * core::mem::size_of::<bool>();
+        assert_eq!(former_row_payload_bytes, 1_059_940);
+
+        let compressed_row_payload_bytes = 144 + MAP_HASH_LEN + core::mem::size_of::<bool>();
+        let four_part_row_payload_bytes =
+            1_568 + 4 * MAP_HASH_LEN + 4 * core::mem::size_of::<bool>();
+        assert_eq!(compressed_row_payload_bytes, 149);
+        assert_eq!(four_part_row_payload_bytes, 1_588);
+    }
+
+    #[test]
+    fn row_shapes_cannot_exceed_protocol_capacities() {
+        let mut table = HeapResourceTable::<u8>::default();
+        assert_eq!(
+            table.push(link(1), hash(1), 11, shape(HEAP_TRANSFER_CAPACITY + 1, 464),),
+            Err(ResourceTablePushError::TransferTooLarge),
+        );
+        assert_eq!(
+            table.push(link(1), hash(1), 11, shape(HEAP_TRANSFER_CAPACITY, 1),),
+            Err(ResourceTablePushError::TooManyParts),
+        );
+        assert!(table.is_empty());
     }
 }

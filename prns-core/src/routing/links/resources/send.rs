@@ -20,8 +20,8 @@ use crate::routing::links::resources::advertisement::{
 };
 use crate::routing::links::resources::assembly::StaticResponseContinuation;
 use crate::routing::links::resources::build_outgoing::{
-    build_outgoing_resource_enveloped, seal_staged_resource, winning_candidate,
-    BuildOutgoingResourceError, SealedStagedResource, STAGED_STREAM_OFFSET,
+    build_outgoing_resource_enveloped, outgoing_resource_buffer_shape, seal_staged_resource,
+    winning_candidate, BuildOutgoingResourceError, SealedStagedResource, STAGED_STREAM_OFFSET,
 };
 use crate::routing::links::resources::control::{
     parse_cancel_plaintext, parse_part_request_plaintext, parse_proof_plaintext,
@@ -491,10 +491,17 @@ impl<S: StorageLayout> EngineState<S> {
                 )
                 .map(RowLanding::Raw)
         } else {
+            let shape = match outgoing_resource_buffer_shape(envelope.len(), &body, sdu) {
+                Ok(shape) => shape,
+                Err(error) => {
+                    reject(sink, TrackOutgoingResourceError::Build(error));
+                    return wake_schedule_changes;
+                }
+            };
             let mut seal_iv = [0u8; 16];
             fill_entropy(&mut seal_iv);
             self.outgoing_resources
-                .track_built(command, lane, |regions| {
+                .track_built(command, lane, shape, |regions| {
                     build_outgoing_resource_enveloped(
                         envelope,
                         &body,

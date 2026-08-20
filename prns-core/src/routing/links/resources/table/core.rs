@@ -6,9 +6,10 @@ use crate::routing::links::resources::build_outgoing::{
 };
 use crate::routing::links::resources::streamed_open::OpenProgress;
 use crate::routing::links::resources::{
-    sealed_transfer_bytes, ResourceCompression, ResourceCorrelation, ResourceHash, ResourceProof,
-    ResourceSegment, SaltNonce, HASHMAP_MAX_LEN, MAP_HASH_LEN, MAX_EFFICIENT_SIZE,
-    PART_TIMEOUT_FACTOR, RESOURCE_NONCE_LEN, WINDOW_MAX_SLOW, WINDOW_MIN, WINDOW_START,
+    sealed_transfer_bytes, ResourceBufferShape, ResourceBufferShapeError, ResourceCompression,
+    ResourceCorrelation, ResourceHash, ResourceProof, ResourceSegment, SaltNonce, HASHMAP_MAX_LEN,
+    MAP_HASH_LEN, MAX_EFFICIENT_SIZE, PART_TIMEOUT_FACTOR, RESOURCE_NONCE_LEN, WINDOW_MAX_SLOW,
+    WINDOW_MIN, WINDOW_START,
 };
 use crate::routing::links::LinkId;
 
@@ -223,6 +224,8 @@ pub struct ResourceBuffers<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceTablePushError {
     TableFull,
+    TransferTooLarge,
+    TooManyParts,
 }
 
 pub trait ResourceTable<State: ResourceRowState> {
@@ -259,6 +262,7 @@ pub trait ResourceTable<State: ResourceRowState> {
         link_id: LinkId,
         hash: ResourceHash,
         state: State,
+        shape: ResourceBufferShape,
     ) -> Result<usize, ResourceTablePushError>;
     fn swap_remove(&mut self, index: usize);
 }
@@ -268,6 +272,18 @@ pub enum TrackOutgoingResourceError {
     TableFull,
     LinkBusy,
     Build(BuildOutgoingResourceError),
+}
+
+fn track_push_error(error: ResourceTablePushError) -> TrackOutgoingResourceError {
+    match error {
+        ResourceTablePushError::TableFull => TrackOutgoingResourceError::TableFull,
+        ResourceTablePushError::TransferTooLarge => {
+            TrackOutgoingResourceError::Build(BuildOutgoingResourceError::Seal(BufferTooShort))
+        }
+        ResourceTablePushError::TooManyParts => {
+            TrackOutgoingResourceError::Build(BuildOutgoingResourceError::HashmapBufferTooShort)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -331,6 +347,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         &mut self,
         command: TrackedCommand,
         lane: TrackLane,
+        shape: ResourceBufferShape,
         build: impl FnOnce(BuildRegions<'_>) -> Result<BuiltResource, BuildOutgoingResourceError>,
     ) -> Result<ResourceHash, TrackOutgoingResourceError> {
         let TrackedCommand {
@@ -340,14 +357,17 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
             correlation,
             segment,
         } = command;
+        let expected_transfer_bytes = shape.transfer_bytes();
+        let expected_part_count = shape.part_count();
         let index = self
             .table
             .push(
                 link_id,
                 ResourceHash::new([0; 32]),
                 OutgoingResourceState::default(),
+                shape,
             )
-            .map_err(|ResourceTablePushError::TableFull| TrackOutgoingResourceError::TableFull)?;
+            .map_err(track_push_error)?;
 
         let buffers = self.table.buffers_mut(index);
 
@@ -355,7 +375,10 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
             transfer: buffers.transfer,
             hashmap: buffers.part_names.as_flattened_mut(),
         }) {
-            Ok(built) => {
+            Ok(built)
+                if built.sealed_transfer_bytes == expected_transfer_bytes
+                    && built.part_count == expected_part_count =>
+            {
                 self.table.set_hash(index, built.hash);
                 *self.table.state_mut(index) = OutgoingResourceState {
                     salt_nonce: built.salt_nonce,
@@ -382,6 +405,13 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                 };
                 self.refresh_earliest_timeout();
                 Ok(built.hash)
+            }
+            Ok(_) => {
+                self.table.swap_remove(index);
+                self.refresh_earliest_timeout();
+                Err(TrackOutgoingResourceError::Build(
+                    BuildOutgoingResourceError::BufferShapeMismatch,
+                ))
             }
             Err(error) => {
                 self.table.swap_remove(index);
@@ -416,14 +446,27 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                 BuildOutgoingResourceError::Seal(BufferTooShort),
             ));
         }
+        let transfer_bytes = sealed_transfer_bytes(stream_len);
+        let shape =
+            ResourceBufferShape::try_for_transfer(transfer_bytes, sdu).map_err(|error| {
+                TrackOutgoingResourceError::Build(match error {
+                    ResourceBufferShapeError::EmptyTransfer => {
+                        BuildOutgoingResourceError::Seal(BufferTooShort)
+                    }
+                    ResourceBufferShapeError::SduTooSmall => {
+                        BuildOutgoingResourceError::SduTooSmall
+                    }
+                })
+            })?;
         let index = self
             .table
             .push(
                 link_id,
                 ResourceHash::new([0; 32]),
                 OutgoingResourceState::default(),
+                shape,
             )
-            .map_err(|ResourceTablePushError::TableFull| TrackOutgoingResourceError::TableFull)?;
+            .map_err(track_push_error)?;
 
         prefill(self.table.buffers_mut(index).transfer);
         *self.table.state_mut(index) = OutgoingResourceState {
@@ -606,6 +649,9 @@ pub struct AcceptedResource<'a> {
 pub enum AcceptIncomingResourceError {
     TableFull,
     AlreadyReceiving,
+    EmptyTransfer,
+    SduTooSmall,
+    PartCountMismatch,
     TransferTooLarge,
     TooManyParts,
     HashmapTooLong,
@@ -647,10 +693,18 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
         link_id: LinkId,
         offer: AcceptedResource<'_>,
     ) -> Result<usize, AcceptIncomingResourceError> {
-        if offer.sealed_transfer_bytes > self.table.transfer_capacity() {
+        let shape = ResourceBufferShape::try_for_transfer(offer.sealed_transfer_bytes, offer.sdu)
+            .map_err(|error| match error {
+            ResourceBufferShapeError::EmptyTransfer => AcceptIncomingResourceError::EmptyTransfer,
+            ResourceBufferShapeError::SduTooSmall => AcceptIncomingResourceError::SduTooSmall,
+        })?;
+        if offer.part_count != shape.part_count() {
+            return Err(AcceptIncomingResourceError::PartCountMismatch);
+        }
+        if shape.transfer_bytes() > self.table.transfer_capacity() {
             return Err(AcceptIncomingResourceError::TransferTooLarge);
         }
-        if offer.part_count > self.table.part_capacity() {
+        if shape.part_count() > self.table.part_capacity() {
             return Err(AcceptIncomingResourceError::TooManyParts);
         }
         if offer.initial_names.len() > HASHMAP_MAX_LEN * MAP_HASH_LEN {
@@ -680,7 +734,7 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
                     segment_index: offer.segment_index,
                     total_segments: offer.total_segment_count,
                     sealed_transfer_bytes: offer.sealed_transfer_bytes,
-                    part_count: offer.part_count,
+                    part_count: shape.part_count(),
                     sdu: offer.sdu,
                     received_part_count: 0,
                     outstanding_part_count: 0,
@@ -706,8 +760,15 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
                     fast_rate_rounds: 0,
                     very_slow_rate_rounds: 0,
                 },
+                shape,
             )
-            .map_err(|ResourceTablePushError::TableFull| AcceptIncomingResourceError::TableFull)?;
+            .map_err(|error| match error {
+                ResourceTablePushError::TableFull => AcceptIncomingResourceError::TableFull,
+                ResourceTablePushError::TransferTooLarge => {
+                    AcceptIncomingResourceError::TransferTooLarge
+                }
+                ResourceTablePushError::TooManyParts => AcceptIncomingResourceError::TooManyParts,
+            })?;
 
         self.write_names(index, 0, offer.initial_names);
         self.refresh_earliest_timeout();
@@ -935,6 +996,10 @@ mod tests {
         ResourceHash::new([byte; 32])
     }
 
+    fn shape(transfer_bytes: usize, sdu: usize) -> ResourceBufferShape {
+        ResourceBufferShape::try_for_transfer(transfer_bytes, sdu).unwrap()
+    }
+
     fn fabricated(hash_byte: u8, sealed_transfer_bytes: usize, part_count: usize) -> BuiltResource {
         BuiltResource {
             sealed_transfer_bytes,
@@ -965,10 +1030,11 @@ mod tests {
                     segment,
                 },
                 lane,
+                shape(928, 464),
                 |regions| {
                     regions.transfer[..3].copy_from_slice(&[hash_byte; 3]);
                     regions.hashmap[..8].copy_from_slice(&[hash_byte; 8]);
-                    Ok(fabricated(hash_byte, 930, 2))
+                    Ok(fabricated(hash_byte, 928, 2))
                 },
             )
             .map(|_| lane)
@@ -1006,7 +1072,7 @@ mod tests {
 
         assert_eq!(tracked, TrackLane::Live);
         let index = outgoing.lookup(&link_id(1), &hash(0xAB)).unwrap();
-        assert_eq!(outgoing.sealed_transfer(index).len(), 930);
+        assert_eq!(outgoing.sealed_transfer(index).len(), 928);
         assert_eq!(&outgoing.sealed_transfer(index)[..3], &[0xAB; 3]);
         assert_eq!(outgoing.names_flat(index), &[0xAB; 8]);
         let state = outgoing.state(index);
@@ -1088,11 +1154,35 @@ mod tests {
                 segment: ResourceSegment::whole(930),
             },
             TrackLane::Live,
+            shape(928, 464),
             |_| Err(BuildOutgoingResourceError::SduTooSmall),
         );
         assert_eq!(
             refused.unwrap_err(),
             TrackOutgoingResourceError::Build(BuildOutgoingResourceError::SduTooSmall),
+        );
+        assert!(outgoing.is_empty());
+        track(&mut outgoing, 1, 0xAB).unwrap();
+    }
+
+    #[test]
+    fn a_build_cannot_commit_dimensions_other_than_its_reserved_shape() {
+        let mut outgoing = TestOutgoing::default();
+        let refused = outgoing.track_built(
+            TrackedCommand {
+                link_id: link_id(1),
+                sdu: 464,
+                command_id: CommandId(7),
+                correlation: ResourceCorrelation::Unsolicited,
+                segment: ResourceSegment::whole(930),
+            },
+            TrackLane::Live,
+            shape(928, 464),
+            |_| Ok(fabricated(0xAB, 927, 2)),
+        );
+        assert_eq!(
+            refused.unwrap_err(),
+            TrackOutgoingResourceError::Build(BuildOutgoingResourceError::BufferShapeMismatch,),
         );
         assert!(outgoing.is_empty());
         track(&mut outgoing, 1, 0xAB).unwrap();
@@ -1169,10 +1259,33 @@ mod tests {
         );
 
         let mut too_many = offer(0xCD, &[]);
+        too_many.sdu = 245;
         too_many.part_count = 4;
         assert_eq!(
             incoming.accept(link_id(1), too_many).unwrap_err(),
             AcceptIncomingResourceError::TooManyParts,
+        );
+
+        let mut mismatched_parts = offer(0xCD, &[]);
+        mismatched_parts.part_count = 2;
+        assert_eq!(
+            incoming.accept(link_id(1), mismatched_parts).unwrap_err(),
+            AcceptIncomingResourceError::PartCountMismatch,
+        );
+
+        let mut empty = offer(0xCD, &[]);
+        empty.sealed_transfer_bytes = 0;
+        empty.part_count = 0;
+        assert_eq!(
+            incoming.accept(link_id(1), empty).unwrap_err(),
+            AcceptIncomingResourceError::EmptyTransfer,
+        );
+
+        let mut zero_sdu = offer(0xCD, &[]);
+        zero_sdu.sdu = 0;
+        assert_eq!(
+            incoming.accept(link_id(1), zero_sdu).unwrap_err(),
+            AcceptIncomingResourceError::SduTooSmall,
         );
 
         let too_long_names = [0u8; (HASHMAP_MAX_LEN + 1) * MAP_HASH_LEN];

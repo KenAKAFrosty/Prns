@@ -145,6 +145,50 @@ pub const fn max_part_count(transfer_capacity: usize) -> usize {
     transfer_capacity.div_ceil(resource_sdu(BROADCAST_MTU))
 }
 
+/// The bulk regions one active Resource row needs.
+///
+/// Heap-backed tables allocate these lengths exactly. Fixed tables retain their
+/// compile-time storage and use the shape to reject rows that cannot fit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceBufferShape {
+    transfer_bytes: usize,
+    part_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceBufferShapeError {
+    EmptyTransfer,
+    SduTooSmall,
+}
+
+impl ResourceBufferShape {
+    pub const fn try_for_transfer(
+        transfer_bytes: usize,
+        sdu: usize,
+    ) -> Result<Self, ResourceBufferShapeError> {
+        if transfer_bytes == 0 {
+            return Err(ResourceBufferShapeError::EmptyTransfer);
+        }
+        if sdu == 0 {
+            return Err(ResourceBufferShapeError::SduTooSmall);
+        }
+        Ok(Self {
+            transfer_bytes,
+            part_count: transfer_bytes.div_ceil(sdu),
+        })
+    }
+
+    #[must_use]
+    pub const fn transfer_bytes(self) -> usize {
+        self.transfer_bytes
+    }
+
+    #[must_use]
+    pub const fn part_count(self) -> usize {
+        self.part_count
+    }
+}
+
 /// The most frames one inbound resource request can synchronously ask the engine to emit.
 ///
 /// A request names at most [`WINDOW_MAX`] existing parts. When the receiver has exhausted its
@@ -163,6 +207,27 @@ pub const fn max_outgoing_resource_reaction_frames(transfer_capacity: usize) -> 
 #[cfg(test)]
 mod reaction_capacity_tests {
     use super::*;
+
+    #[test]
+    fn resource_buffer_shape_derives_parts_and_rejects_invalid_inputs() {
+        let shape = ResourceBufferShape::try_for_transfer(928, 464).unwrap();
+        assert_eq!(shape.transfer_bytes(), 928);
+        assert_eq!(shape.part_count(), 2);
+        assert_eq!(
+            ResourceBufferShape::try_for_transfer(929, 464)
+                .unwrap()
+                .part_count(),
+            3,
+        );
+        assert_eq!(
+            ResourceBufferShape::try_for_transfer(0, 464),
+            Err(ResourceBufferShapeError::EmptyTransfer),
+        );
+        assert_eq!(
+            ResourceBufferShape::try_for_transfer(928, 0),
+            Err(ResourceBufferShapeError::SduTooSmall),
+        );
+    }
 
     #[test]
     fn outbound_reaction_capacity_tracks_small_stores_and_caps_at_one_full_window() {

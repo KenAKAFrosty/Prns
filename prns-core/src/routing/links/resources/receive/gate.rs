@@ -269,7 +269,10 @@ impl<S: StorageLayout> EngineState<S> {
                 return IngestPacketOutcome::OwesResourcePull { link_id, hash };
             }
             Err(
-                AcceptIncomingResourceError::HashmapTooLong
+                AcceptIncomingResourceError::EmptyTransfer
+                | AcceptIncomingResourceError::SduTooSmall
+                | AcceptIncomingResourceError::PartCountMismatch
+                | AcceptIncomingResourceError::HashmapTooLong
                 | AcceptIncomingResourceError::HashmapRagged
                 | AcceptIncomingResourceError::HashmapBeyondPartCount,
             ) => return IngestPacketOutcome::Ignored(IgnoreReason::Malformed),
