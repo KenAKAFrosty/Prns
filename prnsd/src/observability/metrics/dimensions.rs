@@ -204,7 +204,9 @@ pub(super) fn link_closure_name(reason: RuntimeLinkClosure) -> &'static str {
     }
 }
 
-pub(super) fn path_request_ingress_outcome_name(outcome: PathRequestIngressOutcome) -> &'static str {
+pub(super) fn path_request_ingress_outcome_name(
+    outcome: PathRequestIngressOutcome,
+) -> &'static str {
     match outcome {
         PathRequestIngressOutcome::Answered => "answered",
         PathRequestIngressOutcome::AnswerScheduled => "answer_scheduled",
