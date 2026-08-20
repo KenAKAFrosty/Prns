@@ -333,7 +333,7 @@ impl HeapRegion {
 #[derive(Debug)]
 pub struct HeapStats {
     /// Granular stats for all the configured memory regions.
-    pub region_stats: [Option<RegionStats>; 3],
+    pub region_stats: [Option<RegionStats>; 4],
 
     /// Total size of all combined heap regions in bytes.
     pub size: usize,
@@ -406,7 +406,7 @@ struct InternalHeapStats {
 }
 
 struct EspHeapInner {
-    heap: [Option<HeapRegion>; 3],
+    heap: [Option<HeapRegion>; 4],
     #[cfg(feature = "internal-heap-stats")]
     internal_heap_stats: InternalHeapStats,
 }
@@ -415,7 +415,7 @@ impl EspHeapInner {
     /// Crate a new UNINITIALIZED heap allocator
     pub const fn empty() -> Self {
         EspHeapInner {
-            heap: [const { None }; 3],
+            heap: [const { None }; 4],
             #[cfg(feature = "internal-heap-stats")]
             internal_heap_stats: InternalHeapStats {
                 max_usage: 0,
@@ -461,7 +461,7 @@ impl EspHeapInner {
     /// called from within `println!()` to pretty-print the usage of the
     /// heap.
     pub fn stats(&self) -> HeapStats {
-        let mut region_stats: [Option<RegionStats>; 3] = [const { None }; 3];
+        let mut region_stats: [Option<RegionStats>; 4] = [const { None }; 4];
 
         let mut used = 0;
         let mut free = 0;

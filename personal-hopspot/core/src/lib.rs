@@ -18,7 +18,9 @@ mod radio_profile_store;
 mod screen;
 
 pub use battery::{BatteryGauge, BatteryPercent, BatterySource, BatteryState, NoBattery};
-pub use destinations::{HopspotDestinationHashes, HopspotDestinationSet};
+pub use destinations::{
+    hopspot_destination_hashes, HopspotDestinationHashes, HopspotDestinationSet,
+};
 pub use flash_identity::{
     bootstrap_flash_ble_identity, bootstrap_flash_node_identity, FlashIdentityError,
 };

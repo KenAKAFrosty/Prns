@@ -60,7 +60,7 @@ use esp_radio::esp_now::{
 use personal_rns::bluetooth_auto::{BluetoothAutoShared, BluetoothAutoStatus};
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
 use personal_rns::esp_now::EspNowInterface;
-use personal_rns::interfaces::bluetooth_auto::{BleIdentity, BLE_HW_MTU};
+use personal_rns::interfaces::bluetooth_auto::BLE_HW_MTU;
 use personal_rns::interfaces::esp_now::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy, ESP_NOW_V2_AIR_MTU,
 };
@@ -164,6 +164,9 @@ const LANE_COUNT: usize = 5 + cfg!(feature = "lora") as usize;
 const MEMBERS: usize = 24;
 pub const BLE_PEER_CAPACITY: usize = EMBEDDED_BLE_PEER_CAPACITY;
 pub const BLE_CONTROLLER_ACTIVITY_CAPACITY: u8 = (BLE_PEER_CAPACITY + 1) as u8;
+// The S3 Wi-Fi blob creates its driver task at priority 29. Keep the BLE controller immediately
+// below it so an active GATT link cannot monopolize core 0 ahead of Wi-Fi receive processing.
+const BLE_CONTROLLER_TASK_PRIORITY: u8 = 28;
 const INTERFACE_CAPACITY: usize = LANE_COUNT + MEMBERS + BLE_PEER_CAPACITY;
 const WIFI_SUPERVISOR_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::AutoWifi as u8, 0, 0, 0, 0, 0, 0, 0]);
@@ -181,6 +184,12 @@ const COMPLETIONS_CAP: usize = 4;
 
 const CORE1_STACK_BYTES: usize = 72 * 1024;
 const RECLAIMED_HEAP_BYTES: usize = 72 * 1024;
+// Large Wi-Fi, BLE, and manifold async state machines plus both embassy-net socket tables park
+// ordinary software state in PSRAM. Reinvest the released `.bss` in the internal-only radio heap:
+// the S3 Wi-Fi blob can retain its complete RX profile during BLE coexistence without exhausting
+// the allocator. Execution and both CPU stacks remain in internal RAM; only suspended future state
+// lives in PSRAM.
+const RADIO_INTERNAL_HEAP_BYTES: usize = 52 * 1024;
 
 const RENDER_INTERVAL: Duration = Duration::from_millis(500);
 const RENDER_TICKS_PER_BATTERY: u8 = 4;
@@ -454,6 +463,7 @@ macro_rules! boot_common {
         ::esp_println::logger::init_logger_from_env();
         $crate::s3::boot_add_psram_global!($p, $psram_config);
         ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: $crate::s3::RECLAIMED_HEAP_BYTES);
+        ::esp_alloc::heap_allocator!(size: $crate::s3::RADIO_INTERNAL_HEAP_BYTES);
         $crate::s3::reclaim_dcache_region();
         $crate::s3::boot_psram_probe!();
         $crate::s3::boot_rtos_tail!($p, $banner)
@@ -462,6 +472,7 @@ macro_rules! boot_common {
         ::esp_println::logger::init_logger_from_env();
         $crate::s3::boot_add_psram_split!($p, $psram_config);
         ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: $crate::s3::RECLAIMED_HEAP_BYTES);
+        ::esp_alloc::heap_allocator!(size: $crate::s3::RADIO_INTERNAL_HEAP_BYTES);
         $crate::s3::reclaim_dcache_region();
         $crate::s3::boot_psram_probe!();
         $crate::s3::boot_rtos_tail!($p, $banner)

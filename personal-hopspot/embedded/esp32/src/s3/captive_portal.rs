@@ -79,10 +79,10 @@ pub(super) fn build_ap_netif(
         gateway: None,
         dns_servers: Default::default(),
     });
-    let ap_resources = mk_static!(
-        StackResources<AP_STACK_SOCKET_CAPACITY>,
-        StackResources::new()
-    );
+    // Socket-set storage is ordinary software state, not DMA/control memory. Keep it in PSRAM so
+    // the radio blobs retain the scarce internal SRAM needed for concurrent AP + station RX.
+    let ap_resources =
+        crate::storage::allocate_psram(StackResources::<AP_STACK_SOCKET_CAPACITY>::new());
     let ap_seed = {
         let mut b = [0u8; 8];
         Rng::new().read(&mut b);

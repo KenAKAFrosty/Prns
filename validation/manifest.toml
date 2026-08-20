@@ -59,6 +59,7 @@ cargo_manifests = [
     "personal-hopspot/embedded/esp32/boards/heltec-v4-r8/Cargo.toml",
     "personal-hopspot/embedded/esp32/boards/t-beam-supreme/Cargo.toml",
     "personal-hopspot/embedded/esp32/boards/xiao-esp32-c6/Cargo.toml",
+    "personal-hopspot/embedded/esp32/vendor/esp-alloc-0.10.0/Cargo.toml",
     "personal-hopspot/embedded/esp32/vendor/esp-backtrace-0.19.0/Cargo.toml",
     "personal-hopspot/embedded/esp32/vendor/esp-phy-0.2.0/Cargo.toml",
     "personal-hopspot/embedded/esp32/vendor/esp-radio-0.18.0/Cargo.toml",

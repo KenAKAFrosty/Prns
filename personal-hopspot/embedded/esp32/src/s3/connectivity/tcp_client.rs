@@ -8,7 +8,7 @@ pub(in crate::s3) fn build_tcp(
     &'static EmbassyInterfaceStatus,
     InterfaceId,
 )> {
-    let channel_tag = crate::storage::allocate_psram([0u8; 256]);
+    let channel_tag = crate::storage::allocate_psram_slice(256, 0u8);
     let (target, target_len) = match &config.host {
         HopspotTcpClientHost::Ipv4(address) => {
             channel_tag[0] = 1;
@@ -37,9 +37,9 @@ pub(in crate::s3) fn build_tcp(
         EmbassyInterfaceStatus::new(id, ConnectionState::Initializing)
     );
     let rx_buffer: &'static mut [u8] =
-        crate::storage::allocate_psram([0u8; TCP_SOCKET_BUFFER_BYTES]);
+        crate::storage::allocate_psram_slice(TCP_SOCKET_BUFFER_BYTES, 0u8);
     let tx_buffer: &'static mut [u8] =
-        crate::storage::allocate_psram([0u8; TCP_SOCKET_BUFFER_BYTES]);
+        crate::storage::allocate_psram_slice(TCP_SOCKET_BUFFER_BYTES, 0u8);
     let tcp = TcpClient::new(TcpClientInput {
         stack,
         target,

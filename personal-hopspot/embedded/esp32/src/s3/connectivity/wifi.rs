@@ -16,20 +16,30 @@ fn psram_udp_socket<
 ) -> UdpSocket<'static> {
     UdpSocket::new(
         stack,
-        crate::storage::allocate_psram([PacketMetadata::EMPTY; RX_META]),
-        crate::storage::allocate_psram([0u8; RX_BYTES]),
-        crate::storage::allocate_psram([PacketMetadata::EMPTY; TX_META]),
-        crate::storage::allocate_psram([0u8; TX_BYTES]),
+        crate::storage::allocate_psram_slice(RX_META, PacketMetadata::EMPTY),
+        crate::storage::allocate_psram_slice(RX_BYTES, 0u8),
+        crate::storage::allocate_psram_slice(TX_META, PacketMetadata::EMPTY),
+        crate::storage::allocate_psram_slice(TX_BYTES, 0u8),
     )
 }
 
+// Preserve the ESP32-S3 driver's established static RX headroom. Although six buffers matches the
+// configured Block Ack window, on-device Wi-Fi/BLE coexistence testing showed that reducing the
+// prior ten-buffer pool caused the station RX path to wedge repeatedly.
 const WIFI_STATIC_RX_BUFFERS: u8 = 10;
+// Match the driver-private pool to the unchanged 32-frame software queue. Each S3 dynamic RX
+// buffer costs roughly 1.6 KiB of internal RAM; buffers beyond the queue's capacity cannot add
+// delivery capacity and would consume the headroom BLE coexistence needs to keep recycling RX.
 const WIFI_DYNAMIC_RX_BUFFERS: u16 = 32;
 const WIFI_RX_BA_WINDOW: u8 = 6;
-const WIFI_RX_QUEUE_FRAMES: usize = WIFI_DYNAMIC_RX_BUFFERS as usize;
+const WIFI_RX_QUEUE_FRAMES: usize = 32;
 const WIFI_TX_QUEUE_FRAMES: usize = 3;
-const WIFI_STATIC_TX_BUFFERS: u8 = 16;
-const WIFI_DYNAMIC_TX_BUFFERS: u16 = 0;
+// Keep TX storage demand-driven. Sixteen static buffers permanently reserve roughly 25.6 KiB of
+// internal RAM and leave an active BLE link with almost no allocation headroom. The driver copies
+// each submission into a dynamic buffer, while the three-frame software queue below bounds the
+// number that can be live concurrently.
+const WIFI_STATIC_TX_BUFFERS: u8 = 0;
+const WIFI_DYNAMIC_TX_BUFFERS: u16 = 16;
 const WIFI_DATA_SOCKET_BUFFER_BYTES: usize = 4 * 1_024;
 const WIFI_DATA_SOCKET_METADATA: usize = 8;
 const WIFI_AUTO_DISCOVERY_SOCKET_METADATA: usize = 8;
@@ -95,7 +105,8 @@ fn udp_service_discovery_socket(stack: Stack<'static>) -> UdpSocket<'static> {
 
 const _: () = assert!(WIFI_STATIC_RX_BUFFERS >= WIFI_RX_BA_WINDOW);
 const _: () = assert!(WIFI_DYNAMIC_RX_BUFFERS > WIFI_RX_BA_WINDOW as u16);
-const _: () = assert!(WIFI_STATIC_TX_BUFFERS >= WIFI_TX_QUEUE_FRAMES as u8);
+const _: () = assert!(WIFI_DYNAMIC_RX_BUFFERS as usize >= WIFI_RX_QUEUE_FRAMES);
+const _: () = assert!(WIFI_DYNAMIC_TX_BUFFERS >= WIFI_TX_QUEUE_FRAMES as u16);
 const _: () = assert!(
     WIFI_AUTO_UNICAST_DISCOVERY_TX_SOCKET_METADATA > WIFI_AUTO_UNICAST_DISCOVERY_TX_QUEUED_PACKETS
 );
@@ -161,10 +172,10 @@ pub(in crate::s3) fn build_wifi(
             gateway: None,
             dns_servers: Default::default(),
         });
-        let resources = mk_static!(
-            StackResources<STATION_STACK_SOCKET_CAPACITY>,
-            StackResources::new()
-        );
+        // embassy-net's socket table is normal Rust state and may live in PSRAM. Reserving
+        // internal SRAM for the vendor radio allocator prevents its RX pool from stalling.
+        let resources =
+            crate::storage::allocate_psram(StackResources::<STATION_STACK_SOCKET_CAPACITY>::new());
         let seed = {
             let mut bytes = [0u8; 8];
             Rng::new().read(&mut bytes);

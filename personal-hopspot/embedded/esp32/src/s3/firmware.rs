@@ -1,6 +1,10 @@
 use super::*;
 
-pub(crate) async fn run<B: Esp32S3Board>(spawner: Spawner) {
+pub(crate) async fn run<B: Esp32S3Board>(spawner: Spawner)
+where
+    B::Display: 'static,
+    B::Battery: 'static,
+{
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let p = esp_hal::init(config);
     let bringup = B::bringup(p).await;
@@ -16,7 +20,10 @@ pub(crate) async fn run<B: Esp32S3Board>(spawner: Spawner) {
 pub(super) async fn run_core<B: Esp32S3Board>(
     spawner: Spawner,
     hardware: S3BoardHardware<B::Display, B::Battery>,
-) {
+) where
+    B::Display: 'static,
+    B::Battery: 'static,
+{
     let BoardFace {
         display,
         battery,
@@ -136,6 +143,14 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         Err(_) => panic!("the built-in LoRa profile and regional policy must be valid"),
     };
 
+    // Reconstruct identities before radio bring-up, on a temporary RTOS task stack. Curve25519's
+    // stack high-water mark is too large for the guarded core-0 main stack, and doing the work here
+    // also keeps it out of the live Wi-Fi/BLE scheduling window.
+    let (node_bootstrap, ble_bootstrap, destination_hashes) =
+        crate::identity::bootstrap_s3_identities().await;
+    crate::identity::log_persistence("node", node_bootstrap.persistence());
+    crate::identity::log_persistence("Bluetooth", ble_bootstrap.persistence());
+
     // The Wi-Fi stack carries both the Wi-Fi Auto UDP and the TCP client, so it stands up before the
     // node moves to core 1 — activating the TCP slot is a core-0-only act.
     boot_stage(BootPhase::WifiBegin);
@@ -152,10 +167,6 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         wifi.is_some(),
         tcp_stack.is_some()
     );
-    let node_bootstrap = crate::identity::bootstrap_node_identity();
-    crate::identity::log_persistence("node", node_bootstrap.persistence());
-    let ble_bootstrap = crate::identity::bootstrap_ble_identity();
-    crate::identity::log_persistence("Bluetooth", ble_bootstrap.persistence());
     let identity_startup_notice =
         crate::identity::startup_notice(node_bootstrap.persistence(), ble_bootstrap.persistence());
     let node_identity = node_bootstrap.into_identity();
@@ -166,9 +177,6 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         B::ANNOUNCE_APP_DATA,
         B::NODE_ANNOUNCE_APP_DATA,
     );
-    let destination_hashes = destinations
-        .destination_hashes()
-        .expect("the hopspot destination names are valid");
     let node_page_destination = destination_hashes.node_page;
     let ble_identity = Some(ble_bootstrap.into_identity());
 
@@ -295,7 +303,11 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         EXECUTOR
             .init(esp_rtos::embassy::Executor::new())
             .run(|spawner| {
-                spawner.spawn(manifold_task(node, persistence).expect("manifold task fits"));
+                let run = crate::storage::allocate_psram(manifold_run(node, persistence));
+                let run: core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>> =
+                    // SAFETY: `allocate_psram` leaks this allocation, so it cannot move or be freed.
+                    unsafe { core::pin::Pin::new_unchecked(run) };
+                spawner.spawn(manifold_task(run).expect("manifold task fits"));
                 spawner.spawn(core_one_liveness_task().expect("core-one liveness task fits"));
             })
     });
@@ -340,9 +352,15 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let data_buf: &'static mut [u8] = alloc::vec![0u8; wifi_auto_contract::HARDWARE_MTU].leak();
         let secondary_data_buf: &'static mut [u8] =
             alloc::vec![0u8; wifi_auto_contract::HARDWARE_MTU].leak();
-        spawner.spawn(
-            wifi_task(interface, fleet, data_buf, secondary_data_buf).expect("Wi-Fi task fits"),
-        );
+        // Construct the large dual-segment state machine in PSRAM before Embassy measures its
+        // task arguments. Passing only a pinned trait-object pointer keeps the task slot small and
+        // leaves internal SRAM available to the closed-source radio driver.
+        let run =
+            crate::storage::allocate_psram(interface.run(fleet, data_buf, secondary_data_buf));
+        let run: core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>> =
+            // SAFETY: `allocate_psram` leaks this allocation, so it cannot move or be freed.
+            unsafe { core::pin::Pin::new_unchecked(run) };
+        spawner.spawn(wifi_task(run).expect("Wi-Fi task fits"));
     }
 
     let espnow_card_id = espnow.as_ref().map(|(interface, _)| interface.id());
@@ -781,23 +799,40 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             let ble_connector = esp_radio::ble::controller::BleConnector::new(
                 bluetooth,
                 esp_radio::ble::Config::default()
+                    .with_task_priority(BLE_CONTROLLER_TASK_PRIORITY)
                     .with_task_stack_size(4096)
                     .with_max_activities(BLE_CONTROLLER_ACTIVITY_CAPACITY),
             )
             .expect("ble connector");
             boot_stage(BootPhase::BluetoothReady);
             if let Some((identity, fleet)) = ble {
-                spawner.spawn(
-                    ble_task(spawner, ble_connector, mac_octets, identity, fleet)
-                        .expect("Bluetooth task fits"),
-                );
+                let run = crate::storage::allocate_psram(crate::bluetooth_auto::run(
+                    ble_connector,
+                    mac_octets,
+                    identity,
+                    fleet,
+                    &BLE_SHARED,
+                    spawner,
+                ));
+                let run: core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>> =
+                    // SAFETY: `allocate_psram` leaks this allocation, so it cannot move or be freed.
+                    unsafe { core::pin::Pin::new_unchecked(run) };
+                spawner.spawn(ble_task(run).expect("Bluetooth task fits"));
             }
         }
         RadioMode::AccessPoint => {
             let _ = (bluetooth, ble);
         }
     }
-    render.await;
+    // The display loop is an independent forever-task. Polling it inline makes the compiler fold
+    // its large UI state machine into this boot future's native poll frame, leaving essentially no
+    // guarded core-0 stack for callees. Keep the suspended state in PSRAM and hand Embassy only a
+    // fat pointer, as we do for the Wi-Fi, BLE, and manifold state machines.
+    let render = crate::storage::allocate_psram(render);
+    let render: core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>> =
+        // SAFETY: `allocate_psram` leaks this allocation, so it cannot move or be freed.
+        unsafe { core::pin::Pin::new_unchecked(render) };
+    spawner.spawn(display_task(render).expect("display task fits"));
 }
 
 #[cfg(feature = "lora")]
@@ -817,17 +852,16 @@ async fn tcp_task(interface: TcpClient<'static>, seam: S3TcpSeam) {
 }
 
 #[embassy_executor::task]
-async fn wifi_task(
-    interface: AutoWifi<'static, MEMBERS>,
-    fleet: S3WifiFleet,
-    data_buf: &'static mut [u8],
-    secondary_data_buf: &'static mut [u8],
-) {
-    interface.run(fleet, data_buf, secondary_data_buf).await
+async fn wifi_task(run: core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>>) {
+    run.await
 }
 
 #[embassy_executor::task]
-async fn manifold_task(
+async fn manifold_task(run: core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>>) {
+    run.await
+}
+
+async fn manifold_run(
     node: &'static mut S3Node,
     persistence: &'static mut crate::persistence::S3Persistence,
 ) {
@@ -878,12 +912,11 @@ async fn core_one_liveness_task() -> ! {
 }
 
 #[embassy_executor::task]
-async fn ble_task(
-    spawner: Spawner,
-    connector: esp_radio::ble::controller::BleConnector<'static>,
-    mac: [u8; 6],
-    identity: BleIdentity,
-    fleet: S3BleFleet,
-) {
-    crate::bluetooth_auto::run(connector, mac, identity, fleet, &BLE_SHARED, spawner).await
+async fn ble_task(run: core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>>) {
+    run.await
+}
+
+#[embassy_executor::task]
+async fn display_task(run: core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>>) {
+    run.await
 }

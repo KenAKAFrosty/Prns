@@ -132,3 +132,5 @@ features = ["unstable"]
 [build-dependencies.esp-config]
 version = "0.7.0"
 features = ["build"]
+
+[workspace]

@@ -69,6 +69,10 @@ impl<I, E> IdentityBootstrap<I, E> {
         &self.persistence
     }
 
+    pub fn identity(&self) -> &I {
+        &self.identity
+    }
+
     pub fn into_identity(self) -> I {
         self.identity
     }

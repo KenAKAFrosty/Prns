@@ -16,6 +16,7 @@ members = [
 resolver = "2"
 
 [patch.crates-io]
+esp-alloc = { path = "vendor/esp-alloc-0.10.0" }
 esp-radio = { path = "vendor/esp-radio-0.18.0" }
 esp-radio-rtos-driver = { path = "vendor/esp-radio-rtos-driver-0.3.0" }
 esp-phy = { path = "vendor/esp-phy-0.2.0" }
@@ -72,6 +73,7 @@ esp-println = { version = "0.17", default-features = false, features = ["esp32s3
 esp-bootloader-esp-idf = { version = "0.5", features = ["esp32s3"] }
 ssd1306 = "0.9"
 esp-rtos = { version = "0.3.0", features = ["esp32s3", "embassy", "esp-radio"] }
+esp-radio-rtos-driver = { version = "0.3.0", default-features = false }
 esp-alloc = { version = "0.10.0", features = ["internal-heap-stats"] }
 critical-section = "1"
 embassy-executor = { version = "0.10", default-features = false }

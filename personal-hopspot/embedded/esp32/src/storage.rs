@@ -60,6 +60,15 @@ pub fn allocate_psram<T>(value: T) -> &'static mut T {
     Box::leak(Box::new_in(value, PsramAlloc))
 }
 
+/// Allocate and initialize a slice directly in PSRAM without first materializing the whole
+/// collection on the small core-0 stack.
+#[cfg(target_arch = "xtensa")]
+pub fn allocate_psram_slice<T: Clone + 'static>(len: usize, value: T) -> &'static mut [T] {
+    let mut storage = Vec::with_capacity_in(len, PsramAlloc);
+    storage.resize(len, value);
+    Box::leak(storage.into_boxed_slice())
+}
+
 #[cfg(target_arch = "xtensa")]
 use core::cell::RefCell;
 #[cfg(target_arch = "xtensa")]
@@ -120,10 +129,32 @@ pub fn allocate_lora_tx_queue() -> &'static mut [u8; personal_rns::lora::LORA_TX
 pub fn allocate_manifold_outbound<const FRAME: usize>(
     depth: usize,
 ) -> &'static mut [personal_rns::manifold::grant::FrameSlot<FRAME>] {
-    use personal_rns::manifold::grant::FrameSlot;
+    use personal_rns::interfaces::{InterfaceId, PacketPhyStats, INTERFACE_ID_LEN};
+    use personal_rns::manifold::grant::{FrameSlot, FrameTarget};
 
-    let mut storage = Vec::with_capacity_in(depth, PsramAlloc);
-    storage.resize_with(depth, FrameSlot::empty);
+    let mut storage: Vec<FrameSlot<FRAME>, PsramAlloc> = Vec::with_capacity_in(depth, PsramAlloc);
+    for index in 0..depth {
+        // SAFETY: `index` is within the allocation's capacity. Every non-overlapping field is
+        // initialized exactly once, and the byte array is zeroed without a `[u8; FRAME]` stack
+        // temporary. The vector length does not expose the slot until all slots are initialized.
+        unsafe {
+            let slot = storage.as_mut_ptr().add(index);
+            core::ptr::addr_of_mut!((*slot).target).write(FrameTarget::Direct(InterfaceId::new(
+                [0u8; INTERFACE_ID_LEN],
+            )));
+            core::ptr::addr_of_mut!((*slot).len).write(0);
+            core::ptr::addr_of_mut!((*slot).bytes)
+                .cast::<u8>()
+                .write_bytes(0, FRAME);
+            core::ptr::addr_of_mut!((*slot).packet_phy).write(PacketPhyStats {
+                rssi: None,
+                snr: None,
+                quality: None,
+            });
+        }
+    }
+    // SAFETY: every slot in `0..depth` was fully initialized above.
+    unsafe { storage.set_len(depth) };
     Box::leak(storage.into_boxed_slice())
 }
 

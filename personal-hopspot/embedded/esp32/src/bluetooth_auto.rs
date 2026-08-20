@@ -93,14 +93,8 @@ async fn serve_owned_slot(
 
 #[cfg(target_arch = "xtensa")]
 #[embassy_executor::task(pool_size = 4)]
-async fn serve_slot_task(
-    idx: usize,
-    hub: &'static BleHub,
-    stack: &'static HostStack,
-    server: &'static GattServer,
-    gatt: ReticulumGattOwned,
-) {
-    serve_owned_slot(idx, hub, stack, server, gatt).await
+async fn serve_slot_task(run: core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>>) {
+    run.await
 }
 
 #[cfg(target_arch = "riscv32")]
@@ -204,27 +198,29 @@ pub async fn run(
     );
 
     for idx in 0..PEER_CAPACITY {
-        spawner.spawn(
-            serve_slot_task(
-                idx,
-                hub,
-                stack,
-                server,
-                ReticulumGattOwned {
-                    control: control.clone(),
-                    data: data.clone(),
-                    columba_rx: columba_rx.clone(),
-                    columba_tx: columba_tx.clone(),
-                    service_uuid: service_uuid.clone(),
-                    control_uuid: control_uuid.clone(),
-                    data_uuid: data_uuid.clone(),
-                    columba_rx_uuid: columba_rx_uuid.clone(),
-                    columba_tx_uuid: columba_tx_uuid.clone(),
-                    columba_identity_uuid: columba_identity_uuid.clone(),
-                },
-            )
-            .expect("ble slot task fits"),
-        );
+        let gatt = ReticulumGattOwned {
+            control: control.clone(),
+            data: data.clone(),
+            columba_rx: columba_rx.clone(),
+            columba_tx: columba_tx.clone(),
+            service_uuid: service_uuid.clone(),
+            control_uuid: control_uuid.clone(),
+            data_uuid: data_uuid.clone(),
+            columba_rx_uuid: columba_rx_uuid.clone(),
+            columba_tx_uuid: columba_tx_uuid.clone(),
+            columba_identity_uuid: columba_identity_uuid.clone(),
+        };
+        #[cfg(target_arch = "xtensa")]
+        {
+            let run =
+                crate::storage::allocate_psram(serve_owned_slot(idx, hub, stack, server, gatt));
+            let run: core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>> =
+                // SAFETY: `allocate_psram` leaks this allocation, so it cannot move or be freed.
+                unsafe { core::pin::Pin::new_unchecked(run) };
+            spawner.spawn(serve_slot_task(run).expect("ble slot task fits"));
+        }
+        #[cfg(target_arch = "riscv32")]
+        spawner.spawn(serve_slot_task(idx, hub, stack, server, gatt).expect("ble slot task fits"));
     }
 
     let host = host_runner(hub, runner);

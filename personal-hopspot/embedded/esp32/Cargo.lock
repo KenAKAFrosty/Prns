@@ -1097,8 +1097,6 @@ dependencies = [
 [[package]]
 name = "esp-alloc"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46ced060d4085858283df950b80a4da2348e1707d7d07b1e966308582dae79f5"
 dependencies = [
  "allocator-api2",
  "cfg-if",
@@ -2406,6 +2404,7 @@ dependencies = [
  "esp-phy",
  "esp-println",
  "esp-radio",
+ "esp-radio-rtos-driver",
  "esp-rtos",
  "heapless 0.8.0",
  "log",
