@@ -60,6 +60,13 @@ mod boards;
         not(feature = "board-mesh-tower-v2")
     ),
     all(
+        feature = "board-t096",
+        not(feature = "board-t-echo"),
+        not(feature = "board-t114"),
+        not(feature = "board-t1000e"),
+        not(feature = "board-mesh-tower-v2")
+    ),
+    all(
         feature = "board-t114",
         not(feature = "board-t-echo"),
         not(feature = "board-t096"),
@@ -88,6 +95,13 @@ mod storage;
     all(
         feature = "board-t-echo",
         not(feature = "board-t096"),
+        not(feature = "board-t114"),
+        not(feature = "board-t1000e"),
+        not(feature = "board-mesh-tower-v2")
+    ),
+    all(
+        feature = "board-t096",
+        not(feature = "board-t-echo"),
         not(feature = "board-t114"),
         not(feature = "board-t1000e"),
         not(feature = "board-mesh-tower-v2")

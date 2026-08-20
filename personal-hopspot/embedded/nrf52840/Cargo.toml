@@ -17,7 +17,7 @@ exclude = [
 [features]
 default = ["board-t-echo", "softdevice-s140-v7"]
 board-t-echo = []
-board-t096 = []
+board-t096 = ["cortex-m/critical-section-single-core"]
 board-t114 = ["cortex-m/critical-section-single-core"]
 board-t1000e = ["cortex-m/critical-section-single-core"]
 board-mesh-tower-v2 = ["embassy-nrf/nfc-pins-as-gpio"]
@@ -56,6 +56,7 @@ required-features = ["board-mesh-tower-v2", "softdevice-s140-v6"]
 [dependencies]
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "flash", "lora", "bluetooth-auto", "usb"] }
 personal-hopspot-core = { path = "../../core", default-features = false }
+prns-core = { path = "../../../prns-core", default-features = false }
 
 embedded-graphics = "0.8"
 epd-waveshare = { version = "0.6", default-features = false, features = ["graphics", "epd2in13_v3"] }

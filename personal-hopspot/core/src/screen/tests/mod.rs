@@ -10,8 +10,7 @@ use personal_rns::interfaces::lora::{
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::storage::{DisplayedStorageLimits, StorageCapacity};
 
-use crate::battery::{BatteryPercent, BatteryState};
-use crate::PersistenceState;
+use crate::{BatteryPercent, BatteryState, GnssSnapshot, PersistenceState};
 
 use super::limits::{build_limit_rows, LimitRow, LimitValue};
 use super::model::InterfaceMenuDetailKind;
@@ -22,12 +21,12 @@ use super::render::glyphs::{
     draw_battery, draw_clock, draw_interface_icon, draw_link, draw_person,
 };
 use super::render::layout::{
-    ACTIVITY_TEXT_X, CARD_H, CARD_SLOT_STEP, CARD_TOP, FIRST_CARD_WITH_GLOBAL_TOP, FONT_4X6_CHAR_W,
-    FONT_5X8_CHAR_W, FOOTER_FOURTH_LINE_OFFSET, FOOTER_SECOND_LINE_OFFSET, GLOBAL_BACKING_H,
-    GLOBAL_BACKING_X, GLOBAL_BACKING_Y, GLOBAL_ICON_X, GLOBAL_ROW_H, GLOBAL_ROW_TOP, HEIGHT,
-    MENU_BACKING_X, MENU_DIVIDER_Y, MENU_HEADER_Y, MENU_ITEM_STEP, MENU_ITEM_TOP, MENU_MARK_X,
-    MENU_REASON_X, NAME_BACKING_X, NAME_BACKING_Y, NAME_ICON_X, NAME_LINE_Y, STAT_ICON_X,
-    STAT_TEXT_X, WIDTH,
+    ACTIVITY_TEXT_X, CARD_H, CARD_SLOT_STEP, CARD_TOP, FIRST_CARD_WITH_GLOBAL_TOP,
+    FIRST_CARD_WITH_GNSS_TOP, FONT_4X6_CHAR_W, FONT_5X8_CHAR_W, FOOTER_FOURTH_LINE_OFFSET,
+    FOOTER_SECOND_LINE_OFFSET, GLOBAL_BACKING_H, GLOBAL_BACKING_X, GLOBAL_BACKING_Y, GLOBAL_ICON_X,
+    GLOBAL_ROW_H, GLOBAL_ROW_TOP, GNSS_PANEL_TOP, HEIGHT, MENU_BACKING_X, MENU_DIVIDER_Y,
+    MENU_HEADER_Y, MENU_ITEM_STEP, MENU_ITEM_TOP, MENU_MARK_X, MENU_REASON_X, NAME_BACKING_X,
+    NAME_BACKING_Y, NAME_ICON_X, NAME_LINE_Y, STAT_ICON_X, STAT_TEXT_X, WIDTH,
 };
 use super::render::menus::lora::{LORA_DOT_X, LORA_EDITOR_TOP};
 use super::render::menus::{
@@ -50,9 +49,10 @@ use super::state::{
 use super::{
     apply_and_persist_radio_profile, card_label, render as render_screen, sort_cards_for_display,
     AccessPointState, BluetoothRecoveryMenuDetails, Card, CardActivityTracker, CardKind,
-    DisplayPowerControl, InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails,
-    LocalDocsAccess, PersistenceNotice, RadioProfileChangeResult, RenderFrame, ScreenContent,
-    SharedInstanceConfigExport, UiAction, UiConfiguration, UiNotice, UiState,
+    DisplayPowerControl, GnssAvailability, InputEvent, InterfaceMenuDetails,
+    LoRaSpectrumMenuDetails, LocalDocsAccess, PersistenceNotice, RadioProfileChangeResult,
+    RenderFrame, ScreenContent, SharedInstanceConfigExport, UiAction, UiConfiguration, UiNotice,
+    UiState,
 };
 
 const TEST_WIDTH: usize = WIDTH as usize;
@@ -112,6 +112,7 @@ fn render_with_state<D: DrawTarget<Color = BinaryColor>>(
         RenderFrame {
             content: test_content(cards),
             battery,
+            gnss: None,
             state,
             interface_menu_details: &interface_menu_details,
             animation_ms: 0,
@@ -135,6 +136,7 @@ fn render_with_local_docs<D: DrawTarget<Color = BinaryColor>>(
                 local_docs: Some(local_docs),
             },
             battery,
+            gnss: None,
             state,
             interface_menu_details: &interface_menu_details,
             animation_ms: 0,
@@ -180,6 +182,7 @@ fn test_ui_state() -> UiState {
         display_power_control: DisplayPowerControl::Unavailable,
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: SharedInstanceConfigExport::Unavailable,
+        gnss: super::GnssAvailability::Unavailable,
     })
 }
 
@@ -189,6 +192,7 @@ fn test_ui_state_with_display_power() -> UiState {
         display_power_control: DisplayPowerControl::Available,
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: SharedInstanceConfigExport::Unavailable,
+        gnss: super::GnssAvailability::Unavailable,
     })
 }
 
@@ -198,6 +202,7 @@ fn test_ui_state_with_access_point(access_point: AccessPointState) -> UiState {
         display_power_control: DisplayPowerControl::Unavailable,
         access_point,
         shared_instance_config_export: SharedInstanceConfigExport::Unavailable,
+        gnss: super::GnssAvailability::Unavailable,
     })
 }
 
@@ -207,6 +212,17 @@ fn test_ui_state_with_shared_instance_config() -> UiState {
         display_power_control: DisplayPowerControl::Unavailable,
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: SharedInstanceConfigExport::Available,
+        gnss: super::GnssAvailability::Unavailable,
+    })
+}
+
+fn test_ui_state_with_gnss() -> UiState {
+    UiState::new(UiConfiguration {
+        storage_limits: DisplayedStorageLimits::DYNAMIC,
+        display_power_control: DisplayPowerControl::Unavailable,
+        access_point: AccessPointState::Unsupported,
+        shared_instance_config_export: SharedInstanceConfigExport::Unavailable,
+        gnss: GnssAvailability::Available,
     })
 }
 

@@ -43,6 +43,7 @@ fn ui_state() -> UiState {
         display_power_control: DisplayPowerControl::Unavailable,
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: screen::SharedInstanceConfigExport::Unavailable,
+        gnss: screen::GnssAvailability::Unavailable,
     })
 }
 
@@ -556,6 +557,7 @@ pub(super) fn run_window(handles: WindowHandles) {
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
         }
         UiAction::ToggleOledAutoOff => {}
+        UiAction::SetGnssEnabled(_) => {}
         UiAction::Sleep => {
             ui_state.show_notice(screen::UiNotice::Sleeping);
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
@@ -845,6 +847,7 @@ pub(super) fn run_window(handles: WindowHandles) {
                 screen::RenderFrame {
                     content,
                     battery,
+                    gnss: None,
                     state: &ui_state,
                     interface_menu_details: &interface_menu_details,
                     animation_ms,

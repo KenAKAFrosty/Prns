@@ -1,6 +1,40 @@
 use super::*;
 
 #[test]
+fn gnss_panel_stays_between_the_global_row_and_selected_interface() {
+    let mut display = PanelDisplay::new();
+    let cards = [test_card("LoRa"), test_card("USB")];
+    let content = test_content(&cards);
+    let mut state = test_ui_state_with_gnss();
+    state.handle_input(InputEvent::ShortPress, content);
+    let interface_menu_details = InterfaceMenuDetails::empty();
+
+    render_screen(
+        &mut display,
+        RenderFrame {
+            content,
+            battery: BatteryState::Unknown,
+            gnss: Some(GnssSnapshot::Searching { satellites: 7 }),
+            state: &state,
+            interface_menu_details: &interface_menu_details,
+            animation_ms: 0,
+        },
+    );
+
+    assert_eq!(
+        display.get_pixel(Point::new(0, GNSS_PANEL_TOP + 22)),
+        Some(BinaryColor::On)
+    );
+    assert_eq!(
+        display.get_pixel(Point::new(
+            NAME_BACKING_X,
+            FIRST_CARD_WITH_GNSS_TOP + NAME_BACKING_Y
+        )),
+        Some(BinaryColor::On)
+    );
+}
+
+#[test]
 fn render_marks_selected_card_below_global_row() {
     let mut display = MockDisplay::new();
     display.set_allow_overdraw(true);

@@ -199,6 +199,7 @@ impl TechoDeferredHardware {
                 rx_boost: true,
                 dio2_as_rf_switch: true,
                 external_rx_gain_db: 0,
+                external_power_amplifier: None,
                 enter_transmit: None,
                 enter_receive: None,
             },

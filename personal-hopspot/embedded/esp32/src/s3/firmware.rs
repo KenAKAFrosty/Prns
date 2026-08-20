@@ -381,6 +381,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             },
             access_point,
             shared_instance_config_export: screen::SharedInstanceConfigExport::Unavailable,
+            gnss: screen::GnssAvailability::Unavailable,
         });
         let startup_notice = identity_startup_notice.or(profile_startup_notice);
         let mut pending_startup_notice = identity_startup_notice
@@ -497,6 +498,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                     screen::RenderFrame {
                         content,
                         battery: battery_state,
+                        gnss: None,
                         state: &ui_state,
                         interface_menu_details: &interface_menu_details,
                         animation_ms: now_ms,
@@ -561,6 +563,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 notice_until_ms = Some((now_ms + NOTICE_MS, notice));
                             }
                         }
+                        screen::UiAction::SetGnssEnabled(_) => {}
                         screen::UiAction::Sleep => {
                             ui_state.show_notice(screen::UiNotice::Sleeping);
                             notice_until_ms =

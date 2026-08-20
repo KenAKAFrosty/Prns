@@ -22,6 +22,7 @@ fn ui_state() -> UiState {
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export:
             personal_hopspot_core::SharedInstanceConfigExport::Unavailable,
+        gnss: personal_hopspot_core::GnssAvailability::Unavailable,
     })
 }
 
@@ -89,6 +90,7 @@ impl HopspotFace {
             UiAction::None
             | UiAction::OledOff
             | UiAction::ToggleOledAutoOff
+            | UiAction::SetGnssEnabled(_)
             | UiAction::ToggleStationUplink
             | UiAction::OpenLoRaEditor
             | UiAction::OpenDocs
@@ -153,6 +155,7 @@ impl HopspotFace {
                 RenderFrame {
                     content,
                     battery: self.battery,
+                    gnss: None,
                     state: &self.state,
                     interface_menu_details: &interface_menu_details,
                     animation_ms,

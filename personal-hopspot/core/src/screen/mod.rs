@@ -18,8 +18,8 @@ pub use power::{OledAutoOff, OledButtonOutcome, OledDarkReason, OledPowerCommand
 pub use render::cards::card_label_max_chars;
 pub use render::{render, splash, RenderFrame, SplashContent};
 pub use state::{
-    apply_and_persist_radio_profile, AccessPointState, DisplayPowerControl, InputEvent,
-    PersistenceNotice, RadioProfileChangeResult, SharedInstanceConfigExport, UiAction,
+    apply_and_persist_radio_profile, AccessPointState, DisplayPowerControl, GnssAvailability,
+    InputEvent, PersistenceNotice, RadioProfileChangeResult, SharedInstanceConfigExport, UiAction,
     UiConfiguration, UiNotice, UiState,
 };
 

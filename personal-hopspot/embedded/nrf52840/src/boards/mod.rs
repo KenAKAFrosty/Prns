@@ -1,4 +1,5 @@
 #[cfg(any(
+    feature = "board-t096",
     feature = "board-t114",
     feature = "board-t1000e",
     feature = "board-mesh-tower-v2"

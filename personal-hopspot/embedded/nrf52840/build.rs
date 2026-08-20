@@ -31,7 +31,7 @@ fn main() {
         (Board::TEcho, Some(Softdevice::S140V6)) => Some("memory-s140-v6.x"),
         (Board::TEcho, Some(Softdevice::S140V7)) => Some("memory-s140-v7.x"),
         (Board::TEcho, None) => panic!("T-Echo requires exactly one S140 compatibility feature"),
-        (Board::T096, None) => None,
+        (Board::T096, None) => Some("memory-t096.x"),
         (Board::T114, None) => Some("memory-t114.x"),
         (Board::T1000e, None) => Some("memory-t1000e.x"),
         (Board::MeshTowerV2, Some(Softdevice::S140V6)) => Some("memory-mesh-tower-v2.x"),
@@ -52,6 +52,7 @@ fn main() {
     println!("cargo:rustc-link-arg=-Tlink.x");
     println!("cargo:rerun-if-changed=memory-s140-v6.x");
     println!("cargo:rerun-if-changed=memory-s140-v7.x");
+    println!("cargo:rerun-if-changed=memory-t096.x");
     println!("cargo:rerun-if-changed=memory-t114.x");
     println!("cargo:rerun-if-changed=memory-t1000e.x");
     println!("cargo:rerun-if-changed=memory-mesh-tower-v2.x");

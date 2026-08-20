@@ -179,21 +179,31 @@ pub(super) fn draw_global_menu<D: DrawTarget<Color = BinaryColor>>(
         Point::new(WIDTH - 1, MENU_DIVIDER_Y),
     );
 
+    const VISIBLE_ITEMS: usize = 6;
     let items = state.global_menu_items();
     let radio_menu_item = state.global_radio_menu_item();
-    for (index, item) in items.iter().enumerate() {
+    let visible_start = selected_item
+        .saturating_sub(VISIBLE_ITEMS - 1)
+        .min(items.len().saturating_sub(VISIBLE_ITEMS));
+    for (visible_index, (index, item)) in items
+        .iter()
+        .enumerate()
+        .skip(visible_start)
+        .take(VISIBLE_ITEMS)
+        .enumerate()
+    {
         let label = if index == radio_menu_item {
             match state.access_point {
                 AccessPointState::Active => "BLE Mode",
                 AccessPointState::Inactive => "AP Mode",
-                AccessPointState::Unsupported => *item,
+                AccessPointState::Unsupported => state.global_menu_item_label(index, item),
             }
         } else {
-            *item
+            state.global_menu_item_label(index, item)
         };
         draw_menu_item(
             display,
-            MENU_ITEM_TOP + index as i32 * GLOBAL_MENU_ITEM_STEP,
+            MENU_ITEM_TOP + visible_index as i32 * GLOBAL_MENU_ITEM_STEP,
             label,
             index == selected_item.min(items.len() - 1),
         );

@@ -425,6 +425,7 @@ dependencies = [
  "embedded-storage-async",
  "heapless",
  "personal-rns",
+ "prns-core",
  "prns-macros",
  "sha2 0.11.0",
 ]

@@ -144,6 +144,7 @@ impl MeshTowerV2Board {
                 rx_boost: true,
                 dio2_as_rf_switch: true,
                 external_rx_gain_db: 0,
+                external_power_amplifier: None,
                 enter_transmit: Some(enter_transmit),
                 enter_receive: Some(enter_receive),
             },

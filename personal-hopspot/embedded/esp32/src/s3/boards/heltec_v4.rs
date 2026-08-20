@@ -206,6 +206,7 @@ impl Esp32S3Board for HeltecBoard {
                     rx_boost: true,
                     dio2_as_rf_switch: true,
                     external_rx_gain_db: lora_rx_gain_db,
+                    external_power_amplifier: None,
                     enter_transmit: None,
                     enter_receive: None,
                 },

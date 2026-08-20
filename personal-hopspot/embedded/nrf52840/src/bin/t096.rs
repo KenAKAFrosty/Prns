@@ -3,6 +3,9 @@
 
 use panic_halt as _;
 
-compile_error!(
-    "the Mesh Node T096 target is scaffold-only: complete its flash layout, KCT8103L control, ST7735 face, and UC6580 bring-up before enabling firmware"
-);
+use embassy_executor::Spawner;
+
+#[embassy_executor::main]
+async fn main(spawner: Spawner) -> ! {
+    personal_hopspot_nrf52840::run(spawner).await
+}

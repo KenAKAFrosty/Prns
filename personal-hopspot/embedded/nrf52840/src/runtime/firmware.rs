@@ -310,6 +310,7 @@ pub async fn run(spawner: Spawner) -> ! {
             display_power_control: hopspot::DisplayPowerControl::Unavailable,
             access_point: hopspot::AccessPointState::Unsupported,
             shared_instance_config_export: hopspot::SharedInstanceConfigExport::Unavailable,
+            gnss: hopspot::GnssAvailability::Unavailable,
         });
         let startup_notice = identity_startup_notice.or(profile_startup_notice);
         let mut pending_startup_notice = identity_startup_notice
@@ -408,6 +409,7 @@ pub async fn run(spawner: Spawner) -> ! {
                 hopspot::RenderFrame {
                     content,
                     battery,
+                    gnss: None,
                     state: &ui_state,
                     interface_menu_details: &interface_menu_details,
                     animation_ms: EINK_ANIMATION_MS,
@@ -569,6 +571,7 @@ pub async fn run(spawner: Spawner) -> ! {
                         hopspot::UiAction::OledOff => {}
                         hopspot::UiAction::ToggleOledAutoOff => {}
                         hopspot::UiAction::CopySharedInstanceConfig => {}
+                        hopspot::UiAction::SetGnssEnabled(_) => {}
                         hopspot::UiAction::None => {}
                     }
                 }

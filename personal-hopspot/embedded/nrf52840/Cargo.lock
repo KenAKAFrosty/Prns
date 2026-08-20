@@ -1560,6 +1560,7 @@ dependencies = [
  "embedded-storage-async",
  "heapless 0.8.0",
  "personal-rns",
+ "prns-core",
  "prns-macros",
  "sha2 0.11.0",
 ]
@@ -2131,6 +2132,7 @@ dependencies = [
  "panic-halt",
  "personal-hopspot-core",
  "personal-rns",
+ "prns-core",
  "rand_chacha",
  "static_cell",
 ]

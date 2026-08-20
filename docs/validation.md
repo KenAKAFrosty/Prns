@@ -54,10 +54,10 @@ opaque success token. Counts come from the live manifest and native source
 discovery, so the output also gives an operator a quick orientation:
 
 ```text
-[verify] Suite policy: 99 total suites (49 pull-request, 91 release, 96 scheduled); IDs, tiers, platforms, toolchains, commands, timeouts, and artifact paths are valid.
-[verify] Cargo ownership: 39 manifests are registered, valid, and repository-owned; 22 unique workspace roots own formatting.
-[verify] Native discovery: 18 Kani proofs and 8 fuzz targets exactly match their source owners.
-[verify] Asset ownership: 69 oracle/interop/smoke assets are registered; 1 documented exemption is current; nothing is orphaned.
+[verify] Suite policy: 108 total suites (53 pull-request, 98 release, 105 scheduled); IDs, tiers, platforms, toolchains, commands, timeouts, and artifact paths are valid.
+[verify] Cargo ownership: 54 manifests are registered, valid, and repository-owned; 24 first-party lockfile workspaces are inventoried; 22 unique workspace roots own formatting.
+[verify] Native discovery: 20 Kani proofs and 9 fuzz targets exactly match their source owners.
+[verify] Asset ownership: 71 oracle/interop/smoke assets are registered; 1 documented exemption is current; nothing is orphaned.
 VALIDATION_REGISTRY_OK
 ```
 

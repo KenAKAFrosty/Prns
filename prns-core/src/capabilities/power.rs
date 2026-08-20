@@ -1,41 +1,49 @@
-#[derive(Clone, Copy)]
+/// A clamped battery state-of-charge percentage.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct BatteryPercent(u8);
 
 impl BatteryPercent {
+    /// Clamp an untrusted percentage to the inclusive 0–100 range.
     #[must_use]
     pub const fn saturating(percent: u8) -> Self {
         Self(if percent > 100 { 100 } else { percent })
     }
 
+    /// Return the clamped percentage.
     #[must_use]
     pub const fn get(self) -> u8 {
         self.0
     }
 }
 
-/// What the title-bar battery glyph shows; `Unknown` (a dash) means no plausible battery is detected. Boards without a charge-status signal keep reporting `Level`/`Unknown`.
-#[derive(Clone, Copy)]
+/// The battery observation currently available to a host.
+///
+/// `Level` means the source is not reporting active charging; it does not by itself prove that
+/// external power is disconnected. Sources without a charge-status signal report `Level` or
+/// `Unknown`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BatteryState {
     Level(BatteryPercent),
     Charging(BatteryPercent),
     Unknown,
 }
 
-/// A board's hardware battery probe: how to read its cell. The smoothing and percentage curve
-/// live in the shared [`BatteryGauge`]. Boards with no battery return `None`.
+/// A host's battery probe. Embedded implementations may read hardware while mobile and desktop
+/// implementations may use operating-system power services. Smoothing and percentage mapping live
+/// in the shared [`BatteryGauge`]. Sources with no battery return `None`.
 pub trait BatterySource {
     /// Terminal voltage in millivolts; `None` when absent or no reading is available this tick.
     fn read_millivolts(&mut self) -> Option<u32>;
 
-    /// External power present; rendered as [`BatteryState::Charging`]. Defaults to `false` for
-    /// boards with no charge-status signal.
+    /// Whether the source reports active charging. Defaults to `false` when no charge-status
+    /// signal exists.
     fn is_charging(&mut self) -> bool {
         false
     }
 }
 
-/// Folds a [`BatterySource`]'s raw millivolts into a smoothed [`BatteryState`]: the empty/full
-/// span, absent-battery floor, and running average shared so every board renders the same curve.
+/// Folds a [`BatterySource`]'s raw millivolts into a smoothed [`BatteryState`], keeping the
+/// empty/full span, absent-battery floor, and running average consistent across hosts.
 pub struct BatteryGauge {
     ema_mv: u32,
     empty_mv: u32,
@@ -91,7 +99,7 @@ impl BatteryGauge {
     }
 }
 
-/// A [`BatterySource`] for boards with no battery (or none wired up yet): always `None`, so the
+/// A [`BatterySource`] for hosts with no battery (or none wired up yet): always `None`, so the
 /// gauge reports [`BatteryState::Unknown`].
 pub struct NoBattery;
 

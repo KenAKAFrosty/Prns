@@ -6,6 +6,7 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+pub mod capabilities;
 pub mod crypto;
 pub mod engine;
 pub mod identity;

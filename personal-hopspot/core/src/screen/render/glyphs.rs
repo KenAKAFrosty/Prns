@@ -5,8 +5,8 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Line, Rectangle};
 use embedded_graphics::text::{Baseline, Text};
 
-use crate::battery::BatteryState;
 use crate::screen::CardKind;
+use crate::BatteryState;
 
 use super::layout::*;
 use super::primitives::{draw_pattern_colored, fill, line, line_colored, stroke};

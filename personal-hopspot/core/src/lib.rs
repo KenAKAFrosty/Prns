@@ -6,7 +6,6 @@ extern crate std;
 #[cfg(all(test, not(feature = "host")))]
 extern crate std;
 
-mod battery;
 mod destinations;
 mod flash_identity;
 mod flash_layout;
@@ -17,7 +16,6 @@ mod persistence;
 mod radio_profile_store;
 mod screen;
 
-pub use battery::{BatteryGauge, BatteryPercent, BatterySource, BatteryState, NoBattery};
 pub use destinations::{
     hopspot_destination_hashes, HopspotDestinationHashes, HopspotDestinationSet,
 };
@@ -43,6 +41,13 @@ pub use mobile::{
     MOBILE_PANEL_WIDTH, MOBILE_PIXEL_COUNT, MOBILE_RGBA_BYTES,
 };
 pub use persistence::PersistenceState;
+pub use prns_core::capabilities::positioning::gnss::{GnssFix, GnssSnapshot, NmeaParser};
+pub use prns_core::capabilities::positioning::{
+    AltitudeMillimeters, CoordinateOutOfRange, GeographicPosition, LatitudeE7, LongitudeE7,
+};
+pub use prns_core::capabilities::power::{
+    BatteryGauge, BatteryPercent, BatterySource, BatteryState, NoBattery,
+};
 pub use radio_profile_store::{
     LoadedRadioProfile, RadioProfileLoadNotice, RadioProfileStore, RadioProfileStoreError,
 };
@@ -50,11 +55,11 @@ pub use screen::{
     apply_and_persist_radio_profile, card_label, card_label_max_chars, render, splash,
     tcp_card_label, AccessPointState, BluetoothRecoveryMenuDetails, Card, CardActivityTracker,
     CardKind, CardLabel, DisplayPowerControl, EinkRefresh, EinkRefreshPolicy, EinkRefreshUrgency,
-    InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, OledAutoOff,
-    OledButtonOutcome, OledDarkReason, OledPowerCommand, OledPowerState, PersistenceNotice,
-    RadioProfileChangeResult, RenderFrame, ScreenContent, SharedInstanceConfigExport,
-    SplashContent, UiAction, UiConfiguration, UiNotice, UiState, WifiNetworkStatus,
-    WifiStationStatus,
+    GnssAvailability, InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess,
+    OledAutoOff, OledButtonOutcome, OledDarkReason, OledPowerCommand, OledPowerState,
+    PersistenceNotice, RadioProfileChangeResult, RenderFrame, ScreenContent,
+    SharedInstanceConfigExport, SplashContent, UiAction, UiConfiguration, UiNotice, UiState,
+    WifiNetworkStatus, WifiStationStatus,
 };
 
 use personal_rns::engine::{

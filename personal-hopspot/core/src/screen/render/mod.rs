@@ -1,5 +1,6 @@
 pub(in crate::screen) mod cards;
 pub(in crate::screen) mod glyphs;
+mod gnss;
 pub(in crate::screen) mod layout;
 pub(in crate::screen) mod menus;
 pub(in crate::screen) mod metrics;
@@ -11,13 +12,14 @@ use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
 use embedded_graphics::text::{Baseline, Text};
 
-use crate::battery::BatteryState;
+use crate::{BatteryState, GnssSnapshot};
 
 use super::limits::build_limit_rows;
 use super::model::{InterfaceMenuDetails, ScreenContent};
 use super::state::{focus_item_count, visible_start_for, UiMode, UiState};
 use cards::{draw_card_peek, draw_card_with_selection, draw_footer, draw_global_row};
 use glyphs::draw_title_bar;
+use gnss::draw_gnss_panel;
 use layout::*;
 use menus::lora::draw_lora_editor;
 use menus::{
@@ -28,6 +30,7 @@ use menus::{
 pub struct RenderFrame<'frame, 'docs> {
     pub content: ScreenContent<'frame, 'docs>,
     pub battery: BatteryState,
+    pub gnss: Option<GnssSnapshot>,
     pub state: &'frame UiState,
     pub interface_menu_details: &'frame InterfaceMenuDetails,
     pub animation_ms: u64,
@@ -57,6 +60,7 @@ pub fn render<D: DrawTarget<Color = BinaryColor>>(display: &mut D, frame: Render
     let RenderFrame {
         content,
         battery,
+        gnss,
         state,
         interface_menu_details,
         animation_ms,
@@ -108,6 +112,30 @@ pub fn render<D: DrawTarget<Color = BinaryColor>>(display: &mut D, frame: Render
             );
             return;
         }
+    }
+
+    if let Some(gnss) = gnss {
+        draw_global_row(display, GLOBAL_ROW_TOP, state.global_selected());
+        draw_gnss_panel(display, gnss);
+        let selected = state.selected_card_index(cards.len());
+        if let Some(primary) = selected.or_else(|| (!cards.is_empty()).then_some(0)) {
+            draw_card_with_selection(
+                display,
+                FIRST_CARD_WITH_GNSS_TOP,
+                &cards[primary],
+                selected == Some(primary),
+            );
+            if cards.len() > 1 {
+                let secondary = (primary + 1) % cards.len();
+                draw_card_peek(
+                    display,
+                    FIRST_CARD_WITH_GNSS_TOP + CARD_SLOT_STEP,
+                    &cards[secondary],
+                    false,
+                );
+            }
+        }
+        return;
     }
 
     let selected = state.selected_card_index(cards.len());

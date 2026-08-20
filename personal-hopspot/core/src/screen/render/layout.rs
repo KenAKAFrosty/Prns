@@ -10,6 +10,8 @@ pub(in crate::screen) const GLOBAL_ROW_H: i32 = 13;
 pub(super) const GLOBAL_TO_CARD_GAP: i32 = 1;
 pub(in crate::screen) const FIRST_CARD_WITH_GLOBAL_TOP: i32 =
     GLOBAL_ROW_TOP + GLOBAL_ROW_H + GLOBAL_TO_CARD_GAP;
+pub(in crate::screen) const GNSS_PANEL_TOP: i32 = FIRST_CARD_WITH_GLOBAL_TOP;
+pub(in crate::screen) const FIRST_CARD_WITH_GNSS_TOP: i32 = GNSS_PANEL_TOP + 24;
 pub(super) const FOOTER_FIRST_LINE_H: i32 = 10;
 pub(in crate::screen) const FOOTER_SECOND_LINE_OFFSET: i32 = FOOTER_FIRST_LINE_H + 1;
 pub(super) const FOOTER_SECOND_LINE_H: i32 = 8;

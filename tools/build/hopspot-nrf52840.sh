@@ -2,12 +2,17 @@
 set -euo pipefail
 
 if (( $# != 1 )); then
-    echo "usage: hopspot-nrf52840.sh <t114|t1000e>" >&2
+    echo "usage: hopspot-nrf52840.sh <t096|t114|t1000e>" >&2
     exit 1
 fi
 
 board="$1"
 case "$board" in
+    t096)
+        board_name="T096"
+        board_feature="board-t096"
+        firmware_name="t096"
+        ;;
     t114)
         board_name="T114"
         board_feature="board-t114"

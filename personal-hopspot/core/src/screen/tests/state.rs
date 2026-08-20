@@ -235,6 +235,34 @@ fn long_press_on_limits_opens_the_paged_limits_page() {
 }
 
 #[test]
+fn available_gnss_menu_toggles_the_live_panel_and_receiver_demand() {
+    let cards = test_cards::<2>(CardKind::Usb);
+    let content = test_content(&cards);
+    let mut state = test_ui_state_with_gnss();
+
+    state.handle_input(InputEvent::LongPress, content);
+    state.handle_input(InputEvent::ShortPress, content);
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(state.global_menu_selected_item(), Some(2));
+    assert_eq!(state.global_menu_item_label(2, "GPS"), "GPS On");
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::SetGnssEnabled(true)
+    );
+    assert!(state.gnss_visible());
+
+    state.handle_input(InputEvent::LongPress, content);
+    state.handle_input(InputEvent::ShortPress, content);
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(state.global_menu_item_label(2, "GPS"), "GPS Off");
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::SetGnssEnabled(false)
+    );
+    assert!(!state.gnss_visible());
+}
+
+#[test]
 fn long_press_on_sleep_enters_sleep_and_next_press_wakes() {
     let cards = test_cards::<4>(CardKind::Usb);
     let content = test_content(&cards);

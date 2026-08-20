@@ -1313,6 +1313,12 @@ path = "fuzz_targets/shared_instance_rpc_request_msgpack.rs"
 group = "rpc"
 tiers = ["release", "scheduled"]
 
+[[fuzz_target]]
+name = "gnss_nmea_stream"
+path = "fuzz_targets/gnss_nmea_stream.rs"
+group = "gnss"
+tiers = ["release", "scheduled"]
+
 [[kani]]
 name = "hops_above_pathfinder_m_always_reject_before_any_other_gate"
 source = "prns-core/src/routing/announce/acceptance.rs"
@@ -1419,4 +1425,16 @@ tiers = ["release", "scheduled"]
 name = "path_request_parse_never_panics_for_any_wire_payload"
 source = "prns-core/src/routing/ingress/path_requests.rs"
 group = "routing"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "sentence_byte_append_preserves_the_buffer_bound"
+source = "prns-core/src/capabilities/positioning/gnss.rs"
+group = "gnss"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "every_scaled_coordinate_output_respects_its_axis_bound"
+source = "prns-core/src/capabilities/positioning/gnss.rs"
+group = "gnss"
 tiers = ["release", "scheduled"]
