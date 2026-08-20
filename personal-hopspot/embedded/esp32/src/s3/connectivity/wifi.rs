@@ -143,7 +143,11 @@ pub(in crate::s3) fn build_wifi(
 
     // In SoftAP mode, APSTA brings the AP up whether or not a station uplink is configured;
     // set_config calls esp_wifi_start, so the AP is live here on core 0.
-    let _ = controller.set_config(&station_wifi_mode(StationConfig::default(), ap_enabled));
+    let _ = controller.set_config(&station_wifi_mode(
+        StationConfig::default(),
+        ap_enabled,
+        None,
+    ));
 
     // Opportunistic station uplink: only a configured SSID stands a station netif up and runs
     // the connect loop; otherwise the keepalive task just owns the controller, no scanning.

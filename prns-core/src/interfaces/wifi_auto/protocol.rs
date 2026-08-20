@@ -276,6 +276,19 @@ impl<S: PeerStore + Default> PeerTable<S> {
         }
     }
 
+    pub fn refresh_known_peer(&mut self, addr: Ipv6Addr, now_ms: u64) -> bool {
+        let Some(peer) = self
+            .peers
+            .as_mut_slice()
+            .iter_mut()
+            .find(|peer| peer.addr == addr)
+        else {
+            return false;
+        };
+        peer.last_heard_ms = now_ms;
+        true
+    }
+
     pub fn prune_stale_peers(&mut self, now_ms: u64) -> usize {
         let before = self.peers.as_slice().len();
         let mut i = 0;
@@ -393,6 +406,10 @@ impl<S: PeerStore + Default> AutoInterfaceProtocol<S> {
 
     pub fn prune_stale_peers(&mut self, now_ms: u64) -> usize {
         self.peers.prune_stale_peers(now_ms)
+    }
+
+    pub fn refresh_known_peer(&mut self, addr: Ipv6Addr, now_ms: u64) -> bool {
+        self.peers.refresh_known_peer(addr, now_ms)
     }
 
     pub fn known_peer_addresses(&self) -> impl Iterator<Item = Ipv6Addr> + '_ {
@@ -577,5 +594,26 @@ mod tests {
             }
         );
         assert_eq!(brain.peer_count(), 1);
+    }
+
+    #[test]
+    fn known_peer_data_activity_refreshes_liveness_without_admitting_unknown_sources() {
+        let local = nth_peer(20);
+        let peer = nth_peer(21);
+        let unknown = nth_peer(22);
+        let mut brain = FixedAutoInterfaceProtocol::<2>::from_link_local(local);
+
+        assert_eq!(
+            brain.observe_discovery_datagram(peer, peering_token(&peer).as_bytes(), 0),
+            BeaconObservation::AuthenticatedPeer {
+                address: peer,
+                peer_observation: PeerObservation::NewlyDiscovered,
+            }
+        );
+        assert!(!brain.refresh_known_peer(unknown, 21_000));
+        assert_eq!(brain.peer_count(), 1);
+        assert!(brain.refresh_known_peer(peer, 21_000));
+        assert_eq!(brain.prune_stale_peers(PEERING_TIMEOUT_MS + 1), 0);
+        assert_eq!(brain.prune_stale_peers(21_000 + PEERING_TIMEOUT_MS + 1), 1);
     }
 }

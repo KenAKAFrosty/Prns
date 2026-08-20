@@ -1,4 +1,4 @@
-use super::super::captive_portal::station_wifi_mode;
+use super::super::captive_portal::{ap_config, station_wifi_mode};
 use super::super::*;
 use crate::wifi_data_path_recovery::{
     StationDataPathAction, StationDataPathRecovery, StationDataPathWindow,
@@ -34,23 +34,13 @@ pub(super) async fn network_ready_task(stack: Stack<'static>) -> ! {
         if ready && !was_ready {
             boot_stage(BootPhase::NetworkReady);
         }
-        if state_changed || samples_until_report == 0 {
+        // The radio data path is live as soon as association raises the link. Do not wait for
+        // IPv4 configuration: RX can wedge while DHCP is still settling, and an already observed
+        // LAN peer is sufficient evidence that inbound beacons should continue.
+        let station_ready = associated && link_up;
+        let should_report = state_changed || samples_until_report == 0;
+        if should_report {
             let heap = esp_alloc::HEAP.stats();
-            let data_path = esp_radio::wifi::data_path_diagnostics();
-            let station_ready = associated && ready;
-            let data_path_window = previous_data_path.as_ref().map(|earlier| {
-                if data_path.transmit_submission_stalled_since(earlier) {
-                    StationDataPathWindow::TransmitSubmissionStalled
-                } else if data_path.receive_delivery_blocked_by_transmit_capacity_since(earlier) {
-                    StationDataPathWindow::TransmitCapacityBlocked
-                } else if data_path.station_receive_progressed_since(earlier) {
-                    StationDataPathWindow::ReceiveProgress
-                } else if data_path.transmit_progressed_without_station_receive_since(earlier) {
-                    StationDataPathWindow::TransmitWithoutReceive
-                } else {
-                    StationDataPathWindow::NoProgress
-                }
-            });
             log::info!(
                 "wifi-health: associated={} link_up={} ipv4={:?} internal_free={} internal_low={} external_free={} heap_free={} heap_used={} heap_high={}",
                 associated,
@@ -63,39 +53,72 @@ pub(super) async fn network_ready_task(stack: Stack<'static>) -> ! {
                 heap.current_usage,
                 heap.max_usage
             );
-            log::info!("wifi-data: {}", data_path);
-            if station_ready {
-                if let Some(data_path_window) = data_path_window {
-                    if matches!(&data_path_window, StationDataPathWindow::ReceiveProgress) {
-                        WIFI_STATION_DATA_PATH_DEGRADED.store(false, Ordering::Release);
-                    }
-                    match station_data_path_recovery.observe(data_path_window) {
-                        StationDataPathAction::Continue => {}
-                        StationDataPathAction::RestartDriver { count, cause } => {
-                            WIFI_STATION_DATA_PATH_DEGRADED.store(true, Ordering::Release);
-                            WIFI_DRIVER_RESTART_REQUESTED.store(true, Ordering::Release);
-                            log::warn!("wifi-radio-trace: {data_path:?}");
-                            log::warn!(
-                                "wifi-health: station data path stalled cause={cause:?}; requested driver restart count={count}"
-                            );
-                        }
-                    }
-                }
-            } else {
-                station_data_path_recovery.station_unavailable();
-            }
-            previous_data_path = if station_ready { Some(data_path) } else { None };
             samples_until_report = WIFI_HEALTH_SAMPLES_BETWEEN_REPORTS;
         } else {
             samples_until_report = samples_until_report.saturating_sub(1);
         }
+        inspect_station_data_path(
+            &mut previous_data_path,
+            &mut station_data_path_recovery,
+            station_ready,
+            should_report,
+        );
         previous_state = Some(state);
         Timer::after(WIFI_LINK_CHECK_INTERVAL).await;
     }
 }
 
-const WIFI_HEALTH_SAMPLES_BETWEEN_REPORTS: u8 = 4;
+// Keep the comparatively large current diagnostics snapshot in this synchronous frame instead of
+// the Embassy task future. Task futures live in scarce internal RAM and reduce the main boot stack;
+// only the previous snapshot needs to persist across the two-second sampling interval.
+fn inspect_station_data_path(
+    previous: &mut Option<esp_radio::wifi::DataPathDiagnostics>,
+    recovery: &mut StationDataPathRecovery,
+    station_ready: bool,
+    should_report: bool,
+) {
+    let current = esp_radio::wifi::data_path_diagnostics();
+    if station_ready {
+        let window = previous.as_ref().map(|earlier| {
+            if current.transmit_submission_stalled_since(earlier) {
+                StationDataPathWindow::TransmitSubmissionStalled
+            } else if current.receive_delivery_blocked_by_transmit_capacity_since(earlier) {
+                StationDataPathWindow::TransmitCapacityBlocked
+            } else if current.station_receive_progressed_since(earlier) {
+                StationDataPathWindow::ReceiveProgress
+            } else if current.transmit_progressed_without_station_receive_since(earlier) {
+                StationDataPathWindow::TransmitWithoutReceive
+            } else {
+                StationDataPathWindow::NoProgress
+            }
+        });
+        if let Some(window) = window {
+            if matches!(&window, StationDataPathWindow::ReceiveProgress) {
+                WIFI_STATION_DATA_PATH_DEGRADED.store(false, Ordering::Release);
+            }
+            match recovery.observe(window) {
+                StationDataPathAction::Continue => {}
+                StationDataPathAction::RestartDriver { count, cause } => {
+                    WIFI_STATION_DATA_PATH_DEGRADED.store(true, Ordering::Release);
+                    WIFI_DRIVER_RESTART_REQUESTED.store(true, Ordering::Release);
+                    log::warn!("wifi-radio-trace: {current:?}");
+                    log::warn!(
+                        "wifi-health: station data path stalled cause={cause:?}; requested driver restart count={count}"
+                    );
+                }
+            }
+        }
+    } else {
+        recovery.station_unavailable();
+    }
+    if should_report {
+        log::info!("wifi-data: {current}");
+        log::info!("wifi-rtos: {:?}", esp_rtos::radio_wait_queue_diagnostics());
+    }
+    *previous = if station_ready { Some(current) } else { None };
+}
 
+const WIFI_HEALTH_SAMPLES_BETWEEN_REPORTS: u8 = 4;
 const WIFI_LINK_CHECK_INTERVAL: Duration = Duration::from_secs(2);
 const WIFI_INTER_CHANNEL_DELAY: Duration = Duration::from_millis(25);
 const WIFI_CHANNEL_SCAN_TIMEOUT: Duration = Duration::from_millis(500);
@@ -166,6 +189,7 @@ pub(super) async fn wifi_connect_task(
         .with_ssid(credentials.ssid.clone())
         .with_password(credentials.password.clone());
     let mut recovery = StationRecovery::new(DiscoveryScope::FullBand);
+    let mut soft_ap_active = ap_enabled;
 
     loop {
         let mut resumed = false;
@@ -184,13 +208,18 @@ pub(super) async fn wifi_connect_task(
         }
         if WIFI_DRIVER_RESTART_REQUESTED.swap(false, Ordering::AcqRel) {
             log::warn!("wifi: restarting driver after data-path recovery escalation");
+            // Do not disconnect first. `disconnect_async()` enters the vendor's synchronous
+            // `esp_wifi_disconnect_internal()` call before it can yield, so an async timeout
+            // cannot protect us when the TX-completion path itself is wedged. `restart()` already
+            // stops and deinitializes the driver after disabling RX admission and draining queued
+            // buffers, and is the recovery boundary we actually need.
+            WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
             if let Err(error) = controller.restart() {
                 WIFI_DRIVER_RESTART_REQUESTED.store(true, Ordering::Release);
                 log::warn!("wifi: data-path recovery driver restart failed: {error:?}");
                 Timer::after(DRIVER_STOP_RETRY_DELAY).await;
                 continue;
             }
-            WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
             recovery.resume_now();
             continue;
         }
@@ -222,28 +251,11 @@ pub(super) async fn wifi_connect_task(
             continue;
         }
         WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
-        if ap_enabled {
-            let discovery_scope = match controller.channel() {
-                Ok((channel, _)) => match DiscoveryScope::protected(channel) {
-                    Some(discovery_scope) => Some(discovery_scope),
-                    None => {
-                        log::warn!("wifi: SoftAP channel is outside 2.4 GHz channel={channel}");
-                        None
-                    }
-                },
-                Err(error) => {
-                    log::warn!("wifi: SoftAP channel query failed: {error:?}");
-                    None
-                }
-            };
-            let Some(discovery_scope) = discovery_scope else {
-                apply_station_yield(StationYield::Retry(RecoveryDelay::TwoSeconds), &status).await;
-                continue;
-            };
-            recovery.set_discovery_scope(discovery_scope);
-        } else {
-            recovery.set_discovery_scope(DiscoveryScope::FullBand);
-        }
+        // APSTA has one physical 2.4 GHz radio, but the station must discover its uplink before
+        // that shared channel is known. Pinning discovery to the SoftAP's provisional boot channel
+        // makes every configured LAN on another channel permanently invisible. Scan the full band;
+        // once the station associates, the Espressif driver moves the SoftAP onto that channel.
+        recovery.set_discovery_scope(DiscoveryScope::FullBand);
         let Some(attempt) = recovery.begin_attempt() else {
             Timer::after(DRIVER_STOP_RETRY_DELAY).await;
             continue;
@@ -251,14 +263,18 @@ pub(super) async fn wifi_connect_task(
         match attempt {
             StationAttempt::Connect(attempt) => {
                 let access_point = attempt.access_point();
+                let access_point_channel = access_point.channel;
                 let station = base
                     .clone()
                     .with_bssid(access_point.bssid)
-                    .with_channel(access_point.channel);
+                    .with_channel(access_point_channel);
                 let configured = {
-                    let mode = station_wifi_mode(station, ap_enabled);
+                    let mode = station_wifi_mode(station, ap_enabled, Some(access_point_channel));
                     match controller.set_config(&mode) {
-                        Ok(()) => true,
+                        Ok(()) => {
+                            soft_ap_active = ap_enabled;
+                            true
+                        }
                         Err(error) => {
                             log::warn!("wifi: station configuration failed: {error:?}");
                             false
@@ -361,6 +377,20 @@ pub(super) async fn wifi_connect_task(
                 apply_station_yield(next, &status).await;
             }
             StationAttempt::Scan(attempt) => {
+                if ap_enabled && soft_ap_active {
+                    // APSTA can use only one RF channel. Tear down the provisional/recovery AP
+                    // while sweeping so a LAN on another channel remains discoverable; it comes
+                    // back on the selected station channel before association begins.
+                    let mode = WifiConfig::Station(base.clone());
+                    if let Err(error) = controller.set_config(&mode) {
+                        log::warn!("wifi: station discovery mode failed: {error:?}");
+                        let next =
+                            recovery.finish_scan(attempt, ScanOutcome::Failed(ScanFailure::Driver));
+                        apply_station_yield(next, &status).await;
+                        continue;
+                    }
+                    soft_ap_active = false;
+                }
                 let channel = attempt.channel();
                 if attempt.starts_sweep() {
                     boot_stage(BootPhase::WifiDiscoveryBegin);
@@ -419,6 +449,16 @@ pub(super) async fn wifi_connect_task(
                         next
                     }
                 };
+                if ap_enabled && matches!(&next, StationYield::Retry(_) | StationYield::Disabled) {
+                    // If the uplink is absent, keep the local provisioning/recovery AP available
+                    // during backoff. The next sweep will briefly return to station-only mode.
+                    match controller.set_config(&WifiConfig::AccessPoint(ap_config(None))) {
+                        Ok(()) => soft_ap_active = true,
+                        Err(error) => {
+                            log::warn!("wifi: recovery SoftAP configuration failed: {error:?}")
+                        }
+                    }
+                }
                 apply_station_yield(next, &status).await;
             }
         }

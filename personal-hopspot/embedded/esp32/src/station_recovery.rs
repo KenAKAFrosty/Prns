@@ -1,16 +1,19 @@
 const FIRST_2_4_GHZ_CHANNEL: u8 = 1;
 const LAST_2_4_GHZ_CHANNEL: u8 = 13;
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ProtectedChannel(u8);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DiscoveryScope {
     FullBand,
+    #[cfg(test)]
     Protected(ProtectedChannel),
 }
 
 impl DiscoveryScope {
+    #[cfg(test)]
     pub(crate) fn protected(channel: u8) -> Option<Self> {
         (FIRST_2_4_GHZ_CHANNEL..=LAST_2_4_GHZ_CHANNEL)
             .contains(&channel)
@@ -20,6 +23,7 @@ impl DiscoveryScope {
     const fn first_channel(self) -> u8 {
         match self {
             Self::FullBand => FIRST_2_4_GHZ_CHANNEL,
+            #[cfg(test)]
             Self::Protected(channel) => channel.0,
         }
     }
@@ -27,6 +31,7 @@ impl DiscoveryScope {
     fn permits(self, channel: u8) -> bool {
         match self {
             Self::FullBand => (FIRST_2_4_GHZ_CHANNEL..=LAST_2_4_GHZ_CHANNEL).contains(&channel),
+            #[cfg(test)]
             Self::Protected(protected) => channel == protected.0,
         }
     }
@@ -34,6 +39,7 @@ impl DiscoveryScope {
     fn ends_sweep(self, channel: u8) -> bool {
         match self {
             Self::FullBand => channel == LAST_2_4_GHZ_CHANNEL,
+            #[cfg(test)]
             Self::Protected(protected) => channel == protected.0,
         }
     }

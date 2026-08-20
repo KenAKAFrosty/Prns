@@ -107,7 +107,7 @@ fn full_charging_battery_uses_a_steady_filled_shape_without_the_plug() {
 }
 
 #[test]
-fn person_icon_reads_as_peer_count_glyph() {
+fn person_icon_reads_as_destination_count_glyph() {
     let mut display = MockDisplay::new();
 
     draw_person(&mut display, 0, 0);

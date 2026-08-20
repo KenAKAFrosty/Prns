@@ -1,5 +1,56 @@
 use super::*;
 
+struct StationNetworkHealth {
+    joined: bool,
+    data_path_degraded: bool,
+}
+
+const fn project_wifi_connection(
+    connection: ConnectionState,
+    station: StationNetworkHealth,
+) -> ConnectionState {
+    if !station.data_path_degraded {
+        return connection;
+    }
+    match connection {
+        ConnectionState::Connected | ConnectionState::Degraded if station.joined => {
+            ConnectionState::Degraded
+        }
+        ConnectionState::Connected | ConnectionState::Degraded => ConnectionState::Reconnecting,
+        // Auto-WiFi uses Disconnected to mean a healthy topology that is waiting for its first
+        // peer. Station health may demote a live topology, but it must never promote Waiting into
+        // an online or alarming state.
+        ConnectionState::Disconnected => ConnectionState::Disconnected,
+        ConnectionState::Initializing
+        | ConnectionState::Reconnecting
+        | ConnectionState::Failed
+        | ConnectionState::Disabled
+        | ConnectionState::Unknown => connection,
+    }
+}
+
+const _: () = assert!(matches!(
+    project_wifi_connection(
+        ConnectionState::Disconnected,
+        StationNetworkHealth {
+            joined: true,
+            data_path_degraded: true,
+        },
+    ),
+    ConnectionState::Disconnected
+));
+
+const _: () = assert!(matches!(
+    project_wifi_connection(
+        ConnectionState::Disconnected,
+        StationNetworkHealth {
+            joined: false,
+            data_path_degraded: true,
+        },
+    ),
+    ConnectionState::Disconnected
+));
+
 fn classify_card(
     id: InterfaceId,
     usb_id: InterfaceId,
@@ -73,10 +124,10 @@ pub(super) fn build_snapshots(
     tcp: Option<&EmbassyInterfaceStatus>,
     lora: Option<&EmbassyInterfaceStatus>,
     espnow: Option<&EmbassyInterfaceStatus>,
-) -> HVec<InterfaceSnapshot, 8> {
+) -> HVec<InterfaceSnapshot, INTERFACE_CAPACITY> {
     use personal_rns::interfaces::InterfaceStatus;
     let ble = BluetoothAutoStatus::new(&BLE_SHARED);
-    let mut entries: HVec<(&dyn InterfaceStatus, Membership), 8> = HVec::new();
+    let mut entries: HVec<(&dyn InterfaceStatus, Membership), INTERFACE_CAPACITY> = HVec::new();
     if let Some(lora) = lora {
         let _ = entries.push((lora, Membership::Independent));
     }
@@ -106,21 +157,22 @@ pub(super) fn build_snapshots(
             let _ = entries.push((member, Membership::FleetMember { supervisor_id }));
         }
     }
-    let mut snapshots: HVec<InterfaceSnapshot, 8> = HVec::new();
+    let mut snapshots: HVec<InterfaceSnapshot, INTERFACE_CAPACITY> = HVec::new();
     let wifi_id = wifi.map(InterfaceStatus::id);
     for (status, membership) in &entries {
         let id = status.id();
         let counts = INTERFACE_STORE.counts(id);
-        let connection =
-            if Some(id) == wifi_id && WIFI_STATION_DATA_PATH_DEGRADED.load(Ordering::Acquire) {
-                if WIFI_STATION_JOINED.load(Ordering::Relaxed) {
-                    ConnectionState::Degraded
-                } else {
-                    ConnectionState::Reconnecting
-                }
-            } else {
-                status.connection()
-            };
+        let connection = if Some(id) == wifi_id {
+            project_wifi_connection(
+                status.connection(),
+                StationNetworkHealth {
+                    joined: WIFI_STATION_JOINED.load(Ordering::Relaxed),
+                    data_path_degraded: WIFI_STATION_DATA_PATH_DEGRADED.load(Ordering::Acquire),
+                },
+            )
+        } else {
+            status.connection()
+        };
         let _ = snapshots.push(InterfaceSnapshot {
             id,
             mode: personal_rns::interfaces::InterfaceMode::Full,

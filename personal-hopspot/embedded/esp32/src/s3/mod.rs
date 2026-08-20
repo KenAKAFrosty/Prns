@@ -107,7 +107,7 @@ use prns_interfaces_embassy::bluetooth_auto::PEER_CAPACITY as EMBEDDED_BLE_PEER_
 
 use crate::station_recovery::{
     AccessPoint as StationAccessPoint, ConnectionFailure, ConnectionOutcome, DiscoveryScope,
-    RecoveryDelay, ScanFailure, ScanOutcome, StationAttempt, StationRecovery, StationYield,
+    ScanFailure, ScanOutcome, StationAttempt, StationRecovery, StationYield,
 };
 use crate::storage::EngineStorageType;
 
@@ -164,7 +164,7 @@ const LANE_COUNT: usize = 5 + cfg!(feature = "lora") as usize;
 const MEMBERS: usize = 24;
 pub const BLE_PEER_CAPACITY: usize = EMBEDDED_BLE_PEER_CAPACITY;
 pub const BLE_CONTROLLER_ACTIVITY_CAPACITY: u8 = (BLE_PEER_CAPACITY + 1) as u8;
-const INTERFACE_CAPACITY: usize = 4 + MEMBERS + BLE_PEER_CAPACITY;
+const INTERFACE_CAPACITY: usize = LANE_COUNT + MEMBERS + BLE_PEER_CAPACITY;
 const WIFI_SUPERVISOR_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::AutoWifi as u8, 0, 0, 0, 0, 0, 0, 0]);
 const LANE_DEPTH: usize = 1;

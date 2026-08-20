@@ -307,6 +307,30 @@ mod tests {
     }
 
     #[test]
+    fn snapshots_to_cards_rolls_up_more_members_than_the_card_capacity() {
+        let supervisor_id = InterfaceId::new([InterfaceKind::AutoWifi as u8, 0, 0, 0, 0, 0, 0, 0]);
+        let mut supervisor = snapshot(InterfaceKind::AutoWifi);
+        supervisor.id = supervisor_id;
+        let mut snapshots: heapless::Vec<InterfaceSnapshot, 13> = heapless::Vec::new();
+        assert!(snapshots.push(supervisor).is_ok());
+        for suffix in 1..=12 {
+            let mut member = snapshot(InterfaceKind::WifiPeer);
+            member.id = InterfaceId::new([InterfaceKind::WifiPeer as u8, suffix, 0, 0, 0, 0, 0, 0]);
+            member.destinations = 40;
+            member.membership = Membership::FleetMember { supervisor_id };
+            assert!(snapshots.push(member).is_ok());
+        }
+
+        let cards: heapless::Vec<Card, 1> = snapshots_to_cards(&snapshots, |id| {
+            (id == supervisor_id).then_some((CardKind::Wifi, card_label("LAN")))
+        });
+
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].peers, Some(12));
+        assert_eq!(cards[0].destinations, 480);
+    }
+
+    #[test]
     fn snapshots_to_details_keeps_zero_peer_row_for_idle_supervisor() {
         let supervisor_id = InterfaceId::new([InterfaceKind::AutoWifi as u8, 0, 0, 0, 0, 0, 0, 0]);
         let card = Card {

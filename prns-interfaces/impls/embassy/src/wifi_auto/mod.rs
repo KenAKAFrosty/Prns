@@ -96,6 +96,22 @@ impl TopologyState {
     }
 }
 
+const fn peer_aware_connection(lifecycle: ConnectionState, peer_count: u32) -> ConnectionState {
+    match lifecycle {
+        ConnectionState::Connected | ConnectionState::Degraded if peer_count == 0 => {
+            ConnectionState::Disconnected
+        }
+        ConnectionState::Initializing
+        | ConnectionState::Connected
+        | ConnectionState::Degraded
+        | ConnectionState::Reconnecting
+        | ConnectionState::Failed
+        | ConnectionState::Disconnected
+        | ConnectionState::Disabled
+        | ConnectionState::Unknown => lifecycle,
+    }
+}
+
 async fn wait_for_primary_stack<const MEMBERS: usize>(
     stack: &Stack<'_>,
     status: AutoWifiStatus<MEMBERS>,
@@ -312,6 +328,7 @@ pub struct AutoWifiShared<const MEMBERS: usize> {
     station_uplink_enabled_changed: Signal<CriticalSectionRawMutex, bool>,
     lifecycle: AtomicU8,
     peers: AtomicU32,
+    last_peer_heard_ms: AtomicU64,
     members: [WifiMemberStatus; MEMBERS],
 }
 
@@ -328,6 +345,7 @@ impl<const MEMBERS: usize> AutoWifiShared<MEMBERS> {
             station_uplink_enabled_changed: Signal::new(),
             lifecycle: AtomicU8::new(ConnectionState::Initializing.as_u8()),
             peers: AtomicU32::new(0),
+            last_peer_heard_ms: AtomicU64::new(0),
             members: [const { WifiMemberStatus::new() }; MEMBERS],
         }
     }
@@ -512,6 +530,21 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
     pub fn peer_count(&self) -> u32 {
         self.shared.peers.load(Ordering::Relaxed)
     }
+
+    fn record_peer_heard(&self, now_ms: u64) {
+        self.shared
+            .last_peer_heard_ms
+            .store(now_ms.max(1), Ordering::Relaxed);
+    }
+
+    /// Returns how long the active peer fleet has been silent.
+    pub fn peer_silence_ms(&self, now_ms: u64) -> Option<u64> {
+        if self.peer_count() == 0 {
+            return None;
+        }
+        let last_heard_ms = self.shared.last_peer_heard_ms.load(Ordering::Relaxed);
+        (last_heard_ms != 0).then(|| now_ms.saturating_sub(last_heard_ms))
+    }
 }
 
 impl<const MEMBERS: usize> InterfaceStatus for AutoWifiStatus<MEMBERS> {
@@ -523,7 +556,10 @@ impl<const MEMBERS: usize> InterfaceStatus for AutoWifiStatus<MEMBERS> {
         if !self.is_enabled() {
             return ConnectionState::Disabled;
         }
-        ConnectionState::from_u8(self.shared.lifecycle.load(Ordering::Relaxed))
+        peer_aware_connection(
+            ConnectionState::from_u8(self.shared.lifecycle.load(Ordering::Relaxed)),
+            self.peer_count(),
+        )
     }
 
     fn rx_bytes(&self) -> u64 {
@@ -842,7 +878,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         const NOTIFY: usize,
         const LIFECYCLE: usize,
     >(
-        &self,
+        &mut self,
         state: &AutoWifiRunState<MEMBERS>,
         fleet: &mut Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
         received: DatagramReceiveResult,
@@ -850,7 +886,16 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
     ) {
         if let Ok((len, meta)) = received {
             if let IpAddress::Ipv6(src) = meta.endpoint.addr {
-                route_inbound(fleet, &state.peers, &self.status, src, &bytes[..len]);
+                if route_inbound(fleet, &state.peers, &self.status, src, &bytes[..len]) {
+                    // Discovery authenticated this source before it entered the peer table. Live
+                    // data from that exact peer is equally strong liveness evidence, and prevents
+                    // a missed multicast beacon from tearing down an active interface and all of
+                    // the routes learned through it.
+                    let now_ms = Instant::now().as_millis();
+                    if self.brain.refresh_known_peer(src, now_ms) {
+                        self.status.record_peer_heard(now_ms);
+                    }
+                }
             }
         }
     }
@@ -1251,6 +1296,7 @@ async fn handle_rendezvous_event<
                 ))
                 .await;
             status.member(slot).assign(id);
+            status.record_peer_heard(Instant::now().as_millis());
             *tcp_peer = Some(TcpPeer { session, id, slot });
             status.republish_peer_count();
             None
@@ -1262,6 +1308,7 @@ async fn handle_rendezvous_event<
             }
             if fleet.deliver_inbound(id, bytes).await.is_ok() {
                 status.member(peer.slot).add_rx(bytes.len() as u64);
+                status.record_peer_heard(Instant::now().as_millis());
             }
             None
         }
@@ -1395,6 +1442,7 @@ async fn ingest_beacon<
         | (WifiPeerLookup::Vacant { .. }, contract::PeerObservation::TableFull)
         | (WifiPeerLookup::Full, _) => return PeeringTokenReply::NotRequired,
     }
+    status.record_peer_heard(now_ms);
     peering_token_reply(beacon_channel, peer_observation, address, *local_token)
 }
 
@@ -1502,16 +1550,17 @@ fn route_inbound<
     status: &AutoWifiStatus<MEMBERS>,
     src: Ipv6Addr,
     bytes: &[u8],
-) {
+) -> bool {
     if bytes.is_empty() {
-        return;
+        return false;
     }
     let WifiPeerLookup::Present { slot, id } = peers.lookup(src) else {
-        return;
+        return false;
     };
     if fleet.try_deliver_inbound(id, bytes).is_ok() {
         status.member(slot).add_rx(bytes.len() as u64);
     }
+    true
 }
 
 async fn clear_wifi_peers<
@@ -1702,25 +1751,30 @@ mod tests {
     }
 
     #[test]
-    fn aggregate_status_keeps_network_health_separate_from_peer_count() {
+    fn aggregate_status_distinguishes_waiting_from_degradation() {
         let status = AutoWifiStatus::new(&LIFECYCLE_SHARED);
 
         assert_eq!(status.connection(), ConnectionState::Initializing);
-        status.set_lifecycle(ConnectionState::Disconnected);
+        status.set_lifecycle(ConnectionState::Connected);
         assert_eq!(status.connection(), ConnectionState::Disconnected);
         assert_eq!(status.peer_count(), 0);
         status.member(0).assign(id(1));
         status.republish_peer_count();
-        assert_eq!(status.connection(), ConnectionState::Disconnected);
         assert_eq!(status.peer_count(), 1);
-        status.set_lifecycle(ConnectionState::Connected);
         assert_eq!(status.connection(), ConnectionState::Connected);
         status.set_lifecycle(ConnectionState::Degraded);
         assert_eq!(status.connection(), ConnectionState::Degraded);
+        status.retire_member(0);
+        status.republish_peer_count();
+        assert_eq!(status.connection(), ConnectionState::Disconnected);
+        status.set_lifecycle(ConnectionState::Reconnecting);
+        assert_eq!(status.connection(), ConnectionState::Reconnecting);
+        status.set_lifecycle(ConnectionState::Unknown);
+        assert_eq!(status.connection(), ConnectionState::Unknown);
         status.disable();
         assert_eq!(status.connection(), ConnectionState::Disabled);
         status.enable();
-        assert_eq!(status.connection(), ConnectionState::Degraded);
+        assert_eq!(status.connection(), ConnectionState::Unknown);
         status.set_lifecycle(ConnectionState::Failed);
         assert_eq!(status.connection(), ConnectionState::Failed);
     }
@@ -1740,12 +1794,13 @@ mod tests {
         );
         status.retire_member(0);
         status.republish_peer_count();
-        assert_eq!(status.connection(), ConnectionState::Connected);
+        assert_eq!(status.connection(), ConnectionState::Disconnected);
         assert_eq!(status.peer_count(), 0);
         assert_eq!((status.rx_bytes(), status.tx_bytes()), (90, 45));
 
         status.member(0).assign(id(2));
         status.republish_peer_count();
+        assert_eq!(status.connection(), ConnectionState::Connected);
         status.member(0).add_rx(30);
         status.member(0).add_tx(15);
         assert_eq!(status.connection(), ConnectionState::Connected);
