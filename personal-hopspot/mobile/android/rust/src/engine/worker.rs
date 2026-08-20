@@ -13,7 +13,9 @@ use personal_rns::interfaces::bluetooth_auto::{
     AndroidHost, Endpoint, LinkCapabilities, BLE_HW_MTU,
 };
 use personal_rns::interfaces::wifi_direct::GoIntent;
-use personal_rns::runtime::{Diagnostic, ManuallyAttached, PrnsEvent, PrnsNode, PrnsNodeRecipe};
+use personal_rns::runtime::{
+    Diagnostic, ManuallyAttached, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
+};
 use personal_rns::shared_instance::rns_rpc::{SharedInstanceCredentials, SharedInstanceRpcServer};
 use personal_rns::shared_instance::SharedInstanceServer;
 use personal_rns::storage::GrowableHeap;
@@ -76,7 +78,15 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
         return fail_start(ready_tx, EngineStartError::StorageConfiguration);
     }
     let node_identity = node_bootstrap.into_identity();
-    let credentials = SharedInstanceCredentials::from_identity_secret(node_identity.secret());
+    let local_rpc_key = match super::local_rpc_key::load_or_create_local_rpc_key(&storage_dir) {
+        Ok(key) => key,
+        Err(error) => {
+            log::error!("hopspot local RPC key unavailable: {error}");
+            return fail_start(ready_tx, EngineStartError::StorageConfiguration);
+        }
+    };
+    let credentials = SharedInstanceCredentials::from_identity_secret(node_identity.secret())
+        .with_rpc_key(local_rpc_key.to_vec());
     let node_identity_hash = credentials.transport_identity_hash();
     let rpc_key = credentials.rpc_key().as_bytes().to_vec();
     let transport_secret = node_identity.transport_secret();
@@ -149,13 +159,35 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
     let usb_status = usb.status();
     handle.add_interface(usb);
 
-    let local = match SharedInstanceServer::with_port(ports.local).bind().await {
-        Ok(local) => local,
+    let local_server = SharedInstanceServer::with_port(ports.local);
+    #[cfg(target_os = "android")]
+    let local_server = if ports.local != 0 {
+        local_server.also_listen_on_abstract_unix("default")
+    } else {
+        local_server
+    };
+    let local = match local_server.bind().await {
+        Ok(local) => {
+            #[cfg(target_os = "android")]
+            if ports.local != 0 {
+                if local.listens_on_abstract_unix() {
+                    log::info!(
+                        "hopspot: shared instance bus on TCP 127.0.0.1:{} and abstract unix rns/default",
+                        ports.local
+                    );
+                } else {
+                    log::warn!(
+                        "hopspot: abstract unix rns/default unavailable; stock Sideband will not join this instance"
+                    );
+                }
+            }
+            local
+        }
         Err(_) => return fail_start(ready_tx, EngineStartError::LocalListenerBind),
     };
     handle.supervise(local);
 
-    let rpc = match SharedInstanceRpcServer::tcp(credentials, ports.rpc, handle.clone())
+    let rpc = match SharedInstanceRpcServer::tcp(credentials.clone(), ports.rpc, handle.clone())
         .bind()
         .await
     {
@@ -163,6 +195,7 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
         Err(_) => return fail_start(ready_tx, EngineStartError::RpcListenerBind),
     };
     tokio::spawn(rpc.run());
+    spawn_android_abstract_unix_rpc(credentials, ports.rpc, handle.clone());
 
     let service_discovery = match platform.service_discovery.take_service_discovery() {
         Ok(service_discovery) => service_discovery,
@@ -256,6 +289,37 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
                 Err(()) => WorkerExit::Failed(MobileEngineFailure::PersistenceWrite),
             }
         }
+    }
+}
+
+fn spawn_android_abstract_unix_rpc(
+    credentials: SharedInstanceCredentials,
+    rpc_port: u16,
+    handle: PrnsNodeHandle,
+) {
+    #[cfg(target_os = "android")]
+    {
+        if rpc_port == 0 {
+            return;
+        }
+        tokio::spawn(async move {
+            match SharedInstanceRpcServer::abstract_unix(credentials, "default", handle)
+                .bind()
+                .await
+            {
+                Ok(rpc) => {
+                    log::info!("hopspot: shared instance RPC on abstract unix rns/default/rpc");
+                    rpc.run().await;
+                }
+                Err(error) => {
+                    log::warn!("hopspot: abstract unix RPC rns/default/rpc unavailable: {error:?}")
+                }
+            }
+        });
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (credentials, rpc_port, handle);
     }
 }
 

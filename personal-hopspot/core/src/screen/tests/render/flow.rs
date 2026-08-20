@@ -334,6 +334,20 @@ fn station_uplink_menu_labels_follow_requested_state() {
     }
 }
 
+#[cfg(feature = "android-rns-config")]
+#[test]
+fn local_interface_menu_labels_sideband_and_power_toggle() {
+    let mut card = test_card("Local");
+    card.kind = CardKind::Tcp;
+    card.connection = ConnectionState::Connected;
+    assert_eq!(interface_menu_item_label(&card, 0), "Turn Off");
+    assert_eq!(interface_menu_item_label(&card, 1), "RNS Config");
+    assert_eq!(interface_menu_item_label(&card, 2), "Back");
+
+    card.connection = ConnectionState::Disabled;
+    assert_eq!(interface_menu_item_label(&card, 0), "Turn On");
+}
+
 #[test]
 fn failed_interface_menu_draws_failure_reason() {
     let mut display = PanelDisplay::new();

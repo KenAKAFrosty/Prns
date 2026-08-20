@@ -8,3 +8,6 @@ local.properties
 app/src/main/jniLibs/
 
 rust/target/
+
+# Debug-signed Sideband rebuilds for Hopspot TCP join; never commit.
+sideband-*-hopspot-tcp.apk

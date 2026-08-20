@@ -1,3 +1,4 @@
+mod local_rpc_key;
 mod persistence;
 mod worker;
 
@@ -461,6 +462,52 @@ pub(crate) fn rpc_key_hex() -> Option<String> {
     Some(hex(&resources.rpc_key))
 }
 
+/// Sideband Advanced Reticulum settings template with this Hopspot instance's live RPC key.
+pub(crate) fn sideband_join_config() -> Option<String> {
+    let rpc_key_hex = rpc_key_hex()?;
+    Some(format!(
+        "# This template is used to generate a\n\
+         # running configuration for Sideband's\n\
+         # internal RNS instance. Incorrect changes\n\
+         # or addition here may cause Sideband to\n\
+         # fail starting up or working properly.\n\
+         #\n\
+         # If Sideband detects that Reticulum\n\
+         # aborts at startup, due to an error in\n\
+         # configuration, any template changes\n\
+         # will be reset to this default.\n\
+         \n\
+         [reticulum]\n\
+           # Don't change these lines, use the UI\n\
+           # settings instead. Removing them from\n\
+           # the config template will break these\n\
+           # settings controls in the UI.\n\
+           enable_transport = TRANSPORT_IS_ENABLED\n\
+           local_hops_delta = LOCAL_HOPS_DELTA\n\
+         \n\
+           # Changing this setting will cause\n\
+           # Sideband to not work.\n\
+           share_instance = Yes\n\
+         \n\
+           # Personal Hopspot\n\
+           shared_instance_type = tcp\n\
+           instance_control_port = 37429\n\
+           rpc_key = {rpc_key_hex}\n\
+           panic_on_interface_error = No\n\
+         \n\
+         # Logging is controlled by settings\n\
+         # in the UI, so this section is mostly\n\
+         # not relevant in Sideband.\n\
+         [logging]\n\
+           loglevel = 3\n\
+         \n\
+         # No additional interfaces are currently\n\
+         # defined, but you can use this section\n\
+         # to add additional custom interfaces.\n\
+         [interfaces]\n"
+    ))
+}
+
 pub(crate) fn identity_snapshot() -> Option<EngineIdentitySnapshot> {
     let mut manager = lock_manager();
     manager.reap_finished();
@@ -689,6 +736,30 @@ mod tests {
     }
 
     #[test]
+    fn sideband_join_config_includes_the_live_rpc_key() {
+        let storage_dir =
+            std::env::temp_dir().join(format!("personal-hopspot-android-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&storage_dir);
+
+        start_with_ports(storage_dir.clone(), EnginePorts::EPHEMERAL).unwrap();
+        let key = rpc_key_hex().unwrap();
+        assert_eq!(key.len(), 64);
+        let config = sideband_join_config().unwrap();
+        assert!(config.contains(&format!("rpc_key = {key}")));
+        assert!(config.contains("shared_instance_type = tcp"));
+        assert!(config.contains("This template is used to generate a"));
+        assert!(config.contains("# Don't change these lines, use the UI"));
+        assert!(config.contains("# Logging is controlled by settings"));
+        assert!(config.contains("[interfaces]\n"));
+        stop().unwrap();
+
+        start_with_ports(storage_dir.clone(), EnginePorts::EPHEMERAL).unwrap();
+        assert_eq!(rpc_key_hex().unwrap(), key);
+        stop().unwrap();
+        let _ = std::fs::remove_dir_all(storage_dir);
+    }
+
+    #[test]
     fn engine_stops_and_restarts_with_durable_identity_and_runtime_state() {
         let storage_dir =
             std::env::temp_dir().join(format!("personal-hopspot-android-{}", std::process::id()));
@@ -697,6 +768,7 @@ mod tests {
         start_with_ports(storage_dir.clone(), EnginePorts::EPHEMERAL).unwrap();
         assert_eq!(engine_state(), MobileEngineState::Running);
         let first_key = rpc_key_hex().unwrap();
+        assert_eq!(first_key.len(), 64);
         let first_identity = identity_snapshot().unwrap();
         assert_eq!(persistence_snapshot().unwrap().successful_flushes, 1);
         stop().unwrap();

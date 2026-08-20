@@ -652,6 +652,7 @@ pub(super) fn run_window(handles: WindowHandles) {
         }
         UiAction::SwapRadioMode => {}
         UiAction::OpenDocs => {}
+        UiAction::CopySidebandJoinConfig => {}
     };
 
     let mut ui_state = ui_state();

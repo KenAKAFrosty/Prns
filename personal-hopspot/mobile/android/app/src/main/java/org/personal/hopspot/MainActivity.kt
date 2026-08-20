@@ -2,6 +2,8 @@ package org.personal.hopspot
 
 import android.Manifest
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -20,6 +22,7 @@ import android.os.IBinder
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
+import android.widget.Toast
 import java.nio.ByteBuffer
 
 class MainActivity : Activity() {
@@ -193,9 +196,21 @@ private class HopspotView(
             }
 
             private fun act(action: Int) {
-                if (action == NativeBridge.ACTION_ANNOUNCE) {
-                    service?.announce()
+                when (action) {
+                    NativeBridge.ACTION_ANNOUNCE -> service?.announce()
+                    NativeBridge.ACTION_COPY_SIDEBAND_JOIN_CONFIG -> copySidebandJoinConfig()
                 }
+            }
+
+            private fun copySidebandJoinConfig() {
+                val config = NativeBridge.nativeSidebandJoinConfig()
+                if (config.isNullOrBlank()) {
+                    Toast.makeText(context, "Hopspot is not ready", Toast.LENGTH_SHORT).show()
+                    return
+                }
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("RNS config", config))
+                Toast.makeText(context, "RNS config copied", Toast.LENGTH_SHORT).show()
             }
         },
     )

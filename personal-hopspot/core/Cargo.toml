@@ -14,6 +14,7 @@ build = "build.rs"
 default = []
 host = ["personal-rns/tokio-host"]
 source-archive = ["personal-rns/large-static-responses"]
+android-rns-config = []
 
 [dependencies]
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["flash"] }

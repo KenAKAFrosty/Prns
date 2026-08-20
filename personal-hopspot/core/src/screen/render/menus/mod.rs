@@ -43,6 +43,26 @@ pub(in crate::screen) const fn station_uplink_action_label(kind: CardKind) -> Op
     }
 }
 
+pub(in crate::screen) fn interface_menu_item_label(card: &Card, index: usize) -> &'static str {
+    let items = interface_menu_items(card.kind);
+    let item = items.get(index).copied().unwrap_or(items[items.len() - 1]);
+    if index == POWER_MENU_ITEM {
+        if card.connection == ConnectionState::Disabled {
+            "Turn On"
+        } else {
+            "Turn Off"
+        }
+    } else if matches!(
+        card.kind,
+        CardKind::WifiStation | CardKind::WifiStationDisabled
+    ) && index == STATION_UPLINK_MENU_ITEM
+    {
+        station_uplink_action_label(card.kind).unwrap_or(item)
+    } else {
+        item
+    }
+}
+
 pub(in crate::screen) fn menu_item_char_width(label: &str) -> i32 {
     if MENU_TEXT_X + label.chars().count() as i32 * FONT_5X8_CHAR_W > WIDTH {
         FONT_4X6_CHAR_W
@@ -401,18 +421,8 @@ pub(in crate::screen) fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>
     );
 
     let items = interface_menu_items(card.kind);
-    for (index, item) in items.iter().enumerate() {
-        let label = if index == POWER_MENU_ITEM {
-            if card.connection == ConnectionState::Disabled {
-                "Turn On"
-            } else {
-                "Turn Off"
-            }
-        } else if index == STATION_UPLINK_MENU_ITEM {
-            station_uplink_action_label(card.kind).unwrap_or(item)
-        } else {
-            item
-        };
+    for (index, _item) in items.iter().enumerate() {
+        let label = interface_menu_item_label(card, index);
         draw_menu_item(
             display,
             MENU_ITEM_TOP + index as i32 * MENU_ITEM_STEP,

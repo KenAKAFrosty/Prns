@@ -49,8 +49,11 @@ object NativeBridge {
 
     val INPUT_SHORT_PRESS = nativeInputShortPressCode()
     val INPUT_LONG_PRESS = nativeInputLongPressCode()
+    private external fun nativeActionCopySidebandJoinConfigCode(): Int
+
     val ACTION_NONE = nativeActionNoneCode()
     val ACTION_ANNOUNCE = nativeActionAnnounceCode()
+    val ACTION_COPY_SIDEBAND_JOIN_CONFIG = nativeActionCopySidebandJoinConfigCode()
     val ENGINE_STOPPED = nativeEngineStoppedCode()
     val ENGINE_STARTING = nativeEngineStartingCode()
     val ENGINE_RUNNING = nativeEngineRunningCode()
@@ -71,6 +74,8 @@ object NativeBridge {
     external fun nativePersistenceHealth(): LongArray?
 
     external fun nativeRpcKeyHex(): String?
+
+    external fun nativeSidebandJoinConfig(): String?
 
     external fun nativeNodeIdentityHashHex(): String?
 

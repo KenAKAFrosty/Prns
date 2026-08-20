@@ -567,6 +567,7 @@ pub async fn run(spawner: Spawner) -> ! {
                         hopspot::UiAction::ToggleStationUplink => {}
                         hopspot::UiAction::OledOff => {}
                         hopspot::UiAction::ToggleOledAutoOff => {}
+                        hopspot::UiAction::CopySidebandJoinConfig => {}
                         hopspot::UiAction::None => {}
                     }
                 }

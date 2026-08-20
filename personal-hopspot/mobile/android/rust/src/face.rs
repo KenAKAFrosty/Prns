@@ -83,6 +83,7 @@ impl HopspotFace {
                 wake_interfaces();
             }
             UiAction::Announce => self.show_notice(UiNotice::Announcing),
+            UiAction::CopySidebandJoinConfig => self.show_notice(UiNotice::Copied),
             UiAction::None
             | UiAction::OledOff
             | UiAction::ToggleOledAutoOff

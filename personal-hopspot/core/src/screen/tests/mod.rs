@@ -29,6 +29,8 @@ use super::render::layout::{
     MENU_REASON_X, NAME_BACKING_X, NAME_BACKING_Y, NAME_ICON_X, NAME_LINE_Y, STAT_ICON_X,
     STAT_TEXT_X, WIDTH,
 };
+#[cfg(feature = "android-rns-config")]
+use super::render::menus::interface_menu_item_label;
 use super::render::menus::lora::{LORA_DOT_X, LORA_EDITOR_TOP};
 use super::render::menus::{
     draw_interface_menu, limits_row_drawable, limits_row_text, menu_item_text_right,

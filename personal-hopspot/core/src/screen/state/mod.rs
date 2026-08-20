@@ -33,22 +33,34 @@ const SLEEP_MENU_ITEM_NO_DISPLAY: usize = 2;
 pub(in crate::screen) const RADIO_MENU_ITEM_NO_DISPLAY: usize = 3;
 pub(in crate::screen) const POWER_MENU_ITEM: usize = 0;
 pub(in crate::screen) const POWER_ONLY_MENU_ITEMS: &[&str] = &["Power", "Back"];
+#[cfg(feature = "android-rns-config")]
+pub(in crate::screen) const LOCAL_MENU_ITEMS: &[&str] = &["Power", "RNS Config", "Back"];
+#[cfg(feature = "android-rns-config")]
+pub(in crate::screen) const LOCAL_SHARE_MENU_ITEM: usize = 1;
 pub(in crate::screen) const WIFI_MENU_ITEMS: &[&str] = &["Power", "Station", "Back"];
 pub(in crate::screen) const STATION_UPLINK_MENU_ITEM: usize = 1;
 const LORA_MENU_ITEMS: &[&str] = &["Power", "Tune", "Reset", "Back"];
 pub(in crate::screen) const LORA_TUNE_MENU_ITEM: usize = 1;
 pub(in crate::screen) const LORA_RESET_MENU_ITEM: usize = 2;
 
+#[cfg(feature = "android-rns-config")]
+const fn tcp_interface_menu_items() -> &'static [&'static str] {
+    LOCAL_MENU_ITEMS
+}
+
+#[cfg(not(feature = "android-rns-config"))]
+const fn tcp_interface_menu_items() -> &'static [&'static str] {
+    POWER_ONLY_MENU_ITEMS
+}
+
 pub(in crate::screen) fn interface_menu_items(kind: CardKind) -> &'static [&'static str] {
     match kind {
         CardKind::LoRa => LORA_MENU_ITEMS,
         CardKind::WifiStation | CardKind::WifiStationDisabled => WIFI_MENU_ITEMS,
-        CardKind::Wifi
-        | CardKind::Peer
-        | CardKind::Usb
-        | CardKind::Ble
-        | CardKind::EspNow
-        | CardKind::Tcp => POWER_ONLY_MENU_ITEMS,
+        CardKind::Wifi | CardKind::Peer | CardKind::Usb | CardKind::Ble | CardKind::EspNow => {
+            POWER_ONLY_MENU_ITEMS
+        }
+        CardKind::Tcp => tcp_interface_menu_items(),
     }
 }
 
@@ -75,6 +87,8 @@ pub enum UiAction {
     ResetLoRaProfile,
     SwapRadioMode,
     OpenDocs,
+    /// Copy the Sideband shared-instance template (handled outside the face on mobile).
+    CopySidebandJoinConfig,
 }
 
 prns_macros::iterable_enum! {
@@ -99,6 +113,7 @@ prns_macros::iterable_enum! {
         IdentityUnstable,
         SaveDeferred,
         SaveFailed,
+        Copied,
     }
     #[cfg(test)]
     pub(in crate::screen) const ALL;
@@ -169,6 +184,7 @@ impl UiNotice {
                 NoticeLines::three("Save deferred", "Flash cooldown", "Auto retry")
             }
             Self::SaveFailed => NoticeLines::three("Save failed", "Flash error", "Auto retry"),
+            Self::Copied => NoticeLines::one("Copied"),
         }
     }
 }
@@ -577,6 +593,8 @@ impl UiState {
             ) => {
                 self.mode = UiMode::Cards;
                 match (kind, selected_item) {
+                    #[cfg(feature = "android-rns-config")]
+                    (CardKind::Tcp, LOCAL_SHARE_MENU_ITEM) => UiAction::CopySidebandJoinConfig,
                     (_, POWER_MENU_ITEM) => UiAction::ToggleSelectedInterface,
                     (
                         CardKind::WifiStation | CardKind::WifiStationDisabled,

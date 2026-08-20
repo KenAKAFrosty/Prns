@@ -46,6 +46,7 @@ impl InvalidMobileInputCode {
 pub enum MobileActionCode {
     None = 0,
     Announce = 1,
+    CopySidebandJoinConfig = 2,
 }
 
 impl MobileActionCode {
@@ -53,6 +54,7 @@ impl MobileActionCode {
     pub const fn encode(action: UiAction) -> Self {
         match action {
             UiAction::Announce => Self::Announce,
+            UiAction::CopySidebandJoinConfig => Self::CopySidebandJoinConfig,
             UiAction::None
             | UiAction::OledOff
             | UiAction::ToggleOledAutoOff
@@ -226,6 +228,10 @@ mod tests {
         assert_eq!(
             MobileActionCode::encode(UiAction::Announce),
             MobileActionCode::Announce
+        );
+        assert_eq!(
+            MobileActionCode::encode(UiAction::CopySidebandJoinConfig),
+            MobileActionCode::CopySidebandJoinConfig
         );
         assert_eq!(
             MobileActionCode::encode(UiAction::Sleep),

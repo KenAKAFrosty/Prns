@@ -182,7 +182,7 @@ impl SharedInstanceServer {
         self
     }
 
-    /// Set the AF_UNIX `socket_path` to match an app configured with a non-default `local_socket_path` (the abstract socket bound becomes `\0rns/{socket_path}`). Linux only.
+    /// Set the AF_UNIX `socket_path` to match an app configured with a non-default `local_socket_path` (the abstract socket bound becomes `\0rns/{socket_path}`). Linux only. Replaces TCP; use [`Self::also_listen_on_abstract_unix`] to keep loopback TCP.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[must_use]
     pub fn with_socket_path(mut self, socket_path: impl Into<String>) -> Self {
@@ -191,6 +191,16 @@ impl SharedInstanceServer {
         self.status = TokioInterfaceStatus::new(self.id(), ConnectionState::Disconnected);
         self.bind_addr = None;
         self.socket_path = Some(socket_path);
+        self
+    }
+
+    /// Also bind `\0rns/{socket_path}` (stock RNS `instance_name`, default `default`) without dropping the TCP loopback listener.
+    ///
+    /// Android Sideband's baked config uses AF_UNIX, not `shared_instance_type = tcp`. If the Unix name is already taken, [`Self::bind`] still keeps TCP.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[must_use]
+    pub fn also_listen_on_abstract_unix(mut self, socket_path: impl Into<String>) -> Self {
+        self.socket_path = Some(socket_path.into());
         self
     }
 
@@ -209,15 +219,19 @@ impl SharedInstanceServer {
             None => None,
         };
         #[cfg(any(target_os = "linux", target_os = "android"))]
+        let tcp_also_bound = tcp_listener.is_some();
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         let abstract_unix = match self.socket_path {
-            Some(socket_path) => {
-                let listener = bind_abstract_unix(&socket_path)
-                    .map_err(|error| SharedInstanceServerBindError::AbstractUnix(error.kind()))?;
-                BoundAbstractUnix::Listening {
+            Some(socket_path) => match bind_abstract_unix(&socket_path) {
+                Ok(listener) => BoundAbstractUnix::Listening {
                     socket_path,
                     listener,
+                },
+                Err(_) if tcp_also_bound => BoundAbstractUnix::Disabled,
+                Err(error) => {
+                    return Err(SharedInstanceServerBindError::AbstractUnix(error.kind()));
                 }
-            }
+            },
             None => BoundAbstractUnix::Disabled,
         };
         self.status.set_connection(ConnectionState::Connected);
@@ -268,6 +282,14 @@ impl InterfaceSupervisor for SharedInstanceServer {
             return;
         };
         server.run(fleet).await;
+    }
+}
+
+impl BoundSharedInstanceServer {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[must_use]
+    pub fn listens_on_abstract_unix(&self) -> bool {
+        matches!(self.abstract_unix, BoundAbstractUnix::Listening { .. })
     }
 }
 
@@ -422,6 +444,62 @@ mod tests {
                 .bind_addr
                 .is_none()
         );
+        let both = SharedInstanceServer::with_port(37_428)
+            .also_listen_on_abstract_unix(shared_instance::DEFAULT_SOCKET_PATH);
+        assert!(both.bind_addr.is_some());
+        assert_eq!(
+            both.socket_path.as_deref(),
+            Some(shared_instance::DEFAULT_SOCKET_PATH)
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[tokio::test]
+    async fn tcp_and_abstract_unix_can_bind_together() {
+        #[cfg(target_os = "android")]
+        use std::os::android::net::SocketAddrExt;
+        #[cfg(target_os = "linux")]
+        use std::os::linux::net::SocketAddrExt;
+        let probe = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("an ephemeral port binds");
+        let port = probe.local_addr().expect("the probe has an address").port();
+        drop(probe);
+        let socket_path = std::format!("personal-test-dual-{port}");
+        let server = SharedInstanceServer::with_port(port)
+            .also_listen_on_abstract_unix(&socket_path)
+            .bind()
+            .await
+            .expect("TCP and Unix bind together");
+        assert!(server.listens_on_abstract_unix());
+        assert!(tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_ok());
+        let name = std::format!("rns/{socket_path}");
+        let addr = std::os::unix::net::SocketAddr::from_abstract_name(name.as_bytes())
+            .expect("the abstract name is valid");
+        assert!(std::os::unix::net::UnixStream::connect_addr(&addr).is_ok());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[tokio::test]
+    async fn a_taken_unix_name_does_not_drop_tcp_when_both_were_requested() {
+        let probe = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("an ephemeral port binds");
+        let port = probe.local_addr().expect("the probe has an address").port();
+        drop(probe);
+        let socket_path = std::format!("personal-test-unix-taken-{port}");
+        let _holder = bind_abstract_unix(&socket_path).expect("the abstract socket binds");
+        let server = SharedInstanceServer::with_port(port)
+            .also_listen_on_abstract_unix(&socket_path)
+            .bind()
+            .await
+            .expect("TCP still binds when Unix is taken");
+        assert!(!server.listens_on_abstract_unix());
+        assert!(tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_ok());
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]

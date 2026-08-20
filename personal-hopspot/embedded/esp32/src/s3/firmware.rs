@@ -758,6 +758,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             request_radio_mode(next);
                         }
                         screen::UiAction::OpenDocs => {}
+                        screen::UiAction::CopySidebandJoinConfig => {}
                         screen::UiAction::None => {}
                     }
                 }
