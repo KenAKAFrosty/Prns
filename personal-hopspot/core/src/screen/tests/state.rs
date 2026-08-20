@@ -244,20 +244,23 @@ fn available_gnss_menu_toggles_the_live_panel_and_receiver_demand() {
     state.handle_input(InputEvent::ShortPress, content);
     state.handle_input(InputEvent::ShortPress, content);
     assert_eq!(state.global_menu_selected_item(), Some(2));
-    assert_eq!(state.global_menu_item_label(2, "GPS"), "GPS On");
+    assert_eq!(state.global_menu_item_label(GlobalMenuItem::Gnss), "GPS On");
     assert_eq!(
         state.handle_input(InputEvent::LongPress, content),
-        UiAction::SetGnssEnabled(true)
+        UiAction::ControlGnss(GnssReceiverCommand::Enable)
     );
     assert!(state.gnss_visible());
 
     state.handle_input(InputEvent::LongPress, content);
     state.handle_input(InputEvent::ShortPress, content);
     state.handle_input(InputEvent::ShortPress, content);
-    assert_eq!(state.global_menu_item_label(2, "GPS"), "GPS Off");
+    assert_eq!(
+        state.global_menu_item_label(GlobalMenuItem::Gnss),
+        "GPS Off"
+    );
     assert_eq!(
         state.handle_input(InputEvent::LongPress, content),
-        UiAction::SetGnssEnabled(false)
+        UiAction::ControlGnss(GnssReceiverCommand::Disable)
     );
     assert!(!state.gnss_visible());
 }

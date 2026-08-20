@@ -7,13 +7,13 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
-use prns_core::capabilities::positioning::gnss::{GnssSnapshot, NmeaParser};
+use prns_core::capabilities::positioning::gnss::{GnssReceiverCommand, GnssSnapshot, NmeaParser};
 
 const RESET_HOLD: Duration = Duration::from_millis(100);
 const READ_BYTES: usize = 64;
 const ERROR_RETRY: Duration = Duration::from_millis(100);
 
-static COMMAND: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+static COMMAND: Signal<CriticalSectionRawMutex, GnssReceiverCommand> = Signal::new();
 static SNAPSHOT: Mutex<CriticalSectionRawMutex, RefCell<GnssSnapshot>> =
     Mutex::new(RefCell::new(GnssSnapshot::Disabled));
 
@@ -56,13 +56,12 @@ impl T096Gnss {
     }
 }
 
-pub(crate) fn set_enabled(enabled: bool) {
-    publish(if enabled {
-        GnssSnapshot::Starting
-    } else {
-        GnssSnapshot::Disabled
+pub(crate) fn control(command: GnssReceiverCommand) {
+    publish(match command {
+        GnssReceiverCommand::Enable => GnssSnapshot::Starting,
+        GnssReceiverCommand::Disable => GnssSnapshot::Disabled,
     });
-    COMMAND.signal(enabled);
+    COMMAND.signal(command);
 }
 
 pub(crate) fn snapshot() -> GnssSnapshot {
@@ -74,10 +73,13 @@ pub(crate) async fn drive(mut gnss: T096Gnss) -> ! {
     publish(GnssSnapshot::Disabled);
 
     loop {
-        if !COMMAND.wait().await {
-            gnss.stop();
-            publish(GnssSnapshot::Disabled);
-            continue;
+        match COMMAND.wait().await {
+            GnssReceiverCommand::Enable => {}
+            GnssReceiverCommand::Disable => {
+                gnss.stop();
+                publish(GnssSnapshot::Disabled);
+                continue;
+            }
         }
 
         publish(GnssSnapshot::Starting);
@@ -100,10 +102,14 @@ pub(crate) async fn drive(mut gnss: T096Gnss) -> ! {
                     publish(GnssSnapshot::Error);
                     match select(Timer::after(ERROR_RETRY), COMMAND.wait()).await {
                         Either::First(()) => {}
-                        Either::Second(command) => enabled = command,
+                        Either::Second(command) => {
+                            enabled = command == GnssReceiverCommand::Enable;
+                        }
                     }
                 }
-                Either::Second(command) => enabled = command,
+                Either::Second(command) => {
+                    enabled = command == GnssReceiverCommand::Enable;
+                }
             }
         }
 

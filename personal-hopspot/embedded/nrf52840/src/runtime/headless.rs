@@ -409,7 +409,8 @@ pub async fn run(spawner: Spawner) -> ! {
             let mut notice_until_ms = None;
             loop {
                 let battery_mv = battery.sample_millivolts().await;
-                let battery_state = battery_gauge.update(Some(battery_mv), t096_usb_vbus_present());
+                let battery_state =
+                    battery_gauge.update(Some(battery_mv), board::external_power_state());
                 let snapshots = t096_snapshots(lora_status, usb_status);
                 let mut cards: heapless::Vec<hopspot::Card, 2> =
                     hopspot::snapshots_to_cards(&snapshots, |id| {
@@ -449,7 +450,9 @@ pub async fn run(spawner: Spawner) -> ! {
                         animation_ms: now_ms,
                     },
                 );
-                let _panel_changed = display.flush();
+                // A transient panel fault must not take the networking node down. The display
+                // retains the last confirmed frame, so the next face tick retries the update.
+                let _panel_update = display.flush();
                 match select3(
                     board::INPUT_EVENTS.receive(),
                     INTERFACE_STORE.changed(),
@@ -477,7 +480,7 @@ pub async fn run(spawner: Spawner) -> ! {
                                 notice_until_ms = Some((now_ms + 900, notice));
                                 lora_status.disable();
                                 usb_status.disable();
-                                board::set_gnss_enabled(false);
+                                board::control_gnss(hopspot::GnssReceiverCommand::Disable);
                             }
                             hopspot::UiAction::Wake => {
                                 let notice = hopspot::UiNotice::Awake;
@@ -486,11 +489,11 @@ pub async fn run(spawner: Spawner) -> ! {
                                 lora_status.enable();
                                 usb_status.enable();
                                 if ui_state.gnss_visible() {
-                                    board::set_gnss_enabled(true);
+                                    board::control_gnss(hopspot::GnssReceiverCommand::Enable);
                                 }
                             }
-                            hopspot::UiAction::SetGnssEnabled(enabled) => {
-                                board::set_gnss_enabled(enabled);
+                            hopspot::UiAction::ControlGnss(command) => {
+                                board::control_gnss(command);
                             }
                             hopspot::UiAction::ToggleSelectedInterface => {
                                 if let Some(card) = ui_state.selected_card(content.cards) {
@@ -628,9 +631,4 @@ fn t096_snapshots(
         });
     }
     snapshots
-}
-
-#[cfg(feature = "board-t096")]
-fn t096_usb_vbus_present() -> bool {
-    embassy_nrf::pac::POWER.usbregstatus().read().vbusdetect()
 }

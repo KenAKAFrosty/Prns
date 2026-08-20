@@ -115,12 +115,12 @@ final class HopspotBridge: ObservableObject {
         let state = UIDevice.current.batteryState
         guard level >= 0, state != .unknown else { return }
         let percent = Int32((level * 100).rounded())
-        let charging = state == .charging || state == .full
+        let externallyPowered = state == .charging || state == .full
         if updateRenderer {
-            hopspot_set_battery(handle, percent, charging)
+            hopspot_set_battery(handle, percent, externallyPowered)
         }
         logger.notice(
-            "HOPSPOT_IOS_TELEMETRY percent=\(percent, privacy: .public) charging=\(charging, privacy: .public) thermal=\(ProcessInfo.processInfo.thermalState.rawValue, privacy: .public)"
+            "HOPSPOT_IOS_TELEMETRY percent=\(percent, privacy: .public) externally_powered=\(externallyPowered, privacy: .public) thermal=\(ProcessInfo.processInfo.thermalState.rawValue, privacy: .public)"
         )
     }
 }

@@ -125,16 +125,16 @@ impl<I: embedded_hal::i2c::I2c> screen::BatterySource for Axp2101Battery<I> {
         (mv >= 100).then_some(mv)
     }
 
-    fn is_charging(&mut self) -> bool {
+    fn external_power(&mut self) -> screen::ExternalPowerState {
         let mut s = [0u8];
         if self
             .i2c
             .write_read(AXP2101_ADDR, &[AXP2101_STATUS1], &mut s)
             .is_err()
         {
-            return false;
+            return screen::ExternalPowerState::Unknown;
         }
-        s[0] & AXP2101_VBUS_GOOD != 0
+        screen::ExternalPowerState::from_presence(s[0] & AXP2101_VBUS_GOOD != 0)
     }
 }
 

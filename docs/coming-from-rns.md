@@ -135,5 +135,5 @@ By default, `prnsd` will find the active Reticulum configuration automatically; 
 
 ## Verify it yourself
 
-- [Run the interoperability suite](validation.md): real stock RNS 1.4.2 nodes against Prns nodes, on your own machine, traffic checked byte for byte.
+- [Run the interoperability suite](validation.md): real stock RNS 1.4.2 nodes against Prns nodes, on your own machine. Encodings are checked byte for byte against stock RNS, and live sessions are proven by outcome: paths resolve, proofs land, transferred files arrive byte-identical.
 - [Read the benchmark methodology](../benchmarks/README.md): how runs are calibrated, qualified, and published before any number becomes a claim.

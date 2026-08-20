@@ -272,7 +272,8 @@ private class HopspotView(
         return detector.onTouchEvent(event) || super.onTouchEvent(event)
     }
 
-    // Read the OS battery (level + charging) from the sticky ACTION_BATTERY_CHANGED intent and push
+    // Read the OS battery level and external-power presence from the sticky
+    // ACTION_BATTERY_CHANGED intent and push
     // it to the native face. Throttled to ~1s; the sticky read needs no registered receiver and
     // works on every API level.
     private fun pushBattery(current: PrnsService) {
@@ -284,8 +285,8 @@ private class HopspotView(
             return
         }
         val percent = level * 100 / scale
-        val charging = status.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
-        current.setBattery(percent, charging)
+        val externallyPowered = status.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
+        current.setBattery(percent, externallyPowered)
     }
 
     fun stop() {

@@ -10,7 +10,10 @@ use personal_rns::interfaces::lora::{
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::storage::{DisplayedStorageLimits, StorageCapacity};
 
-use crate::{BatteryPercent, BatteryState, GnssSnapshot, PersistenceState};
+use crate::{
+    BatteryPercent, ChargingState, ExternalPowerState, GnssReceiverCommand, GnssSnapshot,
+    PersistenceState, PowerSnapshot,
+};
 
 use super::limits::{build_limit_rows, LimitRow, LimitValue};
 use super::model::InterfaceMenuDetailKind;
@@ -42,9 +45,10 @@ use super::state::lora::{
     LORA_REGION_CANCEL, PRESET_CHOICES,
 };
 use super::state::{
-    UiMode, ANNOUNCE_MENU_ITEM, LORA_RESET_MENU_ITEM, LORA_TUNE_MENU_ITEM, OLED_AUTO_OFF_MENU_ITEM,
-    OLED_OFF_MENU_ITEM, POWER_MENU_ITEM, POWER_ONLY_MENU_ITEMS, RADIO_MENU_ITEM_NO_DISPLAY,
-    SHARED_INSTANCE_CONFIG_MENU_ITEM, SLEEP_MENU_ITEM, STATION_UPLINK_MENU_ITEM, WIFI_MENU_ITEMS,
+    GlobalMenuItem, UiMode, ANNOUNCE_MENU_ITEM, LORA_RESET_MENU_ITEM, LORA_TUNE_MENU_ITEM,
+    OLED_AUTO_OFF_MENU_ITEM, OLED_OFF_MENU_ITEM, POWER_MENU_ITEM, POWER_ONLY_MENU_ITEMS,
+    RADIO_MENU_ITEM_NO_DISPLAY, SHARED_INSTANCE_CONFIG_MENU_ITEM, SLEEP_MENU_ITEM,
+    STATION_UPLINK_MENU_ITEM, WIFI_MENU_ITEMS,
 };
 use super::{
     apply_and_persist_radio_profile, card_label, render as render_screen, sort_cards_for_display,
@@ -103,7 +107,7 @@ impl OriginDimensions for PanelDisplay {
 fn render_with_state<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     cards: &[Card],
-    battery: BatteryState,
+    battery: PowerSnapshot,
     state: &UiState,
 ) {
     let interface_menu_details = InterfaceMenuDetails::empty();
@@ -123,7 +127,7 @@ fn render_with_state<D: DrawTarget<Color = BinaryColor>>(
 fn render_with_local_docs<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     cards: &[Card],
-    battery: BatteryState,
+    battery: PowerSnapshot,
     state: &UiState,
     local_docs: &LocalDocsAccess<'_>,
 ) {

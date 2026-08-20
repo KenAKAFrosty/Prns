@@ -1,7 +1,12 @@
 use super::*;
 
-fn charging(percent: u8) -> BatteryState {
-    BatteryState::Charging(BatteryPercent::saturating(percent))
+fn charging(percent: u8) -> PowerSnapshot {
+    PowerSnapshot::new(
+        Some(BatteryPercent::saturating(percent)),
+        ExternalPowerState::Present {
+            charging: ChargingState::Charging,
+        },
+    )
 }
 
 #[test]
@@ -46,7 +51,7 @@ fn ble_icon_reads_as_bluetooth_rune() {
 fn unknown_battery_dash_is_symmetric() {
     let mut display = MockDisplay::new();
 
-    draw_battery(&mut display, 2, 0, BatteryState::Unknown, true);
+    draw_battery(&mut display, 2, 0, PowerSnapshot::UNKNOWN, true);
 
     assert_eq!(display.get_pixel(Point::new(5, 4)), None);
     for x in 6..=12 {

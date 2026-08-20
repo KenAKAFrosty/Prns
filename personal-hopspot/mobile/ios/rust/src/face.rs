@@ -1,9 +1,9 @@
 use heapless::Vec as HVec;
 use personal_hopspot_core::{
     render, snapshots_to_cards, snapshots_to_interface_menu_details, splash, AccessPointState,
-    BatteryState, Card, CardActivityTracker, DisplayPowerControl, InputEvent,
-    MobileRgbaFrameBuffer, RenderFrame, ScreenContent, SplashContent, UiAction, UiConfiguration,
-    UiNotice, UiState,
+    Card, CardActivityTracker, DisplayPowerControl, InputEvent, MobileRgbaFrameBuffer,
+    PowerSnapshot, RenderFrame, ScreenContent, SplashContent, UiAction, UiConfiguration, UiNotice,
+    UiState,
 };
 use personal_rns::interfaces::InterfaceSnapshot;
 use personal_rns::storage::{GrowableHeap, StorageLayout};
@@ -29,7 +29,7 @@ fn ui_state() -> UiState {
 pub struct HopspotFace {
     state: UiState,
     framebuffer: MobileRgbaFrameBuffer,
-    battery: BatteryState,
+    battery: PowerSnapshot,
     activity: CardActivityTracker<MAX_CARDS>,
     activity_started: Instant,
     notice_started: Option<Instant>,
@@ -40,7 +40,7 @@ impl HopspotFace {
         Self {
             state: ui_state(),
             framebuffer: MobileRgbaFrameBuffer::new(),
-            battery: BatteryState::Unknown,
+            battery: PowerSnapshot::UNKNOWN,
             activity: CardActivityTracker::new(),
             activity_started: Instant::now(),
             notice_started: None,
@@ -52,7 +52,7 @@ impl HopspotFace {
         self.notice_started = Some(Instant::now());
     }
 
-    pub fn set_battery(&mut self, battery: BatteryState) {
+    pub fn set_battery(&mut self, battery: PowerSnapshot) {
         self.battery = battery;
     }
 
@@ -90,7 +90,7 @@ impl HopspotFace {
             UiAction::None
             | UiAction::OledOff
             | UiAction::ToggleOledAutoOff
-            | UiAction::SetGnssEnabled(_)
+            | UiAction::ControlGnss(_)
             | UiAction::ToggleStationUplink
             | UiAction::OpenLoRaEditor
             | UiAction::OpenDocs
@@ -183,7 +183,7 @@ mod tests {
             Self {
                 state: ui_state(),
                 framebuffer: MobileRgbaFrameBuffer::new(),
-                battery: BatteryState::Unknown,
+                battery: PowerSnapshot::UNKNOWN,
                 activity: CardActivityTracker::new(),
                 activity_started: Instant::now(),
                 notice_started: None,

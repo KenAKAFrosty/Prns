@@ -60,7 +60,7 @@ impl MobileActionCode {
             | UiAction::ToggleOledAutoOff
             | UiAction::Sleep
             | UiAction::Wake
-            | UiAction::SetGnssEnabled(_)
+            | UiAction::ControlGnss(_)
             | UiAction::ToggleSelectedInterface
             | UiAction::ToggleStationUplink
             | UiAction::OpenDocs

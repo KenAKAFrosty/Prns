@@ -12,7 +12,8 @@ pub use personal_hopspot_core::{
 
 use core::ffi::c_char;
 use personal_hopspot_core::{
-    BatteryPercent, BatteryState, MobileActionCode, MobileInputCode, COALESCE_MS,
+    BatteryPercent, ExternalPowerState, MobileActionCode, MobileInputCode, PowerSnapshot,
+    COALESCE_MS,
 };
 
 /// # Safety
@@ -93,7 +94,7 @@ pub extern "C" fn hopspot_announce() {
 pub unsafe extern "C" fn hopspot_set_battery(
     handle: *mut HopspotFace,
     percent: i32,
-    charging: bool,
+    externally_powered: bool,
 ) {
     // SAFETY: the caller contract guarantees either null or unique access to a live HopspotFace for
     // this call; `as_mut` handles null without dereferencing it.
@@ -102,11 +103,10 @@ pub unsafe extern "C" fn hopspot_set_battery(
     };
     let pct = percent.clamp(0, 100) as u8;
     let pct = BatteryPercent::saturating(pct);
-    let state = if charging {
-        BatteryState::Charging(pct)
-    } else {
-        BatteryState::Level(pct)
-    };
+    let state = PowerSnapshot::new(
+        Some(pct),
+        ExternalPowerState::from_presence(externally_powered),
+    );
     face.set_battery(state);
 }
 

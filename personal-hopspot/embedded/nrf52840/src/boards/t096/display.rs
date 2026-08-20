@@ -49,6 +49,11 @@ const GMCTRN1: u8 = 0xe1;
 // Meshtastic's hardware-validated T096 support.
 const LANDSCAPE_MADCTL: u8 = 0x80 | 0x20 | 0x08;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DisplayIoError {
+    Spi,
+}
+
 pub(crate) struct St7735Display<SPI> {
     spi: SPI,
     dc: Output<'static>,
@@ -82,7 +87,7 @@ where
         }
     }
 
-    pub(crate) async fn initialize(&mut self) -> Result<(), ()> {
+    pub(crate) async fn initialize(&mut self) -> Result<(), DisplayIoError> {
         // Backlight is active-low. Keep it dark until controller setup and the initial black clear
         // both succeed, avoiding a bright panel-RAM flash during boot.
         self.backlight.set_high();
@@ -144,10 +149,9 @@ where
     }
 
     /// Flush the 64x128 shared portrait canvas, rotated clockwise and centered on the 160x80 TFT.
-    /// Returns whether the physical panel changed.
-    pub(crate) fn flush(&mut self) -> Result<bool, ()> {
+    pub(crate) fn flush(&mut self) -> Result<(), DisplayIoError> {
         if !self.initialized || (self.has_displayed_frame && self.frame == self.displayed_frame) {
-            return Ok(false);
+            return Ok(());
         }
 
         self.set_window(
@@ -174,10 +178,10 @@ where
         }
         self.displayed_frame.copy_from_slice(&self.frame);
         self.has_displayed_frame = true;
-        Ok(true)
+        Ok(())
     }
 
-    fn clear_panel(&mut self) -> Result<(), ()> {
+    fn clear_panel(&mut self) -> Result<(), DisplayIoError> {
         self.set_window(0, 0, PANEL_WIDTH - 1, PANEL_HEIGHT - 1)?;
         self.write_command(RAMWR)?;
         let black_row = [0u8; PANEL_WIDTH as usize * 2];
@@ -187,7 +191,7 @@ where
         Ok(())
     }
 
-    fn set_window(&mut self, x0: u16, y0: u16, x1: u16, y1: u16) -> Result<(), ()> {
+    fn set_window(&mut self, x0: u16, y0: u16, x1: u16, y1: u16) -> Result<(), DisplayIoError> {
         let x0 = x0 + ROTATION_ONE_COLUMN_OFFSET;
         let x1 = x1 + ROTATION_ONE_COLUMN_OFFSET;
         let y0 = y0 + ROTATION_ONE_ROW_OFFSET;
@@ -202,7 +206,7 @@ where
         )
     }
 
-    fn command(&mut self, command: u8, data: &[u8]) -> Result<(), ()> {
+    fn command(&mut self, command: u8, data: &[u8]) -> Result<(), DisplayIoError> {
         self.write_command(command)?;
         if !data.is_empty() {
             self.write_data(data)?;
@@ -210,14 +214,14 @@ where
         Ok(())
     }
 
-    fn write_command(&mut self, command: u8) -> Result<(), ()> {
+    fn write_command(&mut self, command: u8) -> Result<(), DisplayIoError> {
         self.dc.set_low();
-        self.spi.write(&[command]).map_err(|_| ())
+        self.spi.write(&[command]).map_err(|_| DisplayIoError::Spi)
     }
 
-    fn write_data(&mut self, data: &[u8]) -> Result<(), ()> {
+    fn write_data(&mut self, data: &[u8]) -> Result<(), DisplayIoError> {
         self.dc.set_high();
-        self.spi.write(data).map_err(|_| ())
+        self.spi.write(data).map_err(|_| DisplayIoError::Spi)
     }
 
     fn pixel_is_on(&self, x: u32, y: u32) -> bool {

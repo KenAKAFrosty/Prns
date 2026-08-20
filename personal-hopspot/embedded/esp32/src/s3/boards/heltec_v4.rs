@@ -41,7 +41,7 @@ const CHARGE_RISE_MV: u32 = 16;
 
 /// The Heltec V4's battery sense: VBAT on a 49:10 divider into ADC1 (GPIO1), gated by GPIO37. The
 /// shared [`BatteryGauge`](screen::BatteryGauge) owns the percentage curve; this reads the divided
-/// millivolts and keeps two EMAs (fast + slow) so [`is_charging`](Self::is_charging) can infer the
+/// millivolts and keeps two EMAs (fast + slow) so [`external_power`](Self::external_power) can infer the
 /// plugged/charging state this board gives no direct signal for. ADC oneshots can report
 /// `WouldBlock`, so a read is retried briefly.
 pub struct HeltecBattery {
@@ -78,8 +78,14 @@ impl screen::BatterySource for HeltecBattery {
     /// the terminal voltage is stepping/trending up (plug-in or active charge). Fades when the cell
     /// is full (flat) or on unplug (step down) — an approximation that answers "did plugging in
     /// actually start charging?", which is the signal that matters on a board with no charge pin.
-    fn is_charging(&mut self) -> bool {
-        self.fast_ema_mv > self.slow_ema_mv.saturating_add(CHARGE_RISE_MV)
+    fn external_power(&mut self) -> screen::ExternalPowerState {
+        if self.fast_ema_mv > self.slow_ema_mv.saturating_add(CHARGE_RISE_MV) {
+            screen::ExternalPowerState::Present {
+                charging: screen::ChargingState::Charging,
+            }
+        } else {
+            screen::ExternalPowerState::Unknown
+        }
     }
 }
 

@@ -48,8 +48,8 @@ pub(super) fn draw_gnss_panel<D: DrawTarget<Color = BinaryColor>>(
 
     if let Some(fix) = snapshot.fix() {
         let position = fix.position();
-        let latitude = coordinate_text(position.latitude().get(), true);
-        let longitude = coordinate_text(position.longitude().get(), false);
+        let latitude = coordinate_text(position.latitude().get(), CoordinateAxis::Latitude);
+        let longitude = coordinate_text(position.longitude().get(), CoordinateAxis::Longitude);
         let _ = Text::with_baseline(
             latitude.as_str(),
             Point::new(2, GNSS_PANEL_TOP + 8),
@@ -80,21 +80,26 @@ pub(super) fn draw_gnss_panel<D: DrawTarget<Color = BinaryColor>>(
     );
 }
 
-fn coordinate_text(value_e7: i32, latitude: bool) -> HString<16> {
+#[derive(Clone, Copy)]
+enum CoordinateAxis {
+    Latitude,
+    Longitude,
+}
+
+fn coordinate_text(value_e7: i32, axis: CoordinateAxis) -> HString<16> {
     let mut text = HString::new();
-    let direction = match (latitude, value_e7.is_negative()) {
-        (true, false) => 'N',
-        (true, true) => 'S',
-        (false, false) => 'E',
-        (false, true) => 'W',
+    let direction = match (axis, value_e7.is_negative()) {
+        (CoordinateAxis::Latitude, false) => 'N',
+        (CoordinateAxis::Latitude, true) => 'S',
+        (CoordinateAxis::Longitude, false) => 'E',
+        (CoordinateAxis::Longitude, true) => 'W',
     };
     let magnitude = value_e7.unsigned_abs();
     let degrees = magnitude / 10_000_000;
     let fraction = magnitude % 10_000_000;
-    let _ = if latitude {
-        write!(text, "{direction} {degrees:02}.{fraction:07}")
-    } else {
-        write!(text, "{direction} {degrees:03}.{fraction:07}")
+    let _ = match axis {
+        CoordinateAxis::Latitude => write!(text, "{direction} {degrees:02}.{fraction:07}"),
+        CoordinateAxis::Longitude => write!(text, "{direction} {degrees:03}.{fraction:07}"),
     };
     text
 }
@@ -105,9 +110,12 @@ mod tests {
 
     #[test]
     fn coordinate_text_is_fixed_width_and_hemisphere_explicit() {
-        assert_eq!(coordinate_text(481_173_000, true).as_str(), "N 48.1173000");
         assert_eq!(
-            coordinate_text(-115_166_666, false).as_str(),
+            coordinate_text(481_173_000, CoordinateAxis::Latitude).as_str(),
+            "N 48.1173000"
+        );
+        assert_eq!(
+            coordinate_text(-115_166_666, CoordinateAxis::Longitude).as_str(),
             "W 011.5166666"
         );
     }

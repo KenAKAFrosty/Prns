@@ -14,33 +14,39 @@ use lora::{lora_editor_hold, lora_editor_tap, region_index, LoRaHold, LoRaScreen
 const INITIAL_VISIBLE_FOCUS_ITEMS: usize = 3;
 const SCROLLED_VISIBLE_FOCUS_ITEMS: usize = 2;
 const PERSISTENCE_NOTICE_MILLIS: u64 = 5_000;
-pub(in crate::screen) const GLOBAL_MENU_ITEMS: &[&str] = &["Announce", "Limits", "Sleep", "Back"];
-pub(in crate::screen) const GLOBAL_MENU_ITEMS_GNSS: &[&str] =
-    &["Announce", "Limits", "GPS", "Sleep", "Back"];
-pub(in crate::screen) const GLOBAL_MENU_ITEMS_DISPLAY: &[&str] = &[
-    "Announce", "Limits", "OLED Off", "Auto Off", "Sleep", "Back",
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::screen) enum GlobalMenuItem {
+    Announce,
+    Limits,
+    Gnss,
+    OledOff,
+    OledAutoOff,
+    Sleep,
+    RadioMode,
+    Back,
+}
+
+const GLOBAL_MENU_ORDER: [GlobalMenuItem; 8] = [
+    GlobalMenuItem::Announce,
+    GlobalMenuItem::Limits,
+    GlobalMenuItem::Gnss,
+    GlobalMenuItem::OledOff,
+    GlobalMenuItem::OledAutoOff,
+    GlobalMenuItem::Sleep,
+    GlobalMenuItem::RadioMode,
+    GlobalMenuItem::Back,
 ];
-pub(in crate::screen) const GLOBAL_MENU_ITEMS_GNSS_DISPLAY: &[&str] = &[
-    "Announce", "Limits", "GPS", "OLED Off", "Auto Off", "Sleep", "Back",
-];
-pub(in crate::screen) const GLOBAL_MENU_ITEMS_AP: &[&str] =
-    &["Announce", "Limits", "Sleep", "AP Mode", "Back"];
-pub(in crate::screen) const GLOBAL_MENU_ITEMS_AP_GNSS: &[&str] =
-    &["Announce", "Limits", "GPS", "Sleep", "AP Mode", "Back"];
-pub(in crate::screen) const GLOBAL_MENU_ITEMS_AP_DISPLAY: &[&str] = &[
-    "Announce", "Limits", "OLED Off", "Auto Off", "Sleep", "AP Mode", "Back",
-];
-pub(in crate::screen) const GLOBAL_MENU_ITEMS_AP_GNSS_DISPLAY: &[&str] = &[
-    "Announce", "Limits", "GPS", "OLED Off", "Auto Off", "Sleep", "AP Mode", "Back",
-];
+
+#[cfg(test)]
 pub(in crate::screen) const ANNOUNCE_MENU_ITEM: usize = 0;
-const LIMITS_MENU_ITEM: usize = 1;
-const GNSS_MENU_ITEM: usize = 2;
+#[cfg(test)]
 pub(in crate::screen) const OLED_OFF_MENU_ITEM: usize = 2;
+#[cfg(test)]
 pub(in crate::screen) const OLED_AUTO_OFF_MENU_ITEM: usize = 3;
+#[cfg(test)]
 pub(in crate::screen) const SLEEP_MENU_ITEM: usize = 4;
-pub(in crate::screen) const RADIO_MENU_ITEM: usize = 5;
-const SLEEP_MENU_ITEM_NO_DISPLAY: usize = 2;
+#[cfg(test)]
 pub(in crate::screen) const RADIO_MENU_ITEM_NO_DISPLAY: usize = 3;
 pub(in crate::screen) const POWER_MENU_ITEM: usize = 0;
 pub(in crate::screen) const POWER_ONLY_MENU_ITEMS: &[&str] = &["Power", "Back"];
@@ -89,7 +95,7 @@ pub enum UiAction {
     ToggleOledAutoOff,
     Sleep,
     Wake,
-    SetGnssEnabled(bool),
+    ControlGnss(crate::GnssReceiverCommand),
     /// Flip the selected card's interface off or back on, keyed by the card's [`id`](crate::screen::Card::id).
     ToggleSelectedInterface,
     ToggleStationUplink,
@@ -439,99 +445,52 @@ impl UiState {
         self.gnss_visible
     }
 
-    pub(in crate::screen) fn global_menu_items(&self) -> &'static [&'static str] {
-        match (self.display_power_control, self.access_point, self.gnss) {
-            (
-                DisplayPowerControl::Available,
-                AccessPointState::Inactive | AccessPointState::Active,
-                GnssAvailability::Available,
-            ) => GLOBAL_MENU_ITEMS_AP_GNSS_DISPLAY,
-            (
-                DisplayPowerControl::Available,
-                AccessPointState::Inactive | AccessPointState::Active,
-                GnssAvailability::Unavailable,
-            ) => GLOBAL_MENU_ITEMS_AP_DISPLAY,
-            (
-                DisplayPowerControl::Available,
-                AccessPointState::Unsupported,
-                GnssAvailability::Available,
-            ) => GLOBAL_MENU_ITEMS_GNSS_DISPLAY,
-            (
-                DisplayPowerControl::Available,
-                AccessPointState::Unsupported,
-                GnssAvailability::Unavailable,
-            ) => GLOBAL_MENU_ITEMS_DISPLAY,
-            (
-                DisplayPowerControl::Unavailable,
-                AccessPointState::Inactive | AccessPointState::Active,
-                GnssAvailability::Available,
-            ) => GLOBAL_MENU_ITEMS_AP_GNSS,
-            (
-                DisplayPowerControl::Unavailable,
-                AccessPointState::Inactive | AccessPointState::Active,
-                GnssAvailability::Unavailable,
-            ) => GLOBAL_MENU_ITEMS_AP,
-            (
-                DisplayPowerControl::Unavailable,
-                AccessPointState::Unsupported,
-                GnssAvailability::Available,
-            ) => GLOBAL_MENU_ITEMS_GNSS,
-            (
-                DisplayPowerControl::Unavailable,
-                AccessPointState::Unsupported,
-                GnssAvailability::Unavailable,
-            ) => GLOBAL_MENU_ITEMS,
-        }
+    pub(in crate::screen) fn global_menu_items(&self) -> impl Iterator<Item = GlobalMenuItem> + '_ {
+        GLOBAL_MENU_ORDER
+            .into_iter()
+            .filter(|item| self.global_menu_item_available(*item))
     }
 
-    pub(in crate::screen) fn global_radio_menu_item(&self) -> usize {
-        let item = match self.display_power_control {
-            DisplayPowerControl::Available => RADIO_MENU_ITEM,
-            DisplayPowerControl::Unavailable => RADIO_MENU_ITEM_NO_DISPLAY,
-        };
-        item + self.gnss_menu_offset()
-    }
-
-    fn global_sleep_menu_item(&self) -> usize {
-        let item = match self.display_power_control {
-            DisplayPowerControl::Available => SLEEP_MENU_ITEM,
-            DisplayPowerControl::Unavailable => SLEEP_MENU_ITEM_NO_DISPLAY,
-        };
-        item + self.gnss_menu_offset()
-    }
-
-    fn global_oled_off_menu_item(&self) -> usize {
-        OLED_OFF_MENU_ITEM + self.gnss_menu_offset()
-    }
-
-    fn global_oled_auto_off_menu_item(&self) -> usize {
-        OLED_AUTO_OFF_MENU_ITEM + self.gnss_menu_offset()
-    }
-
-    fn global_gnss_menu_item(&self) -> Option<usize> {
-        (self.gnss == GnssAvailability::Available).then_some(GNSS_MENU_ITEM)
-    }
-
-    const fn gnss_menu_offset(&self) -> usize {
-        match self.gnss {
-            GnssAvailability::Unavailable => 0,
-            GnssAvailability::Available => 1,
-        }
-    }
-
-    pub(in crate::screen) fn global_menu_item_label(
-        &self,
-        index: usize,
-        fallback: &'static str,
-    ) -> &'static str {
-        if self.global_gnss_menu_item() == Some(index) {
-            if self.gnss_visible {
-                "GPS Off"
-            } else {
-                "GPS On"
+    fn global_menu_item_available(&self, item: GlobalMenuItem) -> bool {
+        match item {
+            GlobalMenuItem::Gnss => self.gnss == GnssAvailability::Available,
+            GlobalMenuItem::OledOff | GlobalMenuItem::OledAutoOff => {
+                self.display_power_control == DisplayPowerControl::Available
             }
-        } else {
-            fallback
+            GlobalMenuItem::RadioMode => self.access_point != AccessPointState::Unsupported,
+            GlobalMenuItem::Announce
+            | GlobalMenuItem::Limits
+            | GlobalMenuItem::Sleep
+            | GlobalMenuItem::Back => true,
+        }
+    }
+
+    fn global_menu_item_count(&self) -> usize {
+        self.global_menu_items().count()
+    }
+
+    fn global_menu_item(&self, index: usize) -> Option<GlobalMenuItem> {
+        self.global_menu_items().nth(index)
+    }
+
+    pub(in crate::screen) const fn global_menu_item_label(
+        &self,
+        item: GlobalMenuItem,
+    ) -> &'static str {
+        match item {
+            GlobalMenuItem::Announce => "Announce",
+            GlobalMenuItem::Limits => "Limits",
+            GlobalMenuItem::Gnss if self.gnss_visible => "GPS Off",
+            GlobalMenuItem::Gnss => "GPS On",
+            GlobalMenuItem::OledOff => "OLED Off",
+            GlobalMenuItem::OledAutoOff => "Auto Off",
+            GlobalMenuItem::Sleep => "Sleep",
+            GlobalMenuItem::RadioMode => match self.access_point {
+                AccessPointState::Active => "BLE Mode",
+                AccessPointState::Inactive => "AP Mode",
+                AccessPointState::Unsupported => "Radio Mode",
+            },
+            GlobalMenuItem::Back => "Back",
         }
     }
 
@@ -563,7 +522,7 @@ impl UiState {
             }
         }
         if let UiMode::GlobalMenu { selected_item } = self.mode {
-            let count = self.global_menu_items().len();
+            let count = self.global_menu_item_count();
             self.mode = UiMode::GlobalMenu {
                 selected_item: selected_item.min(count - 1),
             };
@@ -617,56 +576,53 @@ impl UiState {
                 UiAction::None
             }
             (InputEvent::ShortPress, UiMode::GlobalMenu { selected_item }) => {
-                let count = self.global_menu_items().len();
+                let count = self.global_menu_item_count();
                 self.mode = UiMode::GlobalMenu {
                     selected_item: (selected_item + 1) % count,
                 };
                 UiAction::None
             }
-            (InputEvent::LongPress, UiMode::GlobalMenu { selected_item }) => match selected_item {
-                ANNOUNCE_MENU_ITEM => {
-                    self.mode = UiMode::Cards;
-                    UiAction::Announce
-                }
-                LIMITS_MENU_ITEM => {
-                    self.mode = UiMode::LimitsPage { page: 0 };
-                    UiAction::None
-                }
-                item if self.global_gnss_menu_item() == Some(item) => {
-                    self.gnss_visible = !self.gnss_visible;
-                    self.mode = UiMode::Cards;
-                    UiAction::SetGnssEnabled(self.gnss_visible)
-                }
-                item if self.display_power_control == DisplayPowerControl::Available
-                    && (item == self.global_oled_off_menu_item()
-                        || item == self.global_oled_auto_off_menu_item()) =>
-                {
-                    if item == self.global_oled_off_menu_item() {
+            (InputEvent::LongPress, UiMode::GlobalMenu { selected_item }) => {
+                match self.global_menu_item(selected_item) {
+                    Some(GlobalMenuItem::Announce) => {
+                        self.mode = UiMode::Cards;
+                        UiAction::Announce
+                    }
+                    Some(GlobalMenuItem::Limits) => {
+                        self.mode = UiMode::LimitsPage { page: 0 };
+                        UiAction::None
+                    }
+                    Some(GlobalMenuItem::Gnss) => {
+                        self.gnss_visible = !self.gnss_visible;
+                        self.mode = UiMode::Cards;
+                        UiAction::ControlGnss(if self.gnss_visible {
+                            crate::GnssReceiverCommand::Enable
+                        } else {
+                            crate::GnssReceiverCommand::Disable
+                        })
+                    }
+                    Some(GlobalMenuItem::OledOff) => {
                         self.mode = UiMode::Cards;
                         UiAction::OledOff
-                    } else if item == self.global_oled_auto_off_menu_item() {
+                    }
+                    Some(GlobalMenuItem::OledAutoOff) => {
                         self.mode = UiMode::Cards;
                         UiAction::ToggleOledAutoOff
-                    } else {
+                    }
+                    Some(GlobalMenuItem::Sleep) => {
+                        self.mode = UiMode::Sleeping;
+                        UiAction::Sleep
+                    }
+                    Some(GlobalMenuItem::RadioMode) => {
+                        self.mode = UiMode::ConfirmRadioSwap { confirm: false };
+                        UiAction::None
+                    }
+                    Some(GlobalMenuItem::Back) | None => {
                         self.mode = UiMode::Cards;
                         UiAction::None
                     }
                 }
-                item if item == self.global_sleep_menu_item() => {
-                    self.mode = UiMode::Sleeping;
-                    UiAction::Sleep
-                }
-                item if self.access_point != AccessPointState::Unsupported
-                    && item == self.global_radio_menu_item() =>
-                {
-                    self.mode = UiMode::ConfirmRadioSwap { confirm: false };
-                    UiAction::None
-                }
-                _ => {
-                    self.mode = UiMode::Cards;
-                    UiAction::None
-                }
-            },
+            }
             (InputEvent::ShortPress, UiMode::ConfirmRadioSwap { confirm }) => {
                 self.mode = UiMode::ConfirmRadioSwap { confirm: !confirm };
                 UiAction::None

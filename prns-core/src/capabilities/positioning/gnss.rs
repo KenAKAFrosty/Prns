@@ -2,6 +2,15 @@ use super::GeographicPosition;
 
 const NMEA_SENTENCE_BYTES: usize = 96;
 
+/// A host command for a controllable GNSS receiver.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GnssReceiverCommand {
+    /// Power or wake the receiver and begin acquiring a fix.
+    Enable,
+    /// Stop acquisition and place the receiver in its board-defined disabled state.
+    Disable,
+}
+
 /// Provider-specific quality metadata accompanying a valid GNSS position.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GnssFix {
@@ -139,13 +148,14 @@ impl Default for NmeaParser {
 }
 
 fn parse_gga(sentence: &[u8]) -> Option<GnssSnapshot> {
-    if sentence.get(3..6) != Some(b"GGA") {
+    if sentence.get(3..7) != Some(b"GGA,") {
         return None;
     }
-    let satellites = parse_unsigned(nmea_field(sentence, 7)?)
-        .unwrap_or(0)
-        .min(u32::from(u8::MAX)) as u8;
-    let quality = parse_unsigned(nmea_field(sentence, 6)?).unwrap_or(0);
+    let satellites = match nmea_field(sentence, 7)? {
+        [] => 0,
+        field => parse_unsigned(field)?.min(u32::from(u8::MAX)) as u8,
+    };
+    let quality = parse_unsigned(nmea_field(sentence, 6)?)?;
     if quality == 0 {
         return Some(GnssSnapshot::Searching { satellites });
     }
@@ -177,6 +187,12 @@ enum CoordinateAxis {
     Longitude,
 }
 
+#[derive(Clone, Copy)]
+enum CoordinateSign {
+    Positive,
+    Negative,
+}
+
 impl CoordinateAxis {
     const fn degree_digits(self) -> usize {
         match self {
@@ -192,10 +208,10 @@ impl CoordinateAxis {
         }
     }
 
-    fn negative(self, hemisphere: &[u8]) -> Option<bool> {
+    fn sign(self, hemisphere: &[u8]) -> Option<CoordinateSign> {
         match (self, hemisphere) {
-            (Self::Latitude, b"N") | (Self::Longitude, b"E") => Some(false),
-            (Self::Latitude, b"S") | (Self::Longitude, b"W") => Some(true),
+            (Self::Latitude, b"N") | (Self::Longitude, b"E") => Some(CoordinateSign::Positive),
+            (Self::Latitude, b"S") | (Self::Longitude, b"W") => Some(CoordinateSign::Negative),
             _ => None,
         }
     }
@@ -219,13 +235,13 @@ fn parse_coordinate(value: &[u8], hemisphere: &[u8], axis: CoordinateAxis) -> Op
     }
     let degrees = parse_unsigned(&value[..degree_digits])?;
     let minutes_e7 = parse_decimal_scaled(&value[degree_digits..], 10_000_000)?;
-    coordinate_e7(degrees, minutes_e7, axis.negative(hemisphere)?, axis)
+    coordinate_e7(degrees, minutes_e7, axis.sign(hemisphere)?, axis)
 }
 
 fn coordinate_e7(
     degrees: u32,
     minutes_e7: u32,
-    negative: bool,
+    sign: CoordinateSign,
     axis: CoordinateAxis,
 ) -> Option<i32> {
     const MINUTES_PER_DEGREE_E7: u32 = 60 * 10_000_000;
@@ -238,7 +254,10 @@ fn coordinate_e7(
         return None;
     }
     let coordinate = i64::from(degrees) * 10_000_000 + i64::from(minutes_e7) / 60;
-    let signed = if negative { -coordinate } else { coordinate };
+    let signed = match sign {
+        CoordinateSign::Positive => coordinate,
+        CoordinateSign::Negative => -coordinate,
+    };
     i32::try_from(signed).ok()
 }
 
@@ -384,6 +403,14 @@ mod tests {
                 .is_none()
         );
         assert!(parse(b"$GPRMC,123519,A,4807.038,N,01131.000,E,0,0,230394,,,A*68\r\n").is_none());
+
+        for malformed in [
+            "GPGGAX,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,",
+            "GPGGA,123519,4807.038,N,01131.000,E,X,08,0.9,545.4,M,46.9,M,,",
+        ] {
+            let malformed = checksummed(malformed);
+            assert_eq!(parse(malformed.as_bytes()), None);
+        }
     }
 
     #[test]
@@ -518,7 +545,12 @@ mod kani_proofs {
         } else {
             CoordinateAxis::Longitude
         };
-        let coordinate = coordinate_e7(kani::any(), kani::any(), kani::any(), axis);
+        let sign = if kani::any() {
+            CoordinateSign::Positive
+        } else {
+            CoordinateSign::Negative
+        };
+        let coordinate = coordinate_e7(kani::any(), kani::any(), sign, axis);
 
         if let Some(coordinate) = coordinate {
             assert!(coordinate.unsigned_abs() <= axis.max_degrees() * 10_000_000);

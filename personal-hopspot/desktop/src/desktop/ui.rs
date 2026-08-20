@@ -557,7 +557,7 @@ pub(super) fn run_window(handles: WindowHandles) {
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
         }
         UiAction::ToggleOledAutoOff => {}
-        UiAction::SetGnssEnabled(_) => {}
+        UiAction::ControlGnss(_) => {}
         UiAction::Sleep => {
             ui_state.show_notice(screen::UiNotice::Sleeping);
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);

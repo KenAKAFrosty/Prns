@@ -13,7 +13,7 @@ fn gnss_panel_stays_between_the_global_row_and_selected_interface() {
         &mut display,
         RenderFrame {
             content,
-            battery: BatteryState::Unknown,
+            battery: PowerSnapshot::UNKNOWN,
             gnss: Some(GnssSnapshot::Searching { satellites: 7 }),
             state: &state,
             interface_menu_details: &interface_menu_details,
@@ -44,7 +44,7 @@ fn render_marks_selected_card_below_global_row() {
     let mut state = test_ui_state();
     state.handle_input(InputEvent::ShortPress, content);
 
-    render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
+    render_with_state(&mut display, &cards, PowerSnapshot::UNKNOWN, &state);
 
     let selected_top = FIRST_CARD_WITH_GLOBAL_TOP;
     assert!(state
@@ -76,7 +76,7 @@ fn render_shows_selected_global_row() {
     let cards = [test_card("USB")];
     let state = test_ui_state();
 
-    render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
+    render_with_state(&mut display, &cards, PowerSnapshot::UNKNOWN, &state);
 
     assert!(state.global_selected());
     assert_eq!(
@@ -138,7 +138,7 @@ fn render_scrolls_local_docs_after_the_last_card() {
     render_with_local_docs(
         &mut display,
         &cards,
-        BatteryState::Unknown,
+        PowerSnapshot::UNKNOWN,
         &state,
         &local_docs,
     );
@@ -169,7 +169,7 @@ fn render_shows_local_docs_access_details() {
     render_with_local_docs(
         &mut display,
         &cards,
-        BatteryState::Unknown,
+        PowerSnapshot::UNKNOWN,
         &state,
         &local_docs,
     );
@@ -226,7 +226,7 @@ fn render_scrolls_global_row_out_of_card_window() {
     state.handle_input(InputEvent::ShortPress, content);
     state.handle_input(InputEvent::ShortPress, content);
 
-    render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
+    render_with_state(&mut display, &cards, PowerSnapshot::UNKNOWN, &state);
 
     assert!(state
         .selected_card(&cards)
@@ -252,7 +252,7 @@ fn render_shows_global_menu() {
     let mut state = test_ui_state();
     state.handle_input(InputEvent::LongPress, content);
 
-    render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
+    render_with_state(&mut display, &cards, PowerSnapshot::UNKNOWN, &state);
 
     assert_eq!(state.global_menu_selected_item(), Some(0));
     assert_eq!(
@@ -301,7 +301,7 @@ fn render_shows_selected_interface_menu() {
     state.handle_input(InputEvent::ShortPress, content);
     state.handle_input(InputEvent::LongPress, content);
 
-    render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
+    render_with_state(&mut display, &cards, PowerSnapshot::UNKNOWN, &state);
 
     assert!(state
         .selected_card(&cards)

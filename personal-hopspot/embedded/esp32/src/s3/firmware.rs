@@ -393,7 +393,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         }
         #[cfg(feature = "lora")]
         let mut working_lora_profile = lora_profile;
-        let mut battery_state = screen::BatteryState::Unknown;
+        let mut battery_state = screen::PowerSnapshot::UNKNOWN;
         let mut battery_gauge = screen::BatteryGauge::lipo();
         let active_ap_ssid = (radio_mode == RadioMode::AccessPoint).then(ap_ssid);
         let local_docs = active_ap_ssid
@@ -563,7 +563,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 notice_until_ms = Some((now_ms + NOTICE_MS, notice));
                             }
                         }
-                        screen::UiAction::SetGnssEnabled(_) => {}
+                        screen::UiAction::ControlGnss(_) => {}
                         screen::UiAction::Sleep => {
                             ui_state.show_notice(screen::UiNotice::Sleeping);
                             notice_until_ms =

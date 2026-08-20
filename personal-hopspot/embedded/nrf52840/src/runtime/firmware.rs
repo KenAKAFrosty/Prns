@@ -337,7 +337,10 @@ pub async fn run(spawner: Spawner) -> ! {
             let mut adc = [0i16; 1];
             saadc.sample(&mut adc).await;
             let vbat_mv = (adc[0].max(0) as u32) * 6000 / 4096;
-            let battery = battery_gauge.update(Some(vbat_mv), usb_vbus_present());
+            let battery = battery_gauge.update(
+                Some(vbat_mv),
+                hopspot::ExternalPowerState::from_presence(usb_vbus_present()),
+            );
 
             let snapshots = build_snapshots(lora_status, usb_status);
             let mut cards = build_cards(&snapshots, lora_status.id(), usb_status.id());
@@ -571,7 +574,7 @@ pub async fn run(spawner: Spawner) -> ! {
                         hopspot::UiAction::OledOff => {}
                         hopspot::UiAction::ToggleOledAutoOff => {}
                         hopspot::UiAction::CopySharedInstanceConfig => {}
-                        hopspot::UiAction::SetGnssEnabled(_) => {}
+                        hopspot::UiAction::ControlGnss(_) => {}
                         hopspot::UiAction::None => {}
                     }
                 }

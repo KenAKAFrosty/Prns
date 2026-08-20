@@ -12,7 +12,7 @@ use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
 use embedded_graphics::text::{Baseline, Text};
 
-use crate::{BatteryState, GnssSnapshot};
+use crate::{GnssSnapshot, PowerSnapshot};
 
 use super::limits::build_limit_rows;
 use super::model::{InterfaceMenuDetails, ScreenContent};
@@ -29,7 +29,7 @@ use menus::{
 
 pub struct RenderFrame<'frame, 'docs> {
     pub content: ScreenContent<'frame, 'docs>,
-    pub battery: BatteryState,
+    pub battery: PowerSnapshot,
     pub gnss: Option<GnssSnapshot>,
     pub state: &'frame UiState,
     pub interface_menu_details: &'frame InterfaceMenuDetails,
@@ -175,7 +175,7 @@ pub fn render<D: DrawTarget<Color = BinaryColor>>(display: &mut D, frame: Render
 
 pub fn splash<D: DrawTarget<Color = BinaryColor>>(display: &mut D, content: SplashContent) {
     let _ = display.clear(BinaryColor::Off);
-    draw_title_bar(display, BatteryState::Unknown, 0);
+    draw_title_bar(display, PowerSnapshot::UNKNOWN, 0);
     let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
     let mut y = CARD_TOP + 4;
     for line in content.lines() {

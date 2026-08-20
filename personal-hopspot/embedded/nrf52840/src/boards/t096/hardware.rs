@@ -18,8 +18,11 @@ use embassy_time::{Delay, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use personal_rns::lora::LoRaInterface;
 use personal_rns::radios::sx126x::{BoardConfig, ExternalPowerAmplifier, Sx126x, TcxoVoltage};
+use prns_core::capabilities::power::ExternalPowerState;
 
 use crate::boards::status_led::StatusLed;
+
+use super::display::DisplayIoError;
 
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
@@ -161,7 +164,12 @@ impl T096Board {
         let display_backlight = Output::new(peripherals.P1_12, Level::High, OutputDrive::Standard);
         let mut display =
             super::Display::new(display_spi, display_dc, display_reset, display_backlight);
-        let _display_initialized = display.initialize().await.is_ok();
+        match display.initialize().await {
+            Ok(()) => {}
+            // Display initialization is optional to node operation. Its uninitialized marker
+            // keeps the face task dormant while LoRa, USB, BLE, and GNSS remain available.
+            Err(DisplayIoError::Spi) => {}
+        }
 
         // AIN1 sees VBAT through Heltec's gated 390k/100k divider. Gain 1/5 against the 0.6 V
         // internal reference yields the 3.0 V ADC range used by Heltec's reference firmware.
@@ -276,6 +284,10 @@ const _: () = {
     assert!(t096_chip_power_dbm(5) == -9);
     assert!(t096_chip_power_dbm(22) == 8);
 };
+
+pub(crate) fn external_power_state() -> ExternalPowerState {
+    ExternalPowerState::from_presence(embassy_nrf::pac::POWER.usbregstatus().read().vbusdetect())
+}
 
 fn enter_transmit() {
     HELD_IO.lock(|held| {
