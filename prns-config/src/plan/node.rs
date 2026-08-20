@@ -7,6 +7,7 @@ use prns_core::interface_discovery::{
     DEFAULT_STAMP_COST,
 };
 use prns_core::interfaces::{BitrateBps, InterfaceGravity};
+use prns_core::routing::links::resources::ResourceMemoryLimits;
 
 use super::error::{GlobalPlanError, PlanError, PlanningError};
 use super::interface::{
@@ -23,7 +24,8 @@ use crate::reference::keys::{
 use crate::reference::{ReferenceConfig, ReferenceConfigParams, ReferenceRemoteManagement};
 use crate::{ConfigDiagnostic, ConfigDiagnosticCode, ConfigErrors, ConfigReport, SourceLocations};
 
-/// The complete, host-agnostic description of a node to stand up, projected from a stock RNS config.
+/// The complete description of a node to stand up, projected from an RNS-compatible
+/// configuration including supported Prns extensions.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DaemonPlan {
     pub transport: TransportPlan,
@@ -33,6 +35,7 @@ pub struct DaemonPlan {
     pub blackhole_exchange: BlackholeExchangePlan,
     pub protocol: ProtocolPlan,
     pub logging: LoggingPlan,
+    pub resource_memory_limits: ResourceMemoryLimits,
     pub panic_on_interface_error: bool,
     pub network_identity_path: Option<PathBuf>,
     pub discovery: InterfaceDiscoveryPolicy,
@@ -346,6 +349,16 @@ pub(super) fn build_plan(config: &ReferenceConfig) -> Result<DaemonPlan, Vec<Pla
             use_implicit_proof: global_bool(&config.globals, global_key::USE_IMPLICIT_PROOF, true),
         },
         logging: logging_plan(config),
+        resource_memory_limits: ResourceMemoryLimits {
+            incoming_bytes: config
+                .prns
+                .resource_mem_in
+                .unwrap_or(ResourceMemoryLimits::DEFAULT_HOST.incoming_bytes),
+            outgoing_bytes: config
+                .prns
+                .resource_mem_out
+                .unwrap_or(ResourceMemoryLimits::DEFAULT_HOST.outgoing_bytes),
+        },
         panic_on_interface_error: global_bool(
             &config.globals,
             global_key::PANIC_ON_INTERFACE_ERROR,

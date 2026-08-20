@@ -9,14 +9,16 @@ use prns_core::interfaces::IFAC_MAX_SIZE;
 use super::diagnostics::{ErrorCode, ErrorDiagnostic, WarningCode, WarningDiagnostic};
 use super::i2p::validate_peers;
 use super::interface_type::InterfaceType;
-use super::interpret::{cleaned_number, parse_bool, parse_identity_hash, ReferenceError};
+use super::interpret::{
+    cleaned_number, parse_bool, parse_byte_quantity, parse_identity_hash, ReferenceError,
+};
 use super::keys::rnode as rnode_key;
 use super::keys::{
     common as common_key, global as global_key, interface as interface_key, section as section_key,
 };
 use super::schema::{
     interface_key_rule, known_interface_keys, KeyApplication, KeyRule, ValueKind, GLOBAL_RULES,
-    LOGGING_RULES, SUPPORTED_INTERFACES,
+    LOGGING_RULES, PRNS_RULES, SUPPORTED_INTERFACES,
 };
 
 #[derive(Default)]
@@ -87,6 +89,7 @@ pub(super) fn validate(
         .iter()
         .map(|(key, _)| *key)
         .collect::<Vec<_>>();
+    let prns_keys = PRNS_RULES.iter().map(|(key, _)| *key).collect::<Vec<_>>();
 
     for (key, value) in &root.scalars {
         let line = location(locations, &[key]);
@@ -111,6 +114,17 @@ pub(super) fn validate(
                 format!("logging setting {key:?} is outside [logging] and will not be applied"),
                 Some(format!("{key} must be under [logging]")),
                 format!("move `{key} = {}` into [logging]", value_text(value)),
+            ));
+        } else if prns_keys.contains(&key.as_str()) {
+            errors.push(ErrorDiagnostic::new(
+                ErrorCode::MisplacedKey,
+                source,
+                line,
+                format!("<root> > {key}"),
+                Some(value_text(value)),
+                format!("Prns setting {key:?} is outside [prns] and will not be applied"),
+                Some(format!("{key} must be under [prns]")),
+                format!("move `{key} = {}` into [prns]", value_text(value)),
             ));
         } else {
             warnings.push(unknown_key(
@@ -157,12 +171,23 @@ pub(super) fn validate(
                 &mut warnings,
                 &mut errors,
             ),
+            section_key::PRNS => validate_section(
+                source,
+                "[prns]",
+                &[section_key::PRNS],
+                section,
+                PRNS_RULES,
+                locations,
+                &mut warnings,
+                &mut errors,
+            ),
             section_key::INTERFACES => {
                 validate_interfaces(source, section, locations, &mut warnings, &mut errors)
             }
             _ => {
                 let known = [
                     section_key::RETICULUM,
+                    section_key::PRNS,
                     section_key::LOGGING,
                     section_key::INTERFACES,
                 ];
@@ -174,9 +199,13 @@ pub(super) fn validate(
                     format!("[{name}]"),
                     Some(name.clone()),
                     "unknown top-level section; its settings will not be applied",
-                    Some("[reticulum], [logging], or [interfaces]".to_string()),
+                    Some("[reticulum], [prns], [logging], or [interfaces]".to_string()),
                     suggestion.map_or_else(
-                        || format!("remove [{name}] or move its settings into a stock section"),
+                        || {
+                            format!(
+                                "remove [{name}] or move its settings into a recognized section"
+                            )
+                        },
                         |expected| format!("rename [{name}] to [{expected}]"),
                     ),
                 ));
@@ -1785,7 +1814,8 @@ fn accepted_for_key(key: &str, kind: ValueKind) -> String {
         | ValueKind::RnodeMultiFrequency
         | ValueKind::RnodeMultiTxPower
         | ValueKind::BlackholeUpdateInterval
-        | ValueKind::WebSocketFramingSelection => return kind.accepted().to_string(),
+        | ValueKind::WebSocketFramingSelection
+        | ValueKind::ByteQuantity => return kind.accepted().to_string(),
         _ => {}
     }
     match key {
@@ -1887,7 +1917,8 @@ pub(super) fn example_for_key(key: &str, kind: ValueKind) -> &'static str {
         | ValueKind::RnodeMultiFrequency
         | ValueKind::RnodeMultiTxPower
         | ValueKind::BlackholeUpdateInterval
-        | ValueKind::WebSocketFramingSelection => return kind.example(),
+        | ValueKind::WebSocketFramingSelection
+        | ValueKind::ByteQuantity => return kind.example(),
         _ => {}
     }
     match key {
@@ -2153,6 +2184,7 @@ fn normalized_value(value: &Value, kind: ValueKind) -> Result<String, ()> {
                 .name()
                 .to_string()
         }
+        ValueKind::ByteQuantity => parse_byte_quantity(text).map_err(|_error| ())?.to_string(),
     };
     Ok(normalized)
 }
@@ -2331,6 +2363,16 @@ pub(super) fn legacy_diagnostic(
             reason,
             None,
             format!("replace {key:?} with a valid value"),
+        ),
+        ReferenceError::BadPrnsValue { key, reason } => ConfigDiagnostic::new(
+            ConfigDiagnosticCode::InvalidValue,
+            source,
+            location(locations, &[section_key::PRNS, &key]),
+            format!("[prns] > {key}"),
+            None,
+            reason,
+            Some(ValueKind::ByteQuantity.accepted().to_string()),
+            format!("set `{key} = {}`", ValueKind::ByteQuantity.example()),
         ),
     }
 }

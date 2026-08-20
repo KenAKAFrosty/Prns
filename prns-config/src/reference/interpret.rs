@@ -9,12 +9,14 @@ use crate::configobj::{ConfigError, Section, Value};
 
 use super::interface_type::InterfaceType;
 use super::keys::{
-    common as common_key, global as global_key, interface as interface_key, section as section_key,
+    common as common_key, global as global_key, interface as interface_key, prns as prns_key,
+    section as section_key,
 };
 use super::types::{
     RNodeRadio, RNodeSubinterface, ReferenceAnnounceRateTarget, ReferenceBlackholeExchange,
     ReferenceConfig, ReferenceConfigParams, ReferenceDiscoveryConfig, ReferenceInterface,
-    ReferenceInterfaceDiscovery, ReferenceMode, ReferenceRemoteManagement, ReferenceValue,
+    ReferenceInterfaceDiscovery, ReferenceMode, ReferencePrnsConfig, ReferenceRemoteManagement,
+    ReferenceValue,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -29,6 +31,10 @@ pub(super) enum ReferenceError {
         reason: &'static str,
     },
     BadGlobalValue {
+        key: String,
+        reason: &'static str,
+    },
+    BadPrnsValue {
         key: String,
         reason: &'static str,
     },
@@ -57,6 +63,9 @@ impl fmt::Display for ReferenceError {
             ReferenceError::BadGlobalValue { key, reason } => {
                 write!(f, "reticulum key '{key}': {reason}")
             }
+            ReferenceError::BadPrnsValue { key, reason } => {
+                write!(f, "prns key '{key}': {reason}")
+            }
         }
     }
 }
@@ -72,6 +81,9 @@ pub(super) fn interpret(root: &Section) -> Result<ReferenceConfig, ReferenceErro
     config.discovery = interpret_discovery_config(&config.globals)?;
     config.blackhole_exchange = interpret_blackhole_exchange(&config.globals)?;
     config.remote_management = interpret_remote_management(&config.globals)?;
+    if let Some(prns) = root.section(section_key::PRNS) {
+        config.prns = interpret_prns_config(prns)?;
+    }
     if let Some(interfaces) = root.section(section_key::INTERFACES) {
         for (name, section) in &interfaces.sections {
             if let Some(interface) = interpret_interface(name, section)? {
@@ -80,7 +92,10 @@ pub(super) fn interpret(root: &Section) -> Result<ReferenceConfig, ReferenceErro
         }
     }
     for (name, section) in &root.sections {
-        if name == section_key::RETICULUM || name == section_key::INTERFACES {
+        if name == section_key::RETICULUM
+            || name == section_key::PRNS
+            || name == section_key::INTERFACES
+        {
             continue;
         }
         config
@@ -88,6 +103,57 @@ pub(super) fn interpret(root: &Section) -> Result<ReferenceConfig, ReferenceErro
             .insert(name.clone(), scalar_map(section));
     }
     Ok(config)
+}
+
+fn interpret_prns_config(section: &Section) -> Result<ReferencePrnsConfig, ReferenceError> {
+    Ok(ReferencePrnsConfig {
+        resource_mem_in: prns_byte_quantity(section, prns_key::RESOURCE_MEM_IN)?,
+        resource_mem_out: prns_byte_quantity(section, prns_key::RESOURCE_MEM_OUT)?,
+    })
+}
+
+fn prns_byte_quantity(section: &Section, key: &str) -> Result<Option<usize>, ReferenceError> {
+    let Some(value) = section.get(key) else {
+        return Ok(None);
+    };
+    let text = value
+        .as_scalar()
+        .ok_or_else(|| bad_prns_value(key, "expected one byte quantity, found a list"))?;
+    parse_byte_quantity(text)
+        .map(Some)
+        .map_err(|_error| bad_prns_value(key, "expected an integer byte quantity"))
+}
+
+pub(super) struct ByteQuantityParseError;
+
+pub(super) fn parse_byte_quantity(text: &str) -> Result<usize, ByteQuantityParseError> {
+    let text = text.trim();
+    let (number, multiplier) = if let Some(number) = text.strip_suffix("GiB") {
+        (number, 1024_u128.pow(3))
+    } else if let Some(number) = text.strip_suffix("MiB") {
+        (number, 1024_u128.pow(2))
+    } else if let Some(number) = text.strip_suffix("KiB") {
+        (number, 1024_u128)
+    } else if let Some(number) = text.strip_suffix('B') {
+        (number, 1)
+    } else {
+        (text, 1)
+    };
+    let cleaned = cleaned_number(number.trim()).ok_or(ByteQuantityParseError)?;
+    let quantity = cleaned
+        .parse::<u128>()
+        .map_err(|_error| ByteQuantityParseError)?;
+    let bytes = quantity
+        .checked_mul(multiplier)
+        .ok_or(ByteQuantityParseError)?;
+    usize::try_from(bytes).map_err(|_error| ByteQuantityParseError)
+}
+
+fn bad_prns_value(key: &str, reason: &'static str) -> ReferenceError {
+    ReferenceError::BadPrnsValue {
+        key: key.to_string(),
+        reason,
+    }
 }
 
 fn interpret_blackhole_exchange(

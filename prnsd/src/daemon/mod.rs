@@ -345,7 +345,14 @@ pub(super) async fn run(
     .with_crypto_pool(CryptoPoolConfig::Pooled {
         workers: PoolWorkers::Auto,
     })
+    .with_resource_memory_limits(plan.resource_memory_limits)
     .with_protocol_policy(protocol_policy);
+    tracing::info!(
+        event = "resource_memory_limits_configured",
+        incoming_bytes = plan.resource_memory_limits.incoming_bytes,
+        outgoing_bytes = plan.resource_memory_limits.outgoing_bytes,
+        changes_require_restart = true,
+    );
     if let Err(error) = prns.register_preconfigured_destination(discovery_destination) {
         tracing::error!(
             event = "interface_discovery_destination_failed",
@@ -862,11 +869,7 @@ async fn apply_reload(
             return (ReloadResult::Rejected, None);
         }
     };
-    let mut active_globals = active_plan.clone();
-    active_globals.interfaces.clear();
-    let mut replacement_globals = replacement.clone();
-    replacement_globals.interfaces.clear();
-    if active_globals != replacement_globals {
+    if non_interface_configuration_changed(active_plan, &replacement) {
         tracing::info!(event = "interface_apply_restart_required");
         return (ReloadResult::RestartRequired, None);
     }
@@ -876,6 +879,17 @@ async fn apply_reload(
     let applied =
         matches!(result, ReloadResult::Applied | ReloadResult::Unchanged).then_some(replacement);
     (result, applied)
+}
+
+fn non_interface_configuration_changed(
+    active: &personal_rns::config::DaemonPlan,
+    replacement: &personal_rns::config::DaemonPlan,
+) -> bool {
+    let mut active = active.clone();
+    active.interfaces.clear();
+    let mut replacement = replacement.clone();
+    replacement.interfaces.clear();
+    active != replacement
 }
 
 #[cfg(test)]
@@ -904,5 +918,21 @@ mod status_tests {
                 unavailable: 2,
             }
         );
+    }
+
+    #[test]
+    fn resource_memory_limit_changes_require_a_daemon_restart() {
+        let active = personal_rns::config::parse_and_plan(
+            "[prns]\nresource_mem_in = 64 MiB\nresource_mem_out = 64 MiB\n",
+        )
+        .unwrap()
+        .value;
+        let changed = personal_rns::config::parse_and_plan(
+            "[prns]\nresource_mem_in = 32 MiB\nresource_mem_out = 64 MiB\n",
+        )
+        .unwrap()
+        .value;
+
+        assert!(non_interface_configuration_changed(&active, &changed));
     }
 }
