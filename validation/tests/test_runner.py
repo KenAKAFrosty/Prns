@@ -295,6 +295,24 @@ class RegistryTests(unittest.TestCase):
         ):
             self.assertEqual(runner.source_cargo_manifests(), {"Cargo.toml"})
 
+    def test_cargo_lock_registry_exactly_owns_first_party_workspaces(self) -> None:
+        self.assertEqual(
+            set(self.manifest["registry"]["cargo_lock_workspaces"]),
+            runner.source_cargo_lock_workspaces(),
+        )
+
+    def test_cargo_lock_discovery_excludes_vendored_upstream_locks(self) -> None:
+        sources = [
+            runner.ROOT / "Cargo.lock",
+            runner.ROOT / "first-party" / "Cargo.lock",
+            runner.ROOT / "first-party" / "vendor" / "upstream" / "Cargo.lock",
+        ]
+        with mock.patch.object(runner, "tracked_or_untracked_sources", return_value=sources):
+            self.assertEqual(
+                runner.source_cargo_lock_workspaces(),
+                {".", "first-party"},
+            )
+
     def test_unregistered_interop_asset_is_rejected(self) -> None:
         orphan = runner.ROOT / "validation/interop/peers/runner_self_test_orphan.py"
         orphan.write_text("# temporary registry self-test\n", encoding="utf-8")
