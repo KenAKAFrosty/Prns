@@ -67,6 +67,34 @@ T-Echo firmware:
 
     ./tools/prns device techo flash
 
+## Local developer web flasher
+
+Build and serve the current working tree for one or more shipping boards with:
+
+    ./tools/prns run device.hopspot.dev-flasher.serve -- BOARD --port PORT
+
+For example, the canonical Heltec V4 command is:
+
+    ./tools/prns run device.hopspot.dev-flasher.serve -- heltec-v4 --port 8765
+
+`BOARD` may be `heltec-v4`, `heltec-v4-r8`, `t-beam-supreme`,
+`xiao-esp32-c6`, or `t-echo`. Multiple unique board slugs may be supplied in
+one command, or `--all` may replace them. The command builds the selected
+firmware, creates a private temporary candidate, signs its manifest and preview
+channel with a newly generated ephemeral key, and serves the real flasher only
+on `127.0.0.1`. Open the printed `/flash` URL in the browser under test.
+
+Flashing erases and rewrites device flash and can destroy the installed
+firmware and stored device state. Confirm the selected board and recovery path
+before starting a flash. Press Ctrl-C to stop the server; the ephemeral secret
+key and temporary candidate are removed as the process exits.
+
+The browser trusts only the ephemeral public key compiled into that local
+website build. This makes the assembled local candidate internally verifiable,
+but it is not production signing, published release custody, or hardware and
+browser qualification evidence. A successful local flash does not qualify a
+signed release.
+
 Heltec T114 developer firmware:
 
     ./tools/prns build hopspot t114

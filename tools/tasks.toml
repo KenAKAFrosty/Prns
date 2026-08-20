@@ -829,6 +829,10 @@ entrypoint = ["python3", "tools/release/prnsd-distribution.py"]
 requires = ["python3"]
 
 [[internal]]
+path = "tools/device/developer_flasher_candidate.py"
+reason = "Validated local developer candidate boundary shared by the developer flasher workflow and its focused tests."
+
+[[internal]]
 path = "tools/release/flasher_acceptance_contract.py"
 reason = "Shared acceptance schema and scaffold implementation used by release commands and bundled qualification tools."
 
