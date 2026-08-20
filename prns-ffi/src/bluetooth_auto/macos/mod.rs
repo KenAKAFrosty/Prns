@@ -1,6 +1,7 @@
 mod backend;
 mod central;
 mod data_plane;
+mod discovery;
 mod gatt_link;
 mod gatt_write;
 mod peripheral;
