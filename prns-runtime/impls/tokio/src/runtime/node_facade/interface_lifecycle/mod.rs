@@ -173,6 +173,8 @@ impl PrnsNodeHandle {
                 gravity: descriptor.gravity,
                 ifac: ifac.as_ref().map(RuntimeIfac::snapshot),
                 name,
+                byte_accounting: ByteAccounting::OwnTraffic,
+                retired_member_bytes: RetiredMemberBytes::default(),
             }),
         );
         attached
@@ -183,13 +185,23 @@ impl PrnsNodeHandle {
         let Ok(map) = self.interfaces.lock() else {
             return std::vec::Vec::new();
         };
-        map.values()
-            .flat_map(|registered| {
+        map.iter()
+            .flat_map(|(owner, registered)| {
+                let owner = *owner;
                 let placement = registered.placement;
                 let ifac = registered.ifac.clone();
                 let name = registered.name.clone();
+                let byte_accounting = registered.byte_accounting;
+                let retired = registered.retired_member_bytes;
                 (registered.view)().into_iter().map(move |vitals| {
                     let counts = self.store.counts(vitals.id);
+                    let (rx_bytes, tx_bytes) = if vitals.id == owner
+                        && matches!(byte_accounting, ByteAccounting::FleetAggregate)
+                    {
+                        (retired.rx, retired.tx)
+                    } else {
+                        (vitals.rx_bytes, vitals.tx_bytes)
+                    };
                     InterfaceInventoryEntry {
                         name: name.clone(),
                         origin: placement.origin,
@@ -199,8 +211,8 @@ impl PrnsNodeHandle {
                             gravity: registered.gravity,
                             connection: vitals.connection,
                             failure_reason: vitals.failure_reason,
-                            rx_bytes: vitals.rx_bytes,
-                            tx_bytes: vitals.tx_bytes,
+                            rx_bytes,
+                            tx_bytes,
                             transfer_rates: vitals.transfer_rates,
                             destinations: counts.destinations,
                             links: counts.links,
@@ -306,6 +318,8 @@ impl PrnsNodeHandle {
                 gravity: policy.gravity,
                 ifac: ifac_status,
                 name: None,
+                byte_accounting: ByteAccounting::FleetAggregate,
+                retired_member_bytes: RetiredMemberBytes::default(),
             }),
         );
         AttachedSupervisor {
@@ -530,6 +544,8 @@ impl Fleet {
                 gravity: descriptor.gravity,
                 ifac: self.ifac.as_ref().map(RuntimeIfac::snapshot),
                 name: None,
+                byte_accounting: ByteAccounting::OwnTraffic,
+                retired_member_bytes: RetiredMemberBytes::default(),
             }),
         );
         attached
@@ -640,8 +656,10 @@ pub(super) async fn drive_interfaces(
                 }
                 Some(DriverMsg::Stop { id }) => {
                     let stopped = stop_interface(&mut stops, id);
-                    supervisor_of.remove(&id);
-                    forget_status(&interfaces, id);
+                    match supervisor_of.remove(&id) {
+                        Some(supervisor) => retire_member_status(&interfaces, id, supervisor),
+                        None => forget_status(&interfaces, id),
+                    }
                     stop_supervised_members(
                         &mut stops,
                         &mut supervisor_of,
@@ -687,6 +705,22 @@ pub(super) struct RegisteredInterface {
     gravity: crate::interfaces::InterfaceGravity,
     ifac: Option<InterfaceIfacSnapshot>,
     name: Option<String>,
+    byte_accounting: ByteAccounting,
+    retired_member_bytes: RetiredMemberBytes,
+}
+
+/// Whether this status owns its byte counters or mirrors the members that inventory tracks separately.
+#[derive(Clone, Copy)]
+pub(super) enum ByteAccounting {
+    OwnTraffic,
+    FleetAggregate,
+}
+
+/// Byte totals carried over from fleet members that have departed, so a supervisor's traffic odometer stays monotonic across member churn instead of dropping each departed connection's bytes from the aggregate.
+#[derive(Clone, Copy, Default)]
+pub(super) struct RetiredMemberBytes {
+    rx: u64,
+    tx: u64,
 }
 
 fn register_status(
@@ -706,6 +740,32 @@ fn forget_status(
     if let Ok(mut map) = interfaces.lock() {
         map.remove(&id);
     }
+}
+
+fn retire_member_status(
+    interfaces: &Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
+    member: InterfaceId,
+    supervisor: InterfaceId,
+) {
+    let Ok(mut map) = interfaces.lock() else {
+        return;
+    };
+    let Some(departed) = map.remove(&member) else {
+        return;
+    };
+    let (rx, tx) = (departed.view)()
+        .into_iter()
+        .fold((0u64, 0u64), |(rx, tx), vitals| {
+            (
+                rx.saturating_add(vitals.rx_bytes),
+                tx.saturating_add(vitals.tx_bytes),
+            )
+        });
+    let Some(kept) = map.get_mut(&supervisor) else {
+        return;
+    };
+    kept.retired_member_bytes.rx = kept.retired_member_bytes.rx.saturating_add(rx);
+    kept.retired_member_bytes.tx = kept.retired_member_bytes.tx.saturating_add(tx);
 }
 
 fn stop_interface(stops: &mut HashMap<InterfaceId, oneshot::Sender<()>>, id: InterfaceId) -> bool {
@@ -744,8 +804,10 @@ fn complete_interface(
     id: InterfaceId,
 ) {
     if stops.remove(&id).is_some() {
-        supervisor_of.remove(&id);
-        forget_status(interfaces, id);
+        match supervisor_of.remove(&id) {
+            Some(supervisor) => retire_member_status(interfaces, id, supervisor),
+            None => forget_status(interfaces, id),
+        }
         let _ = commands.send(HostCommand::RemoveInterface {
             id,
             departure: Departure::MayReturn,

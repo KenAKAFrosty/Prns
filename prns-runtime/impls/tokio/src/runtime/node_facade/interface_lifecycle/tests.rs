@@ -16,9 +16,13 @@ use crate::interfaces::{IfacContext, IfacSize};
 use crate::manifold::driver::{HostCommand, TokioInterfaceStatus};
 use crate::manifold::interface_seam::Interface;
 use crate::node_introspection::{InterfaceIfacSnapshot, InterfaceInventoryEntry};
+use prns_runtime::runtime::node_introspection::fold_logical_interface_inventory;
 
 use super::super::PrnsNodeHandle;
-use super::{drive_interfaces, DriverMsg, Fleet, RuntimeIfac};
+use super::{
+    drive_interfaces, ByteAccounting, DriverMsg, Fleet, InterfacePlacement, RegisteredInterface,
+    RetiredMemberBytes, RuntimeIfac,
+};
 
 struct LiveRun {
     live: Arc<AtomicUsize>,
@@ -183,6 +187,156 @@ async fn a_fleet_member_inherits_its_supervisors_ifac() {
             .network_name
             .as_deref(),
         Some("fleet-net")
+    );
+}
+
+fn registered_status(view: StatusView, membership: Membership) -> RegisteredInterface {
+    RegisteredInterface {
+        view,
+        placement: InterfacePlacement {
+            membership,
+            origin: InterfaceOriginKind::Configured,
+        },
+        mode: crate::interfaces::InterfaceMode::Boundary,
+        gravity: crate::interfaces::InterfaceGravity::new(-27),
+        ifac: None,
+        name: None,
+        byte_accounting: ByteAccounting::OwnTraffic,
+        retired_member_bytes: RetiredMemberBytes::default(),
+    }
+}
+
+#[tokio::test]
+async fn a_departed_fleet_members_bytes_retire_into_its_supervisor() {
+    let (msg_tx, msg_rx) = mpsc::unbounded_channel::<DriverMsg>();
+    let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<HostCommand>();
+
+    let supervisor_id = InterfaceId::new([0x72; 8]);
+    let supervisor_status =
+        TokioInterfaceStatus::new(supervisor_id, crate::interfaces::ConnectionState::Connected);
+    let member = StatusInterface::new(b"departing-member");
+    let member_id = member.id();
+    member.status.add_rx(4096);
+    member.status.add_tx(512);
+
+    let interfaces = Arc::new(Mutex::new(HashMap::new()));
+    {
+        let mut map = interfaces.lock().unwrap();
+        let supervisor_view: StatusView = {
+            let status = supervisor_status.clone();
+            Arc::new(move || std::vec![InterfaceVitals::of(&status)])
+        };
+        map.insert(
+            supervisor_id,
+            registered_status(supervisor_view, Membership::Independent),
+        );
+        map.insert(
+            member_id,
+            registered_status(
+                member.status_view().unwrap(),
+                Membership::FleetMember { supervisor_id },
+            ),
+        );
+    }
+
+    msg_tx
+        .send(DriverMsg::Add {
+            id: member_id,
+            supervisor: Some(supervisor_id),
+            build: Box::new(|| {
+                let run: Pin<Box<dyn Future<Output = ()>>> = Box::pin(async {});
+                run
+            }),
+        })
+        .expect("the driver is listening");
+    drop(msg_tx);
+
+    tokio::join!(
+        drive_interfaces(std::vec![], msg_rx, cmd_tx, interfaces.clone()),
+        async {
+            let command = tokio::time::timeout(std::time::Duration::from_secs(1), cmd_rx.recv())
+                .await
+                .expect("the driver culls the completed member within 1s")
+                .expect("the command channel stays open");
+            assert!(
+                matches!(
+                    command,
+                    HostCommand::RemoveInterface {
+                        id: removed,
+                        departure: Departure::MayReturn,
+                    } if removed == member_id
+                ),
+                "a self-completing fleet member deregisters as a may-return departure"
+            );
+        }
+    );
+
+    let map = interfaces.lock().unwrap();
+    assert!(
+        !map.contains_key(&member_id),
+        "a departed member leaves the status map"
+    );
+    let kept = map
+        .get(&supervisor_id)
+        .expect("the supervisor stays registered");
+    assert_eq!(
+        (kept.retired_member_bytes.rx, kept.retired_member_bytes.tx),
+        (4096, 512),
+        "the departed member's byte totals retire into its supervisor"
+    );
+}
+
+#[tokio::test]
+async fn inventory_replaces_a_fleet_aggregates_live_bytes_with_retired_member_bytes() {
+    let (handle, _command_rx) = handle();
+
+    let supervisor_id = InterfaceId::new([0x73; 8]);
+    let member_id = InterfaceId::new([0x74; 8]);
+    let supervisor_status =
+        TokioInterfaceStatus::new(supervisor_id, crate::interfaces::ConnectionState::Connected);
+    supervisor_status.add_rx(10);
+    supervisor_status.add_tx(20);
+    let member_status =
+        TokioInterfaceStatus::new(member_id, crate::interfaces::ConnectionState::Connected);
+    member_status.add_rx(10);
+    member_status.add_tx(20);
+    let supervisor_view: StatusView = {
+        let status = supervisor_status.clone();
+        Arc::new(move || std::vec![InterfaceVitals::of(&status)])
+    };
+    let member_view: StatusView = {
+        let status = member_status.clone();
+        Arc::new(move || std::vec![InterfaceVitals::of(&status)])
+    };
+    {
+        let mut map = handle.interfaces.lock().unwrap();
+        let mut registered = registered_status(supervisor_view, Membership::Independent);
+        registered.byte_accounting = ByteAccounting::FleetAggregate;
+        registered.retired_member_bytes = RetiredMemberBytes { rx: 4096, tx: 512 };
+        map.insert(supervisor_id, registered);
+        map.insert(
+            member_id,
+            registered_status(member_view, Membership::FleetMember { supervisor_id }),
+        );
+    }
+
+    let mut inventory = handle.interface_inventory();
+    let entry = inventory
+        .iter()
+        .find(|entry| entry.snapshot.id == supervisor_id)
+        .expect("the supervisor is in the inventory");
+    assert_eq!(
+        (entry.snapshot.rx_bytes, entry.snapshot.tx_bytes),
+        (4096, 512),
+        "inventory exposes retired bytes instead of re-counting the supervisor's live member aggregate"
+    );
+
+    let logical = fold_logical_interface_inventory(&mut inventory);
+    assert_eq!(logical.len(), 1);
+    assert_eq!(
+        (logical[0].snapshot.rx_bytes, logical[0].snapshot.tx_bytes),
+        (4106, 532),
+        "folding adds the live member exactly once to the retired odometer"
     );
 }
 

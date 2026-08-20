@@ -128,8 +128,8 @@ impl<Label> FoldedInterface<Label> {
             .unwrap_or(InterfaceGravity::ZERO);
         let root_rx_bytes = self.root.map_or(0, |snapshot| snapshot.rx_bytes);
         let root_tx_bytes = self.root.map_or(0, |snapshot| snapshot.tx_bytes);
-        let rx_bytes = root_rx_bytes.max(self.member_rx_bytes);
-        let tx_bytes = root_tx_bytes.max(self.member_tx_bytes);
+        let rx_bytes = root_rx_bytes.saturating_add(self.member_rx_bytes);
+        let tx_bytes = root_tx_bytes.saturating_add(self.member_tx_bytes);
         let transfer_rates = if self.has_members {
             self.member_rates
         } else {
@@ -293,24 +293,24 @@ mod tests {
         assert_eq!(logical[0].name, Some("Public server"));
         assert_eq!(logical[0].origin, InterfaceOriginKind::Configured);
         assert_eq!(logical[0].snapshot.id, supervisor);
-        assert_eq!(logical[0].snapshot.rx_bytes, 100);
+        assert_eq!(logical[0].snapshot.rx_bytes, 110);
         assert_eq!(logical[0].snapshot.destinations, 5);
         assert_eq!(logical[0].snapshot.links, 3);
         assert_eq!(logical[0].snapshot.membership, Membership::Independent);
     }
 
     #[test]
-    fn retained_supervisor_traffic_is_not_readded_to_live_members() {
+    fn the_folded_byte_odometer_holds_across_a_member_departure() {
         let supervisor = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"default");
         let peer = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"peer");
         let membership = Membership::FleetMember {
             supervisor_id: supervisor,
         };
-        let mut snapshots = [
+        let mut with_live_member = [
             snapshot(
                 supervisor,
                 Membership::Independent,
-                120,
+                90,
                 0,
                 0,
                 Some("Default Interface"),
@@ -318,7 +318,22 @@ mod tests {
             snapshot(peer, membership, 30, 0, 0, None),
         ];
 
-        let logical = fold_logical_interface_inventory(&mut snapshots);
+        let logical = fold_logical_interface_inventory(&mut with_live_member);
+
+        assert_eq!(logical.len(), 1);
+        assert_eq!(logical[0].snapshot.rx_bytes, 120);
+        assert_eq!(logical[0].snapshot.tx_bytes, 60);
+
+        let mut after_departure = [snapshot(
+            supervisor,
+            Membership::Independent,
+            120,
+            0,
+            0,
+            Some("Default Interface"),
+        )];
+
+        let logical = fold_logical_interface_inventory(&mut after_departure);
 
         assert_eq!(logical.len(), 1);
         assert_eq!(logical[0].snapshot.rx_bytes, 120);
