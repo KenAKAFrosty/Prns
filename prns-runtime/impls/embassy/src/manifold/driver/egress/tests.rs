@@ -11,6 +11,7 @@ use super::super::leaked_grant_lane;
 use super::{
     enqueue_broadcast_for_wire, enqueue_for_wire, flush_due_pacers, route_reaction,
     soonest_pacer_release, EgressOutcome, InterfacePacer, ManifoldEgress, PooledEgress,
+    PACER_DEPTH,
 };
 
 fn paced_descriptor(id: InterfaceId) -> InterfaceDescriptor {
@@ -148,6 +149,49 @@ fn a_pacer_retains_back_to_back_announces_for_a_one_slot_direct_lane() {
 }
 
 #[test]
+fn a_full_direct_lane_defers_on_the_embedded_retry_clock_then_recovers() {
+    let id = InterfaceId::new([0x58; 8]);
+    const FRAME: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
+    let (producer, mut consumer) = leaked_grant_lane::<FRAME>(1);
+    let mut egress: PooledEgress<1> = PooledEgress::new();
+    let _ = egress.push(id, std::boxed::Box::leak(std::boxed::Box::new(producer)));
+    let mut pacers = [InterfacePacer::from_descriptor(id, &paced_descriptor(id))];
+    assert_eq!(egress.enqueue(id, b"occupied"), EgressOutcome::Enqueued);
+
+    route_reaction(
+        EngineReaction::Directive(Directive::SendAnnounce {
+            target: id,
+            bytes: b"retained",
+            hops: 1,
+        }),
+        &mut egress,
+        &[],
+        &mut pacers,
+        InstantMillis(0),
+        &mut |_| {},
+    );
+    assert_eq!(pacers[0].pacer.queued_len(), 1);
+    assert_eq!(pacers[0].pacer.deferred_len(), 1);
+    assert_eq!(soonest_pacer_release(&pacers), Some(InstantMillis(250)));
+
+    flush_due_pacers(&mut pacers, InstantMillis(250), &mut egress, &[]);
+    assert_eq!(soonest_pacer_release(&pacers), Some(InstantMillis(750)));
+    assert_eq!(
+        consumer.try_peek().expect("occupied slot").frame(),
+        b"occupied"
+    );
+    consumer.release();
+
+    flush_due_pacers(&mut pacers, InstantMillis(750), &mut egress, &[]);
+    assert_eq!(
+        consumer.try_peek().expect("recovered announce").frame(),
+        b"retained"
+    );
+    assert_eq!(pacers[0].pacer.queued_len(), 0);
+    assert_eq!(pacers[0].pacer.deferred_len(), 0);
+}
+
+#[test]
 fn a_pacer_retains_back_to_back_announces_for_a_one_slot_fleet_lane() {
     let supervisor = InterfaceId::from_channel_tag(InterfaceKind::BluetoothAuto, b"announce-fleet");
     let peer = InterfaceId::new([InterfaceKind::BluetoothPeer as u8, 0x66, 0, 0, 0, 0, 0, 0]);
@@ -198,6 +242,162 @@ fn a_pacer_retains_back_to_back_announces_for_a_one_slot_fleet_lane() {
     assert_eq!(second.target, FrameTarget::Fan(FanTarget::All));
     assert_eq!(second.frame(), b"node");
     consumer.release();
+}
+
+#[test]
+fn a_full_fleet_lane_defers_then_recovers_without_losing_its_fan_target() {
+    let supervisor =
+        InterfaceId::from_channel_tag(InterfaceKind::BluetoothAuto, b"pressured-fleet");
+    let peer = InterfaceId::new([InterfaceKind::BluetoothPeer as u8, 0x67, 0, 0, 0, 0, 0, 0]);
+    const FRAME: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
+    let (producer, mut consumer) = leaked_grant_lane::<FRAME>(1);
+    let mut egress: PooledEgress<1> = PooledEgress::new();
+    let _ = egress.push(
+        supervisor,
+        std::boxed::Box::leak(std::boxed::Box::new(producer)),
+    );
+    let mut pacers = [InterfacePacer::from_descriptor(
+        supervisor,
+        &paced_descriptor(peer),
+    )];
+    assert_eq!(
+        egress.enqueue_broadcast(InterfaceKind::BluetoothAuto, FanTarget::All, b"occupied"),
+        EgressOutcome::Enqueued
+    );
+
+    route_reaction(
+        EngineReaction::Directive(Directive::SendAnnounceToFleet {
+            supervisor: InterfaceKind::BluetoothAuto,
+            fan: FanTarget::AllExcept(peer),
+            bytes: b"retained",
+            hops: 1,
+        }),
+        &mut egress,
+        &[],
+        &mut pacers,
+        InstantMillis(0),
+        &mut |_| {},
+    );
+    assert_eq!(soonest_pacer_release(&pacers), Some(InstantMillis(250)));
+    assert_eq!(
+        consumer.try_peek().expect("occupied slot").frame(),
+        b"occupied"
+    );
+    consumer.release();
+
+    flush_due_pacers(&mut pacers, InstantMillis(250), &mut egress, &[]);
+    let recovered = consumer.try_peek().expect("recovered fleet announce");
+    assert_eq!(recovered.frame(), b"retained");
+    assert_eq!(
+        recovered.target,
+        FrameTarget::Fan(FanTarget::AllExcept(peer))
+    );
+    assert_eq!(pacers[0].pacer.queued_len(), 0);
+}
+
+#[test]
+fn embedded_fixed_queue_sheds_the_worst_hops_under_lane_pressure() {
+    let id = InterfaceId::new([0x59; 8]);
+    const FRAME: usize = EMBEDDED_MAX_WIRE_FRAME_LEN;
+    let (producer, mut consumer) = leaked_grant_lane::<FRAME>(1);
+    let mut egress: PooledEgress<1> = PooledEgress::new();
+    let _ = egress.push(id, std::boxed::Box::leak(std::boxed::Box::new(producer)));
+    let mut pacers = [InterfacePacer::from_descriptor(id, &paced_descriptor(id))];
+    assert_eq!(egress.enqueue(id, b"occupied"), EgressOutcome::Enqueued);
+
+    for (bytes, hops, at) in [
+        (b"evict".as_slice(), 5, 0),
+        (b"keep".as_slice(), 5, 1),
+        (b"best".as_slice(), 1, 2),
+    ] {
+        route_reaction(
+            EngineReaction::Directive(Directive::SendAnnounce {
+                target: id,
+                bytes,
+                hops,
+            }),
+            &mut egress,
+            &[],
+            &mut pacers,
+            InstantMillis(at),
+            &mut |_| {},
+        );
+    }
+    assert_eq!(pacers[0].pacer.queued_len(), PACER_DEPTH);
+    consumer.try_peek().expect("occupied slot");
+    consumer.release();
+
+    let first_due = soonest_pacer_release(&pacers).unwrap();
+    flush_due_pacers(&mut pacers, first_due, &mut egress, &[]);
+    assert_eq!(consumer.try_peek().expect("best hops").frame(), b"best");
+    consumer.release();
+    let second_due = soonest_pacer_release(&pacers).unwrap();
+    flush_due_pacers(&mut pacers, second_due, &mut egress, &[]);
+    assert_eq!(consumer.try_peek().expect("survivor").frame(), b"keep");
+}
+
+#[test]
+fn paced_oversize_ifac_rejection_and_missing_lane_are_terminal() {
+    use crate::interfaces::{IfacContext, IfacSize};
+
+    let id = InterfaceId::new([0x5a; 8]);
+    let mut pacers = [InterfacePacer::from_descriptor(id, &paced_descriptor(id))];
+    let (producer, mut consumer) = leaked_grant_lane::<4>(1);
+    let mut small_egress: PooledEgress<1> = PooledEgress::new();
+    let _ = small_egress.push(id, std::boxed::Box::leak(std::boxed::Box::new(producer)));
+    route_reaction(
+        EngineReaction::Directive(Directive::SendAnnounce {
+            target: id,
+            bytes: b"oversize",
+            hops: 1,
+        }),
+        &mut small_egress,
+        &[],
+        &mut pacers,
+        InstantMillis(0),
+        &mut |_| {},
+    );
+    assert!(consumer.try_peek().is_none());
+    assert!(pacers[0].pacer.is_idle());
+    assert_eq!(soonest_pacer_release(&pacers), None);
+
+    let (producer, mut consumer) = leaked_grant_lane::<EMBEDDED_MAX_WIRE_FRAME_LEN>(1);
+    let mut ifac_egress: PooledEgress<1> = PooledEgress::new();
+    let _ = ifac_egress.push(id, std::boxed::Box::leak(std::boxed::Box::new(producer)));
+    let ifacs = [InterfaceIfac {
+        id,
+        context: IfacContext::derive(Some("network"), Some("secret"), IfacSize::NARROW).unwrap(),
+    }];
+    route_reaction(
+        EngineReaction::Directive(Directive::SendAnnounce {
+            target: id,
+            bytes: b"x",
+            hops: 1,
+        }),
+        &mut ifac_egress,
+        &ifacs,
+        &mut pacers,
+        InstantMillis(1),
+        &mut |_| {},
+    );
+    assert!(consumer.try_peek().is_none());
+    assert!(pacers[0].pacer.is_idle());
+
+    let mut missing_egress: PooledEgress<0> = PooledEgress::new();
+    route_reaction(
+        EngineReaction::Directive(Directive::SendAnnounce {
+            target: id,
+            bytes: b"missing",
+            hops: 1,
+        }),
+        &mut missing_egress,
+        &[],
+        &mut pacers,
+        InstantMillis(2),
+        &mut |_| {},
+    );
+    assert!(pacers[0].pacer.is_idle());
+    assert_eq!(soonest_pacer_release(&pacers), None);
 }
 
 #[test]

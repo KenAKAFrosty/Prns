@@ -3,7 +3,9 @@ use heapless::Vec as HeaplessVec;
 use crate::engine::{EngineReaction, FanTarget, InstantMillis, Journaled};
 use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceKind};
-use crate::manifold::announce_pacer::{AnnouncePacer, FixedPacerQueue};
+use crate::manifold::announce_pacer::{
+    AnnouncePacer, FixedPacerQueue, PacerDelivery, PacerRetryPolicy,
+};
 use crate::manifold::grant::{FrameTarget, LaneWriteOutcome, ManifoldLaneWriter};
 use crate::manifold::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
 use crate::manifold::kernel::{
@@ -120,6 +122,7 @@ impl ManifoldEgress for EmbassyEgress<'_> {
 
 pub(super) const MAX_PACED_INTERFACES: usize = 2;
 const PACER_DEPTH: usize = 2;
+const EMBASSY_ANNOUNCE_RETRY_POLICY: PacerRetryPolicy = PacerRetryPolicy::new(250, 5_000);
 
 pub(super) struct InterfacePacer {
     pub(super) id: InterfaceId,
@@ -130,7 +133,11 @@ impl InterfacePacer {
     pub(super) fn from_descriptor(id: InterfaceId, descriptor: &InterfaceDescriptor) -> Self {
         Self {
             id,
-            pacer: AnnouncePacer::new(descriptor.announce_bandwidth_cap, descriptor.bitrate),
+            pacer: AnnouncePacer::new(
+                descriptor.announce_bandwidth_cap,
+                descriptor.bitrate,
+                EMBASSY_ANNOUNCE_RETRY_POLICY,
+            ),
         }
     }
 }
@@ -256,17 +263,34 @@ pub(super) fn enqueue_for_wire(
     target: InterfaceId,
     bytes: &[u8],
 ) {
+    let _ = attempt_enqueue_for_wire(egress, ifacs, target, bytes);
+}
+
+fn attempt_enqueue_for_wire(
+    egress: &mut impl ManifoldEgress,
+    ifacs: &[InterfaceIfac],
+    target: InterfaceId,
+    bytes: &[u8],
+) -> PacerDelivery {
     let lane = egress.lane_for(target).unwrap_or(target);
-    match ifac_for(ifacs, lane) {
+    let outcome = match ifac_for(ifacs, lane) {
         Some(entry) => {
             let mut wire = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
-            if let Some(masked_len) = entry.context.mask_outbound(bytes, &mut wire) {
-                let _ = egress.enqueue(target, &wire[..masked_len]);
-            }
+            let Some(masked_len) = entry.context.mask_outbound(bytes, &mut wire) else {
+                return PacerDelivery::Discarded;
+            };
+            egress.enqueue(target, &wire[..masked_len])
         }
-        None => {
-            let _ = egress.enqueue(target, bytes);
-        }
+        None => egress.enqueue(target, bytes),
+    };
+    delivery_for_egress_outcome(outcome)
+}
+
+fn delivery_for_egress_outcome(outcome: EgressOutcome) -> PacerDelivery {
+    match outcome {
+        EgressOutcome::Enqueued => PacerDelivery::Admitted,
+        EgressOutcome::LaneFull { .. } => PacerDelivery::Backpressured,
+        EgressOutcome::FrameTooLarge { .. } | EgressOutcome::NoLane => PacerDelivery::Discarded,
     }
 }
 
@@ -277,20 +301,30 @@ pub(super) fn enqueue_broadcast_for_wire(
     fan: FanTarget,
     bytes: &[u8],
 ) {
-    match egress
+    let _ = attempt_enqueue_broadcast_for_wire(egress, ifacs, supervisor, fan, bytes);
+}
+
+fn attempt_enqueue_broadcast_for_wire(
+    egress: &mut impl ManifoldEgress,
+    ifacs: &[InterfaceIfac],
+    supervisor: InterfaceKind,
+    fan: FanTarget,
+    bytes: &[u8],
+) -> PacerDelivery {
+    let outcome = match egress
         .fleet_lane(supervisor)
         .and_then(|lane| ifac_for(ifacs, lane))
     {
         Some(entry) => {
             let mut wire = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
-            if let Some(masked_len) = entry.context.mask_outbound(bytes, &mut wire) {
-                let _ = egress.enqueue_broadcast(supervisor, fan, &wire[..masked_len]);
-            }
+            let Some(masked_len) = entry.context.mask_outbound(bytes, &mut wire) else {
+                return PacerDelivery::Discarded;
+            };
+            egress.enqueue_broadcast(supervisor, fan, &wire[..masked_len])
         }
-        None => {
-            let _ = egress.enqueue_broadcast(supervisor, fan, bytes);
-        }
-    }
+        None => egress.enqueue_broadcast(supervisor, fan, bytes),
+    };
+    delivery_for_egress_outcome(outcome)
 }
 
 fn offer_to_pacer(
@@ -323,13 +357,14 @@ fn enqueue_paced_for_wire(
     lane: InterfaceId,
     target: FrameTarget,
     bytes: &[u8],
-) {
+) -> PacerDelivery {
     match target {
-        FrameTarget::Direct(target) => enqueue_for_wire(egress, ifacs, target, bytes),
+        FrameTarget::Direct(target) => attempt_enqueue_for_wire(egress, ifacs, target, bytes),
         FrameTarget::Fan(fan) => {
-            if let Some(supervisor) = lane.kind() {
-                enqueue_broadcast_for_wire(egress, ifacs, supervisor, fan, bytes);
-            }
+            let Some(supervisor) = lane.kind() else {
+                return PacerDelivery::Discarded;
+            };
+            attempt_enqueue_broadcast_for_wire(egress, ifacs, supervisor, fan, bytes)
         }
     }
 }

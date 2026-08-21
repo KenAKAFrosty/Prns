@@ -179,7 +179,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "3 * ((max(last_over_time(prns_runtime_up[2m])) or vector(0)) == bool 0) + ((max(last_over_time(prns_runtime_up[2m])) or vector(0)) > bool 0) * clamp_max(2 * (((sum(increase(prns_egress_frames_total{outcome=\"lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0))) > bool 0) + ((((sum(increase(prns_routes_removals_total{cause=\"evicted\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_engine_ignored_packets_total{reason=\"capacity_exhausted\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_resources_admission_events_total{event=\"rejected\"}[5m])) or vector(0)) > bool 0)) > bool 0), 2)",
+          "expr": "3 * ((max(last_over_time(prns_runtime_up[2m])) or vector(0)) == bool 0) + ((max(last_over_time(prns_runtime_up[2m])) or vector(0)) > bool 0) * clamp_max(2 * (((sum(increase(prns_egress_frames_total{outcome=\"lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"lane_full|lane_missing|ifac_rejected|pacer_rejected|pacer_evicted|pacer_expired\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0))) > bool 0) + ((((sum(increase(prns_routes_removals_total{cause=\"evicted\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_engine_ignored_packets_total{reason=\"capacity_exhausted\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_resources_admission_events_total{event=\"rejected\"}[5m])) or vector(0)) > bool 0)) > bool 0), 2)",
           "instant": true,
           "legendFormat": "Runtime",
           "range": false,
@@ -257,7 +257,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "((sum(increase(prns_egress_frames_total{outcome=\"lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0)))",
+          "expr": "((sum(increase(prns_egress_frames_total{outcome=\"lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"lane_full|lane_missing|ifac_rejected|pacer_rejected|pacer_evicted|pacer_expired\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0)))",
           "instant": true,
           "legendFormat": "Signals",
           "range": false,
@@ -551,7 +551,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "(label_join(label_replace(sum by (operation, outcome) (increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) > 0, \"kind\", \"operation\", \"operation\", \".*\"), \"signal\", \" · \", \"kind\", \"operation\", \"outcome\") or label_join(label_replace(sum by (cause) (increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) > 0, \"kind\", \"resource\", \"cause\", \".*\"), \"signal\", \" · \", \"kind\", \"cause\") or label_join(label_replace(sum by (reason) (increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) > 0, \"kind\", \"link\", \"reason\", \".*\"), \"signal\", \" · \", \"kind\", \"reason\") or label_replace(sum(increase(prns_links_interface_mismatches_total[5m])) > 0, \"signal\", \"link · interface mismatch\", \"__name__\", \".*\") or label_join(label_replace(sum by (outcome) (increase(prns_egress_frames_total{outcome=\"lane_missing\"}[5m])) > 0, \"kind\", \"egress\", \"outcome\", \".*\"), \"signal\", \" · \", \"kind\", \"outcome\") or label_join(label_replace(sum by (origin, outcome) (increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) > 0, \"kind\", \"announce\", \"origin\", \".*\"), \"signal\", \" · \", \"kind\", \"origin\", \"outcome\") or label_join(label_replace(sum by (outcome) (increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) > 0, \"kind\", \"announce ingress\", \"outcome\", \".*\"), \"signal\", \" · \", \"kind\", \"outcome\")) or on() label_replace(((sum(increase(prns_egress_frames_total{outcome=\"lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0))) == 0, \"signal\", \"No hard failures\", \"__name__\", \".*\")",
+          "expr": "(label_join(label_replace(sum by (operation, outcome) (increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) > 0, \"kind\", \"operation\", \"operation\", \".*\"), \"signal\", \" · \", \"kind\", \"operation\", \"outcome\") or label_join(label_replace(sum by (cause) (increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) > 0, \"kind\", \"resource\", \"cause\", \".*\"), \"signal\", \" · \", \"kind\", \"cause\") or label_join(label_replace(sum by (reason) (increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) > 0, \"kind\", \"link\", \"reason\", \".*\"), \"signal\", \" · \", \"kind\", \"reason\") or label_replace(sum(increase(prns_links_interface_mismatches_total[5m])) > 0, \"signal\", \"link · interface mismatch\", \"__name__\", \".*\") or label_join(label_replace(sum by (outcome) (increase(prns_egress_frames_total{outcome=\"lane_missing\"}[5m])) > 0, \"kind\", \"egress\", \"outcome\", \".*\"), \"signal\", \" · \", \"kind\", \"outcome\") or label_join(label_replace(sum by (origin, outcome) (increase(prns_announces_egress_total{outcome=~\"lane_full|lane_missing|ifac_rejected|pacer_rejected|pacer_evicted|pacer_expired\"}[5m])) > 0, \"kind\", \"announce\", \"origin\", \".*\"), \"signal\", \" · \", \"kind\", \"origin\", \"outcome\") or label_join(label_replace(sum by (outcome) (increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) > 0, \"kind\", \"announce ingress\", \"outcome\", \".*\"), \"signal\", \" · \", \"kind\", \"outcome\")) or on() label_replace(((sum(increase(prns_egress_frames_total{outcome=\"lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"lane_full|lane_missing|ifac_rejected|pacer_rejected|pacer_evicted|pacer_expired\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0))) == 0, \"signal\", \"No hard failures\", \"__name__\", \".*\")",
           "instant": true,
           "legendFormat": "{{signal}}",
           "range": false,
@@ -1316,7 +1316,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Current engine and interface-pacer pressure. Stable zeros are healthy.",
+      "description": "Current engine and interface-pacer pressure. Deferred work is retained, not lost; age shows how long the oldest lane-backpressured announce has waited.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1341,7 +1341,20 @@
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Oldest deferred"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 4,
@@ -1401,6 +1414,30 @@
           "legendFormat": "Paced",
           "range": false,
           "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(prns_announces_pacer_deferred_depth) or vector(0)",
+          "instant": true,
+          "legendFormat": "Deferred",
+          "range": false,
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(prns_announces_pacer_oldest_deferred_age_ms) or vector(0)",
+          "instant": true,
+          "legendFormat": "Oldest deferred",
+          "range": false,
+          "refId": "E"
         }
       ],
       "title": "Announce pressure",
@@ -2478,7 +2515,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Announce queues that currently have something waiting in them. Empty panel means nothing is queued anywhere, which is the normal state.",
+      "description": "Per-interface announce queues, oldest deferred age, and physical-lane occupancy. Lane depth should only be reconsidered when sustained occupancy corroborates deferral age and retries.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2503,7 +2540,32 @@
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*oldest deferred$"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*lane occupancy$"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 8,
@@ -2539,6 +2601,30 @@
           "legendFormat": "{{interface}} · {{interface_origin}} · {{queue}}",
           "range": false,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max by (interface, interface_origin) (prns_interface_announces_oldest_deferred_age_ms{interface=~\"$interface\"}) > 0",
+          "instant": true,
+          "legendFormat": "{{interface}} · {{interface_origin}} · oldest deferred",
+          "range": false,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "100 * max by (physical_lane, logical_interface) (prns_egress_lane_occupancy{logical_interface=~\"$interface\"}) / clamp_min(max by (physical_lane, logical_interface) (prns_egress_lane_capacity{logical_interface=~\"$interface\"}), 1)",
+          "instant": true,
+          "legendFormat": "{{logical_interface}} · {{physical_lane}} · lane occupancy",
+          "range": false,
+          "refId": "C"
         }
       ],
       "title": "Interface announce pressure",
@@ -2714,7 +2800,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
+        "w": 6,
         "x": 0,
         "y": 72
       },
@@ -2771,8 +2857,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
-        "x": 8,
+        "w": 6,
+        "x": 6,
         "y": 72
       },
       "id": 11,
@@ -2809,7 +2895,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Pacer rejections, IFAC failures, and missing or full lanes split by announce origin.",
+      "description": "Terminal announce loss only: pacer rejection/eviction/expiry, IFAC rejection, missing lanes, and pacerless full lanes. Deferral and recovery are pressure signals, not failures.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2828,8 +2914,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
-        "x": 16,
+        "w": 6,
+        "x": 12,
         "y": 72
       },
       "id": 12,
@@ -2852,13 +2938,70 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (origin, outcome) (rate(prns_announces_egress_total{outcome!~\"enqueued|interface_unavailable\"}[$__rate_interval])) or label_replace(label_replace(vector(0), \"origin\", \"none\", \"\", \"\"), \"outcome\", \"none\", \"\", \"\")",
+          "expr": "sum by (origin, outcome) (rate(prns_announces_egress_total{outcome=~\"lane_full|lane_missing|ifac_rejected|pacer_rejected|pacer_evicted|pacer_expired\"}[$__rate_interval])) or label_replace(label_replace(vector(0), \"origin\", \"none\", \"\", \"\"), \"outcome\", \"none\", \"\", \"\")",
           "legendFormat": "{{origin}} · {{outcome}}",
           "range": true,
           "refId": "A"
         }
       ],
       "title": "Announce egress failures",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Temporary announce egress pressure. Deferred counts once per announce, retry counts later failed attempts, and recovered confirms eventual lane admission.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 14,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 72
+      },
+      "id": 49,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (origin, event) (rate(prns_announces_backpressure_total[$__rate_interval])) or label_replace(label_replace(vector(0), \"origin\", \"none\", \"\", \"\"), \"event\", \"none\", \"\", \"\")",
+          "legendFormat": "{{origin}} · {{event}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Announce backpressure",
       "type": "timeseries"
     },
     {

@@ -54,8 +54,9 @@ cfg_if::cfg_if! {
         mod observability;
 
         pub use metrics::{
-            AnnounceEgressCounts, AnnounceEgressMetricsSnapshot, AnnounceEgressOutcome,
-            AnnounceOriginCounts, CryptoMetricsSnapshot, EgressInterfaceKindCounts,
+            AnnounceBackpressureCounts, AnnounceBackpressureEvent, AnnounceEgressCounts,
+            AnnounceEgressMetricsSnapshot, AnnounceEgressOutcome, AnnounceOriginCounts,
+            CryptoMetricsSnapshot, EgressInterfaceKindCounts, EgressLaneMetricsSnapshot,
             EgressMetricsSnapshot, InterfaceAnnounceEgressMetricsSnapshot, RuntimeMetricsSnapshot,
         };
         pub use observability::{

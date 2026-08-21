@@ -19,6 +19,7 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
         TokioGrantProducer {
             free,
             filled,
+            capacity: depth,
             granted: None,
             filled_ready: filled_ready.clone(),
             free_ready: free_ready.clone(),
@@ -108,6 +109,7 @@ impl FrameSink for HeapFrameSlot {
 pub struct TokioGrantProducer {
     free: Consumer<HeapFrameSlot>,
     filled: Producer<HeapFrameSlot>,
+    capacity: usize,
     pub(super) granted: Option<HeapFrameSlot>,
     filled_ready: Arc<Notify>,
     free_ready: Arc<Notify>,
@@ -115,6 +117,14 @@ pub struct TokioGrantProducer {
 }
 
 impl TokioGrantProducer {
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    pub fn occupancy(&self) -> usize {
+        self.capacity().saturating_sub(self.free.slots())
+    }
+
     pub fn try_grant(&mut self) -> Option<&mut HeapFrameSlot> {
         if self.granted.is_none() {
             self.granted = self.free.pop().ok();

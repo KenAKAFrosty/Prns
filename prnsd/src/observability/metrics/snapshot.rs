@@ -16,7 +16,7 @@ impl MetricsReporter {
         self.record_health(health);
         self.record_interfaces(interfaces, &snapshot);
         self.record_engine(&snapshot);
-        self.record_egress(&snapshot);
+        self.record_egress(interfaces, &snapshot);
         self.record_crypto(&snapshot);
         self.record_reliability(&snapshot);
         self.previous = Some(snapshot);
@@ -215,6 +215,23 @@ impl MetricsReporter {
                         &announce_attributes,
                     );
                 }
+                for (origin, event, current) in egress.backpressure.iter() {
+                    let prior =
+                        previous_egress.map(|metrics| metrics.backpressure.get(origin, event));
+                    let pressure_attributes = [
+                        attributes[0].clone(),
+                        attributes[1].clone(),
+                        attributes[2].clone(),
+                        KeyValue::new("origin", announce_origin_name(origin)),
+                        KeyValue::new("event", announce_backpressure_event_name(event)),
+                    ];
+                    add_delta(
+                        &self.instruments.interface_announce_backpressure,
+                        current,
+                        prior,
+                        &pressure_attributes,
+                    );
+                }
                 for (origin, current) in egress.enqueued_bytes_by_origin.iter() {
                     let prior =
                         previous_egress.map(|metrics| metrics.enqueued_bytes_by_origin.get(origin));
@@ -232,16 +249,32 @@ impl MetricsReporter {
                     );
                 }
             }
-            let queue_attributes = [
-                attributes[0].clone(),
-                attributes[1].clone(),
-                attributes[2].clone(),
-                KeyValue::new("queue", "pacer"),
-            ];
-            self.instruments.interface_announce_queue_depth.record(
-                u64::from(egress.map_or(0, |metrics| metrics.pacer_queue_depth)),
-                &queue_attributes,
-            );
+            for (queue, depth) in [
+                (
+                    "pacer",
+                    egress.map_or(0, |metrics| metrics.pacer_queue_depth),
+                ),
+                (
+                    "pacer_deferred",
+                    egress.map_or(0, |metrics| metrics.pacer_deferred_depth),
+                ),
+            ] {
+                let queue_attributes = [
+                    attributes[0].clone(),
+                    attributes[1].clone(),
+                    attributes[2].clone(),
+                    KeyValue::new("queue", queue),
+                ];
+                self.instruments
+                    .interface_announce_queue_depth
+                    .record(u64::from(depth), &queue_attributes);
+            }
+            self.instruments
+                .interface_announce_oldest_deferred_age_ms
+                .record(
+                    egress.map_or(0, |metrics| metrics.pacer_oldest_deferred_age_ms),
+                    &attributes,
+                );
         }
     }
 
@@ -364,25 +397,25 @@ impl MetricsReporter {
                 .resource_active_rows
                 .record(u64::from(metrics.active_rows), &attributes);
         }
-        self.instruments.resource_pending_depth.record(
-            u64::from(snapshot.engine.resources.pending_depth),
-            &[],
-        );
+        self.instruments
+            .resource_pending_depth
+            .record(u64::from(snapshot.engine.resources.pending_depth), &[]);
         for (event, current) in snapshot.engine.resources.admission_events.iter() {
             let prior = previous.map(|metrics| metrics.resources.admission_events.get(event));
             add_delta(
                 &self.instruments.resource_admission_events,
                 current,
                 prior,
-                &[KeyValue::new(
-                    "event",
-                    resource_admission_event_name(event),
-                )],
+                &[KeyValue::new("event", resource_admission_event_name(event))],
             );
         }
     }
 
-    fn record_egress(&self, snapshot: &RuntimeMetricsSnapshot) {
+    fn record_egress(
+        &self,
+        interfaces: &[InterfaceInventoryEntry],
+        snapshot: &RuntimeMetricsSnapshot,
+    ) {
         let previous = self.previous.as_ref().map(|previous| &previous.egress);
         for (outcome, current, prior) in [
             (
@@ -425,6 +458,18 @@ impl MetricsReporter {
                 ],
             );
         }
+        for (origin, event, current) in snapshot.egress.announces.backpressure.iter() {
+            let prior = previous.map(|metrics| metrics.announces.backpressure.get(origin, event));
+            add_delta(
+                &self.instruments.announce_backpressure,
+                current,
+                prior,
+                &[
+                    KeyValue::new("origin", announce_origin_name(origin)),
+                    KeyValue::new("event", announce_backpressure_event_name(event)),
+                ],
+            );
+        }
         for (kind, current) in snapshot.egress.announces.enqueued_by_interface_kind.iter() {
             let prior =
                 previous.map(|metrics| metrics.announces.enqueued_by_interface_kind.get(kind));
@@ -461,6 +506,44 @@ impl MetricsReporter {
         self.instruments
             .announce_pacer_queue_depth
             .record(u64::from(snapshot.egress.announces.pacer_queue_depth), &[]);
+        self.instruments.announce_pacer_deferred_depth.record(
+            u64::from(snapshot.egress.announces.pacer_deferred_depth),
+            &[],
+        );
+        self.instruments
+            .announce_pacer_oldest_deferred_age_ms
+            .record(snapshot.egress.announces.pacer_oldest_deferred_age_ms, &[]);
+        for lane in &snapshot.egress.lanes {
+            let logical_interface = interfaces
+                .iter()
+                .find(|interface| interface.snapshot.id == lane.logical_interface)
+                .map_or_else(
+                    || interface_id_name(lane.logical_interface),
+                    metric_interface_name,
+                );
+            let attributes = [
+                KeyValue::new("physical_lane", interface_id_name(lane.physical_interface)),
+                KeyValue::new(
+                    "physical_lane_kind",
+                    lane.physical_interface
+                        .kind()
+                        .map_or("unknown", interface_kind_name),
+                ),
+                KeyValue::new("logical_interface", logical_interface),
+                KeyValue::new(
+                    "logical_interface_kind",
+                    lane.logical_interface
+                        .kind()
+                        .map_or("unknown", interface_kind_name),
+                ),
+            ];
+            self.instruments
+                .egress_lane_capacity
+                .record(u64::from(lane.capacity), &attributes);
+            self.instruments
+                .egress_lane_occupancy
+                .record(u64::from(lane.occupancy), &attributes);
+        }
     }
 
     fn record_crypto(&self, snapshot: &RuntimeMetricsSnapshot) {

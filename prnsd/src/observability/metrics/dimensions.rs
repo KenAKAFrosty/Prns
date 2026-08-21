@@ -1,13 +1,12 @@
 use personal_rns::engine::{
     AnnounceCommandOutcome, AnnounceIngressOutcome, AnnounceOrigin, AnnounceSourceKind,
-    IgnoreReasonKind, PathRequestIngressOutcome, PathRequestRelayOutcome,
-    ResourceAdmissionEvent,
+    IgnoreReasonKind, PathRequestIngressOutcome, PathRequestRelayOutcome, ResourceAdmissionEvent,
 };
-use personal_rns::interfaces::InterfaceKind;
+use personal_rns::interfaces::{InterfaceId, InterfaceKind};
 use personal_rns::node_introspection::InterfaceInventoryEntry;
 use personal_rns::runtime::{
-    AnnounceEgressOutcome, RuntimeLinkClosure, RuntimeOperation, RuntimeOperationOutcome,
-    RuntimeResourceFailure, RuntimeRouteRemoval,
+    AnnounceBackpressureEvent, AnnounceEgressOutcome, RuntimeLinkClosure, RuntimeOperation,
+    RuntimeOperationOutcome, RuntimeResourceFailure, RuntimeRouteRemoval,
 };
 
 pub(super) fn announce_source_name(source: AnnounceSourceKind) -> &'static str {
@@ -56,7 +55,27 @@ pub(super) fn announce_egress_outcome_name(outcome: AnnounceEgressOutcome) -> &'
         AnnounceEgressOutcome::LaneMissing => "lane_missing",
         AnnounceEgressOutcome::IfacRejected => "ifac_rejected",
         AnnounceEgressOutcome::PacerRejected => "pacer_rejected",
+        AnnounceEgressOutcome::PacerEvicted => "pacer_evicted",
+        AnnounceEgressOutcome::PacerExpired => "pacer_expired",
     }
+}
+
+pub(super) fn announce_backpressure_event_name(event: AnnounceBackpressureEvent) -> &'static str {
+    match event {
+        AnnounceBackpressureEvent::Deferred => "deferred",
+        AnnounceBackpressureEvent::Retry => "retry",
+        AnnounceBackpressureEvent::Recovered => "recovered",
+    }
+}
+
+pub(super) fn interface_id_name(id: InterfaceId) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut name = String::with_capacity(id.as_bytes().len() * 2);
+    for byte in id.as_bytes() {
+        name.push(char::from(HEX[usize::from(byte >> 4)]));
+        name.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    name
 }
 
 pub(super) fn ignore_reason_name(reason: IgnoreReasonKind) -> &'static str {
@@ -273,6 +292,9 @@ mod tests {
         for outcome in AnnounceEgressOutcome::ALL {
             assert!(!announce_egress_outcome_name(outcome).is_empty());
         }
+        for event in AnnounceBackpressureEvent::ALL {
+            assert!(!announce_backpressure_event_name(event).is_empty());
+        }
         for reason in IgnoreReasonKind::ALL {
             assert!(!ignore_reason_name(reason).is_empty());
         }
@@ -311,5 +333,29 @@ mod tests {
         assert_eq!(interface_kind_name(InterfaceKind::I2pPeer), "i2p_peer");
         assert_eq!(interface_kind_name(InterfaceKind::Weave), "weave");
         assert_eq!(interface_kind_name(InterfaceKind::WeavePeer), "weave_peer");
+    }
+
+    #[test]
+    fn interface_ids_have_fixed_width_lowercase_names() {
+        assert_eq!(
+            interface_id_name(InterfaceId::new([
+                0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef
+            ])),
+            "0123456789abcdef"
+        );
+    }
+
+    #[test]
+    fn dashboard_separates_backpressure_from_terminal_announce_loss() {
+        let dashboard = include_str!("../../../observability/grafana/prnsd.json");
+        assert!(dashboard.contains("prns_announces_backpressure_total"));
+        assert!(dashboard.contains("prns_announces_pacer_deferred_depth"));
+        assert!(dashboard.contains("prns_egress_lane_occupancy"));
+        assert!(dashboard.contains(
+            "lane_full|lane_missing|ifac_rejected|pacer_rejected|pacer_evicted|pacer_expired"
+        ));
+        assert!(!dashboard.contains(
+            "prns_announces_egress_total{outcome!~\\\"enqueued|interface_unavailable\\\"}"
+        ));
     }
 }
