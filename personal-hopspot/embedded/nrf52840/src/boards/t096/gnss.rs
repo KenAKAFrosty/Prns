@@ -1,21 +1,16 @@
-use core::cell::RefCell;
-
 use embassy_futures::select::{select, Either};
 use embassy_nrf::gpio::{Input, Output};
 use embassy_nrf::uarte::Uarte;
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::blocking_mutex::Mutex;
-use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
 use prns_core::capabilities::positioning::gnss::{GnssReceiverCommand, GnssSnapshot, NmeaParser};
+
+use crate::runtime::gnss::GnssShared;
 
 const RESET_HOLD: Duration = Duration::from_millis(100);
 const READ_BYTES: usize = 64;
 const ERROR_RETRY: Duration = Duration::from_millis(100);
 
-static COMMAND: Signal<CriticalSectionRawMutex, GnssReceiverCommand> = Signal::new();
-static SNAPSHOT: Mutex<CriticalSectionRawMutex, RefCell<GnssSnapshot>> =
-    Mutex::new(RefCell::new(GnssSnapshot::Disabled));
+static STATE: GnssShared = GnssShared::new();
 
 /// The T096-specific UC6580 transport and power controls. NMEA interpretation and the public
 /// observation contract live in `prns-core`; this module owns only the board adapter.
@@ -57,50 +52,46 @@ impl T096Gnss {
 }
 
 pub(crate) fn control(command: GnssReceiverCommand) {
-    publish(match command {
-        GnssReceiverCommand::Enable => GnssSnapshot::Starting,
-        GnssReceiverCommand::Disable => GnssSnapshot::Disabled,
-    });
-    COMMAND.signal(command);
+    STATE.control(command);
 }
 
 pub(crate) fn snapshot() -> GnssSnapshot {
-    SNAPSHOT.lock(|snapshot| *snapshot.borrow())
+    STATE.snapshot()
 }
 
 pub(crate) async fn drive(mut gnss: T096Gnss) -> ! {
     gnss.stop();
-    publish(GnssSnapshot::Disabled);
+    STATE.publish(GnssSnapshot::Disabled);
 
     loop {
-        match COMMAND.wait().await {
+        match STATE.wait().await {
             GnssReceiverCommand::Enable => {}
             GnssReceiverCommand::Disable => {
                 gnss.stop();
-                publish(GnssSnapshot::Disabled);
+                STATE.publish(GnssSnapshot::Disabled);
                 continue;
             }
         }
 
-        publish(GnssSnapshot::Starting);
+        STATE.publish(GnssSnapshot::Starting);
         gnss.start().await;
         let mut parser = NmeaParser::new();
-        publish(GnssSnapshot::Searching { satellites: 0 });
+        STATE.publish(GnssSnapshot::Searching { satellites: 0 });
         let mut enabled = true;
 
         while enabled {
             let mut bytes = [0u8; READ_BYTES];
-            match select(gnss.uart.read(&mut bytes), COMMAND.wait()).await {
+            match select(gnss.uart.read(&mut bytes), STATE.wait()).await {
                 Either::First(Ok(())) => {
                     for byte in bytes {
                         if let Some(snapshot) = parser.feed(byte) {
-                            publish(snapshot);
+                            STATE.publish(snapshot);
                         }
                     }
                 }
                 Either::First(Err(_)) => {
-                    publish(GnssSnapshot::Error);
-                    match select(Timer::after(ERROR_RETRY), COMMAND.wait()).await {
+                    STATE.publish(GnssSnapshot::Error);
+                    match select(Timer::after(ERROR_RETRY), STATE.wait()).await {
                         Either::First(()) => {}
                         Either::Second(command) => {
                             enabled = command == GnssReceiverCommand::Enable;
@@ -114,10 +105,6 @@ pub(crate) async fn drive(mut gnss: T096Gnss) -> ! {
         }
 
         gnss.stop();
-        publish(GnssSnapshot::Disabled);
+        STATE.publish(GnssSnapshot::Disabled);
     }
-}
-
-fn publish(snapshot: GnssSnapshot) {
-    SNAPSHOT.lock(|current| *current.borrow_mut() = snapshot);
 }

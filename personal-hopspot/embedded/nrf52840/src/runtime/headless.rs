@@ -2,13 +2,13 @@
 use core::fmt::Write as _;
 
 use embassy_executor::Spawner;
+#[cfg(any(feature = "board-t114", feature = "board-mesh-tower-v2"))]
+use embassy_futures::join::join;
 #[cfg(any(
-    feature = "board-t114",
+    feature = "board-t096",
     feature = "board-t1000e",
     feature = "board-mesh-tower-v2"
 ))]
-use embassy_futures::join::join;
-#[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
 use embassy_futures::join::join3;
 use embassy_futures::join::join4;
 #[cfg(feature = "board-t096")]
@@ -199,12 +199,19 @@ pub async fn run(spawner: Spawner) -> ! {
         mut status_led,
         gnss,
     } = hardware;
-    #[cfg(any(feature = "board-t114", feature = "board-t1000e"))]
+    #[cfg(feature = "board-t114")]
     let Hardware {
         usb: usb_driver,
         radio,
         mut status_led,
         ..
+    } = hardware;
+    #[cfg(feature = "board-t1000e")]
+    let Hardware {
+        usb: usb_driver,
+        radio,
+        mut status_led,
+        gnss,
     } = hardware;
     #[cfg(feature = "board-mesh-tower-v2")]
     let Hardware {
@@ -406,9 +413,17 @@ pub async fn run(spawner: Spawner) -> ! {
     let heartbeat = async move {
         loop {
             status_led.illuminate();
-            Timer::after(Duration::from_millis(100)).await;
+            #[cfg(feature = "board-t1000e")]
+            let illuminated = if matches!(board::gnss_snapshot(), hopspot::GnssSnapshot::Fixed(_)) {
+                900
+            } else {
+                100
+            };
+            #[cfg(not(feature = "board-t1000e"))]
+            let illuminated = 100;
+            Timer::after(Duration::from_millis(illuminated)).await;
             status_led.extinguish();
-            Timer::after(Duration::from_millis(900)).await;
+            Timer::after(Duration::from_millis(1_000 - illuminated)).await;
             #[cfg(any(feature = "board-mesh-tower-v2", feature = "board-t114"))]
             board::maintain().await;
         }
@@ -658,9 +673,14 @@ pub async fn run(spawner: Spawner) -> ! {
         let primary = join4(io, lora.run(lora_seam), face, board::drive_button(button));
         join3(primary, board::drive_gnss(gnss), ble_plane).await;
     }
-    #[cfg(any(feature = "board-t114", feature = "board-t1000e"))]
+    #[cfg(feature = "board-t114")]
     {
         join(io, lora.run(lora_seam)).await;
+    }
+    #[cfg(feature = "board-t1000e")]
+    {
+        board::control_gnss(hopspot::GnssReceiverCommand::Enable);
+        join3(io, lora.run(lora_seam), board::drive_gnss(gnss)).await;
     }
     #[cfg(feature = "board-mesh-tower-v2")]
     {

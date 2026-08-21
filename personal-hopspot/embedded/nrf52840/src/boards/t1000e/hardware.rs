@@ -5,6 +5,7 @@ use embassy_nrf::mode::Blocking;
 use embassy_nrf::nvmc::Nvmc;
 use embassy_nrf::rng::Rng;
 use embassy_nrf::spim::{self, Spim};
+use embassy_nrf::uarte::{self, Uarte};
 use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_nrf::usb::Driver;
 use embassy_nrf::{bind_interrupts, config, peripherals, usb};
@@ -21,6 +22,7 @@ bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     CLOCK_POWER => usb::vbus_detect::InterruptHandler;
     SPI2 => spim::InterruptHandler<peripherals::SPI2>;
+    UARTE0 => uarte::InterruptHandler<peripherals::UARTE0>;
 });
 
 type T1000eSpiDevice = ExclusiveDevice<Spim<'static>, Output<'static>, Delay>;
@@ -35,6 +37,7 @@ pub(crate) struct T1000eHardware {
     pub(crate) usb: T1000eUsbDriver,
     pub(crate) radio: T1000eRadio,
     pub(crate) status_led: StatusLed,
+    pub(crate) gnss: super::Gnss,
 }
 
 pub(crate) struct T1000eBoard;
@@ -56,7 +59,27 @@ impl T1000eBoard {
         };
 
         interrupt::USBD.set_priority(Priority::P2);
+        interrupt::UARTE0.set_priority(Priority::P3);
         let usb = Driver::new(peripherals.USBD, Irqs, HardwareVbusDetect::new(Irqs));
+
+        let gnss = {
+            let uart = Uarte::new(
+                peripherals.UARTE0,
+                peripherals.P0_14,
+                peripherals.P0_13,
+                Irqs,
+                uarte::Config::default(),
+            );
+            super::Gnss::new(
+                uart,
+                Output::new(peripherals.P1_11, Level::Low, OutputDrive::Standard),
+                Output::new(peripherals.P1_15, Level::Low, OutputDrive::Standard),
+                Output::new(peripherals.P0_08, Level::High, OutputDrive::Standard),
+                Output::new(peripherals.P1_12, Level::High, OutputDrive::Standard),
+                Output::new(peripherals.P0_15, Level::Low, OutputDrive::Standard),
+                Input::new(peripherals.P1_14, Pull::Up),
+            )
+        };
 
         let mut radio_reset = Output::new(peripherals.P1_10, Level::Low, OutputDrive::Standard);
         Timer::after_millis(500).await;
@@ -97,6 +120,7 @@ impl T1000eBoard {
                 usb,
                 radio,
                 status_led,
+                gnss,
             },
         )
     }

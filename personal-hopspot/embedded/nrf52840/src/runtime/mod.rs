@@ -20,6 +20,8 @@ mod bootloader_entry;
 mod entropy;
 #[cfg(feature = "board-t-echo")]
 mod firmware;
+#[cfg(any(feature = "board-t096", feature = "board-t1000e"))]
+pub(crate) mod gnss;
 #[cfg(any(
     feature = "board-t096",
     feature = "board-t114",
