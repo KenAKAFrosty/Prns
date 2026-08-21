@@ -1,23 +1,31 @@
+#[cfg(feature = "board-t096")]
+use core::fmt::Write as _;
+
 use embassy_executor::Spawner;
 #[cfg(any(
-    feature = "board-t096",
     feature = "board-t114",
     feature = "board-t1000e",
     feature = "board-mesh-tower-v2"
 ))]
 use embassy_futures::join::join;
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
 use embassy_futures::join::join3;
 use embassy_futures::join::join4;
 #[cfg(feature = "board-t096")]
 use embassy_futures::select::{select3, Either3};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
+#[cfg(feature = "board-t096")]
+use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
 use embassy_usb::{Builder, Config as UsbConfig};
 use static_cell::{ConstStaticCell, StaticCell};
 
 use personal_hopspot_core as hopspot;
+#[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
+use personal_rns::bluetooth_auto::BluetoothAuto;
+#[cfg(feature = "board-t096")]
+use personal_rns::bluetooth_auto::BluetoothAutoStatus;
 use personal_rns::engine::IssuedCommand;
 #[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
@@ -33,6 +41,8 @@ use personal_rns::lora::LoRaApplyOutcome;
 use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
 use personal_rns::manifold::embassy::{EmbassyHost, EmbassyInterfaceStatus, InterfaceLifecycle};
 use personal_rns::manifold::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
+#[cfg(feature = "board-t096")]
+use personal_rns::runtime::SharedNorFlash;
 use personal_rns::runtime::{
     minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
     EmbassyInterfaceStore, ManifoldLaneSet, NoPersistence, PrnsEvent, PrnsNode, PrnsNodeHandle,
@@ -50,46 +60,38 @@ use board::{
     USB_INTERFACE_ID, USB_MANUFACTURER, USB_PRODUCT, USB_SERIAL_NUMBER,
 };
 
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
 use super::bluetooth_auto::{
     acceptor, scanner, serve_slot, softdevice_config, softdevice_task, L2capPacket, NrfBleBackend,
     Server, BLE_SHARED, BLE_SUPERVISOR_ID, HUB, MEMBERS, OUTBOUND_WAKE, POOL,
 };
 use super::entropy::{initialize_runtime_entropy, runtime_entropy, RUNTIME_ENTROPY_SEED_LEN};
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
 use nrf_softdevice::ble::l2cap;
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(feature = "board-t096")]
+use nrf_softdevice::Flash;
+#[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
 use nrf_softdevice::Softdevice;
-#[cfg(feature = "board-mesh-tower-v2")]
-use personal_rns::bluetooth_auto::BluetoothAuto;
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
 use personal_rns::interfaces::bluetooth_auto::{Endpoint, LinkCapabilities, Nrf52Host, BLE_HW_MTU};
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
 use personal_rns::runtime::Fleet;
 
 const USB_CONFIG_DESCRIPTOR_BYTES: usize = 64;
 const USB_BOS_DESCRIPTOR_BYTES: usize = 64;
 const WINDOWS_MSOS_VENDOR_CODE: u8 = 0x20;
-#[cfg(any(
-    feature = "board-t096",
-    feature = "board-t114",
-    feature = "board-t1000e"
-))]
+#[cfg(any(feature = "board-t114", feature = "board-t1000e"))]
 const INTERFACE_CAPACITY: usize = 2;
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
 const INTERFACE_CAPACITY: usize = 2 + MEMBERS;
-#[cfg(any(
-    feature = "board-t096",
-    feature = "board-t114",
-    feature = "board-t1000e"
-))]
+#[cfg(any(feature = "board-t114", feature = "board-t1000e"))]
 const LANE_COUNT: usize = INTERFACE_CAPACITY;
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
 const LANE_COUNT: usize = 3;
 const LANE_DEPTH: usize = 1;
 const LORA_TX_QUEUE_BYTES: usize = 1024;
 const LORA_OUTBOUND_DEPTH: usize = Storage::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
 const BLE_OUTBOUND_DEPTH: usize = Storage::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
 const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);
 const COMMANDS_CAP: usize = 2;
@@ -104,7 +106,7 @@ const PACKET_PHY_RETENTION_CAPACITY: usize = match <Storage as StorageLayout>::L
 const PACKET_PHY_INDEX_BUCKETS: usize =
     personal_rns::routing::dedup::dedup_index_buckets(PACKET_PHY_RETENTION_CAPACITY);
 
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
 const _: () = assert!(Storage::LINK_SESSIONS > MEMBERS);
 
 type Mtx = CriticalSectionRawMutex;
@@ -142,7 +144,7 @@ static LORA_MANIFOLD_LANE: StaticManifoldLane<
     LANE_DEPTH,
     LORA_OUTBOUND_DEPTH,
 > = StaticManifoldLane::new();
-#[cfg(feature = "board-mesh-tower-v2")]
+#[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
 static BLE_MANIFOLD_LANE: StaticManifoldLane<Mtx, BLE_HW_MTU, LANE_DEPTH, BLE_OUTBOUND_DEPTH> =
     StaticManifoldLane::new();
 static USB_MANIFOLD_LANE: StaticManifoldLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH> =
@@ -156,11 +158,7 @@ async fn manifold_task(node: &'static mut Node) {
 
 #[allow(clippy::too_many_lines)]
 pub async fn run(spawner: Spawner) -> ! {
-    #[cfg(any(
-        feature = "board-t096",
-        feature = "board-t114",
-        feature = "board-t1000e"
-    ))]
+    #[cfg(any(feature = "board-t114", feature = "board-t1000e"))]
     let ((node_bootstrap, runtime_entropy_seed), hardware) = Board::initialize(|nvmc, rng| {
         let mut fill_entropy = |bytes: &mut [u8]| rng.blocking_fill_bytes(bytes);
         let node_bootstrap = board::bootstrap_node_identity(nvmc, &mut fill_entropy);
@@ -170,7 +168,7 @@ pub async fn run(spawner: Spawner) -> ! {
         (node_bootstrap, runtime_entropy_seed)
     })
     .await;
-    #[cfg(feature = "board-mesh-tower-v2")]
+    #[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
     let ((node_bootstrap, ble_bootstrap, runtime_entropy_seed), hardware) =
         Board::initialize(|nvmc, rng| {
             let mut fill_entropy = |bytes: &mut [u8]| rng.blocking_fill_bytes(bytes);
@@ -184,12 +182,16 @@ pub async fn run(spawner: Spawner) -> ! {
         .await;
     initialize_runtime_entropy(&runtime_entropy_seed);
     drop(runtime_entropy_seed);
+    #[cfg(feature = "board-t096")]
+    let identity_startup_notice =
+        board::identity_startup_notice(node_bootstrap.persistence(), ble_bootstrap.persistence());
     let node_identity = node_bootstrap.into_identity();
-    #[cfg(feature = "board-mesh-tower-v2")]
+    #[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
     let ble_identity = Some(ble_bootstrap.into_identity());
     #[cfg(feature = "board-t096")]
     let Hardware {
         usb: usb_driver,
+        vbus,
         radio,
         mut display,
         mut battery,
@@ -242,7 +244,7 @@ pub async fn run(spawner: Spawner) -> ! {
     );
     let mut usb = builder.build();
 
-    #[cfg(feature = "board-mesh-tower-v2")]
+    #[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
     let sd = {
         let sd = Softdevice::enable(&softdevice_config());
         static SERVER: StaticCell<Server> = StaticCell::new();
@@ -262,6 +264,13 @@ pub async fn run(spawner: Spawner) -> ! {
         sd
     };
 
+    #[cfg(feature = "board-t096")]
+    let shared_flash = {
+        let flash = Flash::take(sd);
+        static FLASH_STORAGE: StaticCell<Mutex<Mtx, Flash>> = StaticCell::new();
+        SharedNorFlash::new(FLASH_STORAGE.init(Mutex::new(flash)), 1024 * 1024)
+    };
+
     let transport_secret = node_identity.transport_secret();
     let destination_secret = node_identity.into_destination_secret();
     #[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
@@ -274,6 +283,26 @@ pub async fn run(spawner: Spawner) -> ! {
     .expect("the hopspot destination names are valid")
     .node_page;
     let mut manifold_lanes = ManifoldLanes::new();
+    #[cfg(feature = "board-t096")]
+    let mut lora_profile_store =
+        hopspot::RadioProfileStore::new(shared_flash, board::RADIO_PROFILE_PAGES);
+    #[cfg(feature = "board-t096")]
+    let loaded_lora_profile = match lora_profile_store.load(DEFAULT_915_PROFILE).await {
+        Ok(loaded) => loaded,
+        Err(_) => hopspot::LoadedRadioProfile {
+            profile: DEFAULT_915_PROFILE,
+            follows_default: true,
+            notice: Some(hopspot::RadioProfileLoadNotice::Reset),
+        },
+    };
+    #[cfg(feature = "board-t096")]
+    let profile_startup_notice = loaded_lora_profile.notice.map(|notice| match notice {
+        hopspot::RadioProfileLoadNotice::Recovered => hopspot::UiNotice::ProfileRecovered,
+        hopspot::RadioProfileLoadNotice::Reset => hopspot::UiNotice::ProfileReset,
+    });
+    #[cfg(feature = "board-t096")]
+    let lora_profile = loaded_lora_profile.profile;
+    #[cfg(not(feature = "board-t096"))]
     let lora_profile = DEFAULT_915_PROFILE;
     let lora_id = LoraInterface::interface_id(&lora_profile);
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
@@ -281,7 +310,7 @@ pub async fn run(spawner: Spawner) -> ! {
         EmbassyInterfaceStatus::new(lora_id, ConnectionState::Initializing),
     );
     static LORA_SPECTRUM: StaticCell<LoRaSpectrumStatus> = StaticCell::new();
-    let lora_spectrum = LORA_SPECTRUM.init(LoRaSpectrumStatus::new());
+    let lora_spectrum: &'static LoRaSpectrumStatus = LORA_SPECTRUM.init(LoRaSpectrumStatus::new());
     static LORA_TX_QUEUE: ConstStaticCell<[u8; LORA_TX_QUEUE_BYTES]> =
         ConstStaticCell::new([0; LORA_TX_QUEUE_BYTES]);
     let lora = match LoRaInterface::new(LoRaInterfaceInput {
@@ -314,7 +343,7 @@ pub async fn run(spawner: Spawner) -> ! {
     let lora_lane = manifold_lanes
         .claim_interface(&LORA_MANIFOLD_LANE, lora.descriptor())
         .expect("LoRa lane is available");
-    #[cfg(feature = "board-mesh-tower-v2")]
+    #[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
     let ble_supervisor_lane = ble_identity.as_ref().map(|_| {
         manifold_lanes
             .claim_supervisor(&BLE_MANIFOLD_LANE, BLE_SUPERVISOR_ID, &OUTBOUND_WAKE)
@@ -353,7 +382,7 @@ pub async fn run(spawner: Spawner) -> ! {
 
     let lora_seam = lora_lane.into_seam(NOTIFY.sender(), runtime_entropy);
     let usb_seam = usb_lane.into_seam(NOTIFY.sender(), runtime_entropy);
-    #[cfg(feature = "board-mesh-tower-v2")]
+    #[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
     let bluetooth = {
         let backend = NrfBleBackend::new(&HUB);
         ble_identity
@@ -401,32 +430,44 @@ pub async fn run(spawner: Spawner) -> ! {
                 storage_limits: <Storage as StorageLayout>::LIMITS,
                 display_power_control: hopspot::DisplayPowerControl::Unavailable,
                 access_point: hopspot::AccessPointState::Unsupported,
+                shared_instance_config_export: hopspot::SharedInstanceConfigExport::Unavailable,
                 gnss: hopspot::GnssAvailability::Available,
             });
-            let mut activity = hopspot::CardActivityTracker::<2>::new();
+            let mut activity = hopspot::CardActivityTracker::<{ MEMBERS + 4 }>::new();
             let mut battery_gauge = hopspot::BatteryGauge::lipo();
             let mut working_lora_profile = lora_profile;
-            let mut notice_until_ms = None;
+            let startup_notice = identity_startup_notice.or(profile_startup_notice);
+            let mut pending_startup_notice = identity_startup_notice
+                .is_some()
+                .then_some(profile_startup_notice)
+                .flatten();
+            if let Some(notice) = startup_notice {
+                ui_state.show_notice(notice);
+            }
+            let mut notice_until_ms = startup_notice
+                .map(|notice| (embassy_time::Instant::now().as_millis() + 5_000, notice));
             loop {
                 let battery_mv = battery.sample_millivolts().await;
-                let battery_state =
-                    battery_gauge.update(Some(battery_mv), board::external_power_state());
+                let battery_state = battery_gauge.update(
+                    Some(battery_mv),
+                    hopspot::ExternalPowerState::from_presence(
+                        super::bluetooth_auto::usb_vbus_present(),
+                    ),
+                );
                 let snapshots = t096_snapshots(lora_status, usb_status);
-                let mut cards: heapless::Vec<hopspot::Card, 2> =
-                    hopspot::snapshots_to_cards(&snapshots, |id| {
-                        if id == lora_status.id() {
-                            Some((hopspot::CardKind::LoRa, hopspot::card_label("LoRa")))
-                        } else if id == usb_status.id() {
-                            Some((hopspot::CardKind::Usb, hopspot::card_label("USB")))
-                        } else {
-                            None
-                        }
-                    });
+                let mut cards = t096_cards(&snapshots, lora_status.id(), usb_status.id());
                 let now_ms = embassy_time::Instant::now().as_millis();
                 if let Some((until, owner)) = notice_until_ms {
                     if now_ms >= until {
                         notice_until_ms = None;
-                        let _cleared = ui_state.clear_notice_if(owner);
+                        if ui_state.clear_notice_if(owner) {
+                            if let Some(notice) = pending_startup_notice.take() {
+                                ui_state.show_notice(notice);
+                                notice_until_ms = Some((now_ms + 5_000, notice));
+                            }
+                        } else {
+                            pending_startup_notice = None;
+                        }
                     }
                 }
                 activity.update(&mut cards, (now_ms / 1_000).min(u64::from(u32::MAX)) as u32);
@@ -435,10 +476,39 @@ pub async fn run(spawner: Spawner) -> ! {
                     local_docs: None,
                 };
                 ui_state.sync(content);
-                let details = hopspot::snapshots_to_interface_menu_details(
+                let mut details = hopspot::snapshots_to_interface_menu_details(
                     ui_state.selected_card(content.cards),
                     &snapshots,
                 );
+                if ui_state
+                    .selected_card(content.cards)
+                    .is_some_and(|card| card.id() == BLE_SUPERVISOR_ID)
+                {
+                    let recovery = BluetoothAutoStatus::new(&BLE_SHARED).recovery_counters();
+                    details.push_bluetooth_recovery(hopspot::BluetoothRecoveryMenuDetails {
+                        receive_pressure: recovery.ingress_pressure,
+                        setup_failures: recovery.setup_failures,
+                        transport_closures: recovery.transport_closures,
+                    });
+                    details.push_egress_pressure(BLE_MANIFOLD_LANE.egress_pressure_events());
+                }
+                if ui_state
+                    .selected_card(content.cards)
+                    .is_some_and(|card| card.id() == lora_status.id())
+                {
+                    let spectrum = lora_spectrum.snapshot();
+                    details.push_lora_spectrum(hopspot::LoRaSpectrumMenuDetails {
+                        channel_busy_per_mille: spectrum.channel_busy_per_mille,
+                        noise_floor_dbm: spectrum.noise_floor_dbm,
+                        cca_threshold_dbm: spectrum.cca_threshold_dbm,
+                        deferrals: spectrum.deferrals,
+                        false_preambles: spectrum.false_preambles,
+                        contention_timeouts: spectrum.contention_timeouts,
+                        duty_holds: spectrum.duty_holds,
+                        duty_timeouts: spectrum.duty_timeouts,
+                        radio_recoveries: spectrum.radio_recoveries,
+                    });
+                }
                 hopspot::render(
                     &mut display,
                     hopspot::RenderFrame {
@@ -480,6 +550,7 @@ pub async fn run(spawner: Spawner) -> ! {
                                 notice_until_ms = Some((now_ms + 900, notice));
                                 lora_status.disable();
                                 usb_status.disable();
+                                BluetoothAutoStatus::new(&BLE_SHARED).disable();
                                 board::control_gnss(hopspot::GnssReceiverCommand::Disable);
                             }
                             hopspot::UiAction::Wake => {
@@ -488,6 +559,7 @@ pub async fn run(spawner: Spawner) -> ! {
                                 notice_until_ms = Some((now_ms + 900, notice));
                                 lora_status.enable();
                                 usb_status.enable();
+                                BluetoothAutoStatus::new(&BLE_SHARED).enable();
                                 if ui_state.gnss_visible() {
                                     board::control_gnss(hopspot::GnssReceiverCommand::Enable);
                                 }
@@ -501,6 +573,17 @@ pub async fn run(spawner: Spawner) -> ! {
                                         Some(lora_status)
                                     } else if card.id() == usb_status.id() {
                                         Some(usb_status)
+                                    } else if card.id() == BLE_SUPERVISOR_ID {
+                                        let status = BluetoothAutoStatus::new(&BLE_SHARED);
+                                        let notice = if status.is_enabled() {
+                                            hopspot::UiNotice::TurningOff
+                                        } else {
+                                            hopspot::UiNotice::TurningOn
+                                        };
+                                        ui_state.show_notice(notice);
+                                        notice_until_ms = Some((now_ms + 900, notice));
+                                        status.toggle_enabled();
+                                        None
                                     } else {
                                         None
                                     };
@@ -525,7 +608,7 @@ pub async fn run(spawner: Spawner) -> ! {
                                         LORA_CONTROL.apply(profile).await
                                             == LoRaApplyOutcome::Applied
                                     },
-                                    || async { false },
+                                    || async { lora_profile_store.save(profile).await.is_ok() },
                                 )
                                 .await;
                                 if result.applied() {
@@ -541,7 +624,7 @@ pub async fn run(spawner: Spawner) -> ! {
                                         LORA_CONTROL.apply(DEFAULT_915_PROFILE).await
                                             == LoRaApplyOutcome::Applied
                                     },
-                                    || async { false },
+                                    || async { lora_profile_store.reset().await.is_ok() },
                                 )
                                 .await;
                                 if result.applied() {
@@ -556,15 +639,24 @@ pub async fn run(spawner: Spawner) -> ! {
                             | hopspot::UiAction::ToggleOledAutoOff
                             | hopspot::UiAction::ToggleStationUplink
                             | hopspot::UiAction::SwapRadioMode
-                            | hopspot::UiAction::OpenDocs => {}
+                            | hopspot::UiAction::OpenDocs
+                            | hopspot::UiAction::CopySharedInstanceConfig => {}
                         }
                     }
                     Either3::Second(()) | Either3::Third(()) => {}
                 }
             }
         };
+        let ble_plane = async move {
+            match bluetooth {
+                Some((supervisor, fleet)) => {
+                    join3(acceptor(sd, &HUB), scanner(sd, &HUB), supervisor.run(fleet)).await;
+                }
+                None => core::future::pending().await,
+            }
+        };
         let primary = join4(io, lora.run(lora_seam), face, board::drive_button(button));
-        join(primary, board::drive_gnss(gnss)).await;
+        join3(primary, board::drive_gnss(gnss), ble_plane).await;
     }
     #[cfg(any(feature = "board-t114", feature = "board-t1000e"))]
     {
@@ -611,9 +703,19 @@ fn ignore_events(_event: PrnsEvent<'_>, _state: &()) {}
 fn t096_snapshots(
     lora: &EmbassyInterfaceStatus,
     usb: &EmbassyInterfaceStatus,
-) -> heapless::Vec<InterfaceSnapshot, 2> {
+) -> heapless::Vec<InterfaceSnapshot, { MEMBERS + 4 }> {
+    let ble = BluetoothAutoStatus::new(&BLE_SHARED);
+    let mut entries: heapless::Vec<(&dyn InterfaceStatus, Membership), { MEMBERS + 4 }> =
+        heapless::Vec::new();
+    let _ = entries.push((lora, Membership::Independent));
+    let _ = entries.push((usb, Membership::Independent));
+    let supervisor_id = ble.id();
+    let _ = entries.push((&ble, Membership::Independent));
+    for member in ble.members() {
+        let _ = entries.push((member, Membership::FleetMember { supervisor_id }));
+    }
     let mut snapshots = heapless::Vec::new();
-    for status in [lora, usb] {
+    for (status, membership) in &entries {
         let counts = INTERFACE_STORE.counts(status.id());
         let _ = snapshots.push(InterfaceSnapshot {
             id: status.id(),
@@ -627,8 +729,30 @@ fn t096_snapshots(
             destinations: counts.destinations,
             links: counts.links,
             transported_links: counts.transported_links,
-            membership: Membership::Independent,
+            membership: *membership,
         });
     }
     snapshots
+}
+
+#[cfg(feature = "board-t096")]
+fn t096_cards(
+    snapshots: &[InterfaceSnapshot],
+    lora_id: InterfaceId,
+    usb_id: InterfaceId,
+) -> heapless::Vec<hopspot::Card, { MEMBERS + 4 }> {
+    hopspot::snapshots_to_cards(snapshots, |id| {
+        if id == lora_id {
+            Some((hopspot::CardKind::LoRa, hopspot::card_label("LoRa")))
+        } else if id == usb_id {
+            Some((hopspot::CardKind::Usb, hopspot::card_label("USB")))
+        } else if id == BLE_SUPERVISOR_ID {
+            Some((hopspot::CardKind::Ble, hopspot::card_label("BLE")))
+        } else {
+            let bytes = id.as_bytes();
+            let mut label = hopspot::CardLabel::new();
+            let _ = write!(label, "Peer {:02x}{:02x}", bytes[1], bytes[2]);
+            Some((hopspot::CardKind::Peer, label))
+        }
+    })
 }

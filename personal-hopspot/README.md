@@ -127,6 +127,20 @@ exercise LoRa where that profile is permitted. The focused
 [T114 qualification receipt](../validation/t114-qualification.md) records the
 tested boundary and remaining limitations.
 
+Heltec Mesh Node T096 developer firmware:
+
+    ./tools/prns build hopspot t096
+
+The task writes `target/hopspot-t096/t096.bin` and
+`target/hopspot-t096/t096.uf2`. It targets the stock S140 6.1.1 foundation at
+`0x26000`; double-press Reset to mount `HT-n5262G`, then copy the UF2 to that
+volume. Once Personal Hopspot is running, the WebUSB bootloader command can
+request that UF2 mode directly. The firmware drives LoRa through the board's
+KCT8103L frontend, USB Auto, BLE Auto, the 160x80 display and controls, battery
+telemetry, and the UC6580 GNSS receiver. Node and Bluetooth identities and LoRa
+profile choices survive reboot and sparse UF2 application updates. The image is
+developer firmware and is not yet in the signed release catalog.
+
 Heltec MeshTower V2 developer firmware:
 
     ./tools/prns build hopspot mesh-tower-v2

@@ -31,7 +31,11 @@ fn main() {
         (Board::TEcho, Some(Softdevice::S140V6)) => Some("memory-s140-v6.x"),
         (Board::TEcho, Some(Softdevice::S140V7)) => Some("memory-s140-v7.x"),
         (Board::TEcho, None) => panic!("T-Echo requires exactly one S140 compatibility feature"),
-        (Board::T096, None) => Some("memory-t096.x"),
+        (Board::T096, Some(Softdevice::S140V6)) => Some("memory-t096.x"),
+        (Board::T096, None) => panic!("T096 requires softdevice-s140-v6"),
+        (Board::T096, Some(Softdevice::S140V7)) => {
+            panic!("T096 does not support S140 7.x")
+        }
         (Board::T114, None) => Some("memory-t114.x"),
         (Board::T1000e, None) => Some("memory-t1000e.x"),
         (Board::MeshTowerV2, Some(Softdevice::S140V6)) => Some("memory-mesh-tower-v2.x"),
@@ -41,8 +45,8 @@ fn main() {
         (Board::MeshTowerV2, Some(Softdevice::S140V7)) => {
             panic!("MeshTower V2 does not support S140 7.x")
         }
-        (Board::T096 | Board::T114 | Board::T1000e, Some(_)) => {
-            panic!("only T-Echo and MeshTower V2 support S140 compatibility features")
+        (Board::T114 | Board::T1000e, Some(_)) => {
+            panic!("only T-Echo, T096, and MeshTower V2 support S140 compatibility features")
         }
     };
     if let Some(memory) = memory {

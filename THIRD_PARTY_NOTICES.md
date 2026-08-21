@@ -6481,9 +6481,9 @@ SOFTWARE.
 
 License: MIT License
 
-Used by: `esp-radio 0.18.0`, `personal-hopspot-esp32 0.1.0`, `t-echo 0.1.0`
+Used by: `esp-radio 0.18.0`, `hopspot 0.3.6`, `personal-hopspot-esp32 0.1.0`, `t-echo 0.1.0`
 
-Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, nRF52840
+Release graphs: ESP32-C6, ESP32-S3 Heltec, ESP32-S3 Heltec R8, ESP32-S3 T-Beam, engine, nRF52840
 
 ```text
 MIT License

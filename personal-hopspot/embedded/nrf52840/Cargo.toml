@@ -17,7 +17,7 @@ exclude = [
 [features]
 default = ["board-t-echo", "softdevice-s140-v7"]
 board-t-echo = []
-board-t096 = ["cortex-m/critical-section-single-core"]
+board-t096 = ["softdevice-s140-v6"]
 board-t114 = ["cortex-m/critical-section-single-core"]
 board-t1000e = ["cortex-m/critical-section-single-core"]
 board-mesh-tower-v2 = ["embassy-nrf/nfc-pins-as-gpio"]

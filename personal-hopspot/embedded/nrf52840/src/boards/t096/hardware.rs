@@ -9,7 +9,7 @@ use embassy_nrf::rng::Rng;
 use embassy_nrf::saadc::{self, ChannelConfig, Config as SaadcConfig, Gain, Reference, Saadc};
 use embassy_nrf::spim::{self, Spim};
 use embassy_nrf::uarte::{self, Uarte};
-use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
+use embassy_nrf::usb::vbus_detect::SoftwareVbusDetect;
 use embassy_nrf::usb::Driver;
 use embassy_nrf::{bind_interrupts, config, peripherals, usb};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -18,7 +18,7 @@ use embassy_time::{Delay, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use personal_rns::lora::LoRaInterface;
 use personal_rns::radios::sx126x::{BoardConfig, ExternalPowerAmplifier, Sx126x, TcxoVoltage};
-use prns_core::capabilities::power::ExternalPowerState;
+use static_cell::StaticCell;
 
 use crate::boards::status_led::StatusLed;
 
@@ -26,7 +26,6 @@ use super::display::DisplayIoError;
 
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
-    CLOCK_POWER => usb::vbus_detect::InterruptHandler;
     TWISPI0 => spim::InterruptHandler<peripherals::TWISPI0>;
     TWISPI1 => spim::InterruptHandler<peripherals::TWISPI1>;
     SAADC => saadc::InterruptHandler;
@@ -41,10 +40,11 @@ pub(crate) type T096LoraInterface = LoRaInterface<'static, T096Radio>;
 
 pub(crate) type T096Display = super::Display<T096SpiDevice>;
 
-type T096UsbDriver = Driver<'static, HardwareVbusDetect>;
+type T096UsbDriver = Driver<'static, &'static SoftwareVbusDetect>;
 
 pub(crate) struct T096Hardware {
     pub(crate) usb: T096UsbDriver,
+    pub(crate) vbus: &'static SoftwareVbusDetect,
     pub(crate) radio: T096Radio,
     pub(crate) display: T096Display,
     pub(crate) battery: T096Battery,
@@ -104,7 +104,10 @@ impl T096Board {
         interrupt::TWISPI1.set_priority(Priority::P3);
         interrupt::SAADC.set_priority(Priority::P3);
         interrupt::UARTE1.set_priority(Priority::P3);
-        let usb = Driver::new(peripherals.USBD, Irqs, HardwareVbusDetect::new(Irqs));
+        static SOFTWARE_VBUS: StaticCell<SoftwareVbusDetect> = StaticCell::new();
+        let vbus: &'static SoftwareVbusDetect =
+            &*SOFTWARE_VBUS.init(SoftwareVbusDetect::new(true, true));
+        let usb = Driver::new(peripherals.USBD, Irqs, vbus);
 
         // VEXT feeds the radio, display, GNSS, and external headers. Keep GNSS disabled and held in
         // reset until a consumer explicitly claims it; the display is brought up below with its
@@ -237,6 +240,7 @@ impl T096Board {
             identity,
             T096Hardware {
                 usb,
+                vbus,
                 radio,
                 display,
                 battery,
@@ -284,10 +288,6 @@ const _: () = {
     assert!(t096_chip_power_dbm(5) == -9);
     assert!(t096_chip_power_dbm(22) == 8);
 };
-
-pub(crate) fn external_power_state() -> ExternalPowerState {
-    ExternalPowerState::from_presence(embassy_nrf::pac::POWER.usbregstatus().read().vbusdetect())
-}
 
 fn enter_transmit() {
     HELD_IO.lock(|held| {

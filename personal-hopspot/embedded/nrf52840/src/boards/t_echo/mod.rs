@@ -22,7 +22,8 @@ pub(crate) use persistence::{
     new as new_persistence, persistence_state, TechoPersistence as Persistence,
 };
 
-pub(crate) const RADIO_PROFILE_PAGES: [u32; 2] = personal_hopspot_core::T_ECHO_RADIO_PROFILE_PAGES;
+pub(crate) const RADIO_PROFILE_PAGES: [u32; 2] =
+    personal_hopspot_core::NRF52840_RADIO_PROFILE_PAGES;
 pub(crate) const USB_MANUFACTURER: &str = "Stay Personal";
 pub(crate) const USB_PRODUCT: &str = "Personal Hopspot (T-Echo)";
 pub(crate) const USB_SERIAL_NUMBER: &str = "PERSONAL-RNS-TECHO-HOP";

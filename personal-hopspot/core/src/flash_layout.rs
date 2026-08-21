@@ -37,7 +37,7 @@ pub const S3_16_MIB_FLASH_LAYOUT: HopspotS3FlashLayout = HopspotS3FlashLayout {
     ),
 };
 
-pub const T_ECHO_RADIO_PROFILE_PAGES: [u32; 2] = [0xE9000, 0xEA000];
+pub const NRF52840_RADIO_PROFILE_PAGES: [u32; 2] = [0xE9000, 0xEA000];
 pub const T_ECHO_MIN_ARENA_BYTES: usize = 19 * HOPSPOT_FLASH_PAGE_BYTES;
 pub const T_ECHO_JOURNAL_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
     [0xC0000, 0xC1000],
@@ -77,9 +77,9 @@ const _: () = {
             == S3_16_MIB_FLASH_LAYOUT.flash_capacity
     );
 
-    assert!(T_ECHO_JOURNAL_LAYOUT.arenas[1].end == T_ECHO_RADIO_PROFILE_PAGES[0]);
-    assert!(T_ECHO_RADIO_PROFILE_PAGES[0] + PAGE == T_ECHO_RADIO_PROFILE_PAGES[1]);
-    assert!(T_ECHO_RADIO_PROFILE_PAGES[1] + PAGE == 0xEB000);
+    assert!(T_ECHO_JOURNAL_LAYOUT.arenas[1].end == NRF52840_RADIO_PROFILE_PAGES[0]);
+    assert!(NRF52840_RADIO_PROFILE_PAGES[0] + PAGE == NRF52840_RADIO_PROFILE_PAGES[1]);
+    assert!(NRF52840_RADIO_PROFILE_PAGES[1] + PAGE == 0xEB000);
 };
 
 #[cfg(test)]
@@ -129,14 +129,14 @@ mod tests {
     }
 
     #[test]
-    fn techo_profile_pages_bridge_the_journal_and_identity_vaults() {
+    fn nrf52840_profile_pages_bridge_the_techo_journal_and_identity_vaults() {
         assert_eq!(
             T_ECHO_JOURNAL_LAYOUT.arenas[1].len() as usize,
             T_ECHO_MIN_ARENA_BYTES
         );
-        assert_eq!(T_ECHO_RADIO_PROFILE_PAGES, [0xE9000, 0xEA000]);
+        assert_eq!(NRF52840_RADIO_PROFILE_PAGES, [0xE9000, 0xEA000]);
         assert_eq!(
-            T_ECHO_RADIO_PROFILE_PAGES[1] + HOPSPOT_FLASH_PAGE_BYTES as u32,
+            NRF52840_RADIO_PROFILE_PAGES[1] + HOPSPOT_FLASH_PAGE_BYTES as u32,
             0xEB000
         );
         assert_eq!(0xEB000 + HOPSPOT_FLASH_PAGE_BYTES as u32, 0xEC000);

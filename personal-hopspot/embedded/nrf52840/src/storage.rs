@@ -76,9 +76,8 @@ impl Nrf52840Storage {
 const _: () = assert!(Nrf52840Storage::LINK_SESSIONS > Nrf52840Storage::CHANNELS);
 const _: () = assert!(Nrf52840Storage::RESOURCE_ASSEMBLIES == 1);
 const _: () = assert!(core::mem::size_of::<NoPendingResourceOfferTable>() == 0);
-const _: () = assert!(core::mem::size_of::<
-    PendingResourceOffers<NoPendingResourceOfferTable>,
->() == 0);
+const _: () =
+    assert!(core::mem::size_of::<PendingResourceOffers<NoPendingResourceOfferTable>>() == 0);
 
 impl StorageLayout for Nrf52840Storage {
     const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
