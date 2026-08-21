@@ -24,6 +24,8 @@ const UF2_DATA_BYTES = 476;
 const UF2_APPLICATION_ENDS = new Map([
   ["t-echo", 0xc0000],
   ["t114", 0xe9000],
+  ["t096", 0xe8000],
+  ["t1000-e", 0xea000],
 ]);
 const UF2_COMPATIBILITIES = new Map([
   ["s140:6.1.1", Object.freeze({ fwid: 0x00b6, applicationBase: 0x26000, familyId: 0xada52840 })],

@@ -88,6 +88,10 @@ pub enum PreparationProfile {
     EspUsbBoot,
     TechoUf2,
     T114Uf2,
+    #[cfg(feature = "local-dev-flasher")]
+    T096Uf2,
+    #[cfg(feature = "local-dev-flasher")]
+    T1000eRecoveryUf2,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -163,6 +167,10 @@ pub struct BoardTarget {
 impl BoardTarget {
     pub fn is_flashable(&self) -> bool {
         matches!(self.tier, Tier::Flashable)
+            || (cfg!(feature = "local-dev-flasher")
+                && matches!(self.tier, Tier::Qualification)
+                && self.preparation_profile.is_some()
+                && self.flash_target.is_some())
     }
 
     pub fn image(&self) -> Option<&'static BoardImage> {
@@ -725,6 +733,20 @@ mod tests {
                 ("t1000-e", Tier::Qualification, true),
             ]
         );
+        if cfg!(feature = "local-dev-flasher") {
+            assert!(QUALIFICATION_BOARD_TARGETS
+                .iter()
+                .all(BoardTarget::is_flashable));
+            assert!(QUALIFICATION_BOARD_TARGETS
+                .iter()
+                .all(|board| board.preparation_profile.is_some() && board.flash_target.is_some()));
+        } else {
+            assert!(QUALIFICATION_BOARD_TARGETS
+                .iter()
+                .all(|board| !board.is_flashable()
+                    && board.preparation_profile.is_none()
+                    && board.flash_target.is_none()));
+        }
     }
 
     #[test]

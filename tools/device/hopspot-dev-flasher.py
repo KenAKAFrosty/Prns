@@ -235,35 +235,37 @@ def require_unquarantined_source(identity: SourceIdentity) -> None:
         )
 
 
-def shipping_boards() -> tuple[str, ...]:
+def catalog_boards() -> tuple[dict, ...]:
     document = json.loads(BOARD_CATALOG.read_text(encoding="utf-8"))
     if document.get("schema") != BOARD_CATALOG_SCHEMA or not isinstance(
         document.get("boards"), list
     ):
-        raise DeveloperFlasherError("shipping board catalog is invalid")
+        raise DeveloperFlasherError("board catalog is invalid")
     entries = document["boards"]
     if not entries or not all(isinstance(board, dict) for board in entries):
-        raise DeveloperFlasherError("shipping board catalog is invalid")
+        raise DeveloperFlasherError("board catalog is invalid")
     if not all(board.get("availability") in BOARD_AVAILABILITIES for board in entries):
-        raise DeveloperFlasherError("shipping board catalog contains an invalid availability")
+        raise DeveloperFlasherError("board catalog contains an invalid availability")
     slugs = tuple(board.get("slug") for board in entries)
     if not all(isinstance(board, str) and board for board in slugs):
-        raise DeveloperFlasherError("shipping board catalog contains an invalid slug")
+        raise DeveloperFlasherError("board catalog contains an invalid slug")
     if len(set(slugs)) != len(slugs):
-        raise DeveloperFlasherError("shipping board catalog contains duplicate slugs")
+        raise DeveloperFlasherError("board catalog contains duplicate slugs")
+    return tuple(entries)
+
+
+def shipping_boards() -> tuple[str, ...]:
     return tuple(
         board["slug"]
-        for board in entries
+        for board in catalog_boards()
         if board.get("availability") == SHIPPING_BOARD_AVAILABILITY
     )
 
 
 def selected_targets(selection: Selection) -> tuple[ExpectedTarget, ...]:
-    document = json.loads(BOARD_CATALOG.read_text(encoding="utf-8"))
     transports = {
         board["slug"]: board["transport"]
-        for board in document["boards"]
-        if board.get("availability") == SHIPPING_BOARD_AVAILABILITY
+        for board in catalog_boards()
     }
     return tuple(ExpectedTarget(board, transports[board]) for board in selection.boards)
 
@@ -284,18 +286,24 @@ def parse_selection(arguments: Sequence[str]) -> Selection:
     parser.add_argument("--all", action="store_true", dest="all_boards")
     parser.add_argument("--port", type=parse_port, default=8765)
     parsed = parser.parse_args(arguments)
-    available = shipping_boards()
+    entries = catalog_boards()
+    available = tuple(board["slug"] for board in entries)
+    shipping = tuple(
+        board["slug"]
+        for board in entries
+        if board.get("availability") == SHIPPING_BOARD_AVAILABILITY
+    )
     if parsed.all_boards and parsed.boards:
         parser.error("--all cannot be combined with explicit boards")
     if parsed.all_boards:
-        return Selection(available, parsed.port)
+        return Selection(shipping, parsed.port)
     if not parsed.boards:
-        parser.error("select at least one shipping board or use --all")
+        parser.error("select at least one cataloged board or use --all")
     if len(set(parsed.boards)) != len(parsed.boards):
         parser.error("board selections must be unique")
     unknown = sorted(set(parsed.boards) - set(available))
     if unknown:
-        parser.error(f"unknown shipping board: {', '.join(unknown)}")
+        parser.error(f"unknown board: {', '.join(unknown)}")
     requested = set(parsed.boards)
     return Selection(tuple(board for board in available if board in requested), parsed.port)
 

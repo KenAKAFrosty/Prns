@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use prns_flash_manifest::{
-    board_catalog, BoardAvailability, BoardBuild, Transport, Uf2BoardIdMatchKind,
+    board_catalog, BoardAvailability, BoardBuild, BoardCatalogEntry, Transport, Uf2BoardIdMatchKind,
 };
 
 pub(crate) fn generate() {
@@ -18,39 +18,8 @@ pub(crate) fn generate() {
          pub const SHIPPING_BOARD_TARGETS: &[BoardTarget] = &[\n",
     );
     for board in catalog.shipping_boards() {
-        let preparation_profile = match board.preparation_profile.as_str() {
-            "esp-usb-boot" => "PreparationProfile::EspUsbBoot",
-            "techo-uf2" => "PreparationProfile::TechoUf2",
-            "t114-uf2" => "PreparationProfile::T114Uf2",
-            value => panic!("unsupported website preparation profile {value:?}"),
-        };
-        let flash_target = match (&board.transport, &board.build) {
-            (Transport::EspSerial, BoardBuild::Esp(_)) => {
-                let expected_chip = board
-                    .expected_chip
-                    .as_deref()
-                    .expect("validated ESP catalog target has a chip family");
-                format!(
-                    "BoardFlashTarget::EspSerial {{ expected_chip: {expected_chip:?}, web_serial_vendor_id: ESPRESSIF_NATIVE_USB_VENDOR_ID, supports_provisioning: {}, supports_tcp_client_provisioning: {} }}",
-                    board.supports_provisioning(),
-                    board.supports_tcp_client_provisioning()
-                )
-            }
-            (Transport::Uf2MassStorage, BoardBuild::Uf2(build)) => {
-                let match_kind = match build.board_identity.match_kind {
-                    Uf2BoardIdMatchKind::Exact => "Uf2BoardIdMatchKind::Exact",
-                    Uf2BoardIdMatchKind::RevisionPrefix => "Uf2BoardIdMatchKind::RevisionPrefix",
-                };
-                format!(
-                    "BoardFlashTarget::Uf2MassStorage {{ mount_label: {:?}, board_id_match_kind: {match_kind}, board_id: {:?} }}",
-                    build.mount_label, build.board_identity.value
-                )
-            }
-            (Transport::NrfSerialDfu, BoardBuild::NrfSerialDfu(_)) => {
-                panic!("qualification target entered the shipping website catalog")
-            }
-            _ => panic!("validated catalog transport and build recipe disagree"),
-        };
+        let preparation_profile = preparation_profile(board);
+        let flash_target = flash_target(board);
         generated.push_str("    BoardTarget {\n");
         generated.push_str(&format!("        name: {:?},\n", board.display_name));
         generated.push_str(&format!("        slug: {:?},\n", board.slug));
@@ -87,7 +56,17 @@ pub(crate) fn generate() {
         }
         generated.push_str("        ],\n");
         generated.push_str(&format!("        icon: Some({:?}),\n", board.icon));
+        let preparation_profile = preparation_profile(board);
+        let flash_target = flash_target(board);
+        generated.push_str("        #[cfg(feature = \"local-dev-flasher\")]\n");
+        generated.push_str(&format!(
+            "        preparation_profile: Some({preparation_profile}),\n"
+        ));
+        generated.push_str("        #[cfg(not(feature = \"local-dev-flasher\"))]\n");
         generated.push_str("        preparation_profile: None,\n");
+        generated.push_str("        #[cfg(feature = \"local-dev-flasher\")]\n");
+        generated.push_str(&format!("        flash_target: Some({flash_target}),\n"));
+        generated.push_str("        #[cfg(not(feature = \"local-dev-flasher\"))]\n");
         generated.push_str("        flash_target: None,\n");
         generated.push_str("    },\n");
     }
@@ -96,4 +75,56 @@ pub(crate) fn generate() {
     let out_dir = env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo");
     fs::write(PathBuf::from(out_dir).join("shipping_boards.rs"), generated)
         .expect("failed to write generated shipping board catalog");
+}
+
+fn preparation_profile(board: &BoardCatalogEntry) -> &'static str {
+    match board.preparation_profile.as_str() {
+        "esp-usb-boot" => "PreparationProfile::EspUsbBoot",
+        "techo-uf2" => "PreparationProfile::TechoUf2",
+        "t114-uf2" => "PreparationProfile::T114Uf2",
+        "t096-uf2" => "PreparationProfile::T096Uf2",
+        "t1000e-nrf-dfu" => "PreparationProfile::T1000eRecoveryUf2",
+        value => panic!("unsupported website preparation profile {value:?}"),
+    }
+}
+
+fn flash_target(board: &BoardCatalogEntry) -> String {
+    match (&board.transport, &board.build) {
+        (Transport::EspSerial, BoardBuild::Esp(_)) => {
+            let expected_chip = board
+                .expected_chip
+                .as_deref()
+                .expect("validated ESP catalog target has a chip family");
+            format!(
+                "BoardFlashTarget::EspSerial {{ expected_chip: {expected_chip:?}, web_serial_vendor_id: ESPRESSIF_NATIVE_USB_VENDOR_ID, supports_provisioning: {}, supports_tcp_client_provisioning: {} }}",
+                board.supports_provisioning(),
+                board.supports_tcp_client_provisioning()
+            )
+        }
+        (Transport::Uf2MassStorage, BoardBuild::Uf2(build)) => uf2_flash_target(
+            &build.mount_label,
+            build.board_identity.match_kind,
+            &build.board_identity.value,
+        ),
+        (Transport::NrfSerialDfu, BoardBuild::NrfSerialDfu(build)) => uf2_flash_target(
+            &build.recovery.mount_label,
+            build.recovery.board_identity.match_kind,
+            &build.recovery.board_identity.value,
+        ),
+        _ => panic!("validated catalog transport and build recipe disagree"),
+    }
+}
+
+fn uf2_flash_target(
+    mount_label: &str,
+    board_id_match_kind: Uf2BoardIdMatchKind,
+    board_id: &str,
+) -> String {
+    let match_kind = match board_id_match_kind {
+        Uf2BoardIdMatchKind::Exact => "Uf2BoardIdMatchKind::Exact",
+        Uf2BoardIdMatchKind::RevisionPrefix => "Uf2BoardIdMatchKind::RevisionPrefix",
+    };
+    format!(
+        "BoardFlashTarget::Uf2MassStorage {{ mount_label: {mount_label:?}, board_id_match_kind: {match_kind}, board_id: {board_id:?} }}"
+    )
 }

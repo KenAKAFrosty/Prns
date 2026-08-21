@@ -13,7 +13,12 @@ RELEASE_TOOLS = Path(__file__).resolve().parents[1] / "release"
 if str(RELEASE_TOOLS) not in sys.path:
     sys.path.insert(0, str(RELEASE_TOOLS))
 
-from flasher_manifest import require_schema, target_artifacts, validate_uf2_artifact
+from flasher_manifest import (
+    require_schema,
+    target_artifacts,
+    validate_nrf_serial_dfu_recovery_artifact,
+    validate_uf2_artifact,
+)
 
 
 class DeveloperCandidateError(RuntimeError):
@@ -59,7 +64,7 @@ def safe_artifact_path(candidate: Path, wire_path: object) -> tuple[PurePosixPat
     ):
         raise DeveloperCandidateError(f"manifest contains unsafe artifact path: {wire_path!r}")
     root = candidate.resolve(strict=True)
-    path = candidate.joinpath(*relative.parts)
+    path = root.joinpath(*relative.parts)
     try:
         resolved = path.resolve(strict=True)
         resolved.relative_to(root)
@@ -182,6 +187,18 @@ def validate_candidate(
             validate_artifact(candidate, artifact, transport, version, source_digest)
             for artifact in artifacts
         )
+        if transport == "nrf-serial-dfu":
+            try:
+                validate_nrf_serial_dfu_recovery_artifact(
+                    target,
+                    validated_artifacts[0].payload,
+                    validated_artifacts[2].payload,
+                )
+            except (IndexError, KeyError, TypeError, ValueError) as error:
+                raise DeveloperCandidateError(
+                    f"assembled manifest Nordic recovery evidence is invalid for "
+                    f"{expected.board_slug}: {error}"
+                ) from error
         paths = tuple(artifact.path for artifact in validated_artifacts)
         duplicates = seen_paths.intersection(paths)
         if len(set(paths)) != len(paths) or duplicates:

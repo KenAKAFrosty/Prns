@@ -32,6 +32,20 @@ def target_artifacts(target: dict) -> list[dict]:
         return parts
     if transport == "uf2-mass-storage" and variants and not parts:
         return variants
+    if transport == "nrf-serial-dfu" and not parts and not variants:
+        nrf_serial_dfu = target.get("nrf_serial_dfu")
+        recovery = (
+            nrf_serial_dfu.get("recovery")
+            if isinstance(nrf_serial_dfu, dict)
+            else None
+        )
+        artifacts = (
+            nrf_serial_dfu.get("application") if isinstance(nrf_serial_dfu, dict) else None,
+            nrf_serial_dfu.get("init_packet") if isinstance(nrf_serial_dfu, dict) else None,
+            recovery.get("artifact") if isinstance(recovery, dict) else None,
+        )
+        if all(isinstance(artifact, dict) for artifact in artifacts):
+            return list(artifacts)
     raise ValueError("flash manifest target artifacts disagree with its transport")
 
 
@@ -83,3 +97,100 @@ def validate_uf2_artifact(variant: dict, payload: bytes) -> None:
             raise ValueError(f"UF2 block {index} exceeds the application region")
         if any(block[UF2_DATA_OFFSET + data_bytes : UF2_DATA_OFFSET + UF2_DATA_BYTES]):
             raise ValueError(f"UF2 block {index} has nonzero payload padding")
+
+
+def validate_nrf_serial_dfu_recovery_artifact(
+    target: dict,
+    application: bytes,
+    recovery_payload: bytes,
+) -> None:
+    nrf_serial_dfu = target.get("nrf_serial_dfu")
+    if not isinstance(nrf_serial_dfu, dict):
+        raise ValueError("Nordic serial DFU metadata is missing")
+    compatibility = nrf_serial_dfu.get("compatibility")
+    recovery = nrf_serial_dfu.get("recovery")
+    if not isinstance(compatibility, dict) or not isinstance(recovery, dict):
+        raise ValueError("Nordic serial DFU recovery metadata is malformed")
+    application_artifact = nrf_serial_dfu.get("application")
+    init_packet_artifact = nrf_serial_dfu.get("init_packet")
+    recovery_artifact = recovery.get("artifact")
+    if (
+        not isinstance(application_artifact, dict)
+        or application_artifact.get("kind") != "dfu-application"
+        or not isinstance(init_packet_artifact, dict)
+        or init_packet_artifact.get("kind") != "dfu-init-packet"
+        or not isinstance(recovery_artifact, dict)
+        or recovery_artifact.get("kind") != "uf2"
+        or recovery.get("mount_label") != "T1000-E"
+        or recovery.get("board_id_prefix") != "nrf52840-t1000-e-v1"
+    ):
+        raise ValueError("Nordic serial DFU recovery artifact identity is unsupported")
+    expected_compatibility = {
+        "softdevice_family": "s140",
+        "softdevice_version": "7.3.0",
+        "fwid": "0x0123",
+        "application_base": "0x00027000",
+        "application_end_exclusive": "0x000ea000",
+    }
+    if any(
+        compatibility.get(field) != value
+        for field, value in expected_compatibility.items()
+    ) or recovery.get("family_id") != "0xada52840":
+        raise ValueError("Nordic serial DFU recovery compatibility is unsupported")
+    if not application:
+        raise ValueError("Nordic serial DFU application is empty")
+    application_base = int(compatibility["application_base"], 16)
+    application_end = int(compatibility["application_end_exclusive"], 16)
+    family_id = int(recovery["family_id"], 16)
+    if not recovery_payload or len(recovery_payload) % UF2_BLOCK_BYTES != 0:
+        raise ValueError("recovery UF2 length is not a nonzero multiple of 512 bytes")
+    expected_blocks = (len(application) + UF2_PAYLOAD_BYTES - 1) // UF2_PAYLOAD_BYTES
+    actual_blocks = len(recovery_payload) // UF2_BLOCK_BYTES
+    if actual_blocks != expected_blocks:
+        raise ValueError("recovery UF2 block count disagrees with the exact DFU application")
+    expected_address = application_base
+    for index in range(actual_blocks):
+        block = recovery_payload[
+            index * UF2_BLOCK_BYTES : (index + 1) * UF2_BLOCK_BYTES
+        ]
+
+        def word(offset: int) -> int:
+            return int.from_bytes(block[offset : offset + 4], "little")
+
+        if (
+            word(0) != UF2_MAGIC_START_ZERO
+            or word(4) != UF2_MAGIC_START_ONE
+            or word(508) != UF2_MAGIC_END
+        ):
+            raise ValueError(f"recovery UF2 block {index} has invalid magic")
+        if word(8) != UF2_FAMILY_ID_FLAG:
+            raise ValueError(f"recovery UF2 block {index} has unsupported flags")
+        if word(20) != index or word(24) != actual_blocks:
+            raise ValueError(f"recovery UF2 block {index} is reordered or has the wrong count")
+        if word(28) != family_id:
+            raise ValueError(f"recovery UF2 block {index} has the wrong family ID")
+        address = word(12)
+        data_bytes = word(16)
+        if address != expected_address:
+            raise ValueError(f"recovery UF2 block {index} is not at the next application address")
+        if data_bytes != UF2_PAYLOAD_BYTES:
+            raise ValueError(f"recovery UF2 block {index} has an unsupported payload length")
+        expected_address = address + data_bytes
+        if expected_address > application_end:
+            raise ValueError(f"recovery UF2 block {index} exceeds the application region")
+        application_offset = index * UF2_PAYLOAD_BYTES
+        application_end_offset = min(
+            application_offset + UF2_PAYLOAD_BYTES,
+            len(application),
+        )
+        expected_payload = application[application_offset:application_end_offset]
+        block_payload = block[UF2_DATA_OFFSET : UF2_DATA_OFFSET + UF2_PAYLOAD_BYTES]
+        if (
+            block_payload[: len(expected_payload)] != expected_payload
+            or any(block_payload[len(expected_payload) :])
+        ):
+            raise ValueError(
+                f"recovery UF2 block {index} disagrees with the exact DFU application"
+            )
+        if any(block[UF2_DATA_OFFSET + data_bytes : UF2_DATA_OFFSET + UF2_DATA_BYTES]):
+            raise ValueError(f"recovery UF2 block {index} has nonzero payload padding")

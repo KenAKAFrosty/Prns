@@ -183,25 +183,67 @@ pub(super) fn preparation_guide(
                 "If automatic connection fails, hold BOOT, tap RESET, release BOOT, then restart the complete connect-and-flash step.".to_string(),
             ],
         },
-        PreparationProfile::TechoUf2 | PreparationProfile::T114Uf2 => PreparationGuide {
-            lead: "This board uses its UF2 bootloader; the website reads its local descriptor and downloads the matching verified UF2 file.",
-            steps: match target {
-                BoardFlashTarget::Uf2MassStorage { mount_label, .. } => vec![
-                    format!(
-                        "Connect with a USB data cable and double-press RESET until the {mount_label} drive appears."
-                    ),
-                    format!(
-                        "Select INFO_UF2.TXT from {mount_label}. The file is parsed only in this browser and is not uploaded or retained."
-                    ),
-                    "Prepare the signed release after the detected SoftDevice foundation appears.".to_string(),
-                    format!(
-                        "Copy the downloaded UF2 to {mount_label} and wait for the copy to finish. The drive disappears when the device reboots."
-                    ),
-                ],
-                BoardFlashTarget::EspSerial { .. } => {
-                    unreachable!("the UF2 preparation profile requires a cataloged UF2 target")
-                }
-            },
+        PreparationProfile::TechoUf2 | PreparationProfile::T114Uf2 => {
+            uf2_preparation_guide(target)
+        }
+        #[cfg(feature = "local-dev-flasher")]
+        PreparationProfile::T096Uf2 => uf2_preparation_guide(target),
+        #[cfg(feature = "local-dev-flasher")]
+        PreparationProfile::T1000eRecoveryUf2 => t1000e_recovery_preparation_guide(target),
+    }
+}
+
+#[cfg(feature = "local-dev-flasher")]
+fn t1000e_recovery_preparation_guide(target: BoardFlashTarget) -> PreparationGuide {
+    PreparationGuide {
+        lead: "This page is the T1000-E recovery-UF2 fallback. Bootloader entry depends on the application currently running; the large button is not a standalone RESET control.",
+        steps: match target {
+            BoardFlashTarget::Uf2MassStorage { mount_label, .. } => vec![
+                "If the green LED is blinking and USB identifies as Personal Hopspot (T1000-E), stop here: this recovery-only browser step cannot request that managed application's bootloader entry yet. Use the native developer flasher for direct DFU; repeatedly pressing the button will not reset our firmware."
+                    .to_string(),
+                "For a tracker still running Seeed or Meshtastic firmware, disconnect its USB charging/data cable, then press and keep holding the single large button."
+                    .to_string(),
+                "While holding the button, quickly plug in, unplug, and plug in the cable again. Keep holding throughout; Seeed notes that this stock-firmware sequence may take several attempts."
+                    .to_string(),
+                format!(
+                    "Release the button when the green LED stays solid and the {mount_label} drive appears."
+                ),
+                format!(
+                    "Select INFO_UF2.TXT from {mount_label}. The file is parsed only in this browser and is not uploaded or retained."
+                ),
+                "Prepare the signed recovery image after the detected bootloader identity appears."
+                    .to_string(),
+                format!(
+                    "Copy the downloaded recovery UF2 to {mount_label} and wait for the copy to finish. The drive disappears when the device reboots."
+                ),
+            ],
+            BoardFlashTarget::EspSerial { .. } => {
+                unreachable!("the T1000-E recovery profile requires a cataloged UF2 target")
+            }
+        },
+    }
+}
+
+fn uf2_preparation_guide(target: BoardFlashTarget) -> PreparationGuide {
+    PreparationGuide {
+        lead: "This board uses its UF2 bootloader; the website reads its local descriptor and downloads the matching verified UF2 file.",
+        steps: match target {
+            BoardFlashTarget::Uf2MassStorage { mount_label, .. } => vec![
+                format!(
+                    "Connect with a USB data cable and double-press RESET until the {mount_label} drive appears."
+                ),
+                format!(
+                    "Select INFO_UF2.TXT from {mount_label}. The file is parsed only in this browser and is not uploaded or retained."
+                ),
+                "Prepare the signed release after the detected SoftDevice foundation appears."
+                    .to_string(),
+                format!(
+                    "Copy the downloaded UF2 to {mount_label} and wait for the copy to finish. The drive disappears when the device reboots."
+                ),
+            ],
+            BoardFlashTarget::EspSerial { .. } => {
+                unreachable!("the UF2 preparation profile requires a cataloged UF2 target")
+            }
         },
     }
 }
@@ -363,6 +405,42 @@ mod tests {
         assert!(shares_serial_chip_identity(t_beam));
         assert!(!shares_serial_chip_identity(xiao));
         assert!(!shares_serial_chip_identity(t_echo));
+    }
+
+    #[cfg(feature = "local-dev-flasher")]
+    #[test]
+    fn t1000e_recovery_uses_its_button_and_cable_sequence() {
+        let t1000e = board_target_by_slug("t1000-e").expect("qualification board");
+        let guide = preparation_guide(
+            t1000e.preparation_profile.expect("flashable profile"),
+            t1000e.flash_target.expect("flash target"),
+        );
+
+        assert!(guide.lead.contains("recovery-UF2 fallback"));
+        assert!(guide.lead.contains("not a standalone RESET control"));
+        assert!(guide
+            .steps
+            .iter()
+            .any(|step| step.contains("Personal Hopspot (T1000-E)")));
+        assert!(guide
+            .steps
+            .iter()
+            .any(|step| step.contains("cannot request that managed application's bootloader")));
+        assert!(guide
+            .steps
+            .iter()
+            .any(|step| step.contains("native developer flasher")));
+        assert!(guide.steps.iter().any(|step| step.contains("keep holding")));
+        assert!(guide
+            .steps
+            .iter()
+            .any(|step| step.contains("plug in, unplug, and plug in")));
+        assert!(guide.steps.iter().any(|step| step.contains("green LED")));
+        assert!(guide.steps.iter().any(|step| step.contains("T1000-E")));
+        assert!(!guide
+            .steps
+            .iter()
+            .any(|step| step.contains("double-press RESET")));
     }
 
     #[test]

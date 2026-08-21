@@ -1,5 +1,7 @@
 use dioxus::prelude::*;
-use prns_flash_manifest::{EspSerialTarget, FlashPartKind, ReleaseTarget, Transport, Uf2Target};
+use prns_flash_manifest::{
+    EspSerialTarget, FlashPartKind, NrfSerialDfuTarget, ReleaseTarget, Transport, Uf2Target,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::platforms::BoardFlashTarget;
@@ -201,6 +203,29 @@ impl BridgeRequest {
                     softdevice,
                 )
             }
+            (
+                ReleaseTarget::NrfSerialDfu(nrf),
+                BoardFlashTarget::Uf2MassStorage { mount_label, .. },
+                ReleaseCompatibility::Uf2(softdevice),
+            ) => {
+                if install_mode != InstallMode::PreserveData
+                    || destructive_confirmation != DestructiveConfirmation::Unconfirmed
+                {
+                    return Err(
+                        "A Nordic recovery UF2 cannot request destructive ESP installation."
+                            .to_string(),
+                    );
+                }
+                Self::from_nrf_recovery_target(
+                    target.board_id().as_str(),
+                    target.display_name(),
+                    nrf,
+                    base_url,
+                    provisioning,
+                    mount_label,
+                    softdevice,
+                )
+            }
             _ => Err(
                 "The signed target disagrees with the cataloged board transport or chip family."
                     .to_string(),
@@ -311,6 +336,64 @@ impl BridgeRequest {
                 fwid: compatibility.fwid(),
                 application_base: compatibility.application_base(),
                 family_id: compatibility.family_id(),
+            }),
+            serial_filters: Vec::new(),
+            install_mode: None,
+            erase_confirmed: None,
+            provisioning: None,
+            parts: vec![BridgePart {
+                kind: part_kind(FlashPartKind::Uf2),
+                path: path.to_string(),
+                url: immutable_part_url(base_url, path)?,
+                offset: None,
+                size: part.size(),
+                sha256: part.sha256().as_str().to_string(),
+            }],
+        })
+    }
+
+    fn from_nrf_recovery_target(
+        board_slug: &str,
+        display_name: &str,
+        target: &NrfSerialDfuTarget,
+        base_url: &str,
+        provisioning: Option<BridgeProvisioning>,
+        mount_label: &str,
+        softdevice: &prns_flash_manifest::SoftdeviceIdentity,
+    ) -> Result<Self, String> {
+        if provisioning.is_some() {
+            return Err("A Nordic recovery UF2 cannot carry ESP provisioning data.".to_string());
+        }
+        let compatibility = target.compatibility();
+        let recovery = target.recovery();
+        if compatibility.softdevice() != softdevice
+            || recovery.mount_label().as_str() != mount_label
+        {
+            return Err(
+                "The signed Nordic recovery target disagrees with the detected foundation or cataloged bootloader."
+                    .to_string(),
+            );
+        }
+        let part = recovery.artifact();
+        let path = part.path().as_str();
+        Ok(Self {
+            schema: contract::schema(),
+            board_slug: board_slug.to_string(),
+            display_name: display_name.to_string(),
+            transport: Transport::Uf2MassStorage,
+            expected_chip: None,
+            flash_size: None,
+            flash_mode: None,
+            flash_frequency: None,
+            before_reset: None,
+            after_reset: None,
+            mount_label: Some(mount_label.to_string()),
+            uf2_compatibility: Some(BridgeUf2Compatibility {
+                softdevice_family: compatibility.softdevice().family().as_str().to_string(),
+                softdevice_version: compatibility.softdevice().version().as_str().to_string(),
+                fwid: compatibility.fwid(),
+                application_base: compatibility.application_base(),
+                family_id: recovery.family_id(),
             }),
             serial_filters: Vec::new(),
             install_mode: None,
@@ -663,6 +746,11 @@ pub(super) fn phase_label(phase: BridgePhase) -> &'static str {
 mod tests {
     use super::*;
     use crate::platforms::{board_target_by_slug, BoardFlashTarget};
+    use prns_flash_manifest::{
+        board_catalog, BoardBuild, FlashManifest, FlashPart, ManifestTargetSetPolicy,
+        NrfSerialDfuManifest, NrfSerialDfuRecoveryManifest, OfflineKeySigningInfo, ReleaseChannel,
+        ReleaseInfo, TargetManifest, ValidatedFlashManifest, FLASH_MANIFEST_SCHEMA,
+    };
     use std::collections::BTreeSet;
 
     const EVENT_FIELDS: [&str; 11] = [
@@ -684,6 +772,130 @@ mod tests {
         supports_provisioning: true,
         supports_tcp_client_provisioning: true,
     };
+
+    fn t1000_manifest() -> Result<ValidatedFlashManifest, Box<dyn std::error::Error>> {
+        let catalog = board_catalog()?;
+        let board = catalog
+            .board("t1000-e")
+            .ok_or("missing T1000-E catalog target")?;
+        let BoardBuild::NrfSerialDfu(build) = &board.build else {
+            return Err("T1000-E catalog target is not Nordic serial DFU".into());
+        };
+        let part = |kind, filename: &str, hash: char| FlashPart {
+            kind,
+            path: format!("firmware/hopspot/t1000-e/0.3.7/{filename}"),
+            offset: None,
+            size: 256,
+            sha256: hash.to_string().repeat(64),
+        };
+        let target = TargetManifest {
+            board_slug: board.slug.clone(),
+            display_name: board.display_name.clone(),
+            silicon: board.silicon.clone(),
+            interfaces: board.interfaces.clone(),
+            transport: board.transport,
+            expected_chip: None,
+            flash_size: None,
+            flash_mode: None,
+            flash_frequency: None,
+            before_reset: None,
+            after_reset: None,
+            preparation_profile: board.preparation_profile.clone(),
+            parts: Vec::new(),
+            variants: Vec::new(),
+            nrf_serial_dfu: Some(NrfSerialDfuManifest {
+                serial: build.serial.clone(),
+                compatibility: build.compatibility.clone(),
+                application: part(
+                    FlashPartKind::DfuApplication,
+                    &build.application_filename,
+                    'a',
+                ),
+                init_packet: part(
+                    FlashPartKind::DfuInitPacket,
+                    &build.init_packet_filename,
+                    'b',
+                ),
+                recovery: NrfSerialDfuRecoveryManifest {
+                    mount_label: build.recovery.mount_label.clone(),
+                    board_id_prefix: build.recovery.board_identity.value.clone(),
+                    family_id: build.recovery.family_id.clone(),
+                    artifact: part(FlashPartKind::Uf2, &build.recovery.filename, 'c'),
+                },
+            }),
+            provisioning: None,
+            source: None,
+        };
+        let manifest = FlashManifest {
+            schema_version: FLASH_MANIFEST_SCHEMA,
+            release: ReleaseInfo {
+                version: "0.3.7".to_string(),
+                channel: ReleaseChannel::Preview,
+                commit: "0".repeat(40),
+            },
+            signing: OfflineKeySigningInfo {
+                key_id: "0123456789ABCDEF".to_string(),
+            },
+            targets: vec![target],
+        };
+        let policy = ManifestTargetSetPolicy::local_development(&catalog, &["t1000-e"])?;
+        Ok(ValidatedFlashManifest::from_json_with_target_set(
+            &serde_json::to_vec(&manifest)?,
+            &catalog,
+            &policy,
+        )?)
+    }
+
+    #[test]
+    fn local_t1000_recovery_projects_only_the_manifest_bound_uf2(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let manifest = t1000_manifest()?;
+        let target = manifest.targets().first().ok_or("missing T1000-E target")?;
+        let ReleaseTarget::NrfSerialDfu(nrf) = target else {
+            return Err("T1000-E target is not Nordic serial DFU".into());
+        };
+        let catalog_target = BoardFlashTarget::Uf2MassStorage {
+            mount_label: "T1000-E",
+            board_id_match_kind: prns_flash_manifest::Uf2BoardIdMatchKind::Exact,
+            board_id: "nrf52840-t1000-e-v1",
+        };
+        let compatibility = ReleaseCompatibility::Uf2(nrf.compatibility().softdevice().clone());
+        let request = BridgeRequest::from_target(
+            target,
+            "https://reticulum.rs/releases/0.3.7/flash-manifest.json",
+            InstallMode::PreserveData,
+            DestructiveConfirmation::Unconfirmed,
+            None,
+            catalog_target,
+            &compatibility,
+        )?;
+        let wire = serde_json::to_value(request)?;
+        assert_eq!(wire["transport"], "uf2-mass-storage");
+        assert_eq!(wire["mountLabel"], "T1000-E");
+        assert_eq!(wire["uf2Compatibility"]["softdeviceVersion"], "7.3.0");
+        let parts = wire["parts"]
+            .as_array()
+            .ok_or("recovery parts are not an array")?;
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["kind"], "uf2");
+        assert_eq!(parts[0]["path"], nrf.recovery().artifact().path().as_str());
+
+        assert!(BridgeRequest::from_target(
+            target,
+            "https://reticulum.rs/releases/0.3.7/flash-manifest.json",
+            InstallMode::PreserveData,
+            DestructiveConfirmation::Unconfirmed,
+            None,
+            BoardFlashTarget::Uf2MassStorage {
+                mount_label: "WRONG",
+                board_id_match_kind: prns_flash_manifest::Uf2BoardIdMatchKind::Exact,
+                board_id: "nrf52840-t1000-e-v1",
+            },
+            &compatibility,
+        )
+        .is_err());
+        Ok(())
+    }
 
     #[test]
     fn rust_event_shape_and_messages_cover_the_shared_contract() {

@@ -184,7 +184,26 @@ test("the UF2 application region bound is pinned per board", () => {
   const pastTechoEnd = (0xc0000 - v6.applicationBase) / 256 + 1;
   const image = uf2Image(v6.applicationBase, v6.familyId, pastTechoEnd);
   assert.throws(() => validateUf2Artifact(image, v6, "t-echo"), /payload bounds/);
+  assert.equal(validateUf2Artifact(image, v6, "t096").length, image.length);
   assert.equal(validateUf2Artifact(image, v6, "t114").length, image.length);
+  const pastT096End = (0xe8000 - v6.applicationBase) / 256 + 1;
+  assert.throws(
+    () => validateUf2Artifact(uf2Image(v6.applicationBase, v6.familyId, pastT096End), v6, "t096"),
+    /payload bounds/,
+  );
+  const v7 = {
+    softdeviceFamily: "s140",
+    softdeviceVersion: "7.3.0",
+    fwid: 0x0123,
+    applicationBase: 0x27000,
+    familyId: 0xada52840,
+  };
+  assert.equal(validateUf2Artifact(uf2Block(v7.applicationBase, v7.familyId), v7, "t1000-e").length, 512);
+  const pastT1000End = (0xea000 - v7.applicationBase) / 256 + 1;
+  assert.throws(
+    () => validateUf2Artifact(uf2Image(v7.applicationBase, v7.familyId, pastT1000End), v7, "t1000-e"),
+    /payload bounds/,
+  );
   assert.throws(
     () => validateUf2Artifact(uf2Block(v6.applicationBase, v6.familyId), v6, "nrf52840-second-board"),
     /pinned application region/,
