@@ -83,7 +83,7 @@ fn preparation_profile(board: &BoardCatalogEntry) -> &'static str {
         "techo-uf2" => "PreparationProfile::TechoUf2",
         "t114-uf2" => "PreparationProfile::T114Uf2",
         "t096-uf2" => "PreparationProfile::T096Uf2",
-        "t1000e-nrf-dfu" => "PreparationProfile::T1000eRecoveryUf2",
+        "t1000e-nrf-dfu" => "PreparationProfile::T1000eNrfSerialDfu",
         value => panic!("unsupported website preparation profile {value:?}"),
     }
 }
@@ -106,11 +106,16 @@ fn flash_target(board: &BoardCatalogEntry) -> String {
             build.board_identity.match_kind,
             &build.board_identity.value,
         ),
-        (Transport::NrfSerialDfu, BoardBuild::NrfSerialDfu(build)) => uf2_flash_target(
-            &build.recovery.mount_label,
-            build.recovery.board_identity.match_kind,
-            &build.recovery.board_identity.value,
-        ),
+        (Transport::NrfSerialDfu, BoardBuild::NrfSerialDfu(build)) => {
+            let match_kind = match build.recovery.board_identity.match_kind {
+                Uf2BoardIdMatchKind::Exact => "Uf2BoardIdMatchKind::Exact",
+                Uf2BoardIdMatchKind::RevisionPrefix => "Uf2BoardIdMatchKind::RevisionPrefix",
+            };
+            format!(
+                "BoardFlashTarget::NrfSerialDfu {{ recovery_mount_label: {:?}, recovery_board_id_match_kind: {match_kind}, recovery_board_id: {:?} }}",
+                build.recovery.mount_label, build.recovery.board_identity.value
+            )
+        }
         _ => panic!("validated catalog transport and build recipe disagree"),
     }
 }

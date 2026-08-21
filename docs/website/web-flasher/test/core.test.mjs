@@ -33,6 +33,7 @@ function request() {
     afterReset: "watchdog-reset",
     mountLabel: null,
     uf2Compatibility: null,
+    nrfSerialDfu: null,
     serialFilters: [{ usbVendorId: 0x303a }],
     provisioning: { action: "preserve", offset: 0xd000, size: 0x1000 },
     parts: [
@@ -41,6 +42,57 @@ function request() {
       { kind: "application", path: "firmware/hopspot/heltec-v4/0.2.6/app.bin", url: "/releases/0.2.6/firmware/hopspot/heltec-v4/0.2.6/app.bin", offset: 0x10000, size: 32, sha256: "c".repeat(64) },
     ],
   };
+}
+
+function nrfRequest() {
+  const value = request();
+  Object.assign(value, {
+    boardSlug: "t1000-e",
+    displayName: "Seeed Studio SenseCAP Card Tracker T1000-E",
+    transport: "nrf-serial-dfu",
+    expectedChip: null,
+    flashSize: null,
+    flashMode: null,
+    flashFrequency: null,
+    beforeReset: null,
+    afterReset: null,
+    provisioning: null,
+    serialFilters: [{ usbVendorId: 0x2886, usbProductId: 0x0057 }],
+    nrfSerialDfu: {
+      entry: "managed-application",
+      touchApplicationAndBootloaderUsb: { vendorId: 0x2886, productId: 0x0057 },
+      touchBaudRate: 1_200,
+      transferBaudRate: 115_200,
+      managedApplication: {
+        usb: { vendorId: 0x1209, productId: 0x0001 },
+        manufacturer: "Stay Personal",
+        product: "Personal Hopspot (T1000-E)",
+        serialNumber: "PERSONAL-RNS-T1000E-HOP",
+        interfaceNumber: 0,
+        request: 0x50,
+        value: 0x5052,
+        index: 0x4e53,
+      },
+      compatibility: {
+        softdeviceFamily: "s140",
+        softdeviceVersion: "7.3.0",
+        softdeviceFwids: [0x0123],
+        deviceType: 0x0052,
+        deviceRevision: 52840,
+        applicationVersion: "not-enforced",
+        applicationBase: 0x27000,
+        applicationEndExclusive: 0xea000,
+        bankLayout: "single",
+      },
+    },
+    parts: [
+      { kind: "dfu-application", path: "firmware/hopspot/t1000-e/0.3.7/app.bin", url: "/releases/0.3.7/firmware/hopspot/t1000-e/0.3.7/app.bin", offset: null, size: 32, sha256: "d".repeat(64) },
+      { kind: "dfu-init-packet", path: "firmware/hopspot/t1000-e/0.3.7/app.dat", url: "/releases/0.3.7/firmware/hopspot/t1000-e/0.3.7/app.dat", offset: null, size: 14, sha256: "e".repeat(64) },
+    ],
+  });
+  delete value.installMode;
+  delete value.eraseConfirmed;
+  return value;
 }
 
 test("valid sparse request is accepted", () => {
@@ -59,6 +111,30 @@ test("ESP serial filters are explicit, bounded, and unique", () => {
     const value = request();
     value.serialFilters = serialFilters;
     assert.throws(() => validateRequest(value), /serial device filter/);
+  }
+});
+
+test("T1000-E Nordic serial DFU identity is exact and closed", () => {
+  const value = nrfRequest();
+  assert.equal(validateRequest(value).nrfSerialDfu.entry, "managed-application");
+  value.nrfSerialDfu.entry = "touch-application-or-bootloader";
+  assert.equal(validateRequest(value).nrfSerialDfu.entry, "touch-application-or-bootloader");
+
+  for (const mutate of [
+    (candidate) => { candidate.serialFilters[0].usbProductId = 0x0058; },
+    (candidate) => { candidate.nrfSerialDfu.touchBaudRate = 2_400; },
+    (candidate) => { candidate.nrfSerialDfu.managedApplication.product = "T1000-E"; },
+    (candidate) => { candidate.nrfSerialDfu.managedApplication.request = 0x51; },
+    (candidate) => { candidate.nrfSerialDfu.compatibility.softdeviceFwids = [0x00b6]; },
+    (candidate) => { candidate.nrfSerialDfu.compatibility.applicationBase = 0x26000; },
+    (candidate) => { candidate.parts.reverse(); },
+  ]) {
+    const candidate = nrfRequest();
+    mutate(candidate);
+    assert.throws(
+      () => validateRequest(candidate),
+      /Nordic serial DFU target|ordered application and init packet/,
+    );
   }
 });
 

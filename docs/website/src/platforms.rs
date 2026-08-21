@@ -91,7 +91,7 @@ pub enum PreparationProfile {
     #[cfg(feature = "local-dev-flasher")]
     T096Uf2,
     #[cfg(feature = "local-dev-flasher")]
-    T1000eRecoveryUf2,
+    T1000eNrfSerialDfu,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -107,11 +107,17 @@ pub enum BoardFlashTarget {
         board_id_match_kind: Uf2BoardIdMatchKind,
         board_id: &'static str,
     },
+    #[cfg_attr(not(feature = "local-dev-flasher"), allow(dead_code))]
+    NrfSerialDfu {
+        recovery_mount_label: &'static str,
+        recovery_board_id_match_kind: Uf2BoardIdMatchKind,
+        recovery_board_id: &'static str,
+    },
 }
 
 impl BoardFlashTarget {
     pub const fn uses_web_serial(self) -> bool {
-        matches!(self, Self::EspSerial { .. })
+        matches!(self, Self::EspSerial { .. } | Self::NrfSerialDfu { .. })
     }
 
     pub const fn supports_provisioning(self) -> bool {
@@ -127,7 +133,7 @@ impl BoardFlashTarget {
     pub const fn expected_chip(self) -> Option<&'static str> {
         match self {
             Self::EspSerial { expected_chip, .. } => Some(expected_chip),
-            Self::Uf2MassStorage { .. } => None,
+            Self::Uf2MassStorage { .. } | Self::NrfSerialDfu { .. } => None,
         }
     }
 

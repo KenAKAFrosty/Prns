@@ -98,6 +98,7 @@ function request() {
       afterReset: "watchdog-reset",
       mountLabel: null,
       uf2Compatibility: null,
+      nrfSerialDfu: null,
       serialFilters: [{ usbVendorId: 0x303a }],
       provisioning: { action: "configure", offset: 0xd000, size: 0x1000, ssid: "local", password: "private" },
       parts: [
@@ -1628,6 +1629,7 @@ test("UF2 completion reports delivery guidance without claiming device verificat
       applicationBase: 0x27000,
       familyId: 0xada52840,
     },
+    nrfSerialDfu: null,
     provisioning: null,
     parts: [{
       kind: "uf2",
