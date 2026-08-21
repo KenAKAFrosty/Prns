@@ -3127,6 +3127,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "prns-nrf-dfu-wasm"
+version = "0.1.0"
+dependencies = [
+ "prns-nrf-dfu",
+ "thiserror 2.0.18",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "prns-runtime"
 version = "0.3.6"
 dependencies = [

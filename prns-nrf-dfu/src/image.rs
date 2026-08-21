@@ -169,8 +169,23 @@ impl ApplicationInitPacket {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DfuImage<'a> {
-    firmware: &'a [u8],
+    firmware: FirmwareBytes<'a>,
     init_packet: ApplicationInitPacket,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum FirmwareBytes<'a> {
+    Borrowed(&'a [u8]),
+    Owned(Vec<u8>),
+}
+
+impl FirmwareBytes<'_> {
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Borrowed(bytes) => bytes,
+            Self::Owned(bytes) => bytes,
+        }
+    }
 }
 
 impl<'a> DfuImage<'a> {
@@ -187,7 +202,7 @@ impl<'a> DfuImage<'a> {
             });
         }
         Ok(Self {
-            firmware,
+            firmware: FirmwareBytes::Borrowed(firmware),
             init_packet,
         })
     }
@@ -202,11 +217,40 @@ impl<'a> DfuImage<'a> {
     }
 
     pub fn firmware(&self) -> &[u8] {
-        self.firmware
+        self.firmware.as_slice()
     }
 
     pub fn init_packet(&self) -> &ApplicationInitPacket {
         &self.init_packet
+    }
+}
+
+impl DfuImage<'static> {
+    pub fn new_owned(
+        firmware: Vec<u8>,
+        init_packet: ApplicationInitPacket,
+    ) -> Result<Self, DfuImageError> {
+        sanity_check_firmware_size(&firmware)?;
+        let actual_firmware_crc = firmware_crc(&firmware);
+        if init_packet.firmware_crc != actual_firmware_crc {
+            return Err(DfuImageError::InitPacketFirmwareMismatch {
+                init_packet_crc: init_packet.firmware_crc.get(),
+                firmware_crc: actual_firmware_crc.get(),
+            });
+        }
+        Ok(Self {
+            firmware: FirmwareBytes::Owned(firmware),
+            init_packet,
+        })
+    }
+
+    pub fn from_owned_artifacts(
+        firmware: Vec<u8>,
+        init_packet: Vec<u8>,
+        spec: &ApplicationInitPacketSpec,
+    ) -> Result<Self, DfuImageError> {
+        let init_packet = ApplicationInitPacket::from_artifacts(&firmware, &init_packet, spec)?;
+        Self::new_owned(firmware, init_packet)
     }
 }
 
@@ -254,6 +298,8 @@ pub enum DfuImageError {
 
 #[cfg(test)]
 mod tests {
+    use std::vec;
+
     use super::{
         ApplicationInitPacket, ApplicationInitPacketSpec, ApplicationVersion, DfuDeviceRevision,
         DfuDeviceType, DfuImage, DfuImageError, SoftdeviceFirmwareId, SoftdeviceRequirements,
@@ -310,6 +356,39 @@ mod tests {
         let image = DfuImage::from_artifacts(&firmware, &init_packet, &t1000e_spec()?)?;
         assert_eq!(image.firmware(), firmware);
         assert_eq!(image.init_packet().bytes(), init_packet);
+        Ok(())
+    }
+
+    #[test]
+    fn owned_image_retains_validated_artifacts() -> Result<(), DfuImageError> {
+        let firmware = vec![1, 2, 3];
+        let init_packet = vec![
+            0x52, 0x00, 0x68, 0xce, 0xff, 0xff, 0xff, 0xff, 0x01, 0x00, 0x23, 0x01, 0xad, 0xad,
+        ];
+        let image = DfuImage::from_owned_artifacts(firmware, init_packet, &t1000e_spec()?)?;
+
+        assert_eq!(image.firmware(), &[1, 2, 3]);
+        assert_eq!(
+            image.init_packet().bytes(),
+            &[0x52, 0x00, 0x68, 0xce, 0xff, 0xff, 0xff, 0xff, 0x01, 0x00, 0x23, 0x01, 0xad, 0xad]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn owned_image_rejects_an_init_packet_for_different_firmware() -> Result<(), DfuImageError> {
+        let firmware = vec![1, 2, 4];
+        let init_packet = vec![
+            0x52, 0x00, 0x68, 0xce, 0xff, 0xff, 0xff, 0xff, 0x01, 0x00, 0x23, 0x01, 0xad, 0xad,
+        ];
+
+        assert_eq!(
+            DfuImage::from_owned_artifacts(firmware, init_packet, &t1000e_spec()?),
+            Err(DfuImageError::InitPacketFirmwareMismatch {
+                init_packet_crc: 0xadad,
+                firmware_crc: 0xdd4a,
+            })
+        );
         Ok(())
     }
 

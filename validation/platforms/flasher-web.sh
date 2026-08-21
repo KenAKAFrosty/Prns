@@ -6,6 +6,7 @@ cd "$root"
 
 cargo test --locked -p prns-flash-manifest -p hopspot-flash
 cargo clippy --locked -p prns-flash-manifest -p hopspot-flash --all-targets -- -D warnings
+./tools/prns run build.web-flasher.nrf-dfu.test
 cargo fmt --manifest-path docs/website/Cargo.toml -- --check
 cargo test --manifest-path docs/website/Cargo.toml --locked
 cargo clippy --manifest-path docs/website/Cargo.toml --locked --all-targets -- -D warnings

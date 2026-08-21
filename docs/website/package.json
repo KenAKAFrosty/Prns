@@ -7,7 +7,8 @@
   "scripts": {
     "build:css": "tailwindcss -i ./tailwind.css -o ./public/assets/tailwind.css --minify",
     "watch:css": "tailwindcss -i ./tailwind.css -o ./public/assets/tailwind.css --watch",
-    "build:flasher": "esbuild web-flasher/src/prns-flash.js --bundle --format=esm --platform=browser --target=es2022 --minify --sourcemap --outfile=target/hosted-assets/prns-flash.js",
+    "build:nrf-dfu-wasm": "bash ../../tools/build/stage-web-flasher-nrf-dfu-wasm.sh target/hosted-assets/nrf-dfu",
+    "build:flasher": "npm run build:nrf-dfu-wasm && esbuild web-flasher/src/prns-flash.js --bundle --format=esm --platform=browser --target=es2022 --minify --sourcemap --outfile=target/hosted-assets/prns-flash.js",
     "test:flasher": "node --test web-flasher/test/*.test.mjs",
     "test:browser": "bash tools/test-web-flasher-browser.sh",
     "test:production-boundary": "bash tools/test-web-flasher-production-boundary.sh",

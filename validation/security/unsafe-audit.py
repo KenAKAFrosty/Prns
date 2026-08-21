@@ -65,6 +65,7 @@ GRAPHS = (
         "xtensa-esp32s3-none-elf",
     ),
     ("wasm", "prns-wasm/Cargo.toml", "wasm32-unknown-unknown"),
+    ("nrf-dfu-browser", "prns-nrf-dfu-wasm/Cargo.toml", "wasm32-unknown-unknown"),
 )
 UNSAFE_EXCEPTIONS = {
     "prns-core",

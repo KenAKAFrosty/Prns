@@ -199,6 +199,28 @@ entrypoint = ["bash", "tools/build/napi.sh", "test"]
 requires = ["bash", "cargo", "node", "npm"]
 
 [[task]]
+id = "build.web-flasher.nrf-dfu.stage"
+summary = "Build and stage the pinned Nordic DFU WASM core for the hosted web flasher."
+domain = "build"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/stage-web-flasher-nrf-dfu-wasm.sh"]
+requires = ["bash", "cargo", "wasm-bindgen"]
+setup = "cargo install wasm-bindgen-cli --version 0.2.126 --locked"
+
+[[task]]
+id = "build.web-flasher.nrf-dfu.test"
+summary = "Test the Nordic DFU core and its generated Node.js WASM boundary."
+domain = "build"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/test-web-flasher-nrf-dfu-wasm.sh"]
+requires = ["bash", "cargo", "node", "wasm-bindgen"]
+setup = "cargo install wasm-bindgen-cli --version 0.2.126 --locked"
+
+[[task]]
 id = "build.wasm-docs.stage"
 summary = "Build and stage the browser transport playground into the documentation site."
 domain = "build"

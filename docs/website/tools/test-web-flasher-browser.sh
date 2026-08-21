@@ -32,10 +32,15 @@ test -f "$dioxus_dist/index.html"
 cp -R "$dioxus_dist/." "$site/"
 cp "$website/target/hosted-assets/prns-flash.js" "$site/assets/flasher/prns-flash.js"
 cp "$website/target/hosted-assets/prns-flash.js.map" "$site/assets/flasher/prns-flash.js.map"
+cp -R "$website/target/hosted-assets/nrf-dfu" "$site/assets/flasher/nrf-dfu"
 node web-flasher/browser/support/build-fixture.mjs "$site"
 production_bundle_sha256="$(node -e 'const fs=require("node:fs"); const crypto=require("node:crypto"); process.stdout.write(crypto.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "$site/assets/flasher/prns-flash.js")"
+nrf_dfu_binding_sha256="$(node -e 'const fs=require("node:fs"); const crypto=require("node:crypto"); process.stdout.write(crypto.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "$site/assets/flasher/nrf-dfu/prns_nrf_dfu_core.js")"
+nrf_dfu_core_sha256="$(node -e 'const fs=require("node:fs"); const crypto=require("node:crypto"); process.stdout.write(crypto.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "$site/assets/flasher/nrf-dfu/prns_nrf_dfu_core_bg.wasm")"
 
 cd "$workspace"
 PRNS_EXPECTED_FLASH_BUNDLE_SHA256="$production_bundle_sha256" \
+PRNS_EXPECTED_NRF_DFU_BINDING_SHA256="$nrf_dfu_binding_sha256" \
+PRNS_EXPECTED_NRF_DFU_CORE_SHA256="$nrf_dfu_core_sha256" \
 "$website/node_modules/.bin/playwright" test \
     --config "$website/web-flasher/browser/playwright.config.mjs"

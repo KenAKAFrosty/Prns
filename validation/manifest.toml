@@ -91,6 +91,7 @@ cargo_manifests = [
     "prns-macros/Cargo.toml",
     "prns-napi/Cargo.toml",
     "prns-nrf-dfu/Cargo.toml",
+    "prns-nrf-dfu-wasm/Cargo.toml",
     "prns-runtime/core/Cargo.toml",
     "prns-runtime/impls/embassy/Cargo.toml",
     "prns-runtime/impls/tokio/Cargo.toml",
@@ -714,7 +715,7 @@ platform = "linux"
 toolchain = "stable"
 timeout_seconds = 3600
 command = ["bash", "validation/platforms/flasher-web.sh"]
-inputs = ["validation/platforms/flasher-web.sh", "docs/website", "README.md", "CONTRIBUTING.md", "docs/getting-started.md", "docs/testing.md", "docs/prnsd-config.md", "docs/prnsd-utilities.md", "docs/validation.md", "docs/observability.md", "prnsd/README.md", "personal-rns/README.md", "benchmarks/README.md", "benchmarks/CONTRIBUTING.md", "benchmarks/PROFILING.md", "tools/README.md"]
+inputs = ["validation/platforms/flasher-web.sh", "docs/website", "prns-nrf-dfu", "prns-nrf-dfu-wasm", "tools/build/stage-web-flasher-nrf-dfu-wasm.sh", "tools/build/test-web-flasher-nrf-dfu-wasm.sh", "README.md", "CONTRIBUTING.md", "docs/getting-started.md", "docs/testing.md", "docs/prnsd-config.md", "docs/prnsd-utilities.md", "docs/validation.md", "docs/observability.md", "prnsd/README.md", "personal-rns/README.md", "benchmarks/README.md", "benchmarks/CONTRIBUTING.md", "benchmarks/PROFILING.md", "tools/README.md"]
 artifacts = "validation-artifacts/results/flasher-web"
 
 [[suite]]

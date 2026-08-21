@@ -190,6 +190,7 @@ jobs:
         with:
           toolchain: 1.96.0
           components: clippy,rustfmt
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           shared-key: flasher-contracts
@@ -203,13 +204,18 @@ jobs:
           version: "1.21.0"
       - name: Install exact Dioxus CLI
         run: cargo binstall --locked --no-confirm --force dioxus-cli@0.7.5
+      - name: Install exact WASM binding CLI
+        run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
       - name: Shared manifest and standalone CLI
         run: |
           rustc --version | grep -E '^rustc 1\.96\.0 '
           test "$(node --version)" = "v24.18.0"
           cargo-binstall -V | grep -E '(^| )1\.21\.0($| )'
           dx --version | grep -E '(^| )0\.7\.5($| )'
+          wasm-bindgen --version | grep -E '^wasm-bindgen 0\.2\.126$'
           cargo test --locked -p prns-flash-manifest -p hopspot-flash
+      - name: Nordic DFU browser core
+        run: ./tools/prns run build.web-flasher.nrf-dfu.test
       - name: Shared manifest and standalone CLI lint
         run: cargo clippy --locked -p prns-flash-manifest -p hopspot-flash --all-targets -- -D warnings
       - name: Website Rust shell

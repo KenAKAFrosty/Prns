@@ -143,6 +143,15 @@ class CandidateFixture:
         flasher_bundle = root / "website" / "assets" / "flasher" / "prns-flash.js"
         flasher_bundle.parent.mkdir(parents=True)
         flasher_bundle.write_text("export const fixture = true;\n", encoding="utf-8")
+        nrf_dfu_assets = flasher_bundle.parent / "nrf-dfu"
+        nrf_dfu_assets.mkdir()
+        for name in (
+            "prns_nrf_dfu_core.js",
+            "prns_nrf_dfu_core.d.ts",
+            "prns_nrf_dfu_core_bg.wasm",
+            "prns_nrf_dfu_core_bg.wasm.d.ts",
+        ):
+            (nrf_dfu_assets / name).write_bytes(f"fixture {name}\n".encode())
         browser_wasm = (
             root
             / "website"
@@ -305,6 +314,7 @@ class CandidateFixture:
                     "node": "v24.18.0",
                     "npm": "11.0.0",
                     "dioxus": "dioxus 0.7.5",
+                    "wasm_bindgen": "wasm-bindgen 0.2.126",
                     "cargo_binstall": "cargo-binstall 1.21.0",
                     "espup": "espup 0.17.1",
                     "esp_rustc": "rustc 1.95.0-nightly (fixture)",
@@ -640,6 +650,24 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         result = self.validate_unsigned()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("SHA-256 mismatch", result.stderr)
+
+    def test_unsigned_candidate_requires_the_nordic_dfu_browser_core(self) -> None:
+        adapter = (
+            self.fixture.root
+            / "website"
+            / "assets"
+            / "flasher"
+            / "nrf-dfu"
+            / "prns_nrf_dfu_core_bg.wasm"
+        )
+        adapter.unlink()
+        result = self.validate_unsigned()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "candidate required release file is missing or empty: "
+            "website/assets/flasher/nrf-dfu/prns_nrf_dfu_core_bg.wasm",
+            result.stderr,
+        )
 
     def test_release_boundary_rejects_structurally_invalid_uf2(self) -> None:
         target = next(

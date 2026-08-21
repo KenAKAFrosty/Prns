@@ -553,6 +553,15 @@ def build_website(
         cwd=WEBSITE,
         label="local developer browser flasher build",
     )
+    run_process(
+        [
+            "bash",
+            ROOT / "tools" / "build" / "stage-web-flasher-nrf-dfu-wasm.sh",
+            flasher_assets / "nrf-dfu",
+        ],
+        cwd=ROOT,
+        label="local developer Nordic DFU browser core build",
+    )
 
 
 def generate_key(signer: Path, secrets: Path, environment: dict[str, str]) -> tuple[Path, Path, str]:

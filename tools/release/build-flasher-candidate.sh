@@ -70,6 +70,10 @@ if [[ "$dx_version" != *"0.7.5"* ]]; then
     echo "dioxus-cli 0.7.5 is required" >&2
     exit 2
 fi
+if [[ "$(wasm-bindgen --version)" != "wasm-bindgen 0.2.126" ]]; then
+    echo "wasm-bindgen 0.2.126 is required" >&2
+    exit 2
+fi
 
 version="$(tr -d '[:space:]' < "$root/VERSION")"
 if [[ "$(cargo run --quiet --locked -p hopspot-flash -- --version)" != "hopspot-flash $version" ]]; then
@@ -200,6 +204,8 @@ bash "$root/tools/build/stage-wasm-docs-browser-playground.sh" \
     "$candidate/website/browser-node-playground-console"
 cp "$root/docs/website/target/hosted-assets/prns-flash.js" \
     "$candidate/website/assets/flasher/prns-flash.js"
+cp -R "$root/docs/website/target/hosted-assets/nrf-dfu" \
+    "$candidate/website/assets/flasher/nrf-dfu"
 cp "$root/THIRD_PARTY_NOTICES.md" "$candidate/website/THIRD_PARTY_NOTICES.md"
 python3 "$root/tools/release/flasher-website-history.py" apply \
     --history "$history" \

@@ -86,6 +86,7 @@ jobs:
           cp "$PRNS_SOURCE_ARCHIVE" "$dist/source.zip"
           cp "$PRNS_SOURCE_ARCHIVE.sha256" "$dist/source.zip.sha256"
           cp docs/website/target/hosted-assets/prns-flash.js "$dist/assets/flasher/prns-flash.js"
+          cp -R docs/website/target/hosted-assets/nrf-dfu "$dist/assets/flasher/nrf-dfu"
           cp THIRD_PARTY_NOTICES.md "$dist/THIRD_PARTY_NOTICES.md"
           export PRNS_SOURCE_VERSION="$(cat VERSION)"
           export PRNS_SOURCE_COMMIT="$GITHUB_SHA"

@@ -16,6 +16,7 @@ EXPECTED_TOOLS = {
     "cargo": "1.96.0",
     "node": "24.18.0",
     "dioxus": "0.7.5",
+    "wasm_bindgen": "0.2.126",
     "cargo_binstall": "1.21.0",
     "espup": "0.17.1",
     "esp_rustc": "1.95.0",
@@ -67,6 +68,7 @@ def resolved_tools(output=command_output) -> dict[str, str]:
         "node": output("node", "--version"),
         "npm": output("npm", "--version"),
         "dioxus": output("dx", "--version"),
+        "wasm_bindgen": output("wasm-bindgen", "--version"),
         "cargo_binstall": output("cargo-binstall", "-V"),
         "espup": output("espup", "--version"),
         "esp_rustc": output("rustc", "+esp", "--version"),
@@ -95,6 +97,7 @@ def validate_tools(tools: dict[str, str]) -> None:
         "cargo": tools.get("cargo", "").startswith("cargo 1.96.0 "),
         "node": tools.get("node") == "v24.18.0",
         "dioxus": bool(re.search(r"(?:^|\s)0\.7\.5(?:\s|$)", tools.get("dioxus", ""))),
+        "wasm_bindgen": tools.get("wasm_bindgen") == "wasm-bindgen 0.2.126",
         "cargo_binstall": bool(
             re.search(r"(?:^|\s)1\.21\.0(?:\s|$)", tools.get("cargo_binstall", ""))
         ),

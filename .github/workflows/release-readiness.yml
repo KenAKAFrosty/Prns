@@ -100,11 +100,13 @@ jobs:
         if: matrix.group == 'apple'
         run: brew install sdl2
       - name: Prepare WASM target and dependencies
-        if: matrix.group == 'wasm' || matrix.group == 'linux-host'
+        if: matrix.group == 'wasm' || matrix.group == 'linux-host' || matrix.group == 'web'
         run: |
           rustup target add wasm32-unknown-unknown
-          if [[ "${{ matrix.group }}" == wasm ]]; then
+          if [[ "${{ matrix.group }}" == wasm || "${{ matrix.group }}" == web ]]; then
             cargo install wasm-bindgen-cli --version 0.2.126 --locked
+          fi
+          if [[ "${{ matrix.group }}" == wasm ]]; then
             npm --prefix prns-wasm ci --ignore-scripts --no-audit --no-fund
             npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
           fi

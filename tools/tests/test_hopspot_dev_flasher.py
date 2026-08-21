@@ -282,6 +282,55 @@ class CandidateSafetyTests(unittest.TestCase):
             self.assertEqual(constructor.call_args.args[0], ("127.0.0.1", 0))
 
 
+class WebsiteBuildTests(unittest.TestCase):
+    def test_local_site_stages_the_nordic_dfu_browser_core(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "dioxus"
+            output.mkdir()
+            (output / "index.html").write_text("site\n", encoding="utf-8")
+            website = root / "website"
+            public_key = root / "minisign.pub"
+            public_key.write_text("fixture key\n", encoding="utf-8")
+            identity = DEV.SourceIdentity(
+                head="0" * 40,
+                digest="a" * 64,
+                state="dirty",
+                version=f"0.3.1-dev.dirty.{'a' * 64}",
+            )
+
+            with (
+                mock.patch.object(
+                    DEV,
+                    "require_node_tools",
+                    return_value=(root / "tailwindcss", root / "esbuild"),
+                ),
+                mock.patch.object(DEV, "clear_dioxus_output", return_value=output),
+                mock.patch.object(DEV, "clean_build_environment", return_value={}),
+                mock.patch.object(DEV, "run_process") as run_process,
+            ):
+                DEV.build_website(
+                    website,
+                    identity,
+                    DEV.Selection(("t1000-e",), 8765),
+                    public_key,
+                )
+
+            command = run_process.call_args_list[-1].args[0]
+            self.assertEqual(
+                command,
+                [
+                    "bash",
+                    DEV.ROOT / "tools" / "build" / "stage-web-flasher-nrf-dfu-wasm.sh",
+                    website / "assets" / "flasher" / "nrf-dfu",
+                ],
+            )
+            self.assertEqual(
+                run_process.call_args_list[-1].kwargs["label"],
+                "local developer Nordic DFU browser core build",
+            )
+
+
 
 class CandidateValidationTests(unittest.TestCase):
     def setUp(self) -> None:

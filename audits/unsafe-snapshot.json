@@ -90,6 +90,11 @@
       "manifest": "prns-wasm/Cargo.toml",
       "name": "wasm",
       "target": "wasm32-unknown-unknown"
+    },
+    {
+      "manifest": "prns-nrf-dfu-wasm/Cargo.toml",
+      "name": "nrf-dfu-browser",
+      "target": "wasm32-unknown-unknown"
     }
   ],
   "packages": [
@@ -1285,6 +1290,9 @@
     },
     {
       "graphs": {
+        "nrf-dfu-browser": [
+          "default"
+        ],
         "wasm": [
           "default"
         ]
@@ -1753,6 +1761,7 @@
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
+        "nrf-dfu-browser": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -13625,6 +13634,12 @@
           "race",
           "std"
         ],
+        "nrf-dfu-browser": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
         "wasm": []
       },
       "name": "once_cell",
@@ -13971,11 +13986,11 @@
       "name": "personal-hopspot-esp32",
       "source": "personal-hopspot/embedded/esp32",
       "unsafe": {
-        "blocks": 776,
+        "blocks": 777,
         "externs": 553,
         "functions": 121,
         "impls": 37,
-        "tokens": 1618
+        "tokens": 1619
       },
       "version": "0.1.0"
     },
@@ -15424,6 +15439,36 @@
     },
     {
       "graphs": {
+        "nrf-dfu-browser": []
+      },
+      "name": "prns-nrf-dfu",
+      "source": "prns-nrf-dfu",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
+        "nrf-dfu-browser": []
+      },
+      "name": "prns-nrf-dfu-wasm",
+      "source": "prns-nrf-dfu-wasm",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
         "android": [
           "alloc",
           "resource-bzip2",
@@ -15872,6 +15917,10 @@
           "default",
           "proc-macro"
         ],
+        "nrf-dfu-browser": [
+          "default",
+          "proc-macro"
+        ],
         "nrf52840": [
           "default",
           "proc-macro"
@@ -16082,6 +16131,10 @@
           "proc-macro"
         ],
         "ios": [
+          "default",
+          "proc-macro"
+        ],
+        "nrf-dfu-browser": [
           "default",
           "proc-macro"
         ],
@@ -17231,6 +17284,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "nrf-dfu-browser": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -19474,6 +19528,19 @@
           "visit",
           "visit-mut"
         ],
+        "nrf-dfu-browser": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "fold",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
         "nrf52840": [
           "clone-impls",
           "default",
@@ -19852,6 +19919,10 @@
         "desktop-windows": [
           "default",
           "std"
+        ],
+        "nrf-dfu-browser": [
+          "default",
+          "std"
         ]
       },
       "name": "thiserror",
@@ -19912,7 +19983,8 @@
         "daemon-macos": [],
         "daemon-windows": [],
         "desktop-macos": [],
-        "desktop-windows": []
+        "desktop-windows": [],
+        "nrf-dfu-browser": []
       },
       "name": "thiserror-impl",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -21712,6 +21784,7 @@
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
+        "nrf-dfu-browser": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -22266,6 +22339,10 @@
     },
     {
       "graphs": {
+        "nrf-dfu-browser": [
+          "default",
+          "std"
+        ],
         "wasm": [
           "default",
           "std"
@@ -22284,6 +22361,7 @@
     },
     {
       "graphs": {
+        "nrf-dfu-browser": [],
         "wasm": []
       },
       "name": "wasm-bindgen-macro",
@@ -22299,6 +22377,7 @@
     },
     {
       "graphs": {
+        "nrf-dfu-browser": [],
         "wasm": []
       },
       "name": "wasm-bindgen-macro-support",
@@ -22314,6 +22393,7 @@
     },
     {
       "graphs": {
+        "nrf-dfu-browser": [],
         "wasm": []
       },
       "name": "wasm-bindgen-shared",

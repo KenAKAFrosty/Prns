@@ -333,7 +333,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.96.0
-          targets: thumbv7em-none-eabihf,riscv32imac-unknown-none-elf
+          targets: thumbv7em-none-eabihf,riscv32imac-unknown-none-elf,wasm32-unknown-unknown
           components: llvm-tools-preview
       - name: Install checksum-pinned ESP compiler and tools
         run: ./tools/prns release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"
