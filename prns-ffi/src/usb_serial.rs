@@ -213,8 +213,11 @@ mod windows_setupapi {
                 continue;
             }
             let wide: Vec<u16> = friendly
-                .chunks_exact(2)
-                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .copied()
+                .map(u16::from_le_bytes)
                 .collect();
             if let Some(port) = com_name(&wide_string(&wide)) {
                 let last_arrival = u64::from_le_bytes(last_arrival);
