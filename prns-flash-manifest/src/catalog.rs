@@ -726,9 +726,9 @@ fn matches_pinned_uf2_recipe(board: &BoardCatalogEntry, build: &Uf2Build) -> boo
 
 fn valid_uf2_application_usb(application_usb: &Uf2ApplicationUsb) -> bool {
     use prns_core::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
-    parse_usb_vendor_product_id(&application_usb.usb).is_some_and(|usb| {
-        usb.vendor_id == WEBUSB_VENDOR_ID && usb.product_id == WEBUSB_PRODUCT_ID
-    }) && valid_usb_string(&application_usb.manufacturer)
+    parse_usb_vendor_product_id(&application_usb.usb)
+        .is_some_and(|usb| usb.vendor_id == WEBUSB_VENDOR_ID && usb.product_id == WEBUSB_PRODUCT_ID)
+        && valid_usb_string(&application_usb.manufacturer)
         && valid_usb_string(&application_usb.product)
         && valid_usb_string(&application_usb.serial_number)
 }
@@ -1039,10 +1039,12 @@ mod tests {
     #[test]
     fn t114_shipping_contract_matches_the_hardware_receipt() -> Result<(), CatalogError> {
         let catalog = board_catalog()?;
-        let board = catalog.board("t114").ok_or_else(|| CatalogError::InvalidBoard {
-            board: "t114".to_string(),
-            message: "missing shipping target".to_string(),
-        })?;
+        let board = catalog
+            .board("t114")
+            .ok_or_else(|| CatalogError::InvalidBoard {
+                board: "t114".to_string(),
+                message: "missing shipping target".to_string(),
+            })?;
         let BoardBuild::Uf2(build) = &board.build else {
             return Err(invalid(board, "expected a UF2 build"));
         };

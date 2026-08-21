@@ -340,11 +340,12 @@ fn wait_for_application_usb(
         if crate::esp::cancelled() {
             return Err(AppError::Cancelled);
         }
-        let current = matching_prns_application_usb_ids(board.application_usb).map_err(|error| {
-            AppError::verify(format!(
+        let current =
+            matching_prns_application_usb_ids(board.application_usb).map_err(|error| {
+                AppError::verify(format!(
                 "UF2 delivery completed, but application USB verification is incomplete: {error}"
             ))
-        })?;
+            })?;
         let newly_enumerated = current.difference(baseline).count();
         match (newly_enumerated, current.len()) {
             (1, 1) => return Ok(()),

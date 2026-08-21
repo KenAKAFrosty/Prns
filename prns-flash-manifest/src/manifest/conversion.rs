@@ -3,9 +3,8 @@ use std::fmt;
 use crate::domain::TargetIdentity;
 use crate::{
     AfterResetStrategy, BeforeResetStrategy, BoardBuild, BoardCatalog, BoardCatalogEntry, BoardId,
-    ChipFamily,
-    EspFlashPart, EspSerialTarget, FlashFrequency, FlashMode, ImmutableArtifactPath, KeyId,
-    NrfSerialDfuArtifact, NrfSerialDfuRecovery, NrfSerialDfuTarget, PreparationProfile,
+    ChipFamily, EspFlashPart, EspSerialTarget, FlashFrequency, FlashMode, ImmutableArtifactPath,
+    KeyId, NrfSerialDfuArtifact, NrfSerialDfuRecovery, NrfSerialDfuTarget, PreparationProfile,
     ProvisioningDescriptor, ProvisioningFormat, ProvisioningSlot, ReleaseTarget, ReleaseVersion,
     Sha256Digest, SoftdeviceIdentity, Transport, Uf2BoardIdPrefix, Uf2Compatibility, Uf2MountLabel,
     Uf2Part, Uf2Target, Uf2Variant, ValidatedChannelDescriptor, ValidatedFlashManifest,
