@@ -174,7 +174,7 @@ impl BoardTarget {
             "t-echo" => Some(&board_images::T_ECHO),
             "t114" => Some(&board_images::T114),
             "t1000-e" => Some(&board_images::SEEED_CARD_TRACKER_T1000_E),
-            "heltec-mesh-node-t096" => Some(&board_images::HELTEC_MESH_NODE_T096),
+            "t096" => Some(&board_images::HELTEC_MESH_NODE_T096),
             "mesh-tower-v2" => Some(&board_images::MESH_TOWER_V2),
             _ => None,
         }
@@ -295,28 +295,16 @@ pub const UPCOMING_BOARD_TARGETS: &[BoardTarget] = &[
     },
 ];
 
-pub const IN_PROGRESS_BOARD_TARGETS: &[BoardTarget] = &[
-    BoardTarget {
-        name: "Heltec MeshTower V2",
-        slug: "mesh-tower-v2",
-        silicon: "nRF52840 + SX1262 + KCT8103L PA",
-        tier: Tier::Qualification,
-        interfaces: &[],
-        icon: Some("nordicsemiconductor"),
-        preparation_profile: None,
-        flash_target: None,
-    },
-    BoardTarget {
-        name: "Heltec Mesh Node T096",
-        slug: "heltec-mesh-node-t096",
-        silicon: "nRF52840 + SX1262",
-        tier: Tier::BringUp,
-        interfaces: &[],
-        icon: Some("nordicsemiconductor"),
-        preparation_profile: None,
-        flash_target: None,
-    },
-];
+pub const IN_PROGRESS_BOARD_TARGETS: &[BoardTarget] = &[BoardTarget {
+    name: "Heltec MeshTower V2",
+    slug: "mesh-tower-v2",
+    silicon: "nRF52840 + SX1262 + KCT8103L PA",
+    tier: Tier::Qualification,
+    interfaces: &[],
+    icon: Some("nordicsemiconductor"),
+    preparation_profile: None,
+    flash_target: None,
+}];
 
 pub fn board_target_by_slug(slug: &str) -> Option<&'static BoardTarget> {
     SHIPPING_BOARD_TARGETS
@@ -721,13 +709,7 @@ mod tests {
             .iter()
             .map(|board| (board.slug, board.tier, board.image().is_some()))
             .collect::<Vec<_>>();
-        assert_eq!(
-            cards,
-            vec![
-                ("mesh-tower-v2", Tier::Qualification, true),
-                ("heltec-mesh-node-t096", Tier::BringUp, true),
-            ]
-        );
+        assert_eq!(cards, vec![("mesh-tower-v2", Tier::Qualification, true)]);
     }
 
     #[test]
@@ -736,7 +718,13 @@ mod tests {
             .iter()
             .map(|board| (board.slug, board.tier, board.image().is_some()))
             .collect::<Vec<_>>();
-        assert_eq!(cards, vec![("t1000-e", Tier::Qualification, true)]);
+        assert_eq!(
+            cards,
+            vec![
+                ("t096", Tier::Qualification, true),
+                ("t1000-e", Tier::Qualification, true),
+            ]
+        );
     }
 
     #[test]

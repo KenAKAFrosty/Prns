@@ -139,7 +139,8 @@ request that UF2 mode directly. The firmware drives LoRa through the board's
 KCT8103L frontend, USB Auto, BLE Auto, the 160x80 display and controls, battery
 telemetry, and the UC6580 GNSS receiver. Node and Bluetooth identities and LoRa
 profile choices survive reboot and sparse UF2 application updates. The image is
-developer firmware and is not yet in the signed release catalog.
+developer firmware cataloged for qualification; it is not part of the shipping
+target set or a signed release.
 
 Heltec MeshTower V2 developer firmware:
 

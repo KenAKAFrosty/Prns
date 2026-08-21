@@ -693,9 +693,31 @@ const T114_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
     }],
 };
 
+const T096_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
+    preparation_profile: PreparationProfile::T096Uf2,
+    package: "t-echo",
+    binary: "t096",
+    board_feature: "board-t096",
+    manufacturer: "Stay Personal",
+    product: "Personal Hopspot (Heltec T096)",
+    serial_number: "PERSONAL-RNS-T096-HOP",
+    variants: &[PinnedUf2Variant {
+        softdevice_family: "s140",
+        softdevice_version: "6.1.1",
+        fwid: "0x00b6",
+        application_base: "0x00026000",
+        application_end_exclusive: "0x000e8000",
+        family_id: "0xada52840",
+        application_link: Uf2ApplicationLink::SoftdeviceS140V6,
+        target_directory: "target/t096",
+        filename: "t096-s140-6.1.1.uf2",
+    }],
+};
+
 fn pinned_uf2_recipe(slug: &str) -> Option<&'static PinnedUf2Recipe> {
     match slug {
         "t-echo" => Some(&T_ECHO_UF2_RECIPE),
+        "t096" => Some(&T096_UF2_RECIPE),
         "t114" => Some(&T114_UF2_RECIPE),
         _ => None,
     }
@@ -981,9 +1003,58 @@ mod tests {
                 ),
                 ("t-echo", None, None),
                 ("t114", None, None),
+                ("t096", None, None),
                 ("t1000-e", None, None),
             ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn t096_qualification_contract_matches_the_hardware_receipt() -> Result<(), CatalogError> {
+        let catalog = board_catalog()?;
+        let board = catalog
+            .board("t096")
+            .ok_or_else(|| CatalogError::InvalidBoard {
+                board: "t096".to_string(),
+                message: "missing qualification target".to_string(),
+            })?;
+        let BoardBuild::Uf2(build) = &board.build else {
+            return Err(invalid(board, "expected a UF2 build"));
+        };
+
+        assert_eq!(board.availability, BoardAvailability::Qualification);
+        assert_eq!(board.preparation_profile, "t096-uf2");
+        assert_eq!(build.package, "t-echo");
+        assert_eq!(build.binary, "t096");
+        assert_eq!(build.board_feature, "board-t096");
+        assert_eq!(build.rust_target, "thumbv7em-none-eabihf");
+        assert_eq!(build.mount_label, "HT-n5262G");
+        assert_eq!(build.board_identity.match_kind, Uf2BoardIdMatchKind::Exact);
+        assert_eq!(build.board_identity.value, "ht-n5262g");
+        assert_eq!(build.application_usb.usb.vendor_id, "0x1209");
+        assert_eq!(build.application_usb.usb.product_id, "0x0001");
+        assert_eq!(build.application_usb.manufacturer, "Stay Personal");
+        assert_eq!(
+            build.application_usb.product,
+            "Personal Hopspot (Heltec T096)"
+        );
+        assert_eq!(build.application_usb.serial_number, "PERSONAL-RNS-T096-HOP");
+        let [variant] = build.variants.as_slice() else {
+            return Err(invalid(board, "expected exactly one T096 variant"));
+        };
+        assert_eq!(variant.softdevice_family, "s140");
+        assert_eq!(variant.softdevice_version, "6.1.1");
+        assert_eq!(variant.fwid, "0x00b6");
+        assert_eq!(variant.application_base, "0x00026000");
+        assert_eq!(variant.application_end_exclusive, "0x000e8000");
+        assert_eq!(variant.family_id, "0xada52840");
+        assert_eq!(
+            variant.application_link,
+            Uf2ApplicationLink::SoftdeviceS140V6
+        );
+        assert_eq!(variant.target_directory, "target/t096");
+        assert_eq!(variant.filename, "t096-s140-6.1.1.uf2");
         Ok(())
     }
 

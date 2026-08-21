@@ -112,6 +112,7 @@ class SelectionTests(unittest.TestCase):
     def test_all_selects_every_shipping_board(self) -> None:
         boards = DEV.shipping_boards()
         self.assertEqual(DEV.parse_selection(["--all"]).boards, boards)
+        self.assertNotIn("t096", boards)
         self.assertNotIn("t1000-e", boards)
 
     def test_missing_duplicate_unknown_and_invalid_port_are_rejected(self) -> None:

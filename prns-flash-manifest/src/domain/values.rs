@@ -323,6 +323,7 @@ impl fmt::Display for ChipFamily {
 pub enum PreparationProfile {
     EspUsbBoot,
     TechoUf2,
+    T096Uf2,
     T114Uf2,
     T1000eNrfDfu,
 }
@@ -332,6 +333,7 @@ impl PreparationProfile {
         match value {
             "esp-usb-boot" => Ok(Self::EspUsbBoot),
             "techo-uf2" => Ok(Self::TechoUf2),
+            "t096-uf2" => Ok(Self::T096Uf2),
             "t114-uf2" => Ok(Self::T114Uf2),
             "t1000e-nrf-dfu" => Ok(Self::T1000eNrfDfu),
             _ => Err(DomainValueError::PreparationProfile(value.to_string())),
@@ -342,6 +344,7 @@ impl PreparationProfile {
         match self {
             Self::EspUsbBoot => "esp-usb-boot",
             Self::TechoUf2 => "techo-uf2",
+            Self::T096Uf2 => "t096-uf2",
             Self::T114Uf2 => "t114-uf2",
             Self::T1000eNrfDfu => "t1000e-nrf-dfu",
         }
