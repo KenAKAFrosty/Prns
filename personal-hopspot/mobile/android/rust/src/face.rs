@@ -241,7 +241,11 @@ mod tests {
         let cards = stub_cards();
         let mut out = fresh_buffer();
         face.render_cards(&cards, &[], &mut out);
-        assert!(out.chunks_exact(4).any(|px| px != MOBILE_DARK_RGBA));
+        assert!(out
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|px| *px != MOBILE_DARK_RGBA));
     }
 
     #[test]
@@ -249,7 +253,11 @@ mod tests {
         let mut face = HopspotFace::detached();
         let mut out = fresh_buffer();
         face.render_cards(&[], &[], &mut out);
-        assert!(out.chunks_exact(4).any(|px| px != MOBILE_DARK_RGBA));
+        assert!(out
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|px| *px != MOBILE_DARK_RGBA));
     }
 
     #[test]

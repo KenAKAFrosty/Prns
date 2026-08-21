@@ -77,7 +77,7 @@ fn parse_hash(value: &str) -> Result<[u8; 16], String> {
         ));
     }
     let mut bytes = [0u8; 16];
-    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+    for (index, pair) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         let pair =
             std::str::from_utf8(pair).map_err(|_| format!("{value:?} is not hexadecimal"))?;
         bytes[index] =

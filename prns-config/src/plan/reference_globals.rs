@@ -41,7 +41,9 @@ pub(super) fn decode_hex(value: &str) -> Option<Vec<u8>> {
         return None;
     }
     bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let text = core::str::from_utf8(pair).ok()?;
             u8::from_str_radix(text, 16).ok()

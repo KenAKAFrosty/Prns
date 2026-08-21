@@ -222,7 +222,7 @@ mod platform {
     fn status_notifier_icon(size: u32) -> ksni::Icon {
         let icon::TrayIcon { rgba, size } = icon::render(size);
         let mut argb = Vec::with_capacity(rgba.len());
-        for pixel in rgba.chunks_exact(4) {
+        for pixel in rgba.as_chunks::<4>().0 {
             argb.extend_from_slice(&[pixel[3], pixel[0], pixel[1], pixel[2]]);
         }
         ksni::Icon {
