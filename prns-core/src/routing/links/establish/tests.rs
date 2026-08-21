@@ -1426,7 +1426,9 @@ fn encrypted_lrrtt_frame(
     frame.extend_from_slice(link_id.as_bytes());
     frame.push(0xFE);
     let mut sealed = [0u8; 64];
-    let n = key.seal(&[0xB5; 16], plaintext, &mut sealed).unwrap();
+    let n = key
+        .seal(&test_entropy_bytes::<16>(0xB5), plaintext, &mut sealed)
+        .unwrap();
     frame.extend_from_slice(&sealed[..n]);
     frame
 }

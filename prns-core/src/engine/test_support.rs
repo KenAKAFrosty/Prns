@@ -32,6 +32,11 @@ pub fn test_fill_entropy(bytes: &mut [u8]) {
     bytes.fill(0xAB);
 }
 
+/// Builds reproducible, non-uniform bytes for test-only protocol entropy fields.
+pub fn test_entropy_bytes<const N: usize>(seed: u8) -> [u8; N] {
+    core::array::from_fn(|index| seed.wrapping_add(index as u8))
+}
+
 /// Production's one road to the transport role is [`EngineState::set_transport_identity`] over a held identity.
 /// The parity vectors were originally minted with RNS 1.3.5 and revalidated against RNS 1.4.2.
 /// They pin the reference relay's raw id (`0x7A…`), so tests set the address directly.

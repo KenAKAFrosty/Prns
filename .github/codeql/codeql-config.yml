@@ -1,0 +1,11 @@
+name: "Prns CodeQL configuration"
+
+# These are generated bindgen outputs from Nordic's vendored SoftDevice headers.
+# Keep the surrounding embedded Rust sources in scope for CodeQL.
+paths-ignore:
+  - personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice-s140-v6/src/bindings.rs
+  - personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice-s140-v7/src/bindings.rs
+  # These low-level pointer operations belong to the vendored esp-radio crate.
+  # Keep the rest of the ESP firmware, including our integration code, in scope.
+  - personal-hopspot/embedded/esp32/vendor/esp-radio-0.18.0/src/ble/npl.rs
+  - personal-hopspot/embedded/esp32/vendor/esp-radio-0.18.0/src/ieee802154/raw.rs

@@ -465,7 +465,7 @@ enum GatePolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::test_support::{routable_descriptor, TestStorageLayout};
+    use crate::engine::test_support::{routable_descriptor, test_entropy_bytes, TestStorageLayout};
     use crate::engine::{Directive, EngineReaction};
     use crate::engine::{IssuedCommand, PrnsCommand, SetResourceStrategyFailure, Settlement};
     use crate::interfaces::AttachedInterfaces;
@@ -1385,7 +1385,7 @@ mod tests {
             BROADCAST_MTU,
             header.context,
             plaintext,
-            &[iv; 16],
+            &test_entropy_bytes::<16>(iv),
             &mut refreshed,
         )
         .unwrap();
@@ -1730,7 +1730,7 @@ mod tests {
 
         let mut close = [0u8; BROADCAST_MTU];
         receiver
-            .write_owed_link_close(&link_id(), &[0x91; 16], &mut close)
+            .write_owed_link_close(&link_id(), &test_entropy_bytes::<16>(0x91), &mut close)
             .unwrap();
         assert!(receiver.pending_resource_offers.is_empty());
     }
