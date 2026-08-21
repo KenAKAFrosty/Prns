@@ -3,7 +3,7 @@
 The acceptance record is evidence for one exact signed candidate, not a checklist or a place to
 record intentions. Generate it only after the public prerelease exists. The generator binds the
 manifest, manifest signature, signed-candidate archive, and signed roster by exact identity and
-produces twelve physical rows, three Firefox Web Serial rows, one unsupported-browser row, and
+produces fourteen physical rows, three Firefox Web Serial rows, one unsupported-browser row, and
 five native installer rows as `not-run`:
 
 ```sh
@@ -23,8 +23,9 @@ results, and any candidate identity that differs from those three exact files.
 
 ## Physical runs
 
-`runs` contains one result for every ESP board and surface (`web` or `cli`) plus separate S140
-6.1.1 and 7.3.0 T-Echo results on both surfaces: twelve rows. The signed roster assigns each
+`runs` contains one result for every ESP board and surface (`web` or `cli`), separate S140 6.1.1
+and 7.3.0 T-Echo results on both surfaces, and the T114 S140 6.1.1 result on both surfaces:
+fourteen rows. The signed roster assigns each
 board/surface pair to one supported host, with Linux, macOS, and Windows
 collectively represented on both surfaces. One person may hold multiple or all assignments; an
 assignment is a coverage obligation, not a distinct-person requirement. Each row records:
@@ -74,15 +75,15 @@ manifest and surface:
 - Heltec/T-Beam: Preserve, Configure, and Clear.
 - Targets sharing a chip: explicit same-chip board confirmation.
 
-T-Echo uses a distinct UF2 contract. Its web route proves signed download verification, truthful
+The T-Echo and T114 use the UF2 contract. The web route proves signed download verification, truthful
 manual-copy behavior, missing-mount/copy-failure guidance, reboot guidance, and post-flash boot. It
 must parse `INFO_UF2.TXT` locally, reject malformed or unsupported foundations, select only the
 matching signed variant, and never upload or retain the descriptor. It must not claim browser-side
 mount detection, filesystem sync, or device-side verification. Its CLI route proves exact
 foundation detection, zero/one/multiple mounts, copy/flush/sync failures, mount disappearance,
 bounded reboot detection and timeout, newly enumerated application USB identity, and post-flash
-boot. Each compatibility row also proves display, BLE, and LoRa operation. Evidence bytes may not
-be reused between the S140 6.1.1 and 7.3.0 rows.
+boot. Each compatibility row also proves the interfaces declared by that board. Evidence bytes may
+not be reused between the T-Echo S140 6.1.1 and 7.3.0 rows or between distinct boards.
 
 The authoritative scenario sets and roster-derived rows live in
 `qualification/flasher_acceptance_contract.py`, used by both generator and validator.

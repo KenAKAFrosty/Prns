@@ -113,7 +113,11 @@ class AcceptanceDocContractTests(unittest.TestCase):
                 {
                     "availability": "shipping",
                     "slug": board,
-                    "transport": "uf2-mass-storage" if board == "t-echo" else "esp-serial",
+                    "transport": (
+                        "uf2-mass-storage"
+                        if board in CHECKER.UF2_COMPATIBILITY_VARIANTS
+                        else "esp-serial"
+                    ),
                 }
                 for board in CHECKER.SHIPPING_BOARDS
             ]
@@ -131,8 +135,10 @@ class AcceptanceDocContractTests(unittest.TestCase):
 
         expected = len(CHECKER.SURFACES) * (
             len(CHECKER.SHIPPING_BOARDS)
-            + len(CHECKER.T_ECHO_COMPATIBILITY_VARIANTS)
-            - 1
+            + sum(
+                len(compatibilities) - 1
+                for compatibilities in CHECKER.UF2_COMPATIBILITY_VARIANTS.values()
+            )
         )
         self.assertEqual(CHECKER.physical_row_count(self.root), expected)
 

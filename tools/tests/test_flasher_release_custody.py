@@ -187,11 +187,21 @@ class CandidateFixture:
         targets = []
         self.firmware_paths = []
         for index, board in enumerate(
-            ("heltec-v4", "heltec-v4-r8", "t-beam-supreme", "xiao-esp32-c6", "t-echo"), start=1
+            (
+                "heltec-v4",
+                "heltec-v4-r8",
+                "t-beam-supreme",
+                "xiao-esp32-c6",
+                "t-echo",
+                "t114",
+            ),
+            start=1,
         ):
             filenames = (
                 ("t-echo-s140-6.1.1.uf2", "t-echo-s140-7.3.0.uf2")
                 if board == "t-echo"
+                else ("heltec-t114-s140-6.1.1.uf2",)
+                if board == "t114"
                 else ("application.bin",)
             )
             artifacts = []
@@ -199,7 +209,7 @@ class CandidateFixture:
                 relative = f"firmware/{board}/{filename}"
                 artifact = root / relative
                 artifact.parent.mkdir(parents=True, exist_ok=True)
-                if board == "t-echo":
+                if board in {"t-echo", "t114"}:
                     application_base = 0x26000 if "6.1.1" in filename else 0x27000
                     artifact.write_bytes(uf2_payload(application_base))
                 else:
@@ -233,13 +243,27 @@ class CandidateFixture:
                         ("0x00026000", "0x00027000"),
                     )
                 ]
+            elif board == "t114":
+                parts = []
+                variants = [
+                    {
+                        **artifacts[0],
+                        "softdevice_family": "s140",
+                        "softdevice_version": "6.1.1",
+                        "fwid": "0x00b6",
+                        "application_base": "0x00026000",
+                        "family_id": "0xada52840",
+                    }
+                ]
             else:
                 parts = [{**artifacts[0], "kind": "application", "offset": 0x10000}]
                 variants = []
             target = {
                 "board_slug": board,
                 "transport": (
-                    "uf2-mass-storage" if board == "t-echo" else "esp-serial"
+                    "uf2-mass-storage"
+                    if board in {"t-echo", "t114"}
+                    else "esp-serial"
                 ),
                 "parts": parts,
                 "variants": variants,
@@ -266,6 +290,7 @@ class CandidateFixture:
                         "t-beam-supreme",
                         "xiao-esp32-c6",
                         "t-echo",
+                        "t114",
                     )
                 ],
             },
@@ -375,6 +400,8 @@ class CandidateFixture:
             ("xiao-esp32-c6", "web"): ("windows", "x86_64"),
             ("t-echo", "cli"): ("linux", "aarch64"),
             ("t-echo", "web"): ("macos", "x86_64"),
+            ("t114", "cli"): ("linux", "x86_64"),
+            ("t114", "web"): ("macos", "aarch64"),
         }
         physical_assignments = []
         for (board, surface), (os_name, architecture) in physical_hosts.items():

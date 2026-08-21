@@ -93,6 +93,6 @@ allowlist and cannot contain a runtime CDN or the legacy ESP Web Tools engine.
 - cargo-about 0.9.1
 - cargo-geiger 0.13.0 (advisory evidence)
 
-OS/hardware acceptance—including the complete web/CLI five-board matrix and every published CLI
+OS/hardware acceptance—including the complete web/CLI all-board matrix and every published CLI
 architecture—must be signed off against the exact signed candidate. The protected promotion job
 validates `acceptance.json`; those physical observations cannot be inferred from CI.

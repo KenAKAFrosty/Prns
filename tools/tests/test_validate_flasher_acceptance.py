@@ -28,13 +28,14 @@ MODELS = {
     "t-beam-supreme": "LilyGO T-Beam Supreme",
     "xiao-esp32-c6": "Seeed XIAO ESP32-C6",
     "t-echo": "LilyGO T-Echo",
+    "t114": "Heltec Mesh Node T114",
 }
 
 
 def manifest() -> dict:
     targets = []
     for board, model in MODELS.items():
-        esp = board != "t-echo"
+        esp = board not in {"t-echo", "t114"}
         chip = "esp32s3" if board in {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"} else "esp32c6"
         targets.append(
             {
@@ -45,24 +46,39 @@ def manifest() -> dict:
                 "parts": [{"path": f"{board}.bin", "size": 1, "sha256": "a" * 64}]
                 if esp
                 else [],
-                "variants": []
-                if esp
-                else [
-                    {
-                        "softdevice_family": "s140",
-                        "softdevice_version": version,
-                        "fwid": fwid,
-                        "application_base": application_base,
-                        "family_id": "0xada52840",
-                        "path": f"t-echo-s140-{version}.uf2",
-                        "size": 512,
-                        "sha256": digest,
-                    }
-                    for version, fwid, application_base, digest in (
-                        ("6.1.1", "0x00b6", "0x00026000", "b" * 64),
-                        ("7.3.0", "0x0123", "0x00027000", "c" * 64),
-                    )
-                ],
+                "variants": (
+                    []
+                    if esp
+                    else [
+                        {
+                            "softdevice_family": "s140",
+                            "softdevice_version": version,
+                            "fwid": fwid,
+                            "application_base": application_base,
+                            "family_id": "0xada52840",
+                            "path": f"t-echo-s140-{version}.uf2",
+                            "size": 512,
+                            "sha256": digest,
+                        }
+                        for version, fwid, application_base, digest in (
+                            ("6.1.1", "0x00b6", "0x00026000", "b" * 64),
+                            ("7.3.0", "0x0123", "0x00027000", "c" * 64),
+                        )
+                    ]
+                    if board == "t-echo"
+                    else [
+                        {
+                            "softdevice_family": "s140",
+                            "softdevice_version": "6.1.1",
+                            "fwid": "0x00b6",
+                            "application_base": "0x00026000",
+                            "family_id": "0xada52840",
+                            "path": "heltec-t114-s140-6.1.1.uf2",
+                            "size": 512,
+                            "sha256": "d" * 64,
+                        }
+                    ]
+                ),
                 "provisioning": {"format": "HSPCFG1"}
                 if board in {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"}
                 else None,
@@ -258,6 +274,8 @@ def complete_roster() -> dict:
         ("xiao-esp32-c6", "web"): ("windows", "x86_64"),
         ("t-echo", "cli"): ("linux", "aarch64"),
         ("t-echo", "web"): ("macos", "x86_64"),
+        ("t114", "cli"): ("linux", "x86_64"),
+        ("t114", "web"): ("macos", "aarch64"),
     }
     physical_assignments = []
     for (board, surface), (os_name, target_architecture) in hosts.items():

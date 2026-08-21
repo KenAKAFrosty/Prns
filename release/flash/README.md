@@ -71,7 +71,7 @@ Before signing any candidate:
 - create `release-rollback` with manual release-owner approval and no signing secrets or wait
   timer; rollback jobs only receive the repository public key and read-only release inputs;
 - confirm Actions attestations are available for the repository and `gh attestation verify` works;
-- assign the ten physical, three Firefox Web Serial, one Safari fallback, and five
+- assign the twelve physical, three Firefox Web Serial, one Safari fallback, and five
   archive-installation coverage slots to real testers across their required hosts; one person may
   hold multiple or all slots;
 - commit and validate `release/acceptance/rosters/VERSION.json` with those real assignments;
@@ -158,7 +158,7 @@ recorded evidence-archive SHA-256. The workflow:
 - revalidates one durable public-review evidence asset against its exact workflow run attempt and
   protected job;
 - extracts the evidence archive safely and recomputes every referenced object's SHA-256;
-- validates twelve full transport-aware physical rows, three Firefox Web Serial smokes, one Safari
+- validates fourteen full transport-aware physical rows, three Firefox Web Serial smokes, one Safari
   fallback, and all five installer/exact-version smokes;
 - signs `acceptance-vVERSION.json`;
 - creates and signs `flasher-release-record-vVERSION.json`.

@@ -98,6 +98,12 @@ def manifest(
                 "parts": [],
                 "variants": [{"size": 350_000}, {"size": 350_000}],
             },
+            {
+                "board_slug": "t114",
+                "transport": "uf2-mass-storage",
+                "parts": [],
+                "variants": [{"size": 350_000}],
+            },
         ],
     }
     if source_size is not None:
@@ -466,7 +472,7 @@ class FlasherReproducibilityTests(unittest.TestCase):
 
     def test_sparse_report_covers_all_boards_and_enforces_sixty_percent(self) -> None:
         report = build_report(manifest())
-        self.assertEqual(len(report["targets"]), 5)
+        self.assertEqual(len(report["targets"]), 6)
         self.assertEqual(report["aggregate_esp"]["gate"], "passed")
         heltec = next(
             target for target in report["targets"] if target["board_slug"] == "heltec-v4"

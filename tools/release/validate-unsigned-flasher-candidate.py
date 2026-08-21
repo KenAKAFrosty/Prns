@@ -26,7 +26,14 @@ CLI_TARGETS = {
     "aarch64-unknown-linux-gnu": ".tar.gz",
     "x86_64-pc-windows-msvc": ".zip",
 }
-SHIPPING_BOARDS = {"heltec-v4", "heltec-v4-r8", "t-beam-supreme", "xiao-esp32-c6", "t-echo"}
+SHIPPING_BOARDS = {
+    "heltec-v4",
+    "heltec-v4-r8",
+    "t-beam-supreme",
+    "xiao-esp32-c6",
+    "t-echo",
+    "t114",
+}
 REQUIRED_RELEASE_FILES = (
     "VERSION",
     "flash-manifest.json",

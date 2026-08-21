@@ -15,7 +15,14 @@ SPARSE_BASELINES = {
     board: MERGED_BASELINES[board]
     for board in ("heltec-v4", "heltec-v4-r8", "t-beam-supreme")
 }
-SHIPPING_BOARDS = {"heltec-v4", "heltec-v4-r8", "t-beam-supreme", "xiao-esp32-c6", "t-echo"}
+SHIPPING_BOARDS = {
+    "heltec-v4",
+    "heltec-v4-r8",
+    "t-beam-supreme",
+    "xiao-esp32-c6",
+    "t-echo",
+    "t114",
+}
 REQUIRED_REDUCTION_PERCENT = 60
 
 

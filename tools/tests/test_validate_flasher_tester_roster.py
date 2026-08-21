@@ -29,6 +29,8 @@ def complete_roster() -> dict:
         ("xiao-esp32-c6", "web"): ("windows", "x86_64"),
         ("t-echo", "cli"): ("linux", "aarch64"),
         ("t-echo", "web"): ("macos", "x86_64"),
+        ("t114", "cli"): ("linux", "x86_64"),
+        ("t114", "web"): ("macos", "aarch64"),
     }
     physical_assignments = []
     for (board, surface), (os_name, architecture) in hosts.items():

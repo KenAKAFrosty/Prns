@@ -43,6 +43,8 @@ def complete_roster() -> dict:
         ("xiao-esp32-c6", "web"): ("windows", "x86_64"),
         ("t-echo", "cli"): ("linux", "aarch64"),
         ("t-echo", "web"): ("macos", "x86_64"),
+        ("t114", "cli"): ("linux", "x86_64"),
+        ("t114", "web"): ("macos", "aarch64"),
     }
     physical_assignments = []
     for (board, surface), (os_name, architecture) in hosts.items():
@@ -115,6 +117,7 @@ def manifest() -> dict:
         ("t-beam-supreme", "LilyGO T-Beam Supreme", "esp-serial", "esp32s3", True),
         ("xiao-esp32-c6", "Seeed XIAO ESP32-C6", "esp-serial", "esp32c6", False),
         ("t-echo", "LilyGO T-Echo", "uf2-mass-storage", None, False),
+        ("t114", "Heltec Mesh Node T114", "uf2-mass-storage", None, False),
     )
     return {
         "schema": 3,
@@ -127,22 +130,39 @@ def manifest() -> dict:
                 "transport": transport,
                 "expected_chip": chip,
                 "parts": [] if transport == "uf2-mass-storage" else [{"path": f"{slug}.bin", "size": 1, "sha256": "a" * 64}],
-                "variants": [
-                    {
-                        "softdevice_family": "s140",
-                        "softdevice_version": version,
-                        "fwid": fwid,
-                        "application_base": application_base,
-                        "family_id": "0xada52840",
-                        "path": f"t-echo-s140-{version}.uf2",
-                        "size": 512,
-                        "sha256": digest,
-                    }
-                    for version, fwid, application_base, digest in (
-                        ("6.1.1", "0x00b6", "0x00026000", "b" * 64),
-                        ("7.3.0", "0x0123", "0x00027000", "c" * 64),
-                    )
-                ] if transport == "uf2-mass-storage" else [],
+                "variants": (
+                    [
+                        {
+                            "softdevice_family": "s140",
+                            "softdevice_version": version,
+                            "fwid": fwid,
+                            "application_base": application_base,
+                            "family_id": "0xada52840",
+                            "path": f"t-echo-s140-{version}.uf2",
+                            "size": 512,
+                            "sha256": digest,
+                        }
+                        for version, fwid, application_base, digest in (
+                            ("6.1.1", "0x00b6", "0x00026000", "b" * 64),
+                            ("7.3.0", "0x0123", "0x00027000", "c" * 64),
+                        )
+                    ]
+                    if slug == "t-echo"
+                    else [
+                        {
+                            "softdevice_family": "s140",
+                            "softdevice_version": "6.1.1",
+                            "fwid": "0x00b6",
+                            "application_base": "0x00026000",
+                            "family_id": "0xada52840",
+                            "path": "heltec-t114-s140-6.1.1.uf2",
+                            "size": 512,
+                            "sha256": "d" * 64,
+                        }
+                    ]
+                    if slug == "t114"
+                    else []
+                ),
                 "provisioning": {"format": "HSPCFG1"} if provisioned else None,
             }
             for slug, display_name, transport, chip, provisioned in boards
@@ -196,7 +216,7 @@ class AcceptanceScaffoldTests(unittest.TestCase):
         )
         self.assertEqual(candidate["prerelease_published_at"], PUBLISHED_AT)
         self.assertEqual(record["schema"], 5)
-        self.assertEqual(len(record["runs"]), 12)
+        self.assertEqual(len(record["runs"]), 14)
         self.assertEqual(len(record["web_serial_smoke"]), 3)
         self.assertEqual(len(record["browser_fallbacks"]), 1)
         self.assertEqual(len(record["installation_smoke"]), 5)

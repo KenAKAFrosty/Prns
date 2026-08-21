@@ -20,6 +20,7 @@ ESP_SERIAL_BOARDS = (
 SHIPPING_BOARDS = (
     *ESP_SERIAL_BOARDS,
     "t-echo",
+    "t114",
 )
 SURFACES = ("cli", "web")
 OS_ARCHITECTURES = {
@@ -121,6 +122,11 @@ T_ECHO_COMPATIBILITY_VARIANTS = (
     "s140-6.1.1-fwid-0x00b6",
     "s140-7.3.0-fwid-0x0123",
 )
+T114_COMPATIBILITY_VARIANTS = ("s140-6.1.1-fwid-0x00b6",)
+UF2_COMPATIBILITY_VARIANTS = {
+    "t-echo": T_ECHO_COMPATIBILITY_VARIANTS,
+    "t114": T114_COMPATIBILITY_VARIANTS,
+}
 NOT_RUN = "NOT_RUN"
 UTC_TIMESTAMP = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
 
@@ -165,6 +171,10 @@ def applicable_scenarios(
 def required_compatibilities(target: dict) -> tuple[str | None, ...]:
     if target.get("transport") != "uf2-mass-storage":
         return (None,)
+    board = target.get("board_slug")
+    expected = UF2_COMPATIBILITY_VARIANTS.get(board)
+    if expected is None:
+        raise ValueError(f"UF2 acceptance has no pinned compatibility matrix for {board!r}")
     labels = []
     for variant in target_artifacts(target):
         family = variant.get("softdevice_family")
@@ -173,8 +183,12 @@ def required_compatibilities(target: dict) -> tuple[str | None, ...]:
         if not all(isinstance(value, str) for value in (family, version, fwid)):
             raise ValueError("UF2 acceptance compatibility identity is malformed")
         labels.append(f"{family}-{version}-fwid-{fwid}")
-    if tuple(labels) != T_ECHO_COMPATIBILITY_VARIANTS:
-        raise ValueError("UF2 acceptance requires the exact S140 v6 and v7 compatibility matrix")
+    if tuple(labels) != expected:
+        if board == "t-echo":
+            raise ValueError(
+                "T-Echo acceptance requires the exact S140 v6 and v7 compatibility matrix"
+            )
+        raise ValueError(f"{board} acceptance requires its exact pinned compatibility matrix")
     return tuple(labels)
 
 
