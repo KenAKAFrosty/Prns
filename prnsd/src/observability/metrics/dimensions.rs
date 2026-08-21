@@ -346,15 +346,50 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_separates_backpressure_from_terminal_announce_loss() {
-        let dashboard = include_str!("../../../observability/grafana/prnsd.json");
-        assert!(dashboard.contains("prns_announces_backpressure_total"));
-        assert!(dashboard.contains("prns_announces_pacer_deferred_depth"));
-        assert!(dashboard.contains("prns_egress_lane_occupancy"));
-        assert!(dashboard.contains(
-            "lane_full|lane_missing|ifac_rejected|pacer_rejected|pacer_evicted|pacer_expired"
-        ));
-        assert!(!dashboard.contains(
+    fn dashboard_classifies_bounded_announce_shedding_as_pressure() {
+        let source = include_str!("../../../observability/grafana/prnsd.json");
+        let dashboard: serde_json::Value = serde_json::from_str(source).unwrap();
+        let panels = dashboard["panels"].as_array().unwrap();
+        let panel = |title: &str| {
+            panels
+                .iter()
+                .find(|panel| panel["title"].as_str() == Some(title))
+                .unwrap()
+        };
+        let target_expression = |title: &str| panel(title)["targets"][0]["expr"].as_str().unwrap();
+
+        let operational = target_expression("Operational state");
+        let hard_signals = target_expression("Hard signals · 5m");
+        for expression in [operational, hard_signals] {
+            assert!(!expression.contains("lane_full"));
+            assert!(!expression.contains("pacer_rejected"));
+            assert!(!expression.contains("pacer_evicted"));
+            assert!(expression.contains("lane_missing|ifac_rejected|pacer_expired"));
+        }
+
+        let breakdown = panel("Pressure and failure breakdown · 5m");
+        assert_eq!(breakdown["type"].as_str(), Some("bargauge"));
+        let breakdown_expression = breakdown["targets"][0]["expr"].as_str().unwrap();
+        assert!(breakdown_expression.contains("prns_interface_announces_egress_total"));
+        assert!(breakdown_expression.contains("prns_interface_announces_backpressure_total"));
+        assert!(breakdown_expression.contains("lane_full|pacer_rejected|pacer_evicted"));
+        assert!(breakdown.to_string().contains("\"fixedColor\":\"blue\""));
+
+        for title in ["Announce terminal egress outcomes", "Announce backpressure"] {
+            let detail = panel(title);
+            assert_eq!(
+                detail["fieldConfig"]["defaults"]["color"]["mode"].as_str(),
+                Some("palette-classic")
+            );
+            assert!(detail["fieldConfig"]["overrides"]
+                .as_array()
+                .unwrap()
+                .is_empty());
+        }
+
+        assert!(source.contains("prns_announces_pacer_deferred_depth"));
+        assert!(source.contains("prns_egress_lane_occupancy"));
+        assert!(!source.contains(
             "prns_announces_egress_total{outcome!~\\\"enqueued|interface_unavailable\\\"}"
         ));
     }
