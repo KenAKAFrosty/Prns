@@ -112,10 +112,10 @@ class SelectionTests(unittest.TestCase):
     def test_all_selects_every_shipping_board(self) -> None:
         boards = DEV.shipping_boards()
         self.assertEqual(DEV.parse_selection(["--all"]).boards, boards)
-        self.assertNotIn("t096", boards)
-        self.assertNotIn("t1000-e", boards)
+        self.assertIn("t096", boards)
+        self.assertIn("t1000-e", boards)
 
-    def test_explicit_qualification_selection_uses_catalog_order(self) -> None:
+    def test_explicit_nordic_selection_uses_catalog_order(self) -> None:
         selection = DEV.parse_selection(["t1000-e", "t096"])
         self.assertEqual(selection.boards, ("t096", "t1000-e"))
         self.assertEqual(

@@ -26,7 +26,10 @@ from script_command import script_command
 from flasher_build_metadata import EXPECTED_TOOLS, EXPECTED_WEB_PACKAGES
 from flasher_reproducibility import SEPARATE_ENVELOPES, payload_identity, payload_manifest
 from flasher_sparse_sizes import build_report as build_sparse_size_report
-from flasher_manifest import validate_uf2_artifact
+from flasher_manifest import (
+    validate_nrf_serial_dfu_recovery_artifact,
+    validate_uf2_artifact,
+)
 from source_snapshot import package_source_snapshot
 
 
@@ -194,6 +197,8 @@ class CandidateFixture:
                 "xiao-esp32-c6",
                 "t-echo",
                 "t114",
+                "t096",
+                "t1000-e",
             ),
             start=1,
         ):
@@ -202,6 +207,10 @@ class CandidateFixture:
                 if board == "t-echo"
                 else ("heltec-t114-s140-6.1.1.uf2",)
                 if board == "t114"
+                else ("t096-s140-6.1.1.uf2",)
+                if board == "t096"
+                else ("t1000e.bin", "t1000e.dat", "t1000e.uf2")
+                if board == "t1000-e"
                 else ("application.bin",)
             )
             artifacts = []
@@ -209,9 +218,13 @@ class CandidateFixture:
                 relative = f"firmware/{board}/{filename}"
                 artifact = root / relative
                 artifact.parent.mkdir(parents=True, exist_ok=True)
-                if board in {"t-echo", "t114"}:
+                if board in {"t-echo", "t114", "t096"}:
                     application_base = 0x26000 if "6.1.1" in filename else 0x27000
                     artifact.write_bytes(uf2_payload(application_base))
+                elif board == "t1000-e" and filename == "t1000e.bin":
+                    artifact.write_bytes(bytes(range(256)))
+                elif board == "t1000-e" and filename == "t1000e.uf2":
+                    artifact.write_bytes(uf2_payload(0x27000))
                 else:
                     artifact.write_bytes(f"firmware-{index}-{board}-{filename}".encode())
                 self.firmware_paths.append(artifact)
@@ -243,7 +256,7 @@ class CandidateFixture:
                         ("0x00026000", "0x00027000"),
                     )
                 ]
-            elif board == "t114":
+            elif board in {"t114", "t096"}:
                 parts = []
                 variants = [
                     {
@@ -255,6 +268,9 @@ class CandidateFixture:
                         "family_id": "0xada52840",
                     }
                 ]
+            elif board == "t1000-e":
+                parts = []
+                variants = []
             else:
                 parts = [{**artifacts[0], "kind": "application", "offset": 0x10000}]
                 variants = []
@@ -262,12 +278,32 @@ class CandidateFixture:
                 "board_slug": board,
                 "transport": (
                     "uf2-mass-storage"
-                    if board in {"t-echo", "t114"}
+                    if board in {"t-echo", "t114", "t096"}
+                    else "nrf-serial-dfu"
+                    if board == "t1000-e"
                     else "esp-serial"
                 ),
                 "parts": parts,
                 "variants": variants,
             }
+            if board == "t1000-e":
+                target["nrf_serial_dfu"] = {
+                    "application": {**artifacts[0], "kind": "dfu-application"},
+                    "init_packet": {**artifacts[1], "kind": "dfu-init-packet"},
+                    "compatibility": {
+                        "softdevice_family": "s140",
+                        "softdevice_version": "7.3.0",
+                        "fwid": "0x0123",
+                        "application_base": "0x00027000",
+                        "application_end_exclusive": "0x000ea000",
+                    },
+                    "recovery": {
+                        "mount_label": "T1000-E",
+                        "board_id_prefix": "nrf52840-t1000-e-v1",
+                        "family_id": "0xada52840",
+                        "artifact": {**artifacts[2], "kind": "uf2"},
+                    },
+                }
             targets.append(target)
         write_json(
             root / "metadata" / "source-capabilities.json",
@@ -291,6 +327,8 @@ class CandidateFixture:
                         "xiao-esp32-c6",
                         "t-echo",
                         "t114",
+                        "t096",
+                        "t1000-e",
                     )
                 ],
             },
@@ -402,6 +440,10 @@ class CandidateFixture:
             ("t-echo", "web"): ("macos", "x86_64"),
             ("t114", "cli"): ("linux", "x86_64"),
             ("t114", "web"): ("macos", "aarch64"),
+            ("t096", "cli"): ("linux", "aarch64"),
+            ("t096", "web"): ("macos", "aarch64"),
+            ("t1000-e", "cli"): ("macos", "x86_64"),
+            ("t1000-e", "web"): ("windows", "x86_64"),
         }
         physical_assignments = []
         for (board, surface), (os_name, architecture) in physical_hosts.items():
@@ -708,6 +750,20 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         payload[0] = 0
         with self.assertRaisesRegex(ValueError, "invalid magic"):
             validate_uf2_artifact(variant, bytes(payload))
+
+    def test_release_boundary_binds_nordic_recovery_to_dfu_application(self) -> None:
+        target = next(
+            target
+            for target in self.fixture.manifest["targets"]
+            if target["board_slug"] == "t1000-e"
+        )
+        nrf_serial_dfu = target["nrf_serial_dfu"]
+        application = (self.fixture.root / nrf_serial_dfu["application"]["path"]).read_bytes()
+        recovery = (self.fixture.root / nrf_serial_dfu["recovery"]["artifact"]["path"]).read_bytes()
+        validate_nrf_serial_dfu_recovery_artifact(target, application, recovery)
+        tampered = bytes([application[0] ^ 0xFF]) + application[1:]
+        with self.assertRaisesRegex(ValueError, "disagrees with the exact DFU application"):
+            validate_nrf_serial_dfu_recovery_artifact(target, tampered, recovery)
 
     def test_embedded_firmware_cannot_carry_the_hosted_source_archive(self) -> None:
         target = next(

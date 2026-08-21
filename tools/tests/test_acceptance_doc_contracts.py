@@ -116,6 +116,8 @@ class AcceptanceDocContractTests(unittest.TestCase):
                     "transport": (
                         "uf2-mass-storage"
                         if board in CHECKER.UF2_COMPATIBILITY_VARIANTS
+                        else "nrf-serial-dfu"
+                        if board == "t1000-e"
                         else "esp-serial"
                     ),
                 }

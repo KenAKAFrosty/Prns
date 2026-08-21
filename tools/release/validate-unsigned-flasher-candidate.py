@@ -16,7 +16,12 @@ from flasher_reproducibility import validate_report as validate_reproducibility_
 from flasher_sparse_sizes import build_report as build_sparse_size_report
 from flasher_website_history import allowed_historical_signatures, validate_candidate_history
 from source_snapshot import verify_source_snapshot
-from flasher_manifest import FLASH_MANIFEST_SCHEMA, target_artifacts, validate_uf2_artifact
+from flasher_manifest import (
+    FLASH_MANIFEST_SCHEMA,
+    target_artifacts,
+    validate_nrf_serial_dfu_recovery_artifact,
+    validate_uf2_artifact,
+)
 
 
 CLI_TARGETS = {
@@ -33,6 +38,8 @@ SHIPPING_BOARDS = {
     "xiao-esp32-c6",
     "t-echo",
     "t114",
+    "t096",
+    "t1000-e",
 }
 REQUIRED_RELEASE_FILES = (
     "VERSION",
@@ -349,6 +356,7 @@ def verify(arguments: argparse.Namespace) -> dict:
         source = target.get("source")
         if source is not None:
             raise ValueError(f"embedded target {board_slug} must not carry source metadata")
+        payloads_by_kind = {}
         for part in parts:
             if not isinstance(part, dict):
                 raise ValueError("candidate manifest contains a malformed firmware part")
@@ -367,14 +375,23 @@ def verify(arguments: argparse.Namespace) -> dict:
             if not artifact.is_file() or artifact.stat().st_size != size or digest(artifact) != checksum:
                 raise ValueError(f"candidate firmware part does not match manifest: {relative}")
             payload = artifact.read_bytes()
+            kind = part.get("kind")
+            if isinstance(kind, str):
+                payloads_by_kind[kind] = payload
             if not hosted.is_file() or hosted.read_bytes() != payload:
                 raise ValueError(f"hosted firmware part differs from candidate payload: {relative}")
             if target.get("transport") == "uf2-mass-storage":
                 validate_uf2_artifact(part, payload)
-            if part.get("kind") == "application" and source_archive in payload:
+            if part.get("kind") in {"application", "dfu-application"} and source_archive in payload:
                 raise ValueError(
                     f"embedded target {board_slug} must not embed source.zip"
                 )
+        if target.get("transport") == "nrf-serial-dfu":
+            application = payloads_by_kind.get("dfu-application")
+            recovery = payloads_by_kind.get("uf2")
+            if application is None or recovery is None:
+                raise ValueError("Nordic serial DFU target is missing bound artifacts")
+            validate_nrf_serial_dfu_recovery_artifact(target, application, recovery)
 
     capability_metadata = json.loads(
         (root / "metadata" / "source-capabilities.json").read_text(encoding="utf-8")

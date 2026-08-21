@@ -533,7 +533,7 @@ mod tests {
     }
 
     #[test]
-    fn local_t096_manifest_constructs_the_exact_qualification_target(
+    fn local_t096_manifest_constructs_the_exact_shipping_target(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let catalog = board_catalog()?;
         let board = catalog.board("t096").ok_or("missing T096 catalog entry")?;
@@ -623,7 +623,7 @@ mod tests {
         let validated = ValidatedFlashManifest::from_json(&encoded, &catalog)?;
         assert_eq!(validated.schema_version(), FLASH_MANIFEST_SCHEMA);
         assert_eq!(validated.release().version().as_str(), "0.2.6");
-        assert_eq!(validated.targets().len(), 6);
+        assert_eq!(validated.targets().len(), 8);
         assert_eq!(
             validated
                 .targets()

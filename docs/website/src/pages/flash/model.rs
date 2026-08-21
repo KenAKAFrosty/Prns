@@ -200,8 +200,6 @@ pub(super) fn preparation_guide(
     target: BoardFlashTarget,
     nrf_recovery: bool,
 ) -> PreparationGuide {
-    #[cfg(not(feature = "local-dev-flasher"))]
-    let _ = nrf_recovery;
     match profile {
         PreparationProfile::EspUsbBoot => PreparationGuide {
             lead: "The flasher will try the board's cataloged automatic reset strategy first.",
@@ -214,16 +212,13 @@ pub(super) fn preparation_guide(
         PreparationProfile::TechoUf2 | PreparationProfile::T114Uf2 => {
             uf2_preparation_guide(target)
         }
-        #[cfg(feature = "local-dev-flasher")]
         PreparationProfile::T096Uf2 => uf2_preparation_guide(target),
-        #[cfg(feature = "local-dev-flasher")]
         PreparationProfile::T1000eNrfSerialDfu => {
             t1000e_preparation_guide(target, nrf_recovery)
         }
     }
 }
 
-#[cfg(feature = "local-dev-flasher")]
 fn t1000e_preparation_guide(target: BoardFlashTarget, recovery: bool) -> PreparationGuide {
     let BoardFlashTarget::NrfSerialDfu {
         recovery_mount_label,
@@ -482,10 +477,9 @@ mod tests {
         assert!(!shares_serial_chip_identity(t_echo));
     }
 
-    #[cfg(feature = "local-dev-flasher")]
     #[test]
     fn t1000e_direct_and_recovery_guides_are_distinct() {
-        let t1000e = board_target_by_slug("t1000-e").expect("qualification board");
+        let t1000e = board_target_by_slug("t1000-e").expect("shipping board");
         let direct = preparation_guide(
             t1000e.preparation_profile.expect("flashable profile"),
             t1000e.flash_target.expect("flash target"),

@@ -29,19 +29,33 @@ MODELS = {
     "xiao-esp32-c6": "Seeed XIAO ESP32-C6",
     "t-echo": "LilyGO T-Echo",
     "t114": "Heltec Mesh Node T114",
+    "t096": "Heltec Mesh Node T096",
+    "t1000-e": "Seeed SenseCAP T1000-E",
 }
 
 
 def manifest() -> dict:
     targets = []
     for board, model in MODELS.items():
-        esp = board not in {"t-echo", "t114"}
+        esp = board in {
+            "heltec-v4",
+            "heltec-v4-r8",
+            "t-beam-supreme",
+            "xiao-esp32-c6",
+        }
+        uf2 = board in {"t-echo", "t114", "t096"}
         chip = "esp32s3" if board in {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"} else "esp32c6"
         targets.append(
             {
                 "board_slug": board,
                 "display_name": model,
-                "transport": "esp-serial" if esp else "uf2-mass-storage",
+                "transport": (
+                    "esp-serial"
+                    if esp
+                    else "uf2-mass-storage"
+                    if uf2
+                    else "nrf-serial-dfu"
+                ),
                 "expected_chip": chip if esp else None,
                 "parts": [{"path": f"{board}.bin", "size": 1, "sha256": "a" * 64}]
                 if esp
@@ -73,11 +87,26 @@ def manifest() -> dict:
                             "fwid": "0x00b6",
                             "application_base": "0x00026000",
                             "family_id": "0xada52840",
-                            "path": "heltec-t114-s140-6.1.1.uf2",
+                            "path": (
+                                "heltec-t114-s140-6.1.1.uf2"
+                                if board == "t114"
+                                else "t096-s140-6.1.1.uf2"
+                            ),
                             "size": 512,
                             "sha256": "d" * 64,
                         }
                     ]
+                    if uf2
+                    else []
+                ),
+                "nrf_serial_dfu": (
+                    {
+                        "application": {"kind": "dfu-application", "path": "t1000e.bin"},
+                        "init_packet": {"kind": "dfu-init-packet", "path": "t1000e.dat"},
+                        "recovery": {"artifact": {"kind": "uf2", "path": "t1000e.uf2"}},
+                    }
+                    if board == "t1000-e"
+                    else None
                 ),
                 "provisioning": {"format": "HSPCFG1"}
                 if board in {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"}
@@ -276,6 +305,10 @@ def complete_roster() -> dict:
         ("t-echo", "web"): ("macos", "x86_64"),
         ("t114", "cli"): ("linux", "x86_64"),
         ("t114", "web"): ("macos", "aarch64"),
+        ("t096", "cli"): ("linux", "aarch64"),
+        ("t096", "web"): ("macos", "aarch64"),
+        ("t1000-e", "cli"): ("macos", "x86_64"),
+        ("t1000-e", "web"): ("windows", "x86_64"),
     }
     physical_assignments = []
     for (board, surface), (os_name, target_architecture) in hosts.items():
@@ -415,6 +448,20 @@ class AcceptanceValidatorTests(unittest.TestCase):
         errors = self.validate()
         self.assertTrue(any("is missing applicable scenarios" in error for error in errors))
         self.assertTrue(any("failed-sync" in error and "reboot-detection" in error for error in errors))
+
+    def test_t1000e_requires_direct_dfu_and_recovery_boundaries(self) -> None:
+        web = self.runs("t1000-e", "web")[0]
+        web["scenarios"].pop("managed-application-entry")
+        web["scenarios"].pop("recovery-uf2-fallback")
+        errors = self.validate()
+        self.assertTrue(any("is missing applicable scenarios" in error for error in errors))
+        self.assertTrue(
+            any(
+                "managed-application-entry" in error
+                and "recovery-uf2-fallback" in error
+                for error in errors
+            )
+        )
 
     def test_t_echo_missing_compatibility_row_is_rejected(self) -> None:
         run = self.runs("t-echo", "web")[-1]

@@ -93,14 +93,16 @@ hopspot-flash flash BOARD \
 
 Replace `preview` only if the signed manifest says `stable`. `--offline` is mandatory for counted
 CLI qualification. Use the masked guided entry or `--wifi-password-stdin` for Configure; never put
-a password on the command line. T-Echo stays on the signed UF2 mount/copy route and must resolve the
-exact S140 6.1.1 or 7.3.0 variant from the mounted bootloader identity before reading that variant
-from the verified cache.
+a password on the command line. T-Echo, T114, and T096 stay on the signed UF2 mount/copy route and
+must resolve their exact pinned variant from the mounted bootloader identity before reading it from
+the verified cache. T-1000E uses the exact Nordic serial-DFU application and init packet; its
+manifest-bound recovery UF2 is the fallback when the serial bootloader cannot be entered.
 
 Run `hopspot-flash doctor BOARD` as part of each physical CLI assignment. On ESP boards it opens a
-non-writing identity session; on T-Echo it reports the Board-ID, bootloader version, SoftDevice,
-and exact compatibility variant without writing. Heltec versus T-Beam remains a same-chip
-limitation and must be confirmed by the tester.
+non-writing identity session; on UF2 boards it reports the Board-ID, bootloader version,
+SoftDevice, and exact compatibility variant without writing; on T-1000E it reports the exact
+application or bootloader mode without writing. Heltec versus T-Beam remains a same-chip limitation
+and must be confirmed by the tester.
 
 The five native installation rows are separate archive checks. Each one runs on its target OS and
 architecture, installs the exact public archive, and confirms that `hopspot-flash --version` reports

@@ -250,7 +250,7 @@
       }
     },
     {
-      "availability": "qualification",
+      "availability": "shipping",
       "slug": "t096",
       "display_name": "Heltec Mesh Node T096",
       "silicon": "nRF52840 + SX1262 + KCT8103L PA",
@@ -297,7 +297,7 @@
       }
     },
     {
-      "availability": "qualification",
+      "availability": "shipping",
       "slug": "t1000-e",
       "display_name": "Seeed SenseCAP T1000-E",
       "silicon": "nRF52840 + LR1110",

@@ -104,6 +104,23 @@ def manifest(
                 "parts": [],
                 "variants": [{"size": 350_000}],
             },
+            {
+                "board_slug": "t096",
+                "transport": "uf2-mass-storage",
+                "parts": [],
+                "variants": [{"size": 350_000}],
+            },
+            {
+                "board_slug": "t1000-e",
+                "transport": "nrf-serial-dfu",
+                "parts": [],
+                "variants": [],
+                "nrf_serial_dfu": {
+                    "application": {"size": 350_000},
+                    "init_packet": {"size": 128},
+                    "recovery": {"artifact": {"size": 700_000}},
+                },
+            },
         ],
     }
     if source_size is not None:
@@ -472,7 +489,7 @@ class FlasherReproducibilityTests(unittest.TestCase):
 
     def test_sparse_report_covers_all_boards_and_enforces_sixty_percent(self) -> None:
         report = build_report(manifest())
-        self.assertEqual(len(report["targets"]), 6)
+        self.assertEqual(len(report["targets"]), 8)
         self.assertEqual(report["aggregate_esp"]["gate"], "passed")
         heltec = next(
             target for target in report["targets"] if target["board_slug"] == "heltec-v4"
@@ -746,7 +763,7 @@ class FlasherReproducibilityTests(unittest.TestCase):
             ROOT / "validation" / "platforms" / "shipping-firmware.sh"
         ).read_text(encoding="utf-8")
         self.assertIn(
-            "for board in heltec-v4 heltec-v4-r8 t-beam-supreme xiao-esp32-c6 t-echo",
+            "for board in heltec-v4 heltec-v4-r8 t-beam-supreme xiao-esp32-c6 t-echo t114 t096 t1000-e",
             shipping,
         )
         self.assertNotIn("PRNS_EMBEDDED_SITE", shipping)

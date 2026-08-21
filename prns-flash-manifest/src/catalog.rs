@@ -10,13 +10,15 @@ use crate::{
 
 const CATALOG_JSON: &str = include_str!("../../release/flash/boards.json");
 const BOARD_CATALOG_SCHEMA: u32 = 4;
-const SHIPPING_BOARD_SLUGS: [&str; 6] = [
+const SHIPPING_BOARD_SLUGS: [&str; 8] = [
     "heltec-v4",
     "heltec-v4-r8",
     "t-beam-supreme",
     "xiao-esp32-c6",
     "t-echo",
     "t114",
+    "t096",
+    "t1000-e",
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -932,7 +934,9 @@ mod tests {
                 "t-beam-supreme",
                 "xiao-esp32-c6",
                 "t-echo",
-                "t114"
+                "t114",
+                "t096",
+                "t1000-e"
             ]
         );
         Ok(())
@@ -953,7 +957,9 @@ mod tests {
                 "t-beam-supreme",
                 "xiao-esp32-c6",
                 "t-echo",
-                "t114"
+                "t114",
+                "t096",
+                "t1000-e"
             ]
         );
         assert!(catalog.board("heltec-v4").is_some());
@@ -1011,19 +1017,19 @@ mod tests {
     }
 
     #[test]
-    fn t096_qualification_contract_matches_the_hardware_receipt() -> Result<(), CatalogError> {
+    fn t096_shipping_contract_matches_the_hardware_receipt() -> Result<(), CatalogError> {
         let catalog = board_catalog()?;
         let board = catalog
             .board("t096")
             .ok_or_else(|| CatalogError::InvalidBoard {
                 board: "t096".to_string(),
-                message: "missing qualification target".to_string(),
+                message: "missing shipping target".to_string(),
             })?;
         let BoardBuild::Uf2(build) = &board.build else {
             return Err(invalid(board, "expected a UF2 build"));
         };
 
-        assert_eq!(board.availability, BoardAvailability::Qualification);
+        assert_eq!(board.availability, BoardAvailability::Shipping);
         assert_eq!(board.preparation_profile, "t096-uf2");
         assert_eq!(build.package, "t-echo");
         assert_eq!(build.binary, "t096");
@@ -1059,18 +1065,18 @@ mod tests {
     }
 
     #[test]
-    fn t1000e_qualification_contract_matches_the_recovery_bootloader() -> Result<(), CatalogError> {
+    fn t1000e_shipping_contract_matches_the_recovery_bootloader() -> Result<(), CatalogError> {
         let catalog = board_catalog()?;
         let board = catalog
             .board("t1000-e")
             .ok_or_else(|| CatalogError::InvalidBoard {
                 board: "t1000-e".to_string(),
-                message: "missing qualification target".to_string(),
+                message: "missing shipping target".to_string(),
             })?;
         let BoardBuild::NrfSerialDfu(build) = &board.build else {
             return Err(invalid(board, "expected Nordic serial DFU build"));
         };
-        assert_eq!(board.availability, BoardAvailability::Qualification);
+        assert_eq!(board.availability, BoardAvailability::Shipping);
         assert_eq!(build.package, "t-echo");
         assert_eq!(build.binary, "t1000e");
         assert_eq!(build.cargo_feature, "board-t1000e");

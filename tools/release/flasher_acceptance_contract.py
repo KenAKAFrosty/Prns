@@ -21,6 +21,8 @@ SHIPPING_BOARDS = (
     *ESP_SERIAL_BOARDS,
     "t-echo",
     "t114",
+    "t096",
+    "t1000-e",
 )
 SURFACES = ("cli", "web")
 OS_ARCHITECTURES = {
@@ -55,6 +57,8 @@ FALLBACK_SCENARIOS = {
     "esp-connect-unavailable",
     "no-broken-connect-action",
     "t-echo-uf2-route",
+    "t096-uf2-route",
+    "t1000-e-recovery-uf2-route",
 }
 
 ESP_COMMON_SCENARIOS = {
@@ -116,6 +120,40 @@ UF2_CLI_SCENARIOS = {
     "application-usb-enumeration",
 }
 
+NRF_SERIAL_DFU_COMMON_SCENARIOS = {
+    "fresh-install",
+    "update",
+    "correct-board",
+    "incorrect-board",
+    "signed-dfu-verification",
+    "corrupt-artifact",
+    "signature-rejection",
+    "exact-bootloader-selection",
+    "reliable-dfu-transfer",
+    "activation",
+    "recovery-uf2-fallback",
+    "lora",
+    "usb",
+    "post-flash-boot",
+}
+NRF_SERIAL_DFU_WEB_SCENARIOS = {
+    "permission-denial",
+    "managed-application-entry",
+    "bootloader-serial-selection",
+    "navigation-warning",
+    "recovery-guidance",
+}
+NRF_SERIAL_DFU_CLI_SCENARIOS = {
+    "zero-devices",
+    "one-device",
+    "multiple-devices",
+    "port-unavailable",
+    "bootloader-entry",
+    "bootloader-timeout",
+    "transfer-retry",
+    "recovery-guidance",
+}
+
 PER_RUN_BASELINE_SCENARIOS = {"fresh-install", "post-flash-boot"}
 ACCEPTANCE_SCHEMA = 5
 T_ECHO_COMPATIBILITY_VARIANTS = (
@@ -123,9 +161,11 @@ T_ECHO_COMPATIBILITY_VARIANTS = (
     "s140-7.3.0-fwid-0x0123",
 )
 T114_COMPATIBILITY_VARIANTS = ("s140-6.1.1-fwid-0x00b6",)
+T096_COMPATIBILITY_VARIANTS = ("s140-6.1.1-fwid-0x00b6",)
 UF2_COMPATIBILITY_VARIANTS = {
     "t-echo": T_ECHO_COMPATIBILITY_VARIANTS,
     "t114": T114_COMPATIBILITY_VARIANTS,
+    "t096": T096_COMPATIBILITY_VARIANTS,
 }
 NOT_RUN = "NOT_RUN"
 UTC_TIMESTAMP = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
@@ -164,6 +204,14 @@ def applicable_scenarios(
     if transport == "uf2-mass-storage":
         scenarios = set(UF2_COMMON_SCENARIOS)
         scenarios.update(UF2_WEB_SCENARIOS if surface == "web" else UF2_CLI_SCENARIOS)
+        return scenarios
+    if transport == "nrf-serial-dfu":
+        scenarios = set(NRF_SERIAL_DFU_COMMON_SCENARIOS)
+        scenarios.update(
+            NRF_SERIAL_DFU_WEB_SCENARIOS
+            if surface == "web"
+            else NRF_SERIAL_DFU_CLI_SCENARIOS
+        )
         return scenarios
     return set()
 
@@ -257,7 +305,8 @@ def scaffold(
     if any(
         not isinstance(target.get("display_name"), str)
         or not target["display_name"].strip()
-        or target.get("transport") not in {"esp-serial", "uf2-mass-storage"}
+        or target.get("transport")
+        not in {"esp-serial", "uf2-mass-storage", "nrf-serial-dfu"}
         for target in targets.values()
     ):
         raise ValueError("manifest targets have malformed identity or transport fields")

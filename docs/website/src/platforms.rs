@@ -88,9 +88,7 @@ pub enum PreparationProfile {
     EspUsbBoot,
     TechoUf2,
     T114Uf2,
-    #[cfg(feature = "local-dev-flasher")]
     T096Uf2,
-    #[cfg(feature = "local-dev-flasher")]
     T1000eNrfSerialDfu,
 }
 
@@ -107,7 +105,6 @@ pub enum BoardFlashTarget {
         board_id_match_kind: Uf2BoardIdMatchKind,
         board_id: &'static str,
     },
-    #[cfg_attr(not(feature = "local-dev-flasher"), allow(dead_code))]
     NrfSerialDfu {
         recovery_mount_label: &'static str,
         recovery_board_id_match_kind: Uf2BoardIdMatchKind,
@@ -727,32 +724,26 @@ mod tests {
     }
 
     #[test]
-    fn qualification_boards_come_from_the_shared_catalog() {
-        let cards = QUALIFICATION_BOARD_TARGETS
+    fn promoted_nordic_boards_come_from_the_shared_shipping_catalog() {
+        assert!(QUALIFICATION_BOARD_TARGETS.is_empty());
+        let cards = SHIPPING_BOARD_TARGETS
             .iter()
+            .filter(|board| matches!(board.slug, "t096" | "t1000-e"))
             .map(|board| (board.slug, board.tier, board.image().is_some()))
             .collect::<Vec<_>>();
         assert_eq!(
             cards,
             vec![
-                ("t096", Tier::Qualification, true),
-                ("t1000-e", Tier::Qualification, true),
+                ("t096", Tier::Flashable, true),
+                ("t1000-e", Tier::Flashable, true),
             ]
         );
-        if cfg!(feature = "local-dev-flasher") {
-            assert!(QUALIFICATION_BOARD_TARGETS
-                .iter()
-                .all(BoardTarget::is_flashable));
-            assert!(QUALIFICATION_BOARD_TARGETS
-                .iter()
-                .all(|board| board.preparation_profile.is_some() && board.flash_target.is_some()));
-        } else {
-            assert!(QUALIFICATION_BOARD_TARGETS
-                .iter()
-                .all(|board| !board.is_flashable()
-                    && board.preparation_profile.is_none()
-                    && board.flash_target.is_none()));
-        }
+        assert!(SHIPPING_BOARD_TARGETS
+            .iter()
+            .filter(|board| matches!(board.slug, "t096" | "t1000-e"))
+            .all(|board| board.is_flashable()
+                && board.preparation_profile.is_some()
+                && board.flash_target.is_some()));
     }
 
     #[test]
