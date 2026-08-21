@@ -1,5 +1,9 @@
 # Heltec Mesh Node T096 Qualification
 
+The later browser-flasher and exact-artifact evidence for the 0.3.7 bring-up is
+recorded in the
+[T096 and T1000-E developer flasher qualification](flasher-0.3.7-qualification.md).
+
 Two exact developer artifacts were exercised during bring-up. The first
 qualified the complete interface and persistence paths. The second is the
 current-head regression artifact after integrating `origin/trunk` and the
