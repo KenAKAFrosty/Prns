@@ -5687,7 +5687,7 @@
         ]
       },
       "name": "esp-alloc",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "source": "personal-hopspot/embedded/esp32/vendor/esp-alloc-0.10.0",
       "unsafe": {
         "blocks": 41,
         "externs": 11,
@@ -5729,7 +5729,7 @@
         ]
       },
       "name": "esp-backtrace",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "source": "personal-hopspot/embedded/esp32/vendor/esp-backtrace-0.19.0",
       "unsafe": {
         "blocks": 12,
         "externs": 4,
@@ -6075,11 +6075,11 @@
       "name": "esp-radio",
       "source": "personal-hopspot/embedded/esp32/vendor/esp-radio-0.18.0",
       "unsafe": {
-        "blocks": 439,
+        "blocks": 437,
         "externs": 511,
         "functions": 12,
         "impls": 3,
-        "tokens": 1023
+        "tokens": 1021
       },
       "version": "0.18.0"
     },
@@ -6111,7 +6111,7 @@
         ]
       },
       "name": "esp-radio-rtos-driver",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "source": "personal-hopspot/embedded/esp32/vendor/esp-radio-rtos-driver-0.3.0",
       "unsafe": {
         "blocks": 124,
         "externs": 11,
@@ -6204,13 +6204,13 @@
         ]
       },
       "name": "esp-rtos",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "source": "personal-hopspot/embedded/esp32/vendor/esp-rtos-0.3.0",
       "unsafe": {
-        "blocks": 97,
+        "blocks": 98,
         "externs": 5,
         "functions": 9,
         "impls": 7,
-        "tokens": 124
+        "tokens": 125
       },
       "version": "0.3.0"
     },
@@ -13971,11 +13971,11 @@
       "name": "personal-hopspot-esp32",
       "source": "personal-hopspot/embedded/esp32",
       "unsafe": {
-        "blocks": 491,
-        "externs": 517,
-        "functions": 15,
-        "impls": 15,
-        "tokens": 1100
+        "blocks": 776,
+        "externs": 553,
+        "functions": 121,
+        "impls": 37,
+        "tokens": 1618
       },
       "version": "0.1.0"
     },
@@ -14941,11 +14941,11 @@
       "name": "prns-ffi",
       "source": "prns-ffi",
       "unsafe": {
-        "blocks": 119,
+        "blocks": 123,
         "externs": 3,
         "functions": 0,
         "impls": 22,
-        "tokens": 180
+        "tokens": 184
       },
       "version": "0.3.6"
     },
@@ -23325,7 +23325,7 @@
         ]
       },
       "name": "xtensa-lx-rt",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "source": "personal-hopspot/embedded/esp32/vendor/xtensa-lx-rt-0.22.0",
       "unsafe": {
         "blocks": 2,
         "externs": 5,
