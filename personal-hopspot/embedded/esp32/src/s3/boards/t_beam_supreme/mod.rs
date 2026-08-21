@@ -1,10 +1,15 @@
+use core::cell::RefCell;
+
 use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::time::Rate;
+use esp_hal::uart::{Config as UartConfig, Uart};
 use esp_println::println;
 
 use embassy_executor::Spawner;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::blocking_mutex::Mutex;
 use embassy_time::{Delay, Duration, Timer};
 use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::BinaryColor;
@@ -16,11 +21,16 @@ use personal_rns::interfaces::InterfaceId;
 use personal_rns::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
 
 use personal_hopspot_core as screen;
+use static_cell::StaticCell;
 
 use crate::s3::{
-    self, BoardDisplay, BoardFace, Esp32S3Board, NoGnss, S3BoardHardware, S3InterfaceHardware,
+    self, BoardDisplay, BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware,
     S3ManifoldHardware,
 };
+
+mod gnss;
+
+use gnss::TBeamSupremeGnss;
 
 /// This board's USB-auto interface id (the always-present top-level wire on pool slot 0).
 const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"tbeamsup");
@@ -30,18 +40,20 @@ const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"tbeamsup");
 const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x1fPersonal Hopspot T-Beam Supreme\xc0";
 const NODE_ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot T-Beam Supreme";
 
-/// The AXP2101 PMU (I2C1 on SDA 42 / SCL 41). On the T-Beam S3 Supreme the SX1262, the GPS, and the
-/// OLED+sensor bus all sit behind PMU LDO rails that boot OFF, so the radio is dead until these are
-/// enabled: ALDO3 → LoRa, ALDO1 + ALDO2 → OLED/sensor bus. Registers per the AXP2101 datasheet
-/// (matching XPowersLib): 0x90 is the LDO on/off control (bit0 ALDO1, bit1 ALDO2, bit2 ALDO3), and
-/// 0x92/0x93/0x94 hold the ALDO1/2/3 voltages (0.5–3.5 V, 100 mV step, so 3.3 V = (3300-500)/100).
+/// The AXP2101 PMU (I2C1 on SDA 42 / SCL 41). On the T-Beam S3 Supreme the SX1262, GPS, and
+/// OLED+sensor bus all sit behind PMU LDO rails that boot OFF: ALDO3 → LoRa, ALDO4 → GNSS, and
+/// ALDO1 + ALDO2 → OLED/sensor bus. Registers per the AXP2101 datasheet (matching XPowersLib):
+/// 0x90 is the LDO on/off control, while 0x92..0x95 hold the ALDO1..4 voltages (0.5–3.5 V,
+/// 100 mV steps, so 3.3 V = (3300-500)/100).
 const AXP2101_ADDR: u8 = 0x34;
 const AXP2101_LDO_ONOFF0: u8 = 0x90;
 const AXP2101_ALDO1_VOL: u8 = 0x92;
 const AXP2101_ALDO2_VOL: u8 = 0x93;
 const AXP2101_ALDO3_VOL: u8 = 0x94;
+const AXP2101_ALDO4_VOL: u8 = 0x95;
 const AXP2101_VOL_3V3: u8 = 0x1c;
 const AXP2101_ALDO123_EN: u8 = 0b0000_0111;
+const AXP2101_ALDO4_EN: u8 = 0b0000_1000;
 /// ADC channel-enable register; bit0 turns on the battery-voltage ADC the fuel gauge reads.
 const AXP2101_ADC_EN: u8 = 0x30;
 const AXP2101_ADC_BATV: u8 = 0x01;
@@ -51,32 +63,39 @@ const AXP2101_BATV_H: u8 = 0x34;
 const AXP2101_STATUS1: u8 = 0x00;
 const AXP2101_VBUS_GOOD: u8 = 0x20;
 
+enum Axp2101AccessError {
+    Bus,
+}
+
+enum GnssPower {
+    On,
+    Off,
+}
+
 /// Power the SX1262 (ALDO3) and the OLED + sensor bus (ALDO1, ALDO2) on by setting each rail to
 /// 3.3 V and flipping its on/off bit. Read-modify-write so the rest of each register (the voltage
 /// regs' high 3 bits, the on/off reg's other rails) is preserved. Returns false if the PMU never
 /// ACKs — i.e. it is absent or the I2C bus is mis-wired, which the boot log surfaces.
-fn axp2101_bringup<I: embedded_hal::i2c::I2c>(i2c: &mut I) -> bool {
-    for reg in [AXP2101_ALDO1_VOL, AXP2101_ALDO2_VOL, AXP2101_ALDO3_VOL] {
+fn axp2101_bringup<I: embedded_hal::i2c::I2c>(i2c: &mut I) -> Result<(), Axp2101AccessError> {
+    for reg in [
+        AXP2101_ALDO1_VOL,
+        AXP2101_ALDO2_VOL,
+        AXP2101_ALDO3_VOL,
+        AXP2101_ALDO4_VOL,
+    ] {
         let mut cur = [0u8];
-        if i2c.write_read(AXP2101_ADDR, &[reg], &mut cur).is_err() {
-            return false;
-        }
+        i2c.write_read(AXP2101_ADDR, &[reg], &mut cur)
+            .map_err(|_| Axp2101AccessError::Bus)?;
         let val = (cur[0] & 0xe0) | AXP2101_VOL_3V3;
-        if i2c.write(AXP2101_ADDR, &[reg, val]).is_err() {
-            return false;
-        }
+        i2c.write(AXP2101_ADDR, &[reg, val])
+            .map_err(|_| Axp2101AccessError::Bus)?;
     }
     let mut onoff = [0u8];
-    if i2c
-        .write_read(AXP2101_ADDR, &[AXP2101_LDO_ONOFF0], &mut onoff)
-        .is_err()
-    {
-        return false;
-    }
+    i2c.write_read(AXP2101_ADDR, &[AXP2101_LDO_ONOFF0], &mut onoff)
+        .map_err(|_| Axp2101AccessError::Bus)?;
     let val = onoff[0] | AXP2101_ALDO123_EN;
-    if i2c.write(AXP2101_ADDR, &[AXP2101_LDO_ONOFF0, val]).is_err() {
-        return false;
-    }
+    i2c.write(AXP2101_ADDR, &[AXP2101_LDO_ONOFF0, val])
+        .map_err(|_| Axp2101AccessError::Bus)?;
     let mut adc = [0u8];
     if i2c
         .write_read(AXP2101_ADDR, &[AXP2101_ADC_EN], &mut adc)
@@ -84,7 +103,24 @@ fn axp2101_bringup<I: embedded_hal::i2c::I2c>(i2c: &mut I) -> bool {
     {
         let _ = i2c.write(AXP2101_ADDR, &[AXP2101_ADC_EN, adc[0] | AXP2101_ADC_BATV]);
     }
-    true
+    Ok(())
+}
+
+/// Switch the Supreme's GNSS supply (ALDO4, bit3 of the LDO on/off register). The receiver backup
+/// domain remains supplied by the board's battery circuit, preserving hot-start state when present.
+fn axp2101_set_gnss_power<I: embedded_hal::i2c::I2c>(
+    i2c: &mut I,
+    power: GnssPower,
+) -> Result<(), Axp2101AccessError> {
+    let mut r = [0u8];
+    i2c.write_read(AXP2101_ADDR, &[AXP2101_LDO_ONOFF0], &mut r)
+        .map_err(|_| Axp2101AccessError::Bus)?;
+    let value = match power {
+        GnssPower::On => r[0] | AXP2101_ALDO4_EN,
+        GnssPower::Off => r[0] & !AXP2101_ALDO4_EN,
+    };
+    i2c.write(AXP2101_ADDR, &[AXP2101_LDO_ONOFF0, value])
+        .map_err(|_| Axp2101AccessError::Bus)
 }
 
 /// Switch the OLED's power rail (ALDO1, bit0 of the on/off register) on or off. A watchdog reset
@@ -102,24 +138,48 @@ fn axp2101_set_aldo1<I: embedded_hal::i2c::I2c>(i2c: &mut I, on: bool) {
     let _ = i2c.write(AXP2101_ADDR, &[AXP2101_LDO_ONOFF0, v]);
 }
 
-/// Reads battery voltage from the AXP2101's fuel-gauge ADC over I2C — the T-Beam S3 Supreme's only
-/// battery telemetry (there is no GPIO divider). Returns `None` when no cell is attached (the ADC
-/// reads ~0) so the gauge shows `Unknown` on USB-only power.
-pub struct Axp2101Battery<I> {
-    i2c: I,
+type TBeamI2c = I2c<'static, esp_hal::Blocking>;
+
+struct TBeamPmu {
+    i2c: Mutex<CriticalSectionRawMutex, RefCell<TBeamI2c>>,
 }
 
-impl<I: embedded_hal::i2c::I2c> Axp2101Battery<I> {
-    fn new(i2c: I) -> Self {
-        Self { i2c }
+impl TBeamPmu {
+    fn new(i2c: TBeamI2c) -> Self {
+        Self {
+            i2c: Mutex::new(RefCell::new(i2c)),
+        }
+    }
+
+    fn with_i2c<R>(&self, f: impl FnOnce(&mut TBeamI2c) -> R) -> R {
+        self.i2c.lock(|i2c| f(&mut i2c.borrow_mut()))
+    }
+
+    fn set_gnss_power(&self, power: GnssPower) -> Result<(), Axp2101AccessError> {
+        self.with_i2c(|i2c| axp2101_set_gnss_power(i2c, power))
     }
 }
 
-impl<I: embedded_hal::i2c::I2c> screen::BatterySource for Axp2101Battery<I> {
+static PMU: StaticCell<TBeamPmu> = StaticCell::new();
+
+/// Reads battery voltage from the AXP2101's fuel-gauge ADC over I2C — the T-Beam S3 Supreme's only
+/// battery telemetry (there is no GPIO divider). Returns `None` when no cell is attached (the ADC
+/// reads ~0) so the gauge shows `Unknown` on USB-only power.
+pub struct Axp2101Battery {
+    pmu: &'static TBeamPmu,
+}
+
+impl Axp2101Battery {
+    fn new(pmu: &'static TBeamPmu) -> Self {
+        Self { pmu }
+    }
+}
+
+impl screen::BatterySource for Axp2101Battery {
     fn read_millivolts(&mut self) -> Option<u32> {
         let mut buf = [0u8; 2];
-        self.i2c
-            .write_read(AXP2101_ADDR, &[AXP2101_BATV_H], &mut buf)
+        self.pmu
+            .with_i2c(|i2c| i2c.write_read(AXP2101_ADDR, &[AXP2101_BATV_H], &mut buf))
             .ok()?;
         let mv = (((buf[0] & 0x3f) as u32) << 8) | buf[1] as u32;
         (mv >= 100).then_some(mv)
@@ -128,8 +188,8 @@ impl<I: embedded_hal::i2c::I2c> screen::BatterySource for Axp2101Battery<I> {
     fn external_power(&mut self) -> screen::ExternalPowerState {
         let mut s = [0u8];
         if self
-            .i2c
-            .write_read(AXP2101_ADDR, &[AXP2101_STATUS1], &mut s)
+            .pmu
+            .with_i2c(|i2c| i2c.write_read(AXP2101_ADDR, &[AXP2101_STATUS1], &mut s))
             .is_err()
         {
             return screen::ExternalPowerState::Unknown;
@@ -230,8 +290,6 @@ impl<I: embedded_hal::i2c::I2c> DrawTarget for Sh1106I2c<I> {
     }
 }
 
-type TBeamI2c = I2c<'static, esp_hal::Blocking>;
-
 /// The LilyGO T-Beam S3 Supreme: an AXP2101 PMU gates the SX1262 + OLED rails (so they boot dark
 /// until [`axp2101_bringup`]), the panel is an SH1106 at 0x3D, and the battery is read over the PMU's
 /// fuel-gauge ADC. Everything past bring-up is the shared [`s3`] core.
@@ -244,8 +302,8 @@ impl Esp32S3Board for TBeamSupremeBoard {
     const USB_INTERFACE_ID: InterfaceId = USB_INTERFACE_ID;
     const FLASH_LAYOUT: screen::HopspotS3FlashLayout = screen::S3_8_MIB_FLASH_LAYOUT;
     type Display = Sh1106I2c<TBeamI2c>;
-    type Battery = Axp2101Battery<TBeamI2c>;
-    type Gnss = NoGnss;
+    type Battery = Axp2101Battery;
+    type Gnss = TBeamSupremeGnss;
 
     fn flush(display: &mut Self::Display) {
         let _ = display.flush();
@@ -270,14 +328,17 @@ impl Esp32S3Board for TBeamSupremeBoard {
         .expect("i2c1")
         .with_sda(p.GPIO42)
         .with_scl(p.GPIO41);
-        let pmu_ok = axp2101_bringup(&mut pmu_i2c);
+        let pmu_status = match axp2101_bringup(&mut pmu_i2c) {
+            Ok(()) => "ok (ALDO1/2/3 @ 3.3V)",
+            Err(Axp2101AccessError::Bus) => "FAILED (no ACK — radio + OLED stay dark)",
+        };
+        let gnss_rail_status = match axp2101_set_gnss_power(&mut pmu_i2c, GnssPower::Off) {
+            Ok(()) => "off",
+            Err(Axp2101AccessError::Bus) => "unknown",
+        };
         println!(
-            "AXP2101 bring-up: {}",
-            if pmu_ok {
-                "ok (ALDO1/2/3 @ 3.3V)"
-            } else {
-                "FAILED (no ACK — radio + OLED stay dark)"
-            }
+            "AXP2101 bring-up: {}; GNSS rail: {}",
+            pmu_status, gnss_rail_status
         );
         Timer::after(Duration::from_millis(50)).await;
         // Power-cycle the OLED rail so the SH1106 resets cleanly even when a watchdog reset left it
@@ -286,8 +347,10 @@ impl Esp32S3Board for TBeamSupremeBoard {
         Timer::after(Duration::from_millis(80)).await;
         axp2101_set_aldo1(&mut pmu_i2c, true);
         Timer::after(Duration::from_millis(120)).await;
-        // The PMU bus stays alive past bring-up: its AXP2101 fuel-gauge ADC is the board's battery sense.
-        let mut battery = Axp2101Battery::new(pmu_i2c);
+        // Battery telemetry and GNSS power changes share the blocking PMU bus. The critical-section
+        // mutex keeps their short register transactions coherent across the display and GNSS tasks.
+        let pmu = PMU.init(TBeamPmu::new(pmu_i2c));
+        let mut battery = Axp2101Battery::new(pmu);
         {
             use screen::BatterySource as _;
             println!("battery: {:?} mV", battery.read_millivolts());
@@ -352,6 +415,21 @@ impl Esp32S3Board for TBeamSupremeBoard {
             )
         };
 
+        // LilyGO names these pins from the ESP side: GPIO9 receives the receiver's NMEA output,
+        // while GPIO8 transmits toward it. GPIO7 wakes L76K boards and is unconnected on MAX-M10S;
+        // the shared ALDO4 control above powers either receiver option.
+        let gnss_uart = Uart::new(p.UART1, UartConfig::default().with_baudrate(9_600))
+            .expect("T-Beam GNSS UART configuration is valid")
+            .with_rx(p.GPIO9)
+            .with_tx(p.GPIO8)
+            .into_async();
+        let gnss = TBeamSupremeGnss::new(
+            gnss_uart,
+            Output::new(p.GPIO7, Level::Low, OutputConfig::default()),
+            Input::new(p.GPIO6, InputConfig::default()),
+            pmu,
+        );
+
         S3BoardHardware {
             face: BoardFace {
                 display: BoardDisplay {
@@ -364,7 +442,7 @@ impl Esp32S3Board for TBeamSupremeBoard {
                     InputConfig::default().with_pull(esp_hal::gpio::Pull::Up),
                 ),
             },
-            gnss: NoGnss,
+            gnss,
             interface_hardware: S3InterfaceHardware {
                 usb_device: p.USB_DEVICE,
                 lora_radio,
