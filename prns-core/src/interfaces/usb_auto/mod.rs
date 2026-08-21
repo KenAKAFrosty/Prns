@@ -7,7 +7,7 @@ pub use policy::{
 };
 pub use protocol::{
     decode_message, host_react, node_tag_for, Capabilities, Decoder, HostInbound, MalformedMessage,
-    Message, NodeTag, PeerProfile, WriteError, ANDROID_ACCESSORY_DESCRIPTION,
+    Message, NodeTag, PeerProfile, VitalsReport, WriteError, ANDROID_ACCESSORY_DESCRIPTION,
     ANDROID_ACCESSORY_MANUFACTURER, ANDROID_ACCESSORY_MODEL, ANDROID_ACCESSORY_SERIAL,
     ANDROID_ACCESSORY_URI, ANDROID_ACCESSORY_VERSION, BOOTLOADER_ENTRY_CONTROL_INDEX,
     BOOTLOADER_ENTRY_CONTROL_REQUEST, BOOTLOADER_ENTRY_CONTROL_VALUE, MAGIC, MAX_DATA_BYTES,

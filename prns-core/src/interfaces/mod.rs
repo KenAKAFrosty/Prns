@@ -51,8 +51,8 @@ pub use policy::{
     TransportCapability, LOCAL_INTERFACE_BITRATE_ESTIMATE, TRAVERSED_NETWORK_BITRATE_ESTIMATE,
 };
 pub use status::{
-    AirtimeUtilization, ConnectionState, InterfaceSnapshot, InterfaceStatus, InterfaceVitals,
-    Membership, TransferRates,
+    AirtimeUtilization, ConnectionState, FrameAccounting, InterfaceSnapshot, InterfaceStatus,
+    InterfaceVitals, Membership, TransferRates,
 };
 #[cfg(feature = "tokio-host")]
 pub use status::{ConnectionView, ReportsStatus, StatusView};

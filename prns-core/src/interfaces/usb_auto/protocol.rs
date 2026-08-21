@@ -1,6 +1,6 @@
 use crate::interfaces::framing::rns_serial_framing;
 use crate::interfaces::framing::rns_serial_framing::RnsSerialDecoder;
-use crate::interfaces::InterfaceId;
+use crate::interfaces::{ConnectionState, FrameAccounting, InterfaceId};
 use crate::wire::BROADCAST_MTU;
 
 const PROTOCOL_VERSION_LEN: usize = 1;
@@ -33,6 +33,7 @@ enum MessageKind {
     Hello = 0x01,
     HelloAck = 0x02,
     Data = 0x03,
+    Vitals = 0x04,
 }
 
 impl MessageKind {
@@ -41,6 +42,7 @@ impl MessageKind {
             b if b == Self::Hello as u8 => Self::Hello,
             b if b == Self::HelloAck as u8 => Self::HelloAck,
             b if b == Self::Data as u8 => Self::Data,
+            b if b == Self::Vitals as u8 => Self::Vitals,
             unknown => return Err(MalformedMessage::UnknownMessageKind { kind_byte: unknown }),
         })
     }
@@ -60,6 +62,7 @@ pub struct Capabilities(u8);
 
 impl Capabilities {
     const HOST_LANE: u8 = 0b0000_0001;
+    const VITALS: u8 = 0b0000_0010;
 
     pub const fn none() -> Self {
         Self(0)
@@ -71,6 +74,16 @@ impl Capabilities {
 
     pub const fn supports_host_lane(self) -> bool {
         self.0 & Self::HOST_LANE != 0
+    }
+
+    /// This peer wants [`Message::Vitals`] reports. A sender only emits them toward a peer that
+    /// advertised the bit, so a pre-vitals peer never sees the message kind at all.
+    pub const fn with_vitals(self) -> Self {
+        Self(self.0 | Self::VITALS)
+    }
+
+    pub const fn supports_vitals(self) -> bool {
+        self.0 & Self::VITALS != 0
     }
 }
 
@@ -90,6 +103,40 @@ impl PeerProfile {
     }
 }
 
+/// One interface's health as seen from inside the node that owns it, shipped across the USB link
+/// so the peer can watch a radio it has no console to. `frames` is `None` when the interface
+/// family does not count frames — which a reader must not collapse into all-zero, because
+/// "unaccounted" and "nothing arrived" are different answers.
+///
+/// `uptime_ms` is the reporting node's own monotonic clock at the moment the report was built,
+/// so every sample dates itself. A host stamping arrival time instead would fold its polling
+/// gaps into the timeline — and when the question is "when did arrivals stop", that resolution
+/// is the point.
+///
+/// `last_frame_in_at_ms` is that same clock's value when the interface last accepted an inbound
+/// frame, `None` before the first one. The pair answers "how long ago did arrivals stop" from a
+/// single report: the accounting counters are monotonic totals, so one read of them cannot tell
+/// a frozen interface from a quiet one, and `connection` only dissents once the link layer has
+/// noticed. `uptime_ms - last_frame_in_at_ms` needs no second sample and no host clock.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct VitalsReport {
+    pub interface_id: InterfaceId,
+    pub connection: ConnectionState,
+    pub uptime_ms: u64,
+    pub last_frame_in_at_ms: Option<u64>,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub frames: Option<FrameAccounting>,
+}
+
+const VITALS_FIXED_LEN: usize = 8 + 1 + 8 + 8 + 8 + 8 + 1;
+/// "No inbound frame since boot" on the wire. A real stamp cannot reach it: 2^64 - 1 ms of
+/// uptime is over half a billion years, so the sentinel costs no representable value.
+const VITALS_NO_FRAME_YET: u64 = u64::MAX;
+const VITALS_FRAMES_LEN: usize = 5 * 8;
+const VITALS_FRAMES_ABSENT: u8 = 0;
+const VITALS_FRAMES_PRESENT: u8 = 1;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Message<'a> {
     Hello(Capabilities),
@@ -98,6 +145,7 @@ pub enum Message<'a> {
         capabilities: Capabilities,
     },
     Data(&'a [u8]),
+    Vitals(VitalsReport),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -114,6 +162,7 @@ pub enum MalformedMessage {
     WrongMagic,
     UnsupportedVersion { peer_version: u8 },
     DataTooLarge,
+    MalformedVitals,
 }
 
 impl Message<'_> {
@@ -144,6 +193,35 @@ impl Message<'_> {
                 let slot = out.get_mut(..total).ok_or(WriteError::BufferTooSmall)?;
                 slot[0] = MessageKind::Data as u8;
                 slot[MESSAGE_KIND_LEN..].copy_from_slice(packet);
+                Ok(total)
+            }
+            Message::Vitals(report) => {
+                let frames_len = match report.frames {
+                    Some(_) => VITALS_FRAMES_LEN,
+                    None => 0,
+                };
+                let total = MESSAGE_KIND_LEN + VITALS_FIXED_LEN + frames_len;
+                let slot = out.get_mut(..total).ok_or(WriteError::BufferTooSmall)?;
+                slot[0] = MessageKind::Vitals as u8;
+                let body = &mut slot[MESSAGE_KIND_LEN..];
+                body[..8].copy_from_slice(report.interface_id.as_bytes());
+                body[8] = report.connection.as_u8();
+                body[9..17].copy_from_slice(&report.uptime_ms.to_be_bytes());
+                let last_frame_in = report.last_frame_in_at_ms.unwrap_or(VITALS_NO_FRAME_YET);
+                body[17..25].copy_from_slice(&last_frame_in.to_be_bytes());
+                body[25..33].copy_from_slice(&report.rx_bytes.to_be_bytes());
+                body[33..41].copy_from_slice(&report.tx_bytes.to_be_bytes());
+                match report.frames {
+                    None => body[41] = VITALS_FRAMES_ABSENT,
+                    Some(frames) => {
+                        body[41] = VITALS_FRAMES_PRESENT;
+                        body[42..50].copy_from_slice(&frames.frames_in.to_be_bytes());
+                        body[50..58].copy_from_slice(&frames.frames_out.to_be_bytes());
+                        body[58..66].copy_from_slice(&frames.malformed.to_be_bytes());
+                        body[66..74].copy_from_slice(&frames.undecodable.to_be_bytes());
+                        body[74..82].copy_from_slice(&frames.delivered.to_be_bytes());
+                    }
+                }
                 Ok(total)
             }
         }
@@ -194,7 +272,45 @@ pub fn decode_message(payload: &[u8]) -> Result<Message<'_>, MalformedMessage> {
             }
             Ok(Message::Data(body))
         }
+        MessageKind::Vitals => decode_vitals(body).map(Message::Vitals),
     }
+}
+
+fn decode_vitals(body: &[u8]) -> Result<VitalsReport, MalformedMessage> {
+    let (fixed, frames_body) = body
+        .split_at_checked(VITALS_FIXED_LEN)
+        .ok_or(MalformedMessage::MalformedVitals)?;
+    let mut id = [0u8; 8];
+    id.copy_from_slice(&fixed[..8]);
+    let frames = match (fixed[41], frames_body.len()) {
+        (VITALS_FRAMES_ABSENT, 0) => None,
+        (VITALS_FRAMES_PRESENT, VITALS_FRAMES_LEN) => Some(FrameAccounting {
+            frames_in: be_u64(&frames_body[..8]),
+            frames_out: be_u64(&frames_body[8..16]),
+            malformed: be_u64(&frames_body[16..24]),
+            undecodable: be_u64(&frames_body[24..32]),
+            delivered: be_u64(&frames_body[32..40]),
+        }),
+        _ => return Err(MalformedMessage::MalformedVitals),
+    };
+    Ok(VitalsReport {
+        interface_id: InterfaceId::new(id),
+        connection: ConnectionState::from_u8(fixed[8]),
+        uptime_ms: be_u64(&fixed[9..17]),
+        last_frame_in_at_ms: match be_u64(&fixed[17..25]) {
+            VITALS_NO_FRAME_YET => None,
+            at_ms => Some(at_ms),
+        },
+        rx_bytes: be_u64(&fixed[25..33]),
+        tx_bytes: be_u64(&fixed[33..41]),
+        frames,
+    })
+}
+
+fn be_u64(bytes: &[u8]) -> u64 {
+    let mut word = [0u8; 8];
+    word.copy_from_slice(bytes);
+    u64::from_be_bytes(word)
 }
 
 fn vet_handshake(body: &[u8], expected_len: usize) -> Result<(), MalformedMessage> {
@@ -223,7 +339,7 @@ pub fn react_to(message: Result<Message<'_>, MalformedMessage>) -> InboundReacti
     match message {
         Ok(Message::Hello(_)) => InboundReaction::AnswerHandshake,
         Ok(Message::Data(packet)) => InboundReaction::Deliver(packet),
-        Ok(Message::HelloAck { .. }) | Err(_) => InboundReaction::Ignore,
+        Ok(Message::HelloAck { .. } | Message::Vitals(_)) | Err(_) => InboundReaction::Ignore,
     }
 }
 
@@ -233,6 +349,7 @@ pub enum HostInbound<'a> {
     AnswerHandshake,
     Confirmed(NodeTag),
     Data(&'a [u8]),
+    Vitals(VitalsReport),
     Ignore,
 }
 
@@ -241,6 +358,7 @@ pub fn host_react(message: Result<Message<'_>, MalformedMessage>) -> HostInbound
         Ok(Message::Hello(_)) => HostInbound::AnswerHandshake,
         Ok(Message::HelloAck { tag, .. }) => HostInbound::Confirmed(tag),
         Ok(Message::Data(packet)) => HostInbound::Data(packet),
+        Ok(Message::Vitals(report)) => HostInbound::Vitals(report),
         Err(_) => HostInbound::Ignore,
     }
 }
@@ -259,6 +377,7 @@ mod tests {
             capabilities: Capabilities,
         },
         Data(std::vec::Vec<u8>),
+        Vitals(VitalsReport),
     }
 
     impl OwnedMessage {
@@ -270,6 +389,7 @@ mod tests {
                     capabilities: *capabilities,
                 },
                 OwnedMessage::Data(packet) => Message::Data(packet),
+                OwnedMessage::Vitals(report) => Message::Vitals(*report),
             }
         }
 
@@ -278,6 +398,11 @@ mod tests {
                 OwnedMessage::Hello(_) => MESSAGE_KIND_LEN + HELLO_BODY_LEN,
                 OwnedMessage::HelloAck { .. } => MESSAGE_KIND_LEN + HELLO_ACK_BODY_LEN,
                 OwnedMessage::Data(packet) => MESSAGE_KIND_LEN + packet.len(),
+                OwnedMessage::Vitals(report) => {
+                    MESSAGE_KIND_LEN
+                        + VITALS_FIXED_LEN
+                        + report.frames.map_or(0, |_| VITALS_FRAMES_LEN)
+                }
             }
         }
     }
@@ -287,6 +412,7 @@ mod tests {
             Message::Hello(capabilities) => OwnedMessage::Hello(capabilities),
             Message::HelloAck { tag, capabilities } => OwnedMessage::HelloAck { tag, capabilities },
             Message::Data(packet) => OwnedMessage::Data(packet.to_vec()),
+            Message::Vitals(report) => OwnedMessage::Vitals(report),
         }
     }
 
@@ -298,12 +424,53 @@ mod tests {
         any::<[u8; NODE_TAG_LEN]>().prop_map(NodeTag)
     }
 
+    fn vitals_reports() -> impl Strategy<Value = VitalsReport> {
+        (
+            any::<[u8; 8]>(),
+            any::<u8>(),
+            any::<(u64, u64, u64)>(),
+            // The wire spends u64::MAX on "no frame yet", so it is not a representable stamp.
+            prop::option::of(0..u64::MAX),
+            prop::option::of((
+                any::<u64>(),
+                any::<u64>(),
+                any::<u64>(),
+                any::<u64>(),
+                any::<u64>(),
+            )),
+        )
+            .prop_map(
+                |(id, connection, (uptime_ms, rx_bytes, tx_bytes), last_frame_in_at_ms, frames)| {
+                    VitalsReport {
+                        interface_id: InterfaceId::new(id),
+                        connection: ConnectionState::from_u8(connection),
+                        uptime_ms,
+                        last_frame_in_at_ms,
+                        rx_bytes,
+                        tx_bytes,
+                        frames: frames.map(
+                            |(frames_in, frames_out, malformed, undecodable, delivered)| {
+                                FrameAccounting {
+                                    frames_in,
+                                    frames_out,
+                                    malformed,
+                                    undecodable,
+                                    delivered,
+                                }
+                            },
+                        ),
+                    }
+                },
+            )
+    }
+
     fn owned_messages() -> impl Strategy<Value = OwnedMessage> {
         prop_oneof![
             capabilities().prop_map(OwnedMessage::Hello),
             (node_tags(), capabilities())
                 .prop_map(|(tag, capabilities)| OwnedMessage::HelloAck { tag, capabilities }),
             prop::collection::vec(any::<u8>(), 0..=MAX_DATA_BYTES).prop_map(OwnedMessage::Data),
+            vitals_reports().prop_map(OwnedMessage::Vitals),
         ]
     }
 
@@ -314,7 +481,9 @@ mod tests {
         match decode_message(&owned).expect("decode") {
             Message::Hello(capabilities) => Message::Hello(capabilities),
             Message::HelloAck { tag, capabilities } => Message::HelloAck { tag, capabilities },
-            Message::Data(_) => unreachable!("test helper not used for data"),
+            Message::Data(_) | Message::Vitals(_) => {
+                unreachable!("test helper only used for handshakes")
+            }
         }
     }
 
@@ -450,6 +619,146 @@ mod tests {
         match decode_message(&frame).expect("decode") {
             Message::Data(body) => assert_eq!(body.len(), MAX_DATA_BYTES),
             other => panic!("expected data, got {other:?}"),
+        }
+    }
+
+    fn sample_vitals(frames: Option<FrameAccounting>) -> VitalsReport {
+        VitalsReport {
+            interface_id: InterfaceId::new(*b"halowat0"),
+            connection: ConnectionState::Connected,
+            uptime_ms: 1_923_004,
+            last_frame_in_at_ms: Some(1_919_557),
+            rx_bytes: 0x0102_0304_0506_0708,
+            tx_bytes: 42,
+            frames,
+        }
+    }
+
+    #[test]
+    fn vitals_round_trip_with_frame_accounting() {
+        let report = sample_vitals(Some(FrameAccounting {
+            frames_in: 61,
+            frames_out: 33,
+            malformed: 2,
+            undecodable: 17,
+            delivered: 40,
+        }));
+        let mut buf = [0u8; MAX_MESSAGE_BYTES];
+        let n = Message::Vitals(report).write_payload(&mut buf).unwrap();
+        assert_eq!(decode_message(&buf[..n]), Ok(Message::Vitals(report)));
+    }
+
+    #[test]
+    fn vitals_round_trip_without_frame_accounting_stays_unaccounted() {
+        // None must survive the wire as None: an interface that does not count frames must not
+        // arrive at the host reading all-zero.
+        let report = sample_vitals(None);
+        let mut buf = [0u8; MAX_MESSAGE_BYTES];
+        let n = Message::Vitals(report).write_payload(&mut buf).unwrap();
+        match decode_message(&buf[..n]) {
+            Ok(Message::Vitals(decoded)) => assert_eq!(decoded.frames, None),
+            other => panic!("expected vitals, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_never_stamped_interface_survives_the_wire_as_never() {
+        // None must not collapse into a number: "no frame since boot" and "a frame at some
+        // stamp" are different answers, exactly like the accounting block's None.
+        let report = VitalsReport {
+            last_frame_in_at_ms: None,
+            ..sample_vitals(None)
+        };
+        let mut buf = [0u8; MAX_MESSAGE_BYTES];
+        let n = Message::Vitals(report).write_payload(&mut buf).unwrap();
+        match decode_message(&buf[..n]) {
+            Ok(Message::Vitals(decoded)) => assert_eq!(decoded.last_frame_in_at_ms, None),
+            other => panic!("expected vitals, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn one_sample_tells_a_frozen_interface_from_a_quiet_one() {
+        // The counters below are identical, so nothing else in the report can make this call.
+        // Both stamps ride the reporter's own clock, so the ages are commensurable by
+        // construction and no second sample or host clock enters the arithmetic.
+        let frames = Some(FrameAccounting {
+            frames_in: 5058,
+            frames_out: 5258,
+            malformed: 0,
+            undecodable: 0,
+            delivered: 5058,
+        });
+        let quiet = VitalsReport {
+            uptime_ms: 3_600_000,
+            last_frame_in_at_ms: Some(3_594_000),
+            ..sample_vitals(frames)
+        };
+        let frozen = VitalsReport {
+            uptime_ms: 3_600_000,
+            last_frame_in_at_ms: Some(600_000),
+            ..sample_vitals(frames)
+        };
+        let age = |report: VitalsReport| report.uptime_ms - report.last_frame_in_at_ms.unwrap();
+        assert_eq!(age(quiet), 6_000);
+        assert_eq!(age(frozen), 3_000_000);
+        assert_eq!(quiet.frames, frozen.frames);
+    }
+
+    #[test]
+    fn truncated_vitals_are_rejected() {
+        let report = sample_vitals(Some(FrameAccounting::default()));
+        let mut buf = [0u8; MAX_MESSAGE_BYTES];
+        let n = Message::Vitals(report).write_payload(&mut buf).unwrap();
+        for cut in 1..n {
+            assert!(
+                decode_message(&buf[..cut]).is_err(),
+                "a vitals frame cut to {cut} of {n} bytes decoded anyway"
+            );
+        }
+    }
+
+    #[test]
+    fn vitals_with_a_presence_flag_that_contradicts_the_length_are_rejected() {
+        let report = sample_vitals(None);
+        let mut buf = [0u8; MAX_MESSAGE_BYTES];
+        let n = Message::Vitals(report).write_payload(&mut buf).unwrap();
+        // Claim the accounting block is present while sending none of it.
+        buf[n - 1] = 1;
+        assert_eq!(
+            decode_message(&buf[..n]),
+            Err(MalformedMessage::MalformedVitals)
+        );
+    }
+
+    #[test]
+    fn the_vitals_capability_composes_with_the_host_lane() {
+        let both = Capabilities::host().with_vitals();
+        assert!(both.supports_host_lane());
+        assert!(both.supports_vitals());
+        assert!(!Capabilities::host().supports_vitals());
+        assert!(!Capabilities::none().supports_vitals());
+        // The bit must not disturb lane negotiation with a pre-vitals peer.
+        assert_eq!(
+            PeerProfile::negotiate(both, Capabilities::host()),
+            PeerProfile::Host
+        );
+    }
+
+    #[test]
+    fn the_device_ignores_an_inbound_vitals_report() {
+        assert!(matches!(
+            react_to(Ok(Message::Vitals(sample_vitals(None)))),
+            InboundReaction::Ignore
+        ));
+    }
+
+    #[test]
+    fn the_host_surfaces_a_vitals_report() {
+        let report = sample_vitals(Some(FrameAccounting::default()));
+        match host_react(Ok(Message::Vitals(report))) {
+            HostInbound::Vitals(surfaced) => assert_eq!(surfaced, report),
+            _ => panic!("expected the host to surface the report"),
         }
     }
 

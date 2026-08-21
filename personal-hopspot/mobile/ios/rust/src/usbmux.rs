@@ -162,7 +162,10 @@ async fn serve_stream<Seam: InterfaceSeam>(
                         Ok(Message::Data(packet)) if !packet.is_empty() => {
                             seam.next_inbound(packet).await;
                         }
-                        Ok(Message::Data(_)) | Ok(Message::HelloAck { .. }) | Err(_) => {}
+                        Ok(Message::Data(_))
+                        | Ok(Message::HelloAck { .. })
+                        | Ok(Message::Vitals(_))
+                        | Err(_) => {}
                     }
                 }
             }
