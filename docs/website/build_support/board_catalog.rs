@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-use prns_flash_manifest::{board_catalog, BoardBuild, Transport};
+use prns_flash_manifest::{board_catalog, BoardAvailability, BoardBuild, Transport};
 
 pub(crate) fn generate() {
     println!("cargo:rerun-if-changed=../../release/flash/boards.json");
@@ -57,6 +57,29 @@ pub(crate) fn generate() {
             "        preparation_profile: Some({preparation_profile}),\n"
         ));
         generated.push_str(&format!("        flash_target: Some({flash_target}),\n"));
+        generated.push_str("    },\n");
+    }
+    generated.push_str("];\n");
+
+    generated.push_str("\npub const QUALIFICATION_BOARD_TARGETS: &[BoardTarget] = &[\n");
+    for board in catalog
+        .boards
+        .iter()
+        .filter(|board| board.availability == BoardAvailability::Qualification)
+    {
+        generated.push_str("    BoardTarget {\n");
+        generated.push_str(&format!("        name: {:?},\n", board.display_name));
+        generated.push_str(&format!("        slug: {:?},\n", board.slug));
+        generated.push_str(&format!("        silicon: {:?},\n", board.silicon));
+        generated.push_str("        tier: Tier::Qualification,\n");
+        generated.push_str("        interfaces: &[\n");
+        for interface in &board.interfaces {
+            generated.push_str(&format!("            {:?},\n", interface));
+        }
+        generated.push_str("        ],\n");
+        generated.push_str(&format!("        icon: Some({:?}),\n", board.icon));
+        generated.push_str("        preparation_profile: None,\n");
+        generated.push_str("        flash_target: None,\n");
         generated.push_str("    },\n");
     }
     generated.push_str("];\n");

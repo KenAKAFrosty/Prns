@@ -1,8 +1,9 @@
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Tier {
     Shipping,
     SdkPreview,
     Flashable,
+    Qualification,
     BringUp,
     Roadmap,
 }
@@ -13,6 +14,7 @@ impl Tier {
             Tier::Shipping => None,
             Tier::SdkPreview => Some("SDK preview"),
             Tier::Flashable => Some("flashable"),
+            Tier::Qualification => Some("qualification"),
             Tier::BringUp => Some("bring-up"),
             Tier::Roadmap => Some("roadmap"),
         }
@@ -26,6 +28,7 @@ impl Tier {
         match self {
             Tier::Shipping | Tier::SdkPreview => "flash-board-card--runtime",
             Tier::Flashable => "flash-board-card--flashable",
+            Tier::Qualification => "flash-board-card--qualification",
             Tier::BringUp => "flash-board-card--bringup",
             Tier::Roadmap => "flash-board-card--roadmap",
         }
@@ -140,7 +143,7 @@ pub mod shipping_boards {
     include!(concat!(env!("OUT_DIR"), "/shipping_boards.rs"));
 }
 
-pub use shipping_boards::SHIPPING_BOARD_TARGETS;
+pub use shipping_boards::{QUALIFICATION_BOARD_TARGETS, SHIPPING_BOARD_TARGETS};
 
 #[derive(Clone, Copy, PartialEq)]
 pub struct BoardTarget {
@@ -191,16 +194,6 @@ pub const UPCOMING_BOARD_TARGETS: &[BoardTarget] = &[
         name: "muzi.works Base Duo",
         slug: "muzi-works-base-duo",
         silicon: "nRF52840 + LR1121",
-        tier: Tier::BringUp,
-        interfaces: &[],
-        icon: Some("nordicsemiconductor"),
-        preparation_profile: None,
-        flash_target: None,
-    },
-    BoardTarget {
-        name: "Heltec Mesh Node T096",
-        slug: "heltec-mesh-node-t096",
-        silicon: "nRF52840 + SX1262",
         tier: Tier::BringUp,
         interfaces: &[],
         icon: Some("nordicsemiconductor"),
@@ -299,9 +292,34 @@ pub const UPCOMING_BOARD_TARGETS: &[BoardTarget] = &[
     },
 ];
 
+pub const IN_PROGRESS_BOARD_TARGETS: &[BoardTarget] = &[
+    BoardTarget {
+        name: "Heltec MeshTower V2",
+        slug: "mesh-tower-v2",
+        silicon: "nRF52840 + SX1262 + KCT8103L PA",
+        tier: Tier::Qualification,
+        interfaces: &[],
+        icon: Some("nordicsemiconductor"),
+        preparation_profile: None,
+        flash_target: None,
+    },
+    BoardTarget {
+        name: "Heltec Mesh Node T096",
+        slug: "heltec-mesh-node-t096",
+        silicon: "nRF52840 + SX1262",
+        tier: Tier::BringUp,
+        interfaces: &[],
+        icon: Some("nordicsemiconductor"),
+        preparation_profile: None,
+        flash_target: None,
+    },
+];
+
 pub fn board_target_by_slug(slug: &str) -> Option<&'static BoardTarget> {
     SHIPPING_BOARD_TARGETS
         .iter()
+        .chain(QUALIFICATION_BOARD_TARGETS.iter())
+        .chain(IN_PROGRESS_BOARD_TARGETS.iter())
         .chain(UPCOMING_BOARD_TARGETS.iter())
         .find(|board| board.slug == slug)
 }
@@ -680,7 +698,6 @@ mod tests {
             bring_up,
             vec![
                 "muzi.works Base Duo",
-                "Heltec Mesh Node T096",
                 "Heltec Wireless Stick Lite V3",
                 "Raspberry Pi Zero 2 W",
                 "RAK WisBlock Starter Kit",
@@ -693,6 +710,30 @@ mod tests {
                 .all(|board| board.tier == Tier::Roadmap),
             "every other non-shipping board should remain on the roadmap"
         );
+    }
+
+    #[test]
+    fn in_progress_boards_sit_in_the_main_grid_with_their_status() {
+        let cards = IN_PROGRESS_BOARD_TARGETS
+            .iter()
+            .map(|board| (board.slug, board.tier, board.image().is_some()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            cards,
+            vec![
+                ("mesh-tower-v2", Tier::Qualification, true),
+                ("heltec-mesh-node-t096", Tier::BringUp, true),
+            ]
+        );
+    }
+
+    #[test]
+    fn qualification_boards_come_from_the_shared_catalog() {
+        let cards = QUALIFICATION_BOARD_TARGETS
+            .iter()
+            .map(|board| (board.slug, board.tier, board.image().is_some()))
+            .collect::<Vec<_>>();
+        assert_eq!(cards, vec![("t1000-e", Tier::Qualification, true)]);
     }
 
     #[test]

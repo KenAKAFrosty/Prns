@@ -279,14 +279,14 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                     PreparationInstructions { profile, flash_target }
                 }
 
-                if !is_esp {
+                if let BoardFlashTarget::Uf2MassStorage { mount_label, .. } = flash_target {
                     fieldset { class: "flash-wifi-config mt-5",
                         legend { class: "font-semibold text-paper", "Detect firmware foundation" }
                         p { class: "mt-2 text-sm text-soft",
-                            "Select INFO_UF2.TXT from TECHOBOOT. It is read entirely in this browser, never uploaded, and its contents are discarded after identity parsing."
+                            "Select INFO_UF2.TXT from {mount_label}. It is read entirely in this browser, never uploaded, and its contents are discarded after identity parsing."
                         }
                         input {
-                            class: "mt-3 block w-full text-sm text-soft",
+                            class: "mt-3 block w-full cursor-pointer text-sm text-soft file:mr-4 file:cursor-pointer file:rounded-lg file:border file:border-solid file:border-accent/50 file:bg-accent/15 file:px-4 file:py-2.5 file:text-sm file:font-semibold file:text-accent file:transition-colors hover:file:bg-accent/25 disabled:cursor-not-allowed disabled:file:cursor-not-allowed disabled:file:border-line/60 disabled:file:bg-layer/40 disabled:file:text-soft",
                             r#type: "file",
                             accept: ".txt,text/plain",
                             disabled: device_operation_active,
@@ -787,6 +787,7 @@ pub(super) fn BoardTargetCard(board: &'static BoardTarget, selected: bool) -> El
             } else {
                 p { class: "flash-interfaces-pending mt-4",
                     match board.tier {
+                        Tier::Qualification => "Hardware qualification in progress",
                         Tier::BringUp => "Bring-up in progress",
                         Tier::Roadmap => "Planned",
                         Tier::Shipping | Tier::SdkPreview | Tier::Flashable => "Coming later",
@@ -815,7 +816,7 @@ pub(super) fn UnavailablePanel() -> Element {
     rsx! {
         section { class: "rounded-card border border-line/60 bg-layer/40 p-5",
             h2 { class: "text-xl font-semibold text-paper", "Not flashable yet" }
-            p { class: "mt-3 text-soft", "This target is still in bring-up or roadmap tracking." }
+            p { class: "mt-3 text-soft", "This target is still in hardware qualification, bring-up, or roadmap tracking. It becomes flashable here once its signed release lane opens." }
         }
     }
 }
