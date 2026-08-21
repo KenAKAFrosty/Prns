@@ -38,7 +38,7 @@ type T096Radio = Sx126x<T096SpiDevice, Input<'static>, Input<'static>, Output<'s
 
 pub(crate) type T096LoraInterface = LoRaInterface<'static, T096Radio>;
 
-pub(crate) type T096Display = super::Display<T096SpiDevice>;
+pub(crate) type T096Display = super::DisplayDriver<T096SpiDevice>;
 
 type T096UsbDriver = Driver<'static, &'static SoftwareVbusDetect>;
 
