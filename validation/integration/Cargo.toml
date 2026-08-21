@@ -12,7 +12,7 @@ publish = false
 [workspace]
 
 [dependencies]
-personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "tcp", "udp", "shared-instance", "wifi-auto", "wifi-direct"] }
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "tcp", "udp", "shared-instance", "wifi-auto", "wifi-direct", "runtime-metrics"] }
 personal-hopspot-core = { path = "../../personal-hopspot/core" }
 
 [dev-dependencies]

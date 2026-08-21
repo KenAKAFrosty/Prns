@@ -8,6 +8,8 @@ use crate::interfaces::InterfaceKind;
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, ConnectionState, ConnectionView, InterfaceId,
 };
+#[cfg(feature = "runtime-metrics")]
+use crate::interfaces::{IfacContext, IfacSize, InterfaceIfac};
 use crate::manifold::grant_lane::tokio_grant_lane;
 use crate::manifold::interface_seam::MAX_WIRE_FRAME_LEN;
 #[cfg(feature = "runtime-metrics")]
@@ -40,6 +42,42 @@ fn egress_metrics_distinguish_enqueued_full_and_missing_lanes() {
                     enqueued_bytes_by_origin: Default::default(),
                     pacer_queue_depth: 0,
                 },],
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    );
+}
+
+#[cfg(feature = "runtime-metrics")]
+#[test]
+fn egress_metrics_distinguish_ifac_rejection_from_successful_masking() {
+    let id = InterfaceId::new([0x93; 8]);
+    let (producer, mut consumer) = tokio_grant_lane(64, 1);
+    let mut egress = Egress::new(std::vec![(id, producer)]);
+    let ifacs = [InterfaceIfac {
+        id,
+        context: IfacContext::derive(Some("metrics"), Some("ifac"), IfacSize::NARROW).unwrap(),
+    }];
+    let clean = [0u8; 3];
+    let mut masked = [0u8; 64];
+
+    enqueue_for_wire(&mut egress, &ifacs, id, &clean, &mut masked);
+    enqueue_for_wire(&mut egress, &ifacs, id, &clean, &mut masked[..clean.len()]);
+
+    assert_eq!(consumer.try_peek().unwrap().frame().len(), 11);
+    assert_eq!(
+        egress.metrics_snapshot(&[]),
+        EgressMetricsSnapshot {
+            enqueued_frames: 1,
+            ifac_rejected_frames: 1,
+            announces: crate::runtime::AnnounceEgressMetricsSnapshot {
+                interfaces: std::vec![crate::runtime::InterfaceAnnounceEgressMetricsSnapshot {
+                    interface: id,
+                    outcomes: Default::default(),
+                    enqueued_bytes_by_origin: Default::default(),
+                    pacer_queue_depth: 0,
+                }],
                 ..Default::default()
             },
             ..Default::default()

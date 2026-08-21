@@ -214,6 +214,7 @@ pub struct EgressMetricsSnapshot {
     pub unavailable_frame_skips: u64,
     pub full_lane_drops: u64,
     pub missing_lane_drops: u64,
+    pub ifac_rejected_frames: u64,
     pub announces: AnnounceEgressMetricsSnapshot,
 }
 

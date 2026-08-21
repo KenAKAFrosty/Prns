@@ -115,6 +115,13 @@ impl Egress {
         EgressEnqueueOutcome::LaneMissing
     }
 
+    fn record_ifac_rejection(&mut self) {
+        #[cfg(feature = "runtime-metrics")]
+        {
+            self.metrics.ifac_rejected_frames = self.metrics.ifac_rejected_frames.saturating_add(1);
+        }
+    }
+
     fn skip_unavailable(&mut self, target: InterfaceId) -> bool {
         let unavailable = self
             .lanes
@@ -464,11 +471,13 @@ fn emit_for_wire(
     match ifac_for(ifacs, target) {
         Some(entry) => {
             if let Some(len) = fill(&mut scratch.emit) {
-                if let Some(masked_len) = entry
+                if let Ok(masked_len) = entry
                     .context
-                    .mask_outbound(&scratch.emit[..len], &mut scratch.masked)
+                    .try_mask_outbound(&scratch.emit[..len], &mut scratch.masked)
                 {
                     egress.enqueue(target, &scratch.masked[..masked_len]);
+                } else {
+                    egress.record_ifac_rejection();
                 }
             }
         }
@@ -492,11 +501,12 @@ fn enqueue_for_wire(
     masked: &mut [u8],
 ) {
     match ifac_for(ifacs, target) {
-        Some(entry) => {
-            if let Some(masked_len) = entry.context.mask_outbound(bytes, masked) {
+        Some(entry) => match entry.context.try_mask_outbound(bytes, masked) {
+            Ok(masked_len) => {
                 egress.enqueue(target, &masked[..masked_len]);
             }
-        }
+            Err(_) => egress.record_ifac_rejection(),
+        },
         None => {
             egress.enqueue(target, bytes);
         }
@@ -514,7 +524,8 @@ pub(super) fn enqueue_announce_for_wire(
 ) {
     let (outcome, wire_bytes) = match ifac_for(ifacs, target) {
         Some(entry) => {
-            let Some(masked_len) = entry.context.mask_outbound(bytes, masked) else {
+            let Ok(masked_len) = entry.context.try_mask_outbound(bytes, masked) else {
+                egress.record_ifac_rejection();
                 egress.record_announce(
                     target,
                     bytes.len(),

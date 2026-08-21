@@ -508,8 +508,12 @@ pub(super) async fn run(
                 status_publisher = Some(publisher);
                 (Some(tray), Some(tray_shutdown))
             }
-            Err(error) => {
-                tracing::warn!(event = "tray_unavailable", error = %error);
+            Err(crate::tray::TrayStartError::Platform(error)) => {
+                tracing::info!(event = "tray_unavailable", cause = "platform", error = %error);
+                (None, None)
+            }
+            Err(crate::tray::TrayStartError::Actions(error)) => {
+                tracing::warn!(event = "tray_unavailable", cause = "actions", error = %error);
                 (None, None)
             }
         },

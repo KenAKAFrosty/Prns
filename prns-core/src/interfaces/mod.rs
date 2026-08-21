@@ -37,9 +37,9 @@ pub use descriptor::{
 };
 pub use identity::{InterfaceId, InterfaceKind, InterfaceOriginKind, MacAddress, INTERFACE_ID_LEN};
 pub use packet::{
-    frame_cap_for, IfacContext, IfacSize, IfacSizeError, InboundPacket, InterfaceIfac,
-    OutboundPacket, PacketPhyStats, RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb,
-    BROADCAST_WIRE_FRAME_LEN, DEFAULT_IFAC_SIZE, EMBEDDED_MAX_LINK_MTU,
+    frame_cap_for, IfacContext, IfacMaskError, IfacSize, IfacSizeError, InboundPacket,
+    InterfaceIfac, OutboundPacket, PacketPhyStats, RssiDbm, SignalQualityTenthsPercent,
+    SnrQuarterDb, BROADCAST_WIRE_FRAME_LEN, DEFAULT_IFAC_SIZE, EMBEDDED_MAX_LINK_MTU,
     EMBEDDED_MAX_WIRE_FRAME_LEN, IFAC_MAX_SIZE, MAX_WIRE_FRAME_LEN,
 };
 pub use policy::{

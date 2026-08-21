@@ -118,8 +118,9 @@ platform-owned actions:
 
 Terminal actions target the exact running executable and carry an isolated `PRNSD_STATE_DIR`
 through to the child session; they do not depend on the user's shell `PATH`. Tray setup remains
-best-effort: headless sessions continue normally and emit `tray_unavailable` when the platform tray
-service is absent. Service-oriented builds can omit it with
+best-effort: headless sessions continue normally and emit an informational `tray_unavailable` when
+the platform tray service is absent, while failures preparing local tray actions remain warnings.
+Service-oriented builds can omit it with
 `--no-default-features --features tokio-host,observability`.
 
 OTLP metrics and traces are an explicit build capability. The official cloud container and canonical `cargo prnsd build` artifact include it; custom source and native service builds must select the `otlp` feature. Export starts only when an endpoint is configured for that signal and `OTEL_SDK_DISABLED` is not `true`.
