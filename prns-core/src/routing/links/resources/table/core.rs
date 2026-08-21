@@ -6,10 +6,10 @@ use crate::routing::links::resources::build_outgoing::{
 };
 use crate::routing::links::resources::streamed_open::OpenProgress;
 use crate::routing::links::resources::{
-    sealed_transfer_bytes, ResourceBufferShape, ResourceBufferShapeError, ResourceCompression,
-    ResourceCorrelation, ResourceHash, ResourceProof, ResourceSegment, SaltNonce, HASHMAP_MAX_LEN,
-    MAP_HASH_LEN, MAX_EFFICIENT_SIZE, PART_TIMEOUT_FACTOR, RESOURCE_NONCE_LEN, WINDOW_MAX_SLOW,
-    WINDOW_MIN, WINDOW_START,
+    checked_resource_buffer_bytes, sealed_transfer_bytes, ResourceBufferShape,
+    ResourceBufferShapeError, ResourceCompression, ResourceCorrelation, ResourceHash,
+    ResourceProof, ResourceSegment, SaltNonce, HASHMAP_MAX_LEN, MAP_HASH_LEN, MAX_EFFICIENT_SIZE,
+    PART_TIMEOUT_FACTOR, RESOURCE_NONCE_LEN, WINDOW_MAX_SLOW, WINDOW_MIN, WINDOW_START,
 };
 use crate::routing::links::LinkId;
 
@@ -234,6 +234,27 @@ pub trait ResourceTable<State: ResourceRowState> {
     fn transfer_capacity(&self) -> usize;
     fn part_capacity(&self) -> usize;
     fn len(&self) -> usize;
+
+    fn active_buffer_bytes(&self) -> usize {
+        (0..self.len()).fold(0usize, |total, index| {
+            let row = self
+                .transfer(index)
+                .len()
+                .saturating_add(self.part_names(index).len().saturating_mul(MAP_HASH_LEN))
+                .saturating_add(
+                    self.part_flags(index)
+                        .len()
+                        .saturating_mul(core::mem::size_of::<bool>()),
+                );
+            total.saturating_add(row)
+        })
+    }
+
+    fn buffer_memory_limit(&self) -> usize {
+        checked_resource_buffer_bytes(self.transfer_capacity(), self.part_capacity())
+            .and_then(|row| row.checked_mul(self.capacity()))
+            .unwrap_or(usize::MAX)
+    }
 
     fn is_empty(&self) -> bool {
         self.len() == 0
@@ -634,6 +655,14 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
 
     pub fn len(&self) -> usize {
         self.table.len()
+    }
+
+    pub fn active_buffer_bytes(&self) -> usize {
+        self.table.active_buffer_bytes()
+    }
+
+    pub fn buffer_memory_limit(&self) -> usize {
+        self.table.buffer_memory_limit()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -1072,6 +1101,14 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
 
     pub fn len(&self) -> usize {
         self.table.len()
+    }
+
+    pub fn active_buffer_bytes(&self) -> usize {
+        self.table.active_buffer_bytes()
+    }
+
+    pub fn buffer_memory_limit(&self) -> usize {
+        self.table.buffer_memory_limit()
     }
 
     pub fn is_empty(&self) -> bool {

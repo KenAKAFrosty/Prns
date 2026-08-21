@@ -187,6 +187,8 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) path_request_ingress_counts: super::PathRequestIngressCounts,
     #[cfg(feature = "runtime-metrics")]
     pub(crate) path_request_relay_counts: super::PathRequestRelayCounts,
+    #[cfg(feature = "runtime-metrics")]
+    pub(crate) resource_admission_event_counts: super::ResourceAdmissionEventCounts,
     pub(crate) routing_table: EngineRoutingTable<S>,
     pub(crate) route_evidence_id_issuer: RouteEvidenceIdIssuer,
     pub(crate) destination_identities:
@@ -249,6 +251,8 @@ impl<S: StorageLayout> Default for EngineState<S> {
             path_request_ingress_counts: Default::default(),
             #[cfg(feature = "runtime-metrics")]
             path_request_relay_counts: Default::default(),
+            #[cfg(feature = "runtime-metrics")]
+            resource_admission_event_counts: Default::default(),
             routing_table: Default::default(),
             route_evidence_id_issuer: RouteEvidenceIdIssuer::default(),
             destination_identities: DestinationIdentities::default(),
@@ -318,6 +322,12 @@ impl<S: StorageLayout> EngineState<S> {
             write!(announce_interface_metrics, Vec::new());
             #[cfg(feature = "runtime-metrics")]
             write!(interface_metric_groups, Vec::new());
+            #[cfg(feature = "runtime-metrics")]
+            write!(path_request_ingress_counts, Default::default());
+            #[cfg(feature = "runtime-metrics")]
+            write!(path_request_relay_counts, Default::default());
+            #[cfg(feature = "runtime-metrics")]
+            write!(resource_admission_event_counts, Default::default());
             write!(routing_table, Default::default());
             write!(route_evidence_id_issuer, RouteEvidenceIdIssuer::default());
             write!(destination_identities, DestinationIdentities::default());
@@ -478,6 +488,33 @@ impl<S: StorageLayout> EngineState<S> {
                 relays: self.path_request_relay_counts,
                 pending_discoveries: u32::try_from(self.recursive_path_requests.in_flight_count())
                     .unwrap_or(u32::MAX),
+            },
+            resources: super::EngineResourceMetricsSnapshot {
+                incoming: super::ResourceDirectionMetricsSnapshot {
+                    active_buffer_bytes: u64::try_from(
+                        self.incoming_resources.active_buffer_bytes(),
+                    )
+                    .unwrap_or(u64::MAX),
+                    buffer_budget_bytes: u64::try_from(
+                        self.incoming_resources.buffer_memory_limit(),
+                    )
+                    .unwrap_or(u64::MAX),
+                    active_rows: u32::try_from(self.incoming_resources.len()).unwrap_or(u32::MAX),
+                },
+                outgoing: super::ResourceDirectionMetricsSnapshot {
+                    active_buffer_bytes: u64::try_from(
+                        self.outgoing_resources.active_buffer_bytes(),
+                    )
+                    .unwrap_or(u64::MAX),
+                    buffer_budget_bytes: u64::try_from(
+                        self.outgoing_resources.buffer_memory_limit(),
+                    )
+                    .unwrap_or(u64::MAX),
+                    active_rows: u32::try_from(self.outgoing_resources.len()).unwrap_or(u32::MAX),
+                },
+                pending_depth: u32::try_from(self.pending_resource_offers.len())
+                    .unwrap_or(u32::MAX),
+                admission_events: self.resource_admission_event_counts,
             },
             route_count: u32::try_from(self.routing_table.route_count()).unwrap_or(u32::MAX),
             link_count: u32::try_from(self.links.active_link_count()).unwrap_or(u32::MAX),

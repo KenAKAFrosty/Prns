@@ -1,6 +1,8 @@
 //! The deadline watchdog: silent rounds re-request and shrink the window, exhausted retry budgets fail the transfer, and every retired slot bequeaths its window and rate to the link.
 
 use super::rounds::{expected_inflight_bits_per_second, shrink_window_after_silent_round};
+#[cfg(feature = "runtime-metrics")]
+use crate::engine::ResourceAdmissionEvent;
 use crate::engine::{
     EngineReaction, EngineState, InstantMillis, Journaled, SendRequestFailure, Settlement,
 };
@@ -128,6 +130,24 @@ impl<S: StorageLayout> EngineState<S> {
                 break;
             };
             let offer = self.pending_resource_offers.remove_at(index);
+            #[cfg(feature = "runtime-metrics")]
+            if matches!(
+                &action,
+                PendingOfferDueAction::Reject | PendingOfferDueAction::RejectResponse { .. }
+            ) {
+                if offer.wait_deadline() <= now
+                    || matches!(
+                        &action,
+                        PendingOfferDueAction::RejectResponse {
+                            failure: SendRequestFailure::Timeout,
+                            ..
+                        }
+                    )
+                {
+                    self.record_resource_admission_event(ResourceAdmissionEvent::Expired);
+                }
+                self.record_resource_admission_event(ResourceAdmissionEvent::Rejected);
+            }
             match action {
                 PendingOfferDueAction::Drop => continue,
                 PendingOfferDueAction::Reject => {
@@ -182,6 +202,8 @@ impl<S: StorageLayout> EngineState<S> {
                 hash,
             } = outcome
             {
+                #[cfg(feature = "runtime-metrics")]
+                self.record_resource_admission_event(ResourceAdmissionEvent::Promoted);
                 self.emit_resource_pull(&link_id, &hash, now, fill_entropy, sink);
             }
         }

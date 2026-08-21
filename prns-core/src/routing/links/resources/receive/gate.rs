@@ -1,5 +1,7 @@
 //! RNS 1.4.2 `Resource.accept`: the strategy gate runs before a single part moves. The advertisement declares size and kind up front, so refusing is free.
 
+#[cfg(feature = "runtime-metrics")]
+use crate::engine::ResourceAdmissionEvent;
 use crate::engine::{CommandId, CommandOutcome, SetResourceStrategy, SetResourceStrategyRejection};
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis};
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
@@ -289,8 +291,12 @@ impl<S: StorageLayout> EngineState<S> {
                 let outcome = self.pending_resource_offers.queue(pending);
                 self.links.note_inbound(&link_id, arrived_at);
                 match outcome {
-                    QueuePendingResourceOfferOutcome::Queued
-                    | QueuePendingResourceOfferOutcome::RetryCoalesced => {
+                    QueuePendingResourceOfferOutcome::Queued => {
+                        #[cfg(feature = "runtime-metrics")]
+                        self.record_resource_admission_event(ResourceAdmissionEvent::Queued);
+                        IngestPacketOutcome::ResourceAdmissionPending
+                    }
+                    QueuePendingResourceOfferOutcome::RetryCoalesced => {
                         IngestPacketOutcome::ResourceAdmissionPending
                     }
                     QueuePendingResourceOfferOutcome::TableFull => self.resource_capacity_rejected(
@@ -316,6 +322,8 @@ impl<S: StorageLayout> EngineState<S> {
         hash: ResourceHash,
         correlation: ResourceCorrelation,
     ) -> IngestPacketOutcome<'static> {
+        #[cfg(feature = "runtime-metrics")]
+        self.record_resource_admission_event(ResourceAdmissionEvent::Rejected);
         let settled_request = match correlation {
             ResourceCorrelation::Response(request_id) => self
                 .receipts
@@ -1479,6 +1487,14 @@ mod tests {
             InstantMillis(2_200),
             "promotion does not forge inbound traffic at its later maintenance time",
         );
+        #[cfg(feature = "runtime-metrics")]
+        {
+            let events = receiver.metrics_snapshot().resources.admission_events;
+            assert_eq!(events.get(ResourceAdmissionEvent::Queued), 1);
+            assert_eq!(events.get(ResourceAdmissionEvent::Promoted), 1);
+            assert_eq!(events.get(ResourceAdmissionEvent::Expired), 0);
+            assert_eq!(events.get(ResourceAdmissionEvent::Rejected), 0);
+        }
     }
 
     #[test]
@@ -1571,6 +1587,14 @@ mod tests {
         );
         assert!(receiver.pending_resource_offers.is_empty());
         assert!(!receiver.receipts.has_pending_request(request_id));
+        #[cfg(feature = "runtime-metrics")]
+        {
+            let events = receiver.metrics_snapshot().resources.admission_events;
+            assert_eq!(events.get(ResourceAdmissionEvent::Queued), 1);
+            assert_eq!(events.get(ResourceAdmissionEvent::Promoted), 0);
+            assert_eq!(events.get(ResourceAdmissionEvent::Expired), 1);
+            assert_eq!(events.get(ResourceAdmissionEvent::Rejected), 1);
+        }
     }
 
     #[test]
@@ -1683,6 +1707,12 @@ mod tests {
             WireContext::ResourceReceiverCancel,
         );
         assert_eq!(receiver.pending_resource_offers.len(), 4);
+        #[cfg(feature = "runtime-metrics")]
+        {
+            let events = receiver.metrics_snapshot().resources.admission_events;
+            assert_eq!(events.get(ResourceAdmissionEvent::Queued), 4);
+            assert_eq!(events.get(ResourceAdmissionEvent::Rejected), 1);
+        }
     }
 
     #[test]

@@ -197,8 +197,11 @@ mod tests {
     #[test]
     fn requested_shape_is_validated_without_changing_inline_regions() {
         let mut table = Table::default();
+        assert_eq!(table.active_buffer_bytes(), 0);
+        assert_eq!(table.buffer_memory_limit(), 2 * (1024 + 3 * 5));
         let index = table.push(link(1), hash(1), 7, shape(144, 464)).unwrap();
 
+        assert_eq!(table.active_buffer_bytes(), 1024 + 3 * 5);
         assert_eq!(table.transfer(index).len(), 1024);
         assert_eq!(table.part_names(index).len(), 3);
         assert_eq!(table.part_flags(index).len(), 3);

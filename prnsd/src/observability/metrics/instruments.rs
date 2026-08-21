@@ -35,6 +35,11 @@ pub(super) struct Instruments {
     pub(super) path_request_ingress: Counter<u64>,
     pub(super) path_request_relays: Counter<u64>,
     pub(super) path_request_pending_discoveries: Gauge<u64>,
+    pub(super) resource_buffer_bytes: Gauge<u64>,
+    pub(super) resource_buffer_budget_bytes: Gauge<u64>,
+    pub(super) resource_active_rows: Gauge<u64>,
+    pub(super) resource_pending_depth: Gauge<u64>,
+    pub(super) resource_admission_events: Counter<u64>,
     pub(super) crypto_jobs: Counter<u64>,
     pub(super) crypto_queue_depth: Gauge<u64>,
     pub(super) crypto_maximum_queue_depth: Gauge<u64>,
@@ -97,6 +102,15 @@ impl Instruments {
             path_request_relays: meter.u64_counter("prns.path_requests.relays").build(),
             path_request_pending_discoveries: meter
                 .u64_gauge("prns.path_requests.pending_discoveries")
+                .build(),
+            resource_buffer_bytes: meter.u64_gauge("prns.resources.buffer_bytes").build(),
+            resource_buffer_budget_bytes: meter
+                .u64_gauge("prns.resources.buffer_budget_bytes")
+                .build(),
+            resource_active_rows: meter.u64_gauge("prns.resources.active_rows").build(),
+            resource_pending_depth: meter.u64_gauge("prns.resources.pending_depth").build(),
+            resource_admission_events: meter
+                .u64_counter("prns.resources.admission_events")
                 .build(),
             crypto_jobs: meter.u64_counter("prns.crypto.jobs").build(),
             crypto_queue_depth: meter.u64_gauge("prns.crypto.queue_depth").build(),

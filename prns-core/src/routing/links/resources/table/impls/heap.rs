@@ -78,6 +78,14 @@ impl<State: ResourceRowState + Default> ResourceTable<State> for HeapResourceTab
         self.link_ids.len()
     }
 
+    fn active_buffer_bytes(&self) -> usize {
+        self.active_buffer_bytes
+    }
+
+    fn buffer_memory_limit(&self) -> usize {
+        self.memory_limit
+    }
+
     fn link_ids(&self) -> &[LinkId] {
         &self.link_ids
     }
@@ -214,11 +222,14 @@ mod tests {
     #[test]
     fn rows_allocate_their_exact_shapes_and_removal_drops_bulk_buffers() {
         let mut table = HeapResourceTable::<u8>::default();
+        assert_eq!(table.active_buffer_bytes(), 0);
+        assert_eq!(table.buffer_memory_limit(), DEFAULT_RESOURCE_MEMORY_BYTES);
         let first = table.push(link(1), hash(1), 11, shape(144, 464)).unwrap();
         assert_eq!(table.transfer(first).len(), 144);
         assert_eq!(table.part_names(first).len(), 1);
         assert_eq!(table.part_flags(first).len(), 1);
         assert_eq!(table.active_buffer_bytes, 149);
+        assert_eq!(table.active_buffer_bytes(), 149);
         table.buffers_mut(first).part_flags[0] = true;
 
         table.swap_remove(first);

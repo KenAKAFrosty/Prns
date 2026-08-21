@@ -349,6 +349,37 @@ impl MetricsReporter {
             u64::from(snapshot.engine.path_requests.pending_discoveries),
             &[],
         );
+        for (direction, metrics) in [
+            ("incoming", snapshot.engine.resources.incoming),
+            ("outgoing", snapshot.engine.resources.outgoing),
+        ] {
+            let attributes = [KeyValue::new("direction", direction)];
+            self.instruments
+                .resource_buffer_bytes
+                .record(metrics.active_buffer_bytes, &attributes);
+            self.instruments
+                .resource_buffer_budget_bytes
+                .record(metrics.buffer_budget_bytes, &attributes);
+            self.instruments
+                .resource_active_rows
+                .record(u64::from(metrics.active_rows), &attributes);
+        }
+        self.instruments.resource_pending_depth.record(
+            u64::from(snapshot.engine.resources.pending_depth),
+            &[],
+        );
+        for (event, current) in snapshot.engine.resources.admission_events.iter() {
+            let prior = previous.map(|metrics| metrics.resources.admission_events.get(event));
+            add_delta(
+                &self.instruments.resource_admission_events,
+                current,
+                prior,
+                &[KeyValue::new(
+                    "event",
+                    resource_admission_event_name(event),
+                )],
+            );
+        }
     }
 
     fn record_egress(&self, snapshot: &RuntimeMetricsSnapshot) {

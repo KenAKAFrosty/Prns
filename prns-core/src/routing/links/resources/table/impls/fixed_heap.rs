@@ -226,8 +226,11 @@ mod tests {
         let mut table = Table::default();
         assert_eq!(table.capacity(), 2);
         assert_eq!(table.transfer_capacity(), 1024);
+        assert_eq!(table.active_buffer_bytes(), 0);
+        assert_eq!(table.buffer_memory_limit(), 2 * (1024 + 3 * 5));
 
         let i = table.push(link(1), hash(0xA1), 7, shape()).unwrap();
+        assert_eq!(table.active_buffer_bytes(), 1024 + 3 * 5);
         table.set_hash(i, hash(0xB2));
         let buffers = table.buffers_mut(i);
         buffers.transfer[..4].copy_from_slice(&[1, 2, 3, 4]);

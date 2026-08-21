@@ -1,6 +1,7 @@
 use personal_rns::engine::{
     AnnounceCommandOutcome, AnnounceIngressOutcome, AnnounceOrigin, AnnounceSourceKind,
     IgnoreReasonKind, PathRequestIngressOutcome, PathRequestRelayOutcome,
+    ResourceAdmissionEvent,
 };
 use personal_rns::interfaces::InterfaceKind;
 use personal_rns::node_introspection::InterfaceInventoryEntry;
@@ -233,6 +234,15 @@ pub(super) fn path_request_relay_outcome_name(outcome: PathRequestRelayOutcome) 
     }
 }
 
+pub(super) fn resource_admission_event_name(event: ResourceAdmissionEvent) -> &'static str {
+    match event {
+        ResourceAdmissionEvent::Queued => "queued",
+        ResourceAdmissionEvent::Promoted => "promoted",
+        ResourceAdmissionEvent::Expired => "expired",
+        ResourceAdmissionEvent::Rejected => "rejected",
+    }
+}
+
 pub(super) fn route_removal_name(cause: RuntimeRouteRemoval) -> &'static str {
     match cause {
         RuntimeRouteRemoval::Expired => "expired",
@@ -271,6 +281,9 @@ mod tests {
         }
         for outcome in PathRequestRelayOutcome::ALL {
             assert!(!path_request_relay_outcome_name(outcome).is_empty());
+        }
+        for event in ResourceAdmissionEvent::ALL {
+            assert!(!resource_admission_event_name(event).is_empty());
         }
         for kind in InterfaceKind::ALL {
             assert!(!interface_kind_name(kind).is_empty());

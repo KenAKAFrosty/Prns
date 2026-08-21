@@ -35,10 +35,11 @@ cfg_if::cfg_if! {
         pub use metrics::{
             AnnounceCommandCounts, AnnounceCommandOutcome, AnnounceIngressCounts,
             AnnounceIngressOutcome, AnnounceOrigin, AnnounceSourceKind,
-            EngineAnnounceMetricsSnapshot, EngineMetricsSnapshot,
-            EnginePathRequestMetricsSnapshot, IgnoreReasonCounts, IgnoreReasonKind,
+            EngineAnnounceMetricsSnapshot, EngineMetricsSnapshot, EnginePathRequestMetricsSnapshot,
+            EngineResourceMetricsSnapshot, IgnoreReasonCounts, IgnoreReasonKind,
             InterfaceAnnounceMetricsSnapshot, InterfaceKindCounts, PathRequestIngressCounts,
             PathRequestIngressOutcome, PathRequestRelayCounts, PathRequestRelayOutcome,
+            ResourceAdmissionEvent, ResourceAdmissionEventCounts, ResourceDirectionMetricsSnapshot,
         };
     }
 }
