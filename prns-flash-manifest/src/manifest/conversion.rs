@@ -6,8 +6,8 @@ use crate::{
     ChipFamily, EspFlashPart, EspSerialTarget, FlashFrequency, FlashMode, ImmutableArtifactPath,
     KeyId, NrfSerialDfuArtifact, NrfSerialDfuRecovery, NrfSerialDfuTarget, PreparationProfile,
     ProvisioningDescriptor, ProvisioningFormat, ProvisioningSlot, ReleaseTarget, ReleaseVersion,
-    Sha256Digest, SoftdeviceIdentity, Transport, Uf2BoardIdPrefix, Uf2Compatibility, Uf2MountLabel,
-    Uf2Part, Uf2Target, Uf2Variant, ValidatedChannelDescriptor, ValidatedFlashManifest,
+    Sha256Digest, SoftdeviceIdentity, Transport, Uf2Compatibility, Uf2MountLabel, Uf2Part,
+    Uf2Target, Uf2Variant, ValidatedChannelDescriptor, ValidatedFlashManifest,
     ValidatedNrfSerialDfuCompatibility, ValidatedNrfSerialDfuSerialTransport,
     ValidatedOfflineKeySigningInfo, ValidatedReleaseInfo, CONFIG_OFFSET, CONFIG_PASSWORD_MAX_BYTES,
     CONFIG_SIZE, CONFIG_SSID_MAX_BYTES, CONFIG_VERSION,
@@ -350,6 +350,12 @@ fn convert_target(
             Ok(ReleaseTarget::Uf2(Uf2Target { identity, variants }))
         }
         Transport::NrfSerialDfu => {
+            let BoardBuild::NrfSerialDfu(catalog_build) = &board.build else {
+                return Err(ManifestError::CatalogMismatch {
+                    board: board_slug,
+                    field: "Nordic serial DFU transport requires its catalog build".to_string(),
+                });
+            };
             if identity.preparation_profile != PreparationProfile::T1000eNrfDfu {
                 return Err(ManifestError::CatalogMismatch {
                     board: board_slug,
@@ -403,10 +409,9 @@ fn convert_target(
                 mount_label: Uf2MountLabel::parse(manifest.recovery.mount_label).map_err(
                     |error| invalid_part_values(&board_slug, &recovery_path, &error.to_string()),
                 )?,
-                board_id_prefix: Uf2BoardIdPrefix::parse(manifest.recovery.board_id_prefix)
-                    .map_err(|error| {
-                        invalid_part_values(&board_slug, &recovery_path, &error.to_string())
-                    })?,
+                board_id_match: catalog_build.recovery.board_identity.validated().map_err(
+                    |error| invalid_part_values(&board_slug, &recovery_path, &error.to_string()),
+                )?,
                 family_id: parse_hex_u32(&manifest.recovery.family_id).ok_or_else(|| {
                     invalid_part_values(
                         &board_slug,

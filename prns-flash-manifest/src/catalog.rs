@@ -3,13 +3,13 @@ use thiserror::Error;
 
 use crate::{
     AfterResetStrategy, BeforeResetStrategy, BoardId, ChipFamily, ImmutableArtifactPath,
-    PreparationProfile, ProvisioningFormat, SoftdeviceIdentity, Uf2BoardIdPrefix, Uf2MountLabel,
-    UsbVidPid, ValidatedNrfSerialDfuSerialTransport, CONFIG_OFFSET, CONFIG_PASSWORD_MAX_BYTES,
-    CONFIG_SIZE, CONFIG_SSID_MAX_BYTES, CONFIG_VERSION,
+    PreparationProfile, ProvisioningFormat, SoftdeviceIdentity, Uf2BoardIdMatch,
+    Uf2BoardIdMatchKind, Uf2MountLabel, UsbVidPid, ValidatedNrfSerialDfuSerialTransport,
+    CONFIG_OFFSET, CONFIG_PASSWORD_MAX_BYTES, CONFIG_SIZE, CONFIG_SSID_MAX_BYTES, CONFIG_VERSION,
 };
 
 const CATALOG_JSON: &str = include_str!("../../release/flash/boards.json");
-const BOARD_CATALOG_SCHEMA: u32 = 3;
+const BOARD_CATALOG_SCHEMA: u32 = 4;
 const SHIPPING_BOARD_SLUGS: [&str; 6] = [
     "heltec-v4",
     "heltec-v4-r8",
@@ -297,7 +297,7 @@ pub enum NrfDfuBankLayout {
 #[serde(deny_unknown_fields)]
 pub struct NrfSerialDfuRecoveryBuild {
     pub mount_label: String,
-    pub board_id_prefix: String,
+    pub board_identity: Uf2BoardIdentity,
     pub family_id: String,
     pub filename: String,
 }
@@ -325,9 +325,23 @@ pub struct Uf2Build {
     pub board_feature: String,
     pub rust_target: String,
     pub mount_label: String,
-    pub board_id_prefix: String,
+    pub board_identity: Uf2BoardIdentity,
     pub application_usb: Uf2ApplicationUsb,
     pub variants: Vec<Uf2BuildVariant>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Uf2BoardIdentity {
+    #[serde(rename = "match")]
+    pub match_kind: Uf2BoardIdMatchKind,
+    pub value: String,
+}
+
+impl Uf2BoardIdentity {
+    pub fn validated(&self) -> Result<Uf2BoardIdMatch, crate::DomainValueError> {
+        Uf2BoardIdMatch::parse(self.match_kind, self.value.clone())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -379,8 +393,8 @@ pub enum CatalogError {
     Schema(u32),
     #[error("duplicate board slug {0:?}")]
     DuplicateSlug(String),
-    #[error("UF2 board-id prefixes overlap between {first:?} and {second:?}")]
-    OverlappingUf2BoardIdPrefixes { first: String, second: String },
+    #[error("UF2 Board-ID match rules overlap between {first:?} and {second:?}")]
+    OverlappingUf2BoardIdentities { first: String, second: String },
     #[error("board {board:?}: {message}")]
     InvalidBoard { board: String, message: String },
 }
@@ -405,7 +419,7 @@ impl BoardCatalog {
             validate_transport(board)?;
             validate_provisioning(board)?;
         }
-        validate_uf2_board_id_prefixes(&self.boards)?;
+        validate_uf2_board_identities(&self.boards)?;
         let shipping = self
             .shipping_boards()
             .map(|board| board.slug.as_str())
@@ -504,7 +518,7 @@ fn validate_transport(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
             if board.expected_chip.is_some()
                 || board.flash_size.is_some()
                 || Uf2MountLabel::parse(build.mount_label.clone()).is_err()
-                || Uf2BoardIdPrefix::parse(build.board_id_prefix.clone()).is_err()
+                || build.board_identity.validated().is_err()
                 || build.rust_target != "thumbv7em-none-eabihf"
                 || !valid_uf2_application_usb(&build.application_usb)
                 || !matches_pinned_uf2_recipe(board, build)
@@ -533,22 +547,35 @@ fn validate_transport(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
     Ok(())
 }
 
-/// Reject nested UF2 Board-ID prefixes so one drive can never identify as multiple boards.
-fn validate_uf2_board_id_prefixes(boards: &[BoardCatalogEntry]) -> Result<(), CatalogError> {
-    let prefixes = boards
+/// Reject UF2 Board-ID rules whose accepted identities overlap.
+fn validate_uf2_board_identities(boards: &[BoardCatalogEntry]) -> Result<(), CatalogError> {
+    let identities = boards
         .iter()
         .filter_map(|board| match &board.build {
-            BoardBuild::Uf2(build) => Some((board.slug.as_str(), build.board_id_prefix.as_str())),
+            BoardBuild::Uf2(build) => Some((board.slug.as_str(), &build.board_identity)),
             BoardBuild::Esp(_) => None,
             BoardBuild::NrfSerialDfu(build) => {
-                Some((board.slug.as_str(), build.recovery.board_id_prefix.as_str()))
+                Some((board.slug.as_str(), &build.recovery.board_identity))
             }
         })
         .collect::<Vec<_>>();
-    for (index, (slug, prefix)) in prefixes.iter().enumerate() {
-        for (other_slug, other_prefix) in &prefixes[index + 1..] {
-            if prefix.starts_with(other_prefix) || other_prefix.starts_with(prefix) {
-                return Err(CatalogError::OverlappingUf2BoardIdPrefixes {
+    for (index, (slug, identity)) in identities.iter().enumerate() {
+        let identity = identity
+            .validated()
+            .map_err(|_| CatalogError::InvalidBoard {
+                board: (*slug).to_string(),
+                message: "UF2 Board-ID match rule is invalid".to_string(),
+            })?;
+        for (other_slug, other_identity) in &identities[index + 1..] {
+            let other_identity =
+                other_identity
+                    .validated()
+                    .map_err(|_| CatalogError::InvalidBoard {
+                        board: (*other_slug).to_string(),
+                        message: "UF2 Board-ID match rule is invalid".to_string(),
+                    })?;
+            if identity.overlaps(&other_identity) {
+                return Err(CatalogError::OverlappingUf2BoardIdentities {
                     first: (*slug).to_string(),
                     second: (*other_slug).to_string(),
                 });
@@ -763,7 +790,7 @@ fn valid_nrf_serial_dfu_build(build: &NrfSerialDfuBuild) -> bool {
         && compatibility.device_revision != 0
         && application_region_is_valid
         && Uf2MountLabel::parse(recovery.mount_label.clone()).is_ok()
-        && Uf2BoardIdPrefix::parse(recovery.board_id_prefix.clone()).is_ok()
+        && recovery.board_identity.validated().is_ok()
         && parse_hex_u32(&recovery.family_id).is_some()
         && valid_artifact_filename(&recovery.filename, ".uf2")
         && recovery.filename != build.application_filename
@@ -870,6 +897,7 @@ mod tests {
     #[test]
     fn embedded_catalog_has_all_shipping_boards() -> Result<(), CatalogError> {
         let catalog = board_catalog()?;
+        assert_eq!(catalog.schema_version, 4);
         let slugs = catalog
             .shipping_boards()
             .map(|board| board.slug.as_str())
@@ -1031,7 +1059,11 @@ mod tests {
         assert_eq!(build.compatibility.application_end_exclusive, "0x000ea000");
         assert_eq!(build.compatibility.bank_layout, NrfDfuBankLayout::Single);
         assert_eq!(build.recovery.mount_label, "T1000-E");
-        assert_eq!(build.recovery.board_id_prefix, "nrf52840-t1000-e-v1");
+        assert_eq!(
+            build.recovery.board_identity.match_kind,
+            Uf2BoardIdMatchKind::Exact
+        );
+        assert_eq!(build.recovery.board_identity.value, "nrf52840-t1000-e-v1");
         assert_eq!(build.recovery.family_id, "0xada52840");
         Ok(())
     }
@@ -1054,7 +1086,8 @@ mod tests {
         assert_eq!(build.binary, "heltec-t114");
         assert_eq!(build.board_feature, "board-t114");
         assert_eq!(build.mount_label, "HT-n5262");
-        assert_eq!(build.board_id_prefix, "ht-n5262");
+        assert_eq!(build.board_identity.match_kind, Uf2BoardIdMatchKind::Exact);
+        assert_eq!(build.board_identity.value, "ht-n5262");
         assert_eq!(build.application_usb.usb.vendor_id, "0x1209");
         assert_eq!(build.application_usb.usb.product_id, "0x0001");
         assert_eq!(build.application_usb.manufacturer, "Stay Personal");
@@ -1148,21 +1181,28 @@ mod tests {
             return Err("expected a UF2 build".into());
         };
         build.mount_label = "T114BOOT".to_string();
-        build.board_id_prefix = "nrf52840-heltec-t114-v".to_string();
+        build.board_identity = Uf2BoardIdentity {
+            match_kind: Uf2BoardIdMatchKind::RevisionPrefix,
+            value: "nrf52840-heltec-t114-v".to_string(),
+        };
         catalog.validate()?;
         Ok(())
     }
 
     #[test]
-    fn one_uf2_board_id_prefix_may_not_begin_with_another() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn uf2_board_id_match_rules_may_not_overlap() -> Result<(), Box<dyn std::error::Error>> {
         let mut catalog = board_catalog()?;
         let uf2_prefix = catalog
             .boards
             .iter()
             .find_map(|board| match &board.build {
-                BoardBuild::Uf2(build) => Some(build.board_id_prefix.clone()),
+                BoardBuild::Uf2(build)
+                    if build.board_identity.match_kind == Uf2BoardIdMatchKind::RevisionPrefix =>
+                {
+                    Some(build.board_identity.value.clone())
+                }
                 BoardBuild::Esp(_) | BoardBuild::NrfSerialDfu(_) => None,
+                BoardBuild::Uf2(_) => None,
             })
             .ok_or("expected a UF2 board")?;
         let recovery = catalog
@@ -1173,10 +1213,13 @@ mod tests {
                 BoardBuild::Esp(_) | BoardBuild::Uf2(_) => None,
             })
             .ok_or("expected a Nordic serial DFU board")?;
-        recovery.board_id_prefix = format!("{uf2_prefix}2");
+        recovery.board_identity = Uf2BoardIdentity {
+            match_kind: Uf2BoardIdMatchKind::Exact,
+            value: format!("{uf2_prefix}2"),
+        };
         assert!(matches!(
             catalog.validate(),
-            Err(CatalogError::OverlappingUf2BoardIdPrefixes { .. })
+            Err(CatalogError::OverlappingUf2BoardIdentities { .. })
         ));
         Ok(())
     }
@@ -1199,7 +1242,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unnormalized_uf2_board_id_prefix_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+    fn an_unnormalized_uf2_board_id_match_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
         let mut catalog = board_catalog()?;
         let board = catalog
             .boards
@@ -1209,7 +1252,7 @@ mod tests {
         let BoardBuild::Uf2(build) = &mut board.build else {
             return Err("expected a UF2 build".into());
         };
-        build.board_id_prefix = "nRF52840_TEcho_v".to_string();
+        build.board_identity.value = "nRF52840_TEcho_v".to_string();
         assert!(matches!(
             catalog.validate(),
             Err(CatalogError::InvalidBoard { .. })

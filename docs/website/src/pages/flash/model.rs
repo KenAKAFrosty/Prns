@@ -5,7 +5,7 @@ use std::sync::{
 
 use dioxus::prelude::{Signal, WritableExt};
 use prns_flash_manifest::{
-    FlashPartKind, SoftdeviceIdentity, Uf2BoardIdPrefix, Uf2BootloaderIdentity,
+    FlashPartKind, SoftdeviceIdentity, Uf2BoardIdMatch, Uf2BootloaderIdentity,
 };
 use serde::Serialize;
 
@@ -238,15 +238,17 @@ pub(super) fn parse_uf2_selection(
     target: BoardFlashTarget,
 ) -> Result<Uf2BootloaderIdentity, String> {
     let BoardFlashTarget::Uf2MassStorage {
-        board_id_prefix, ..
+        board_id_match_kind,
+        board_id,
+        ..
     } = target
     else {
         return Err("An ESP target cannot use a UF2 bootloader descriptor.".to_string());
     };
     let identity = Uf2BootloaderIdentity::parse(bytes).map_err(|error| error.to_string())?;
-    let prefix =
-        Uf2BoardIdPrefix::parse(board_id_prefix.to_string()).map_err(|error| error.to_string())?;
-    if !identity.matches_board(&prefix) {
+    let board_id_match = Uf2BoardIdMatch::parse(board_id_match_kind, board_id.to_string())
+        .map_err(|error| error.to_string())?;
+    if !identity.matches_board(&board_id_match) {
         return Err(format!(
             "INFO_UF2.TXT reports Board-ID {:?}, which does not match the selected board.",
             identity.board_id()

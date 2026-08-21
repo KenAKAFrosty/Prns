@@ -1,3 +1,5 @@
+use prns_flash_manifest::Uf2BoardIdMatchKind;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Tier {
     Shipping,
@@ -98,7 +100,8 @@ pub enum BoardFlashTarget {
     },
     Uf2MassStorage {
         mount_label: &'static str,
-        board_id_prefix: &'static str,
+        board_id_match_kind: Uf2BoardIdMatchKind,
+        board_id: &'static str,
     },
 }
 

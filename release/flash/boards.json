@@ -1,5 +1,5 @@
 {
-  "schema": 3,
+  "schema": 4,
   "boards": [
     {
       "availability": "shipping",
@@ -163,7 +163,10 @@
         "board_feature": "board-t-echo",
         "rust_target": "thumbv7em-none-eabihf",
         "mount_label": "TECHOBOOT",
-        "board_id_prefix": "nrf52840-techo-v",
+        "board_identity": {
+          "match": "revision-prefix",
+          "value": "nrf52840-techo-v"
+        },
         "application_usb": {
           "usb": {
             "vendor_id": "0x1209",
@@ -218,7 +221,10 @@
         "board_feature": "board-t114",
         "rust_target": "thumbv7em-none-eabihf",
         "mount_label": "HT-n5262",
-        "board_id_prefix": "ht-n5262",
+        "board_identity": {
+          "match": "exact",
+          "value": "ht-n5262"
+        },
         "application_usb": {
           "usb": {
             "vendor_id": "0x1209",
@@ -308,7 +314,10 @@
         },
         "recovery": {
           "mount_label": "T1000-E",
-          "board_id_prefix": "nrf52840-t1000-e-v1",
+          "board_identity": {
+            "match": "exact",
+            "value": "nrf52840-t1000-e-v1"
+          },
           "family_id": "0xada52840",
           "filename": "t1000e.uf2"
         }

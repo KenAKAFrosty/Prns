@@ -598,7 +598,7 @@ mod tests {
                 ),
                 recovery: NrfSerialDfuRecoveryManifest {
                     mount_label: build.recovery.mount_label.clone(),
-                    board_id_prefix: build.recovery.board_id_prefix.clone(),
+                    board_id_prefix: build.recovery.board_identity.value.clone(),
                     family_id: build.recovery.family_id.clone(),
                     artifact: artifact(FlashPartKind::Uf2, &build.recovery.filename, recovery),
                 },

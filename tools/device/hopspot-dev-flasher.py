@@ -35,7 +35,7 @@ from developer_flasher_candidate import (
 ROOT = Path(__file__).resolve().parents[2]
 WEBSITE = ROOT / "docs" / "website"
 BOARD_CATALOG = ROOT / "release" / "flash" / "boards.json"
-BOARD_CATALOG_SCHEMA = 3
+BOARD_CATALOG_SCHEMA = 4
 SHIPPING_BOARD_AVAILABILITY = "shipping"
 BOARD_AVAILABILITIES = frozenset((SHIPPING_BOARD_AVAILABILITY, "qualification"))
 PINNED_MINISIGN = ROOT / ".build" / "toolchains" / "minisign" / "0.12" / "minisign"

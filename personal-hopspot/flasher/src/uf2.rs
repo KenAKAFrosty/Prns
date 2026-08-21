@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use nusb::{DeviceId, MaybeFuture};
 use prns_flash_manifest::{
     BoardBuild, BoardCatalog, BoardCatalogEntry, SoftdeviceIdentity, Uf2ApplicationUsb,
-    Uf2BoardIdPrefix, Uf2BootloaderIdentity, Uf2MountLabel,
+    Uf2BoardIdMatch, Uf2BootloaderIdentity, Uf2MountLabel,
 };
 
 use crate::error::AppError;
@@ -54,7 +54,7 @@ enum Uf2CopyOutcome {
 struct CatalogedUf2Board<'a> {
     entry: &'a BoardCatalogEntry,
     mount_label: Uf2MountLabel,
-    board_id_prefix: Uf2BoardIdPrefix,
+    board_id_match: Uf2BoardIdMatch,
     application_usb: &'a Uf2ApplicationUsb,
 }
 
@@ -65,7 +65,9 @@ impl<'a> CatalogedUf2Board<'a> {
                 entry,
                 mount_label: Uf2MountLabel::parse(build.mount_label.clone())
                     .map_err(|error| AppError::trust_catalog(error.to_string()))?,
-                board_id_prefix: Uf2BoardIdPrefix::parse(build.board_id_prefix.clone())
+                board_id_match: build
+                    .board_identity
+                    .validated()
                     .map_err(|error| AppError::trust_catalog(error.to_string()))?,
                 application_usb: &build.application_usb,
             }),
@@ -90,8 +92,8 @@ impl<'a> CatalogedUf2Board<'a> {
         self.mount_label.as_str()
     }
 
-    fn board_id_prefix(&self) -> &str {
-        self.board_id_prefix.as_str()
+    fn board_id_match(&self) -> &Uf2BoardIdMatch {
+        &self.board_id_match
     }
 }
 
@@ -161,7 +163,7 @@ pub(crate) fn detect_device(
     let board = CatalogedUf2Board::try_from_entry(entry)?;
     let mount = select_mount(&board, detect_mounts_for(&board), mount_override)?;
     let identity = read_identity(&mount)?;
-    if !identity.matches_board(&board.board_id_prefix) {
+    if !identity.matches_board(board.board_id_match()) {
         return Err(AppError::device_identity(format!(
             "{} reports Board-ID {:?}, not {}",
             mount.display(),
@@ -411,36 +413,50 @@ fn sync_mount_directory(_mount: &Path) -> std::io::Result<()> {
 }
 
 fn detect_mounts_for(board: &CatalogedUf2Board<'_>) -> Vec<PathBuf> {
-    scan(&[board.board_id_prefix()], Some(board.mount_label()))
+    scan(
+        std::slice::from_ref(board.board_id_match()),
+        Some(board.mount_label()),
+    )
 }
 
 pub(crate) fn detect_any_uf2_mounts(catalog: &BoardCatalog) -> Vec<PathBuf> {
-    let prefixes = catalog
+    let board_id_matches = catalog
         .boards
         .iter()
         .filter_map(|board| match &board.build {
-            BoardBuild::Uf2(build) => Some(build.board_id_prefix.as_str()),
+            BoardBuild::Uf2(build) => build.board_identity.validated().ok(),
             BoardBuild::Esp(_) => None,
-            BoardBuild::NrfSerialDfu(build) => Some(build.recovery.board_id_prefix.as_str()),
+            BoardBuild::NrfSerialDfu(build) => build.recovery.board_identity.validated().ok(),
         })
         .collect::<Vec<_>>();
-    scan(&prefixes, None)
+    scan(&board_id_matches, None)
 }
 
-fn scan(prefixes: &[&str], mount_label: Option<&str>) -> Vec<PathBuf> {
+fn scan(board_id_matches: &[Uf2BoardIdMatch], mount_label: Option<&str>) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(path) = env::var_os("HOPSPOT_TECHOBOOT") {
-        push_if_identified(&mut candidates, PathBuf::from(path), prefixes, mount_label);
+        push_if_identified(
+            &mut candidates,
+            PathBuf::from(path),
+            board_id_matches,
+            mount_label,
+        );
     }
     for root in ["/Volumes", "/mnt", "/media", "/run/media"] {
-        scan_root(Path::new(root), 2, prefixes, mount_label, &mut candidates);
+        scan_root(
+            Path::new(root),
+            2,
+            board_id_matches,
+            mount_label,
+            &mut candidates,
+        );
     }
     #[cfg(windows)]
     for letter in b'D'..=b'Z' {
         push_if_identified(
             &mut candidates,
             PathBuf::from(format!("{}:\\", letter as char)),
-            prefixes,
+            board_id_matches,
             mount_label,
         );
     }
@@ -452,7 +468,7 @@ fn scan(prefixes: &[&str], mount_label: Option<&str>) -> Vec<PathBuf> {
 fn scan_root(
     root: &Path,
     depth: usize,
-    prefixes: &[&str],
+    board_id_matches: &[Uf2BoardIdMatch],
     mount_label: Option<&str>,
     candidates: &mut Vec<PathBuf>,
 ) {
@@ -465,8 +481,8 @@ fn scan_root(
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            push_if_identified(candidates, path.clone(), prefixes, mount_label);
-            scan_root(&path, depth - 1, prefixes, mount_label, candidates);
+            push_if_identified(candidates, path.clone(), board_id_matches, mount_label);
+            scan_root(&path, depth - 1, board_id_matches, mount_label, candidates);
         }
     }
 }
@@ -474,29 +490,28 @@ fn scan_root(
 fn push_if_identified(
     candidates: &mut Vec<PathBuf>,
     path: PathBuf,
-    prefixes: &[&str],
+    board_id_matches: &[Uf2BoardIdMatch],
     mount_label: Option<&str>,
 ) {
     let labelled = mount_label.is_some_and(|label| {
         path.file_name().and_then(|name| name.to_str()) == Some(label)
             && path.join("INFO_UF2.TXT").is_file()
     });
-    if labelled || mount_identity_matches(&path, prefixes) {
+    if labelled || mount_identity_matches(&path, board_id_matches) {
         candidates.push(path);
     }
 }
 
-fn mount_identity_matches(path: &Path, prefixes: &[&str]) -> bool {
+fn mount_identity_matches(path: &Path, board_id_matches: &[Uf2BoardIdMatch]) -> bool {
     if !path.is_dir() {
         return false;
     }
     let Ok(identity) = read_identity(path) else {
         return false;
     };
-    prefixes.iter().any(|prefix| {
-        Uf2BoardIdPrefix::parse((*prefix).to_string())
-            .is_ok_and(|prefix| identity.matches_board(&prefix))
-    })
+    board_id_matches
+        .iter()
+        .any(|board_id_match| identity.matches_board(board_id_match))
 }
 
 fn read_identity(path: &Path) -> Result<Uf2BootloaderIdentity, AppError> {
@@ -647,7 +662,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cataloged_prefix_does_not_answer_for_another_board() {
+    fn a_cataloged_match_rule_does_not_answer_for_another_board() {
         let mount = temporary_mount("cross-board");
         fs::create_dir(&mount).expect("create mount");
         fs::write(
@@ -655,8 +670,18 @@ mod tests {
             info("nRF52840-TEcho-v1", "7.3.0"),
         )
         .expect("write identity");
-        assert!(!mount_identity_matches(&mount, &["nrf52840-heltec-t114-v"]));
-        assert!(mount_identity_matches(&mount, &["nrf52840-techo-v"]));
+        let wrong_board = Uf2BoardIdMatch::parse(
+            prns_flash_manifest::Uf2BoardIdMatchKind::RevisionPrefix,
+            "nrf52840-heltec-t114-v",
+        )
+        .expect("match rule");
+        let t_echo = Uf2BoardIdMatch::parse(
+            prns_flash_manifest::Uf2BoardIdMatchKind::RevisionPrefix,
+            "nrf52840-techo-v",
+        )
+        .expect("match rule");
+        assert!(!mount_identity_matches(&mount, &[wrong_board]));
+        assert!(mount_identity_matches(&mount, &[t_echo]));
         fs::remove_dir_all(&mount).expect("remove mount");
     }
 

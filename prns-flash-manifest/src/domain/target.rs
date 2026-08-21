@@ -6,7 +6,7 @@ use crate::{
 use super::values::{
     AfterResetStrategy, BeforeResetStrategy, BoardId, ChipFamily, FlashFrequency, FlashMode,
     ImmutableArtifactPath, KeyId, PreparationProfile, ProvisioningSlot, ReleaseVersion,
-    Sha256Digest, Uf2BoardIdPrefix, Uf2MountLabel,
+    Sha256Digest, Uf2BoardIdMatch, Uf2MountLabel,
 };
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -469,7 +469,7 @@ impl NrfSerialDfuArtifact {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NrfSerialDfuRecovery {
     pub(crate) mount_label: Uf2MountLabel,
-    pub(crate) board_id_prefix: Uf2BoardIdPrefix,
+    pub(crate) board_id_match: Uf2BoardIdMatch,
     pub(crate) family_id: u32,
     pub(crate) artifact: NrfSerialDfuArtifact,
 }
@@ -479,8 +479,8 @@ impl NrfSerialDfuRecovery {
         &self.mount_label
     }
 
-    pub fn board_id_prefix(&self) -> &Uf2BoardIdPrefix {
-        &self.board_id_prefix
+    pub fn board_id_match(&self) -> &Uf2BoardIdMatch {
+        &self.board_id_match
     }
 
     pub const fn family_id(&self) -> u32 {
@@ -914,7 +914,7 @@ impl ReleaseTarget {
                     init_packet: target.init_packet.to_wire(),
                     recovery: crate::NrfSerialDfuRecoveryManifest {
                         mount_label: target.recovery.mount_label.as_str().to_string(),
-                        board_id_prefix: target.recovery.board_id_prefix.as_str().to_string(),
+                        board_id_prefix: target.recovery.board_id_match.as_str().to_string(),
                         family_id: format!("0x{:08x}", target.recovery.family_id),
                         artifact: target.recovery.artifact.to_wire(),
                     },

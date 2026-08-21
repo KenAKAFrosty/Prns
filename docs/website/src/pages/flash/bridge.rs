@@ -1021,7 +1021,8 @@ mod tests {
             None,
             BoardFlashTarget::Uf2MassStorage {
                 mount_label: "TECHOBOOT",
-                board_id_prefix: "nrf52840-techo-v",
+                board_id_match_kind: prns_flash_manifest::Uf2BoardIdMatchKind::RevisionPrefix,
+                board_id: "nrf52840-techo-v",
             },
             &compatibility,
         )

@@ -252,7 +252,7 @@ fn validate_nrf_serial_dfu(
     if manifest.serial != build.serial
         || manifest.compatibility != build.compatibility
         || manifest.recovery.mount_label != build.recovery.mount_label
-        || manifest.recovery.board_id_prefix != build.recovery.board_id_prefix
+        || manifest.recovery.board_id_prefix != build.recovery.board_identity.value
         || manifest.recovery.family_id != build.recovery.family_id
     {
         return Err(mismatch(target, "Nordic serial DFU compatibility"));
