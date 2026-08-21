@@ -84,4 +84,4 @@ developer UF2s:
 python3 validation/run.py run --suite embedded-builds --platform linux
 ```
 
-Release qualification builds the Heltec V4, T-Beam Supreme, XIAO ESP32-C6, and T-Echo through the release-custody path. See the [testing guide](testing.md) before choosing a broader lane.
+Release qualification builds the flashable boards through the release-custody path. See the [testing guide](testing.md) before choosing a broader lane.

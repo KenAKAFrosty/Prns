@@ -14,7 +14,6 @@ const UF2_MAGIC_START_ZERO: u32 = 0x0a32_4655;
 const UF2_MAGIC_START_ONE: u32 = 0x9e5d_5157;
 const UF2_MAGIC_END: u32 = 0x0ab1_6f30;
 const UF2_FAMILY_ID_FLAG: u32 = 0x0000_2000;
-const T_ECHO_APPLICATION_FLASH_END: u32 = 0x000c_0000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Uf2BootloaderIdentity {
@@ -88,12 +87,13 @@ impl Uf2BootloaderIdentity {
                 }
                 "softdevice" => {
                     let values = value.split_ascii_whitespace().collect::<Vec<_>>();
-                    let [family, marker, version] = values.as_slice() else {
-                        return Err(Uf2IdentityError::Softdevice);
+                    let (family, version) = match values.as_slice() {
+                        [family, marker, version] if marker.eq_ignore_ascii_case("version") => {
+                            (family, version)
+                        }
+                        [family, version] => (family, version),
+                        _ => return Err(Uf2IdentityError::Softdevice),
                     };
-                    if !marker.eq_ignore_ascii_case("version") {
-                        return Err(Uf2IdentityError::Softdevice);
-                    }
                     softdevice = Some(
                         SoftdeviceIdentity::parse(family, (*version).to_string())
                             .map_err(|_| Uf2IdentityError::Softdevice)?,
@@ -182,7 +182,7 @@ pub enum Uf2IdentityError {
 pub fn validate_uf2_artifact(variant: &Uf2Variant, bytes: &[u8]) -> Result<(), Uf2ArtifactError> {
     validate_uf2_bytes(
         variant.compatibility().application_base(),
-        T_ECHO_APPLICATION_FLASH_END,
+        variant.compatibility().application_end_exclusive(),
         variant.compatibility().family_id(),
         bytes,
     )
@@ -347,6 +347,7 @@ mod tests {
                     .expect("SoftDevice identity"),
                 fwid,
                 application_base,
+                0x000c_0000,
                 0xada5_2840,
             ),
             part: Uf2Part {
@@ -397,6 +398,25 @@ mod tests {
         let identity = Uf2BootloaderIdentity::parse(&info("\n", "nRF52840-T1000-E-v1", "7.3.0"))
             .expect("valid descriptor");
         assert!(identity.matches_board(&prefix));
+    }
+
+    #[test]
+    fn the_hardware_recorded_t114_descriptor_parses_without_a_version_marker() {
+        let bytes = [
+            "UF2 Bootloader 0.9.0-2-g836c8dc-dirty",
+            "Model: HT-n5262",
+            "Board-ID: HT-n5262",
+            "Date: Jul  9 2024",
+            "SoftDevice: S140 6.1.1",
+        ]
+        .join("\n")
+        .into_bytes();
+        let identity = Uf2BootloaderIdentity::parse(&bytes).expect("valid descriptor");
+        let prefix = Uf2BoardIdPrefix::parse("ht-n5262".to_string()).expect("prefix");
+        assert!(identity.matches_board(&prefix));
+        assert_eq!(identity.bootloader_version(), "0.9.0-2-g836c8dc-dirty");
+        assert_eq!(identity.softdevice().family().as_str(), "s140");
+        assert_eq!(identity.softdevice().version().as_str(), "6.1.1");
     }
 
     #[test]

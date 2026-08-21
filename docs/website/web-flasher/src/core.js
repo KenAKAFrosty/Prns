@@ -21,7 +21,10 @@ const UF2_BLOCK_BYTES = 512;
 const UF2_PAYLOAD_BYTES = 256;
 const UF2_DATA_OFFSET = 32;
 const UF2_DATA_BYTES = 476;
-const UF2_APPLICATION_END = 0xc0000;
+const UF2_APPLICATION_ENDS = new Map([
+  ["t-echo", 0xc0000],
+  ["t114", 0xe9000],
+]);
 const UF2_COMPATIBILITIES = new Map([
   ["s140:6.1.1", Object.freeze({ fwid: 0x00b6, applicationBase: 0x26000, familyId: 0xada52840 })],
   ["s140:7.3.0", Object.freeze({ fwid: 0x0123, applicationBase: 0x27000, familyId: 0xada52840 })],
@@ -321,12 +324,16 @@ function validUf2Compatibility(value) {
     && value.familyId === expected.familyId;
 }
 
-export function validateUf2Artifact(bytes, compatibility) {
+export function validateUf2Artifact(bytes, compatibility, boardSlug) {
   if (!(bytes instanceof Uint8Array) || bytes.length === 0 || bytes.length % UF2_BLOCK_BYTES !== 0) {
     throw new FlashBridgeError("invalid_request", "The signed UF2 length is structurally invalid.");
   }
   if (!validUf2Compatibility(compatibility)) {
     throw new FlashBridgeError("invalid_request", "The signed UF2 compatibility identity is invalid.");
+  }
+  const applicationEnd = UF2_APPLICATION_ENDS.get(boardSlug);
+  if (applicationEnd === undefined) {
+    throw new FlashBridgeError("invalid_request", "The signed UF2 board has no pinned application region.");
   }
   const blocks = bytes.length / UF2_BLOCK_BYTES;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -347,7 +354,7 @@ export function validateUf2Artifact(bytes, compatibility) {
     if (address !== compatibility.applicationBase + index * UF2_PAYLOAD_BYTES) {
       throw new FlashBridgeError("invalid_request", "The signed UF2 application address is invalid.");
     }
-    if (payload !== UF2_PAYLOAD_BYTES || address + payload > UF2_APPLICATION_END) {
+    if (payload !== UF2_PAYLOAD_BYTES || address + payload > applicationEnd) {
       throw new FlashBridgeError("invalid_request", "The signed UF2 payload bounds are invalid.");
     }
     const padding = bytes.subarray(

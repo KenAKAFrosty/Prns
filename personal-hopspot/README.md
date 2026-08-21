@@ -86,7 +86,7 @@ For example, the canonical Heltec V4 command is:
     ./tools/prns run device.hopspot.dev-flasher.serve -- heltec-v4 --port 8765
 
 `BOARD` may be `heltec-v4`, `heltec-v4-r8`, `t-beam-supreme`,
-`xiao-esp32-c6`, or `t-echo`. Multiple unique board slugs may be supplied in
+`xiao-esp32-c6`, `t-echo`, or `t114`. Multiple unique board slugs may be supplied in
 one command, or `--all` may replace them. The command builds the selected
 firmware, creates a private temporary candidate, signs its manifest and preview
 channel with a newly generated ephemeral key, and serves the real flasher only
@@ -120,8 +120,9 @@ bootloader will jump four KiB above the image and the application will not run.
 The exact image built from `c40e8cb0` was independently confirmed on stock T114
 Rev. 2.x hardware: it booted, bound to WinUSB, retained UF2 recovery, completed
 USB Auto over its vendor-class interface, and carried LoRa traffic in both
-directions against a known-good RNode. The developer image is not yet in the
-signed release catalog. Its current radio profile is fixed at 915 MHz, so only
+directions against a known-good RNode. The board is in the release catalog as
+`t114`; this task remains the unsigned developer lane.
+Its current radio profile is fixed at 915 MHz, so only
 exercise LoRa where that profile is permitted. The focused
 [T114 qualification receipt](../validation/t114-qualification.md) records the
 tested boundary and remaining limitations.

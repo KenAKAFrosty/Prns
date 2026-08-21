@@ -142,26 +142,52 @@ test("UF2 structure is bound to the exact detected foundation", () => {
     applicationBase: 0x27000,
     familyId: 0xada52840,
   };
-  assert.equal(validateUf2Artifact(uf2Block(v6.applicationBase, v6.familyId), v6).length, 512);
-  assert.equal(validateUf2Artifact(uf2Block(v7.applicationBase, v7.familyId), v7).length, 512);
+  assert.equal(validateUf2Artifact(uf2Block(v6.applicationBase, v6.familyId), v6, "t-echo").length, 512);
+  assert.equal(validateUf2Artifact(uf2Block(v7.applicationBase, v7.familyId), v7, "t-echo").length, 512);
 
   const corrupt = uf2Block(v7.applicationBase, v7.familyId);
   corrupt[0] = 0;
-  assert.throws(() => validateUf2Artifact(corrupt, v7), /block magic/);
+  assert.throws(() => validateUf2Artifact(corrupt, v7, "t-echo"), /block magic/);
 
   const reordered = uf2Block(v7.applicationBase, v7.familyId, 1, 2);
-  assert.throws(() => validateUf2Artifact(reordered, v7), /block sequence/);
+  assert.throws(() => validateUf2Artifact(reordered, v7, "t-echo"), /block sequence/);
   assert.throws(
-    () => validateUf2Artifact(uf2Block(v7.applicationBase + 256, v7.familyId), v7),
+    () => validateUf2Artifact(uf2Block(v7.applicationBase + 256, v7.familyId), v7, "t-echo"),
     /application address/,
   );
   assert.throws(
-    () => validateUf2Artifact(uf2Block(v7.applicationBase, 0x12345678), v7),
+    () => validateUf2Artifact(uf2Block(v7.applicationBase, 0x12345678), v7, "t-echo"),
     /family ID/,
   );
   assert.throws(
-    () => validateUf2Artifact(uf2Block(v6.applicationBase, v6.familyId), v7),
+    () => validateUf2Artifact(uf2Block(v6.applicationBase, v6.familyId), v7, "t-echo"),
     /application address/,
+  );
+});
+
+function uf2Image(applicationBase, familyId, blockCount) {
+  const bytes = new Uint8Array(blockCount * 512);
+  for (let index = 0; index < blockCount; index += 1) {
+    bytes.set(uf2Block(applicationBase, familyId, index, blockCount), index * 512);
+  }
+  return bytes;
+}
+
+test("the UF2 application region bound is pinned per board", () => {
+  const v6 = {
+    softdeviceFamily: "s140",
+    softdeviceVersion: "6.1.1",
+    fwid: 0x00b6,
+    applicationBase: 0x26000,
+    familyId: 0xada52840,
+  };
+  const pastTechoEnd = (0xc0000 - v6.applicationBase) / 256 + 1;
+  const image = uf2Image(v6.applicationBase, v6.familyId, pastTechoEnd);
+  assert.throws(() => validateUf2Artifact(image, v6, "t-echo"), /payload bounds/);
+  assert.equal(validateUf2Artifact(image, v6, "t114").length, image.length);
+  assert.throws(
+    () => validateUf2Artifact(uf2Block(v6.applicationBase, v6.familyId), v6, "nrf52840-second-board"),
+    /pinned application region/,
   );
 });
 

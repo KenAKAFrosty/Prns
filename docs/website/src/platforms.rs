@@ -82,6 +82,7 @@ pub const ESPRESSIF_NATIVE_USB_VENDOR_ID: u16 = 0x303a;
 pub enum PreparationProfile {
     EspUsbBoot,
     TechoUf2,
+    T114Uf2,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -256,16 +257,6 @@ pub const UPCOMING_BOARD_TARGETS: &[BoardTarget] = &[
     BoardTarget {
         name: "SenseCAP Solar Node P1",
         slug: "seeed-sensecap-solar-node-p1",
-        silicon: "nRF52840 + SX1262",
-        tier: Tier::Roadmap,
-        interfaces: &[],
-        icon: Some("nordicsemiconductor"),
-        preparation_profile: None,
-        flash_target: None,
-    },
-    BoardTarget {
-        name: "Heltec Mesh Node T114",
-        slug: "heltec-mesh-node-t114",
         silicon: "nRF52840 + SX1262",
         tier: Tier::Roadmap,
         interfaces: &[],

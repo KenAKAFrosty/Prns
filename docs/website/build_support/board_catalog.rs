@@ -18,6 +18,7 @@ pub(crate) fn generate() {
         let preparation_profile = match board.preparation_profile.as_str() {
             "esp-usb-boot" => "PreparationProfile::EspUsbBoot",
             "techo-uf2" => "PreparationProfile::TechoUf2",
+            "t114-uf2" => "PreparationProfile::T114Uf2",
             value => panic!("unsupported website preparation profile {value:?}"),
         };
         let flash_target = match (&board.transport, &board.build) {

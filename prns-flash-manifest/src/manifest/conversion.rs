@@ -2,7 +2,8 @@ use std::fmt;
 
 use crate::domain::TargetIdentity;
 use crate::{
-    AfterResetStrategy, BeforeResetStrategy, BoardCatalog, BoardCatalogEntry, BoardId, ChipFamily,
+    AfterResetStrategy, BeforeResetStrategy, BoardBuild, BoardCatalog, BoardCatalogEntry, BoardId,
+    ChipFamily,
     EspFlashPart, EspSerialTarget, FlashFrequency, FlashMode, ImmutableArtifactPath, KeyId,
     NrfSerialDfuArtifact, NrfSerialDfuRecovery, NrfSerialDfuTarget, PreparationProfile,
     ProvisioningDescriptor, ProvisioningFormat, ProvisioningSlot, ReleaseTarget, ReleaseVersion,
@@ -42,7 +43,7 @@ impl TargetManifest {
         version: &ReleaseVersion,
     ) -> Result<ReleaseTarget, ManifestError> {
         validate_target(&self, board, version.as_str())?;
-        convert_target(self)
+        convert_target(self, board)
     }
 
     pub fn into_validated_uf2_variant(
@@ -52,7 +53,7 @@ impl TargetManifest {
         softdevice: &SoftdeviceIdentity,
     ) -> Result<ReleaseTarget, ManifestError> {
         validate_uf2_target_variant(&self, board, version.as_str(), softdevice)?;
-        convert_target(self)
+        convert_target(self, board)
     }
 }
 
@@ -84,7 +85,7 @@ pub(super) fn convert_manifest(
         // Whole-manifest validation has already run, but keep this conversion
         // independently safe for future call sites.
         validate_target(&target, board, version.as_str())?;
-        validated_targets.push(convert_target(target)?);
+        validated_targets.push(convert_target(target, board)?);
     }
     Ok(ValidatedFlashManifest {
         schema_version,
@@ -111,7 +112,10 @@ pub(super) fn convert_channel_descriptor(
     })
 }
 
-fn convert_target(target: TargetManifest) -> Result<ReleaseTarget, ManifestError> {
+fn convert_target(
+    target: TargetManifest,
+    board: &BoardCatalogEntry,
+) -> Result<ReleaseTarget, ManifestError> {
     let TargetManifest {
         board_slug,
         display_name,
@@ -236,12 +240,21 @@ fn convert_target(target: TargetManifest) -> Result<ReleaseTarget, ManifestError
             }))
         }
         Transport::Uf2MassStorage => {
-            if identity.preparation_profile != PreparationProfile::TechoUf2 {
+            if PreparationProfile::parse(&board.preparation_profile)
+                != Ok(identity.preparation_profile)
+            {
                 return Err(ManifestError::CatalogMismatch {
                     board: board_slug,
-                    field: "UF2 target requires the techo-uf2 preparation profile".to_string(),
+                    field: "UF2 target preparation profile disagrees with the board catalog"
+                        .to_string(),
                 });
             }
+            let BoardBuild::Uf2(catalog_build) = &board.build else {
+                return Err(ManifestError::CatalogMismatch {
+                    board: board_slug,
+                    field: "UF2 target requires a cataloged UF2 build recipe".to_string(),
+                });
+            };
             if expected_chip.is_some()
                 || flash_size.is_some()
                 || flash_mode.is_some()
@@ -266,6 +279,26 @@ fn convert_target(target: TargetManifest) -> Result<ReleaseTarget, ManifestError
                 .into_iter()
                 .map(|variant| {
                     let path = variant.path.clone();
+                    let application_end_exclusive = catalog_build
+                        .variants
+                        .iter()
+                        .find(|catalog_variant| {
+                            catalog_variant.softdevice_family == variant.softdevice_family
+                                && catalog_variant.softdevice_version == variant.softdevice_version
+                                && catalog_variant.fwid == variant.fwid
+                                && catalog_variant.application_base == variant.application_base
+                                && catalog_variant.family_id == variant.family_id
+                        })
+                        .and_then(|catalog_variant| {
+                            parse_hex_u32(&catalog_variant.application_end_exclusive)
+                        })
+                        .ok_or_else(|| {
+                            invalid_part_values(
+                                &board_slug,
+                                &path,
+                                "UF2 variant is not pinned by the board catalog",
+                            )
+                        })?;
                     let softdevice = SoftdeviceIdentity::parse(
                         &variant.softdevice_family,
                         variant.softdevice_version,
@@ -294,6 +327,7 @@ fn convert_target(target: TargetManifest) -> Result<ReleaseTarget, ManifestError
                             softdevice,
                             fwid,
                             application_base,
+                            application_end_exclusive,
                             family_id,
                         ),
                         part: Uf2Part {

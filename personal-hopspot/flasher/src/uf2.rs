@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 
 use nusb::{DeviceId, MaybeFuture};
 use prns_flash_manifest::{
-    BoardBuild, BoardCatalog, BoardCatalogEntry, SoftdeviceIdentity, Uf2BoardIdPrefix,
-    Uf2BootloaderIdentity, Uf2MountLabel,
+    BoardBuild, BoardCatalog, BoardCatalogEntry, SoftdeviceIdentity, Uf2ApplicationUsb,
+    Uf2BoardIdPrefix, Uf2BootloaderIdentity, Uf2MountLabel,
 };
 
 use crate::error::AppError;
@@ -19,9 +19,6 @@ const REBOOT_TIMEOUT: Duration = Duration::from_secs(20);
 const APPLICATION_ENUMERATION_TIMEOUT: Duration = Duration::from_secs(20);
 const PRNS_USB_VENDOR_ID: u16 = 0x1209;
 const PRNS_USB_PRODUCT_ID: u16 = 0x0001;
-const PRNS_TECHO_USB_MANUFACTURER: &str = "Stay Personal";
-const PRNS_TECHO_USB_PRODUCT: &str = "Personal Hopspot (T-Echo)";
-const PRNS_TECHO_USB_SERIAL: &str = "PERSONAL-RNS-TECHO-HOP";
 const INFO_UF2_READ_LIMIT: u64 = 4097;
 
 #[derive(Clone, Debug)]
@@ -58,6 +55,7 @@ struct CatalogedUf2Board<'a> {
     entry: &'a BoardCatalogEntry,
     mount_label: Uf2MountLabel,
     board_id_prefix: Uf2BoardIdPrefix,
+    application_usb: &'a Uf2ApplicationUsb,
 }
 
 impl<'a> CatalogedUf2Board<'a> {
@@ -69,6 +67,7 @@ impl<'a> CatalogedUf2Board<'a> {
                     .map_err(|error| AppError::trust_catalog(error.to_string()))?,
                 board_id_prefix: Uf2BoardIdPrefix::parse(build.board_id_prefix.clone())
                     .map_err(|error| AppError::trust_catalog(error.to_string()))?,
+                application_usb: &build.application_usb,
             }),
             BoardBuild::Esp(_) => Err(AppError::unsupported_operation(
                 "ESP board cannot use the UF2 bootloader engine",
@@ -109,7 +108,7 @@ pub(crate) fn flash(
         ));
     }
     let mount = device.mount;
-    let baseline_usb = matching_prns_techo_usb_ids()?;
+    let baseline_usb = matching_prns_application_usb_ids(board.application_usb)?;
 
     let destination = mount.join("prns-hopspot.uf2");
     reporter.phase(
@@ -140,6 +139,7 @@ pub(crate) fn flash(
         return Err(AppError::Cancelled);
     }
     wait_for_application_usb(
+        &board,
         &baseline_usb,
         APPLICATION_ENUMERATION_TIMEOUT,
         Duration::from_millis(200),
@@ -307,7 +307,9 @@ fn wait_for_reboot(
     Ok(())
 }
 
-fn matching_prns_techo_usb_ids() -> Result<HashSet<DeviceId>, AppError> {
+fn matching_prns_application_usb_ids(
+    expected: &Uf2ApplicationUsb,
+) -> Result<HashSet<DeviceId>, AppError> {
     nusb::list_devices()
         .wait()
         .map_err(|error| {
@@ -318,9 +320,9 @@ fn matching_prns_techo_usb_ids() -> Result<HashSet<DeviceId>, AppError> {
                 .filter(|device| {
                     device.vendor_id() == PRNS_USB_VENDOR_ID
                         && device.product_id() == PRNS_USB_PRODUCT_ID
-                        && device.manufacturer_string() == Some(PRNS_TECHO_USB_MANUFACTURER)
-                        && device.product_string() == Some(PRNS_TECHO_USB_PRODUCT)
-                        && device.serial_number() == Some(PRNS_TECHO_USB_SERIAL)
+                        && device.manufacturer_string() == Some(expected.manufacturer.as_str())
+                        && device.product_string() == Some(expected.product.as_str())
+                        && device.serial_number() == Some(expected.serial_number.as_str())
                 })
                 .map(|device| device.id())
                 .collect()
@@ -328,6 +330,7 @@ fn matching_prns_techo_usb_ids() -> Result<HashSet<DeviceId>, AppError> {
 }
 
 fn wait_for_application_usb(
+    board: &CatalogedUf2Board<'_>,
     baseline: &HashSet<DeviceId>,
     timeout: Duration,
     poll: Duration,
@@ -337,7 +340,7 @@ fn wait_for_application_usb(
         if crate::esp::cancelled() {
             return Err(AppError::Cancelled);
         }
-        let current = matching_prns_techo_usb_ids().map_err(|error| {
+        let current = matching_prns_application_usb_ids(board.application_usb).map_err(|error| {
             AppError::verify(format!(
                 "UF2 delivery completed, but application USB verification is incomplete: {error}"
             ))
@@ -346,13 +349,15 @@ fn wait_for_application_usb(
         match (newly_enumerated, current.len()) {
             (1, 1) => return Ok(()),
             (1.., 2..) => {
-                return Err(AppError::verify(
-                    "UF2 delivery completed, but multiple indistinguishable Prns T-Echo USB devices enumerated; application verification is incomplete",
-                ));
+                return Err(AppError::verify(format!(
+                    "UF2 delivery completed, but multiple indistinguishable {:?} USB devices enumerated; application verification is incomplete",
+                    board.application_usb.product
+                )));
             }
             _ if Instant::now() >= deadline => {
                 return Err(AppError::verify(format!(
-                    "UF2 delivery completed, but no newly enumerated Prns T-Echo USB identity appeared within {timeout:?}; application verification is incomplete"
+                    "UF2 delivery completed, but no newly enumerated {:?} USB identity appeared within {timeout:?}; application verification is incomplete",
+                    board.application_usb.product
                 )));
             }
             _ => std::thread::sleep(poll),

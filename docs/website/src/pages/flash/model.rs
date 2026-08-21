@@ -183,7 +183,7 @@ pub(super) fn preparation_guide(
                 "If automatic connection fails, hold BOOT, tap RESET, release BOOT, then restart the complete connect-and-flash step.".to_string(),
             ],
         },
-        PreparationProfile::TechoUf2 => PreparationGuide {
+        PreparationProfile::TechoUf2 | PreparationProfile::T114Uf2 => PreparationGuide {
             lead: "This board uses its UF2 bootloader; the website reads its local descriptor and downloads the matching verified UF2 file.",
             steps: match target {
                 BoardFlashTarget::Uf2MassStorage { mount_label, .. } => vec![

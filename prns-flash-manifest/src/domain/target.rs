@@ -109,6 +109,7 @@ pub struct Uf2Compatibility {
     softdevice: SoftdeviceIdentity,
     fwid: u16,
     application_base: u32,
+    application_end_exclusive: u32,
     family_id: u32,
 }
 
@@ -117,12 +118,14 @@ impl Uf2Compatibility {
         softdevice: SoftdeviceIdentity,
         fwid: u16,
         application_base: u32,
+        application_end_exclusive: u32,
         family_id: u32,
     ) -> Self {
         Self {
             softdevice,
             fwid,
             application_base,
+            application_end_exclusive,
             family_id,
         }
     }
@@ -137,6 +140,10 @@ impl Uf2Compatibility {
 
     pub const fn application_base(&self) -> u32 {
         self.application_base
+    }
+
+    pub const fn application_end_exclusive(&self) -> u32 {
+        self.application_end_exclusive
     }
 
     pub const fn family_id(&self) -> u32 {
