@@ -35,8 +35,9 @@ pub(crate) struct S3ManifoldHardware {
     pub(crate) rtc: esp_hal::rtc_cntl::Rtc<'static>,
 }
 
-pub(crate) struct S3BoardHardware<D, B> {
+pub(crate) struct S3BoardHardware<D, B, G> {
     pub(crate) face: BoardFace<D, B>,
+    pub(crate) gnss: G,
     pub(crate) interface_hardware: S3InterfaceHardware,
     pub(crate) manifold: S3ManifoldHardware,
 }
@@ -50,10 +51,11 @@ pub(crate) trait Esp32S3Board {
     const FLASH_LAYOUT: screen::HopspotS3FlashLayout;
     type Display: DrawTarget<Color = BinaryColor>;
     type Battery: screen::BatterySource;
+    type Gnss: GnssProvider;
 
     fn flush(display: &mut Self::Display);
     fn set_display_awake(display: &mut Self::Display, awake: bool);
     async fn bringup(
         peripherals: esp_hal::peripherals::Peripherals,
-    ) -> S3BoardHardware<Self::Display, Self::Battery>;
+    ) -> S3BoardHardware<Self::Display, Self::Battery, Self::Gnss>;
 }

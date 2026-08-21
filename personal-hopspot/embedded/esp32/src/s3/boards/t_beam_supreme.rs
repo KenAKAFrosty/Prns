@@ -18,7 +18,7 @@ use personal_rns::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
 use personal_hopspot_core as screen;
 
 use crate::s3::{
-    self, BoardDisplay, BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware,
+    self, BoardDisplay, BoardFace, Esp32S3Board, NoGnss, S3BoardHardware, S3InterfaceHardware,
     S3ManifoldHardware,
 };
 
@@ -245,6 +245,7 @@ impl Esp32S3Board for TBeamSupremeBoard {
     const FLASH_LAYOUT: screen::HopspotS3FlashLayout = screen::S3_8_MIB_FLASH_LAYOUT;
     type Display = Sh1106I2c<TBeamI2c>;
     type Battery = Axp2101Battery<TBeamI2c>;
+    type Gnss = NoGnss;
 
     fn flush(display: &mut Self::Display) {
         let _ = display.flush();
@@ -256,7 +257,7 @@ impl Esp32S3Board for TBeamSupremeBoard {
 
     async fn bringup(
         p: esp_hal::peripherals::Peripherals,
-    ) -> S3BoardHardware<Self::Display, Self::Battery> {
+    ) -> S3BoardHardware<Self::Display, Self::Battery, Self::Gnss> {
         let (sw_int1, timebase, rtc) = s3::boot_common!(p, Self::BOOT_BANNER);
 
         s3::boot_stage(s3::BootPhase::OledBegin);
@@ -363,6 +364,7 @@ impl Esp32S3Board for TBeamSupremeBoard {
                     InputConfig::default().with_pull(esp_hal::gpio::Pull::Up),
                 ),
             },
+            gnss: NoGnss,
             interface_hardware: S3InterfaceHardware {
                 usb_device: p.USB_DEVICE,
                 lora_radio,

@@ -4,6 +4,7 @@ pub(crate) async fn run<B: Esp32S3Board>(spawner: Spawner)
 where
     B::Display: 'static,
     B::Battery: 'static,
+    B::Gnss: 'static,
 {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let p = esp_hal::init(config);
@@ -19,10 +20,11 @@ where
 #[allow(clippy::too_many_lines)]
 pub(super) async fn run_core<B: Esp32S3Board>(
     spawner: Spawner,
-    hardware: S3BoardHardware<B::Display, B::Battery>,
+    hardware: S3BoardHardware<B::Display, B::Battery, B::Gnss>,
 ) where
     B::Display: 'static,
     B::Battery: 'static,
+    B::Gnss: 'static,
 {
     let BoardFace {
         display,
@@ -34,6 +36,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         initialized: oled_ok,
     } = display;
     let mut battery_source = battery;
+    let gnss = hardware.gnss;
     let S3InterfaceHardware {
         usb_device,
         #[cfg(feature = "lora")]
@@ -381,7 +384,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             },
             access_point,
             shared_instance_config_export: screen::SharedInstanceConfigExport::Unavailable,
-            gnss: screen::GnssAvailability::Unavailable,
+            gnss: B::Gnss::AVAILABILITY,
         });
         let startup_notice = identity_startup_notice.or(profile_startup_notice);
         let mut pending_startup_notice = identity_startup_notice
@@ -498,7 +501,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                     screen::RenderFrame {
                         content,
                         battery: battery_state,
-                        gnss: None,
+                        gnss: ui_state.gnss_visible().then(B::Gnss::snapshot).flatten(),
                         state: &ui_state,
                         interface_menu_details: &interface_menu_details,
                         animation_ms: now_ms,
@@ -563,7 +566,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 notice_until_ms = Some((now_ms + NOTICE_MS, notice));
                             }
                         }
-                        screen::UiAction::ControlGnss(_) => {}
+                        screen::UiAction::ControlGnss(command) => {
+                            B::Gnss::control(command);
+                        }
                         screen::UiAction::Sleep => {
                             ui_state.show_notice(screen::UiNotice::Sleeping);
                             notice_until_ms =
@@ -588,6 +593,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 let status = BluetoothAutoStatus::new(&BLE_SHARED);
                                 status.disable();
                             }
+                            B::Gnss::control(screen::GnssReceiverCommand::Disable);
                         }
                         screen::UiAction::Wake => {
                             if oled_power.wake(now_ms, DEFAULT_OLED_AUTO_OFF_MS)
@@ -614,6 +620,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             {
                                 let status = BluetoothAutoStatus::new(&BLE_SHARED);
                                 status.enable();
+                            }
+                            if ui_state.gnss_visible() {
+                                B::Gnss::control(screen::GnssReceiverCommand::Enable);
                             }
                         }
                         screen::UiAction::Announce => {
@@ -790,6 +799,14 @@ pub(super) async fn run_core<B: Esp32S3Board>(
 
     spawner.spawn(watchdog_task(rtc.rwdt).expect("watchdog task fits"));
 
+    if B::Gnss::AVAILABILITY == screen::GnssAvailability::Available {
+        let run = crate::storage::allocate_psram(gnss.drive());
+        let run: core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>> =
+            // SAFETY: `allocate_psram` leaks this allocation, so it cannot move or be freed.
+            unsafe { core::pin::Pin::new_unchecked(run) };
+        spawner.spawn(gnss_task(run).expect("GNSS task fits"));
+    }
+
     #[cfg(feature = "lora")]
     spawner.spawn(lora_task(lora, lora_seam).expect("LoRa task fits"));
     if let Some((interface, seam)) = espnow {
@@ -858,6 +875,11 @@ async fn tcp_task(interface: TcpClient<'static>, seam: S3TcpSeam) {
 
 #[embassy_executor::task]
 async fn wifi_task(run: core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>>) {
+    run.await
+}
+
+#[embassy_executor::task]
+async fn gnss_task(run: core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>>) {
     run.await
 }
 

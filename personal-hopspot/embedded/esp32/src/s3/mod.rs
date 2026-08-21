@@ -1,5 +1,6 @@
 mod board;
 pub mod boards;
+mod gnss;
 
 use alloc::string::{String, ToString};
 use core::fmt::Write as _;
@@ -118,6 +119,7 @@ pub(crate) use board::LoraRadio;
 pub(crate) use board::{
     BoardDisplay, BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware, S3ManifoldHardware,
 };
+pub(crate) use gnss::{GnssProvider, GnssShared, NoGnss};
 
 esp_app_desc!();
 

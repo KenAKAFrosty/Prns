@@ -3,8 +3,11 @@ use esp_hal::gpio::{Flex, Input, InputConfig, Level, Output, OutputConfig};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::time::Rate;
+use esp_hal::uart::{Config as UartConfig, Uart};
+use esp_hal::Async;
 
 use embassy_executor::Spawner;
+use embassy_futures::select::{select, Either};
 use embassy_time::{Delay, Duration, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use ssd1306::mode::BufferedGraphicsMode;
@@ -18,8 +21,8 @@ use personal_hopspot_core as screen;
 
 use super::{HELTEC_GC1109_RX_GAIN_DB, HELTEC_KCT8103L_RX_GAIN_DB};
 use crate::s3::{
-    self, BoardDisplay, BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware,
-    S3ManifoldHardware,
+    self, BoardDisplay, BoardFace, Esp32S3Board, GnssProvider, GnssShared, S3BoardHardware,
+    S3InterfaceHardware, S3ManifoldHardware,
 };
 
 /// This board's USB-auto interface id (the always-present top-level wire on pool slot 0).
@@ -32,6 +35,12 @@ const NODE_ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot HeltecV4";
 
 const VBAT_DIVIDER_NUM: u32 = 49;
 const VBAT_DIVIDER_DEN: u32 = 10;
+const GNSS_RESET_HOLD: Duration = Duration::from_millis(100);
+const GNSS_WARMUP: Duration = Duration::from_secs(1);
+const GNSS_ERROR_RETRY: Duration = Duration::from_millis(100);
+const GNSS_READ_BYTES: usize = 64;
+
+static GNSS_SHARED: GnssShared = GnssShared::new();
 
 /// How far the fast voltage average must lead the slow one to read as "charging". The Heltec V4 has
 /// no charge/VBUS pin, so charging is inferred from the cell's voltage trend: plugging in steps the
@@ -95,6 +104,101 @@ type HeltecDisplay = Ssd1306<
     BufferedGraphicsMode<DisplaySize128x64>,
 >;
 
+/// The standard V4's L76K transport and electrical controls. NMEA parsing and public positioning
+/// types stay in `prns-core`; this adapter owns only the Heltec pin policy and ESP-HAL UART.
+pub struct HeltecV4Gnss {
+    uart: Uart<'static, Async>,
+    enable: Output<'static>,
+    reset: Output<'static>,
+    standby: Output<'static>,
+    _pulse_per_second: Input<'static>,
+}
+
+impl HeltecV4Gnss {
+    fn stop(&mut self) {
+        // VGNSS_Ctrl and reset are active-low. Letting standby fall before removing power keeps the
+        // receiver quiescent, and holding reset asserted prevents stale UART output while disabled.
+        self.standby.set_low();
+        self.reset.set_low();
+        self.enable.set_high();
+    }
+
+    async fn start(&mut self) {
+        self.reset.set_low();
+        self.standby.set_low();
+        self.enable.set_low();
+        Timer::after(GNSS_RESET_HOLD).await;
+        self.reset.set_high();
+        self.standby.set_high();
+        Timer::after(GNSS_WARMUP).await;
+    }
+}
+
+impl GnssProvider for HeltecV4Gnss {
+    const AVAILABILITY: screen::GnssAvailability = screen::GnssAvailability::Available;
+
+    fn control(command: screen::GnssReceiverCommand) {
+        GNSS_SHARED.control(command);
+    }
+
+    fn snapshot() -> Option<screen::GnssSnapshot> {
+        Some(GNSS_SHARED.snapshot())
+    }
+
+    async fn drive(mut self) {
+        self.stop();
+        GNSS_SHARED.publish(screen::GnssSnapshot::Disabled);
+
+        loop {
+            match GNSS_SHARED.wait_command().await {
+                screen::GnssReceiverCommand::Enable => {}
+                screen::GnssReceiverCommand::Disable => {
+                    self.stop();
+                    GNSS_SHARED.publish(screen::GnssSnapshot::Disabled);
+                    continue;
+                }
+            }
+
+            GNSS_SHARED.publish(screen::GnssSnapshot::Starting);
+            self.start().await;
+            let mut parser = screen::NmeaParser::new();
+            GNSS_SHARED.publish(screen::GnssSnapshot::Searching { satellites: 0 });
+            let mut enabled = true;
+
+            while enabled {
+                let mut bytes = [0u8; GNSS_READ_BYTES];
+                match select(self.uart.read_async(&mut bytes), GNSS_SHARED.wait_command()).await {
+                    Either::First(Ok(read)) => {
+                        for &byte in &bytes[..read] {
+                            if let Some(snapshot) = parser.feed(byte) {
+                                GNSS_SHARED.publish(snapshot);
+                            }
+                        }
+                    }
+                    Either::First(Err(error)) => {
+                        log::warn!("GNSS UART receive failed: {error:?}");
+                        GNSS_SHARED.publish(screen::GnssSnapshot::Error);
+                        match select(Timer::after(GNSS_ERROR_RETRY), GNSS_SHARED.wait_command())
+                            .await
+                        {
+                            Either::First(()) => {}
+                            Either::Second(command) => {
+                                enabled = command == screen::GnssReceiverCommand::Enable;
+                            }
+                        }
+                    }
+                    Either::Second(command) => {
+                        enabled = command == screen::GnssReceiverCommand::Enable;
+                    }
+                }
+            }
+
+            self.stop();
+            GNSS_SHARED.publish(screen::GnssSnapshot::Disabled);
+        }
+    }
+}
+
 /// The Heltec V4's board half (OLED/battery/radio bring-up); everything past it is the shared
 /// [`s3`] core.
 pub struct HeltecBoard;
@@ -107,6 +211,7 @@ impl Esp32S3Board for HeltecBoard {
     const FLASH_LAYOUT: screen::HopspotS3FlashLayout = screen::S3_16_MIB_FLASH_LAYOUT;
     type Display = HeltecDisplay;
     type Battery = HeltecBattery;
+    type Gnss = HeltecV4Gnss;
 
     fn flush(display: &mut Self::Display) {
         if let Err(error) = display.flush() {
@@ -120,12 +225,34 @@ impl Esp32S3Board for HeltecBoard {
 
     async fn bringup(
         p: esp_hal::peripherals::Peripherals,
-    ) -> S3BoardHardware<Self::Display, Self::Battery> {
+    ) -> S3BoardHardware<Self::Display, Self::Battery, Self::Gnss> {
         let (sw_int1, timebase, rtc) = s3::boot_common!(p, Self::BOOT_BANNER);
 
         // GPIO35 drives the V4's bright white user LED active-high. Claim it immediately so the
         // reset/default pin state cannot leave the LED lit while the Hopspot is running.
         let _user_led = Output::new(p.GPIO35, Level::Low, OutputConfig::default());
+
+        // Heltec's standard V4 routes its optional L76K through the 8-pin GNSS connector. Establish
+        // the disabled electrical state before slower display/radio bring-up: VGNSS_Ctrl (34) and
+        // reset (42) are active-low, while standby (40) must be high to force the receiver awake.
+        let gnss_enable = Output::new(p.GPIO34, Level::High, OutputConfig::default());
+        let gnss_reset = Output::new(p.GPIO42, Level::Low, OutputConfig::default());
+        let gnss_standby = Output::new(p.GPIO40, Level::Low, OutputConfig::default());
+        let gnss_pps = Input::new(p.GPIO41, InputConfig::default());
+        let gnss_uart = Uart::new(p.UART1, UartConfig::default().with_baudrate(9_600))
+            .expect("L76K UART configuration is valid")
+            // Heltec names these connector nets from the receiver's perspective: GPIO39 carries
+            // GNSS TX toward the ESP RX, while GPIO38 carries ESP TX toward GNSS RX.
+            .with_rx(p.GPIO39)
+            .with_tx(p.GPIO38)
+            .into_async();
+        let gnss = HeltecV4Gnss {
+            uart: gnss_uart,
+            enable: gnss_enable,
+            reset: gnss_reset,
+            standby: gnss_standby,
+            _pulse_per_second: gnss_pps,
+        };
 
         s3::boot_stage(s3::BootPhase::OledBegin);
         // OLED (Heltec V4: Vext active-low gates panel power; pulse RST; I2C0 on 17/18).
@@ -246,6 +373,7 @@ impl Esp32S3Board for HeltecBoard {
                     InputConfig::default().with_pull(esp_hal::gpio::Pull::Up),
                 ),
             },
+            gnss,
             interface_hardware: S3InterfaceHardware {
                 usb_device: p.USB_DEVICE,
                 lora_radio,
