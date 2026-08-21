@@ -214,7 +214,7 @@ fn validate_recovery_application(
             uf2_blocks: actual_blocks,
         });
     }
-    for (index, block) in recovery.chunks_exact(UF2_BLOCK_BYTES).enumerate() {
+    for (index, block) in recovery.as_chunks::<UF2_BLOCK_BYTES>().0.iter().enumerate() {
         let application_offset = index * UF2_PAYLOAD_BYTES as usize;
         let application_end =
             (application_offset + UF2_PAYLOAD_BYTES as usize).min(application.len());
@@ -242,7 +242,7 @@ fn validate_uf2_bytes(
     let declared_blocks =
         u32::try_from(block_count).map_err(|_| Uf2ArtifactError::Length(bytes.len()))?;
     let mut expected_address = application_base;
-    for (index, block) in bytes.chunks_exact(UF2_BLOCK_BYTES).enumerate() {
+    for (index, block) in bytes.as_chunks::<UF2_BLOCK_BYTES>().0.iter().enumerate() {
         let block_number =
             u32::try_from(index).map_err(|_| Uf2ArtifactError::Length(bytes.len()))?;
         if word(block, 0) != UF2_MAGIC_START_ZERO

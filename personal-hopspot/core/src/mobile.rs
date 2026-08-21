@@ -156,7 +156,7 @@ impl MobileRgbaFrameBuffer {
     }
 
     pub fn expand_rgba(&self, out: &mut [u8]) {
-        for (lit, chunk) in self.lit.iter().zip(out.chunks_exact_mut(4)) {
+        for (lit, chunk) in self.lit.iter().zip(out.as_chunks_mut::<4>().0.iter_mut()) {
             chunk.copy_from_slice(if *lit {
                 &MOBILE_LIT_RGBA
             } else {
@@ -289,6 +289,10 @@ mod tests {
 
         let mut out = [0u8; MOBILE_RGBA_BYTES];
         frame.expand_rgba(&mut out);
-        assert!(out.chunks_exact(4).all(|pixel| pixel == MOBILE_DARK_RGBA));
+        assert!(out
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| *pixel == MOBILE_DARK_RGBA));
     }
 }

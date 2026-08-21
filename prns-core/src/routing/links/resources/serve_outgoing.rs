@@ -86,16 +86,17 @@ pub fn serve_part_indices(
     requested: &[u8],
 ) -> ServedPartIndices {
     let mut served = ServedPartIndices::empty();
-    let requested_len = requested.len() / MAP_HASH_LEN;
+    let (requested_names, _) = requested.as_chunks::<MAP_HASH_LEN>();
+    let requested_len = requested_names.len();
 
     if requested_len <= MAX_REQUESTED_PARTS {
-        let mut requested_names = [0u32; MAX_REQUESTED_PARTS];
-        for (index, asked) in requested.chunks_exact(MAP_HASH_LEN).enumerate() {
-            requested_names[index] = map_hash_name_word(asked);
+        let mut requested_name_words = [0u32; MAX_REQUESTED_PARTS];
+        for (index, asked) in requested_names.iter().enumerate() {
+            requested_name_words[index] = map_hash_name_word(asked);
         }
         for i in serving_scope(hashmap, scope_start) {
             let name = &hashmap[i * MAP_HASH_LEN..(i + 1) * MAP_HASH_LEN];
-            if requested_names[..requested_len].contains(&map_hash_name_word(name))
+            if requested_name_words[..requested_len].contains(&map_hash_name_word(name))
                 && !served.push(i)
             {
                 break;
@@ -106,11 +107,7 @@ pub fn serve_part_indices(
 
     for i in serving_scope(hashmap, scope_start) {
         let name = &hashmap[i * MAP_HASH_LEN..(i + 1) * MAP_HASH_LEN];
-        if requested
-            .chunks_exact(MAP_HASH_LEN)
-            .any(|asked| asked == name)
-            && !served.push(i)
-        {
+        if requested_names.iter().any(|asked| asked == name) && !served.push(i) {
             break;
         }
     }

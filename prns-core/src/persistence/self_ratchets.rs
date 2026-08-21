@@ -94,11 +94,12 @@ impl PersistedSelfRatchets<'_> {
         self.secrets.len() / X25519SecretKey::LEN
     }
 
-    #[allow(clippy::expect_used)]
     pub fn secrets_newest_first(&self) -> impl DoubleEndedIterator<Item = X25519SecretKey> + '_ {
-        self.secrets.chunks_exact(X25519SecretKey::LEN).map(|raw| {
-            X25519SecretKey::new(raw.try_into().expect("chunks_exact yields exact chunks"))
-        })
+        self.secrets
+            .as_chunks::<{ X25519SecretKey::LEN }>()
+            .0
+            .iter()
+            .map(|raw| X25519SecretKey::new(*raw))
     }
 }
 
