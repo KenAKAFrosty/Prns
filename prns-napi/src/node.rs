@@ -57,6 +57,7 @@ use prns_host::{
     MulticastAddressType, PersistenceConfig, PrnsLimits, RNodeRadioConfig, RequestHandlerConfig,
     RequestPolicy as HostRequestPolicy, ResourceStrategy as HostResourceStrategy, SerialDataBits,
     SerialLineConfig, SerialParity, SerialStopBits, SingleDestinationConfig,
+    WebSocketFramingSelection,
 };
 use prns_host_native::{
     CommandWait, NativeHost, NativeSnapshotError, NativeStartError, NativeSubmitError,
@@ -259,6 +260,8 @@ pub struct InterfaceConfigSpec {
     pub peers: Option<Vec<String>>,
     pub connectable: Option<bool>,
     pub url: Option<String>,
+    #[napi(ts_type = "'RawPacket' | 'Hdlc' | 'Kiss' | 'Auto'")]
+    pub framing: Option<String>,
 }
 
 #[napi(object)]
@@ -365,7 +368,7 @@ pub struct HostRouteSnapshotInfo {
     pub via_identity: Option<Buffer>,
     pub interface_id: Buffer,
     pub learned_at_millis: f64,
-    pub last_relayed_at_millis: f64,
+    pub last_route_activity_at_millis: f64,
     pub expires_at_millis: f64,
 }
 
@@ -417,7 +420,7 @@ pub struct RouteInfo {
     pub via: Option<Buffer>,
     pub interface_id: Buffer,
     pub learned_at_millis: f64,
-    pub last_relayed_at_millis: f64,
+    pub last_route_activity_at_millis: f64,
     pub expires_at_millis: f64,
 }
 
@@ -641,6 +644,9 @@ fn request_error(error: personal_rns::SendError<SendRequestFailure>) -> crate::e
         }
         personal_rns::SendError::Failed(SendRequestFailure::ResponseTooLarge) => {
             code_err(ErrorCode::ResponseTooLarge, "response is too large")
+        }
+        personal_rns::SendError::Failed(SendRequestFailure::ResourceCapacity) => {
+            code_err(ErrorCode::ResourceTableFull, "resource capacity exhausted")
         }
     }
 }
@@ -1008,6 +1014,18 @@ fn multicast_address_type(value: Option<String>) -> CodeResult<Option<MulticastA
         .transpose()
 }
 
+fn websocket_framing_selection(value: Option<String>) -> CodeResult<WebSocketFramingSelection> {
+    match required_interface_field(value, "framing")?.as_str() {
+        "RawPacket" => Ok(WebSocketFramingSelection::RawPacket),
+        "Hdlc" => Ok(WebSocketFramingSelection::Hdlc),
+        "Kiss" => Ok(WebSocketFramingSelection::Kiss),
+        "Auto" => Ok(WebSocketFramingSelection::Auto),
+        other => Err(interface_config_error(format!(
+            "unknown WebSocket framing selection {other:?}"
+        ))),
+    }
+}
+
 fn stable_interface_config(spec: InterfaceConfigSpec) -> CodeResult<StableInterfaceConfig> {
     let kind = spec.kind.clone();
     let config = match kind.as_str() {
@@ -1144,9 +1162,11 @@ fn stable_interface_config(spec: InterfaceConfigSpec) -> CodeResult<StableInterf
         "AutomaticBluetoothLe" => StableInterfaceConfig::AutomaticBluetoothLe,
         "WebSocketClient" => StableInterfaceConfig::WebSocketClient {
             target: required_interface_field(spec.target, "target")?,
+            framing: websocket_framing_selection(spec.framing)?,
         },
         "WebSocketServer" => StableInterfaceConfig::WebSocketServer {
             bind: required_interface_field(spec.bind, "bind")?,
+            framing: websocket_framing_selection(spec.framing)?,
         },
         "BrowserRendezvous" => StableInterfaceConfig::BrowserRendezvous {
             url: required_interface_field(spec.url, "url")?,
@@ -2979,7 +2999,7 @@ fn host_snapshot_info(snapshot: prns_host::HostSnapshot) -> HostSnapshotInfo {
                 .map(|identity| marshal::to_buffer(identity.as_bytes())),
             interface_id: marshal::to_buffer(route.interface_id.as_bytes()),
             learned_at_millis: route.learned_at_millis as f64,
-            last_relayed_at_millis: route.last_relayed_at_millis as f64,
+            last_route_activity_at_millis: route.last_route_activity_at_millis as f64,
             expires_at_millis: route.expires_at_millis as f64,
         })
         .collect();
@@ -3055,7 +3075,7 @@ fn interface_info(snapshot: &InterfaceSnapshot) -> InterfaceInfo {
 
 fn route_info(route: &RouteSnapshot) -> RouteInfo {
     let learned_at_millis = route.learned_at.0 as f64;
-    let last_relayed_at_millis = route.last_relayed_at.0 as f64;
+    let last_route_activity_at_millis = route.last_route_activity_at.0 as f64;
     let expires_at_millis = route.expires_at.0 as f64;
     RouteInfo {
         destination: marshal::to_buffer(route.destination.as_bytes()),
@@ -3066,7 +3086,7 @@ fn route_info(route: &RouteSnapshot) -> RouteInfo {
         },
         interface_id: marshal::to_buffer(route.interface.as_bytes()),
         learned_at_millis,
-        last_relayed_at_millis,
+        last_route_activity_at_millis,
         expires_at_millis,
     }
 }

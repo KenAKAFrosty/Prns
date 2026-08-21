@@ -16,8 +16,18 @@ members = [
 resolver = "2"
 
 [patch.crates-io]
+esp-alloc = { path = "vendor/esp-alloc-0.10.0" }
 esp-radio = { path = "vendor/esp-radio-0.18.0" }
+esp-radio-rtos-driver = { path = "vendor/esp-radio-rtos-driver-0.3.0" }
 esp-phy = { path = "vendor/esp-phy-0.2.0" }
+# Backport esp-rs/esp-hal#6027 and #6032 until these fixes are published. The affected 0.3.0
+# runtime tracks the two S3 main stacks at four times their actual size, misses idle-stack overflow
+# checks, enters Xtensa interrupt handlers with an inconsistent processor mode, and can free a
+# self-deleting task's live stack. This local copy also restores the FromISR wake flag required by
+# the ESP-IDF radio adapter contract.
+esp-rtos = { path = "vendor/esp-rtos-0.3.0" }
+esp-backtrace = { path = "vendor/esp-backtrace-0.19.0" }
+xtensa-lx-rt = { path = "vendor/xtensa-lx-rt-0.22.0" }
 trouble-host = { path = "vendor/trouble-host-0.6.0" }
 bt-hci = { git = "https://github.com/embassy-rs/bt-hci", rev = "adae58af86d241237ba52ed27d0d9dc9588155ee" }
 
@@ -63,6 +73,7 @@ esp-println = { version = "0.17", default-features = false, features = ["esp32s3
 esp-bootloader-esp-idf = { version = "0.5", features = ["esp32s3"] }
 ssd1306 = "0.9"
 esp-rtos = { version = "0.3.0", features = ["esp32s3", "embassy", "esp-radio"] }
+esp-radio-rtos-driver = { version = "0.3.0", default-features = false }
 esp-alloc = { version = "0.10.0", features = ["internal-heap-stats"] }
 critical-section = "1"
 embassy-executor = { version = "0.10", default-features = false }

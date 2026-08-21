@@ -17,6 +17,7 @@ use crate::routing::links::channel::table::impls::HeapChannelTable;
 use crate::routing::links::resources::assembly::{
     HeapIncomingAssemblyTable, HeapOutgoingAssemblyTable,
 };
+use crate::routing::links::resources::pending::HeapPendingResourceOfferTable;
 use crate::routing::links::resources::table::{
     HeapResourceTable, IncomingResourceState, OutgoingResourceState,
 };
@@ -84,6 +85,7 @@ impl StorageLayout for GrowableHeap {
     type Links = HeapLinkTable;
     type OutgoingResources = HeapResourceTable<OutgoingResourceState>;
     type IncomingResources = HeapResourceTable<IncomingResourceState>;
+    type PendingResourceOffers = HeapPendingResourceOfferTable;
     type IncomingAssemblies = HeapIncomingAssemblyTable;
     type OutgoingAssemblies = HeapOutgoingAssemblyTable;
     type Channels = HeapChannelTable;

@@ -55,6 +55,50 @@ entrypoint = ["bash", "tools/build/android.sh"]
 requires = ["bash", "cargo"]
 
 [[task]]
+id = "build.hopspot.t096"
+summary = "Build the Heltec T096 firmware and package its recovery-compatible developer UF2."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/hopspot-nrf52840.sh", "t096"]
+requires = ["bash", "cargo", "python3", "rustc"]
+setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
+
+[[task]]
+id = "build.hopspot.t114"
+summary = "Build the headless Heltec T114 firmware and package its recovery-compatible developer UF2."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/hopspot-nrf52840.sh", "t114"]
+requires = ["bash", "cargo", "python3", "rustc"]
+setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
+
+[[task]]
+id = "build.hopspot.t1000e"
+summary = "Build the headless T1000-E firmware and package its recovery-compatible developer UF2."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/hopspot-nrf52840.sh", "t1000e"]
+requires = ["bash", "cargo", "python3", "rustc"]
+setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
+
+[[task]]
+id = "build.hopspot.mesh-tower-v2"
+summary = "Build the headless Heltec MeshTower V2 firmware with S140 6.1.1 Bluetooth Auto and package its recovery-compatible developer UF2."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/hopspot-mesh-tower-v2.sh"]
+requires = ["bash", "cargo", "python3", "rustc"]
+setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
+
+[[task]]
 id = "guide.rust-basics"
 summary = "Rust quickstart: run the bounded two-node API contract over an isolated localhost TCP connection."
 domain = "guide"
@@ -155,6 +199,28 @@ entrypoint = ["bash", "tools/build/napi.sh", "test"]
 requires = ["bash", "cargo", "node", "npm"]
 
 [[task]]
+id = "build.web-flasher.nrf-dfu.stage"
+summary = "Build and stage the pinned Nordic DFU WASM core for the hosted web flasher."
+domain = "build"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/stage-web-flasher-nrf-dfu-wasm.sh"]
+requires = ["bash", "cargo", "wasm-bindgen"]
+setup = "cargo install wasm-bindgen-cli --version 0.2.126 --locked"
+
+[[task]]
+id = "build.web-flasher.nrf-dfu.test"
+summary = "Test the Nordic DFU core and its generated Node.js WASM boundary."
+domain = "build"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/test-web-flasher-nrf-dfu-wasm.sh"]
+requires = ["bash", "cargo", "node", "wasm-bindgen"]
+setup = "cargo install wasm-bindgen-cli --version 0.2.126 --locked"
+
+[[task]]
 id = "build.wasm-docs.stage"
 summary = "Build and stage the browser transport playground into the documentation site."
 domain = "build"
@@ -167,7 +233,7 @@ setup = "cargo install wasm-bindgen-cli --version 0.2.126 --locked"
 
 [[task]]
 id = "device.techo.flash"
-summary = "Build T-Echo firmware, create a UF2 image, and copy it to the mounted bootloader."
+summary = "Detect the mounted T-Echo foundation, build its compatible UF2, flash it, and verify reboot."
 domain = "device"
 effect = "device-write"
 platforms = ["macos"]
@@ -796,12 +862,20 @@ entrypoint = ["python3", "tools/release/prnsd-distribution.py"]
 requires = ["python3"]
 
 [[internal]]
+path = "tools/device/developer_flasher_candidate.py"
+reason = "Validated local developer candidate boundary shared by the developer flasher workflow and its focused tests."
+
+[[internal]]
 path = "tools/release/flasher_acceptance_contract.py"
 reason = "Shared acceptance schema and scaffold implementation used by release commands and bundled qualification tools."
 
 [[internal]]
 path = "tools/release/flasher_build_metadata.py"
 reason = "Shared reproducible build metadata implementation."
+
+[[internal]]
+path = "tools/release/flasher_manifest.py"
+reason = "Shared signed flash manifest and UF2 validation implementation."
 
 [[internal]]
 path = "tools/release/flasher_browser_test_trust.py"

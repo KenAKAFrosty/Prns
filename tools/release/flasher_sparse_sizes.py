@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from flasher_manifest import target_artifacts
+
 
 MERGED_BASELINES = {
     "heltec-v4": 7_643_152,
@@ -13,7 +15,16 @@ SPARSE_BASELINES = {
     board: MERGED_BASELINES[board]
     for board in ("heltec-v4", "heltec-v4-r8", "t-beam-supreme")
 }
-SHIPPING_BOARDS = {"heltec-v4", "heltec-v4-r8", "t-beam-supreme", "xiao-esp32-c6", "t-echo"}
+SHIPPING_BOARDS = {
+    "heltec-v4",
+    "heltec-v4-r8",
+    "t-beam-supreme",
+    "xiao-esp32-c6",
+    "t-echo",
+    "t114",
+    "t096",
+    "t1000-e",
+}
 REQUIRED_REDUCTION_PERCENT = 60
 
 
@@ -31,9 +42,9 @@ def build_report(manifest: dict) -> dict:
             raise ValueError("sparse-size report encountered a malformed target")
         board = target.get("board_slug")
         transport = target.get("transport")
-        parts = target.get("parts")
-        if not isinstance(board, str) or board in boards or not isinstance(parts, list) or not parts:
+        if not isinstance(board, str) or board in boards:
             raise ValueError("sparse-size report encountered an invalid board or parts list")
+        parts = target_artifacts(target)
         boards.add(board)
         sizes = []
         for part in parts:
@@ -89,6 +100,8 @@ def build_report(manifest: dict) -> dict:
             record["gate"] = "reported-no-merged-baseline"
         elif transport == "uf2-mass-storage":
             record["gate"] = "verified-uf2-not-gap-padded"
+        elif transport == "nrf-serial-dfu":
+            record["gate"] = "verified-nrf-serial-dfu-not-gap-padded"
         else:
             raise ValueError(f"sparse-size report encountered unknown transport {transport!r}")
         reports.append(record)

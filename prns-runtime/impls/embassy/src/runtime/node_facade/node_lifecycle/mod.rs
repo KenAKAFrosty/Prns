@@ -8,7 +8,7 @@ use embedded_storage_async::nor_flash::NorFlash;
 use heapless::Vec as HeaplessVec;
 use static_cell::StaticCell;
 
-use crate::engine::{IssuedCommand, Journaled, MAX_SEND_REQUEST_DATA_LEN};
+use crate::engine::{IssuedCommand, Journaled, ProofRequest, MAX_SEND_REQUEST_DATA_LEN};
 use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceIfac};
 use crate::manifold::driver::{
     run_pooled, InterfaceLifecycle, PooledEgress, PooledWiring, ResumableHost,
@@ -320,6 +320,24 @@ where
             .await;
     }
 
+    /// Runs the node with the synchronous application decision used by destinations
+    /// configured with [`ProofStrategy::ProveIf`](crate::routing::ProofStrategy::ProveIf).
+    ///
+    /// The closure lives in this future and is consulted inline after delivery is
+    /// journaled. Prns allocates no policy table or per-packet decision state; capture a
+    /// shared handle to application state when proof policy must change at runtime.
+    pub async fn run_with_proof_decider<P>(self, should_prove: P, drive: impl Future<Output = ()>)
+    where
+        P: FnMut(&ProofRequest) -> bool,
+    {
+        self.run_with_inspection_store_and_proof_decider(
+            &NoInterfaceInspectionStore,
+            should_prove,
+            drive,
+        )
+        .await;
+    }
+
     pub async fn run_with_interface_store<
         const INTERFACES: usize,
         const PACKET_PHY_CAPACITY: usize,
@@ -340,9 +358,46 @@ where
         self.run_with_inspection_store(store, drive).await;
     }
 
+    pub async fn run_with_interface_store_and_proof_decider<
+        P,
+        const INTERFACES: usize,
+        const PACKET_PHY_CAPACITY: usize,
+        const PACKET_PHY_INDEX_BUCKETS: usize,
+    >(
+        self,
+        store: &EmbassyInterfaceStore<M, INTERFACES, PACKET_PHY_CAPACITY, PACKET_PHY_INDEX_BUCKETS>,
+        should_prove: P,
+        drive: impl Future<Output = ()>,
+    ) where
+        M: Sync,
+        P: FnMut(&ProofRequest) -> bool,
+    {
+        const {
+            assert!(
+                INTERFACES >= INTERFACE_CAPACITY,
+                "EmbassyInterfaceStore INTERFACES must cover PrnsNode INTERFACE_CAPACITY"
+            );
+        }
+        self.run_with_inspection_store_and_proof_decider(store, should_prove, drive)
+            .await;
+    }
+
     async fn run_with_inspection_store<Store>(self, store: &Store, drive: impl Future<Output = ()>)
     where
         Store: InterfaceInspectionStore,
+    {
+        self.run_with_inspection_store_and_proof_decider(store, |_| false, drive)
+            .await;
+    }
+
+    async fn run_with_inspection_store_and_proof_decider<Store, P>(
+        self,
+        store: &Store,
+        should_prove: P,
+        drive: impl Future<Output = ()>,
+    ) where
+        Store: InterfaceInspectionStore,
+        P: FnMut(&ProofRequest) -> bool,
     {
         let PrnsNode {
             node,
@@ -389,7 +444,10 @@ where
                 }
                 on_event(PrnsEvent::from(journaled), &state);
             },
-            crate::manifold::decline_all(),
+            crate::manifold::AppDeciders {
+                should_prove,
+                should_accept_resource: |_| false,
+            },
             store,
             &mut persistence,
         );
@@ -406,6 +464,20 @@ where
     pub async fn run_manifold(&mut self) {
         self.run_manifold_with_inspection_store(&NoInterfaceInspectionStore)
             .await;
+    }
+
+    /// Runs only the manifold with a synchronous application proof decision.
+    pub async fn run_manifold_with_proof_decider<P>(&mut self, should_prove: P)
+    where
+        P: FnMut(&ProofRequest) -> bool,
+    {
+        let mut persistence = NoManifoldPersistence;
+        self.run_manifold_with_inspection_store_and_persistence_and_proof_decider(
+            &NoInterfaceInspectionStore,
+            &mut persistence,
+            should_prove,
+        )
+        .await;
     }
 
     pub async fn run_manifold_with_interface_store<
@@ -425,6 +497,34 @@ where
             );
         }
         self.run_manifold_with_inspection_store(store).await;
+    }
+
+    pub async fn run_manifold_with_interface_store_and_proof_decider<
+        P,
+        const INTERFACES: usize,
+        const PACKET_PHY_CAPACITY: usize,
+        const PACKET_PHY_INDEX_BUCKETS: usize,
+    >(
+        &mut self,
+        store: &EmbassyInterfaceStore<M, INTERFACES, PACKET_PHY_CAPACITY, PACKET_PHY_INDEX_BUCKETS>,
+        should_prove: P,
+    ) where
+        M: Sync,
+        P: FnMut(&ProofRequest) -> bool,
+    {
+        const {
+            assert!(
+                INTERFACES >= INTERFACE_CAPACITY,
+                "EmbassyInterfaceStore INTERFACES must cover PrnsNode INTERFACE_CAPACITY"
+            );
+        }
+        let mut persistence = NoManifoldPersistence;
+        self.run_manifold_with_inspection_store_and_persistence_and_proof_decider(
+            store,
+            &mut persistence,
+            should_prove,
+        )
+        .await;
     }
 
     async fn run_manifold_with_inspection_store<Store>(&mut self, store: &Store)
@@ -464,6 +564,41 @@ where
             .await;
     }
 
+    pub async fn run_manifold_with_persistence_and_interface_store_and_proof_decider<
+        Fl,
+        Keys,
+        Observe,
+        Decide,
+        const PENDING: usize,
+        const INTERFACES: usize,
+        const PACKET_PHY_CAPACITY: usize,
+        const PACKET_PHY_INDEX_BUCKETS: usize,
+    >(
+        &mut self,
+        store: &EmbassyInterfaceStore<M, INTERFACES, PACKET_PHY_CAPACITY, PACKET_PHY_INDEX_BUCKETS>,
+        persistence: &mut EmbeddedFlashPersistence<Fl, Keys, Observe, PENDING>,
+        should_prove: Decide,
+    ) where
+        M: Sync,
+        Fl: NorFlash,
+        Keys: RouteSnapshotKeys,
+        Observe: FnMut(EmbeddedPersistenceDiagnostic),
+        Decide: FnMut(&ProofRequest) -> bool,
+    {
+        const {
+            assert!(
+                INTERFACES >= INTERFACE_CAPACITY,
+                "EmbassyInterfaceStore INTERFACES must cover PrnsNode INTERFACE_CAPACITY"
+            );
+        }
+        self.run_manifold_with_inspection_store_and_persistence_and_proof_decider(
+            store,
+            persistence,
+            should_prove,
+        )
+        .await;
+    }
+
     pub async fn restore_embedded_persistence<Fl, Keys, Observe, const PENDING: usize>(
         &mut self,
         persistence: &mut EmbeddedFlashPersistence<Fl, Keys, Observe, PENDING>,
@@ -488,6 +623,28 @@ where
     ) where
         Store: InterfaceInspectionStore,
         P: ManifoldPersistence<S>,
+    {
+        self.run_manifold_with_inspection_store_and_persistence_and_proof_decider(
+            store,
+            persistence,
+            |_| false,
+        )
+        .await;
+    }
+
+    async fn run_manifold_with_inspection_store_and_persistence_and_proof_decider<
+        Store,
+        P,
+        Decide,
+    >(
+        &mut self,
+        store: &Store,
+        persistence: &mut P,
+        should_prove: Decide,
+    ) where
+        Store: InterfaceInspectionStore,
+        P: ManifoldPersistence<S>,
+        Decide: FnMut(&ProofRequest) -> bool,
     {
         let PrnsNode {
             node,
@@ -533,7 +690,10 @@ where
                 }
                 on_event(PrnsEvent::from(journaled), state);
             },
-            crate::manifold::decline_all(),
+            crate::manifold::AppDeciders {
+                should_prove,
+                should_accept_resource: |_| false,
+            },
             store,
             persistence,
         );

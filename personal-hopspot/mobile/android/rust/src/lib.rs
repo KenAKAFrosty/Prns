@@ -2,7 +2,7 @@ mod bridge;
 mod engine;
 mod face;
 mod jni;
-mod mdns;
+mod service_discovery;
 
 use prns_ffi::bluetooth_auto::android as bluetooth_auto;
 use prns_ffi::wifi_aware::android as wifi_aware;

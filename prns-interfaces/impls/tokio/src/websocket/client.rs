@@ -6,6 +6,7 @@ use tokio_tungstenite::connect_async_with_config;
 use crate::reconnect::ReconnectPolicy;
 use crate::websocket::framing;
 use prns_core::interfaces::websocket;
+use prns_core::interfaces::websocket::WebSocketFramingSelection;
 use prns_core::interfaces::BitrateBps;
 use prns_core::interfaces::{
     ConnectionState, EffectiveInterfacePolicy, InterfaceDescriptor, InterfaceId, InterfaceKind,
@@ -20,20 +21,29 @@ const WEBSOCKET_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct WebSocketClientInterface {
     id: InterfaceId,
     target: String,
+    channel_tag: Vec<u8>,
     policy: EffectiveInterfacePolicy,
     reconnect_policy: ReconnectPolicy,
+    framing_selection: WebSocketFramingSelection,
     status: TokioInterfaceStatus,
 }
 
 impl WebSocketClientInterface {
     #[must_use]
-    pub fn new(target: String, bitrate: BitrateBps, reconnect_policy: ReconnectPolicy) -> Self {
-        let id = InterfaceId::from_channel_tag(InterfaceKind::WebSocketClient, target.as_bytes());
+    pub fn new(
+        target: String,
+        bitrate: BitrateBps,
+        reconnect_policy: ReconnectPolicy,
+        framing_selection: WebSocketFramingSelection,
+    ) -> Self {
+        let channel_tag = channel_tag(&target, framing_selection);
+        let id = InterfaceId::from_channel_tag(InterfaceKind::WebSocketClient, &channel_tag);
         Self::with_id_and_policy(
             id,
             target,
             websocket::policy_for_bitrate(bitrate),
             reconnect_policy,
+            framing_selection,
         )
     }
 
@@ -42,9 +52,11 @@ impl WebSocketClientInterface {
         target: String,
         policy: EffectiveInterfacePolicy,
         reconnect_policy: ReconnectPolicy,
+        framing_selection: WebSocketFramingSelection,
     ) -> Self {
-        let id = InterfaceId::from_channel_tag(InterfaceKind::WebSocketClient, target.as_bytes());
-        Self::with_id_and_policy(id, target, policy, reconnect_policy)
+        let channel_tag = channel_tag(&target, framing_selection);
+        let id = InterfaceId::from_channel_tag(InterfaceKind::WebSocketClient, &channel_tag);
+        Self::with_id_and_policy(id, target, policy, reconnect_policy, framing_selection)
     }
 
     #[must_use]
@@ -53,12 +65,14 @@ impl WebSocketClientInterface {
         target: String,
         bitrate: BitrateBps,
         reconnect_policy: ReconnectPolicy,
+        framing_selection: WebSocketFramingSelection,
     ) -> Self {
         Self::with_id_and_policy(
             id,
             target,
             websocket::policy_for_bitrate(bitrate),
             reconnect_policy,
+            framing_selection,
         )
     }
 
@@ -68,12 +82,16 @@ impl WebSocketClientInterface {
         target: String,
         policy: EffectiveInterfacePolicy,
         reconnect_policy: ReconnectPolicy,
+        framing_selection: WebSocketFramingSelection,
     ) -> Self {
+        let channel_tag = channel_tag(&target, framing_selection);
         Self {
             id,
             target,
+            channel_tag,
             policy,
             reconnect_policy,
+            framing_selection,
             status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
         }
     }
@@ -98,7 +116,7 @@ impl Interface for WebSocketClientInterface {
     }
 
     fn channel_tag(&self) -> &[u8] {
-        self.target.as_bytes()
+        &self.channel_tag
     }
 
     async fn run<Seam: InterfaceSeam>(self, mut seam: Seam) {
@@ -110,7 +128,11 @@ impl Interface for WebSocketClientInterface {
         loop {
             let connect = tokio::time::timeout(
                 WEBSOCKET_HANDSHAKE_TIMEOUT,
-                connect_async_with_config(self.target.as_str(), Some(framing::config()), false),
+                connect_async_with_config(
+                    self.target.as_str(),
+                    Some(framing::config(self.framing_selection)),
+                    false,
+                ),
             );
             #[cfg(feature = "tracing")]
             let connected = tracing::Instrument::instrument(
@@ -141,8 +163,11 @@ impl Interface for WebSocketClientInterface {
                         &self.status,
                         &mut airtime,
                         &mut throughput,
-                        self.policy.bitrate,
-                        started,
+                        framing::SessionConfig::new(
+                            self.policy.bitrate,
+                            started,
+                            self.framing_selection,
+                        ),
                     )
                     .await;
                     crate::diagnostic_log::debug!(
@@ -165,6 +190,12 @@ impl Interface for WebSocketClientInterface {
     }
 }
 
+fn channel_tag(target: &str, selection: WebSocketFramingSelection) -> Vec<u8> {
+    let mut tag = target.as_bytes().to_vec();
+    tag.extend_from_slice(selection.channel_tag_suffix());
+    tag
+}
+
 impl prns_core::interfaces::ReportsStatus for WebSocketClientInterface {
     fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
         let status = self.status();
@@ -182,6 +213,7 @@ impl prns_core::interfaces::ReportsStatus for WebSocketClientInterface {
 mod tests {
     use super::*;
     use futures_util::{SinkExt, StreamExt};
+    use prns_core::interfaces::websocket::WebSocketWireFraming;
     use tokio::net::TcpListener;
     use tokio::sync::mpsc::{self, UnboundedSender};
     use tokio_tungstenite::accept_async;
@@ -251,6 +283,7 @@ mod tests {
             std::format!("ws://{addr}/prns"),
             websocket::WEBSOCKET_BITRATE_ESTIMATE,
             ReconnectPolicy::STANDARD,
+            WebSocketFramingSelection::Fixed(WebSocketWireFraming::RawPacket),
         );
         tokio::spawn(interface.run(seam));
 
@@ -318,7 +351,9 @@ mod tests {
             Duration::from_secs(if cfg!(windows) { 20 } else { 2 }),
             connect_async_with_config(
                 std::format!("wss://localhost:{}/prns", addr.port()),
-                Some(framing::config()),
+                Some(framing::config(WebSocketFramingSelection::Fixed(
+                    WebSocketWireFraming::RawPacket,
+                ))),
                 false,
             ),
         )

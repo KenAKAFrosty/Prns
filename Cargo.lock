@@ -1825,6 +1825,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "hopspot"
+version = "0.3.6"
+dependencies = [
+ "personal-rns",
+]
+
+[[package]]
 name = "hopspot-flash"
 version = "0.3.6"
 dependencies = [
@@ -1832,7 +1839,9 @@ dependencies = [
  "ctrlc",
  "dialoguer",
  "espflash",
+ "nusb",
  "prns-flash-manifest",
+ "prns-nrf-dfu",
  "serde",
  "serde_json",
  "serialport",
@@ -2031,7 +2040,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "617ee6cf8e3f66f3b4ea67a4058564628cde41901316e19f559e14c7c72c5e7b"
 dependencies = [
  "core-foundation-sys",
- "mach2",
+ "mach2 0.4.3",
+]
+
+[[package]]
+name = "io-kit-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06d3a048d09fbb6597dbf7c69f40d14df4a49487db1487191618c893fc3b1c26"
+dependencies = [
+ "core-foundation-sys",
+ "mach2 0.5.0",
 ]
 
 [[package]]
@@ -2236,6 +2255,15 @@ name = "mach2"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d640282b302c0bb0a2a8e0233ead9035e3bed871f0b7e81fe4a1ec829765db44"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "mach2"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a1b95cd5421ec55b445b5ae102f5ea0e768de1f82bd3001e11f426c269c3aea"
 dependencies = [
  "libc",
 ]
@@ -2568,6 +2596,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "nusb"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "215a49c10e8cff30a0da93b258b21846c4e9242f7683748cfa8474fdc2e4d22b"
+dependencies = [
+ "core-foundation 0.10.1",
+ "core-foundation-sys",
+ "futures-core",
+ "io-kit-sys 0.5.0",
+ "linux-raw-sys",
+ "log",
+ "once_cell",
+ "rustix",
+ "slab",
+ "tokio",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "objc-sys"
 version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2802,6 +2849,8 @@ dependencies = [
  "embedded-storage-async",
  "heapless 0.8.0",
  "personal-rns",
+ "prns-core",
+ "prns-macros",
  "sha2 0.11.0",
 ]
 
@@ -2962,6 +3011,7 @@ dependencies = [
  "hmac 0.13.0",
  "keyring",
  "md-5 0.11.0",
+ "prns-macros",
  "proptest",
  "rayon",
  "rmp",
@@ -2996,6 +3046,7 @@ name = "prns-flash-manifest"
 version = "0.1.0"
 dependencies = [
  "minisign-verify",
+ "prns-core",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -3045,6 +3096,7 @@ dependencies = [
  "log",
  "mdns-sd",
  "netdev",
+ "nusb",
  "prns-config",
  "prns-core",
  "prns-ffi",
@@ -3064,6 +3116,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "prns-macros"
+version = "0.3.6"
+
+[[package]]
+name = "prns-nrf-dfu"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "prns-nrf-dfu-wasm"
+version = "0.1.0"
+dependencies = [
+ "prns-nrf-dfu",
+ "thiserror 2.0.18",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "prns-runtime"
 version = "0.3.6"
 dependencies = [
@@ -3073,6 +3145,7 @@ dependencies = [
  "futures-test",
  "heapless 0.8.0",
  "prns-core",
+ "prns-macros",
  "rmpv",
 ]
 
@@ -3684,8 +3757,8 @@ dependencies = [
  "cfg-if",
  "core-foundation 0.10.1",
  "core-foundation-sys",
- "io-kit-sys",
- "mach2",
+ "io-kit-sys 0.4.1",
+ "mach2 0.4.3",
  "nix 0.26.4",
  "scopeguard",
  "unescaper",

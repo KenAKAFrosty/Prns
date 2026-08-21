@@ -51,6 +51,9 @@ mdns-sd = { version = "0.20.2", optional = true }
 bluer = { version = "0.17", optional = true, features = ["l2cap", "bluetoothd"] }
 zbus = { version = "4", optional = true, default-features = false, features = ["tokio"] }
 
+[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))'.dependencies]
+nusb = { version = "0.2.4", optional = true, features = ["tokio"] }
+
 [target.'cfg(not(target_os = "ios"))'.dependencies]
 netdev = { version = "0.45", optional = true }
 
@@ -86,9 +89,11 @@ weave = ["serial", "dep:getrandom"]
 shared-instance = ["dep:tokio", "tokio/net", "dep:getrandom", "dep:serde-pickle", "prns-core/shared-instance-rpc", "prns-runtime/rns-management"]
 network-device-selection = ["dep:if-addrs", "dep:netdev"]
 wifi-auto = ["tcp", "network-device-selection"]
+wifi-auto-apple = ["wifi-auto", "dep:prns-ffi", "dep:getrandom"]
+wifi-auto-mdns = ["wifi-auto", "dep:mdns-sd", "dep:getrandom"]
 wifi-direct = ["tcp", "tokio/process", "dep:zbus", "dep:futures-util", "dep:if-addrs"]
 wifi-aware = ["tcp"]
-usb = ["serial", "dep:futures-util", "dep:prns-ffi"]
+usb = ["serial", "tcp", "dep:futures-util", "dep:prns-ffi", "dep:nusb"]
 interface-discovery = ["tcp", "backbone", "dep:getrandom", "prns-core/interface-discovery", "prns-runtime/interface-discovery"]
 config = ["dep:prns-config", "dep:tokio", "dep:if-addrs", "tokio/rt"]
 bluetooth-auto = ["dep:tokio", "tokio/rt", "dep:futures-util", "dep:bluer", "dep:prns-ffi"]

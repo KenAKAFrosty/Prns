@@ -34,7 +34,7 @@ else
     npm --prefix "$wasm_dir" run build:playground
 fi
 
-mkdir -p "$public_dir/sdk/browser/auto_wifi" "$public_dir/pkg"
+mkdir -p "$public_dir/sdk" "$public_dir/pkg"
 cp "$example_dir/index.html" "$public_dir/index.html"
 cp "$example_dir/styles.css" "$public_dir/styles.css"
 cp "$build_dir/prns-wasm/examples/browser-playground/lxmf.js" "$public_dir/lxmf.js"
@@ -44,17 +44,7 @@ cp "$build_dir/prns-wasm/examples/browser-playground/presentation.js" "$public_d
 cp "$build_dir/prns-wasm/examples/browser-playground/state.js" "$public_dir/state.js"
 cp "$build_dir/prns-wasm/examples/browser-playground/view.js" "$public_dir/view.js"
 cp "$example_dir/sdk/index.js" "$public_dir/sdk/index.js"
-cp "$build_dir/prns-js/src/async_lanes.js" "$public_dir/sdk/async_lanes.js"
-cp "$build_dir/prns-js/src/casework.js" "$public_dir/sdk/casework.js"
-cp "$build_dir/prns-js/src/contract.generated.js" "$public_dir/sdk/contract.generated.js"
-cp "$build_dir/prns-js/src/contract.js" "$public_dir/sdk/contract.js"
-cp "$build_dir/prns-js/src/memory_resource.js" "$public_dir/sdk/memory_resource.js"
-cp "$build_dir/prns-js/src/browser/auto_wifi.js" "$public_dir/sdk/browser/auto_wifi.js"
-cp "$build_dir/prns-js/src/browser/auto_wifi/recovery.js" "$public_dir/sdk/browser/auto_wifi/recovery.js"
-cp "$build_dir/prns-js/src/browser/index.js" "$public_dir/sdk/browser/index.js"
-cp "$build_dir/prns-js/src/browser/resource_compression_worker.js" "$public_dir/sdk/browser/resource_compression_worker.js"
-cp "$build_dir/prns-js/src/browser/resource_compressor.js" "$public_dir/sdk/browser/resource_compressor.js"
-cp "$build_dir/prns-js/src/browser/resource_send.js" "$public_dir/sdk/browser/resource_send.js"
+cp -R "$build_dir/prns-js/src/." "$public_dir/sdk/"
 cp "$build_dir/pkg/prns_wasm.js" "$public_dir/pkg/prns_wasm.js"
 cp "$build_dir/pkg/prns_wasm_bg.wasm" "$public_dir/pkg/prns_wasm_bg.wasm"
 

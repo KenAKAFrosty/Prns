@@ -1,5 +1,8 @@
 pub mod core;
+mod evidence;
 mod impls;
+
+pub(crate) use evidence::{RouteEvidenceIdIssuer, RouteEvidenceScan};
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "alloc")] {

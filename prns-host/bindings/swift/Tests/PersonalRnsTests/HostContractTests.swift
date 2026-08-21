@@ -123,8 +123,8 @@ func everySharedInterfaceFixtureMarshals() throws {
         .weave(port: "/dev/ttyWEAVE0"),
         .automaticUsb,
         .automaticBluetoothLe,
-        .webSocketClient(target: "ws://fixture.invalid/client"),
-        .webSocketServer(bind: "127.0.0.1:4246"),
+        .webSocketClient(target: "ws://fixture.invalid/client", framing: .kiss),
+        .webSocketServer(bind: "127.0.0.1:4246", framing: .hdlc),
         .browserRendezvous(url: "ws://fixture.invalid/rendezvous"),
     ]
     #expect(fixture.schemaVersion == HostContract.schemaVersion)

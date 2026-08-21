@@ -11,7 +11,8 @@ use tokio::sync::oneshot;
 
 use crate::engine::{
     CommandId, EstablishLinkFailure, Journaled, LinkEstablished, PacketReceiptDelivered,
-    PersistenceFlushTarget, PrnsCommand, SendSinglePacketFailure, SetTransportIdentityError,
+    PersistenceFlushTarget, PrnsCommand, ProofRequest, SendSinglePacketFailure,
+    SetTransportIdentityError,
 };
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{IdentityHash, Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -22,9 +23,10 @@ use crate::manifold::driver::{
     TokioHost,
 };
 use crate::routing::announce::AnnounceObservation;
+use crate::routing::links::resources::ResourceMemoryLimits;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::{RequestHandlerError, RequestPolicy};
-use crate::storage::{StorageLayout, TablePushError};
+use crate::storage::{GrowableHeap, StorageLayout, TablePushError};
 use crate::units::RttMillis;
 use crate::wire::DestinationHash;
 
@@ -88,6 +90,20 @@ pub enum NonRoutingIdentityError {
 }
 
 pub type SharedInstanceIdentityError = NonRoutingIdentityError;
+
+impl<St, R, F> PrnsNode<St, R, F, GrowableHeap>
+where
+    R: RequestEndpointSet<St>,
+    F: FnMut(PrnsEvent<'_>, &St),
+{
+    /// Applies independent incoming and outgoing active Resource buffer budgets
+    /// before the node is run.
+    #[must_use]
+    pub fn with_resource_memory_limits(mut self, limits: ResourceMemoryLimits) -> Self {
+        self.node.engine.set_resource_memory_limits(limits);
+        self
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegisterRequestEndpointError {
@@ -471,7 +487,22 @@ where
     /// [`run_until`](Self::run_until) when recipe-managed persistence must land a final
     /// state and ratchet flush.
     pub async fn run(self) -> Result<(), NodeRunError> {
-        self.run_until(core::future::pending::<()>()).await
+        self.run_with_proof_decider(|_| false).await
+    }
+
+    /// Drive the node with the synchronous application decision used by destinations
+    /// configured with [`ProofStrategy::ProveIf`](crate::routing::ProofStrategy::ProveIf).
+    ///
+    /// The closure is kept in the run future and consulted inline after delivery is
+    /// journaled. Prns allocates no policy table or per-packet decision state; capture a
+    /// shared handle to caller-owned state when proof policy must change at runtime.
+    /// [`run`](Self::run) keeps the default posture of declining every request.
+    pub async fn run_with_proof_decider<P>(self, should_prove: P) -> Result<(), NodeRunError>
+    where
+        P: FnMut(&ProofRequest) -> bool,
+    {
+        self.run_until_with_proof_decider(core::future::pending::<()>(), should_prove)
+            .await
     }
 
     /// Drive the node until `shutdown` resolves, then finish recipe-managed persistence
@@ -481,10 +512,19 @@ where
     /// and commits its final state and ratchet snapshots. Successful shutdown flushes,
     /// or a terminal persistence failure, reach the recipe's `on_event` callback before
     /// this method returns.
-    pub async fn run_until(
+    pub async fn run_until(self, shutdown: impl Future<Output = ()>) -> Result<(), NodeRunError> {
+        self.run_until_with_proof_decider(shutdown, |_| false).await
+    }
+
+    /// [`run_until`](Self::run_until) with a synchronous application proof decision.
+    pub async fn run_until_with_proof_decider<P>(
         mut self,
         shutdown: impl Future<Output = ()>,
-    ) -> Result<(), NodeRunError> {
+        should_prove: P,
+    ) -> Result<(), NodeRunError>
+    where
+        P: FnMut(&ProofRequest) -> bool,
+    {
         let restored = match self.persistence.take() {
             Some(node_persistence) => {
                 let report = node_persistence.restore(&mut self);
@@ -639,7 +679,7 @@ where
                 store,
                 crypto_pool,
                 crate::manifold::AppDeciders {
-                    should_prove: |_| false,
+                    should_prove,
                     should_accept_resource: move |offer| admission_decider.permits(offer),
                 },
             )

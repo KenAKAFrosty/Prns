@@ -32,6 +32,7 @@ use crate::routing::links::channel::table::impls::FixedHeapChannelTable;
 use crate::routing::links::resources::assembly::{
     FixedIncomingAssemblyTable, FixedStaticOutgoingAssemblyTable,
 };
+use crate::routing::links::resources::pending::FixedHeapPendingResourceOfferTable;
 use crate::routing::links::resources::table::{
     FixedHeapResourceTable, IncomingResourceState, OutgoingResourceState,
 };
@@ -70,6 +71,7 @@ const RETAINED_RATCHETS_PER_DESTINATION: usize = 8;
 /// Cheap: an open channel costs a metadata row; the bulk payloads live in [`CHANNEL_WINDOW_POOL`].
 const MAX_CONCURRENT_CHANNELS: usize = 8;
 const MAX_RESOURCE_ASSEMBLIES: usize = 1;
+const MAX_PENDING_RESOURCE_OFFERS: usize = 4;
 /// The real PSRAM dial; a channel that finds the pool dry cannot grow its window until another drains a slot.
 const CHANNEL_WINDOW_POOL: usize = 192;
 /// Incoming resources retain the existing conservative PSRAM bound.
@@ -103,6 +105,9 @@ pub struct Esp32S3<
 
 impl<A: Allocator, const MAX_REQUEST_HANDLERS: usize> Esp32S3<A, MAX_REQUEST_HANDLERS> {
     pub const TRACKED_DESTINATIONS: usize = MAX_TRACKED_DESTINATIONS;
+    pub const PENDING_RESOURCE_OFFERS: usize = MAX_PENDING_RESOURCE_OFFERS;
+    pub const PENDING_RESOURCE_OFFER_ROW_BYTES: usize =
+        FixedHeapPendingResourceOfferTable::<MAX_PENDING_RESOURCE_OFFERS, A>::RESERVED_ROW_BYTES;
 
     /// Cheap retained sessions outnumber every configured auto-interface fleet member, leaving
     /// admission room without multiplying resource or channel workspaces.
@@ -226,6 +231,7 @@ impl<A: Allocator + Default, const MAX_REQUEST_HANDLERS: usize> StorageLayout
         MAX_INCOMING_RESOURCE_PARTS,
         A,
     >;
+    type PendingResourceOffers = FixedHeapPendingResourceOfferTable<MAX_PENDING_RESOURCE_OFFERS, A>;
     type IncomingAssemblies = FixedIncomingAssemblyTable<MAX_RESOURCE_ASSEMBLIES>;
     type OutgoingAssemblies = FixedStaticOutgoingAssemblyTable<MAX_RESOURCE_ASSEMBLIES>;
     type Channels = FixedHeapChannelTable<
@@ -304,6 +310,10 @@ mod tests {
             1
         );
         let engine = EngineState::<L>::default();
+        assert_eq!(
+            engine.pending_resource_offers.capacity(),
+            L::PENDING_RESOURCE_OFFERS,
+        );
         assert_eq!(
             engine.incoming_resources.transfer_capacity(),
             super::MAX_INCOMING_RESOURCE_TRANSFER_BYTES,
@@ -400,6 +410,11 @@ mod tests {
         println!(
             "  InResources   {:>6} B (boxed)",
             core::mem::size_of::<<L as StorageLayout>::IncomingResources>()
+        );
+        println!(
+            "  PendingOffers {:>6} B control; {:>6} B allocator row request",
+            core::mem::size_of::<<L as StorageLayout>::PendingResourceOffers>(),
+            L::PENDING_RESOURCE_OFFER_ROW_BYTES,
         );
         println!(
             "  Channels      {:>6} B (metadata inline; payload pools boxed)",

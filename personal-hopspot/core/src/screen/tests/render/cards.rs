@@ -26,7 +26,17 @@ fn cards_name_each_connection_state_without_a_dormant_bucket() {
         (
             CardKind::Wifi,
             ConnectionState::Disconnected,
-            Some("LAN Down"),
+            Some("Waiting"),
+        ),
+        (
+            CardKind::WifiStation,
+            ConnectionState::Disconnected,
+            Some("Waiting"),
+        ),
+        (
+            CardKind::WifiStationDisabled,
+            ConnectionState::Disconnected,
+            Some("Waiting"),
         ),
         (
             CardKind::Usb,
@@ -35,11 +45,11 @@ fn cards_name_each_connection_state_without_a_dormant_bucket() {
         ),
     ];
 
-    let labels: HVec<Option<&str>, 10> = states
+    let labels: HVec<Option<&str>, 12> = states
         .iter()
         .map(|(kind, connection, _)| connection_status_label(*kind, *connection))
         .collect();
-    let expected: HVec<Option<&str>, 10> =
+    let expected: HVec<Option<&str>, 12> =
         states.iter().map(|(_, _, expected)| *expected).collect();
 
     assert_eq!(labels, expected);
@@ -53,7 +63,7 @@ fn card_label_budgets_follow_the_rendered_font_and_slot() {
 }
 
 #[test]
-fn card_stacks_traffic_and_moves_peers_right() {
+fn card_stacks_traffic_and_moves_destinations_right() {
     let mut display = MockDisplay::new();
     display.set_allow_overdraw(true);
     let card = Card {
@@ -90,7 +100,7 @@ fn card_stacks_traffic_and_moves_peers_right() {
 }
 
 #[test]
-fn large_link_and_peer_counts_fit_right_column() {
+fn large_link_and_destination_counts_fit_right_column() {
     let mut display = MockDisplay::new();
     display.set_allow_overdraw(true);
     let card = Card {
@@ -115,6 +125,34 @@ fn large_link_and_peer_counts_fit_right_column() {
     assert!(STAT_TEXT_X + compact_numeric_width("999K") < WIDTH);
     assert!(8 + compact_numeric_width("999M") < STAT_ICON_X);
     assert!(ACTIVITY_TEXT_X + compact_numeric_width("-") < WIDTH);
+}
+
+#[test]
+fn supervisor_cards_render_destinations_instead_of_unlabelled_peer_count() {
+    fn render(peers: u32, destinations: u32) -> MockDisplay<BinaryColor> {
+        let mut display = MockDisplay::new();
+        display.set_allow_overdraw(true);
+        let card = Card {
+            id: InterfaceId::new([0; 8]),
+            kind: CardKind::Wifi,
+            label: card_label("LAN"),
+            connection: ConnectionState::Connected,
+            failure_reason: None,
+            tx_bytes: 0,
+            rx_bytes: 0,
+            links: 0,
+            peers: Some(peers),
+            destinations,
+            rate_bytes_per_sec: 0,
+            last_activity_secs: None,
+        };
+
+        draw_card_with_selection(&mut display, 0, &card, false);
+        display
+    }
+
+    assert_eq!(render(2, 512), render(9, 512));
+    assert_ne!(render(2, 512), render(2, 511));
 }
 
 #[test]

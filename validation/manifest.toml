@@ -21,6 +21,32 @@ requirements = "validation/oracles/requirements.txt"
 version = "1.4.2"
 
 [registry]
+cargo_lock_workspaces = [
+    ".",
+    "benchmarks",
+    "docs/website",
+    "personal-hopspot/desktop",
+    "personal-hopspot/embedded/esp32",
+    "personal-hopspot/embedded/nrf52840",
+    "personal-hopspot/mobile/android/rust",
+    "personal-hopspot/mobile/ios/rust",
+    "prns-config",
+    "prns-ffi",
+    "prns-host/abi/c",
+    "prns-host/impls/cooperative",
+    "prns-host/impls/native",
+    "prns-host/impls/tokio",
+    "prns-interfaces/impls/embassy",
+    "prns-interfaces/impls/tokio",
+    "prns-napi",
+    "prns-runtime/impls/embassy",
+    "prns-runtime/impls/tokio",
+    "prns-wasm",
+    "prnsd",
+    "validation/fuzz",
+    "validation/integration",
+    "validation/oracles",
+]
 cargo_manifests = [
     "Cargo.toml",
     "benchmarks/Cargo.toml",
@@ -33,13 +59,23 @@ cargo_manifests = [
     "personal-hopspot/embedded/esp32/boards/heltec-v4-r8/Cargo.toml",
     "personal-hopspot/embedded/esp32/boards/t-beam-supreme/Cargo.toml",
     "personal-hopspot/embedded/esp32/boards/xiao-esp32-c6/Cargo.toml",
+    "personal-hopspot/embedded/esp32/vendor/esp-alloc-0.10.0/Cargo.toml",
+    "personal-hopspot/embedded/esp32/vendor/esp-backtrace-0.19.0/Cargo.toml",
     "personal-hopspot/embedded/esp32/vendor/esp-phy-0.2.0/Cargo.toml",
     "personal-hopspot/embedded/esp32/vendor/esp-radio-0.18.0/Cargo.toml",
+    "personal-hopspot/embedded/esp32/vendor/esp-radio-rtos-driver-0.3.0/Cargo.toml",
+    "personal-hopspot/embedded/esp32/vendor/esp-rtos-0.3.0/Cargo.toml",
     "personal-hopspot/embedded/esp32/vendor/trouble-host-0.6.0/Cargo.toml",
+    "personal-hopspot/embedded/esp32/vendor/xtensa-lx-rt-0.22.0/Cargo.toml",
     "personal-hopspot/embedded/nrf52840/Cargo.toml",
+    "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice/Cargo.toml",
+    "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice-macro/Cargo.toml",
+    "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice-s140-v6/Cargo.toml",
+    "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice-s140-v7/Cargo.toml",
     "personal-hopspot/flasher/Cargo.toml",
     "personal-hopspot/mobile/android/rust/Cargo.toml",
     "personal-hopspot/mobile/ios/rust/Cargo.toml",
+    "personal-hopspot/sdk/hopspot/Cargo.toml",
     "personal-rns/Cargo.toml",
     "prns-config/Cargo.toml",
     "prns-core/Cargo.toml",
@@ -52,7 +88,10 @@ cargo_manifests = [
     "prns-host/impls/tokio/Cargo.toml",
     "prns-interfaces/impls/embassy/Cargo.toml",
     "prns-interfaces/impls/tokio/Cargo.toml",
+    "prns-macros/Cargo.toml",
     "prns-napi/Cargo.toml",
+    "prns-nrf-dfu/Cargo.toml",
+    "prns-nrf-dfu-wasm/Cargo.toml",
     "prns-runtime/core/Cargo.toml",
     "prns-runtime/impls/embassy/Cargo.toml",
     "prns-runtime/impls/tokio/Cargo.toml",
@@ -91,9 +130,23 @@ format_manifests = [
     "validation/oracles/Cargo.toml",
 ]
 
+[registry.format_package_overrides]
+"personal-hopspot/embedded/nrf52840/Cargo.toml" = ["t-echo"]
+
 [[registry.asset_exemptions]]
 path = "prns-wasm/smoke/smoke.ts"
 reason = "Interactive browser-and-device smoke page; the automatable TypeScript smokes are registered suites."
+
+[[suite]]
+id = "cargo-locks"
+domain = "hygiene"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "python"
+timeout_seconds = 600
+command = ["__RUNNER_PYTHON__", "validation/hygiene/cargo-locks.py"]
+inputs = ["validation/hygiene/cargo-locks.py", "validation/manifest.toml"]
+artifacts = "validation-artifacts/results/cargo-locks"
 
 [[suite]]
 id = "host-contract-generated"
@@ -180,7 +233,9 @@ inputs = [
   "prns-host/distribution/RUST_PACKAGE.md",
   "prns-host/distribution",
   "tools/release/check-host-sdk-distribution.py",
+  "personal-hopspot/sdk/hopspot",
   "personal-rns/Cargo.toml",
+  "prns-js/package.json",
   "prns-config/Cargo.toml",
   "prns-core/Cargo.toml",
   "prns-ffi/Cargo.toml",
@@ -477,7 +532,7 @@ platform = "linux"
 toolchain = "python"
 timeout_seconds = 600
 command = ["bash", "validation/release/contracts.sh"]
-inputs = ["tools/tests", "tools/release", "prnsd/Cargo.toml", "validation/release/contracts.sh", "validation/release/prnsd-feature-contracts.py", "validation/release/workflow-contracts.py"]
+inputs = ["tools/tests", "tools/release", "prnsd/Cargo.toml", "validation/release/contracts.sh", "validation/release/prnsd-feature-contracts.py", "validation/release/workflow-contracts.py", "validation/release/acceptance-doc-contracts.py", "release/acceptance/README.md", "release/acceptance/QUALIFICATION.md", "release/acceptance/rosters/README.md", "release/flash/README.md", "release/flash/boards.json", "docs/release-dependency-audit.md"]
 artifacts = "validation-artifacts/results/release-contracts"
 
 [[suite]]
@@ -660,7 +715,7 @@ platform = "linux"
 toolchain = "stable"
 timeout_seconds = 3600
 command = ["bash", "validation/platforms/flasher-web.sh"]
-inputs = ["validation/platforms/flasher-web.sh", "docs/website", "README.md", "CONTRIBUTING.md", "docs/getting-started.md", "docs/testing.md", "docs/prnsd-config.md", "docs/prnsd-utilities.md", "docs/validation.md", "docs/observability.md", "prnsd/README.md", "personal-rns/README.md", "benchmarks/README.md", "benchmarks/CONTRIBUTING.md", "benchmarks/PROFILING.md", "tools/README.md"]
+inputs = ["validation/platforms/flasher-web.sh", "docs/website", "prns-nrf-dfu", "prns-nrf-dfu-wasm", "tools/build/stage-web-flasher-nrf-dfu-wasm.sh", "tools/build/test-web-flasher-nrf-dfu-wasm.sh", "README.md", "CONTRIBUTING.md", "docs/getting-started.md", "docs/testing.md", "docs/prnsd-config.md", "docs/prnsd-utilities.md", "docs/validation.md", "docs/observability.md", "prnsd/README.md", "personal-rns/README.md", "benchmarks/README.md", "benchmarks/CONTRIBUTING.md", "benchmarks/PROFILING.md", "tools/README.md"]
 artifacts = "validation-artifacts/results/flasher-web"
 
 [[suite]]
@@ -716,6 +771,31 @@ inputs = [
   "prns-js/tests",
 ]
 artifacts = "validation-artifacts/results/javascript-contract"
+
+[[suite]]
+id = "hopspot-javascript-package"
+domain = "platform"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "node"
+timeout_seconds = 120
+command = ["npm", "--prefix", "personal-hopspot/sdk/hopspot", "run", "check"]
+inputs = [
+  "personal-hopspot/sdk/hopspot/package.json",
+  "personal-hopspot/sdk/hopspot/index.js",
+  "personal-hopspot/sdk/hopspot/index.cjs",
+  "personal-hopspot/sdk/hopspot/index.d.ts",
+  "personal-hopspot/sdk/hopspot/native.js",
+  "personal-hopspot/sdk/hopspot/native.cjs",
+  "personal-hopspot/sdk/hopspot/native.d.ts",
+  "personal-hopspot/sdk/hopspot/browser.js",
+  "personal-hopspot/sdk/hopspot/browser.d.ts",
+  "personal-hopspot/sdk/hopspot/casework.js",
+  "personal-hopspot/sdk/hopspot/casework.cjs",
+  "personal-hopspot/sdk/hopspot/casework.d.ts",
+  "personal-hopspot/sdk/hopspot/test",
+]
+artifacts = "validation-artifacts/results/hopspot-javascript-package"
 
 [[suite]]
 id = "javascript-browser-package"
@@ -849,6 +929,19 @@ timeout_seconds = 300
 command = ["cargo", "test", "--manifest-path", "validation/oracles/Cargo.toml", "--test", "config_prns_interface_skip", "--locked"]
 inputs = ["validation/oracles/tests/config_prns_interface_skip.rs", "validation/oracles/python/prns_interface_skip_oracle.py"]
 artifacts = "validation-artifacts/results/oracle-config-prns-skip"
+
+[[suite]]
+id = "oracle-config-prns-section-skip"
+domain = "oracles"
+group = "deterministic"
+tiers = ["release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+interpreter = "smoke"
+timeout_seconds = 300
+command = ["cargo", "test", "--manifest-path", "validation/oracles/Cargo.toml", "--test", "config_prns_section_skip", "--locked"]
+inputs = ["validation/oracles/tests/config_prns_section_skip.rs", "validation/oracles/python/prns_section_skip_oracle.py"]
+artifacts = "validation-artifacts/results/oracle-config-prns-section-skip"
 
 [[suite]]
 id = "oracle-wire"
@@ -1136,6 +1229,56 @@ command = ["bash", "validation/interop/cases/rnx-interop-smoke.sh"]
 inputs = ["validation/interop/cases/rnx-interop-smoke.sh", "validation/interop/peers/rns_rnx_oracle.py"]
 artifacts = "validation-artifacts/results/interop-rnx"
 
+[[suite]]
+id = "interop-websocket-ecosystem-characterization"
+domain = "interop"
+group = "linux-network"
+tiers = ["scheduled"]
+platform = "linux"
+toolchain = "python"
+timeout_seconds = 600
+command = ["__RUNNER_PYTHON__", "validation/interop/websocket_ecosystem_characterization.py"]
+inputs = [
+  "validation/interop/websocket_ecosystem_characterization.py",
+  "validation/interop/peers/websocket_ecosystem/aerik.mjs",
+  "validation/interop/peers/websocket_ecosystem/bergie.mjs",
+  "validation/interop/peers/websocket_ecosystem/bergie_prns.mjs",
+  "validation/interop/peers/websocket_ecosystem/nilu96.py",
+  "validation/integration/Cargo.toml",
+  "validation/integration/Cargo.lock",
+  "validation/integration/examples/websocket_bergie_peer.rs",
+  "prns-core/src/interfaces/websocket",
+  "prns-interfaces/impls/tokio/src/websocket",
+]
+artifacts = "validation-artifacts/results/interop-websocket-ecosystem-characterization"
+
+[[suite]]
+id = "interop-websocket-bergie-lxmf-e2e"
+domain = "interop"
+group = "linux-network"
+tiers = ["scheduled"]
+platform = "linux"
+toolchain = "python"
+timeout_seconds = 600
+command = [
+  "__RUNNER_PYTHON__",
+  "validation/interop/websocket_ecosystem_characterization.py",
+  "--lxmf-application-e2e",
+]
+inputs = [
+  "validation/interop/websocket_ecosystem_characterization.py",
+  "validation/interop/websocket_bergie_lxmf_e2e.py",
+  "validation/interop/peers/websocket_ecosystem/bergie_lxmf/echo.mjs",
+  "validation/interop/peers/websocket_ecosystem/bergie_lxmf/sender.mjs",
+  "prns-core/src/interfaces/websocket",
+  "prns-interfaces/impls/tokio/src/websocket",
+  "personal-rns/src",
+  "prnsd/Cargo.toml",
+  "prnsd/Cargo.lock",
+  "prnsd/src",
+]
+artifacts = "validation-artifacts/results/interop-websocket-bergie-lxmf-e2e"
+
 [[fuzz_target]]
 name = "wire_announce_parse"
 path = "fuzz_targets/wire_announce_parse.rs"
@@ -1182,6 +1325,12 @@ tiers = ["release", "scheduled"]
 name = "shared_instance_rpc_request_msgpack"
 path = "fuzz_targets/shared_instance_rpc_request_msgpack.rs"
 group = "rpc"
+tiers = ["release", "scheduled"]
+
+[[fuzz_target]]
+name = "gnss_nmea_stream"
+path = "fuzz_targets/gnss_nmea_stream.rs"
+group = "gnss"
 tiers = ["release", "scheduled"]
 
 [[kani]]
@@ -1290,4 +1439,16 @@ tiers = ["release", "scheduled"]
 name = "path_request_parse_never_panics_for_any_wire_payload"
 source = "prns-core/src/routing/ingress/path_requests.rs"
 group = "routing"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "sentence_byte_append_preserves_the_buffer_bound"
+source = "prns-core/src/capabilities/positioning/gnss.rs"
+group = "gnss"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "every_scaled_coordinate_output_respects_its_axis_bound"
+source = "prns-core/src/capabilities/positioning/gnss.rs"
+group = "gnss"
 tiers = ["release", "scheduled"]

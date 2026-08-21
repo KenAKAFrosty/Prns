@@ -35,6 +35,12 @@ def roster(version: str) -> dict:
         ("xiao-esp32-c6", "web", "windows", "x86_64"),
         ("t-echo", "cli", "macos", "aarch64"),
         ("t-echo", "web", "linux", "x86_64"),
+        ("t114", "cli", "linux", "x86_64"),
+        ("t114", "web", "macos", "aarch64"),
+        ("t096", "cli", "linux", "aarch64"),
+        ("t096", "web", "macos", "aarch64"),
+        ("t1000-e", "cli", "macos", "x86_64"),
+        ("t1000-e", "web", "windows", "x86_64"),
     )
     for board, surface, os_name, architecture in hosts:
         assignment = {
@@ -61,12 +67,7 @@ def roster(version: str) -> dict:
             "tester": "github:solo-tester",
             "browser_ready": True,
         }
-        for browser, os_name, architecture in (
-            ("firefox", "linux", "x86_64"),
-            ("firefox", "macos", "aarch64"),
-            ("firefox", "windows", "x86_64"),
-            ("safari", "macos", "aarch64"),
-        )
+        for browser, os_name, architecture in (("safari", "macos", "aarch64"),)
     ]
     installations = [
         {
@@ -85,11 +86,28 @@ def roster(version: str) -> dict:
         }.items()
     ]
     return {
-        "schema": 2,
+        "schema": 3,
         "release": {"version": version},
         "release_owner": "github:release-owner",
         "confirmed_on": "2026-07-24",
         "physical_assignments": physical,
+        "web_serial_assignments": [
+            {
+                "board": board,
+                "os": os_name,
+                "architecture": architecture,
+                "browser": {"name": "firefox", "channel": "stable"},
+                "tester": "github:solo-tester",
+                "cables_ready": True,
+                "device_permissions_ready": True,
+                "recovery_instructions_reviewed": True,
+            }
+            for board, os_name, architecture in (
+                ("heltec-v4", "linux", "x86_64"),
+                ("t-beam-supreme", "macos", "x86_64"),
+                ("xiao-esp32-c6", "windows", "x86_64"),
+            )
+        ],
         "fallback_assignments": fallbacks,
         "installation_assignments": installations,
     }

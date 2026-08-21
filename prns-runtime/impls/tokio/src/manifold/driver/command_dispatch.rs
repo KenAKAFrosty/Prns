@@ -595,7 +595,7 @@ where
                 let _ = reply.send(RuntimeMetricsSnapshot {
                     taken_at: now,
                     engine: engine.metrics_snapshot(),
-                    egress: topology.egress.metrics_snapshot(&topology.pacers),
+                    egress: topology.egress.metrics_snapshot(&topology.pacers, now),
                     crypto: crypto_pool.map(CryptoPool::metrics_snapshot),
                     reliability: journal.reliability_metrics(),
                 });

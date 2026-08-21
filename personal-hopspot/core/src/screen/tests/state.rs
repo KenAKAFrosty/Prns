@@ -235,6 +235,37 @@ fn long_press_on_limits_opens_the_paged_limits_page() {
 }
 
 #[test]
+fn available_gnss_menu_toggles_the_live_panel_and_receiver_demand() {
+    let cards = test_cards::<2>(CardKind::Usb);
+    let content = test_content(&cards);
+    let mut state = test_ui_state_with_gnss();
+
+    state.handle_input(InputEvent::LongPress, content);
+    state.handle_input(InputEvent::ShortPress, content);
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(state.global_menu_selected_item(), Some(2));
+    assert_eq!(state.global_menu_item_label(GlobalMenuItem::Gnss), "GPS On");
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::ControlGnss(GnssReceiverCommand::Enable)
+    );
+    assert!(state.gnss_visible());
+
+    state.handle_input(InputEvent::LongPress, content);
+    state.handle_input(InputEvent::ShortPress, content);
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(
+        state.global_menu_item_label(GlobalMenuItem::Gnss),
+        "GPS Off"
+    );
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::ControlGnss(GnssReceiverCommand::Disable)
+    );
+    assert!(!state.gnss_visible());
+}
+
+#[test]
 fn long_press_on_sleep_enters_sleep_and_next_press_wakes() {
     let cards = test_cards::<4>(CardKind::Usb);
     let content = test_content(&cards);
@@ -256,7 +287,7 @@ fn long_press_on_sleep_enters_sleep_and_next_press_wakes() {
 }
 
 #[test]
-fn oled_capable_menu_offers_display_off_before_sleep() {
+fn oled_capable_menu_offers_display_controls_before_sleep() {
     let cards = test_cards::<4>(CardKind::Usb);
     let content = test_content(&cards);
     let mut state = test_ui_state_with_display_power();
@@ -268,6 +299,16 @@ fn oled_capable_menu_offers_display_off_before_sleep() {
     assert_eq!(
         state.handle_input(InputEvent::LongPress, content),
         UiAction::OledOff
+    );
+    assert!(state.global_selected());
+
+    state.handle_input(InputEvent::LongPress, content);
+    for _ in 0..OLED_AUTO_OFF_MENU_ITEM {
+        state.handle_input(InputEvent::ShortPress, content);
+    }
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::ToggleOledAutoOff
     );
     assert!(state.global_selected());
 
@@ -357,6 +398,48 @@ fn non_lora_interface_menus_cycle_power_and_back_only() {
     assert_eq!(state.interface_menu_selected_item(), Some(1));
     state.handle_input(InputEvent::ShortPress, content);
     assert_eq!(state.interface_menu_selected_item(), Some(0));
+}
+
+#[test]
+fn shared_instance_config_action_requires_platform_capability() {
+    let cards = test_cards::<1>(CardKind::SharedInstance);
+    let content = test_content(&cards);
+    let mut unavailable = test_ui_state();
+    unavailable.handle_input(InputEvent::ShortPress, content);
+    unavailable.handle_input(InputEvent::LongPress, content);
+    unavailable.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(unavailable.interface_menu_selected_item(), Some(1));
+    unavailable.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(
+        unavailable.interface_menu_selected_item(),
+        Some(POWER_MENU_ITEM)
+    );
+
+    let mut available = test_ui_state_with_shared_instance_config();
+    available.handle_input(InputEvent::ShortPress, content);
+    available.handle_input(InputEvent::LongPress, content);
+    available.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(
+        available.interface_menu_selected_item(),
+        Some(SHARED_INSTANCE_CONFIG_MENU_ITEM)
+    );
+    assert_eq!(
+        available.handle_input(InputEvent::LongPress, content),
+        UiAction::CopySharedInstanceConfig
+    );
+}
+
+#[test]
+fn ordinary_tcp_menu_never_exports_shared_instance_config() {
+    let cards = test_cards::<1>(CardKind::Tcp);
+    let content = test_content(&cards);
+    let mut state = test_ui_state_with_shared_instance_config();
+    state.handle_input(InputEvent::ShortPress, content);
+    state.handle_input(InputEvent::LongPress, content);
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(state.interface_menu_selected_item(), Some(1));
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(state.interface_menu_selected_item(), Some(POWER_MENU_ITEM));
 }
 
 #[test]

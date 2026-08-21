@@ -145,6 +145,24 @@ test("device sequences reject skipped phases and unstable progress", () => {
   );
 });
 
+test("managed Nordic DFU has one typed user-gesture continuation", () => {
+  const sequence = new BridgeEventSequence("device");
+  sequence.accept({ schema: 1, phase: "requesting_port" });
+  sequence.accept({ schema: 1, phase: "connecting" });
+  sequence.accept({ schema: 1, phase: "awaiting_bootloader_port" });
+  sequence.accept({
+    schema: 1,
+    phase: "verifying_target",
+    detectedChip: "nRF52840 (2886:0057)",
+  });
+  sequence.accept({ schema: 1, phase: "writing", current: 0, total: 4 });
+  sequence.accept({ schema: 1, phase: "writing", current: 4, total: 4 });
+  sequence.accept({ schema: 1, phase: "verifying_flash", current: 4, total: 4 });
+  sequence.accept({ schema: 1, phase: "resetting" });
+  sequence.accept({ schema: 1, phase: "success", current: 4, total: 4 });
+  assert.equal(sequence.terminal, true);
+});
+
 test("fresh device sequences require erasure before writing and cannot cancel after it begins", () => {
   const sequence = new BridgeEventSequence("device");
   sequence.accept({ schema: 1, phase: "requesting_port" });

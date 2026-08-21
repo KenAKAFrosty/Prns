@@ -11,8 +11,11 @@ use crate::routing::blackhole::IdentityBlackholes;
 use crate::routing::delivery::receipts::Receipts;
 use crate::routing::group_keys::GroupKeys;
 use crate::routing::links::resources::assembly::{IncomingAssemblies, OutgoingAssemblies};
+use crate::routing::links::resources::pending::PendingResourceOffers;
 use crate::routing::links::resources::streamed_open::ResourceOpenLane;
 use crate::routing::links::resources::table::{IncomingResources, OutgoingResources};
+#[cfg(feature = "alloc")]
+use crate::routing::links::resources::ResourceMemoryLimits;
 use crate::routing::links::table::Links;
 use crate::routing::links::transported::TransportedLinks;
 use crate::routing::path_requests::interface_path_request_limit::InterfacePathRequestLimits;
@@ -22,10 +25,13 @@ use crate::routing::path_requests::recursive::RecursivePathRequests;
 use crate::routing::path_requests::seen::SeenPathRequests;
 use crate::routing::request_handlers::RequestHandlers;
 use crate::routing::reverse_routes::ReverseRoutes;
+use crate::routing::routes::RouteEvidenceIdIssuer;
 use crate::routing::tunnel::Tunnels;
 use crate::routing::upstream_app_destinations::UpstreamAppDestinations;
 use crate::routing::warmth::{DepartedInterfaces, Departure};
 use crate::routing::RoutingTable;
+#[cfg(feature = "alloc")]
+use crate::storage::GrowableHeap;
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::wire::TransportId;
 use core::mem::MaybeUninit;
@@ -177,7 +183,14 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) announce_interface_metrics: Vec<super::InterfaceAnnounceMetricsSnapshot>,
     #[cfg(feature = "runtime-metrics")]
     pub(crate) interface_metric_groups: Vec<super::metrics::InterfaceMetricGroup>,
+    #[cfg(feature = "runtime-metrics")]
+    pub(crate) path_request_ingress_counts: super::PathRequestIngressCounts,
+    #[cfg(feature = "runtime-metrics")]
+    pub(crate) path_request_relay_counts: super::PathRequestRelayCounts,
+    #[cfg(feature = "runtime-metrics")]
+    pub(crate) resource_admission_event_counts: super::ResourceAdmissionEventCounts,
     pub(crate) routing_table: EngineRoutingTable<S>,
+    pub(crate) route_evidence_id_issuer: RouteEvidenceIdIssuer,
     pub(crate) destination_identities:
         DestinationIdentities<S::DestinationIdentities, S::DestinationIdentityAppData>,
     pub(crate) scheduled_announces: S::ScheduledAnnounces,
@@ -208,6 +221,7 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) links: Links<S::Links>,
     pub(crate) outgoing_resources: OutgoingResources<S::OutgoingResources>,
     pub(crate) incoming_resources: IncomingResources<S::IncomingResources>,
+    pub(crate) pending_resource_offers: PendingResourceOffers<S::PendingResourceOffers>,
     pub resource_open_lane: ResourceOpenLane,
     pub(crate) incoming_assemblies: IncomingAssemblies<S::IncomingAssemblies>,
     pub(crate) outgoing_assemblies: OutgoingAssemblies<S::OutgoingAssemblies>,
@@ -233,7 +247,14 @@ impl<S: StorageLayout> Default for EngineState<S> {
             announce_interface_metrics: Vec::new(),
             #[cfg(feature = "runtime-metrics")]
             interface_metric_groups: Vec::new(),
+            #[cfg(feature = "runtime-metrics")]
+            path_request_ingress_counts: Default::default(),
+            #[cfg(feature = "runtime-metrics")]
+            path_request_relay_counts: Default::default(),
+            #[cfg(feature = "runtime-metrics")]
+            resource_admission_event_counts: Default::default(),
             routing_table: Default::default(),
+            route_evidence_id_issuer: RouteEvidenceIdIssuer::default(),
             destination_identities: DestinationIdentities::default(),
             scheduled_announces: Default::default(),
             upstream_app_destinations: UpstreamAppDestinations::default(),
@@ -261,6 +282,7 @@ impl<S: StorageLayout> Default for EngineState<S> {
             links: Links::default(),
             outgoing_resources: OutgoingResources::default(),
             incoming_resources: IncomingResources::default(),
+            pending_resource_offers: PendingResourceOffers::default(),
             resource_open_lane: ResourceOpenLane::default(),
             incoming_assemblies: IncomingAssemblies::default(),
             outgoing_assemblies: OutgoingAssemblies::default(),
@@ -300,7 +322,14 @@ impl<S: StorageLayout> EngineState<S> {
             write!(announce_interface_metrics, Vec::new());
             #[cfg(feature = "runtime-metrics")]
             write!(interface_metric_groups, Vec::new());
+            #[cfg(feature = "runtime-metrics")]
+            write!(path_request_ingress_counts, Default::default());
+            #[cfg(feature = "runtime-metrics")]
+            write!(path_request_relay_counts, Default::default());
+            #[cfg(feature = "runtime-metrics")]
+            write!(resource_admission_event_counts, Default::default());
             write!(routing_table, Default::default());
+            write!(route_evidence_id_issuer, RouteEvidenceIdIssuer::default());
             write!(destination_identities, DestinationIdentities::default());
             write!(scheduled_announces, Default::default());
             write!(
@@ -343,6 +372,7 @@ impl<S: StorageLayout> EngineState<S> {
             write!(links, Links::default());
             write!(outgoing_resources, OutgoingResources::default());
             write!(incoming_resources, IncomingResources::default());
+            write!(pending_resource_offers, PendingResourceOffers::default());
             write!(resource_open_lane, ResourceOpenLane::default());
             write!(incoming_assemblies, IncomingAssemblies::default());
             write!(outgoing_assemblies, OutgoingAssemblies::default());
@@ -350,6 +380,28 @@ impl<S: StorageLayout> EngineState<S> {
             write!(dirty_interfaces, Default::default());
             write!(departed_interfaces, DepartedInterfaces::default());
             slot.assume_init_mut()
+        }
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl EngineState<GrowableHeap> {
+    /// Replaces the independent incoming and outgoing active Resource buffer
+    /// budgets used by heap hosts. Existing transfers remain active if a limit
+    /// is lowered beneath their current usage; new rows wait for usage to fall
+    /// back within the new limit.
+    pub fn set_resource_memory_limits(&mut self, limits: ResourceMemoryLimits) {
+        self.incoming_resources
+            .set_memory_limit(limits.incoming_bytes);
+        self.outgoing_resources
+            .set_memory_limit(limits.outgoing_bytes);
+    }
+
+    #[must_use]
+    pub fn resource_memory_limits(&self) -> ResourceMemoryLimits {
+        ResourceMemoryLimits {
+            incoming_bytes: self.incoming_resources.memory_limit(),
+            outgoing_bytes: self.outgoing_resources.memory_limit(),
         }
     }
 }
@@ -431,6 +483,39 @@ impl<S: StorageLayout> EngineState<S> {
                     .unwrap_or(u32::MAX),
                 interfaces: self.interface_announce_metrics_snapshot(),
             },
+            path_requests: super::EnginePathRequestMetricsSnapshot {
+                ingress: self.path_request_ingress_counts,
+                relays: self.path_request_relay_counts,
+                pending_discoveries: u32::try_from(self.recursive_path_requests.in_flight_count())
+                    .unwrap_or(u32::MAX),
+            },
+            resources: super::EngineResourceMetricsSnapshot {
+                incoming: super::ResourceDirectionMetricsSnapshot {
+                    active_buffer_bytes: u64::try_from(
+                        self.incoming_resources.active_buffer_bytes(),
+                    )
+                    .unwrap_or(u64::MAX),
+                    buffer_budget_bytes: u64::try_from(
+                        self.incoming_resources.buffer_memory_limit(),
+                    )
+                    .unwrap_or(u64::MAX),
+                    active_rows: u32::try_from(self.incoming_resources.len()).unwrap_or(u32::MAX),
+                },
+                outgoing: super::ResourceDirectionMetricsSnapshot {
+                    active_buffer_bytes: u64::try_from(
+                        self.outgoing_resources.active_buffer_bytes(),
+                    )
+                    .unwrap_or(u64::MAX),
+                    buffer_budget_bytes: u64::try_from(
+                        self.outgoing_resources.buffer_memory_limit(),
+                    )
+                    .unwrap_or(u64::MAX),
+                    active_rows: u32::try_from(self.outgoing_resources.len()).unwrap_or(u32::MAX),
+                },
+                pending_depth: u32::try_from(self.pending_resource_offers.len())
+                    .unwrap_or(u32::MAX),
+                admission_events: self.resource_admission_event_counts,
+            },
             route_count: u32::try_from(self.routing_table.route_count()).unwrap_or(u32::MAX),
             link_count: u32::try_from(self.links.active_link_count()).unwrap_or(u32::MAX),
             transported_link_count: u32::try_from(self.transported_links.validated_count())
@@ -511,6 +596,23 @@ mod tests {
             EngineProtocolPolicy::default().recursive_path_request_default,
             RecursivePathRequestDefault::Disabled,
         );
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn heap_resource_memory_limits_are_public_directional_configuration() {
+        let mut state = EngineState::<GrowableHeap>::default();
+        assert_eq!(
+            state.resource_memory_limits(),
+            ResourceMemoryLimits::DEFAULT_HOST,
+        );
+
+        let limits = ResourceMemoryLimits {
+            incoming_bytes: 123,
+            outgoing_bytes: 456,
+        };
+        state.set_resource_memory_limits(limits);
+        assert_eq!(state.resource_memory_limits(), limits);
     }
 
     #[test]

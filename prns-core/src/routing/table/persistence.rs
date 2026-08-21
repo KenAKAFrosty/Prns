@@ -7,7 +7,7 @@ use crate::routing::announce::{
     AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey, ANNOUNCE_ID_WIRE_LEN,
 };
 use crate::routing::route_expiry::RouteExpiryIndex;
-use crate::routing::routes::{RouteEntry, RouteTable};
+use crate::routing::routes::{RouteEntry, RouteEvidenceId, RouteTable};
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 
@@ -48,11 +48,13 @@ impl AnnounceIdRing<'_> {
             AnnounceIdRing::Table(ids) => (Some(ids.iter().copied()), None),
             AnnounceIdRing::Wire(bytes) => (
                 None,
-                Some(bytes.chunks_exact(ANNOUNCE_ID_WIRE_LEN).map(|chunk| {
-                    let mut bytes = [0u8; ANNOUNCE_ID_WIRE_LEN];
-                    bytes.copy_from_slice(chunk);
-                    AnnounceId::from_wire(bytes)
-                })),
+                Some(
+                    bytes
+                        .as_chunks::<ANNOUNCE_ID_WIRE_LEN>()
+                        .0
+                        .iter()
+                        .map(|bytes| AnnounceId::from_wire(*bytes)),
+                ),
             ),
         };
         table
@@ -107,7 +109,11 @@ where
         }
     }
 
-    pub fn seed_route(&mut self, row: &PersistedRouteRow<'_>) -> SeedRouteOutcome {
+    pub fn seed_route(
+        &mut self,
+        row: &PersistedRouteRow<'_>,
+        evidence_id: RouteEvidenceId,
+    ) -> SeedRouteOutcome {
         if self.index_of(&row.destination).is_some() {
             return SeedRouteOutcome::AlreadyPresent;
         }
@@ -117,7 +123,7 @@ where
         let Ok(handle) = self.announce_app_data.insert(row.app_data) else {
             return SeedRouteOutcome::AppDataArenaFull;
         };
-        let routes_slot = match self.routes.push(row.destination, row.entry) {
+        let routes_slot = match self.routes.push(row.destination, evidence_id, row.entry) {
             Ok(i) => i,
             Err(TablePushError::TableFull) => {
                 self.announce_app_data.free(handle);
@@ -142,5 +148,27 @@ where
         }
         self.route_expiries.invalidate();
         SeedRouteOutcome::Seeded
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wire_announce_id_ring_ignores_an_incomplete_trailing_id() {
+        let ids = [
+            AnnounceId::from_wire([0x11; ANNOUNCE_ID_WIRE_LEN]),
+            AnnounceId::from_wire([0x22; ANNOUNCE_ID_WIRE_LEN]),
+        ];
+        let mut wire = std::vec::Vec::new();
+        for id in ids {
+            wire.extend_from_slice(&id.to_wire_bytes());
+        }
+        wire.extend_from_slice(&[0x33; ANNOUNCE_ID_WIRE_LEN - 1]);
+
+        let ring = AnnounceIdRing::Wire(&wire);
+        assert_eq!(ring.len(), ids.len());
+        assert_eq!(ring.ids().collect::<std::vec::Vec<_>>(), ids);
     }
 }

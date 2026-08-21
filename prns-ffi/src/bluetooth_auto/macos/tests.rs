@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use objc2_core_bluetooth::CBCharacteristicProperties;
 use prns_core::interfaces::bluetooth_auto::{
     AdvertisingMode, BleBackend, BleIdentity, Control, ScanningMode,
@@ -6,12 +8,149 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::backend::{dial_admission, DialAdmission, StartupReadiness};
 use super::central::CentralPeerSession;
+use super::discovery::{
+    candidate_strength, discover_disposition, CandidateStrength, DiscoverDisposition,
+    DiscoveryGuard, PeripheralLinkState, SessionPresence, StaleCancellation, StaleLinkRecovery,
+};
 use super::gatt_link::{
     gatt_inbound_channel, gatt_inbound_channel_with_budget, GattInboundSendError,
 };
 use super::gatt_write::{write_admission, GattWriteAdmission, GattWriteMode, GattWritePlan};
-use super::MacosBleBackend;
 use super::MacosBleError;
+use super::{CoreBluetoothPeerId, MacosBleBackend};
+
+fn peer_id(value: u16) -> CoreBluetoothPeerId {
+    let mut bytes = [0; 16];
+    bytes[..2].copy_from_slice(&value.to_le_bytes());
+    CoreBluetoothPeerId(bytes)
+}
+
+#[test]
+fn discovery_recovery_distinguishes_owned_stale_and_transitioning_links() {
+    assert_eq!(
+        discover_disposition(
+            PeripheralLinkState::Disconnected,
+            SessionPresence::Absent,
+            StaleCancellation::Idle,
+            StaleLinkRecovery::Enabled,
+        ),
+        DiscoverDisposition::Adopt
+    );
+    for state in [
+        PeripheralLinkState::Connecting,
+        PeripheralLinkState::Connected,
+    ] {
+        assert_eq!(
+            discover_disposition(
+                state,
+                SessionPresence::Present,
+                StaleCancellation::Idle,
+                StaleLinkRecovery::Enabled,
+            ),
+            DiscoverDisposition::IgnoreOwned
+        );
+        assert_eq!(
+            discover_disposition(
+                state,
+                SessionPresence::Absent,
+                StaleCancellation::Idle,
+                StaleLinkRecovery::Enabled,
+            ),
+            DiscoverDisposition::CancelStale
+        );
+        assert_eq!(
+            discover_disposition(
+                state,
+                SessionPresence::Absent,
+                StaleCancellation::InFlight,
+                StaleLinkRecovery::Enabled,
+            ),
+            DiscoverDisposition::WaitForDisconnect
+        );
+        assert_eq!(
+            discover_disposition(
+                state,
+                SessionPresence::Absent,
+                StaleCancellation::Idle,
+                StaleLinkRecovery::Disabled,
+            ),
+            DiscoverDisposition::WaitForDisconnect
+        );
+    }
+    for state in [
+        PeripheralLinkState::Disconnecting,
+        PeripheralLinkState::Unknown,
+    ] {
+        assert_eq!(
+            discover_disposition(
+                state,
+                SessionPresence::Absent,
+                StaleCancellation::Idle,
+                StaleLinkRecovery::Enabled,
+            ),
+            DiscoverDisposition::WaitForDisconnect
+        );
+    }
+}
+
+#[test]
+fn candidate_strength_accepts_prns_name_or_manufacturer_marker() {
+    assert_eq!(candidate_strength(true, None), CandidateStrength::Strong);
+    assert_eq!(
+        candidate_strength(false, Some(&[0xff, 0xff, 0x03, 0x00])),
+        CandidateStrength::Strong
+    );
+    assert_eq!(
+        candidate_strength(false, Some(&[0x4c, 0x00, 0x03, 0x00])),
+        CandidateStrength::Weak
+    );
+    assert_eq!(candidate_strength(false, None), CandidateStrength::Weak);
+}
+
+#[test]
+fn service_miss_suppresses_only_weak_candidates_until_expiry() {
+    let now = Instant::now();
+    let peer = peer_id(1);
+    let mut guard = DiscoveryGuard::default();
+
+    assert!(guard.admit_candidate(peer, CandidateStrength::Weak, now));
+    guard.record_service_miss(peer, now);
+    assert!(!guard.admit_candidate(
+        peer,
+        CandidateStrength::Weak,
+        now + Duration::from_secs(299)
+    ));
+    assert!(guard.admit_candidate(
+        peer,
+        CandidateStrength::Strong,
+        now + Duration::from_secs(299)
+    ));
+
+    guard.record_service_miss(peer, now);
+    assert!(guard.admit_candidate(
+        peer,
+        CandidateStrength::Weak,
+        now + Duration::from_secs(300)
+    ));
+}
+
+#[test]
+fn discovery_guard_bounds_service_misses_and_stale_cancellation_retries() {
+    let now = Instant::now();
+    let mut guard = DiscoveryGuard::default();
+    for value in 0..=255 {
+        guard.record_service_miss(peer_id(value), now);
+    }
+    assert_eq!(guard.suppressed_len(), 256);
+    guard.record_service_miss(peer_id(256), now + Duration::from_secs(1));
+    assert_eq!(guard.suppressed_len(), 256);
+
+    let peer = peer_id(500);
+    assert!(!guard.cancellation_recent(peer, now));
+    guard.record_stale_cancellation(peer, now);
+    assert!(guard.cancellation_recent(peer, now + Duration::from_secs(29)));
+    assert!(!guard.cancellation_recent(peer, now + Duration::from_secs(30)));
+}
 
 #[test]
 fn startup_requires_central_gatt_and_l2cap_readiness() {

@@ -221,6 +221,8 @@ impl<S: StorageLayout> EngineState<S> {
             );
         }
 
+        self.reconcile_pending_link_route_evidence();
+
         let decision = determine_acceptance(AnnounceAcceptanceInput {
             packet_hops: received_hops,
             announce_id: announce.announce_id,
@@ -250,12 +252,18 @@ impl<S: StorageLayout> EngineState<S> {
             .routing_table
             .path_row(&announce.destination)
             .map(|entry| entry.receiving_interface);
+        let route_evidence_id = self.route_evidence_id_for_update(
+            &announce.destination,
+            arrival.receiving_interface,
+            arrival.next_hop,
+        );
         let warmth = WarmestOf(&self.tunnels, &self.departed_interfaces);
         let dirty = &mut self.dirty_interfaces;
         let destination_identities = &self.destination_identities;
         let scheduled_announces = &mut self.scheduled_announces;
         let outcome = self.routing_table.upsert_route_with_warmth(
             arrival,
+            route_evidence_id,
             interfaces,
             &warmth,
             &mut |removed| {
@@ -955,7 +963,7 @@ mod tests {
             &mut |_| {},
             None,
         );
-        assert_eq!(out, IngestPacketOutcome::Announce(AnnounceIngest::Ignored));
+        assert_eq!(out, IngestPacketOutcome::Ignored(IgnoreReason::Malformed));
         assert_eq!(state.route_count(), 0);
     }
 

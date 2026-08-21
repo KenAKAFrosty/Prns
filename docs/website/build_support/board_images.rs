@@ -8,6 +8,13 @@ pub(crate) fn generate() {
         ("T_BEAM_SUPREME", "t-beam-supreme.webp"),
         ("XIAO_ESP32_C6", "xiao-esp32-c6.webp"),
         ("T_ECHO", "t-echo.webp"),
+        (
+            "SEEED_CARD_TRACKER_T1000_E",
+            "seeed-card-tracker-t1000-e.webp",
+        ),
+        ("T114", "t114.webp"),
+        ("HELTEC_MESH_NODE_T096", "heltec-mesh-node-t096.webp"),
+        ("MESH_TOWER_V2", "mesh-tower-v2.webp"),
     ];
 
     let mut generated =

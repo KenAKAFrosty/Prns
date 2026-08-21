@@ -874,6 +874,8 @@ static STA_RX_DELIVERED: AtomicUsize = AtomicUsize::new(0);
 static AP_RX_ADMITTED: AtomicUsize = AtomicUsize::new(0);
 static AP_RX_REFUSED: AtomicUsize = AtomicUsize::new(0);
 static AP_RX_DELIVERED: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static WIFI_ISR_QUEUE_SENDS: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static WIFI_ISR_QUEUE_SEND_FAILURES: AtomicUsize = AtomicUsize::new(0);
 static RX_BLOCKED_BY_TX_CAPACITY: AtomicUsize = AtomicUsize::new(0);
 static TX_SUBMITTED: AtomicUsize = AtomicUsize::new(0);
 static TX_SUBMIT_REFUSED: AtomicUsize = AtomicUsize::new(0);
@@ -881,18 +883,10 @@ static TX_COMPLETED: AtomicUsize = AtomicUsize::new(0);
 static TX_COMPLETION_FAILED: AtomicUsize = AtomicUsize::new(0);
 static TX_CREDITS_RECOVERED: AtomicUsize = AtomicUsize::new(0);
 static TX_SUBMISSION_BLOCKED: AtomicBool = AtomicBool::new(false);
-static WIFI_ALLOCATIONS_PREFER_EXTERNAL: AtomicBool = AtomicBool::new(false);
-static RX_BLOCKED_ON_TX: AtomicBool = AtomicBool::new(false);
 static TX_SATURATED: AtomicBool = AtomicBool::new(false);
-static TX_SATURATED_SINCE_US: AtomicUsize = AtomicUsize::new(0);
 
 const WIFI_TX_BUFFER_TYPE_STATIC: i32 = 0;
 const WIFI_TX_BUFFER_TYPE_DYNAMIC: i32 = 1;
-const TX_CREDIT_RECOVERY_TIMEOUT_US: usize = 1_000_000;
-
-fn wifi_allocations_prefer_external() -> bool {
-    WIFI_ALLOCATIONS_PREFER_EXTERNAL.load(Ordering::Relaxed)
-}
 
 pub(crate) static DATA_QUEUE_RX_AP: NonReentrantMutex<VecDeque<PacketBuffer>> =
     NonReentrantMutex::new(VecDeque::new());
@@ -914,6 +908,10 @@ pub struct DataPathDiagnostics {
     access_point_rx_admitted: usize,
     access_point_rx_refused: usize,
     access_point_rx_delivered: usize,
+    wifi_mac_interrupts: usize,
+    wifi_power_interrupts: usize,
+    wifi_isr_queue_sends: usize,
+    wifi_isr_queue_send_failures: usize,
     rx_blocked_by_tx_capacity: usize,
     tx_submitted: usize,
     tx_submit_refused: usize,
@@ -959,7 +957,7 @@ impl core::fmt::Display for DataPathDiagnostics {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             formatter,
-            "sta_rx_queue={}/{} ap_rx_queue={} sta_admitted={} sta_delivered={} sta_refused={} ap_admitted={} ap_delivered={} ap_refused={} tx_inflight={}/{} tx_submitted={} tx_completed={} tx_submit_refused={} tx_completion_failed={} tx_credits_recovered={} tx_submission_blocked={} rx_tx_blocked={}",
+            "sta_rx_queue={}/{} ap_rx_queue={} sta_admitted={} sta_delivered={} sta_refused={} ap_admitted={} ap_delivered={} ap_refused={} wifi_irq=mac:{}/pwr:{} wifi_isr_queue_sends={} wifi_isr_queue_send_failures={} tx_inflight={}/{} tx_submitted={} tx_completed={} tx_submit_refused={} tx_completion_failed={} tx_credits_recovered={} tx_submission_blocked={} rx_tx_blocked={}",
             self.station_rx_queue_depth,
             self.rx_queue_capacity,
             self.access_point_rx_queue_depth,
@@ -969,6 +967,10 @@ impl core::fmt::Display for DataPathDiagnostics {
             self.access_point_rx_admitted,
             self.access_point_rx_delivered,
             self.access_point_rx_refused,
+            self.wifi_mac_interrupts,
+            self.wifi_power_interrupts,
+            self.wifi_isr_queue_sends,
+            self.wifi_isr_queue_send_failures,
             self.tx_inflight,
             self.tx_queue_capacity,
             self.tx_submitted,
@@ -996,6 +998,10 @@ pub fn data_path_diagnostics() -> DataPathDiagnostics {
         access_point_rx_admitted: AP_RX_ADMITTED.load(Ordering::Relaxed),
         access_point_rx_refused: AP_RX_REFUSED.load(Ordering::Relaxed),
         access_point_rx_delivered: AP_RX_DELIVERED.load(Ordering::Relaxed),
+        wifi_mac_interrupts: os_adapter::WIFI_MAC_INTERRUPTS.load(Ordering::Relaxed),
+        wifi_power_interrupts: os_adapter::WIFI_POWER_INTERRUPTS.load(Ordering::Relaxed),
+        wifi_isr_queue_sends: WIFI_ISR_QUEUE_SENDS.load(Ordering::Relaxed),
+        wifi_isr_queue_send_failures: WIFI_ISR_QUEUE_SEND_FAILURES.load(Ordering::Relaxed),
         rx_blocked_by_tx_capacity: RX_BLOCKED_BY_TX_CAPACITY.load(Ordering::Relaxed),
         tx_submitted: TX_SUBMITTED.load(Ordering::Relaxed),
         tx_submit_refused: TX_SUBMIT_REFUSED.load(Ordering::Relaxed),
@@ -1135,7 +1141,11 @@ pub(crate) unsafe extern "C" fn coex_init() -> i32 {
 
 fn wifi_deinit() -> Result<(), crate::WifiError> {
     radio_trace::record(RadioEventKind::WifiDriverDeinitStarted, 0);
-    esp_wifi_result!(unsafe { esp_wifi_stop() })?;
+    // Stop admitting packets and return every driver-owned RX buffer before asking the blob to
+    // stop. In a TX-completion stall, embassy-net cannot consume RX because its Driver contract
+    // pairs every receive token with a transmit token. The RX queue can therefore retain most of
+    // the dynamic buffers and leave too little internal DMA memory for `esp_wifi_stop()` to make
+    // progress. Draining after stop deadlocks precisely when recovery is needed most.
     let station_callback = unsafe {
         esp_wifi_internal_reg_rxcb(esp_interface_t_ESP_IF_WIFI_STA, None)
     };
@@ -1152,8 +1162,12 @@ fn wifi_deinit() -> Result<(), crate::WifiError> {
     let access_point_packets = DATA_QUEUE_RX_AP.with(core::mem::take);
     drop(station_packets);
     drop(access_point_packets);
-    esp_wifi_result!(unsafe { esp_supplicant_deinit() })?;
+    esp_wifi_result!(unsafe { esp_wifi_stop() })?;
+    // Preserve esp-radio's driver lifecycle ordering. The Wi-Fi blob owns the large RX/TX and
+    // control allocations; it must release those before the supplicant is torn down so repeated
+    // recovery does not strand one full driver allocation on every restart.
     esp_wifi_result!(unsafe { esp_wifi_deinit_internal() })?;
+    esp_wifi_result!(unsafe { esp_supplicant_deinit() })?;
     radio_trace::record(RadioEventKind::WifiDriverDeinitialized, 0);
     Ok(())
 }
@@ -1233,52 +1247,11 @@ fn decrement_inflight_counter() -> usize {
         })
     );
     if previous >= TX_QUEUE_SIZE.load(Ordering::Relaxed) {
-        TX_SATURATED_SINCE_US.store(0, Ordering::SeqCst);
         if TX_SATURATED.swap(false, Ordering::Relaxed) {
             radio_trace::record(RadioEventKind::WifiTxAvailable, previous);
         }
     }
     previous
-}
-
-fn recover_stalled_transmit_credit() {
-    let capacity = TX_QUEUE_SIZE.load(Ordering::Relaxed);
-    let inflight = WIFI_TX_INFLIGHT.load(Ordering::SeqCst);
-    if capacity == 0 || inflight < capacity {
-        return;
-    }
-    let now = esp_hal::time::Instant::now()
-        .duration_since_epoch()
-        .as_micros() as usize;
-    let saturated_since = TX_SATURATED_SINCE_US.load(Ordering::SeqCst);
-    if saturated_since == 0 {
-        let _ = TX_SATURATED_SINCE_US.compare_exchange(
-            0,
-            now.max(1),
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        );
-        return;
-    }
-    if now.wrapping_sub(saturated_since) < TX_CREDIT_RECOVERY_TIMEOUT_US {
-        return;
-    }
-    if WIFI_TX_INFLIGHT
-        .compare_exchange(
-            inflight,
-            inflight - 1,
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        )
-        .is_err()
-    {
-        return;
-    }
-    TX_SATURATED_SINCE_US.store(0, Ordering::SeqCst);
-    TX_SATURATED.store(false, Ordering::Relaxed);
-    TX_CREDITS_RECOVERED.fetch_add(1, Ordering::Relaxed);
-    radio_trace::record(RadioEventKind::WifiTxCreditRecovered, inflight);
-    embassy::TRANSMIT_WAKER.wake();
 }
 
 #[ram]
@@ -1300,7 +1273,9 @@ unsafe extern "C" fn esp_wifi_tx_done_cb(
     if previous_inflight == 0 {
         radio_trace::record(RadioEventKind::WifiTxCompletionUnmatched, 0);
     }
-    embassy::TRANSMIT_WAKER.wake();
+    // TX token availability no longer depends on completion credits, so the network executor
+    // does not need to be woken here. Keep the vendor callback bounded to atomic accounting: its
+    // progress must not depend on contending with the executor over a RawMutex-backed waker.
 }
 
 pub(crate) fn wifi_start_scan(
@@ -1436,55 +1411,30 @@ impl InterfaceType {
         }
     }
 
-    fn can_send(&self) -> bool {
-        if TX_SUBMISSION_BLOCKED.load(Ordering::Relaxed) {
-            return false;
-        }
-        recover_stalled_transmit_credit();
-        !TX_SUBMISSION_BLOCKED.load(Ordering::Relaxed)
-            && WIFI_TX_INFLIGHT.load(Ordering::SeqCst) < TX_QUEUE_SIZE.load(Ordering::Relaxed)
-    }
-
     fn increase_in_flight_counter(&self) {
         let inflight = WIFI_TX_INFLIGHT.fetch_add(1, Ordering::SeqCst) + 1;
         if inflight >= TX_QUEUE_SIZE.load(Ordering::Relaxed)
             && !TX_SATURATED.swap(true, Ordering::Relaxed)
         {
-            let now = esp_hal::time::Instant::now()
-                .duration_since_epoch()
-                .as_micros() as usize;
-            TX_SATURATED_SINCE_US.store(now.max(1), Ordering::SeqCst);
             radio_trace::record(RadioEventKind::WifiTxSaturated, inflight);
         }
     }
 
     fn tx_token(&self) -> Option<WifiTxToken> {
-        if !self.can_send() {
-            // TODO: perhaps we can use a counting semaphore with a short blocking timeout
-            crate::preempt::yield_task();
+        // `esp_wifi_internal_tx` copies the caller's buffer and reports the blob's actual
+        // admission result synchronously. Do not make token availability depend on tx-done
+        // callbacks: coexistence can delay or lose one of those callbacks, and a stale software
+        // credit must not prevent either future TX attempts or unrelated RX delivery.
+        if self.link_state() == embassy_net_driver::LinkState::Up {
+            Some(WifiTxToken { mode: *self })
+        } else {
+            None
         }
-
-        if self.can_send() {
-            // even checking for !Uninitialized would be enough to not crash
-            if self.link_state() == embassy_net_driver::LinkState::Up {
-                return Some(WifiTxToken { mode: *self });
-            }
-        }
-
-        None
     }
 
     fn rx_token(&self) -> Option<(WifiRxToken, WifiTxToken)> {
         let is_empty = self.data_queue_rx().with(|q| q.is_empty());
-        if !is_empty && !self.can_send() {
-            RX_BLOCKED_BY_TX_CAPACITY.fetch_add(1, Ordering::Relaxed);
-            if !RX_BLOCKED_ON_TX.swap(true, Ordering::Relaxed) {
-                radio_trace::record(RadioEventKind::WifiRxBlockedByTx, 0);
-            }
-        } else if RX_BLOCKED_ON_TX.swap(false, Ordering::Relaxed) {
-            radio_trace::record(RadioEventKind::WifiRxUnblockedByTx, 0);
-        }
-        if is_empty || !self.can_send() {
+        if is_empty {
             // TODO: use an OS queue with a short timeout
             crate::preempt::yield_task();
         }
@@ -1492,7 +1442,13 @@ impl InterfaceType {
         let is_empty = is_empty && self.data_queue_rx().with(|q| q.is_empty());
 
         if !is_empty {
-            self.tx_token().map(|tx| (WifiRxToken { mode: *self }, tx))
+            // embassy-net requires a companion TX token so the stack can form an immediate
+            // response, but that token does not need to reserve one of esp-radio's software
+            // completion credits. The blob remains the authority when the token is consumed.
+            Some((
+                WifiRxToken { mode: *self },
+                WifiTxToken { mode: *self },
+            ))
         } else {
             None
         }
@@ -1999,7 +1955,12 @@ pub(crate) fn esp_wifi_send_data(interface: wifi_interface_t, data: &mut [u8]) {
         TX_SUBMITTED.fetch_add(1, Ordering::Relaxed);
         let res = unsafe { esp_wifi_internal_tx(interface, ptr, len) };
 
-        if res != include::ESP_OK as i32 {
+        if res == include::ESP_OK as i32 {
+            // A later refusal is the only meaningful evidence that the blob itself is full.
+            // Clear a prior transient refusal as soon as a new frame is admitted; tx-done
+            // callbacks are deliberately not required for forward progress.
+            TX_SUBMISSION_BLOCKED.store(false, Ordering::Relaxed);
+        } else {
             TX_SUBMIT_REFUSED.fetch_add(1, Ordering::Relaxed);
             TX_SUBMISSION_BLOCKED.store(true, Ordering::Relaxed);
             radio_trace::record(RadioEventKind::WifiTxSubmitRefused, res as usize);
@@ -2476,7 +2437,6 @@ pub fn new<'d>(
 
     unsafe {
         let uses_static_tx_buffers = config.static_tx_buf_num > 0 && config.dynamic_tx_buf_num == 0;
-        WIFI_ALLOCATIONS_PREFER_EXTERNAL.store(uses_static_tx_buffers, Ordering::Relaxed);
         internal::G_CONFIG = wifi_init_config_t {
             osi_funcs: (&raw const internal::__ESP_RADIO_G_WIFI_OSI_FUNCS).cast_mut(),
 
@@ -2531,9 +2491,7 @@ pub fn new<'d>(
     let mut controller = WifiController {
         _guard,
         _phantom: Default::default(),
-        driver_state: WifiDriverState::Initialized,
         config: config.initial_config.clone(),
-        country_info: config.country_info,
         power_save_mode: PowerSaveMode::default(),
     };
 
@@ -2574,25 +2532,15 @@ pub fn new<'d>(
 pub struct WifiController<'d> {
     _guard: RadioRefGuard,
     _phantom: PhantomData<&'d ()>,
-    driver_state: WifiDriverState,
     config: Config,
-    country_info: CountryInfo,
     power_save_mode: PowerSaveMode,
-}
-
-#[derive(Debug)]
-enum WifiDriverState {
-    Initialized,
-    Uninitialized,
 }
 
 impl Drop for WifiController<'_> {
     fn drop(&mut self) {
         state::locked(|| {
-            if matches!(self.driver_state, WifiDriverState::Initialized) {
-                if let Err(e) = crate::wifi::wifi_deinit() {
-                    warn!("Failed to cleanly deinit wifi: {:?}", e);
-                }
+            if let Err(e) = crate::wifi::wifi_deinit() {
+                warn!("Failed to cleanly deinit wifi: {:?}", e);
             }
 
             set_access_point_state(WifiAccessPointState::Uninitialized);
@@ -2697,7 +2645,6 @@ impl WifiController<'_> {
             let country = country.into_blob();
             esp_wifi_result!(esp_wifi_set_country(&country))?;
         }
-        self.country_info = *country;
         Ok(())
     }
 
@@ -3014,30 +2961,29 @@ ignored."
         esp_wifi_result!(unsafe { esp_wifi_stop() })?;
         radio_trace::record(RadioEventKind::WifiDriverStopped, 0);
         WIFI_TX_INFLIGHT.store(0, Ordering::SeqCst);
-        TX_SATURATED_SINCE_US.store(0, Ordering::SeqCst);
         TX_SATURATED.store(false, Ordering::Relaxed);
         TX_SUBMISSION_BLOCKED.store(false, Ordering::Relaxed);
         embassy::TRANSMIT_WAKER.wake();
         Ok(())
     }
 
-    /// Reinitializes the Wi-Fi driver and restores the controller's configuration.
+    /// Restarts the configured Wi-Fi mode without reallocating the shared driver.
     pub fn restart(&mut self) -> Result<(), WifiError> {
         let config = self.config.clone();
-        let country_info = self.country_info;
         let power_save_mode = self.power_save_mode;
 
-        wifi_deinit()?;
-        self.driver_state = WifiDriverState::Uninitialized;
+        // A full esp_wifi_deinit/esp_wifi_init cycle strands the blob's dynamic RX allocation on
+        // ESP32-S3 when BLE coexistence is active. Repeating it consumes one complete RX pool per
+        // recovery and eventually panics with ESP_ERR_NO_MEM. Stopping the active mode releases
+        // its station/AP control blocks and flushes the data path while preserving the one driver
+        // allocation and coexistence registration established at boot.
+        Self::stop_impl()?;
+        esp_wifi_result!(unsafe { esp_wifi_set_mode(wifi_mode_t_WIFI_MODE_NULL) })?;
         WIFI_TX_INFLIGHT.store(0, Ordering::SeqCst);
-        TX_SATURATED_SINCE_US.store(0, Ordering::SeqCst);
         TX_SATURATED.store(false, Ordering::Relaxed);
         TX_SUBMISSION_BLOCKED.store(false, Ordering::Relaxed);
         embassy::TRANSMIT_WAKER.wake();
 
-        wifi_driver_init()?;
-        self.driver_state = WifiDriverState::Initialized;
-        self.set_country_info(&country_info)?;
         self.set_config(&config)?;
         self.set_power_saving(power_save_mode)
     }

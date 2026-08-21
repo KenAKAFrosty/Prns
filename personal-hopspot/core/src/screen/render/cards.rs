@@ -57,13 +57,15 @@ pub(in crate::screen) const fn connection_status_label(
         ConnectionState::Failed => Some("Failed"),
         ConnectionState::Disconnected => match kind {
             CardKind::Wifi | CardKind::WifiStation | CardKind::WifiStationDisabled => {
-                Some("LAN Down")
+                Some("Waiting")
             }
             CardKind::Ble => Some("No Peers"),
             CardKind::Usb => Some("Waiting"),
-            CardKind::LoRa | CardKind::EspNow | CardKind::Tcp | CardKind::Peer => {
-                Some("Disconnected")
-            }
+            CardKind::LoRa
+            | CardKind::EspNow
+            | CardKind::SharedInstance
+            | CardKind::Tcp
+            | CardKind::Peer => Some("Disconnected"),
         },
         ConnectionState::Disabled => Some("Off"),
         ConnectionState::Unknown => Some("Unknown"),
@@ -150,10 +152,10 @@ pub(in crate::screen) fn draw_card_with_selection<D: DrawTarget<Color = BinaryCo
     );
 
     draw_person(display, STAT_ICON_X, tx_y + 1);
-    let people = fmt_count(card.peers.unwrap_or(card.destinations));
+    let destinations = fmt_count(card.destinations);
     draw_compact_number(
         display,
-        people.as_str(),
+        destinations.as_str(),
         Point::new(STAT_TEXT_X, tx_y),
         BinaryColor::On,
     );

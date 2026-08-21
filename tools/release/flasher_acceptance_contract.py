@@ -8,13 +8,21 @@ import hashlib
 from pathlib import Path
 import re
 
+from flasher_manifest import require_schema, target_artifacts
 
-SHIPPING_BOARDS = (
+
+ESP_SERIAL_BOARDS = (
     "heltec-v4",
     "heltec-v4-r8",
     "t-beam-supreme",
     "xiao-esp32-c6",
+)
+SHIPPING_BOARDS = (
+    *ESP_SERIAL_BOARDS,
     "t-echo",
+    "t114",
+    "t096",
+    "t1000-e",
 )
 SURFACES = ("cli", "web")
 OS_ARCHITECTURES = {
@@ -31,17 +39,26 @@ CLI_TARGETS = {
     "aarch64-unknown-linux-gnu": ("linux", "aarch64"),
     "x86_64-pc-windows-msvc": ("windows", "x86_64"),
 }
-REQUIRED_FALLBACKS = {
-    ("firefox", "macos"),
-    ("firefox", "windows"),
-    ("firefox", "linux"),
-    ("safari", "macos"),
+WEB_SERIAL_HOSTS = {
+    "linux": {"aarch64", "x86_64"},
+    "macos": {"aarch64", "x86_64"},
+    "windows": {"x86_64"},
 }
+WEB_SERIAL_SCENARIOS = {
+    "correct-board",
+    "fresh-install",
+    "one-device",
+    "permission-grant",
+    "post-flash-boot",
+}
+REQUIRED_FALLBACKS = {("safari", "macos")}
 FALLBACK_SCENARIOS = {
     "esp-cli-guidance",
     "esp-connect-unavailable",
     "no-broken-connect-action",
     "t-echo-uf2-route",
+    "t096-uf2-route",
+    "t1000-e-recovery-uf2-route",
 }
 
 ESP_COMMON_SCENARIOS = {
@@ -76,12 +93,19 @@ UF2_COMMON_SCENARIOS = {
     "corrupt-artifact",
     "signature-rejection",
     "post-flash-boot",
+    "foundation-detection",
+    "unsupported-foundation-rejection",
+    "display",
+    "ble",
+    "lora",
 }
 UF2_WEB_SCENARIOS = {
     "manual-copy-flow",
     "missing-mount-guidance",
     "copy-failure-guidance",
     "reboot-guidance",
+    "malformed-foundation-rejection",
+    "local-only-info-file",
 }
 UF2_CLI_SCENARIOS = {
     "zero-mounts",
@@ -93,11 +117,56 @@ UF2_CLI_SCENARIOS = {
     "mount-disappearance",
     "reboot-detection",
     "reboot-timeout",
+    "application-usb-enumeration",
+}
+
+NRF_SERIAL_DFU_COMMON_SCENARIOS = {
+    "fresh-install",
+    "update",
+    "correct-board",
+    "incorrect-board",
+    "signed-dfu-verification",
+    "corrupt-artifact",
+    "signature-rejection",
+    "exact-bootloader-selection",
+    "reliable-dfu-transfer",
+    "activation",
+    "recovery-uf2-fallback",
+    "lora",
+    "usb",
+    "post-flash-boot",
+}
+NRF_SERIAL_DFU_WEB_SCENARIOS = {
+    "permission-denial",
+    "managed-application-entry",
+    "bootloader-serial-selection",
+    "navigation-warning",
+    "recovery-guidance",
+}
+NRF_SERIAL_DFU_CLI_SCENARIOS = {
+    "zero-devices",
+    "one-device",
+    "multiple-devices",
+    "port-unavailable",
+    "bootloader-entry",
+    "bootloader-timeout",
+    "transfer-retry",
+    "recovery-guidance",
 }
 
 PER_RUN_BASELINE_SCENARIOS = {"fresh-install", "post-flash-boot"}
-ACCEPTANCE_SCHEMA = 3
-MAINTAINER_OVERRIDE_SCHEMA = 4
+ACCEPTANCE_SCHEMA = 5
+T_ECHO_COMPATIBILITY_VARIANTS = (
+    "s140-6.1.1-fwid-0x00b6",
+    "s140-7.3.0-fwid-0x0123",
+)
+T114_COMPATIBILITY_VARIANTS = ("s140-6.1.1-fwid-0x00b6",)
+T096_COMPATIBILITY_VARIANTS = ("s140-6.1.1-fwid-0x00b6",)
+UF2_COMPATIBILITY_VARIANTS = {
+    "t-echo": T_ECHO_COMPATIBILITY_VARIANTS,
+    "t114": T114_COMPATIBILITY_VARIANTS,
+    "t096": T096_COMPATIBILITY_VARIANTS,
+}
 NOT_RUN = "NOT_RUN"
 UTC_TIMESTAMP = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
 
@@ -136,7 +205,39 @@ def applicable_scenarios(
         scenarios = set(UF2_COMMON_SCENARIOS)
         scenarios.update(UF2_WEB_SCENARIOS if surface == "web" else UF2_CLI_SCENARIOS)
         return scenarios
+    if transport == "nrf-serial-dfu":
+        scenarios = set(NRF_SERIAL_DFU_COMMON_SCENARIOS)
+        scenarios.update(
+            NRF_SERIAL_DFU_WEB_SCENARIOS
+            if surface == "web"
+            else NRF_SERIAL_DFU_CLI_SCENARIOS
+        )
+        return scenarios
     return set()
+
+
+def required_compatibilities(target: dict) -> tuple[str | None, ...]:
+    if target.get("transport") != "uf2-mass-storage":
+        return (None,)
+    board = target.get("board_slug")
+    expected = UF2_COMPATIBILITY_VARIANTS.get(board)
+    if expected is None:
+        raise ValueError(f"UF2 acceptance has no pinned compatibility matrix for {board!r}")
+    labels = []
+    for variant in target_artifacts(target):
+        family = variant.get("softdevice_family")
+        version = variant.get("softdevice_version")
+        fwid = variant.get("fwid")
+        if not all(isinstance(value, str) for value in (family, version, fwid)):
+            raise ValueError("UF2 acceptance compatibility identity is malformed")
+        labels.append(f"{family}-{version}-fwid-{fwid}")
+    if tuple(labels) != expected:
+        if board == "t-echo":
+            raise ValueError(
+                "T-Echo acceptance requires the exact S140 v6 and v7 compatibility matrix"
+            )
+        raise ValueError(f"{board} acceptance requires its exact pinned compatibility matrix")
+    return tuple(labels)
 
 
 def evidence_placeholder() -> dict:
@@ -165,8 +266,7 @@ def scaffold(
     release = manifest.get("release")
     signing = manifest.get("signing")
     raw_targets = manifest.get("targets")
-    if manifest.get("schema") != 2:
-        raise ValueError("manifest must use schema 2")
+    require_schema(manifest)
     if not isinstance(release, dict) or not isinstance(signing, dict):
         raise ValueError("manifest release/signing identity is malformed")
     if not isinstance(raw_targets, list):
@@ -205,7 +305,8 @@ def scaffold(
     if any(
         not isinstance(target.get("display_name"), str)
         or not target["display_name"].strip()
-        or target.get("transport") not in {"esp-serial", "uf2-mass-storage"}
+        or target.get("transport")
+        not in {"esp-serial", "uf2-mass-storage", "nrf-serial-dfu"}
         for target in targets.values()
     ):
         raise ValueError("manifest targets have malformed identity or transport fields")
@@ -218,6 +319,7 @@ def scaffold(
 
     runs = []
     physical_assignments = getattr(tester_roster, "physical", {})
+    web_serial_assignments = getattr(tester_roster, "web_serial", {})
     fallback_assignments = getattr(tester_roster, "fallbacks", {})
     installation_assignments = getattr(tester_roster, "installations", {})
     for board in SHIPPING_BOARDS:
@@ -227,36 +329,73 @@ def scaffold(
             if assignment is None:
                 raise ValueError(f"tester roster is missing {board}/{surface}")
             required = applicable_scenarios(target, surface, chip_counts)
-            run = {
-                "board": board,
-                "surface": surface,
-                "os": assignment.os_name,
+            for compatibility in required_compatibilities(target):
+                run = {
+                    "board": board,
+                    "surface": surface,
+                    "os": assignment.os_name,
+                    "architecture": assignment.architecture,
+                    "os_version": NOT_RUN,
+                    "hardware_identity": NOT_RUN,
+                    "hardware_model": target.get("display_name", NOT_RUN),
+                    "hardware_revision": NOT_RUN,
+                    "client": {
+                        "name": "prns-web-flasher"
+                        if surface == "web"
+                        else "hopspot-flash",
+                        "version": version,
+                    },
+                    "scenarios": {
+                        scenario: "not-run" for scenario in sorted(required)
+                    },
+                    "result": "not-run",
+                    "tester": assignment.tester,
+                    "completed_at": NOT_RUN,
+                    "evidence": evidence_placeholder(),
+                }
+                if compatibility is not None:
+                    run["compatibility_variant"] = compatibility
+                if surface == "web":
+                    run["browser"] = {
+                        "name": assignment.browser_name,
+                        "channel": "stable",
+                        "version": NOT_RUN,
+                    }
+                runs.append(run)
+
+    web_serial_smoke = []
+    for os_name in WEB_SERIAL_HOSTS:
+        assignment = web_serial_assignments.get(os_name)
+        if assignment is None:
+            raise ValueError(f"tester roster is missing Firefox Web Serial {os_name}")
+        target = targets[assignment.board]
+        web_serial_smoke.append(
+            {
+                "board": assignment.board,
+                "os": os_name,
                 "architecture": assignment.architecture,
                 "os_version": NOT_RUN,
                 "hardware_identity": NOT_RUN,
                 "hardware_model": target.get("display_name", NOT_RUN),
                 "hardware_revision": NOT_RUN,
                 "client": {
-                    "name": "prns-web-flasher"
-                    if surface == "web"
-                    else "hopspot-flash",
+                    "name": "prns-web-flasher",
                     "version": version,
                 },
+                "browser": {
+                    "name": "firefox",
+                    "channel": "stable",
+                    "version": NOT_RUN,
+                },
                 "scenarios": {
-                    scenario: "not-run" for scenario in sorted(required)
+                    scenario: "not-run" for scenario in sorted(WEB_SERIAL_SCENARIOS)
                 },
                 "result": "not-run",
                 "tester": assignment.tester,
                 "completed_at": NOT_RUN,
                 "evidence": evidence_placeholder(),
             }
-            if surface == "web":
-                run["browser"] = {
-                    "name": assignment.browser_name,
-                    "channel": "stable",
-                    "version": NOT_RUN,
-                }
-            runs.append(run)
+        )
 
     browser_fallbacks = []
     for browser, os_name in sorted(REQUIRED_FALLBACKS):
@@ -308,7 +447,7 @@ def scaffold(
         )
 
     return {
-        "schema": 3,
+        "schema": ACCEPTANCE_SCHEMA,
         "candidate": {
             "version": version,
             "channel": channel,
@@ -320,6 +459,7 @@ def scaffold(
             "prerelease_published_at": prerelease_published_at,
         },
         "runs": runs,
+        "web_serial_smoke": web_serial_smoke,
         "browser_fallbacks": browser_fallbacks,
         "installation_smoke": installation_smoke,
     }

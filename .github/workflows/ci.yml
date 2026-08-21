@@ -81,6 +81,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
       - name: clippy and test — prns-core external-alloc
         run: bash validation/native/external-alloc.sh
+      # Counter dimensions are feature-gated, so the default workspace test does not compile or
+      # execute their owning tests. Keep the regression that motivated iterable enums on a PR lane.
+      - name: test — prns-core runtime-metrics
+        run: cargo test -p prns-core --features std,runtime-metrics --locked
       # The tokio interface crate: every host interface family above the engine's tokio-host bind,
       # linted/tested/doc'd as the standalone workspace consumers actually build. --all-features is
       # honest here — the per-OS BLE backends live in target tables, so Linux gets BlueR and never
@@ -186,6 +190,7 @@ jobs:
         with:
           toolchain: 1.96.0
           components: clippy,rustfmt
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           shared-key: flasher-contracts
@@ -199,13 +204,18 @@ jobs:
           version: "1.21.0"
       - name: Install exact Dioxus CLI
         run: cargo binstall --locked --no-confirm --force dioxus-cli@0.7.5
+      - name: Install exact WASM binding CLI
+        run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
       - name: Shared manifest and standalone CLI
         run: |
           rustc --version | grep -E '^rustc 1\.96\.0 '
           test "$(node --version)" = "v24.18.0"
           cargo-binstall -V | grep -E '(^| )1\.21\.0($| )'
           dx --version | grep -E '(^| )0\.7\.5($| )'
+          wasm-bindgen --version | grep -E '^wasm-bindgen 0\.2\.126$'
           cargo test --locked -p prns-flash-manifest -p hopspot-flash
+      - name: Nordic DFU browser core
+        run: ./tools/prns run build.web-flasher.nrf-dfu.test
       - name: Shared manifest and standalone CLI lint
         run: cargo clippy --locked -p prns-flash-manifest -p hopspot-flash --all-targets -- -D warnings
       - name: Website Rust shell
@@ -290,6 +300,7 @@ jobs:
           submodules: false
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
+          components: llvm-tools-preview
           targets: riscv32imac-unknown-none-elf, thumbv7em-none-eabihf
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
       - run: bash validation/platforms/no-std-esp-build.sh
@@ -299,9 +310,19 @@ jobs:
       - name: prns-interfaces-embassy — cross-build (nRF52840 / thumbv7em)
         run: cargo build --locked --target thumbv7em-none-eabihf --features "lora,bluetooth-auto,usb"
         working-directory: prns-interfaces/impls/embassy
-      - name: t-echo firmware — cross-build (nRF52840 / thumbv7em)
-        run: cargo build --release --locked
+      - name: t-echo firmware — cross-build both S140 foundations (nRF52840 / thumbv7em)
+        run: |
+          cargo build --release --locked --no-default-features \
+            --features board-t-echo,softdevice-s140-v6 \
+            --target-dir target/s140-v6
+          cargo build --release --locked --no-default-features \
+            --features board-t-echo,softdevice-s140-v7 \
+            --target-dir target/s140-v7
         working-directory: personal-hopspot/embedded/nrf52840
+      - name: heltec t114 firmware — build recovery-compatible developer UF2
+        run: ./tools/prns build hopspot t114
+      - name: heltec meshtower v2 firmware — build recovery-compatible developer UF2
+        run: ./tools/prns build hopspot mesh-tower-v2
 
   android-service:
     # Android is now more than a foreground Activity shell: the Hopspot app packages a foreground

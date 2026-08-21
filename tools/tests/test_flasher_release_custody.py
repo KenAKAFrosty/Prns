@@ -26,6 +26,10 @@ from script_command import script_command
 from flasher_build_metadata import EXPECTED_TOOLS, EXPECTED_WEB_PACKAGES
 from flasher_reproducibility import SEPARATE_ENVELOPES, payload_identity, payload_manifest
 from flasher_sparse_sizes import build_report as build_sparse_size_report
+from flasher_manifest import (
+    validate_nrf_serial_dfu_recovery_artifact,
+    validate_uf2_artifact,
+)
 from source_snapshot import package_source_snapshot
 
 
@@ -50,6 +54,24 @@ CLI_TARGETS = {
 }
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def uf2_payload(application_base: int) -> bytes:
+    block = bytearray(512)
+    for offset, value in (
+        (0, 0x0A324655),
+        (4, 0x9E5D5157),
+        (8, 0x00002000),
+        (12, application_base),
+        (16, 256),
+        (20, 0),
+        (24, 1),
+        (28, 0xADA52840),
+        (508, 0x0AB16F30),
+    ):
+        block[offset : offset + 4] = value.to_bytes(4, "little")
+    block[32:288] = bytes(range(256))
+    return bytes(block)
 
 
 def run_script(script: str, *arguments: object, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -124,6 +146,15 @@ class CandidateFixture:
         flasher_bundle = root / "website" / "assets" / "flasher" / "prns-flash.js"
         flasher_bundle.parent.mkdir(parents=True)
         flasher_bundle.write_text("export const fixture = true;\n", encoding="utf-8")
+        nrf_dfu_assets = flasher_bundle.parent / "nrf-dfu"
+        nrf_dfu_assets.mkdir()
+        for name in (
+            "prns_nrf_dfu_core.js",
+            "prns_nrf_dfu_core.d.ts",
+            "prns_nrf_dfu_core_bg.wasm",
+            "prns_nrf_dfu_core_bg.wasm.d.ts",
+        ):
+            (nrf_dfu_assets / name).write_bytes(f"fixture {name}\n".encode())
         browser_wasm = (
             root
             / "website"
@@ -159,33 +190,120 @@ class CandidateFixture:
         targets = []
         self.firmware_paths = []
         for index, board in enumerate(
-            ("heltec-v4", "heltec-v4-r8", "t-beam-supreme", "xiao-esp32-c6", "t-echo"), start=1
+            (
+                "heltec-v4",
+                "heltec-v4-r8",
+                "t-beam-supreme",
+                "xiao-esp32-c6",
+                "t-echo",
+                "t114",
+                "t096",
+                "t1000-e",
+            ),
+            start=1,
         ):
-            relative = f"firmware/{board}/application.bin"
-            artifact = root / relative
-            artifact.parent.mkdir(parents=True, exist_ok=True)
-            payload = f"firmware-{index}-{board}".encode()
-            artifact.write_bytes(payload)
-            self.firmware_paths.append(artifact)
-            hosted = root / "website" / "releases" / VERSION / relative
-            hosted.parent.mkdir(parents=True, exist_ok=True)
-            hosted.write_bytes(artifact.read_bytes())
-            application_part = {
-                "kind": "uf2" if board == "t-echo" else "application",
-                "path": relative,
-                "size": artifact.stat().st_size,
-                "sha256": sha256(artifact),
-            }
-            if board != "t-echo":
-                application_part["offset"] = 0x10000
-            parts = [application_part]
+            filenames = (
+                ("t-echo-s140-6.1.1.uf2", "t-echo-s140-7.3.0.uf2")
+                if board == "t-echo"
+                else ("heltec-t114-s140-6.1.1.uf2",)
+                if board == "t114"
+                else ("t096-s140-6.1.1.uf2",)
+                if board == "t096"
+                else ("t1000e.bin", "t1000e.dat", "t1000e.uf2")
+                if board == "t1000-e"
+                else ("application.bin",)
+            )
+            artifacts = []
+            for filename in filenames:
+                relative = f"firmware/{board}/{filename}"
+                artifact = root / relative
+                artifact.parent.mkdir(parents=True, exist_ok=True)
+                if board in {"t-echo", "t114", "t096"}:
+                    application_base = 0x26000 if "6.1.1" in filename else 0x27000
+                    artifact.write_bytes(uf2_payload(application_base))
+                elif board == "t1000-e" and filename == "t1000e.bin":
+                    artifact.write_bytes(bytes(range(256)))
+                elif board == "t1000-e" and filename == "t1000e.uf2":
+                    artifact.write_bytes(uf2_payload(0x27000))
+                else:
+                    artifact.write_bytes(f"firmware-{index}-{board}-{filename}".encode())
+                self.firmware_paths.append(artifact)
+                hosted = root / "website" / "releases" / VERSION / relative
+                hosted.parent.mkdir(parents=True, exist_ok=True)
+                hosted.write_bytes(artifact.read_bytes())
+                artifacts.append(
+                    {
+                        "path": relative,
+                        "size": artifact.stat().st_size,
+                        "sha256": sha256(artifact),
+                    }
+                )
+            if board == "t-echo":
+                parts = []
+                variants = [
+                    {
+                        **artifact,
+                        "softdevice_family": "s140",
+                        "softdevice_version": version,
+                        "fwid": fwid,
+                        "application_base": application_base,
+                        "family_id": "0xada52840",
+                    }
+                    for artifact, version, fwid, application_base in zip(
+                        artifacts,
+                        ("6.1.1", "7.3.0"),
+                        ("0x00b6", "0x0123"),
+                        ("0x00026000", "0x00027000"),
+                    )
+                ]
+            elif board in {"t114", "t096"}:
+                parts = []
+                variants = [
+                    {
+                        **artifacts[0],
+                        "softdevice_family": "s140",
+                        "softdevice_version": "6.1.1",
+                        "fwid": "0x00b6",
+                        "application_base": "0x00026000",
+                        "family_id": "0xada52840",
+                    }
+                ]
+            elif board == "t1000-e":
+                parts = []
+                variants = []
+            else:
+                parts = [{**artifacts[0], "kind": "application", "offset": 0x10000}]
+                variants = []
             target = {
                 "board_slug": board,
                 "transport": (
-                    "uf2-mass-storage" if board == "t-echo" else "esp-serial"
+                    "uf2-mass-storage"
+                    if board in {"t-echo", "t114", "t096"}
+                    else "nrf-serial-dfu"
+                    if board == "t1000-e"
+                    else "esp-serial"
                 ),
                 "parts": parts,
+                "variants": variants,
             }
+            if board == "t1000-e":
+                target["nrf_serial_dfu"] = {
+                    "application": {**artifacts[0], "kind": "dfu-application"},
+                    "init_packet": {**artifacts[1], "kind": "dfu-init-packet"},
+                    "compatibility": {
+                        "softdevice_family": "s140",
+                        "softdevice_version": "7.3.0",
+                        "fwid": "0x0123",
+                        "application_base": "0x00027000",
+                        "application_end_exclusive": "0x000ea000",
+                    },
+                    "recovery": {
+                        "mount_label": "T1000-E",
+                        "board_id_prefix": "nrf52840-t1000-e-v1",
+                        "family_id": "0xada52840",
+                        "artifact": {**artifacts[2], "kind": "uf2"},
+                    },
+                }
             targets.append(target)
         write_json(
             root / "metadata" / "source-capabilities.json",
@@ -208,12 +326,15 @@ class CandidateFixture:
                         "t-beam-supreme",
                         "xiao-esp32-c6",
                         "t-echo",
+                        "t114",
+                        "t096",
+                        "t1000-e",
                     )
                 ],
             },
         )
         self.manifest = {
-            "schema": 2,
+            "schema": 3,
             "release": {
                 "version": VERSION,
                 "channel": "stable",
@@ -256,6 +377,7 @@ class CandidateFixture:
                     "node": "v24.18.0",
                     "npm": "11.0.0",
                     "dioxus": "dioxus 0.7.5",
+                    "wasm_bindgen": "wasm-bindgen 0.2.126",
                     "cargo_binstall": "cargo-binstall 1.21.0",
                     "espup": "espup 0.17.1",
                     "esp_rustc": "rustc 1.95.0-nightly (fixture)",
@@ -295,6 +417,7 @@ class CandidateFixture:
             "create-flasher-acceptance.py": SCRIPTS / "create-flasher-acceptance.py",
             "validate-flasher-acceptance.py": SCRIPTS / "validate-flasher-acceptance.py",
             "flasher_acceptance_contract.py": SCRIPTS / "flasher_acceptance_contract.py",
+            "flasher_manifest.py": SCRIPTS / "flasher_manifest.py",
             "serve-flasher-candidate.py": SCRIPTS / "serve-flasher-candidate.py",
             "verify-flasher-candidate-files.py": SCRIPTS / "verify-flasher-candidate-files.py",
             "validate-flasher-tester-roster.py": SCRIPTS / "validate-flasher-tester-roster.py",
@@ -315,6 +438,12 @@ class CandidateFixture:
             ("xiao-esp32-c6", "web"): ("windows", "x86_64"),
             ("t-echo", "cli"): ("linux", "aarch64"),
             ("t-echo", "web"): ("macos", "x86_64"),
+            ("t114", "cli"): ("linux", "x86_64"),
+            ("t114", "web"): ("macos", "aarch64"),
+            ("t096", "cli"): ("linux", "aarch64"),
+            ("t096", "web"): ("macos", "aarch64"),
+            ("t1000-e", "cli"): ("macos", "x86_64"),
+            ("t1000-e", "web"): ("windows", "x86_64"),
         }
         physical_assignments = []
         for (board, surface), (os_name, architecture) in physical_hosts.items():
@@ -335,11 +464,28 @@ class CandidateFixture:
                 }
             physical_assignments.append(assignment)
         roster = {
-            "schema": 2,
+            "schema": 3,
             "release": {"version": VERSION},
             "release_owner": "github:fixture-owner",
             "confirmed_on": "2025-01-01",
             "physical_assignments": physical_assignments,
+            "web_serial_assignments": [
+                {
+                    "board": board,
+                    "os": os_name,
+                    "architecture": architecture,
+                    "browser": {"name": "firefox", "channel": "stable"},
+                    "tester": "github:fixture",
+                    "cables_ready": True,
+                    "device_permissions_ready": True,
+                    "recovery_instructions_reviewed": True,
+                }
+                for board, os_name, architecture in (
+                    ("heltec-v4", "linux", "x86_64"),
+                    ("t-beam-supreme", "macos", "x86_64"),
+                    ("xiao-esp32-c6", "windows", "x86_64"),
+                )
+            ],
             "fallback_assignments": [
                 {
                     "browser": {"name": browser, "channel": "stable"},
@@ -348,12 +494,7 @@ class CandidateFixture:
                     "tester": "github:fixture",
                     "browser_ready": True,
                 }
-                for browser, os_name, architecture in (
-                    ("firefox", "linux", "x86_64"),
-                    ("firefox", "macos", "x86_64"),
-                    ("firefox", "windows", "x86_64"),
-                    ("safari", "macos", "aarch64"),
-                )
+                for browser, os_name, architecture in (("safari", "macos", "aarch64"),)
             ],
             "installation_assignments": [
                 {
@@ -578,6 +719,51 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         result = self.validate_unsigned()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("SHA-256 mismatch", result.stderr)
+
+    def test_unsigned_candidate_requires_the_nordic_dfu_browser_core(self) -> None:
+        adapter = (
+            self.fixture.root
+            / "website"
+            / "assets"
+            / "flasher"
+            / "nrf-dfu"
+            / "prns_nrf_dfu_core_bg.wasm"
+        )
+        adapter.unlink()
+        result = self.validate_unsigned()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "candidate required release file is missing or empty: "
+            "website/assets/flasher/nrf-dfu/prns_nrf_dfu_core_bg.wasm",
+            result.stderr,
+        )
+
+    def test_release_boundary_rejects_structurally_invalid_uf2(self) -> None:
+        target = next(
+            target
+            for target in self.fixture.manifest["targets"]
+            if target["board_slug"] == "t-echo"
+        )
+        variant = target["variants"][0]
+        payload = bytearray((self.fixture.root / variant["path"]).read_bytes())
+        validate_uf2_artifact(variant, bytes(payload))
+        payload[0] = 0
+        with self.assertRaisesRegex(ValueError, "invalid magic"):
+            validate_uf2_artifact(variant, bytes(payload))
+
+    def test_release_boundary_binds_nordic_recovery_to_dfu_application(self) -> None:
+        target = next(
+            target
+            for target in self.fixture.manifest["targets"]
+            if target["board_slug"] == "t1000-e"
+        )
+        nrf_serial_dfu = target["nrf_serial_dfu"]
+        application = (self.fixture.root / nrf_serial_dfu["application"]["path"]).read_bytes()
+        recovery = (self.fixture.root / nrf_serial_dfu["recovery"]["artifact"]["path"]).read_bytes()
+        validate_nrf_serial_dfu_recovery_artifact(target, application, recovery)
+        tampered = bytes([application[0] ^ 0xFF]) + application[1:]
+        with self.assertRaisesRegex(ValueError, "disagrees with the exact DFU application"):
+            validate_nrf_serial_dfu_recovery_artifact(target, tampered, recovery)
 
     def test_embedded_firmware_cannot_carry_the_hosted_source_archive(self) -> None:
         target = next(
@@ -885,7 +1071,7 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         write_json(
             acceptance,
             {
-                "schema": 3,
+                "schema": 4,
                 "candidate": {
                     "version": VERSION,
                     "channel": "stable",
@@ -1251,6 +1437,7 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             self.fixture.root / "qualification" / "create-flasher-acceptance.py",
             self.fixture.root / "qualification" / "validate-flasher-acceptance.py",
             self.fixture.root / "qualification" / "flasher_acceptance_contract.py",
+            self.fixture.root / "qualification" / "flasher_manifest.py",
             self.fixture.root / "qualification" / "serve-flasher-candidate.py",
             self.fixture.root / "qualification" / "verify-flasher-candidate-files.py",
             self.fixture.root / "qualification" / "validate-flasher-tester-roster.py",

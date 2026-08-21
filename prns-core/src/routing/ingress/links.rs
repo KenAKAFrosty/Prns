@@ -27,8 +27,9 @@ use crate::routing::links::transported::{
 };
 use crate::routing::links::LinkId;
 use crate::routing::proof::{LinkProofOwed, ProofObligation};
+use crate::routing::routes::RouteEvidenceHandle;
 use crate::routing::upstream_app_destinations::{LinkRequestPolicy, ProofStrategy};
-use crate::routing::{NextHop, RouteResponsiveness};
+use crate::routing::NextHop;
 use crate::storage::StorageLayout;
 use crate::units::RttMillis;
 use crate::wire::{
@@ -71,6 +72,7 @@ struct AcceptedTransportedLinkProof {
     destination: DestinationHash,
     next_hop_interface: InterfaceId,
     received_interface: InterfaceId,
+    route_evidence: RouteEvidenceHandle,
     route_update: TransportedRouteUpdate,
 }
 
@@ -126,7 +128,7 @@ impl<S: StorageLayout> EngineState<S> {
                 self.ingest_link_data(data, packet_hash, source_interface, arrived_at)
             }
             WireContext::KeepAlive => self.ingest_keepalive(link_id, data.payload, arrived_at),
-            WireContext::LinkClose => self.ingest_link_close(data),
+            WireContext::LinkClose => self.ingest_link_close(data, arrived_at),
             WireContext::LinkIdentify => self.ingest_link_identify(data, arrived_at),
             WireContext::Request => self.ingest_request_over_link(data, packet_hash, arrived_at),
             WireContext::Response => self.ingest_response_over_link(data, packet_hash, arrived_at),
@@ -221,12 +223,20 @@ impl<S: StorageLayout> EngineState<S> {
         match accepted.route_update {
             TransportedRouteUpdate::Unchanged => {}
             TransportedRouteUpdate::RebalancedTo(hops) => {
-                self.routing_table
-                    .rebalance_hops(&accepted.destination, hops);
+                let mut handle = accepted.route_evidence;
+                if self
+                    .routing_table
+                    .resolve_route_evidence(&mut handle)
+                    .is_some()
+                {
+                    self.routing_table
+                        .rebalance_hops(&accepted.destination, hops);
+                }
             }
         }
+        let mut route_evidence = accepted.route_evidence;
         self.routing_table
-            .mark_responsiveness(&accepted.destination, RouteResponsiveness::Responsive);
+            .apply_route_evidence(&mut route_evidence, arrived_at);
         IngestPacketOutcome::Forward(PacketToForward {
             header: WirePacketHeader {
                 ifac_flag: IfacFlag::Open,
@@ -264,10 +274,27 @@ impl<S: StorageLayout> EngineState<S> {
         let mode = entry.mode;
         let next_hop_interface = entry.next_hop_interface;
         let received_interface = entry.received_interface;
+        let route_evidence = entry.route_evidence;
         let expected_hops = entry.remaining_hops;
         let already_validated = entry.validated_by_proof;
         if payload.len() != LINK_PROOF_BODY_LEN && payload.len() != SIGNALLED_LINK_PROOF_LEN {
             return Err(IgnoreReason::Malformed);
+        }
+        if already_validated || source_interface != next_hop_interface {
+            return Err(IgnoreReason::ProofInvalid);
+        }
+        // Intentional deviation from RNS 1.4.2: the reference accepts an exact-hop LRPROOF by
+        // shape. Prns unlocks later opaque switching, and credits route activity, only after the
+        // responder's signature verifies for both exact and rebalanced hop counts.
+        let stored = self
+            .routing_table
+            .stored_announce_for(&destination)
+            .ok_or(IgnoreReason::UnknownIdentity)?;
+        let responder_signing = *stored.announce.public_keys.signing.as_ed25519();
+        let proof = link_proof_from(link_id, payload, &responder_signing)
+            .map_err(|_| IgnoreReason::ProofInvalid)?;
+        if proof.mode != mode {
+            return Err(IgnoreReason::ProofInvalid);
         }
         if received_hops == expected_hops {
             let switch = self
@@ -279,21 +306,9 @@ impl<S: StorageLayout> EngineState<S> {
                 destination,
                 next_hop_interface,
                 received_interface,
+                route_evidence,
                 route_update: TransportedRouteUpdate::Unchanged,
             });
-        }
-        if already_validated || source_interface != next_hop_interface {
-            return Err(IgnoreReason::ProofInvalid);
-        }
-        let stored = self
-            .routing_table
-            .stored_announce_for(&destination)
-            .ok_or(IgnoreReason::UnknownIdentity)?;
-        let responder_signing = *stored.announce.public_keys.signing.as_ed25519();
-        let proof = link_proof_from(link_id, payload, &responder_signing)
-            .map_err(|_| IgnoreReason::ProofInvalid)?;
-        if proof.mode != mode {
-            return Err(IgnoreReason::ProofInvalid);
         }
         let switch = self
             .transported_links
@@ -304,6 +319,7 @@ impl<S: StorageLayout> EngineState<S> {
             destination,
             next_hop_interface,
             received_interface,
+            route_evidence,
             route_update: TransportedRouteUpdate::RebalancedTo(received_hops),
         })
     }
@@ -335,6 +351,12 @@ impl<S: StorageLayout> EngineState<S> {
         let Some(route) = self
             .routing_table
             .forwarding_route_for(&request.destination)
+        else {
+            return IngestPacketOutcome::Ignored(IgnoreReason::NoRoute);
+        };
+        let Some(route_evidence) = self
+            .routing_table
+            .route_evidence_handle_for(&request.destination)
         else {
             return IngestPacketOutcome::Ignored(IgnoreReason::NoRoute);
         };
@@ -412,6 +434,7 @@ impl<S: StorageLayout> EngineState<S> {
         match self.transported_links.track(TransportedLink {
             link_id: request.link_id,
             destination: request.destination,
+            route_evidence,
             mode: request.mode,
             next_hop: match route.next_hop {
                 NextHop::Via(next) => Some(next),
@@ -488,6 +511,7 @@ impl<S: StorageLayout> EngineState<S> {
                 responder_signing,
                 initiator_secret: initiator_secret.cloned(),
                 command_id,
+                arrived_at,
                 rtt: RttMillis::measured_between(requested_at, arrived_at),
                 mtu: if parsed.proof.mtu == 0 {
                     BROADCAST_MTU
@@ -512,6 +536,7 @@ impl<S: StorageLayout> EngineState<S> {
             responder_encryption: proof.responder_encryption,
             responder_signing,
             command_id,
+            arrived_at,
             rtt: RttMillis::measured_between(requested_at, arrived_at),
             mtu: if proof.mtu == 0 {
                 BROADCAST_MTU
@@ -823,6 +848,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub(super) fn ingest_link_close(
         &mut self,
         data: DataPacket<'_>,
+        arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'static> {
         let link_id = LinkId::from_address(data.header.address);
         let (key, attached_interface) = match self.links.phase_for(&link_id) {
@@ -842,8 +868,11 @@ impl<S: StorageLayout> EngineState<S> {
         if plaintext != link_id.as_bytes() {
             return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
         }
+        self.links.note_inbound(&link_id, arrived_at);
+        self.reconcile_pending_link_route_evidence();
         self.links.remove(&link_id);
         self.channels.close(&link_id);
+        self.pending_resource_offers.remove_link(&link_id);
         self.incoming_assemblies.clear(&link_id);
         self.outgoing_assemblies.clear(&link_id);
         if let Some(interface) = attached_interface {
@@ -870,6 +899,11 @@ impl<S: StorageLayout> EngineState<S> {
         else {
             return self.ingest_transported_link_request(header, &request, arrival);
         };
+        if let Some(transport_id) = header.transport_id {
+            if self.transport_id() != Some(transport_id) {
+                return IngestPacketOutcome::Ignored(IgnoreReason::OtherInstance);
+            }
+        }
         match registered.link_request_policy {
             LinkRequestPolicy::AcceptNone => {
                 return IngestPacketOutcome::Ignored(IgnoreReason::LinkRequestsRefused)

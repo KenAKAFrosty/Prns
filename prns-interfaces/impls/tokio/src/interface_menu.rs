@@ -28,7 +28,10 @@ pub use crate::tcp::TcpClientInterface;
 pub use crate::tcp::TcpServer;
 #[cfg(feature = "udp")]
 pub use crate::udp::UdpInterface;
-#[cfg(feature = "usb")]
+#[cfg(all(
+    feature = "usb",
+    any(target_os = "linux", target_os = "macos", target_os = "windows")
+))]
 pub use crate::usb_auto::AutoUsb;
 #[cfg(feature = "usb")]
 pub use crate::usb_auto::UsbAutoHost;

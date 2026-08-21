@@ -11,80 +11,57 @@ use heapless::String as HString;
 use super::layout::*;
 use super::primitives::fill;
 
-/// 3 significant figures, rolling unit B -> K -> M -> G (1000-based), max 3 numeric chars: `1.0K` up to `10K` up to `100K`, then `1.0M`, and so on. Integer-only (no float), max 4 chars including the unit.
-pub(super) fn fmt_bytes(n: u64) -> HString<8> {
+enum CompactQuantity {
+    Count,
+    Bytes,
+}
+
+fn fmt_compact_quantity(n: u64, quantity: CompactQuantity) -> HString<8> {
     let mut s = HString::new();
-    if n < 1000 {
-        let _ = write!(s, "{n}B");
+    let (unit, unit_value) = match quantity {
+        CompactQuantity::Count if n < 1_000 => ("", 1),
+        CompactQuantity::Count if n < 1_000_000 => ("K", 1_000),
+        CompactQuantity::Count if n < 1_000_000_000 => ("M", 1_000_000),
+        CompactQuantity::Count => ("B", 1_000_000_000),
+        CompactQuantity::Bytes if n < 1_000 => ("B", 1),
+        CompactQuantity::Bytes if n < 1_000_000 => ("K", 1_000),
+        CompactQuantity::Bytes if n < 1_000_000_000 => ("M", 1_000_000),
+        CompactQuantity::Bytes if n < 1_000_000_000_000 => ("G", 1_000_000_000),
+        CompactQuantity::Bytes if n < 1_000_000_000_000_000 => ("T", 1_000_000_000_000),
+        CompactQuantity::Bytes if n < 1_000_000_000_000_000_000 => ("P", 1_000_000_000_000_000),
+        CompactQuantity::Bytes => ("E", 1_000_000_000_000_000_000),
+    };
+
+    if unit_value == 1 {
+        let _ = write!(s, "{n}{unit}");
         return s;
     }
-    let (unit, unit_val) = if n < 1_000_000 {
-        ('K', 1_000u64)
-    } else if n < 1_000_000_000 {
-        ('M', 1_000_000)
-    } else {
-        ('G', 1_000_000_000)
-    };
-    let thousandths = n * 1000 / unit_val;
-    let int_part = thousandths / 1000;
+
+    let int_part = n / unit_value;
     if int_part < 10 {
-        let tenths = thousandths / 100;
+        let tenths = n / (unit_value / 10);
         let _ = write!(s, "{}.{}{}", tenths / 10, tenths % 10, unit);
     } else {
         let _ = write!(s, "{int_part}{unit}");
     }
     s
+}
+
+pub(in crate::screen) fn fmt_bytes(n: u64) -> HString<8> {
+    fmt_compact_quantity(n, CompactQuantity::Bytes)
 }
 
 pub(in crate::screen) fn fmt_count(n: u32) -> HString<8> {
-    let mut s = HString::new();
-    if n < 1000 {
-        let _ = write!(s, "{n}");
-        return s;
-    }
-
-    let n = n as u64;
-    let (unit, unit_val) = if n < 1_000_000 {
-        ('K', 1_000u64)
-    } else if n < 1_000_000_000 {
-        ('M', 1_000_000)
-    } else {
-        ('B', 1_000_000_000)
-    };
-    let thousandths = n * 1000 / unit_val;
-    let int_part = thousandths / 1000;
-    if int_part < 10 {
-        let tenths = thousandths / 100;
-        let _ = write!(s, "{}.{}{}", tenths / 10, tenths % 10, unit);
-    } else {
-        let _ = write!(s, "{int_part}{unit}");
-    }
-    s
+    fmt_compact_quantity(u64::from(n), CompactQuantity::Count)
 }
 
-pub(in crate::screen) fn fmt_rate_bytes_per_sec(n: u32) -> HString<8> {
+pub(in crate::screen) fn fmt_rate_bytes_per_sec(n: u32) -> HString<10> {
     let mut s = HString::new();
-    if n < 1000 {
-        let _ = write!(s, "{n}B");
-        return s;
-    }
-
-    let n = n as u64;
-    let (unit, unit_val) = if n < 1_000_000 {
-        ('K', 1_000u64)
-    } else if n < 1_000_000_000 {
-        ('M', 1_000_000)
-    } else {
-        ('G', 1_000_000_000)
-    };
-    let thousandths = n * 1000 / unit_val;
-    let int_part = thousandths / 1000;
-    if int_part < 10 {
-        let tenths = thousandths / 100;
-        let _ = write!(s, "{}.{}{}", tenths / 10, tenths % 10, unit);
-    } else {
-        let _ = write!(s, "{int_part}{unit}");
-    }
+    let _ = write!(
+        s,
+        "{}/s",
+        fmt_compact_quantity(u64::from(n), CompactQuantity::Bytes)
+    );
     s
 }
 

@@ -46,6 +46,7 @@ impl InvalidMobileInputCode {
 pub enum MobileActionCode {
     None = 0,
     Announce = 1,
+    CopySharedInstanceConfig = 2,
 }
 
 impl MobileActionCode {
@@ -53,10 +54,13 @@ impl MobileActionCode {
     pub const fn encode(action: UiAction) -> Self {
         match action {
             UiAction::Announce => Self::Announce,
+            UiAction::CopySharedInstanceConfig => Self::CopySharedInstanceConfig,
             UiAction::None
             | UiAction::OledOff
+            | UiAction::ToggleOledAutoOff
             | UiAction::Sleep
             | UiAction::Wake
+            | UiAction::ControlGnss(_)
             | UiAction::ToggleSelectedInterface
             | UiAction::ToggleStationUplink
             | UiAction::OpenDocs
@@ -153,7 +157,7 @@ impl MobileRgbaFrameBuffer {
     }
 
     pub fn expand_rgba(&self, out: &mut [u8]) {
-        for (lit, chunk) in self.lit.iter().zip(out.chunks_exact_mut(4)) {
+        for (lit, chunk) in self.lit.iter().zip(out.as_chunks_mut::<4>().0.iter_mut()) {
             chunk.copy_from_slice(if *lit {
                 &MOBILE_LIT_RGBA
             } else {
@@ -227,6 +231,10 @@ mod tests {
             MobileActionCode::Announce
         );
         assert_eq!(
+            MobileActionCode::encode(UiAction::CopySharedInstanceConfig),
+            MobileActionCode::CopySharedInstanceConfig
+        );
+        assert_eq!(
             MobileActionCode::encode(UiAction::Sleep),
             MobileActionCode::None
         );
@@ -282,6 +290,10 @@ mod tests {
 
         let mut out = [0u8; MOBILE_RGBA_BYTES];
         frame.expand_rgba(&mut out);
-        assert!(out.chunks_exact(4).all(|pixel| pixel == MOBILE_DARK_RGBA));
+        assert!(out
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| *pixel == MOBILE_DARK_RGBA));
     }
 }

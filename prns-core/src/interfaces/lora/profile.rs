@@ -8,8 +8,6 @@ const DUTY_ONE_PERCENT_PER_MILLE: u16 = 10;
 const DUTY_QUEUE_BUDGET_MS: u32 = 4_000;
 const DUTY_TEN_PERCENT_PER_MILLE: u16 = 100;
 const MODULATION_TAG_LORA: u8 = 0x00;
-const SX1262_MIN_TX_POWER_DBM: i8 = -9;
-const SX1262_MAX_TX_POWER_DBM: i8 = 22;
 
 pub const CHANNEL_TAG_CAP: usize = 11;
 
@@ -52,38 +50,25 @@ impl PreambleSymbols {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Region {
-    Us915,
-    Au915,
-    Eu433,
-    Eu865,
-    Eu868,
-    Eu869,
-    As923,
-    In865,
-    Cn470,
-    Kr920,
-    Jp920,
-    Unlimited,
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Region {
+        Us915,
+        Au915,
+        Eu433,
+        Eu865,
+        Eu868,
+        Eu869,
+        As923,
+        In865,
+        Cn470,
+        Kr920,
+        Jp920,
+        Unlimited,
+    }
 }
 
 impl Region {
-    pub const ALL: [Region; 12] = [
-        Self::Us915,
-        Self::Au915,
-        Self::Eu433,
-        Self::Eu865,
-        Self::Eu868,
-        Self::Eu869,
-        Self::As923,
-        Self::In865,
-        Self::Cn470,
-        Self::Kr920,
-        Self::Jp920,
-        Self::Unlimited,
-    ];
-
     pub const fn band(self) -> (u32, u32) {
         match self {
             Self::Us915 => (902_000_000, 928_000_000),
@@ -187,17 +172,21 @@ pub enum RadioProfileError {
         minimum_hz: u32,
         maximum_hz: u32,
     },
-    TransmitPowerOutsideRadioRange {
-        power_dbm: i8,
-        minimum_dbm: i8,
-        maximum_dbm: i8,
-    },
     TransmitPowerAboveRegionLimit {
         region: Region,
         power_dbm: i8,
         maximum_dbm: i8,
     },
     EmptyPreamble,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RadioProfileCompatibilityError {
+    TransmitPowerOutsideRadioRange {
+        power_dbm: i8,
+        minimum_dbm: i8,
+        maximum_dbm: i8,
+    },
 }
 
 /// Where a LoRa interface obtains its airtime limit.
@@ -270,22 +259,17 @@ impl AirtimePolicy {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ModemPreset {
-    ShortFast,
-    MediumFast,
-    LongFast,
-    LongSlow,
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum ModemPreset {
+        ShortFast,
+        MediumFast,
+        LongFast,
+        LongSlow,
+    }
 }
 
 impl ModemPreset {
-    pub const ALL: [ModemPreset; 4] = [
-        Self::ShortFast,
-        Self::MediumFast,
-        Self::LongFast,
-        Self::LongSlow,
-    ];
-
     pub const fn modulation(self) -> Modulation {
         match self {
             Self::ShortFast => Modulation::Lora {
@@ -337,7 +321,6 @@ pub struct RadioProfile {
 }
 
 impl RadioProfile {
-    /// Validate the profile against both the selected region and the SX1262 PA.
     pub const fn validate(self) -> Result<(), RadioProfileError> {
         let frequency_hz = self.frequency.hz();
         let (minimum_hz, maximum_hz) = self.region.band();
@@ -350,13 +333,6 @@ impl RadioProfile {
             });
         }
         let power_dbm = self.tx_power.dbm();
-        if power_dbm < SX1262_MIN_TX_POWER_DBM || power_dbm > SX1262_MAX_TX_POWER_DBM {
-            return Err(RadioProfileError::TransmitPowerOutsideRadioRange {
-                power_dbm,
-                minimum_dbm: SX1262_MIN_TX_POWER_DBM,
-                maximum_dbm: SX1262_MAX_TX_POWER_DBM,
-            });
-        }
         let maximum_dbm = self.region.max_tx_power().dbm();
         if power_dbm > maximum_dbm {
             return Err(RadioProfileError::TransmitPowerAboveRegionLimit {
@@ -485,18 +461,13 @@ mod tests {
     }
 
     #[test]
-    fn every_region_default_frequency_sits_inside_its_band_and_within_the_radio_pa() {
+    fn every_region_default_frequency_sits_inside_its_band() {
         for region in Region::ALL {
             let (lo, hi) = region.band();
             let default = region.default_frequency().hz();
             assert!(
                 (lo..=hi).contains(&default),
                 "{}: default {default} outside band {lo}..={hi}",
-                region.label()
-            );
-            assert!(
-                region.max_tx_power().dbm() <= 22,
-                "{}: power cap above the SX1262 PA",
                 region.label()
             );
         }

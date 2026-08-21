@@ -30,11 +30,10 @@ jobs:
     timeout-minutes: 15
     outputs:
       matrix: ${{ steps.inventory.outputs.matrix }}
-      commit: ${{ steps.inventory.outputs.commit }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ inputs.commit_sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - id: inventory
@@ -42,10 +41,10 @@ jobs:
           REQUESTED_SHA: ${{ inputs.commit_sha }}
         run: |
           [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$REQUESTED_SHA"
           test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
           test -z "$(git status --porcelain --untracked-files=no)"
           python3 validation/run.py verify
-          echo "commit=$REQUESTED_SHA" >> "$GITHUB_OUTPUT"
           echo "matrix=$(python3 validation/run.py matrix --tier release)" >> "$GITHUB_OUTPUT"
 
   qualify:
@@ -65,7 +64,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ needs.inventory.outputs.commit }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
@@ -100,11 +99,13 @@ jobs:
         if: matrix.group == 'apple'
         run: brew install sdl2
       - name: Prepare WASM target and dependencies
-        if: matrix.group == 'wasm' || matrix.group == 'linux-host'
+        if: matrix.group == 'wasm' || matrix.group == 'linux-host' || matrix.group == 'web'
         run: |
           rustup target add wasm32-unknown-unknown
-          if [[ "${{ matrix.group }}" == wasm ]]; then
+          if [[ "${{ matrix.group }}" == wasm || "${{ matrix.group }}" == web ]]; then
             cargo install wasm-bindgen-cli --version 0.2.126 --locked
+          fi
+          if [[ "${{ matrix.group }}" == wasm ]]; then
             npm --prefix prns-wasm ci --ignore-scripts --no-audit --no-fund
             npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
           fi
@@ -153,7 +154,7 @@ jobs:
         env:
           PRNS_ANDROID_DEVICE: ${{ matrix.platform == 'android-device' && '1' || '0' }}
           VALIDATION_PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
-        run: '"$VALIDATION_PYTHON" validation/run.py run --suite "${{ matrix.id }}" --expected-sha "${{ needs.inventory.outputs.commit }}" --fuzz-seconds "${{ inputs.fuzz_seconds }}"'
+        run: '"$VALIDATION_PYTHON" validation/run.py run --suite "${{ matrix.id }}" --expected-sha "${{ github.sha }}" --fuzz-seconds "${{ inputs.fuzz_seconds }}"'
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -170,7 +171,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ needs.inventory.outputs.commit }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -179,10 +180,10 @@ jobs:
           path: validation-artifacts
           merge-multiple: true
       - name: Aggregate complete exact-SHA evidence
-        run: python3 validation/run.py aggregate --tier release --expected-sha "${{ needs.inventory.outputs.commit }}"
+        run: python3 validation/run.py aggregate --tier release --expected-sha "${{ github.sha }}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: release-readiness-manifest-${{ needs.inventory.outputs.commit }}
+          name: release-readiness-manifest-${{ github.sha }}
           if-no-files-found: error
           retention-days: 30
           path: |

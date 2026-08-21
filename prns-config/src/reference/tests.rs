@@ -6,7 +6,7 @@ use prns_core::interface_discovery::StampCost;
 use crate::diagnostic::{ConfigDiagnosticCode, ConfigErrors};
 
 use super::keys::{
-    global as global_key, interface as interface_key, logging as logging_key,
+    global as global_key, interface as interface_key, logging as logging_key, prns as prns_key,
     section as section_key,
 };
 use super::schema::{
@@ -50,6 +50,67 @@ fn parse_reads_globals_interfaces_and_other_sections() {
         config.other_sections[section_key::LOGGING].get(logging_key::LEVEL),
         Some(&ReferenceValue::Scalar("4".to_string()))
     );
+}
+
+#[test]
+fn prns_resource_memory_limits_accept_binary_quantities_without_unknown_warnings() {
+    let report = parse_named(
+        "/tmp/rns/config",
+        "[prns]\nresource_mem_in = 64 MiB\nresource_mem_out = 1_024 KiB\n",
+    )
+    .unwrap();
+
+    assert_eq!(
+        report.value.prns,
+        ReferencePrnsConfig {
+            resource_mem_in: Some(64 * 1024 * 1024),
+            resource_mem_out: Some(1024 * 1024),
+        }
+    );
+    assert!(report.warnings.is_empty());
+    assert!(!report.value.other_sections.contains_key(section_key::PRNS));
+}
+
+#[test]
+fn prns_resource_memory_limits_accept_bare_bytes_and_exact_unit_spellings() {
+    for (configured, expected) in [
+        ("0", 0),
+        ("7 B", 7),
+        ("2KiB", 2 * 1024),
+        ("3 MiB", 3 * 1024 * 1024),
+        ("1 GiB", 1024 * 1024 * 1024),
+    ] {
+        let config = parse(&format!(
+            "[prns]\n{} = {configured}\n",
+            prns_key::RESOURCE_MEM_IN
+        ))
+        .unwrap();
+        assert_eq!(config.prns.resource_mem_in, Some(expected), "{configured}");
+    }
+}
+
+#[test]
+fn invalid_prns_resource_memory_limits_report_the_exact_setting() {
+    for configured in ["-1", "1.5 MiB", "64 MB", "MiB", "1 mib"] {
+        let errors = parse_named(
+            "/tmp/rns/config",
+            &format!("[prns]\nresource_mem_in = {configured}\n"),
+        )
+        .unwrap_err();
+        let diagnostic = &errors.diagnostics()[0];
+        assert_eq!(diagnostic.code(), ConfigDiagnosticCode::InvalidValue);
+        assert_eq!(diagnostic.path(), "[prns] > resource_mem_in");
+        assert_eq!(diagnostic.line(), 2);
+        assert!(diagnostic.to_string().contains("KiB, MiB, or GiB"));
+    }
+
+    let overflow = (usize::MAX as u128) + 1;
+    let errors = parse_named(
+        "/tmp/rns/config",
+        &format!("[prns]\nresource_mem_out = {overflow} B\n"),
+    )
+    .unwrap_err();
+    assert_eq!(errors.diagnostics()[0].path(), "[prns] > resource_mem_out");
 }
 
 #[test]
@@ -598,9 +659,11 @@ fn application_contract_baseline(type_name: &'static str) -> BTreeMap<&'static s
         }
         "PrnsWebSocketClient" => {
             settings.insert(interface_key::TARGET, "ws://peer.example:4242/prns");
+            settings.insert(interface_key::FRAMING, "raw");
         }
         "PrnsWebSocketServer" => {
             settings.insert(interface_key::PORT, "4242");
+            settings.insert(interface_key::FRAMING, "raw");
         }
         _ => panic!("unsupported contract interface {type_name}"),
     }
@@ -638,8 +701,8 @@ fn prns_interface_names_accept_explicit_and_short_case_insensitive_aliases() {
         ("PRNSWEBSOCKETSERVERINTERFACE", "PrnsWebSocketServer"),
     ] {
         let settings = match canonical {
-            "PrnsWebSocketClient" => "target = ws://peer.example:4242/prns\n",
-            "PrnsWebSocketServer" => "port = 4242\n",
+            "PrnsWebSocketClient" => "target = ws://peer.example:4242/prns\nframing = raw\n",
+            "PrnsWebSocketServer" => "port = 4242\nframing = raw\n",
             _ => "",
         };
         let config =
@@ -663,7 +726,7 @@ fn stock_interface_names_remain_case_sensitive() {
 fn websocket_targets_require_a_supported_websocket_url() {
     for target in ["peer.example", "ws://bad target", "wss://bad target"] {
         let errors = parse(&format!(
-            "[interfaces]\n[[WebSocket]]\ntype = PrnsWebSocketClient\nenabled = Yes\ntarget = {target}\n"
+            "[interfaces]\n[[WebSocket]]\ntype = PrnsWebSocketClient\nenabled = Yes\ntarget = {target}\nframing = raw\n"
         ))
         .unwrap_err();
         assert!(has_code(&errors, ConfigDiagnosticCode::InvalidValue));
@@ -671,9 +734,35 @@ fn websocket_targets_require_a_supported_websocket_url() {
 
     for target in ["ws://peer.example:4284/prns", "wss://peer.example/prns"] {
         parse(&format!(
-            "[interfaces]\n[[WebSocket]]\ntype = PrnsWebSocketClient\nenabled = Yes\ntarget = {target}\n"
+            "[interfaces]\n[[WebSocket]]\ntype = PrnsWebSocketClient\nenabled = Yes\ntarget = {target}\nframing = raw\n"
         ))
         .expect("supported WebSocket targets parse");
+    }
+}
+
+#[test]
+fn websocket_framing_is_optional_and_closed() {
+    for type_and_endpoint in [
+        "type = PrnsWebSocketClient\ntarget = ws://peer.example/prns",
+        "type = PrnsWebSocketServer\nport = 4242",
+    ] {
+        parse(&format!(
+            "[interfaces]\n[[WebSocket]]\n{type_and_endpoint}\nenabled = Yes\n"
+        ))
+        .expect("omitted WebSocket framing uses automatic selection");
+
+        for framing in ["auto", "raw", "hdlc", "kiss"] {
+            parse(&format!(
+                "[interfaces]\n[[WebSocket]]\n{type_and_endpoint}\nenabled = Yes\nframing = {framing}\n"
+            ))
+            .expect("supported WebSocket framing parses");
+        }
+
+        let errors = parse(&format!(
+            "[interfaces]\n[[WebSocket]]\n{type_and_endpoint}\nenabled = Yes\nframing = slip\n"
+        ))
+        .unwrap_err();
+        assert!(has_code(&errors, ConfigDiagnosticCode::InvalidValue));
     }
 }
 

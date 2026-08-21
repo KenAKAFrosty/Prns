@@ -96,7 +96,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "HEALTHY has no hard failures or bounded-table pressure. DEGRADED covers route eviction or table-capacity exhaustion. Interface availability is informational and shown separately. FAULT means a hard runtime failure occurred in five minutes. Host integrity is also independent.",
+      "description": "HEALTHY: no hard runtime failure or engine-capacity degradation in the last 5 minutes. DEGRADED: routes got evicted or a table ran out of room. FAULT: the runtime hit a hard failure. Bounded egress pressure and shedding are expected flow control and do not affect this state. Interface up/down and host problems are shown separately and do not affect it either.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -179,7 +179,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "3 * ((max(last_over_time(prns_runtime_up[2m])) or vector(0)) == bool 0) + ((max(last_over_time(prns_runtime_up[2m])) or vector(0)) > bool 0) * clamp_max(2 * (((sum(increase(prns_egress_frames_total{outcome=~\"lane_full|lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0))) > bool 0) + ((((sum(increase(prns_routes_removals_total{cause=\"evicted\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_engine_ignored_packets_total{reason=\"capacity_exhausted\"}[5m])) or vector(0)) > bool 0)) > bool 0), 2)",
+          "expr": "3 * ((max(last_over_time(prns_runtime_up[2m])) or vector(0)) == bool 0) + ((max(last_over_time(prns_runtime_up[2m])) or vector(0)) > bool 0) * clamp_max(2 * (((sum(increase(prns_egress_frames_total{outcome=\"lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"lane_missing|ifac_rejected|pacer_expired\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0))) > bool 0) + ((((sum(increase(prns_routes_removals_total{cause=\"evicted\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_engine_ignored_packets_total{reason=\"capacity_exhausted\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_resources_admission_events_total{event=\"rejected\"}[5m])) or vector(0)) > bool 0)) > bool 0), 2)",
           "instant": true,
           "legendFormat": "Runtime",
           "range": false,
@@ -194,7 +194,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Actionable failure signals in the last five minutes. Related counters can describe the same incident, so this is a signal count rather than a unique-incident count.",
+      "description": "Actionable hard-failure signals in the last five minutes. Bounded egress pressure, lane shedding, and pacer shedding are excluded. Related counters can describe the same incident, so this is a signal count rather than a unique-incident count.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -257,7 +257,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "((sum(increase(prns_egress_frames_total{outcome=~\"lane_full|lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0)))",
+          "expr": "((sum(increase(prns_egress_frames_total{outcome=\"lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"lane_missing|ifac_rejected|pacer_expired\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0)))",
           "instant": true,
           "legendFormat": "Signals",
           "range": false,
@@ -272,7 +272,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Number of active bounded-table pressure conditions: route eviction or capacity exhaustion. Interface availability and cryptographic-work deferrals do not change Operational state.",
+      "description": "How many pressure signals fired in the last 5 minutes: route eviction and table capacity. Egress lane shed does not count here, it is normal backpressure. Interface up/down and crypto work deferrals do not count either.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -335,7 +335,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "(((sum(increase(prns_routes_removals_total{cause=\"evicted\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_engine_ignored_packets_total{reason=\"capacity_exhausted\"}[5m])) or vector(0)) > bool 0))",
+          "expr": "(((sum(increase(prns_routes_removals_total{cause=\"evicted\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_engine_ignored_packets_total{reason=\"capacity_exhausted\"}[5m])) or vector(0)) > bool 0) + ((sum(increase(prns_resources_admission_events_total{event=\"rejected\"}[5m])) or vector(0)) > bool 0))",
           "instant": true,
           "legendFormat": "Signals",
           "range": false,
@@ -494,7 +494,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Only non-zero actionable signals are shown. No bars while Hard signals is CLEAR means no hard runtime failures in the window. Related signals can describe the same incident.",
+      "description": "Non-zero signals from the last five minutes. Blue bars are expected bounded egress pressure or shedding and identify the affected logical interface. Red bars are genuine hard failures. Related counters can describe the same incident.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -517,7 +517,23 @@
           },
           "unit": "short"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^(Egress lane shed|.* · (lane_full|pacer_rejected|pacer_evicted|deferred|retry))$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 8,
@@ -551,14 +567,14 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "(label_join(label_replace(sum by (operation, outcome) (increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) > 0, \"kind\", \"operation\", \"operation\", \".*\"), \"signal\", \" · \", \"kind\", \"operation\", \"outcome\") or label_join(label_replace(sum by (cause) (increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) > 0, \"kind\", \"resource\", \"cause\", \".*\"), \"signal\", \" · \", \"kind\", \"cause\") or label_join(label_replace(sum by (reason) (increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) > 0, \"kind\", \"link\", \"reason\", \".*\"), \"signal\", \" · \", \"kind\", \"reason\") or label_replace(sum(increase(prns_links_interface_mismatches_total[5m])) > 0, \"signal\", \"link · interface mismatch\", \"__name__\", \".*\") or label_join(label_replace(sum by (outcome) (increase(prns_egress_frames_total{outcome=~\"lane_full|lane_missing\"}[5m])) > 0, \"kind\", \"egress\", \"outcome\", \".*\"), \"signal\", \" · \", \"kind\", \"outcome\") or label_join(label_replace(sum by (origin, outcome) (increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) > 0, \"kind\", \"announce\", \"origin\", \".*\"), \"signal\", \" · \", \"kind\", \"origin\", \"outcome\") or label_join(label_replace(sum by (outcome) (increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) > 0, \"kind\", \"announce ingress\", \"outcome\", \".*\"), \"signal\", \" · \", \"kind\", \"outcome\")) or on() label_replace(((sum(increase(prns_egress_frames_total{outcome=~\"lane_full|lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"ifac_rejected|pacer_rejected\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0))) == 0, \"signal\", \"No hard failures\", \"__name__\", \".*\")",
+          "expr": "(label_join(label_replace(sum by (operation, outcome) (increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) > 0, \"kind\", \"operation\", \"operation\", \".*\"), \"signal\", \" · \", \"kind\", \"operation\", \"outcome\") or label_join(label_replace(sum by (cause) (increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) > 0, \"kind\", \"resource\", \"cause\", \".*\"), \"signal\", \" · \", \"kind\", \"cause\") or label_join(label_replace(sum by (reason) (increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) > 0, \"kind\", \"link\", \"reason\", \".*\"), \"signal\", \" · \", \"kind\", \"reason\") or label_replace(sum(increase(prns_links_interface_mismatches_total[5m])) > 0, \"signal\", \"link · interface mismatch\", \"__name__\", \".*\") or label_join(label_replace(sum by (outcome) (increase(prns_egress_frames_total{outcome=\"lane_missing\"}[5m])) > 0, \"kind\", \"egress\", \"outcome\", \".*\"), \"signal\", \" · \", \"kind\", \"outcome\") or label_join(label_replace(sum by (origin, outcome) (increase(prns_announces_egress_total{outcome=~\"lane_missing|ifac_rejected|pacer_expired\"}[5m])) > 0, \"kind\", \"announce\", \"origin\", \".*\"), \"signal\", \" · \", \"kind\", \"origin\", \"outcome\") or label_join(label_replace(sum by (outcome) (increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) > 0, \"kind\", \"announce ingress\", \"outcome\", \".*\"), \"signal\", \" · \", \"kind\", \"outcome\") or label_replace(sum(increase(prns_egress_frames_total{outcome=\"lane_full\"}[5m])) > 0, \"signal\", \"Egress lane shed\", \"__name__\", \".*\") or label_join(sum by (interface, interface_origin, outcome) (increase(prns_interface_announces_egress_total{outcome=~\"lane_full|pacer_rejected|pacer_evicted\"}[5m])) > 0, \"signal\", \" · \", \"interface\", \"outcome\") or label_join(sum by (interface, interface_origin, event) (increase(prns_interface_announces_backpressure_total{event=~\"deferred|retry\"}[5m])) > 0, \"signal\", \" · \", \"interface\", \"event\")) or on() label_replace(((sum(increase(prns_egress_frames_total{outcome=~\"lane_full|lane_missing\"}[5m])) or vector(0)) + (sum(increase(prns_announces_egress_total{outcome=~\"lane_full|lane_missing|ifac_rejected|pacer_rejected|pacer_evicted|pacer_expired\"}[5m])) or vector(0)) + (sum(increase(prns_announces_backpressure_total{event=~\"deferred|retry\"}[5m])) or vector(0)) + (sum(increase(prns_announces_ingress_total{outcome=~\"held_dropped_.*\"}[5m])) or vector(0)) + (sum(increase(prns_operations_total{outcome!=\"succeeded\"}[5m])) or vector(0)) + (sum(increase(prns_resources_failures_total{cause!=\"cancelled_by_sender\"}[5m])) or vector(0)) + (sum(increase(prns_links_closures_total{reason=~\"timeout|malformed_rtt\"}[5m])) or vector(0)) + (sum(increase(prns_links_interface_mismatches_total[5m])) or vector(0))) == 0, \"signal\", \"No pressure or failures\", \"__name__\", \".*\")",
           "instant": true,
           "legendFormat": "{{signal}}",
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "Hard failure breakdown · 5m",
+      "title": "Pressure and failure breakdown · 5m",
       "type": "bargauge"
     },
     {
@@ -566,7 +582,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Route eviction and capacity exhaustion are bounded-table pressure signals. Interface availability and cryptographic-work deferrals are deliberately excluded.",
+      "description": "Counts from the last five minutes. Blue egress shedding is expected bounded flow control and does not change Operational state. Yellow engine, route, and resource-capacity events indicate degradation.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -587,7 +603,38 @@
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Egress lane shed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Announce pacer shed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 8,
@@ -635,9 +682,45 @@
           "legendFormat": "Capacity exhausted",
           "range": false,
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "(sum(increase(prns_egress_frames_total{outcome=\"lane_full\"}[5m])) or vector(0))",
+          "instant": true,
+          "legendFormat": "Egress lane shed",
+          "range": false,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "(sum(increase(prns_resources_admission_events_total{event=\"rejected\"}[5m])) or vector(0))",
+          "instant": true,
+          "legendFormat": "Resource admission rejected",
+          "range": false,
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "(sum(increase(prns_announces_egress_total{outcome=~\"lane_full|pacer_rejected|pacer_evicted\"}[5m])) or vector(0))",
+          "instant": true,
+          "legendFormat": "Announce pacer shed",
+          "range": false,
+          "refId": "E"
         }
       ],
-      "title": "Bounded-table pressure · 5m",
+      "title": "Bounded-capacity activity · 5m",
       "type": "stat"
     },
     {
@@ -1020,6 +1103,73 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
+      "description": "Total data sent and received since the daemon started. Same numbers as prnsd status --totals.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "noValue": "0 B",
+          "unit": "decbytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 20
+      },
+      "id": 36,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(prns_runtime_io_bytes{direction=\"transmit\"}) or vector(0)",
+          "instant": true,
+          "legendFormat": "↑ Sent",
+          "range": false,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(prns_runtime_io_bytes{direction=\"receive\"}) or vector(0)",
+          "instant": true,
+          "legendFormat": "↓ Received",
+          "range": false,
+          "refId": "B"
+        }
+      ],
+      "title": "Traffic since up",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1040,8 +1190,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 4,
+        "w": 3,
+        "x": 8,
         "y": 20
       },
       "id": 4,
@@ -1093,8 +1243,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 8,
+        "w": 3,
+        "x": 11,
         "y": 20
       },
       "id": 5,
@@ -1167,8 +1317,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 12,
+        "w": 3,
+        "x": 14,
         "y": 20
       },
       "id": 6,
@@ -1209,7 +1359,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Current engine and interface-pacer pressure. Stable zeros are healthy.",
+      "description": "Current engine and interface-pacer pressure. Deferred work is retained, not lost; age shows how long the oldest lane-backpressured announce has waited.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1224,28 +1374,37 @@
                 "value": null
               },
               {
-                "color": "yellow",
+                "color": "blue",
                 "value": 1
-              },
-              {
-                "color": "red",
-                "value": 10
               }
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Oldest deferred"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 4,
-        "w": 8,
-        "x": 16,
+        "w": 7,
+        "x": 17,
         "y": 20
       },
       "id": 13,
       "options": {
         "colorMode": "background",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "horizontal",
         "reduceOptions": {
@@ -1254,6 +1413,10 @@
           ],
           "fields": "",
           "values": false
+        },
+        "text": {
+          "titleSize": 11,
+          "valueSize": 14
         },
         "textMode": "value_and_name",
         "wideLayout": true
@@ -1294,6 +1457,30 @@
           "legendFormat": "Paced",
           "range": false,
           "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(prns_announces_pacer_deferred_depth) or vector(0)",
+          "instant": true,
+          "legendFormat": "Deferred",
+          "range": false,
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(prns_announces_pacer_oldest_deferred_age_ms) or vector(0)",
+          "instant": true,
+          "legendFormat": "Oldest deferred",
+          "range": false,
+          "refId": "E"
         }
       ],
       "title": "Announce pressure",
@@ -1304,7 +1491,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Aggregate rates reported by all currently attached interfaces.",
+      "description": "How fast the whole node is sending and receiving. Computed from the byte counters, so short bursts always show up.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1350,7 +1537,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "max by (direction) (prns_runtime_io_bits_per_second)",
+          "expr": "8 * sum by (direction) (rate(prns_runtime_io_bytes[$__rate_interval]))",
           "legendFormat": "{{direction}}",
           "range": true,
           "refId": "A"
@@ -1364,7 +1551,7 @@
         "type": "tempo",
         "uid": "tempo"
       },
-      "description": "Latency from sampled prns.request spans. Sampling follows OTEL_TRACES_SAMPLER and defaults to parent-based 10%.",
+      "description": "How long requests this node sends out itself take, like prnsd probe or a fetch it makes over a link. Measured from tracing spans; every one is recorded. Tempo can only compute this over a window of 3 hours or less.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1383,7 +1570,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 10,
+        "w": 6,
         "x": 8,
         "y": 24
       },
@@ -1432,7 +1619,69 @@
           "refId": "C"
         }
       ],
-      "title": "Sampled request latency · avg / p95 / p99",
+      "title": "Outbound Request Latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "How many requests this node answered in each time slice, like a page fetch from its hosted pages, split by outcome.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 5,
+        "x": 14,
+        "y": 24
+      },
+      "id": 40,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (outcome) (increase(prns_operations_total{operation=\"respond\"}[$__interval]))",
+          "interval": "1m",
+          "legendFormat": "{{outcome}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Inbound Requests",
       "type": "timeseries"
     },
     {
@@ -1459,8 +1708,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 6,
-        "x": 18,
+        "w": 5,
+        "x": 19,
         "y": 24
       },
       "id": 9,
@@ -2063,7 +2312,125 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Receive and transmit rates for the selected logical interfaces.",
+      "description": "How much data each interface moved in the selected time range. Relayed traffic counts as received on one interface and transmitted on another.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "decbytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 49
+      },
+      "id": 37,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": [
+            "Received",
+            "Transmitted"
+          ],
+          "reducer": [
+            "sum"
+          ],
+          "show": true
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Transmitted"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (interface) (increase(prns_interface_io_bytes{direction=\"receive\"}[$__range]))",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (interface) (increase(prns_interface_io_bytes{direction=\"transmit\"}[$__range]))",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "B"
+        }
+      ],
+      "title": "Busiest interfaces · selected range",
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "interface",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Time 1": true,
+              "Time 2": true
+            },
+            "indexByName": {
+              "interface": 0,
+              "Value #A": 1,
+              "Value #B": 2
+            },
+            "renameByName": {
+              "interface": "Interface",
+              "Value #A": "Received",
+              "Value #B": "Transmitted"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "How fast each selected interface is sending and receiving. Computed from the byte counters, so short bursts always show up.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2084,7 +2451,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 49
+        "y": 56
       },
       "id": 20,
       "options": {
@@ -2109,7 +2476,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "max by (interface, interface_origin, direction) (prns_interface_io_bits_per_second{interface=~\"$interface\"})",
+          "expr": "8 * sum by (interface, interface_origin, direction) (rate(prns_interface_io_bytes{interface=~\"$interface\"}[$__rate_interval]))",
           "legendFormat": "{{interface}} · {{interface_origin}} · {{direction}}",
           "range": true,
           "refId": "A"
@@ -2144,7 +2511,7 @@
         "h": 8,
         "w": 10,
         "x": 8,
-        "y": 49
+        "y": 56
       },
       "id": 21,
       "options": {
@@ -2191,13 +2558,13 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Held ingress, scheduled retransmit, and egress-pacer depth for the selected logical interfaces.",
+      "description": "Per-interface announce queues, oldest deferred age, and physical-lane occupancy. Lane depth should only be reconsidered when sustained occupancy corroborates deferral age and retries.",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "thresholds"
           },
-          "noValue": "0",
+          "noValue": "All clear",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -2206,23 +2573,44 @@
                 "value": null
               },
               {
-                "color": "yellow",
+                "color": "blue",
                 "value": 1
-              },
-              {
-                "color": "red",
-                "value": 10
               }
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*oldest deferred$"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*lane occupancy$"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 8,
         "w": 6,
         "x": 18,
-        "y": 49
+        "y": 56
       },
       "id": 22,
       "options": {
@@ -2237,6 +2625,10 @@
           "fields": "",
           "values": false
         },
+        "text": {
+          "titleSize": 11,
+          "valueSize": 14
+        },
         "textMode": "value_and_name",
         "wideLayout": true
       },
@@ -2247,15 +2639,185 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "max by (interface, interface_origin, queue) (prns_interface_announces_queue_depth{interface=~\"$interface\"})",
+          "expr": "max by (interface, interface_origin, queue) (prns_interface_announces_queue_depth{interface=~\"$interface\"}) > 0",
           "instant": true,
           "legendFormat": "{{interface}} · {{interface_origin}} · {{queue}}",
           "range": false,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max by (interface, interface_origin) (prns_interface_announces_oldest_deferred_age_ms{interface=~\"$interface\"}) > 0",
+          "instant": true,
+          "legendFormat": "{{interface}} · {{interface_origin}} · oldest deferred",
+          "range": false,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "100 * max by (physical_lane, logical_interface) (prns_egress_lane_occupancy{logical_interface=~\"$interface\"}) / clamp_min(max by (physical_lane, logical_interface) (prns_egress_lane_capacity{logical_interface=~\"$interface\"}), 1)",
+          "instant": true,
+          "legendFormat": "{{logical_interface}} · {{physical_lane}} · lane occupancy",
+          "range": false,
+          "refId": "C"
         }
       ],
       "title": "Interface announce pressure",
       "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "How much data moved in each time slice, one color per interface. Received is above the line, transmitted below. Relayed traffic shows a bar above and a matching bar below at the same moment: that pair implies the likely the path it took. Hover to see the names. Always shows all interfaces, ignoring the filter. Slices are 1 minute zoomed in, wider zoomed out.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
+          },
+          "unit": "decbytes"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* · out$"
+            },
+            "properties": [
+              {
+                "id": "custom.transform",
+                "value": "negative-Y"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 64
+      },
+      "id": 38,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "maxHeight": 600
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (interface) (increase(prns_interface_io_bytes{direction=\"receive\"}[$__interval]))",
+          "legendFormat": "{{interface}} · in",
+          "range": true,
+          "refId": "A",
+          "interval": "1m"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (interface) (increase(prns_interface_io_bytes{direction=\"transmit\"}[$__interval]))",
+          "legendFormat": "{{interface}} · out",
+          "range": true,
+          "refId": "B",
+          "interval": "1m"
+        }
+      ],
+      "title": "Relay flow · all interfaces",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Which interfaces are carrying relayed links right now. A relayed conversation counts on both the interface it comes in on and the one it goes out on, so matching lines are a pair.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 64
+      },
+      "id": 39,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max by (interface) (prns_interface_links{kind=\"transported\"}) > 0",
+          "legendFormat": "{{interface}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Transit links by interface",
+      "type": "timeseries"
     },
     {
       "datasource": {
@@ -2281,9 +2843,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
+        "w": 6,
         "x": 0,
-        "y": 57
+        "y": 72
       },
       "id": 10,
       "options": {
@@ -2338,9 +2900,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 57
+        "w": 6,
+        "x": 6,
+        "y": 72
       },
       "id": 11,
       "options": {
@@ -2376,7 +2938,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Pacer rejections, IFAC failures, and missing or full lanes split by announce origin.",
+      "description": "Terminal per-interface announce outcomes. Categorical colors distinguish each interface, origin, and outcome series; use the top-level pressure and failure panels for semantic blue/red classification. Deferral and recovery remain pressure lifecycle events, not terminal outcomes.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2395,9 +2957,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 57
+        "w": 6,
+        "x": 12,
+        "y": 72
       },
       "id": 12,
       "options": {
@@ -2419,13 +2981,70 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (origin, outcome) (rate(prns_announces_egress_total{outcome!~\"enqueued|interface_unavailable\"}[$__rate_interval])) or label_replace(label_replace(vector(0), \"origin\", \"none\", \"\", \"\"), \"outcome\", \"none\", \"\", \"\")",
-          "legendFormat": "{{origin}} · {{outcome}}",
+          "expr": "sum by (interface, origin, outcome) (rate(prns_interface_announces_egress_total{interface=~\"$interface\",outcome=~\"lane_full|lane_missing|ifac_rejected|pacer_rejected|pacer_evicted|pacer_expired\"}[$__rate_interval])) or label_replace(label_replace(label_replace(vector(0), \"interface\", \"none\", \"\", \"\"), \"origin\", \"none\", \"\", \"\"), \"outcome\", \"none\", \"\", \"\")",
+          "legendFormat": "{{interface}} · {{origin}} · {{outcome}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Announce egress failures",
+      "title": "Announce terminal egress outcomes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Temporary announce egress pressure. Categorical colors distinguish each interface, origin, and event series. Deferred counts once per announce, retry counts later failed attempts, and recovered confirms eventual lane admission.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 14,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 72
+      },
+      "id": 49,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (interface, origin, event) (rate(prns_interface_announces_backpressure_total{interface=~\"$interface\"}[$__rate_interval])) or label_replace(label_replace(label_replace(vector(0), \"interface\", \"none\", \"\", \"\"), \"origin\", \"none\", \"\", \"\"), \"event\", \"none\", \"\", \"\")",
+          "legendFormat": "{{interface}} · {{origin}} · {{event}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Announce backpressure",
       "type": "timeseries"
     },
     {
@@ -2454,7 +3073,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 65
+        "y": 80
       },
       "id": 14,
       "options": {
@@ -2511,7 +3130,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 65
+        "y": 80
       },
       "id": 15,
       "options": {
@@ -2568,7 +3187,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 65
+        "y": 80
       },
       "id": 16,
       "options": {
@@ -2601,6 +3220,380 @@
     },
     {
       "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Path requests as the engine classifies them: answered from our destinations or route cache, relayed onward, or ignored with the reason.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 14,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 87
+      },
+      "id": 41,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (outcome) (rate(prns_path_requests_ingress_total[$__rate_interval]))",
+          "legendFormat": "{{outcome}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Inbound path requests",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Relay transmissions of path requests toward other interfaces, one count per target, with per-interface egress throttling shown as rate_limited.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 14,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 87
+      },
+      "id": 42,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (outcome) (rate(prns_path_requests_relays_total[$__rate_interval]))",
+          "legendFormat": "{{outcome}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Path request relays",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Unknown-destination discoveries currently awaiting an answer, capped by the recursive table; steady growth means requests are outpacing responses.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 14,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 87
+      },
+      "id": 43,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(prns_path_requests_pending_discoveries) or vector(0)",
+          "legendFormat": "pending discoveries",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Pending path discoveries",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Path requests this node recursed onto the network (recursive or boundary forwarding). Stays at 0 unless an interface opts in via a discovery mode (gateway, access point, roaming, internal) or recursive_prs; anything above 0 deserves a look at the interface config.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 5,
+        "x": 0,
+        "y": 95
+      },
+      "id": 44,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(prns_path_requests_ingress_total{outcome=~\"relayed_recursive|relayed_across_boundary\"}) or vector(0)",
+          "legendFormat": "recursed",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Recursed path requests · since up",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Raw packet counts since the daemon started: everything the engine ingested, and every frame enqueued to an outbound lane. The live per-second view is the Engine throughput panel.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "noValue": "0",
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 4,
+        "x": 5,
+        "y": 95
+      },
+      "id": 45,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(prns_engine_packets_total) or vector(0)",
+          "legendFormat": "↓ Packets in",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(prns_egress_frames_total{outcome=\"enqueued\"}) or vector(0)",
+          "legendFormat": "↑ Frames out",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Packets since up",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Raw packet flow over time: everything the engine ingests and every frame enqueued to an outbound lane. The load view: announce storms, relay bursts, and quiet hours all show up here first.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "pps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 15,
+        "x": 9,
+        "y": 95
+      },
+      "id": 46,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(prns_engine_packets_total[$__rate_interval])) or vector(0)",
+          "legendFormat": "↓ packets in",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(prns_egress_frames_total{outcome=\"enqueued\"}[$__rate_interval])) or vector(0)",
+          "legendFormat": "↑ frames out",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Packet flow",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
         "type": "loki",
         "uid": "loki"
       },
@@ -2609,7 +3602,7 @@
         "h": 10,
         "w": 8,
         "x": 0,
-        "y": 72
+        "y": 102
       },
       "id": 17,
       "options": {
@@ -2649,7 +3642,7 @@
         "h": 10,
         "w": 16,
         "x": 8,
-        "y": 72
+        "y": 102
       },
       "id": 18,
       "options": {
@@ -2678,6 +3671,196 @@
       ],
       "title": "Recent prnsd events",
       "type": "logs"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Active Resource buffer occupancy against each configured directional budget. Fixed embedded stores report occupied slot capacity against their compile-time budget; host stores report exact active bytes against the configured heap budget.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 112
+      },
+      "id": 47,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "prns_resources_buffer_bytes",
+          "legendFormat": "{{direction}} active",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "prns_resources_buffer_budget_bytes",
+          "legendFormat": "{{direction}} budget",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Resource buffer memory",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Active transfer rows and pending inbound offers, alongside admission events. Expiration and rejection are separate events: an expired offer also emits the standard Resource cancellation and therefore increments both.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "unit",
+                "value": "ops"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 112
+      },
+      "id": 48,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "prns_resources_active_rows",
+          "legendFormat": "{{direction}} active rows",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "prns_resources_pending_depth",
+          "legendFormat": "waiting offers",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (event) (rate(prns_resources_admission_events_total[$__rate_interval]))",
+          "legendFormat": "{{event}} / second",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Resource admission",
+      "type": "timeseries"
     }
   ],
   "refresh": "5s",
@@ -2726,6 +3909,6 @@
   "timezone": "browser",
   "title": "Prns health",
   "uid": "prns-observability",
-  "version": 4,
+  "version": 8,
   "weekStart": ""
 }

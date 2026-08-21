@@ -8,7 +8,7 @@ import http.server
 import importlib.util
 import json
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import re
 import shutil
 import signal
@@ -20,9 +20,24 @@ from types import ModuleType
 from typing import Iterator, Sequence
 
 
+DEVICE_TOOLS = Path(__file__).resolve().parent
+if str(DEVICE_TOOLS) not in sys.path:
+    sys.path.insert(0, str(DEVICE_TOOLS))
+
+from developer_flasher_candidate import (
+    DeveloperCandidateError,
+    ExpectedTarget,
+    ValidatedCandidate,
+    validate_candidate,
+)
+
+
 ROOT = Path(__file__).resolve().parents[2]
 WEBSITE = ROOT / "docs" / "website"
 BOARD_CATALOG = ROOT / "release" / "flash" / "boards.json"
+BOARD_CATALOG_SCHEMA = 4
+SHIPPING_BOARD_AVAILABILITY = "shipping"
+BOARD_AVAILABILITIES = frozenset((SHIPPING_BOARD_AVAILABILITY, "qualification"))
 PINNED_MINISIGN = ROOT / ".build" / "toolchains" / "minisign" / "0.12" / "minisign"
 MINISIGN_INSTALL_COMMAND = (
     "./tools/prns run release.toolchain.minisign.install -- "
@@ -220,16 +235,39 @@ def require_unquarantined_source(identity: SourceIdentity) -> None:
         )
 
 
-def shipping_boards() -> tuple[str, ...]:
+def catalog_boards() -> tuple[dict, ...]:
     document = json.loads(BOARD_CATALOG.read_text(encoding="utf-8"))
-    if document.get("schema") != 1 or not isinstance(document.get("boards"), list):
-        raise DeveloperFlasherError("shipping board catalog is invalid")
-    boards = tuple(board.get("slug") for board in document["boards"])
-    if not boards or not all(isinstance(board, str) and board for board in boards):
-        raise DeveloperFlasherError("shipping board catalog contains an invalid slug")
-    if len(set(boards)) != len(boards):
-        raise DeveloperFlasherError("shipping board catalog contains duplicate slugs")
-    return boards
+    if document.get("schema") != BOARD_CATALOG_SCHEMA or not isinstance(
+        document.get("boards"), list
+    ):
+        raise DeveloperFlasherError("board catalog is invalid")
+    entries = document["boards"]
+    if not entries or not all(isinstance(board, dict) for board in entries):
+        raise DeveloperFlasherError("board catalog is invalid")
+    if not all(board.get("availability") in BOARD_AVAILABILITIES for board in entries):
+        raise DeveloperFlasherError("board catalog contains an invalid availability")
+    slugs = tuple(board.get("slug") for board in entries)
+    if not all(isinstance(board, str) and board for board in slugs):
+        raise DeveloperFlasherError("board catalog contains an invalid slug")
+    if len(set(slugs)) != len(slugs):
+        raise DeveloperFlasherError("board catalog contains duplicate slugs")
+    return tuple(entries)
+
+
+def shipping_boards() -> tuple[str, ...]:
+    return tuple(
+        board["slug"]
+        for board in catalog_boards()
+        if board.get("availability") == SHIPPING_BOARD_AVAILABILITY
+    )
+
+
+def selected_targets(selection: Selection) -> tuple[ExpectedTarget, ...]:
+    transports = {
+        board["slug"]: board["transport"]
+        for board in catalog_boards()
+    }
+    return tuple(ExpectedTarget(board, transports[board]) for board in selection.boards)
 
 
 def parse_port(value: str) -> int:
@@ -248,18 +286,24 @@ def parse_selection(arguments: Sequence[str]) -> Selection:
     parser.add_argument("--all", action="store_true", dest="all_boards")
     parser.add_argument("--port", type=parse_port, default=8765)
     parsed = parser.parse_args(arguments)
-    available = shipping_boards()
+    entries = catalog_boards()
+    available = tuple(board["slug"] for board in entries)
+    shipping = tuple(
+        board["slug"]
+        for board in entries
+        if board.get("availability") == SHIPPING_BOARD_AVAILABILITY
+    )
     if parsed.all_boards and parsed.boards:
         parser.error("--all cannot be combined with explicit boards")
     if parsed.all_boards:
-        return Selection(available, parsed.port)
+        return Selection(shipping, parsed.port)
     if not parsed.boards:
-        parser.error("select at least one shipping board or use --all")
+        parser.error("select at least one cataloged board or use --all")
     if len(set(parsed.boards)) != len(parsed.boards):
         parser.error("board selections must be unique")
     unknown = sorted(set(parsed.boards) - set(available))
     if unknown:
-        parser.error(f"unknown shipping board: {', '.join(unknown)}")
+        parser.error(f"unknown board: {', '.join(unknown)}")
     requested = set(parsed.boards)
     return Selection(tuple(board for board in available if board in requested), parsed.port)
 
@@ -509,6 +553,15 @@ def build_website(
         cwd=WEBSITE,
         label="local developer browser flasher build",
     )
+    run_process(
+        [
+            "bash",
+            ROOT / "tools" / "build" / "stage-web-flasher-nrf-dfu-wasm.sh",
+            flasher_assets / "nrf-dfu",
+        ],
+        cwd=ROOT,
+        label="local developer Nordic DFU browser core build",
+    )
 
 
 def generate_key(signer: Path, secrets: Path, environment: dict[str, str]) -> tuple[Path, Path, str]:
@@ -591,76 +644,30 @@ def write_channel_descriptor(candidate: Path, identity: SourceIdentity, manifest
     return channel
 
 
-def normalized_artifact(candidate: Path, wire_path: str) -> Path:
-    relative = PurePosixPath(wire_path)
-    if (
-        relative.is_absolute()
-        or not relative.parts
-        or any(part in {"", ".", ".."} for part in relative.parts)
-    ):
-        raise DeveloperFlasherError(f"manifest contains unsafe artifact path: {wire_path!r}")
-    path = candidate.joinpath(*relative.parts)
-    if not path.is_file() or path.is_symlink():
-        raise DeveloperFlasherError(f"manifest artifact is unavailable: {wire_path}")
-    return path
-
-
 def verify_manifest_artifacts(
     candidate: Path,
     manifest_path: Path,
     identity: SourceIdentity,
     selection: Selection,
     key_id: str,
-) -> None:
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    release = manifest.get("release")
-    signing = manifest.get("signing")
-    targets = manifest.get("targets")
-    if (
-        manifest.get("schema") != 2
-        or release
-        != {
-            "version": identity.version,
-            "channel": "preview",
-            "commit": identity.head,
-        }
-        or signing != {"key_id": key_id}
-        or not isinstance(targets, list)
-    ):
-        raise DeveloperFlasherError("assembled manifest release identity is invalid")
-    actual = [target.get("board_slug") for target in targets if isinstance(target, dict)]
-    if len(actual) != len(targets) or tuple(actual) != selection.boards:
-        raise DeveloperFlasherError("assembled manifest target set is not the exact selection")
-    if len(set(actual)) != len(actual):
-        raise DeveloperFlasherError("assembled manifest target set contains duplicates")
-    for target in targets:
-        parts = target.get("parts")
-        if not isinstance(parts, list) or not parts:
-            raise DeveloperFlasherError("assembled manifest target has no firmware parts")
-        for part in parts:
-            if not isinstance(part, dict):
-                raise DeveloperFlasherError("assembled manifest contains an invalid part")
-            artifact = normalized_artifact(candidate, part.get("path", ""))
-            payload = artifact.read_bytes()
-            if part.get("size") != len(payload) or part.get("sha256") != hashlib.sha256(
-                payload
-            ).hexdigest():
-                raise DeveloperFlasherError(
-                    f"assembled manifest hash or size disagrees with {part.get('path')!r}"
-                )
-            embedded_identity = (
-                f"version={identity.version} source={identity.digest}".encode("ascii")
-            )
-            if part.get("kind") == "application" and embedded_identity not in payload:
-                raise DeveloperFlasherError(
-                    "ESP application does not embed the signed developer version and source digest"
-                )
+) -> ValidatedCandidate:
+    try:
+        return validate_candidate(
+            candidate,
+            manifest_path,
+            identity.version,
+            identity.head,
+            identity.digest,
+            key_id,
+            selected_targets(selection),
+        )
+    except DeveloperCandidateError as error:
+        raise DeveloperFlasherError(str(error)) from error
 
 
 def stage_signed_release(
-    candidate: Path,
     website_stage: Path,
-    identity: SourceIdentity,
+    validated: ValidatedCandidate,
     manifest: Path,
     manifest_signature: Path,
     channel: Path,
@@ -668,7 +675,7 @@ def stage_signed_release(
     public_key: Path,
 ) -> None:
     releases = website_stage / "releases"
-    release = releases / identity.version
+    release = releases / validated.version
     channels = releases / "channels"
     release.mkdir(parents=True, exist_ok=True)
     channels.mkdir(parents=True, exist_ok=True)
@@ -677,14 +684,11 @@ def stage_signed_release(
     shutil.copy2(manifest_signature, release / manifest_signature.name)
     shutil.copy2(channel, channels / channel.name)
     shutil.copy2(channel_signature, channels / channel_signature.name)
-    document = json.loads(manifest.read_text(encoding="utf-8"))
-    for target in document["targets"]:
-        for part in target["parts"]:
-            source = normalized_artifact(candidate, part["path"])
-            relative = PurePosixPath(part["path"])
-            destination = release.joinpath(*relative.parts)
+    for target in validated.targets:
+        for artifact in target.artifacts:
+            destination = release.joinpath(*artifact.path.parts)
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, destination)
+            destination.write_bytes(artifact.payload)
 
 
 def assert_secret_removed(run_directory: Path, secret_key: Path) -> None:
@@ -752,7 +756,7 @@ def run(selection: Selection) -> None:
             signer_environment,
         )
         manifest = build_firmware(candidate, initial_identity, selection, key_id)
-        verify_manifest_artifacts(
+        validated = verify_manifest_artifacts(
             candidate,
             manifest,
             initial_identity,
@@ -778,9 +782,8 @@ def run(selection: Selection) -> None:
             signer_environment,
         )
         stage_signed_release(
-            candidate,
             website_stage,
-            initial_identity,
+            validated,
             manifest,
             manifest_signature,
             channel,

@@ -4,6 +4,7 @@ mod cli;
 mod error;
 mod esp;
 mod events;
+mod nrf_serial_dfu;
 mod release;
 mod splash;
 mod toolchain;
@@ -22,12 +23,13 @@ use prns_flash_manifest::{
 use serde::Serialize;
 
 use build::{
-    assemble_manifest, build_board, default_artifact_root, BuildVersion, ManifestTargetProfile,
+    assemble_manifest, build_board, build_board_for_flash, default_artifact_root, BuildVersion,
+    ManifestTargetProfile,
 };
 use cli::{CacheCommand, ChannelArg, Cli, CommandMode, WifiMode};
 use error::AppError;
 use events::{Phase, Reporter};
-use release::{prepare_candidate_target, prepare_published_target, PreparedTarget};
+use release::{verify_candidate_target, verify_published_target, PreparedTarget};
 use wifi::WifiOptions;
 
 fn main() -> ExitCode {
@@ -229,27 +231,56 @@ fn execute_flash(
     reporter: Reporter,
 ) -> Result<(), AppError> {
     esp::begin_cancellable_operation()?;
-    let prepared = if request.local_build {
+    let (prepared, detected_uf2) = if request.local_build {
+        let detected_uf2 = match board.transport {
+            Transport::EspSerial => None,
+            Transport::Uf2MassStorage => Some(uf2::detect_device(board, request.mount)?),
+            Transport::NrfSerialDfu => None,
+        };
         let repo = repo_root()?;
-        build_board(
-            board,
-            &repo,
-            &default_artifact_root(&repo),
-            BuildVersion::Repository,
-            reporter,
-        )?
-        .prepared
-    } else if let Some(candidate) = request.candidate {
-        prepare_candidate_target(catalog, &board.slug, request.channel, candidate, reporter)?
+        let prepared = match &detected_uf2 {
+            Some(device) => build_board_for_flash(
+                board,
+                &repo,
+                &default_artifact_root(&repo),
+                BuildVersion::Repository,
+                device.softdevice(),
+                reporter,
+            )?
+            .into_prepared()?,
+            None => build_board(
+                board,
+                &repo,
+                &default_artifact_root(&repo),
+                BuildVersion::Repository,
+                reporter,
+            )?
+            .into_prepared()?,
+        };
+        (prepared, detected_uf2)
     } else {
-        prepare_published_target(
-            catalog,
-            &board.slug,
-            request.channel,
-            request.version,
-            request.offline,
+        let verified = if let Some(candidate) = request.candidate {
+            verify_candidate_target(catalog, &board.slug, request.channel, candidate, reporter)?
+        } else {
+            verify_published_target(
+                catalog,
+                &board.slug,
+                request.channel,
+                request.version,
+                request.offline,
+                reporter,
+            )?
+        };
+        let detected_uf2 = match board.transport {
+            Transport::EspSerial => None,
+            Transport::Uf2MassStorage => Some(uf2::detect_device(board, request.mount)?),
+            Transport::NrfSerialDfu => None,
+        };
+        let prepared = verified.prepare(
+            detected_uf2.as_ref().map(|device| device.softdevice()),
             reporter,
-        )?
+        )?;
+        (prepared, detected_uf2)
     };
     if esp::cancelled() {
         return Err(AppError::Cancelled);
@@ -284,7 +315,24 @@ fn execute_flash(
                     board.display_name
                 )));
             }
-            uf2::flash(board, &prepared, request.mount, reporter)
+            let device = detected_uf2.ok_or_else(|| {
+                AppError::device_identity("UF2 device selection disappeared before delivery")
+            })?;
+            uf2::flash(board, &prepared, device, reporter)
+        }
+        (Transport::NrfSerialDfu, PreparedTarget::NrfSerialDfu(prepared)) => {
+            if !matches!(request.provisioning, ProvisioningAction::Preserve) {
+                return Err(AppError::unsupported_operation(format!(
+                    "{} does not support Wi-Fi provisioning",
+                    board.display_name
+                )));
+            }
+            if request.monitor {
+                return Err(AppError::unsupported_operation(
+                    "Nordic serial DFU does not provide a post-flash serial monitor",
+                ));
+            }
+            nrf_serial_dfu::flash(board, &prepared, request.port, reporter)
         }
         _ => Err(AppError::trust_identity(
             "prepared artifact transport does not match the selected board",
@@ -299,8 +347,8 @@ fn guided(catalog: &BoardCatalog, reporter: Reporter) -> Result<(), AppError> {
         ));
     }
     ui::print_header();
-    let labels = catalog
-        .boards
+    let boards = catalog.shipping_boards().collect::<Vec<_>>();
+    let labels = boards
         .iter()
         .map(|board| {
             format!(
@@ -315,8 +363,7 @@ fn guided(catalog: &BoardCatalog, reporter: Reporter) -> Result<(), AppError> {
     else {
         return Ok(());
     };
-    let board = catalog
-        .boards
+    let board = boards
         .get(index)
         .ok_or_else(|| AppError::configuration("board selection is out of range"))?;
     println!();
@@ -418,13 +465,14 @@ fn confirm_pinned_version(
 }
 
 fn list_boards(catalog: &BoardCatalog, json: bool) -> Result<(), AppError> {
+    let boards = catalog.shipping_boards().collect::<Vec<_>>();
     if json {
         #[derive(Serialize)]
         struct BoardListEvent<'a> {
             schema: u8,
             event: &'static str,
             phase: &'static str,
-            boards: &'a [BoardCatalogEntry],
+            boards: &'a [&'a BoardCatalogEntry],
         }
         println!(
             "{}",
@@ -432,11 +480,11 @@ fn list_boards(catalog: &BoardCatalog, json: bool) -> Result<(), AppError> {
                 schema: 1,
                 event: "board_list",
                 phase: "complete",
-                boards: &catalog.boards,
+                boards: &boards,
             })?
         );
     } else {
-        for board in &catalog.boards {
+        for board in boards {
             println!(
                 "{:<20} {:<12} {}",
                 board.slug,
@@ -480,7 +528,21 @@ enum DoctorCheck {
         note: Option<String>,
     },
     #[serde(rename = "uf2-mass-storage")]
-    Uf2MassStorage { mount: String },
+    Uf2MassStorage {
+        mount: String,
+        board_id: String,
+        bootloader_version: String,
+        softdevice_family: String,
+        softdevice_version: String,
+        compatibility_variant: String,
+    },
+    #[serde(rename = "nrf-serial-dfu")]
+    NrfSerialDfu {
+        port: String,
+        mode: nrf_serial_dfu::DeviceMode,
+        vendor_id: u16,
+        product_id: u16,
+    },
 }
 
 fn doctor(
@@ -496,7 +558,7 @@ fn doctor(
         && requested_port.is_some()
     {
         return Err(AppError::unsupported_operation(
-            "--port applies only to ESP serial boards; UF2 boards use a bootloader drive",
+            "--port applies only to serial boards; UF2 boards use a bootloader drive",
         ));
     }
     if board.is_some() {
@@ -534,10 +596,24 @@ fn doctor(
                 note,
             })
         }
-        Some(board) => {
-            let mount = uf2::doctor_mount_from(detected_mounts.clone(), board)?;
+        Some(board) if board.transport == Transport::Uf2MassStorage => {
+            let device = uf2::detect_device(board, None)?;
             Some(DoctorCheck::Uf2MassStorage {
-                mount: mount.display().to_string(),
+                mount: device.mount().display().to_string(),
+                board_id: device.identity().board_id().to_string(),
+                bootloader_version: device.identity().bootloader_version().to_string(),
+                softdevice_family: device.softdevice().family().as_str().to_string(),
+                softdevice_version: device.softdevice().version().as_str().to_string(),
+                compatibility_variant: device.compatibility_variant().to_string(),
+            })
+        }
+        Some(board) => {
+            let report = nrf_serial_dfu::doctor(board, detected_ports.clone(), requested_port)?;
+            Some(DoctorCheck::NrfSerialDfu {
+                port: report.port_name,
+                mode: report.mode,
+                vendor_id: report.vendor_id,
+                product_id: report.product_id,
             })
         }
         None => None,
@@ -559,7 +635,7 @@ fn doctor(
         .map(|path| path.display().to_string())
         .collect::<Vec<_>>();
     let output = DoctorOutput {
-        schema: 1,
+        schema: 2,
         event: "doctor",
         phase: "complete",
         board: board_slug,
@@ -585,7 +661,7 @@ fn human_doctor_output(
     if let Some(board) = output.board {
         rendered.push_str(&format!("board: {board}\n"));
     }
-    if board.is_none_or(|board| board.transport == Transport::EspSerial) {
+    if board.is_none_or(|board| board.transport != Transport::Uf2MassStorage) {
         rendered.push_str("serial ports:\n");
         let ports = human_serial_ports(&output.serial_ports, requested_port);
         if ports.is_empty() {
@@ -625,9 +701,37 @@ fn human_doctor_output(
                 rendered.push_str(&format!("  board confirmation: {note}\n"));
             }
         }
-        Some(DoctorCheck::Uf2MassStorage { mount }) => {
+        Some(DoctorCheck::Uf2MassStorage {
+            mount,
+            board_id,
+            bootloader_version,
+            softdevice_family,
+            softdevice_version,
+            compatibility_variant,
+        }) => {
             rendered.push_str("non-writing UF2 preflight: passed\n");
             rendered.push_str(&format!("  identifiable UF2 bootloader mount: {mount}\n"));
+            rendered.push_str(&format!("  Board-ID: {board_id}\n"));
+            rendered.push_str(&format!("  bootloader: {bootloader_version}\n"));
+            rendered.push_str(&format!(
+                "  SoftDevice: {softdevice_family} {softdevice_version}\n"
+            ));
+            rendered.push_str(&format!(
+                "  compatibility variant: {compatibility_variant}\n"
+            ));
+        }
+        Some(DoctorCheck::NrfSerialDfu {
+            port,
+            mode,
+            vendor_id,
+            product_id,
+        }) => {
+            rendered.push_str("non-writing Nordic serial DFU preflight: passed\n");
+            rendered.push_str(&format!("  port: {port}\n"));
+            rendered.push_str(&format!("  device mode: {mode}\n"));
+            rendered.push_str(&format!(
+                "  USB identity: {vendor_id:04x}:{product_id:04x}\n"
+            ));
         }
         None => {}
     }
@@ -700,6 +804,7 @@ const fn transport_label(transport: Transport) -> &'static str {
     match transport {
         Transport::EspSerial => "ESP serial",
         Transport::Uf2MassStorage => "UF2",
+        Transport::NrfSerialDfu => "Nordic serial DFU",
     }
 }
 
@@ -733,7 +838,7 @@ mod doctor_tests {
     #[test]
     fn esp_doctor_json_exposes_same_chip_ambiguity() {
         let encoded = json_line(&DoctorOutput {
-            schema: 1,
+            schema: 2,
             event: "doctor",
             phase: "complete",
             board: Some("heltec-v4"),
@@ -754,7 +859,7 @@ mod doctor_tests {
         .expect("doctor output serializes");
         assert_eq!(
             encoded,
-            r#"{"schema":1,"event":"doctor","phase":"complete","board":"heltec-v4","requested_port":"fake-port","serial_ports":[{"name":"fake-port","kind":"usb"}],"techo_mounts":[],"check":{"transport":"esp-serial","port":"fake-port","detected_chip":"esp32s3","flash_size":16777216,"same_chip_board_ambiguity":true,"note":"cannot distinguish these two board models"}}"#
+            r#"{"schema":2,"event":"doctor","phase":"complete","board":"heltec-v4","requested_port":"fake-port","serial_ports":[{"name":"fake-port","kind":"usb"}],"techo_mounts":[],"check":{"transport":"esp-serial","port":"fake-port","detected_chip":"esp32s3","flash_size":16777216,"same_chip_board_ambiguity":true,"note":"cannot distinguish these two board models"}}"#
         );
     }
 
@@ -791,7 +896,7 @@ mod doctor_tests {
         let catalog = board_catalog().expect("catalog");
         let board = catalog.board("t-beam-supreme").expect("T-Beam");
         let output = DoctorOutput {
-            schema: 1,
+            schema: 2,
             event: "doctor",
             phase: "complete",
             board: Some("t-beam-supreme"),
@@ -827,7 +932,7 @@ mod doctor_tests {
         let catalog = board_catalog().expect("catalog");
         let board = catalog.board("t-echo").expect("T-Echo");
         let output = DoctorOutput {
-            schema: 1,
+            schema: 2,
             event: "doctor",
             phase: "complete",
             board: Some("t-echo"),
@@ -839,12 +944,17 @@ mod doctor_tests {
             techo_mounts: vec!["/media/operator/TECHOBOOT".to_string()],
             check: Some(DoctorCheck::Uf2MassStorage {
                 mount: "/media/operator/TECHOBOOT".to_string(),
+                board_id: "nrf52840-techo-v1".to_string(),
+                bootloader_version: "0.6.1".to_string(),
+                softdevice_family: "s140".to_string(),
+                softdevice_version: "7.3.0".to_string(),
+                compatibility_variant: "s140-7.3.0-fwid-0x0123".to_string(),
             }),
         };
 
         assert_eq!(
             human_doctor_output(&output, Some(board), None),
-            "board: t-echo\nUF2 bootloader mounts:\n  /media/operator/TECHOBOOT\nnon-writing UF2 preflight: passed\n  identifiable UF2 bootloader mount: /media/operator/TECHOBOOT\n"
+            "board: t-echo\nUF2 bootloader mounts:\n  /media/operator/TECHOBOOT\nnon-writing UF2 preflight: passed\n  identifiable UF2 bootloader mount: /media/operator/TECHOBOOT\n  Board-ID: nrf52840-techo-v1\n  bootloader: 0.6.1\n  SoftDevice: s140 7.3.0\n  compatibility variant: s140-7.3.0-fwid-0x0123\n"
         );
     }
 }

@@ -17,7 +17,7 @@ use personal_rns::runtime::{Diagnostic, ManuallyAttached, PrnsEvent, PrnsNode, P
 use personal_rns::shared_instance::rns_rpc::{SharedInstanceCredentials, SharedInstanceRpcServer};
 use personal_rns::shared_instance::SharedInstanceServer;
 use personal_rns::storage::GrowableHeap;
-use personal_rns::usb_auto::UsbAutoHost;
+use personal_rns::usb_auto::{UsbAutoCandidate, UsbAutoHost};
 use personal_rns::wifi_auto::AutoWifi;
 use personal_rns::wifi_aware::WifiAwareAuto;
 use personal_rns::wifi_direct::WifiDirectAuto;
@@ -78,7 +78,7 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
     let node_identity = node_bootstrap.into_identity();
     let credentials = SharedInstanceCredentials::from_identity_secret(node_identity.secret());
     let node_identity_hash = credentials.transport_identity_hash();
-    let rpc_key = credentials.rpc_key().as_bytes().to_vec();
+    let rpc_key = credentials.rpc_key().clone();
     let transport_secret = node_identity.transport_secret();
 
     let ble_bootstrap = load_host_ble_identity(&storage_dir.join(BLE_IDENTITY_STORAGE.as_str()));
@@ -132,7 +132,7 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
         let bridge = platform.usb.clone();
         move || {
             if bridge.is_connected() {
-                vec![ANDROID_PORT.to_string()]
+                vec![UsbAutoCandidate::prns_specific(ANDROID_PORT)]
             } else {
                 Vec::new()
             }
@@ -140,7 +140,7 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
     };
     let open = {
         let bridge = platform.usb.clone();
-        move |_name: String| {
+        move |_candidate: UsbAutoCandidate| {
             let bridge = bridge.clone();
             async move { Ok::<BridgeStream, io::Error>(bridge.open_stream()) }
         }
@@ -164,10 +164,13 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
     };
     tokio::spawn(rpc.run());
 
-    let Some(mdns_rx) = platform.mdns.take_receiver() else {
-        return fail_start(ready_tx, EngineStartError::WorkerStopped);
+    let service_discovery = match platform.service_discovery.take_service_discovery() {
+        Ok(service_discovery) => service_discovery,
+        Err(_service_discovery_unavailable) => {
+            return fail_start(ready_tx, EngineStartError::WorkerStopped);
+        }
     };
-    let wifi = AutoWifi::new().with_platform_rendezvous(mdns_rx);
+    let wifi = AutoWifi::new().with_platform_discovery(service_discovery);
     let wifi_status = wifi.status();
     handle.supervise(wifi);
 
@@ -207,6 +210,7 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
         destination: destination_hashes.delivery,
         node_page_destination: destination_hashes.node_page,
         rpc_key,
+        ports,
         persistence: persistence_health,
     };
     let mut node_run = Box::pin(node.run());

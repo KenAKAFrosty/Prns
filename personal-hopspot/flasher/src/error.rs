@@ -152,6 +152,8 @@ pub(crate) enum WriteVerifyResetError {
     DeviceLost(String),
     #[error("{0}")]
     Uf2Delivery(String),
+    #[error(transparent)]
+    NrfSerialDfu(#[from] crate::nrf_serial_dfu::SerialDfuError),
 }
 
 impl WriteVerifyResetError {
@@ -159,6 +161,9 @@ impl WriteVerifyResetError {
         match self {
             Self::Uf2Delivery(_) => {
                 "Return the board to its bootloader drive, then copy the complete verified UF2 again."
+            }
+            Self::NrfSerialDfu(_) => {
+                "Reconnect the tracker and restart the complete Nordic serial DFU operation; the tool will safely retransmit it from the beginning."
             }
             Self::Write(_) | Self::Verify(_) | Self::Reset(_) | Self::DeviceLost(_) => {
                 "Hold BOOT, tap RESET, release BOOT, then restart the complete sparse flash operation."
@@ -304,6 +309,10 @@ impl AppError {
 
     pub(crate) fn uf2_delivery(message: impl Into<String>) -> Self {
         Self::WriteVerifyReset(WriteVerifyResetError::Uf2Delivery(message.into()))
+    }
+
+    pub(crate) fn nrf_serial_dfu(error: crate::nrf_serial_dfu::SerialDfuError) -> Self {
+        Self::WriteVerifyReset(WriteVerifyResetError::NrfSerialDfu(error))
     }
 
     pub(crate) fn developer_repository(message: impl Into<String>) -> Self {

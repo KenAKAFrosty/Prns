@@ -157,6 +157,7 @@ def query(config_dir, source_hash):
 
 def serve(config_dir):
     RNS.Reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
+    print("BLACKHOLE_SERVER_READY", flush=True)
     while True:
         time.sleep(1)
 

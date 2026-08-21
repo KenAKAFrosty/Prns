@@ -12,7 +12,7 @@ publish = false
 [workspace]
 
 [dependencies]
-personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "tcp", "udp", "shared-instance", "wifi-auto", "wifi-direct"] }
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "tcp", "udp", "shared-instance", "wifi-auto", "wifi-direct", "runtime-metrics"] }
 personal-hopspot-core = { path = "../../personal-hopspot/core" }
 
 [dev-dependencies]
@@ -20,8 +20,9 @@ env_logger = "0.11"
 futures-util = "0.3"
 prns-core = { path = "../../prns-core" }
 prns-ffi = { path = "../../prns-ffi" }
-prns-interfaces-tokio = { path = "../../prns-interfaces/impls/tokio", features = ["bluetooth-auto", "log", "shared-instance", "tcp", "wifi-direct"] }
-tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
+prns-interfaces-tokio = { path = "../../prns-interfaces/impls/tokio", features = ["bluetooth-auto", "log", "shared-instance", "tcp", "websocket", "wifi-direct"] }
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "process"] }
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 zbus = "4"

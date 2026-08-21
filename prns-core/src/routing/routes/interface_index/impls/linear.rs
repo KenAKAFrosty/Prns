@@ -35,16 +35,16 @@ impl RouteInterfaceIndex for LinearRouteInterfaceIndex {
         current: InterfaceId,
         now: InstantMillis,
         receiving_interfaces: &mut [InterfaceId],
-        last_relayed_at: &mut [InstantMillis],
+        last_route_activity_at: &mut [InstantMillis],
     ) -> usize {
-        debug_assert_eq!(receiving_interfaces.len(), last_relayed_at.len());
+        debug_assert_eq!(receiving_interfaces.len(), last_route_activity_at.len());
         let mut moved = 0;
         for (row, interface) in receiving_interfaces.iter_mut().enumerate() {
             if *interface != previous {
                 continue;
             }
             *interface = current;
-            last_relayed_at[row] = now;
+            last_route_activity_at[row] = now;
             moved += 1;
         }
         moved

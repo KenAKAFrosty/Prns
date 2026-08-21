@@ -10,9 +10,16 @@ import {
   readBoundedBytes,
   safeFailure,
   sha256Hex,
+  validateUf2Artifact,
   validateRequest,
 } from "./core.js";
 import { BRIDGE_SCHEMA, BridgeEventSequence, RESPONSE_LIMITS } from "./contract.js";
+import {
+  cancelNrfBootloaderSelection,
+  continueNrfBootloaderSelection as continuePendingNrfBootloaderSelection,
+  createNrfDfuSession,
+  runNrfSerialDfu,
+} from "./nrf-serial-dfu.js";
 
 let prepared = null;
 let active = false;
@@ -165,6 +172,7 @@ export async function prepare(request, emit = () => {}, dependencies = {}) {
   cancelRequested = false;
   const fetchImpl = dependencies.fetchImpl ?? globalThis.fetch;
   const cryptoImpl = dependencies.cryptoImpl ?? globalThis.crypto;
+  let nrfDfu = null;
   try {
     validateRequest(request);
     if (request.transport === "esp-serial" && dependencies.loadEsptool !== false) {
@@ -235,6 +243,9 @@ export async function prepare(request, emit = () => {}, dependencies = {}) {
       if (actual !== part.sha256) {
         throw new FlashBridgeError("artifact_hash_mismatch", "A firmware part failed SHA-256 verification.");
       }
+      if (request.transport === "uf2-mass-storage") {
+        validateUf2Artifact(bytes, request.uf2Compatibility, request.boardSlug);
+      }
       files.push({ ...part, bytes });
       completed += bytes.length;
       events.emit({
@@ -248,6 +259,10 @@ export async function prepare(request, emit = () => {}, dependencies = {}) {
     }
 
     requireCurrentPreparation(generation);
+    if (request.transport === "nrf-serial-dfu") {
+      nrfDfu = await createNrfDfuSession(request.nrfSerialDfu, files, dependencies);
+      requireCurrentPreparation(generation);
+    }
     const config = provisioningImage(request.provisioning);
     if (config) {
       files.push({
@@ -272,9 +287,12 @@ export async function prepare(request, emit = () => {}, dependencies = {}) {
       beforeReset: request.beforeReset,
       afterReset: request.afterReset,
       mountLabel: request.mountLabel,
+      serialFilters: request.serialFilters.map((filter) => ({ ...filter })),
       installMode: request.installMode,
       files,
+      nrfDfu,
     };
+    nrfDfu = null;
     events.emit({
       phase: "ready",
       current: completed,
@@ -283,6 +301,7 @@ export async function prepare(request, emit = () => {}, dependencies = {}) {
     });
     return { ready: true };
   } catch (error) {
+    nrfDfu?.session?.free?.();
     const failure = safeFailure(error);
     if (generation === preparationGeneration) {
       discardPrepared();
@@ -334,9 +353,12 @@ export async function flash(emit = () => {}, dependencies = {}) {
       events,
       new FlashBridgeError(
         "unsupported_browser",
-        "This browser does not provide Web Serial. Use current Chrome/Edge or the CLI.",
+        "This browser does not provide Web Serial. Use current desktop Chrome, Edge, or Firefox 151 or later, or the CLI.",
       ),
     );
+  }
+  if (prepared.transport === "nrf-serial-dfu") {
+    return flashNrfSerialDfu(events, dependencies, environment);
   }
   const TransportImpl = dependencies.TransportImpl ?? DefaultTransport;
   const LoaderImpl = dependencies.LoaderImpl ?? DefaultLoader;
@@ -357,7 +379,7 @@ export async function flash(emit = () => {}, dependencies = {}) {
     events.emit({ phase: "requesting_port" });
     let port;
     try {
-      port = await serial.requestPort();
+      port = await serial.requestPort({ filters: prepared.serialFilters });
     } catch (error) {
       if (error?.name === "NotFoundError" || error?.name === "SecurityError") {
         throw error;
@@ -587,6 +609,7 @@ export function cancel() {
   if (!cancellationLocked) {
     cancelRequested = true;
   }
+  cancelNrfBootloaderSelection();
 }
 
 export function clearPrepared() {
@@ -595,6 +618,37 @@ export function clearPrepared() {
   cancelRequested = active && !cancellationLocked;
   if (!active) {
     discardPrepared();
+  }
+  cancelNrfBootloaderSelection();
+}
+
+export function continueNrfBootloaderSelection() {
+  return continuePendingNrfBootloaderSelection();
+}
+
+async function flashNrfSerialDfu(events, dependencies, environment) {
+  active = true;
+  cancelRequested = false;
+  cancellationLocked = false;
+  setNavigationGuard(true, environment);
+  try {
+    return await runNrfSerialDfu({
+      prepared,
+      events,
+      dependencies,
+      isCancelled: () => cancelRequested,
+    });
+  } catch (error) {
+    const failure = safeFailure(error);
+    if (!events.terminal) {
+      events.emit({ phase: failure.code === "cancelled" ? "cancelled" : "failed", ...failure });
+    }
+    throw error;
+  } finally {
+    active = false;
+    setNavigationGuard(false, environment);
+    discardPrepared();
+    cancellationLocked = false;
   }
 }
 
@@ -828,6 +882,7 @@ function discardPrepared() {
       file.bytes.fill(0);
     }
   }
+  prepared.nrfDfu?.session?.free?.();
   prepared = null;
 }
 

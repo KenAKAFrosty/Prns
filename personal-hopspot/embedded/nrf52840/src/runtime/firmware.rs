@@ -1,16 +1,13 @@
 use embassy_executor::Spawner;
 use embassy_futures::join::{join, join3, join5};
 use embassy_futures::select::{select3, Either3};
-use embassy_nrf::gpio::{Input, Output};
-use embassy_nrf::spim::Spim;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
-use embassy_time::{Delay, Duration, Timer};
+use embassy_time::{Duration, Timer};
 use embassy_usb::{Builder, Config as UsbConfig};
 use static_cell::{ConstStaticCell, StaticCell};
 
 use embedded_graphics::prelude::*;
-use embedded_hal_bus::spi::ExclusiveDevice;
 use epd_waveshare::color::Color as EpdColor;
 
 use nrf_softdevice::ble::l2cap;
@@ -31,7 +28,10 @@ use personal_rns::runtime::{
 };
 use personal_rns::storage::StorageLayout;
 use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
-use personal_rns::usb_auto::{WebUsbAutoClass, WebUsbAutoState, WEBUSB_AUTO_PACKET_SIZE};
+use personal_rns::usb_auto::{
+    WebUsbAutoClass, WebUsbAutoState, WebUsbBootloaderEntry, WEBUSB_AUTO_CONTROL_BUFFER_BYTES,
+    WEBUSB_AUTO_MSOS_DESCRIPTOR_BYTES, WEBUSB_AUTO_PACKET_SIZE,
+};
 
 use crate::boards::selected as board;
 use board::{
@@ -57,7 +57,6 @@ const EINK_ANIMATION_MS: u64 = 0;
 const NOTICE_MS: u64 = 900;
 const USB_CONFIG_DESCRIPTOR_BYTES: usize = 64;
 const USB_BOS_DESCRIPTOR_BYTES: usize = 64;
-const USB_MSOS_DESCRIPTOR_BYTES: usize = 192;
 
 #[embassy_executor::task]
 async fn manifold_task(node: &'static mut Node, persistence: &'static mut board::Persistence) {
@@ -101,21 +100,21 @@ pub async fn run(spawner: Spawner) -> ! {
     usb_config.max_packet_size_0 = 64;
     static CONFIG_DESC: StaticCell<[u8; USB_CONFIG_DESCRIPTOR_BYTES]> = StaticCell::new();
     static BOS_DESC: StaticCell<[u8; USB_BOS_DESCRIPTOR_BYTES]> = StaticCell::new();
-    static MSOS_DESC: StaticCell<[u8; USB_MSOS_DESCRIPTOR_BYTES]> = StaticCell::new();
-    static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
+    static MSOS_DESC: StaticCell<[u8; WEBUSB_AUTO_MSOS_DESCRIPTOR_BYTES]> = StaticCell::new();
+    static CONTROL_BUF: StaticCell<[u8; WEBUSB_AUTO_CONTROL_BUFFER_BYTES]> = StaticCell::new();
     let mut builder = Builder::new(
         usb_driver,
         usb_config,
         CONFIG_DESC.init([0; USB_CONFIG_DESCRIPTOR_BYTES]),
         BOS_DESC.init([0; USB_BOS_DESCRIPTOR_BYTES]),
-        MSOS_DESC.init([0; USB_MSOS_DESCRIPTOR_BYTES]),
-        CONTROL_BUF.init([0; 64]),
+        MSOS_DESC.init([0; WEBUSB_AUTO_MSOS_DESCRIPTOR_BYTES]),
+        CONTROL_BUF.init([0; WEBUSB_AUTO_CONTROL_BUFFER_BYTES]),
     );
-    builder.msos_descriptor(0x0603_0000, 0x20);
+    builder.msos_descriptor(embassy_usb::msos::windows_version::WIN8_1, 0x20);
     static USB_STATE: StaticCell<WebUsbAutoState> = StaticCell::new();
     let class = WebUsbAutoClass::new(
         &mut builder,
-        USB_STATE.init(WebUsbAutoState::new()),
+        USB_STATE.init(WebUsbAutoState::new(WebUsbBootloaderEntry::Unsupported)),
         WEBUSB_AUTO_PACKET_SIZE,
     );
     let mut usb = builder.build();
@@ -182,13 +181,7 @@ pub async fn run(spawner: Spawner) -> ! {
     let node_page_destination = destination_hashes.node_page;
     let mut manifold_lanes = ManifoldLanes::new();
     let lora_profile = loaded_lora_profile.profile;
-    let lora_id = LoRaInterface::<
-        ExclusiveDevice<Spim<'static>, Output<'static>, Delay>,
-        Input<'static>,
-        Input<'static>,
-        Output<'static>,
-        Delay,
-    >::interface_id(&lora_profile);
+    let lora_id = LoRaInterface::<board::Radio>::interface_id(&lora_profile);
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
     let lora_status: &'static EmbassyInterfaceStatus = LORA_STATUS.init(
         EmbassyInterfaceStatus::new(lora_id, ConnectionState::Initializing),
@@ -316,6 +309,8 @@ pub async fn run(spawner: Spawner) -> ! {
             storage_limits: <Storage as StorageLayout>::LIMITS,
             display_power_control: hopspot::DisplayPowerControl::Unavailable,
             access_point: hopspot::AccessPointState::Unsupported,
+            shared_instance_config_export: hopspot::SharedInstanceConfigExport::Unavailable,
+            gnss: hopspot::GnssAvailability::Unavailable,
         });
         let startup_notice = identity_startup_notice.or(profile_startup_notice);
         let mut pending_startup_notice = identity_startup_notice
@@ -342,7 +337,10 @@ pub async fn run(spawner: Spawner) -> ! {
             let mut adc = [0i16; 1];
             saadc.sample(&mut adc).await;
             let vbat_mv = (adc[0].max(0) as u32) * 6000 / 4096;
-            let battery = battery_gauge.update(Some(vbat_mv), usb_vbus_present());
+            let battery = battery_gauge.update(
+                Some(vbat_mv),
+                hopspot::ExternalPowerState::from_presence(usb_vbus_present()),
+            );
 
             let snapshots = build_snapshots(lora_status, usb_status);
             let mut cards = build_cards(&snapshots, lora_status.id(), usb_status.id());
@@ -414,6 +412,7 @@ pub async fn run(spawner: Spawner) -> ! {
                 hopspot::RenderFrame {
                     content,
                     battery,
+                    gnss: None,
                     state: &ui_state,
                     interface_menu_details: &interface_menu_details,
                     animation_ms: EINK_ANIMATION_MS,
@@ -573,6 +572,9 @@ pub async fn run(spawner: Spawner) -> ! {
                         hopspot::UiAction::SwapRadioMode => {}
                         hopspot::UiAction::ToggleStationUplink => {}
                         hopspot::UiAction::OledOff => {}
+                        hopspot::UiAction::ToggleOledAutoOff => {}
+                        hopspot::UiAction::CopySharedInstanceConfig => {}
+                        hopspot::UiAction::ControlGnss(_) => {}
                         hopspot::UiAction::None => {}
                     }
                 }

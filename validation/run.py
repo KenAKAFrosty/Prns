@@ -279,6 +279,17 @@ def source_cargo_manifests() -> set[str]:
     }
 
 
+def source_cargo_lock_workspaces() -> set[str]:
+    workspaces = set()
+    for path in tracked_or_untracked_sources():
+        relative = path.relative_to(ROOT)
+        if path.name != "Cargo.lock" or "vendor" in relative.parts:
+            continue
+        parent = relative.parent.as_posix()
+        workspaces.add("." if parent == "." else parent)
+    return workspaces
+
+
 def validate_cargo_workspaces(manifests: set[str]) -> list[str]:
     errors = []
     for relative in sorted(manifests):
@@ -429,6 +440,25 @@ def validate_manifest(manifest: dict, check_tools: bool = False) -> list[str]:
         )
     else:
         errors.extend(validate_cargo_workspaces(expected_manifests))
+    cargo_lock_workspaces = manifest.get("registry", {}).get("cargo_lock_workspaces", [])
+    if not isinstance(cargo_lock_workspaces, list) or not cargo_lock_workspaces:
+        errors.append("Cargo lockfile workspace registry must be a non-empty list")
+    else:
+        duplicates = sorted(
+            path
+            for path in set(cargo_lock_workspaces)
+            if cargo_lock_workspaces.count(path) > 1
+        )
+        expected_locks = set(cargo_lock_workspaces)
+        actual_locks = source_cargo_lock_workspaces()
+        if duplicates:
+            errors.append(f"duplicate Cargo lockfile workspaces: {duplicates!r}")
+        if expected_locks != actual_locks:
+            errors.append(
+                "Cargo lockfile workspace registry drift: registry-only="
+                f"{sorted(expected_locks - actual_locks)!r} source-only="
+                f"{sorted(actual_locks - expected_locks)!r}"
+            )
     format_manifests = manifest.get("registry", {}).get("format_manifests", [])
     if not isinstance(format_manifests, list) or not format_manifests:
         errors.append("format manifest registry must be a non-empty list")
@@ -441,6 +471,30 @@ def validate_manifest(manifest: dict, check_tools: bool = False) -> list[str]:
             errors.append(f"duplicate format manifests: {duplicates!r}")
         if unknown:
             errors.append(f"format manifests are not registered Cargo manifests: {unknown!r}")
+        format_package_overrides = manifest.get("registry", {}).get(
+            "format_package_overrides", {}
+        )
+        if not isinstance(format_package_overrides, dict):
+            errors.append("format package overrides must be a table")
+        else:
+            unknown_overrides = sorted(
+                set(format_package_overrides) - set(format_manifests)
+            )
+            if unknown_overrides:
+                errors.append(
+                    "format package overrides name unknown manifests: "
+                    f"{unknown_overrides!r}"
+                )
+            for path, packages in format_package_overrides.items():
+                if (
+                    not isinstance(packages, list)
+                    or not packages
+                    or any(not isinstance(package, str) or not package for package in packages)
+                    or len(set(packages)) != len(packages)
+                ):
+                    errors.append(
+                        f"format package override for {path!r} must contain unique package names"
+                    )
 
     try:
         discovered_kani = discover_kani_harnesses()
@@ -525,6 +579,7 @@ def verification_report(manifest: dict, check_tools: bool) -> list[str]:
     }
     registry = manifest["registry"]
     cargo_manifests = registry["cargo_manifests"]
+    cargo_lock_workspaces = registry["cargo_lock_workspaces"]
     format_manifests = registry["format_manifests"]
     kani = discover_kani_harnesses()
     fuzz = discover_fuzz_targets(ROOT / "validation" / "fuzz" / "Cargo.toml")
@@ -551,6 +606,7 @@ def verification_report(manifest: dict, check_tools: bool) -> list[str]:
         "entrypoints are available.",
         "[verify] Cargo ownership: "
         f"{len(cargo_manifests)} manifests are registered, valid, and repository-owned; "
+        f"{len(cargo_lock_workspaces)} first-party lockfile workspaces are inventoried; "
         f"{len(format_manifests)} unique workspace roots own formatting.",
         "[verify] Native discovery: "
         f"{len(kani)} Kani proofs and {len(fuzz)} fuzz targets exactly match their source owners.",

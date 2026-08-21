@@ -18,7 +18,6 @@ use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_REQUEST};
 use crate::routing::links::table::OverdueLink;
 use crate::routing::path_requests::write_path_request_wire_packet;
 use crate::routing::warmth::WarmestOf;
-use crate::routing::RouteResponsiveness;
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::wire::{BROADCAST_MTU, TRUNCATED_HASH_BYTE_LEN};
 
@@ -33,6 +32,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
         WakeSchedules {
             receipt_timeouts: self.receipt_timeouts_wake(),
+            resource_deadlines: self.resource_deadlines_wake(),
             ..WakeSchedules::UNCHANGED
         }
     }
@@ -65,6 +65,7 @@ impl<S: StorageLayout> EngineState<S> {
         interfaces: AttachedInterfaces<'_>,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
+        self.reconcile_pending_link_route_evidence();
         let tunnels_changed = self.tunnels.expire(now) != 0;
         let departures_changed = self.departed_interfaces.evict_expired(now) != 0;
         if tunnels_changed || departures_changed {
@@ -232,12 +233,14 @@ impl<S: StorageLayout> EngineState<S> {
     where
         F: FnMut(&mut [u8]),
     {
+        self.reconcile_pending_link_route_evidence();
         self.expire_unestablished_links(now, sink);
         self.cull_overdue_transported_links(now, interfaces, fill_entropy, sink);
         self.close_stale_links(now, interfaces, fill_entropy, sink);
         self.send_due_keepalives(now, interfaces, sink);
         WakeSchedules {
             link_deadlines: self.link_deadlines_wake(),
+            resource_deadlines: self.resource_deadlines_wake(),
             ..WakeSchedules::UNCHANGED
         }
     }
@@ -250,12 +253,13 @@ impl<S: StorageLayout> EngineState<S> {
         while let Some(overdue) = self.pop_timed_out_link(now) {
             if let OverdueLink::Initiated {
                 command_id,
-                destination,
+                mut route_evidence,
+                requested_at,
                 ..
             } = overdue
             {
                 self.routing_table
-                    .mark_responsiveness(&destination, RouteResponsiveness::Unresponsive);
+                    .mark_unresponsive_if_not_active_since(&mut route_evidence, requested_at);
                 settle(
                     sink,
                     command_id,
@@ -278,7 +282,7 @@ impl<S: StorageLayout> EngineState<S> {
             .network_transport_enabled()
             .then(|| self.transport_id())
             .flatten();
-        while let Some(overdue) = self.transported_links.pop_overdue(now) {
+        while let Some(mut overdue) = self.transported_links.pop_overdue(now) {
             if overdue.validated_by_proof {
                 self.mark_interface_dirty(overdue.next_hop_interface);
                 self.mark_interface_dirty(overdue.received_interface);
@@ -301,9 +305,9 @@ impl<S: StorageLayout> EngineState<S> {
                             .descriptor_for(overdue.received_interface)
                             .map(|descriptor| descriptor.mode);
                         if !matches!(arrival_mode, Some(InterfaceMode::Boundary)) {
-                            self.routing_table.mark_responsiveness(
-                                &overdue.destination,
-                                RouteResponsiveness::Unresponsive,
+                            self.routing_table.mark_unresponsive_if_not_active_since(
+                                &mut overdue.route_evidence,
+                                overdue.last_active,
                             );
                         }
                         FanTarget::AllExcept(overdue.received_interface)

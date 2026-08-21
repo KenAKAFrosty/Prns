@@ -1,0 +1,20 @@
+[package]
+name = "nrf-softdevice-s140-v6"
+version = "0.1.2-prns.1"
+description = "Low-level bindings for the Nordic nRF SoftDevice S140"
+authors = ["Dario Nieuwenhuis <dirbaio@dirbaio.net>"]
+repository = "https://github.com/embassy-rs/nrf-softdevice"
+categories = ["embedded", "hardware-support", "no-std"]
+keywords = ["cortex-m", "nrf52", "nrf-softdevice", "bluetooth", "ble"]
+license-file = "LICENSE-NORDIC"
+edition = "2021"
+
+[package.metadata.docs.rs]
+targets = ["thumbv7em-none-eabi"]
+
+[package.metadata.embassy_docs]
+src_base = "https://github.com/embassy-rs/nrf-softdevice/blob/nrf-softdevice-s140-v$VERSION/nrf-softdevice-s140/src/"
+src_base_git = "https://github.com/embassy-rs/nrf-softdevice/blob/$COMMIT/nrf-softdevice-s140/src/"
+target = "thumbv7em-none-eabi"
+
+[workspace]

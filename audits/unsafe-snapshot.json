@@ -90,6 +90,11 @@
       "manifest": "prns-wasm/Cargo.toml",
       "name": "wasm",
       "target": "wasm32-unknown-unknown"
+    },
+    {
+      "manifest": "prns-nrf-dfu-wasm/Cargo.toml",
+      "name": "nrf-dfu-browser",
+      "target": "wasm32-unknown-unknown"
     }
   ],
   "packages": [
@@ -1285,6 +1290,9 @@
     },
     {
       "graphs": {
+        "nrf-dfu-browser": [
+          "default"
+        ],
         "wasm": [
           "default"
         ]
@@ -1753,6 +1761,7 @@
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
+        "nrf-dfu-browser": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -4662,7 +4671,8 @@
           "gpiote",
           "nrf52840",
           "rt",
-          "time-driver-rtc1"
+          "time-driver-rtc1",
+          "unstable-pac"
         ]
       },
       "name": "embassy-nrf",
@@ -5686,7 +5696,7 @@
         ]
       },
       "name": "esp-alloc",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "source": "personal-hopspot/embedded/esp32/vendor/esp-alloc-0.10.0",
       "unsafe": {
         "blocks": 41,
         "externs": 11,
@@ -5728,7 +5738,7 @@
         ]
       },
       "name": "esp-backtrace",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "source": "personal-hopspot/embedded/esp32/vendor/esp-backtrace-0.19.0",
       "unsafe": {
         "blocks": 12,
         "externs": 4,
@@ -6074,11 +6084,11 @@
       "name": "esp-radio",
       "source": "personal-hopspot/embedded/esp32/vendor/esp-radio-0.18.0",
       "unsafe": {
-        "blocks": 439,
+        "blocks": 437,
         "externs": 511,
         "functions": 12,
         "impls": 3,
-        "tokens": 1023
+        "tokens": 1021
       },
       "version": "0.18.0"
     },
@@ -6110,7 +6120,7 @@
         ]
       },
       "name": "esp-radio-rtos-driver",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "source": "personal-hopspot/embedded/esp32/vendor/esp-radio-rtos-driver-0.3.0",
       "unsafe": {
         "blocks": 124,
         "externs": 11,
@@ -6203,13 +6213,13 @@
         ]
       },
       "name": "esp-rtos",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "source": "personal-hopspot/embedded/esp32/vendor/esp-rtos-0.3.0",
       "unsafe": {
-        "blocks": 97,
+        "blocks": 98,
         "externs": 5,
         "functions": 9,
         "impls": 7,
-        "tokens": 124
+        "tokens": 125
       },
       "version": "0.3.0"
     },
@@ -7378,6 +7388,7 @@
         ],
         "engine": [
           "alloc",
+          "default",
           "std"
         ],
         "esp32-c6": [
@@ -9439,7 +9450,9 @@
     },
     {
       "graphs": {
-        "desktop-macos": []
+        "daemon-macos": [],
+        "desktop-macos": [],
+        "host-c-macos": []
       },
       "name": "io-kit-sys",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -10064,6 +10077,7 @@
       "graphs": {
         "daemon-linux": [
           "auxvec",
+          "default",
           "elf",
           "errno",
           "general",
@@ -10073,6 +10087,7 @@
           "netlink",
           "no_std",
           "prctl",
+          "std",
           "xdp"
         ],
         "desktop-linux": [
@@ -10092,19 +10107,31 @@
         ],
         "engine": [
           "auxvec",
+          "default",
           "elf",
           "errno",
           "general",
+          "if_ether",
           "ioctl",
-          "no_std"
+          "net",
+          "netlink",
+          "no_std",
+          "std",
+          "xdp"
         ],
         "host-c-linux": [
           "auxvec",
+          "default",
           "elf",
           "errno",
           "general",
+          "if_ether",
           "ioctl",
-          "no_std"
+          "net",
+          "netlink",
+          "no_std",
+          "std",
+          "xdp"
         ]
       },
       "name": "linux-raw-sys",
@@ -10424,7 +10451,13 @@
     },
     {
       "graphs": {
+        "daemon-macos": [
+          "default"
+        ],
         "desktop-macos": [
+          "default"
+        ],
+        "host-c-macos": [
           "default"
         ]
       },
@@ -11375,13 +11408,13 @@
           "default",
           "evt-max-size-512",
           "macros",
-          "nrf-softdevice-s140",
           "nrf52840",
-          "s140"
+          "s140",
+          "s140-v7"
         ]
       },
       "name": "nrf-softdevice",
-      "source": "git+https://github.com/embassy-rs/nrf-softdevice?rev=47d6121c6e823120e8b883a7ac75f44ce7daa3aa#47d6121c6e823120e8b883a7ac75f44ce7daa3aa",
+      "source": "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice",
       "unsafe": {
         "blocks": 123,
         "externs": 3,
@@ -11389,14 +11422,14 @@
         "impls": 14,
         "tokens": 159
       },
-      "version": "0.1.0"
+      "version": "0.1.0-prns.1"
     },
     {
       "graphs": {
         "nrf52840": []
       },
       "name": "nrf-softdevice-macro",
-      "source": "git+https://github.com/embassy-rs/nrf-softdevice?rev=47d6121c6e823120e8b883a7ac75f44ce7daa3aa#47d6121c6e823120e8b883a7ac75f44ce7daa3aa",
+      "source": "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice-macro",
       "unsafe": {
         "blocks": 2,
         "externs": 0,
@@ -11410,8 +11443,8 @@
       "graphs": {
         "nrf52840": []
       },
-      "name": "nrf-softdevice-s140",
-      "source": "git+https://github.com/embassy-rs/nrf-softdevice?rev=47d6121c6e823120e8b883a7ac75f44ce7daa3aa#47d6121c6e823120e8b883a7ac75f44ce7daa3aa",
+      "name": "nrf-softdevice-s140-v7",
+      "source": "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice-s140-v7",
       "unsafe": {
         "blocks": 676,
         "externs": 5,
@@ -11419,7 +11452,7 @@
         "impls": 0,
         "tokens": 822
       },
-      "version": "0.1.2"
+      "version": "0.1.2-prns.1"
     },
     {
       "graphs": {
@@ -11741,6 +11774,38 @@
         "tokens": 347
       },
       "version": "0.2.4"
+    },
+    {
+      "graphs": {
+        "daemon-linux": [
+          "tokio"
+        ],
+        "daemon-macos": [
+          "tokio"
+        ],
+        "daemon-windows": [
+          "tokio"
+        ],
+        "host-c-linux": [
+          "tokio"
+        ],
+        "host-c-macos": [
+          "tokio"
+        ],
+        "host-c-windows": [
+          "tokio"
+        ]
+      },
+      "name": "nusb",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 162,
+        "externs": 133,
+        "functions": 16,
+        "impls": 34,
+        "tokens": 345
+      },
+      "version": "0.2.7"
     },
     {
       "graphs": {
@@ -13569,6 +13634,12 @@
           "race",
           "std"
         ],
+        "nrf-dfu-browser": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
         "wasm": []
       },
       "name": "once_cell",
@@ -13804,11 +13875,11 @@
       "name": "personal-hopspot-android",
       "source": "personal-hopspot/mobile/android/rust",
       "unsafe": {
-        "blocks": 22,
+        "blocks": 20,
         "externs": 0,
         "functions": 0,
         "impls": 0,
-        "tokens": 22
+        "tokens": 20
       },
       "version": "0.1.0"
     },
@@ -13915,11 +13986,11 @@
       "name": "personal-hopspot-esp32",
       "source": "personal-hopspot/embedded/esp32",
       "unsafe": {
-        "blocks": 491,
-        "externs": 517,
-        "functions": 15,
-        "impls": 15,
-        "tokens": 1100
+        "blocks": 777,
+        "externs": 553,
+        "functions": 121,
+        "impls": 37,
+        "tokens": 1619
       },
       "version": "0.1.0"
     },
@@ -13985,7 +14056,8 @@
           "usb",
           "weave",
           "websocket",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-mdns"
         ],
         "daemon-macos": [
           "alloc",
@@ -14015,7 +14087,8 @@
           "usb",
           "weave",
           "websocket",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-mdns"
         ],
         "daemon-windows": [
           "alloc",
@@ -14045,7 +14118,8 @@
           "usb",
           "weave",
           "websocket",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-mdns"
         ],
         "desktop-linux": [
           "alloc",
@@ -14061,7 +14135,8 @@
           "tokio-host",
           "tracing",
           "usb",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-apple"
         ],
         "desktop-macos": [
           "alloc",
@@ -14077,7 +14152,8 @@
           "tokio-host",
           "tracing",
           "usb",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-apple"
         ],
         "desktop-windows": [
           "alloc",
@@ -14093,7 +14169,8 @@
           "tokio-host",
           "tracing",
           "usb",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-apple"
         ],
         "engine": [
           "alloc",
@@ -14236,7 +14313,8 @@
           "std",
           "tcp",
           "tokio-host",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-apple"
         ],
         "nrf52840": [
           "bluetooth-auto",
@@ -14844,11 +14922,11 @@
       "name": "prns-core",
       "source": "prns-core",
       "unsafe": {
-        "blocks": 1,
+        "blocks": 3,
         "externs": 0,
         "functions": 0,
         "impls": 0,
-        "tokens": 1
+        "tokens": 3
       },
       "version": "0.3.6"
     },
@@ -14878,11 +14956,11 @@
       "name": "prns-ffi",
       "source": "prns-ffi",
       "unsafe": {
-        "blocks": 119,
+        "blocks": 123,
         "externs": 3,
         "functions": 0,
         "impls": 22,
-        "tokens": 177
+        "tokens": 184
       },
       "version": "0.3.6"
     },
@@ -14913,11 +14991,11 @@
       "name": "prns-host-c",
       "source": "prns-host/abi/c",
       "unsafe": {
-        "blocks": 247,
-        "externs": 60,
+        "blocks": 282,
+        "externs": 70,
         "functions": 18,
         "impls": 2,
-        "tokens": 327
+        "tokens": 372
       },
       "version": "0.3.6"
     },
@@ -15122,7 +15200,8 @@
           "usb",
           "weave",
           "websocket",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-mdns"
         ],
         "daemon-macos": [
           "ax25",
@@ -15145,7 +15224,8 @@
           "usb",
           "weave",
           "websocket",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-mdns"
         ],
         "daemon-windows": [
           "ax25",
@@ -15168,7 +15248,8 @@
           "usb",
           "weave",
           "websocket",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-mdns"
         ],
         "desktop-linux": [
           "bluetooth-auto",
@@ -15179,7 +15260,8 @@
           "tcp",
           "tracing",
           "usb",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-apple"
         ],
         "desktop-macos": [
           "bluetooth-auto",
@@ -15190,7 +15272,8 @@
           "tcp",
           "tracing",
           "usb",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-apple"
         ],
         "desktop-windows": [
           "bluetooth-auto",
@@ -15201,7 +15284,8 @@
           "tcp",
           "tracing",
           "usb",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-apple"
         ],
         "esp32-c6": [
           "bluetooth-auto",
@@ -15300,11 +15384,13 @@
           "bluetooth-auto",
           "network-device-selection",
           "tcp",
-          "wifi-auto"
+          "wifi-auto",
+          "wifi-auto-apple"
         ],
         "nrf52840": [
           "bluetooth-auto",
           "serial",
+          "tcp",
           "usb"
         ]
       },
@@ -15318,6 +15404,68 @@
         "tokens": 0
       },
       "version": "0.3.6"
+    },
+    {
+      "graphs": {
+        "android": [],
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
+        "desktop-linux": [],
+        "desktop-macos": [],
+        "desktop-windows": [],
+        "engine": [],
+        "esp32-c6": [],
+        "esp32-s3-heltec": [],
+        "esp32-s3-heltec-r8": [],
+        "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
+        "ios": [],
+        "nrf52840": [],
+        "wasm": []
+      },
+      "name": "prns-macros",
+      "source": "prns-macros",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.3.6"
+    },
+    {
+      "graphs": {
+        "nrf-dfu-browser": []
+      },
+      "name": "prns-nrf-dfu",
+      "source": "prns-nrf-dfu",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
+        "nrf-dfu-browser": []
+      },
+      "name": "prns-nrf-dfu-wasm",
+      "source": "prns-nrf-dfu-wasm",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
     },
     {
       "graphs": {
@@ -15769,6 +15917,10 @@
           "default",
           "proc-macro"
         ],
+        "nrf-dfu-browser": [
+          "default",
+          "proc-macro"
+        ],
         "nrf52840": [
           "default",
           "proc-macro"
@@ -15979,6 +16131,10 @@
           "proc-macro"
         ],
         "ios": [
+          "default",
+          "proc-macro"
+        ],
+        "nrf-dfu-browser": [
           "default",
           "proc-macro"
         ],
@@ -16869,6 +17025,7 @@
           "default",
           "event",
           "fs",
+          "mm",
           "net",
           "pipe",
           "process",
@@ -16880,6 +17037,7 @@
           "default",
           "event",
           "fs",
+          "mm",
           "net",
           "pipe",
           "process",
@@ -16900,20 +17058,32 @@
         "engine": [
           "alloc",
           "default",
+          "event",
           "fs",
-          "std"
+          "mm",
+          "net",
+          "std",
+          "time"
         ],
         "host-c-linux": [
           "alloc",
           "default",
+          "event",
           "fs",
-          "std"
+          "mm",
+          "net",
+          "std",
+          "time"
         ],
         "host-c-macos": [
           "alloc",
           "default",
+          "event",
           "fs",
-          "std"
+          "mm",
+          "net",
+          "std",
+          "time"
         ],
         "ios": [
           "alloc",
@@ -17114,6 +17284,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "nrf-dfu-browser": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -18348,33 +18519,42 @@
           "std"
         ],
         "engine": [
+          "default",
           "std"
         ],
         "esp32-c6": [
+          "default",
           "std"
         ],
         "esp32-s3-heltec": [
+          "default",
           "std"
         ],
         "esp32-s3-heltec-r8": [
+          "default",
           "std"
         ],
         "esp32-s3-tbeam": [
+          "default",
           "std"
         ],
         "host-c-linux": [
+          "default",
           "std"
         ],
         "host-c-macos": [
+          "default",
           "std"
         ],
         "host-c-windows": [
+          "default",
           "std"
         ],
         "ios": [
           "std"
         ],
         "nrf52840": [
+          "default",
           "std"
         ],
         "wasm": [
@@ -19348,6 +19528,19 @@
           "visit",
           "visit-mut"
         ],
+        "nrf-dfu-browser": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "fold",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
         "nrf52840": [
           "clone-impls",
           "default",
@@ -19611,17 +19804,18 @@
       "graphs": {
         "nrf52840": [
           "board-t-echo",
-          "default"
+          "default",
+          "softdevice-s140-v7"
         ]
       },
       "name": "t-echo",
       "source": "personal-hopspot/embedded/nrf52840",
       "unsafe": {
-        "blocks": 4,
-        "externs": 0,
-        "functions": 1,
-        "impls": 1,
-        "tokens": 6
+        "blocks": 1476,
+        "externs": 13,
+        "functions": 298,
+        "impls": 15,
+        "tokens": 1803
       },
       "version": "0.1.0"
     },
@@ -19725,6 +19919,10 @@
         "desktop-windows": [
           "default",
           "std"
+        ],
+        "nrf-dfu-browser": [
+          "default",
+          "std"
         ]
       },
       "name": "thiserror",
@@ -19785,7 +19983,8 @@
         "daemon-macos": [],
         "daemon-windows": [],
         "desktop-macos": [],
-        "desktop-windows": []
+        "desktop-windows": [],
+        "nrf-dfu-browser": []
       },
       "name": "thiserror-impl",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -21585,6 +21784,7 @@
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
+        "nrf-dfu-browser": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -22139,6 +22339,10 @@
     },
     {
       "graphs": {
+        "nrf-dfu-browser": [
+          "default",
+          "std"
+        ],
         "wasm": [
           "default",
           "std"
@@ -22157,6 +22361,7 @@
     },
     {
       "graphs": {
+        "nrf-dfu-browser": [],
         "wasm": []
       },
       "name": "wasm-bindgen-macro",
@@ -22172,6 +22377,7 @@
     },
     {
       "graphs": {
+        "nrf-dfu-browser": [],
         "wasm": []
       },
       "name": "wasm-bindgen-macro-support",
@@ -22187,6 +22393,7 @@
     },
     {
       "graphs": {
+        "nrf-dfu-browser": [],
         "wasm": []
       },
       "name": "wasm-bindgen-shared",
@@ -22220,6 +22427,7 @@
           "Win32_Devices",
           "Win32_Devices_Communication",
           "Win32_Devices_DeviceAndDriverInstallation",
+          "Win32_Devices_Properties",
           "Win32_Foundation",
           "Win32_Security",
           "Win32_System",
@@ -22247,6 +22455,7 @@
           "Win32_Devices",
           "Win32_Devices_Communication",
           "Win32_Devices_DeviceAndDriverInstallation",
+          "Win32_Devices_Properties",
           "Win32_Foundation",
           "Win32_Security",
           "Win32_System",
@@ -22274,6 +22483,7 @@
           "Win32_Devices",
           "Win32_Devices_Communication",
           "Win32_Devices_DeviceAndDriverInstallation",
+          "Win32_Devices_Properties",
           "Win32_Foundation",
           "Win32_Security",
           "Win32_System",
@@ -22734,6 +22944,9 @@
           "Win32",
           "Win32_Devices",
           "Win32_Devices_Communication",
+          "Win32_Devices_DeviceAndDriverInstallation",
+          "Win32_Devices_Properties",
+          "Win32_Devices_Usb",
           "Win32_Foundation",
           "Win32_Globalization",
           "Win32_Graphics",
@@ -22835,6 +23048,9 @@
           "Win32",
           "Win32_Devices",
           "Win32_Devices_Communication",
+          "Win32_Devices_DeviceAndDriverInstallation",
+          "Win32_Devices_Properties",
+          "Win32_Devices_Usb",
           "Win32_Foundation",
           "Win32_NetworkManagement",
           "Win32_NetworkManagement_IpHelper",
@@ -23189,7 +23405,7 @@
         ]
       },
       "name": "xtensa-lx-rt",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "source": "personal-hopspot/embedded/esp32/vendor/xtensa-lx-rt-0.22.0",
       "unsafe": {
         "blocks": 2,
         "externs": 5,

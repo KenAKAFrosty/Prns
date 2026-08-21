@@ -45,6 +45,9 @@ pub enum SendRequestFailure {
     Culled,
     Timeout,
     ResponseTooLarge,
+    /// A valid Resource response could not be admitted within the receiver's
+    /// bounded memory and pending-offer limits.
+    ResourceCapacity,
 }
 
 pub const MAX_RESPOND_DATA_LEN: usize =

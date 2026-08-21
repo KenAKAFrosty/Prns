@@ -123,6 +123,7 @@ tasks.register("verifyExperimentalWifiDirectDisabled")
 
 dependencies {
     implementation(libs.usb.serial)
+    testImplementation(libs.junit)
 }
 
 afterEvaluate {

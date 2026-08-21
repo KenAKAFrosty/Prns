@@ -109,11 +109,13 @@
     { "kind": "AutomaticBluetoothLe" },
     {
       "kind": "WebSocketClient",
-      "target": "ws://fixture.invalid/client"
+      "target": "ws://fixture.invalid/client",
+      "framing": "Auto"
     },
     {
       "kind": "WebSocketServer",
-      "bind": "127.0.0.1:4246"
+      "bind": "127.0.0.1:4246",
+      "framing": "Hdlc"
     },
     {
       "kind": "BrowserRendezvous",

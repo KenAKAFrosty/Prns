@@ -8,7 +8,15 @@ use embedded_hal_async::delay::DelayNs;
 use embedded_hal_async::digital::Wait;
 use embedded_hal_async::spi::{Operation, SpiDevice};
 
+use prns_core::interfaces::lora::{
+    CodingRate as ProfileCodingRate, LoRaNetwork, LoraBandwidth as ProfileBandwidth,
+    Modulation as ProfileModulation, RadioProfile, RadioProfileCompatibilityError,
+    SpreadingFactor as ProfileSpreadingFactor, RNODE_LORA_SYNC_WORD,
+};
 use prns_core::interfaces::{PacketPhyStats, RssiDbm, SnrQuarterDb};
+
+use super::{LoRaRadio, RadioRecovery};
+pub use super::{RadioEvent, ReceivedAirFrame};
 
 #[allow(dead_code)]
 mod op {
@@ -128,11 +136,12 @@ pub struct LoraPacket {
     pub invert_iq: bool,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct RadioConfig {
     pub frequency_hz: u32,
     pub modulation: Modulation,
     pub packet: LoraPacket,
-    pub sync_word: u16,
+    pub network: LoRaNetwork,
     pub tx_power_dbm: i8,
 }
 
@@ -140,6 +149,8 @@ pub struct RadioConfig {
 const MAX_LORA_PAYLOAD: usize = 255;
 
 const STATUS_NOP: u8 = 0x00;
+const MIN_TX_POWER_DBM: i8 = -9;
+const MAX_TX_POWER_DBM: i8 = 22;
 const SX126X_XTAL_HZ: u64 = 32_000_000;
 const SX126X_PLL_SHIFT: u32 = 25;
 const TCXO_STARTUP_TIMEOUT_TICKS: u32 = 640;
@@ -147,6 +158,7 @@ const TX_RAMP_40_US: u8 = 0x02;
 
 /// Longest the SX1262 should ever hold BUSY: commands process in tens of microseconds and the worst legitimate case is cold-start calibration with TCXO startup (~15 ms). BUSY gates every SPI command, so an unbounded wait lets one wedged-high line hang the radio task and every recovery command with it; past this we surface [`Error::Busy`] so the caller can hard-reset.
 const BUSY_TIMEOUT_MS: u32 = 100;
+const DIO1_RELEASE_TIMEOUT_MS: u32 = 100;
 
 /// Longest a single LoRa frame can sit on air before TxDone: the worst supported case (SF12 / BW125, a full 255-byte frame at CR4:8 with LDRO) is ~14 s, so this clears it with margin. `SetTx` runs with the chip's own timeout disabled (single-shot), so the TxDone IRQ is otherwise unbounded; a wait past this means the PA or IRQ path faulted, surfaced as [`Error::Timeout`].
 const TX_DONE_TIMEOUT_MS: u32 = 20_000;
@@ -177,6 +189,16 @@ where
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct ExternalPowerAmplifier {
+    /// Lowest supported antenna-referred output power.
+    pub minimum_output_power_dbm: i8,
+    /// Highest supported antenna-referred output power.
+    pub maximum_output_power_dbm: i8,
+    /// Convert an antenna-referred output-power request into the power programmed into the SX126x.
+    pub chip_power_dbm: fn(i8) -> i8,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct BoardConfig {
     /// `Some(v)` if a TCXO is fed from DIO3 at voltage `v`; `None` for a bare XTAL.
     pub tcxo_voltage: Option<TcxoVoltage>,
@@ -186,6 +208,13 @@ pub struct BoardConfig {
     /// Receive-path gain ahead of the SX126x, removed from RSSI reports so callers see the signal
     /// level at the antenna rather than the amplified level at the transceiver input.
     pub external_rx_gain_db: u8,
+    /// External transmit PA behavior. When present, profiles remain antenna-referred while the
+    /// driver programs the lower chip power required to produce that output through the PA.
+    pub external_power_amplifier: Option<ExternalPowerAmplifier>,
+    /// Optional external PA/LNA switch into transmit. Invoked immediately before `SetTx`.
+    pub enter_transmit: Option<fn()>,
+    /// Optional external PA/LNA switch into receive. Invoked immediately before `SetRx`.
+    pub enter_receive: Option<fn()>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,28 +226,6 @@ pub enum Error {
     Crc,
     Timeout,
     BufferTooSmall,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReceivedAirFrame {
-    pub len: usize,
-    pub phy: PacketPhyStats,
-}
-
-/// One receive-side IRQ observation from an SX126x in continuous RX.
-///
-/// Preamble and header events are channel evidence even before a complete
-/// frame exists. Callers implementing listen-before-talk must consume these
-/// events instead of waiting only for `RxDone`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RadioEvent {
-    PreambleDetected,
-    HeaderValid,
-    Frame(ReceivedAirFrame),
-    HeaderError,
-    CrcError,
-    Timeout,
-    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -398,6 +405,18 @@ where
         self.command(&[op::CLEAR_IRQ_STATUS, (mask >> 8) as u8, mask as u8])
             .await
     }
+
+    async fn wait_for_dio1_release(&mut self) -> Result<(), Error> {
+        let Self { dio1, delay, .. } = self;
+        deadline(
+            dio1.wait_for_low(),
+            delay,
+            DIO1_RELEASE_TIMEOUT_MS,
+            Error::Dio1,
+            Error::Timeout,
+        )
+        .await
+    }
 }
 
 impl<SPI, BUSY, DIO1, RST, DLY> Sx126x<SPI, BUSY, DIO1, RST, DLY>
@@ -414,13 +433,19 @@ where
             frequency_hz,
             modulation,
             packet,
-            sync_word,
+            network,
             tx_power_dbm,
         } = config;
         self.freq_hz = frequency_hz;
         self.modulation = modulation;
         self.packet = packet;
-        self.tx_power_dbm = tx_power_dbm;
+        self.tx_power_dbm = self
+            .config
+            .external_power_amplifier
+            .map_or(tx_power_dbm, |amplifier| {
+                (amplifier.chip_power_dbm)(tx_power_dbm)
+            })
+            .clamp(MIN_TX_POWER_DBM, MAX_TX_POWER_DBM);
 
         self.hard_reset().await?;
         self.command(&[op::GET_STATUS, 0x00]).await?;
@@ -446,15 +471,20 @@ where
             self.command(&[op::CALIBRATE, 0x7F]).await?;
         }
         self.command(&[op::SET_PACKET_TYPE, 0x01]).await?;
-        self.write_register(reg::LORA_SYNC_WORD_MSB, &sync_word.to_be_bytes())
-            .await?;
+        self.write_register(
+            reg::LORA_SYNC_WORD_MSB,
+            &sync_word_for_network(network).to_be_bytes(),
+        )
+        .await?;
         self.command(&[op::SET_BUFFER_BASE_ADDRESS, 0x00, 0x00])
             .await?;
         let [image_cal_a, image_cal_b] = image_calibration_pair(frequency_hz);
         self.command(&[op::CALIBRATE_IMAGE, image_cal_a, image_cal_b])
             .await?;
         self.configure().await?;
-        self.route_irqs_and_tune_rx().await
+        self.route_irqs_and_tune_rx().await?;
+        invoke_frontend(self.config.enter_receive);
+        Ok(())
     }
 
     /// Apply the channel config (modulation, frequency, TX power, packet shape). The SX1262 RETAINS these registers across SetStandby / SetTx / SetRx (only Sleep or reset clears them), so this runs ONCE from [`init`](Self::init) and again only on a discrete channel change, never per packet; the per-packet path only restamps the payload length.
@@ -498,8 +528,9 @@ where
         // EasyDMA (and most SPI DMA) can only source from RAM; the caller's payload may be flash-resident (`&'static`), so stage it through the RAM `tx_staging` field.
         self.tx_staging[..len].copy_from_slice(payload);
 
+        invoke_frontend(self.config.enter_transmit);
         self.standby().await?;
-        self.set_payload_length(len as u8).await?;
+        self.set_packet_params(len as u8).await?;
         self.write_tx_payload(len).await?;
         self.clear_irq(irq::ALL).await?;
         // SetTx with timeout 0 = single shot, no chip timeout — so the TxDone wait is bounded here ([`TX_DONE_TIMEOUT_MS`]); a TX that never completes must not trap the radio task forever.
@@ -517,6 +548,7 @@ where
         }
         let flags = self.irq_status().await?;
         self.clear_irq(flags).await?;
+        self.wait_for_dio1_release().await?;
         if flags & irq::TIMEOUT != 0 {
             return Err(Error::Timeout);
         }
@@ -525,8 +557,9 @@ where
 
     /// Arm continuous RX: restamp the RX-side max payload length, clear stale IRQs, enter SetRx continuous. [`read_frame`](Self::read_frame) waits WITHOUT re-arming, so a host-side select that cancels the read mid-listen leaves the radio receiving (the RxDone IRQ latches) rather than guillotining an in-flight multi-hundred-ms LoRa frame.
     pub async fn arm_rx(&mut self) -> Result<(), Error> {
+        invoke_frontend(self.config.enter_receive);
         self.standby().await?;
-        self.set_payload_length(0xFF).await?;
+        self.set_packet_params(0xFF).await?;
         self.clear_irq(irq::ALL).await?;
         // SetRx 0xFFFFFF = continuous.
         self.command(&[op::SET_RX, 0xFF, 0xFF, 0xFF]).await
@@ -589,7 +622,7 @@ where
             IrqEventKind::HeaderError => Ok(RadioEvent::HeaderError),
             IrqEventKind::CrcError => Ok(RadioEvent::CrcError),
             IrqEventKind::Timeout => Ok(RadioEvent::Timeout),
-            IrqEventKind::Other => Ok(RadioEvent::Other),
+            IrqEventKind::Other => Ok(RadioEvent::SpuriousInterrupt),
         }
     }
 
@@ -605,7 +638,7 @@ where
                 RadioEvent::PreambleDetected
                 | RadioEvent::HeaderValid
                 | RadioEvent::HeaderError
-                | RadioEvent::Other => {}
+                | RadioEvent::SpuriousInterrupt => {}
             }
         }
     }
@@ -665,7 +698,7 @@ where
         }
     }
 
-    async fn set_payload_length(&mut self, payload_len: u8) -> Result<(), Error> {
+    async fn set_packet_params(&mut self, payload_len: u8) -> Result<(), Error> {
         let pre = self.packet.preamble_symbols.to_be_bytes();
         let header = u8::from(!self.packet.explicit_header);
         let crc = u8::from(self.packet.crc_on);
@@ -679,11 +712,7 @@ where
             crc,
             iq,
         ])
-        .await
-    }
-
-    async fn set_packet_params(&mut self, payload_len: u8) -> Result<(), Error> {
-        self.set_payload_length(payload_len).await?;
+        .await?;
         // IQPolarity errata (DS 15.4): set bit 2 unless inverted IQ.
         let mut v = [0u8; 1];
         self.read_register(reg::IQ_POLARITY, &mut v).await?;
@@ -710,6 +739,76 @@ where
     }
 }
 
+impl<SPI, BUSY, DIO1, RST, DLY> LoRaRadio for Sx126x<SPI, BUSY, DIO1, RST, DLY>
+where
+    SPI: SpiDevice,
+    BUSY: Wait,
+    DIO1: Wait,
+    RST: OutputPin,
+    DLY: DelayNs,
+{
+    type Error = Error;
+
+    fn validate_profile(
+        &self,
+        profile: RadioProfile,
+    ) -> Result<(), RadioProfileCompatibilityError> {
+        let power_dbm = profile.tx_power.dbm();
+        let (minimum_dbm, maximum_dbm) = self.config.external_power_amplifier.map_or(
+            (MIN_TX_POWER_DBM, MAX_TX_POWER_DBM),
+            |amplifier| {
+                (
+                    amplifier.minimum_output_power_dbm,
+                    amplifier.maximum_output_power_dbm,
+                )
+            },
+        );
+        if !(minimum_dbm..=maximum_dbm).contains(&power_dbm) {
+            return Err(
+                RadioProfileCompatibilityError::TransmitPowerOutsideRadioRange {
+                    power_dbm,
+                    minimum_dbm,
+                    maximum_dbm,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn recovery(error: &Self::Error) -> RadioRecovery {
+        match error {
+            Error::Spi | Error::Busy | Error::Dio1 | Error::Reset | Error::Timeout => {
+                RadioRecovery::Reinitialize
+            }
+            Error::Crc | Error::BufferTooSmall => RadioRecovery::Continue,
+        }
+    }
+
+    async fn initialize(&mut self, profile: RadioProfile) -> Result<(), Self::Error> {
+        Sx126x::init(self, radio_config(profile)).await
+    }
+
+    async fn arm_rx(&mut self) -> Result<(), Self::Error> {
+        Sx126x::arm_rx(self).await
+    }
+
+    async fn transmit(&mut self, payload: &[u8]) -> Result<(), Self::Error> {
+        Sx126x::transmit(self, payload).await
+    }
+
+    async fn channel_rssi_dbm(&mut self) -> Result<i16, Self::Error> {
+        Sx126x::channel_rssi_dbm(self).await
+    }
+
+    async fn read_event(&mut self, buffer: &mut [u8]) -> Result<RadioEvent, Self::Error> {
+        Sx126x::read_event(self, buffer).await
+    }
+
+    async fn poll_event(&mut self, buffer: &mut [u8]) -> Result<Option<RadioEvent>, Self::Error> {
+        Sx126x::poll_event(self, buffer).await
+    }
+}
+
 fn lora_ldro(sf: SpreadingFactor, bw: Bandwidth) -> u8 {
     u8::from(matches!(
         (sf, bw),
@@ -718,6 +817,57 @@ fn lora_ldro(sf: SpreadingFactor, bw: Bandwidth) -> u8 {
             Bandwidth::Bw125
         ) | (SpreadingFactor::Sf12, Bandwidth::Bw250)
     ))
+}
+
+fn sync_word_for_network(network: LoRaNetwork) -> u16 {
+    match network {
+        LoRaNetwork::Reticulum => RNODE_LORA_SYNC_WORD,
+    }
+}
+
+fn radio_config(profile: RadioProfile) -> RadioConfig {
+    let ProfileModulation::Lora {
+        spreading_factor,
+        bandwidth,
+        coding_rate,
+    } = profile.modulation;
+    let spreading_factor = match spreading_factor {
+        ProfileSpreadingFactor::Sf5 => SpreadingFactor::Sf5,
+        ProfileSpreadingFactor::Sf6 => SpreadingFactor::Sf6,
+        ProfileSpreadingFactor::Sf7 => SpreadingFactor::Sf7,
+        ProfileSpreadingFactor::Sf8 => SpreadingFactor::Sf8,
+        ProfileSpreadingFactor::Sf9 => SpreadingFactor::Sf9,
+        ProfileSpreadingFactor::Sf10 => SpreadingFactor::Sf10,
+        ProfileSpreadingFactor::Sf11 => SpreadingFactor::Sf11,
+        ProfileSpreadingFactor::Sf12 => SpreadingFactor::Sf12,
+    };
+    let bandwidth = match bandwidth {
+        ProfileBandwidth::Bw125kHz => Bandwidth::Bw125,
+        ProfileBandwidth::Bw250kHz => Bandwidth::Bw250,
+        ProfileBandwidth::Bw500kHz => Bandwidth::Bw500,
+    };
+    let coding_rate = match coding_rate {
+        ProfileCodingRate::Cr45 => CodingRate::Cr4_5,
+        ProfileCodingRate::Cr46 => CodingRate::Cr4_6,
+        ProfileCodingRate::Cr47 => CodingRate::Cr4_7,
+        ProfileCodingRate::Cr48 => CodingRate::Cr4_8,
+    };
+    RadioConfig {
+        frequency_hz: profile.frequency.hz(),
+        modulation: Modulation::Lora {
+            spreading_factor,
+            bandwidth,
+            coding_rate,
+        },
+        packet: LoraPacket {
+            preamble_symbols: profile.preamble.count(),
+            explicit_header: true,
+            crc_on: true,
+            invert_iq: false,
+        },
+        network: LoRaNetwork::Reticulum,
+        tx_power_dbm: profile.tx_power.dbm(),
+    }
 }
 
 fn image_calibration_pair(frequency_hz: u32) -> [u8; 2] {
@@ -733,6 +883,12 @@ fn image_calibration_pair(frequency_hz: u32) -> [u8; 2] {
 
 fn decode_rssi_dbm(encoded: u8) -> i16 {
     -i16::from(encoded) / 2
+}
+
+fn invoke_frontend(hook: Option<fn()>) {
+    if let Some(enter) = hook {
+        enter();
+    }
 }
 
 fn antenna_referred_rssi_dbm(encoded: u8, external_rx_gain_db: u8) -> i16 {
@@ -777,6 +933,7 @@ mod tests {
     use embedded_hal_async::delay::DelayNs;
     use embedded_hal_async::digital::Wait;
     use embedded_hal_async::spi::SpiDevice;
+    use prns_core::interfaces::lora::{TxPower, DEFAULT_915_PROFILE};
 
     #[derive(Debug)]
     struct MockErr;
@@ -906,6 +1063,21 @@ mod tests {
         async fn delay_ns(&mut self, _ns: u32) {}
     }
 
+    type MockRadio = Sx126x<MockSpi, MockWait, MockWait, MockOut, MockDelay>;
+
+    fn mock_radio() -> MockRadio {
+        Sx126x::new(
+            MockSpi {
+                log: Rc::new(RefCell::new(Vec::new())),
+            },
+            MockWait,
+            MockWait,
+            MockOut,
+            MockDelay,
+            board(),
+        )
+    }
+
     struct BusyNeverLow;
     impl DigErrorType for BusyNeverLow {
         type Error = MockErr;
@@ -950,6 +1122,28 @@ mod tests {
         }
     }
 
+    struct Dio1NeverReleases;
+    impl DigErrorType for Dio1NeverReleases {
+        type Error = MockErr;
+    }
+    impl Wait for Dio1NeverReleases {
+        async fn wait_for_high(&mut self) -> Result<(), MockErr> {
+            Ok(())
+        }
+        async fn wait_for_low(&mut self) -> Result<(), MockErr> {
+            core::future::pending::<Result<(), MockErr>>().await
+        }
+        async fn wait_for_rising_edge(&mut self) -> Result<(), MockErr> {
+            Ok(())
+        }
+        async fn wait_for_falling_edge(&mut self) -> Result<(), MockErr> {
+            core::future::pending::<Result<(), MockErr>>().await
+        }
+        async fn wait_for_any_edge(&mut self) -> Result<(), MockErr> {
+            Ok(())
+        }
+    }
+
     fn board() -> BoardConfig {
         BoardConfig {
             tcxo_voltage: Some(TcxoVoltage::V1_8),
@@ -957,6 +1151,9 @@ mod tests {
             rx_boost: true,
             dio2_as_rf_switch: true,
             external_rx_gain_db: 0,
+            external_power_amplifier: None,
+            enter_transmit: None,
+            enter_receive: None,
         }
     }
 
@@ -972,6 +1169,112 @@ mod tests {
     }
 
     #[test]
+    fn reticulum_profile_maps_to_the_existing_sx126x_configuration() {
+        assert_eq!(
+            radio_config(DEFAULT_915_PROFILE),
+            RadioConfig {
+                frequency_hz: 915_000_000,
+                modulation: Modulation::Lora {
+                    spreading_factor: SpreadingFactor::Sf9,
+                    bandwidth: Bandwidth::Bw250,
+                    coding_rate: CodingRate::Cr4_5,
+                },
+                packet: LoraPacket {
+                    preamble_symbols: 18,
+                    explicit_header: true,
+                    crc_on: true,
+                    invert_iq: false,
+                },
+                network: LoRaNetwork::Reticulum,
+                tx_power_dbm: 22,
+            }
+        );
+        assert_eq!(
+            sync_word_for_network(LoRaNetwork::Reticulum),
+            RNODE_LORA_SYNC_WORD
+        );
+    }
+
+    #[test]
+    fn sx126x_owns_its_transmit_power_compatibility() {
+        let radio = mock_radio();
+        let mut profile = DEFAULT_915_PROFILE;
+        profile.tx_power = TxPower::new(MIN_TX_POWER_DBM - 1);
+        assert_eq!(profile.validate(), Ok(()));
+        assert_eq!(
+            radio.validate_profile(profile),
+            Err(
+                RadioProfileCompatibilityError::TransmitPowerOutsideRadioRange {
+                    power_dbm: MIN_TX_POWER_DBM - 1,
+                    minimum_dbm: MIN_TX_POWER_DBM,
+                    maximum_dbm: MAX_TX_POWER_DBM,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn external_pa_limits_and_chip_power_are_antenna_referred() {
+        fn chip_power_dbm(requested_output_dbm: i8) -> i8 {
+            requested_output_dbm - 14
+        }
+
+        let mut board = board();
+        board.external_power_amplifier = Some(ExternalPowerAmplifier {
+            minimum_output_power_dbm: 5,
+            maximum_output_power_dbm: 22,
+            chip_power_dbm,
+        });
+        let log: Log = Rc::new(RefCell::new(Vec::new()));
+        let mut radio = Sx126x::new(
+            MockSpi { log: log.clone() },
+            MockWait,
+            MockWait,
+            MockOut,
+            MockDelay,
+            board,
+        );
+
+        let mut profile = DEFAULT_915_PROFILE;
+        profile.tx_power = TxPower::new(4);
+        assert_eq!(
+            radio.validate_profile(profile),
+            Err(
+                RadioProfileCompatibilityError::TransmitPowerOutsideRadioRange {
+                    power_dbm: 4,
+                    minimum_dbm: 5,
+                    maximum_dbm: 22,
+                }
+            )
+        );
+
+        block_on(radio.init(radio_config(DEFAULT_915_PROFILE))).expect("init");
+        assert_eq!(radio.tx_power_dbm, 8);
+        assert!(
+            log.borrow()
+                .iter()
+                .any(|command| command.as_slice() == [op::SET_TX_PARAMS, 0x10, TX_RAMP_40_US]),
+            "22 dBm antenna-referred maps to 8 dBm at the chip"
+        );
+    }
+
+    #[test]
+    fn sx126x_recovery_classifies_every_error() {
+        for error in [
+            Error::Spi,
+            Error::Busy,
+            Error::Dio1,
+            Error::Reset,
+            Error::Timeout,
+        ] {
+            assert_eq!(MockRadio::recovery(&error), RadioRecovery::Reinitialize);
+        }
+        for error in [Error::Crc, Error::BufferTooSmall] {
+            assert_eq!(MockRadio::recovery(&error), RadioRecovery::Continue);
+        }
+    }
+
+    #[test]
     fn command_stream_matches_lora_phy_oracle() {
         let log: Log = Rc::new(RefCell::new(Vec::new()));
         let board = BoardConfig {
@@ -980,6 +1283,9 @@ mod tests {
             rx_boost: true,
             dio2_as_rf_switch: true,
             external_rx_gain_db: 0,
+            external_power_amplifier: None,
+            enter_transmit: None,
+            enter_receive: None,
         };
         let mut radio = Sx126x::new(
             MockSpi { log: log.clone() },
@@ -1005,7 +1311,7 @@ mod tests {
             frequency_hz: 915_000_000,
             modulation,
             packet,
-            sync_word: 0x1424,
+            network: LoRaNetwork::Reticulum,
             tx_power_dbm: 14,
         };
         block_on(radio.init(config)).expect("init");
@@ -1064,7 +1370,11 @@ mod tests {
             "SetPacketParams RX max len"
         );
         assert!(has(&[0x0D, 0x08, 0x89, 0x04]), "TxModulation errata bit2");
-        assert!(has(&[0x0D, 0x07, 0x36, 0x04]), "IQPolarity errata bit2");
+        assert_eq!(
+            count(&[0x0D, 0x07, 0x36, 0x04]),
+            4,
+            "IQPolarity errata follows initial, TX, and explicit RX packet parameters"
+        );
         assert!(has(&[0x0D, 0x08, 0xD8, 0x1E]), "TxClampCfg errata bits1-4");
 
         assert_eq!(
@@ -1175,6 +1485,21 @@ mod tests {
             MockSpi { log },
             MockWait,
             Dio1NeverHigh,
+            MockOut,
+            MockDelay,
+            board(),
+        );
+        let result = block_on(radio.transmit(b"PRNS-HELTEC-SMOK"));
+        assert_eq!(result, Err(Error::Timeout));
+    }
+
+    #[test]
+    fn a_txdone_that_never_releases_times_out_instead_of_reentering_receive() {
+        let log: Log = Rc::new(RefCell::new(Vec::new()));
+        let mut radio = Sx126x::new(
+            MockSpi { log },
+            MockWait,
+            Dio1NeverReleases,
             MockOut,
             MockDelay,
             board(),

@@ -776,7 +776,8 @@ mod tests {
     use super::*;
     use prns_flash_manifest::{
         board_catalog, BoardBuild, ChannelDescriptor, FlashManifest, FlashPart, FlashPartKind,
-        ReleaseInfo, SigningInfo, TargetManifest, FLASH_MANIFEST_SCHEMA,
+        NrfSerialDfuManifest, NrfSerialDfuRecoveryManifest, OfflineKeySigningInfo, ReleaseInfo,
+        TargetManifest, Uf2VariantManifest, FLASH_MANIFEST_SCHEMA,
     };
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -839,8 +840,7 @@ mod tests {
         let catalog = board_catalog().expect("catalog");
         let mut application_path = None;
         let targets = catalog
-            .boards
-            .iter()
+            .shipping_boards()
             .map(|board| {
                 let (flash_mode, flash_frequency, before_reset, after_reset, recipes) =
                     match &board.build {
@@ -859,13 +859,9 @@ mod tests {
                                 (FlashPartKind::Application, "application.bin", Some(0x10000)),
                             ],
                         ),
-                        BoardBuild::Uf2(_) => (
-                            None,
-                            None,
-                            None,
-                            None,
-                            vec![(FlashPartKind::Uf2, "t-echo.uf2", None)],
-                        ),
+                        BoardBuild::Uf2(_) | BoardBuild::NrfSerialDfu(_) => {
+                            (None, None, None, None, Vec::new())
+                        }
                     };
                 let parts = recipes
                     .into_iter()
@@ -885,6 +881,69 @@ mod tests {
                         }
                     })
                     .collect();
+                let variants = match &board.build {
+                    BoardBuild::Esp(_) => Vec::new(),
+                    BoardBuild::Uf2(build) => build
+                        .variants
+                        .iter()
+                        .map(|variant| {
+                            let relative = format!(
+                                "firmware/hopspot/{}/{version}/{}",
+                                board.slug, variant.filename
+                            );
+                            let bytes =
+                                format!("{seed}:{}:{}", board.slug, variant.filename).into_bytes();
+                            write_fixture(directory.path(), &relative, &bytes);
+                            Uf2VariantManifest {
+                                softdevice_family: variant.softdevice_family.clone(),
+                                softdevice_version: variant.softdevice_version.clone(),
+                                fwid: variant.fwid.clone(),
+                                application_base: variant.application_base.clone(),
+                                family_id: variant.family_id.clone(),
+                                path: relative,
+                                size: bytes.len() as u64,
+                                sha256: sha256_hex(&bytes),
+                            }
+                        })
+                        .collect(),
+                    BoardBuild::NrfSerialDfu(_) => Vec::new(),
+                };
+                let nrf_serial_dfu = match &board.build {
+                    BoardBuild::NrfSerialDfu(build) => {
+                        let artifact = |name: &str, kind: FlashPartKind| {
+                            let relative =
+                                format!("firmware/hopspot/{}/{version}/{name}", board.slug);
+                            let bytes = format!("{seed}:{}:{name}", board.slug).into_bytes();
+                            write_fixture(directory.path(), &relative, &bytes);
+                            FlashPart {
+                                kind,
+                                path: relative,
+                                offset: None,
+                                size: bytes.len() as u64,
+                                sha256: sha256_hex(&bytes),
+                            }
+                        };
+                        Some(NrfSerialDfuManifest {
+                            serial: build.serial.clone(),
+                            compatibility: build.compatibility.clone(),
+                            application: artifact(
+                                &build.application_filename,
+                                FlashPartKind::DfuApplication,
+                            ),
+                            init_packet: artifact(
+                                &build.init_packet_filename,
+                                FlashPartKind::DfuInitPacket,
+                            ),
+                            recovery: NrfSerialDfuRecoveryManifest {
+                                mount_label: build.recovery.mount_label.clone(),
+                                board_id_prefix: build.recovery.board_identity.value.clone(),
+                                family_id: build.recovery.family_id.clone(),
+                                artifact: artifact(&build.recovery.filename, FlashPartKind::Uf2),
+                            },
+                        })
+                    }
+                    BoardBuild::Esp(_) | BoardBuild::Uf2(_) => None,
+                };
                 TargetManifest {
                     board_slug: board.slug.clone(),
                     display_name: board.display_name.clone(),
@@ -899,19 +958,21 @@ mod tests {
                     after_reset,
                     preparation_profile: board.preparation_profile.clone(),
                     parts,
+                    variants,
+                    nrf_serial_dfu,
                     provisioning: board.provisioning.clone(),
                     source: None,
                 }
             })
             .collect();
         let manifest = FlashManifest {
-            schema: FLASH_MANIFEST_SCHEMA,
+            schema_version: FLASH_MANIFEST_SCHEMA,
             release: ReleaseInfo {
                 version: version.to_string(),
                 channel: ReleaseChannel::Preview,
                 commit: "0123456789abcdef0123456789abcdef01234567".to_string(),
             },
-            signing: SigningInfo {
+            signing: OfflineKeySigningInfo {
                 key_id: "1FB2CA18B2C25E1F".to_string(),
             },
             targets,
@@ -927,7 +988,7 @@ mod tests {
         sign_fixture(directory.path(), "flash-manifest.json");
 
         let descriptor = ChannelDescriptor {
-            schema: 1,
+            schema_version: 1,
             channel: ReleaseChannel::Preview,
             version: version.to_string(),
             manifest_url: format!("https://reticulum.rs/releases/{version}/flash-manifest.json"),
@@ -1021,7 +1082,7 @@ mod tests {
 
         assert_eq!(imported.version, "0.2.6");
         assert_eq!(imported.channel, "preview");
-        assert_eq!(imported.artifact_count, 13);
+        assert_eq!(imported.artifact_count, 19);
         assert!(cache
             .path()
             .join("releases/0.2.6/heltec-v4/application.bin")

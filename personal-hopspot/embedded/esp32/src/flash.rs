@@ -187,7 +187,15 @@ fn read_words(
     len: usize,
 ) -> Result<(), EspRomFlashError> {
     for attempt in 0..ATTEMPTS {
-        let result = critical_section::with(|_| rom_read(offset, words.as_mut_ptr(), len as u32));
+        let result = critical_section::with(|_| {
+            // ROM flash reads suspend the shared flash/PSRAM cache just like writes and erases.
+            // Core 0 owns Wi-Fi and may otherwise enter the radio driver while its PSRAM-backed
+            // allocations are inaccessible, leaving RX permanently wedged after persistence
+            // scans. Keep both cores quiescent for the short, 256-byte ROM transaction.
+            #[cfg(target_arch = "xtensa")]
+            let _park = OtherCorePark::acquire();
+            rom_read(offset, words.as_mut_ptr(), len as u32)
+        });
         if result == ESP_ROM_SPIFLASH_RESULT_OK {
             return Ok(());
         }

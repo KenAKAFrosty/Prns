@@ -32,6 +32,39 @@ class GenerateHostContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown host contract keys"):
             GENERATOR.validate(schema)
 
+    def test_foreign_callbacks_are_not_general_contract_types(self):
+        schema = canonical_schema()
+        schema["callbacks"] = [
+            {
+                "name": "DescriptorOpener",
+                "parameters": [{"name": "context", "type": "opaquePointer"}],
+                "result": "i64",
+            }
+        ]
+        with self.assertRaisesRegex(ValueError, "unknown host contract keys"):
+            GENERATOR.validate(schema)
+
+    def test_supplied_pipe_contract_is_owned_and_pull_based(self):
+        schema = canonical_schema()
+        handles = {handle["name"] for handle in schema["handles"]}
+        operations = {operation["name"]: operation for operation in schema["operations"]}
+        self.assertTrue({"SuppliedPipe", "SuppliedPipeOpenRequest"} <= handles)
+        self.assertEqual(
+            operations["hostAttachSuppliedPipe"]["result"],
+            {"type": "SuppliedPipe", "ownership": "owned"},
+        )
+        self.assertEqual(
+            operations["suppliedPipeNextOpenRequest"]["result"],
+            {"type": "SuppliedPipeOpenRequest", "ownership": "owned"},
+        )
+        parameter_types = {
+            parameter["type"]
+            for operation in operations.values()
+            for parameter in operation["parameters"]
+        }
+        self.assertNotIn("SuppliedPipeOpenCallback", parameter_types)
+        self.assertNotIn("SuppliedPipeReleaseCallback", parameter_types)
+
     def test_scalar_ranges_and_limits_are_rejected_before_rendering(self):
         schema = canonical_schema()
         schema["scalars"][0]["maximum"] = 2**64

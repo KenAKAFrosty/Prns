@@ -1,9 +1,9 @@
 # Hopspot flasher release custody
 
 `boards.json` is the authoritative catalog used by the firmware builder, standalone CLI, hosted
-website, and validation tools. Published schema-2 manifests contain sparse immutable firmware
-parts. The ESP application, partition table, and bootloader are separate files; the `0xD000`
-provisioning slot is never part of ordinary firmware.
+website, and validation tools. Published schema-3 manifests contain sparse immutable ESP firmware
+parts and compatibility-keyed T-Echo UF2 variants. The ESP application, partition table, and
+bootloader are separate files; the `0xD000` provisioning slot is never part of ordinary firmware.
 
 The S3 per-board artifact gates are pinned to the previous merged-image baselines (7,643,152 bytes
 for Heltec V4 and 7,639,296 bytes for T-Beam Supreme) and reject anything above 40% of those
@@ -35,7 +35,7 @@ The release is intentionally split into three immutable layers:
    asset binds the signing run, exact rerun attempt, protected job, source revision, publication
    timestamp, candidate hashes, and approval timestamp. Every qualification observation must occur
    after publication.
-3. After physical qualification, the protected evidence workflow validates schema-3 acceptance,
+3. After physical qualification, the protected evidence workflow validates schema-5 acceptance,
    signs it, generates a release record binding every custody layer, signs that record, and adds the
    deterministic qualification-evidence archive plus four signed evidence documents to the
    prerelease. It also revalidates one exact successful public-review run attempt and binds that
@@ -71,8 +71,9 @@ Before signing any candidate:
 - create `release-rollback` with manual release-owner approval and no signing secrets or wait
   timer; rollback jobs only receive the repository public key and read-only release inputs;
 - confirm Actions attestations are available for the repository and `gh attestation verify` works;
-- assign the ten physical, four fallback, and five archive-installation coverage slots to real
-  testers across their required hosts; one person may hold multiple or all slots;
+- assign the sixteen physical, three Firefox Web Serial, one Safari fallback, and five
+  archive-installation coverage slots to real testers across their required hosts; one person may
+  hold multiple or all slots;
 - commit and validate `release/acceptance/rosters/VERSION.json` with those real assignments;
 - review the exact default-branch workflow revisions. Do not dispatch a signing workflow from a
   feature branch.
@@ -157,8 +158,8 @@ recorded evidence-archive SHA-256. The workflow:
 - revalidates one durable public-review evidence asset against its exact workflow run attempt and
   protected job;
 - extracts the evidence archive safely and recomputes every referenced object's SHA-256;
-- validates eight full transport-aware physical rows, four browser fallbacks, and all five
-  installer/exact-version smokes;
+- validates eighteen full transport-aware physical rows, three Firefox Web Serial smokes, one Safari
+  fallback, and all five installer/exact-version smokes;
 - signs `acceptance-vVERSION.json`;
 - creates and signs `flasher-release-record-vVERSION.json`.
 

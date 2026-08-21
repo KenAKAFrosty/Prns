@@ -701,6 +701,10 @@ mod tests {
             .track_initiated(InitiatedLink {
                 link_id,
                 destination: DestinationHash::new([0x11; 16]),
+                route_evidence: crate::routing::routes::RouteEvidenceHandle::new(
+                    crate::routing::routes::RouteEvidenceId::FIRST,
+                    0,
+                ),
                 expected_hops: 1,
                 mode: crate::routing::links::LinkMode::Aes256Cbc,
                 initiator_secret: X25519SecretKey::new([0x21; 32]),

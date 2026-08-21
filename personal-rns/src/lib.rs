@@ -77,7 +77,7 @@ pub use interface_families::{lora, radios};
 pub use prns_runtime::engine::{CommandId, PacketReceiptDelivered, PrnsCommand, RatchetPolicy};
 pub use prns_runtime::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 pub use prns_runtime::interfaces::InterfaceStatus;
-pub use prns_runtime::routing::links::resources::ResourceStrategy;
+pub use prns_runtime::routing::links::resources::{ResourceMemoryLimits, ResourceStrategy};
 pub use prns_runtime::routing::ProofStrategy;
 pub use prns_runtime::runtime::{
     Diagnostic, ManuallyAttached, Message, NoPersistence, PreConfiguredDestination, PrnsEvent,
@@ -123,7 +123,11 @@ pub use prns_runtime_embassy::runtime::{
 ))]
 pub use prns_interfaces_tokio::interface_menu::DefaultAutoInterfaces;
 
-#[cfg(all(feature = "usb", feature = "tokio-host"))]
+#[cfg(all(
+    feature = "usb",
+    feature = "tokio-host",
+    any(target_os = "linux", target_os = "macos", target_os = "windows")
+))]
 pub use usb_auto::AutoUsb;
 
 #[cfg(all(feature = "bluetooth-auto", feature = "tokio-host"))]

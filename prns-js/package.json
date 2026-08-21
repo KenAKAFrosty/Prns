@@ -3,7 +3,7 @@
   "version": "0.3.6",
   "description": "Correct, robust, fast Personal Reticulum bindings for native JavaScript and browsers.",
   "license": "MIT OR Apache-2.0",
-  "homepage": "https://prns.dev",
+  "homepage": "https://reticulum.rs",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/KenAKAFrosty/Prns.git",

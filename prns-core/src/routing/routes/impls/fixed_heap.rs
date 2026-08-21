@@ -5,7 +5,7 @@ use allocator_api2::vec::Vec;
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::lemire_index::LemireIndex;
-use crate::routing::routes::{route_index_buckets, RouteEntry, RouteTable};
+use crate::routing::routes::{route_index_buckets, RouteEntry, RouteEvidenceId, RouteTable};
 use crate::routing::{NextHop, RouteResponsiveness};
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
@@ -22,10 +22,11 @@ pub struct FixedHeapRouteTable<const N: usize, const BUCKETS: usize, A: Allocato
     destination: Box<[DestinationHash], A>,
     hops: Box<[u8], A>,
     learned_at: Box<[InstantMillis], A>,
-    last_relayed_at: Box<[InstantMillis], A>,
+    last_route_activity_at: Box<[InstantMillis], A>,
     responsiveness: Box<[RouteResponsiveness], A>,
     receiving_interface: Box<[InterfaceId], A>,
     next_hop: Box<[NextHop], A>,
+    evidence_id: Box<[RouteEvidenceId], A>,
 }
 
 impl<const N: usize, const BUCKETS: usize, A: Allocator + Default> Default
@@ -48,10 +49,11 @@ impl<const N: usize, const BUCKETS: usize, A: Allocator + Default> Default
             destination: filled(DestinationHash::new([0u8; 16]), N, A::default()),
             hops: filled(0u8, N, A::default()),
             learned_at: filled(InstantMillis(0), N, A::default()),
-            last_relayed_at: filled(InstantMillis(0), N, A::default()),
+            last_route_activity_at: filled(InstantMillis(0), N, A::default()),
             responsiveness: filled(RouteResponsiveness::Responsive, N, A::default()),
             receiving_interface: filled(InterfaceId::new([0u8; 8]), N, A::default()),
             next_hop: filled(NextHop::Direct, N, A::default()),
+            evidence_id: filled(RouteEvidenceId::FIRST, N, A::default()),
         }
     }
 }
@@ -79,8 +81,8 @@ impl<const N: usize, const BUCKETS: usize, A: Allocator> RouteTable
     fn learned_at(&self) -> &[InstantMillis] {
         &self.learned_at[..self.len]
     }
-    fn last_relayed_at(&self) -> &[InstantMillis] {
-        &self.last_relayed_at[..self.len]
+    fn last_route_activity_at(&self) -> &[InstantMillis] {
+        &self.last_route_activity_at[..self.len]
     }
     fn responsiveness(&self) -> &[RouteResponsiveness] {
         &self.responsiveness[..self.len]
@@ -91,19 +93,27 @@ impl<const N: usize, const BUCKETS: usize, A: Allocator> RouteTable
     fn next_hops(&self) -> &[NextHop] {
         &self.next_hop[..self.len]
     }
+    fn evidence_ids(&self) -> &[RouteEvidenceId] {
+        &self.evidence_id[..self.len]
+    }
 
     fn set_row(&mut self, i: usize, row: RouteEntry) {
         self.hops[i] = row.hops;
         self.learned_at[i] = row.learned_at;
-        self.last_relayed_at[i] = row.last_relayed_at;
+        self.last_route_activity_at[i] = row.last_route_activity_at;
         self.responsiveness[i] = row.responsiveness;
         self.receiving_interface[i] = row.receiving_interface;
         self.next_hop[i] = row.next_hop;
     }
 
+    fn set_evidence_id(&mut self, i: usize, evidence_id: RouteEvidenceId) {
+        self.evidence_id[i] = evidence_id;
+    }
+
     fn push(
         &mut self,
         destination: DestinationHash,
+        evidence_id: RouteEvidenceId,
         row: RouteEntry,
     ) -> Result<usize, TablePushError> {
         if self.len >= N {
@@ -111,6 +121,7 @@ impl<const N: usize, const BUCKETS: usize, A: Allocator> RouteTable
         }
         let i = self.len;
         self.destination[i] = destination;
+        self.evidence_id[i] = evidence_id;
         self.set_row(i, row);
         self.len += 1;
         self.index.insert(i, &self.destination[..]);
@@ -128,10 +139,11 @@ impl<const N: usize, const BUCKETS: usize, A: Allocator> RouteTable
         self.destination[i] = self.destination[last];
         self.hops[i] = self.hops[last];
         self.learned_at[i] = self.learned_at[last];
-        self.last_relayed_at[i] = self.last_relayed_at[last];
+        self.last_route_activity_at[i] = self.last_route_activity_at[last];
         self.responsiveness[i] = self.responsiveness[last];
         self.receiving_interface[i] = self.receiving_interface[last];
         self.next_hop[i] = self.next_hop[last];
+        self.evidence_id[i] = self.evidence_id[last];
         self.len = last;
     }
 }
@@ -152,12 +164,15 @@ mod tests {
     fn iface(byte: u8) -> InterfaceId {
         InterfaceId::new([byte; 8])
     }
+    fn evidence(n: u32) -> RouteEvidenceId {
+        RouteEvidenceId::new(n + 1).unwrap()
+    }
 
     fn row(hops: u8, learned_at: u64, receiving_interface: InterfaceId) -> RouteEntry {
         RouteEntry {
             hops,
             learned_at: InstantMillis(learned_at),
-            last_relayed_at: InstantMillis(0),
+            last_route_activity_at: InstantMillis(0),
             responsiveness: RouteResponsiveness::Responsive,
             receiving_interface,
             next_hop: NextHop::Direct,
@@ -172,8 +187,14 @@ mod tests {
         assert_eq!(table.capacity(), 8);
         assert!(table.is_empty());
 
-        assert_eq!(table.push(dest_n(1), row(1, 10, iface(0xE1))), Ok(0));
-        assert_eq!(table.push(dest_n(2), row(2, 20, iface(0xE2))), Ok(1));
+        assert_eq!(
+            table.push(dest_n(1), evidence(1), row(1, 10, iface(0xE1))),
+            Ok(0)
+        );
+        assert_eq!(
+            table.push(dest_n(2), evidence(2), row(2, 20, iface(0xE2))),
+            Ok(1)
+        );
 
         assert_eq!(table.len(), 2);
         assert_eq!(table.destinations(), &[dest_n(1), dest_n(2)]);
@@ -188,7 +209,7 @@ mod tests {
         let mut table = Routes8::default();
         for n in 0..8u32 {
             assert_eq!(
-                table.push(dest_n(n), row(1, n as u64, iface(n as u8))),
+                table.push(dest_n(n), evidence(n), row(1, n as u64, iface(n as u8))),
                 Ok(n as usize)
             );
         }
@@ -203,12 +224,12 @@ mod tests {
         let mut table = Routes8::default();
         for n in 0..8u32 {
             table
-                .push(dest_n(n), row(1, n as u64, iface(n as u8)))
+                .push(dest_n(n), evidence(n), row(1, n as u64, iface(n as u8)))
                 .unwrap();
         }
         assert_eq!(table.len(), 8);
         assert_eq!(
-            table.push(dest_n(8), row(1, 8, iface(8))),
+            table.push(dest_n(8), evidence(8), row(1, 8, iface(8))),
             Err(TablePushError::TableFull)
         );
         assert_eq!(table.index_of(&dest_n(8)), None);
@@ -218,9 +239,15 @@ mod tests {
     #[test]
     fn swap_remove_moves_the_last_row_and_keeps_the_index_consistent() {
         let mut table = Routes8::default();
-        table.push(dest_n(1), row(1, 10, iface(0xE1))).unwrap();
-        table.push(dest_n(2), row(2, 20, iface(0xE2))).unwrap();
-        table.push(dest_n(3), row(3, 30, iface(0xE3))).unwrap();
+        table
+            .push(dest_n(1), evidence(1), row(1, 10, iface(0xE1)))
+            .unwrap();
+        table
+            .push(dest_n(2), evidence(2), row(2, 20, iface(0xE2)))
+            .unwrap();
+        table
+            .push(dest_n(3), evidence(3), row(3, 30, iface(0xE3)))
+            .unwrap();
 
         table.swap_remove(0, table.len() - 1);
 
@@ -229,6 +256,7 @@ mod tests {
         assert_eq!(table.index_of(&dest_n(3)), Some(0));
         assert_eq!(table.index_of(&dest_n(2)), Some(1));
         assert_eq!(table.hops()[table.index_of(&dest_n(3)).unwrap()], 3);
+        assert_eq!(table.evidence_ids(), &[evidence(3), evidence(2)]);
     }
 
     #[test]
@@ -236,7 +264,7 @@ mod tests {
         let mut table = Routes8::default();
         for n in 0..8u32 {
             table
-                .push(dest_n(n), row(1, n as u64, iface(n as u8)))
+                .push(dest_n(n), evidence(n), row(1, n as u64, iface(n as u8)))
                 .unwrap();
         }
         for _ in 0..4 {
@@ -245,7 +273,9 @@ mod tests {
             for n in 1..8u32 {
                 assert_eq!(table.hops()[table.index_of(&dest_n(n)).unwrap()], 1);
             }
-            table.push(dest_n(0), row(7, 70, iface(0))).unwrap();
+            table
+                .push(dest_n(0), evidence(9), row(7, 70, iface(0)))
+                .unwrap();
             assert_eq!(table.hops()[table.index_of(&dest_n(0)).unwrap()], 7);
         }
     }
@@ -256,7 +286,7 @@ mod tests {
         let mut table = Routes4096::default();
         for n in 0..4096u32 {
             table
-                .push(dest_n(n), row(1, n as u64, iface(n as u8)))
+                .push(dest_n(n), evidence(n), row(1, n as u64, iface(n as u8)))
                 .unwrap();
         }
         assert_eq!(table.len(), 4096);
@@ -264,7 +294,7 @@ mod tests {
         assert_eq!(table.index_of(&dest_n(2048)), Some(2048));
         assert_eq!(table.index_of(&dest_n(99999)), None);
         assert_eq!(
-            table.push(dest_n(4096), row(1, 4096, iface(0))),
+            table.push(dest_n(4096), evidence(4096), row(1, 4096, iface(0))),
             Err(TablePushError::TableFull)
         );
     }

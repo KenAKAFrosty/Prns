@@ -41,6 +41,10 @@ fn active_initiator() -> (
         .track_initiated(InitiatedLink {
             link_id,
             destination: DestinationHash::new([0x77; 16]),
+            route_evidence: crate::routing::routes::RouteEvidenceHandle::new(
+                crate::routing::routes::RouteEvidenceId::FIRST,
+                0,
+            ),
             expected_hops: 1,
             mode: crate::routing::links::LinkMode::Aes256Cbc,
             initiator_secret: X25519SecretKey::new([0x33; 32]),
@@ -97,6 +101,14 @@ fn channel_frame(
 }
 
 type FeedOutcome = (Vec<(MessageType, Vec<u8>)>, Option<Vec<u8>>);
+
+fn take_route_evidence(state: &mut EngineState<TestStorageLayout>) -> Option<InstantMillis> {
+    let mut observed = None;
+    state
+        .links
+        .reconcile_pending_route_evidence(|_, at| observed = Some(at));
+    observed
+}
 
 fn feed(state: &mut EngineState<TestStorageLayout>, frame: &[u8], now: u64) -> FeedOutcome {
     let mut raw = frame.to_vec();
@@ -183,6 +195,38 @@ fn an_in_order_channel_message_is_journaled_and_unconditionally_acked() {
         &link_id,
         &signer,
     );
+    assert_eq!(take_route_evidence(&mut state), Some(InstantMillis(2_000)));
+}
+
+#[test]
+fn an_inbound_byte_stream_frame_is_route_evidence() {
+    use crate::routing::links::channel::byte_stream::{
+        write_frame, StreamDataHeader, StreamId, STREAM_DATA_TYPE,
+    };
+
+    let (mut state, link_id, key, _signer) = active_initiator();
+    let mut body = [0u8; 64];
+    let body_len = write_frame(
+        StreamDataHeader {
+            stream_id: StreamId::new(7).unwrap(),
+            eof: false,
+            compressed: false,
+        },
+        b"stream bytes",
+        &mut body,
+    )
+    .unwrap();
+    let frame = channel_frame(
+        &key,
+        &link_id,
+        STREAM_DATA_TYPE,
+        ChannelSequence(0),
+        &body[..body_len],
+    );
+
+    let (messages, _) = feed(&mut state, &frame, 2_000);
+    assert_eq!(messages[0].0, STREAM_DATA_TYPE);
+    assert_eq!(take_route_evidence(&mut state), Some(InstantMillis(2_000)));
 }
 
 #[test]

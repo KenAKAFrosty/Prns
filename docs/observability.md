@@ -48,7 +48,7 @@ Open [the Prns health dashboard](http://127.0.0.1:3000/d/prns-observability/prns
 - five-minute failure breakdowns
 - uptime, configured-versus-discovered interfaces, routes, links, shared clients, traffic, and sampled request latency
 - inbound and outbound announces by source, origin, outcome, and interface kind
-- announce holds, schedules, pacer pressure, and egress failures
+- announce holds, schedules, pacer depth, lossless egress backpressure, lane occupancy, and terminal egress failures
 - warnings, errors, and recent structured events
 
 Metrics and traces travel over OTLP. Structured events remain in the daemon log. The local collector reads `prnsd.jsonl` from the shared per-user state directory for the Loki panels.
@@ -100,7 +100,7 @@ RUST_LOG=debug,prns.runtime=info cargo prnsd restart
 $env:RUST_LOG = 'debug,prns.runtime=info'; cargo prnsd restart
 ```
 
-The built executable accepts the same lifecycle commands without Cargo. `prnsd run` is the explicit foreground mode for terminals and future native service managers. The portable managed session survives terminal exit, but does not start at login or boot and does not restart after a crash.
+The built executable accepts the same lifecycle commands without Cargo. `prnsd run` is the explicit foreground mode for terminals, and `prnsd run --service --config DIR` registers that process for native service operation. The portable managed session survives terminal exit, but does not start at login or boot and does not restart after a crash. The [deployment guide](deploy-prnsd.md#systemd) provides a hardened systemd unit.
 
 The default `tray` feature publishes the Prns mark after daemon readiness on macOS, Windows, and
 Linux. Its concise status menu reports the live logical-interface state and provides these
@@ -118,8 +118,9 @@ platform-owned actions:
 
 Terminal actions target the exact running executable and carry an isolated `PRNSD_STATE_DIR`
 through to the child session; they do not depend on the user's shell `PATH`. Tray setup remains
-best-effort: headless sessions continue normally and emit `tray_unavailable` when the platform tray
-service is absent. Service-oriented builds can omit it with
+best-effort: headless sessions continue normally and emit an informational `tray_unavailable` when
+the platform tray service is absent, while failures preparing local tray actions remain warnings.
+Service-oriented builds can omit it with
 `--no-default-features --features tokio-host,observability`.
 
 OTLP metrics and traces are an explicit build capability. The official cloud container and canonical `cargo prnsd build` artifact include it; custom source and native service builds must select the `otlp` feature. Export starts only when an endpoint is configured for that signal and `OTEL_SDK_DISABLED` is not `true`.
@@ -129,6 +130,16 @@ The exporter uses OTLP/HTTP protobuf. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and `
 If several `prnsd` processes publish to one backend, give each a stable `service.instance.id` through `OTEL_RESOURCE_ATTRIBUTES`.
 
 Production traces default to parent-based 10% sampling. Remote trace export queues at most 2,048 spans, sends at most 512 per batch, and uses five-second network and shutdown bounds. Runtime state is sampled every five seconds, while `OTEL_METRIC_EXPORT_INTERVAL` controls how often the SDK exports those observations.
+
+### Announce egress pressure and loss
+
+Announce pacing treats a full outbound lane as temporary backpressure. The pacer retains the original queued frame and retries it without charging announce bandwidth until the lane admits it. The `prns.announces.backpressure` and `prns.interface.announces.backpressure` counters separate the lifecycle into `deferred` (once when an announce first encounters a full lane), `retry` (each later failed attempt), and `recovered` (eventual admission). These are pressure signals and do not contribute to the dashboard's announce-failure or health-degradation totals.
+
+`prns.announces.pacer_deferred_depth` and `prns.announces.pacer_oldest_deferred_age_ms` show current retained work node-wide. Their interface views are `prns.interface.announces.queue_depth{queue="pacer_deferred"}` and `prns.interface.announces.oldest_deferred_age_ms`. Physical outbound capacity is exported as `prns.egress.lane.capacity` and `prns.egress.lane.occupancy`, labeled with both the physical lane and its logical interface. A `lane_full` outcome is a terminal failure only for a pacerless announce; retained pacer work is represented exclusively by the backpressure lifecycle.
+
+Bounded shedding remains a terminal outcome for the affected interface attempt, but it is not a node fault. The dashboard's top-level summaries present pacer rejection, priority eviction, and pacerless lane-full shedding as blue egress-pressure signals and keep them out of Operational state and Hard signals. Missing lanes, IFAC rejection, and a pacer entry surviving to its 24-hour expiry remain hard failures. The detailed terminal-egress and backpressure time series use categorical colors so interfaces remain visually distinct as their number grows; their legends retain the origin and outcome or event meaning. The per-interface egress and backpressure counters identify the logical interface responsible for pressure instead of attributing an aggregate node-wide failure.
+
+Queue or lane depth should not be raised merely because `LaneFull` occurred. Sustained physical-lane occupancy together with growing deferred depth, oldest age, and retry rates is the evidence for a capacity change. A low-occupancy lane with deferrals instead points toward scheduling or fairness, which this iteration measures but does not reserve capacity to solve.
 
 Structured events remain on stderr for journald, Grafana Alloy, Vector, Fluent Bit, or another log collector.
 

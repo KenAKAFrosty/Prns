@@ -1,4 +1,7 @@
-const EVIDENCE_WINDOWS_BEFORE_RECOVERY: u8 = 2;
+// The station health task samples every two seconds. A full driver restart is expensive and the
+// vendor driver can hold TX capacity for several samples during otherwise healthy coexistence
+// bursts, so require roughly 18 seconds of uninterrupted hard evidence before escalating.
+const HARD_STALL_WINDOWS_BEFORE_RECOVERY: u8 = 9;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum StationDataPathWindow {
@@ -11,7 +14,6 @@ pub(crate) enum StationDataPathWindow {
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum DriverRestartCause {
-    ReceiveStalled,
     TransmitCapacityBlocked,
     TransmitSubmissionStalled,
 }
@@ -26,7 +28,6 @@ pub(crate) enum StationDataPathAction {
 }
 
 pub(crate) struct StationDataPathRecovery {
-    stalled_windows: u8,
     transmit_capacity_blocked_windows: u8,
     transmit_submission_stalled_windows: u8,
     driver_restarts: usize,
@@ -35,7 +36,6 @@ pub(crate) struct StationDataPathRecovery {
 impl StationDataPathRecovery {
     pub(crate) const fn new() -> Self {
         Self {
-            stalled_windows: 0,
             transmit_capacity_blocked_windows: 0,
             transmit_submission_stalled_windows: 0,
             driver_restarts: 0,
@@ -45,31 +45,24 @@ impl StationDataPathRecovery {
     pub(crate) fn observe(&mut self, window: StationDataPathWindow) -> StationDataPathAction {
         match window {
             StationDataPathWindow::ReceiveProgress => {
-                self.stalled_windows = 0;
                 self.transmit_capacity_blocked_windows = 0;
                 self.transmit_submission_stalled_windows = 0;
                 StationDataPathAction::Continue
             }
             StationDataPathWindow::TransmitWithoutReceive => {
+                // An RX counter can prove progress, but its absence cannot prove failure. A quiet
+                // LAN, bursty peer announcements, multicast filtering, and AP buffering all
+                // legitimately produce TX-only windows. Restarting from this asymmetry was the
+                // source of the periodic disconnect/route-retirement loop.
                 self.transmit_capacity_blocked_windows = 0;
                 self.transmit_submission_stalled_windows = 0;
-                self.stalled_windows = self.stalled_windows.saturating_add(1);
-                if self.stalled_windows < EVIDENCE_WINDOWS_BEFORE_RECOVERY {
-                    return StationDataPathAction::Continue;
-                }
-                self.stalled_windows = 0;
-                self.driver_restarts = self.driver_restarts.saturating_add(1);
-                StationDataPathAction::RestartDriver {
-                    count: self.driver_restarts,
-                    cause: DriverRestartCause::ReceiveStalled,
-                }
+                StationDataPathAction::Continue
             }
             StationDataPathWindow::TransmitCapacityBlocked => {
-                self.stalled_windows = 0;
                 self.transmit_submission_stalled_windows = 0;
                 self.transmit_capacity_blocked_windows =
                     self.transmit_capacity_blocked_windows.saturating_add(1);
-                if self.transmit_capacity_blocked_windows < EVIDENCE_WINDOWS_BEFORE_RECOVERY {
+                if self.transmit_capacity_blocked_windows < HARD_STALL_WINDOWS_BEFORE_RECOVERY {
                     return StationDataPathAction::Continue;
                 }
                 self.transmit_capacity_blocked_windows = 0;
@@ -80,11 +73,10 @@ impl StationDataPathRecovery {
                 }
             }
             StationDataPathWindow::TransmitSubmissionStalled => {
-                self.stalled_windows = 0;
                 self.transmit_capacity_blocked_windows = 0;
                 self.transmit_submission_stalled_windows =
                     self.transmit_submission_stalled_windows.saturating_add(1);
-                if self.transmit_submission_stalled_windows < EVIDENCE_WINDOWS_BEFORE_RECOVERY {
+                if self.transmit_submission_stalled_windows < HARD_STALL_WINDOWS_BEFORE_RECOVERY {
                     return StationDataPathAction::Continue;
                 }
                 self.transmit_submission_stalled_windows = 0;
@@ -103,7 +95,6 @@ impl StationDataPathRecovery {
     }
 
     pub(crate) fn station_unavailable(&mut self) {
-        self.stalled_windows = 0;
         self.transmit_capacity_blocked_windows = 0;
         self.transmit_submission_stalled_windows = 0;
     }
@@ -114,98 +105,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn restarts_driver_after_two_consecutive_receive_stalled_windows() {
+    fn receive_silence_never_restarts_the_driver() {
         let mut recovery = StationDataPathRecovery::new();
 
-        assert_eq!(
-            recovery.observe(StationDataPathWindow::TransmitWithoutReceive),
-            StationDataPathAction::Continue
-        );
-        assert_eq!(
-            recovery.observe(StationDataPathWindow::TransmitWithoutReceive),
-            StationDataPathAction::RestartDriver {
-                count: 1,
-                cause: DriverRestartCause::ReceiveStalled,
-            }
-        );
+        for _ in 0..64 {
+            assert_eq!(
+                recovery.observe(StationDataPathWindow::TransmitWithoutReceive),
+                StationDataPathAction::Continue
+            );
+        }
     }
 
     #[test]
-    fn receive_progress_clears_stall_evidence() {
+    fn brief_transmit_capacity_backpressure_does_not_restart_the_driver() {
         let mut recovery = StationDataPathRecovery::new();
 
-        assert_eq!(
-            recovery.observe(StationDataPathWindow::TransmitWithoutReceive),
-            StationDataPathAction::Continue
-        );
-        assert_eq!(
-            recovery.observe(StationDataPathWindow::ReceiveProgress),
-            StationDataPathAction::Continue
-        );
-        assert_eq!(
-            recovery.observe(StationDataPathWindow::TransmitWithoutReceive),
-            StationDataPathAction::Continue
-        );
+        for _ in 0..HARD_STALL_WINDOWS_BEFORE_RECOVERY - 1 {
+            assert_eq!(
+                recovery.observe(StationDataPathWindow::TransmitCapacityBlocked),
+                StationDataPathAction::Continue
+            );
+        }
     }
 
     #[test]
-    fn idle_window_preserves_stall_evidence() {
+    fn persistent_transmit_capacity_block_restarts_the_driver() {
         let mut recovery = StationDataPathRecovery::new();
 
-        assert_eq!(
-            recovery.observe(StationDataPathWindow::TransmitWithoutReceive),
-            StationDataPathAction::Continue
-        );
-        assert_eq!(
-            recovery.observe(StationDataPathWindow::NoProgress),
-            StationDataPathAction::Continue
-        );
-        assert_eq!(
-            recovery.observe(StationDataPathWindow::TransmitWithoutReceive),
-            StationDataPathAction::RestartDriver {
-                count: 1,
-                cause: DriverRestartCause::ReceiveStalled,
-            }
-        );
-    }
-
-    #[test]
-    fn unavailable_station_clears_pending_restart() {
-        let mut recovery = StationDataPathRecovery::new();
-
-        assert_eq!(
-            recovery.observe(StationDataPathWindow::TransmitWithoutReceive),
-            StationDataPathAction::Continue
-        );
-        assert_eq!(
-            recovery.observe(StationDataPathWindow::TransmitWithoutReceive),
-            StationDataPathAction::RestartDriver {
-                count: 1,
-                cause: DriverRestartCause::ReceiveStalled,
-            }
-        );
-        recovery.station_unavailable();
-        assert_eq!(
-            recovery.observe(StationDataPathWindow::TransmitWithoutReceive),
-            StationDataPathAction::Continue
-        );
-        assert_eq!(
-            recovery.observe(StationDataPathWindow::TransmitWithoutReceive),
-            StationDataPathAction::RestartDriver {
-                count: 2,
-                cause: DriverRestartCause::ReceiveStalled,
-            }
-        );
-    }
-
-    #[test]
-    fn restarts_driver_after_two_transmit_capacity_blocked_windows() {
-        let mut recovery = StationDataPathRecovery::new();
-
-        assert_eq!(
-            recovery.observe(StationDataPathWindow::TransmitCapacityBlocked),
-            StationDataPathAction::Continue
-        );
+        for _ in 0..HARD_STALL_WINDOWS_BEFORE_RECOVERY - 1 {
+            assert_eq!(
+                recovery.observe(StationDataPathWindow::TransmitCapacityBlocked),
+                StationDataPathAction::Continue
+            );
+        }
         assert_eq!(
             recovery.observe(StationDataPathWindow::TransmitCapacityBlocked),
             StationDataPathAction::RestartDriver {
@@ -216,13 +148,15 @@ mod tests {
     }
 
     #[test]
-    fn restarts_driver_after_two_transmit_submission_stalled_windows() {
+    fn persistent_transmit_submission_stall_restarts_the_driver() {
         let mut recovery = StationDataPathRecovery::new();
 
-        assert_eq!(
-            recovery.observe(StationDataPathWindow::TransmitSubmissionStalled),
-            StationDataPathAction::Continue
-        );
+        for _ in 0..HARD_STALL_WINDOWS_BEFORE_RECOVERY - 1 {
+            assert_eq!(
+                recovery.observe(StationDataPathWindow::TransmitSubmissionStalled),
+                StationDataPathAction::Continue
+            );
+        }
         assert_eq!(
             recovery.observe(StationDataPathWindow::TransmitSubmissionStalled),
             StationDataPathAction::RestartDriver {
@@ -244,6 +178,23 @@ mod tests {
             recovery.observe(StationDataPathWindow::NoProgress),
             StationDataPathAction::Continue
         );
+        assert_eq!(
+            recovery.observe(StationDataPathWindow::TransmitCapacityBlocked),
+            StationDataPathAction::Continue
+        );
+    }
+
+    #[test]
+    fn unavailable_station_clears_hard_stall_evidence() {
+        let mut recovery = StationDataPathRecovery::new();
+
+        for _ in 0..HARD_STALL_WINDOWS_BEFORE_RECOVERY - 1 {
+            assert_eq!(
+                recovery.observe(StationDataPathWindow::TransmitCapacityBlocked),
+                StationDataPathAction::Continue
+            );
+        }
+        recovery.station_unavailable();
         assert_eq!(
             recovery.observe(StationDataPathWindow::TransmitCapacityBlocked),
             StationDataPathAction::Continue

@@ -34,5 +34,5 @@ pub use plan::{
 pub use reference::{
     InterfaceKind, RNodeRadio, RNodeSubinterface, ReferenceBlackholeExchange, ReferenceConfig,
     ReferenceConfigParams, ReferenceDiscoveryConfig, ReferenceInterface,
-    ReferenceInterfaceDiscovery, ReferenceMode, ReferenceValue,
+    ReferenceInterfaceDiscovery, ReferenceMode, ReferencePrnsConfig, ReferenceValue,
 };

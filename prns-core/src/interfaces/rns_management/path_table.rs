@@ -82,7 +82,7 @@ impl From<RouteSnapshot> for RnsPathTableEntry {
             via: TransportId::new(next_hop_bytes(&entry)),
             hops: u64::from(entry.hops),
             learned_at_seconds: rns_timestamp(InstantMillis(
-                entry.learned_at.0.max(entry.last_relayed_at.0),
+                entry.learned_at.0.max(entry.last_route_activity_at.0),
             )),
             expires_at_seconds: rns_timestamp(entry.expires_at),
             interface: interface_name(entry.interface),

@@ -8,6 +8,8 @@ from pathlib import Path, PurePosixPath
 import re
 import shutil
 
+from flasher_manifest import FLASH_MANIFEST_SCHEMA, require_schema
+
 
 FLASHER_RELEASE_RECORD_NAME = re.compile(r"flasher-release-record-v.+\.json")
 SIGNED_CANDIDATE_NAME = re.compile(r"prns-flasher-candidate-v.+-signed\.tar\.gz")
@@ -225,7 +227,8 @@ def validate_metadata_identity(
                 raise ValueError(f"retained release {version} lacks {required}")
         manifest = load_object(directory / "flash-manifest.json", "retained manifest")
         release = manifest.get("release")
-        if manifest.get("schema") != 2 or not isinstance(release, dict) or release.get("version") != version:
+        require_schema(manifest)
+        if not isinstance(release, dict) or release.get("version") != version:
             raise ValueError(f"retained release directory {version} has the wrong manifest")
 
 
@@ -256,8 +259,8 @@ def load_history(root: Path) -> dict:
 def candidate_version(candidate: Path) -> tuple[str, dict]:
     manifest = load_object(candidate / "flash-manifest.json", "candidate manifest")
     release = manifest.get("release")
-    if manifest.get("schema") != 2 or not isinstance(release, dict):
-        raise ValueError("candidate manifest is not schema 2")
+    if manifest.get("schema") != FLASH_MANIFEST_SCHEMA or not isinstance(release, dict):
+        raise ValueError(f"candidate manifest is not schema {FLASH_MANIFEST_SCHEMA}")
     return canonical_version(release.get("version")), manifest
 
 

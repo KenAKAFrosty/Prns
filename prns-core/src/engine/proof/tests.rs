@@ -1,7 +1,9 @@
 use super::*;
 use crate::engine::test_support::*;
 use crate::engine::IngestIo;
-use crate::engine::{Directive, EngineReaction, EngineState, IngestPacketOutcome, RatchetPolicy};
+use crate::engine::{
+    Directive, EngineReaction, EngineState, IngestPacketOutcome, Journaled, RatchetPolicy,
+};
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::IdentityHash;
 use crate::interfaces::AttachedInterfaces;
@@ -172,6 +174,52 @@ fn the_app_decider_gates_the_prove_if_proof() {
 }
 
 #[test]
+fn delivery_is_journaled_before_the_prove_if_decision_and_proof_egress() {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Step {
+        Delivered,
+        Decided,
+        ProofSent,
+    }
+
+    let (mut state, identity, destination) = prove_if_state();
+    let mut raw = sealed_single_packet(&identity, destination, b"persist-before-proof");
+    let steps = core::cell::RefCell::new(std::vec::Vec::new());
+    state.ingest_packet_into(
+        InboundPacket {
+            arrived_at: InstantMillis(1_000),
+            source_interface: InterfaceId::new([0xEE; 8]),
+            bytes: &mut raw,
+        },
+        IngestIo {
+            interfaces: AttachedInterfaces::new(&transporting_interfaces()),
+            now: InstantMillis(1_000),
+            fill_entropy: &mut |bytes| bytes.fill(0),
+            should_prove: &mut |_| {
+                steps.borrow_mut().push(Step::Decided);
+                true
+            },
+            should_accept_resource: &mut |_| false,
+            sink: &mut |reaction| match reaction {
+                EngineReaction::Journaled(Journaled::Delivered(_)) => {
+                    steps.borrow_mut().push(Step::Delivered);
+                }
+                EngineReaction::Directive(Directive::Send { .. }) => {
+                    steps.borrow_mut().push(Step::ProofSent);
+                }
+                _ => {}
+            },
+        },
+    );
+
+    assert_eq!(
+        *steps.borrow(),
+        [Step::Delivered, Step::Decided, Step::ProofSent],
+        "the host can persist delivery before policy or proof egress acknowledges it",
+    );
+}
+
+#[test]
 fn write_proof_for_an_unheld_identity_reports_it() {
     let state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
     let owed = ProofOwed {
@@ -219,6 +267,10 @@ fn an_initiator_channel_ack_is_signed_by_the_link_key() {
         .track_initiated(InitiatedLink {
             link_id,
             destination: DestinationHash::new([0x77; 16]),
+            route_evidence: crate::routing::routes::RouteEvidenceHandle::new(
+                crate::routing::routes::RouteEvidenceId::FIRST,
+                0,
+            ),
             expected_hops: 1,
             mode: crate::routing::links::LinkMode::Aes256Cbc,
             initiator_secret: X25519SecretKey::new([0x33; 32]),

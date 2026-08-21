@@ -363,7 +363,8 @@ pub struct ReportedInterfaces(Vec<RadioType>);
 
 impl ReportedInterfaces {
     pub fn apply(&mut self, payload: &[u8]) {
-        for pair in payload.chunks_exact(2) {
+        let (reports, _) = payload.as_chunks::<2>();
+        for pair in reports {
             if self.0.len() == MAX_SUBINTERFACES {
                 return;
             }
@@ -759,6 +760,13 @@ mod tests {
                 .radio_type(VPort::new(2).expect("valid vport")),
             Some(RadioType::Sx127x)
         );
+    }
+
+    #[test]
+    fn interface_inventory_ignores_an_incomplete_trailing_report() {
+        let mut interfaces = ReportedInterfaces::default();
+        interfaces.apply(&[0x00, 0x11, 0x01]);
+        assert_eq!(interfaces, ReportedInterfaces(vec![RadioType::Sx126x]));
     }
 
     #[test]

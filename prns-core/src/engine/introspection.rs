@@ -20,7 +20,7 @@ pub struct RouteSnapshot {
     pub hops: u8,
     pub via: NextHop,
     pub learned_at: InstantMillis,
-    pub last_relayed_at: InstantMillis,
+    pub last_route_activity_at: InstantMillis,
     pub expires_at: InstantMillis,
     pub interface: InterfaceId,
 }
@@ -35,7 +35,7 @@ fn route_snapshot(
         hops: entry.hops,
         via: entry.next_hop,
         learned_at: entry.learned_at,
-        last_relayed_at: entry.last_relayed_at,
+        last_route_activity_at: entry.last_route_activity_at,
         expires_at,
         interface: entry.receiving_interface,
     }

@@ -131,9 +131,9 @@ By default, `prnsd` will find the active Reticulum configuration automatically; 
 
 ## Beyond the daemon
 
-`prnsd` is one face of a larger engine, and that engine goes everywhere: onto a $5 microcontroller ([flash a Hopspot](https://prns.dev/flash)), into a browser tab, and inside your own software through [paved and source-ready SDKs](sdks.md). Anything you build against one meshes with the rest, including any RNS network you already participate in.
+`prnsd` is one face of a larger engine, and that engine goes everywhere: onto a $5 microcontroller ([flash a Hopspot](https://reticulum.rs/flash)), into a browser tab, and inside your own software through [paved and source-ready SDKs](sdks.md). Anything you build against one meshes with the rest, including any RNS network you already participate in.
 
 ## Verify it yourself
 
-- [Run the interoperability suite](validation.md): real stock RNS 1.4.2 nodes against Prns nodes, on your own machine, traffic checked byte for byte.
+- [Run the interoperability suite](validation.md): real stock RNS 1.4.2 nodes against Prns nodes, on your own machine. Encodings are checked byte for byte against stock RNS, and live sessions are proven by outcome: paths resolve, proofs land, transferred files arrive byte-identical.
 - [Read the benchmark methodology](../benchmarks/README.md): how runs are calibrated, qualified, and published before any number becomes a claim.

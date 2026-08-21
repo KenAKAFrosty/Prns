@@ -6,8 +6,8 @@ Every hosted SDK delegates protocol behavior to the same engine. Native FFI pack
 
 The package version and contract ABI are checked before host creation. Commands settle as typed success or failure values, event lanes have one explicit owner, and resource bodies retain their own bounded stream lifetime.
 
-- Documentation: [prns.dev](https://prns.dev)
-- Documentation mirror: [reticulum.rs](https://reticulum.rs)
+- Documentation: [reticulum.rs](https://reticulum.rs)
+- Documentation mirror: [prns.dev](https://prns.dev)
 - SDK readiness: [Prns SDK guide](https://github.com/KenAKAFrosty/Prns/blob/trunk/docs/sdks.md)
 - Source and examples: [github.com/KenAKAFrosty/Prns](https://github.com/KenAKAFrosty/Prns)
 - Issues: [GitHub Issues](https://github.com/KenAKAFrosty/Prns/issues)

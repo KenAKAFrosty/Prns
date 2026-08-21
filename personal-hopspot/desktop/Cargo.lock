@@ -1968,6 +1968,8 @@ dependencies = [
  "embedded-storage-async",
  "heapless 0.8.0",
  "personal-rns",
+ "prns-core",
+ "prns-macros",
  "sha2 0.11.0",
 ]
 
@@ -1979,7 +1981,6 @@ dependencies = [
  "embedded-graphics-simulator",
  "heapless 0.8.0",
  "ksni",
- "nusb",
  "personal-hopspot-core",
  "personal-rns",
  "prns-ffi",
@@ -2094,6 +2095,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "md-5",
+ "prns-macros",
  "rayon",
  "rmp",
  "roaring",
@@ -2150,6 +2152,7 @@ dependencies = [
  "if-addrs",
  "log",
  "netdev",
+ "nusb",
  "prns-core",
  "prns-ffi",
  "prns-runtime-tokio",
@@ -2161,6 +2164,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "prns-macros"
+version = "0.3.6"
+
+[[package]]
 name = "prns-runtime"
 version = "0.3.6"
 dependencies = [
@@ -2168,6 +2175,7 @@ dependencies = [
  "cfg-if",
  "heapless 0.8.0",
  "prns-core",
+ "prns-macros",
 ]
 
 [[package]]

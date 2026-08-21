@@ -317,7 +317,7 @@ fn each_lora_screen_renders_its_selected_row_within_bounds() {
             state.mode = UiMode::LoRaEditor { screen, profile };
         }
 
-        render_with_state(&mut display, &[], BatteryState::Unknown, &state);
+        render_with_state(&mut display, &[], PowerSnapshot::UNKNOWN, &state);
 
         assert_eq!(
             display.get_pixel(Point::new(LORA_DOT_X, LORA_EDITOR_TOP + 3)),

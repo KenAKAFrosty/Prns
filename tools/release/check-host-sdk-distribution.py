@@ -144,6 +144,132 @@ def check_packages(catalog):
         raise ValueError("prns-js/PACKAGE.md differs from the canonical package README")
 
 
+def export_shape(value):
+    if isinstance(value, dict):
+        return {key: export_shape(item) for key, item in value.items()}
+    return None
+
+
+def check_hopspot_alias(version):
+    canonical_rust = tomllib.loads((ROOT / "personal-rns" / "Cargo.toml").read_text())
+    hopspot_root = ROOT / "personal-hopspot" / "sdk" / "hopspot"
+    hopspot_rust = tomllib.loads((hopspot_root / "Cargo.toml").read_text())
+    canonical_features = canonical_rust["features"]
+    expected_features = {
+        feature: values
+        if feature == "default"
+        else [f"personal-rns/{feature}"]
+        for feature, values in canonical_features.items()
+    }
+    if hopspot_rust.get("features") != expected_features:
+        raise ValueError("hopspot Rust features do not exactly forward personal-rns")
+    if hopspot_rust.get("dependencies") != {
+        "personal-rns": {
+            "version": f"={version}",
+            "path": "../../../personal-rns",
+            "default-features": False,
+        }
+    }:
+        raise ValueError("hopspot Rust dependency is not exactly version-locked")
+    if hopspot_rust.get("build-dependencies") or (
+        hopspot_root / "build.rs"
+    ).exists():
+        raise ValueError("hopspot Rust facade has a build-time implementation")
+    if set((hopspot_root / "src").glob("*.rs")) != {
+        hopspot_root / "src" / "lib.rs"
+    }:
+        raise ValueError("hopspot Rust facade has an additional crate target")
+    if (hopspot_root / "src" / "lib.rs").read_text() != (
+        '#![cfg_attr(not(any(feature = "std", test)), no_std)]\n'
+        "#![forbid(unsafe_code)]\n\n"
+        "pub use personal_rns::*;\n"
+    ):
+        raise ValueError("hopspot Rust facade contains behavior beyond its re-export")
+
+    canonical_npm = json.loads((ROOT / "prns-js" / "package.json").read_text())
+    hopspot_npm = json.loads((hopspot_root / "package.json").read_text())
+    if hopspot_npm.get("name") != "hopspot" or hopspot_npm.get("version") != version:
+        raise ValueError("hopspot npm identity differs from the product release")
+    if hopspot_npm.get("dependencies") != {"personal-rns": version}:
+        raise ValueError("hopspot npm dependency is not exactly version-locked")
+    for field in ("optionalDependencies", "peerDependencies"):
+        if hopspot_npm.get(field):
+            raise ValueError(f"hopspot npm facade has independent {field}")
+    for field in ("license", "type", "sideEffects", "engines", "publishConfig"):
+        if hopspot_npm.get(field) != canonical_npm.get(field):
+            raise ValueError(f"hopspot npm {field} differs from personal-rns")
+    expected_exports = {
+        ".": {
+            "bun": {
+                "types": "./index.d.ts",
+                "import": "./index.js",
+                "require": "./index.cjs",
+            },
+            "node": {
+                "types": "./index.d.ts",
+                "import": "./index.js",
+                "require": "./index.cjs",
+            },
+            "browser": {
+                "types": "./browser.d.ts",
+                "import": "./browser.js",
+            },
+            "default": {
+                "types": "./browser.d.ts",
+                "import": "./browser.js",
+            },
+        },
+        "./native": {
+            "types": "./native.d.ts",
+            "import": "./native.js",
+            "require": "./native.cjs",
+        },
+        "./browser": {
+            "types": "./browser.d.ts",
+            "import": "./browser.js",
+        },
+        "./casework": {
+            "types": "./casework.d.ts",
+            "import": "./casework.js",
+            "require": "./casework.cjs",
+        },
+        "./package.json": "./package.json",
+    }
+    if export_shape(expected_exports) != export_shape(
+        canonical_npm.get("exports")
+    ):
+        raise ValueError("hopspot npm export conditions differ from personal-rns")
+    if hopspot_npm.get("exports") != expected_exports:
+        raise ValueError("hopspot npm export paths differ from its facade modules")
+    if hopspot_npm.get("scripts") != {
+        "test": "node --test",
+        "check": "npm test && npm pack --dry-run --cache ./target/npm-cache",
+    }:
+        raise ValueError("hopspot npm package has unexpected lifecycle behavior")
+    for field in ("bin", "main", "module", "browser"):
+        if field in hopspot_npm:
+            raise ValueError(f"hopspot npm package bypasses exports through {field}")
+    wrappers = {
+        "index.js": 'export * from "personal-rns";\n',
+        "index.cjs": 'module.exports = require("personal-rns");\n',
+        "index.d.ts": 'export * from "personal-rns";\n',
+        "native.js": 'export * from "personal-rns/native";\n',
+        "native.cjs": 'module.exports = require("personal-rns/native");\n',
+        "native.d.ts": 'export * from "personal-rns/native";\n',
+        "browser.js": 'export * from "personal-rns/browser";\n',
+        "browser.d.ts": 'export * from "personal-rns/browser";\n',
+        "casework.js": 'export * from "personal-rns/casework";\n',
+        "casework.cjs": 'module.exports = require("personal-rns/casework");\n',
+        "casework.d.ts": 'export * from "personal-rns/casework";\n',
+    }
+    expected_files = [*wrappers, "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
+    if hopspot_npm.get("files") != expected_files:
+        raise ValueError("hopspot npm package payload differs from its facade surface")
+    for path, expected in wrappers.items():
+        if (hopspot_root / path).read_text() != expected:
+            raise ValueError(f"hopspot npm facade contains behavior in {path}")
+
+
 def main():
     catalog = json.loads(CATALOG_PATH.read_text())
     version = (ROOT / "VERSION").read_text().strip()
@@ -161,6 +287,7 @@ def main():
     check_native(catalog)
     check_rust(catalog, version)
     check_packages(catalog)
+    check_hopspot_alias(version)
     print(
         f"HOST_SDK_DISTRIBUTION_OK version={version} "
         f"targets={len(catalog['nativeTargets'])} "

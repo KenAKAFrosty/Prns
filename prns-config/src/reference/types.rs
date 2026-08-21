@@ -63,6 +63,15 @@ pub enum ReferenceRemoteManagement {
     },
 }
 
+/// Prns-owned host settings read from the optional `[prns]` section.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ReferencePrnsConfig {
+    /// Explicit incoming active-Resource memory budget in bytes; `None` uses the engine default.
+    pub resource_mem_in: Option<usize>,
+    /// Explicit outgoing active-Resource memory budget in bytes; `None` uses the engine default.
+    pub resource_mem_out: Option<usize>,
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ReferenceInterfaceDiscovery {
     pub discoverable: Option<bool>,
@@ -196,6 +205,7 @@ pub enum ReferenceConfigParams {
     PrnsBluetoothAuto,
     PrnsWebSocketClient {
         target: Option<String>,
+        framing: Option<String>,
     },
     PrnsWebSocketServer {
         listen_ip: Option<String>,
@@ -203,6 +213,7 @@ pub enum ReferenceConfigParams {
         device: Option<String>,
         port: Option<u16>,
         prefer_ipv6: Option<bool>,
+        framing: Option<String>,
     },
     Unknown,
 }
@@ -306,5 +317,6 @@ pub struct ReferenceConfig {
     pub discovery: ReferenceDiscoveryConfig,
     pub blackhole_exchange: ReferenceBlackholeExchange,
     pub remote_management: ReferenceRemoteManagement,
+    pub prns: ReferencePrnsConfig,
     pub other_sections: BTreeMap<String, BTreeMap<String, ReferenceValue>>,
 }

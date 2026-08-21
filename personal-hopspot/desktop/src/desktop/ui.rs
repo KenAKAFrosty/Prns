@@ -42,6 +42,8 @@ fn ui_state() -> UiState {
         storage_limits: <GrowableHeap as StorageLayout>::LIMITS,
         display_power_control: DisplayPowerControl::Unavailable,
         access_point: AccessPointState::Unsupported,
+        shared_instance_config_export: screen::SharedInstanceConfigExport::Unavailable,
+        gnss: screen::GnssAvailability::Unavailable,
     })
 }
 
@@ -245,7 +247,7 @@ impl ksni::Tray for LinuxTray {
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
         let (rgba, size) = hopspot_tray_rgba();
         let mut argb = Vec::with_capacity(rgba.len());
-        for pixel in rgba.chunks_exact(4) {
+        for pixel in rgba.as_chunks::<4>().0 {
             argb.extend_from_slice(&[pixel[3], pixel[0], pixel[1], pixel[2]]);
         }
         vec![ksni::Icon {
@@ -554,6 +556,8 @@ pub(super) fn run_window(handles: WindowHandles) {
             ui_state.show_notice(screen::UiNotice::OledOff);
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
         }
+        UiAction::ToggleOledAutoOff => {}
+        UiAction::ControlGnss(_) => {}
         UiAction::Sleep => {
             ui_state.show_notice(screen::UiNotice::Sleeping);
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
@@ -651,6 +655,7 @@ pub(super) fn run_window(handles: WindowHandles) {
         }
         UiAction::SwapRadioMode => {}
         UiAction::OpenDocs => {}
+        UiAction::CopySharedInstanceConfig => {}
     };
 
     let mut ui_state = ui_state();
@@ -842,6 +847,7 @@ pub(super) fn run_window(handles: WindowHandles) {
                 screen::RenderFrame {
                     content,
                     battery,
+                    gnss: None,
                     state: &ui_state,
                     interface_menu_details: &interface_menu_details,
                     animation_ms,

@@ -439,9 +439,11 @@ func marshalInterface(
 	case InterfaceConfigWebSocketClient:
 		result.kind = C.PRNS_INTERFACE_KIND_WEB_SOCKET_CLIENT
 		result.target, err = arena.stringView(config.Target)
+		result.websocket_framing_selection = C.PrnsWebSocketFramingSelection(config.Framing)
 	case InterfaceConfigWebSocketServer:
 		result.kind = C.PRNS_INTERFACE_KIND_WEB_SOCKET_SERVER
 		result.bind, err = arena.stringView(config.Bind)
+		result.websocket_framing_selection = C.PrnsWebSocketFramingSelection(config.Framing)
 	case InterfaceConfigBrowserRendezvous:
 		result.kind = C.PRNS_INTERFACE_KIND_BROWSER_RENDEZVOUS
 		result.url, err = arena.stringView(config.Url)
@@ -816,7 +818,7 @@ func ffiHostSnapshot(host nativeHost, timeoutMillis uint32) (HostSnapshot, Statu
 				ViaIdentity:         viaIdentity,
 				InterfaceId:         interfaceID,
 				LearnedAtMillis:     uint64(item.learned_at_millis),
-				LastRelayedAtMillis: uint64(item.last_relayed_at_millis),
+				LastRouteActivityAtMillis: uint64(item.last_route_activity_at_millis),
 				ExpiresAtMillis:     uint64(item.expires_at_millis),
 			}
 		}

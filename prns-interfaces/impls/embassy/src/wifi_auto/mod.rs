@@ -1,26 +1,34 @@
 mod fanout;
+mod peer;
 mod rendezvous;
+mod service_discovery;
 
 use ::core::cell::Cell;
 use ::core::net::Ipv6Addr;
 
 use embassy_futures::join::join;
-use embassy_futures::select::{select, select3, select5, Either, Either3, Either5};
-use embassy_net::udp::{RecvError, UdpMetadata, UdpSocket};
-use embassy_net::{IpAddress, Stack};
+use embassy_futures::select::{select, select4, select5, Either, Either4, Either5};
+use embassy_net::udp::{BindError as UdpBindError, RecvError, UdpMetadata, UdpSocket};
+use embassy_net::{IpAddress, MulticastError, Stack};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
 use embassy_sync::blocking_mutex::CriticalSectionMutex;
 use embassy_sync::signal::Signal;
+use embassy_sync::watch::Watch;
 use embassy_time::{with_timeout, Duration, Instant, Ticker};
+use heapless::Vec;
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
 use prns_core::interfaces::wifi_auto as contract;
 use prns_core::interfaces::{
     BitrateBps, ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus, MacAddress,
 };
-use prns_runtime::runtime::EmbassyFleet as Fleet;
+use prns_runtime::runtime::{EmbassyFleet as Fleet, OutboundFrame};
 
 use fanout::{dispatch_fanout, send_beacon, target_includes, FanoutPlan, UdpFanoutSender};
+use peer::{
+    SegmentRole, WifiPeer, WifiPeerClear, WifiPeerInsertion, WifiPeerLookup, WifiPeerReplacement,
+    WifiPeerRetirement, WifiPeerSlotLookup, WifiPeerTable,
+};
 use rendezvous::TcpRendezvousEvent;
 pub use rendezvous::{
     tcp_rendezvous, TcpRendezvousBuffers, TcpRendezvousClient, TcpRendezvousExitCause,
@@ -28,12 +36,86 @@ pub use rendezvous::{
     TCP_RENDEZVOUS_FRAMED_LEN, TCP_RENDEZVOUS_FRAME_CAP, TCP_RENDEZVOUS_LIVENESS_TIMEOUT,
     TCP_RENDEZVOUS_READ_BUFFER_BYTES, TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES,
 };
+use service_discovery::{
+    DiscoveryParticipationReceiver, EmbeddedDiscoveryParticipation,
+    EMBEDDED_SERVICE_DISCOVERY_CAPACITY as SERVICE_DISCOVERY_INSTANCES,
+};
+pub use service_discovery::{
+    UdpServiceDiscovery, UdpServiceDiscoveryConstructionError, UdpServiceDiscoveryStorage,
+    EMBEDDED_SERVICE_DISCOVERY_CAPACITY, UDP_SERVICE_DISCOVERY_PACKET_BYTES,
+    UDP_SERVICE_DISCOVERY_RECEIVE_PACKET_BYTES, UDP_SERVICE_DISCOVERY_RX_QUEUED_PACKETS,
+    UDP_SERVICE_DISCOVERY_RX_SOCKET_BYTES, UDP_SERVICE_DISCOVERY_RX_SOCKET_METADATA,
+    UDP_SERVICE_DISCOVERY_SOCKET_COUNT, UDP_SERVICE_DISCOVERY_TX_QUEUED_PACKETS,
+    UDP_SERVICE_DISCOVERY_TX_SOCKET_BYTES, UDP_SERVICE_DISCOVERY_TX_SOCKET_METADATA,
+};
 
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
+const UNICAST_REPEER_EVERY: u32 = 3;
 const SEND_TIMEOUT: Duration = Duration::from_millis(300);
 const BEACON_FAILURES_BEFORE_DEGRADED: u8 = 3;
+const SECONDARY_STACK_CONFIGURATION_TIMEOUT: Duration = Duration::from_secs(10);
 
-async fn wait_for_stack<const MEMBERS: usize>(stack: &Stack<'_>, status: AutoWifiStatus<MEMBERS>) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SecondaryStackReadiness {
+    Ready,
+    Disabled,
+    TimedOut,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SegmentActivationError {
+    MulticastDiscoveryBind(UdpBindError),
+    UnicastDiscoveryBind(UdpBindError),
+    DataBind(UdpBindError),
+    MulticastJoin(MulticastError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SecondaryActivationError {
+    StackConfigurationTimedOut,
+    Segment(SegmentActivationError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TopologyState {
+    PrimaryOnly,
+    DualSegment,
+    SecondaryUnavailable,
+}
+
+impl TopologyState {
+    const fn connection_state(self) -> ConnectionState {
+        match self {
+            Self::PrimaryOnly | Self::DualSegment => ConnectionState::Connected,
+            Self::SecondaryUnavailable => ConnectionState::Degraded,
+        }
+    }
+
+    const fn requires_secondary_health(self) -> bool {
+        matches!(self, Self::DualSegment | Self::SecondaryUnavailable)
+    }
+}
+
+const fn peer_aware_connection(lifecycle: ConnectionState, peer_count: u32) -> ConnectionState {
+    match lifecycle {
+        ConnectionState::Connected | ConnectionState::Degraded if peer_count == 0 => {
+            ConnectionState::Disconnected
+        }
+        ConnectionState::Initializing
+        | ConnectionState::Connected
+        | ConnectionState::Degraded
+        | ConnectionState::Reconnecting
+        | ConnectionState::Failed
+        | ConnectionState::Disconnected
+        | ConnectionState::Disabled
+        | ConnectionState::Unknown => lifecycle,
+    }
+}
+
+async fn wait_for_primary_stack<const MEMBERS: usize>(
+    stack: &Stack<'_>,
+    status: AutoWifiStatus<MEMBERS>,
+) {
     loop {
         if !status.is_enabled() {
             status.wait_until_enabled().await;
@@ -48,19 +130,57 @@ async fn wait_for_stack<const MEMBERS: usize>(stack: &Stack<'_>, status: AutoWif
 async fn wait_for_secondary_stack<const MEMBERS: usize>(
     stack: &Stack<'_>,
     status: AutoWifiStatus<MEMBERS>,
-) -> bool {
+) -> SecondaryStackReadiness {
+    if !status.is_enabled() {
+        return SecondaryStackReadiness::Disabled;
+    }
+    match select(
+        with_timeout(
+            SECONDARY_STACK_CONFIGURATION_TIMEOUT,
+            stack.wait_config_up(),
+        ),
+        status.wait_until_disabled(),
+    )
+    .await
+    {
+        Either::First(Ok(())) => SecondaryStackReadiness::Ready,
+        Either::First(Err(_timeout)) => SecondaryStackReadiness::TimedOut,
+        Either::Second(()) => SecondaryStackReadiness::Disabled,
+    }
+}
+
+fn activate_segment(segment: &mut AutoWifiSegment<'_>) -> Result<(), SegmentActivationError> {
+    segment
+        .discovery
+        .bind(contract::DEFAULT_DISCOVERY_PORT)
+        .map_err(SegmentActivationError::MulticastDiscoveryBind)?;
+    segment
+        .unicast_discovery
+        .bind(contract::UNICAST_DISCOVERY_PORT)
+        .map_err(SegmentActivationError::UnicastDiscoveryBind)?;
+    segment
+        .data
+        .bind(contract::DEFAULT_DATA_PORT)
+        .map_err(SegmentActivationError::DataBind)?;
+    segment
+        .stack
+        .join_multicast_group(IpAddress::Ipv6(contract::DISCOVERY_GROUP))
+        .map_err(SegmentActivationError::MulticastJoin)
+}
+
+async fn activate_secondary_segment<const MEMBERS: usize>(
+    segment: &mut AutoWifiSegment<'_>,
+    status: AutoWifiStatus<MEMBERS>,
+) -> Result<(), SecondaryActivationError> {
     loop {
-        if !status.is_enabled() {
-            status.wait_until_enabled().await;
-        }
-        match select(
-            with_timeout(Duration::from_secs(10), stack.wait_config_up()),
-            status.wait_until_disabled(),
-        )
-        .await
-        {
-            Either::First(result) => return result.is_ok(),
-            Either::Second(()) => {}
+        match wait_for_secondary_stack(&segment.stack, status).await {
+            SecondaryStackReadiness::Ready => {
+                return activate_segment(segment).map_err(SecondaryActivationError::Segment);
+            }
+            SecondaryStackReadiness::Disabled => status.wait_until_enabled().await,
+            SecondaryStackReadiness::TimedOut => {
+                return Err(SecondaryActivationError::StackConfigurationTimedOut);
+            }
         }
     }
 }
@@ -74,6 +194,69 @@ pub struct WifiMemberStatus {
     session_rx_start: AtomicU64,
     session_tx_start: AtomicU64,
     active: AtomicBool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EmbeddedDiscoveryTargets<const TARGETS: usize> {
+    addresses: Vec<Ipv6Addr, TARGETS>,
+}
+
+impl<const TARGETS: usize> EmbeddedDiscoveryTargets<TARGETS> {
+    pub(crate) const fn new() -> Self {
+        Self {
+            addresses: Vec::new(),
+        }
+    }
+
+    pub(crate) fn insert(&mut self, address: Ipv6Addr) {
+        let Err(index) = self.addresses.binary_search(&address) else {
+            return;
+        };
+        let _ = self.addresses.insert(index, address);
+    }
+
+    fn address_at(&self, index: usize) -> Option<Ipv6Addr> {
+        self.addresses.get(index).copied()
+    }
+
+    #[cfg(test)]
+    fn iter(&self) -> impl Iterator<Item = Ipv6Addr> + '_ {
+        self.addresses.iter().copied()
+    }
+
+    fn len(&self) -> usize {
+        self.addresses.len()
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum RoundRobinPosition {
+    Item(usize),
+    Empty,
+}
+
+struct RoundRobinCursor {
+    next: usize,
+}
+
+impl RoundRobinCursor {
+    const fn new() -> Self {
+        Self { next: 0 }
+    }
+
+    fn advance(&mut self, length: usize) -> RoundRobinPosition {
+        if length == 0 {
+            self.next = 0;
+            return RoundRobinPosition::Empty;
+        }
+        let current = self.next % length;
+        self.next = (current + 1) % length;
+        RoundRobinPosition::Item(current)
+    }
+
+    fn reset(&mut self) {
+        self.next = 0;
+    }
 }
 
 impl WifiMemberStatus {
@@ -135,10 +318,17 @@ pub struct AutoWifiShared<const MEMBERS: usize> {
     id: InterfaceId,
     enabled: AtomicBool,
     enabled_changed: Signal<CriticalSectionRawMutex, bool>,
+    discovery_participation: Watch<
+        CriticalSectionRawMutex,
+        EmbeddedDiscoveryParticipation,
+        { SERVICE_DISCOVERY_INSTANCES as usize },
+    >,
+    discovery_targets: Signal<CriticalSectionRawMutex, EmbeddedDiscoveryTargets<MEMBERS>>,
     station_uplink_enabled: AtomicBool,
     station_uplink_enabled_changed: Signal<CriticalSectionRawMutex, bool>,
     lifecycle: AtomicU8,
     peers: AtomicU32,
+    last_peer_heard_ms: AtomicU64,
     members: [WifiMemberStatus; MEMBERS],
 }
 
@@ -149,10 +339,13 @@ impl<const MEMBERS: usize> AutoWifiShared<MEMBERS> {
             id,
             enabled: AtomicBool::new(true),
             enabled_changed: Signal::new(),
+            discovery_participation: Watch::new_with(EmbeddedDiscoveryParticipation::Central),
+            discovery_targets: Signal::new(),
             station_uplink_enabled: AtomicBool::new(true),
             station_uplink_enabled_changed: Signal::new(),
             lifecycle: AtomicU8::new(ConnectionState::Initializing.as_u8()),
             peers: AtomicU32::new(0),
+            last_peer_heard_ms: AtomicU64::new(0),
             members: [const { WifiMemberStatus::new() }; MEMBERS],
         }
     }
@@ -179,13 +372,44 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
 
     pub fn toggle_enabled(&self) {
         let enabled = !self.shared.enabled.fetch_xor(true, Ordering::Relaxed);
-        self.shared.enabled_changed.signal(enabled);
+        self.publish_enabled_change(enabled);
     }
 
     fn update_enabled(&self, enabled: bool) {
         if self.shared.enabled.swap(enabled, Ordering::Relaxed) != enabled {
-            self.shared.enabled_changed.signal(enabled);
+            self.publish_enabled_change(enabled);
         }
+    }
+
+    fn publish_enabled_change(&self, enabled: bool) {
+        self.shared.enabled_changed.signal(enabled);
+        self.shared
+            .discovery_participation
+            .sender()
+            .send(if enabled {
+                EmbeddedDiscoveryParticipation::Central
+            } else {
+                EmbeddedDiscoveryParticipation::Inactive
+            });
+    }
+
+    fn discovery_participation_receiver(
+        &self,
+    ) -> Result<
+        DiscoveryParticipationReceiver,
+        service_discovery::UdpServiceDiscoveryConstructionError,
+    > {
+        self.shared.discovery_participation.receiver().ok_or(
+            service_discovery::UdpServiceDiscoveryConstructionError::DiscoveryCapacityExhausted,
+        )
+    }
+
+    fn publish_discovery_targets(&self, targets: EmbeddedDiscoveryTargets<MEMBERS>) {
+        self.shared.discovery_targets.signal(targets);
+    }
+
+    async fn wait_for_discovery_targets(&self) -> EmbeddedDiscoveryTargets<MEMBERS> {
+        self.shared.discovery_targets.wait().await
     }
 
     #[must_use]
@@ -306,6 +530,21 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
     pub fn peer_count(&self) -> u32 {
         self.shared.peers.load(Ordering::Relaxed)
     }
+
+    fn record_peer_heard(&self, now_ms: u64) {
+        self.shared
+            .last_peer_heard_ms
+            .store(now_ms.max(1), Ordering::Relaxed);
+    }
+
+    /// Returns how long the active peer fleet has been silent.
+    pub fn peer_silence_ms(&self, now_ms: u64) -> Option<u64> {
+        if self.peer_count() == 0 {
+            return None;
+        }
+        let last_heard_ms = self.shared.last_peer_heard_ms.load(Ordering::Relaxed);
+        (last_heard_ms != 0).then(|| now_ms.saturating_sub(last_heard_ms))
+    }
 }
 
 impl<const MEMBERS: usize> InterfaceStatus for AutoWifiStatus<MEMBERS> {
@@ -317,7 +556,10 @@ impl<const MEMBERS: usize> InterfaceStatus for AutoWifiStatus<MEMBERS> {
         if !self.is_enabled() {
             return ConnectionState::Disabled;
         }
-        ConnectionState::from_u8(self.shared.lifecycle.load(Ordering::Relaxed))
+        peer_aware_connection(
+            ConnectionState::from_u8(self.shared.lifecycle.load(Ordering::Relaxed)),
+            self.peer_count(),
+        )
     }
 
     fn rx_bytes(&self) -> u64 {
@@ -360,6 +602,83 @@ pub struct AutoWifi<'a, const MEMBERS: usize> {
     rendezvous: Option<TcpRendezvousClient<'a>>,
 }
 
+type DatagramReceiveResult = Result<(usize, UdpMetadata), RecvError>;
+
+enum AutoWifiEvent<'a, const FRAME: usize, const MEMBERS: usize> {
+    PrimaryMulticast(DatagramReceiveResult),
+    PrimaryUnicast(DatagramReceiveResult),
+    PrimaryData(DatagramReceiveResult),
+    BeaconTick,
+    Outbound(OutboundFrame<FRAME>),
+    SecondaryMulticast(DatagramReceiveResult),
+    SecondaryUnicast(DatagramReceiveResult),
+    SecondaryData(DatagramReceiveResult),
+    Rendezvous(&'a mut TcpRendezvousWireSlot),
+    DiscoveryTargets(EmbeddedDiscoveryTargets<MEMBERS>),
+    Disabled,
+}
+
+struct AutoWifiReceiveBuffers<'a> {
+    primary_multicast: &'a mut [u8],
+    primary_unicast: &'a mut [u8],
+    primary_data: &'a mut [u8],
+    secondary_multicast: &'a mut [u8],
+    secondary_unicast: &'a mut [u8],
+    secondary_data: &'a mut [u8],
+}
+
+struct AutoWifiRunState<const MEMBERS: usize> {
+    topology: TopologyState,
+    peers: WifiPeerTable<MEMBERS>,
+    tcp_peer: Option<TcpPeer>,
+    primary_token: [u8; contract::PEERING_TOKEN_BYTES],
+    secondary_token: Option<[u8; contract::PEERING_TOKEN_BYTES]>,
+    fanout_start: usize,
+    consecutive_beacon_failures: u8,
+    beacon_cycle: u32,
+    discovered_targets: EmbeddedDiscoveryTargets<MEMBERS>,
+    discovery_probe_cursor: RoundRobinCursor,
+}
+
+impl<const MEMBERS: usize> AutoWifiRunState<MEMBERS> {
+    fn new(auto_wifi: &AutoWifi<'_, MEMBERS>, topology: TopologyState) -> Self {
+        let primary_token = *auto_wifi.brain.our_peering_token().as_bytes();
+        let secondary_token = auto_wifi.secondary.as_ref().map(|segment| {
+            let link_local = contract::link_local_from_mac(MacAddress::new(segment.mac));
+            *contract::peering_token(&link_local).as_bytes()
+        });
+        let peers = match auto_wifi.rendezvous.as_ref() {
+            Some(_) => WifiPeerTable::reserving_last_slot(),
+            None => WifiPeerTable::new(),
+        };
+        Self {
+            topology,
+            peers,
+            tcp_peer: None,
+            primary_token,
+            secondary_token,
+            fanout_start: 0,
+            consecutive_beacon_failures: 0,
+            beacon_cycle: 0,
+            discovered_targets: EmbeddedDiscoveryTargets::new(),
+            discovery_probe_cursor: RoundRobinCursor::new(),
+        }
+    }
+
+    fn secondary_token(&self) -> &[u8; contract::PEERING_TOKEN_BYTES] {
+        match self.secondary_token.as_ref() {
+            Some(token) => token,
+            None => &self.primary_token,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BeaconMaintenanceOutcome {
+    Completed,
+    Disabled,
+}
+
 impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
     #[must_use]
     pub fn aggregate_id() -> InterfaceId {
@@ -386,7 +705,309 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         self.status
     }
 
-    #[allow(irrefutable_let_patterns, clippy::expect_used)]
+    async fn handle_disablement<
+        M: RawMutex + 'static,
+        const FRAME: usize,
+        const NOTIFY: usize,
+        const LIFECYCLE: usize,
+    >(
+        &mut self,
+        state: &mut AutoWifiRunState<MEMBERS>,
+        fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
+    ) {
+        clear_wifi_peers(&mut state.peers, &self.status, fleet).await;
+        clear_tcp_member(
+            &mut self.rendezvous,
+            &mut state.tcp_peer,
+            &self.status,
+            fleet,
+        )
+        .await;
+        state.discovered_targets = EmbeddedDiscoveryTargets::new();
+        state.discovery_probe_cursor.reset();
+        self.status.wait_until_enabled().await;
+    }
+
+    async fn handle_primary_multicast<
+        M: RawMutex + 'static,
+        const FRAME: usize,
+        const NOTIFY: usize,
+        const LIFECYCLE: usize,
+    >(
+        &mut self,
+        state: &mut AutoWifiRunState<MEMBERS>,
+        fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
+        received: DatagramReceiveResult,
+        bytes: &[u8],
+    ) {
+        if let Ok((len, meta)) = received {
+            if let IpAddress::Ipv6(src) = meta.endpoint.addr {
+                ingest_beacon(
+                    &mut self.brain,
+                    &mut state.peers,
+                    &self.status,
+                    fleet,
+                    self.bitrate,
+                    src,
+                    &bytes[..len],
+                    Instant::now().as_millis(),
+                    SegmentRole::Primary,
+                    BeaconChannel::Multicast,
+                    &state.primary_token,
+                )
+                .await;
+            }
+        }
+    }
+
+    async fn handle_primary_unicast<
+        M: RawMutex + 'static,
+        const FRAME: usize,
+        const NOTIFY: usize,
+        const LIFECYCLE: usize,
+    >(
+        &mut self,
+        state: &mut AutoWifiRunState<MEMBERS>,
+        fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
+        received: DatagramReceiveResult,
+        bytes: &[u8],
+    ) {
+        if let Ok((len, meta)) = received {
+            if let IpAddress::Ipv6(src) = meta.endpoint.addr {
+                let peering_token_reply = ingest_beacon(
+                    &mut self.brain,
+                    &mut state.peers,
+                    &self.status,
+                    fleet,
+                    self.bitrate,
+                    src,
+                    &bytes[..len],
+                    Instant::now().as_millis(),
+                    SegmentRole::Primary,
+                    BeaconChannel::Unicast,
+                    &state.primary_token,
+                )
+                .await;
+                send_peering_token_reply(
+                    &self.primary.unicast_discovery,
+                    peering_token_reply,
+                    self.status,
+                )
+                .await;
+            }
+        }
+    }
+
+    async fn handle_secondary_multicast<
+        M: RawMutex + 'static,
+        const FRAME: usize,
+        const NOTIFY: usize,
+        const LIFECYCLE: usize,
+    >(
+        &mut self,
+        state: &mut AutoWifiRunState<MEMBERS>,
+        fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
+        received: DatagramReceiveResult,
+        bytes: &[u8],
+    ) {
+        if let Ok((len, meta)) = received {
+            if let IpAddress::Ipv6(src) = meta.endpoint.addr {
+                let secondary_token = *state.secondary_token();
+                ingest_beacon(
+                    &mut self.brain,
+                    &mut state.peers,
+                    &self.status,
+                    fleet,
+                    self.bitrate,
+                    src,
+                    &bytes[..len],
+                    Instant::now().as_millis(),
+                    SegmentRole::Secondary,
+                    BeaconChannel::Multicast,
+                    &secondary_token,
+                )
+                .await;
+            }
+        }
+    }
+
+    async fn handle_secondary_unicast<
+        M: RawMutex + 'static,
+        const FRAME: usize,
+        const NOTIFY: usize,
+        const LIFECYCLE: usize,
+    >(
+        &mut self,
+        state: &mut AutoWifiRunState<MEMBERS>,
+        fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
+        received: DatagramReceiveResult,
+        bytes: &[u8],
+    ) {
+        if let Ok((len, meta)) = received {
+            if let IpAddress::Ipv6(src) = meta.endpoint.addr {
+                let secondary_token = *state.secondary_token();
+                let peering_token_reply = ingest_beacon(
+                    &mut self.brain,
+                    &mut state.peers,
+                    &self.status,
+                    fleet,
+                    self.bitrate,
+                    src,
+                    &bytes[..len],
+                    Instant::now().as_millis(),
+                    SegmentRole::Secondary,
+                    BeaconChannel::Unicast,
+                    &secondary_token,
+                )
+                .await;
+                if let Some(secondary) = self.secondary.as_ref() {
+                    send_peering_token_reply(
+                        &secondary.unicast_discovery,
+                        peering_token_reply,
+                        self.status,
+                    )
+                    .await;
+                }
+            }
+        }
+    }
+
+    fn handle_inbound_data<
+        M: RawMutex + 'static,
+        const FRAME: usize,
+        const NOTIFY: usize,
+        const LIFECYCLE: usize,
+    >(
+        &mut self,
+        state: &AutoWifiRunState<MEMBERS>,
+        fleet: &mut Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
+        received: DatagramReceiveResult,
+        bytes: &[u8],
+    ) {
+        if let Ok((len, meta)) = received {
+            if let IpAddress::Ipv6(src) = meta.endpoint.addr {
+                if route_inbound(fleet, &state.peers, &self.status, src, &bytes[..len]) {
+                    // Discovery authenticated this source before it entered the peer table. Live
+                    // data from that exact peer is equally strong liveness evidence, and prevents
+                    // a missed multicast beacon from tearing down an active interface and all of
+                    // the routes learned through it.
+                    let now_ms = Instant::now().as_millis();
+                    if self.brain.refresh_known_peer(src, now_ms) {
+                        self.status.record_peer_heard(now_ms);
+                    }
+                }
+            }
+        }
+    }
+
+    async fn handle_beacon_tick<
+        M: RawMutex + 'static,
+        const FRAME: usize,
+        const NOTIFY: usize,
+        const LIFECYCLE: usize,
+    >(
+        &mut self,
+        state: &mut AutoWifiRunState<MEMBERS>,
+        fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
+    ) -> BeaconMaintenanceOutcome {
+        state.beacon_cycle = state.beacon_cycle.wrapping_add(1);
+        let sends = with_timeout(
+            SEND_TIMEOUT,
+            join(
+                send_beacon(Some(&self.primary.discovery), Some(&state.primary_token)),
+                send_beacon(
+                    self.secondary.as_ref().map(|segment| &segment.discovery),
+                    state.secondary_token.as_ref(),
+                ),
+            ),
+        );
+        let sent = match select(self.status.wait_until_disabled(), sends).await {
+            Either::First(()) => return BeaconMaintenanceOutcome::Disabled,
+            Either::Second(Ok((primary, secondary))) => {
+                primary && (!state.topology.requires_secondary_health() || secondary)
+            }
+            Either::Second(Err(_timeout)) => false,
+        };
+        if sent {
+            state.consecutive_beacon_failures = 0;
+            self.status.set_lifecycle(state.topology.connection_state());
+        } else {
+            state.consecutive_beacon_failures = state.consecutive_beacon_failures.saturating_add(1);
+            if state.consecutive_beacon_failures >= BEACON_FAILURES_BEFORE_DEGRADED {
+                self.status.set_lifecycle(ConnectionState::Degraded);
+            }
+        }
+        retire_stale(
+            &mut self.brain,
+            &mut state.peers,
+            &self.status,
+            fleet,
+            Instant::now().as_millis(),
+        )
+        .await;
+        if state.beacon_cycle.is_multiple_of(UNICAST_REPEER_EVERY) {
+            send_discovery_probes(
+                &self.primary.unicast_discovery,
+                &state.discovered_targets,
+                &self.brain,
+                &mut state.discovery_probe_cursor,
+                self.status,
+            )
+            .await;
+        }
+        BeaconMaintenanceOutcome::Completed
+    }
+
+    async fn handle_outbound<const FRAME: usize>(
+        &mut self,
+        state: &mut AutoWifiRunState<MEMBERS>,
+        outbound: OutboundFrame<FRAME>,
+    ) {
+        if outbound.is_empty() {
+            return;
+        }
+        let mut plan = FanoutPlan::new(outbound.target(), &state.peers, state.fanout_start);
+        if MEMBERS > 0 {
+            state.fanout_start = (state.fanout_start + 1) % MEMBERS;
+        }
+        let mut sender = UdpFanoutSender {
+            primary: &self.primary.data,
+            secondary: self.secondary.as_ref().map(|segment| &segment.data),
+            peers: &state.peers,
+            status: self.status,
+            bytes: outbound.bytes(),
+        };
+        let dispatch = dispatch_fanout(&mut plan, &mut sender, SEND_TIMEOUT);
+        let _ = select(self.status.wait_until_disabled(), dispatch).await;
+        if let (Some(rendezvous), Some(peer)) = (self.rendezvous.as_mut(), state.tcp_peer) {
+            if target_includes(outbound.target(), peer.id) {
+                let send = rendezvous.send_frame(peer.session, outbound.bytes());
+                if matches!(
+                    select(self.status.wait_until_disabled(), send).await,
+                    Either::Second(Ok(()))
+                ) {
+                    self.status.member(peer.slot).add_tx(outbound.len() as u64);
+                }
+            }
+        }
+    }
+
+    async fn handle_discovery_targets(
+        &self,
+        state: &mut AutoWifiRunState<MEMBERS>,
+        targets: EmbeddedDiscoveryTargets<MEMBERS>,
+    ) {
+        state.discovered_targets = targets;
+        send_discovery_probes(
+            &self.primary.unicast_discovery,
+            &state.discovered_targets,
+            &self.brain,
+            &mut state.discovery_probe_cursor,
+            self.status,
+        )
+        .await;
+    }
+
     pub async fn run<M, const FRAME: usize, const NOTIFY: usize, const LIFECYCLE: usize>(
         mut self,
         mut fleet: Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
@@ -395,314 +1016,136 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
     ) where
         M: RawMutex + 'static,
     {
-        wait_for_stack(&self.primary.stack, self.status).await;
-        let primary_ok = self
-            .primary
-            .discovery
-            .bind(contract::DEFAULT_DISCOVERY_PORT)
-            .is_ok()
-            && self
-                .primary
-                .unicast_discovery
-                .bind(contract::UNICAST_DISCOVERY_PORT)
-                .is_ok()
-            && self.primary.data.bind(contract::DEFAULT_DATA_PORT).is_ok()
-            && self
-                .primary
-                .stack
-                .join_multicast_group(IpAddress::Ipv6(contract::DISCOVERY_GROUP))
-                .is_ok();
-        crate::diagnostic_log::debug!(
-            "wifi-auto: primary segment {}",
-            if primary_ok { "up" } else { "down" }
-        );
-        if !primary_ok {
-            self.status.set_lifecycle(ConnectionState::Failed);
-            return;
+        wait_for_primary_stack(&self.primary.stack, self.status).await;
+        match activate_segment(&mut self.primary) {
+            Ok(()) => crate::diagnostic_log::debug!("wifi-auto: primary segment active"),
+            Err(error) => {
+                crate::diagnostic_log::warn!(
+                    "wifi-auto: primary segment activation failed: {error:?}"
+                );
+                self.status.set_lifecycle(ConnectionState::Failed);
+                return;
+            }
         }
 
-        let secondary_configured = self.secondary.is_some();
-        let secondary_ok = if let Some(segment) = self.secondary.as_mut() {
-            wait_for_secondary_stack(&segment.stack, self.status).await
-                && segment
-                    .discovery
-                    .bind(contract::DEFAULT_DISCOVERY_PORT)
-                    .is_ok()
-                && segment
-                    .unicast_discovery
-                    .bind(contract::UNICAST_DISCOVERY_PORT)
-                    .is_ok()
-                && segment.data.bind(contract::DEFAULT_DATA_PORT).is_ok()
-                && segment
-                    .stack
-                    .join_multicast_group(IpAddress::Ipv6(contract::DISCOVERY_GROUP))
-                    .is_ok()
-        } else {
-            false
+        let topology = match self.secondary.as_mut() {
+            None => {
+                crate::diagnostic_log::debug!("wifi-auto: secondary segment not configured");
+                TopologyState::PrimaryOnly
+            }
+            Some(segment) => match activate_secondary_segment(segment, self.status).await {
+                Ok(()) => {
+                    crate::diagnostic_log::debug!("wifi-auto: secondary segment active");
+                    TopologyState::DualSegment
+                }
+                Err(error) => {
+                    crate::diagnostic_log::warn!(
+                        "wifi-auto: secondary segment unavailable: {error:?}"
+                    );
+                    self.secondary = None;
+                    TopologyState::SecondaryUnavailable
+                }
+            },
         };
-        if !secondary_ok {
-            self.secondary = None;
-        }
-        crate::diagnostic_log::debug!(
-            "wifi-auto: secondary segment {}",
-            if secondary_ok { "up" } else { "down" }
-        );
-        let topology_degraded = secondary_configured && !secondary_ok;
-        self.status.set_lifecycle(if topology_degraded {
-            ConnectionState::Degraded
-        } else {
-            ConnectionState::Connected
-        });
+        self.status.set_lifecycle(topology.connection_state());
 
-        let mut peers: [Option<Ipv6Addr>; MEMBERS] = [None; MEMBERS];
-        let mut ids: [InterfaceId; MEMBERS] = [InterfaceId::new([0u8; 8]); MEMBERS];
-        let mut peer_on_secondary: [bool; MEMBERS] = [false; MEMBERS];
-        let tcp_slot = self
-            .rendezvous
-            .as_ref()
-            .and_then(|_| MEMBERS.checked_sub(1));
-        let mut tcp_peer = None;
-
-        let token = *self.brain.our_peering_token().as_bytes();
-        let secondary_token = self.secondary.as_ref().map(|segment| {
-            let link_local = contract::link_local_from_mac(MacAddress::new(segment.mac));
-            *contract::peering_token(&link_local).as_bytes()
-        });
+        let mut state = AutoWifiRunState::new(&self, topology);
         let mut beacon = Ticker::every(BEACON_INTERVAL);
-        let mut fanout_start = 0;
-        let mut discovery_buf = [0u8; 64];
-        let mut unicast_discovery_buf = [0u8; 64];
-        let mut sec_discovery_buf = [0u8; 64];
-        let mut sec_unicast_discovery_buf = [0u8; 64];
-        let mut consecutive_beacon_failures = 0u8;
+        let mut primary_multicast = [0u8; 64];
+        let mut primary_unicast = [0u8; 64];
+        let mut secondary_multicast = [0u8; 64];
+        let mut secondary_unicast = [0u8; 64];
+        let mut receive_buffers = AutoWifiReceiveBuffers {
+            primary_multicast: &mut primary_multicast,
+            primary_unicast: &mut primary_unicast,
+            primary_data: data_buf,
+            secondary_multicast: &mut secondary_multicast,
+            secondary_unicast: &mut secondary_unicast,
+            secondary_data: sec_data_buf,
+        };
 
         loop {
             if !self.status.is_enabled() {
-                clear_members(
-                    &mut peers,
-                    &ids,
-                    &mut peer_on_secondary,
-                    &self.status,
-                    &fleet,
-                )
-                .await;
-                clear_tcp_member(&mut self.rendezvous, &mut tcp_peer, &self.status, &fleet).await;
-                self.status.wait_until_enabled().await;
+                self.handle_disablement(&mut state, &fleet).await;
             }
-            match select(
-                select5(
-                    self.primary.discovery.recv_from(&mut discovery_buf),
-                    self.primary
-                        .unicast_discovery
-                        .recv_from(&mut unicast_discovery_buf),
-                    self.primary.data.recv_from(&mut data_buf[..]),
-                    beacon.next(),
-                    fleet.next_outbound(),
-                ),
-                select3(
-                    next_secondary_datagram(
-                        &self.secondary,
-                        &mut sec_discovery_buf,
-                        &mut sec_unicast_discovery_buf,
-                        &mut sec_data_buf[..],
-                    ),
-                    next_rendezvous_event(&mut self.rendezvous),
-                    self.status.wait_until_disabled(),
-                ),
+            let event = next_auto_wifi_event(
+                &self.primary,
+                &self.secondary,
+                &mut self.rendezvous,
+                self.status,
+                &mut fleet,
+                &mut beacon,
+                &mut receive_buffers,
             )
-            .await
-            {
-                Either::First(Either5::First(received)) => {
-                    if let Ok((len, meta)) = received {
-                        if let IpAddress::Ipv6(src) = meta.endpoint.addr {
-                            ingest_beacon(
-                                &mut self.brain,
-                                &mut peers,
-                                &mut ids,
-                                &mut peer_on_secondary,
-                                &self.status,
-                                &fleet,
-                                self.bitrate,
-                                src,
-                                &discovery_buf[..len],
-                                Instant::now().as_millis(),
-                                false,
-                                tcp_slot,
-                            )
-                            .await;
-                        }
-                    }
-                }
-                Either::First(Either5::Second(received)) => {
-                    if let Ok((len, meta)) = received {
-                        if let IpAddress::Ipv6(src) = meta.endpoint.addr {
-                            ingest_beacon(
-                                &mut self.brain,
-                                &mut peers,
-                                &mut ids,
-                                &mut peer_on_secondary,
-                                &self.status,
-                                &fleet,
-                                self.bitrate,
-                                src,
-                                &unicast_discovery_buf[..len],
-                                Instant::now().as_millis(),
-                                false,
-                                tcp_slot,
-                            )
-                            .await;
-                        }
-                    }
-                }
-                Either::First(Either5::Third(received)) => {
-                    if let Ok((len, meta)) = received {
-                        if let IpAddress::Ipv6(src) = meta.endpoint.addr {
-                            route_inbound(
-                                &mut fleet,
-                                &peers,
-                                &ids,
-                                &self.status,
-                                src,
-                                &data_buf[..len],
-                            );
-                        }
-                    }
-                }
-                Either::First(Either5::Fourth(())) => {
-                    let sends = with_timeout(
-                        SEND_TIMEOUT,
-                        join(
-                            send_beacon(Some(&self.primary.discovery), Some(&token)),
-                            send_beacon(
-                                self.secondary.as_ref().map(|segment| &segment.discovery),
-                                secondary_token.as_ref(),
-                            ),
-                        ),
-                    );
-                    let sent = match select(self.status.wait_until_disabled(), sends).await {
-                        Either::First(()) => continue,
-                        Either::Second(Ok((primary, secondary))) => {
-                            primary && (!secondary_configured || secondary)
-                        }
-                        Either::Second(Err(_)) => false,
-                    };
-                    if sent {
-                        consecutive_beacon_failures = 0;
-                        self.status.set_lifecycle(if topology_degraded {
-                            ConnectionState::Degraded
-                        } else {
-                            ConnectionState::Connected
-                        });
-                    } else {
-                        consecutive_beacon_failures = consecutive_beacon_failures.saturating_add(1);
-                        if consecutive_beacon_failures >= BEACON_FAILURES_BEFORE_DEGRADED {
-                            self.status.set_lifecycle(ConnectionState::Degraded);
-                        }
-                    }
-                    retire_stale(
-                        &mut self.brain,
-                        &mut peers,
-                        &ids,
-                        &mut peer_on_secondary,
-                        &self.status,
+            .await;
+            match event {
+                AutoWifiEvent::PrimaryMulticast(received) => {
+                    self.handle_primary_multicast(
+                        &mut state,
                         &fleet,
-                        Instant::now().as_millis(),
+                        received,
+                        receive_buffers.primary_multicast,
                     )
                     .await;
                 }
-                Either::First(Either5::Fifth(outbound)) => {
-                    if !outbound.is_empty() {
-                        let mut plan =
-                            FanoutPlan::new(outbound.target(), &peers, &ids, fanout_start);
-                        if MEMBERS > 0 {
-                            fanout_start = (fanout_start + 1) % MEMBERS;
-                        }
-                        let mut sender = UdpFanoutSender {
-                            primary: &self.primary.data,
-                            secondary: self.secondary.as_ref().map(|segment| &segment.data),
-                            peers: &peers,
-                            peer_on_secondary: &peer_on_secondary,
-                            status: self.status,
-                            bytes: outbound.bytes(),
-                        };
-                        let dispatch = dispatch_fanout(&mut plan, &mut sender, SEND_TIMEOUT);
-                        let _ = select(self.status.wait_until_disabled(), dispatch).await;
-                        if let (Some(rendezvous), Some(peer)) = (self.rendezvous.as_mut(), tcp_peer)
-                        {
-                            if target_includes(outbound.target(), peer.id) {
-                                let send = rendezvous.send_frame(peer.session, outbound.bytes());
-                                if matches!(
-                                    select(self.status.wait_until_disabled(), send).await,
-                                    Either::Second(Ok(()))
-                                ) {
-                                    self.status.member(peer.slot).add_tx(outbound.len() as u64);
-                                }
-                            }
-                        }
+                AutoWifiEvent::PrimaryUnicast(received) => {
+                    self.handle_primary_unicast(
+                        &mut state,
+                        &fleet,
+                        received,
+                        receive_buffers.primary_unicast,
+                    )
+                    .await;
+                }
+                AutoWifiEvent::PrimaryData(received) => {
+                    self.handle_inbound_data(
+                        &state,
+                        &mut fleet,
+                        received,
+                        receive_buffers.primary_data,
+                    );
+                }
+                AutoWifiEvent::BeaconTick => {
+                    match self.handle_beacon_tick(&mut state, &fleet).await {
+                        BeaconMaintenanceOutcome::Completed => {}
+                        BeaconMaintenanceOutcome::Disabled => continue,
                     }
                 }
-                Either::Second(Either3::First(SecondaryDatagram::Discovery(received))) => {
-                    if let Ok((len, meta)) = received {
-                        if let IpAddress::Ipv6(src) = meta.endpoint.addr {
-                            ingest_beacon(
-                                &mut self.brain,
-                                &mut peers,
-                                &mut ids,
-                                &mut peer_on_secondary,
-                                &self.status,
-                                &fleet,
-                                self.bitrate,
-                                src,
-                                &sec_discovery_buf[..len],
-                                Instant::now().as_millis(),
-                                true,
-                                tcp_slot,
-                            )
-                            .await;
-                        }
-                    }
+                AutoWifiEvent::Outbound(outbound) => {
+                    self.handle_outbound(&mut state, outbound).await;
                 }
-                Either::Second(Either3::First(SecondaryDatagram::UnicastDiscovery(received))) => {
-                    if let Ok((len, meta)) = received {
-                        if let IpAddress::Ipv6(src) = meta.endpoint.addr {
-                            ingest_beacon(
-                                &mut self.brain,
-                                &mut peers,
-                                &mut ids,
-                                &mut peer_on_secondary,
-                                &self.status,
-                                &fleet,
-                                self.bitrate,
-                                src,
-                                &sec_unicast_discovery_buf[..len],
-                                Instant::now().as_millis(),
-                                true,
-                                tcp_slot,
-                            )
-                            .await;
-                        }
-                    }
+                AutoWifiEvent::SecondaryMulticast(received) => {
+                    self.handle_secondary_multicast(
+                        &mut state,
+                        &fleet,
+                        received,
+                        receive_buffers.secondary_multicast,
+                    )
+                    .await;
                 }
-                Either::Second(Either3::First(SecondaryDatagram::Data(received))) => {
-                    if let Ok((len, meta)) = received {
-                        if let IpAddress::Ipv6(src) = meta.endpoint.addr {
-                            route_inbound(
-                                &mut fleet,
-                                &peers,
-                                &ids,
-                                &self.status,
-                                src,
-                                &sec_data_buf[..len],
-                            );
-                        }
-                    }
+                AutoWifiEvent::SecondaryUnicast(received) => {
+                    self.handle_secondary_unicast(
+                        &mut state,
+                        &fleet,
+                        received,
+                        receive_buffers.secondary_unicast,
+                    )
+                    .await;
                 }
-                Either::Second(Either3::Second(event_slot)) => {
+                AutoWifiEvent::SecondaryData(received) => {
+                    self.handle_inbound_data(
+                        &state,
+                        &mut fleet,
+                        received,
+                        receive_buffers.secondary_data,
+                    );
+                }
+                AutoWifiEvent::Rendezvous(event_slot) => {
                     let rejected_session = match event_slot.event() {
                         Some(event) => {
                             handle_rendezvous_event(
-                                &mut tcp_peer,
-                                tcp_slot,
+                                &mut state.tcp_peer,
+                                state.peers.reserved_slot(),
                                 &self.status,
                                 &mut fleet,
                                 self.bitrate,
@@ -719,16 +1162,77 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         }
                     }
                 }
-                Either::Second(Either3::Third(())) => {}
+                AutoWifiEvent::DiscoveryTargets(targets) => {
+                    self.handle_discovery_targets(&mut state, targets).await;
+                }
+                AutoWifiEvent::Disabled => {}
             }
         }
     }
 }
 
 enum SecondaryDatagram {
-    Discovery(Result<(usize, UdpMetadata), RecvError>),
-    UnicastDiscovery(Result<(usize, UdpMetadata), RecvError>),
-    Data(Result<(usize, UdpMetadata), RecvError>),
+    Discovery(DatagramReceiveResult),
+    UnicastDiscovery(DatagramReceiveResult),
+    Data(DatagramReceiveResult),
+}
+
+async fn next_auto_wifi_event<
+    'r,
+    M: RawMutex + 'static,
+    const FRAME: usize,
+    const MEMBERS: usize,
+    const NOTIFY: usize,
+    const LIFECYCLE: usize,
+>(
+    primary: &AutoWifiSegment<'_>,
+    secondary: &Option<AutoWifiSegment<'_>>,
+    rendezvous: &'r mut Option<TcpRendezvousClient<'_>>,
+    status: AutoWifiStatus<MEMBERS>,
+    fleet: &mut Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
+    beacon: &mut Ticker,
+    buffers: &mut AutoWifiReceiveBuffers<'_>,
+) -> AutoWifiEvent<'r, FRAME, MEMBERS> {
+    match select(
+        select5(
+            primary.discovery.recv_from(buffers.primary_multicast),
+            primary.unicast_discovery.recv_from(buffers.primary_unicast),
+            primary.data.recv_from(buffers.primary_data),
+            beacon.next(),
+            fleet.next_outbound(),
+        ),
+        select4(
+            next_secondary_datagram(
+                secondary,
+                buffers.secondary_multicast,
+                buffers.secondary_unicast,
+                buffers.secondary_data,
+            ),
+            next_rendezvous_event(rendezvous),
+            status.wait_for_discovery_targets(),
+            status.wait_until_disabled(),
+        ),
+    )
+    .await
+    {
+        Either::First(Either5::First(received)) => AutoWifiEvent::PrimaryMulticast(received),
+        Either::First(Either5::Second(received)) => AutoWifiEvent::PrimaryUnicast(received),
+        Either::First(Either5::Third(received)) => AutoWifiEvent::PrimaryData(received),
+        Either::First(Either5::Fourth(())) => AutoWifiEvent::BeaconTick,
+        Either::First(Either5::Fifth(outbound)) => AutoWifiEvent::Outbound(outbound),
+        Either::Second(Either4::First(SecondaryDatagram::Discovery(received))) => {
+            AutoWifiEvent::SecondaryMulticast(received)
+        }
+        Either::Second(Either4::First(SecondaryDatagram::UnicastDiscovery(received))) => {
+            AutoWifiEvent::SecondaryUnicast(received)
+        }
+        Either::Second(Either4::First(SecondaryDatagram::Data(received))) => {
+            AutoWifiEvent::SecondaryData(received)
+        }
+        Either::Second(Either4::Second(event_slot)) => AutoWifiEvent::Rendezvous(event_slot),
+        Either::Second(Either4::Third(targets)) => AutoWifiEvent::DiscoveryTargets(targets),
+        Either::Second(Either4::Fourth(())) => AutoWifiEvent::Disabled,
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -736,6 +1240,21 @@ struct TcpPeer {
     session: u32,
     id: InterfaceId,
     slot: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BeaconChannel {
+    Multicast,
+    Unicast,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PeeringTokenReply {
+    NotRequired,
+    Send {
+        address: Ipv6Addr,
+        peering_token: [u8; contract::PEERING_TOKEN_BYTES],
+    },
 }
 
 async fn next_rendezvous_event<'a>(
@@ -777,6 +1296,7 @@ async fn handle_rendezvous_event<
                 ))
                 .await;
             status.member(slot).assign(id);
+            status.record_peer_heard(Instant::now().as_millis());
             *tcp_peer = Some(TcpPeer { session, id, slot });
             status.republish_peer_count();
             None
@@ -788,6 +1308,7 @@ async fn handle_rendezvous_event<
             }
             if fleet.deliver_inbound(id, bytes).await.is_ok() {
                 status.member(peer.slot).add_rx(bytes.len() as u64);
+                status.record_peer_heard(Instant::now().as_millis());
             }
             None
         }
@@ -864,45 +1385,157 @@ async fn ingest_beacon<
     const LIFECYCLE: usize,
 >(
     brain: &mut contract::FixedAutoInterfaceProtocol<MEMBERS>,
-    peers: &mut [Option<Ipv6Addr>; MEMBERS],
-    ids: &mut [InterfaceId; MEMBERS],
-    peer_on_secondary: &mut [bool; MEMBERS],
+    peers: &mut WifiPeerTable<MEMBERS>,
     status: &AutoWifiStatus<MEMBERS>,
     fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
     bitrate: BitrateBps,
     src: Ipv6Addr,
     bytes: &[u8],
     now_ms: u64,
-    on_secondary: bool,
-    reserved_slot: Option<usize>,
-) {
-    let verdict = brain.ingest_discovery_datagram(src, bytes, now_ms);
-    let contract::BeaconVerdict::Peer(addr) = verdict else {
-        return;
-    };
-    if let Some(slot) = peers.iter().position(|peer| *peer == Some(addr)) {
-        peer_on_secondary[slot] = on_secondary;
-        return;
+    segment: SegmentRole,
+    beacon_channel: BeaconChannel,
+    local_token: &[u8; contract::PEERING_TOKEN_BYTES],
+) -> PeeringTokenReply {
+    let peer_lookup = peers.lookup(src);
+    if peer_lookup == WifiPeerLookup::Full {
+        return PeeringTokenReply::NotRequired;
     }
-    let Some(slot) = peers
-        .iter()
-        .enumerate()
-        .position(|(slot, peer)| peer.is_none() && Some(slot) != reserved_slot)
+    let contract::BeaconObservation::AuthenticatedPeer {
+        address,
+        peer_observation,
+    } = brain.observe_discovery_datagram(src, bytes, now_ms)
+    else {
+        return PeeringTokenReply::NotRequired;
+    };
+    match (peer_lookup, peer_observation) {
+        (
+            WifiPeerLookup::Present { slot, .. },
+            contract::PeerObservation::NewlyDiscovered | contract::PeerObservation::Refreshed,
+        ) => match peers.replace_segment(slot, segment) {
+            WifiPeerReplacement::Replaced { .. } | WifiPeerReplacement::Unchanged { .. } => {}
+            WifiPeerReplacement::Missing => return PeeringTokenReply::NotRequired,
+        },
+        (WifiPeerLookup::Vacant { slot }, contract::PeerObservation::NewlyDiscovered) => {
+            let peer = WifiPeer::new(address, segment);
+            let id = peer.id();
+            fleet
+                .register_member(contract::descriptor(
+                    id,
+                    contract::policy_for_bitrate(bitrate),
+                ))
+                .await;
+            match peers.insert(slot, peer) {
+                WifiPeerInsertion::Inserted { .. } => {
+                    status.member(slot).assign(id);
+                    status.republish_peer_count();
+                }
+                WifiPeerInsertion::Occupied { .. }
+                | WifiPeerInsertion::Reserved { .. }
+                | WifiPeerInsertion::OutOfBounds => {
+                    fleet.deregister_member(id).await;
+                    return PeeringTokenReply::NotRequired;
+                }
+            }
+        }
+        (WifiPeerLookup::Vacant { .. }, contract::PeerObservation::Refreshed)
+        | (WifiPeerLookup::Present { .. }, contract::PeerObservation::TableFull)
+        | (WifiPeerLookup::Vacant { .. }, contract::PeerObservation::TableFull)
+        | (WifiPeerLookup::Full, _) => return PeeringTokenReply::NotRequired,
+    }
+    status.record_peer_heard(now_ms);
+    peering_token_reply(beacon_channel, peer_observation, address, *local_token)
+}
+
+fn peering_token_reply(
+    beacon_channel: BeaconChannel,
+    peer_observation: contract::PeerObservation,
+    address: Ipv6Addr,
+    local_peering_token: [u8; contract::PEERING_TOKEN_BYTES],
+) -> PeeringTokenReply {
+    match (beacon_channel, peer_observation) {
+        (BeaconChannel::Unicast, contract::PeerObservation::NewlyDiscovered) => {
+            PeeringTokenReply::Send {
+                address,
+                peering_token: local_peering_token,
+            }
+        }
+        (
+            BeaconChannel::Multicast | BeaconChannel::Unicast,
+            contract::PeerObservation::Refreshed | contract::PeerObservation::TableFull,
+        )
+        | (BeaconChannel::Multicast, contract::PeerObservation::NewlyDiscovered) => {
+            PeeringTokenReply::NotRequired
+        }
+    }
+}
+
+async fn send_peering_token_reply<const MEMBERS: usize>(
+    unicast_discovery_socket: &UdpSocket<'_>,
+    peering_token_reply: PeeringTokenReply,
+    status: AutoWifiStatus<MEMBERS>,
+) {
+    let PeeringTokenReply::Send {
+        address,
+        peering_token,
+    } = peering_token_reply
     else {
         return;
     };
-    let id = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, &addr.octets());
-    fleet
-        .register_member(contract::descriptor(
-            id,
-            contract::policy_for_bitrate(bitrate),
-        ))
-        .await;
-    peers[slot] = Some(addr);
-    ids[slot] = id;
-    peer_on_secondary[slot] = on_secondary;
-    status.member(slot).assign(id);
-    status.republish_peer_count();
+    let send = with_timeout(
+        SEND_TIMEOUT,
+        unicast_discovery_socket.send_to(
+            &peering_token,
+            (IpAddress::Ipv6(address), contract::UNICAST_DISCOVERY_PORT),
+        ),
+    );
+    match select(status.wait_until_disabled(), send).await {
+        Either::First(()) | Either::Second(Ok(Ok(()))) => {}
+        Either::Second(Ok(Err(error))) => {
+            crate::diagnostic_log::debug!("wifi-auto: reciprocal peering reply failed: {error:?}");
+        }
+        Either::Second(Err(_timeout)) => {
+            crate::diagnostic_log::debug!("wifi-auto: reciprocal peering reply timed out");
+        }
+    }
+}
+
+async fn send_discovery_probes<const MEMBERS: usize>(
+    unicast_discovery_socket: &UdpSocket<'_>,
+    discovery_targets: &EmbeddedDiscoveryTargets<MEMBERS>,
+    brain: &contract::FixedAutoInterfaceProtocol<MEMBERS>,
+    cursor: &mut RoundRobinCursor,
+    status: AutoWifiStatus<MEMBERS>,
+) {
+    let token = brain.our_peering_token();
+    let target_count = discovery_targets.len();
+    let send = with_timeout(SEND_TIMEOUT, async {
+        for _ in 0..target_count {
+            let RoundRobinPosition::Item(index) = cursor.advance(target_count) else {
+                return;
+            };
+            let Some(address) = discovery_targets.address_at(index) else {
+                continue;
+            };
+            if brain
+                .known_peer_addresses()
+                .any(|known_peer| known_peer == address)
+            {
+                continue;
+            }
+            let _send_result = unicast_discovery_socket
+                .send_to(
+                    token.as_bytes(),
+                    (IpAddress::Ipv6(address), contract::UNICAST_DISCOVERY_PORT),
+                )
+                .await;
+        }
+    });
+    match select(status.wait_until_disabled(), send).await {
+        Either::First(()) | Either::Second(Ok(())) => {}
+        Either::Second(Err(_timeout)) => {
+            crate::diagnostic_log::debug!("wifi-auto: discovery probe budget exhausted");
+        }
+    }
 }
 
 fn route_inbound<
@@ -913,50 +1546,54 @@ fn route_inbound<
     const LIFECYCLE: usize,
 >(
     fleet: &mut Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
-    peers: &[Option<Ipv6Addr>; MEMBERS],
-    ids: &[InterfaceId; MEMBERS],
+    peers: &WifiPeerTable<MEMBERS>,
     status: &AutoWifiStatus<MEMBERS>,
     src: Ipv6Addr,
     bytes: &[u8],
-) {
+) -> bool {
     if bytes.is_empty() {
-        return;
+        return false;
     }
-    let Some(slot) = peers.iter().position(|peer| *peer == Some(src)) else {
-        return;
+    let WifiPeerLookup::Present { slot, id } = peers.lookup(src) else {
+        return false;
     };
-    if fleet.try_deliver_inbound(ids[slot], bytes).is_ok() {
+    if fleet.try_deliver_inbound(id, bytes).is_ok() {
         status.member(slot).add_rx(bytes.len() as u64);
     }
+    true
 }
 
-async fn clear_members<
+async fn clear_wifi_peers<
     M: RawMutex + 'static,
     const FRAME: usize,
     const MEMBERS: usize,
     const NOTIFY: usize,
     const LIFECYCLE: usize,
 >(
-    peers: &mut [Option<Ipv6Addr>; MEMBERS],
-    ids: &[InterfaceId; MEMBERS],
-    peer_on_secondary: &mut [bool; MEMBERS],
+    peers: &mut WifiPeerTable<MEMBERS>,
     status: &AutoWifiStatus<MEMBERS>,
     fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
-) {
-    let mut changed = false;
+) -> WifiPeerClear {
+    let mut outcome = WifiPeerClear::AlreadyEmpty;
     for slot in 0..MEMBERS {
-        if peers[slot].is_none() {
+        let WifiPeerSlotLookup::Occupied(peer) = peers.lookup_slot(slot) else {
             continue;
+        };
+        let id = peer.id();
+        fleet.deregister_member(id).await;
+        match peers.retire(slot) {
+            WifiPeerRetirement::Retired { .. } => {
+                status.retire_member(slot);
+                outcome = WifiPeerClear::Cleared;
+            }
+            WifiPeerRetirement::Missing => {}
         }
-        fleet.deregister_member(ids[slot]).await;
-        peers[slot] = None;
-        peer_on_secondary[slot] = false;
-        status.retire_member(slot);
-        changed = true;
     }
-    if changed {
-        status.republish_peer_count();
+    match outcome {
+        WifiPeerClear::AlreadyEmpty => {}
+        WifiPeerClear::Cleared => status.republish_peer_count(),
     }
+    outcome
 }
 
 async fn retire_stale<
@@ -967,9 +1604,7 @@ async fn retire_stale<
     const LIFECYCLE: usize,
 >(
     brain: &mut contract::FixedAutoInterfaceProtocol<MEMBERS>,
-    peers: &mut [Option<Ipv6Addr>; MEMBERS],
-    ids: &[InterfaceId; MEMBERS],
-    peer_on_secondary: &mut [bool; MEMBERS],
+    peers: &mut WifiPeerTable<MEMBERS>,
     status: &AutoWifiStatus<MEMBERS>,
     fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
     now_ms: u64,
@@ -978,14 +1613,19 @@ async fn retire_stale<
         return;
     }
     for slot in 0..MEMBERS {
-        let Some(addr) = peers[slot] else { continue };
-        if brain.known_peer_addresses().any(|known| known == addr) {
+        let WifiPeerSlotLookup::Occupied(peer) = peers.lookup_slot(slot) else {
+            continue;
+        };
+        let address = peer.address();
+        let id = peer.id();
+        if brain.known_peer_addresses().any(|known| known == address) {
             continue;
         }
-        fleet.deregister_member(ids[slot]).await;
-        peers[slot] = None;
-        peer_on_secondary[slot] = false;
-        status.retire_member(slot);
+        fleet.deregister_member(id).await;
+        match peers.retire(slot) {
+            WifiPeerRetirement::Retired { .. } => status.retire_member(slot),
+            WifiPeerRetirement::Missing => {}
+        }
     }
     status.republish_peer_count();
 }
@@ -999,9 +1639,41 @@ mod tests {
     static UPLINK_SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5E; 8]));
     static LIFECYCLE_SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5C; 8]));
     static ACCOUNTING_SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5D; 8]));
+    static DISCOVERY_SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x5F; 8]));
 
     fn id(suffix: u8) -> InterfaceId {
         InterfaceId::new([InterfaceKind::WifiPeer as u8, 0, 0, 0, 0, 0, 0, suffix])
+    }
+
+    #[test]
+    fn topology_health_preserves_a_configured_secondary_failure() {
+        assert_eq!(
+            TopologyState::PrimaryOnly.connection_state(),
+            ConnectionState::Connected
+        );
+        assert!(!TopologyState::PrimaryOnly.requires_secondary_health());
+        assert_eq!(
+            TopologyState::DualSegment.connection_state(),
+            ConnectionState::Connected
+        );
+        assert!(TopologyState::DualSegment.requires_secondary_health());
+        assert_eq!(
+            TopologyState::SecondaryUnavailable.connection_state(),
+            ConnectionState::Degraded
+        );
+        assert!(TopologyState::SecondaryUnavailable.requires_secondary_health());
+    }
+
+    #[test]
+    fn bounded_work_resumes_at_the_next_round_robin_position() {
+        let mut cursor = RoundRobinCursor::new();
+
+        assert_eq!(cursor.advance(3), RoundRobinPosition::Item(0));
+        assert_eq!(cursor.advance(3), RoundRobinPosition::Item(1));
+        assert_eq!(cursor.advance(3), RoundRobinPosition::Item(2));
+        assert_eq!(cursor.advance(3), RoundRobinPosition::Item(0));
+        assert_eq!(cursor.advance(0), RoundRobinPosition::Empty);
+        assert_eq!(cursor.advance(2), RoundRobinPosition::Item(0));
     }
 
     #[test]
@@ -1039,25 +1711,70 @@ mod tests {
     }
 
     #[test]
-    fn aggregate_status_keeps_network_health_separate_from_peer_count() {
+    fn discovery_participation_tracks_every_interface_transition(
+    ) -> Result<(), UdpServiceDiscoveryConstructionError> {
+        let status = AutoWifiStatus::new(&DISCOVERY_SHARED);
+        status.enable();
+        let mut participation = status.discovery_participation_receiver()?;
+
+        assert_eq!(
+            participation.try_get(),
+            Some(EmbeddedDiscoveryParticipation::Central)
+        );
+        status.disable();
+        assert_eq!(
+            participation.try_changed(),
+            Some(EmbeddedDiscoveryParticipation::Inactive)
+        );
+        status.toggle_enabled();
+        assert_eq!(
+            participation.try_changed(),
+            Some(EmbeddedDiscoveryParticipation::Central)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn service_discovery_instances_are_bounded_by_capacity(
+    ) -> Result<(), UdpServiceDiscoveryConstructionError> {
+        static BOUNDED_SHARED: AutoWifiShared<1> = AutoWifiShared::new(InterfaceId::new([0x60; 8]));
+        let status = AutoWifiStatus::new(&BOUNDED_SHARED);
+        let first = status.discovery_participation_receiver()?;
+        assert_eq!(
+            status.discovery_participation_receiver().err(),
+            Some(UdpServiceDiscoveryConstructionError::DiscoveryCapacityExhausted)
+        );
+
+        drop(first);
+        assert!(status.discovery_participation_receiver().is_ok());
+        Ok(())
+    }
+
+    #[test]
+    fn aggregate_status_distinguishes_waiting_from_degradation() {
         let status = AutoWifiStatus::new(&LIFECYCLE_SHARED);
 
         assert_eq!(status.connection(), ConnectionState::Initializing);
-        status.set_lifecycle(ConnectionState::Disconnected);
+        status.set_lifecycle(ConnectionState::Connected);
         assert_eq!(status.connection(), ConnectionState::Disconnected);
         assert_eq!(status.peer_count(), 0);
         status.member(0).assign(id(1));
         status.republish_peer_count();
-        assert_eq!(status.connection(), ConnectionState::Disconnected);
         assert_eq!(status.peer_count(), 1);
-        status.set_lifecycle(ConnectionState::Connected);
         assert_eq!(status.connection(), ConnectionState::Connected);
         status.set_lifecycle(ConnectionState::Degraded);
         assert_eq!(status.connection(), ConnectionState::Degraded);
+        status.retire_member(0);
+        status.republish_peer_count();
+        assert_eq!(status.connection(), ConnectionState::Disconnected);
+        status.set_lifecycle(ConnectionState::Reconnecting);
+        assert_eq!(status.connection(), ConnectionState::Reconnecting);
+        status.set_lifecycle(ConnectionState::Unknown);
+        assert_eq!(status.connection(), ConnectionState::Unknown);
         status.disable();
         assert_eq!(status.connection(), ConnectionState::Disabled);
         status.enable();
-        assert_eq!(status.connection(), ConnectionState::Degraded);
+        assert_eq!(status.connection(), ConnectionState::Unknown);
         status.set_lifecycle(ConnectionState::Failed);
         assert_eq!(status.connection(), ConnectionState::Failed);
     }
@@ -1077,12 +1794,13 @@ mod tests {
         );
         status.retire_member(0);
         status.republish_peer_count();
-        assert_eq!(status.connection(), ConnectionState::Connected);
+        assert_eq!(status.connection(), ConnectionState::Disconnected);
         assert_eq!(status.peer_count(), 0);
         assert_eq!((status.rx_bytes(), status.tx_bytes()), (90, 45));
 
         status.member(0).assign(id(2));
         status.republish_peer_count();
+        assert_eq!(status.connection(), ConnectionState::Connected);
         status.member(0).add_rx(30);
         status.member(0).add_tx(15);
         assert_eq!(status.connection(), ConnectionState::Connected);
@@ -1091,6 +1809,43 @@ mod tests {
         assert_eq!(
             (status.member(0).rx_bytes(), status.member(0).tx_bytes()),
             (30, 15)
+        );
+    }
+
+    #[test]
+    fn reciprocal_peering_is_one_shot_and_uses_the_local_token() {
+        let peer = Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 2);
+        let local_token = [0x5a; 32];
+
+        assert_eq!(
+            peering_token_reply(
+                BeaconChannel::Unicast,
+                contract::PeerObservation::NewlyDiscovered,
+                peer,
+                local_token,
+            ),
+            PeeringTokenReply::Send {
+                address: peer,
+                peering_token: local_token,
+            }
+        );
+        assert_eq!(
+            peering_token_reply(
+                BeaconChannel::Unicast,
+                contract::PeerObservation::Refreshed,
+                peer,
+                local_token,
+            ),
+            PeeringTokenReply::NotRequired
+        );
+        assert_eq!(
+            peering_token_reply(
+                BeaconChannel::Multicast,
+                contract::PeerObservation::NewlyDiscovered,
+                peer,
+                local_token,
+            ),
+            PeeringTokenReply::NotRequired
         );
     }
 }

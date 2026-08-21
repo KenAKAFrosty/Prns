@@ -64,8 +64,11 @@ local after extraction; do not replace its manifest, firmware, website, or flash
 Test the assigned board/OS scenarios from `acceptance.json`. Each physical row must independently
 show a fresh install and expected post-flash boot. Preserve is the configuration default. For
 Heltec and T-Beam, explicitly confirm the board image/name because their shared ESP32-S3 identity
-cannot distinguish the products. Record Safari/Firefox fallback checks separately; do not count
-them as Web Serial flashes.
+cannot distinguish the products. Perform the three roster-assigned Firefox Web Serial smokes on
+macOS, Windows, and Linux with physical ESP-serial boards. Each smoke must show permission grant,
+one-device selection, correct-board selection, a fresh install from the exact signed candidate,
+and post-flash boot, with distinct immutable evidence for every OS. Record only Safari as the
+unsupported-browser fallback.
 
 ## 3. CLI qualification
 
@@ -90,12 +93,16 @@ hopspot-flash flash BOARD \
 
 Replace `preview` only if the signed manifest says `stable`. `--offline` is mandatory for counted
 CLI qualification. Use the masked guided entry or `--wifi-password-stdin` for Configure; never put
-a password on the command line. T-Echo stays on the signed UF2 mount/copy route. Do not claim
-device-side UF2 verification.
+a password on the command line. T-Echo, T114, and T096 stay on the signed UF2 mount/copy route and
+must resolve their exact pinned variant from the mounted bootloader identity before reading it from
+the verified cache. T-1000E uses the exact Nordic serial-DFU application and init packet; its
+manifest-bound recovery UF2 is the fallback when the serial bootloader cannot be entered.
 
 Run `hopspot-flash doctor BOARD` as part of each physical CLI assignment. On ESP boards it opens a
-non-writing identity session; on T-Echo it validates the UF2 mount. Heltec versus T-Beam remains a
-same-chip limitation and must be confirmed by the tester.
+non-writing identity session; on UF2 boards it reports the Board-ID, bootloader version,
+SoftDevice, and exact compatibility variant without writing; on T-1000E it reports the exact
+application or bootloader mode without writing. Heltec versus T-Beam remains a same-chip limitation
+and must be confirmed by the tester.
 
 The five native installation rows are separate archive checks. Each one runs on its target OS and
 architecture, installs the exact public archive, and confirms that `hopspot-flash --version` reports

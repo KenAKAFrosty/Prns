@@ -51,6 +51,7 @@ LOCAL_FEATURES = {
     "personal-rns/rnode",
     "personal-rns/weave",
     "personal-rns/wifi-auto",
+    "personal-rns/wifi-auto-mdns",
     "personal-rns/usb",
     "personal-rns/bluetooth-auto",
     "dep:dbus",

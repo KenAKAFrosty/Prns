@@ -5,8 +5,8 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Line, Rectangle};
 use embedded_graphics::text::{Baseline, Text};
 
-use crate::battery::BatteryState;
 use crate::screen::CardKind;
+use crate::{ChargingState, ExternalPowerState, PowerSnapshot};
 
 use super::layout::*;
 use super::primitives::{draw_pattern_colored, fill, line, line_colored, stroke};
@@ -16,7 +16,7 @@ pub(in crate::screen) fn draw_battery<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     x: i32,
     y: i32,
-    state: BatteryState,
+    state: PowerSnapshot,
     charging_tier_visible: bool,
 ) {
     let outline = stroke(BinaryColor::Off);
@@ -27,19 +27,21 @@ pub(in crate::screen) fn draw_battery<D: DrawTarget<Color = BinaryColor>>(
     let _ = Rectangle::new(Point::new(x - 2, y + 3), Size::new(2, 3))
         .into_styled(solid)
         .draw(display);
-    match state {
-        BatteryState::Level(pct) => {
-            // Segments fill to the nearest quarter, anchored at the RIGHT so the leftmost bar empties first as the cell drains (matching the panel's orientation).
-            let pct = pct.get();
-            let filled = ((pct as u32 * 4 + 50) / 100).min(4);
-            for i in (4 - filled)..4 {
-                draw_battery_segment(display, x, y, i);
-            }
-        }
-        BatteryState::Charging(pct) if pct.get() >= 100 => {
+    match state.battery() {
+        Some(pct)
+            if matches!(state.external_power(), ExternalPowerState::Present { .. })
+                && pct.get() >= 100 =>
+        {
             draw_full_battery(display, x, y);
         }
-        BatteryState::Charging(pct) => {
+        Some(pct)
+            if matches!(
+                state.external_power(),
+                ExternalPowerState::Present {
+                    charging: ChargingState::Charging
+                }
+            ) =>
+        {
             let pct = pct.get();
             let filled = (pct as u32 * 4 / 100).min(3);
             for i in (4 - filled)..4 {
@@ -48,13 +50,25 @@ pub(in crate::screen) fn draw_battery<D: DrawTarget<Color = BinaryColor>>(
             if charging_tier_visible {
                 draw_battery_segment(display, x, y, 3 - filled);
             }
-            draw_charging_plug(display, x, y);
         }
-        BatteryState::Unknown => {
+        Some(pct) => {
+            // Segments fill to the nearest quarter, anchored at the RIGHT so the leftmost bar empties first as the cell drains (matching the panel's orientation).
+            let pct = pct.get();
+            let filled = ((pct as u32 * 4 + 50) / 100).min(4);
+            for i in (4 - filled)..4 {
+                draw_battery_segment(display, x, y, i);
+            }
+        }
+        None => {
             let _ = Line::new(Point::new(x + 4, y + 4), Point::new(x + 10, y + 4))
                 .into_styled(outline)
                 .draw(display);
         }
+    }
+    if matches!(state.external_power(), ExternalPowerState::Present { .. })
+        && state.battery().is_none_or(|percent| percent.get() < 100)
+    {
+        draw_charging_plug(display, x, y);
     }
 }
 
@@ -96,7 +110,7 @@ fn draw_charging_plug<D: DrawTarget<Color = BinaryColor>>(display: &mut D, x: i3
 
 pub(super) fn draw_title_bar<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
-    battery: BatteryState,
+    battery: PowerSnapshot,
     animation_ms: u64,
 ) {
     let _ = Rectangle::new(Point::new(0, 0), Size::new(WIDTH as u32, TITLE_H as u32))
@@ -334,7 +348,7 @@ pub(in crate::screen) fn draw_interface_icon<D: DrawTarget<Color = BinaryColor>>
                 color,
             );
         }
-        CardKind::Tcp => {
+        CardKind::SharedInstance | CardKind::Tcp => {
             draw_pattern_colored(
                 display,
                 x,

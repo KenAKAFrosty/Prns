@@ -112,6 +112,7 @@ def expected_candidate_assets(candidate: Path, version: str) -> dict[str, Path]:
         "flasher_acceptance_contract.py": candidate
         / "qualification"
         / "flasher_acceptance_contract.py",
+        "flasher_manifest.py": candidate / "qualification" / "flasher_manifest.py",
         "flasher_tester_roster.py": candidate / "qualification" / "flasher_tester_roster.py",
         "package-flasher-qualification-evidence.py": candidate
         / "qualification"

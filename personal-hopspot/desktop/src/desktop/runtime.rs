@@ -1,13 +1,10 @@
 use core::fmt::Write as _;
-use std::io;
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 
 use personal_rns::bluetooth_auto::BluetoothAutoStatus;
 use personal_rns::interfaces::shared_instance as instance_core;
 use personal_rns::interfaces::tcp;
-#[cfg(target_os = "macos")]
-use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind};
 use personal_rns::manifold::reconnect::ReconnectPolicy;
 use personal_rns::manifold::tokio::TokioInterfaceStatus;
@@ -18,7 +15,12 @@ use personal_rns::shared_instance::rns_rpc::{
 use personal_rns::shared_instance::SharedInstanceServer;
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::TcpClientInterface;
-use personal_rns::usb_auto::UsbAutoHost;
+use personal_rns::usb_auto::{
+    open_native_usb_auto_target, scan_native_usb_auto_targets, NativeUsbAutoStream,
+    UsbAutoCandidate, UsbAutoHost,
+};
+#[cfg(target_os = "macos")]
+use personal_rns::wifi_auto::apple_service_discovery;
 use personal_rns::wifi_auto::{AutoWifi, AutoWifiStatus};
 use personal_rns::wire::DestinationHash;
 use tokio::sync::Notify;
@@ -27,8 +29,6 @@ use personal_hopspot_core::{
     self as screen, load_host_ble_identity, load_host_node_identity, CardKind,
     HopspotDestinationSet, IdentityPersistence, BLE_IDENTITY_STORAGE, NODE_IDENTITY_STORAGE,
 };
-
-use crate::host_usb::{open_usb_auto_target, scan_usb_auto_targets, HostUsb};
 
 use super::persistence;
 use super::ui::run_window;
@@ -111,28 +111,6 @@ fn init_observability() {
         .with(filter)
         .with(tracing_subscriber::fmt::layer());
     let _ = subscriber.try_init();
-}
-
-#[cfg(target_os = "macos")]
-fn spawn_mdns(port: u16, sightings: tokio::sync::mpsc::UnboundedSender<std::net::SocketAddr>) {
-    use prns_ffi::mdns::macos::MacosMdnsBackend;
-
-    tokio::spawn(async move {
-        match MacosMdnsBackend::new(port, &[("v", b"1")]).await {
-            Ok(mut backend) => {
-                tracing::info!(event = "mdns_started", port);
-                while let Some(addr) = backend.next_sighting().await {
-                    tracing::debug!(event = "mdns_peer_discovered", address = %addr);
-                    if sightings.send(addr).is_err() {
-                        return;
-                    }
-                }
-            }
-            Err(error) => {
-                tracing::warn!(event = "mdns_failed", error = ?error);
-            }
-        }
-    });
 }
 
 fn log_identity_persistence(
@@ -228,8 +206,8 @@ fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
         let rescan = Arc::new(Notify::new());
         let usb = UsbAutoHost::new(
             USB_INTERFACE_ID,
-            scan_usb_auto_targets,
-            open_usb_auto_target_with_baud,
+            scan_native_usb_auto_targets,
+            open_native_usb_auto_target_with_baud,
             rescan.clone(),
         );
         let usb_status = usb.status();
@@ -249,18 +227,13 @@ fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
         }
 
         #[cfg(target_os = "macos")]
-        let (mdns_tx, mdns_rx) = tokio::sync::mpsc::unbounded_channel::<std::net::SocketAddr>();
-        #[cfg(target_os = "macos")]
-        let wifi = AutoWifi::default().with_mdns(mdns_rx);
+        let wifi = AutoWifi::default().with_host_discovery(apple_service_discovery());
         #[cfg(not(target_os = "macos"))]
         let wifi = AutoWifi::default();
         let wifi_status = wifi.status();
         if std::env::var_os("HOPSPOT_WIFI_OFF").is_some() {
             wifi_status.disable();
             tracing::info!(event = "wifi_started_disabled");
-        } else {
-            #[cfg(target_os = "macos")]
-            spawn_mdns(wifi_auto_contract::TCP_RENDEZVOUS_PORT, mdns_tx);
         }
         handle.supervise(wifi);
 
@@ -350,8 +323,10 @@ fn run_node(ready_tx: Sender<(WindowHandles, persistence::ShutdownFlush)>) {
     });
 }
 
-async fn open_usb_auto_target_with_baud(name: String) -> io::Result<HostUsb> {
-    open_usb_auto_target(name, USB_BAUD).await
+async fn open_native_usb_auto_target_with_baud(
+    candidate: UsbAutoCandidate,
+) -> std::io::Result<NativeUsbAutoStream> {
+    open_native_usb_auto_target(candidate, USB_BAUD).await
 }
 
 #[cfg(target_os = "linux")]

@@ -7,6 +7,7 @@ import io
 import json
 from pathlib import Path
 import shutil
+import sys
 import tarfile
 import tempfile
 import types
@@ -23,7 +24,12 @@ def load_module() -> types.ModuleType:
     if spec is None or spec.loader is None:
         raise RuntimeError("could not load prnsd distribution module")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    script_directory = str(SCRIPT.parent)
+    sys.path.insert(0, script_directory)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(script_directory)
     return module
 
 
@@ -240,6 +246,7 @@ class PrnsdDistributionTests(unittest.TestCase):
                 targets.append(
                     {
                         "board_slug": board,
+                        "transport": "esp-serial",
                         "parts": [
                             {
                                 "path": relative,
@@ -247,11 +254,13 @@ class PrnsdDistributionTests(unittest.TestCase):
                                 "size": len(content),
                             }
                         ],
+                        "variants": [],
                     }
                 )
             (candidate / "flash-manifest.json").write_bytes(
                 distribution.canonical_json(
                     {
+                        "schema": 3,
                         "release": {"channel": "stable", "version": VERSION},
                         "targets": targets,
                     }
@@ -730,10 +739,12 @@ class PrnsdDistributionTests(unittest.TestCase):
             payload.parent.mkdir(parents=True)
             payload.write_bytes(payload_content)
             manifest = {
+                "schema": 3,
                 "release": {"channel": "stable", "version": VERSION},
                 "targets": [
                     {
                         "board_slug": "heltec-v4",
+                        "transport": "esp-serial",
                         "parts": [
                             {
                                 "path": payload_relative,
@@ -741,6 +752,7 @@ class PrnsdDistributionTests(unittest.TestCase):
                                 "size": len(payload_content),
                             }
                         ],
+                        "variants": [],
                     }
                 ],
             }

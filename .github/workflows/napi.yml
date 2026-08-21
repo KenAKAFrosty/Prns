@@ -23,6 +23,7 @@ on:
       - "prns-host/**"
       - "prns-wasm/**"
       - "personal-rns/**"
+      - "personal-hopspot/sdk/hopspot/**"
       - "prns-core/**"
       - "prns-config/**"
       - "prns-ffi/**"
@@ -36,6 +37,7 @@ on:
       - "prns-host/**"
       - "prns-wasm/**"
       - "personal-rns/**"
+      - "personal-hopspot/sdk/hopspot/**"
       - "prns-core/**"
       - "prns-config/**"
       - "prns-ffi/**"
@@ -97,6 +99,8 @@ jobs:
         working-directory: prns-js
       - run: npm run check
         working-directory: prns-js
+      - run: npm test
+        working-directory: personal-hopspot/sdk/hopspot
       - run: python3 validation/run.py run --suite host-dotnet-contract
 
   napi-clippy:
@@ -412,6 +416,7 @@ jobs:
             npm pack "$directory" --pack-destination dist/npm
           done
           npm pack ./prns-js --pack-destination dist/npm
+          npm pack ./personal-hopspot/sdk/hopspot --pack-destination dist/npm
       - name: smoke packed Node and Bun consumers
         run: |
           smoke="$(mktemp -d)"
@@ -419,7 +424,8 @@ jobs:
           npm init --yes
           npm install --ignore-scripts --no-audit --no-fund \
             "$GITHUB_WORKSPACE/dist/npm/personal-rns-linux-x64-gnu-$(cat "$GITHUB_WORKSPACE/VERSION").tgz" \
-            "$GITHUB_WORKSPACE/dist/npm/personal-rns-$(cat "$GITHUB_WORKSPACE/VERSION").tgz"
+            "$GITHUB_WORKSPACE/dist/npm/personal-rns-$(cat "$GITHUB_WORKSPACE/VERSION").tgz" \
+            "$GITHUB_WORKSPACE/dist/npm/hopspot-$(cat "$GITHUB_WORKSPACE/VERSION").tgz"
           cp "$GITHUB_WORKSPACE/VERSION" VERSION
           mkdir -p prns-js/tests prns-host/conformance
           cp "$GITHUB_WORKSPACE/prns-js/tests/native-consumer.test.mjs" \
@@ -428,9 +434,9 @@ jobs:
             prns-host/conformance/
           node --test prns-js/tests/native-consumer.test.mjs
           node --input-type=module --eval \
-            'import { HOST_CONTRACT_ABI, Prns, Tag } from "personal-rns"; if (HOST_CONTRACT_ABI !== 1) throw new Error("contract mismatch"); const ready = await Prns.create({ identity: Tag("GenerateEphemeral"), role: "Endpoint" }); if (ready.tag !== "Ready") throw new Error(ready.tag); const stopped = await ready.data.stop(); if (stopped.tag !== "Stopped") throw new Error(stopped.tag);'
+            'import { HOST_CONTRACT_ABI, Prns, Tag } from "personal-rns"; import { HOST_CONTRACT_ABI as HOPSPOT_ABI, Prns as HopspotPrns, Tag as HopspotTag } from "hopspot"; if (HOST_CONTRACT_ABI !== 1 || HOPSPOT_ABI !== HOST_CONTRACT_ABI || HopspotPrns !== Prns || HopspotTag !== Tag) throw new Error("facade mismatch"); const ready = await HopspotPrns.create({ identity: HopspotTag("GenerateEphemeral"), role: "Endpoint" }); if (ready.tag !== "Ready") throw new Error(ready.tag); const stopped = await ready.data.stop(); if (stopped.tag !== "Stopped") throw new Error(stopped.tag);'
           bun --eval \
-            'import { HOST_CONTRACT_ABI, Prns, Tag } from "personal-rns"; if (HOST_CONTRACT_ABI !== 1) throw new Error("contract mismatch"); const ready = await Prns.create({ identity: Tag("GenerateEphemeral"), role: "Endpoint" }); if (ready.tag !== "Ready") throw new Error(ready.tag); const stopped = await ready.data.stop(); if (stopped.tag !== "Stopped") throw new Error(stopped.tag);'
+            'import { HOST_CONTRACT_ABI, Prns, Tag } from "personal-rns"; import { HOST_CONTRACT_ABI as HOPSPOT_ABI, Prns as HopspotPrns, Tag as HopspotTag } from "hopspot"; if (HOST_CONTRACT_ABI !== 1 || HOPSPOT_ABI !== HOST_CONTRACT_ABI || HopspotPrns !== Prns || HopspotTag !== Tag) throw new Error("facade mismatch"); const ready = await HopspotPrns.create({ identity: HopspotTag("GenerateEphemeral"), role: "Endpoint" }); if (ready.tag !== "Ready") throw new Error(ready.tag); const stopped = await ready.data.stop(); if (stopped.tag !== "Stopped") throw new Error(stopped.tag);'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: host-npm
@@ -475,10 +481,12 @@ jobs:
           workspace_version="$(cat VERSION)"
           napi_package_version="$(node -p "require('./prns-napi/package.json').version")"
           js_package_version="$(node -p "require('./prns-js/package.json').version")"
+          hopspot_package_version="$(node -p "require('./personal-hopspot/sdk/hopspot/package.json').version")"
           napi_crate_version="$(grep -m1 '^version = ' prns-napi/Cargo.toml | cut -d'"' -f2)"
           wasm_crate_version="$(grep -m1 '^version = ' prns-wasm/Cargo.toml | cut -d'"' -f2)"
           test "$workspace_version" = "$napi_package_version"
           test "$workspace_version" = "$js_package_version"
+          test "$workspace_version" = "$hopspot_package_version"
           test "$workspace_version" = "$napi_crate_version"
           test "$workspace_version" = "$wasm_crate_version"
       - run: npx napi create-npm-dirs
@@ -503,5 +511,25 @@ jobs:
       - name: publish unified root package
         run: npm publish --provenance --access public --tag "${{ inputs.npm_tag }}"
         working-directory: prns-js
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: inspect alternate-name facade
+        run: npm run check
+        working-directory: personal-hopspot/sdk/hopspot
+      - name: wait for the canonical package dependency
+        run: |
+          version="$(cat VERSION)"
+          for attempt in {1..18}; do
+            if test "$(npm view "personal-rns@$version" version 2>/dev/null)" = "$version"; then
+              break
+            fi
+            if test "$attempt" = 18; then
+              exit 1
+            fi
+            sleep 10
+          done
+      - name: publish alternate-name facade
+        run: npm publish --provenance --access public --tag "${{ inputs.npm_tag }}"
+        working-directory: personal-hopspot/sdk/hopspot
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

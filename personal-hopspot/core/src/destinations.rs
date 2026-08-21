@@ -40,20 +40,7 @@ impl<'a> HopspotDestinationSet<'a> {
     }
 
     pub fn destination_hashes(&self) -> Result<HopspotDestinationHashes, ExpandNameError> {
-        let signer = InMemoryNodeIdentity::from_secret_key_bytes(&self.identity);
-        let identity_hash = signer.identity_hash();
-        Ok(HopspotDestinationHashes {
-            delivery: derive_single_destination_hash(
-                &identity_hash,
-                DELIVERY_APP_NAME,
-                DELIVERY_ASPECTS,
-            )?,
-            node_page: derive_single_destination_hash(
-                &identity_hash,
-                node_pages::NODE_APP_NAME,
-                node_pages::NODE_ASPECTS,
-            )?,
-        })
+        hopspot_destination_hashes(&self.identity)
     }
 
     #[must_use]
@@ -85,6 +72,29 @@ impl<'a> HopspotDestinationSet<'a> {
             },
         ]
     }
+}
+
+/// Derives the two built-in Hopspot destination addresses from the persisted identity.
+///
+/// This is independent of announce app-data, so boot targets that need a dedicated crypto stack
+/// can derive the addresses before constructing their destination set.
+pub fn hopspot_destination_hashes(
+    identity: &[u8; IDENTITY_SECRET_KEY_LEN],
+) -> Result<HopspotDestinationHashes, ExpandNameError> {
+    let signer = InMemoryNodeIdentity::from_secret_key_bytes(identity);
+    let identity_hash = signer.identity_hash();
+    Ok(HopspotDestinationHashes {
+        delivery: derive_single_destination_hash(
+            &identity_hash,
+            DELIVERY_APP_NAME,
+            DELIVERY_ASPECTS,
+        )?,
+        node_page: derive_single_destination_hash(
+            &identity_hash,
+            node_pages::NODE_APP_NAME,
+            node_pages::NODE_ASPECTS,
+        )?,
+    })
 }
 
 #[cfg(test)]

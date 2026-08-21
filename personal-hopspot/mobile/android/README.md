@@ -15,11 +15,11 @@ window. This crate adds the platform adapters Android needs:
 plain Android `View` so the same APK can run on old Android devices as well as
 modern phones.
 
-## Native ABI — `com.personal.hopspot.NativeBridge`
+## Native ABI — `org.personal.hopspot.NativeBridge`
 
 ```
 nativeInit(storageDir) -> long handle
-nativePostInput(handle, code) -> int action   // code: 0 = tap, 1 = hold; action: 0 = none, 1 = announce
+nativePostInput(handle, code) -> int action   // code: 0 = tap, 1 = hold; action: 0 = none, 1 = announce, 2 = copy shared-instance config
 nativeRender(handle, directByteBuffer)         // fills PANEL_WIDTH * PANEL_HEIGHT * 4 RGBA bytes
 nativeFree(handle)
 ```

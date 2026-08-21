@@ -51,7 +51,7 @@ mod tests {
             "../../../web-flasher/browser/fixtures/signed-candidate/releases/0.2.6/flash-manifest.json.minisig"
         );
 
-        assert_eq!(key_id().as_deref(), Some("6B62D3410E007120"));
+        assert_eq!(key_id().as_deref(), Some("FE225DB0CF7ED13B"));
         prns_flash_manifest::verify_minisign(MANIFEST, SIGNATURE, PUBLIC_KEY)
             .expect("the deterministic browser fixture must have a valid Minisign signature");
     }

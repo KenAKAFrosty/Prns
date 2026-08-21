@@ -103,6 +103,7 @@ pub const DEFAULT_DATA_PORT: u16 = 42671;
 pub const TCP_RENDEZVOUS_PORT: u16 = 42699;
 
 pub const PEERING_TIMEOUT_MS: u64 = 22_000;
+pub const PEERING_TOKEN_BYTES: usize = crate::crypto::SHA256_OUTPUT_LEN;
 
 /// Reconstructs the EUI-64 link-local address peers use as the source when validating [`peering_token`].
 pub fn link_local_from_mac(mac: MacAddress) -> Ipv6Addr {
@@ -121,15 +122,16 @@ pub fn link_local_from_mac(mac: MacAddress) -> Ipv6Addr {
 
 /// The token is sent in cleartext, so ordinary equality matches RNS without leaking a secret.
 #[derive(PartialEq, Eq)]
-pub struct PeeringToken([u8; 32]);
+pub struct PeeringToken([u8; PEERING_TOKEN_BYTES]);
 
 impl PeeringToken {
     pub fn from_beacon_prefix(bytes: &[u8]) -> Option<Self> {
-        let prefix: [u8; 32] = bytes.get(..32)?.try_into().ok()?;
+        let prefix: [u8; PEERING_TOKEN_BYTES] =
+            bytes.get(..PEERING_TOKEN_BYTES)?.try_into().ok()?;
         Some(Self(prefix))
     }
 
-    pub fn as_bytes(&self) -> &[u8; 32] {
+    pub fn as_bytes(&self) -> &[u8; PEERING_TOKEN_BYTES] {
         &self.0
     }
 }
@@ -145,6 +147,7 @@ pub fn peering_token_for_group(group_id: &[u8], addr: &Ipv6Addr) -> PeeringToken
     PeeringToken(Sha256PrefixState::absorb(&[group_id]).digest_with_suffix(rendered.as_bytes()))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BeaconVerdict {
     Peer(Ipv6Addr),
     SelfEcho,
@@ -175,10 +178,22 @@ pub fn classify_beacon_for_group(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PeerObservation {
     NewlyDiscovered,
     Refreshed,
     TableFull,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BeaconObservation {
+    AuthenticatedPeer {
+        address: Ipv6Addr,
+        peer_observation: PeerObservation,
+    },
+    SelfEcho,
+    AuthenticationFailed,
+    TooShort,
 }
 
 pub struct Peer {
@@ -261,6 +276,19 @@ impl<S: PeerStore + Default> PeerTable<S> {
         }
     }
 
+    pub fn refresh_known_peer(&mut self, addr: Ipv6Addr, now_ms: u64) -> bool {
+        let Some(peer) = self
+            .peers
+            .as_mut_slice()
+            .iter_mut()
+            .find(|peer| peer.addr == addr)
+        else {
+            return false;
+        };
+        peer.last_heard_ms = now_ms;
+        true
+    }
+
     pub fn prune_stale_peers(&mut self, now_ms: u64) -> usize {
         let before = self.peers.as_slice().len();
         let mut i = 0;
@@ -339,6 +367,20 @@ impl<S: PeerStore + Default> AutoInterfaceProtocol<S> {
         bytes: &[u8],
         now_ms: u64,
     ) -> BeaconVerdict {
+        match self.observe_discovery_datagram(src, bytes, now_ms) {
+            BeaconObservation::AuthenticatedPeer { address, .. } => BeaconVerdict::Peer(address),
+            BeaconObservation::SelfEcho => BeaconVerdict::SelfEcho,
+            BeaconObservation::AuthenticationFailed => BeaconVerdict::AuthenticationFailed,
+            BeaconObservation::TooShort => BeaconVerdict::TooShort,
+        }
+    }
+
+    pub fn observe_discovery_datagram(
+        &mut self,
+        src: Ipv6Addr,
+        bytes: &[u8],
+        now_ms: u64,
+    ) -> BeaconObservation {
         let verdict = classify_beacon_with_prefix(
             bytes,
             &src,
@@ -347,18 +389,27 @@ impl<S: PeerStore + Default> AutoInterfaceProtocol<S> {
         );
         match verdict {
             BeaconVerdict::Peer(addr) => {
-                self.peers.upsert_peer(addr, now_ms);
+                let peer_observation = self.peers.upsert_peer(addr, now_ms);
+                BeaconObservation::AuthenticatedPeer {
+                    address: addr,
+                    peer_observation,
+                }
             }
             BeaconVerdict::AuthenticationFailed => {
                 self.auth_failure_count = self.auth_failure_count.wrapping_add(1);
+                BeaconObservation::AuthenticationFailed
             }
-            BeaconVerdict::SelfEcho | BeaconVerdict::TooShort => {}
+            BeaconVerdict::SelfEcho => BeaconObservation::SelfEcho,
+            BeaconVerdict::TooShort => BeaconObservation::TooShort,
         }
-        verdict
     }
 
     pub fn prune_stale_peers(&mut self, now_ms: u64) -> usize {
         self.peers.prune_stale_peers(now_ms)
+    }
+
+    pub fn refresh_known_peer(&mut self, addr: Ipv6Addr, now_ms: u64) -> bool {
+        self.peers.refresh_known_peer(addr, now_ms)
     }
 
     pub fn known_peer_addresses(&self) -> impl Iterator<Item = Ipv6Addr> + '_ {
@@ -510,5 +561,59 @@ mod tests {
             table.upsert_peer(nth_peer(0), 1),
             PeerObservation::Refreshed
         ));
+    }
+
+    #[test]
+    fn authenticated_observation_names_peer_admission_outcomes() {
+        let local = nth_peer(10);
+        let first_peer = nth_peer(11);
+        let second_peer = nth_peer(12);
+        let mut brain = FixedAutoInterfaceProtocol::<1>::from_link_local(local);
+        let first_token = peering_token(&first_peer);
+        let second_token = peering_token(&second_peer);
+
+        assert_eq!(
+            brain.observe_discovery_datagram(first_peer, first_token.as_bytes(), 1),
+            BeaconObservation::AuthenticatedPeer {
+                address: first_peer,
+                peer_observation: PeerObservation::NewlyDiscovered,
+            }
+        );
+        assert_eq!(
+            brain.observe_discovery_datagram(first_peer, first_token.as_bytes(), 2),
+            BeaconObservation::AuthenticatedPeer {
+                address: first_peer,
+                peer_observation: PeerObservation::Refreshed,
+            }
+        );
+        assert_eq!(
+            brain.observe_discovery_datagram(second_peer, second_token.as_bytes(), 3),
+            BeaconObservation::AuthenticatedPeer {
+                address: second_peer,
+                peer_observation: PeerObservation::TableFull,
+            }
+        );
+        assert_eq!(brain.peer_count(), 1);
+    }
+
+    #[test]
+    fn known_peer_data_activity_refreshes_liveness_without_admitting_unknown_sources() {
+        let local = nth_peer(20);
+        let peer = nth_peer(21);
+        let unknown = nth_peer(22);
+        let mut brain = FixedAutoInterfaceProtocol::<2>::from_link_local(local);
+
+        assert_eq!(
+            brain.observe_discovery_datagram(peer, peering_token(&peer).as_bytes(), 0),
+            BeaconObservation::AuthenticatedPeer {
+                address: peer,
+                peer_observation: PeerObservation::NewlyDiscovered,
+            }
+        );
+        assert!(!brain.refresh_known_peer(unknown, 21_000));
+        assert_eq!(brain.peer_count(), 1);
+        assert!(brain.refresh_known_peer(peer, 21_000));
+        assert_eq!(brain.prune_stale_peers(PEERING_TIMEOUT_MS + 1), 0);
+        assert_eq!(brain.prune_stale_peers(21_000 + PEERING_TIMEOUT_MS + 1), 1);
     }
 }

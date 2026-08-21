@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use prns_core::interfaces::rnode::policy as rnode_policy;
 use prns_core::interfaces::tcp::TcpWireFraming;
+use prns_core::interfaces::websocket::WebSocketFramingSelection;
 pub use prns_core::interfaces::wifi_auto::{
     DiscoveryScope as AutoInterfaceDiscoveryScope,
     MulticastAddressType as AutoInterfaceMulticastAddressType,
@@ -463,9 +464,11 @@ pub enum PlannedMedium {
     PrnsBluetoothAuto,
     PrnsWebSocketClient {
         target: WebSocketTargetPlan,
+        framing: WebSocketFramingSelection,
     },
     PrnsWebSocketServer {
         listener: TcpListenPlan,
+        framing: WebSocketFramingSelection,
     },
 }
 
@@ -809,12 +812,13 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
         }),
         ReferenceConfigParams::PrnsUsbAuto => Ok(PlannedMedium::PrnsUsbAuto),
         ReferenceConfigParams::PrnsBluetoothAuto => Ok(PlannedMedium::PrnsBluetoothAuto),
-        ReferenceConfigParams::PrnsWebSocketClient { target } => {
+        ReferenceConfigParams::PrnsWebSocketClient { target, framing } => {
             let target = target.clone().ok_or(PlanErrorKind::MissingRequiredField {
                 key: interface_key::TARGET,
             })?;
             Ok(PlannedMedium::PrnsWebSocketClient {
                 target: WebSocketTargetPlan::from_configured(target)?,
+                framing: websocket_framing_selection(framing.as_deref())?,
             })
         }
         ReferenceConfigParams::PrnsWebSocketServer {
@@ -823,6 +827,7 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
             device,
             port,
             prefer_ipv6,
+            framing,
         } => {
             let port = port
                 .or(*listen_port)
@@ -836,10 +841,24 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
                     address_family: preferred_ip_family(*prefer_ipv6),
                     tunnel: TcpTunnelMode::Direct,
                 },
+                framing: websocket_framing_selection(framing.as_deref())?,
             })
         }
         _ => Err(PlanErrorKind::UnsupportedKind),
     }
+}
+
+fn websocket_framing_selection(
+    framing: Option<&str>,
+) -> Result<WebSocketFramingSelection, PlanErrorKind> {
+    let Some(framing) = framing else {
+        return Ok(WebSocketFramingSelection::Auto);
+    };
+    WebSocketFramingSelection::from_name(framing.trim()).map_err(|_| {
+        PlanErrorKind::InvalidSetting {
+            key: interface_key::FRAMING,
+        }
+    })
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -15,102 +15,104 @@ use validation::{
     validate_release, validate_sha256, validate_target, validate_target_set, validate_version,
 };
 
-/// Signed release manifest consumed by every public flasher.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FlashManifest {
-    /// Manifest schema version.
-    pub schema: u32,
-    /// Immutable release identity.
+    #[serde(rename = "schema")]
+    pub schema_version: u32,
     pub release: ReleaseInfo,
-    /// Signing-key identity.
-    pub signing: SigningInfo,
-    /// Shipping targets.
+    pub signing: OfflineKeySigningInfo,
     pub targets: Vec<TargetManifest>,
 }
 
-/// Signed pointer from a mutable channel name to one immutable release.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelDescriptor {
-    /// Channel descriptor schema version.
-    pub schema: u32,
-    /// Channel this document controls.
+    #[serde(rename = "schema")]
+    pub schema_version: u32,
     pub channel: ReleaseChannel,
-    /// Immutable release version.
     pub version: String,
-    /// Absolute HTTPS URL for the immutable manifest.
     pub manifest_url: String,
-    /// SHA-256 of the exact signed manifest bytes.
     pub manifest_sha256: String,
 }
 
-/// Immutable release identity.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReleaseInfo {
-    /// Suite version.
     pub version: String,
-    /// Signed release channel.
     pub channel: ReleaseChannel,
-    /// Full source commit.
     pub commit: String,
 }
 
-/// Allowed signed release channels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ReleaseChannel {
-    /// Public stable release.
     Stable,
-    /// Signed preview release.
     Preview,
 }
 
-/// Identity of the offline signing key.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SigningInfo {
-    /// Maintainer-assigned key identifier.
+pub struct OfflineKeySigningInfo {
     pub key_id: String,
 }
 
-/// Board-specific release plan.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TargetManifest {
-    /// Stable board slug.
     pub board_slug: String,
-    /// Display name captured for external clients.
     pub display_name: String,
-    /// Silicon summary captured for external clients.
     pub silicon: String,
-    /// Supported interfaces.
     pub interfaces: Vec<String>,
-    /// Flashing transport.
     pub transport: Transport,
-    /// Expected Espressif chip.
     pub expected_chip: Option<String>,
-    /// Flash capacity.
     pub flash_size: Option<u32>,
-    /// SPI mode for ESP targets.
     pub flash_mode: Option<String>,
-    /// SPI frequency for ESP targets.
     pub flash_frequency: Option<String>,
-    /// Pre-connect reset mode.
     pub before_reset: Option<String>,
-    /// Post-flash reset mode.
     pub after_reset: Option<String>,
-    /// Localized preparation-instruction key.
     pub preparation_profile: String,
-    /// Ordered immutable release parts.
     pub parts: Vec<FlashPart>,
-    /// Optional local provisioning slot.
+    pub variants: Vec<Uf2VariantManifest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nrf_serial_dfu: Option<NrfSerialDfuManifest>,
     pub provisioning: Option<ProvisioningDescriptor>,
     /// Native source archive served by this exact target. Its absence means the target does not
     /// register source-download routes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<SourceArchiveIdentity>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NrfSerialDfuManifest {
+    pub serial: crate::NrfSerialDfuSerialTransport,
+    pub compatibility: crate::NrfSerialDfuCompatibility,
+    pub application: FlashPart,
+    pub init_packet: FlashPart,
+    pub recovery: NrfSerialDfuRecoveryManifest,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NrfSerialDfuRecoveryManifest {
+    pub mount_label: String,
+    pub board_id_prefix: String,
+    pub family_id: String,
+    pub artifact: FlashPart,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Uf2VariantManifest {
+    pub softdevice_family: String,
+    pub softdevice_version: String,
+    pub fwid: String,
+    pub application_base: String,
+    pub family_id: String,
+    pub path: String,
+    pub size: u64,
+    pub sha256: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -122,8 +124,7 @@ impl ManifestTargetSetPolicy {
     pub fn all_shipping_targets(catalog: &BoardCatalog) -> Self {
         Self {
             expected: catalog
-                .boards
-                .iter()
+                .shipping_boards()
                 .map(|board| board.slug.clone())
                 .collect(),
         }
@@ -163,87 +164,62 @@ impl ManifestTargetSetPolicy {
     }
 }
 
-/// Identity of one commit-bound archive embedded in a source-capable target.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceArchiveIdentity {
-    /// Native NomadNet archive route.
     pub route: String,
-    /// Native NomadNet checksum route.
     pub checksum_route: String,
-    /// Exact embedded archive bytes.
     pub size: u64,
-    /// SHA-256 of those exact bytes.
     pub sha256: String,
 }
 
-/// One immutable firmware payload.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FlashPart {
-    /// Semantic part kind.
     pub kind: FlashPartKind,
-    /// Relative immutable release path.
     pub path: String,
-    /// ESP flash offset; `None` for UF2.
     pub offset: Option<u32>,
-    /// Exact byte length.
     pub size: u64,
-    /// Lowercase SHA-256 digest.
     pub sha256: String,
 }
 
-/// Supported release payload kinds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FlashPartKind {
-    /// ESP bootloader image.
     Bootloader,
-    /// ESP partition-table image.
     PartitionTable,
-    /// ESP application image.
     Application,
-    /// Nordic UF2 image.
     Uf2,
+    DfuApplication,
+    DfuInitPacket,
 }
 
-/// Manifest parsing or invariant failure.
 #[derive(Debug, Error)]
 pub enum ManifestError {
-    /// JSON could not be parsed.
     #[error("flash manifest is invalid JSON: {0}")]
     Json(#[from] serde_json::Error),
-    /// Schema is unsupported.
+
     #[error("unsupported flash manifest schema {0}")]
     Schema(u32),
-    /// Release identity is not publishable.
+
     #[error("invalid release identity: {0}")]
     Release(String),
-    /// A target is duplicated or missing.
+
     #[error("manifest target set is invalid: {0}")]
     TargetSet(String),
-    /// Target disagrees with the catalog.
+
     #[error("target {board:?} disagrees with the catalog: {field}")]
-    CatalogMismatch {
-        /// Board slug.
-        board: String,
-        /// Mismatched field.
-        field: String,
-    },
-    /// A firmware part is invalid.
+    CatalogMismatch { board: String, field: String },
+
     #[error("target {board:?} part {path:?}: {message}")]
     InvalidPart {
-        /// Board slug.
         board: String,
-        /// Part path.
         path: String,
-        /// Failure detail.
         message: String,
     },
 }
 
 impl FlashManifest {
-    /// Parse and validate a signed manifest's JSON bytes against the catalog.
     pub fn from_json(bytes: &[u8], catalog: &BoardCatalog) -> Result<Self, ManifestError> {
         let policy = ManifestTargetSetPolicy::all_shipping_targets(catalog);
         Self::from_json_with_target_set(bytes, catalog, &policy)
@@ -263,7 +239,6 @@ impl FlashManifest {
         Ok(manifest)
     }
 
-    /// Consume a schema-v2 wire DTO into the validated release-domain model.
     pub fn into_validated(
         self,
         catalog: &BoardCatalog,
@@ -281,7 +256,6 @@ impl FlashManifest {
         convert_manifest(self, catalog)
     }
 
-    /// Clone this DTO into the validated release-domain model.
     pub fn to_validated(
         &self,
         catalog: &BoardCatalog,
@@ -297,7 +271,6 @@ impl FlashManifest {
         self.clone().into_validated_with_target_set(catalog, policy)
     }
 
-    /// Validate release, target, and flash-layout invariants.
     pub fn validate(&self, catalog: &BoardCatalog) -> Result<(), ManifestError> {
         let policy = ManifestTargetSetPolicy::all_shipping_targets(catalog);
         self.validate_with_target_set(catalog, &policy)
@@ -308,8 +281,8 @@ impl FlashManifest {
         catalog: &BoardCatalog,
         policy: &ManifestTargetSetPolicy,
     ) -> Result<(), ManifestError> {
-        if self.schema != FLASH_MANIFEST_SCHEMA {
-            return Err(ManifestError::Schema(self.schema));
+        if self.schema_version != FLASH_MANIFEST_SCHEMA {
+            return Err(ManifestError::Schema(self.schema_version));
         }
         validate_release(self)?;
         validate_target_set(self, policy)?;
@@ -324,7 +297,6 @@ impl FlashManifest {
 }
 
 impl ChannelDescriptor {
-    /// Parse and validate a signed channel descriptor.
     pub fn from_json(bytes: &[u8], expected: ReleaseChannel) -> Result<Self, ManifestError> {
         let descriptor: Self = serde_json::from_slice(bytes)?;
         descriptor.validate(expected)?;
@@ -332,12 +304,11 @@ impl ChannelDescriptor {
         Ok(descriptor)
     }
 
-    /// Validate channel identity, immutability, URL safety, and manifest digest.
     pub fn validate(&self, expected: ReleaseChannel) -> Result<(), ManifestError> {
-        if self.schema != 1 {
+        if self.schema_version != 1 {
             return Err(ManifestError::Release(format!(
                 "unsupported channel descriptor schema {}",
-                self.schema
+                self.schema_version
             )));
         }
         if self.channel != expected {
@@ -377,76 +348,133 @@ impl PartialOrd for FlashPartKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{board_catalog, BoardBuild, ReleaseTarget, CONFIG_OFFSET};
+    use crate::{
+        board_catalog, BoardBuild, PreparationProfile, ReleaseTarget, ReleaseVersion,
+        SoftdeviceIdentity, CONFIG_OFFSET,
+    };
 
     fn valid_manifest() -> Result<FlashManifest, crate::catalog::CatalogError> {
         let catalog = board_catalog()?;
-        let targets = catalog
-            .boards
-            .iter()
-            .map(|board| {
-                let (flash_mode, flash_frequency, before_reset, after_reset, parts) =
-                    match &board.build {
-                        BoardBuild::Esp(build) => (
-                            Some(build.flash_mode.clone()),
-                            Some(build.flash_frequency.clone()),
-                            Some(build.before_reset.clone()),
-                            Some(build.after_reset.clone()),
-                            vec![
-                                part(board, FlashPartKind::Bootloader, "bootloader.bin", Some(0)),
-                                part(
-                                    board,
-                                    FlashPartKind::PartitionTable,
-                                    "partition-table.bin",
-                                    Some(0x8000),
-                                ),
-                                part(
-                                    board,
-                                    FlashPartKind::Application,
-                                    "application.bin",
-                                    Some(0x10000),
-                                ),
-                            ],
-                        ),
-                        BoardBuild::Uf2(_) => (
-                            None,
-                            None,
-                            None,
-                            None,
-                            vec![part(board, FlashPartKind::Uf2, "firmware.uf2", None)],
-                        ),
-                    };
-                TargetManifest {
-                    board_slug: board.slug.clone(),
-                    display_name: board.display_name.clone(),
-                    silicon: board.silicon.clone(),
-                    interfaces: board.interfaces.clone(),
-                    transport: board.transport,
-                    expected_chip: board.expected_chip.clone(),
-                    flash_size: board.flash_size,
-                    flash_mode,
-                    flash_frequency,
-                    before_reset,
-                    after_reset,
-                    preparation_profile: board.preparation_profile.clone(),
-                    parts,
-                    provisioning: board.provisioning.clone(),
-                    source: None,
-                }
-            })
-            .collect();
+        let targets = catalog.shipping_boards().map(target).collect();
         Ok(FlashManifest {
-            schema: FLASH_MANIFEST_SCHEMA,
+            schema_version: FLASH_MANIFEST_SCHEMA,
             release: ReleaseInfo {
                 version: "0.2.6".to_string(),
                 channel: ReleaseChannel::Preview,
                 commit: "0123456789abcdef0123456789abcdef01234567".to_string(),
             },
-            signing: SigningInfo {
+            signing: OfflineKeySigningInfo {
                 key_id: "1FB2CA18B2C25E1F".to_string(),
             },
             targets,
         })
+    }
+
+    fn target(board: &crate::BoardCatalogEntry) -> TargetManifest {
+        let (
+            flash_mode,
+            flash_frequency,
+            before_reset,
+            after_reset,
+            parts,
+            variants,
+            nrf_serial_dfu,
+        ) = match &board.build {
+            BoardBuild::Esp(build) => (
+                Some(build.flash_mode.clone()),
+                Some(build.flash_frequency.clone()),
+                Some(build.before_reset.clone()),
+                Some(build.after_reset.clone()),
+                vec![
+                    part(board, FlashPartKind::Bootloader, "bootloader.bin", Some(0)),
+                    part(
+                        board,
+                        FlashPartKind::PartitionTable,
+                        "partition-table.bin",
+                        Some(0x8000),
+                    ),
+                    part(
+                        board,
+                        FlashPartKind::Application,
+                        "application.bin",
+                        Some(0x10000),
+                    ),
+                ],
+                Vec::new(),
+                None,
+            ),
+            BoardBuild::Uf2(build) => (
+                None,
+                None,
+                None,
+                None,
+                Vec::new(),
+                build
+                    .variants
+                    .iter()
+                    .map(|variant| Uf2VariantManifest {
+                        softdevice_family: variant.softdevice_family.clone(),
+                        softdevice_version: variant.softdevice_version.clone(),
+                        fwid: variant.fwid.clone(),
+                        application_base: variant.application_base.clone(),
+                        family_id: variant.family_id.clone(),
+                        path: format!("firmware/hopspot/{}/0.2.6/{}", board.slug, variant.filename),
+                        size: 256,
+                        sha256: "a".repeat(64),
+                    })
+                    .collect(),
+                None,
+            ),
+            BoardBuild::NrfSerialDfu(build) => (
+                None,
+                None,
+                None,
+                None,
+                Vec::new(),
+                Vec::new(),
+                Some(NrfSerialDfuManifest {
+                    serial: build.serial.clone(),
+                    compatibility: build.compatibility.clone(),
+                    application: part(
+                        board,
+                        FlashPartKind::DfuApplication,
+                        &build.application_filename,
+                        None,
+                    ),
+                    init_packet: part(
+                        board,
+                        FlashPartKind::DfuInitPacket,
+                        &build.init_packet_filename,
+                        None,
+                    ),
+                    recovery: NrfSerialDfuRecoveryManifest {
+                        mount_label: build.recovery.mount_label.clone(),
+                        board_id_prefix: build.recovery.board_identity.value.clone(),
+                        family_id: build.recovery.family_id.clone(),
+                        artifact: part(board, FlashPartKind::Uf2, &build.recovery.filename, None),
+                    },
+                }),
+            ),
+        };
+        TargetManifest {
+            board_slug: board.slug.clone(),
+            display_name: board.display_name.clone(),
+            silicon: board.silicon.clone(),
+            interfaces: board.interfaces.clone(),
+            transport: board.transport,
+            expected_chip: board.expected_chip.clone(),
+            flash_size: board.flash_size,
+            flash_mode,
+            flash_frequency,
+            before_reset,
+            after_reset,
+            preparation_profile: board.preparation_profile.clone(),
+            parts,
+            variants,
+            nrf_serial_dfu,
+            provisioning: board.provisioning.clone(),
+            source: None,
+        }
     }
 
     fn part(
@@ -505,6 +533,48 @@ mod tests {
     }
 
     #[test]
+    fn local_t096_manifest_constructs_the_exact_shipping_target(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = board_catalog()?;
+        let board = catalog.board("t096").ok_or("missing T096 catalog entry")?;
+        let mut manifest = valid_manifest()?;
+        manifest.targets = vec![target(board)];
+        let policy = ManifestTargetSetPolicy::local_development(&catalog, &["t096"])?;
+
+        manifest.validate_with_target_set(&catalog, &policy)?;
+        let encoded = serde_json::to_vec(&manifest)?;
+        let validated =
+            ValidatedFlashManifest::from_json_with_target_set(&encoded, &catalog, &policy)?;
+        let [target] = validated.targets() else {
+            return Err("expected one validated T096 target".into());
+        };
+        assert_eq!(target.board_id().as_str(), "t096");
+        assert_eq!(target.preparation_profile(), PreparationProfile::T096Uf2);
+        let ReleaseTarget::Uf2(target) = target else {
+            return Err("T096 did not convert to UF2".into());
+        };
+        let [variant] = target.variants() else {
+            return Err("expected one validated T096 UF2 variant".into());
+        };
+        assert_eq!(
+            variant.compatibility().softdevice(),
+            &SoftdeviceIdentity::parse("s140", "6.1.1")?
+        );
+        assert_eq!(variant.compatibility().fwid(), 0x00b6);
+        assert_eq!(variant.compatibility().application_base(), 0x0002_6000);
+        assert_eq!(
+            variant.compatibility().application_end_exclusive(),
+            0x000e_8000
+        );
+        assert_eq!(variant.compatibility().family_id(), 0xada5_2840);
+        assert_eq!(
+            variant.part().path().as_str(),
+            "firmware/hopspot/t096/0.2.6/t096-s140-6.1.1.uf2"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn local_target_set_policy_rejects_invalid_requests_and_manifest_sets(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let catalog = board_catalog()?;
@@ -542,19 +612,18 @@ mod tests {
     }
 
     #[test]
-    fn schema_two_wire_roundtrips_through_transport_typed_domain(
+    fn schema_three_wire_roundtrips_through_transport_typed_domain(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let catalog = board_catalog()?;
         let wire = valid_manifest()?;
         let encoded = serde_json::to_vec(&wire)?;
 
-        // Compatibility callers retain the exact schema-v2 DTO.
         assert_eq!(FlashManifest::from_json(&encoded, &catalog)?, wire);
 
         let validated = ValidatedFlashManifest::from_json(&encoded, &catalog)?;
-        assert_eq!(validated.schema(), FLASH_MANIFEST_SCHEMA);
+        assert_eq!(validated.schema_version(), FLASH_MANIFEST_SCHEMA);
         assert_eq!(validated.release().version().as_str(), "0.2.6");
-        assert_eq!(validated.targets().len(), 5);
+        assert_eq!(validated.targets().len(), 8);
         assert_eq!(
             validated
                 .targets()
@@ -580,9 +649,86 @@ mod tests {
             return Err("T-Echo did not convert to the UF2 variant".into());
         };
         assert_eq!(
-            t_echo.part().path().as_str(),
-            "firmware/hopspot/t-echo/0.2.6/firmware.uf2"
+            t_echo
+                .variants()
+                .iter()
+                .map(|variant| variant.part().path().as_str())
+                .collect::<Vec<_>>(),
+            [
+                "firmware/hopspot/t-echo/0.2.6/t-echo-s140-6.1.1.uf2",
+                "firmware/hopspot/t-echo/0.2.6/t-echo-s140-7.3.0.uf2",
+            ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn local_nordic_dfu_target_has_three_typed_artifacts() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let catalog = board_catalog()?;
+        let board = catalog.board("t1000-e").ok_or("missing T1000-E")?;
+        let policy = ManifestTargetSetPolicy::local_development(&catalog, &["t1000-e"])?;
+        let mut manifest = valid_manifest()?;
+        manifest.targets = vec![target(board)];
+        manifest.validate_with_target_set(&catalog, &policy)?;
+        let validated = ValidatedFlashManifest::from_json_with_target_set(
+            &serde_json::to_vec(&manifest)?,
+            &catalog,
+            &policy,
+        )?;
+        let [ReleaseTarget::NrfSerialDfu(target)] = validated.targets() else {
+            return Err("T1000-E did not convert to Nordic serial DFU".into());
+        };
+        assert_eq!(
+            [
+                target.application().kind(),
+                target.init_packet().kind(),
+                target.recovery().artifact().kind(),
+            ],
+            [
+                FlashPartKind::DfuApplication,
+                FlashPartKind::DfuInitPacket,
+                FlashPartKind::Uf2,
+            ]
+        );
+        assert_eq!(
+            target.compatibility().application_end_exclusive(),
+            0x000e_a000
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn local_uf2_validation_accepts_only_the_selected_catalog_variant(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = board_catalog()?;
+        let board = catalog
+            .board("t-echo")
+            .ok_or("missing T-Echo catalog entry")?;
+        let mut target = valid_manifest()?
+            .targets
+            .into_iter()
+            .find(|target| target.board_slug == "t-echo")
+            .ok_or("missing T-Echo target")?;
+        target
+            .variants
+            .retain(|variant| variant.softdevice_version == "6.1.1");
+        let version = ReleaseVersion::parse("0.2.6")?;
+        let v6 = SoftdeviceIdentity::parse("s140", "6.1.1")?;
+        let v7 = SoftdeviceIdentity::parse("s140", "7.3.0")?;
+
+        assert!(target.clone().into_validated(board, &version).is_err());
+        assert!(target
+            .clone()
+            .into_validated_uf2_variant(board, &version, &v7)
+            .is_err());
+        let ReleaseTarget::Uf2(validated) =
+            target.into_validated_uf2_variant(board, &version, &v6)?
+        else {
+            return Err("selected T-Echo target did not remain UF2".into());
+        };
+        assert_eq!(validated.variants().len(), 1);
+        assert_eq!(validated.variants()[0].compatibility().softdevice(), &v6);
         Ok(())
     }
 
@@ -753,7 +899,7 @@ mod tests {
     fn channel_descriptor_requires_an_immutable_https_manifest(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let valid = ChannelDescriptor {
-            schema: 1,
+            schema_version: 1,
             channel: ReleaseChannel::Stable,
             version: "0.2.6".to_string(),
             manifest_url: "https://reticulum.rs/releases/0.2.6/flash-manifest.json".to_string(),

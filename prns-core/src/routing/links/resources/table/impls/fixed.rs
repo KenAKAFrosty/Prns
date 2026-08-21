@@ -1,8 +1,11 @@
 use crate::engine::InstantMillis;
 use crate::routing::links::resources::table::{
-    ResourceBuffers, ResourceRowState, ResourceTable, ResourceTablePushError,
+    ResourceBuffers, ResourceRowState, ResourceTable, ResourceTableAdmission,
+    ResourceTablePushError,
 };
-use crate::routing::links::resources::{max_part_count, ResourceHash, MAP_HASH_LEN};
+use crate::routing::links::resources::{
+    max_part_count, ResourceBufferShape, ResourceHash, MAP_HASH_LEN,
+};
 use crate::routing::links::LinkId;
 
 /// Inline table for a no_std target: every byte the slots can hold lives in the struct, sized where the storage recipe is assembled. `MAX_PARTS` must cover `TRANSFER_BYTES` at the broadcast-MTU sdu; the constructor proves it at compile time.
@@ -121,12 +124,29 @@ impl<
         (&mut self.transfers[index], &mut self.streamed_opens[index])
     }
 
+    fn admission_for_shape(&self, shape: ResourceBufferShape) -> ResourceTableAdmission {
+        if shape.transfer_bytes() > TRANSFER_BYTES || shape.part_count() > MAX_PARTS {
+            ResourceTableAdmission::Impossible
+        } else if self.len >= SLOTS {
+            ResourceTableAdmission::TemporarilyFull
+        } else {
+            ResourceTableAdmission::Available
+        }
+    }
+
     fn push(
         &mut self,
         link_id: LinkId,
         hash: ResourceHash,
         state: State,
+        shape: ResourceBufferShape,
     ) -> Result<usize, ResourceTablePushError> {
+        if shape.transfer_bytes() > TRANSFER_BYTES {
+            return Err(ResourceTablePushError::TransferTooLarge);
+        }
+        if shape.part_count() > MAX_PARTS {
+            return Err(ResourceTablePushError::TooManyParts);
+        }
         if self.len >= SLOTS {
             return Err(ResourceTablePushError::TableFull);
         }
@@ -153,5 +173,45 @@ impl<
         self.states[last] = State::default();
         self.streamed_opens[last] = Default::default();
         self.len = last;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type Table = FixedResourceTable<u8, 2, 1024, 3>;
+
+    fn link(byte: u8) -> LinkId {
+        LinkId::new([byte; 16])
+    }
+
+    fn hash(byte: u8) -> ResourceHash {
+        ResourceHash::new([byte; 32])
+    }
+
+    fn shape(transfer_bytes: usize, sdu: usize) -> ResourceBufferShape {
+        ResourceBufferShape::try_for_transfer(transfer_bytes, sdu).unwrap()
+    }
+
+    #[test]
+    fn requested_shape_is_validated_without_changing_inline_regions() {
+        let mut table = Table::default();
+        assert_eq!(table.active_buffer_bytes(), 0);
+        assert_eq!(table.buffer_memory_limit(), 2 * (1024 + 3 * 5));
+        let index = table.push(link(1), hash(1), 7, shape(144, 464)).unwrap();
+
+        assert_eq!(table.active_buffer_bytes(), 1024 + 3 * 5);
+        assert_eq!(table.transfer(index).len(), 1024);
+        assert_eq!(table.part_names(index).len(), 3);
+        assert_eq!(table.part_flags(index).len(), 3);
+        assert_eq!(
+            table.push(link(2), hash(2), 8, shape(1025, 464),),
+            Err(ResourceTablePushError::TransferTooLarge),
+        );
+        assert_eq!(
+            table.push(link(2), hash(2), 8, shape(1024, 256),),
+            Err(ResourceTablePushError::TooManyParts),
+        );
     }
 }

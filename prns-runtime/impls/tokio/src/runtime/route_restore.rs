@@ -321,7 +321,7 @@ mod tests {
             entry: RouteEntry {
                 hops: (index % 8) as u8,
                 learned_at: InstantMillis(u64::from(index) * 10),
-                last_relayed_at: InstantMillis(u64::from(index) * 10 + 1),
+                last_route_activity_at: InstantMillis(u64::from(index) * 10 + 1),
                 responsiveness: RouteResponsiveness::Responsive,
                 receiving_interface: InterfaceId::new([index as u8; 8]),
                 next_hop: NextHop::Direct,

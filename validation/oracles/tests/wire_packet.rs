@@ -3,8 +3,8 @@
 use std::path::{Path, PathBuf};
 
 use prns_core::wire::{
-    ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType, WirePacketHeader,
-    BROADCAST_MTU, HEADER_MAX_LEN, HEADER_MIN_LEN, MAX_HOP_COUNT,
+    wire_hop_count_is_valid, ContextFlag, DestinationType, IfacFlag, PacketType, PropagationType,
+    WirePacketHeader, BROADCAST_MTU, HEADER_MAX_LEN, HEADER_MIN_LEN,
 };
 
 mod support;
@@ -127,12 +127,12 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn normalized(raw: &[u8]) -> serde_json::Value {
-    if raw.get(1).is_some_and(|hops| *hops >= MAX_HOP_COUNT) {
-        return serde_json::json!({ "error": "rejected" });
-    }
     let Ok((header, payload)) = WirePacketHeader::parse(raw) else {
         return serde_json::json!({ "error": "rejected" });
     };
+    if !wire_hop_count_is_valid(header.hops) {
+        return serde_json::json!({ "error": "rejected" });
+    }
     let mut encoded = [0u8; HEADER_MAX_LEN];
     let written = header.write(&mut encoded).expect("parsed header writes");
     let mut reencoded = encoded[..written].to_vec();

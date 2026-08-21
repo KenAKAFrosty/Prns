@@ -4,7 +4,7 @@ use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::lemire_index::HeapLemireIndex;
 use crate::routing::routes::interface_index::{LinearRouteInterfaceIndex, RouteInterfaceIndex};
-use crate::routing::routes::{RouteEntry, RouteTable};
+use crate::routing::routes::{RouteEntry, RouteEvidenceId, RouteTable};
 use crate::routing::{NextHop, RouteResponsiveness};
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
@@ -14,10 +14,11 @@ pub struct HeapRouteTableWithInterfaceIndex<I> {
     destination: Vec<DestinationHash>,
     hops: Vec<u8>,
     learned_at: Vec<InstantMillis>,
-    last_relayed_at: Vec<InstantMillis>,
+    last_route_activity_at: Vec<InstantMillis>,
     responsiveness: Vec<RouteResponsiveness>,
     receiving_interface: Vec<InterfaceId>,
     next_hop: Vec<NextHop>,
+    evidence_id: Vec<RouteEvidenceId>,
     index: HeapLemireIndex,
     interface_index: I,
 }
@@ -65,7 +66,7 @@ impl<I: RouteInterfaceIndex> RouteTable for HeapRouteTableWithInterfaceIndex<I> 
             current,
             now,
             &mut self.receiving_interface,
-            &mut self.last_relayed_at,
+            &mut self.last_route_activity_at,
         )
     }
 
@@ -78,8 +79,8 @@ impl<I: RouteInterfaceIndex> RouteTable for HeapRouteTableWithInterfaceIndex<I> 
     fn learned_at(&self) -> &[InstantMillis] {
         &self.learned_at
     }
-    fn last_relayed_at(&self) -> &[InstantMillis] {
-        &self.last_relayed_at
+    fn last_route_activity_at(&self) -> &[InstantMillis] {
+        &self.last_route_activity_at
     }
     fn responsiveness(&self) -> &[RouteResponsiveness] {
         &self.responsiveness
@@ -90,21 +91,29 @@ impl<I: RouteInterfaceIndex> RouteTable for HeapRouteTableWithInterfaceIndex<I> 
     fn next_hops(&self) -> &[NextHop] {
         &self.next_hop
     }
+    fn evidence_ids(&self) -> &[RouteEvidenceId] {
+        &self.evidence_id
+    }
 
     fn set_row(&mut self, i: usize, row: RouteEntry) {
         self.interface_index
             .update(i, self.receiving_interface[i], row.receiving_interface);
         self.hops[i] = row.hops;
         self.learned_at[i] = row.learned_at;
-        self.last_relayed_at[i] = row.last_relayed_at;
+        self.last_route_activity_at[i] = row.last_route_activity_at;
         self.responsiveness[i] = row.responsiveness;
         self.receiving_interface[i] = row.receiving_interface;
         self.next_hop[i] = row.next_hop;
     }
 
+    fn set_evidence_id(&mut self, i: usize, evidence_id: RouteEvidenceId) {
+        self.evidence_id[i] = evidence_id;
+    }
+
     fn push(
         &mut self,
         destination: DestinationHash,
+        evidence_id: RouteEvidenceId,
         row: RouteEntry,
     ) -> Result<usize, TablePushError> {
         if self.destination.len() >= self.capacity() {
@@ -112,9 +121,10 @@ impl<I: RouteInterfaceIndex> RouteTable for HeapRouteTableWithInterfaceIndex<I> 
         }
         let i = self.destination.len();
         self.destination.push(destination);
+        self.evidence_id.push(evidence_id);
         self.hops.push(row.hops);
         self.learned_at.push(row.learned_at);
-        self.last_relayed_at.push(row.last_relayed_at);
+        self.last_route_activity_at.push(row.last_route_activity_at);
         self.responsiveness.push(row.responsiveness);
         self.receiving_interface.push(row.receiving_interface);
         self.next_hop.push(row.next_hop);
@@ -136,10 +146,11 @@ impl<I: RouteInterfaceIndex> RouteTable for HeapRouteTableWithInterfaceIndex<I> 
         self.destination.swap_remove(i);
         self.hops.swap_remove(i);
         self.learned_at.swap_remove(i);
-        self.last_relayed_at.swap_remove(i);
+        self.last_route_activity_at.swap_remove(i);
         self.responsiveness.swap_remove(i);
         self.receiving_interface.swap_remove(i);
         self.next_hop.swap_remove(i);
+        self.evidence_id.swap_remove(i);
     }
 }
 
@@ -153,11 +164,14 @@ mod tests {
     fn iface(byte: u8) -> InterfaceId {
         InterfaceId::new([byte; 8])
     }
+    fn evidence(n: u32) -> RouteEvidenceId {
+        RouteEvidenceId::new(n + 1).unwrap()
+    }
     fn row(hops: u8, learned_at: u64, receiving_interface: InterfaceId) -> RouteEntry {
         RouteEntry {
             hops,
             learned_at: InstantMillis(learned_at),
-            last_relayed_at: InstantMillis(0),
+            last_route_activity_at: InstantMillis(0),
             responsiveness: RouteResponsiveness::Responsive,
             receiving_interface,
             next_hop: NextHop::Direct,
@@ -180,7 +194,7 @@ mod tests {
 
         for n in 0..1_000u32 {
             assert_eq!(
-                table.push(dest_n(n), row(1, n as u64, iface(n as u8))),
+                table.push(dest_n(n), evidence(n), row(1, n as u64, iface(n as u8))),
                 Ok(n as usize)
             );
         }
@@ -195,9 +209,15 @@ mod tests {
     #[test]
     fn swap_remove_moves_the_last_row_into_the_hole() {
         let mut table = HeapRouteTable::default();
-        table.push(dest(0xA1), row(1, 10, iface(0xE1))).unwrap();
-        table.push(dest(0xB2), row(2, 20, iface(0xE2))).unwrap();
-        table.push(dest(0xC3), row(3, 30, iface(0xE3))).unwrap();
+        table
+            .push(dest(0xA1), evidence(1), row(1, 10, iface(0xE1)))
+            .unwrap();
+        table
+            .push(dest(0xB2), evidence(2), row(2, 20, iface(0xE2)))
+            .unwrap();
+        table
+            .push(dest(0xC3), evidence(3), row(3, 30, iface(0xE3)))
+            .unwrap();
 
         table.swap_remove(0, table.len() - 1);
 
@@ -206,13 +226,18 @@ mod tests {
         assert_eq!(table.hops(), &[3, 2]);
         assert_eq!(table.learned_at(), &[InstantMillis(30), InstantMillis(20)]);
         assert_eq!(table.receiving_interfaces(), &[iface(0xE3), iface(0xE2)]);
+        assert_eq!(table.evidence_ids(), &[evidence(3), evidence(2)]);
     }
 
     #[test]
     fn the_index_finds_inserted_destinations_and_misses_absent_ones() {
         let mut table = HeapRouteTable::default();
-        let a = table.push(dest_n(1), row(1, 10, iface(0))).unwrap();
-        let b = table.push(dest_n(2), row(2, 20, iface(0))).unwrap();
+        let a = table
+            .push(dest_n(1), evidence(1), row(1, 10, iface(0)))
+            .unwrap();
+        let b = table
+            .push(dest_n(2), evidence(2), row(2, 20, iface(0)))
+            .unwrap();
 
         assert_eq!(table.index_of(&dest_n(1)), Some(a));
         assert_eq!(table.index_of(&dest_n(2)), Some(b));
@@ -222,9 +247,15 @@ mod tests {
     #[test]
     fn the_index_tracks_a_swap_remove() {
         let mut table = HeapRouteTable::default();
-        table.push(dest_n(1), row(1, 10, iface(0))).unwrap();
-        table.push(dest_n(2), row(2, 20, iface(0))).unwrap();
-        table.push(dest_n(3), row(3, 30, iface(0))).unwrap();
+        table
+            .push(dest_n(1), evidence(1), row(1, 10, iface(0)))
+            .unwrap();
+        table
+            .push(dest_n(2), evidence(2), row(2, 20, iface(0)))
+            .unwrap();
+        table
+            .push(dest_n(3), evidence(3), row(3, 30, iface(0)))
+            .unwrap();
 
         table.swap_remove(0, table.len() - 1);
 
@@ -252,7 +283,9 @@ mod tests {
             if insert {
                 let id = next_id;
                 next_id += 1;
-                let slot = table.push(dest_n(id), row(1, id as u64, iface(0))).unwrap();
+                let slot = table
+                    .push(dest_n(id), evidence(id), row(1, id as u64, iface(0)))
+                    .unwrap();
                 assert_eq!(slot, live.len());
                 live.push(id);
             } else {
@@ -281,7 +314,10 @@ mod tests {
         assert_eq!(linear.destinations(), roaring.destinations());
         assert_eq!(linear.hops(), roaring.hops());
         assert_eq!(linear.learned_at(), roaring.learned_at());
-        assert_eq!(linear.last_relayed_at(), roaring.last_relayed_at());
+        assert_eq!(
+            linear.last_route_activity_at(),
+            roaring.last_route_activity_at()
+        );
         assert_eq!(linear.responsiveness(), roaring.responsiveness());
         assert_eq!(
             linear.receiving_interfaces(),
@@ -318,8 +354,14 @@ mod tests {
                     let interface = iface((rng >> 17) as u8);
                     let route = row(1, step, interface);
                     let slot = linear.len();
-                    assert_eq!(linear.push(dest_n(next_id), route), Ok(slot));
-                    assert_eq!(roaring.push(dest_n(next_id), route), Ok(slot));
+                    assert_eq!(
+                        linear.push(dest_n(next_id), evidence(next_id), route),
+                        Ok(slot)
+                    );
+                    assert_eq!(
+                        roaring.push(dest_n(next_id), evidence(next_id), route),
+                        Ok(slot)
+                    );
                     next_id += 1;
                 }
                 3..=4 => {
@@ -327,7 +369,7 @@ mod tests {
                     let route = RouteEntry {
                         hops: linear.hops()[slot],
                         learned_at: linear.learned_at()[slot],
-                        last_relayed_at: InstantMillis(step),
+                        last_route_activity_at: InstantMillis(step),
                         responsiveness: linear.responsiveness()[slot],
                         receiving_interface: iface((rng >> 37) as u8),
                         next_hop: linear.next_hops()[slot],

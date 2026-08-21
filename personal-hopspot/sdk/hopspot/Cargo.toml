@@ -1,0 +1,73 @@
+[package]
+name = "hopspot"
+version = "0.3.6"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+description = "The Personal RNS API under the alternate Hopspot package name"
+documentation = "https://docs.rs/hopspot"
+readme = "README.md"
+keywords = ["reticulum", "hopspot", "mesh", "networking", "no-std"]
+categories = ["network-programming", "embedded", "no-std", "asynchronous"]
+publish = true
+include = ["src/**", "tests/**", "!tests/**/__pycache__/**", "!tests/**/*.pyc", "examples/**", "Cargo.toml", "README.md"]
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = ["std", "std-sync-host"]
+alloc = ["personal-rns/alloc"]
+rnx = ["personal-rns/rnx"]
+signed-artifact = ["personal-rns/signed-artifact"]
+interface-discovery = ["personal-rns/interface-discovery"]
+interface-discovery-archive = ["personal-rns/interface-discovery-archive"]
+external-alloc = ["personal-rns/external-alloc"]
+std = ["personal-rns/std"]
+std-sync-host = ["personal-rns/std-sync-host"]
+tokio-host = ["personal-rns/tokio-host"]
+embassy-host = ["personal-rns/embassy-host"]
+runtime-metrics = ["personal-rns/runtime-metrics"]
+tracing = ["personal-rns/tracing"]
+log = ["personal-rns/log"]
+stream-compression = ["personal-rns/stream-compression"]
+large-static-responses = ["personal-rns/large-static-responses"]
+embassy-large-static-responses = ["personal-rns/embassy-large-static-responses"]
+parallel-resource-hash = ["personal-rns/parallel-resource-hash"]
+parallel-persistence = ["personal-rns/parallel-persistence"]
+test-support = ["personal-rns/test-support"]
+keyring-zbus = ["personal-rns/keyring-zbus"]
+keyring-libdbus = ["personal-rns/keyring-libdbus"]
+flash = ["personal-rns/flash"]
+tcp = ["personal-rns/tcp"]
+tcp-dns = ["personal-rns/tcp-dns"]
+wifi-auto = ["personal-rns/wifi-auto"]
+wifi-auto-apple = ["personal-rns/wifi-auto-apple"]
+wifi-auto-mdns = ["personal-rns/wifi-auto-mdns"]
+wifi-direct = ["personal-rns/wifi-direct"]
+wifi-aware = ["personal-rns/wifi-aware"]
+usb = ["personal-rns/usb"]
+config = ["personal-rns/config"]
+bluetooth-auto = ["personal-rns/bluetooth-auto"]
+udp = ["personal-rns/udp"]
+serial = ["personal-rns/serial"]
+kiss = ["personal-rns/kiss"]
+ax25 = ["personal-rns/ax25"]
+rnode = ["personal-rns/rnode"]
+pipe = ["personal-rns/pipe"]
+backbone = ["personal-rns/backbone"]
+websocket = ["personal-rns/websocket"]
+browser-rendezvous = ["personal-rns/browser-rendezvous"]
+i2p = ["personal-rns/i2p"]
+weave = ["personal-rns/weave"]
+shared-instance = ["personal-rns/shared-instance"]
+lora = ["personal-rns/lora"]
+esp-now = ["personal-rns/esp-now"]
+
+[dependencies]
+personal-rns = { version = "=0.3.6", path = "../../../personal-rns", default-features = false }
+
+[lints]
+workspace = true

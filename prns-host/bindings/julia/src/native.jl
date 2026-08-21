@@ -168,6 +168,7 @@ struct NativeInterfaceConfig
     peer_count::Csize_t
     connectable::UInt8
     url::NativeStringView
+    websocket_framing_selection::UInt32
 end
 
 struct NativeInterfaceRoutingPolicy
@@ -222,7 +223,7 @@ struct NativeRouteSnapshot
     via_identity::NativeByteView
     interface_id::NativeByteView
     learned_at_millis::UInt64
-    last_relayed_at_millis::UInt64
+    last_route_activity_at_millis::UInt64
     expires_at_millis::UInt64
 end
 
@@ -312,6 +313,7 @@ function NativeInterfaceConfig(;
     peer_count=0,
     connectable=false,
     url=NativeStringView(C_NULL, 0),
+    websocket_framing_selection=UInt32(0),
 )
     empty_string = NativeStringView(C_NULL, 0)
     NativeInterfaceConfig(
@@ -364,6 +366,7 @@ function NativeInterfaceConfig(;
         peer_count,
         UInt8(connectable),
         url,
+        UInt32(websocket_framing_selection),
     )
 end
 
@@ -781,12 +784,14 @@ function native_interface(arena::NativeArena, value::InterfaceConfig)
         return NativeInterfaceConfig(
             kind=InterfaceKindWebSocketClient,
             target=native_string_view(arena, value.target),
+            websocket_framing_selection=value.framing,
         )
     end
     if value isa InterfaceConfigWebSocketServer
         return NativeInterfaceConfig(
             kind=InterfaceKindWebSocketServer,
             bind=native_string_view(arena, value.bind),
+            websocket_framing_selection=value.framing,
         )
     end
     if value isa InterfaceConfigBrowserRendezvous
@@ -844,7 +849,7 @@ function decode_host_snapshot(value::NativeHostSnapshot)
                 IdentityHash(copy_view(item.via_identity)),
             InterfaceId(copy_view(item.interface_id)),
             item.learned_at_millis,
-            item.last_relayed_at_millis,
+            item.last_route_activity_at_millis,
             item.expires_at_millis,
         )
         for item in native_array(value.routes, value.route_count)

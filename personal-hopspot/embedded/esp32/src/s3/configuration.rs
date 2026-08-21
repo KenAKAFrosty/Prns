@@ -1,6 +1,5 @@
 use super::*;
 
-#[cfg(feature = "wifi-auto")]
 #[derive(Clone, Debug)]
 pub(super) struct HopspotWifiConfig {
     pub(super) ssid: String,
@@ -20,7 +19,6 @@ pub(super) enum HopspotTcpClientHost {
     Hostname(String),
 }
 
-#[cfg(feature = "wifi-auto")]
 impl HopspotWifiConfig {
     fn from_build_env() -> Self {
         Self {
@@ -35,14 +33,12 @@ impl HopspotWifiConfig {
     }
 }
 
-#[cfg(feature = "wifi-auto")]
 #[derive(Clone, Copy, Debug)]
 pub(super) enum HopspotWifiConfigSource {
     Provisioning,
     BuildEnvironment,
 }
 
-#[cfg(feature = "wifi-auto")]
 pub(super) fn hopspot_wifi_config() -> (HopspotWifiConfig, HopspotWifiConfigSource) {
     match read_hopspot_config_slot() {
         Some(config) => (config, HopspotWifiConfigSource::Provisioning),
@@ -53,7 +49,6 @@ pub(super) fn hopspot_wifi_config() -> (HopspotWifiConfig, HopspotWifiConfigSour
     }
 }
 
-#[cfg(feature = "wifi-auto")]
 fn read_hopspot_config_slot() -> Option<HopspotWifiConfig> {
     let mut words = [0u32; HOPSPOT_CONFIG_READ_WORDS];
     // SAFETY: `words` is aligned writable storage of the exact byte length passed to the ROM, and
@@ -79,7 +74,6 @@ fn read_hopspot_config_slot() -> Option<HopspotWifiConfig> {
     parse_hopspot_config(bytes)
 }
 
-#[cfg(feature = "wifi-auto")]
 fn parse_hopspot_config(bytes: &[u8]) -> Option<HopspotWifiConfig> {
     if bytes.get(0..8)? != HOPSPOT_CONFIG_MAGIC || *bytes.get(8)? != HOPSPOT_CONFIG_VERSION {
         return None;
@@ -101,7 +95,6 @@ fn parse_hopspot_config(bytes: &[u8]) -> Option<HopspotWifiConfig> {
     })
 }
 
-#[cfg(feature = "wifi-auto")]
 fn parse_tcp_client(bytes: &[u8]) -> Option<HopspotTcpClientConfig> {
     match *bytes.get(HOPSPOT_CONFIG_TCP_KIND_OFFSET)? {
         1 => {
@@ -137,7 +130,6 @@ fn parse_tcp_client(bytes: &[u8]) -> Option<HopspotTcpClientConfig> {
     }
 }
 
-#[cfg(feature = "wifi-auto")]
 fn parse_tcp_client_target(value: &str) -> Option<HopspotTcpClientConfig> {
     if let Ok(target) = value.parse::<core::net::SocketAddrV4>() {
         return valid_tcp_ipv4(*target.ip(), target.port()).then_some(HopspotTcpClientConfig {
@@ -163,7 +155,6 @@ fn parse_tcp_client_target(value: &str) -> Option<HopspotTcpClientConfig> {
     })
 }
 
-#[cfg(feature = "wifi-auto")]
 fn read_tcp_port(bytes: &[u8]) -> Option<u16> {
     Some(u16::from_be_bytes([
         *bytes.get(HOPSPOT_CONFIG_TCP_PORT_OFFSET)?,
@@ -171,7 +162,6 @@ fn read_tcp_port(bytes: &[u8]) -> Option<u16> {
     ]))
 }
 
-#[cfg(feature = "wifi-auto")]
 fn valid_tcp_ipv4(address: core::net::Ipv4Addr, port: u16) -> bool {
     !address.is_unspecified()
         && !address.is_multicast()
@@ -179,7 +169,6 @@ fn valid_tcp_ipv4(address: core::net::Ipv4Addr, port: u16) -> bool {
         && port != 0
 }
 
-#[cfg(feature = "wifi-auto")]
 fn valid_tcp_hostname(hostname: &str, port: u16) -> bool {
     port != 0
         && !hostname.is_empty()

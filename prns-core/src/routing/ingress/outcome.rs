@@ -71,6 +71,7 @@ pub struct LinkRttOwed {
     pub responder_encryption: X25519PublicKey,
     pub responder_signing: Ed25519PublicKey,
     pub command_id: CommandId,
+    pub arrived_at: InstantMillis,
     pub rtt: RttMillis,
     pub mtu: usize,
 }
@@ -198,6 +199,16 @@ pub enum IngestPacketOutcome<'p> {
         accepted: AcceptedResource<'p>,
     },
     ResourceTooLarge {
+        link_id: LinkId,
+        hash: ResourceHash,
+        settled_request: Option<CommandId>,
+    },
+    /// A validated and policy-approved advertisement is waiting for an
+    /// incoming Resource row, or a retry coalesced into that existing wait.
+    ResourceAdmissionPending,
+    /// The offer cannot wait: it can never fit, this target has no pending
+    /// queue, or the bounded queue is full.
+    ResourceCapacityRejected {
         link_id: LinkId,
         hash: ResourceHash,
         settled_request: Option<CommandId>,

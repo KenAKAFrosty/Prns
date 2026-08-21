@@ -38,6 +38,18 @@ MAIN_RELEASE_AUTHORITY_WORKFLOWS = (
     "suite-promote.yml",
     "suite-sign.yml",
 )
+TRUSTED_DISPATCH_CHECKOUTS = {
+    "flasher-installation-qualification.yml": ("inputs.source_commit",),
+    "host-sdk-public-qualification.yml": ("inputs.expected_sha",),
+    "prnsd-candidate.yml": ("inputs.commit_sha",),
+    "prnsd-image-candidate.yml": ("inputs.commit_sha",),
+    "prnsd-staging-qualification.yml": ("inputs.source_commit",),
+    "release-readiness.yml": (
+        "inputs.commit_sha",
+        "needs.inventory.outputs.commit",
+    ),
+    "suite-deployment-qualification.yml": ("inputs.source_commit",),
+}
 
 
 def workflow_jobs(text: str) -> tuple[tuple[str, str], ...]:
@@ -143,6 +155,19 @@ def validate() -> list[str]:
     unused = sorted(set(actions) - used)
     if unused:
         errors.append(f"action-pins.json contains unused actions: {unused}")
+
+    for workflow_name, untrusted_refs in TRUSTED_DISPATCH_CHECKOUTS.items():
+        release_workflow = (
+            ROOT / ".github" / "workflows" / workflow_name
+        ).read_text(encoding="utf-8")
+        if "ref: ${{ github.sha }}" not in release_workflow:
+            errors.append(f"{workflow_name} does not checkout the dispatched workflow SHA")
+        for untrusted_ref in untrusted_refs:
+            fragment = f"ref: ${{{{ {untrusted_ref} }}}}"
+            if fragment in release_workflow:
+                errors.append(
+                    f"{workflow_name} checks out untrusted dispatch ref {untrusted_ref}"
+                )
 
     for workflow_name in MAIN_RELEASE_AUTHORITY_WORKFLOWS:
         release_workflow = (
@@ -700,7 +725,7 @@ def validate() -> list[str]:
     for qualification_gate in (
         "Verify every public signature, hash, tag, and source commit",
         'test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"',
-        "compare/${EXPECTED_SHA}...${GITHUB_SHA}",
+        'test "$EXPECTED_SHA" = "$GITHUB_SHA"',
         "sha256sum --check SHA256SUMS",
         "ssh-keygen -Y verify",
         "git tag -v",
@@ -709,6 +734,8 @@ def validate() -> list[str]:
         "release.host-sdk.python.smoke",
         "release.host-sdk.dotnet.smoke -- --public",
         '"personal-rns@=$VERSION"',
+        '"hopspot@=$VERSION"',
+        '"personal-rns@$VERSION" "hopspot@$VERSION"',
         "https://repo1.maven.org/maven2",
         "persistent-two-node-smoke.c",
         'go -C "$go_root" test ./...',
@@ -737,6 +764,12 @@ def validate() -> list[str]:
         "persistent-two-node-v1.json",
         'cp "$GITHUB_WORKSPACE/VERSION" VERSION',
         "node --test prns-js/tests/native-consumer.test.mjs",
+        "npm pack ./personal-hopspot/sdk/hopspot --pack-destination dist/npm",
+        '"$GITHUB_WORKSPACE/dist/npm/hopspot-$(cat "$GITHUB_WORKSPACE/VERSION").tgz"',
+        "publish alternate-name facade",
+        "wait for the canonical package dependency",
+        'npm view "personal-rns@$version" version',
+        "working-directory: personal-hopspot/sdk/hopspot",
     ):
         if package_gate not in napi_release:
             errors.append(f"napi.yml is missing package journey gate {package_gate!r}")

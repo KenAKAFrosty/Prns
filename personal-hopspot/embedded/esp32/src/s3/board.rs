@@ -24,9 +24,7 @@ pub(crate) struct S3InterfaceHardware {
     pub(crate) usb_device: USB_DEVICE<'static>,
     #[cfg(feature = "lora")]
     pub(crate) lora_radio: LoraRadio,
-    #[cfg(feature = "wifi-auto")]
     pub(crate) wifi: esp_hal::peripherals::WIFI<'static>,
-    #[cfg(feature = "bluetooth-auto")]
     pub(crate) bluetooth: esp_hal::peripherals::BT<'static>,
 }
 
@@ -37,8 +35,9 @@ pub(crate) struct S3ManifoldHardware {
     pub(crate) rtc: esp_hal::rtc_cntl::Rtc<'static>,
 }
 
-pub(crate) struct S3BoardHardware<D, B> {
+pub(crate) struct S3BoardHardware<D, B, G> {
     pub(crate) face: BoardFace<D, B>,
+    pub(crate) gnss: G,
     pub(crate) interface_hardware: S3InterfaceHardware,
     pub(crate) manifold: S3ManifoldHardware,
 }
@@ -52,10 +51,11 @@ pub(crate) trait Esp32S3Board {
     const FLASH_LAYOUT: screen::HopspotS3FlashLayout;
     type Display: DrawTarget<Color = BinaryColor>;
     type Battery: screen::BatterySource;
+    type Gnss: GnssProvider;
 
     fn flush(display: &mut Self::Display);
     fn set_display_awake(display: &mut Self::Display, awake: bool);
     async fn bringup(
         peripherals: esp_hal::peripherals::Peripherals,
-    ) -> S3BoardHardware<Self::Display, Self::Battery>;
+    ) -> S3BoardHardware<Self::Display, Self::Battery, Self::Gnss>;
 }

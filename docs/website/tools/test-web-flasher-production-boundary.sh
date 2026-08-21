@@ -81,6 +81,7 @@ mkdir -p "$hosted"
 cp -R "$dioxus_dist/." "$hosted/"
 mkdir -p "$hosted/assets/flasher"
 cp "$website/target/hosted-assets/prns-flash.js" "$hosted/assets/flasher/prns-flash.js"
+cp -R "$website/target/hosted-assets/nrf-dfu" "$hosted/assets/flasher/nrf-dfu"
 
 test -f "$captive_page"
 rm -rf -- "$embedded"

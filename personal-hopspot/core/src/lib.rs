@@ -6,7 +6,6 @@ extern crate std;
 #[cfg(all(test, not(feature = "host")))]
 extern crate std;
 
-mod battery;
 mod destinations;
 mod flash_identity;
 mod flash_layout;
@@ -17,14 +16,16 @@ mod persistence;
 mod radio_profile_store;
 mod screen;
 
-pub use battery::{BatteryGauge, BatteryPercent, BatterySource, BatteryState, NoBattery};
-pub use destinations::{HopspotDestinationHashes, HopspotDestinationSet};
+pub use destinations::{
+    hopspot_destination_hashes, HopspotDestinationHashes, HopspotDestinationSet,
+};
 pub use flash_identity::{
     bootstrap_flash_ble_identity, bootstrap_flash_node_identity, FlashIdentityError,
 };
 pub use flash_layout::{
-    HopspotS3FlashLayout, HOPSPOT_FLASH_PAGE_BYTES, S3_16_MIB_FLASH_LAYOUT, S3_8_MIB_FLASH_LAYOUT,
-    T_ECHO_JOURNAL_LAYOUT, T_ECHO_MIN_ARENA_BYTES, T_ECHO_RADIO_PROFILE_PAGES,
+    HopspotS3FlashLayout, HEADLESS_NRF52840_MIN_ARENA_BYTES, HOPSPOT_FLASH_PAGE_BYTES,
+    NRF52840_RADIO_PROFILE_PAGES, S3_16_MIB_FLASH_LAYOUT, S3_8_MIB_FLASH_LAYOUT,
+    T096_JOURNAL_LAYOUT, T1000E_JOURNAL_LAYOUT, T_ECHO_JOURNAL_LAYOUT, T_ECHO_MIN_ARENA_BYTES,
 };
 #[cfg(feature = "host")]
 pub use identity::{
@@ -41,6 +42,16 @@ pub use mobile::{
     MOBILE_PANEL_WIDTH, MOBILE_PIXEL_COUNT, MOBILE_RGBA_BYTES,
 };
 pub use persistence::PersistenceState;
+pub use prns_core::capabilities::positioning::gnss::{
+    GnssFix, GnssReceiverCommand, GnssSnapshot, NmeaParser,
+};
+pub use prns_core::capabilities::positioning::{
+    AltitudeMillimeters, CoordinateOutOfRange, GeographicPosition, LatitudeE7, LongitudeE7,
+};
+pub use prns_core::capabilities::power::{
+    BatteryGauge, BatteryPercent, BatterySource, ChargingState, ExternalPowerState, NoBattery,
+    PowerSnapshot,
+};
 pub use radio_profile_store::{
     LoadedRadioProfile, RadioProfileLoadNotice, RadioProfileStore, RadioProfileStoreError,
 };
@@ -48,9 +59,11 @@ pub use screen::{
     apply_and_persist_radio_profile, card_label, card_label_max_chars, render, splash,
     tcp_card_label, AccessPointState, BluetoothRecoveryMenuDetails, Card, CardActivityTracker,
     CardKind, CardLabel, DisplayPowerControl, EinkRefresh, EinkRefreshPolicy, EinkRefreshUrgency,
-    InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, PersistenceNotice,
-    RadioProfileChangeResult, RenderFrame, ScreenContent, SplashContent, UiAction, UiConfiguration,
-    UiNotice, UiState, WifiNetworkStatus, WifiStationStatus,
+    GnssAvailability, InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess,
+    OledAutoOff, OledButtonOutcome, OledDarkReason, OledPowerCommand, OledPowerState,
+    PersistenceNotice, RadioProfileChangeResult, RenderFrame, ScreenContent,
+    SharedInstanceConfigExport, SplashContent, UiAction, UiConfiguration, UiNotice, UiState,
+    WifiNetworkStatus, WifiStationStatus,
 };
 
 use personal_rns::engine::{
@@ -303,6 +316,30 @@ mod tests {
 
         assert_eq!(cards.len(), 1);
         assert_eq!(cards[0].connection, ConnectionState::Disconnected);
+    }
+
+    #[test]
+    fn snapshots_to_cards_rolls_up_more_members_than_the_card_capacity() {
+        let supervisor_id = InterfaceId::new([InterfaceKind::AutoWifi as u8, 0, 0, 0, 0, 0, 0, 0]);
+        let mut supervisor = snapshot(InterfaceKind::AutoWifi);
+        supervisor.id = supervisor_id;
+        let mut snapshots: heapless::Vec<InterfaceSnapshot, 13> = heapless::Vec::new();
+        assert!(snapshots.push(supervisor).is_ok());
+        for suffix in 1..=12 {
+            let mut member = snapshot(InterfaceKind::WifiPeer);
+            member.id = InterfaceId::new([InterfaceKind::WifiPeer as u8, suffix, 0, 0, 0, 0, 0, 0]);
+            member.destinations = 40;
+            member.membership = Membership::FleetMember { supervisor_id };
+            assert!(snapshots.push(member).is_ok());
+        }
+
+        let cards: heapless::Vec<Card, 1> = snapshots_to_cards(&snapshots, |id| {
+            (id == supervisor_id).then_some((CardKind::Wifi, card_label("LAN")))
+        });
+
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].peers, Some(12));
+        assert_eq!(cards[0].destinations, 480);
     }
 
     #[test]

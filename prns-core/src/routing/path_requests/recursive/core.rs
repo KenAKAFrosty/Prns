@@ -64,6 +64,10 @@ pub enum RecursiveOutcome {
 }
 
 impl<C: RecursivePathRequestTable> RecursivePathRequests<C> {
+    pub fn in_flight_count(&self) -> usize {
+        self.table.len()
+    }
+
     pub fn begin(
         &mut self,
         destination: DestinationHash,

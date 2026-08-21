@@ -2,11 +2,28 @@
 
 use std::io;
 
-/// Return only USB-backed serial port paths/names, sorted and deduplicated.
-pub fn available_ports() -> io::Result<Vec<String>> {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UsbSerialPort {
+    path: String,
+    incarnation: String,
+}
+
+impl UsbSerialPort {
+    #[must_use]
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    #[must_use]
+    pub fn incarnation(&self) -> &str {
+        &self.incarnation
+    }
+}
+
+pub fn available_ports() -> io::Result<Vec<UsbSerialPort>> {
     let mut ports = platform::available_ports()?;
-    ports.sort();
-    ports.dedup();
+    ports.sort_by(|left, right| left.path.cmp(&right.path));
+    ports.dedup_by(|left, right| left.path == right.path);
     Ok(ports)
 }
 
@@ -14,13 +31,14 @@ pub fn available_ports() -> io::Result<Vec<String>> {
 mod platform {
     use std::io;
 
+    use super::UsbSerialPort;
     use objc2_core_foundation::{CFDictionary, CFRetained, CFString};
     use objc2_io_kit::{
         io_iterator_t, io_object_t, kIOMainPortDefault, kIORegistryIterateParents,
         kIORegistryIterateRecursively, kIOReturnSuccess, kIOSerialBSDServiceValue, kIOServicePlane,
         IOIteratorNext, IOObjectRelease, IORegistryEntryCreateCFProperty,
-        IORegistryEntrySearchCFProperty, IOServiceGetMatchingServices, IOServiceMatching,
-        IO_OBJECT_NULL,
+        IORegistryEntryGetRegistryEntryID, IORegistryEntrySearchCFProperty,
+        IOServiceGetMatchingServices, IOServiceMatching, IO_OBJECT_NULL,
     };
 
     struct IoObject(io_object_t);
@@ -33,7 +51,7 @@ mod platform {
         }
     }
 
-    pub(super) fn available_ports() -> io::Result<Vec<String>> {
+    pub(super) fn available_ports() -> io::Result<Vec<UsbSerialPort>> {
         // SAFETY: The generated binding accepts a valid, NUL-terminated static class name and
         // returns an owned CoreFoundation dictionary when successful.
         let matching = unsafe { IOServiceMatching(kIOSerialBSDServiceValue.as_ptr()) }
@@ -71,14 +89,22 @@ mod platform {
             if vendor.is_none() {
                 continue;
             }
-            // SAFETY: `service` and the CFString key remain valid. IOKit returns a retained CFType.
-            let Some(callout) =
-                (unsafe { IORegistryEntryCreateCFProperty(service, Some(&callout_key), None, 0) })
-            else {
+            let mut entry_id = 0;
+            // SAFETY: service remains live; entry_id is writable, and IOKit returns the callout property retained.
+            let Some(callout) = (unsafe {
+                if IORegistryEntryGetRegistryEntryID(service, &mut entry_id) != kIOReturnSuccess {
+                    None
+                } else {
+                    IORegistryEntryCreateCFProperty(service, Some(&callout_key), None, 0)
+                }
+            }) else {
                 continue;
             };
             if let Some(path) = callout.downcast_ref::<CFString>() {
-                ports.push(path.to_string());
+                ports.push(UsbSerialPort {
+                    path: path.to_string(),
+                    incarnation: entry_id.to_string(),
+                });
             }
         }
         Ok(ports)
@@ -89,7 +115,9 @@ mod platform {
 mod platform {
     use std::io;
 
-    pub(super) fn available_ports() -> io::Result<Vec<String>> {
+    use super::UsbSerialPort;
+
+    pub(super) fn available_ports() -> io::Result<Vec<UsbSerialPort>> {
         super::windows_setupapi::available_ports()
     }
 }
@@ -99,11 +127,15 @@ mod windows_setupapi {
     use std::io;
     use std::mem::size_of;
 
+    use super::UsbSerialPort;
     use windows::core::{HRESULT, PCWSTR};
     use windows::Win32::Devices::DeviceAndDriverInstallation::{
         SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInfo, SetupDiGetClassDevsW,
-        SetupDiGetDeviceInstanceIdW, SetupDiGetDeviceRegistryPropertyW, DIGCF_ALLCLASSES,
-        DIGCF_PRESENT, HDEVINFO, SPDRP_FRIENDLYNAME, SP_DEVINFO_DATA,
+        SetupDiGetDeviceInstanceIdW, SetupDiGetDevicePropertyW, SetupDiGetDeviceRegistryPropertyW,
+        DIGCF_ALLCLASSES, DIGCF_PRESENT, HDEVINFO, SPDRP_FRIENDLYNAME, SP_DEVINFO_DATA,
+    };
+    use windows::Win32::Devices::Properties::{
+        DEVPKEY_Device_LastArrivalDate, DEVPROPTYPE, DEVPROP_TYPE_FILETIME,
     };
     use windows::Win32::Foundation::{ERROR_NO_MORE_ITEMS, HWND};
 
@@ -116,7 +148,7 @@ mod windows_setupapi {
         }
     }
 
-    pub(super) fn available_ports() -> io::Result<Vec<String>> {
+    pub(super) fn available_ports() -> io::Result<Vec<UsbSerialPort>> {
         // SAFETY: A null class/enumerator with ALLCLASSES asks SetupAPI for all present local devices.
         let set = unsafe {
             SetupDiGetClassDevsW(
@@ -154,28 +186,45 @@ mod windows_setupapi {
                 continue;
             }
             let mut friendly = [0u8; 1024];
-            // SAFETY: The device-info structure belongs to `set`; SetupAPI writes at most the
-            // provided byte-buffer length for this REG_SZ property.
-            if unsafe {
-                SetupDiGetDeviceRegistryPropertyW(
+            let mut last_arrival = [0u8; size_of::<u64>()];
+            let mut property_type = DEVPROPTYPE::default();
+            // SAFETY: set and info remain live; both output buffers and the property-type slot are valid for their declared lengths.
+            let properties = unsafe {
+                let friendly = SetupDiGetDeviceRegistryPropertyW(
                     set.0,
                     &info,
                     SPDRP_FRIENDLYNAME,
                     None,
                     Some(&mut friendly),
                     None,
-                )
-            }
-            .is_err()
-            {
+                );
+                let arrival = SetupDiGetDevicePropertyW(
+                    set.0,
+                    &info,
+                    &DEVPKEY_Device_LastArrivalDate,
+                    &mut property_type,
+                    Some(&mut last_arrival),
+                    None,
+                    0,
+                );
+                friendly.and(arrival)
+            };
+            if properties.is_err() || property_type != DEVPROP_TYPE_FILETIME {
                 continue;
             }
             let wide: Vec<u16> = friendly
-                .chunks_exact(2)
-                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .copied()
+                .map(u16::from_le_bytes)
                 .collect();
             if let Some(port) = com_name(&wide_string(&wide)) {
-                ports.push(port);
+                let last_arrival = u64::from_le_bytes(last_arrival);
+                ports.push(UsbSerialPort {
+                    path: port,
+                    incarnation: format!("{instance}:{last_arrival}"),
+                });
             }
         }
         Ok(ports)

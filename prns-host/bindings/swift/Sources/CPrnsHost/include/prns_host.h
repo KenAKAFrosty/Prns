@@ -71,6 +71,7 @@ typedef uint32_t PrnsCapability;
 #define PRNS_CAPABILITY_BROWSER_RENDEZVOUS UINT32_C(10)
 #define PRNS_CAPABILITY_I2P UINT32_C(11)
 #define PRNS_CAPABILITY_WEAVE UINT32_C(12)
+#define PRNS_CAPABILITY_SUPPLIED_PIPE UINT32_C(13)
 
 typedef uint32_t PrnsInterfaceKind;
 #define PRNS_INTERFACE_KIND_AUTO_LAN UINT32_C(1)
@@ -101,6 +102,12 @@ typedef uint32_t PrnsInterfaceMode;
 #define PRNS_INTERFACE_MODE_BOUNDARY UINT32_C(5)
 #define PRNS_INTERFACE_MODE_GATEWAY UINT32_C(6)
 #define PRNS_INTERFACE_MODE_INTERNAL UINT32_C(7)
+
+typedef uint32_t PrnsWebSocketFramingSelection;
+#define PRNS_WEB_SOCKET_FRAMING_SELECTION_RAW_PACKET UINT32_C(1)
+#define PRNS_WEB_SOCKET_FRAMING_SELECTION_HDLC UINT32_C(2)
+#define PRNS_WEB_SOCKET_FRAMING_SELECTION_KISS UINT32_C(3)
+#define PRNS_WEB_SOCKET_FRAMING_SELECTION_AUTO UINT32_C(4)
 
 typedef uint32_t PrnsInterfaceHealth;
 #define PRNS_INTERFACE_HEALTH_INITIALIZING UINT32_C(1)
@@ -353,12 +360,19 @@ typedef uint32_t PrnsEventField;
  *   with status results reject other required NULL arguments.
  * - A release must not race another operation on the same handle. Interrupt
  *   may race its matching wait; release only after that wait has returned.
- * - UINT32_MAX is the infinite timeout for command and event-stream waits.
+ * - UINT32_MAX is the infinite timeout for command, event-stream, and
+ *   supplied-Pipe request waits.
+ * - Supplied-Pipe readiness is only a wake hint. Consumers pull an owned
+ *   open-request handle, then provide or decline it exactly once.
+ * - A successful descriptor-provide call consumes every non-negative
+ *   descriptor, including one rejected because closure won a race.
  * - All exported calls contain Rust panics and report PRNS_STATUS_PANIC where
  *   the function has a status result; no Rust unwinding crosses this ABI.
  */
 
 typedef struct PrnsHost PrnsHost;
+typedef struct PrnsSuppliedPipe PrnsSuppliedPipe;
+typedef struct PrnsSuppliedPipeOpenRequest PrnsSuppliedPipeOpenRequest;
 typedef struct PrnsHostInspection PrnsHostInspection;
 typedef struct PrnsIssuedCommand PrnsIssuedCommand;
 typedef struct PrnsResourceUpload PrnsResourceUpload;
@@ -497,7 +511,7 @@ typedef struct PrnsRouteSnapshot {
     PrnsByteView via_identity;
     PrnsByteView interface_id;
     uint64_t learned_at_millis;
-    uint64_t last_relayed_at_millis;
+    uint64_t last_route_activity_at_millis;
     uint64_t expires_at_millis;
 } PrnsRouteSnapshot;
 
@@ -597,6 +611,7 @@ typedef struct PrnsInterfaceConfig {
     size_t peer_count;
     uint8_t connectable;
     PrnsStringView url;
+    PrnsWebSocketFramingSelection websocket_framing_selection;
 } PrnsInterfaceConfig;
 
 typedef struct PrnsDestinationConfig {
@@ -662,6 +677,15 @@ PRNS_HOST_API void prns_host_snapshot_release(PrnsHostInspection *host_inspectio
 PRNS_HOST_API PrnsStatus prns_host_identity_hash(const PrnsHost *host, PrnsByteView *out_value);
 PRNS_HOST_API size_t prns_host_destination_count(const PrnsHost *host);
 PRNS_HOST_API PrnsStatus prns_host_destination_hash(const PrnsHost *host, size_t index, PrnsByteView *out_value);
+PRNS_HOST_API PrnsStatus prns_host_attach_supplied_pipe(PrnsHost *host, PrnsStringView name, uint64_t respawn_delay_millis, PrnsBitrateKind bitrate_kind, uint64_t bitrate_bps, PrnsSuppliedPipe **out_value);
+PRNS_HOST_API PrnsStatus prns_supplied_pipe_claim_attachment(PrnsSuppliedPipe *supplied_pipe, PrnsIssuedCommand **out_value);
+PRNS_HOST_API PrnsStatus prns_supplied_pipe_next_open_request(PrnsSuppliedPipe *supplied_pipe, uint32_t timeout_millis, PrnsSuppliedPipeOpenRequest **out_value);
+PRNS_HOST_API PrnsStatus prns_supplied_pipe_register_readiness(PrnsSuppliedPipe *supplied_pipe, PrnsReadinessCallback callback, void *context, PrnsReadinessRegistration **out_value);
+PRNS_HOST_API void prns_supplied_pipe_interrupt_wait(PrnsSuppliedPipe *supplied_pipe);
+PRNS_HOST_API void prns_supplied_pipe_release(PrnsSuppliedPipe *supplied_pipe);
+PRNS_HOST_API PrnsStatus prns_supplied_pipe_open_request_provide(PrnsSuppliedPipeOpenRequest *supplied_pipe_open_request, int64_t descriptor, uint8_t *out_value);
+PRNS_HOST_API PrnsStatus prns_supplied_pipe_open_request_decline(PrnsSuppliedPipeOpenRequest *supplied_pipe_open_request, uint8_t *out_value);
+PRNS_HOST_API void prns_supplied_pipe_open_request_release(PrnsSuppliedPipeOpenRequest *supplied_pipe_open_request);
 PRNS_HOST_API PrnsStatus prns_host_begin_resource_upload(PrnsHost *host, PrnsByteView link_id, uint64_t declared_length, const PrnsByteView *packed_metadata, PrnsResourceCompressionKind compression_kind, PrnsResourceUpload **out_value);
 PRNS_HOST_API PrnsStatus prns_resource_upload_write(PrnsResourceUpload *resource_upload, PrnsByteView chunk);
 PRNS_HOST_API PrnsStatus prns_resource_upload_is_writable(const PrnsResourceUpload *resource_upload, uint8_t *out_value);

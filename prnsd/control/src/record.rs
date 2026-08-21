@@ -180,7 +180,9 @@ fn decode_bytes(value: &str) -> Option<Vec<u8>> {
     }
     value
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let pair = std::str::from_utf8(pair).ok()?;
             u8::from_str_radix(pair, 16).ok()
@@ -215,8 +217,12 @@ pub(crate) fn decode_os(value: &str) -> Option<OsString> {
         return None;
     }
     let wide: Option<Vec<_>> = bytes
-        .chunks_exact(2)
-        .map(|pair| Some(u16::from_le_bytes([pair[0], pair[1]])))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .copied()
+        .map(u16::from_le_bytes)
+        .map(Some)
         .collect();
     wide.map(|wide| OsString::from_wide(&wide))
 }

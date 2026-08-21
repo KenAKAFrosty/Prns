@@ -44,7 +44,8 @@ export type CapabilityName =
   | "WebSocket"
   | "BrowserRendezvous"
   | "I2p"
-  | "Weave";
+  | "Weave"
+  | "SuppliedPipe";
 
 export const CAPABILITY_NAME_VALUES: readonly CapabilityName[] = Object.freeze([
   "Loopback",
@@ -59,6 +60,7 @@ export const CAPABILITY_NAME_VALUES: readonly CapabilityName[] = Object.freeze([
   "BrowserRendezvous",
   "I2p",
   "Weave",
+  "SuppliedPipe",
 ]);
 
 export function isCapabilityName(value: unknown): value is CapabilityName {
@@ -256,6 +258,23 @@ export function isInterfaceMode(value: unknown): value is InterfaceMode {
   return typeof value === "string" && (INTERFACE_MODE_VALUES as readonly string[]).includes(value);
 }
 
+export type WebSocketFramingSelection =
+  | "RawPacket"
+  | "Hdlc"
+  | "Kiss"
+  | "Auto";
+
+export const WEB_SOCKET_FRAMING_SELECTION_VALUES: readonly WebSocketFramingSelection[] = Object.freeze([
+  "RawPacket",
+  "Hdlc",
+  "Kiss",
+  "Auto",
+]);
+
+export function isWebSocketFramingSelection(value: unknown): value is WebSocketFramingSelection {
+  return typeof value === "string" && (WEB_SOCKET_FRAMING_SELECTION_VALUES as readonly string[]).includes(value);
+}
+
 export type InterfaceHealth =
   | "Initializing"
   | "Connected"
@@ -426,7 +445,7 @@ export type RouteSnapshot = {
   readonly viaIdentity?: IdentityHash;
   readonly interfaceId: InterfaceId;
   readonly learnedAtMillis: number;
-  readonly lastRelayedAtMillis: number;
+  readonly lastRouteActivityAtMillis: number;
   readonly expiresAtMillis: number;
 };
 
@@ -627,12 +646,14 @@ export type InterfaceConfig =
       "WebSocketClient",
       {
         readonly target: string;
+        readonly framing: WebSocketFramingSelection;
       }
     >
   | Tag<
       "WebSocketServer",
       {
         readonly bind: string;
+        readonly framing: WebSocketFramingSelection;
       }
     >
   | Tag<
@@ -1211,6 +1232,15 @@ const HOST_OPERATION_NAMES = [
   "hostIdentityHash",
   "hostDestinationCount",
   "hostDestinationHash",
+  "hostAttachSuppliedPipe",
+  "suppliedPipeClaimAttachment",
+  "suppliedPipeNextOpenRequest",
+  "suppliedPipeRegisterReadiness",
+  "suppliedPipeInterruptWait",
+  "suppliedPipeRelease",
+  "suppliedPipeOpenRequestProvide",
+  "suppliedPipeOpenRequestDecline",
+  "suppliedPipeOpenRequestRelease",
   "hostBeginResourceUpload",
   "resourceUploadWrite",
   "resourceUploadIsWritable",
@@ -1283,6 +1313,8 @@ type RawResourceChunk = { readonly rawType: "ResourceChunk" };
 type RawResourceStream = { readonly rawType: "ResourceStream" };
 type RawResourceUpload = { readonly rawType: "ResourceUpload" };
 type RawStatus = { readonly rawType: "Status" };
+type RawSuppliedPipe = { readonly rawType: "SuppliedPipe" };
+type RawSuppliedPipeOpenRequest = { readonly rawType: "SuppliedPipeOpenRequest" };
 type RawOpaquePointer = { readonly rawType: "opaquePointer" };
 
 interface RawHostProtocol {
@@ -1297,6 +1329,15 @@ interface RawHostProtocol {
   readonly hostIdentityHash: (host: RawHost) => RawCallResult<RawBorrowed<Uint8Array>>;
   readonly hostDestinationCount: (host: RawHost) => number;
   readonly hostDestinationHash: (host: RawHost, index: number) => RawCallResult<RawBorrowed<Uint8Array>>;
+  readonly hostAttachSuppliedPipe: (host: RawHost, name: string, respawnDelayMillis: number, bitrate: Bitrate) => RawCallResult<RawOwned<RawSuppliedPipe>>;
+  readonly suppliedPipeClaimAttachment: (supplied_pipe: RawSuppliedPipe) => RawCallResult<RawOwned<RawIssuedCommand>>;
+  readonly suppliedPipeNextOpenRequest: (supplied_pipe: RawSuppliedPipe, timeoutMillis: number) => RawCallResult<RawOwned<RawSuppliedPipeOpenRequest>>;
+  readonly suppliedPipeRegisterReadiness: (supplied_pipe: RawSuppliedPipe, callback: RawReadinessCallback, context: RawOpaquePointer) => RawCallResult<RawOwned<RawReadinessRegistration>>;
+  readonly suppliedPipeInterruptWait: (supplied_pipe: RawSuppliedPipe) => RawUnit;
+  readonly suppliedPipeRelease: (supplied_pipe: RawSuppliedPipe) => RawUnit;
+  readonly suppliedPipeOpenRequestProvide: (supplied_pipe_open_request: RawSuppliedPipeOpenRequest, descriptor: bigint) => RawCallResult<boolean>;
+  readonly suppliedPipeOpenRequestDecline: (supplied_pipe_open_request: RawSuppliedPipeOpenRequest) => RawCallResult<boolean>;
+  readonly suppliedPipeOpenRequestRelease: (supplied_pipe_open_request: RawSuppliedPipeOpenRequest) => RawUnit;
   readonly hostBeginResourceUpload: (host: RawHost, linkId: LinkId, declaredLength: bigint, packedMetadata: Uint8Array | undefined, compression: ResourceCompression) => RawCallResult<RawOwned<RawResourceUpload>>;
   readonly resourceUploadWrite: (resource_upload: RawResourceUpload, chunk: Uint8Array) => RawCallResult<RawUnit>;
   readonly resourceUploadIsWritable: (resource_upload: RawResourceUpload) => RawCallResult<boolean>;

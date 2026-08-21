@@ -4,7 +4,7 @@
   "private": true,
   "description": "Node.js bindings for Personal Reticulum: a fast, robust implementation of the Reticulum network stack.",
   "license": "MIT OR Apache-2.0",
-  "homepage": "https://prns.dev",
+  "homepage": "https://reticulum.rs",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/KenAKAFrosty/Prns.git",

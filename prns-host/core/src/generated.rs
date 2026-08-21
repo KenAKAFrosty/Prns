@@ -29,6 +29,15 @@ pub const HOST_OPERATION_NAMES: &[&str] = &[
     "hostIdentityHash",
     "hostDestinationCount",
     "hostDestinationHash",
+    "hostAttachSuppliedPipe",
+    "suppliedPipeClaimAttachment",
+    "suppliedPipeNextOpenRequest",
+    "suppliedPipeRegisterReadiness",
+    "suppliedPipeInterruptWait",
+    "suppliedPipeRelease",
+    "suppliedPipeOpenRequestProvide",
+    "suppliedPipeOpenRequestDecline",
+    "suppliedPipeOpenRequestRelease",
     "hostBeginResourceUpload",
     "resourceUploadWrite",
     "resourceUploadIsWritable",
@@ -195,6 +204,7 @@ pub enum Capability {
     BrowserRendezvous = 10,
     I2p = 11,
     Weave = 12,
+    SuppliedPipe = 13,
 }
 
 impl Capability {
@@ -213,6 +223,7 @@ impl Capability {
             Self::BrowserRendezvous => "BrowserRendezvous",
             Self::I2p => "I2p",
             Self::Weave => "Weave",
+            Self::SuppliedPipe => "SuppliedPipe",
         }
     }
 }
@@ -234,6 +245,7 @@ impl TryFrom<u32> for Capability {
             10 => Ok(Self::BrowserRendezvous),
             11 => Ok(Self::I2p),
             12 => Ok(Self::Weave),
+            13 => Ok(Self::SuppliedPipe),
             _ => Err(()),
         }
     }
@@ -358,6 +370,41 @@ impl TryFrom<u32> for InterfaceMode {
             5 => Ok(Self::Boundary),
             6 => Ok(Self::Gateway),
             7 => Ok(Self::Internal),
+            _ => Err(()),
+        }
+    }
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum WebSocketFramingSelection {
+    RawPacket = 1,
+    Hdlc = 2,
+    Kiss = 3,
+    Auto = 4,
+}
+
+impl WebSocketFramingSelection {
+    #[must_use]
+    pub const fn contract_name(self) -> &'static str {
+        match self {
+            Self::RawPacket => "RawPacket",
+            Self::Hdlc => "Hdlc",
+            Self::Kiss => "Kiss",
+            Self::Auto => "Auto",
+        }
+    }
+}
+
+impl TryFrom<u32> for WebSocketFramingSelection {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::RawPacket),
+            2 => Ok(Self::Hdlc),
+            3 => Ok(Self::Kiss),
+            4 => Ok(Self::Auto),
             _ => Err(()),
         }
     }
@@ -1609,6 +1656,7 @@ mod tests {
             (Capability::BrowserRendezvous, 10, "BrowserRendezvous"),
             (Capability::I2p, 11, "I2p"),
             (Capability::Weave, 12, "Weave"),
+            (Capability::SuppliedPipe, 13, "SuppliedPipe"),
         ]);
     }
 
@@ -1649,6 +1697,17 @@ mod tests {
             (InterfaceMode::Boundary, 5, "Boundary"),
             (InterfaceMode::Gateway, 6, "Gateway"),
             (InterfaceMode::Internal, 7, "Internal"),
+        ]);
+    }
+
+    #[rustfmt::skip]
+    #[test]
+    fn web_socket_framing_selection_values_match_the_contract() {
+        assert_contract_enum!(WebSocketFramingSelection, [
+            (WebSocketFramingSelection::RawPacket, 1, "RawPacket"),
+            (WebSocketFramingSelection::Hdlc, 2, "Hdlc"),
+            (WebSocketFramingSelection::Kiss, 3, "Kiss"),
+            (WebSocketFramingSelection::Auto, 4, "Auto"),
         ]);
     }
 

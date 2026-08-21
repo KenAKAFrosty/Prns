@@ -126,8 +126,8 @@ unsafe extern "C" fn task_yield() {
 }
 
 unsafe extern "C" fn task_yield_from_isr() {
-    // This is not called because we never set xHigherPriorityTaskWoken = true in the `_from_isr`
-    // functions. This should be revisited if a scheduler needs it.
+    // FromISR queue/semaphore wakes propagate xHigherPriorityTaskWoken through the RTOS bridge,
+    // matching the ESP-IDF adapter contract.
     crate::preempt::yield_task_from_isr();
 }
 
@@ -223,7 +223,7 @@ unsafe extern "C" fn btdm_hus_2_lpcycles(us: u32) -> u32 {
     let g_btdm_lpcycle_us = 2 << (g_btdm_lpcycle_us_frac);
 
     // Converts a duration in half us into a number of low power clock cycles.
-    let cycles: u64 = (us as u64) << (g_btdm_lpcycle_us_frac as u64 / g_btdm_lpcycle_us as u64);
+    let cycles: u64 = ((us as u64) << g_btdm_lpcycle_us_frac) / (g_btdm_lpcycle_us as u64);
     trace!("btdm_hus_2_lpcycles {} {}", us, cycles);
 
     cycles as u32

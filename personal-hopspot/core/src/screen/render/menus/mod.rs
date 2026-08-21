@@ -16,13 +16,13 @@ use crate::screen::model::{
     Card, CardKind, InterfaceMenuDetailKind, InterfaceMenuDetailRow, InterfaceMenuDetails,
 };
 use crate::screen::state::{
-    interface_menu_items, AccessPointState, UiNotice, UiState, POWER_MENU_ITEM,
-    STATION_UPLINK_MENU_ITEM,
+    interface_menu_items, AccessPointState, SharedInstanceConfigExport, UiNotice, UiState,
+    POWER_MENU_ITEM, STATION_UPLINK_MENU_ITEM,
 };
 
 use super::glyphs::{draw_global_icon, draw_interface_icon, draw_menu_cursor};
 use super::layout::*;
-use super::metrics::{fmt_bytes, fmt_rate_bytes_per_sec};
+use super::metrics::{fmt_bytes, fmt_count, fmt_rate_bytes_per_sec};
 use super::primitives::{fill, line};
 
 fn menu_item_backing_width(label: &str) -> u32 {
@@ -38,6 +38,7 @@ pub(in crate::screen) const fn station_uplink_action_label(kind: CardKind) -> Op
         | CardKind::Ble
         | CardKind::LoRa
         | CardKind::EspNow
+        | CardKind::SharedInstance
         | CardKind::Tcp
         | CardKind::Peer => None,
     }
@@ -178,23 +179,24 @@ pub(super) fn draw_global_menu<D: DrawTarget<Color = BinaryColor>>(
         Point::new(WIDTH - 1, MENU_DIVIDER_Y),
     );
 
-    let items = state.global_menu_items();
-    let radio_menu_item = state.global_radio_menu_item();
-    for (index, item) in items.iter().enumerate() {
-        let label = if index == radio_menu_item {
-            match state.access_point {
-                AccessPointState::Active => "BLE Mode",
-                AccessPointState::Inactive => "AP Mode",
-                AccessPointState::Unsupported => *item,
-            }
-        } else {
-            *item
-        };
+    const VISIBLE_ITEMS: usize = 6;
+    let item_count = state.global_menu_items().count();
+    let visible_start = selected_item
+        .saturating_sub(VISIBLE_ITEMS - 1)
+        .min(item_count.saturating_sub(VISIBLE_ITEMS));
+    for (visible_index, (index, item)) in state
+        .global_menu_items()
+        .enumerate()
+        .skip(visible_start)
+        .take(VISIBLE_ITEMS)
+        .enumerate()
+    {
+        let label = state.global_menu_item_label(item);
         draw_menu_item(
             display,
-            MENU_ITEM_TOP + index as i32 * GLOBAL_MENU_ITEM_STEP,
+            MENU_ITEM_TOP + visible_index as i32 * GLOBAL_MENU_ITEM_STEP,
             label,
-            index == selected_item.min(items.len() - 1),
+            index == selected_item.min(item_count - 1),
         );
     }
 }
@@ -247,7 +249,7 @@ fn fmt_limit_value(value: LimitValue) -> HString<12> {
     let mut s = HString::new();
     match value {
         LimitValue::Count(value) => {
-            let _ = write!(s, "{value}");
+            let _ = write!(s, "{}", fmt_count(value));
         }
         LimitValue::Bytes(value) => {
             let _ = write!(s, "{}", fmt_bytes(value));
@@ -257,7 +259,7 @@ fn fmt_limit_value(value: LimitValue) -> HString<12> {
         }
         LimitValue::RateBytesPerSec(value) => {
             let rate = fmt_rate_bytes_per_sec(value.min(u64::from(u32::MAX)) as u32);
-            let _ = write!(s, "{rate}/s");
+            let _ = write!(s, "{rate}");
         }
         LimitValue::Text(value) => {
             let _ = write!(s, "{value}");
@@ -266,9 +268,18 @@ fn fmt_limit_value(value: LimitValue) -> HString<12> {
     s
 }
 
-fn draw_limits_text<D: DrawTarget<Color = BinaryColor>>(display: &mut D, y: i32, text: &str) {
+pub(in crate::screen) fn limits_row_text(row: LimitRow) -> HString<16> {
+    let mut s = HString::new();
+    let _ = write!(s, "{} {}", row.label, fmt_limit_value(row.value));
+    s
+}
+
+pub(in crate::screen) fn limits_row_drawable<'a>(
+    text: &'a str,
+    y: i32,
+) -> Text<'a, MonoTextStyle<'static, BinaryColor>> {
     let style = MonoTextStyle::new(&FONT_5X8, BinaryColor::On);
-    let _ = Text::with_baseline(text, Point::new(2, y), style, Baseline::Top).draw(display);
+    Text::with_baseline(text, Point::new(LIMITS_TEXT_X, y), style, Baseline::Top)
 }
 
 pub(super) fn draw_limits_page<D: DrawTarget<Color = BinaryColor>>(
@@ -296,10 +307,8 @@ pub(super) fn draw_limits_page<D: DrawTarget<Color = BinaryColor>>(
 
     let start = page * LIMITS_PER_PAGE;
     for (offset, row) in rows.iter().skip(start).take(LIMITS_PER_PAGE).enumerate() {
-        let value = fmt_limit_value(row.value);
-        let mut line_buf: HString<16> = HString::new();
-        let _ = write!(line_buf, "{} {value}", row.label);
-        draw_limits_text(display, CARD_TOP + 29 + offset as i32 * 11, &line_buf);
+        let line_buf = limits_row_text(*row);
+        let _ = limits_row_drawable(&line_buf, CARD_TOP + 29 + offset as i32 * 11).draw(display);
     }
 }
 
@@ -361,6 +370,7 @@ pub(in crate::screen) fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>
     display: &mut D,
     card: &Card,
     selected_item: usize,
+    shared_instance_config_export: SharedInstanceConfigExport,
     details: &InterfaceMenuDetails,
 ) {
     draw_interface_icon(
@@ -393,7 +403,7 @@ pub(in crate::screen) fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>
         Point::new(WIDTH - 1, MENU_DIVIDER_Y),
     );
 
-    let items = interface_menu_items(card.kind);
+    let items = interface_menu_items(card.kind, shared_instance_config_export);
     for (index, item) in items.iter().enumerate() {
         let label = if index == POWER_MENU_ITEM {
             if card.connection == ConnectionState::Disabled {

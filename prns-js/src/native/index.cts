@@ -35,6 +35,7 @@ import type {
   ResourceCompression,
   ResourceStrategy,
   ResponseTimeout,
+  WebSocketFramingSelection,
 } from "../contract.js";
 import type { StreamClaim } from "../async_lanes.js";
 import type { Tag as Tagged } from "../casework.js";
@@ -230,6 +231,7 @@ type RawInterfaceConfig = {
   peers?: string[];
   connectable?: boolean;
   url?: string;
+  framing?: WebSocketFramingSelection;
 };
 
 type RawInterfaceRoutingPolicy = {
@@ -340,7 +342,7 @@ type RawHostSnapshot = {
     viaIdentity?: Buffer;
     interfaceId: Buffer;
     learnedAtMillis: number;
-    lastRelayedAtMillis: number;
+    lastRouteActivityAtMillis: number;
     expiresAtMillis: number;
   }>;
   activeLinkCount: number;
@@ -552,7 +554,7 @@ function decodeHostSnapshot(raw: RawHostSnapshot): HostSnapshot {
       hops: entry.hops,
       interfaceId: contract.interfaceId(entry.interfaceId),
       learnedAtMillis: entry.learnedAtMillis,
-      lastRelayedAtMillis: entry.lastRelayedAtMillis,
+      lastRouteActivityAtMillis: entry.lastRouteActivityAtMillis,
       expiresAtMillis: entry.expiresAtMillis,
       ...(entry.viaIdentity === undefined
         ? {}
@@ -2287,8 +2289,16 @@ function rawInterfaceConfig(config: InterfaceConfig): RawInterfaceConfig {
     Weave: ({ port }) => ({ kind: "Weave", port }),
     AutomaticUsb: () => ({ kind: "AutomaticUsb" }),
     AutomaticBluetoothLe: () => ({ kind: "AutomaticBluetoothLe" }),
-    WebSocketClient: ({ target }) => ({ kind: "WebSocketClient", target }),
-    WebSocketServer: ({ bind }) => ({ kind: "WebSocketServer", bind }),
+    WebSocketClient: ({ target, framing }) => ({
+      kind: "WebSocketClient",
+      target,
+      framing,
+    }),
+    WebSocketServer: ({ bind, framing }) => ({
+      kind: "WebSocketServer",
+      bind,
+      framing,
+    }),
     BrowserRendezvous: ({ url }) => ({ kind: "BrowserRendezvous", url }),
   });
 }
@@ -2482,9 +2492,13 @@ function validateInterfaceConfig(config: InterfaceConfig): void {
     },
     AutomaticUsb: () => undefined,
     AutomaticBluetoothLe: () => undefined,
-    WebSocketClient: ({ target }) => validateWebSocket("target", target),
-    WebSocketServer: ({ bind }) => {
+    WebSocketClient: ({ target, framing }) => {
+      validateWebSocket("target", target);
+      validateWebSocketFramingSelection(framing);
+    },
+    WebSocketServer: ({ bind, framing }) => {
       nonEmpty("bind", bind);
+      validateWebSocketFramingSelection(framing);
     },
     BrowserRendezvous: ({ url }) => validateWebSocket("url", url),
   });
@@ -2529,6 +2543,12 @@ function validateWebSocket(name: string, value: string): void {
     /\s/.test(value)
   ) {
     invalidConfiguration(`${name} must be a ws:// or wss:// URL with no whitespace`);
+  }
+}
+
+function validateWebSocketFramingSelection(value: unknown): void {
+  if (!contract.isWebSocketFramingSelection(value)) {
+    invalidConfiguration("framing is invalid");
   }
 }
 

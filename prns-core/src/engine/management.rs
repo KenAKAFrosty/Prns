@@ -174,6 +174,7 @@ mod tests {
             signature: Ed25519Signature([0x61; 64]),
             app_data: b"",
         };
+        let evidence_id = engine.route_evidence_id_for_update(&destination, SOURCE, next_hop);
         let _ = engine.routing_table.upsert_route(
             &AnnounceArrival {
                 announce,
@@ -183,6 +184,7 @@ mod tests {
                 next_hop,
                 is_path_response: false,
             },
+            evidence_id,
             AttachedInterfaces::new(&interfaces()),
             &mut |_| {},
         );

@@ -3,15 +3,20 @@ use crate::engine::AnnounceOrigin;
 use crate::engine::{EngineReaction, FanTarget, InstantMillis, Journaled};
 use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{ConnectionView, InterfaceDescriptor, InterfaceId, InterfaceKind};
+use crate::manifold::announce_pacer::{
+    AnnouncePacer, BoundedHeapPacerQueue, PacerDelivery, PacerRetryPolicy,
+};
 #[cfg(feature = "runtime-metrics")]
-use crate::manifold::announce_pacer::PacerOffer;
-use crate::manifold::announce_pacer::{AnnouncePacer, HeapPacerQueue};
+use crate::manifold::announce_pacer::{PacerEntry, PacerEvent, PacerOffer};
 use crate::manifold::interface_seam::MAX_WIRE_FRAME_LEN;
 use crate::manifold::kernel::{
     route_reaction as route_engine_reaction, AnnounceDirective, DirectiveEgress,
 };
 #[cfg(feature = "runtime-metrics")]
-use crate::runtime::{AnnounceEgressOutcome, EgressMetricsSnapshot};
+use crate::runtime::{
+    AnnounceBackpressureEvent, AnnounceEgressOutcome, EgressLaneMetricsSnapshot,
+    EgressMetricsSnapshot,
+};
 
 use super::TokioGrantProducer;
 
@@ -21,6 +26,9 @@ pub struct Egress {
     #[cfg(feature = "runtime-metrics")]
     metrics: EgressMetricsSnapshot,
 }
+
+const TOKIO_ANNOUNCE_PACER_DEPTH: usize = 256;
+const TOKIO_ANNOUNCE_RETRY_POLICY: PacerRetryPolicy = PacerRetryPolicy::new(50, 1_000);
 
 struct EgressLane {
     id: InterfaceId,
@@ -77,21 +85,19 @@ impl Egress {
     }
 
     pub(super) fn enqueue(&mut self, target: InterfaceId, bytes: &[u8]) -> EgressEnqueueOutcome {
+        let outcome = self.try_enqueue(target, bytes);
+        self.record_generic_enqueue_outcome(outcome);
+        outcome
+    }
+
+    fn try_enqueue(&mut self, target: InterfaceId, bytes: &[u8]) -> EgressEnqueueOutcome {
         for lane in &mut self.lanes {
             if lane.id != target {
                 continue;
             }
 
             match lane.producer.try_grant() {
-                None => {
-                    #[cfg(feature = "runtime-metrics")]
-                    {
-                        self.metrics.full_lane_drops =
-                            self.metrics.full_lane_drops.saturating_add(1);
-                    }
-
-                    return EgressEnqueueOutcome::LaneFull;
-                }
+                None => return EgressEnqueueOutcome::LaneFull,
                 Some(slot) => {
                     slot.fill(bytes);
                     lane.producer.commit();
@@ -106,13 +112,30 @@ impl Egress {
                 }
             }
         }
+        EgressEnqueueOutcome::LaneMissing
+    }
 
+    #[cfg(feature = "runtime-metrics")]
+    fn record_generic_enqueue_outcome(&mut self, outcome: EgressEnqueueOutcome) {
+        match outcome {
+            EgressEnqueueOutcome::Enqueued => {}
+            EgressEnqueueOutcome::LaneFull => {
+                self.metrics.full_lane_drops = self.metrics.full_lane_drops.saturating_add(1);
+            }
+            EgressEnqueueOutcome::LaneMissing => {
+                self.metrics.missing_lane_drops = self.metrics.missing_lane_drops.saturating_add(1);
+            }
+        }
+    }
+
+    #[cfg(not(feature = "runtime-metrics"))]
+    fn record_generic_enqueue_outcome(&mut self, _outcome: EgressEnqueueOutcome) {}
+
+    fn record_ifac_rejection(&mut self) {
         #[cfg(feature = "runtime-metrics")]
         {
-            self.metrics.missing_lane_drops = self.metrics.missing_lane_drops.saturating_add(1);
+            self.metrics.ifac_rejected_frames = self.metrics.ifac_rejected_frames.saturating_add(1);
         }
-
-        EgressEnqueueOutcome::LaneMissing
     }
 
     fn skip_unavailable(&mut self, target: InterfaceId) -> bool {
@@ -147,6 +170,23 @@ impl Egress {
         self.metrics
             .announces
             .record(origin, logical_interface, outcome, bytes);
+    }
+
+    #[cfg(feature = "runtime-metrics")]
+    fn record_backpressure(
+        &mut self,
+        target: InterfaceId,
+        origin: AnnounceOrigin,
+        event: AnnounceBackpressureEvent,
+    ) {
+        let logical_interface = self
+            .lanes
+            .iter()
+            .find(|lane| lane.id == target)
+            .map_or(target, |lane| lane.logical_interface);
+        self.metrics
+            .announces
+            .record_backpressure(origin, logical_interface, event);
     }
 
     /// Every lane of the supervisor's member kind that `fan` selects.
@@ -240,22 +280,47 @@ impl Egress {
     }
 
     #[cfg(feature = "runtime-metrics")]
-    pub(super) fn metrics_snapshot(&self, pacers: &[InterfacePacer]) -> EgressMetricsSnapshot {
+    pub(super) fn metrics_snapshot(
+        &self,
+        pacers: &[InterfacePacer],
+        now: InstantMillis,
+    ) -> EgressMetricsSnapshot {
         let mut snapshot = self.metrics.clone();
-        snapshot.announces.reset_pacer_depths();
+        snapshot.announces.reset_pacer_gauges();
         for entry in pacers {
-            snapshot
-                .announces
-                .add_pacer_depth(entry.logical_interface, entry.pacer.queued_len());
+            let oldest_deferred_age_ms = entry
+                .pacer
+                .oldest_deferred_at()
+                .map_or(0, |at| now.0.saturating_sub(at.0));
+            snapshot.announces.add_pacer_gauges(
+                entry.logical_interface,
+                entry.pacer.queued_len(),
+                entry.pacer.deferred_len(),
+                oldest_deferred_age_ms,
+            );
         }
+        snapshot.lanes = self
+            .lanes
+            .iter()
+            .map(|lane| EgressLaneMetricsSnapshot {
+                physical_interface: lane.id,
+                logical_interface: lane.logical_interface,
+                capacity: u32::try_from(lane.producer.capacity()).unwrap_or(u32::MAX),
+                occupancy: u32::try_from(lane.producer.occupancy()).unwrap_or(u32::MAX),
+            })
+            .collect();
         snapshot
     }
 }
 
 #[cfg(feature = "runtime-metrics")]
-pub(super) type TokioAnnouncePacer = AnnouncePacer<HeapPacerQueue<AnnounceOrigin>, AnnounceOrigin>;
+pub(super) type TokioAnnouncePacer = AnnouncePacer<
+    BoundedHeapPacerQueue<TOKIO_ANNOUNCE_PACER_DEPTH, AnnounceOrigin>,
+    AnnounceOrigin,
+>;
 #[cfg(not(feature = "runtime-metrics"))]
-pub(super) type TokioAnnouncePacer = AnnouncePacer<HeapPacerQueue>;
+pub(super) type TokioAnnouncePacer =
+    AnnouncePacer<BoundedHeapPacerQueue<TOKIO_ANNOUNCE_PACER_DEPTH>>;
 
 pub(super) struct InterfacePacer {
     pub(super) id: InterfaceId,
@@ -276,7 +341,11 @@ impl InterfacePacer {
             id: descriptor.id,
             #[cfg(feature = "runtime-metrics")]
             logical_interface,
-            pacer: AnnouncePacer::new(descriptor.announce_bandwidth_cap, descriptor.bitrate),
+            pacer: AnnouncePacer::new(
+                descriptor.announce_bandwidth_cap,
+                descriptor.bitrate,
+                TOKIO_ANNOUNCE_RETRY_POLICY,
+            ),
         }
     }
 }
@@ -422,7 +491,7 @@ impl DirectiveEgress for TokioDirectiveEgress<'_> {
 
     #[cfg(feature = "runtime-metrics")]
     fn send_measured_local_announce(&mut self, target: InterfaceId, bytes: &[u8]) {
-        enqueue_announce_for_wire(
+        enqueue_pacerless_announce_for_wire(
             self.egress,
             self.ifacs,
             target,
@@ -440,7 +509,7 @@ impl DirectiveEgress for TokioDirectiveEgress<'_> {
         bytes: &[u8],
     ) {
         for target in self.egress.broadcast_targets(supervisor, fan) {
-            enqueue_announce_for_wire(
+            enqueue_pacerless_announce_for_wire(
                 self.egress,
                 self.ifacs,
                 target,
@@ -464,11 +533,13 @@ fn emit_for_wire(
     match ifac_for(ifacs, target) {
         Some(entry) => {
             if let Some(len) = fill(&mut scratch.emit) {
-                if let Some(masked_len) = entry
+                if let Ok(masked_len) = entry
                     .context
-                    .mask_outbound(&scratch.emit[..len], &mut scratch.masked)
+                    .try_mask_outbound(&scratch.emit[..len], &mut scratch.masked)
                 {
                     egress.enqueue(target, &scratch.masked[..masked_len]);
+                } else {
+                    egress.record_ifac_rejection();
                 }
             }
         }
@@ -492,11 +563,12 @@ fn enqueue_for_wire(
     masked: &mut [u8],
 ) {
     match ifac_for(ifacs, target) {
-        Some(entry) => {
-            if let Some(masked_len) = entry.context.mask_outbound(bytes, masked) {
+        Some(entry) => match entry.context.try_mask_outbound(bytes, masked) {
+            Ok(masked_len) => {
                 egress.enqueue(target, &masked[..masked_len]);
             }
-        }
+            Err(_) => egress.record_ifac_rejection(),
+        },
         None => {
             egress.enqueue(target, bytes);
         }
@@ -511,28 +583,99 @@ pub(super) fn enqueue_announce_for_wire(
     bytes: &[u8],
     masked: &mut [u8],
     origin: AnnounceOrigin,
-) {
+) -> PacerDelivery {
     let (outcome, wire_bytes) = match ifac_for(ifacs, target) {
         Some(entry) => {
-            let Some(masked_len) = entry.context.mask_outbound(bytes, masked) else {
+            let Ok(masked_len) = entry.context.try_mask_outbound(bytes, masked) else {
+                egress.record_ifac_rejection();
                 egress.record_announce(
                     target,
                     bytes.len(),
                     origin,
                     AnnounceEgressOutcome::IfacRejected,
                 );
-                return;
+                return PacerDelivery::Discarded;
             };
-            (egress.enqueue(target, &masked[..masked_len]), masked_len)
+            (
+                egress.try_enqueue(target, &masked[..masked_len]),
+                masked_len,
+            )
         }
-        None => (egress.enqueue(target, bytes), bytes.len()),
+        None => (egress.try_enqueue(target, bytes), bytes.len()),
     };
-    let outcome = match outcome {
-        EgressEnqueueOutcome::Enqueued => AnnounceEgressOutcome::Enqueued,
-        EgressEnqueueOutcome::LaneFull => AnnounceEgressOutcome::LaneFull,
-        EgressEnqueueOutcome::LaneMissing => AnnounceEgressOutcome::LaneMissing,
+    match outcome {
+        EgressEnqueueOutcome::Enqueued => {
+            egress.record_announce(target, wire_bytes, origin, AnnounceEgressOutcome::Enqueued);
+            PacerDelivery::Admitted
+        }
+        EgressEnqueueOutcome::LaneFull => PacerDelivery::Backpressured,
+        EgressEnqueueOutcome::LaneMissing => {
+            egress.record_generic_enqueue_outcome(EgressEnqueueOutcome::LaneMissing);
+            egress.record_announce(
+                target,
+                wire_bytes,
+                origin,
+                AnnounceEgressOutcome::LaneMissing,
+            );
+            PacerDelivery::Discarded
+        }
+    }
+}
+
+#[cfg(not(feature = "runtime-metrics"))]
+fn enqueue_announce_for_wire(
+    egress: &mut Egress,
+    ifacs: &[InterfaceIfac],
+    target: InterfaceId,
+    bytes: &[u8],
+    masked: &mut [u8],
+) -> PacerDelivery {
+    let outcome = match ifac_for(ifacs, target) {
+        Some(entry) => {
+            let Some(masked_len) = entry.context.mask_outbound(bytes, masked) else {
+                return PacerDelivery::Discarded;
+            };
+            egress.try_enqueue(target, &masked[..masked_len])
+        }
+        None => egress.try_enqueue(target, bytes),
     };
-    egress.record_announce(target, wire_bytes, origin, outcome);
+    match outcome {
+        EgressEnqueueOutcome::Enqueued => PacerDelivery::Admitted,
+        EgressEnqueueOutcome::LaneFull => PacerDelivery::Backpressured,
+        EgressEnqueueOutcome::LaneMissing => PacerDelivery::Discarded,
+    }
+}
+
+#[cfg(feature = "runtime-metrics")]
+fn enqueue_pacerless_announce_for_wire(
+    egress: &mut Egress,
+    ifacs: &[InterfaceIfac],
+    target: InterfaceId,
+    bytes: &[u8],
+    masked: &mut [u8],
+    origin: AnnounceOrigin,
+) {
+    if enqueue_announce_for_wire(egress, ifacs, target, bytes, masked, origin)
+        == PacerDelivery::Backpressured
+    {
+        egress.record_generic_enqueue_outcome(EgressEnqueueOutcome::LaneFull);
+        egress.record_announce(target, bytes.len(), origin, AnnounceEgressOutcome::LaneFull);
+    }
+}
+
+#[cfg(not(feature = "runtime-metrics"))]
+fn enqueue_pacerless_announce_for_wire(
+    egress: &mut Egress,
+    ifacs: &[InterfaceIfac],
+    target: InterfaceId,
+    bytes: &[u8],
+    masked: &mut [u8],
+) {
+    if enqueue_announce_for_wire(egress, ifacs, target, bytes, masked)
+        == PacerDelivery::Backpressured
+    {
+        egress.record_generic_enqueue_outcome(EgressEnqueueOutcome::LaneFull);
+    }
 }
 
 /// A paced announce is broadcast-sized by construction, so its mask scratch fits on the stack — the wire-sized [`WireScratch`] is reserved for the frame paths.
@@ -543,6 +686,47 @@ pub(super) struct PacedAnnounce<'a> {
     pub(super) hops: u8,
     #[cfg(feature = "runtime-metrics")]
     pub(super) origin: AnnounceOrigin,
+}
+
+#[cfg(feature = "runtime-metrics")]
+fn record_pacer_events(
+    egress: &mut Egress,
+    target: InterfaceId,
+    events: impl IntoIterator<Item = PacerEvent<AnnounceOrigin>>,
+) {
+    for event in events {
+        match event {
+            PacerEvent::Deferred(entry) => egress.record_backpressure(
+                target,
+                entry.metadata,
+                AnnounceBackpressureEvent::Deferred,
+            ),
+            PacerEvent::Retry(entry) => {
+                egress.record_backpressure(target, entry.metadata, AnnounceBackpressureEvent::Retry)
+            }
+            PacerEvent::Recovered(entry) => egress.record_backpressure(
+                target,
+                entry.metadata,
+                AnnounceBackpressureEvent::Recovered,
+            ),
+            PacerEvent::Evicted(entry) => {
+                record_shed_entry(egress, target, entry, AnnounceEgressOutcome::PacerEvicted)
+            }
+            PacerEvent::Expired(entry) => {
+                record_shed_entry(egress, target, entry, AnnounceEgressOutcome::PacerExpired)
+            }
+        }
+    }
+}
+
+#[cfg(feature = "runtime-metrics")]
+fn record_shed_entry(
+    egress: &mut Egress,
+    target: InterfaceId,
+    entry: PacerEntry<AnnounceOrigin>,
+    outcome: AnnounceEgressOutcome,
+) {
+    egress.record_announce(target, entry.frame_bytes, entry.metadata, outcome);
 }
 
 #[cfg(feature = "runtime-metrics")]
@@ -563,20 +747,22 @@ pub(super) fn offer_to_pacer(
         );
         return;
     }
+    let mut events = std::vec::Vec::new();
     let offer = match pacers.iter_mut().find(|entry| entry.id == target) {
-        Some(entry) => entry.pacer.offer_tagged(
+        Some(entry) => entry.pacer.offer_tagged_observed(
             announce.bytes,
             announce.hops,
             now,
             announce.origin,
             |frame, frame_origin| {
                 let mut masked = [0u8; PACED_MASK_LEN];
-                enqueue_announce_for_wire(egress, ifacs, target, frame, &mut masked, frame_origin);
+                enqueue_announce_for_wire(egress, ifacs, target, frame, &mut masked, frame_origin)
             },
+            |event| events.push(event),
         ),
         None => {
             let mut masked = [0u8; PACED_MASK_LEN];
-            enqueue_announce_for_wire(
+            enqueue_pacerless_announce_for_wire(
                 egress,
                 ifacs,
                 target,
@@ -584,9 +770,10 @@ pub(super) fn offer_to_pacer(
                 &mut masked,
                 announce.origin,
             );
-            PacerOffer::Sent
+            PacerOffer::Admitted
         }
     };
+    record_pacer_events(egress, target, events);
     if matches!(offer, PacerOffer::Rejected(_)) {
         egress.record_announce(
             target,
@@ -615,12 +802,12 @@ pub(super) fn offer_to_pacer(
                 .pacer
                 .offer(announce.bytes, announce.hops, now, |frame| {
                     let mut masked = [0u8; PACED_MASK_LEN];
-                    enqueue_for_wire(egress, ifacs, target, frame, &mut masked);
+                    enqueue_announce_for_wire(egress, ifacs, target, frame, &mut masked)
                 });
         }
         None => {
             let mut masked = [0u8; PACED_MASK_LEN];
-            enqueue_for_wire(egress, ifacs, target, announce.bytes, &mut masked);
+            enqueue_pacerless_announce_for_wire(egress, ifacs, target, announce.bytes, &mut masked);
         }
     }
 }
@@ -634,19 +821,25 @@ pub(super) fn flush_due_pacers(
 ) {
     for entry in pacers.iter_mut() {
         let target = entry.id;
-        entry.pacer.release_due_tagged(now, |frame, origin| {
-            if egress.skip_unavailable(target) {
-                egress.record_announce(
-                    target,
-                    frame.len(),
-                    origin,
-                    AnnounceEgressOutcome::InterfaceUnavailable,
-                );
-                return;
-            }
-            let mut masked = [0u8; PACED_MASK_LEN];
-            enqueue_announce_for_wire(egress, ifacs, target, frame, &mut masked, origin);
-        });
+        let mut events = std::vec::Vec::new();
+        entry.pacer.release_due_tagged_observed(
+            now,
+            |frame, origin| {
+                if egress.skip_unavailable(target) {
+                    egress.record_announce(
+                        target,
+                        frame.len(),
+                        origin,
+                        AnnounceEgressOutcome::InterfaceUnavailable,
+                    );
+                    return PacerDelivery::Discarded;
+                }
+                let mut masked = [0u8; PACED_MASK_LEN];
+                enqueue_announce_for_wire(egress, ifacs, target, frame, &mut masked, origin)
+            },
+            |event| events.push(event),
+        );
+        record_pacer_events(egress, target, events);
     }
 }
 
@@ -661,10 +854,10 @@ pub(super) fn flush_due_pacers(
         let target = entry.id;
         entry.pacer.release_due(now, |frame| {
             if egress.skip_unavailable(target) {
-                return;
+                return PacerDelivery::Discarded;
             }
             let mut masked = [0u8; PACED_MASK_LEN];
-            enqueue_for_wire(egress, ifacs, target, frame, &mut masked);
+            enqueue_announce_for_wire(egress, ifacs, target, frame, &mut masked)
         });
     }
 }

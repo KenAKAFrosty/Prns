@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ inputs.expected_sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           submodules: false
       - id: release
@@ -40,13 +40,8 @@ jobs:
           test "$GITHUB_REF" = "refs/heads/main"
           test "$REF_PROTECTED" = "true"
           test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
+          test "$EXPECTED_SHA" = "$GITHUB_SHA"
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          gh api "repos/${GITHUB_REPOSITORY}/compare/${EXPECTED_SHA}...${GITHUB_SHA}" \
-            > "${RUNNER_TEMP}/source-to-authority.json"
-          status="$(jq -r '.status' "${RUNNER_TEMP}/source-to-authority.json")"
-          test "$status" = "ahead" || test "$status" = "identical"
-          test "$(jq -r '.merge_base_commit.sha' "${RUNNER_TEMP}/source-to-authority.json")" = \
-            "$EXPECTED_SHA"
           version="$(<VERSION)"
           release_tag="host-sdk-v$version"
           mkdir -p dist/public
@@ -98,7 +93,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ inputs.expected_sha }}
+          ref: ${{ github.sha }}
           submodules: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -115,8 +110,14 @@ jobs:
           cp prns-js/tests/native-consumer.test.mjs "$scratch/prns-js/tests/"
           cp prns-host/conformance/persistent-two-node-v1.json \
             "$scratch/prns-host/conformance/"
-          npm install --prefix "$scratch" --save-exact "personal-rns@$VERSION"
-          node --test "$scratch/prns-js/tests/native-consumer.test.mjs"
+          npm install --prefix "$scratch" --save-exact \
+            "personal-rns@$VERSION" "hopspot@$VERSION"
+          (
+            cd "$scratch"
+            node --test prns-js/tests/native-consumer.test.mjs
+            node --input-type=module --eval \
+              'import { Prns } from "personal-rns"; import { Prns as HopspotPrns } from "hopspot"; if (HopspotPrns !== Prns) throw new Error("facade mismatch");'
+          )
 
   python:
     needs: custody
@@ -125,7 +126,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ inputs.expected_sha }}
+          ref: ${{ github.sha }}
           submodules: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
@@ -151,7 +152,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ inputs.expected_sha }}
+          ref: ${{ github.sha }}
           submodules: false
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
         with:
@@ -166,7 +167,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ inputs.expected_sha }}
+          ref: ${{ github.sha }}
           submodules: false
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
       - name: Resolve the public Rust crate graph in a clean consumer
@@ -179,6 +180,9 @@ jobs:
           cargo add \
             --manifest-path "$scratch/consumer/Cargo.toml" \
             "personal-rns@=$VERSION"
+          cargo add \
+            --manifest-path "$scratch/consumer/Cargo.toml" \
+            "hopspot@=$VERSION"
           cargo check --manifest-path "$scratch/consumer/Cargo.toml" --locked
 
   maven:
@@ -188,7 +192,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ inputs.expected_sha }}
+          ref: ${{ github.sha }}
           submodules: false
       - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9
         with:
@@ -220,7 +224,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ inputs.expected_sha }}
+          ref: ${{ github.sha }}
           submodules: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:

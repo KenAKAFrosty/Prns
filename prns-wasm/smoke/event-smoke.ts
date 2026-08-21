@@ -30,7 +30,10 @@ import type {
   UsbAutoDecoderBinding,
 } from "../../prns-js/src/browser/index.js";
 import type { PacketContentPresentation } from "../examples/browser-playground/presentation.js";
-import { MockRuntimeBase } from "./mock_runtime.js";
+import {
+  MockRuntimeBase,
+  MockWebSocketFramingCodec,
+} from "./mock_runtime.js";
 
 const IDENTITY_LENGTH = 32;
 
@@ -336,6 +339,7 @@ function wasmModule(): PrnsWasmModule {
     PrnsRuntime: MockRuntime,
     UsbAutoDecoder: MockUsbAutoDecoder,
     BluetoothReassembler: MockBluetoothReassembler,
+    WebSocketFramingCodec: MockWebSocketFramingCodec,
     hostContractAbi: () => 1,
     hostSchemaVersion: () => 1,
     browserPersistenceVersion: () => 1,

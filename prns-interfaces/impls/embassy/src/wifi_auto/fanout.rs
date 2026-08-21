@@ -1,5 +1,3 @@
-use ::core::net::Ipv6Addr;
-
 use embassy_net::udp::UdpSocket;
 use embassy_net::IpAddress;
 use embassy_time::{with_timeout, Duration};
@@ -9,6 +7,7 @@ use prns_core::interfaces::wifi_auto as contract;
 use prns_core::interfaces::InterfaceId;
 use prns_runtime::manifold::grant::FrameTarget;
 
+use super::peer::{SegmentRole, WifiPeerSlotLookup, WifiPeerTable};
 use super::AutoWifiStatus;
 
 pub(super) fn target_includes(target: FrameTarget, id: InterfaceId) -> bool {
@@ -32,22 +31,14 @@ pub(super) struct FanoutPlan<const MEMBERS: usize> {
 }
 
 impl<const MEMBERS: usize> FanoutPlan<MEMBERS> {
-    pub(super) fn new(
-        target: FrameTarget,
-        peers: &[Option<Ipv6Addr>; MEMBERS],
-        ids: &[InterfaceId; MEMBERS],
-        start: usize,
-    ) -> Self {
+    pub(super) fn new(target: FrameTarget, peers: &WifiPeerTable<MEMBERS>, start: usize) -> Self {
         let mut selected = [false; MEMBERS];
         let mut remaining = 0;
-        for slot in 0..MEMBERS {
-            if peers[slot].is_none() {
-                continue;
-            }
+        for (slot, peer) in peers.iter() {
             selected[slot] = match target {
-                FrameTarget::Direct(id) | FrameTarget::Fan(FanTarget::Only(id)) => ids[slot] == id,
+                FrameTarget::Direct(id) | FrameTarget::Fan(FanTarget::Only(id)) => peer.id() == id,
                 FrameTarget::Fan(FanTarget::All) => true,
-                FrameTarget::Fan(FanTarget::AllExcept(id)) => ids[slot] != id,
+                FrameTarget::Fan(FanTarget::AllExcept(id)) => peer.id() != id,
             };
             remaining += usize::from(selected[slot]);
         }
@@ -107,21 +98,19 @@ pub(super) async fn dispatch_fanout<const MEMBERS: usize>(
 pub(super) struct UdpFanoutSender<'a, 'd, const MEMBERS: usize> {
     pub(super) primary: &'a UdpSocket<'d>,
     pub(super) secondary: Option<&'a UdpSocket<'d>>,
-    pub(super) peers: &'a [Option<Ipv6Addr>; MEMBERS],
-    pub(super) peer_on_secondary: &'a [bool; MEMBERS],
+    pub(super) peers: &'a WifiPeerTable<MEMBERS>,
     pub(super) status: AutoWifiStatus<MEMBERS>,
     pub(super) bytes: &'a [u8],
 }
 
 impl<const MEMBERS: usize> FanoutSender for UdpFanoutSender<'_, '_, MEMBERS> {
     async fn send_to_slot(&mut self, slot: usize) -> bool {
-        let Some(peer) = self.peers[slot] else {
+        let WifiPeerSlotLookup::Occupied(peer) = self.peers.lookup_slot(slot) else {
             return false;
         };
-        let socket = if self.peer_on_secondary[slot] {
-            self.secondary
-        } else {
-            Some(self.primary)
+        let socket = match peer.segment() {
+            SegmentRole::Primary => Some(self.primary),
+            SegmentRole::Secondary => self.secondary,
         };
         let Some(socket) = socket else {
             return false;
@@ -129,7 +118,7 @@ impl<const MEMBERS: usize> FanoutSender for UdpFanoutSender<'_, '_, MEMBERS> {
         if socket
             .send_to(
                 self.bytes,
-                (IpAddress::Ipv6(peer), contract::DEFAULT_DATA_PORT),
+                (IpAddress::Ipv6(peer.address()), contract::DEFAULT_DATA_PORT),
             )
             .await
             .is_err()
@@ -161,17 +150,32 @@ pub(super) async fn send_beacon(socket: Option<&UdpSocket<'_>>, token: Option<&[
 mod tests {
     use super::*;
     use ::core::future::pending;
+    use ::core::net::Ipv6Addr;
     use embassy_futures::select::{select, Either};
     use embassy_futures::{block_on, yield_now};
-    use prns_core::interfaces::InterfaceKind;
     use std::cell::Cell;
 
-    fn peer(suffix: u16) -> Ipv6Addr {
+    fn address(suffix: u16) -> Ipv6Addr {
         Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, suffix)
     }
 
-    fn id(suffix: u8) -> InterfaceId {
-        InterfaceId::new([InterfaceKind::WifiPeer as u8, 0, 0, 0, 0, 0, 0, suffix])
+    fn peer(suffix: u16) -> super::super::peer::WifiPeer {
+        super::super::peer::WifiPeer::new(address(suffix), SegmentRole::Primary)
+    }
+
+    fn id(suffix: u16) -> InterfaceId {
+        peer(suffix).id()
+    }
+
+    fn peer_table<const MEMBERS: usize>(occupied: &[(usize, u16)]) -> WifiPeerTable<MEMBERS> {
+        let mut peers = WifiPeerTable::new();
+        for &(slot, suffix) in occupied {
+            assert_eq!(
+                peers.insert(slot, peer(suffix)),
+                super::super::peer::WifiPeerInsertion::Inserted { slot }
+            );
+        }
+        peers
     }
 
     fn slots<const MEMBERS: usize>(mut plan: FanoutPlan<MEMBERS>) -> std::vec::Vec<usize> {
@@ -218,27 +222,20 @@ mod tests {
 
     #[test]
     fn targets_only_live_selected_members_in_rotating_order() {
-        let peers = [Some(peer(1)), None, Some(peer(3)), Some(peer(4))];
-        let ids = [id(1), id(2), id(3), id(4)];
+        let peers = peer_table::<4>(&[(0, 1), (2, 3), (3, 4)]);
 
         assert_eq!(
-            slots(FanoutPlan::new(
-                FrameTarget::Fan(FanTarget::All),
-                &peers,
-                &ids,
-                2,
-            )),
+            slots(FanoutPlan::new(FrameTarget::Fan(FanTarget::All), &peers, 2)),
             [2, 3, 0]
         );
         assert_eq!(
-            slots(FanoutPlan::new(FrameTarget::Direct(id(4)), &peers, &ids, 0,)),
+            slots(FanoutPlan::new(FrameTarget::Direct(id(4)), &peers, 0)),
             [3]
         );
         assert_eq!(
             slots(FanoutPlan::new(
                 FrameTarget::Fan(FanTarget::AllExcept(id(3))),
                 &peers,
-                &ids,
                 2,
             )),
             [3, 0]
@@ -262,10 +259,10 @@ mod tests {
 
     #[test]
     fn one_aggregate_budget_is_divided_across_selected_members() {
-        let peers = [Some(peer(1)); 24];
-        let ids = ::core::array::from_fn(|slot| id(slot as u8 + 1));
-        let broadcast = FanoutPlan::new(FrameTarget::Fan(FanTarget::All), &peers, &ids, 0);
-        let direct = FanoutPlan::new(FrameTarget::Direct(id(1)), &peers, &ids, 0);
+        let occupied = ::std::vec::Vec::from_iter((0..24).map(|slot| (slot, slot as u16 + 1)));
+        let peers = peer_table::<24>(&occupied);
+        let broadcast = FanoutPlan::new(FrameTarget::Fan(FanTarget::All), &peers, 0);
+        let direct = FanoutPlan::new(FrameTarget::Direct(id(1)), &peers, 0);
         let budget = Duration::from_millis(300);
 
         assert_eq!(
@@ -277,9 +274,8 @@ mod tests {
 
     #[test]
     fn a_blocked_member_does_not_consume_later_members_budgets() {
-        let peers = [Some(peer(1)), Some(peer(2)), Some(peer(3))];
-        let ids = [id(1), id(2), id(3)];
-        let mut plan = FanoutPlan::new(FrameTarget::Fan(FanTarget::All), &peers, &ids, 0);
+        let peers = peer_table::<3>(&[(0, 1), (1, 2), (2, 3)]);
+        let mut plan = FanoutPlan::new(FrameTarget::Fan(FanTarget::All), &peers, 0);
         let mut sender = MockSender {
             attempts: std::vec::Vec::new(),
             blocked: Some(0),
@@ -297,9 +293,8 @@ mod tests {
 
     #[test]
     fn cancellation_drops_the_blocked_transport_future() {
-        let peers = [Some(peer(1))];
-        let ids = [id(1)];
-        let mut plan = FanoutPlan::new(FrameTarget::Fan(FanTarget::All), &peers, &ids, 0);
+        let peers = peer_table::<1>(&[(0, 1)]);
+        let mut plan = FanoutPlan::new(FrameTarget::Fan(FanTarget::All), &peers, 0);
         let canceled = Cell::new(false);
         let mut sender = BlockingSender {
             canceled: &canceled,

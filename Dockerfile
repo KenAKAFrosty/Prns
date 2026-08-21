@@ -38,9 +38,9 @@ RUN test "$(rustc --version | cut -d ' ' -f 2)" = "1.96.0" \
     && install -D -m 0644 THIRD_PARTY_NOTICES.md /image/usr/share/doc/prnsd/THIRD_PARTY_NOTICES.md \
     && install -D -m 0644 release/keys/minisign.pub /image/usr/share/doc/prnsd/minisign.pub \
     && if test -f release/source-bundle/source.zip; then \
-         install -D -m 0644 release/source-bundle/source.zip /image/usr/share/prnsd/source.zip; \
-         install -D -m 0644 release/source-bundle/source.zip.sha256 /image/usr/share/prnsd/source.zip.sha256; \
-       fi \
+    install -D -m 0644 release/source-bundle/source.zip /image/usr/share/prnsd/source.zip; \
+    install -D -m 0644 release/source-bundle/source.zip.sha256 /image/usr/share/prnsd/source.zip.sha256; \
+    fi \
     && install -d -m 0700 -o 65532 -g 65532 /image/var/lib/prnsd \
     && rm -rf /tmp/prnsd-target /usr/local/cargo/registry
 
@@ -54,7 +54,7 @@ ARG BUILD_DATE
 LABEL org.opencontainers.image.title="prnsd" \
     org.opencontainers.image.description="Containerized headless Prns daemon" \
     org.opencontainers.image.source="https://github.com/KenAKAFrosty/Prns" \
-    org.opencontainers.image.url="https://prns.dev" \
+    org.opencontainers.image.url="https://reticulum.rs" \
     org.opencontainers.image.documentation="https://github.com/KenAKAFrosty/Prns/tree/main/docs" \
     org.opencontainers.image.licenses="MIT OR Apache-2.0" \
     org.opencontainers.image.version="${VERSION}" \

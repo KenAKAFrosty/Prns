@@ -1,18 +1,11 @@
-#[cfg(feature = "wifi-auto")]
 use super::connectivity::net_task;
 use super::*;
 
-#[cfg(feature = "wifi-auto")]
 pub(super) const HTTP_SERVER_WORKERS: usize = 4;
-#[cfg(feature = "wifi-auto")]
 const EMBASSY_INTERNAL_SOCKET_COUNT: usize = 1;
-#[cfg(feature = "wifi-auto")]
 const WIFI_AUTO_UDP_SOCKET_COUNT: usize = 3;
-#[cfg(feature = "wifi-auto")]
 const CAPTIVE_PORTAL_UDP_SOCKET_COUNT: usize = 2;
-#[cfg(feature = "wifi-auto")]
 const TCP_RENDEZVOUS_SOCKET_COUNT: usize = 1;
-#[cfg(feature = "wifi-auto")]
 const AP_STACK_SOCKET_CAPACITY: usize = EMBASSY_INTERNAL_SOCKET_COUNT
     + WIFI_AUTO_UDP_SOCKET_COUNT
     + CAPTIVE_PORTAL_UDP_SOCKET_COUNT
@@ -22,10 +15,8 @@ const AP_STACK_SOCKET_CAPACITY: usize = EMBASSY_INTERNAL_SOCKET_COUNT
 /// A random per-boot SoftAP SSID suffix, cached so every `set_config` within a boot reuses the same
 /// name (regenerating per call would flap the SSID). 0 = unset. Random rather than MAC-derived so the
 /// AP name leaks no device identity; it re-rolls on reboot, which is acceptable (preferred, even).
-#[cfg(feature = "wifi-auto")]
 static AP_SSID_SUFFIX: AtomicU64 = AtomicU64::new(0);
 
-#[cfg(feature = "wifi-auto")]
 pub(super) fn ap_ssid_suffix() -> u16 {
     let mut suffix = AP_SSID_SUFFIX.load(Ordering::Relaxed);
     if suffix == 0 {
@@ -37,24 +28,29 @@ pub(super) fn ap_ssid_suffix() -> u16 {
     suffix as u16
 }
 
-#[cfg(feature = "wifi-auto")]
 pub(super) fn ap_ssid() -> String {
     alloc::format!("Hopspot-{:04X}", ap_ssid_suffix())
 }
 
-#[cfg(feature = "wifi-auto")]
-pub(super) fn ap_config() -> AccessPointConfig {
-    AccessPointConfig::default()
+pub(super) fn ap_config(channel: Option<u8>) -> AccessPointConfig {
+    let config = AccessPointConfig::default()
         .with_ssid(ap_ssid())
-        .with_max_connections(4)
+        .with_max_connections(4);
+    match channel {
+        Some(channel) => config.with_channel(channel),
+        None => config,
+    }
 }
 
-/// The Wi-Fi mode to request for a station config. APSTA keeps the Hopspot SoftAP alongside the
-/// station and survives reconnects; a bare `Station` configuration would drop the AP.
-#[cfg(feature = "wifi-auto")]
-pub(super) fn station_wifi_mode(station: StationConfig, ap_enabled: bool) -> WifiConfig {
+/// The Wi-Fi mode to request for a station config. Once discovery resolves the uplink channel,
+/// APSTA starts the Hopspot SoftAP on that same channel and keeps it alongside the station.
+pub(super) fn station_wifi_mode(
+    station: StationConfig,
+    ap_enabled: bool,
+    channel: Option<u8>,
+) -> WifiConfig {
     if ap_enabled {
-        return WifiConfig::AccessPointStation(station, ap_config());
+        return WifiConfig::AccessPointStation(station, ap_config(channel));
     }
     WifiConfig::Station(station)
 }
@@ -62,7 +58,6 @@ pub(super) fn station_wifi_mode(station: StationConfig, ap_enabled: bool) -> Wif
 /// Stand a second embassy-net Stack on the AP netif and drive it, so the SoftAP is a real interface
 /// (APSTA). Sized like the station's; the AP takes the station MAC + 1 for its link-local (matching
 /// the SoftAP's own BSSID) so the two netifs are distinct.
-#[cfg(feature = "wifi-auto")]
 pub(super) fn build_ap_netif(
     spawner: &Spawner,
     ap_iface: WifiStaDevice<'static>,
@@ -84,10 +79,10 @@ pub(super) fn build_ap_netif(
         gateway: None,
         dns_servers: Default::default(),
     });
-    let ap_resources = mk_static!(
-        StackResources<AP_STACK_SOCKET_CAPACITY>,
-        StackResources::new()
-    );
+    // Socket-set storage is ordinary software state, not DMA/control memory. Keep it in PSRAM so
+    // the radio blobs retain the scarce internal SRAM needed for concurrent AP + station RX.
+    let ap_resources =
+        crate::storage::allocate_psram(StackResources::<AP_STACK_SOCKET_CAPACITY>::new());
     let ap_seed = {
         let mut b = [0u8; 8];
         Rng::new().read(&mut b);
@@ -103,7 +98,6 @@ pub(super) fn build_ap_netif(
 /// is the point: once the joiner's default route is the Heltec, its Wi-Fi Auto client auto-dials the TCP
 /// rendezvous on the gateway (port 42699), sidestepping the SoftAP's broken multicast entirely. One
 /// static lease is enough to start; the wire format is hand-rolled (embassy-net ships only a client).
-#[cfg(feature = "wifi-auto")]
 #[embassy_executor::task]
 pub(super) async fn dhcp_server_task(stack: Stack<'static>) -> ! {
     let rx_meta: &'static mut [PacketMetadata] = alloc::vec![PacketMetadata::EMPTY; 4].leak();
@@ -191,7 +185,6 @@ pub(super) async fn dhcp_server_task(stack: Stack<'static>) -> ! {
 }
 
 /// Scan DHCP options (TLV) for option 53 (message type); returns its value (1=DISCOVER, 3=REQUEST, ...).
-#[cfg(feature = "wifi-auto")]
 fn dhcp_message_type(mut opts: &[u8]) -> Option<u8> {
     while let Some(&code) = opts.first() {
         if code == 255 {
@@ -213,7 +206,6 @@ fn dhcp_message_type(mut opts: &[u8]) -> Option<u8> {
 
 /// Build a BOOTREPLY (OFFER/ACK) leasing 192.168.4.2 with the SoftAP (192.168.4.1) as server, router,
 /// and DNS; returns the reply length. `msg_type` is 2 (OFFER) or 5 (ACK).
-#[cfg(feature = "wifi-auto")]
 fn build_dhcp_reply(req: &[u8], out: &mut [u8], msg_type: u8) -> usize {
     out.fill(0);
     out[0] = 2; // op = BOOTREPLY
@@ -250,7 +242,6 @@ fn build_dhcp_reply(req: &[u8], out: &mut [u8], msg_type: u8) -> usize {
     finish_dhcp_options(out, pos)
 }
 
-#[cfg(feature = "wifi-auto")]
 fn write_dhcp_option(out: &mut [u8], pos: &mut usize, code: u8, value: &[u8]) -> bool {
     if *pos + 2 + value.len() + 1 > out.len() || value.len() > u8::MAX as usize {
         return false;
@@ -262,7 +253,6 @@ fn write_dhcp_option(out: &mut [u8], pos: &mut usize, code: u8, value: &[u8]) ->
     true
 }
 
-#[cfg(feature = "wifi-auto")]
 fn finish_dhcp_options(out: &mut [u8], pos: usize) -> usize {
     let pos = pos.min(out.len().saturating_sub(1));
     out[pos] = 255; // end
@@ -271,7 +261,6 @@ fn finish_dhcp_options(out: &mut [u8], pos: usize) -> usize {
 
 /// Captive DNS for the SoftAP: every A/ANY query resolves to 192.168.4.1, which makes
 /// OS connectivity checks and typed hostnames land on the Hopspot HTTP server.
-#[cfg(feature = "wifi-auto")]
 #[embassy_executor::task]
 pub(super) async fn dns_server_task(stack: Stack<'static>) -> ! {
     let rx_meta: &'static mut [PacketMetadata] = alloc::vec![PacketMetadata::EMPTY; 4].leak();
@@ -305,7 +294,6 @@ pub(super) async fn dns_server_task(stack: Stack<'static>) -> ! {
     }
 }
 
-#[cfg(feature = "wifi-auto")]
 fn build_dns_reply(req: &[u8], out: &mut [u8]) -> Option<usize> {
     if req.len() < 12 || req[2] & 0x80 != 0 {
         return None;
@@ -347,7 +335,6 @@ fn build_dns_reply(req: &[u8], out: &mut [u8]) -> Option<usize> {
     Some(reply_len)
 }
 
-#[cfg(feature = "wifi-auto")]
 fn dns_question_end(req: &[u8]) -> Option<(usize, u16)> {
     let mut pos = 12;
     loop {
@@ -371,14 +358,10 @@ fn dns_question_end(req: &[u8]) -> Option<(usize, u16)> {
     Some((pos + 4, qtype))
 }
 
-#[cfg(feature = "wifi-auto")]
 const CAPTIVE_PORTAL_PAGE: &[u8] = include_bytes!("../../assets/captive-portal.html");
-#[cfg(feature = "wifi-auto")]
 const HTTP_SOCKET_BUFFER_BYTES: usize = 2048;
-#[cfg(feature = "wifi-auto")]
 const HTTP_REQUEST_BUFFER_BYTES: usize = 1024;
 
-#[cfg(feature = "wifi-auto")]
 #[embassy_executor::task(pool_size = HTTP_SERVER_WORKERS)]
 pub(super) async fn http_server_task(stack: Stack<'static>) -> ! {
     let rx_buffer: &'static mut [u8] = alloc::vec![0u8; HTTP_SOCKET_BUFFER_BYTES].leak();
@@ -424,14 +407,12 @@ pub(super) async fn http_server_task(stack: Stack<'static>) -> ! {
     }
 }
 
-#[cfg(feature = "wifi-auto")]
 struct HttpResponseAttempt<'a> {
     method: &'a str,
     path: &'a str,
     written: bool,
 }
 
-#[cfg(feature = "wifi-auto")]
 async fn serve_site_connection<'a>(
     socket: &mut TcpSocket<'static>,
     request_buffer: &'a mut [u8],
@@ -493,7 +474,6 @@ async fn serve_site_connection<'a>(
     })
 }
 
-#[cfg(feature = "wifi-auto")]
 async fn read_http_request(
     socket: &mut TcpSocket<'static>,
     request_buffer: &mut [u8],
@@ -523,13 +503,11 @@ async fn read_http_request(
     }
 }
 
-#[cfg(feature = "wifi-auto")]
 fn http_headers_complete(bytes: &[u8]) -> bool {
     bytes.windows(4).any(|window| window == b"\r\n\r\n")
         || bytes.windows(2).any(|window| window == b"\n\n")
 }
 
-#[cfg(feature = "wifi-auto")]
 fn normalize_http_path(raw_path: &str) -> &str {
     let path = raw_path.split_once('?').map_or(raw_path, |(path, _)| path);
     let path = path.strip_prefix("/.").unwrap_or(path);
@@ -540,7 +518,6 @@ fn normalize_http_path(raw_path: &str) -> &str {
     }
 }
 
-#[cfg(feature = "wifi-auto")]
 fn is_captive_probe_path(path: &str) -> bool {
     matches!(
         path,
@@ -558,7 +535,6 @@ fn is_captive_probe_path(path: &str) -> bool {
     )
 }
 
-#[cfg(feature = "wifi-auto")]
 async fn send_captive_portal_api(
     socket: &mut TcpSocket<'static>,
     head_only: bool,
@@ -576,7 +552,6 @@ async fn send_captive_portal_api(
     .await
 }
 
-#[cfg(feature = "wifi-auto")]
 async fn send_captive_portal_redirect(
     socket: &mut TcpSocket<'static>,
     head_only: bool,
@@ -593,7 +568,6 @@ async fn send_captive_portal_redirect(
     Ok(())
 }
 
-#[cfg(feature = "wifi-auto")]
 struct SiteResponse<'a> {
     status: &'a str,
     content_type: &'a str,
@@ -601,7 +575,6 @@ struct SiteResponse<'a> {
     head_only: bool,
 }
 
-#[cfg(feature = "wifi-auto")]
 async fn send_site_response(
     socket: &mut TcpSocket<'static>,
     response: SiteResponse<'_>,
@@ -623,7 +596,6 @@ async fn send_site_response(
     Ok(())
 }
 
-#[cfg(feature = "wifi-auto")]
 async fn tcp_write_all(socket: &mut TcpSocket<'static>, mut bytes: &[u8]) -> Result<(), ()> {
     while !bytes.is_empty() {
         let written = socket.write(bytes).await.map_err(|_| ())?;

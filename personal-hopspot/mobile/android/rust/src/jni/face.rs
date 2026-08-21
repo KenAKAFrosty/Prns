@@ -2,14 +2,15 @@ use jni::objects::{JByteBuffer, JClass, JString};
 use jni::sys::{jboolean, jint, jlong, jlongArray, jstring};
 use jni::JNIEnv;
 use personal_hopspot_core::{
-    BatteryPercent, BatteryState, MobileActionCode, MobileEngineFailure, MobileEngineState,
-    MobileInputCode, COALESCE_MS, MOBILE_PANEL_HEIGHT, MOBILE_PANEL_WIDTH, MOBILE_RGBA_BYTES,
+    BatteryPercent, ExternalPowerState, MobileActionCode, MobileEngineFailure, MobileEngineState,
+    MobileInputCode, PowerSnapshot, COALESCE_MS, MOBILE_PANEL_HEIGHT, MOBILE_PANEL_WIDTH,
+    MOBILE_RGBA_BYTES,
 };
 
 use crate::engine::{
     ble_identity_hex, delivery_destination_hex, engine_state, last_failure, node_identity_hash_hex,
     node_page_destination_hex, persistence_snapshot, rpc_key_hex, runtime_health,
-    wifi_aware_failure_reason, wifi_direct_failure_reason,
+    sideband_join_config, wifi_aware_failure_reason, wifi_direct_failure_reason,
 };
 use crate::face::HopspotFace;
 
@@ -143,6 +144,14 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeActionAnnoun
 }
 
 #[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeActionCopySharedInstanceConfigCode(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    MobileActionCode::CopySharedInstanceConfig.code()
+}
+
+#[no_mangle]
 pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeEngineStoppedCode(
     _env: JNIEnv,
     _class: JClass,
@@ -250,7 +259,7 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeSetBattery(
     _class: JClass,
     handle: jlong,
     percent: jint,
-    charging: jboolean,
+    externally_powered: jboolean,
 ) {
     // SAFETY: as in `nativePostInput`, a non-null `handle` is a live `HopspotFace` from
     // `nativeInit`; `as_mut` yields `None` for null rather than dereferencing it.
@@ -259,11 +268,10 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeSetBattery(
     };
     let pct = percent.clamp(0, 100) as u8;
     let pct = BatteryPercent::saturating(pct);
-    let state = if charging != 0 {
-        BatteryState::Charging(pct)
-    } else {
-        BatteryState::Level(pct)
-    };
+    let state = PowerSnapshot::new(
+        Some(pct),
+        ExternalPowerState::from_presence(externally_powered != 0),
+    );
     face.set_battery(state);
 }
 
@@ -341,6 +349,16 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeRpcKeyHex(
 ) -> jstring {
     rpc_key_hex()
         .and_then(|key| env.new_string(key).ok())
+        .map_or(core::ptr::null_mut(), JString::into_raw)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeSidebandJoinConfig(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    sideband_join_config()
+        .and_then(|config| env.new_string(config).ok())
         .map_or(core::ptr::null_mut(), JString::into_raw)
 }
 

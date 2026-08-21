@@ -1,0 +1,21 @@
+[package]
+name = "prns-nrf-dfu-wasm"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Pinned browser bindings for the Prns Nordic serial DFU protocol core."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+prns-nrf-dfu = { path = "../prns-nrf-dfu" }
+thiserror = "2.0"
+wasm-bindgen = "=0.2.126"
+
+[lints]
+workspace = true

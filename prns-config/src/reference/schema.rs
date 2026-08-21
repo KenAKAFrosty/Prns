@@ -1,6 +1,7 @@
 use super::interface_type::InterfaceType;
 use super::keys::{
     common as common_key, global as global_key, interface as interface_key, logging as logging_key,
+    prns as prns_key,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -30,6 +31,8 @@ pub(super) enum ValueKind {
     RnodeMultiFrequency,
     RnodeMultiTxPower,
     BlackholeUpdateInterval,
+    WebSocketFramingSelection,
+    ByteQuantity,
 }
 
 impl ValueKind {
@@ -72,6 +75,10 @@ impl ValueKind {
             ValueKind::BlackholeUpdateInterval => {
                 "a finite number of minutes representable by the host; values below 2 use 2 minutes"
             }
+            ValueKind::WebSocketFramingSelection => "one of auto, raw, hdlc, or kiss",
+            ValueKind::ByteQuantity => {
+                "a non-negative integer optionally followed by B, KiB, MiB, or GiB, whose byte total is representable by this host"
+            }
         }
     }
 
@@ -100,6 +107,8 @@ impl ValueKind {
             ValueKind::RnodeMultiFrequency => "868000000",
             ValueKind::RnodeMultiTxPower => "7",
             ValueKind::BlackholeUpdateInterval => "60.0",
+            ValueKind::WebSocketFramingSelection => "auto",
+            ValueKind::ByteQuantity => "64 MiB",
         }
     }
 }
@@ -235,6 +244,11 @@ pub(super) const GLOBAL_RULES: &[(&str, KeyRule)] = &[
 pub(super) const LOGGING_RULES: &[(&str, KeyRule)] = &[
     (logging_key::LEVEL, Applied(ValueKind::LogLevel)),
     (logging_key::TIMESTAMPS, Applied(ValueKind::Bool)),
+];
+
+pub(super) const PRNS_RULES: &[(&str, KeyRule)] = &[
+    (prns_key::RESOURCE_MEM_IN, Applied(ValueKind::ByteQuantity)),
+    (prns_key::RESOURCE_MEM_OUT, Applied(ValueKind::ByteQuantity)),
 ];
 
 pub(super) const SUPPORTED_INTERFACES: &[&str] = InterfaceType::CANONICAL_NAMES;
@@ -519,6 +533,7 @@ fn weave_interface_key_rule(key: &str) -> Option<KeyRule> {
 fn prns_websocket_client_key_rule(key: &str) -> Option<KeyRule> {
     match key {
         interface_key::TARGET => Some(Applied(ValueKind::String)),
+        interface_key::FRAMING => Some(Applied(ValueKind::WebSocketFramingSelection)),
         _ => None,
     }
 }
@@ -528,6 +543,7 @@ fn prns_websocket_server_key_rule(key: &str) -> Option<KeyRule> {
         interface_key::LISTEN_IP | interface_key::DEVICE => Some(Applied(ValueKind::String)),
         interface_key::LISTEN_PORT | interface_key::PORT => Some(Applied(ValueKind::U16)),
         interface_key::PREFER_IPV6 => Some(Applied(ValueKind::Bool)),
+        interface_key::FRAMING => Some(Applied(ValueKind::WebSocketFramingSelection)),
         _ => None,
     }
 }

@@ -18,6 +18,7 @@ from flasher_acceptance_contract import (  # noqa: E402,F401
     REQUIRED_FALLBACKS,
     SHIPPING_BOARDS,
     SURFACES,
+    WEB_SERIAL_HOSTS,
 )
 from flasher_tester_roster import validate_roster  # noqa: E402
 
@@ -49,8 +50,9 @@ def main() -> int:
         return 1
     print(
         f"tester roster covers {len(SHIPPING_BOARDS) * len(SURFACES)} physical, "
+        f"{len(WEB_SERIAL_HOSTS)} Firefox Web Serial, "
         f"{len(REQUIRED_FALLBACKS)} fallback, and "
-        f"{len(OS_ARCHITECTURES)} installer assignments"
+        f"{len(CLI_TARGETS)} installer assignments"
     )
     return 0
 

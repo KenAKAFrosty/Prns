@@ -29,6 +29,12 @@ def complete_roster() -> dict:
         ("xiao-esp32-c6", "web"): ("windows", "x86_64"),
         ("t-echo", "cli"): ("linux", "aarch64"),
         ("t-echo", "web"): ("macos", "x86_64"),
+        ("t114", "cli"): ("linux", "x86_64"),
+        ("t114", "web"): ("macos", "aarch64"),
+        ("t096", "cli"): ("linux", "aarch64"),
+        ("t096", "web"): ("macos", "aarch64"),
+        ("t1000-e", "cli"): ("macos", "x86_64"),
+        ("t1000-e", "web"): ("windows", "x86_64"),
     }
     physical_assignments = []
     for (board, surface), (os_name, architecture) in hosts.items():
@@ -48,6 +54,23 @@ def complete_roster() -> dict:
                 "channel": "stable",
             }
         physical_assignments.append(assignment)
+    web_serial_assignments = [
+        {
+            "board": board,
+            "os": os_name,
+            "architecture": architecture,
+            "browser": {"name": "firefox", "channel": "stable"},
+            "tester": "github:solo-tester",
+            "cables_ready": True,
+            "device_permissions_ready": True,
+            "recovery_instructions_reviewed": True,
+        }
+        for board, os_name, architecture in (
+            ("heltec-v4", "linux", "x86_64"),
+            ("t-beam-supreme", "macos", "x86_64"),
+            ("xiao-esp32-c6", "windows", "x86_64"),
+        )
+    ]
     fallback_assignments = [
         {
             "browser": {"name": browser, "channel": "stable"},
@@ -56,12 +79,7 @@ def complete_roster() -> dict:
             "tester": "github:solo-tester",
             "browser_ready": True,
         }
-        for browser, os_name, architecture in (
-            ("firefox", "linux", "x86_64"),
-            ("firefox", "macos", "x86_64"),
-            ("firefox", "windows", "x86_64"),
-            ("safari", "macos", "aarch64"),
-        )
+        for browser, os_name, architecture in (("safari", "macos", "aarch64"),)
     ]
     installation_assignments = [
         {
@@ -74,11 +92,12 @@ def complete_roster() -> dict:
         for target, (os_name, architecture) in VALIDATOR.CLI_TARGETS.items()
     ]
     return {
-        "schema": 2,
+        "schema": 3,
         "release": {"version": VERSION},
         "release_owner": "github:release-owner",
         "confirmed_on": date.today().isoformat(),
         "physical_assignments": physical_assignments,
+        "web_serial_assignments": web_serial_assignments,
         "fallback_assignments": fallback_assignments,
         "installation_assignments": installation_assignments,
     }
@@ -122,7 +141,9 @@ class TesterRosterValidatorTests(unittest.TestCase):
 
     def test_each_surface_must_cover_linux_macos_and_windows(self) -> None:
         roster = complete_roster()
-        roster["physical_assignments"][4]["os"] = "linux"
+        for assignment in roster["physical_assignments"]:
+            if assignment["surface"] == "cli" and assignment["os"] == "macos":
+                assignment["os"] = "linux"
         errors = self.validate(roster)
         self.assertTrue(
             any("cli physical assignments do not cover host OSes" in error for error in errors)
@@ -135,6 +156,20 @@ class TesterRosterValidatorTests(unittest.TestCase):
         errors = self.validate(roster)
         self.assertTrue(any("missing fallback assignments" in error for error in errors))
         self.assertTrue(any("duplicate installation assignment" in error for error in errors))
+
+    def test_firefox_web_serial_assignments_require_exact_hosts_and_esp_boards(self) -> None:
+        roster = complete_roster()
+        roster["web_serial_assignments"][0]["board"] = "t-echo"
+        roster["web_serial_assignments"][2]["architecture"] = "aarch64"
+        errors = self.validate(roster)
+        self.assertTrue(any("eligible shipping ESP-serial board" in error for error in errors))
+        self.assertTrue(any("architecture does not match" in error for error in errors))
+
+    def test_firefox_cannot_be_a_fallback_assignment(self) -> None:
+        roster = complete_roster()
+        roster["fallback_assignments"][0]["browser"]["name"] = "firefox"
+        errors = self.validate(roster)
+        self.assertTrue(any("not the required Safari assignment" in error for error in errors))
 
     def test_roster_is_bound_to_candidate_identity(self) -> None:
         roster = complete_roster()

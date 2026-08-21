@@ -1,7 +1,11 @@
 package rs.reticulum.prns
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
@@ -110,8 +114,11 @@ class HostContractTest {
             InterfaceConfigWeave("/dev/ttyWEAVE0"),
             InterfaceConfigAutomaticUsb,
             InterfaceConfigAutomaticBluetoothLe,
-            InterfaceConfigWebSocketClient("ws://fixture.invalid/client"),
-            InterfaceConfigWebSocketServer("127.0.0.1:4246"),
+            InterfaceConfigWebSocketClient(
+                "ws://fixture.invalid/client",
+                WebSocketFramingSelection.AUTO,
+            ),
+            InterfaceConfigWebSocketServer("127.0.0.1:4246", WebSocketFramingSelection.HDLC),
             InterfaceConfigBrowserRendezvous("ws://fixture.invalid/rendezvous"),
         )
         val fixtureKinds = Regex("\\\"kind\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"")
@@ -438,6 +445,150 @@ class HostContractTest {
         }
     }
 
+    @Test
+    fun suppliedPipeCarriesAnnouncesAndReportsPipeIdentity(): Unit = runBlocking {
+        val pair = IntArray(2)
+        assertEquals(
+            0,
+            TestLibC.INSTANCE.socketpair(AF_UNIX, SOCK_STREAM, 0, pair),
+            "socketpair(2) failed",
+        )
+        val firstWire = java.util.concurrent.atomic.AtomicInteger(pair[0])
+        val secondWire = java.util.concurrent.atomic.AtomicInteger(pair[1])
+        fun options(aspect: String) = HostOptions(
+            role = HostRole.ENDPOINT,
+            identity = IdentityConfigGenerateEphemeral,
+            destinations = listOf(
+                DestinationConfigSingle(
+                    name = DestinationName("suppliedpipe", listOf(aspect)),
+                    identity = DestinationIdentityConfigHostIdentity,
+                    announceAppData = null,
+                    maximumRequestBytes = null,
+                    requestHandlers = emptyList(),
+                ),
+            ),
+            requiredCapabilities = setOf(Capability.SUPPLIED_PIPE),
+        )
+        Host(options("first")).use { first ->
+            Host(options("second")).use { second ->
+                assertTrue(Capability.SUPPLIED_PIPE in first.backendInfo.capabilities)
+                first.beginSuppliedPipe(
+                    name = "to-second",
+                    respawnDelayMillis = 50,
+                    bitrate = BitrateAuto,
+                ).use { firstPipe ->
+                    second.beginSuppliedPipe(
+                        name = "to-first",
+                        respawnDelayMillis = 50,
+                        bitrate = BitrateAuto,
+                    ).use { secondPipe ->
+                        val firstInterface = assertIs<CommandOutcomeInterfaceAttached>(
+                            successfulOutcome(withTimeout(5_000) { firstPipe.awaitAttachment() }),
+                        ).`interface`
+                        assertIs<CommandOutcomeInterfaceAttached>(
+                            successfulOutcome(withTimeout(5_000) { secondPipe.awaitAttachment() }),
+                        )
+                        val firstService = launch(CoroutineName("supplied-pipe-opener")) {
+                            firstPipe.serve {
+                                assertEquals(
+                                    "supplied-pipe-opener",
+                                    currentCoroutineContext()[CoroutineName]?.name,
+                                )
+                                firstWire.getAndSet(SUPPLIED_PIPE_DECLINED)
+                            }
+                        }
+                        val secondService = launch {
+                            secondPipe.serve {
+                                secondWire.getAndSet(SUPPLIED_PIPE_DECLINED)
+                            }
+                        }
+
+                        var firstSnapshot: InterfaceSnapshot? = null
+                        repeat(50) {
+                            if (firstSnapshot == null) {
+                                firstSnapshot = first.snapshot().interfaces.singleOrNull {
+                                    it.interfaceId == firstInterface &&
+                                        it.health == InterfaceHealth.CONNECTED
+                                }
+                                if (firstSnapshot == null) {
+                                    kotlinx.coroutines.delay(25)
+                                }
+                            }
+                        }
+                        assertEquals(InterfaceKind.PIPE, firstSnapshot?.kind)
+
+                        val destination = first.destinationHashes.single()
+                        var routed = false
+                        repeat(50) {
+                            if (!routed) {
+                                successfulOutcome(
+                                    settled(
+                                        first,
+                                        HostCommandAnnounce(destination, firstInterface),
+                                    ),
+                                )
+                                routed = second.snapshot().routes.any {
+                                    it.destination == destination
+                                }
+                                if (!routed) {
+                                    kotlinx.coroutines.delay(50)
+                                }
+                            }
+                        }
+                        assertTrue(routed, "the supplied Pipe did not carry the announce")
+                        firstPipe.close()
+                        secondPipe.close()
+                        firstService.cancelAndJoin()
+                        secondService.cancelAndJoin()
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun suppliedPipeCancellationReleasesTheOutstandingRequest(): Unit = runBlocking {
+        val options = HostOptions(
+            role = HostRole.ENDPOINT,
+            identity = IdentityConfigGenerateEphemeral,
+            destinations = emptyList(),
+            requiredCapabilities = setOf(Capability.SUPPLIED_PIPE),
+        )
+        Host(options).use { host ->
+            host.beginSuppliedPipe(
+                name = "cancelled-opener",
+                respawnDelayMillis = 50,
+                bitrate = BitrateAuto,
+            ).use { pipe ->
+                val interfaceId = assertIs<CommandOutcomeInterfaceAttached>(
+                    successfulOutcome(withTimeout(5_000) { pipe.awaitAttachment() }),
+                ).`interface`
+                val entered = CompletableDeferred<Unit>()
+                val service = launch {
+                    pipe.serve {
+                        entered.complete(Unit)
+                        awaitCancellation()
+                    }
+                }
+                withTimeout(5_000) { entered.await() }
+                service.cancelAndJoin()
+                pipe.close()
+                var detached = false
+                repeat(50) {
+                    if (!detached) {
+                        detached = host.snapshot().interfaces.none {
+                            it.interfaceId == interfaceId
+                        }
+                        if (!detached) {
+                            kotlinx.coroutines.delay(20)
+                        }
+                    }
+                }
+                assertTrue(detached, "closing the controller did not detach the interface")
+            }
+        }
+    }
+
     private suspend fun settled(host: Host, command: HostCommand): CommandSettlement =
         host.execute(command).use {
             withTimeout(5_000) {
@@ -452,6 +603,17 @@ class HostContractTest {
         channel: Channel<ApplicationEvent>,
     ): Event = withTimeout(5_000) {
         channel.receiveAsFlow().filterIsInstance<Event>().first()
+    }
+}
+
+private const val AF_UNIX = 1
+private const val SOCK_STREAM = 1
+
+private interface TestLibC : com.sun.jna.Library {
+    fun socketpair(domain: Int, type: Int, protocol: Int, descriptors: IntArray): Int
+
+    companion object {
+        val INSTANCE: TestLibC = com.sun.jna.Native.load("c", TestLibC::class.java)
     }
 }
 

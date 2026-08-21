@@ -4,84 +4,75 @@ use crate::interfaces::InterfaceId;
 use crate::interfaces::InterfaceKind;
 use crate::routing::announce::held::HeldDropCause;
 use crate::routing::announce::schedule::ScheduledAnnounceQueue;
-use crate::routing::ingress::{AnnounceIngest, IgnoreReason};
+use crate::routing::ingress::{AnnounceIngest, IgnoreReason, IngestPacketOutcome};
 use crate::routing::links::handshake::LinkRttError;
 use crate::storage::StorageLayout;
 
 use super::state::EngineState;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum AnnounceSourceKind {
-    Network,
-    SharedClient,
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum AnnounceSourceKind {
+        Network,
+        SharedClient,
+    }
 }
 
 impl AnnounceSourceKind {
-    pub const ALL: [Self; 2] = [Self::Network, Self::SharedClient];
-
     const fn index(self) -> usize {
         self as usize
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum AnnounceIngressOutcome {
-    Accepted,
-    Held,
-    Ignored,
-    HeldDroppedInterfaceAtCap,
-    HeldDroppedPoolFull,
-    HeldDroppedArenaFull,
-    Blackholed,
-    AcceptedScheduleRejectedQueueFull,
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum AnnounceIngressOutcome {
+        Accepted,
+        Held,
+        Ignored,
+        HeldDroppedInterfaceAtCap,
+        HeldDroppedPoolFull,
+        HeldDroppedArenaFull,
+        Blackholed,
+        AcceptedScheduleRejectedQueueFull,
+    }
 }
 
 impl AnnounceIngressOutcome {
-    pub const ALL: [Self; 8] = [
-        Self::Accepted,
-        Self::AcceptedScheduleRejectedQueueFull,
-        Self::Held,
-        Self::Ignored,
-        Self::HeldDroppedInterfaceAtCap,
-        Self::HeldDroppedPoolFull,
-        Self::HeldDroppedArenaFull,
-        Self::Blackholed,
-    ];
-
     const fn index(self) -> usize {
         self as usize
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum AnnounceCommandOutcome {
-    Succeeded,
-    Rejected,
-    WriteFailed,
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum AnnounceCommandOutcome {
+        Succeeded,
+        Rejected,
+        WriteFailed,
+    }
 }
 
 impl AnnounceCommandOutcome {
-    pub const ALL: [Self; 3] = [Self::Succeeded, Self::Rejected, Self::WriteFailed];
-
     const fn index(self) -> usize {
         self as usize
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum AnnounceOrigin {
-    Local,
-    SharedClient,
-    Relay,
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum AnnounceOrigin {
+        Local,
+        SharedClient,
+        Relay,
+    }
 }
 
 impl AnnounceOrigin {
-    pub const ALL: [Self; 3] = [Self::Local, Self::SharedClient, Self::Relay];
-
     pub const fn index(self) -> usize {
         self as usize
     }
@@ -216,68 +207,248 @@ pub struct EngineAnnounceMetricsSnapshot {
     pub interfaces: Vec<InterfaceAnnounceMetricsSnapshot>,
 }
 
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum PathRequestIngressOutcome {
+        Answered,
+        AnswerScheduled,
+        AnswerScheduleRejected,
+        RelayedRecursive,
+        RelayedAcrossBoundary,
+        RelayedToTransports,
+        OfferedToLocalClients,
+        IgnoredMalformed,
+        IgnoredDuplicate,
+        IgnoredLoopPrevented,
+        IgnoredRouteUnresponsive,
+        IgnoredRateLimited,
+        IgnoredSuperseded,
+        IgnoredNotForUs,
+        IgnoredOther,
+    }
+}
+
+impl PathRequestIngressOutcome {
+    const fn index(self) -> usize {
+        self as usize
+    }
+
+    pub(crate) fn from_classification(outcome: &IngestPacketOutcome<'_>) -> Option<Self> {
+        match outcome {
+            IngestPacketOutcome::AnswerPathRequest { .. } => Some(Self::Answered),
+            IngestPacketOutcome::ScheduledPathResponse { .. } => Some(Self::AnswerScheduled),
+            IngestPacketOutcome::PathResponseScheduleRejected { .. } => {
+                Some(Self::AnswerScheduleRejected)
+            }
+            IngestPacketOutcome::ForwardRecursivePathRequest { .. } => Some(Self::RelayedRecursive),
+            IngestPacketOutcome::ForwardBoundaryPathRequest { .. } => {
+                Some(Self::RelayedAcrossBoundary)
+            }
+            IngestPacketOutcome::ForwardLocalClientPathRequest { .. } => {
+                Some(Self::RelayedToTransports)
+            }
+            IngestPacketOutcome::RelayPathRequestToLocalClients { .. } => {
+                Some(Self::OfferedToLocalClients)
+            }
+            IngestPacketOutcome::Ignored(IgnoreReason::Malformed) => Some(Self::IgnoredMalformed),
+            IngestPacketOutcome::Ignored(IgnoreReason::Duplicate) => Some(Self::IgnoredDuplicate),
+            IngestPacketOutcome::Ignored(IgnoreReason::LoopPrevented) => {
+                Some(Self::IgnoredLoopPrevented)
+            }
+            IngestPacketOutcome::Ignored(IgnoreReason::RouteUnresponsive) => {
+                Some(Self::IgnoredRouteUnresponsive)
+            }
+            IngestPacketOutcome::Ignored(IgnoreReason::RateLimited) => {
+                Some(Self::IgnoredRateLimited)
+            }
+            IngestPacketOutcome::Ignored(IgnoreReason::Superseded) => Some(Self::IgnoredSuperseded),
+            IngestPacketOutcome::Ignored(IgnoreReason::NotForUs) => Some(Self::IgnoredNotForUs),
+            IngestPacketOutcome::Ignored(_) => Some(Self::IgnoredOther),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum IgnoreReasonKind {
-    Consumed,
-    Malformed,
-    UnhandledContext,
-    Duplicate,
-    Superseded,
-    NotForUs,
-    NoRoute,
-    HopLimitReached,
-    LoopPrevented,
-    RouteUnresponsive,
-    OtherInstance,
-    UnknownLink,
-    LinkPhaseMismatch,
-    LinkRttMalformed,
-    LinkRttInvalidToken,
-    LinkRttBufferTooShort,
-    DecryptFailed,
-    ProofInvalid,
-    UnknownIdentity,
-    LinkRequestsRefused,
-    PermissionDenied,
-    RateLimited,
-    CapacityExhausted,
-    StrategyDeclined,
-    UnmatchedResponse,
-    IfacRefused,
-    RequestTooLarge,
+pub struct PathRequestIngressCounts {
+    counts: [u64; PathRequestIngressOutcome::ALL.len()],
+}
+
+impl Default for PathRequestIngressCounts {
+    fn default() -> Self {
+        Self {
+            counts: [0; PathRequestIngressOutcome::ALL.len()],
+        }
+    }
+}
+
+impl PathRequestIngressCounts {
+    pub const fn get(&self, outcome: PathRequestIngressOutcome) -> u64 {
+        self.counts[outcome.index()]
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (PathRequestIngressOutcome, u64)> + '_ {
+        PathRequestIngressOutcome::ALL
+            .into_iter()
+            .map(|outcome| (outcome, self.get(outcome)))
+    }
+
+    pub(crate) fn record(&mut self, outcome: PathRequestIngressOutcome) {
+        let count = &mut self.counts[outcome.index()];
+        *count = count.saturating_add(1);
+    }
+}
+
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum PathRequestRelayOutcome {
+        Sent,
+        RateLimited,
+    }
+}
+
+impl PathRequestRelayOutcome {
+    const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PathRequestRelayCounts {
+    counts: [u64; PathRequestRelayOutcome::ALL.len()],
+}
+
+impl Default for PathRequestRelayCounts {
+    fn default() -> Self {
+        Self {
+            counts: [0; PathRequestRelayOutcome::ALL.len()],
+        }
+    }
+}
+
+impl PathRequestRelayCounts {
+    pub const fn get(&self, outcome: PathRequestRelayOutcome) -> u64 {
+        self.counts[outcome.index()]
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (PathRequestRelayOutcome, u64)> + '_ {
+        PathRequestRelayOutcome::ALL
+            .into_iter()
+            .map(|outcome| (outcome, self.get(outcome)))
+    }
+
+    pub(crate) fn record(&mut self, outcome: PathRequestRelayOutcome) {
+        let count = &mut self.counts[outcome.index()];
+        *count = count.saturating_add(1);
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EnginePathRequestMetricsSnapshot {
+    pub ingress: PathRequestIngressCounts,
+    pub relays: PathRequestRelayCounts,
+    pub pending_discoveries: u32,
+}
+
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum ResourceAdmissionEvent {
+        Queued,
+        Promoted,
+        Expired,
+        Rejected,
+    }
+}
+
+impl ResourceAdmissionEvent {
+    const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceAdmissionEventCounts {
+    counts: [u64; ResourceAdmissionEvent::ALL.len()],
+}
+
+impl Default for ResourceAdmissionEventCounts {
+    fn default() -> Self {
+        Self {
+            counts: [0; ResourceAdmissionEvent::ALL.len()],
+        }
+    }
+}
+
+impl ResourceAdmissionEventCounts {
+    pub const fn get(&self, event: ResourceAdmissionEvent) -> u64 {
+        self.counts[event.index()]
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (ResourceAdmissionEvent, u64)> + '_ {
+        ResourceAdmissionEvent::ALL
+            .into_iter()
+            .map(|event| (event, self.get(event)))
+    }
+
+    fn record(&mut self, event: ResourceAdmissionEvent) {
+        let count = &mut self.counts[event.index()];
+        *count = count.saturating_add(1);
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ResourceDirectionMetricsSnapshot {
+    pub active_buffer_bytes: u64,
+    pub buffer_budget_bytes: u64,
+    pub active_rows: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EngineResourceMetricsSnapshot {
+    pub incoming: ResourceDirectionMetricsSnapshot,
+    pub outgoing: ResourceDirectionMetricsSnapshot,
+    pub pending_depth: u32,
+    pub admission_events: ResourceAdmissionEventCounts,
+}
+
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum IgnoreReasonKind {
+        Consumed,
+        Malformed,
+        UnhandledContext,
+        Duplicate,
+        Superseded,
+        NotForUs,
+        NoRoute,
+        HopLimitReached,
+        LoopPrevented,
+        RouteUnresponsive,
+        OtherInstance,
+        UnknownLink,
+        LinkPhaseMismatch,
+        LinkRttMalformed,
+        LinkRttInvalidToken,
+        LinkRttBufferTooShort,
+        DecryptFailed,
+        ProofInvalid,
+        UnknownIdentity,
+        LinkRequestsRefused,
+        PermissionDenied,
+        RateLimited,
+        CapacityExhausted,
+        StrategyDeclined,
+        UnmatchedResponse,
+        IfacRefused,
+        RequestTooLarge,
+    }
 }
 
 impl IgnoreReasonKind {
-    pub const ALL: [Self; 26] = [
-        Self::Consumed,
-        Self::Malformed,
-        Self::UnhandledContext,
-        Self::Duplicate,
-        Self::Superseded,
-        Self::NotForUs,
-        Self::NoRoute,
-        Self::HopLimitReached,
-        Self::LoopPrevented,
-        Self::RouteUnresponsive,
-        Self::OtherInstance,
-        Self::UnknownLink,
-        Self::LinkPhaseMismatch,
-        Self::LinkRttMalformed,
-        Self::LinkRttInvalidToken,
-        Self::LinkRttBufferTooShort,
-        Self::DecryptFailed,
-        Self::ProofInvalid,
-        Self::UnknownIdentity,
-        Self::LinkRequestsRefused,
-        Self::PermissionDenied,
-        Self::RateLimited,
-        Self::CapacityExhausted,
-        Self::StrategyDeclined,
-        Self::UnmatchedResponse,
-        Self::IfacRefused,
-    ];
-
     const fn index(self) -> usize {
         self as usize
     }
@@ -359,12 +530,18 @@ pub struct EngineMetricsSnapshot {
     pub ingested_commands: u64,
     pub ignored_packets: IgnoreReasonCounts,
     pub announces: EngineAnnounceMetricsSnapshot,
+    pub path_requests: EnginePathRequestMetricsSnapshot,
+    pub resources: EngineResourceMetricsSnapshot,
     pub route_count: u32,
     pub link_count: u32,
     pub transported_link_count: u32,
 }
 
 impl<S: StorageLayout> EngineState<S> {
+    pub(crate) fn record_resource_admission_event(&mut self, event: ResourceAdmissionEvent) {
+        self.resource_admission_event_counts.record(event);
+    }
+
     pub fn attach_metrics_interface(
         &mut self,
         interface: InterfaceId,
@@ -531,11 +708,115 @@ impl<S: StorageLayout> EngineState<S> {
     pub(crate) fn record_announce_command(&mut self, outcome: AnnounceCommandOutcome) {
         self.announce_command_counts.record(outcome);
     }
+
+    pub(crate) fn record_path_request_ingress(&mut self, outcome: &IngestPacketOutcome<'_>) {
+        if let Some(classified) = PathRequestIngressOutcome::from_classification(outcome) {
+            self.path_request_ingress_counts.record(classified);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[expect(
+        unsafe_code,
+        reason = "poisoned MaybeUninit storage proves every metric field is explicitly initialized"
+    )]
+    fn in_place_initialization_overwrites_poisoned_runtime_metrics() {
+        use crate::storage::GrowableHeap;
+        use alloc::boxed::Box;
+
+        let mut slot = Box::<EngineState<GrowableHeap>>::new_uninit();
+        // SAFETY: the destination is a valid allocation of `MaybeUninit` bytes;
+        // no typed value is exposed until `init_in_place` overwrites every field.
+        unsafe {
+            slot.as_mut_ptr().write_bytes(0xA5, 1);
+        }
+        EngineState::init_in_place(slot.as_mut());
+        // SAFETY: `init_in_place`'s contract initializes every `EngineState` field.
+        let state = unsafe { slot.assume_init() };
+
+        let snapshot = state.metrics_snapshot();
+        assert_eq!(snapshot.ingested_packets, 0);
+        assert_eq!(snapshot.ingested_commands, 0);
+        assert_eq!(snapshot.ignored_packets, IgnoreReasonCounts::default());
+        assert_eq!(snapshot.announces, EngineAnnounceMetricsSnapshot::default());
+        assert_eq!(
+            snapshot.path_requests,
+            EnginePathRequestMetricsSnapshot::default()
+        );
+        assert_eq!(
+            snapshot.resources.admission_events,
+            ResourceAdmissionEventCounts::default()
+        );
+    }
+
+    #[test]
+    fn resource_snapshot_reads_live_tables_and_cumulative_admission_events() {
+        use crate::routing::links::resources::pending::PendingResourceOffer;
+        use crate::routing::links::resources::table::AcceptedResource;
+        use crate::routing::links::resources::{
+            ResourceCompression, ResourceCorrelation, ResourceHash, ResourceMemoryLimits, SaltNonce,
+        };
+        use crate::routing::links::LinkId;
+        use crate::storage::GrowableHeap;
+        use crate::units::RttMillis;
+
+        let mut state = EngineState::<GrowableHeap>::default();
+        state.set_resource_memory_limits(ResourceMemoryLimits {
+            incoming_bytes: 1_024,
+            outgoing_bytes: 2_048,
+        });
+        let link_id = LinkId::new([0x11; 16]);
+        let accepted = |byte| AcceptedResource {
+            hash: ResourceHash::new([byte; 32]),
+            salt_nonce: SaltNonce::new([0x22; 4]),
+            compression: ResourceCompression::Uncompressed,
+            has_metadata: false,
+            uncompressed_data_bytes: 128,
+            segment_index: 1,
+            total_segment_count: 1,
+            sealed_transfer_bytes: 144,
+            part_count: 1,
+            sdu: 464,
+            correlation: ResourceCorrelation::Unsolicited,
+            initial_names: &[0x33; 4],
+        };
+        state
+            .incoming_resources
+            .accept(link_id, accepted(1))
+            .unwrap();
+        let pending = PendingResourceOffer::try_from_accepted(
+            link_id,
+            ResourceHash::new([0x44; 32]),
+            accepted(2),
+            crate::engine::InstantMillis(1_000),
+            RttMillis::new(250),
+        )
+        .unwrap();
+        assert!(matches!(
+            state.pending_resource_offers.queue(pending),
+            crate::routing::links::resources::pending::QueuePendingResourceOfferOutcome::Queued
+        ));
+        for event in ResourceAdmissionEvent::ALL {
+            state.record_resource_admission_event(event);
+        }
+
+        let resources = state.metrics_snapshot().resources;
+        assert_eq!(resources.incoming.active_buffer_bytes, 149);
+        assert_eq!(resources.incoming.buffer_budget_bytes, 1_024);
+        assert_eq!(resources.incoming.active_rows, 1);
+        assert_eq!(resources.outgoing.active_buffer_bytes, 0);
+        assert_eq!(resources.outgoing.buffer_budget_bytes, 2_048);
+        assert_eq!(resources.outgoing.active_rows, 0);
+        assert_eq!(resources.pending_depth, 1);
+        for event in ResourceAdmissionEvent::ALL {
+            assert_eq!(resources.admission_events.get(event), 1);
+        }
+    }
 
     #[test]
     fn accepted_schedule_capacity_rejections_have_their_own_metric_outcome() {
@@ -565,6 +846,20 @@ mod tests {
                 AnnounceIngressOutcome::Accepted
             ),
             0,
+        );
+    }
+
+    #[test]
+    fn request_too_large_is_recorded_and_exported_as_a_stable_counter() {
+        let mut counts = IgnoreReasonCounts::default();
+        counts.record(IgnoreReason::RequestTooLarge);
+
+        assert_eq!(counts.get(IgnoreReasonKind::RequestTooLarge), 1);
+        assert_eq!(
+            counts
+                .iter()
+                .find(|(reason, _)| *reason == IgnoreReasonKind::RequestTooLarge),
+            Some((IgnoreReasonKind::RequestTooLarge, 1)),
         );
     }
 

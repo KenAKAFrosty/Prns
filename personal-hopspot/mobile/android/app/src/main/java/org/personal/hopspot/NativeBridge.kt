@@ -31,6 +31,8 @@ object NativeBridge {
 
     private external fun nativeActionAnnounceCode(): Int
 
+    private external fun nativeActionCopySharedInstanceConfigCode(): Int
+
     private external fun nativeEngineStoppedCode(): Int
 
     private external fun nativeEngineStartingCode(): Int
@@ -51,6 +53,7 @@ object NativeBridge {
     val INPUT_LONG_PRESS = nativeInputLongPressCode()
     val ACTION_NONE = nativeActionNoneCode()
     val ACTION_ANNOUNCE = nativeActionAnnounceCode()
+    val ACTION_COPY_SHARED_INSTANCE_CONFIG = nativeActionCopySharedInstanceConfigCode()
     val ENGINE_STOPPED = nativeEngineStoppedCode()
     val ENGINE_STARTING = nativeEngineStartingCode()
     val ENGINE_RUNNING = nativeEngineRunningCode()
@@ -72,6 +75,8 @@ object NativeBridge {
 
     external fun nativeRpcKeyHex(): String?
 
+    external fun nativeSidebandJoinConfig(): String?
+
     external fun nativeNodeIdentityHashHex(): String?
 
     external fun nativeBleIdentityHex(): String?
@@ -86,7 +91,7 @@ object NativeBridge {
 
     external fun nativeRender(handle: Long, buffer: ByteBuffer)
 
-    external fun nativeSetBattery(handle: Long, percent: Int, charging: Boolean)
+    external fun nativeSetBattery(handle: Long, percent: Int, externallyPowered: Boolean)
 
     external fun nativeUsbConnected(connected: Boolean)
 
@@ -110,9 +115,58 @@ object NativeBridge {
 
     external fun nativeUsbTx(buffer: ByteBuffer): Int
 
-    external fun nativeRendezvousPort(): Int
+    const val WIFI_DISCOVERY_INACTIVE = 0
+    const val WIFI_DISCOVERY_SATELLITE = 1
+    const val WIFI_DISCOVERY_CENTRAL = 2
+    const val WIFI_RESOLVED_SERVICE_VISIBLE = 0
+    const val WIFI_RESOLVED_SERVICE_REJECTED = 1
+    const val WIFI_RESOLVED_SERVICE_AT_CAPACITY = 2
+    const val WIFI_RESOLVED_SERVICE_UNAVAILABLE = 3
 
-    external fun nativeWifiSighting(address: ByteBuffer, port: Int)
+    external fun nativeWifiTcpServicePort(): Int
+
+    external fun nativeWifiUdpServicePort(): Int
+
+    external fun nativeWifiTcpServiceType(): String
+
+    external fun nativeWifiUdpServiceType(): String
+
+    external fun nativeWifiTxtVersionKey(): String
+
+    external fun nativeWifiTxtVersionValue(): String
+
+    external fun nativeWifiServiceCapacity(): Int
+
+    external fun nativeWifiCandidateCapacity(): Int
+
+    external fun nativeWifiResolvedCandidateInputCapacity(): Int
+
+    external fun nativeWifiDiscoveryParticipation(): Int
+
+    external fun nativeWifiWorkGeneration(): Long
+
+    external fun nativeWifiWaitForWork(observedGeneration: Long, timeoutMillis: Long): Long
+
+    external fun nativeWifiWakeDiscoveryPump()
+
+    external fun nativeWifiTcpPublicationName(): String?
+
+    external fun nativeWifiUdpPublicationName(): String?
+
+    external fun nativeWifiEndPublicationSession()
+
+    external fun nativeWifiRegistered(serviceType: String, serviceInstance: String)
+
+    external fun nativeWifiResolved(
+        serviceType: String,
+        serviceInstance: String,
+        addresses: Array<ByteArray>,
+        scopeIds: IntArray,
+        port: Int,
+        version: String?,
+    ): Int
+
+    external fun nativeWifiLost(serviceType: String, serviceInstance: String)
 
     external fun nativeBleSetPsm(psm: Int)
 

@@ -1,18 +1,27 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::engine::test_support::{
+    fixed_secret_key, personal_node_destination, sealed_single_packet,
+};
 use crate::engine::{InstantMillis, Journaled, PersistenceFlushCause, PersistenceFlushTarget};
+use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use crate::interfaces::InterfaceId;
+use crate::interfaces::{
+    AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
+    InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode, ReportsStatus,
+    TransportCapability,
+};
+use crate::manifold::interface_seam::{Interface, InterfaceSeam};
 use crate::routing::announce::AnnounceObservation;
-use crate::routing::links::resources::ResourceStrategy;
+use crate::routing::links::resources::{ResourceMemoryLimits, ResourceStrategy};
 use crate::routing::request_handlers::RequestHandlerError;
 use crate::runtime::{
     ManuallyAttached, NoPersistence, PreConfiguredDestination, PrnsNodeHandle, PrnsNodeRecipe,
     ServeMyRequestEndpoints,
 };
-use crate::wire::DestinationHash;
+use crate::wire::{DestinationHash, PacketType, WirePacketHeader};
 
 use super::super::super::request_endpoints::{
     Decline, RequestContext, RequestEndpoint, RequestEndpointPolicy,
@@ -23,6 +32,55 @@ use super::{
 };
 
 static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+struct ProofLoopback {
+    id: InterfaceId,
+    inbound: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
+    outbound: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+}
+
+impl Interface for ProofLoopback {
+    const HW_MTU: usize = crate::wire::BROADCAST_MTU;
+    const KIND: InterfaceKind = InterfaceKind::Loopback;
+
+    fn channel_tag(&self) -> &[u8] {
+        self.id.as_bytes()
+    }
+
+    fn descriptor(&self) -> InterfaceDescriptor {
+        InterfaceDescriptor {
+            id: self.id,
+            capabilities: InterfaceCapabilities {
+                ingress: IngressCapability::Enabled,
+                egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
+            },
+            mode: InterfaceMode::Full,
+            gravity: crate::interfaces::InterfaceGravity::ZERO,
+            bitrate: BitrateBps::guess(1_000_000),
+            hardware_mtu: None,
+            announce_rate_limit: None,
+            announce_bandwidth_cap: AnnounceBandwidthCap::Unlimited,
+            airtime_duty_cycle: None,
+            common: crate::interfaces::InterfaceCommonPolicy::RNS_DEFAULT,
+        }
+    }
+
+    async fn run<S: InterfaceSeam>(mut self, mut seam: S) {
+        loop {
+            tokio::select! {
+                inbound = self.inbound.recv() => match inbound {
+                    Some(bytes) => seam.next_inbound(&bytes).await,
+                    None => return,
+                },
+                outbound = seam.next_outbound() => {
+                    let _ = self.outbound.send(outbound.to_vec());
+                }
+            }
+        }
+    }
+}
+
+impl ReportsStatus for ProofLoopback {}
 
 fn persistence_test_directory(label: &str) -> PathBuf {
     let sequence = TEST_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
@@ -179,6 +237,80 @@ async fn run_until_returns_when_a_non_persistent_node_is_asked_to_stop() {
     });
 
     assert_eq!(node.run_until(async {}).await, Ok(()));
+}
+
+#[tokio::test]
+async fn run_until_with_proof_decider_reaches_a_prove_if_recipe_destination() {
+    let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+    let raw = sealed_single_packet(
+        &identity,
+        personal_node_destination(),
+        b"facade proof decision",
+    );
+    let node = PrnsNode::new(PrnsNodeRecipe {
+        transport_identity: None,
+        pre_configured_destinations: [PreConfiguredDestination::Single {
+            app_name: "personal",
+            aspects: &["node"],
+            identity: fixed_secret_key(),
+            announce_app_data: &[],
+            proof: crate::routing::ProofStrategy::ProveIf,
+            link_requests: crate::routing::LinkRequestPolicy::AcceptAll,
+            ratchet: crate::engine::RatchetPolicy::NoRatchets,
+            resource_strategy: ResourceStrategy::AcceptNone,
+            maximum_request_bytes: Default::default(),
+            request_endpoints: ServeMyRequestEndpoints::No,
+        }],
+        app_state: (),
+        storage: crate::storage::GrowableHeap,
+        request_endpoints: crate::request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
+        on_event: |_event, _state: &()| {},
+    });
+    let (wire_in, inbound) = tokio::sync::mpsc::unbounded_channel();
+    let (outbound, mut wire_out) = tokio::sync::mpsc::unbounded_channel();
+    let _attached = node.handle().add_interface(ProofLoopback {
+        id: InterfaceId::from_channel_tag(InterfaceKind::Loopback, b"prove-if-facade"),
+        inbound,
+        outbound,
+    });
+    wire_in.send(raw).unwrap();
+
+    let decisions = Arc::new(AtomicUsize::new(0));
+    let decision_count = Arc::clone(&decisions);
+    let seen_plaintext = Arc::new(Mutex::new(Vec::new()));
+    let plaintext_sink = Arc::clone(&seen_plaintext);
+    let proof = Arc::new(Mutex::new(None));
+    let proof_sink = Arc::clone(&proof);
+    let shutdown = async move {
+        if let Ok(Some(bytes)) =
+            tokio::time::timeout(std::time::Duration::from_secs(1), wire_out.recv()).await
+        {
+            *proof_sink.lock().unwrap() = Some(bytes);
+        }
+    };
+
+    assert_eq!(
+        node.run_until_with_proof_decider(shutdown, move |request| {
+            decision_count.fetch_add(1, Ordering::SeqCst);
+            plaintext_sink
+                .lock()
+                .unwrap()
+                .extend_from_slice(request.plaintext);
+            true
+        })
+        .await,
+        Ok(()),
+    );
+    assert_eq!(decisions.load(Ordering::SeqCst), 1);
+    assert_eq!(*seen_plaintext.lock().unwrap(), b"facade proof decision");
+    let proof = proof.lock().unwrap();
+    let proof = proof.as_ref().expect("the accepted decision emits a proof");
+    assert_eq!(
+        WirePacketHeader::parse(proof).unwrap().0.packet_type,
+        PacketType::Proof
+    );
 }
 
 #[tokio::test]
@@ -349,6 +481,27 @@ fn new_with_handle_builds_state_from_the_nodes_handle() {
     });
 
     assert!(Arc::ptr_eq(&prns.handle.ids, &prns.node.state.ids));
+}
+
+#[test]
+fn host_resource_memory_limits_reach_the_engine_before_run() {
+    let limits = ResourceMemoryLimits {
+        incoming_bytes: 1_024,
+        outgoing_bytes: 2_048,
+    };
+    let prns = PrnsNode::new(PrnsNodeRecipe {
+        transport_identity: None,
+        pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+        app_state: (),
+        storage: crate::storage::GrowableHeap,
+        request_endpoints: crate::request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
+        on_event: |_event, _state: &()| {},
+    })
+    .with_resource_memory_limits(limits);
+
+    assert_eq!(prns.node.engine.resource_memory_limits(), limits);
 }
 
 #[test]

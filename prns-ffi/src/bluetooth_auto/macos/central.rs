@@ -1,13 +1,13 @@
 use core::cell::RefCell;
 use std::collections::HashMap;
+use std::time::Instant;
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{define_class, msg_send, AllocAnyThread, DefinedClass, Message};
 use objc2_core_bluetooth::{
     CBCentralManager, CBCentralManagerDelegate, CBCentralManagerRestoredStatePeripheralsKey,
-    CBCharacteristic, CBManagerState, CBPeripheral, CBPeripheralDelegate, CBPeripheralState,
-    CBService,
+    CBCharacteristic, CBManagerState, CBPeripheral, CBPeripheralDelegate, CBService,
 };
 use objc2_foundation::{
     NSArray, NSData, NSDictionary, NSError, NSNumber, NSObject, NSObjectProtocol, NSString,
@@ -16,6 +16,10 @@ use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 
 use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, Control, PeerProtocol};
 
+use super::discovery::{
+    advertisement_candidate_strength, discover_disposition, DiscoverDisposition, DiscoveryGuard,
+    PeripheralLinkState, SessionPresence, StaleCancellation, StaleLinkRecovery,
+};
 use super::gatt_link::GattInboundSender;
 use super::gatt_write::{
     write_admission, GattWriteAdmission, GattWriteMode, GattWriteRequest, GattWriteTarget,
@@ -273,6 +277,7 @@ pub(super) struct CentralDelegateIvars {
     peripherals: PeripheralTable,
     restored: RestoredPeripherals,
     sessions: RefCell<HashMap<CoreBluetoothPeerId, CentralPeerSession>>,
+    discovery_guard: RefCell<DiscoveryGuard>,
 }
 
 define_class!(
@@ -326,15 +331,66 @@ define_class!(
         #[unsafe(method(centralManager:didDiscoverPeripheral:advertisementData:RSSI:))]
         fn did_discover(
             &self,
-            _central: &CBCentralManager,
+            central: &CBCentralManager,
             peripheral: &CBPeripheral,
-            _advertisement_data: &NSDictionary<NSString, AnyObject>,
+            advertisement_data: &NSDictionary<NSString, AnyObject>,
             rssi: &NSNumber,
         ) {
+            let peer_id = core_bluetooth_peer_id(peripheral);
+            let now = Instant::now();
+            let strength = advertisement_candidate_strength(advertisement_data);
+            if cfg!(target_os = "macos")
+                && !self
+                    .ivars()
+                    .discovery_guard
+                    .borrow_mut()
+                    .admit_candidate(peer_id, strength, now)
+            {
+                return;
+            }
             // SAFETY: CoreBluetooth supplied this live peripheral to its delegate on the manager
             // queue, so querying immutable framework state is valid.
-            if unsafe { peripheral.state() } != CBPeripheralState::Disconnected {
-                return;
+            let state = PeripheralLinkState::from(unsafe { peripheral.state() });
+            let session = if self.ivars().sessions.borrow().contains_key(&peer_id) {
+                SessionPresence::Present
+            } else {
+                SessionPresence::Absent
+            };
+            let cancellation = if self
+                .ivars()
+                .discovery_guard
+                .borrow_mut()
+                .cancellation_recent(peer_id, now)
+            {
+                StaleCancellation::InFlight
+            } else {
+                StaleCancellation::Idle
+            };
+            let recovery = if cfg!(target_os = "macos") {
+                StaleLinkRecovery::Enabled
+            } else {
+                StaleLinkRecovery::Disabled
+            };
+            let disposition = discover_disposition(state, session, cancellation, recovery);
+            match disposition {
+                DiscoverDisposition::IgnoreOwned | DiscoverDisposition::WaitForDisconnect => {
+                    return;
+                }
+                DiscoverDisposition::CancelStale => {
+                    self.ivars()
+                        .discovery_guard
+                        .borrow_mut()
+                        .record_stale_cancellation(peer_id, now);
+                    crate::diagnostic_log::debug!(
+                        "bluetooth: cancelling stale CoreBluetooth link to {:02x?} after Prns session closed",
+                        peer_id.address().octets()
+                    );
+                    // SAFETY: CoreBluetooth supplied both live objects on the central manager's
+                    // serial queue and this app is cancelling only its local connection request.
+                    unsafe { central.cancelPeripheralConnection(peripheral) };
+                    return;
+                }
+                DiscoverDisposition::Adopt => {}
             }
             let dbm = rssi.integerValue();
             let rssi = if dbm == 127 {
@@ -342,7 +398,6 @@ define_class!(
             } else {
                 i8::try_from(dbm).ok()
             };
-            let peer_id = core_bluetooth_peer_id(peripheral);
             let address = peer_id.address();
             if let Ok(mut map) = self.ivars().peripherals.lock() {
                 map.insert(peer_id, (SendPeripheral(peripheral.retain()), rssi));
@@ -384,8 +439,13 @@ define_class!(
             peripheral: &CBPeripheral,
             error: Option<&NSError>,
         ) {
+            let peer_id = core_bluetooth_peer_id(peripheral);
+            self.ivars()
+                .discovery_guard
+                .borrow_mut()
+                .clear_stale_cancellation(peer_id);
             crate::diagnostic_log::warn!("bluetooth: dialed peripheral disconnected: {error:?}");
-            self.fail_peer(core_bluetooth_peer_id(peripheral));
+            self.fail_peer(peer_id);
         }
     }
 
@@ -398,12 +458,25 @@ define_class!(
                 self.fail_peer(peer_id);
                 return;
             }
+            let expected_service_id = service_uuid();
             // SAFETY: the callback occurs only after CoreBluetooth completed service discovery;
-            // the peripheral retains the returned service array.
-            let service = unsafe { peripheral.services() }.and_then(|s| s.iter().next());
+            // the peripheral retains the returned service array and each service retains its UUID.
+            let service = unsafe { peripheral.services() }.and_then(|services| {
+                services.iter().find(|service| {
+                    // SAFETY: `service` remains retained by the array for this comparison.
+                    let uuid = unsafe { service.UUID() };
+                    cbuuid_eq(&uuid, &expected_service_id)
+                })
+            });
             let Some(service) = service else {
+                if cfg!(target_os = "macos") {
+                    self.ivars()
+                        .discovery_guard
+                        .borrow_mut()
+                        .record_service_miss(peer_id, Instant::now());
+                }
                 crate::diagnostic_log::warn!(
-                    "bluetooth: no Prns service on peripheral — dropping dial"
+                    "bluetooth: no Prns service on peripheral — dropping dial and backing off repeated weak candidates"
                 );
                 self.fail_peer(peer_id);
                 return;
@@ -695,6 +768,7 @@ impl CentralDelegate {
             peripherals,
             restored,
             sessions: RefCell::new(HashMap::new()),
+            discovery_guard: RefCell::new(DiscoveryGuard::default()),
         });
         // SAFETY: `this` is a freshly allocated CentralDelegate with fully initialized ivars;
         // forwarding to NSObject's designated initializer preserves its allocation identity.

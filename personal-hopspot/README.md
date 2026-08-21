@@ -13,6 +13,14 @@ Personal Hopspot is also the board-backed embedded reference application. A
 screen is optional: headless boards run the node and expose their supported
 remote controls without compiling a display surface.
 
+## Public packages
+
+The `sdk/hopspot` directory is the shared home of the Rust crate and npm package
+named `hopspot`. Both are transparent, version-locked facades over the complete
+`personal-rns` Rust and JavaScript APIs. They provide an alternate package name
+without creating a second implementation, type system, protocol surface, or
+release line.
+
 ## The built-in NomadNet page
 
 Every hopspot serves small [micron](https://github.com/markqvist/NomadNet) pages about the project
@@ -48,6 +56,14 @@ On Windows the desktop build compiles SDL2 from the bundled source and links it
 statically, which requires CMake and the Visual Studio Build Tools C++ workload
 (MSVC). On macOS it links Homebrew's `sdl2` (`brew install sdl2`).
 
+Native USB Auto discovers CDC, Prns WebUSB, already-enumerated Android Open
+Accessory devices, and managed iOS devices. Set `PRNS_USB_AUTO_ANDROID_ACCESSORY`
+to allow an ordinary Android device to be switched into accessory mode. An
+explicit usbmux endpoint can be supplied through `PRNS_USB_AUTO_USBMUX_TARGET`,
+or `PRNS_USB_AUTO_USBMUX_AUTO` can select `127.0.0.1:42700`. The older
+`HOPSPOT_USBMUX_TARGET` and `HOPSPOT_USBMUX_AUTO` names remain lower-precedence
+compatibility aliases.
+
 ESP32 firmware, from `embedded/esp32/` with the board on USB:
 
     cargo heltec-v4-flash
@@ -58,6 +74,36 @@ ESP32 firmware, from `embedded/esp32/` with the board on USB:
 T-Echo firmware:
 
     ./tools/prns device techo flash
+
+## Local developer web flasher
+
+Build and serve the current working tree for one or more cataloged boards with:
+
+    ./tools/prns run device.hopspot.dev-flasher.serve -- BOARD [BOARD ...] --port PORT
+
+Supply multiple unique board slugs to test them together. Explicit selection
+may include qualification targets; `--all` intentionally builds only the
+shipping set:
+
+    ./tools/prns run device.hopspot.dev-flasher.serve -- --all --port 8765
+
+The [board catalog](../release/flash/boards.json) is the source of truth for
+available slugs and lifecycle state. The command builds the selected firmware,
+creates a private temporary candidate, signs its manifest and preview channel
+with a newly generated ephemeral key, and serves the real flasher only on
+`127.0.0.1`. Open the printed `/flash` URL in the browser under test.
+
+Flashing erases and rewrites device flash and can destroy the installed
+firmware and stored device state. Confirm the selected board and recovery path
+before starting a flash. Press Ctrl-C to stop the server; the ephemeral secret
+key and temporary candidate are removed as the process exits.
+
+The browser trusts only the ephemeral public key compiled into that local
+website build. This makes the assembled local candidate internally verifiable,
+but it is not production signing, published release custody, or hardware and
+browser qualification evidence. A successful local flash does not qualify a
+signed release. Qualification receipts and their remaining limits live under
+[`validation/qualifications/`](../validation/qualifications/).
 
 ## Embedded flash-layout upgrade
 

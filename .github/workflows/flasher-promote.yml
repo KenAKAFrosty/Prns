@@ -578,6 +578,15 @@ jobs:
 
           fetch "index.html" "$live/index.html"
           fetch "assets/flasher/prns-flash.js" "$live/prns-flash.js"
+          nrf_dfu_assets=(
+            prns_nrf_dfu_core.js
+            prns_nrf_dfu_core.d.ts
+            prns_nrf_dfu_core_bg.wasm
+            prns_nrf_dfu_core_bg.wasm.d.ts
+          )
+          for asset in "${nrf_dfu_assets[@]}"; do
+            fetch "assets/flasher/nrf-dfu/$asset" "$live/$asset"
+          done
           fetch "releases/${RELEASE_VERSION}/flash-manifest.json" \
             "$live/flash-manifest.json"
           fetch "releases/${RELEASE_VERSION}/flash-manifest.json.minisig" \
@@ -589,6 +598,10 @@ jobs:
           cmp "$live/index.html" "$local_candidate/website/index.html"
           cmp "$live/prns-flash.js" \
             "$local_candidate/website/assets/flasher/prns-flash.js"
+          for asset in "${nrf_dfu_assets[@]}"; do
+            cmp "$live/$asset" \
+              "$local_candidate/website/assets/flasher/nrf-dfu/$asset"
+          done
           cmp "$live/stable.json" \
             "$local_candidate/website/releases/channels/stable.json"
           cmp "$live/stable.json.minisig" \
@@ -680,6 +693,15 @@ jobs:
           }
           fetch "index.html" "$live/index.html"
           fetch "assets/flasher/prns-flash.js" "$live/prns-flash.js"
+          nrf_dfu_assets=(
+            prns_nrf_dfu_core.js
+            prns_nrf_dfu_core.d.ts
+            prns_nrf_dfu_core_bg.wasm
+            prns_nrf_dfu_core_bg.wasm.d.ts
+          )
+          for asset in "${nrf_dfu_assets[@]}"; do
+            fetch "assets/flasher/nrf-dfu/$asset" "$live/$asset"
+          done
           fetch "releases/channels/stable.json" "$live/stable.json"
           fetch "releases/channels/stable.json.minisig" "$live/stable.json.minisig"
           "$PRNS_MINISIGN_BIN" -Vm "$live/stable.json" \
@@ -697,6 +719,10 @@ jobs:
           cmp "$live/index.html" target/post-promotion/candidate/website/index.html
           cmp "$live/prns-flash.js" \
             target/post-promotion/candidate/website/assets/flasher/prns-flash.js
+          for asset in "${nrf_dfu_assets[@]}"; do
+            cmp "$live/$asset" \
+              "target/post-promotion/candidate/website/assets/flasher/nrf-dfu/$asset"
+          done
           cmp "$live/stable.json" \
             target/post-promotion/candidate/website/releases/channels/stable.json
           cmp "$live/flash-manifest.json" \

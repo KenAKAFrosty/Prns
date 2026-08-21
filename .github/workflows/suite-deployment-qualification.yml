@@ -68,7 +68,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-          ref: ${{ inputs.source_commit }}
+          ref: ${{ github.sha }}
       - name: Require exact protected release source and operator confirmations
         env:
           REF_PROTECTED: ${{ github.ref_protected }}

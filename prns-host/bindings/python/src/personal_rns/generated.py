@@ -60,6 +60,7 @@ class Capability(IntEnum):
     BROWSER_RENDEZVOUS = 10
     I2P = 11
     WEAVE = 12
+    SUPPLIED_PIPE = 13
 
 class InterfaceKind(IntEnum):
     AUTO_LAN = 1
@@ -90,6 +91,12 @@ class InterfaceMode(IntEnum):
     BOUNDARY = 5
     GATEWAY = 6
     INTERNAL = 7
+
+class WebSocketFramingSelection(IntEnum):
+    RAW_PACKET = 1
+    HDLC = 2
+    KISS = 3
+    AUTO = 4
 
 class InterfaceHealth(IntEnum):
     INITIALIZING = 1
@@ -514,7 +521,7 @@ class RouteSnapshot:
     via_identity: IdentityHash | None
     interface_id: InterfaceId
     learned_at_millis: int
-    last_relayed_at_millis: int
+    last_route_activity_at_millis: int
     expires_at_millis: int
 
 @dataclass(frozen=True, slots=True)
@@ -681,10 +688,12 @@ class InterfaceConfigAutomaticBluetoothLe:
 @dataclass(frozen=True, slots=True)
 class InterfaceConfigWebSocketClient:
     target: str
+    framing: WebSocketFramingSelection
 
 @dataclass(frozen=True, slots=True)
 class InterfaceConfigWebSocketServer:
     bind: str
+    framing: WebSocketFramingSelection
 
 @dataclass(frozen=True, slots=True)
 class InterfaceConfigBrowserRendezvous:
@@ -1256,6 +1265,15 @@ HOST_OPERATION_NAMES: tuple[str, ...] = (
     "hostIdentityHash",
     "hostDestinationCount",
     "hostDestinationHash",
+    "hostAttachSuppliedPipe",
+    "suppliedPipeClaimAttachment",
+    "suppliedPipeNextOpenRequest",
+    "suppliedPipeRegisterReadiness",
+    "suppliedPipeInterruptWait",
+    "suppliedPipeRelease",
+    "suppliedPipeOpenRequestProvide",
+    "suppliedPipeOpenRequestDecline",
+    "suppliedPipeOpenRequestRelease",
     "hostBeginResourceUpload",
     "resourceUploadWrite",
     "resourceUploadIsWritable",
@@ -1354,6 +1372,10 @@ class _RawResourceStream: pass
 
 class _RawResourceUpload: pass
 
+class _RawSuppliedPipe: pass
+
+class _RawSuppliedPipeOpenRequest: pass
+
 class _RawOpaquePointer: pass
 
 class _RawHostProtocol(Protocol):
@@ -1368,6 +1390,15 @@ class _RawHostProtocol(Protocol):
     def host_identity_hash(self, host: _RawHost) -> _RawCallResult[_RawBorrowed[bytes]]: ...
     def host_destination_count(self, host: _RawHost) -> int: ...
     def host_destination_hash(self, host: _RawHost, index: int) -> _RawCallResult[_RawBorrowed[bytes]]: ...
+    def host_attach_supplied_pipe(self, host: _RawHost, name: str, respawn_delay_millis: int, bitrate: Bitrate) -> _RawCallResult[_RawOwned[_RawSuppliedPipe]]: ...
+    def supplied_pipe_claim_attachment(self, supplied_pipe: _RawSuppliedPipe) -> _RawCallResult[_RawOwned[_RawIssuedCommand]]: ...
+    def supplied_pipe_next_open_request(self, supplied_pipe: _RawSuppliedPipe, timeout_millis: int) -> _RawCallResult[_RawOwned[_RawSuppliedPipeOpenRequest]]: ...
+    def supplied_pipe_register_readiness(self, supplied_pipe: _RawSuppliedPipe, callback: _RawReadinessCallback, context: _RawOpaquePointer) -> _RawCallResult[_RawOwned[_RawReadinessRegistration]]: ...
+    def supplied_pipe_interrupt_wait(self, supplied_pipe: _RawSuppliedPipe) -> _RawUnit: ...
+    def supplied_pipe_release(self, supplied_pipe: _RawSuppliedPipe) -> _RawUnit: ...
+    def supplied_pipe_open_request_provide(self, supplied_pipe_open_request: _RawSuppliedPipeOpenRequest, descriptor: int) -> _RawCallResult[bool]: ...
+    def supplied_pipe_open_request_decline(self, supplied_pipe_open_request: _RawSuppliedPipeOpenRequest) -> _RawCallResult[bool]: ...
+    def supplied_pipe_open_request_release(self, supplied_pipe_open_request: _RawSuppliedPipeOpenRequest) -> _RawUnit: ...
     def host_begin_resource_upload(self, host: _RawHost, link_id: LinkId, declared_length: int, packed_metadata: bytes | None, compression: ResourceCompression) -> _RawCallResult[_RawOwned[_RawResourceUpload]]: ...
     def resource_upload_write(self, resource_upload: _RawResourceUpload, chunk: bytes) -> _RawCallResult[_RawUnit]: ...
     def resource_upload_is_writable(self, resource_upload: _RawResourceUpload) -> _RawCallResult[bool]: ...

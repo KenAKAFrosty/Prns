@@ -2,7 +2,8 @@ mod ifac;
 mod limits;
 
 pub use ifac::{
-    IfacContext, IfacSize, IfacSizeError, InterfaceIfac, DEFAULT_IFAC_SIZE, IFAC_MAX_SIZE,
+    IfacContext, IfacMaskError, IfacSize, IfacSizeError, InterfaceIfac, DEFAULT_IFAC_SIZE,
+    IFAC_MAX_SIZE,
 };
 pub use limits::{
     frame_cap_for, BROADCAST_WIRE_FRAME_LEN, EMBEDDED_MAX_LINK_MTU, EMBEDDED_MAX_WIRE_FRAME_LEN,

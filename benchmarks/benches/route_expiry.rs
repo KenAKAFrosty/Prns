@@ -19,7 +19,7 @@ const ROUTE_LIFETIMES: [u64; 8] = [
 
 struct RouteRows {
     learned_at: Vec<u64>,
-    last_relayed_at: Vec<u64>,
+    last_route_activity_at: Vec<u64>,
     interface_slots: Vec<u8>,
 }
 
@@ -27,14 +27,14 @@ impl RouteRows {
     fn new(count: usize) -> Self {
         let spread = 7 * 24 * 60 * 60 * 1_000u64;
         let mut learned_at = Vec::with_capacity(count);
-        let mut last_relayed_at = Vec::with_capacity(count);
+        let mut last_route_activity_at = Vec::with_capacity(count);
         let mut interface_slots = Vec::with_capacity(count);
         for row in 0..count {
             let mixed = mix(row as u64);
             let activity = mix(mixed ^ 0xA076_1D64_78BD_642F);
             let learned = mixed % spread;
             learned_at.push(learned);
-            last_relayed_at.push(if activity & 3 == 0 {
+            last_route_activity_at.push(if activity & 3 == 0 {
                 learned.saturating_add((activity >> 17) % (2 * 60 * 60 * 1_000))
             } else {
                 0
@@ -43,7 +43,7 @@ impl RouteRows {
         }
         Self {
             learned_at,
-            last_relayed_at,
+            last_route_activity_at,
             interface_slots,
         }
     }
@@ -53,7 +53,7 @@ impl RouteRows {
     }
 
     fn expiry(&self, row: usize) -> InstantMillis {
-        let active = self.learned_at[row].max(self.last_relayed_at[row]);
+        let active = self.learned_at[row].max(self.last_route_activity_at[row]);
         InstantMillis(active.saturating_add(ROUTE_LIFETIMES[self.interface_slots[row] as usize]))
     }
 }
@@ -101,9 +101,10 @@ fn route_expiry(c: &mut Criterion) {
             b.iter(|| {
                 let row = iteration % rows.len();
                 iteration = iteration.wrapping_add(1);
-                rows.last_relayed_at[row] = rows.last_relayed_at[row].wrapping_add(300_001);
+                rows.last_route_activity_at[row] =
+                    rows.last_route_activity_at[row].wrapping_add(300_001);
                 roaring.update(row, rows.expiry(row));
-                black_box(rows.last_relayed_at[row])
+                black_box(rows.last_route_activity_at[row])
             })
         });
     }

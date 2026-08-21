@@ -11,7 +11,10 @@ import {
   parseBrowserGatewayCatalog,
   validateBrowserGatewayUrl,
 } from "../../prns-js/src/browser/index.js";
-import { MockRuntimeBase } from "./mock_runtime.js";
+import {
+  MockRuntimeBase,
+  MockWebSocketFramingCodec,
+} from "./mock_runtime.js";
 import type {
   BleIdentity,
   BluetoothReassemblerBinding,
@@ -364,6 +367,7 @@ function wasmModule(): PrnsWasmModule {
     PrnsRuntime: MockRuntime,
     UsbAutoDecoder: MockUsbAutoDecoder,
     BluetoothReassembler: MockBluetoothReassembler,
+    WebSocketFramingCodec: MockWebSocketFramingCodec,
     hostContractAbi: () => 1,
     hostSchemaVersion: () => 1,
     browserPersistenceVersion: () => 1,

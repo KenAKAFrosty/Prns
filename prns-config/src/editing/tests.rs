@@ -406,6 +406,34 @@ fn auto_setting_catalog_exposes_runtime_relevant_values_and_effective_defaults()
 }
 
 #[test]
+fn websocket_setting_catalog_exposes_automatic_framing_as_the_optional_default() {
+    let specs = InterfaceKind::PrnsWebSocketClient.supported_setting_specs();
+    let framing = specs
+        .iter()
+        .find(|spec| spec.key().as_str() == interface_key::FRAMING)
+        .unwrap_or_else(|| panic!("missing WebSocket framing setting"));
+    let report = parse_and_plan(
+        "[interfaces]\n[[WebSocket]]\ntype = PrnsWebSocketClient\nenabled = Yes\ntarget = ws://peer.example/prns\n",
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    let planned = report
+        .value
+        .interfaces
+        .first()
+        .unwrap_or_else(|| panic!("missing WebSocket plan"));
+
+    assert_eq!(
+        framing.required_hint(InterfaceKind::PrnsWebSocketClient),
+        None
+    );
+    assert_eq!(framing.effective_value(planned).as_deref(), Some("auto"));
+    assert_eq!(
+        framing.accepted(InterfaceKind::PrnsWebSocketClient),
+        "auto, raw, hdlc, or kiss"
+    );
+}
+
+#[test]
 fn technical_quantities_use_natural_units_without_changing_stored_values() {
     let formatted = |kind: InterfaceKind, name: &str, value: &str| {
         kind.setting_specs()

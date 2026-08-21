@@ -46,6 +46,7 @@ def tools() -> dict[str, str]:
         "node": "v24.18.0",
         "npm": "11.0.0",
         "dioxus": "dioxus 0.7.5",
+        "wasm_bindgen": "wasm-bindgen 0.2.126",
         "cargo_binstall": "cargo-binstall 1.21.0",
         "espup": "espup 0.17.1",
         "esp_rustc": "rustc 1.95.0-nightly (fixture)",
@@ -71,26 +72,54 @@ def manifest(
                 "board_slug": "heltec-v4",
                 "transport": "esp-serial",
                 "parts": [{"size": heltec_size}],
+                "variants": [],
             },
             {
                 "board_slug": "heltec-v4-r8",
                 "transport": "esp-serial",
                 "parts": [{"size": heltec_r8_size}],
+                "variants": [],
             },
             {
                 "board_slug": "t-beam-supreme",
                 "transport": "esp-serial",
                 "parts": [{"size": t_beam_size}],
+                "variants": [],
             },
             {
                 "board_slug": "xiao-esp32-c6",
                 "transport": "esp-serial",
                 "parts": [{"size": xiao_size}],
+                "variants": [],
             },
             {
                 "board_slug": "t-echo",
                 "transport": "uf2-mass-storage",
-                "parts": [{"size": 700_000}],
+                "parts": [],
+                "variants": [{"size": 350_000}, {"size": 350_000}],
+            },
+            {
+                "board_slug": "t114",
+                "transport": "uf2-mass-storage",
+                "parts": [],
+                "variants": [{"size": 350_000}],
+            },
+            {
+                "board_slug": "t096",
+                "transport": "uf2-mass-storage",
+                "parts": [],
+                "variants": [{"size": 350_000}],
+            },
+            {
+                "board_slug": "t1000-e",
+                "transport": "nrf-serial-dfu",
+                "parts": [],
+                "variants": [],
+                "nrf_serial_dfu": {
+                    "application": {"size": 350_000},
+                    "init_packet": {"size": 128},
+                    "recovery": {"artifact": {"size": 700_000}},
+                },
             },
         ],
     }
@@ -128,7 +157,7 @@ def candidate(root: Path, *, payload: bytes = b"same bytes") -> None:
     (root / "flash-manifest.json").write_text(
         json.dumps(
             {
-                "schema": 2,
+                "schema": 3,
                 "release": {
                     "version": VERSION,
                     "channel": "preview",
@@ -448,6 +477,7 @@ class FlasherReproducibilityTests(unittest.TestCase):
                 ("node", "--version"),
                 ("npm", "--version"),
                 ("dx", "--version"),
+                ("wasm-bindgen", "--version"),
                 ("cargo-binstall", "-V"),
                 ("espup", "--version"),
                 ("rustc", "+esp", "--version"),
@@ -459,7 +489,7 @@ class FlasherReproducibilityTests(unittest.TestCase):
 
     def test_sparse_report_covers_all_boards_and_enforces_sixty_percent(self) -> None:
         report = build_report(manifest())
-        self.assertEqual(len(report["targets"]), 5)
+        self.assertEqual(len(report["targets"]), 8)
         self.assertEqual(report["aggregate_esp"]["gate"], "passed")
         heltec = next(
             target for target in report["targets"] if target["board_slug"] == "heltec-v4"
@@ -733,7 +763,7 @@ class FlasherReproducibilityTests(unittest.TestCase):
             ROOT / "validation" / "platforms" / "shipping-firmware.sh"
         ).read_text(encoding="utf-8")
         self.assertIn(
-            "for board in heltec-v4 heltec-v4-r8 t-beam-supreme xiao-esp32-c6 t-echo",
+            "for board in heltec-v4 heltec-v4-r8 t-beam-supreme xiao-esp32-c6 t-echo t114 t096 t1000-e",
             shipping,
         )
         self.assertNotIn("PRNS_EMBEDDED_SITE", shipping)

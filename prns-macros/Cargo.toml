@@ -1,0 +1,29 @@
+[package]
+name = "prns-macros"
+version = "0.3.6"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+description = "Dependency-free macros shared across the project"
+documentation = "https://docs.rs/prns-macros"
+readme = "README.md"
+keywords = ["reticulum", "macros", "no-std"]
+categories = ["development-tools", "no-std"]
+publish = true
+include = [
+    "src/**",
+    "tests/**",
+    "!tests/**/__pycache__/**",
+    "!tests/**/*.pyc",
+    "examples/**",
+    "Cargo.toml",
+    "README.md",
+]
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true

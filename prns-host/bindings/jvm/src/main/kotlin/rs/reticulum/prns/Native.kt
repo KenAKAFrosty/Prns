@@ -313,6 +313,41 @@ internal interface PrnsNative : Library {
         bitrateBps: Long,
         command: PointerByReference,
     ): Int
+    fun prns_host_attach_supplied_pipe(
+        host: Pointer,
+        name: NativeStringView.ByValue,
+        respawnDelayMillis: Long,
+        bitrateKind: Int,
+        bitrateBps: Long,
+        suppliedPipe: PointerByReference,
+    ): Int
+    fun prns_supplied_pipe_claim_attachment(
+        suppliedPipe: Pointer,
+        command: PointerByReference,
+    ): Int
+    fun prns_supplied_pipe_next_open_request(
+        suppliedPipe: Pointer,
+        timeoutMillis: Int,
+        request: PointerByReference,
+    ): Int
+    fun prns_supplied_pipe_register_readiness(
+        suppliedPipe: Pointer,
+        callback: NativeReadinessCallback,
+        context: Pointer?,
+        registration: PointerByReference,
+    ): Int
+    fun prns_supplied_pipe_interrupt_wait(suppliedPipe: Pointer)
+    fun prns_supplied_pipe_release(suppliedPipe: Pointer)
+    fun prns_supplied_pipe_open_request_provide(
+        request: Pointer,
+        descriptor: Long,
+        accepted: ByteByReference,
+    ): Int
+    fun prns_supplied_pipe_open_request_decline(
+        request: Pointer,
+        accepted: ByteByReference,
+    ): Int
+    fun prns_supplied_pipe_open_request_release(request: Pointer)
     fun prns_host_attach_udp(
         host: Pointer,
         local: NativeStringView.ByValue,

@@ -1,3 +1,5 @@
+use core::num::NonZeroUsize;
+
 use crate::crypto::{Ed25519PublicKey, Ed25519SecretKey, X25519SecretKey};
 use crate::engine::CommandId;
 use crate::engine::InstantMillis;
@@ -6,6 +8,7 @@ use crate::interfaces::InterfaceId;
 use crate::routing::links::maintenance::{keepalive_ms_from, stale_ms_from, timeout_grace_ms_from};
 use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::links::{LinkId, LinkKey, LinkMode};
+use crate::routing::routes::{RouteEvidenceHandle, RouteEvidenceId};
 use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::units::RttMillis;
 use crate::wire::DestinationHash;
@@ -43,6 +46,7 @@ impl core::fmt::Debug for LinkRole {
 pub enum LinkPhase {
     Pending {
         destination: DestinationHash,
+        route_evidence: RouteEvidenceHandle,
         expected_hops: u8,
         mode: LinkMode,
         initiator_secret: X25519SecretKey,
@@ -72,8 +76,10 @@ pub enum LinkPhase {
         peer_signing: Ed25519PublicKey,
         remote_identity: Option<IdentityHash>,
         resource_strategy: ResourceStrategy,
-        last_resource_window: Option<usize>,
+        last_resource_window: Option<NonZeroUsize>,
         last_resource_eifr: Option<u64>,
+        route_evidence: Option<RouteEvidenceHandle>,
+        route_evidence_pending: bool,
     },
 }
 
@@ -81,6 +87,7 @@ impl LinkPhase {
     pub fn vacant() -> Self {
         Self::Pending {
             destination: DestinationHash::new([0u8; 16]),
+            route_evidence: RouteEvidenceHandle::new(RouteEvidenceId::FIRST, 0),
             expected_hops: 0,
             mode: LinkMode::Aes256Cbc,
             initiator_secret: X25519SecretKey::new([0u8; 32]),
@@ -147,6 +154,7 @@ impl core::fmt::Debug for LinkPhase {
 pub struct InitiatedLink {
     pub link_id: LinkId,
     pub destination: DestinationHash,
+    pub route_evidence: RouteEvidenceHandle,
     pub expected_hops: u8,
     pub mode: LinkMode,
     pub initiator_secret: X25519SecretKey,
@@ -155,6 +163,14 @@ pub struct InitiatedLink {
     pub timeout_at: InstantMillis,
     pub command_id: CommandId,
 }
+
+#[cfg(target_pointer_width = "32")]
+const _: () = {
+    // Route attribution must consume padding recovered inside LinkPhase, never multiply the
+    // fixed 512-row embedded Link store.
+    assert!(core::mem::size_of::<LinkRole>() == 228);
+    assert!(core::mem::size_of::<LinkPhase>() == 440);
+};
 
 pub struct RespondingLink {
     pub link_id: LinkId,
@@ -214,6 +230,8 @@ pub enum OverdueLink {
         link_id: LinkId,
         command_id: CommandId,
         destination: DestinationHash,
+        route_evidence: RouteEvidenceHandle,
+        requested_at: InstantMillis,
     },
     Responding {
         link_id: LinkId,
@@ -318,6 +336,7 @@ impl<C: LinkTable> Links<C> {
             link.link_id,
             LinkPhase::Pending {
                 destination: link.destination,
+                route_evidence: link.route_evidence,
                 expected_hops: link.expected_hops,
                 mode: link.mode,
                 initiator_secret: link.initiator_secret,
@@ -426,7 +445,11 @@ impl<C: LinkTable> Links<C> {
         // Take the phase by value so the arm can move its non-Copy secret (link_signing) into the new role; a &mut can't yield ownership of a field.
         // The vacant placeholder is transient: every arm writes *phase back before returning.
         match core::mem::replace(phase, LinkPhase::vacant()) {
-            LinkPhase::Pending { link_signing, .. } => {
+            LinkPhase::Pending {
+                link_signing,
+                route_evidence,
+                ..
+            } => {
                 let keepalive_ms = keepalive_ms_from(rtt);
                 let role = LinkRole::Initiator { link_signing };
                 let deadline = active_deadline(&role, now, now, now, keepalive_ms, rtt);
@@ -435,6 +458,8 @@ impl<C: LinkTable> Links<C> {
                     resource_strategy: ResourceStrategy::default(),
                     last_resource_window: None,
                     last_resource_eifr: None,
+                    route_evidence: Some(route_evidence),
+                    route_evidence_pending: false,
                     key,
                     role,
                     rtt,
@@ -492,6 +517,8 @@ impl<C: LinkTable> Links<C> {
                     resource_strategy: ResourceStrategy::default(),
                     last_resource_window: None,
                     last_resource_eifr: None,
+                    route_evidence: None,
+                    route_evidence_pending: false,
                     key,
                     role,
                     rtt,
@@ -535,6 +562,11 @@ impl<C: LinkTable> Links<C> {
 
     /// RNS 1.4.2 `Link.resource_concluded`'s memory. The window and expected in-flight rate an incoming transfer ended with, inherited by the next transfer this link accepts.
     pub fn note_resource_concluded(&mut self, link_id: &LinkId, window: usize, eifr: u64) {
+        // Live resource congestion windows are bounded below by WINDOW_MIN. Keeping that invariant
+        // in the type recovers the padding used by route attribution on 32-bit Link rows.
+        let Some(window) = NonZeroUsize::new(window) else {
+            return;
+        };
         let Some(index) = self.index_of(link_id) else {
             return;
         };
@@ -572,13 +604,18 @@ impl<C: LinkTable> Links<C> {
             last_outbound,
             last_keepalive_sent,
             keepalive_ms,
+            route_evidence,
+            route_evidence_pending,
             ..
         } = self.table.phase_mut(index)
         {
-            *last_inbound = now;
+            *last_inbound = (*last_inbound).max(now);
+            if route_evidence.is_some() {
+                *route_evidence_pending = true;
+            }
             let deadline = active_deadline(
                 role,
-                now,
+                *last_inbound,
                 *last_outbound,
                 *last_keepalive_sent,
                 *keepalive_ms,
@@ -587,6 +624,38 @@ impl<C: LinkTable> Links<C> {
             self.table.set_timeout_at(index, Some(deadline));
         }
         self.refresh_earliest_timeout();
+    }
+
+    pub(crate) fn route_evidence_ids(&self) -> impl Iterator<Item = RouteEvidenceId> + '_ {
+        self.table.phases().iter().filter_map(|phase| match phase {
+            LinkPhase::Pending { route_evidence, .. } => Some(route_evidence.id),
+            LinkPhase::Active { route_evidence, .. } => route_evidence.map(|handle| handle.id),
+            LinkPhase::Handshake { .. } => None,
+        })
+    }
+
+    /// Coalesces every valid inbound observation since the last reconciliation into one route
+    /// update. Clearing happens even for a stale handle, so retired evidence cannot replay.
+    pub(crate) fn reconcile_pending_route_evidence(
+        &mut self,
+        mut apply: impl FnMut(&mut RouteEvidenceHandle, InstantMillis),
+    ) {
+        for index in 0..self.table.len() {
+            let LinkPhase::Active {
+                last_inbound,
+                route_evidence: Some(route_evidence),
+                route_evidence_pending,
+                ..
+            } = self.table.phase_mut(index)
+            else {
+                continue;
+            };
+            if !*route_evidence_pending {
+                continue;
+            }
+            apply(route_evidence, *last_inbound);
+            *route_evidence_pending = false;
+        }
     }
 
     pub fn note_outbound(&mut self, link_id: &LinkId, now: InstantMillis) {
@@ -742,11 +811,15 @@ impl<C: LinkTable> Links<C> {
             LinkPhase::Pending {
                 command_id,
                 destination,
+                route_evidence,
+                requested_at,
                 ..
             } => OverdueLink::Initiated {
                 link_id,
                 command_id: *command_id,
                 destination: *destination,
+                route_evidence: *route_evidence,
+                requested_at: *requested_at,
             },
             LinkPhase::Handshake { .. } => OverdueLink::Responding { link_id },
             LinkPhase::Active { .. } => return None,
@@ -787,11 +860,12 @@ mod tests {
     use super::super::*;
     use super::*;
     use crate::crypto::{x25519_diffie_hellman, x25519_public_key};
+    use crate::engine::test_support::test_entropy_bytes;
 
     type TestLinks = Links<FixedLinkTable<4>>;
 
     fn link_id(byte: u8) -> LinkId {
-        LinkId::new([byte; 16])
+        LinkId::new(test_entropy_bytes(byte))
     }
 
     fn dest(byte: u8) -> DestinationHash {
@@ -814,6 +888,7 @@ mod tests {
         InitiatedLink {
             link_id: link_id(id),
             destination: dest(id),
+            route_evidence: RouteEvidenceHandle::new(RouteEvidenceId::FIRST, 0),
             expected_hops: 1,
             mode: LinkMode::Aes256Cbc,
             initiator_secret: secret(id),
@@ -894,6 +969,59 @@ mod tests {
             Some(InstantMillis(2_000 + 51_428)),
             "activation arms the initiator's keepalive deadline from its rtt",
         );
+    }
+
+    #[test]
+    fn inbound_route_evidence_coalesces_and_outbound_activity_does_not_count() {
+        let mut links = TestLinks::default();
+        links.track_initiated(initiated(1, 5_000)).unwrap();
+        links
+            .activate_initiated(
+                &link_id(1),
+                key(1, 9),
+                &LinkActivation {
+                    received_hops: 1,
+                    rtt: RttMillis::new(250),
+                    mtu: 500,
+                    attached_interface: iface(0xEE),
+                    peer_signing: Ed25519PublicKey([0x99; 32]),
+                },
+                InstantMillis(2_000),
+            )
+            .unwrap();
+
+        links.note_outbound(&link_id(1), InstantMillis(3_000));
+        let mut observations = std::vec::Vec::new();
+        links.reconcile_pending_route_evidence(|handle, observed_at| {
+            observations.push((handle.id, observed_at));
+        });
+        assert!(
+            observations.is_empty(),
+            "outbound traffic is not return evidence"
+        );
+
+        links.note_inbound(&link_id(1), InstantMillis(4_000));
+        links.note_inbound(&link_id(1), InstantMillis(5_000));
+        links.note_inbound(&link_id(1), InstantMillis(4_500));
+        links.reconcile_pending_route_evidence(|handle, observed_at| {
+            observations.push((handle.id, observed_at));
+            handle.row_hint = 3;
+        });
+        assert_eq!(
+            observations,
+            std::vec![(RouteEvidenceId::FIRST, InstantMillis(5_000))],
+            "a burst promotes one observation at its newest authenticated arrival",
+        );
+
+        links.reconcile_pending_route_evidence(|_, _| unreachable!("evidence was cleared"));
+        let Some(LinkPhase::Active {
+            route_evidence: Some(handle),
+            ..
+        }) = links.phase_for(&link_id(1))
+        else {
+            panic!("the initiated Link remains attributed");
+        };
+        assert_eq!(handle.row_hint, 3, "a repaired hint remains with the Link");
     }
 
     #[test]
@@ -1160,6 +1288,8 @@ mod tests {
             link_id: link_id(1),
             command_id: CommandId(1),
             destination: dest(1),
+            route_evidence: RouteEvidenceHandle::new(RouteEvidenceId::FIRST, 0),
+            requested_at: InstantMillis(1_000),
         }));
         assert!(popped.contains(&OverdueLink::Responding {
             link_id: link_id(2),

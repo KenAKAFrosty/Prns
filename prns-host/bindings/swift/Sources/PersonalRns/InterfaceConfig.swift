@@ -166,12 +166,14 @@ func nativeInterfaceConfig(
         result.kind = InterfaceKind.automaticUsb.rawValue
     case .automaticBluetoothLe:
         result.kind = InterfaceKind.automaticBluetoothLe.rawValue
-    case .webSocketClient(let target):
+    case .webSocketClient(let target, let framing):
         result.kind = InterfaceKind.webSocketClient.rawValue
         result.target = try arena.string(target)
-    case .webSocketServer(let bind):
+        result.websocket_framing_selection = framing.rawValue
+    case .webSocketServer(let bind, let framing):
         result.kind = InterfaceKind.webSocketServer.rawValue
         result.bind = try arena.string(bind)
+        result.websocket_framing_selection = framing.rawValue
     case .browserRendezvous(let url):
         result.kind = InterfaceKind.browserRendezvous.rawValue
         result.url = try arena.string(url)

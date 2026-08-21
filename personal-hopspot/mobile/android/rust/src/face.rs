@@ -1,9 +1,9 @@
 use heapless::Vec as HVec;
 use personal_hopspot_core::{
     render, snapshots_to_cards, snapshots_to_interface_menu_details, splash, AccessPointState,
-    BatteryState, Card, CardActivityTracker, DisplayPowerControl, InputEvent,
-    MobileRgbaFrameBuffer, RenderFrame, ScreenContent, SplashContent, UiAction, UiConfiguration,
-    UiNotice, UiState,
+    Card, CardActivityTracker, DisplayPowerControl, InputEvent, MobileRgbaFrameBuffer,
+    PowerSnapshot, RenderFrame, ScreenContent, SplashContent, UiAction, UiConfiguration, UiNotice,
+    UiState,
 };
 use personal_rns::interfaces::InterfaceSnapshot;
 use personal_rns::storage::{GrowableHeap, StorageLayout};
@@ -20,13 +20,15 @@ fn ui_state() -> UiState {
         storage_limits: <GrowableHeap as StorageLayout>::LIMITS,
         display_power_control: DisplayPowerControl::Unavailable,
         access_point: AccessPointState::Unsupported,
+        shared_instance_config_export: personal_hopspot_core::SharedInstanceConfigExport::Available,
+        gnss: personal_hopspot_core::GnssAvailability::Unavailable,
     })
 }
 
 pub struct HopspotFace {
     state: UiState,
     framebuffer: MobileRgbaFrameBuffer,
-    battery: BatteryState,
+    battery: PowerSnapshot,
     activity: CardActivityTracker<MAX_CARDS>,
     activity_started: Instant,
     notice_started: Option<Instant>,
@@ -37,7 +39,7 @@ impl HopspotFace {
         Self {
             state: ui_state(),
             framebuffer: MobileRgbaFrameBuffer::new(),
-            battery: BatteryState::Unknown,
+            battery: PowerSnapshot::UNKNOWN,
             activity: CardActivityTracker::new(),
             activity_started: Instant::now(),
             notice_started: None,
@@ -49,7 +51,7 @@ impl HopspotFace {
         self.notice_started = Some(Instant::now());
     }
 
-    pub fn set_battery(&mut self, battery: BatteryState) {
+    pub fn set_battery(&mut self, battery: PowerSnapshot) {
         self.battery = battery;
     }
 
@@ -83,8 +85,11 @@ impl HopspotFace {
                 wake_interfaces();
             }
             UiAction::Announce => self.show_notice(UiNotice::Announcing),
+            UiAction::CopySharedInstanceConfig => {}
             UiAction::None
             | UiAction::OledOff
+            | UiAction::ToggleOledAutoOff
+            | UiAction::ControlGnss(_)
             | UiAction::ToggleStationUplink
             | UiAction::OpenDocs
             | UiAction::OpenLoRaEditor
@@ -149,6 +154,7 @@ impl HopspotFace {
                 RenderFrame {
                     content,
                     battery: self.battery,
+                    gnss: None,
                     state: &self.state,
                     interface_menu_details: &interface_menu_details,
                     animation_ms,
@@ -178,7 +184,7 @@ mod tests {
             Self {
                 state: ui_state(),
                 framebuffer: MobileRgbaFrameBuffer::new(),
-                battery: BatteryState::Unknown,
+                battery: PowerSnapshot::UNKNOWN,
                 activity: CardActivityTracker::new(),
                 activity_started: Instant::now(),
                 notice_started: None,
@@ -235,7 +241,11 @@ mod tests {
         let cards = stub_cards();
         let mut out = fresh_buffer();
         face.render_cards(&cards, &[], &mut out);
-        assert!(out.chunks_exact(4).any(|px| px != MOBILE_DARK_RGBA));
+        assert!(out
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|px| *px != MOBILE_DARK_RGBA));
     }
 
     #[test]
@@ -243,7 +253,11 @@ mod tests {
         let mut face = HopspotFace::detached();
         let mut out = fresh_buffer();
         face.render_cards(&[], &[], &mut out);
-        assert!(out.chunks_exact(4).any(|px| px != MOBILE_DARK_RGBA));
+        assert!(out
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|px| *px != MOBILE_DARK_RGBA));
     }
 
     #[test]

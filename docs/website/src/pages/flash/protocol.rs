@@ -457,6 +457,23 @@ mod tests {
             Err(ProtocolViolation::TotalChanged)
         );
 
+        let mut managed_nrf = EventSequence::new(BridgeOperation::Device);
+        managed_nrf
+            .accept(event(BridgePhase::RequestingPort))
+            .expect("requesting managed application");
+        managed_nrf
+            .accept(event(BridgePhase::Connecting))
+            .expect("entering Nordic bootloader");
+        managed_nrf
+            .accept(event(BridgePhase::AwaitingBootloaderPort))
+            .expect("bounded bootloader picker continuation");
+        managed_nrf
+            .accept(EventFacts {
+                detected_chip: Some("nRF52840 (2886:0057)"),
+                ..event(BridgePhase::VerifyingTarget)
+            })
+            .expect("exact Nordic target check");
+
         let mut fresh = EventSequence::new(BridgeOperation::Device);
         fresh
             .accept(event(BridgePhase::RequestingPort))

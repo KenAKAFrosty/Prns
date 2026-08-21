@@ -110,7 +110,18 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(selection.port, 1234)
 
     def test_all_selects_every_shipping_board(self) -> None:
-        self.assertEqual(DEV.parse_selection(["--all"]).boards, DEV.shipping_boards())
+        boards = DEV.shipping_boards()
+        self.assertEqual(DEV.parse_selection(["--all"]).boards, boards)
+        self.assertIn("t096", boards)
+        self.assertIn("t1000-e", boards)
+
+    def test_explicit_nordic_selection_uses_catalog_order(self) -> None:
+        selection = DEV.parse_selection(["t1000-e", "t096"])
+        self.assertEqual(selection.boards, ("t096", "t1000-e"))
+        self.assertEqual(
+            tuple((target.board_slug, target.transport) for target in DEV.selected_targets(selection)),
+            (("t096", "uf2-mass-storage"), ("t1000-e", "nrf-serial-dfu")),
+        )
 
     def test_missing_duplicate_unknown_and_invalid_port_are_rejected(self) -> None:
         for arguments in (
@@ -270,191 +281,399 @@ class CandidateSafetyTests(unittest.TestCase):
                 self.assertIs(module.create_server(website, 0), server)
             self.assertEqual(constructor.call_args.args[0], ("127.0.0.1", 0))
 
-    def test_manifest_artifact_tampering_is_rejected(self) -> None:
-        with DEV.temporary_run_directory() as candidate:
+
+class WebsiteBuildTests(unittest.TestCase):
+    def test_local_site_stages_the_nordic_dfu_browser_core(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "dioxus"
+            output.mkdir()
+            (output / "index.html").write_text("site\n", encoding="utf-8")
+            website = root / "website"
+            public_key = root / "minisign.pub"
+            public_key.write_text("fixture key\n", encoding="utf-8")
             identity = DEV.SourceIdentity(
                 head="0" * 40,
                 digest="a" * 64,
                 state="dirty",
                 version=f"0.3.1-dev.dirty.{'a' * 64}",
             )
-            selection = DEV.Selection(("t-echo",), 8765)
-            artifact = (
-                candidate
-                / "firmware"
-                / "hopspot"
-                / "t-echo"
-                / identity.version
-                / "firmware.uf2"
-            )
-            artifact.parent.mkdir(parents=True)
-            artifact.write_bytes(b"firmware")
-            manifest = candidate / "flash-manifest.json"
-            manifest.write_text(
-                json.dumps(
-                    {
-                        "schema": 2,
-                        "release": {
-                            "version": identity.version,
-                            "channel": "preview",
-                            "commit": identity.head,
-                        },
-                        "signing": {"key_id": "0123456789ABCDEF"},
-                        "targets": [
-                            {
-                                "board_slug": "t-echo",
-                                "parts": [
-                                    {
-                                        "path": artifact.relative_to(candidate).as_posix(),
-                                        "size": len(b"firmware"),
-                                        "sha256": "0" * 64,
-                                    }
-                                ],
-                            }
-                        ],
-                    }
+
+            with (
+                mock.patch.object(
+                    DEV,
+                    "require_node_tools",
+                    return_value=(root / "tailwindcss", root / "esbuild"),
                 ),
-                encoding="utf-8",
-            )
-            with self.assertRaisesRegex(DEV.DeveloperFlasherError, "hash or size"):
-                DEV.verify_manifest_artifacts(
-                    candidate,
-                    manifest,
+                mock.patch.object(DEV, "clear_dioxus_output", return_value=output),
+                mock.patch.object(DEV, "clean_build_environment", return_value={}),
+                mock.patch.object(DEV, "run_process") as run_process,
+            ):
+                DEV.build_website(
+                    website,
                     identity,
-                    selection,
-                    "0123456789ABCDEF",
+                    DEV.Selection(("t1000-e",), 8765),
+                    public_key,
                 )
+
+            command = run_process.call_args_list[-1].args[0]
+            self.assertEqual(
+                command,
+                [
+                    "bash",
+                    DEV.ROOT / "tools" / "build" / "stage-web-flasher-nrf-dfu-wasm.sh",
+                    website / "assets" / "flasher" / "nrf-dfu",
+                ],
+            )
+            self.assertEqual(
+                run_process.call_args_list[-1].kwargs["label"],
+                "local developer Nordic DFU browser core build",
+            )
+
+
+
+class CandidateValidationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.candidate = Path(self.temporary.name)
+        self.identity = DEV.SourceIdentity(
+            head="0" * 40,
+            digest="a" * 64,
+            state="dirty",
+            version=f"0.3.1-dev.dirty.{'a' * 64}",
+        )
+        self.key_id = "0123456789ABCDEF"
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def artifact(self, relative: str, payload: bytes, **fields: object) -> dict:
+        path = self.candidate / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+        return {
+            "path": relative,
+            "size": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            **fields,
+        }
+
+    def esp_target(self, board: str = "heltec-v4") -> dict:
+        payload = (
+            f"version={self.identity.version} source={self.identity.digest}"
+        ).encode("ascii")
+        part = self.artifact(f"firmware/{board}/application.bin", payload, kind="application")
+        return {
+            "board_slug": board,
+            "transport": "esp-serial",
+            "parts": [part],
+            "variants": [],
+        }
+
+    def uf2_payload(self, application_base: int = 0x26000) -> bytes:
+        block = bytearray(512)
+        words = {
+            0: 0x0A324655,
+            4: 0x9E5D5157,
+            8: 0x00002000,
+            12: application_base,
+            16: 256,
+            20: 0,
+            24: 1,
+            28: 0xADA52840,
+            508: 0x0AB16F30,
+        }
+        for offset, value in words.items():
+            block[offset : offset + 4] = value.to_bytes(4, "little")
+        return bytes(block)
+
+    def uf2_target(self) -> dict:
+        payload = self.uf2_payload()
+        variant = self.artifact(
+            "firmware/t-echo/t-echo-s140-6.1.1.uf2",
+            payload,
+            softdevice_family="s140",
+            softdevice_version="6.1.1",
+            fwid="0x00b6",
+            application_base="0x00026000",
+            family_id="0xada52840",
+        )
+        return {
+            "board_slug": "t-echo",
+            "transport": "uf2-mass-storage",
+            "parts": [],
+            "variants": [variant],
+        }
+
+    def recovery_uf2_payload(self, application: bytes) -> bytes:
+        blocks = []
+        block_count = (len(application) + 255) // 256
+        for index in range(block_count):
+            block = bytearray(512)
+            words = {
+                0: 0x0A324655,
+                4: 0x9E5D5157,
+                8: 0x00002000,
+                12: 0x27000 + index * 256,
+                16: 256,
+                20: index,
+                24: block_count,
+                28: 0xADA52840,
+                508: 0x0AB16F30,
+            }
+            for offset, value in words.items():
+                block[offset : offset + 4] = value.to_bytes(4, "little")
+            start = index * 256
+            block[32 : 32 + min(256, len(application) - start)] = application[
+                start : start + 256
+            ]
+            blocks.append(bytes(block))
+        return b"".join(blocks)
+
+    def nrf_serial_dfu_target(self) -> dict:
+        application_payload = bytes(index % 251 for index in range(300))
+        application = self.artifact(
+            "firmware/t1000-e/t1000e.bin",
+            application_payload,
+            kind="dfu-application",
+        )
+        init_packet = self.artifact(
+            "firmware/t1000-e/t1000e.dat",
+            b"init packet",
+            kind="dfu-init-packet",
+        )
+        recovery = self.artifact(
+            "firmware/t1000-e/t1000e.uf2",
+            self.recovery_uf2_payload(application_payload),
+            kind="uf2",
+        )
+        return {
+            "board_slug": "t1000-e",
+            "transport": "nrf-serial-dfu",
+            "parts": [],
+            "variants": [],
+            "nrf_serial_dfu": {
+                "compatibility": {
+                    "softdevice_family": "s140",
+                    "softdevice_version": "7.3.0",
+                    "fwid": "0x0123",
+                    "application_base": "0x00027000",
+                    "application_end_exclusive": "0x000ea000",
+                },
+                "application": application,
+                "init_packet": init_packet,
+                "recovery": {
+                    "mount_label": "T1000-E",
+                    "board_id_prefix": "nrf52840-t1000-e-v1",
+                    "family_id": "0xada52840",
+                    "artifact": recovery,
+                },
+            },
+        }
+
+    def write_manifest(self, targets: list[dict], schema: int = 3) -> Path:
+        path = self.candidate / "flash-manifest.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": schema,
+                    "release": {
+                        "version": self.identity.version,
+                        "channel": "preview",
+                        "commit": self.identity.head,
+                    },
+                    "signing": {"key_id": self.key_id},
+                    "targets": targets,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    def validate(self, targets: list[dict], boards: tuple[str, ...]) -> object:
+        return DEV.verify_manifest_artifacts(
+            self.candidate,
+            self.write_manifest(targets),
+            self.identity,
+            DEV.Selection(boards, 8765),
+            self.key_id,
+        )
+
+    def test_schema_three_accepts_esp_parts_and_uf2_variants_in_selection_order(self) -> None:
+        validated = self.validate(
+            [self.esp_target(), self.uf2_target()],
+            ("heltec-v4", "t-echo"),
+        )
+        self.assertEqual(
+            tuple((target.board_slug, target.transport) for target in validated.targets),
+            (("heltec-v4", "esp-serial"), ("t-echo", "uf2-mass-storage")),
+        )
+        self.assertEqual(tuple(len(target.artifacts) for target in validated.targets), (1, 1))
+
+    def test_nordic_recovery_is_bound_to_the_exact_dfu_application(self) -> None:
+        target = self.nrf_serial_dfu_target()
+        validated = self.validate([target], ("t1000-e",))
+        self.assertEqual(
+            tuple(artifact.path.name for artifact in validated.targets[0].artifacts),
+            ("t1000e.bin", "t1000e.dat", "t1000e.uf2"),
+        )
+
+        application = target["nrf_serial_dfu"]["application"]
+        application_path = self.candidate / application["path"]
+        changed = bytearray(application_path.read_bytes())
+        changed[17] ^= 0x80
+        application_path.write_bytes(changed)
+        application["sha256"] = hashlib.sha256(changed).hexdigest()
+        with self.assertRaisesRegex(
+            DEV.DeveloperFlasherError,
+            "recovery UF2 block 0 disagrees with the exact DFU application",
+        ):
+            self.validate([target], ("t1000-e",))
+
+    def test_schema_two_is_rejected_by_the_shared_contract(self) -> None:
+        manifest = self.write_manifest([self.esp_target()], schema=2)
+        with self.assertRaisesRegex(DEV.DeveloperFlasherError, "schema 3"):
+            DEV.verify_manifest_artifacts(
+                self.candidate,
+                manifest,
+                self.identity,
+                DEV.Selection(("heltec-v4",), 8765),
+                self.key_id,
+            )
+
+    def test_wrong_transport_and_artifact_shapes_are_rejected(self) -> None:
+        cases = []
+        wrong_transport = self.esp_target()
+        wrong_transport["transport"] = "uf2-mass-storage"
+        cases.append((wrong_transport, "transport disagrees"))
+        wrong_shape = self.esp_target()
+        wrong_shape["variants"] = [wrong_shape["parts"][0]]
+        cases.append((wrong_shape, "disagree with its transport"))
+        for target, message in cases:
+            with self.subTest(message=message), self.assertRaisesRegex(
+                DEV.DeveloperFlasherError, message
+            ):
+                self.validate([target], ("heltec-v4",))
+
+    def test_duplicate_missing_linked_and_traversing_paths_are_rejected(self) -> None:
+        target = self.esp_target()
+        target["parts"].append(dict(target["parts"][0]))
+        with self.assertRaisesRegex(DEV.DeveloperFlasherError, "repeats artifact path"):
+            self.validate([target], ("heltec-v4",))
+
+        for path, message in (
+            ("firmware/missing.bin", "unavailable"),
+            ("../outside.bin", "unsafe"),
+        ):
+            target = self.esp_target()
+            target["parts"][0]["path"] = path
+            with self.subTest(path=path), self.assertRaisesRegex(
+                DEV.DeveloperFlasherError, message
+            ):
+                self.validate([target], ("heltec-v4",))
+
+        target = self.esp_target()
+        original = self.candidate / target["parts"][0]["path"]
+        linked = original.with_name("linked.bin")
+        linked.symlink_to(original)
+        target["parts"][0]["path"] = linked.relative_to(self.candidate).as_posix()
+        with self.assertRaisesRegex(DEV.DeveloperFlasherError, "contains a link"):
+            self.validate([target], ("heltec-v4",))
+
+    def test_size_and_hash_mismatches_are_rejected(self) -> None:
+        for field, value in (("size", 1), ("sha256", "0" * 64)):
+            target = self.esp_target()
+            target["parts"][0][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(
+                DEV.DeveloperFlasherError, "hash or size"
+            ):
+                self.validate([target], ("heltec-v4",))
+
+    def test_malformed_uf2_evidence_is_rejected(self) -> None:
+        target = self.uf2_target()
+        artifact = self.candidate / target["variants"][0]["path"]
+        artifact.write_bytes(b"not uf2")
+        target["variants"][0]["size"] = len(b"not uf2")
+        target["variants"][0]["sha256"] = hashlib.sha256(b"not uf2").hexdigest()
+        with self.assertRaisesRegex(DEV.DeveloperFlasherError, "UF2 evidence is invalid"):
+            self.validate([target], ("t-echo",))
 
     def test_esp_application_must_embed_signed_source_identity(self) -> None:
-        with DEV.temporary_run_directory() as candidate:
-            identity = DEV.SourceIdentity(
-                head="0" * 40,
-                digest="a" * 64,
-                state="dirty",
-                version=f"0.3.1-dev.dirty.{'a' * 64}",
-            )
-            selection = DEV.Selection(("heltec-v4",), 8765)
-            artifact = (
-                candidate
-                / "firmware"
-                / "hopspot"
-                / "heltec-v4"
-                / identity.version
-                / "application.bin"
-            )
-            artifact.parent.mkdir(parents=True)
-            artifact.write_bytes(identity.version.encode("ascii"))
-            payload = artifact.read_bytes()
-            manifest = candidate / "flash-manifest.json"
-            manifest.write_text(
-                json.dumps(
-                    {
-                        "schema": 2,
-                        "release": {
-                            "version": identity.version,
-                            "channel": "preview",
-                            "commit": identity.head,
-                        },
-                        "signing": {"key_id": "0123456789ABCDEF"},
-                        "targets": [
-                            {
-                                "board_slug": "heltec-v4",
-                                "parts": [
-                                    {
-                                        "kind": "application",
-                                        "path": artifact.relative_to(candidate).as_posix(),
-                                        "size": len(payload),
-                                        "sha256": hashlib.sha256(payload).hexdigest(),
-                                    }
-                                ],
-                            }
-                        ],
-                    }
-                ),
-                encoding="utf-8",
-            )
-            with self.assertRaisesRegex(DEV.DeveloperFlasherError, "does not embed"):
+        target = self.esp_target()
+        part = target["parts"][0]
+        payload = self.identity.version.encode("ascii")
+        artifact = self.candidate / part["path"]
+        artifact.write_bytes(payload)
+        part["size"] = len(payload)
+        part["sha256"] = hashlib.sha256(payload).hexdigest()
+        with self.assertRaisesRegex(DEV.DeveloperFlasherError, "does not embed"):
+            self.validate([target], ("heltec-v4",))
+
+    def test_release_signing_and_selection_identity_must_be_exact(self) -> None:
+        target = self.esp_target()
+        manifest = self.write_manifest([target])
+        document = json.loads(manifest.read_text(encoding="utf-8"))
+        cases = (
+            (("release", "version"), "other", "release identity"),
+            (("release", "commit"), "1" * 40, "release identity"),
+            (("signing", "key_id"), "FEDCBA9876543210", "release identity"),
+            (("targets", 0, "board_slug"), "t-echo", "exact selection"),
+        )
+        for coordinates, value, message in cases:
+            changed = json.loads(json.dumps(document))
+            owner = changed
+            for coordinate in coordinates[:-1]:
+                owner = owner[coordinate]
+            owner[coordinates[-1]] = value
+            manifest.write_text(json.dumps(changed), encoding="utf-8")
+            with self.subTest(coordinates=coordinates), self.assertRaisesRegex(
+                DEV.DeveloperFlasherError, message
+            ):
                 DEV.verify_manifest_artifacts(
-                    candidate,
+                    self.candidate,
                     manifest,
-                    identity,
-                    selection,
-                    "0123456789ABCDEF",
+                    self.identity,
+                    DEV.Selection(("heltec-v4",), 8765),
+                    self.key_id,
                 )
 
-    def test_signed_release_stages_only_manifest_artifacts(self) -> None:
-        with DEV.temporary_run_directory() as run_directory:
-            candidate = run_directory / "candidate"
-            website = candidate / "website"
-            candidate.mkdir()
-            website.mkdir()
-            identity = DEV.SourceIdentity(
-                head="0" * 40,
-                digest="a" * 64,
-                state="dirty",
-                version=f"0.3.1-dev.dirty.{'a' * 64}",
-            )
-            artifact = (
-                candidate
-                / "firmware"
-                / "hopspot"
-                / "t-echo"
-                / identity.version
-                / "firmware.uf2"
-            )
-            artifact.parent.mkdir(parents=True)
-            artifact.write_bytes(b"firmware")
-            (artifact.parent / "target.json").write_text("{}\n", encoding="utf-8")
-            (artifact.parent / "source-capability.json").write_text(
-                "{}\n",
-                encoding="utf-8",
-            )
-            manifest = candidate / "flash-manifest.json"
-            manifest.write_text(
-                json.dumps(
-                    {
-                        "targets": [
-                            {
-                                "parts": [
-                                    {
-                                        "path": artifact.relative_to(candidate).as_posix(),
-                                    }
-                                ]
-                            }
-                        ]
-                    }
-                ),
-                encoding="utf-8",
-            )
-            manifest_signature = candidate / "flash-manifest.json.minisig"
-            manifest_signature.write_text("signature\n", encoding="utf-8")
-            channel = candidate / "preview.json"
-            channel.write_text("{}\n", encoding="utf-8")
-            channel_signature = candidate / "preview.json.minisig"
-            channel_signature.write_text("signature\n", encoding="utf-8")
-            public_key = candidate / "minisign.pub"
-            public_key.write_text("public key\n", encoding="utf-8")
+    def test_staging_uses_only_the_immutable_validated_artifacts(self) -> None:
+        target = self.esp_target()
+        manifest = self.write_manifest([target])
+        validated = DEV.verify_manifest_artifacts(
+            self.candidate,
+            manifest,
+            self.identity,
+            DEV.Selection(("heltec-v4",), 8765),
+            self.key_id,
+        )
+        artifact = self.candidate / target["parts"][0]["path"]
+        original = artifact.read_bytes()
+        artifact.write_bytes(b"tampered after validation")
+        extra = artifact.with_name("target.json")
+        extra.write_text("{}\n", encoding="utf-8")
+        website = self.candidate / "website"
+        website.mkdir()
+        manifest_signature = self.candidate / "flash-manifest.json.minisig"
+        channel = self.candidate / "preview.json"
+        channel_signature = self.candidate / "preview.json.minisig"
+        public_key = self.candidate / "minisign.pub"
+        for path in (manifest_signature, channel, channel_signature, public_key):
+            path.write_text(f"{path.name}\n", encoding="utf-8")
 
-            DEV.stage_signed_release(
-                candidate,
-                website,
-                identity,
-                manifest,
-                manifest_signature,
-                channel,
-                channel_signature,
-                public_key,
-            )
+        DEV.stage_signed_release(
+            website,
+            validated,
+            manifest,
+            manifest_signature,
+            channel,
+            channel_signature,
+            public_key,
+        )
 
-            staged = (
-                website
-                / "releases"
-                / identity.version
-                / artifact.relative_to(candidate)
-            )
-            self.assertEqual(staged.read_bytes(), b"firmware")
-            self.assertFalse((staged.parent / "target.json").exists())
-            self.assertFalse((staged.parent / "source-capability.json").exists())
+        staged = website / "releases" / self.identity.version / target["parts"][0]["path"]
+        self.assertEqual(staged.read_bytes(), original)
+        self.assertFalse((staged.parent / extra.name).exists())
 
 
 if __name__ == "__main__":

@@ -26,7 +26,7 @@ pub(crate) enum CommandMode {
     Doctor {
         /// Optional board slug; when present, a real non-writing preflight is required.
         board: Option<String>,
-        /// Explicit serial port for an ESP board preflight.
+        /// Explicit serial port for a serial-board preflight.
         #[arg(long, value_name = "PORT")]
         port: Option<String>,
         /// Emit stable JSON diagnostics.
@@ -51,7 +51,7 @@ pub(crate) enum CommandMode {
         /// Explicitly acknowledge that a pinned version may downgrade the device.
         #[arg(long, requires = "version")]
         allow_downgrade: bool,
-        /// Explicit serial port for ESP boards.
+        /// Explicit serial port for serial boards.
         #[arg(long, value_name = "PORT")]
         port: Option<String>,
         /// Provisioning behavior. Preserve is always the default.
@@ -108,7 +108,6 @@ pub(crate) enum CommandMode {
         #[arg(long, value_name = "VERSION", hide = true)]
         developer_version: Option<String>,
     },
-    /// Assemble manifest v2 after all shipping developer artifacts have been built.
     #[command(hide = true)]
     AssembleManifest {
         #[arg(long, value_name = "DIR")]

@@ -18,7 +18,7 @@ use personal_hopspot_core as screen;
 
 use super::{HELTEC_GC1109_RX_GAIN_DB, HELTEC_KCT8103L_RX_GAIN_DB};
 use crate::s3::{
-    self, BoardDisplay, BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware,
+    self, BoardDisplay, BoardFace, Esp32S3Board, NoGnss, S3BoardHardware, S3InterfaceHardware,
     S3ManifoldHardware,
 };
 
@@ -42,7 +42,7 @@ const CHARGE_RISE_MV: u32 = 16;
 /// The Heltec V4-R8's battery sense: VBAT on a 49:10 divider into ADC1 (GPIO1). Unlike the S3R2 V4,
 /// ADC_Ctrl is not broken out — do not claim GPIO37 (that pad is SPIDQS on the Octal SiP). The shared
 /// [`BatteryGauge`](screen::BatteryGauge) owns the percentage curve; this reads the divided
-/// millivolts and keeps two EMAs (fast + slow) so [`is_charging`](Self::is_charging) can infer the
+/// millivolts and keeps two EMAs (fast + slow) so [`external_power`](Self::external_power) can infer the
 /// plugged/charging state this board gives no direct signal for. ADC oneshots can report
 /// `WouldBlock`, so a read is retried briefly.
 pub struct HeltecR8Battery {
@@ -78,8 +78,14 @@ impl screen::BatterySource for HeltecR8Battery {
     /// the terminal voltage is stepping/trending up (plug-in or active charge). Fades when the cell
     /// is full (flat) or on unplug (step down) — an approximation that answers "did plugging in
     /// actually start charging?", which is the signal that matters on a board with no charge pin.
-    fn is_charging(&mut self) -> bool {
-        self.fast_ema_mv > self.slow_ema_mv.saturating_add(CHARGE_RISE_MV)
+    fn external_power(&mut self) -> screen::ExternalPowerState {
+        if self.fast_ema_mv > self.slow_ema_mv.saturating_add(CHARGE_RISE_MV) {
+            screen::ExternalPowerState::Present {
+                charging: screen::ChargingState::Charging,
+            }
+        } else {
+            screen::ExternalPowerState::Unknown
+        }
     }
 }
 
@@ -101,6 +107,7 @@ impl Esp32S3Board for HeltecV4R8Board {
     const FLASH_LAYOUT: screen::HopspotS3FlashLayout = screen::S3_16_MIB_FLASH_LAYOUT;
     type Display = HeltecDisplay;
     type Battery = HeltecR8Battery;
+    type Gnss = NoGnss;
 
     fn flush(display: &mut Self::Display) {
         if let Err(error) = display.flush() {
@@ -114,7 +121,7 @@ impl Esp32S3Board for HeltecV4R8Board {
 
     async fn bringup(
         p: esp_hal::peripherals::Peripherals,
-    ) -> S3BoardHardware<Self::Display, Self::Battery> {
+    ) -> S3BoardHardware<Self::Display, Self::Battery, Self::Gnss> {
         // Octal 8 MiB at 40 MHz, split between a private low engine window and a global high `esp_alloc` window.
         // Vext is GPIO40; GPIO36 is FSPICLK/SPIIO7 on the R8 SiP, and driving it as GPIO disrupts PSRAM access after early probes.
         let (sw_int1, timebase, rtc) = s3::boot_common!(
@@ -168,7 +175,6 @@ impl Esp32S3Board for HeltecV4R8Board {
             }
         }
 
-        #[cfg(feature = "lora")]
         let lora_radio = {
             let lora_spi = Spi::new(
                 p.SPI2,
@@ -214,6 +220,9 @@ impl Esp32S3Board for HeltecV4R8Board {
                     rx_boost: true,
                     dio2_as_rf_switch: true,
                     external_rx_gain_db: lora_rx_gain_db,
+                    external_power_amplifier: None,
+                    enter_transmit: None,
+                    enter_receive: None,
                 },
             )
         };
@@ -242,13 +251,11 @@ impl Esp32S3Board for HeltecV4R8Board {
                     InputConfig::default().with_pull(esp_hal::gpio::Pull::Up),
                 ),
             },
+            gnss: NoGnss,
             interface_hardware: S3InterfaceHardware {
                 usb_device: p.USB_DEVICE,
-                #[cfg(feature = "lora")]
                 lora_radio,
-                #[cfg(feature = "wifi-auto")]
                 wifi: p.WIFI,
-                #[cfg(feature = "bluetooth-auto")]
                 bluetooth: p.BT,
             },
             manifold: S3ManifoldHardware {

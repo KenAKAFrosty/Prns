@@ -508,6 +508,7 @@ dependencies = [
  "heapless",
  "hkdf",
  "hmac",
+ "prns-macros",
  "rmp",
  "roaring",
  "serde",
@@ -516,6 +517,10 @@ dependencies = [
  "x25519-dalek",
  "zeroize",
 ]
+
+[[package]]
+name = "prns-macros"
+version = "0.3.6"
 
 [[package]]
 name = "proc-macro2"

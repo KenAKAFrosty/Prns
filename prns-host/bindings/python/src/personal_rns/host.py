@@ -672,9 +672,11 @@ def _marshal_interface(
     elif isinstance(value, g.InterfaceConfigWebSocketClient):
         result.kind = g.InterfaceKind.WEB_SOCKET_CLIENT
         result.target = arena.string(value.target)
+        result.websocket_framing_selection = value.framing
     elif isinstance(value, g.InterfaceConfigWebSocketServer):
         result.kind = g.InterfaceKind.WEB_SOCKET_SERVER
         result.bind = arena.string(value.bind)
+        result.websocket_framing_selection = value.framing
     elif isinstance(value, g.InterfaceConfigBrowserRendezvous):
         result.kind = g.InterfaceKind.BROWSER_RENDEZVOUS
         result.url = arena.string(value.url)
@@ -743,7 +745,7 @@ def _decode_host_snapshot(value: NativeHostSnapshot) -> g.HostSnapshot:
             else None,
             g.InterfaceId(bytes_from_view(item.interface_id)),
             item.learned_at_millis,
-            item.last_relayed_at_millis,
+            item.last_route_activity_at_millis,
             item.expires_at_millis,
         )
         for item in (value.routes[index] for index in range(value.route_count))

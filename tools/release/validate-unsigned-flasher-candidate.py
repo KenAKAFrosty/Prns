@@ -16,6 +16,12 @@ from flasher_reproducibility import validate_report as validate_reproducibility_
 from flasher_sparse_sizes import build_report as build_sparse_size_report
 from flasher_website_history import allowed_historical_signatures, validate_candidate_history
 from source_snapshot import verify_source_snapshot
+from flasher_manifest import (
+    FLASH_MANIFEST_SCHEMA,
+    target_artifacts,
+    validate_nrf_serial_dfu_recovery_artifact,
+    validate_uf2_artifact,
+)
 
 
 CLI_TARGETS = {
@@ -25,7 +31,16 @@ CLI_TARGETS = {
     "aarch64-unknown-linux-gnu": ".tar.gz",
     "x86_64-pc-windows-msvc": ".zip",
 }
-SHIPPING_BOARDS = {"heltec-v4", "heltec-v4-r8", "t-beam-supreme", "xiao-esp32-c6", "t-echo"}
+SHIPPING_BOARDS = {
+    "heltec-v4",
+    "heltec-v4-r8",
+    "t-beam-supreme",
+    "xiao-esp32-c6",
+    "t-echo",
+    "t114",
+    "t096",
+    "t1000-e",
+}
 REQUIRED_RELEASE_FILES = (
     "VERSION",
     "flash-manifest.json",
@@ -44,6 +59,7 @@ REQUIRED_RELEASE_FILES = (
     "qualification/create-flasher-acceptance.py",
     "qualification/validate-flasher-acceptance.py",
     "qualification/flasher_acceptance_contract.py",
+    "qualification/flasher_manifest.py",
     "qualification/flasher_tester_roster.py",
     "qualification/package-flasher-qualification-evidence.py",
     "qualification/serve-flasher-candidate.py",
@@ -53,6 +69,10 @@ REQUIRED_RELEASE_FILES = (
     "website/index.html",
     "website/404.html",
     "website/assets/flasher/prns-flash.js",
+    "website/assets/flasher/nrf-dfu/prns_nrf_dfu_core.js",
+    "website/assets/flasher/nrf-dfu/prns_nrf_dfu_core.d.ts",
+    "website/assets/flasher/nrf-dfu/prns_nrf_dfu_core_bg.wasm",
+    "website/assets/flasher/nrf-dfu/prns_nrf_dfu_core_bg.wasm.d.ts",
     "website/source.zip",
     "website/source.zip.sha256",
     "website/browser-node-playground-console/pkg/prns_wasm_bg.wasm",
@@ -128,6 +148,7 @@ def verify_qualification_kit(root: Path, version: str, tester_roster: Path) -> N
         "qualification/validate-flasher-acceptance.py": release_tools / "validate-flasher-acceptance.py",
         "qualification/flasher_acceptance_contract.py": release_tools
         / "flasher_acceptance_contract.py",
+        "qualification/flasher_manifest.py": release_tools / "flasher_manifest.py",
         "qualification/flasher_tester_roster.py": release_tools / "flasher_tester_roster.py",
         "qualification/package-flasher-qualification-evidence.py": release_tools
         / "package-flasher-qualification-evidence.py",
@@ -307,7 +328,7 @@ def verify(arguments: argparse.Namespace) -> dict:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     release = manifest.get("release")
     signing = manifest.get("signing")
-    if manifest.get("schema") != 2 or not isinstance(release, dict) or not isinstance(signing, dict):
+    if manifest.get("schema") != FLASH_MANIFEST_SCHEMA or not isinstance(release, dict) or not isinstance(signing, dict):
         raise ValueError("candidate manifest identity is malformed")
     channel = release.get("channel")
     if release != {
@@ -330,13 +351,12 @@ def verify(arguments: argparse.Namespace) -> dict:
     for target in targets:
         if not isinstance(target, dict):
             raise ValueError("candidate manifest contains a malformed target")
-        parts = target.get("parts")
-        if not isinstance(parts, list) or not parts:
-            raise ValueError(f"candidate target {target.get('board_slug')!r} has no firmware parts")
+        parts = target_artifacts(target)
         board_slug = target.get("board_slug")
         source = target.get("source")
         if source is not None:
             raise ValueError(f"embedded target {board_slug} must not carry source metadata")
+        payloads_by_kind = {}
         for part in parts:
             if not isinstance(part, dict):
                 raise ValueError("candidate manifest contains a malformed firmware part")
@@ -354,12 +374,24 @@ def verify(arguments: argparse.Namespace) -> dict:
             hosted = safe_path(immutable_root, relative)
             if not artifact.is_file() or artifact.stat().st_size != size or digest(artifact) != checksum:
                 raise ValueError(f"candidate firmware part does not match manifest: {relative}")
-            if not hosted.is_file() or hosted.read_bytes() != artifact.read_bytes():
+            payload = artifact.read_bytes()
+            kind = part.get("kind")
+            if isinstance(kind, str):
+                payloads_by_kind[kind] = payload
+            if not hosted.is_file() or hosted.read_bytes() != payload:
                 raise ValueError(f"hosted firmware part differs from candidate payload: {relative}")
-            if part.get("kind") == "application" and source_archive in artifact.read_bytes():
+            if target.get("transport") == "uf2-mass-storage":
+                validate_uf2_artifact(part, payload)
+            if part.get("kind") in {"application", "dfu-application"} and source_archive in payload:
                 raise ValueError(
                     f"embedded target {board_slug} must not embed source.zip"
                 )
+        if target.get("transport") == "nrf-serial-dfu":
+            application = payloads_by_kind.get("dfu-application")
+            recovery = payloads_by_kind.get("uf2")
+            if application is None or recovery is None:
+                raise ValueError("Nordic serial DFU target is missing bound artifacts")
+            validate_nrf_serial_dfu_recovery_artifact(target, application, recovery)
 
     capability_metadata = json.loads(
         (root / "metadata" / "source-capabilities.json").read_text(encoding="utf-8")

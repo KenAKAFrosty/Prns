@@ -1282,6 +1282,7 @@ dependencies = [
  "libc",
  "personal-rns",
  "pprof",
+ "prns-macros",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -1394,6 +1395,7 @@ dependencies = [
  "heapless 0.8.0",
  "hkdf",
  "hmac",
+ "prns-macros",
  "rayon",
  "roaring",
  "sha2 0.11.0",
@@ -1429,6 +1431,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "prns-macros"
+version = "0.3.6"
+
+[[package]]
 name = "prns-runtime"
 version = "0.3.6"
 dependencies = [
@@ -1436,6 +1442,7 @@ dependencies = [
  "cfg-if",
  "heapless 0.8.0",
  "prns-core",
+ "prns-macros",
 ]
 
 [[package]]

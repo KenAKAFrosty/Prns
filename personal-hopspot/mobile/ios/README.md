@@ -151,9 +151,11 @@ The manual socket path remains available as a diagnostic override when you want
 to provide your own forwarding process:
 
 ```sh
-HOPSPOT_USBMUX_TARGET=127.0.0.1:42700 \
+PRNS_USB_AUTO_USBMUX_TARGET=127.0.0.1:42700 \
   cargo run --manifest-path personal-hopspot/desktop/Cargo.toml --locked
 ```
+
+`HOPSPOT_USBMUX_TARGET` remains a lower-precedence compatibility alias.
 
 ## Host-side checks (no Xcode or simulator required)
 

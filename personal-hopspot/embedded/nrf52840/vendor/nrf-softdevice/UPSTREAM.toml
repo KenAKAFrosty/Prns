@@ -1,0 +1,6 @@
+embassy_repository = "https://github.com/embassy-rs/nrf-softdevice"
+embassy_revision = "47d6121c6e823120e8b883a7ac75f44ce7daa3aa"
+s140_v6_header_repository = "https://github.com/adafruit/Adafruit_nRF52_Arduino"
+s140_v6_header_revision = "343ab5fe7fb3d5657d3176883dfb188d65b79f06"
+s140_v6_header_directory = "cores/nRF5/nordic/softdevice/s140_nrf52_6.1.1_API/include"
+s140_v6_bindings_sha256 = "95a28cc428fa2d79684570f657f9ddca633991284e1024780d3464a3befe361c"

@@ -136,6 +136,8 @@ pub(super) static G_OSI_FUNCS: osi_funcs_s = osi_funcs_s {
     btdm_sleep_exit_phase2: Some(btdm_sleep_exit_phase2),
     btdm_sleep_exit_phase3: Some(btdm_sleep_exit_phase3),
     coex_wifi_sleep_set: Some(coex_wifi_sleep_set),
+    // ESP-IDF v5.5 leaves this callback null on ESP32-C3/S3. The ROM coexistence scheduler owns
+    // connection priorities; exposing its private helper here changes that contract.
     coex_core_ble_conn_dyn_prio_get: None,
     coex_schm_register_btdm_callback: Some(coex_schm_register_btdm_callback),
     coex_schm_status_bit_set: Some(coex_schm_status_bit_set),
@@ -187,19 +189,17 @@ extern "C" fn coex_schm_register_btdm_callback(_callback: *mut c_void) -> i32 {
 
 extern "C" fn coex_bt_wakeup_request() -> bool {
     trace!("coex_bt_wakeup_request");
+    // Modem sleep is disabled by this adapter, matching ESP-IDF's async_wakeup_request() fast
+    // path when its low-power controller is disabled.
     false
 }
 
 extern "C" fn coex_bt_wakeup_request_end() {
     trace!("coex_bt_wakeup_request_end");
-
-    unsafe extern "C" {
-        fn btdm_in_wakeup_requesting_set(set: bool);
-    }
-
-    unsafe {
-        btdm_in_wakeup_requesting_set(false);
-    }
+    // Low-power controller sleep is disabled (`sleep_mode = 0`). ESP-IDF's
+    // `async_wakeup_request_end()` returns immediately in this configuration;
+    // clearing the controller's private wakeup-request flag here makes this pair
+    // asymmetric and mutates coexistence state that this adapter never acquired.
 }
 
 extern "C" fn ets_delay_us_wrapper(us: u32) {

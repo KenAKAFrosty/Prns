@@ -14,7 +14,8 @@ use opentelemetry_otlp::{Protocol, WithExportConfig};
 use opentelemetry_sdk::metrics::SdkMeterProvider;
 #[cfg(feature = "otlp")]
 use opentelemetry_sdk::trace::{
-    BatchConfigBuilder, BatchSpanProcessor, Sampler, SdkTracerProvider,
+    BatchConfigBuilder, BatchSpanProcessor, Sampler, SamplingDecision, SamplingResult,
+    SdkTracerProvider, ShouldSample,
 };
 #[cfg(feature = "otlp")]
 use opentelemetry_sdk::Resource;
@@ -188,13 +189,48 @@ fn build_tracer_provider() -> Result<Option<SdkTracerProvider>, ObservabilityErr
         .with_resource(resource)
         .with_span_processor(batch);
     let provider = if optional_env("OTEL_TRACES_SAMPLER")?.is_none() {
-        provider.with_sampler(Sampler::ParentBased(Box::new(Sampler::TraceIdRatioBased(
-            0.1,
-        ))))
+        provider.with_sampler(RequestSpansAlwaysOn {
+            fallback: Sampler::ParentBased(Box::new(Sampler::TraceIdRatioBased(0.1))),
+        })
     } else {
         provider
     };
     Ok(Some(provider.build()))
+}
+
+#[cfg(feature = "otlp")]
+const ALWAYS_SAMPLED_SPAN_NAMES: [&str; 2] = ["prns.request", "prns.respond"];
+
+#[cfg(feature = "otlp")]
+#[derive(Debug, Clone)]
+struct RequestSpansAlwaysOn {
+    fallback: Sampler,
+}
+
+#[cfg(feature = "otlp")]
+impl ShouldSample for RequestSpansAlwaysOn {
+    fn should_sample(
+        &self,
+        parent_context: Option<&opentelemetry::Context>,
+        trace_id: opentelemetry::trace::TraceId,
+        name: &str,
+        span_kind: &opentelemetry::trace::SpanKind,
+        attributes: &[KeyValue],
+        links: &[opentelemetry::trace::Link],
+    ) -> SamplingResult {
+        use opentelemetry::trace::TraceContextExt;
+        if ALWAYS_SAMPLED_SPAN_NAMES.contains(&name) {
+            return SamplingResult {
+                decision: SamplingDecision::RecordAndSample,
+                attributes: Vec::new(),
+                trace_state: parent_context
+                    .map(|context| context.span().span_context().trace_state().clone())
+                    .unwrap_or_default(),
+            };
+        }
+        self.fallback
+            .should_sample(parent_context, trace_id, name, span_kind, attributes, links)
+    }
 }
 
 #[cfg(feature = "otlp")]

@@ -127,7 +127,7 @@ mod tests {
             hops,
             via: NextHop::Direct,
             learned_at: InstantMillis(1_000),
-            last_relayed_at: InstantMillis(1_500),
+            last_route_activity_at: InstantMillis(1_500),
             expires_at: InstantMillis(2_000),
             interface: InterfaceId::from_channel_tag(InterfaceKind::TcpClient, b"remote"),
         }

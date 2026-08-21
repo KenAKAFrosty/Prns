@@ -16,12 +16,13 @@ pub use prns_runtime::runtime::{
 
 #[cfg(feature = "runtime-metrics")]
 pub use prns_runtime::runtime::{
-    AnnounceEgressCounts, AnnounceEgressMetricsSnapshot, AnnounceEgressOutcome,
-    AnnounceOriginCounts, CryptoMetricsSnapshot, EgressInterfaceKindCounts, EgressMetricsSnapshot,
-    InterfaceAnnounceEgressMetricsSnapshot, ReliabilityMetricsSnapshot, RuntimeLinkClosure,
-    RuntimeLinkClosureCounts, RuntimeMetricsSnapshot, RuntimeOperation, RuntimeOperationCounts,
-    RuntimeOperationOutcome, RuntimeResourceFailure, RuntimeResourceFailureCounts,
-    RuntimeRouteRemoval, RuntimeRouteRemovalCounts,
+    AnnounceBackpressureCounts, AnnounceBackpressureEvent, AnnounceEgressCounts,
+    AnnounceEgressMetricsSnapshot, AnnounceEgressOutcome, AnnounceOriginCounts,
+    CryptoMetricsSnapshot, EgressInterfaceKindCounts, EgressLaneMetricsSnapshot,
+    EgressMetricsSnapshot, InterfaceAnnounceEgressMetricsSnapshot, ReliabilityMetricsSnapshot,
+    RuntimeLinkClosure, RuntimeLinkClosureCounts, RuntimeMetricsSnapshot, RuntimeOperation,
+    RuntimeOperationCounts, RuntimeOperationOutcome, RuntimeResourceFailure,
+    RuntimeResourceFailureCounts, RuntimeRouteRemoval, RuntimeRouteRemovalCounts,
 };
 
 #[cfg(feature = "rnx")]

@@ -67,7 +67,7 @@ func decodeHostSnapshot(_ value: PrnsHostSnapshot) throws -> HostSnapshot {
                 try IdentityHash(copyBytes(item.via_identity)),
             interfaceId: try InterfaceId(copyBytes(item.interface_id)),
             learnedAtMillis: item.learned_at_millis,
-            lastRelayedAtMillis: item.last_relayed_at_millis,
+            lastRouteActivityAtMillis: item.last_route_activity_at_millis,
             expiresAtMillis: item.expires_at_millis
         )
     }

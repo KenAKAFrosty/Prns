@@ -58,6 +58,7 @@ GRAPHS = (
         "xtensa-esp32s3-none-elf",
     ),
     ("WASM", "prns-wasm/Cargo.toml", "wasm32-unknown-unknown"),
+    ("Nordic DFU browser core", "prns-nrf-dfu-wasm/Cargo.toml", "wasm32-unknown-unknown"),
     ("website Rust/WASM", "docs/website/Cargo.toml", "wasm32-unknown-unknown"),
     (
         "flasher macOS arm64",
@@ -100,6 +101,12 @@ NPM = (
     ("tslib 2.8.1", "0BSD", "docs/website/node_modules/tslib/LICENSE.txt"),
 )
 VENDORED = (
+    (
+        "nrf-softdevice-s140-v6 0.1.2-prns.1",
+        "LicenseRef-Nordic-SoftDevice",
+        "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice-s140-v6/LICENSE-NORDIC",
+        ("nRF52840",),
+    ),
     (
         "libdbus 1.14.4",
         "AFL-2.1",

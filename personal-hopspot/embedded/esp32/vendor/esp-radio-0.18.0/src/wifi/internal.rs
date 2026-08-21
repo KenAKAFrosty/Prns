@@ -1,7 +1,6 @@
 use super::os_adapter::{self, *};
 #[cfg(feature = "coex")]
 use crate::hal::ram;
-#[cfg(feature = "coex")]
 use crate::sys::c_types::c_void;
 use crate::{
     common_adapter::*,
@@ -96,6 +95,22 @@ unsafe extern "C" fn semphr_give_from_isr_wrapper(semphr: *mut c_void, hptw: *mu
     unsafe { crate::common_adapter::semphr_give_from_isr(semphr, hptw as *mut bool) }
 }
 
+#[crate::hal::ram]
+unsafe extern "C" fn queue_send_from_isr_wrapper(
+    queue: *mut c_void,
+    item: *mut c_void,
+    higher_priority_task_waken: *mut c_void,
+) -> i32 {
+    super::WIFI_ISR_QUEUE_SENDS.fetch_add(1, portable_atomic::Ordering::Relaxed);
+    let result = unsafe {
+        crate::common_adapter::queue_send_from_isr(queue, item, higher_priority_task_waken)
+    };
+    if result == 0 {
+        super::WIFI_ISR_QUEUE_SEND_FAILURES.fetch_add(1, portable_atomic::Ordering::Relaxed);
+    }
+    result
+}
+
 #[unsafe(no_mangle)]
 pub(crate) static __ESP_RADIO_G_WIFI_OSI_FUNCS: wifi_osi_funcs_t = wifi_osi_funcs_t {
     _version: ESP_WIFI_OS_ADAPTER_VERSION as i32,
@@ -124,7 +139,7 @@ pub(crate) static __ESP_RADIO_G_WIFI_OSI_FUNCS: wifi_osi_funcs_t = wifi_osi_func
     _queue_create: Some(queue_create),
     _queue_delete: Some(queue_delete),
     _queue_send: Some(queue_send),
-    _queue_send_from_isr: Some(queue_send_from_isr),
+    _queue_send_from_isr: Some(queue_send_from_isr_wrapper),
     _queue_send_to_back: Some(queue_send_to_back),
     _queue_send_to_front: Some(queue_send_to_front),
     _queue_recv: Some(queue_recv),

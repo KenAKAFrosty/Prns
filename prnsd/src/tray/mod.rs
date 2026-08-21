@@ -65,11 +65,28 @@ mod platform {
     use crate::daemon::{DaemonStatus, DaemonStatusPublisher};
     use crate::shutdown::{self, ShutdownRequest, ShutdownSignal};
 
-    use super::actions::{TrayAction, TrayActionContext};
+    use super::actions::{TrayAction, TrayActionContext, TrayActionError};
     use super::{icon, status_label, DAEMON_DISPLAY_NAME};
 
     pub(crate) struct RunningTray {
         handle: ksni::Handle<LinuxTray>,
+    }
+
+    #[derive(Debug)]
+    pub(crate) enum TrayStartError {
+        Actions(TrayActionError),
+        Platform(ksni::Error),
+    }
+
+    impl std::fmt::Display for TrayStartError {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Self::Actions(error) => write!(formatter, "tray actions unavailable: {error}"),
+                Self::Platform(error) => {
+                    write!(formatter, "StatusNotifier tray unavailable: {error}")
+                }
+            }
+        }
     }
 
     struct LinuxTray {
@@ -205,7 +222,7 @@ mod platform {
     fn status_notifier_icon(size: u32) -> ksni::Icon {
         let icon::TrayIcon { rgba, size } = icon::render(size);
         let mut argb = Vec::with_capacity(rgba.len());
-        for pixel in rgba.chunks_exact(4) {
+        for pixel in rgba.as_chunks::<4>().0 {
             argb.extend_from_slice(&[pixel[3], pixel[0], pixel[1], pixel[2]]);
         }
         ksni::Icon {
@@ -219,9 +236,9 @@ mod platform {
         config_dir: PathBuf,
         managed_state_dir: Option<PathBuf>,
         status: DaemonStatus,
-    ) -> Result<(RunningTray, ShutdownSignal, DaemonStatusPublisher), String> {
+    ) -> Result<(RunningTray, ShutdownSignal, DaemonStatusPublisher), TrayStartError> {
         let actions = TrayActionContext::discover(config_dir, managed_state_dir)
-            .map_err(|error| format!("tray actions unavailable: {error}"))?;
+            .map_err(TrayStartError::Actions)?;
         let (shutdown, signal) = shutdown::channel();
         let handle = LinuxTray {
             actions,
@@ -230,7 +247,7 @@ mod platform {
         }
         .spawn()
         .await
-        .map_err(|error| format!("StatusNotifier tray start failed: {error}"))?;
+        .map_err(TrayStartError::Platform)?;
         let update_handle = handle.clone();
         let publisher = DaemonStatusPublisher::new(move |status| {
             let handle = update_handle.clone();
@@ -688,5 +705,15 @@ mod tests {
             "Foreground session · 1 interface"
         );
         assert_eq!(status_label(status, true, true), "Stopping prnsd…");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_tray_start_failures_preserve_platform_and_action_causes() {
+        let platform = TrayStartError::Platform(ksni::Error::WontShow);
+        let actions = TrayStartError::Actions(actions::TrayActionError::ForegroundSession);
+
+        assert!(matches!(platform, TrayStartError::Platform(_)));
+        assert!(matches!(actions, TrayStartError::Actions(_)));
     }
 }

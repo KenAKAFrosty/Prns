@@ -18,7 +18,7 @@ use crate::routing::links::table::{
     InitiatedLink, LinkActivation, LinkPhase, OverdueLink, RespondingLink, TrackLinkError,
 };
 use crate::routing::links::{LinkId, LinkKey, LinkMode, MAX_LINK_MTU};
-use crate::routing::{NextHop, RouteResponsiveness};
+use crate::routing::NextHop;
 use crate::storage::StorageLayout;
 use crate::wire::BROADCAST_MTU;
 
@@ -65,6 +65,12 @@ pub struct LinkRequestDispatch {
     pub wire_bytes: usize,
     pub fire_on: InterfaceId,
     pub link_id: LinkId,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LinkRttTimes {
+    pub activated_at: InstantMillis,
+    pub evidence_observed_at: InstantMillis,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,6 +158,14 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let hops = stored.hops;
         let fire_on = stored.receiving_interface;
+        let Some(route_evidence) = self
+            .routing_table
+            .route_evidence_handle_for(&establish.destination)
+        else {
+            return Rejected {
+                rejection: WriteEstablishLinkRejection::RouteVanished,
+            };
+        };
 
         let (initiator_secret, link_signing, ephemeral) = entropy.into_parts();
         let encryption_public = *ephemeral.encryption_public_key().as_x25519();
@@ -195,6 +209,7 @@ impl<S: StorageLayout> EngineState<S> {
         match self.links.track_initiated(InitiatedLink {
             link_id,
             destination: establish.destination,
+            route_evidence,
             expected_hops: hops,
             mode,
             initiator_secret,
@@ -347,8 +362,31 @@ impl<S: StorageLayout> EngineState<S> {
         iv: &[u8; 16],
         buf: &mut [u8],
     ) -> Result<usize, WriteLinkRttError> {
+        self.write_owed_link_rtt_with_shared_observed(
+            link_id,
+            shared,
+            activation,
+            LinkRttTimes {
+                activated_at: now,
+                evidence_observed_at: now,
+            },
+            iv,
+            buf,
+        )
+    }
+
+    pub(crate) fn write_owed_link_rtt_with_shared_observed(
+        &mut self,
+        link_id: &LinkId,
+        shared: &X25519SharedSecret,
+        activation: &LinkActivation,
+        times: LinkRttTimes,
+        iv: &[u8; 16],
+        buf: &mut [u8],
+    ) -> Result<usize, WriteLinkRttError> {
         let Some(LinkPhase::Pending {
             destination,
+            route_evidence,
             expected_hops,
             ..
         }) = self.links.phase_for(link_id)
@@ -356,20 +394,26 @@ impl<S: StorageLayout> EngineState<S> {
             return Err(WriteLinkRttError::NotPending);
         };
         let destination = *destination;
+        let mut route_evidence = *route_evidence;
         let expected_hops = *expected_hops;
         let key = LinkKey::derive(link_id, shared);
         let written = write_link_rtt(link_id, &key, activation.rtt, iv, buf)
             .map_err(|_| WriteLinkRttError::Serialize)?;
         self.links
-            .activate_initiated(link_id, key, activation, now)
+            .activate_initiated(link_id, key, activation, times.activated_at)
             .map_err(|_| WriteLinkRttError::NotPending)?;
-        if activation.received_hops != expected_hops {
+        if activation.received_hops != expected_hops
+            && self
+                .routing_table
+                .resolve_route_evidence(&mut route_evidence)
+                .is_some()
+        {
             self.routing_table
                 .rebalance_hops(&destination, activation.received_hops);
         }
         self.mark_interface_dirty(activation.attached_interface);
         self.routing_table
-            .mark_responsiveness(&destination, RouteResponsiveness::Responsive);
+            .apply_route_evidence(&mut route_evidence, times.evidence_observed_at);
         Ok(written)
     }
 

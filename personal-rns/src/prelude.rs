@@ -1,8 +1,8 @@
 pub use crate::{
     request_endpoints, CommandId, DestinationHash, Diagnostic, InterfaceStatus, ManuallyAttached,
     Message, NoPersistence, PacketReceiptDelivered, PreConfiguredDestination, PrnsCommand,
-    PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, ProofStrategy, RatchetPolicy, ResourceStrategy,
-    RuntimeHealth, SendError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
+    PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, ProofStrategy, RatchetPolicy, ResourceMemoryLimits,
+    ResourceStrategy, RuntimeHealth, SendError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
 };
 
 pub use crate::engine::{
@@ -84,8 +84,14 @@ pub use crate::tcp::{TcpClient, TcpClientInput, TcpSocketBuffers};
 pub use crate::tcp::{TcpClientInterface, TcpServer};
 #[cfg(all(feature = "udp", feature = "tokio-host"))]
 pub use crate::udp::UdpInterface;
+#[cfg(all(
+    feature = "usb",
+    feature = "tokio-host",
+    any(target_os = "linux", target_os = "macos", target_os = "windows")
+))]
+pub use crate::usb_auto::AutoUsb;
 #[cfg(all(feature = "usb", feature = "tokio-host"))]
-pub use crate::usb_auto::{AutoUsb, UsbAutoHost};
+pub use crate::usb_auto::UsbAutoHost;
 #[cfg(all(feature = "usb", feature = "embassy-host"))]
 pub use crate::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
 #[cfg(all(feature = "weave", feature = "tokio-host"))]

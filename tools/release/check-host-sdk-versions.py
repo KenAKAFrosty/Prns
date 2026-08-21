@@ -53,6 +53,9 @@ def main():
         (ROOT / "prns-host/schema/host-contract-v1.json").read_text()
     )
     javascript = package_json(ROOT / "prns-js/package.json")
+    hopspot_javascript = package_json(
+        ROOT / "personal-hopspot/sdk/hopspot/package.json"
+    )
     napi = package_json(ROOT / "prns-napi/package.json")
     wasm = package_json(ROOT / "prns-wasm/package.json")
     expected_npm_packages = {
@@ -105,6 +108,7 @@ def main():
             ROOT / "prns-host/bindings/julia/Project.toml"
         ),
         "javascript": javascript["version"],
+        "javascript:hopspot": hopspot_javascript["version"],
         "napi-cargo": cargo_version(ROOT / "prns-napi/Cargo.toml"),
         "napi-package": napi["version"],
         "wasm-cargo": cargo_version(ROOT / "prns-wasm/Cargo.toml"),
@@ -145,6 +149,8 @@ def main():
             "generated N-API loader versions disagree with VERSION="
             f"{expected}: {sorted(binding_versions)}"
         )
+    if hopspot_javascript.get("dependencies") != {"personal-rns": expected}:
+        raise SystemExit("hopspot npm dependency disagrees with VERSION")
     disagreements = {
         name: version for name, version in versions.items() if version != expected
     }

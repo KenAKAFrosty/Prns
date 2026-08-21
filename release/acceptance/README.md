@@ -3,8 +3,8 @@
 The acceptance record is evidence for one exact signed candidate, not a checklist or a place to
 record intentions. Generate it only after the public prerelease exists. The generator binds the
 manifest, manifest signature, signed-candidate archive, and signed roster by exact identity and
-produces ten physical rows, four unsupported-browser rows, and five native installer rows as
-`not-run`:
+produces eighteen physical rows, three Firefox Web Serial rows, one unsupported-browser row, and
+five native installer rows as `not-run`:
 
 ```sh
 PUBLISHED_AT="$(gh release view vVERSION --json publishedAt --jq .publishedAt)"
@@ -23,8 +23,10 @@ results, and any candidate identity that differs from those three exact files.
 
 ## Physical runs
 
-`runs` contains exactly one result for every shipping board and surface (`web` or `cli`): ten
-rows. The signed roster assigns each row to one supported host, with Linux, macOS, and Windows
+`runs` contains one result for every board and surface (`web` or `cli`) plus separate S140 6.1.1
+and 7.3.0 T-Echo results on both surfaces: eighteen rows. The pinned S140 6.1.1 variant for T114
+and T096 contributes one row per surface. The signed roster assigns each
+board/surface pair to one supported host, with Linux, macOS, and Windows
 collectively represented on both surfaces. One person may hold multiple or all assignments; an
 assignment is a coverage obligation, not a distinct-person requirement. Each row records:
 
@@ -73,21 +75,42 @@ manifest and surface:
 - Heltec/T-Beam: Preserve, Configure, and Clear.
 - Targets sharing a chip: explicit same-chip board confirmation.
 
-T-Echo uses a distinct UF2 contract. Its web route proves signed download verification, truthful
+The T-Echo, T114, and T096 use the UF2 contract. The web route proves signed download verification, truthful
 manual-copy behavior, missing-mount/copy-failure guidance, reboot guidance, and post-flash boot. It
-must not claim browser-side mount detection, filesystem sync, or device-side verification. Its CLI
-route proves zero/one/multiple mounts, copy/flush/sync failures, mount disappearance, bounded reboot
-detection and timeout, and post-flash boot.
+must parse `INFO_UF2.TXT` locally, reject malformed or unsupported foundations, select only the
+matching signed variant, and never upload or retain the descriptor. It must not claim browser-side
+mount detection, filesystem sync, or device-side verification. Its CLI route proves exact
+foundation detection, zero/one/multiple mounts, copy/flush/sync failures, mount disappearance,
+bounded reboot detection and timeout, newly enumerated application USB identity, and post-flash
+boot. Each compatibility row also proves the interfaces declared by that board. Evidence bytes may
+not be reused between the T-Echo S140 6.1.1 and 7.3.0 rows or between distinct boards.
+
+T-1000E uses the Nordic serial-DFU contract. Both surfaces prove the exact signed application,
+init packet, and manifest-bound recovery UF2; exact application/bootloader identity; reliable
+transfer and activation; recovery guidance; LoRa and USB operation; and post-flash boot. The web
+row additionally proves managed-application WebUSB entry, exact Web Serial bootloader selection,
+permission denial, and navigation protection. The CLI row proves zero/one/multiple-device
+handling, port failure, bootloader timeout, bounded transfer retry, and non-writing doctor output.
 
 The authoritative scenario sets and roster-derived rows live in
 `qualification/flasher_acceptance_contract.py`, used by both generator and validator.
 
-## Browser fallbacks
+## Firefox Web Serial smoke
 
-`browser_fallbacks` records exact stable Firefox checks on macOS, Windows, and Linux plus stable
-Safari on macOS. Every row must prove all four points: the ESP CLI guidance is present, ESP connect
-is unavailable, no broken connect action is shown, and the T-Echo UF2 route remains available.
-Fallback checks are separate from successful Web Serial flashing.
+`web_serial_smoke` contains one hardware-backed stable Firefox result on each of macOS, Windows,
+and Linux. Each row uses the eligible shipping ESP-serial board and host from the signed roster,
+records the exact OS, architecture, hardware identity/model/revision, Firefox and flasher versions,
+tester, completion timestamp, and immutable evidence, and must pass exactly five scenarios:
+permission grant, one-device selection, correct-board selection, fresh signed-candidate install,
+and post-flash boot. UF2 boards and unsupported-page observations do not satisfy these smokes. Each
+OS row requires distinct evidence.
+
+## Browser fallback
+
+`browser_fallbacks` records stable Safari on macOS. Every row must prove all six points: the ESP
+CLI guidance is present, ESP connect is unavailable, no broken connect action is shown, and the
+T-Echo and T096 UF2 routes and T-1000E recovery-UF2 route remain available. The fallback check is
+separate from successful Web Serial flashing.
 
 ## Native installation smoke
 

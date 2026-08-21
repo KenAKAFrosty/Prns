@@ -230,7 +230,7 @@ export interface HostRouteSnapshotInfo {
   viaIdentity?: Buffer
   interfaceId: Buffer
   learnedAtMillis: number
-  lastRelayedAtMillis: number
+  lastRouteActivityAtMillis: number
   expiresAtMillis: number
 }
 
@@ -300,6 +300,7 @@ export interface InterfaceConfigSpec {
   peers?: Array<string>
   connectable?: boolean
   url?: string
+  framing?: 'RawPacket' | 'Hdlc' | 'Kiss' | 'Auto'
 }
 
 export interface InterfaceInfo {
@@ -429,7 +430,7 @@ export interface RouteInfo {
   via?: Buffer
   interfaceId: Buffer
   learnedAtMillis: number
-  lastRelayedAtMillis: number
+  lastRouteActivityAtMillis: number
   expiresAtMillis: number
 }
 

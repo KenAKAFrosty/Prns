@@ -10,6 +10,7 @@ mod node_ingress;
 mod proof;
 mod reaction;
 mod registration;
+mod route_evidence;
 mod settlement;
 mod state;
 mod tunnel;
@@ -34,8 +35,11 @@ cfg_if::cfg_if! {
         pub use metrics::{
             AnnounceCommandCounts, AnnounceCommandOutcome, AnnounceIngressCounts,
             AnnounceIngressOutcome, AnnounceOrigin, AnnounceSourceKind,
-            EngineAnnounceMetricsSnapshot, EngineMetricsSnapshot, IgnoreReasonCounts,
-            IgnoreReasonKind, InterfaceAnnounceMetricsSnapshot, InterfaceKindCounts,
+            EngineAnnounceMetricsSnapshot, EngineMetricsSnapshot, EnginePathRequestMetricsSnapshot,
+            EngineResourceMetricsSnapshot, IgnoreReasonCounts, IgnoreReasonKind,
+            InterfaceAnnounceMetricsSnapshot, InterfaceKindCounts, PathRequestIngressCounts,
+            PathRequestIngressOutcome, PathRequestRelayCounts, PathRequestRelayOutcome,
+            ResourceAdmissionEvent, ResourceAdmissionEventCounts, ResourceDirectionMetricsSnapshot,
         };
     }
 }
@@ -63,6 +67,7 @@ pub use commands::*;
 pub use introspection::{AnnounceRateState, RouteSnapshot};
 pub use node_egress::ReemitAnnounce;
 pub use node_ingress::IngestIo;
+pub use proof::ResolvedReceiptSettlement;
 pub use reaction::{
     Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason, PersistenceFlushCause,
     PersistenceFlushTarget,

@@ -48,7 +48,7 @@ internal static partial class Native
         internal ByteView ViaIdentity;
         internal ByteView InterfaceId;
         internal ulong LearnedAtMillis;
-        internal ulong LastRelayedAtMillis;
+        internal ulong LastRouteActivityAtMillis;
         internal ulong ExpiresAtMillis;
     }
 

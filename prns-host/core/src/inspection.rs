@@ -29,7 +29,7 @@ pub struct RouteSnapshot {
     pub via_identity: Option<IdentityHash>,
     pub interface_id: InterfaceId,
     pub learned_at_millis: u64,
-    pub last_relayed_at_millis: u64,
+    pub last_route_activity_at_millis: u64,
     pub expires_at_millis: u64,
 }
 

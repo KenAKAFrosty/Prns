@@ -1,12 +1,12 @@
 use personal_rns::engine::{
     AnnounceCommandOutcome, AnnounceIngressOutcome, AnnounceOrigin, AnnounceSourceKind,
-    IgnoreReasonKind,
+    IgnoreReasonKind, PathRequestIngressOutcome, PathRequestRelayOutcome, ResourceAdmissionEvent,
 };
-use personal_rns::interfaces::InterfaceKind;
+use personal_rns::interfaces::{InterfaceId, InterfaceKind};
 use personal_rns::node_introspection::InterfaceInventoryEntry;
 use personal_rns::runtime::{
-    AnnounceEgressOutcome, RuntimeLinkClosure, RuntimeOperation, RuntimeOperationOutcome,
-    RuntimeResourceFailure, RuntimeRouteRemoval,
+    AnnounceBackpressureEvent, AnnounceEgressOutcome, RuntimeLinkClosure, RuntimeOperation,
+    RuntimeOperationOutcome, RuntimeResourceFailure, RuntimeRouteRemoval,
 };
 
 pub(super) fn announce_source_name(source: AnnounceSourceKind) -> &'static str {
@@ -55,7 +55,27 @@ pub(super) fn announce_egress_outcome_name(outcome: AnnounceEgressOutcome) -> &'
         AnnounceEgressOutcome::LaneMissing => "lane_missing",
         AnnounceEgressOutcome::IfacRejected => "ifac_rejected",
         AnnounceEgressOutcome::PacerRejected => "pacer_rejected",
+        AnnounceEgressOutcome::PacerEvicted => "pacer_evicted",
+        AnnounceEgressOutcome::PacerExpired => "pacer_expired",
     }
+}
+
+pub(super) fn announce_backpressure_event_name(event: AnnounceBackpressureEvent) -> &'static str {
+    match event {
+        AnnounceBackpressureEvent::Deferred => "deferred",
+        AnnounceBackpressureEvent::Retry => "retry",
+        AnnounceBackpressureEvent::Recovered => "recovered",
+    }
+}
+
+pub(super) fn interface_id_name(id: InterfaceId) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut name = String::with_capacity(id.as_bytes().len() * 2);
+    for byte in id.as_bytes() {
+        name.push(char::from(HEX[usize::from(byte >> 4)]));
+        name.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    name
 }
 
 pub(super) fn ignore_reason_name(reason: IgnoreReasonKind) -> &'static str {
@@ -204,6 +224,44 @@ pub(super) fn link_closure_name(reason: RuntimeLinkClosure) -> &'static str {
     }
 }
 
+pub(super) fn path_request_ingress_outcome_name(
+    outcome: PathRequestIngressOutcome,
+) -> &'static str {
+    match outcome {
+        PathRequestIngressOutcome::Answered => "answered",
+        PathRequestIngressOutcome::AnswerScheduled => "answer_scheduled",
+        PathRequestIngressOutcome::AnswerScheduleRejected => "answer_schedule_rejected",
+        PathRequestIngressOutcome::RelayedRecursive => "relayed_recursive",
+        PathRequestIngressOutcome::RelayedAcrossBoundary => "relayed_across_boundary",
+        PathRequestIngressOutcome::RelayedToTransports => "relayed_to_transports",
+        PathRequestIngressOutcome::OfferedToLocalClients => "offered_to_local_clients",
+        PathRequestIngressOutcome::IgnoredMalformed => "ignored_malformed",
+        PathRequestIngressOutcome::IgnoredDuplicate => "ignored_duplicate",
+        PathRequestIngressOutcome::IgnoredLoopPrevented => "ignored_loop_prevented",
+        PathRequestIngressOutcome::IgnoredRouteUnresponsive => "ignored_route_unresponsive",
+        PathRequestIngressOutcome::IgnoredRateLimited => "ignored_rate_limited",
+        PathRequestIngressOutcome::IgnoredSuperseded => "ignored_superseded",
+        PathRequestIngressOutcome::IgnoredNotForUs => "ignored_not_for_us",
+        PathRequestIngressOutcome::IgnoredOther => "ignored_other",
+    }
+}
+
+pub(super) fn path_request_relay_outcome_name(outcome: PathRequestRelayOutcome) -> &'static str {
+    match outcome {
+        PathRequestRelayOutcome::Sent => "sent",
+        PathRequestRelayOutcome::RateLimited => "rate_limited",
+    }
+}
+
+pub(super) fn resource_admission_event_name(event: ResourceAdmissionEvent) -> &'static str {
+    match event {
+        ResourceAdmissionEvent::Queued => "queued",
+        ResourceAdmissionEvent::Promoted => "promoted",
+        ResourceAdmissionEvent::Expired => "expired",
+        ResourceAdmissionEvent::Rejected => "rejected",
+    }
+}
+
 pub(super) fn route_removal_name(cause: RuntimeRouteRemoval) -> &'static str {
     match cause {
         RuntimeRouteRemoval::Expired => "expired",
@@ -234,8 +292,20 @@ mod tests {
         for outcome in AnnounceEgressOutcome::ALL {
             assert!(!announce_egress_outcome_name(outcome).is_empty());
         }
+        for event in AnnounceBackpressureEvent::ALL {
+            assert!(!announce_backpressure_event_name(event).is_empty());
+        }
         for reason in IgnoreReasonKind::ALL {
             assert!(!ignore_reason_name(reason).is_empty());
+        }
+        for outcome in PathRequestIngressOutcome::ALL {
+            assert!(!path_request_ingress_outcome_name(outcome).is_empty());
+        }
+        for outcome in PathRequestRelayOutcome::ALL {
+            assert!(!path_request_relay_outcome_name(outcome).is_empty());
+        }
+        for event in ResourceAdmissionEvent::ALL {
+            assert!(!resource_admission_event_name(event).is_empty());
         }
         for kind in InterfaceKind::ALL {
             assert!(!interface_kind_name(kind).is_empty());
@@ -263,5 +333,64 @@ mod tests {
         assert_eq!(interface_kind_name(InterfaceKind::I2pPeer), "i2p_peer");
         assert_eq!(interface_kind_name(InterfaceKind::Weave), "weave");
         assert_eq!(interface_kind_name(InterfaceKind::WeavePeer), "weave_peer");
+    }
+
+    #[test]
+    fn interface_ids_have_fixed_width_lowercase_names() {
+        assert_eq!(
+            interface_id_name(InterfaceId::new([
+                0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef
+            ])),
+            "0123456789abcdef"
+        );
+    }
+
+    #[test]
+    fn dashboard_classifies_bounded_announce_shedding_as_pressure() {
+        let source = include_str!("../../../observability/grafana/prnsd.json");
+        let dashboard: serde_json::Value = serde_json::from_str(source).unwrap();
+        let panels = dashboard["panels"].as_array().unwrap();
+        let panel = |title: &str| {
+            panels
+                .iter()
+                .find(|panel| panel["title"].as_str() == Some(title))
+                .unwrap()
+        };
+        let target_expression = |title: &str| panel(title)["targets"][0]["expr"].as_str().unwrap();
+
+        let operational = target_expression("Operational state");
+        let hard_signals = target_expression("Hard signals · 5m");
+        for expression in [operational, hard_signals] {
+            assert!(!expression.contains("lane_full"));
+            assert!(!expression.contains("pacer_rejected"));
+            assert!(!expression.contains("pacer_evicted"));
+            assert!(expression.contains("lane_missing|ifac_rejected|pacer_expired"));
+        }
+
+        let breakdown = panel("Pressure and failure breakdown · 5m");
+        assert_eq!(breakdown["type"].as_str(), Some("bargauge"));
+        let breakdown_expression = breakdown["targets"][0]["expr"].as_str().unwrap();
+        assert!(breakdown_expression.contains("prns_interface_announces_egress_total"));
+        assert!(breakdown_expression.contains("prns_interface_announces_backpressure_total"));
+        assert!(breakdown_expression.contains("lane_full|pacer_rejected|pacer_evicted"));
+        assert!(breakdown.to_string().contains("\"fixedColor\":\"blue\""));
+
+        for title in ["Announce terminal egress outcomes", "Announce backpressure"] {
+            let detail = panel(title);
+            assert_eq!(
+                detail["fieldConfig"]["defaults"]["color"]["mode"].as_str(),
+                Some("palette-classic")
+            );
+            assert!(detail["fieldConfig"]["overrides"]
+                .as_array()
+                .unwrap()
+                .is_empty());
+        }
+
+        assert!(source.contains("prns_announces_pacer_deferred_depth"));
+        assert!(source.contains("prns_egress_lane_occupancy"));
+        assert!(!source.contains(
+            "prns_announces_egress_total{outcome!~\\\"enqueued|interface_unavailable\\\"}"
+        ));
     }
 }

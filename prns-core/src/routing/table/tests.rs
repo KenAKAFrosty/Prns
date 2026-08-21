@@ -11,7 +11,7 @@ use crate::routing::announce::stored::{
 use crate::routing::announce::{
     Announce, AnnounceArrival, AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey,
 };
-use crate::routing::routes::{FixedArrayRouteTable, RouteEntry, RouteTable};
+use crate::routing::routes::{FixedArrayRouteTable, RouteEntry, RouteEvidenceId, RouteTable};
 use crate::routing::{
     AnnounceIdRing, DropCause, NextHop, PersistedRouteRow, RemovedRoute, RouteRemovalCause,
     RouteResponsiveness, SeedRouteOutcome, UpsertRouteOutcome,
@@ -126,6 +126,35 @@ fn record_with_next_hop<const D: usize, const S: usize, const A: usize>(
             next_hop,
             is_path_response: false,
         },
+        RouteEvidenceId::FIRST,
+        AttachedInterfaces::new(&full_interfaces()),
+        &mut |_| {},
+    )
+}
+
+fn record_with_evidence<const D: usize, const S: usize, const A: usize>(
+    table: &mut TestRoutingTable<D, S, A>,
+    destination: DestinationHash,
+    arrived_at: InstantMillis,
+    receiving_interface: InterfaceId,
+    next_hop: NextHop,
+    evidence_id: RouteEvidenceId,
+) -> UpsertRouteOutcome {
+    table.upsert_route(
+        &AnnounceArrival {
+            announce: announce_for(
+                destination,
+                announce_id(destination.as_bytes()[0], arrived_at.0),
+                None,
+                b"",
+            ),
+            hops: 1,
+            arrived_at,
+            receiving_interface,
+            next_hop,
+            is_path_response: false,
+        },
+        evidence_id,
         AttachedInterfaces::new(&full_interfaces()),
         &mut |_| {},
     )
@@ -340,6 +369,7 @@ fn eviction_prefers_a_newer_roaming_route_over_an_older_full_one() {
                     next_hop: NextHop::Direct,
                     is_path_response: false,
                 },
+                RouteEvidenceId::FIRST,
                 AttachedInterfaces::new(&two_mode_interfaces),
                 &mut |_| {},
             ),
@@ -358,6 +388,7 @@ fn eviction_prefers_a_newer_roaming_route_over_an_older_full_one() {
                 next_hop: NextHop::Direct,
                 is_path_response: false,
             },
+            RouteEvidenceId::FIRST,
             AttachedInterfaces::new(&two_mode_interfaces),
             &mut |removal| removed.push(removal),
         ),
@@ -418,6 +449,7 @@ fn route_count_via_attributes_destinations_to_the_receiving_interface() {
                     next_hop: NextHop::Direct,
                     is_path_response: false,
                 },
+                RouteEvidenceId::FIRST,
                 AttachedInterfaces::new(&full_interfaces()),
                 &mut |_| {},
             ),
@@ -440,6 +472,7 @@ fn route_count_via_attributes_destinations_to_the_receiving_interface() {
                 next_hop: NextHop::Direct,
                 is_path_response: false,
             },
+            RouteEvidenceId::FIRST,
             AttachedInterfaces::new(&full_interfaces()),
             &mut |_| {},
         ),
@@ -561,6 +594,7 @@ fn a_full_table_of_fresh_routes_evicts_the_one_nearest_expiry_for_a_newcomer() {
                 next_hop: NextHop::Direct,
                 is_path_response: false,
             },
+            RouteEvidenceId::FIRST,
             AttachedInterfaces::new(&full_interfaces()),
             &mut |removal| removed.push(removal),
         ),
@@ -676,6 +710,7 @@ fn a_new_path_that_overflows_the_arena_evicts_the_route_nearest_expiry() {
                 next_hop: NextHop::Direct,
                 is_path_response: false,
             },
+            RouteEvidenceId::FIRST,
             AttachedInterfaces::new(&full_interfaces()),
             &mut |removal| removed.push(removal),
         ),
@@ -726,6 +761,7 @@ fn an_oversized_newcomer_takes_one_eviction_per_attempt_until_it_fits() {
                 next_hop: NextHop::Direct,
                 is_path_response: false,
             },
+            RouteEvidenceId::FIRST,
             AttachedInterfaces::new(&full_interfaces()),
             &mut |removal| removed.push(removal),
         ),
@@ -753,6 +789,7 @@ fn an_oversized_newcomer_takes_one_eviction_per_attempt_until_it_fits() {
                 next_hop: NextHop::Direct,
                 is_path_response: false,
             },
+            RouteEvidenceId::FIRST,
             AttachedInterfaces::new(&full_interfaces()),
             &mut |removal| removed.push(removal),
         ),
@@ -814,6 +851,7 @@ fn ratchet_is_retained_for_faithful_rebroadcast() {
             next_hop: NextHop::Direct,
             is_path_response: false,
         },
+        RouteEvidenceId::FIRST,
         AttachedInterfaces::new(&full_interfaces()),
         &mut |_| {},
     );
@@ -956,7 +994,7 @@ fn explicit_drops_target_one_destination_or_every_route_via_one_transport() {
             RouteEntry {
                 hops: 1,
                 learned_at: InstantMillis(100),
-                last_relayed_at: InstantMillis(0),
+                last_route_activity_at: InstantMillis(0),
                 responsiveness: RouteResponsiveness::Unknown,
                 receiving_interface: source(),
                 next_hop: NextHop::Via(via_b),
@@ -990,6 +1028,7 @@ fn an_identity_drop_removes_every_destination_announced_by_that_identity() {
                     next_hop: NextHop::Direct,
                     is_path_response: false,
                 },
+                RouteEvidenceId::FIRST,
                 AttachedInterfaces::new(&full_interfaces()),
                 &mut |_| {},
             ),
@@ -1065,6 +1104,7 @@ where
                     next_hop: NextHop::Direct,
                     is_path_response: false,
                 },
+                RouteEvidenceId::FIRST,
                 AttachedInterfaces::new(&full_interfaces()),
                 &mut |_| {},
             ),
@@ -1188,6 +1228,7 @@ fn roaring_route_expiries_match_linear_route_semantics_across_mutations() {
                         next_hop: NextHop::Direct,
                         is_path_response: false,
                     },
+                    RouteEvidenceId::FIRST,
                     interfaces,
                     &mut |_| {},
                 ),
@@ -1297,6 +1338,7 @@ fn a_route_whose_interface_left_the_view_is_culled_as_interface_gone() {
                 next_hop: NextHop::Direct,
                 is_path_response: false,
             },
+            RouteEvidenceId::FIRST,
             AttachedInterfaces::new(&both),
             &mut |_| {},
         );
@@ -1359,6 +1401,7 @@ fn at_capacity_an_orphan_goes_as_interface_gone_before_any_fresh_eviction() {
                 next_hop: NextHop::Direct,
                 is_path_response: false,
             },
+            RouteEvidenceId::FIRST,
             AttachedInterfaces::new(&both),
             &mut |_| {},
         );
@@ -1376,6 +1419,7 @@ fn at_capacity_an_orphan_goes_as_interface_gone_before_any_fresh_eviction() {
                 next_hop: NextHop::Direct,
                 is_path_response: false,
             },
+            RouteEvidenceId::FIRST,
             AttachedInterfaces::new(&shrunk),
             &mut |removal| removed.push(removal),
         ),
@@ -1420,6 +1464,7 @@ fn expired_occupants_are_culled_before_any_fresh_route_is_evicted() {
                 next_hop: NextHop::Direct,
                 is_path_response: false,
             },
+            RouteEvidenceId::FIRST,
             AttachedInterfaces::new(&full_interfaces()),
             &mut |removal| removed.push(removal),
         ),
@@ -1472,6 +1517,7 @@ fn mismatched_backend_capacities_fill_at_the_smaller_and_stay_aligned() {
                     next_hop: NextHop::Direct,
                     is_path_response: false,
                 },
+                RouteEvidenceId::FIRST,
                 AttachedInterfaces::new(&full_interfaces()),
                 &mut |removal| removed.push(removal),
             ),
@@ -1537,7 +1583,7 @@ fn seedable_row<'a>(
         entry: RouteEntry {
             hops: 7,
             learned_at: InstantMillis(3_000),
-            last_relayed_at: InstantMillis(5_000),
+            last_route_activity_at: InstantMillis(5_000),
             responsiveness: RouteResponsiveness::Responsive,
             receiving_interface: source(),
             next_hop: NextHop::Direct,
@@ -1553,13 +1599,242 @@ fn seedable_row<'a>(
 }
 
 #[test]
+fn route_evidence_identity_changes_only_with_the_selected_path() {
+    let mut table: Rt = Rt::default();
+    let destination = dest(0x31);
+    let first = RouteEvidenceId::new(10).unwrap();
+    let unused_refresh = RouteEvidenceId::new(11).unwrap();
+    let replacement = RouteEvidenceId::new(12).unwrap();
+
+    assert_eq!(
+        record_with_evidence(
+            &mut table,
+            destination,
+            InstantMillis(1_000),
+            source(),
+            NextHop::Direct,
+            first,
+        ),
+        UpsertRouteOutcome::Inserted
+    );
+    assert_eq!(
+        table.route_evidence_handle_for(&destination).unwrap().id,
+        first
+    );
+
+    assert_eq!(
+        record_with_evidence(
+            &mut table,
+            destination,
+            InstantMillis(2_000),
+            source(),
+            NextHop::Direct,
+            unused_refresh,
+        ),
+        UpsertRouteOutcome::Updated
+    );
+    assert_eq!(
+        table.route_evidence_handle_for(&destination).unwrap().id,
+        first,
+        "a same-path announce keeps the attribution identity",
+    );
+
+    assert_eq!(
+        record_with_evidence(
+            &mut table,
+            destination,
+            InstantMillis(3_000),
+            source(),
+            NextHop::Via(TransportId::new([0x44; 16])),
+            replacement,
+        ),
+        UpsertRouteOutcome::Updated
+    );
+    assert_eq!(
+        table.route_evidence_handle_for(&destination).unwrap().id,
+        replacement,
+        "a materially different path retires the previous identity",
+    );
+
+    table.rebalance_hops(&destination, 7);
+    table.repoint_routes(source(), iface(0xDD), InstantMillis(4_000));
+    assert_eq!(
+        table.route_evidence_handle_for(&destination).unwrap().id,
+        replacement,
+        "hop correction and internal interface repointing preserve the path identity",
+    );
+}
+
+#[test]
+fn route_evidence_lookup_only_moves_down_and_rejects_retired_ids() {
+    let mut table: Rt = Rt::default();
+    let a = dest(0x41);
+    let b = dest(0x42);
+    let c = dest(0x43);
+    let a_id = RouteEvidenceId::new(21).unwrap();
+    let b_id = RouteEvidenceId::new(22).unwrap();
+    let c_id = RouteEvidenceId::new(23).unwrap();
+
+    for (destination, evidence_id) in [(a, a_id), (b, b_id), (c, c_id)] {
+        assert_eq!(
+            record_with_evidence(
+                &mut table,
+                destination,
+                InstantMillis(u64::from(destination.as_bytes()[0])),
+                source(),
+                NextHop::Direct,
+                evidence_id,
+            ),
+            UpsertRouteOutcome::Inserted
+        );
+    }
+
+    let mut a_handle = table.route_evidence_handle_for(&a).unwrap();
+    let mut c_handle = table.route_evidence_handle_for(&c).unwrap();
+    assert_eq!(c_handle.row_hint, 2);
+
+    table.drop_route(&a).unwrap();
+    assert_eq!(table.resolve_route_evidence(&mut c_handle), Some(0));
+    assert_eq!(
+        c_handle.row_hint, 0,
+        "the successful slow path repairs the hint"
+    );
+    assert_eq!(table.resolve_route_evidence(&mut a_handle), None);
+
+    let replacement = RouteEvidenceId::new(24).unwrap();
+    assert_eq!(
+        record_with_evidence(
+            &mut table,
+            a,
+            InstantMillis(5_000),
+            source(),
+            NextHop::Direct,
+            replacement,
+        ),
+        UpsertRouteOutcome::Inserted
+    );
+    assert_eq!(table.resolve_route_evidence(&mut a_handle), None);
+    assert_eq!(
+        table.route_evidence_handle_for(&a).unwrap().id,
+        replacement,
+        "reinsertion receives a distinct identity",
+    );
+}
+
+#[test]
+fn authenticated_route_evidence_advances_only_its_live_path() {
+    let mut table: Rt = Rt::default();
+    let destination = dest(0x51);
+    let original = RouteEvidenceId::new(31).unwrap();
+    let replacement = RouteEvidenceId::new(32).unwrap();
+    record_with_evidence(
+        &mut table,
+        destination,
+        InstantMillis(1_000),
+        source(),
+        NextHop::Direct,
+        original,
+    );
+    let mut original_handle = table.route_evidence_handle_for(&destination).unwrap();
+
+    assert!(table.apply_route_evidence(&mut original_handle, InstantMillis(4_000)));
+    assert_eq!(
+        table.path_row(&destination).unwrap(),
+        RouteEntry {
+            hops: 1,
+            learned_at: InstantMillis(1_000),
+            last_route_activity_at: InstantMillis(4_000),
+            responsiveness: RouteResponsiveness::Responsive,
+            receiving_interface: source(),
+            next_hop: NextHop::Direct,
+        },
+    );
+    assert!(
+        !table.apply_route_evidence(&mut original_handle, InstantMillis(3_000)),
+        "older evidence neither rolls the activity clock back nor rewrites an already responsive row",
+    );
+
+    table.mark_responsiveness(&destination, RouteResponsiveness::Unresponsive);
+    assert!(table.apply_route_evidence(&mut original_handle, InstantMillis(3_000)));
+    assert_eq!(
+        table.path_row(&destination).unwrap().last_route_activity_at,
+        InstantMillis(4_000),
+        "an older valid observation can restore responsiveness without moving the clock backward",
+    );
+
+    record_with_evidence(
+        &mut table,
+        destination,
+        InstantMillis(5_000),
+        source(),
+        NextHop::Via(TransportId::new([0x55; 16])),
+        replacement,
+    );
+    assert!(!table.apply_route_evidence(&mut original_handle, InstantMillis(6_000)));
+    let row = table.path_row(&destination).unwrap();
+    assert_eq!(row.last_route_activity_at, InstantMillis(0));
+    assert_eq!(row.responsiveness, RouteResponsiveness::Unknown);
+}
+
+#[test]
+fn failed_attempts_cannot_override_newer_activity_or_a_replacement_path() {
+    let mut table: Rt = Rt::default();
+    let destination = dest(0x52);
+    let original = RouteEvidenceId::new(41).unwrap();
+    let replacement = RouteEvidenceId::new(42).unwrap();
+    record_with_evidence(
+        &mut table,
+        destination,
+        InstantMillis(1_000),
+        source(),
+        NextHop::Direct,
+        original,
+    );
+    let mut old_handle = table.route_evidence_handle_for(&destination).unwrap();
+    assert!(table.apply_route_evidence(&mut old_handle, InstantMillis(3_000)));
+    assert!(
+        !table.mark_unresponsive_if_not_active_since(&mut old_handle, InstantMillis(2_000)),
+        "evidence newer than the failed attempt wins",
+    );
+
+    record_with_evidence(
+        &mut table,
+        destination,
+        InstantMillis(4_000),
+        source(),
+        NextHop::Via(TransportId::new([0x56; 16])),
+        replacement,
+    );
+    assert!(
+        !table.mark_unresponsive_if_not_active_since(&mut old_handle, InstantMillis(5_000)),
+        "a retired handle cannot poison its replacement",
+    );
+    assert_eq!(
+        table.path_row(&destination).unwrap().responsiveness,
+        RouteResponsiveness::Unknown,
+    );
+
+    let mut replacement_handle = table.route_evidence_handle_for(&destination).unwrap();
+    assert!(
+        table.mark_unresponsive_if_not_active_since(&mut replacement_handle, InstantMillis(5_000),)
+    );
+    assert_eq!(
+        table.path_row(&destination).unwrap().responsiveness,
+        RouteResponsiveness::Unresponsive,
+    );
+}
+
+#[test]
 fn a_seeded_row_carries_its_entry_verbatim_where_an_upsert_would_default_it() {
     let ring = [announce_id(1, 1), announce_id(2, 2), announce_id(3, 3)];
     let payload = app_data(0x5D);
     let row = seedable_row(dest(9), &payload, &ring);
 
     let mut table: Rt = Rt::default();
-    assert_eq!(table.seed_route(&row), SeedRouteOutcome::Seeded);
+    assert_eq!(
+        table.seed_route(&row, RouteEvidenceId::FIRST),
+        SeedRouteOutcome::Seeded
+    );
 
     let seeded = table.path_row(&dest(9)).unwrap();
     assert_eq!(
@@ -1576,7 +1851,10 @@ fn a_seeded_row_carries_its_entry_verbatim_where_an_upsert_would_default_it() {
     assert_eq!(seeded_ring, ring, "the replay ring replays in stored order");
     assert_eq!(table.app_data_for(&dest(9)), Some(&payload[..]));
 
-    assert_eq!(table.seed_route(&row), SeedRouteOutcome::AlreadyPresent);
+    assert_eq!(
+        table.seed_route(&row, RouteEvidenceId::FIRST),
+        SeedRouteOutcome::AlreadyPresent
+    );
 }
 
 #[test]
@@ -1585,7 +1863,10 @@ fn path_rows_carry_the_expiry_owned_by_routing_policy() {
     let payload = app_data(0x5D);
     let row = seedable_row(dest(9), &payload, &ring);
     let mut table: Rt = Rt::default();
-    assert_eq!(table.seed_route(&row), SeedRouteOutcome::Seeded);
+    assert_eq!(
+        table.seed_route(&row, RouteEvidenceId::FIRST),
+        SeedRouteOutcome::Seeded
+    );
     let interfaces = full_interfaces();
 
     assert_eq!(
@@ -1615,7 +1896,10 @@ fn a_seed_never_evicts_a_row_the_live_network_earned() {
     let ring = [announce_id(2, 2)];
     let payload = app_data(0x22);
     let refused = seedable_row(dest(2), &payload, &ring);
-    assert_eq!(table.seed_route(&refused), SeedRouteOutcome::TableFull);
+    assert_eq!(
+        table.seed_route(&refused, RouteEvidenceId::FIRST),
+        SeedRouteOutcome::TableFull
+    );
     assert!(
         table.has_route(&dest(1)),
         "the live row survives the refused seed"
@@ -1647,7 +1931,10 @@ fn a_flushed_table_seeds_back_to_the_same_persisted_rows() {
 
     let mut reborn: Rt = Rt::default();
     for row in read_routing_table_snapshot(&out[..len]).unwrap() {
-        assert_eq!(reborn.seed_route(&row.unwrap()), SeedRouteOutcome::Seeded);
+        assert_eq!(
+            reborn.seed_route(&row.unwrap(), RouteEvidenceId::FIRST),
+            SeedRouteOutcome::Seeded
+        );
     }
 
     for n in 1..=3u8 {

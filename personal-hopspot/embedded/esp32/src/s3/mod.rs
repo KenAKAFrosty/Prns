@@ -1,7 +1,7 @@
 mod board;
 pub mod boards;
+mod gnss;
 
-#[cfg(feature = "wifi-auto")]
 use alloc::string::{String, ToString};
 use core::fmt::Write as _;
 use esp_backtrace as _;
@@ -13,32 +13,27 @@ use esp_hal::gpio::Input;
 use esp_hal::gpio::Output;
 use esp_hal::peripherals::USB_DEVICE;
 use esp_hal::rng::Rng;
-#[cfg(feature = "wifi-auto")]
 use esp_hal::rom::spiflash::esp_rom_spiflash_read;
 #[cfg(feature = "lora")]
 use esp_hal::spi::master::Spi;
 use esp_hal::system::Stack as CpuStack;
-#[cfg(feature = "wifi-auto")]
 use esp_hal::time::Duration as HalDuration;
 use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
 
 use embassy_executor::Spawner;
 use embassy_futures::select::{select3, Either3};
-#[cfg(feature = "wifi-auto")]
 use embassy_net::tcp::TcpSocket;
 use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_net::{
     Config as NetConfig, ConfigV6, DhcpConfig, IpEndpoint, Ipv6Cidr, Runner, Stack, StackResources,
     StaticConfigV6,
 };
-#[cfg(feature = "wifi-auto")]
 use embassy_net::{IpAddress, Ipv4Address, Ipv4Cidr, StaticConfigV4};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
-#[cfg(feature = "wifi-auto")]
 use embassy_time::with_timeout;
 #[cfg(feature = "lora")]
 use embassy_time::Delay;
@@ -48,35 +43,25 @@ use embedded_graphics::pixelcolor::BinaryColor;
 #[cfg(feature = "lora")]
 use embedded_hal_bus::spi::ExclusiveDevice;
 use heapless::Vec as HVec;
-#[cfg(feature = "wifi-auto")]
 use portable_atomic::AtomicBool;
 use portable_atomic::{AtomicU32, AtomicU64, Ordering};
 use static_cell::StaticCell;
 
-#[cfg(feature = "wifi-auto")]
 use esp_radio::wifi::ap::AccessPointConfig;
-#[cfg(feature = "wifi-auto")]
 use esp_radio::wifi::scan::{ScanConfig, ScanTypeConfig};
-#[cfg(feature = "wifi-auto")]
 use esp_radio::wifi::sta::StationConfig;
-#[cfg(feature = "wifi-auto")]
 use esp_radio::wifi::{
     Config as WifiConfig, ControllerConfig, DisconnectReason, Interface as WifiStaDevice,
     PowerSaveMode, WifiController, WifiError,
 };
 
-#[cfg(feature = "wifi-auto")]
 use esp_radio::esp_now::{
     EspNow, EspNowManager, EspNowReceiver, EspNowSender, WifiPhyRate, BROADCAST_ADDRESS,
 };
-#[cfg(feature = "bluetooth-auto")]
 use personal_rns::bluetooth_auto::{BluetoothAutoShared, BluetoothAutoStatus};
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
-#[cfg(feature = "wifi-auto")]
 use personal_rns::esp_now::EspNowInterface;
-#[cfg(feature = "bluetooth-auto")]
-use personal_rns::interfaces::bluetooth_auto::{BleIdentity, BLE_HW_MTU};
-#[cfg(feature = "wifi-auto")]
+use personal_rns::interfaces::bluetooth_auto::BLE_HW_MTU;
 use personal_rns::interfaces::esp_now::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy, ESP_NOW_V2_AIR_MTU,
 };
@@ -113,58 +98,47 @@ use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
 use personal_rns::wifi_auto::{
     tcp_rendezvous, AutoWifi, AutoWifiSegment, AutoWifiShared, AutoWifiStatus, AutoWifiTopology,
     TcpRendezvousBuffers, TcpRendezvousServer, TcpRendezvousStorage, TcpRendezvousWireSlot,
-    TCP_RENDEZVOUS_FRAMED_LEN, TCP_RENDEZVOUS_FRAME_CAP, TCP_RENDEZVOUS_READ_BUFFER_BYTES,
-    TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES,
+    UdpServiceDiscovery, UdpServiceDiscoveryStorage, TCP_RENDEZVOUS_FRAMED_LEN,
+    TCP_RENDEZVOUS_FRAME_CAP, TCP_RENDEZVOUS_READ_BUFFER_BYTES, TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES,
+    UDP_SERVICE_DISCOVERY_RX_SOCKET_BYTES, UDP_SERVICE_DISCOVERY_RX_SOCKET_METADATA,
+    UDP_SERVICE_DISCOVERY_SOCKET_COUNT, UDP_SERVICE_DISCOVERY_TX_SOCKET_BYTES,
+    UDP_SERVICE_DISCOVERY_TX_SOCKET_METADATA,
 };
-#[cfg(feature = "bluetooth-auto")]
 use prns_interfaces_embassy::bluetooth_auto::PEER_CAPACITY as EMBEDDED_BLE_PEER_CAPACITY;
 
-#[cfg(feature = "wifi-auto")]
 use crate::station_recovery::{
     AccessPoint as StationAccessPoint, ConnectionFailure, ConnectionOutcome, DiscoveryScope,
-    RecoveryDelay, ScanFailure, ScanOutcome, StationAttempt, StationRecovery, StationYield,
+    ScanFailure, ScanOutcome, StationAttempt, StationRecovery, StationYield,
 };
 use crate::storage::EngineStorageType;
 
 use personal_hopspot_core as screen;
 
+#[cfg(feature = "lora")]
+pub(crate) use board::LoraRadio;
 pub(crate) use board::{
     BoardDisplay, BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware, S3ManifoldHardware,
 };
+pub(crate) use gnss::{GnssProvider, GnssShared, NoGnss};
 
 esp_app_desc!();
 
-#[cfg(feature = "wifi-auto")]
 const AP_IPV4: [u8; 4] = [192, 168, 4, 1];
-#[cfg(feature = "wifi-auto")]
 const CAPTIVE_PORTAL_HOST: &str = "192.168.4.1";
 const CAPTIVE_PORTAL_URL: &str = "http://192.168.4.1/";
-#[cfg(feature = "wifi-auto")]
 const CAPTIVE_PORTAL_API_URL: &str = "http://192.168.4.1/captive-portal/api";
-#[cfg(feature = "wifi-auto")]
 const HOPSPOT_CONFIG_OFFSET: u32 = 0xD000;
-#[cfg(feature = "wifi-auto")]
 const HOPSPOT_CONFIG_MAGIC: &[u8; 8] = b"HSPCFG1\0";
-#[cfg(feature = "wifi-auto")]
 const HOPSPOT_CONFIG_VERSION: u8 = 1;
-#[cfg(feature = "wifi-auto")]
 const HOPSPOT_CONFIG_READ_WORDS: usize = 92;
-#[cfg(feature = "wifi-auto")]
 const HOPSPOT_CONFIG_SSID_MAX: usize = 32;
-#[cfg(feature = "wifi-auto")]
 const HOPSPOT_CONFIG_PASSWORD_MAX: usize = 64;
-#[cfg(feature = "wifi-auto")]
 const HOPSPOT_CONFIG_TCP_KIND_OFFSET: usize = 9;
-#[cfg(feature = "wifi-auto")]
 const HOPSPOT_CONFIG_TCP_HOST_LENGTH_OFFSET: usize =
     16 + HOPSPOT_CONFIG_SSID_MAX + HOPSPOT_CONFIG_PASSWORD_MAX;
-#[cfg(feature = "wifi-auto")]
 const HOPSPOT_CONFIG_TCP_PORT_OFFSET: usize = HOPSPOT_CONFIG_TCP_HOST_LENGTH_OFFSET + 1;
-#[cfg(feature = "wifi-auto")]
 const HOPSPOT_CONFIG_TCP_TARGET_OFFSET: usize = HOPSPOT_CONFIG_TCP_PORT_OFFSET + 2;
-#[cfg(feature = "wifi-auto")]
 const HOPSPOT_CONFIG_TCP_HOSTNAME_MAX: usize = 253;
-#[cfg(feature = "wifi-auto")]
 const HOPSPOT_TCP_DEFAULT_PORT: u16 = 4242;
 
 /// Fallback Wi-Fi network the board joins as a station, read at build time. Normal flashing writes the
@@ -188,19 +162,14 @@ const HOPSPOT_TCP_TARGET: &str = match option_env!("HOPSPOT_TCP_TARGET") {
 const TCP_BITRATE_BPS: BitrateBps = wifi_auto_contract::WIFI_EMBEDDED_BITRATE_CEILING_BPS;
 const TCP_SOCKET_BUFFER_BYTES: usize = 4 * 1_024;
 
-const LANE_COUNT: usize = 3
-    + cfg!(feature = "lora") as usize
-    + cfg!(feature = "bluetooth-auto") as usize
-    + cfg!(feature = "esp-now") as usize;
+const LANE_COUNT: usize = 5 + cfg!(feature = "lora") as usize;
 const MEMBERS: usize = 24;
-#[cfg(feature = "bluetooth-auto")]
 pub const BLE_PEER_CAPACITY: usize = EMBEDDED_BLE_PEER_CAPACITY;
-#[cfg(feature = "bluetooth-auto")]
 pub const BLE_CONTROLLER_ACTIVITY_CAPACITY: u8 = (BLE_PEER_CAPACITY + 1) as u8;
-#[cfg(not(feature = "bluetooth-auto"))]
-pub const BLE_PEER_CAPACITY: usize = 0;
-const INTERFACE_CAPACITY: usize =
-    3 + MEMBERS + BLE_PEER_CAPACITY + cfg!(feature = "esp-now") as usize;
+// The S3 Wi-Fi blob creates its driver task at priority 29. Keep the BLE controller immediately
+// below it so an active GATT link cannot monopolize core 0 ahead of Wi-Fi receive processing.
+const BLE_CONTROLLER_TASK_PRIORITY: u8 = 28;
+const INTERFACE_CAPACITY: usize = LANE_COUNT + MEMBERS + BLE_PEER_CAPACITY;
 const WIFI_SUPERVISOR_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::AutoWifi as u8, 0, 0, 0, 0, 0, 0, 0]);
 const LANE_DEPTH: usize = 1;
@@ -210,7 +179,6 @@ const LANE_DEPTH: usize = 1;
 const OUTBOUND_BURST_DEPTH: usize = EngineStorageType::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
 pub const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);
 const _: () = assert!(EngineStorageType::LINK_SESSIONS > MEMBERS + BLE_PEER_CAPACITY);
-#[cfg(feature = "bluetooth-auto")]
 const _: () = assert!(BLE_CONTROLLER_ACTIVITY_CAPACITY <= 10);
 const COMMANDS_CAP: usize = 8;
 pub const LIFECYCLE_CAP: usize = 8;
@@ -218,11 +186,18 @@ const COMPLETIONS_CAP: usize = 4;
 
 const CORE1_STACK_BYTES: usize = 72 * 1024;
 const RECLAIMED_HEAP_BYTES: usize = 72 * 1024;
+// Large Wi-Fi, BLE, and manifold async state machines plus both embassy-net socket tables park
+// ordinary software state in PSRAM. Reinvest the released `.bss` in the internal-only radio heap:
+// the S3 Wi-Fi blob can retain its complete RX profile during BLE coexistence without exhausting
+// the allocator. Execution and both CPU stacks remain in internal RAM; only suspended future state
+// lives in PSRAM.
+const RADIO_INTERNAL_HEAP_BYTES: usize = 52 * 1024;
 
 const RENDER_INTERVAL: Duration = Duration::from_millis(500);
 const RENDER_TICKS_PER_BATTERY: u8 = 4;
 const NOTICE_MS: u64 = 900;
 const OLED_SLEEP_DELAY_MS: u64 = 2_500;
+const DEFAULT_OLED_AUTO_OFF_MS: u64 = 60_000;
 
 const BUTTON_LONG_PRESS: Duration = Duration::from_millis(500);
 const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
@@ -231,24 +206,13 @@ type Mtx = CriticalSectionRawMutex;
 type Handle = PrnsNodeHandle<'static, Mtx, COMMANDS_CAP, COMPLETIONS_CAP>;
 type UsbSeam = EmbassyInterfaceSeam<'static, Mtx, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
 #[cfg(feature = "lora")]
-type S3LoraInterface = LoRaInterface<
-    'static,
-    ExclusiveDevice<Spi<'static, esp_hal::Async>, Output<'static>, Delay>,
-    Input<'static>,
-    Input<'static>,
-    Output<'static>,
-    Delay,
->;
+type S3LoraInterface = LoRaInterface<'static, LoraRadio>;
 #[cfg(feature = "lora")]
 type S3LoraSeam = EmbassyInterfaceSeam<'static, Mtx, NOTIFY_CAP, LORA_MAX_PAYLOAD>;
-#[cfg(feature = "esp-now")]
 type S3EspNowInterface = EspNowInterface<'static, EspNowAdapter>;
-#[cfg(feature = "esp-now")]
 type S3EspNowSeam = EmbassyInterfaceSeam<'static, Mtx, NOTIFY_CAP, ESP_NOW_V2_AIR_MTU>;
 type S3TcpSeam = EmbassyInterfaceSeam<'static, Mtx, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
-#[cfg(feature = "wifi-auto")]
 type S3WifiFleet = Fleet<Mtx, { wifi_auto_contract::HARDWARE_MTU }, NOTIFY_CAP, LIFECYCLE_CAP>;
-#[cfg(feature = "bluetooth-auto")]
 type S3BleFleet = Fleet<Mtx, BLE_HW_MTU, NOTIFY_CAP, LIFECYCLE_CAP>;
 type InterfaceStore = EmbassyInterfaceStore<
     Mtx,
@@ -285,28 +249,17 @@ mod configuration;
 mod connectivity;
 mod display;
 
-#[cfg(feature = "wifi-auto")]
 use captive_portal::ap_ssid;
-#[cfg(feature = "wifi-auto")]
 use configuration::{hopspot_wifi_config, HopspotWifiConfig};
 use configuration::{HopspotTcpClientConfig, HopspotTcpClientHost};
-use connectivity::build_tcp;
-#[cfg(feature = "wifi-auto")]
-use connectivity::{build_wifi, espnow_channel_policy, EspNowAdapter, ESPNOW_PHY};
-#[cfg(all(not(feature = "wifi-auto"), feature = "lora"))]
-use display::add_lora_spectrum;
-#[cfg(not(feature = "wifi-auto"))]
-use display::add_manifold_pressure;
-#[cfg(feature = "wifi-auto")]
+use connectivity::{build_tcp, build_wifi, espnow_channel_policy, EspNowAdapter, ESPNOW_PHY};
 use display::build_interface_menu_details;
 use display::{build_cards, build_snapshots, button_task};
 
 static WIFI_SHARED: AutoWifiShared<MEMBERS> = AutoWifiShared::new(WIFI_SUPERVISOR_ID);
 
-#[cfg(feature = "bluetooth-auto")]
 const BLE_SUPERVISOR_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);
-#[cfg(feature = "bluetooth-auto")]
 static BLE_SHARED: BluetoothAutoShared<BLE_PEER_CAPACITY> =
     BluetoothAutoShared::new(BLE_SUPERVISOR_ID);
 #[cfg(feature = "lora")]
@@ -324,10 +277,8 @@ static WIFI_MANIFOLD_LANE: StaticManifoldLane<
 #[cfg(feature = "lora")]
 static LORA_MANIFOLD_LANE: StaticManifoldLane<Mtx, LORA_MAX_PAYLOAD, LANE_DEPTH, 0> =
     StaticManifoldLane::new();
-#[cfg(feature = "bluetooth-auto")]
 static BLE_MANIFOLD_LANE: StaticManifoldLane<Mtx, BLE_HW_MTU, LANE_DEPTH, 0> =
     StaticManifoldLane::new();
-#[cfg(feature = "esp-now")]
 static ESPNOW_MANIFOLD_LANE: StaticManifoldLane<Mtx, ESP_NOW_V2_AIR_MTU, LANE_DEPTH, 0> =
     StaticManifoldLane::new();
 
@@ -335,7 +286,6 @@ static NOTIFY: Channel<Mtx, InterfaceId, NOTIFY_CAP> = Channel::new();
 static COMMANDS: Channel<Mtx, personal_rns::engine::IssuedCommand, COMMANDS_CAP> = Channel::new();
 static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new();
 static OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
-#[cfg(feature = "bluetooth-auto")]
 static BLE_OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
 static BUTTON_EVENTS: Channel<Mtx, screen::InputEvent, 4> = Channel::new();
@@ -348,9 +298,7 @@ const PACKET_PHY_RETENTION_CAPACITY: usize = 32;
 const PACKET_PHY_INDEX_BUCKETS: usize =
     personal_rns::routing::dedup::dedup_index_buckets(PACKET_PHY_RETENTION_CAPACITY);
 
-#[cfg(feature = "wifi-auto")]
 static WIFI_STATION_JOINED: AtomicBool = AtomicBool::new(false);
-#[cfg(feature = "wifi-auto")]
 static WIFI_STATION_DATA_PATH_DEGRADED: AtomicBool = AtomicBool::new(false);
 static WIFI_DRIVER_RESTART_REQUESTED: AtomicBool = AtomicBool::new(false);
 static CORE_ONE_HEARTBEAT: AtomicU64 = AtomicU64::new(0);
@@ -517,6 +465,7 @@ macro_rules! boot_common {
         ::esp_println::logger::init_logger_from_env();
         $crate::s3::boot_add_psram_global!($p, $psram_config);
         ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: $crate::s3::RECLAIMED_HEAP_BYTES);
+        ::esp_alloc::heap_allocator!(size: $crate::s3::RADIO_INTERNAL_HEAP_BYTES);
         $crate::s3::reclaim_dcache_region();
         $crate::s3::boot_psram_probe!();
         $crate::s3::boot_rtos_tail!($p, $banner)
@@ -525,6 +474,7 @@ macro_rules! boot_common {
         ::esp_println::logger::init_logger_from_env();
         $crate::s3::boot_add_psram_split!($p, $psram_config);
         ::esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: $crate::s3::RECLAIMED_HEAP_BYTES);
+        ::esp_alloc::heap_allocator!(size: $crate::s3::RADIO_INTERNAL_HEAP_BYTES);
         $crate::s3::reclaim_dcache_region();
         $crate::s3::boot_psram_probe!();
         $crate::s3::boot_rtos_tail!($p, $banner)
@@ -630,39 +580,27 @@ macro_rules! boot_rtos_tail {
 pub(crate) use boot_rtos_tail;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(feature = "wifi-auto"), allow(dead_code))]
 pub enum RadioMode {
     Ble,
     AccessPoint,
 }
 
-#[cfg(feature = "wifi-auto")]
 const RADIO_MODE_AP: u32 = 0x4150_0001;
-#[cfg(feature = "wifi-auto")]
 const RADIO_MODE_BLE: u32 = 0x424C_4501;
-#[cfg(feature = "wifi-auto")]
 #[esp_hal::ram(unstable(rtc_fast, persistent))]
 static mut RADIO_MODE_FLAG: u32 = 0;
 
-fn boot_radio_mode(station_configured: bool) -> RadioMode {
-    let _ = station_configured;
-    #[cfg(feature = "wifi-auto")]
-    {
-        // SAFETY: Boot reads the aligned RTC-fast persistent word before concurrent tasks start;
-        // volatile semantics are not required because reset is the only cross-execution boundary.
-        let flag = unsafe { core::ptr::addr_of!(RADIO_MODE_FLAG).read() };
-        if flag == RADIO_MODE_AP {
-            return RadioMode::AccessPoint;
-        }
-        RadioMode::Ble
-    }
-    #[cfg(not(feature = "wifi-auto"))]
-    {
+fn boot_radio_mode(_station_configured: bool) -> RadioMode {
+    // SAFETY: Boot reads the aligned RTC-fast persistent word before concurrent tasks start;
+    // volatile semantics are not required because reset is the only cross-execution boundary.
+    let flag = unsafe { core::ptr::addr_of!(RADIO_MODE_FLAG).read() };
+    if flag == RADIO_MODE_AP {
+        RadioMode::AccessPoint
+    } else {
         RadioMode::Ble
     }
 }
 
-#[cfg(feature = "wifi-auto")]
 fn request_radio_mode(mode: RadioMode) -> ! {
     let flag = match mode {
         RadioMode::AccessPoint => RADIO_MODE_AP,

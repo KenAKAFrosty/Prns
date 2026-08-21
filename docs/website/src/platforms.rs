@@ -1,8 +1,11 @@
-#[derive(Clone, Copy, PartialEq)]
+use prns_flash_manifest::Uf2BoardIdMatchKind;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Tier {
     Shipping,
     SdkPreview,
     Flashable,
+    Qualification,
     BringUp,
     Roadmap,
 }
@@ -13,6 +16,7 @@ impl Tier {
             Tier::Shipping => None,
             Tier::SdkPreview => Some("SDK preview"),
             Tier::Flashable => Some("flashable"),
+            Tier::Qualification => Some("qualification"),
             Tier::BringUp => Some("bring-up"),
             Tier::Roadmap => Some("roadmap"),
         }
@@ -26,6 +30,7 @@ impl Tier {
         match self {
             Tier::Shipping | Tier::SdkPreview => "flash-board-card--runtime",
             Tier::Flashable => "flash-board-card--flashable",
+            Tier::Qualification => "flash-board-card--qualification",
             Tier::BringUp => "flash-board-card--bringup",
             Tier::Roadmap => "flash-board-card--roadmap",
         }
@@ -76,27 +81,40 @@ pub struct BoardImage {
     pub data_uri: &'static str,
 }
 
+pub const ESPRESSIF_NATIVE_USB_VENDOR_ID: u16 = 0x303a;
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum PreparationProfile {
     EspUsbBoot,
     TechoUf2,
+    T114Uf2,
+    T096Uf2,
+    T1000eNrfSerialDfu,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum BoardFlashTarget {
     EspSerial {
         expected_chip: &'static str,
+        web_serial_vendor_id: u16,
         supports_provisioning: bool,
         supports_tcp_client_provisioning: bool,
     },
     Uf2MassStorage {
         mount_label: &'static str,
+        board_id_match_kind: Uf2BoardIdMatchKind,
+        board_id: &'static str,
+    },
+    NrfSerialDfu {
+        recovery_mount_label: &'static str,
+        recovery_board_id_match_kind: Uf2BoardIdMatchKind,
+        recovery_board_id: &'static str,
     },
 }
 
 impl BoardFlashTarget {
     pub const fn uses_web_serial(self) -> bool {
-        matches!(self, Self::EspSerial { .. })
+        matches!(self, Self::EspSerial { .. } | Self::NrfSerialDfu { .. })
     }
 
     pub const fn supports_provisioning(self) -> bool {
@@ -112,7 +130,7 @@ impl BoardFlashTarget {
     pub const fn expected_chip(self) -> Option<&'static str> {
         match self {
             Self::EspSerial { expected_chip, .. } => Some(expected_chip),
-            Self::Uf2MassStorage { .. } => None,
+            Self::Uf2MassStorage { .. } | Self::NrfSerialDfu { .. } => None,
         }
     }
 
@@ -135,7 +153,7 @@ pub mod shipping_boards {
     include!(concat!(env!("OUT_DIR"), "/shipping_boards.rs"));
 }
 
-pub use shipping_boards::SHIPPING_BOARD_TARGETS;
+pub use shipping_boards::{QUALIFICATION_BOARD_TARGETS, SHIPPING_BOARD_TARGETS};
 
 #[derive(Clone, Copy, PartialEq)]
 pub struct BoardTarget {
@@ -152,6 +170,10 @@ pub struct BoardTarget {
 impl BoardTarget {
     pub fn is_flashable(&self) -> bool {
         matches!(self.tier, Tier::Flashable)
+            || (cfg!(feature = "local-dev-flasher")
+                && matches!(self.tier, Tier::Qualification)
+                && self.preparation_profile.is_some()
+                && self.flash_target.is_some())
     }
 
     pub fn image(&self) -> Option<&'static BoardImage> {
@@ -161,6 +183,10 @@ impl BoardTarget {
             "t-beam-supreme" => Some(&board_images::T_BEAM_SUPREME),
             "xiao-esp32-c6" => Some(&board_images::XIAO_ESP32_C6),
             "t-echo" => Some(&board_images::T_ECHO),
+            "t114" => Some(&board_images::T114),
+            "t1000-e" => Some(&board_images::SEEED_CARD_TRACKER_T1000_E),
+            "t096" => Some(&board_images::HELTEC_MESH_NODE_T096),
+            "mesh-tower-v2" => Some(&board_images::MESH_TOWER_V2),
             _ => None,
         }
     }
@@ -189,16 +215,6 @@ pub const UPCOMING_BOARD_TARGETS: &[BoardTarget] = &[
         flash_target: None,
     },
     BoardTarget {
-        name: "Heltec Mesh Node T096",
-        slug: "heltec-mesh-node-t096",
-        silicon: "nRF52840 + SX1262",
-        tier: Tier::BringUp,
-        interfaces: &[],
-        icon: Some("nordicsemiconductor"),
-        preparation_profile: None,
-        flash_target: None,
-    },
-    BoardTarget {
         name: "Heltec Wireless Stick Lite V3",
         slug: "heltec-wireless-stick-lite-v3",
         silicon: "ESP32-S3 + SX1262",
@@ -215,16 +231,6 @@ pub const UPCOMING_BOARD_TARGETS: &[BoardTarget] = &[
         tier: Tier::BringUp,
         interfaces: &[],
         icon: Some("raspberrypi"),
-        preparation_profile: None,
-        flash_target: None,
-    },
-    BoardTarget {
-        name: "SenseCAP Card Tracker T1000-E",
-        slug: "seeed-card-tracker-t1000-e",
-        silicon: "nRF52840 + LR1110",
-        tier: Tier::BringUp,
-        interfaces: &[],
-        icon: Some("nordicsemiconductor"),
         preparation_profile: None,
         flash_target: None,
     },
@@ -269,16 +275,6 @@ pub const UPCOMING_BOARD_TARGETS: &[BoardTarget] = &[
         flash_target: None,
     },
     BoardTarget {
-        name: "Heltec Mesh Node T114",
-        slug: "heltec-mesh-node-t114",
-        silicon: "nRF52840 + SX1262",
-        tier: Tier::Roadmap,
-        interfaces: &[],
-        icon: Some("nordicsemiconductor"),
-        preparation_profile: None,
-        flash_target: None,
-    },
-    BoardTarget {
         name: "LILYGO LoRa32 T3-S3",
         slug: "lilygo-lora32-t3-s3",
         silicon: "ESP32-S3 + SX1262/SX1276/SX1280/LR1121 variants",
@@ -310,9 +306,22 @@ pub const UPCOMING_BOARD_TARGETS: &[BoardTarget] = &[
     },
 ];
 
+pub const IN_PROGRESS_BOARD_TARGETS: &[BoardTarget] = &[BoardTarget {
+    name: "Heltec MeshTower V2",
+    slug: "mesh-tower-v2",
+    silicon: "nRF52840 + SX1262 + KCT8103L PA",
+    tier: Tier::Qualification,
+    interfaces: &[],
+    icon: Some("nordicsemiconductor"),
+    preparation_profile: None,
+    flash_target: None,
+}];
+
 pub fn board_target_by_slug(slug: &str) -> Option<&'static BoardTarget> {
     SHIPPING_BOARD_TARGETS
         .iter()
+        .chain(QUALIFICATION_BOARD_TARGETS.iter())
+        .chain(IN_PROGRESS_BOARD_TARGETS.iter())
         .chain(UPCOMING_BOARD_TARGETS.iter())
         .find(|board| board.slug == slug)
 }
@@ -374,6 +383,12 @@ pub const PLATFORMS: &[Platform] = &[
     },
     Platform {
         name: "SX1262",
+        group: Group::Microcontroller,
+        tier: Tier::Shipping,
+        icon: Some("semtech"),
+    },
+    Platform {
+        name: "LR1110",
         group: Group::Microcontroller,
         tier: Tier::Shipping,
         icon: Some("semtech"),
@@ -596,6 +611,10 @@ pub const LANDING_PLATFORM_CHIPS: &[LandingPlatformChip] = &[
         icon: Some("semtech"),
     },
     LandingPlatformChip {
+        name: "LR1110",
+        icon: Some("semtech"),
+    },
+    LandingPlatformChip {
         name: "Rust",
         icon: Some("rust"),
     },
@@ -681,10 +700,8 @@ mod tests {
             bring_up,
             vec![
                 "muzi.works Base Duo",
-                "Heltec Mesh Node T096",
                 "Heltec Wireless Stick Lite V3",
                 "Raspberry Pi Zero 2 W",
-                "SenseCAP Card Tracker T1000-E",
                 "RAK WisBlock Starter Kit",
             ]
         );
@@ -695,6 +712,38 @@ mod tests {
                 .all(|board| board.tier == Tier::Roadmap),
             "every other non-shipping board should remain on the roadmap"
         );
+    }
+
+    #[test]
+    fn in_progress_boards_sit_in_the_main_grid_with_their_status() {
+        let cards = IN_PROGRESS_BOARD_TARGETS
+            .iter()
+            .map(|board| (board.slug, board.tier, board.image().is_some()))
+            .collect::<Vec<_>>();
+        assert_eq!(cards, vec![("mesh-tower-v2", Tier::Qualification, true)]);
+    }
+
+    #[test]
+    fn promoted_nordic_boards_come_from_the_shared_shipping_catalog() {
+        assert!(QUALIFICATION_BOARD_TARGETS.is_empty());
+        let cards = SHIPPING_BOARD_TARGETS
+            .iter()
+            .filter(|board| matches!(board.slug, "t096" | "t1000-e"))
+            .map(|board| (board.slug, board.tier, board.image().is_some()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            cards,
+            vec![
+                ("t096", Tier::Flashable, true),
+                ("t1000-e", Tier::Flashable, true),
+            ]
+        );
+        assert!(SHIPPING_BOARD_TARGETS
+            .iter()
+            .filter(|board| matches!(board.slug, "t096" | "t1000-e"))
+            .all(|board| board.is_flashable()
+                && board.preparation_profile.is_some()
+                && board.flash_target.is_some()));
     }
 
     #[test]

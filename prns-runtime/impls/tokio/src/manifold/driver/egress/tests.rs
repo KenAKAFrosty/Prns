@@ -8,10 +8,15 @@ use crate::interfaces::InterfaceKind;
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, ConnectionState, ConnectionView, InterfaceId,
 };
+#[cfg(feature = "runtime-metrics")]
+use crate::interfaces::{IfacContext, IfacSize, InterfaceIfac};
 use crate::manifold::grant_lane::tokio_grant_lane;
 use crate::manifold::interface_seam::MAX_WIRE_FRAME_LEN;
 #[cfg(feature = "runtime-metrics")]
-use crate::runtime::{AnnounceEgressOutcome, EgressMetricsSnapshot};
+use crate::runtime::{
+    AnnounceBackpressureEvent, AnnounceEgressOutcome, EgressLaneMetricsSnapshot,
+    EgressMetricsSnapshot,
+};
 
 use super::super::interface_status::TokioInterfaceStatus;
 
@@ -28,7 +33,7 @@ fn egress_metrics_distinguish_enqueued_full_and_missing_lanes() {
     egress.enqueue(missing, b"missing");
 
     assert_eq!(
-        egress.metrics_snapshot(&[]),
+        egress.metrics_snapshot(&[], InstantMillis(0)),
         EgressMetricsSnapshot {
             enqueued_frames: 1,
             full_lane_drops: 1,
@@ -37,11 +42,65 @@ fn egress_metrics_distinguish_enqueued_full_and_missing_lanes() {
                 interfaces: std::vec![crate::runtime::InterfaceAnnounceEgressMetricsSnapshot {
                     interface: id,
                     outcomes: Default::default(),
+                    backpressure: Default::default(),
                     enqueued_bytes_by_origin: Default::default(),
                     pacer_queue_depth: 0,
+                    pacer_deferred_depth: 0,
+                    pacer_oldest_deferred_age_ms: 0,
                 },],
                 ..Default::default()
             },
+            lanes: std::vec![EgressLaneMetricsSnapshot {
+                physical_interface: id,
+                logical_interface: id,
+                capacity: 1,
+                occupancy: 1,
+            }],
+            ..Default::default()
+        }
+    );
+}
+
+#[cfg(feature = "runtime-metrics")]
+#[test]
+fn egress_metrics_distinguish_ifac_rejection_from_successful_masking() {
+    let id = InterfaceId::new([0x93; 8]);
+    let (producer, mut consumer) = tokio_grant_lane(64, 1);
+    let mut egress = Egress::new(std::vec![(id, producer)]);
+    let ifacs = [InterfaceIfac {
+        id,
+        context: IfacContext::derive(Some("metrics"), Some("ifac"), IfacSize::NARROW).unwrap(),
+    }];
+    let clean = [0u8; 3];
+    let mut masked = [0u8; 64];
+
+    enqueue_for_wire(&mut egress, &ifacs, id, &clean, &mut masked);
+    enqueue_for_wire(&mut egress, &ifacs, id, &clean, &mut masked[..clean.len()]);
+
+    assert_eq!(consumer.try_peek().unwrap().frame().len(), 11);
+    assert_eq!(
+        egress.metrics_snapshot(&[], InstantMillis(0)),
+        EgressMetricsSnapshot {
+            enqueued_frames: 1,
+            ifac_rejected_frames: 1,
+            announces: crate::runtime::AnnounceEgressMetricsSnapshot {
+                interfaces: std::vec![crate::runtime::InterfaceAnnounceEgressMetricsSnapshot {
+                    interface: id,
+                    outcomes: Default::default(),
+                    backpressure: Default::default(),
+                    enqueued_bytes_by_origin: Default::default(),
+                    pacer_queue_depth: 0,
+                    pacer_deferred_depth: 0,
+                    pacer_oldest_deferred_age_ms: 0,
+                }],
+                ..Default::default()
+            },
+            lanes: std::vec![EgressLaneMetricsSnapshot {
+                physical_interface: id,
+                logical_interface: id,
+                capacity: 1,
+                occupancy: 1,
+            }],
             ..Default::default()
         }
     );
@@ -56,7 +115,7 @@ fn announce_egress_metrics_preserve_origin_outcome_kind_and_bytes() {
     let mut egress = Egress::new(std::vec![(id, producer)]);
     let mut masked = [0u8; 64];
 
-    enqueue_announce_for_wire(
+    enqueue_pacerless_announce_for_wire(
         &mut egress,
         &[],
         id,
@@ -64,7 +123,7 @@ fn announce_egress_metrics_preserve_origin_outcome_kind_and_bytes() {
         &mut masked,
         AnnounceOrigin::Local,
     );
-    enqueue_announce_for_wire(
+    enqueue_pacerless_announce_for_wire(
         &mut egress,
         &[],
         id,
@@ -81,7 +140,7 @@ fn announce_egress_metrics_preserve_origin_outcome_kind_and_bytes() {
         AnnounceOrigin::SharedClient,
     );
 
-    let announces = egress.metrics_snapshot(&[]).announces;
+    let announces = egress.metrics_snapshot(&[], InstantMillis(0)).announces;
     assert_eq!(
         announces
             .outcomes
@@ -145,7 +204,7 @@ fn announce_egress_metrics_roll_fleet_members_into_their_logical_interface() {
         AnnounceOrigin::Relay,
     );
 
-    let announces = egress.metrics_snapshot(&[]).announces;
+    let announces = egress.metrics_snapshot(&[], InstantMillis(0)).announces;
     assert_eq!(announces.interfaces.len(), 1);
     assert_eq!(announces.interfaces[0].interface, logical);
     assert_eq!(
@@ -169,7 +228,11 @@ fn the_pacer_wiring_holds_then_releases_a_capped_burst() {
         id,
         #[cfg(feature = "runtime-metrics")]
         logical_interface: id,
-        pacer: TokioAnnouncePacer::new(AnnounceBandwidthCap::RNS_DEFAULT, BitrateBps::guess(5_000),),
+        pacer: TokioAnnouncePacer::new(
+            AnnounceBandwidthCap::RNS_DEFAULT,
+            BitrateBps::guess(5_000),
+            TOKIO_ANNOUNCE_RETRY_POLICY,
+        ),
     }];
     let (tx, mut rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
     let mut egress = Egress::new(std::vec![(id, tx)]);
@@ -207,7 +270,9 @@ fn the_pacer_wiring_holds_then_releases_a_capped_burst() {
     assert_eq!(soonest_pacer_release(&pacers), Some(InstantMillis(1_800)));
     #[cfg(feature = "runtime-metrics")]
     {
-        let announces = egress.metrics_snapshot(&pacers).announces;
+        let announces = egress
+            .metrics_snapshot(&pacers, InstantMillis(1_200))
+            .announces;
         assert_eq!(announces.pacer_queue_depth, 1);
         assert_eq!(
             announces
@@ -235,7 +300,9 @@ fn the_pacer_wiring_holds_then_releases_a_capped_burst() {
     assert_eq!(soonest_pacer_release(&pacers), None);
     #[cfg(feature = "runtime-metrics")]
     {
-        let announces = egress.metrics_snapshot(&pacers).announces;
+        let announces = egress
+            .metrics_snapshot(&pacers, InstantMillis(1_800))
+            .announces;
         assert_eq!(announces.pacer_queue_depth, 0);
         assert_eq!(
             announces
@@ -246,6 +313,92 @@ fn the_pacer_wiring_holds_then_releases_a_capped_burst() {
     }
 }
 
+#[cfg(feature = "runtime-metrics")]
+#[test]
+fn a_full_lane_defers_in_place_then_recovers_with_truthful_metrics() {
+    let id = InterfaceId::new([0x5d; 8]);
+    let mut pacers = std::vec![InterfacePacer {
+        id,
+        logical_interface: id,
+        pacer: TokioAnnouncePacer::new(
+            AnnounceBandwidthCap::RNS_DEFAULT,
+            BitrateBps::guess(5_000),
+            TOKIO_ANNOUNCE_RETRY_POLICY,
+        ),
+    }];
+    let (tx, mut rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 1);
+    let mut egress = Egress::new(std::vec![(id, tx)]);
+    assert_eq!(
+        egress.enqueue(id, b"occupy"),
+        EgressEnqueueOutcome::Enqueued
+    );
+
+    offer_to_pacer(
+        &mut pacers,
+        id,
+        PacedAnnounce {
+            bytes: &[0xa5; 10],
+            hops: 1,
+            origin: AnnounceOrigin::Relay,
+        },
+        InstantMillis(1_000),
+        &mut egress,
+        &[],
+    );
+    let pressure = egress.metrics_snapshot(&pacers, InstantMillis(1_025));
+    assert_eq!(pressure.full_lane_drops, 0);
+    assert_eq!(pressure.announces.pacer_queue_depth, 1);
+    assert_eq!(pressure.announces.pacer_deferred_depth, 1);
+    assert_eq!(pressure.announces.pacer_oldest_deferred_age_ms, 25);
+    assert_eq!(pressure.lanes[0].capacity, 1);
+    assert_eq!(pressure.lanes[0].occupancy, 1);
+    assert_eq!(
+        pressure
+            .announces
+            .backpressure
+            .get(AnnounceOrigin::Relay, AnnounceBackpressureEvent::Deferred),
+        1
+    );
+
+    flush_due_pacers(&mut pacers, InstantMillis(1_050), &mut egress, &[]);
+    let retried = egress.metrics_snapshot(&pacers, InstantMillis(1_050));
+    assert_eq!(retried.full_lane_drops, 0);
+    assert_eq!(
+        retried
+            .announces
+            .backpressure
+            .get(AnnounceOrigin::Relay, AnnounceBackpressureEvent::Retry),
+        1
+    );
+
+    assert_eq!(rx.try_peek().expect("occupied slot").frame(), b"occupy");
+    rx.release();
+    flush_due_pacers(&mut pacers, InstantMillis(1_150), &mut egress, &[]);
+
+    let recovered = egress.metrics_snapshot(&pacers, InstantMillis(1_150));
+    assert_eq!(recovered.full_lane_drops, 0);
+    assert_eq!(recovered.announces.pacer_queue_depth, 0);
+    assert_eq!(recovered.announces.pacer_deferred_depth, 0);
+    assert_eq!(
+        recovered
+            .announces
+            .backpressure
+            .get(AnnounceOrigin::Relay, AnnounceBackpressureEvent::Recovered),
+        1
+    );
+    assert_eq!(
+        recovered
+            .announces
+            .outcomes
+            .get(AnnounceOrigin::Relay, AnnounceEgressOutcome::Enqueued),
+        1
+    );
+    assert_eq!(
+        rx.try_peek().expect("recovered announce").frame(),
+        &[0xa5; 10]
+    );
+}
+
 #[test]
 fn clearing_announce_queues_counts_every_pacer_entry() {
     let first = InterfaceId::new([0x5B; 8]);
@@ -254,7 +407,11 @@ fn clearing_announce_queues_counts_every_pacer_entry() {
         id,
         #[cfg(feature = "runtime-metrics")]
         logical_interface: id,
-        pacer: TokioAnnouncePacer::new(AnnounceBandwidthCap::RNS_DEFAULT, BitrateBps::guess(5_000)),
+        pacer: TokioAnnouncePacer::new(
+            AnnounceBandwidthCap::RNS_DEFAULT,
+            BitrateBps::guess(5_000),
+            TOKIO_ANNOUNCE_RETRY_POLICY,
+        ),
     });
     let (first_tx, _first_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
     let (second_tx, _second_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
@@ -289,7 +446,11 @@ fn an_unavailable_interface_never_enters_the_pacer_or_lane() {
         id,
         #[cfg(feature = "runtime-metrics")]
         logical_interface: id,
-        pacer: TokioAnnouncePacer::new(AnnounceBandwidthCap::RNS_DEFAULT, BitrateBps::guess(5_000),),
+        pacer: TokioAnnouncePacer::new(
+            AnnounceBandwidthCap::RNS_DEFAULT,
+            BitrateBps::guess(5_000),
+            TOKIO_ANNOUNCE_RETRY_POLICY,
+        ),
     }];
     let (tx, mut rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
     let mut egress = Egress::new(std::vec![]);
@@ -349,7 +510,7 @@ fn an_unavailable_interface_never_enters_the_pacer_or_lane() {
 
     #[cfg(feature = "runtime-metrics")]
     {
-        let snapshot = egress.metrics_snapshot(&pacers);
+        let snapshot = egress.metrics_snapshot(&pacers, InstantMillis(10_000));
         assert_eq!(snapshot.unavailable_frame_skips, 2);
         assert_eq!(snapshot.announces.pacer_queue_depth, 0);
         assert_eq!(

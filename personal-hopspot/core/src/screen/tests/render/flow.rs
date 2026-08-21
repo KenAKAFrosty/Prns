@@ -1,6 +1,40 @@
 use super::*;
 
 #[test]
+fn gnss_panel_stays_between_the_global_row_and_selected_interface() {
+    let mut display = PanelDisplay::new();
+    let cards = [test_card("LoRa"), test_card("USB")];
+    let content = test_content(&cards);
+    let mut state = test_ui_state_with_gnss();
+    state.handle_input(InputEvent::ShortPress, content);
+    let interface_menu_details = InterfaceMenuDetails::empty();
+
+    render_screen(
+        &mut display,
+        RenderFrame {
+            content,
+            battery: PowerSnapshot::UNKNOWN,
+            gnss: Some(GnssSnapshot::Searching { satellites: 7 }),
+            state: &state,
+            interface_menu_details: &interface_menu_details,
+            animation_ms: 0,
+        },
+    );
+
+    assert_eq!(
+        display.get_pixel(Point::new(0, GNSS_PANEL_TOP + 22)),
+        Some(BinaryColor::On)
+    );
+    assert_eq!(
+        display.get_pixel(Point::new(
+            NAME_BACKING_X,
+            FIRST_CARD_WITH_GNSS_TOP + NAME_BACKING_Y
+        )),
+        Some(BinaryColor::On)
+    );
+}
+
+#[test]
 fn render_marks_selected_card_below_global_row() {
     let mut display = MockDisplay::new();
     display.set_allow_overdraw(true);
@@ -10,7 +44,7 @@ fn render_marks_selected_card_below_global_row() {
     let mut state = test_ui_state();
     state.handle_input(InputEvent::ShortPress, content);
 
-    render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
+    render_with_state(&mut display, &cards, PowerSnapshot::UNKNOWN, &state);
 
     let selected_top = FIRST_CARD_WITH_GLOBAL_TOP;
     assert!(state
@@ -42,7 +76,7 @@ fn render_shows_selected_global_row() {
     let cards = [test_card("USB")];
     let state = test_ui_state();
 
-    render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
+    render_with_state(&mut display, &cards, PowerSnapshot::UNKNOWN, &state);
 
     assert!(state.global_selected());
     assert_eq!(
@@ -104,7 +138,7 @@ fn render_scrolls_local_docs_after_the_last_card() {
     render_with_local_docs(
         &mut display,
         &cards,
-        BatteryState::Unknown,
+        PowerSnapshot::UNKNOWN,
         &state,
         &local_docs,
     );
@@ -135,7 +169,7 @@ fn render_shows_local_docs_access_details() {
     render_with_local_docs(
         &mut display,
         &cards,
-        BatteryState::Unknown,
+        PowerSnapshot::UNKNOWN,
         &state,
         &local_docs,
     );
@@ -192,7 +226,7 @@ fn render_scrolls_global_row_out_of_card_window() {
     state.handle_input(InputEvent::ShortPress, content);
     state.handle_input(InputEvent::ShortPress, content);
 
-    render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
+    render_with_state(&mut display, &cards, PowerSnapshot::UNKNOWN, &state);
 
     assert!(state
         .selected_card(&cards)
@@ -218,7 +252,7 @@ fn render_shows_global_menu() {
     let mut state = test_ui_state();
     state.handle_input(InputEvent::LongPress, content);
 
-    render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
+    render_with_state(&mut display, &cards, PowerSnapshot::UNKNOWN, &state);
 
     assert_eq!(state.global_menu_selected_item(), Some(0));
     assert_eq!(
@@ -267,7 +301,7 @@ fn render_shows_selected_interface_menu() {
     state.handle_input(InputEvent::ShortPress, content);
     state.handle_input(InputEvent::LongPress, content);
 
-    render_with_state(&mut display, &cards, BatteryState::Unknown, &state);
+    render_with_state(&mut display, &cards, PowerSnapshot::UNKNOWN, &state);
 
     assert!(state
         .selected_card(&cards)
@@ -308,7 +342,13 @@ fn interface_menu_draws_detail_rows_below_actions() {
         ConnectionState::Connected,
     )]);
 
-    draw_interface_menu(&mut display, &card, POWER_MENU_ITEM, &details);
+    draw_interface_menu(
+        &mut display,
+        &card,
+        POWER_MENU_ITEM,
+        SharedInstanceConfigExport::Unavailable,
+        &details,
+    );
 
     let detail_top = MENU_ITEM_TOP + WIFI_MENU_ITEMS.len() as i32 * MENU_ITEM_STEP + 1;
     assert!(
@@ -343,7 +383,13 @@ fn failed_interface_menu_draws_failure_reason() {
     card.failure_reason = Some("BlueZ GATT Channels >1; set Channels=1");
 
     let details = InterfaceMenuDetails::empty();
-    draw_interface_menu(&mut display, &card, POWER_MENU_ITEM, &details);
+    draw_interface_menu(
+        &mut display,
+        &card,
+        POWER_MENU_ITEM,
+        SharedInstanceConfigExport::Unavailable,
+        &details,
+    );
 
     let reason_top = MENU_ITEM_TOP + POWER_ONLY_MENU_ITEMS.len() as i32 * MENU_ITEM_STEP - 1;
     assert!(

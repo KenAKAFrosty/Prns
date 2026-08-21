@@ -1,6 +1,10 @@
 use super::super::{CompletionPool, Fleet, ManifoldLaneSet, StaticManifoldLane};
 use super::*;
-use crate::engine::test_support::{bytes_from_hex, RNS_1_4_2_ANNOUNCE};
+use crate::engine::test_support::{
+    bytes_from_hex, fixed_secret_key, personal_node_destination, sealed_single_packet,
+    RNS_1_4_2_ANNOUNCE,
+};
+use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
@@ -8,8 +12,10 @@ use crate::interfaces::{
 };
 use crate::manifold::driver::EmbassyHost;
 use crate::manifold::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
-use crate::runtime::{Diagnostic, NoPersistence};
+use crate::routing::links::resources::ResourceStrategy;
+use crate::runtime::{Diagnostic, NoPersistence, ServeMyRequestEndpoints};
 use crate::storage::GrowableHeap;
+use crate::wire::{PacketType, WirePacketHeader};
 use embassy_futures::block_on;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
@@ -120,5 +126,99 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
         *heard.borrow(),
         1,
         "the node heard the announce the supervisor's peer carried in"
+    );
+}
+
+#[test]
+fn run_with_proof_decider_reaches_a_prove_if_recipe_destination() {
+    let notify: &'static Channel<Mtx, InterfaceId, 4> = leak(Channel::new());
+    let commands: &'static Channel<Mtx, IssuedCommand, 4> = leak(Channel::new());
+    let lifecycle: &'static Channel<Mtx, InterfaceLifecycle, 4> = leak(Channel::new());
+    let completion: &'static CompletionPool<Mtx, 4> = leak(CompletionPool::new());
+
+    static LANE: StaticManifoldLane<Mtx, FRAME, 4> = StaticManifoldLane::new();
+    let mut lanes: ManifoldLaneSet<Mtx, 1, 4> = ManifoldLaneSet::new();
+    let supervisor = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"proof-supervisor");
+    let supervisor_lane = lanes
+        .claim_supervisor(&LANE, supervisor, leak(Signal::new()))
+        .unwrap();
+    let handle = PrnsNodeHandle::new(commands.sender(), completion);
+    let manifold_wiring = lanes.into_manifold_wiring(
+        notify.receiver(),
+        commands.receiver(),
+        lifecycle.receiver(),
+        handle,
+    );
+    let mut fleet: Fleet<Mtx, FRAME, 4, 4> =
+        supervisor_lane.into_fleet(notify.sender(), lifecycle.sender());
+
+    let recipe = PrnsNodeRecipe {
+        transport_identity: None,
+        pre_configured_destinations: [PreConfiguredDestination::Single {
+            app_name: "personal",
+            aspects: &["node"],
+            identity: fixed_secret_key(),
+            announce_app_data: &[],
+            proof: crate::routing::ProofStrategy::ProveIf,
+            link_requests: crate::routing::LinkRequestPolicy::AcceptAll,
+            ratchet: crate::engine::RatchetPolicy::NoRatchets,
+            resource_strategy: ResourceStrategy::AcceptNone,
+            maximum_request_bytes: Default::default(),
+            request_endpoints: ServeMyRequestEndpoints::No,
+        }],
+        app_state: (),
+        storage: GrowableHeap,
+        request_endpoints: crate::request_endpoints![],
+        interfaces: crate::runtime::ManuallyAttached,
+        persistence: NoPersistence,
+        on_event: |_event: PrnsEvent<'_>, _state: &()| {},
+    };
+    let node: PrnsNode<_, _, _, _, _, _, 1, 1, 4, 4, 4, 4> = PrnsNode::new(
+        recipe,
+        manifold_wiring,
+        EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0)),
+    );
+
+    let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+    let raw = sealed_single_packet(
+        &identity,
+        personal_node_destination(),
+        b"embedded facade decision",
+    );
+    let peer = InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"proof-peer");
+    let proof = Rc::new(RefCell::new(None));
+    let proof_sink = proof.clone();
+    let drive = async move {
+        fleet.register_member(descriptor(peer)).await;
+        Timer::after(Duration::from_millis(40)).await;
+        fleet
+            .try_deliver_inbound(peer, &raw)
+            .expect("the peer frame enters the shared lane");
+        if let Ok(frame) = with_timeout(Duration::from_millis(300), fleet.next_outbound()).await {
+            *proof_sink.borrow_mut() = Some(frame.bytes().to_vec());
+        }
+    };
+
+    let decisions = Rc::new(RefCell::new(Vec::new()));
+    let decision_sink = decisions.clone();
+    let _ = block_on(with_timeout(
+        Duration::from_millis(600),
+        node.run_with_proof_decider(
+            move |request| {
+                decision_sink
+                    .borrow_mut()
+                    .extend_from_slice(request.plaintext);
+                true
+            },
+            drive,
+        ),
+    ));
+
+    assert_eq!(*decisions.borrow(), b"embedded facade decision");
+    let proof = proof.borrow();
+    let proof = proof.as_ref().expect("the accepted decision emits a proof");
+    assert_eq!(
+        WirePacketHeader::parse(proof).unwrap().0.packet_type,
+        PacketType::Proof
     );
 }
