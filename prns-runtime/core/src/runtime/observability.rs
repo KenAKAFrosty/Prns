@@ -440,6 +440,7 @@ impl From<&SendRequestFailure> for RuntimeOperationOutcome {
             SendRequestFailure::Culled => Self::Culled,
             SendRequestFailure::Timeout => Self::Timeout,
             SendRequestFailure::ResponseTooLarge => Self::ResponseTooLarge,
+            SendRequestFailure::ResourceCapacity => Self::Backpressure,
         }
     }
 }
@@ -578,6 +579,14 @@ mod tests {
                 RuntimeOperationOutcome::PeerRejected
             ),
             1
+        );
+    }
+
+    #[test]
+    fn response_resource_capacity_is_reported_as_backpressure() {
+        assert_eq!(
+            RuntimeOperationOutcome::from(&SendRequestFailure::ResourceCapacity),
+            RuntimeOperationOutcome::Backpressure,
         );
     }
 

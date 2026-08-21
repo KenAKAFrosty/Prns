@@ -330,6 +330,17 @@ impl<C: ReceiptTable> Receipts<C> {
         }
     }
 
+    /// The request's still-live response deadline before a Resource claims it.
+    /// Pending Resource offers use this as a hard ceiling on their shorter
+    /// admission wait.
+    pub fn pending_request_deadline(&self, request_id: RequestId) -> Option<InstantMillis> {
+        let index = self.request_row_index(request_id)?;
+        match self.table.deadlines().get(index)? {
+            ReceiptDeadline::Due(at) => Some(*at),
+            ReceiptDeadline::ClaimedByTransfer => None,
+        }
+    }
+
     /// RNS 1.4.2 `RequestReceipt.response_resource_progress`: accepting a response resource flips the request to `RECEIVING` and its own timeout stops.
     /// The transfer settles the row through every exit, so a claimed row cannot leak.
     pub fn claim_request_for_transfer(&mut self, request_id: RequestId) {

@@ -1,6 +1,7 @@
 use crate::engine::InstantMillis;
 use crate::routing::links::resources::table::{
-    ResourceBuffers, ResourceRowState, ResourceTable, ResourceTablePushError,
+    ResourceBuffers, ResourceRowState, ResourceTable, ResourceTableAdmission,
+    ResourceTablePushError,
 };
 use crate::routing::links::resources::{
     max_part_count, ResourceBufferShape, ResourceHash, MAP_HASH_LEN,
@@ -121,6 +122,16 @@ impl<
         index: usize,
     ) -> (&mut [u8], &mut State::StreamedOpenSlot) {
         (&mut self.transfers[index], &mut self.streamed_opens[index])
+    }
+
+    fn admission_for_shape(&self, shape: ResourceBufferShape) -> ResourceTableAdmission {
+        if shape.transfer_bytes() > TRANSFER_BYTES || shape.part_count() > MAX_PARTS {
+            ResourceTableAdmission::Impossible
+        } else if self.len >= SLOTS {
+            ResourceTableAdmission::TemporarilyFull
+        } else {
+            ResourceTableAdmission::Available
+        }
     }
 
     fn push(

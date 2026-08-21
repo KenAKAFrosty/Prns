@@ -645,6 +645,9 @@ fn request_error(error: personal_rns::SendError<SendRequestFailure>) -> crate::e
         personal_rns::SendError::Failed(SendRequestFailure::ResponseTooLarge) => {
             code_err(ErrorCode::ResponseTooLarge, "response is too large")
         }
+        personal_rns::SendError::Failed(SendRequestFailure::ResourceCapacity) => {
+            code_err(ErrorCode::ResourceTableFull, "resource capacity exhausted")
+        }
     }
 }
 

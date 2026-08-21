@@ -27,6 +27,22 @@ use crate::routing::links::LinkId;
 use crate::units::RttMillis;
 
 const INITIAL_NAMES_BYTES: usize = HASHMAP_MAX_LEN * MAP_HASH_LEN;
+const PENDING_RESOURCE_WAIT_CEILING_MS: u64 = 10_000;
+
+/// A pending advertisement gets two complete Resource advertisement-response
+/// windows, capped so admission pressure cannot pin metadata indefinitely.
+pub const fn pending_resource_wait_ms(rtt: RttMillis) -> u64 {
+    let calculated = rtt
+        .millis()
+        .saturating_mul(6)
+        .saturating_add(1_000)
+        .saturating_mul(2);
+    if calculated < PENDING_RESOURCE_WAIT_CEILING_MS {
+        calculated
+    } else {
+        PENDING_RESOURCE_WAIT_CEILING_MS
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
@@ -194,6 +210,14 @@ impl PendingResourceOffer {
         self.frozen_link_rtt
     }
 
+    pub const fn wait_deadline(&self) -> InstantMillis {
+        InstantMillis(
+            self.first_arrived_at
+                .0
+                .saturating_add(pending_resource_wait_ms(self.frozen_link_rtt)),
+        )
+    }
+
     pub const fn priority(&self) -> PendingResourcePriority {
         self.accepted.correlation.priority()
     }
@@ -263,6 +287,13 @@ impl<C: PendingResourceOfferTable> PendingResourceOffers<C> {
         self.table.offers()
     }
 
+    pub fn contains(&self, link_id: &LinkId, hash: &ResourceHash) -> bool {
+        self.table
+            .offers()
+            .iter()
+            .any(|offer| &offer.link_id() == link_id && &offer.hash() == hash)
+    }
+
     pub fn queue(&mut self, offer: PendingResourceOffer) -> QueuePendingResourceOfferOutcome {
         if self
             .table
@@ -291,6 +322,10 @@ impl<C: PendingResourceOfferTable> PendingResourceOffers<C> {
             .min_by_key(|(_, offer)| (offer.priority(), offer.first_arrived_at()))
             .map(|(index, _)| index)?;
         Some(self.table.swap_remove(index))
+    }
+
+    pub(crate) fn remove_at(&mut self, index: usize) -> PendingResourceOffer {
+        self.table.swap_remove(index)
     }
 
     pub fn remove_link(&mut self, link_id: &LinkId) -> usize {
@@ -569,7 +604,17 @@ mod tests {
         assert_eq!(pending.len(), 1);
         assert_eq!(pending.offers()[0].first_arrived_at(), InstantMillis(1_000));
         assert_eq!(pending.offers()[0].frozen_link_rtt(), RttMillis::new(250));
+        assert_eq!(pending.offers()[0].wait_deadline(), InstantMillis(6_000));
         assert_eq!(pending.offers()[0].accepted().sealed_transfer_bytes, 100);
+    }
+
+    #[test]
+    fn wait_budget_is_two_resource_windows_capped_at_ten_seconds() {
+        assert_eq!(pending_resource_wait_ms(RttMillis::new(0)), 2_000);
+        assert_eq!(pending_resource_wait_ms(RttMillis::new(250)), 5_000);
+        assert_eq!(pending_resource_wait_ms(RttMillis::new(666)), 9_992);
+        assert_eq!(pending_resource_wait_ms(RttMillis::new(667)), 10_000);
+        assert_eq!(pending_resource_wait_ms(RttMillis::new(u64::MAX)), 10_000);
     }
 
     #[test]

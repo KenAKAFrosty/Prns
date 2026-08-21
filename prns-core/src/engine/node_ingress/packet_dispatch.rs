@@ -368,6 +368,7 @@ impl<S: StorageLayout> EngineState<S> {
                 }));
                 settle(sink, id, Settlement::SendRequest(Ok(delivered)));
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+                wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::ResponseTooLarge { id, .. } => {
                 settle(
@@ -376,6 +377,7 @@ impl<S: StorageLayout> EngineState<S> {
                     Settlement::SendRequest(Err(SendRequestFailure::ResponseTooLarge)),
                 );
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+                wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::ChannelDataReceived {
                 link_id,
@@ -448,13 +450,37 @@ impl<S: StorageLayout> EngineState<S> {
                     has_metadata: accepted.has_metadata,
                 };
                 if (should_accept_resource)(&offer) {
-                    if let IngestPacketOutcome::OwesResourcePull { link_id, hash } =
-                        self.admit_accepted_resource(link_id, original_hash, accepted, now)
-                    {
-                        self.emit_resource_pull(&link_id, &hash, now, fill_entropy, sink);
-                        wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
-                        wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+                    match self.admit_or_queue_accepted_resource(
+                        link_id,
+                        original_hash,
+                        accepted,
+                        now,
+                    ) {
+                        IngestPacketOutcome::OwesResourcePull { link_id, hash } => {
+                            self.emit_resource_pull(&link_id, &hash, now, fill_entropy, sink);
+                        }
+                        IngestPacketOutcome::ResourceAdmissionPending => {}
+                        IngestPacketOutcome::ResourceCapacityRejected {
+                            link_id,
+                            hash,
+                            settled_request,
+                        } => {
+                            self.reject_offered_resource(&link_id, &hash, now, fill_entropy, sink);
+                            if let Some(id) = settled_request {
+                                settle(
+                                    sink,
+                                    id,
+                                    Settlement::SendRequest(Err(
+                                        SendRequestFailure::ResourceCapacity,
+                                    )),
+                                );
+                            }
+                        }
+                        IngestPacketOutcome::Ignored(_) => {}
+                        _ => unreachable!("Resource admission returned an unrelated outcome"),
                     }
+                    wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                    wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
                 } else {
                     self.reject_offered_resource(&link_id, &accepted.hash, now, fill_entropy, sink);
                 }
@@ -473,6 +499,26 @@ impl<S: StorageLayout> EngineState<S> {
                     );
                     wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
                 }
+                wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+            }
+            IngestPacketOutcome::ResourceAdmissionPending => {
+                wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+            }
+            IngestPacketOutcome::ResourceCapacityRejected {
+                link_id,
+                hash,
+                settled_request,
+            } => {
+                self.reject_offered_resource(&link_id, &hash, now, fill_entropy, sink);
+                if let Some(id) = settled_request {
+                    settle(
+                        sink,
+                        id,
+                        Settlement::SendRequest(Err(SendRequestFailure::ResourceCapacity)),
+                    );
+                    wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+                }
+                wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::OwesResourceAssembly { link_id, hash } => {
                 self.conclude_resource(&link_id, &hash, now, sink);
@@ -624,6 +670,7 @@ impl<S: StorageLayout> EngineState<S> {
                     link_id,
                     reason: LinkClosedReason::PeerClosed,
                 }));
+                wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::OwesLinkClose { link_id, reason } => {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];

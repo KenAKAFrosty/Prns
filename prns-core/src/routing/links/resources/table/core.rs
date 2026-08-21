@@ -258,6 +258,11 @@ pub trait ResourceTable<State: ResourceRowState> {
         index: usize,
     ) -> (&mut [u8], &mut State::StreamedOpenSlot);
 
+    /// Classify a validated row shape without reserving it. The pending-offer
+    /// scheduler uses this to distinguish burst pressure from an offer that
+    /// can never fit this storage recipe.
+    fn admission_for_shape(&self, shape: ResourceBufferShape) -> ResourceTableAdmission;
+
     fn push(
         &mut self,
         link_id: LinkId,
@@ -266,6 +271,13 @@ pub trait ResourceTable<State: ResourceRowState> {
         shape: ResourceBufferShape,
     ) -> Result<usize, ResourceTablePushError>;
     fn swap_remove(&mut self, index: usize);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceTableAdmission {
+    Available,
+    TemporarilyFull,
+    Impossible,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -667,6 +679,23 @@ pub enum AcceptIncomingResourceError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IncomingResourceAdmission {
+    Available,
+    AlreadyReceiving,
+    TemporarilyFull,
+    Impossible,
+    Malformed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IncomingResourceStorageAdmission {
+    Available,
+    TemporarilyFull,
+    Impossible,
+    Malformed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApplyHashmapUpdateError {
     BeyondPartCount,
     SkipsAhead,
@@ -691,7 +720,86 @@ pub struct IncomingResources<C: ResourceTable<IncomingResourceState>> {
     earliest_timeout: Option<InstantMillis>,
 }
 
+fn accepted_resource_shape(
+    offer: AcceptedResource<'_>,
+) -> Result<ResourceBufferShape, AcceptIncomingResourceError> {
+    let shape = ResourceBufferShape::try_for_transfer(offer.sealed_transfer_bytes, offer.sdu)
+        .map_err(|error| match error {
+            ResourceBufferShapeError::EmptyTransfer => AcceptIncomingResourceError::EmptyTransfer,
+            ResourceBufferShapeError::SduTooSmall => AcceptIncomingResourceError::SduTooSmall,
+            ResourceBufferShapeError::SizeOverflow => AcceptIncomingResourceError::TransferTooLarge,
+        })?;
+    if offer.part_count != shape.part_count() {
+        return Err(AcceptIncomingResourceError::PartCountMismatch);
+    }
+    if offer.initial_names.len() > HASHMAP_MAX_LEN * MAP_HASH_LEN {
+        return Err(AcceptIncomingResourceError::HashmapTooLong);
+    }
+    if !offer.initial_names.len().is_multiple_of(MAP_HASH_LEN) {
+        return Err(AcceptIncomingResourceError::HashmapRagged);
+    }
+    if offer.initial_names.len() / MAP_HASH_LEN > offer.part_count {
+        return Err(AcceptIncomingResourceError::HashmapBeyondPartCount);
+    }
+    Ok(shape)
+}
+
 impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
+    pub(crate) fn storage_admission_for(
+        &self,
+        offer: AcceptedResource<'_>,
+    ) -> IncomingResourceStorageAdmission {
+        let shape = match accepted_resource_shape(offer) {
+            Ok(shape) => shape,
+            Err(AcceptIncomingResourceError::TransferTooLarge) => {
+                return IncomingResourceStorageAdmission::Impossible
+            }
+            Err(
+                AcceptIncomingResourceError::TableFull
+                | AcceptIncomingResourceError::AlreadyReceiving
+                | AcceptIncomingResourceError::EmptyTransfer
+                | AcceptIncomingResourceError::SduTooSmall
+                | AcceptIncomingResourceError::PartCountMismatch
+                | AcceptIncomingResourceError::TooManyParts
+                | AcceptIncomingResourceError::HashmapTooLong
+                | AcceptIncomingResourceError::HashmapRagged
+                | AcceptIncomingResourceError::HashmapBeyondPartCount,
+            ) => return IncomingResourceStorageAdmission::Malformed,
+        };
+        match self.table.admission_for_shape(shape) {
+            ResourceTableAdmission::Available => IncomingResourceStorageAdmission::Available,
+            ResourceTableAdmission::TemporarilyFull => {
+                IncomingResourceStorageAdmission::TemporarilyFull
+            }
+            ResourceTableAdmission::Impossible => IncomingResourceStorageAdmission::Impossible,
+        }
+    }
+
+    pub(crate) fn admission_for(
+        &self,
+        link_id: &LinkId,
+        offer: AcceptedResource<'_>,
+    ) -> IncomingResourceAdmission {
+        let storage = self.storage_admission_for(offer);
+        let storage = match storage {
+            IncomingResourceStorageAdmission::Available => IncomingResourceAdmission::Available,
+            IncomingResourceStorageAdmission::TemporarilyFull => {
+                IncomingResourceAdmission::TemporarilyFull
+            }
+            IncomingResourceStorageAdmission::Impossible => {
+                return IncomingResourceAdmission::Impossible
+            }
+            IncomingResourceStorageAdmission::Malformed => {
+                return IncomingResourceAdmission::Malformed
+            }
+        };
+        if self.lookup(link_id, &offer.hash).is_some() {
+            IncomingResourceAdmission::AlreadyReceiving
+        } else {
+            storage
+        }
+    }
+
     /// The capacity and shape gate the engine asks at accept; policy gating happens before the offer ever reaches the table.
     /// The duplicate refusal is RNS 1.4.2 `Resource.accept`'s `has_incoming_resource` registration gate.
     pub fn accept(
@@ -699,29 +807,12 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
         link_id: LinkId,
         offer: AcceptedResource<'_>,
     ) -> Result<usize, AcceptIncomingResourceError> {
-        let shape = ResourceBufferShape::try_for_transfer(offer.sealed_transfer_bytes, offer.sdu)
-            .map_err(|error| match error {
-            ResourceBufferShapeError::EmptyTransfer => AcceptIncomingResourceError::EmptyTransfer,
-            ResourceBufferShapeError::SduTooSmall => AcceptIncomingResourceError::SduTooSmall,
-            ResourceBufferShapeError::SizeOverflow => AcceptIncomingResourceError::TransferTooLarge,
-        })?;
-        if offer.part_count != shape.part_count() {
-            return Err(AcceptIncomingResourceError::PartCountMismatch);
-        }
+        let shape = accepted_resource_shape(offer)?;
         if shape.transfer_bytes() > self.table.transfer_capacity() {
             return Err(AcceptIncomingResourceError::TransferTooLarge);
         }
         if shape.part_count() > self.table.part_capacity() {
             return Err(AcceptIncomingResourceError::TooManyParts);
-        }
-        if offer.initial_names.len() > HASHMAP_MAX_LEN * MAP_HASH_LEN {
-            return Err(AcceptIncomingResourceError::HashmapTooLong);
-        }
-        if !offer.initial_names.len().is_multiple_of(MAP_HASH_LEN) {
-            return Err(AcceptIncomingResourceError::HashmapRagged);
-        }
-        if offer.initial_names.len() / MAP_HASH_LEN > offer.part_count {
-            return Err(AcceptIncomingResourceError::HashmapBeyondPartCount);
         }
 
         if self.lookup(&link_id, &offer.hash).is_some() {

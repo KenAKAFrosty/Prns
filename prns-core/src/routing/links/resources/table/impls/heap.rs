@@ -3,7 +3,8 @@ use alloc::vec::Vec;
 
 use crate::engine::InstantMillis;
 use crate::routing::links::resources::table::{
-    ResourceBuffers, ResourceRowState, ResourceTable, ResourceTablePushError,
+    ResourceBuffers, ResourceRowState, ResourceTable, ResourceTableAdmission,
+    ResourceTablePushError,
 };
 use crate::routing::links::resources::{
     checked_resource_buffer_bytes, max_part_count, sealed_transfer_bytes, ResourceBufferShape,
@@ -124,6 +125,21 @@ impl<State: ResourceRowState + Default> ResourceTable<State> for HeapResourceTab
         index: usize,
     ) -> (&mut [u8], &mut State::StreamedOpenSlot) {
         (&mut self.transfers[index], &mut self.streamed_opens[index])
+    }
+
+    fn admission_for_shape(&self, shape: ResourceBufferShape) -> ResourceTableAdmission {
+        if shape.transfer_bytes() > HEAP_TRANSFER_CAPACITY
+            || shape.part_count() > HEAP_PART_CAPACITY
+            || shape.buffer_bytes() > self.memory_limit
+        {
+            ResourceTableAdmission::Impossible
+        } else if self.len() >= self.capacity()
+            || shape.buffer_bytes() > self.memory_limit.saturating_sub(self.active_buffer_bytes)
+        {
+            ResourceTableAdmission::TemporarilyFull
+        } else {
+            ResourceTableAdmission::Available
+        }
     }
 
     fn push(
@@ -278,6 +294,26 @@ mod tests {
         assert_eq!(table.active_buffer_bytes, 149);
         table.push(link(3), hash(3), 33, shape(144, 464)).unwrap();
         assert_eq!(table.active_buffer_bytes, 298);
+    }
+
+    #[test]
+    fn admission_distinguishes_live_pressure_from_an_impossible_row() {
+        let mut table = HeapResourceTable::<u8>::default();
+        table.set_memory_limit(298);
+        assert_eq!(
+            table.admission_for_shape(shape(144, 464)),
+            ResourceTableAdmission::Available,
+        );
+        table.push(link(1), hash(1), 11, shape(144, 464)).unwrap();
+        table.push(link(2), hash(2), 22, shape(144, 464)).unwrap();
+        assert_eq!(
+            table.admission_for_shape(shape(144, 464)),
+            ResourceTableAdmission::TemporarilyFull,
+        );
+        assert_eq!(
+            table.admission_for_shape(shape(300, 464)),
+            ResourceTableAdmission::Impossible,
+        );
     }
 
     #[test]

@@ -2598,6 +2598,9 @@ fn request_failure(error: SendError<SendRequestFailure>) -> CommandFailure {
         SendError::Failed(SendRequestFailure::Culled) => CommandFailure::PacketCulled,
         SendError::Failed(SendRequestFailure::Timeout) => CommandFailure::DeliveryTimedOut,
         SendError::Failed(SendRequestFailure::ResponseTooLarge) => CommandFailure::ResponseTooLarge,
+        SendError::Failed(SendRequestFailure::ResourceCapacity) => {
+            CommandFailure::ResourceTableFull
+        }
     }
 }
 

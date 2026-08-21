@@ -168,7 +168,12 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn resource_deadlines_wake(&self) -> WakeSchedule {
         let outgoing = self.outgoing_resources.earliest_timeout_at();
         let incoming = self.incoming_resources.earliest_timeout_at();
-        WakeSchedule::from_deadline(match (outgoing, incoming) {
+        let active = match (outgoing, incoming) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        let pending = self.pending_resource_deadline();
+        WakeSchedule::from_deadline(match (active, pending) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         })
