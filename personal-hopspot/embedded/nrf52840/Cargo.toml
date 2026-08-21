@@ -68,6 +68,7 @@ cortex-m-rt = "0.7"
 panic-halt = "1.0"
 
 embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread"] }
+embassy-embedded-hal = "0.6"
 embassy-time = { version = "0.5" }
 embassy-nrf = { version = "0.10", features = ["nrf52840", "time-driver-rtc1", "gpiote", "unstable-pac"] }
 embassy-usb = { version = "0.6" }

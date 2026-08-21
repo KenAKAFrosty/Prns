@@ -34,6 +34,7 @@ pub(crate) type T1000eLoraInterface = LoRaInterface<'static, T1000eRadio>;
 type T1000eUsbDriver = Driver<'static, HardwareVbusDetect>;
 
 pub(crate) struct T1000eHardware {
+    pub(crate) flash: Nvmc<'static>,
     pub(crate) usb: T1000eUsbDriver,
     pub(crate) radio: T1000eRadio,
     pub(crate) status_led: StatusLed,
@@ -52,10 +53,11 @@ impl T1000eBoard {
         nrf_config.time_interrupt_priority = Priority::P2;
         let peripherals = embassy_nrf::init(nrf_config);
 
-        let identity = {
+        let (identity, flash) = {
             let mut nvmc = Nvmc::new(peripherals.NVMC);
             let mut rng = Rng::new_blocking(peripherals.RNG);
-            bootstrap(&mut nvmc, &mut rng)
+            let identity = bootstrap(&mut nvmc, &mut rng);
+            (identity, nvmc)
         };
 
         interrupt::USBD.set_priority(Priority::P2);
@@ -117,6 +119,7 @@ impl T1000eBoard {
         (
             identity,
             T1000eHardware {
+                flash,
                 usb,
                 radio,
                 status_led,

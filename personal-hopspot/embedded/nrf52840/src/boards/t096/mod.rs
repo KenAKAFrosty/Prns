@@ -3,6 +3,7 @@ mod gnss;
 mod hardware;
 mod identity;
 mod input;
+mod persistence;
 
 use personal_rns::interfaces::InterfaceId;
 
@@ -19,6 +20,7 @@ pub(crate) use identity::{
     bootstrap_ble_identity, bootstrap_node_identity, startup_notice as identity_startup_notice,
 };
 pub(crate) use input::{drive_button, EVENTS as INPUT_EVENTS};
+pub(crate) use persistence::{new as new_persistence, persistence_state, Persistence, SharedFlash};
 
 pub(crate) const USB_MANUFACTURER: &str = "Stay Personal";
 pub(crate) const USB_PRODUCT: &str = "Personal Hopspot (Heltec T096)";

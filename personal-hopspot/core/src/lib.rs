@@ -23,8 +23,9 @@ pub use flash_identity::{
     bootstrap_flash_ble_identity, bootstrap_flash_node_identity, FlashIdentityError,
 };
 pub use flash_layout::{
-    HopspotS3FlashLayout, HOPSPOT_FLASH_PAGE_BYTES, NRF52840_RADIO_PROFILE_PAGES,
-    S3_16_MIB_FLASH_LAYOUT, S3_8_MIB_FLASH_LAYOUT, T_ECHO_JOURNAL_LAYOUT, T_ECHO_MIN_ARENA_BYTES,
+    HopspotS3FlashLayout, HEADLESS_NRF52840_MIN_ARENA_BYTES, HOPSPOT_FLASH_PAGE_BYTES,
+    NRF52840_RADIO_PROFILE_PAGES, S3_16_MIB_FLASH_LAYOUT, S3_8_MIB_FLASH_LAYOUT,
+    T096_JOURNAL_LAYOUT, T1000E_JOURNAL_LAYOUT, T_ECHO_JOURNAL_LAYOUT, T_ECHO_MIN_ARENA_BYTES,
 };
 #[cfg(feature = "host")]
 pub use identity::{

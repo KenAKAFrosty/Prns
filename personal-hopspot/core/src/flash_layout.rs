@@ -47,6 +47,22 @@ pub const T_ECHO_JOURNAL_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
     ],
 );
 
+pub const HEADLESS_NRF52840_MIN_ARENA_BYTES: usize = 2 * HOPSPOT_FLASH_PAGE_BYTES;
+pub const T096_JOURNAL_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
+    [0xE2000, 0xE3000],
+    [
+        FlashArenaRange::new(0xE4000, 0xE6000),
+        FlashArenaRange::new(0xE6000, 0xE8000),
+    ],
+);
+pub const T1000E_JOURNAL_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
+    [0xEA000, 0xEB000],
+    [
+        FlashArenaRange::new(0xEC000, 0xEE000),
+        FlashArenaRange::new(0xEE000, 0xF0000),
+    ],
+);
+
 const _: () = {
     const PAGE: u32 = HOPSPOT_FLASH_PAGE_BYTES as u32;
     assert!(S3_8_MIB_FLASH_LAYOUT.factory_end == S3_8_MIB_FLASH_LAYOUT.radio_profile_pages[0]);
@@ -141,5 +157,33 @@ mod tests {
         );
         assert_eq!(0xEB000 + HOPSPOT_FLASH_PAGE_BYTES as u32, 0xEC000);
         assert_eq!(0xEC000 + HOPSPOT_FLASH_PAGE_BYTES as u32, 0xED000);
+    }
+
+    #[test]
+    fn headless_nrf52840_journals_are_contiguous_and_end_at_identity_storage() {
+        for (layout, expected_start, expected_end) in [
+            (T096_JOURNAL_LAYOUT, 0xE2000, 0xE8000),
+            (T1000E_JOURNAL_LAYOUT, 0xEA000, 0xF0000),
+        ] {
+            assert_eq!(layout.timebase_regions[0], expected_start);
+            assert_eq!(
+                layout.timebase_regions[0] + HOPSPOT_FLASH_PAGE_BYTES as u32,
+                layout.timebase_regions[1]
+            );
+            assert_eq!(
+                layout.timebase_regions[1] + HOPSPOT_FLASH_PAGE_BYTES as u32,
+                layout.arenas[0].start
+            );
+            assert_eq!(layout.arenas[0].end, layout.arenas[1].start);
+            assert_eq!(layout.arenas[1].end, expected_end);
+            assert_eq!(
+                layout.arenas[0].len() as usize,
+                HEADLESS_NRF52840_MIN_ARENA_BYTES
+            );
+            assert_eq!(
+                layout.arenas[1].len() as usize,
+                HEADLESS_NRF52840_MIN_ARENA_BYTES
+            );
+        }
     }
 }

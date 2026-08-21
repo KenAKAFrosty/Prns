@@ -28,7 +28,7 @@ use super::{Mtx, Storage, BLE_MANIFOLD_LANE, COMMANDS, COMPLETION, INTERFACE_STO
 pub(super) const INTERFACE_CAPACITY: usize = 2 + MEMBERS;
 pub(super) const LANE_COUNT: usize = 3;
 
-type SharedFlash = SharedNorFlash<'static, Mtx, Flash>;
+type SharedFlash = board::SharedFlash;
 type ProfileStore = hopspot::RadioProfileStore<SharedFlash>;
 
 pub(super) struct LoadedProfile {
@@ -56,10 +56,11 @@ pub(super) const fn heartbeat_illuminated_ms() -> u64 {
 
 pub(super) async fn maintain() {}
 
-pub(super) async fn load_profile(sd: &'static Softdevice) -> LoadedProfile {
+pub(super) async fn load_profile(sd: &'static Softdevice) -> (LoadedProfile, board::Persistence) {
     let flash = Flash::take(sd);
     static FLASH_STORAGE: StaticCell<Mutex<Mtx, Flash>> = StaticCell::new();
     let shared_flash = SharedNorFlash::new(FLASH_STORAGE.init(Mutex::new(flash)), 1024 * 1024);
+    let persistence = board::new_persistence(shared_flash);
     let mut store = hopspot::RadioProfileStore::new(shared_flash, board::RADIO_PROFILE_PAGES);
     let loaded = match store.load(DEFAULT_915_PROFILE).await {
         Ok(loaded) => loaded,
@@ -73,11 +74,14 @@ pub(super) async fn load_profile(sd: &'static Softdevice) -> LoadedProfile {
         hopspot::RadioProfileLoadNotice::Recovered => hopspot::UiNotice::ProfileRecovered,
         hopspot::RadioProfileLoadNotice::Reset => hopspot::UiNotice::ProfileReset,
     });
-    LoadedProfile {
-        store,
-        profile: loaded.profile,
-        startup_notice,
-    }
+    (
+        LoadedProfile {
+            store,
+            profile: loaded.profile,
+            startup_notice,
+        },
+        persistence,
+    )
 }
 
 #[allow(clippy::too_many_lines)]
@@ -108,6 +112,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
         });
         let mut activity = hopspot::CardActivityTracker::<{ MEMBERS + 4 }>::new();
         let mut battery_gauge = hopspot::BatteryGauge::lipo();
+        let mut persistence_notice = hopspot::PersistenceNotice::new();
         let mut working_lora_profile = lora_profile;
         let startup_notice = identity_startup_notice.or(profile_startup_notice);
         let mut pending_startup_notice = identity_startup_notice
@@ -147,6 +152,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                 local_docs: None,
             };
             ui_state.sync(content);
+            persistence_notice.update(&mut ui_state, board::persistence_state(), now_ms);
             let mut details = hopspot::snapshots_to_interface_menu_details(
                 ui_state.selected_card(content.cards),
                 &snapshots,
