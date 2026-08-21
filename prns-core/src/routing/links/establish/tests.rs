@@ -18,6 +18,7 @@ use crate::routing::links::table::LinkRole;
 use crate::routing::upstream_app_destinations::LinkRequestPolicy;
 use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::routing::RouteResponsiveness;
+use crate::storage::TestFixedStorage;
 use crate::units::RttMillis;
 use crate::wire::{DestinationHash, PropagationType, TransportId, WirePacketHeader};
 
@@ -548,6 +549,116 @@ fn a_link_request_for_a_held_destination_owes_its_proof() {
         IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
         "a replayed request deduplicates away",
     );
+}
+
+#[test]
+fn a_full_responder_link_table_withholds_the_proof_and_preserves_its_row() {
+    type OneLinkStorage = TestFixedStorage<64, 64, 4096, 8, 8, 128, 8, 8, 8, 8, 16, 1>;
+
+    let mut initiator = neighbor_with_a_route();
+    let make_request =
+        |initiator: &mut EngineState<TestStorageLayout>, command_id, entropy_fill: u8| {
+            let mut entropy = [entropy_fill; EstablishLinkEntropy::LEN];
+            entropy[32..].fill(entropy_fill.wrapping_add(1));
+            let mut wire = [0u8; BROADCAST_MTU];
+            let dispatch = initiator
+                .write_commanded_link_request(
+                    CommandId(command_id),
+                    &establish(),
+                    InstantMillis(1_000 + command_id),
+                    EstablishLinkEntropy::new(entropy),
+                    AttachedInterfaces::new(&arrival_interfaces()),
+                    &mut wire,
+                )
+                .dispatched();
+            (wire[..dispatch.wire_bytes].to_vec(), dispatch.link_id)
+        };
+
+    let mut responder = EngineState::<OneLinkStorage>::new(fixed_secret_key());
+    let identity = responder.held_identity_hashes()[0];
+    responder
+        .register_single_destination(
+            &identity,
+            "personal",
+            &["node"],
+            b"hello-personal",
+            ProofStrategy::ProveNone,
+            LinkRequestPolicy::AcceptAll,
+            crate::engine::RatchetPolicy::NoRatchets,
+        )
+        .unwrap();
+
+    let accept = |responder: &mut EngineState<OneLinkStorage>, wire: &mut [u8], arrived_at| {
+        let outcome = responder.ingest_packet_with(
+            InboundPacket {
+                arrived_at: InstantMillis(arrived_at),
+                source_interface: arrival(),
+                bytes: wire,
+            },
+            &mut |_| {},
+            AttachedInterfaces::new(&arrival_interfaces()),
+            &mut |_| {},
+            None,
+        );
+        let IngestPacketOutcome::OwesLinkProof(accepted) = outcome else {
+            panic!("the local destination must accept this link request");
+        };
+        accepted
+    };
+
+    let (mut first_wire, first_link_id) = make_request(&mut initiator, 7, 0x71);
+    let first = accept(&mut responder, &mut first_wire, 2_000);
+    let mut proof = [0u8; BROADCAST_MTU];
+    responder
+        .write_owed_link_proof(
+            &first,
+            X25519SecretKey::new([0x81; X25519SecretKey::LEN]),
+            BROADCAST_MTU,
+            &mut proof,
+        )
+        .unwrap();
+    assert_eq!(responder.links.len(), 1);
+
+    let (mut second_wire, second_link_id) = make_request(&mut initiator, 8, 0x72);
+    let second = accept(&mut responder, &mut second_wire, 3_000);
+    assert_eq!(
+        responder.write_owed_link_proof(
+            &second,
+            X25519SecretKey::new([0x82; X25519SecretKey::LEN]),
+            BROADCAST_MTU,
+            &mut proof,
+        ),
+        Err(WriteLinkProofError::LinkTableFull),
+    );
+    assert_eq!(responder.links.len(), 1);
+    assert!(responder.links.phase_for(&first_link_id).is_some());
+    assert!(responder.links.phase_for(&second_link_id).is_none());
+    let (mut third_wire, third_link_id) = make_request(&mut initiator, 9, 0x73);
+    let mut sent = std::vec::Vec::new();
+    responder.ingest_packet_into(
+        InboundPacket {
+            arrived_at: InstantMillis(4_000),
+            source_interface: arrival(),
+            bytes: &mut third_wire,
+        },
+        IngestIo {
+            interfaces: AttachedInterfaces::new(&arrival_interfaces()),
+            now: InstantMillis(4_000),
+            fill_entropy: &mut |bytes| bytes.fill(0x83),
+            should_prove: &mut |_| false,
+            should_accept_resource: &mut |_| false,
+            sink: &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
+                    sent.push(bytes.to_vec());
+                }
+            },
+        },
+    );
+
+    assert!(sent.is_empty(), "a proof cannot escape without a link row");
+    assert_eq!(responder.links.len(), 1);
+    assert!(responder.links.phase_for(&first_link_id).is_some());
+    assert!(responder.links.phase_for(&third_link_id).is_none());
 }
 
 #[test]
