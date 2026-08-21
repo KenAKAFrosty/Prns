@@ -19,6 +19,13 @@ pub enum IfacSizeError {
     TooLarge,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum IfacMaskError {
+    PacketTooShort,
+    LengthOverflow,
+    OutputTooSmall { required: usize, available: usize },
+}
+
 impl IfacSize {
     pub const MIN: Self = Self(1);
     pub const NARROW: Self = Self(8);
@@ -57,6 +64,12 @@ const HEADER_HOPS_INDEX: usize = 1;
 const IFAC_START: usize = HEADER_HOPS_INDEX + 1;
 const HMAC_SHA256_OUTPUT_LEN: usize = 32;
 const SIGNATURE_BYTE_LEN: usize = 64;
+
+fn masked_packet_len(clean_len: usize, ifac_size: IfacSize) -> Result<usize, IfacMaskError> {
+    clean_len
+        .checked_add(ifac_size.bytes())
+        .ok_or(IfacMaskError::LengthOverflow)
+}
 
 pub struct InterfaceIfac {
     pub id: crate::interfaces::InterfaceId,
@@ -119,10 +132,20 @@ impl IfacContext {
     }
 
     pub fn mask_outbound(&self, clean: &[u8], out: &mut [u8]) -> Option<usize> {
+        self.try_mask_outbound(clean, out).ok()
+    }
+
+    pub fn try_mask_outbound(&self, clean: &[u8], out: &mut [u8]) -> Result<usize, IfacMaskError> {
         let size = self.size.bytes();
-        let total = clean.len().checked_add(size)?;
-        if clean.len() <= IFAC_START || out.len() < total {
-            return None;
+        let total = masked_packet_len(clean.len(), self.size)?;
+        if clean.len() <= IFAC_START {
+            return Err(IfacMaskError::PacketTooShort);
+        }
+        if out.len() < total {
+            return Err(IfacMaskError::OutputTooSmall {
+                required: total,
+                available: out.len(),
+            });
         }
         let signature = self.identity.sign(clean);
         let ifac = &signature.0[SIGNATURE_BYTE_LEN - size..];
@@ -134,7 +157,7 @@ impl IfacContext {
         out[ifac_end..total].copy_from_slice(&clean[IFAC_START..]);
         apply_rns_mask(ifac, &self.key[..], &mut out[..total], IFAC_START..ifac_end);
         out[HEADER_FLAGS_INDEX] |= IFAC_FLAG;
-        Some(total)
+        Ok(total)
     }
 
     pub fn unmask_inbound(&self, wire: &[u8], out: &mut [u8]) -> Option<usize> {
@@ -316,6 +339,30 @@ mod tests {
         assert!(ctx
             .unmask_inbound(&bytes_from_hex(REFERENCE_MASKED)[..10], &mut out)
             .is_none());
+    }
+
+    #[test]
+    fn checked_masking_distinguishes_invalid_input_from_insufficient_output() {
+        let ctx = testnet();
+        let mut out = [0u8; TEST_MASK_LEN];
+        assert_eq!(
+            ctx.try_mask_outbound(&[0u8; IFAC_START], &mut out),
+            Err(IfacMaskError::PacketTooShort)
+        );
+
+        let clean = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
+        let available = clean.len() + IfacSize::NARROW.bytes() - 1;
+        assert_eq!(
+            ctx.try_mask_outbound(&clean, &mut out[..available]),
+            Err(IfacMaskError::OutputTooSmall {
+                required: available + 1,
+                available,
+            })
+        );
+        assert_eq!(
+            masked_packet_len(usize::MAX, IfacSize::MIN),
+            Err(IfacMaskError::LengthOverflow)
+        );
     }
 
     #[test]

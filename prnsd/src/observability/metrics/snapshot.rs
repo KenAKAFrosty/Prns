@@ -438,6 +438,11 @@ impl MetricsReporter {
                 snapshot.egress.missing_lane_drops,
                 previous.map(|metrics| metrics.missing_lane_drops),
             ),
+            (
+                "ifac_rejected",
+                snapshot.egress.ifac_rejected_frames,
+                previous.map(|metrics| metrics.ifac_rejected_frames),
+            ),
         ] {
             add_delta(
                 &self.instruments.egress_frames,

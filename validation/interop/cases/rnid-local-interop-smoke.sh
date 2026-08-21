@@ -106,7 +106,7 @@ done
 
 $BIN id -i "$PRIVATE" -e "$PLAINTEXT" -O > "$WORK/stdout.rfe" 2> "$WORK/stdout.err"
 $PYTHON "$ORACLE" decrypt "$PRIVATE" "$WORK/stdout.rfe" "$PLAINTEXT"
-$BIN id -M "$(xxd -p -c 128 "$PRIVATE")" -s --raw -I -O < "$CANDIDATE_MESSAGE" > "$WORK/stdin.rsg"
+$BIN id -M "$($PYTHON -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).read_bytes().hex())' "$PRIVATE")" -s --raw -I -O < "$CANDIDATE_MESSAGE" > "$WORK/stdin.rsg"
 $PYTHON "$ORACLE" verify "$PRIVATE" "$CANDIDATE_MESSAGE" "$WORK/stdin.rsg"
 
 $BIN id -g "$WORK/generated.rid" > "$WORK/generate.out"

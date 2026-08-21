@@ -115,6 +115,24 @@ async fn main() {
         .expect("the shared-instance RPC listener binds");
     tokio::spawn(rpc.run());
 
+    let metrics_handle = handle.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        loop {
+            interval.tick().await;
+            if let Some(snapshot) = metrics_handle.metrics_snapshot().await {
+                println!(
+                    "EGRESS_METRICS enqueued={} unavailable={} lane_full={} lane_missing={} ifac_rejected={}",
+                    snapshot.egress.enqueued_frames,
+                    snapshot.egress.unavailable_frame_skips,
+                    snapshot.egress.full_lane_drops,
+                    snapshot.egress.missing_lane_drops,
+                    snapshot.egress.ifac_rejected_frames,
+                );
+            }
+        }
+    });
+
     println!("READY bridge local=127.0.0.1:{local_port} rpc=127.0.0.1:{rpc_port} peer={peer_addr}");
     if let Err(error) = node.run().await {
         eprintln!("node stopped: {error}");

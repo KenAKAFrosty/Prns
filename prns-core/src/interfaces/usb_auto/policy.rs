@@ -4,10 +4,17 @@ use crate::interfaces::{
     InterfaceMode, MtuPolicy, TransportCapability,
 };
 
-pub const HOST_USB_BITRATE_BPS: BitrateBps = BitrateBps::guess(1_000_000_000);
+const FULL_SPEED_BULK_PACKETS_PER_FRAME: u64 = 19;
+const FULL_SPEED_BULK_PACKET_BYTES: u64 = 64;
+const USB_FRAMES_PER_SECOND: u64 = 1_000;
+const FULL_SPEED_BULK_CEILING_BPS: BitrateBps = BitrateBps::guess(
+    FULL_SPEED_BULK_PACKETS_PER_FRAME * FULL_SPEED_BULK_PACKET_BYTES * 8 * USB_FRAMES_PER_SECOND,
+);
+
+pub const HOST_USB_BITRATE_BPS: BitrateBps = FULL_SPEED_BULK_CEILING_BPS;
 pub const HOST_USB_HW_MTU: usize = 8_192;
 pub const DEVICE_USB_HW_MTU: usize = 8_192;
-pub const DEVICE_USB_BITRATE_BPS: BitrateBps = BitrateBps::guess(6_000_000);
+pub const DEVICE_USB_BITRATE_BPS: BitrateBps = FULL_SPEED_BULK_CEILING_BPS;
 
 pub fn host_descriptor(id: InterfaceId) -> InterfaceDescriptor {
     HOST_DEFAULTS

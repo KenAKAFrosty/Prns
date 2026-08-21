@@ -24,12 +24,18 @@ free_port() {
     "$PYTHON" -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'
 }
 
-wait_for_port() {
-    local port="$1"
+wait_for_marker() {
+    local pid="$1"
+    local log="$2"
+    local marker="$3"
+    local failure="$4"
     for _ in $(seq 1 150); do
-        "$PYTHON" -c 'import socket, sys; sock = socket.socket(); sock.settimeout(0.1); sys.exit(sock.connect_ex(("127.0.0.1", int(sys.argv[1]))))' "$port" && return 0
+        grep -Fq "$marker" "$log" && return 0
+        kill -0 "$pid" 2>/dev/null || break
         sleep 0.1
     done
+    echo "FAIL: $failure"
+    tail -30 "$log"
     return 1
 }
 
@@ -37,15 +43,17 @@ wait_for_port() {
 
 PUBLISHER_SERVER="$WORK/prns-publisher"
 PUBLISHER_CLIENT="$WORK/stock-client"
+PUBLISHER_LOG="$WORK/prns-publisher.log"
 PUBLISHER_PORT="$(free_port)"
 PUBLISHER_SOURCE="$($PYTHON "$CLIENT" prepare-prns-publisher "$PUBLISHER_SERVER" "$PUBLISHER_CLIENT" "$PUBLISHER_PORT")"
-"$PRNSD" run --log-format json --config "$PUBLISHER_SERVER" &
+RUST_LOG=info "$PRNSD" run --log-format json --config "$PUBLISHER_SERVER" > "$PUBLISHER_LOG" 2>&1 &
 PRNS_PID=$!
-wait_for_port "$PUBLISHER_PORT" || { echo "FAIL: Prnsd publisher listener never became ready"; exit 1; }
+wait_for_marker "$PRNS_PID" "$PUBLISHER_LOG" '"event":"daemon_ready' "Prnsd publisher never became ready" || exit 1
 PUBLISHER_RESULT="$($PYTHON "$CLIENT" query "$PUBLISHER_CLIENT" "$PUBLISHER_SOURCE" 2>&1)"
 if [[ "$PUBLISHER_RESULT" != *"BLACKHOLE_PUBLISHER_OK"* ]]; then
     echo "FAIL: stock RNS did not receive Prnsd's blackhole list"
     echo "$PUBLISHER_RESULT"
+    tail -30 "$PUBLISHER_LOG"
     exit 1
 fi
 kill "$PRNS_PID" 2>/dev/null
@@ -54,20 +62,23 @@ PRNS_PID=""
 
 STOCK_SERVER="$WORK/stock-publisher"
 PRNS_CLIENT="$WORK/prns-client"
+STOCK_LOG="$WORK/stock-publisher.log"
+UPDATER_LOG="$WORK/prns-updater.log"
 STOCK_PORT="$(free_port)"
 STOCK_SOURCE="$($PYTHON "$CLIENT" prepare-stock-publisher "$STOCK_SERVER" "$PRNS_CLIENT" "$STOCK_PORT")"
-"$PYTHON" "$CLIENT" serve "$STOCK_SERVER" &
+"$PYTHON" "$CLIENT" serve "$STOCK_SERVER" > "$STOCK_LOG" 2>&1 &
 STOCK_PID=$!
-wait_for_port "$STOCK_PORT" || { echo "FAIL: stock RNS publisher listener never became ready"; exit 1; }
-"$PRNSD" run --log-format json --config "$PRNS_CLIENT" &
+wait_for_marker "$STOCK_PID" "$STOCK_LOG" "BLACKHOLE_SERVER_READY" "stock RNS publisher never became ready" || exit 1
+RUST_LOG=info "$PRNSD" run --log-format json --config "$PRNS_CLIENT" > "$UPDATER_LOG" 2>&1 &
 PRNS_PID=$!
+wait_for_marker "$PRNS_PID" "$UPDATER_LOG" '"event":"daemon_ready' "Prnsd updater never became ready" || exit 1
 SOURCE_FILE="$PRNS_CLIENT/storage/blackhole/$STOCK_SOURCE"
 for _ in $(seq 1 500); do
     [ -f "$SOURCE_FILE" ] && break
     kill -0 "$PRNS_PID" 2>/dev/null || break
     sleep 0.1
 done
-[ -f "$SOURCE_FILE" ] || { echo "FAIL: Prnsd did not persist the stock RNS source list"; exit 1; }
+[ -f "$SOURCE_FILE" ] || { echo "FAIL: Prnsd did not persist the stock RNS source list"; tail -30 "$UPDATER_LOG"; exit 1; }
 UPDATER_RESULT="$($PYTHON "$CLIENT" verify-source-file "$SOURCE_FILE" "$STOCK_SOURCE" 2>&1)"
 if [[ "$UPDATER_RESULT" != *"BLACKHOLE_UPDATER_OK"* ]]; then
     echo "FAIL: Prnsd's imported source file was not stock-compatible"

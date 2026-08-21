@@ -92,11 +92,14 @@ done
 OUT_OK=""; IN_OK=""
 grep -q "RESOURCE_OK" "$PEER_LOG" && OUT_OK=1
 grep -q "RESOURCE_OK" "$CLIENT_LOG" && IN_OK=1
+EGRESS_METRICS="$(grep 'EGRESS_METRICS' "$DAEMON_LOG" | tail -1)"
+[ -n "$EGRESS_METRICS" ] || { echo "FAIL: bridge did not publish egress diagnostics"; tail -30 "$DAEMON_LOG"; exit 1; }
 
 if [ -n "$OUT_OK" ] && [ -n "$IN_OK" ]; then
     echo "PASS: real RNS apps transferred multi-part resources through the shared instance both ways"
     echo "  local client -> peer: $(grep -o 'RESOURCE_OK [0-9]*' "$PEER_LOG" | head -1)"
     echo "  peer -> local client (inbound transit): $(grep -o 'RESOURCE_OK [0-9]*' "$CLIENT_LOG" | head -1)"
+    echo "  bridge: $EGRESS_METRICS"
     exit 0
 fi
 
