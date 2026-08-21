@@ -1,4 +1,5 @@
 mod persistence;
+mod sideband_join;
 mod worker;
 
 use core::fmt::Write as _;
@@ -18,6 +19,7 @@ use personal_rns::interfaces::bluetooth_auto::BleIdentity;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::manifold::tokio::TokioInterfaceStatus;
 use personal_rns::runtime::{PrnsNodeHandle, RuntimeHealth};
+use personal_rns::shared_instance::rns_rpc::RpcAuthenticationKey;
 use personal_rns::wifi_auto::AutoWifiStatus;
 use personal_rns::wifi_aware::WifiAwareStatus;
 use personal_rns::wifi_direct::WifiDirectStatus;
@@ -70,7 +72,8 @@ pub(super) struct EngineResources {
     pub(super) handle: PrnsNodeHandle,
     pub(super) destination: DestinationHash,
     pub(super) node_page_destination: DestinationHash,
-    pub(super) rpc_key: Vec<u8>,
+    pub(super) rpc_key: RpcAuthenticationKey,
+    pub(super) ports: EnginePorts,
     pub(super) persistence: PersistenceHealth,
 }
 
@@ -458,7 +461,14 @@ pub(crate) fn rpc_key_hex() -> Option<String> {
     let mut manager = lock_manager();
     manager.reap_finished();
     let resources = manager.process.as_ref()?.resources.as_ref()?;
-    Some(hex(&resources.rpc_key))
+    Some(hex(resources.rpc_key.as_bytes()))
+}
+
+pub(crate) fn sideband_join_config() -> Option<String> {
+    let mut manager = lock_manager();
+    manager.reap_finished();
+    let resources = manager.process.as_ref()?.resources.as_ref()?;
+    Some(sideband_join::render(&resources.rpc_key, resources.ports))
 }
 
 pub(crate) fn identity_snapshot() -> Option<EngineIdentitySnapshot> {
@@ -633,7 +643,7 @@ pub(crate) fn classify(id: InterfaceId) -> Option<(CardKind, CardLabel)> {
     }
     match id.kind() {
         Some(InterfaceKind::AutoWifi) => Some((CardKind::Wifi, card_label("LAN"))),
-        Some(InterfaceKind::LocalServer) => Some((CardKind::Tcp, card_label("Local"))),
+        Some(InterfaceKind::LocalServer) => Some((CardKind::SharedInstance, card_label("Local"))),
         Some(InterfaceKind::LocalClient) => Some((CardKind::Peer, card_label("App"))),
         Some(InterfaceKind::BluetoothAuto) => Some((CardKind::Ble, card_label("BLE"))),
         Some(InterfaceKind::WifiDirect) => Some((CardKind::Wifi, card_label("Direct"))),
@@ -697,6 +707,9 @@ mod tests {
         start_with_ports(storage_dir.clone(), EnginePorts::EPHEMERAL).unwrap();
         assert_eq!(engine_state(), MobileEngineState::Running);
         let first_key = rpc_key_hex().unwrap();
+        assert_eq!(first_key.len(), 64);
+        let first_sideband_config = sideband_join_config().unwrap();
+        assert!(first_sideband_config.contains(&format!("rpc_key = {first_key}")));
         let first_identity = identity_snapshot().unwrap();
         assert_eq!(persistence_snapshot().unwrap().successful_flushes, 1);
         stop().unwrap();
@@ -708,6 +721,7 @@ mod tests {
         start_with_ports(storage_dir.clone(), EnginePorts::EPHEMERAL).unwrap();
         assert_eq!(engine_state(), MobileEngineState::Running);
         assert_eq!(rpc_key_hex().unwrap(), first_key);
+        assert_eq!(sideband_join_config().unwrap(), first_sideband_config);
         assert_eq!(identity_snapshot().unwrap(), first_identity);
         let persistence = persistence_snapshot().unwrap();
         assert_eq!(persistence.restore.refused, 0);

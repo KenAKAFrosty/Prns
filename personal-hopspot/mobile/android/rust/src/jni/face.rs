@@ -9,7 +9,7 @@ use personal_hopspot_core::{
 use crate::engine::{
     ble_identity_hex, delivery_destination_hex, engine_state, last_failure, node_identity_hash_hex,
     node_page_destination_hex, persistence_snapshot, rpc_key_hex, runtime_health,
-    wifi_aware_failure_reason, wifi_direct_failure_reason,
+    sideband_join_config, wifi_aware_failure_reason, wifi_direct_failure_reason,
 };
 use crate::face::HopspotFace;
 
@@ -140,6 +140,14 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeActionAnnoun
     _class: JClass,
 ) -> jint {
     MobileActionCode::Announce.code()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeActionCopySharedInstanceConfigCode(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    MobileActionCode::CopySharedInstanceConfig.code()
 }
 
 #[no_mangle]
@@ -341,6 +349,16 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeRpcKeyHex(
 ) -> jstring {
     rpc_key_hex()
         .and_then(|key| env.new_string(key).ok())
+        .map_or(core::ptr::null_mut(), JString::into_raw)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeSidebandJoinConfig(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    sideband_join_config()
+        .and_then(|config| env.new_string(config).ok())
         .map_or(core::ptr::null_mut(), JString::into_raw)
 }
 

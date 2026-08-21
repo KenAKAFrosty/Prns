@@ -42,6 +42,7 @@ fn ui_state() -> UiState {
         storage_limits: <GrowableHeap as StorageLayout>::LIMITS,
         display_power_control: DisplayPowerControl::Unavailable,
         access_point: AccessPointState::Unsupported,
+        shared_instance_config_export: screen::SharedInstanceConfigExport::Unavailable,
     })
 }
 
@@ -652,6 +653,7 @@ pub(super) fn run_window(handles: WindowHandles) {
         }
         UiAction::SwapRadioMode => {}
         UiAction::OpenDocs => {}
+        UiAction::CopySharedInstanceConfig => {}
     };
 
     let mut ui_state = ui_state();

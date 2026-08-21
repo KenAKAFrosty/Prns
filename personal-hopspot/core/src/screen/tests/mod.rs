@@ -45,14 +45,14 @@ use super::state::lora::{
 use super::state::{
     UiMode, ANNOUNCE_MENU_ITEM, LORA_RESET_MENU_ITEM, LORA_TUNE_MENU_ITEM, OLED_AUTO_OFF_MENU_ITEM,
     OLED_OFF_MENU_ITEM, POWER_MENU_ITEM, POWER_ONLY_MENU_ITEMS, RADIO_MENU_ITEM_NO_DISPLAY,
-    SLEEP_MENU_ITEM, STATION_UPLINK_MENU_ITEM, WIFI_MENU_ITEMS,
+    SHARED_INSTANCE_CONFIG_MENU_ITEM, SLEEP_MENU_ITEM, STATION_UPLINK_MENU_ITEM, WIFI_MENU_ITEMS,
 };
 use super::{
     apply_and_persist_radio_profile, card_label, render as render_screen, sort_cards_for_display,
     AccessPointState, BluetoothRecoveryMenuDetails, Card, CardActivityTracker, CardKind,
     DisplayPowerControl, InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails,
     LocalDocsAccess, PersistenceNotice, RadioProfileChangeResult, RenderFrame, ScreenContent,
-    UiAction, UiConfiguration, UiNotice, UiState,
+    SharedInstanceConfigExport, UiAction, UiConfiguration, UiNotice, UiState,
 };
 
 const TEST_WIDTH: usize = WIDTH as usize;
@@ -179,6 +179,7 @@ fn test_ui_state() -> UiState {
         storage_limits: DisplayedStorageLimits::DYNAMIC,
         display_power_control: DisplayPowerControl::Unavailable,
         access_point: AccessPointState::Unsupported,
+        shared_instance_config_export: SharedInstanceConfigExport::Unavailable,
     })
 }
 
@@ -187,6 +188,7 @@ fn test_ui_state_with_display_power() -> UiState {
         storage_limits: DisplayedStorageLimits::DYNAMIC,
         display_power_control: DisplayPowerControl::Available,
         access_point: AccessPointState::Unsupported,
+        shared_instance_config_export: SharedInstanceConfigExport::Unavailable,
     })
 }
 
@@ -195,6 +197,16 @@ fn test_ui_state_with_access_point(access_point: AccessPointState) -> UiState {
         storage_limits: DisplayedStorageLimits::DYNAMIC,
         display_power_control: DisplayPowerControl::Unavailable,
         access_point,
+        shared_instance_config_export: SharedInstanceConfigExport::Unavailable,
+    })
+}
+
+fn test_ui_state_with_shared_instance_config() -> UiState {
+    UiState::new(UiConfiguration {
+        storage_limits: DisplayedStorageLimits::DYNAMIC,
+        display_power_control: DisplayPowerControl::Unavailable,
+        access_point: AccessPointState::Unsupported,
+        shared_instance_config_export: SharedInstanceConfigExport::Available,
     })
 }
 

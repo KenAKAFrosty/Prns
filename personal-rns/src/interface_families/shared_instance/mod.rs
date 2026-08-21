@@ -11,10 +11,11 @@ pub use prns_interfaces_tokio::shared_instance::{
 
 pub mod rns_rpc {
     pub use prns_interfaces_tokio::shared_instance::rns_rpc::{
-        load_or_seed_rns_rpc_key, reticulum_storage_dir, RnsRpcKeyStorageError, RpcTelemetry,
-        RpcTelemetrySnapshot, SharedInstanceBlackholeOutcome, SharedInstanceCredentials,
-        SharedInstancePacketPhyStats, SharedInstanceRpcBindError, SharedInstanceRpcClient,
-        SharedInstanceRpcClientError, SharedInstanceRpcClientPhase, SharedInstanceRpcEndpoint,
-        SharedInstanceRpcListener, SharedInstanceRpcServer, SharedInstanceUnblackholeOutcome,
+        load_or_seed_rns_rpc_key, reticulum_storage_dir, RnsRpcKeyStorageError,
+        RpcAuthenticationKey, RpcTelemetry, RpcTelemetrySnapshot, SharedInstanceBlackholeOutcome,
+        SharedInstanceCredentials, SharedInstancePacketPhyStats, SharedInstanceRpcBindError,
+        SharedInstanceRpcClient, SharedInstanceRpcClientError, SharedInstanceRpcClientPhase,
+        SharedInstanceRpcEndpoint, SharedInstanceRpcListener, SharedInstanceRpcServer,
+        SharedInstanceUnblackholeOutcome,
     };
 }

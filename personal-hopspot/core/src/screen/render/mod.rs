@@ -103,6 +103,7 @@ pub fn render<D: DrawTarget<Color = BinaryColor>>(display: &mut D, frame: Render
                 display,
                 selected_card,
                 selected_item,
+                state.shared_instance_config_export,
                 interface_menu_details,
             );
             return;

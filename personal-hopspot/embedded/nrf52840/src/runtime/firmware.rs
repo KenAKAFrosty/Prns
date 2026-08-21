@@ -309,6 +309,7 @@ pub async fn run(spawner: Spawner) -> ! {
             storage_limits: <Storage as StorageLayout>::LIMITS,
             display_power_control: hopspot::DisplayPowerControl::Unavailable,
             access_point: hopspot::AccessPointState::Unsupported,
+            shared_instance_config_export: hopspot::SharedInstanceConfigExport::Unavailable,
         });
         let startup_notice = identity_startup_notice.or(profile_startup_notice);
         let mut pending_startup_notice = identity_startup_notice
@@ -567,6 +568,7 @@ pub async fn run(spawner: Spawner) -> ! {
                         hopspot::UiAction::ToggleStationUplink => {}
                         hopspot::UiAction::OledOff => {}
                         hopspot::UiAction::ToggleOledAutoOff => {}
+                        hopspot::UiAction::CopySharedInstanceConfig => {}
                         hopspot::UiAction::None => {}
                     }
                 }

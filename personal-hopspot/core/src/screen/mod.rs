@@ -19,7 +19,8 @@ pub use render::cards::card_label_max_chars;
 pub use render::{render, splash, RenderFrame, SplashContent};
 pub use state::{
     apply_and_persist_radio_profile, AccessPointState, DisplayPowerControl, InputEvent,
-    PersistenceNotice, RadioProfileChangeResult, UiAction, UiConfiguration, UiNotice, UiState,
+    PersistenceNotice, RadioProfileChangeResult, SharedInstanceConfigExport, UiAction,
+    UiConfiguration, UiNotice, UiState,
 };
 
 #[cfg(test)]

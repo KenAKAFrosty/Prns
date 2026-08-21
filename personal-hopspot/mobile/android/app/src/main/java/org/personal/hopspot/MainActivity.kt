@@ -2,6 +2,9 @@ package org.personal.hopspot
 
 import android.Manifest
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipDescription
+import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -17,9 +20,11 @@ import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.os.PersistableBundle
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
+import android.widget.Toast
 import java.nio.ByteBuffer
 
 class MainActivity : Activity() {
@@ -193,9 +198,28 @@ private class HopspotView(
             }
 
             private fun act(action: Int) {
-                if (action == NativeBridge.ACTION_ANNOUNCE) {
-                    service?.announce()
+                when (action) {
+                    NativeBridge.ACTION_ANNOUNCE -> service?.announce()
+                    NativeBridge.ACTION_COPY_SHARED_INSTANCE_CONFIG -> copySharedInstanceConfig()
                 }
+            }
+
+            private fun copySharedInstanceConfig() {
+                val config = NativeBridge.nativeSidebandJoinConfig()
+                if (config.isNullOrBlank()) {
+                    Toast.makeText(context, "Hopspot is not ready", Toast.LENGTH_SHORT).show()
+                    return
+                }
+                val clip = ClipData.newPlainText("RNS config", config)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    clip.description.extras = PersistableBundle().apply {
+                        putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+                    }
+                }
+                val clipboard =
+                    context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(clip)
+                Toast.makeText(context, "RNS config copied", Toast.LENGTH_SHORT).show()
             }
         },
     )

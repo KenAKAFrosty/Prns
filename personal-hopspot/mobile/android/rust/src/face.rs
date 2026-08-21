@@ -20,6 +20,7 @@ fn ui_state() -> UiState {
         storage_limits: <GrowableHeap as StorageLayout>::LIMITS,
         display_power_control: DisplayPowerControl::Unavailable,
         access_point: AccessPointState::Unsupported,
+        shared_instance_config_export: personal_hopspot_core::SharedInstanceConfigExport::Available,
     })
 }
 
@@ -83,6 +84,7 @@ impl HopspotFace {
                 wake_interfaces();
             }
             UiAction::Announce => self.show_notice(UiNotice::Announcing),
+            UiAction::CopySharedInstanceConfig => {}
             UiAction::None
             | UiAction::OledOff
             | UiAction::ToggleOledAutoOff

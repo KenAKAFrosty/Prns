@@ -61,9 +61,11 @@ pub(in crate::screen) const fn connection_status_label(
             }
             CardKind::Ble => Some("No Peers"),
             CardKind::Usb => Some("Waiting"),
-            CardKind::LoRa | CardKind::EspNow | CardKind::Tcp | CardKind::Peer => {
-                Some("Disconnected")
-            }
+            CardKind::LoRa
+            | CardKind::EspNow
+            | CardKind::SharedInstance
+            | CardKind::Tcp
+            | CardKind::Peer => Some("Disconnected"),
         },
         ConnectionState::Disabled => Some("Off"),
         ConnectionState::Unknown => Some("Unknown"),

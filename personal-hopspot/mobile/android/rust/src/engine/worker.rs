@@ -78,7 +78,7 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
     let node_identity = node_bootstrap.into_identity();
     let credentials = SharedInstanceCredentials::from_identity_secret(node_identity.secret());
     let node_identity_hash = credentials.transport_identity_hash();
-    let rpc_key = credentials.rpc_key().as_bytes().to_vec();
+    let rpc_key = credentials.rpc_key().clone();
     let transport_secret = node_identity.transport_secret();
 
     let ble_bootstrap = load_host_ble_identity(&storage_dir.join(BLE_IDENTITY_STORAGE.as_str()));
@@ -210,6 +210,7 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
         destination: destination_hashes.delivery,
         node_page_destination: destination_hashes.node_page,
         rpc_key,
+        ports,
         persistence: persistence_health,
     };
     let mut node_run = Box::pin(node.run());

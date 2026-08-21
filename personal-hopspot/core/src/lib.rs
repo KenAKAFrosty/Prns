@@ -52,8 +52,9 @@ pub use screen::{
     CardKind, CardLabel, DisplayPowerControl, EinkRefresh, EinkRefreshPolicy, EinkRefreshUrgency,
     InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, OledAutoOff,
     OledButtonOutcome, OledDarkReason, OledPowerCommand, OledPowerState, PersistenceNotice,
-    RadioProfileChangeResult, RenderFrame, ScreenContent, SplashContent, UiAction, UiConfiguration,
-    UiNotice, UiState, WifiNetworkStatus, WifiStationStatus,
+    RadioProfileChangeResult, RenderFrame, ScreenContent, SharedInstanceConfigExport,
+    SplashContent, UiAction, UiConfiguration, UiNotice, UiState, WifiNetworkStatus,
+    WifiStationStatus,
 };
 
 use personal_rns::engine::{

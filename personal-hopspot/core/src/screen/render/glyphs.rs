@@ -334,7 +334,7 @@ pub(in crate::screen) fn draw_interface_icon<D: DrawTarget<Color = BinaryColor>>
                 color,
             );
         }
-        CardKind::Tcp => {
+        CardKind::SharedInstance | CardKind::Tcp => {
             draw_pattern_colored(
                 display,
                 x,

@@ -33,21 +33,32 @@ const SLEEP_MENU_ITEM_NO_DISPLAY: usize = 2;
 pub(in crate::screen) const RADIO_MENU_ITEM_NO_DISPLAY: usize = 3;
 pub(in crate::screen) const POWER_MENU_ITEM: usize = 0;
 pub(in crate::screen) const POWER_ONLY_MENU_ITEMS: &[&str] = &["Power", "Back"];
+pub(in crate::screen) const SHARED_INSTANCE_MENU_ITEMS: &[&str] = &["Power", "RNS Config", "Back"];
+pub(in crate::screen) const SHARED_INSTANCE_CONFIG_MENU_ITEM: usize = 1;
 pub(in crate::screen) const WIFI_MENU_ITEMS: &[&str] = &["Power", "Station", "Back"];
 pub(in crate::screen) const STATION_UPLINK_MENU_ITEM: usize = 1;
 const LORA_MENU_ITEMS: &[&str] = &["Power", "Tune", "Reset", "Back"];
 pub(in crate::screen) const LORA_TUNE_MENU_ITEM: usize = 1;
 pub(in crate::screen) const LORA_RESET_MENU_ITEM: usize = 2;
 
-pub(in crate::screen) fn interface_menu_items(kind: CardKind) -> &'static [&'static str] {
+pub(in crate::screen) fn interface_menu_items(
+    kind: CardKind,
+    shared_instance_config_export: SharedInstanceConfigExport,
+) -> &'static [&'static str] {
     match kind {
         CardKind::LoRa => LORA_MENU_ITEMS,
         CardKind::WifiStation | CardKind::WifiStationDisabled => WIFI_MENU_ITEMS,
+        CardKind::SharedInstance
+            if shared_instance_config_export == SharedInstanceConfigExport::Available =>
+        {
+            SHARED_INSTANCE_MENU_ITEMS
+        }
         CardKind::Wifi
         | CardKind::Peer
         | CardKind::Usb
         | CardKind::Ble
         | CardKind::EspNow
+        | CardKind::SharedInstance
         | CardKind::Tcp => POWER_ONLY_MENU_ITEMS,
     }
 }
@@ -75,6 +86,7 @@ pub enum UiAction {
     ResetLoRaProfile,
     SwapRadioMode,
     OpenDocs,
+    CopySharedInstanceConfig,
 }
 
 prns_macros::iterable_enum! {
@@ -267,10 +279,17 @@ pub enum AccessPointState {
     Active,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SharedInstanceConfigExport {
+    Unavailable,
+    Available,
+}
+
 pub struct UiConfiguration {
     pub storage_limits: DisplayedStorageLimits,
     pub display_power_control: DisplayPowerControl,
     pub access_point: AccessPointState,
+    pub shared_instance_config_export: SharedInstanceConfigExport,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -280,6 +299,7 @@ pub struct UiState {
     pub(in crate::screen) mode: UiMode,
     pub(in crate::screen) display_power_control: DisplayPowerControl,
     pub(in crate::screen) access_point: AccessPointState,
+    pub(in crate::screen) shared_instance_config_export: SharedInstanceConfigExport,
     pub(in crate::screen) notice: Option<UiNotice>,
     pub(in crate::screen) storage_limits: DisplayedStorageLimits,
 }
@@ -315,6 +335,7 @@ impl UiState {
             mode: UiMode::Cards,
             display_power_control: configuration.display_power_control,
             access_point: configuration.access_point,
+            shared_instance_config_export: configuration.shared_instance_config_export,
             notice: None,
             storage_limits: configuration.storage_limits,
         }
@@ -441,7 +462,9 @@ impl UiState {
                 kind,
             } => {
                 self.mode = UiMode::InterfaceMenu {
-                    selected_item: selected_item.min(interface_menu_items(kind).len() - 1),
+                    selected_item: selected_item.min(
+                        interface_menu_items(kind, self.shared_instance_config_export).len() - 1,
+                    ),
                     kind,
                 };
             }
@@ -563,7 +586,8 @@ impl UiState {
                 },
             ) => {
                 self.mode = UiMode::InterfaceMenu {
-                    selected_item: (selected_item + 1) % interface_menu_items(kind).len(),
+                    selected_item: (selected_item + 1)
+                        % interface_menu_items(kind, self.shared_instance_config_export).len(),
                     kind,
                 };
                 UiAction::None
@@ -577,6 +601,12 @@ impl UiState {
             ) => {
                 self.mode = UiMode::Cards;
                 match (kind, selected_item) {
+                    (CardKind::SharedInstance, SHARED_INSTANCE_CONFIG_MENU_ITEM)
+                        if self.shared_instance_config_export
+                            == SharedInstanceConfigExport::Available =>
+                    {
+                        UiAction::CopySharedInstanceConfig
+                    }
                     (_, POWER_MENU_ITEM) => UiAction::ToggleSelectedInterface,
                     (
                         CardKind::WifiStation | CardKind::WifiStationDisabled,

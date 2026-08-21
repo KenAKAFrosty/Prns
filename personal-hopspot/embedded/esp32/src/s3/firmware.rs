@@ -380,6 +380,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 screen::DisplayPowerControl::Unavailable
             },
             access_point,
+            shared_instance_config_export: screen::SharedInstanceConfigExport::Unavailable,
         });
         let startup_notice = identity_startup_notice.or(profile_startup_notice);
         let mut pending_startup_notice = identity_startup_notice
@@ -776,6 +777,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             request_radio_mode(next);
                         }
                         screen::UiAction::OpenDocs => {}
+                        screen::UiAction::CopySharedInstanceConfig => {}
                         screen::UiAction::None => {}
                     }
                 }

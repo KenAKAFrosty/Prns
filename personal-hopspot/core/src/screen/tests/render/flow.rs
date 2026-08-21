@@ -308,7 +308,13 @@ fn interface_menu_draws_detail_rows_below_actions() {
         ConnectionState::Connected,
     )]);
 
-    draw_interface_menu(&mut display, &card, POWER_MENU_ITEM, &details);
+    draw_interface_menu(
+        &mut display,
+        &card,
+        POWER_MENU_ITEM,
+        SharedInstanceConfigExport::Unavailable,
+        &details,
+    );
 
     let detail_top = MENU_ITEM_TOP + WIFI_MENU_ITEMS.len() as i32 * MENU_ITEM_STEP + 1;
     assert!(
@@ -343,7 +349,13 @@ fn failed_interface_menu_draws_failure_reason() {
     card.failure_reason = Some("BlueZ GATT Channels >1; set Channels=1");
 
     let details = InterfaceMenuDetails::empty();
-    draw_interface_menu(&mut display, &card, POWER_MENU_ITEM, &details);
+    draw_interface_menu(
+        &mut display,
+        &card,
+        POWER_MENU_ITEM,
+        SharedInstanceConfigExport::Unavailable,
+        &details,
+    );
 
     let reason_top = MENU_ITEM_TOP + POWER_ONLY_MENU_ITEMS.len() as i32 * MENU_ITEM_STEP - 1;
     assert!(
