@@ -963,7 +963,7 @@ mod tests {
             &mut |_| {},
             None,
         );
-        assert_eq!(out, IngestPacketOutcome::Announce(AnnounceIngest::Ignored));
+        assert_eq!(out, IngestPacketOutcome::Ignored(IgnoreReason::Malformed));
         assert_eq!(state.route_count(), 0);
     }
 

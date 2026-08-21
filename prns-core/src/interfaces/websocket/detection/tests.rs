@@ -253,6 +253,31 @@ fn opaque_ifac_and_malformed_frames_do_not_select_a_codec() {
 }
 
 #[test]
+fn packet_evidence_uses_the_reference_hop_boundary() {
+    let mut last_reachable = packet(&[0x22]);
+    last_reachable[1] = crate::wire::MAX_HOP_COUNT - 1;
+    let mut detector = WebSocketWireDetector::new();
+    let mut sink = FrameBuffer::<FRAME_CAP>::new();
+    assert_eq!(
+        detected_frame(
+            detector
+                .inspect_message(&last_reachable, &mut sink)
+                .expect("detection succeeds"),
+        )
+        .framing(),
+        WebSocketWireFraming::RawPacket,
+    );
+
+    let mut out_of_reach = last_reachable;
+    out_of_reach[1] = crate::wire::MAX_HOP_COUNT;
+    let mut detector = WebSocketWireDetector::new();
+    assert_eq!(
+        detector.inspect_message(&out_of_reach, &mut sink),
+        Ok(WebSocketWireDetection::AwaitingEvidence),
+    );
+}
+
+#[test]
 fn reset_discards_partial_stream_evidence() {
     let packet = packet(&[0x7E, 0x7D, 0x44]);
     let wire = encoded(WebSocketWireFraming::Hdlc, &packet);

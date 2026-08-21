@@ -5,7 +5,8 @@ use crate::routing::announce::Announce;
 use crate::routing::dedup::PacketHash;
 use crate::routing::NextHop;
 use crate::wire::{
-    IfacFlag, PacketType, WireAddress, WireContext, WirePacketHeader, BROADCAST_MTU,
+    wire_hop_count_is_valid, IfacFlag, PacketType, WireAddress, WireContext, WirePacketHeader,
+    BROADCAST_MTU,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -131,6 +132,9 @@ impl<'a> Ingress<'a> {
             Ok((header, payload)) => (header, bytes.len() - payload.len()),
             Err(_) => return Self::Malformed,
         };
+        if !wire_hop_count_is_valid(header.hops) {
+            return Self::Malformed;
+        }
         if header.ifac_flag == IfacFlag::Authenticated {
             return Self::IfacRefused;
         }

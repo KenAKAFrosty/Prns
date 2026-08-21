@@ -60,7 +60,8 @@ mod allocated {
     use super::*;
     use crate::interfaces::{FrameSink, FrameSinkError};
     use crate::wire::{
-        DestinationType, IfacFlag, PacketType, PropagationType, WirePacketHeader, MAX_HOP_COUNT,
+        wire_hop_count_is_valid, DestinationType, IfacFlag, PacketType, PropagationType,
+        WirePacketHeader,
     };
     use alloc::vec::Vec;
 
@@ -594,7 +595,7 @@ mod allocated {
         let Ok((header, _)) = WirePacketHeader::parse(bytes) else {
             return false;
         };
-        if header.ifac_flag == IfacFlag::Authenticated || header.hops > MAX_HOP_COUNT {
+        if header.ifac_flag == IfacFlag::Authenticated || !wire_hop_count_is_valid(header.hops) {
             return false;
         }
         let is_transported = header.propagation == PropagationType::Transport;

@@ -19,7 +19,7 @@ use crate::routing::upstream_app_destinations::LinkRequestPolicy;
 use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::routing::RouteResponsiveness;
 use crate::units::RttMillis;
-use crate::wire::DestinationHash;
+use crate::wire::{DestinationHash, PropagationType, TransportId, WirePacketHeader};
 
 impl EstablishLinkWriteOutcome {
     #[track_caller]
@@ -32,6 +32,7 @@ impl EstablishLinkWriteOutcome {
 }
 
 const PEER_DESTINATION_HEX: &str = "c3cfae69b36bb6e3bbfd96a3b5867a59";
+const RESPONDER_TRANSPORT_ID: TransportId = TransportId::new([0x3C; 16]);
 
 fn peer_destination() -> DestinationHash {
     DestinationHash::new(bytes_from_hex(PEER_DESTINATION_HEX).try_into().unwrap())
@@ -546,6 +547,68 @@ fn a_link_request_for_a_held_destination_owes_its_proof() {
         replayed,
         IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
         "a replayed request deduplicates away",
+    );
+}
+
+#[test]
+fn a_foreign_stamped_link_request_is_not_delivered_to_a_local_destination() {
+    let mut initiator = neighbor_with_a_route();
+    let mut direct = [0u8; BROADCAST_MTU];
+    let dispatch = initiator
+        .write_commanded_link_request(
+            CommandId(7),
+            &establish(),
+            InstantMillis(1_000),
+            vector_establish_entropy(),
+            AttachedInterfaces::new(&arrival_interfaces()),
+            &mut direct,
+        )
+        .dispatched();
+    let direct = &direct[..dispatch.wire_bytes];
+    let (header, payload) = WirePacketHeader::parse(direct).unwrap();
+    let foreign_header = WirePacketHeader {
+        propagation: PropagationType::Transport,
+        transport_id: Some(TEST_TRANSPORT_ID),
+        ..header
+    };
+    let mut foreign = [0u8; BROADCAST_MTU];
+    let foreign_header_len = foreign_header.write(&mut foreign).unwrap();
+    foreign[foreign_header_len..foreign_header_len + payload.len()].copy_from_slice(payload);
+    let foreign_len = foreign_header_len + payload.len();
+
+    let mut responder = personal_node_announcer();
+    pin_transport_id(&mut responder, RESPONDER_TRANSPORT_ID);
+    let outcome = responder.ingest_packet_with(
+        InboundPacket {
+            arrived_at: InstantMillis(2_000),
+            source_interface: arrival(),
+            bytes: &mut foreign[..foreign_len],
+        },
+        &mut |_| {},
+        AttachedInterfaces::new(&arrival_interfaces()),
+        &mut |_| {},
+        None,
+    );
+    assert_eq!(
+        outcome,
+        IngestPacketOutcome::Ignored(IgnoreReason::OtherInstance),
+    );
+
+    let mut direct = direct.to_vec();
+    let outcome = responder.ingest_packet_with(
+        InboundPacket {
+            arrived_at: InstantMillis(2_100),
+            source_interface: arrival(),
+            bytes: &mut direct,
+        },
+        &mut |_| {},
+        AttachedInterfaces::new(&arrival_interfaces()),
+        &mut |_| {},
+        None,
+    );
+    assert!(
+        matches!(outcome, IngestPacketOutcome::OwesLinkProof(_)),
+        "the foreign copy must not consume dedup before the direct copy arrives",
     );
 }
 

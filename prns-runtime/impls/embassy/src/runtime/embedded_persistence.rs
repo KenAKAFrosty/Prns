@@ -313,7 +313,7 @@ where
             .ok();
         let logical_start = timebase_state
             .and_then(|state| state.high_water)
-            .unwrap_or(raw_now);
+            .map_or(raw_now, |high_water| high_water.max(raw_now));
         let mut scratch = Zeroizing::new([0u8; RECORD_SCRATCH_LEN]);
         let mut report = EmbeddedPersistenceRestoreReport {
             logical_start,
@@ -1163,6 +1163,7 @@ fn earlier(first: Option<InstantMillis>, second: Option<InstantMillis>) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::persistence::TIMEBASE_HEADROOM_MILLIS;
     use embedded_storage::nor_flash::{ErrorType, NorFlashError, NorFlashErrorKind};
     use embedded_storage_async::nor_flash::ReadNorFlash;
     use std::cell::{Cell, RefCell};
@@ -1518,6 +1519,40 @@ mod tests {
             );
             restored.restore(&mut engine, InstantMillis(0)).await;
             assert!(restored.next_compaction_not_before.is_some());
+        });
+    }
+
+    #[test]
+    fn restore_uses_the_later_of_flash_high_water_and_the_raw_clock() {
+        embassy_futures::block_on(async {
+            let recorded_at = InstantMillis(10_000);
+            let flash_high_water = InstantMillis(recorded_at.0 + TIMEBASE_HEADROOM_MILLIS);
+            let rtc_after_downtime = InstantMillis(flash_high_water.0 + 86_400_000);
+
+            for raw_now in [InstantMillis(0), rtc_after_downtime] {
+                let flash = TestFlash::new();
+                let mut scratch = [0u8; RECORD_SCRATCH_LEN];
+                let (mut journal, _) = FlashJournal::open(flash, LAYOUT, &mut scratch, |_| {})
+                    .await
+                    .unwrap();
+                journal.initialize_empty().await.unwrap();
+                journal.record_timebase(recorded_at).await.unwrap();
+
+                let mut persistence =
+                    EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
+                        journal.release(),
+                        LAYOUT,
+                        EmbeddedPersistencePolicy::hopspot_default(
+                            EmbeddedCompactionPolicy::hopspot(0),
+                        ),
+                        FixedRouteSnapshotKeys::new(),
+                        (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
+                    );
+                let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
+                let report = persistence.restore(&mut engine, raw_now).await;
+
+                assert_eq!(report.logical_start, raw_now.max(flash_high_water));
+            }
         });
     }
 
