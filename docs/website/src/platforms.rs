@@ -166,7 +166,10 @@ impl BoardTarget {
             "t-beam-supreme" => Some(&board_images::T_BEAM_SUPREME),
             "xiao-esp32-c6" => Some(&board_images::XIAO_ESP32_C6),
             "t-echo" => Some(&board_images::T_ECHO),
-            "seeed-card-tracker-t1000-e" => Some(&board_images::SEEED_CARD_TRACKER_T1000_E),
+            "t114" => Some(&board_images::T114),
+            "t1000-e" => Some(&board_images::SEEED_CARD_TRACKER_T1000_E),
+            "heltec-mesh-node-t096" => Some(&board_images::HELTEC_MESH_NODE_T096),
+            "mesh-tower-v2" => Some(&board_images::MESH_TOWER_V2),
             _ => None,
         }
     }
