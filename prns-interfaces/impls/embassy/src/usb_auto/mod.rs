@@ -457,7 +457,10 @@ async fn write_message<W: Write>(
     };
     match select(
         status.wait_until_disabled(),
-        with_timeout(WRITE_TIMEOUT, tx.write_all(&frame_buf[..n])),
+        with_timeout(WRITE_TIMEOUT, async {
+            tx.write_all(&frame_buf[..n]).await?;
+            tx.flush().await
+        }),
     )
     .await
     {
@@ -604,6 +607,11 @@ mod tests {
         cancellations: &'a Cell<usize>,
     }
 
+    struct FlushRecordingWriter<'a> {
+        bytes: &'a RefCell<Vec<u8>>,
+        flushes: &'a Cell<usize>,
+    }
+
     impl embedded_io_async::ErrorType for ScriptedWriter<'_> {
         type Error = MockIoError;
     }
@@ -624,6 +632,22 @@ mod tests {
         }
 
         async fn flush(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    impl embedded_io_async::ErrorType for FlushRecordingWriter<'_> {
+        type Error = Infallible;
+    }
+
+    impl Write for FlushRecordingWriter<'_> {
+        async fn write(&mut self, data: &[u8]) -> Result<usize, Self::Error> {
+            self.bytes.borrow_mut().extend_from_slice(data);
+            Ok(data.len())
+        }
+
+        async fn flush(&mut self) -> Result<(), Self::Error> {
+            self.flushes.set(self.flushes.get() + 1);
             Ok(())
         }
     }
@@ -929,6 +953,34 @@ mod tests {
             assert_eq!(outcome, WriteOutcome::Disabled);
         });
         assert_eq!(cancellations.get(), 1);
+    }
+
+    #[test]
+    fn each_framed_message_flushes_its_usb_transfer_boundary() {
+        let bytes = RefCell::new(Vec::new());
+        let flushes = Cell::new(0);
+        let mut writer = FlushRecordingWriter {
+            bytes: &bytes,
+            flushes: &flushes,
+        };
+        let status = EmbassyInterfaceStatus::new(device_id(), ConnectionState::Connected);
+        let mut frame_buf = [0u8; contract::MAX_FRAMED_BYTES];
+
+        block_on(async {
+            assert!(matches!(
+                write_message(
+                    &mut writer,
+                    &Message::Data(&[0x11; 64]),
+                    &mut frame_buf,
+                    &status,
+                )
+                .await,
+                WriteOutcome::Sent(_)
+            ));
+        });
+
+        assert!(!bytes.borrow().is_empty());
+        assert_eq!(flushes.get(), 1);
     }
 
     #[test]
