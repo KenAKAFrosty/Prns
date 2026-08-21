@@ -931,6 +931,19 @@ inputs = ["validation/oracles/tests/config_prns_interface_skip.rs", "validation/
 artifacts = "validation-artifacts/results/oracle-config-prns-skip"
 
 [[suite]]
+id = "oracle-config-prns-section-skip"
+domain = "oracles"
+group = "deterministic"
+tiers = ["release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+interpreter = "smoke"
+timeout_seconds = 300
+command = ["cargo", "test", "--manifest-path", "validation/oracles/Cargo.toml", "--test", "config_prns_section_skip", "--locked"]
+inputs = ["validation/oracles/tests/config_prns_section_skip.rs", "validation/oracles/python/prns_section_skip_oracle.py"]
+artifacts = "validation-artifacts/results/oracle-config-prns-section-skip"
+
+[[suite]]
 id = "oracle-wire"
 domain = "oracles"
 group = "deterministic"

@@ -46,9 +46,11 @@ const _: () = assert!(
     EngineStorageType::MAX_COMPACTED_FLASH_JOURNAL_BYTES <= crate::persistence::S3_ARENA_BYTES
 );
 #[cfg(target_arch = "xtensa")]
-const _: () = assert!(core::mem::size_of::<
-    <EngineStorageType as personal_rns::storage::StorageLayout>::PendingResourceOffers,
->() == 3 * core::mem::size_of::<usize>());
+const _: () = assert!(
+    core::mem::size_of::<
+        <EngineStorageType as personal_rns::storage::StorageLayout>::PendingResourceOffers,
+    >() == 3 * core::mem::size_of::<usize>()
+);
 #[cfg(target_arch = "xtensa")]
 const _: () = assert!(EngineStorageType::PENDING_RESOURCE_OFFER_ROW_BYTES <= 2 * 1024);
 
@@ -295,9 +297,8 @@ mod riscv {
     const _: () = assert!(C6Storage::LINK_SESSIONS > C6Storage::CHANNELS);
     const _: () = assert!(C6Storage::RESOURCE_ASSEMBLIES == 1);
     const _: () = assert!(core::mem::size_of::<NoPendingResourceOfferTable>() == 0);
-    const _: () = assert!(core::mem::size_of::<
-        PendingResourceOffers<NoPendingResourceOfferTable>,
-    >() == 0);
+    const _: () =
+        assert!(core::mem::size_of::<PendingResourceOffers<NoPendingResourceOfferTable>>() == 0);
 
     impl StorageLayout for C6Storage {
         const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
