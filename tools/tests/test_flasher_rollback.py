@@ -76,10 +76,12 @@ def bootstrap_metadata() -> dict:
     }
 
 
-def signed_candidate(root: Path, version: str = VERSION) -> tuple[Path, Path]:
+def signed_candidate(
+    root: Path, version: str = VERSION, *, manifest_schema: int = 3
+) -> tuple[Path, Path]:
     root.mkdir(parents=True)
     manifest = {
-        "schema": 3,
+        "schema": manifest_schema,
         "release": {
             "version": version,
             "channel": "stable",
@@ -190,7 +192,9 @@ class FlasherRollbackTests(unittest.TestCase):
             validate_candidate_history(bootstrap_candidate)
 
             prior = workspace / "prior"
-            _, record = signed_candidate(prior)
+            _, record = signed_candidate(prior, manifest_schema=2)
+            with self.assertRaisesRegex(ValueError, "candidate manifest is not schema 3"):
+                validate_candidate_history(prior)
             retained = workspace / "retained"
             retained_metadata = prepare_retained(prior, record, retained)
             self.assertEqual(retained_metadata["mode"], "retained")
