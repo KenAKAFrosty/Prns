@@ -177,9 +177,7 @@ if find "$boundary_root/embedded" \( -path '*/firmware/*' -o -path '*/assets/fla
 fi
 
 cd "$root"
-for board in heltec-v4 heltec-v4-r8 t-beam-supreme xiao-esp32-c6 t-echo; do
-    cargo run --locked -p hopspot-flash -- build "$board" --out-root "$candidate"
-done
+"$root/tools/prns" release firmware build -- --all "$candidate"
 cargo run --locked -p hopspot-flash -- assemble-manifest \
     --out-root "$candidate" \
     --channel "$channel" \
