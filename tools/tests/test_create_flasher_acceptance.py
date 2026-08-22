@@ -308,7 +308,7 @@ class AcceptanceScaffoldTests(unittest.TestCase):
                 json.loads(path.read_text(encoding="utf-8"))["schema"]
                 for path in rosters.glob("0.3.*.json")
             },
-            {2},
+            {2, 3},
         )
 
     def test_scaffold_assigns_complete_transport_aware_coverage(self) -> None:
