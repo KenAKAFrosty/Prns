@@ -180,6 +180,17 @@ test("packaged native API completes the persistent two-node journey", async () =
       await client.establishLink(destinationHash),
       "LinkEstablished",
     );
+    const linkPayload = Buffer.from("native direct Link payload");
+    const linkDeliveryResult = client.sendLinkPacket(
+      established.data.linkId,
+      linkPayload,
+    );
+    const linkDelivery = await nextTagged(events, "LinkDelivery");
+    assert.deepEqual(Buffer.from(linkDelivery.data.linkId), established.data.linkId);
+    assert.deepEqual(Buffer.from(linkDelivery.data.plaintext), linkPayload);
+    assert.equal(linkDelivery.data.sourceInterface.length, 8);
+    assertSucceeded(await linkDeliveryResult, "PacketDelivered");
+
     const requestPayload = Buffer.from(fixture.request.payloadHex, "hex");
     const responsePayload = Buffer.from(fixture.request.responseHex, "hex");
     const requestResult = client.request(

@@ -374,6 +374,12 @@ func decodeApplicationEvent(_ pointer: OpaquePointer) throws -> ApplicationEvent
             sourceInterface: try InterfaceId(event.bytes(.sourceInterface)),
             plaintext: try event.bytes(.plaintext)
         )
+    case .linkDelivery:
+        return .linkDelivery(
+            linkId: try LinkId(event.bytes(.linkId)),
+            sourceInterface: try InterfaceId(event.bytes(.sourceInterface)),
+            plaintext: try event.bytes(.plaintext)
+        )
     case .request:
         let requester = try event.optionalBytes(.requester).map {
             try IdentityHash($0)

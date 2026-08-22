@@ -67,6 +67,9 @@ for await (const event of claim.data) {
     SingleDelivery: ({ destination, plaintext, sourceInterface }) => {
       receiveSingle(destination, plaintext, sourceInterface);
     },
+    LinkDelivery: ({ linkId, plaintext, sourceInterface }) => {
+      receiveLinkPacket(linkId, plaintext, sourceInterface);
+    },
     Request: receiveRequest,
     Response: receiveResponse,
     ResponseSegment: receiveResponseSegment,

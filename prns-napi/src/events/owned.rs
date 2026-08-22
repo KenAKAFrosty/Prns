@@ -11,6 +11,11 @@ pub enum OwnedEvent {
         plaintext: Vec<u8>,
         source_interface: [u8; 8],
     },
+    LinkDelivery {
+        link_id: [u8; 16],
+        plaintext: Vec<u8>,
+        source_interface: [u8; 8],
+    },
     Request {
         destination: [u8; 16],
         link_id: [u8; 16],
@@ -136,7 +141,9 @@ pub enum OwnedEvent {
 impl OwnedEvent {
     pub fn application_bytes(&self) -> Option<usize> {
         match self {
-            Self::SingleDelivery { plaintext, .. } => Some(plaintext.len()),
+            Self::SingleDelivery { plaintext, .. } | Self::LinkDelivery { plaintext, .. } => {
+                Some(plaintext.len())
+            }
             Self::Request { data, .. }
             | Self::Response { data, .. }
             | Self::ResponseSegment { data, .. } => Some(data.len()),
@@ -195,6 +202,11 @@ impl OwnedEvent {
         match event {
             prns_host::ApplicationEvent::SingleDelivery(event) => Some(Self::SingleDelivery {
                 destination: event.destination.into_bytes(),
+                plaintext: event.plaintext,
+                source_interface: event.source_interface.into_bytes(),
+            }),
+            prns_host::ApplicationEvent::LinkDelivery(event) => Some(Self::LinkDelivery {
+                link_id: event.link_id.into_bytes(),
                 plaintext: event.plaintext,
                 source_interface: event.source_interface.into_bytes(),
             }),

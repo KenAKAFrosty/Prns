@@ -515,7 +515,8 @@
         { "name": "ResourceAvailable", "value": 104 },
         { "name": "ResourceSegment", "value": 105 },
         { "name": "ResourceNeedsDecompression", "value": 106 },
-        { "name": "ChannelMessage", "value": 107 }
+        { "name": "ChannelMessage", "value": 107 },
+        { "name": "LinkDelivery", "value": 108 }
       ]
     },
     {
@@ -1205,6 +1206,15 @@
             { "name": "linkId", "type": "LinkId" },
             { "name": "messageType", "type": "u16" },
             { "name": "data", "type": "bytes" }
+          ]
+        },
+        {
+          "name": "LinkDelivery",
+          "value": 108,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "sourceInterface", "type": "InterfaceId" },
+            { "name": "plaintext", "type": "bytes" }
           ]
         }
       ]

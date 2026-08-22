@@ -12,14 +12,16 @@ For Prns, a checked item has registered black-box or live evidence against stock
 RNS 1.4.2. An unchecked item marks a gap in Prns's registered evidence, not
 necessarily missing Prns behavior and never a verdict on another implementation.
 Internal unit tests or implementation support alone do not check an item. Prns
-currently has registered evidence for 22 of these 28 operations.
+currently has registered evidence for 23 of these 28 operations. Each linked
+`[x]` opens the executable case providing the primary evidence for that check;
+one suite may substantiate several observable operations.
 
 ## Identity and destinations
 
-- [x] **Identity compatibility**
+- [\[x\]](../validation/interop/cases/rnid-local-interop-smoke.sh) **Identity compatibility**
   - Load the same identity in both binaries, then confirm matching hashes,
     cross-compatible signatures, and cross-compatible encryption.
-- [x] **SINGLE announcements**
+- [\[x\]](../validation/interop/cases/napi-tcp-server-interop-smoke.sh) **SINGLE announcements**
   - Have each side announce a SINGLE destination and confirm the other side addresses
     it successfully.
 - [ ] **Announce application data**
@@ -29,49 +31,50 @@ currently has registered evidence for 22 of these 28 operations.
   - Exchange exact PLAIN payloads both ways without an identity or shared key.
 - [ ] **GROUP destinations**
   - Configure the same group key and exchange exact GROUP payloads both ways.
-- [x] **Ratchets**
+- [\[x\]](../validation/interop/cases/napi-ratchet-interop-smoke.sh) **Ratchets**
   - Require ratchets and prove packets across two distinct announced ratchet
     generations.
 
 ## Packets and links
 
-- [x] **Proven SINGLE packets**
+- [\[x\]](../validation/interop/cases/napi-udp-interop-smoke.sh) **Proven SINGLE packets**
   - Exchange exact payloads both ways and confirm valid delivery proofs.
-- [x] **Link establishment**
+- [\[x\]](../validation/interop/cases/napi-link-closure-interop-smoke.sh) **Link establishment**
   - Initiate a Link from each implementation and exchange traffic only after both peers
     report it active.
-- [ ] **Link packets**
-  - Exchange exact direct Link packets both ways and confirm their delivery proofs.
-- [x] **Link identification**
+- [\[x\]](../validation/interop/cases/napi-link-packet-interop-smoke.sh) **Link packets**
+  - Initiate a Link from each implementation, send an exact direct Link packet to
+    its responder, and confirm delivery plus the responder's proof.
+- [\[x\]](../validation/interop/cases/rncp-interop-smoke.sh) **Link identification**
   - Have each initiator identify itself and confirm the responder observes and
     authorizes the exact identity.
-- [x] **Link closure**
+- [\[x\]](../validation/interop/cases/napi-link-closure-interop-smoke.sh) **Link closure**
   - Have each side close a Link and confirm its peer observes a clean remote closure.
-- [x] **Packet-backed requests**
+- [\[x\]](../validation/interop/cases/napi-large-request-interop-smoke.sh) **Packet-backed requests**
   - Send a small named-path request from each side and confirm the exact response.
-- [x] **Resource-backed responses**
+- [\[x\]](../validation/interop/cases/napi-large-request-interop-smoke.sh) **Resource-backed responses**
   - Return an oversized response in both directions and confirm exact completion.
-- [x] **Request authorization**
+- [\[x\]](../validation/interop/cases/remote-management-interop-smoke.sh) **Request authorization**
   - Confirm an allowed identity succeeds while an unknown identity receives no
     protected response.
 
 ## Resources and streams
 
-- [x] **Resource transfer and metadata**
+- [\[x\]](../validation/interop/cases/rncp-interop-smoke.sh) **Resource transfer and metadata**
   - Transfer an exact single-segment Resource with metadata in both directions.
-- [x] **Resource compression**
+- [\[x\]](../validation/interop/cases/rncp-interop-smoke.sh) **Resource compression**
   - Transfer compressible Resources both ways and confirm compressed transport plus
     exact reconstructed bytes.
-- [x] **Multi-segment Resources**
+- [\[x\]](../validation/interop/cases/rncp-interop-smoke.sh) **Multi-segment Resources**
   - Cross the stock segment boundary both ways and confirm multiple completed
     segments plus exact bytes.
-- [x] **Resource cancellation**
+- [\[x\]](../validation/interop/cases/rncp-interop-smoke.sh) **Resource cancellation**
   - Cancel an active transfer, confirm no partial publication, then complete a fresh
     transfer.
-- [x] **Resource rejection**
+- [\[x\]](../validation/interop/cases/napi-resource-rejection-interop-smoke.sh) **Resource rejection**
   - Refuse an offered Resource and confirm the sender sees rejection with no payload
     publication.
-- [x] **Channel messages**
+- [\[x\]](../validation/interop/cases/napi-channel-interop-smoke.sh) **Channel messages**
   - Exchange multiple typed messages both ways and confirm exact order and
     acknowledgements.
 - [ ] **Buffer streams**
@@ -80,10 +83,10 @@ currently has registered evidence for 22 of these 28 operations.
 
 ## Routing and transport
 
-- [x] **Path discovery**
+- [\[x\]](../validation/interop/cases/mixed-multihop-interop-smoke.sh) **Path discovery**
   - Discover an initially unknown destination through a transport, report its hops,
     and reach it.
-- [x] **Mixed multi-hop forwarding**
+- [\[x\]](../validation/interop/cases/mixed-multihop-interop-smoke.sh) **Mixed multi-hop forwarding**
   - Exchange exact payloads between stock endpoints through stock and candidate
     transports in series.
 - [ ] **Transport tunnel recovery**
@@ -92,14 +95,14 @@ currently has registered evidence for 22 of these 28 operations.
 
 ## Common adapters
 
-- [x] **TCP client and server**
+- [\[x\]](../validation/interop/cases/napi-tcp-server-interop-smoke.sh) **TCP client and server**
   - Run the candidate in both TCP roles against stock RNS and exchange proven packets.
-- [x] **UDP**
+- [\[x\]](../validation/interop/cases/napi-udp-interop-smoke.sh) **UDP**
   - Configure complementary endpoints and exchange exact proven payloads both ways.
-- [x] **Shared-instance client and server**
+- [\[x\]](../validation/interop/cases/local-interop-smoke.sh) **Shared-instance client and server**
   - Run both shared-instance roles against stock RNS and carry valid application
     traffic each way.
-- [x] **IFAC authentication**
+- [\[x\]](../validation/interop/cases/ifac-tcp-interop-smoke.sh) **IFAC authentication**
   - Confirm matching credentials exchange traffic while missing or incorrect
     credentials are rejected.
 

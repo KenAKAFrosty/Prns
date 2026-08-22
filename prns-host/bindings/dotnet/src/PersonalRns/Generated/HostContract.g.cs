@@ -324,6 +324,7 @@ public enum ApplicationEventKind : uint
     ResourceSegment = 105,
     ResourceNeedsDecompression = 106,
     ChannelMessage = 107,
+    LinkDelivery = 108,
 }
 
 public enum DiagnosticEventKind : uint
@@ -1496,6 +1497,11 @@ public abstract record ApplicationEvent
         ushort MessageType,
         ReadOnlyMemory<byte> Data
     ) : ApplicationEvent;
+    public sealed record LinkDelivery(
+        LinkId LinkId,
+        InterfaceId SourceInterface,
+        ReadOnlyMemory<byte> Plaintext
+    ) : ApplicationEvent;
 
     public TResult Match<TResult>(
         Func<ApplicationEvent.SingleDelivery, TResult> singleDelivery,
@@ -1505,7 +1511,8 @@ public abstract record ApplicationEvent
         Func<ApplicationEvent.ResourceAvailable, TResult> resourceAvailable,
         Func<ApplicationEvent.ResourceSegment, TResult> resourceSegment,
         Func<ApplicationEvent.ResourceNeedsDecompression, TResult> resourceNeedsDecompression,
-        Func<ApplicationEvent.ChannelMessage, TResult> channelMessage
+        Func<ApplicationEvent.ChannelMessage, TResult> channelMessage,
+        Func<ApplicationEvent.LinkDelivery, TResult> linkDelivery
     ) =>
         this switch
         {
@@ -1517,6 +1524,7 @@ public abstract record ApplicationEvent
             ResourceSegment value => resourceSegment(value),
             ResourceNeedsDecompression value => resourceNeedsDecompression(value),
             ChannelMessage value => channelMessage(value),
+            LinkDelivery value => linkDelivery(value),
             _ => throw new InvalidOperationException("Unknown contract case."),
         };
 }

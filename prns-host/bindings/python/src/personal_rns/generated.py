@@ -264,6 +264,7 @@ class ApplicationEventKind(IntEnum):
     RESOURCE_SEGMENT = 105
     RESOURCE_NEEDS_DECOMPRESSION = 106
     CHANNEL_MESSAGE = 107
+    LINK_DELIVERY = 108
 
 class DiagnosticEventKind(IntEnum):
     ANNOUNCE_HEARD = 200
@@ -1133,6 +1134,12 @@ class ApplicationEventChannelMessage:
     data: bytes
 
 @dataclass(frozen=True, slots=True)
+class ApplicationEventLinkDelivery:
+    link_id: LinkId
+    source_interface: InterfaceId
+    plaintext: bytes
+
+@dataclass(frozen=True, slots=True)
 class DiagnosticEventAnnounceHeard:
     destination: DestinationHash
     hops: int
@@ -1250,7 +1257,7 @@ DestinationConfig: TypeAlias = DestinationConfigPlain | DestinationConfigSingle
 HostCommand: TypeAlias = HostCommandAnnounce | HostCommandSendSinglePacket | HostCommandCloseLink | HostCommandAttachTcpServer | HostCommandAttachTcpClient | HostCommandAttachUdp | HostCommandDetachInterface | HostCommandEstablishLink | HostCommandRequestPath | HostCommandIdentify | HostCommandSendLinkPacket | HostCommandRequest | HostCommandRespond | HostCommandSendResource | HostCommandSetLinkResourceStrategy | HostCommandSetDestinationResourceStrategy | HostCommandSendChannelMessage | HostCommandAllowRequester | HostCommandAttachInterface
 CommandOutcome: TypeAlias = CommandOutcomeAnnounced | CommandOutcomePacketDelivered | CommandOutcomeLinkCloseQueued | CommandOutcomeInterfaceAttached | CommandOutcomeInterfaceDetached | CommandOutcomeLinkEstablished | CommandOutcomePathDiscovered | CommandOutcomeIdentified | CommandOutcomeResponseReceived | CommandOutcomeResponseSent | CommandOutcomeResourceSent | CommandOutcomeResourceStrategySet | CommandOutcomeRequesterAllowed
 CommandFailure: TypeAlias = CommandFailureNodeStopped | CommandFailureBusy | CommandFailurePayloadTooLarge | CommandFailureUnknownDestination | CommandFailureNotSingleDestination | CommandFailureAnnounceAppDataTooLong | CommandFailureUnknownInterface | CommandFailureNoRouteToDestination | CommandFailureNotDirectlyReachable | CommandFailurePacketCulled | CommandFailureDeliveryTimedOut | CommandFailureInvalidBitrate | CommandFailureBindFailed | CommandFailureWriteFailed | CommandFailureUnsupportedByBackend | CommandFailureUnknownLink | CommandFailureLinkNotActive | CommandFailureEntropyUnavailable | CommandFailureNotLinkInitiator | CommandFailureIdentityNotHeld | CommandFailureUnknownRequestHandler | CommandFailureRequestPolicyNotAllowList | CommandFailureRequestAllowListFull | CommandFailureLinkBusy | CommandFailureResourceTableFull | CommandFailureResourceMetadataTooLarge | CommandFailureResourceRejectedByPeer | CommandFailureResourceSequencingFailed | CommandFailureResourcePredecessorFailed | CommandFailureChannelWindowFull | CommandFailureChannelUntrackable | CommandFailureInvalidChannelMessageType | CommandFailureInvalidConfiguration | CommandFailureResourceUploadCancelled | CommandFailureResourceEarlyEof | CommandFailureResourceLengthOverrun | CommandFailurePermissionDenied | CommandFailureDeviceUnavailable | CommandFailureConnectFailed | CommandFailureBackendFailed | CommandFailureResponseTooLarge
-ApplicationEvent: TypeAlias = ApplicationEventSingleDelivery | ApplicationEventRequest | ApplicationEventResponse | ApplicationEventResponseSegment | ApplicationEventResourceAvailable | ApplicationEventResourceSegment | ApplicationEventResourceNeedsDecompression | ApplicationEventChannelMessage
+ApplicationEvent: TypeAlias = ApplicationEventSingleDelivery | ApplicationEventRequest | ApplicationEventResponse | ApplicationEventResponseSegment | ApplicationEventResourceAvailable | ApplicationEventResourceSegment | ApplicationEventResourceNeedsDecompression | ApplicationEventChannelMessage | ApplicationEventLinkDelivery
 DiagnosticEvent: TypeAlias = DiagnosticEventAnnounceHeard | DiagnosticEventLinkEstablished | DiagnosticEventPeerIdentified | DiagnosticEventLinkClosed | DiagnosticEventLinkInterfaceMismatch | DiagnosticEventResourceAssembled | DiagnosticEventResourceFailed | DiagnosticEventResourceSendProgress | DiagnosticEventSelfRatchetRotated | DiagnosticEventAnnounceHeldDropped | DiagnosticEventDelivered | DiagnosticEventRouteExpired | DiagnosticEventRouteEvicted | DiagnosticEventRouteInterfaceGone | DiagnosticEventRouteDropped | DiagnosticEventBackendDiagnostic | DiagnosticEventDiagnosticsDropped | DiagnosticEventPersistenceRestored | DiagnosticEventPersistenceFlushed | DiagnosticEventPersistenceFlushFailed
 
 HOST_OPERATION_NAMES: tuple[str, ...] = (

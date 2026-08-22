@@ -1178,6 +1178,19 @@ inputs = ["validation/interop/cases/napi-link-closure-interop-smoke.sh", "valida
 artifacts = "validation-artifacts/results/interop-napi-link-closure"
 
 [[suite]]
+id = "interop-napi-link-packet"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "linux"
+toolchain = "node"
+interpreter = "smoke"
+timeout_seconds = 420
+command = ["bash", "validation/interop/cases/napi-link-packet-interop-smoke.sh"]
+inputs = ["validation/interop/cases/napi-link-packet-interop-smoke.sh", "validation/interop/peers/rns_link_packet_peer.py", "prns-napi/tests/interop/link_packet_peer.mjs"]
+artifacts = "validation-artifacts/results/interop-napi-link-packet"
+
+[[suite]]
 id = "interop-napi-ratchet"
 domain = "interop"
 group = "essential"

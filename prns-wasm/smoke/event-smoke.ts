@@ -174,7 +174,8 @@ async function main(): Promise<void> {
     plaintext,
     sourceInterface,
   });
-  const delivered = await claimed(prns.claimEvents()).next();
+  const events = claimed(prns.claimEvents());
+  const delivered = await events.next();
   assert(!delivered.done, "single delivery streams");
   const event = delivered.value;
   assert(event.tag === "SingleDelivery", "single delivery is tagged");
@@ -188,6 +189,34 @@ async function main(): Promise<void> {
   assert(
     new TextDecoder().decode(event.data.plaintext) === "hello from a single packet",
     "parsed plaintext owns its bytes",
+  );
+
+  const activeLink = new Uint8Array(16).fill(6);
+  const linkPlaintext = new TextEncoder().encode("hello from a direct Link packet");
+  runtime.events.push({
+    type: "linkDelivery",
+    linkId: activeLink,
+    plaintext: linkPlaintext,
+    sourceInterface,
+  });
+  const linkDelivered = await events.next();
+  assert(!linkDelivered.done, "Link delivery streams");
+  const linkEvent = linkDelivered.value;
+  assert(linkEvent.tag === "LinkDelivery", "Link delivery is tagged");
+  assert(bytesEqual(linkEvent.data.linkId, activeLink), "Link ID is preserved");
+  assert(
+    bytesEqual(linkEvent.data.sourceInterface, sourceInterface),
+    "Link source interface is preserved",
+  );
+  assert(
+    bytesEqual(linkEvent.data.plaintext, linkPlaintext),
+    "Link plaintext is preserved",
+  );
+  linkPlaintext.fill(0);
+  assert(
+    new TextDecoder().decode(linkEvent.data.plaintext) ===
+      "hello from a direct Link packet",
+    "parsed Link plaintext owns its bytes",
   );
 
   runtime.events.push(

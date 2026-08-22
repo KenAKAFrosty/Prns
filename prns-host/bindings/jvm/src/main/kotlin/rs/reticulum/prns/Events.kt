@@ -278,6 +278,11 @@ internal fun decodeApplicationEvent(pointer: Pointer): ApplicationEvent {
             sourceInterface = InterfaceId(event.bytes(EventField.SOURCE_INTERFACE)),
             plaintext = Bytes(event.bytes(EventField.PLAINTEXT)),
         )
+        ApplicationEventKind.LINK_DELIVERY -> ApplicationEventLinkDelivery(
+            linkId = LinkId(event.bytes(EventField.LINK_ID)),
+            sourceInterface = InterfaceId(event.bytes(EventField.SOURCE_INTERFACE)),
+            plaintext = Bytes(event.bytes(EventField.PLAINTEXT)),
+        )
         ApplicationEventKind.REQUEST -> ApplicationEventRequest(
             destination = DestinationHash(event.bytes(EventField.DESTINATION)),
             linkId = LinkId(event.bytes(EventField.LINK_ID)),

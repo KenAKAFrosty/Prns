@@ -149,8 +149,14 @@ pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
             set_str(&object, "detail", &format!("{delivery:?}"));
         }
         Journaled::Delivered(Delivery::Link(delivery)) => {
-            set_str(&object, "type", "delivered");
-            set_str(&object, "detail", &format!("{delivery:?}"));
+            set_str(&object, "type", "linkDelivery");
+            set_bytes(&object, "linkId", delivery.link_id.as_bytes());
+            set_bytes(&object, "plaintext", delivery.plaintext);
+            set_bytes(
+                &object,
+                "sourceInterface",
+                delivery.source_interface.as_bytes(),
+            );
         }
         Journaled::LinkClosed { link_id, reason } => {
             set_str(&object, "type", "linkClosed");

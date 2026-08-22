@@ -354,6 +354,7 @@ const (
 	ApplicationEventKindResourceSegment ApplicationEventKind = 105
 	ApplicationEventKindResourceNeedsDecompression ApplicationEventKind = 106
 	ApplicationEventKindChannelMessage ApplicationEventKind = 107
+	ApplicationEventKindLinkDelivery ApplicationEventKind = 108
 )
 
 type DiagnosticEventKind uint32
@@ -1335,6 +1336,14 @@ type ApplicationEventChannelMessage struct {
 }
 
 func (ApplicationEventChannelMessage) applicationEvent() {}
+
+type ApplicationEventLinkDelivery struct {
+	LinkId LinkId
+	SourceInterface InterfaceId
+	Plaintext []byte
+}
+
+func (ApplicationEventLinkDelivery) applicationEvent() {}
 
 type DiagnosticEvent interface {
 	diagnosticEvent()

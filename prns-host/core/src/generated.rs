@@ -1266,6 +1266,7 @@ pub enum ApplicationEventKind {
     ResourceSegment = 105,
     ResourceNeedsDecompression = 106,
     ChannelMessage = 107,
+    LinkDelivery = 108,
 }
 
 impl ApplicationEventKind {
@@ -1280,6 +1281,7 @@ impl ApplicationEventKind {
             Self::ResourceSegment => "ResourceSegment",
             Self::ResourceNeedsDecompression => "ResourceNeedsDecompression",
             Self::ChannelMessage => "ChannelMessage",
+            Self::LinkDelivery => "LinkDelivery",
         }
     }
 }
@@ -1297,6 +1299,7 @@ impl TryFrom<u32> for ApplicationEventKind {
             105 => Ok(Self::ResourceSegment),
             106 => Ok(Self::ResourceNeedsDecompression),
             107 => Ok(Self::ChannelMessage),
+            108 => Ok(Self::LinkDelivery),
             _ => Err(()),
         }
     }
@@ -1990,6 +1993,7 @@ mod tests {
             (ApplicationEventKind::ResourceSegment, 105, "ResourceSegment"),
             (ApplicationEventKind::ResourceNeedsDecompression, 106, "ResourceNeedsDecompression"),
             (ApplicationEventKind::ChannelMessage, 107, "ChannelMessage"),
+            (ApplicationEventKind::LinkDelivery, 108, "LinkDelivery"),
         ]);
     }
 

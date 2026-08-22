@@ -290,6 +290,7 @@ public enum ApplicationEventKind: UInt32, Sendable {
     case resourceSegment = 105
     case resourceNeedsDecompression = 106
     case channelMessage = 107
+    case linkDelivery = 108
 }
 
 public enum DiagnosticEventKind: UInt32, Sendable {
@@ -867,6 +868,7 @@ public enum ApplicationEvent: Sendable {
     case resourceSegment(linkId: LinkId, originalHash: ResourceHash, segmentIndex: UInt64, totalSegments: UInt64, metadata: [UInt8]?, data: [UInt8])
     case resourceNeedsDecompression(linkId: LinkId, hash: ResourceHash, stream: [UInt8], uncompressedDataBytes: UInt64)
     case channelMessage(linkId: LinkId, messageType: UInt16, data: [UInt8])
+    case linkDelivery(linkId: LinkId, sourceInterface: InterfaceId, plaintext: [UInt8])
 }
 
 public enum DiagnosticEvent: Sendable {

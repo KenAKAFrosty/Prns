@@ -14,6 +14,13 @@ pub struct SingleDelivery {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkDelivery {
+    pub link_id: LinkId,
+    pub source_interface: InterfaceId,
+    pub plaintext: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RequestAvailable {
     pub destination: DestinationHash,
     pub link_id: LinkId,
@@ -68,6 +75,7 @@ pub struct ChannelMessage {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ApplicationEvent {
     SingleDelivery(SingleDelivery),
+    LinkDelivery(LinkDelivery),
     Request(RequestAvailable),
     Response(ResponseAvailable),
     ResponseSegment(ResponseSegmentAvailable),
@@ -82,6 +90,7 @@ impl ApplicationEvent {
     pub fn retained_bytes(&self) -> usize {
         match self {
             Self::SingleDelivery(event) => event.plaintext.len(),
+            Self::LinkDelivery(event) => event.plaintext.len(),
             Self::Request(event) => event.data.len(),
             Self::Response(event) => event.data.len(),
             Self::ResponseSegment(event) => event.data.len(),

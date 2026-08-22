@@ -1070,6 +1070,14 @@ export type ApplicationEvent =
         readonly messageType: number;
         readonly data: Uint8Array;
       }
+    >
+  | Tag<
+      "LinkDelivery",
+      {
+        readonly linkId: LinkId;
+        readonly sourceInterface: InterfaceId;
+        readonly plaintext: Uint8Array;
+      }
     >;
 
 export type DiagnosticEvent =

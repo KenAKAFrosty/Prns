@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { startNode } from '../../index.js';
 import { announceUntilHeard, bufEq, waitFor, type AnyEvent } from './helpers.js';
 
-test('two nodes exchange a proven single packet over TCP', async () => {
+test('two nodes exchange proven single and direct Link packets over TCP', async () => {
   const serverEvents: AnyEvent[] = [];
   const clientEvents: AnyEvent[] = [];
 
@@ -35,6 +35,24 @@ test('two nodes exchange a proven single packet over TCP', async () => {
       () => serverEvents.some((e) => e.type === 'singleDelivery' && bufEq(e.plaintext, payload)),
       5000,
       'delivery event'
+    );
+
+    const linkId = await client.establishLink(dest);
+    const linkPayload = Buffer.from('direct link payload');
+    const linkReceipt = await client.sendLinkPacket(linkId, linkPayload);
+    assert.match(linkReceipt.evidence, /^proof(Explicit|Implicit)$/);
+
+    await waitFor(
+      () =>
+        serverEvents.some(
+          (e) =>
+            e.type === 'linkDelivery' &&
+            bufEq(e.linkId, linkId) &&
+            bufEq(e.plaintext, linkPayload) &&
+            e.sourceInterface?.length === 8
+        ),
+      5000,
+      'Link delivery event'
     );
 
     assert.ok(dialer.teardown());

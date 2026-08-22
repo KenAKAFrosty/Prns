@@ -403,7 +403,8 @@ enum class ApplicationEventKind(val rawValue: Int) {
     RESOURCE_AVAILABLE(104),
     RESOURCE_SEGMENT(105),
     RESOURCE_NEEDS_DECOMPRESSION(106),
-    CHANNEL_MESSAGE(107);
+    CHANNEL_MESSAGE(107),
+    LINK_DELIVERY(108);
 
     companion object {
         fun fromRawValue(value: Int): ApplicationEventKind? = entries.firstOrNull { it.rawValue == value }
@@ -1246,6 +1247,12 @@ data class ApplicationEventChannelMessage(
     val linkId: LinkId,
     val messageType: Int,
     val data: Bytes
+) : ApplicationEvent
+
+data class ApplicationEventLinkDelivery(
+    val linkId: LinkId,
+    val sourceInterface: InterfaceId,
+    val plaintext: Bytes
 ) : ApplicationEvent
 
 sealed interface DiagnosticEvent

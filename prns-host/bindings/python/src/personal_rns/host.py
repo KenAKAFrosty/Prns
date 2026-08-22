@@ -1244,6 +1244,12 @@ def _decode_event(native: NativeLibrary, event):
             g.InterfaceId(_event_bytes(native, event, f.SOURCE_INTERFACE)),
             _event_bytes(native, event, f.PLAINTEXT),
         )
+    if application is g.ApplicationEventKind.LINK_DELIVERY:
+        return g.ApplicationEventLinkDelivery(
+            g.LinkId(_event_bytes(native, event, f.LINK_ID)),
+            g.InterfaceId(_event_bytes(native, event, f.SOURCE_INTERFACE)),
+            _event_bytes(native, event, f.PLAINTEXT),
+        )
     if application is g.ApplicationEventKind.REQUEST:
         requester = _optional_event_bytes(native, event, f.REQUESTER)
         return g.ApplicationEventRequest(

@@ -35,8 +35,8 @@ pub use contract::{
 };
 pub use delivery::{EventDelivery, EventDeliveryAdmission, EventDeliveryQueue};
 pub use events::{
-    ApplicationEvent, ChannelMessage, DiagnosticBatch, DiagnosticEvent, RequestAvailable,
-    ResourceNeedsDecompression, ResourceSegmentAvailable, ResponseAvailable,
+    ApplicationEvent, ChannelMessage, DiagnosticBatch, DiagnosticEvent, LinkDelivery,
+    RequestAvailable, ResourceNeedsDecompression, ResourceSegmentAvailable, ResponseAvailable,
     ResponseSegmentAvailable, SingleDelivery,
 };
 pub use generated::{

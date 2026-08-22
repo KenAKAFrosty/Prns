@@ -30,6 +30,16 @@ pub fn event_to_object(env: &Env, event: OwnedEvent) -> napi::Result<Object<'sta
             object.set("plaintext", Buffer::from(plaintext))?;
             object.set("sourceInterface", bytes(&source_interface))?;
         }
+        OwnedEvent::LinkDelivery {
+            link_id,
+            plaintext,
+            source_interface,
+        } => {
+            object.set("type", "linkDelivery")?;
+            object.set("linkId", bytes(&link_id))?;
+            object.set("plaintext", Buffer::from(plaintext))?;
+            object.set("sourceInterface", bytes(&source_interface))?;
+        }
         OwnedEvent::Request {
             destination,
             link_id,

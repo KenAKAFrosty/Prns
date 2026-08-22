@@ -286,6 +286,7 @@ end
     ApplicationEventKindResourceSegment = 105
     ApplicationEventKindResourceNeedsDecompression = 106
     ApplicationEventKindChannelMessage = 107
+    ApplicationEventKindLinkDelivery = 108
 end
 
 @enum DiagnosticEventKind::UInt32 begin
@@ -1112,6 +1113,12 @@ struct ApplicationEventChannelMessage <: ApplicationEvent
     link_id::LinkId
     message_type::UInt16
     data::Vector{UInt8}
+end
+
+struct ApplicationEventLinkDelivery <: ApplicationEvent
+    link_id::LinkId
+    source_interface::InterfaceId
+    plaintext::Vector{UInt8}
 end
 
 struct DiagnosticEventAnnounceHeard <: DiagnosticEvent
