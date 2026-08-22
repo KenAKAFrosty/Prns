@@ -361,7 +361,7 @@ class FlasherReproducibilityTests(unittest.TestCase):
         self.assertLess(
             candidate_build.index("package-source-snapshot.py"),
             candidate_build.index(
-                'cargo run --locked -p hopspot-flash -- build "$board"'
+                'release firmware build -- --all "$candidate"'
             ),
         )
         self.assertLess(
@@ -758,14 +758,27 @@ class FlasherReproducibilityTests(unittest.TestCase):
             self.assertIn("--coff-debug-directory", workflow)
             self.assertIn("PDBFileName:", workflow)
 
-    def test_shipping_firmware_builds_each_shipping_board(self) -> None:
+    def test_release_builds_use_catalog_driven_all_board_selection(self) -> None:
         shipping = (
             ROOT / "validation" / "platforms" / "shipping-firmware.sh"
         ).read_text(encoding="utf-8")
+        candidate = (
+            ROOT / "tools" / "release" / "build-flasher-candidate.sh"
+        ).read_text(encoding="utf-8")
+        builder = (
+            ROOT / "tools" / "release" / "build-flash-artifact.sh"
+        ).read_text(encoding="utf-8")
+        all_board_build = 'release firmware build -- --all'
+        self.assertIn(all_board_build, shipping)
+        self.assertIn(all_board_build, candidate)
         self.assertIn(
-            "for board in heltec-v4 heltec-v4-r8 t-beam-supreme xiao-esp32-c6 t-echo t114 t096 t1000-e",
-            shipping,
+            "cargo run --quiet --locked -p hopspot-flash -- list",
+            builder,
         )
+        self.assertIn("awk '{print $1}'", builder)
+        self.assertIn("--all)", builder)
+        self.assertNotIn("for board in heltec-v4", shipping)
+        self.assertNotIn("for board in heltec-v4", candidate)
         self.assertNotIn("PRNS_EMBEDDED_SITE", shipping)
 
     def test_embedded_captive_portal_is_a_bounded_static_asset(self) -> None:
