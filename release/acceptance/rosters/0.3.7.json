@@ -1,0 +1,292 @@
+{
+  "schema": 3,
+  "release": {
+    "version": "0.3.7"
+  },
+  "release_owner": "github:KenAKAFrosty",
+  "confirmed_on": "2026-08-21",
+  "physical_assignments": [
+    {
+      "board": "heltec-v4",
+      "surface": "web",
+      "os": "linux",
+      "architecture": "x86_64",
+      "browser": {
+        "name": "chrome",
+        "channel": "stable"
+      },
+      "tester": "github:KenAKAFrosty",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "heltec-v4",
+      "surface": "cli",
+      "os": "linux",
+      "architecture": "x86_64",
+      "tester": "github:KenAKAFrosty",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "heltec-v4-r8",
+      "surface": "web",
+      "os": "windows",
+      "architecture": "x86_64",
+      "browser": {
+        "name": "edge",
+        "channel": "stable"
+      },
+      "tester": "github:jackspace",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "heltec-v4-r8",
+      "surface": "cli",
+      "os": "windows",
+      "architecture": "x86_64",
+      "tester": "github:jackspace",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "t-beam-supreme",
+      "surface": "web",
+      "os": "macos",
+      "architecture": "aarch64",
+      "browser": {
+        "name": "chrome",
+        "channel": "stable"
+      },
+      "tester": "github:KenAKAFrosty",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "t-beam-supreme",
+      "surface": "cli",
+      "os": "macos",
+      "architecture": "aarch64",
+      "tester": "github:KenAKAFrosty",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "xiao-esp32-c6",
+      "surface": "web",
+      "os": "windows",
+      "architecture": "x86_64",
+      "browser": {
+        "name": "edge",
+        "channel": "stable"
+      },
+      "tester": "github:KenAKAFrosty",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "xiao-esp32-c6",
+      "surface": "cli",
+      "os": "windows",
+      "architecture": "x86_64",
+      "tester": "github:KenAKAFrosty",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "t-echo",
+      "surface": "web",
+      "os": "linux",
+      "architecture": "x86_64",
+      "browser": {
+        "name": "chrome",
+        "channel": "stable"
+      },
+      "tester": "github:KenAKAFrosty",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "t-echo",
+      "surface": "cli",
+      "os": "linux",
+      "architecture": "x86_64",
+      "tester": "github:KenAKAFrosty",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "t114",
+      "surface": "web",
+      "os": "macos",
+      "architecture": "aarch64",
+      "browser": {
+        "name": "chrome",
+        "channel": "stable"
+      },
+      "tester": "github:KenAKAFrosty",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "t114",
+      "surface": "cli",
+      "os": "macos",
+      "architecture": "aarch64",
+      "tester": "github:KenAKAFrosty",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "t096",
+      "surface": "web",
+      "os": "macos",
+      "architecture": "aarch64",
+      "browser": {
+        "name": "chrome",
+        "channel": "stable"
+      },
+      "tester": "github:KenAKAFrosty",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "t096",
+      "surface": "cli",
+      "os": "macos",
+      "architecture": "aarch64",
+      "tester": "github:KenAKAFrosty",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "t1000-e",
+      "surface": "web",
+      "os": "macos",
+      "architecture": "aarch64",
+      "browser": {
+        "name": "chrome",
+        "channel": "stable"
+      },
+      "tester": "github:KenAKAFrosty",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "t1000-e",
+      "surface": "cli",
+      "os": "macos",
+      "architecture": "aarch64",
+      "tester": "github:KenAKAFrosty",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    }
+  ],
+  "web_serial_assignments": [
+    {
+      "board": "heltec-v4",
+      "os": "linux",
+      "architecture": "x86_64",
+      "browser": {
+        "name": "firefox",
+        "channel": "stable"
+      },
+      "tester": "github:KenAKAFrosty",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "t-beam-supreme",
+      "os": "macos",
+      "architecture": "aarch64",
+      "browser": {
+        "name": "firefox",
+        "channel": "stable"
+      },
+      "tester": "github:KenAKAFrosty",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    },
+    {
+      "board": "heltec-v4-r8",
+      "os": "windows",
+      "architecture": "x86_64",
+      "browser": {
+        "name": "firefox",
+        "channel": "stable"
+      },
+      "tester": "github:jackspace",
+      "cables_ready": true,
+      "device_permissions_ready": true,
+      "recovery_instructions_reviewed": true
+    }
+  ],
+  "fallback_assignments": [
+    {
+      "browser": {
+        "name": "safari",
+        "channel": "stable"
+      },
+      "os": "macos",
+      "architecture": "aarch64",
+      "tester": "github:KenAKAFrosty",
+      "browser_ready": true
+    }
+  ],
+  "installation_assignments": [
+    {
+      "target": "aarch64-apple-darwin",
+      "os": "macos",
+      "architecture": "aarch64",
+      "tester": "github:KenAKAFrosty",
+      "archive_ready": true
+    },
+    {
+      "target": "x86_64-apple-darwin",
+      "os": "macos",
+      "architecture": "x86_64",
+      "tester": "github:KenAKAFrosty",
+      "archive_ready": true
+    },
+    {
+      "target": "x86_64-unknown-linux-gnu",
+      "os": "linux",
+      "architecture": "x86_64",
+      "tester": "github:KenAKAFrosty",
+      "archive_ready": true
+    },
+    {
+      "target": "aarch64-unknown-linux-gnu",
+      "os": "linux",
+      "architecture": "aarch64",
+      "tester": "github:jackspace",
+      "archive_ready": true
+    },
+    {
+      "target": "x86_64-pc-windows-msvc",
+      "os": "windows",
+      "architecture": "x86_64",
+      "tester": "github:jackspace",
+      "archive_ready": true
+    }
+  ]
+}

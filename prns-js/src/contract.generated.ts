@@ -8,7 +8,7 @@ type BrandedBytes<Name extends string> = Uint8Array & Brand<Name>;
 
 export const HOST_CONTRACT_ABI = 1;
 export const HOST_SCHEMA_VERSION = 1;
-export const PRODUCT_VERSION = "0.3.6";
+export const PRODUCT_VERSION = "0.3.7";
 export const DESTINATION_HASH_LENGTH = 16;
 export const IDENTITY_HASH_LENGTH = 16;
 export const INTERFACE_ID_LENGTH = 8;

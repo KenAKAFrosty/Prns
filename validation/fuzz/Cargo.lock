@@ -417,7 +417,7 @@ dependencies = [
 
 [[package]]
 name = "prns-config"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "home",
  "prns-core",
@@ -427,7 +427,7 @@ dependencies = [
 
 [[package]]
 name = "prns-core"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "aes",
  "cbc",
@@ -448,11 +448,11 @@ dependencies = [
 
 [[package]]
 name = "prns-macros"
-version = "0.3.6"
+version = "0.3.7"
 
 [[package]]
 name = "prns-runtime"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "cfg-if",
  "heapless",

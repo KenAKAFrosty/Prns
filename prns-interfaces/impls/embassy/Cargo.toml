@@ -1,6 +1,6 @@
 [package]
 name = "prns-interfaces-embassy"
-version = "0.3.6"
+version = "0.3.7"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KenAKAFrosty/Prns"
@@ -20,8 +20,8 @@ include = ["src/**", "tests/**", "!tests/**/__pycache__/**", "!tests/**/*.pyc", 
 path = "src/lib.rs"
 
 [dependencies]
-prns-core = { version = "=0.3.6", path = "../../../prns-core", default-features = false, features = ["embassy-host"] }
-prns-runtime = { package = "prns-runtime-embassy", version = "=0.3.6", path = "../../../prns-runtime/impls/embassy", default-features = false }
+prns-core = { version = "=0.3.7", path = "../../../prns-core", default-features = false, features = ["embassy-host"] }
+prns-runtime = { package = "prns-runtime-embassy", version = "=0.3.7", path = "../../../prns-runtime/impls/embassy", default-features = false }
 embassy-sync = { version = "0.8.0", default-features = false }
 embassy-time = { version = "0.5", default-features = false }
 embassy-futures = { version = "0.1", default-features = false }
@@ -48,8 +48,8 @@ heapless-09 = { package = "heapless", version = "0.9", default-features = false,
 cfg-if = { version = "1", optional = true }
 
 [dev-dependencies]
-prns-core = { version = "=0.3.6", path = "../../../prns-core", default-features = false, features = ["std", "embassy-host"] }
-prns-runtime = { package = "prns-runtime-embassy", version = "=0.3.6", path = "../../../prns-runtime/impls/embassy", default-features = false, features = ["std"] }
+prns-core = { version = "=0.3.7", path = "../../../prns-core", default-features = false, features = ["std", "embassy-host"] }
+prns-runtime = { package = "prns-runtime-embassy", version = "=0.3.7", path = "../../../prns-runtime/impls/embassy", default-features = false, features = ["std"] }
 critical-section = { version = "1", features = ["std"] }
 embassy-time = { version = "0.5", default-features = false, features = ["std", "generic-queue-8"] }
 

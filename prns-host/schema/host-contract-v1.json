@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "abi": 1,
-  "productVersion": "0.3.6",
+  "productVersion": "0.3.7",
   "scalars": [
     {
       "name": "safeInt",

@@ -1,6 +1,6 @@
 [package]
 name = "prns-runtime-embassy"
-version = "0.3.6"
+version = "0.3.7"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KenAKAFrosty/Prns"
@@ -29,8 +29,8 @@ log = ["dep:log"]
 large-static-responses = ["prns-core/large-static-responses"]
 
 [dependencies]
-prns-core = { version = "=0.3.6", path = "../../../prns-core", default-features = false, features = ["embassy-host", "flash"] }
-prns-runtime = { version = "=0.3.6", path = "../../core", default-features = false }
+prns-core = { version = "=0.3.7", path = "../../../prns-core", default-features = false, features = ["embassy-host", "flash"] }
+prns-runtime = { version = "=0.3.7", path = "../../core", default-features = false }
 embassy-sync = { version = "0.8.0", default-features = false }
 embassy-time = { version = "0.5", default-features = false }
 embassy-futures = { version = "0.1", default-features = false }
@@ -41,7 +41,7 @@ static_cell = "2.1"
 log = { version = "0.4", optional = true, default-features = false }
 
 [dev-dependencies]
-prns-core = { version = "=0.3.6", path = "../../../prns-core", default-features = false, features = ["std", "embassy-host", "test-support", "flash"] }
+prns-core = { version = "=0.3.7", path = "../../../prns-core", default-features = false, features = ["std", "embassy-host", "test-support", "flash"] }
 embedded-storage = "0.3"
 critical-section = { version = "1", features = ["std"] }
 embassy-time = { version = "0.5", default-features = false, features = ["std", "generic-queue-8"] }
