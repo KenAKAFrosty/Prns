@@ -1536,6 +1536,7 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
       casework.Tag(
         "Diagnostic",
         casework.Tag("AnnounceHeard", {
+          appData: bytes("appData", data.appData).slice(),
           destination: contract.destinationHash(
             bytes("destination", data.destination),
           ),

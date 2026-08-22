@@ -339,6 +339,7 @@ class EventField(IntEnum):
     DROPPED = 37
     PERSISTENCE_CAUSE = 38
     PERSISTENCE_TARGET = 39
+    APP_DATA = 40
 
 @dataclass(frozen=True, slots=True)
 class DestinationHash:
@@ -1144,6 +1145,7 @@ class DiagnosticEventAnnounceHeard:
     destination: DestinationHash
     hops: int
     source_interface: InterfaceId
+    app_data: bytes
 
 @dataclass(frozen=True, slots=True)
 class DiagnosticEventLinkEstablished:

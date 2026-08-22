@@ -2,6 +2,7 @@ use prns_host::EventDelivery;
 
 pub enum OwnedEvent {
     Announce {
+        app_data: Vec<u8>,
         destination: [u8; 16],
         hops: u8,
         source_interface: [u8; 8],
@@ -261,10 +262,12 @@ impl OwnedEvent {
     pub fn capture_host_diagnostic(event: prns_host::DiagnosticEvent) -> Self {
         match event {
             prns_host::DiagnosticEvent::AnnounceHeard {
+                app_data,
                 destination,
                 hops,
                 source_interface,
             } => Self::Announce {
+                app_data,
                 destination: destination.into_bytes(),
                 hops,
                 source_interface: source_interface.into_bytes(),

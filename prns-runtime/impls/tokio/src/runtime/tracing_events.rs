@@ -127,7 +127,7 @@ fn emit_message(message: &Message<'_>) {
     }
 }
 
-fn emit_diagnostic(diagnostic: &Diagnostic) {
+fn emit_diagnostic(diagnostic: &Diagnostic<'_>) {
     match diagnostic {
         Diagnostic::PersistenceRestored {
             routes,

@@ -365,6 +365,7 @@ end
     EventFieldDropped = 37
     EventFieldPersistenceCause = 38
     EventFieldPersistenceTarget = 39
+    EventFieldAppData = 40
 end
 
 struct DestinationHash
@@ -1125,6 +1126,7 @@ struct DiagnosticEventAnnounceHeard <: DiagnosticEvent
     destination::DestinationHash
     hops::UInt8
     source_interface::InterfaceId
+    app_data::Vector{UInt8}
 end
 
 struct DiagnosticEventLinkEstablished <: DiagnosticEvent

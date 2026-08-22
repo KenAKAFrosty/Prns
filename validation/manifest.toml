@@ -1191,6 +1191,19 @@ inputs = ["validation/interop/cases/napi-link-packet-interop-smoke.sh", "validat
 artifacts = "validation-artifacts/results/interop-napi-link-packet"
 
 [[suite]]
+id = "interop-napi-announce-app-data"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "linux"
+toolchain = "node"
+interpreter = "smoke"
+timeout_seconds = 420
+command = ["bash", "validation/interop/cases/napi-announce-app-data-interop-smoke.sh"]
+inputs = ["validation/interop/cases/napi-announce-app-data-interop-smoke.sh", "validation/interop/peers/rns_announce_app_data_peer.py", "prns-napi/tests/interop/announce_app_data_peer.mjs"]
+artifacts = "validation-artifacts/results/interop-napi-announce-app-data"
+
+[[suite]]
 id = "interop-napi-ratchet"
 domain = "interop"
 group = "essential"

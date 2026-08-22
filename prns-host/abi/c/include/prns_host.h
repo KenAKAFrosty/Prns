@@ -350,6 +350,7 @@ typedef uint32_t PrnsEventField;
 #define PRNS_EVENT_FIELD_DROPPED UINT32_C(37)
 #define PRNS_EVENT_FIELD_PERSISTENCE_CAUSE UINT32_C(38)
 #define PRNS_EVENT_FIELD_PERSISTENCE_TARGET UINT32_C(39)
+#define PRNS_EVENT_FIELD_APP_DATA UINT32_C(40)
 
 /*
  * Ownership and lifetime contract:

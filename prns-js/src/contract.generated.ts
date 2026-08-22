@@ -1087,6 +1087,7 @@ export type DiagnosticEvent =
         readonly destination: DestinationHash;
         readonly hops: number;
         readonly sourceInterface: InterfaceId;
+        readonly appData: Uint8Array;
       }
     >
   | Tag<

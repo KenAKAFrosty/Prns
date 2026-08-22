@@ -369,6 +369,7 @@ public enum EventField: UInt32, Sendable {
     case dropped = 37
     case persistenceCause = 38
     case persistenceTarget = 39
+    case appData = 40
 }
 
 public struct DestinationHash: Hashable, Sendable {
@@ -872,7 +873,7 @@ public enum ApplicationEvent: Sendable {
 }
 
 public enum DiagnosticEvent: Sendable {
-    case announceHeard(destination: DestinationHash, hops: UInt8, sourceInterface: InterfaceId)
+    case announceHeard(destination: DestinationHash, hops: UInt8, sourceInterface: InterfaceId, appData: [UInt8])
     case linkEstablished(linkId: LinkId, rttMillis: UInt64)
     case peerIdentified(linkId: LinkId, identity: IdentityHash)
     case linkClosed(linkId: LinkId, reason: LinkClosedReason)

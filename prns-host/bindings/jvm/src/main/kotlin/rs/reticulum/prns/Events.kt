@@ -349,6 +349,7 @@ internal fun decodeDiagnosticEvent(pointer: Pointer): DiagnosticEvent {
                 sourceInterface = InterfaceId(
                     event.bytes(EventField.SOURCE_INTERFACE),
                 ),
+                appData = Bytes(event.bytes(EventField.APP_DATA)),
             )
         }
         DiagnosticEventKind.LINK_ESTABLISHED -> DiagnosticEventLinkEstablished(

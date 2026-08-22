@@ -407,6 +407,7 @@ public enum EventField : uint
     Dropped = 37,
     PersistenceCause = 38,
     PersistenceTarget = 39,
+    AppData = 40,
 }
 
 public readonly struct DestinationHash : IEquatable<DestinationHash>
@@ -1536,7 +1537,8 @@ public abstract record DiagnosticEvent
     public sealed record AnnounceHeard(
         DestinationHash Destination,
         byte Hops,
-        InterfaceId SourceInterface
+        InterfaceId SourceInterface,
+        ReadOnlyMemory<byte> AppData
     ) : DiagnosticEvent;
     public sealed record LinkEstablished(
         LinkId LinkId,

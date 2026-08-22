@@ -1497,6 +1497,7 @@ pub enum EventField {
     Dropped = 37,
     PersistenceCause = 38,
     PersistenceTarget = 39,
+    AppData = 40,
 }
 
 impl EventField {
@@ -1542,6 +1543,7 @@ impl EventField {
             Self::Dropped => "Dropped",
             Self::PersistenceCause => "PersistenceCause",
             Self::PersistenceTarget => "PersistenceTarget",
+            Self::AppData => "AppData",
         }
     }
 }
@@ -1590,6 +1592,7 @@ impl TryFrom<u32> for EventField {
             37 => Ok(Self::Dropped),
             38 => Ok(Self::PersistenceCause),
             39 => Ok(Self::PersistenceTarget),
+            40 => Ok(Self::AppData),
             _ => Err(()),
         }
     }
@@ -2088,6 +2091,7 @@ mod tests {
             (EventField::Dropped, 37, "Dropped"),
             (EventField::PersistenceCause, 38, "PersistenceCause"),
             (EventField::PersistenceTarget, 39, "PersistenceTarget"),
+            (EventField::AppData, 40, "AppData"),
         ]);
     }
 }

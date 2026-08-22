@@ -169,6 +169,7 @@
       "Site": 3
     },
     "EventField": {
+      "AppData": 40,
       "ArrivedOn": 22,
       "AttachedInterface": 21,
       "Cause": 24,

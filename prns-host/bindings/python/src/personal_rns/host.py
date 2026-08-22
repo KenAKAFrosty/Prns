@@ -1328,6 +1328,7 @@ def _decode_diagnostic(
             g.DestinationHash(_event_bytes(native, event, f.DESTINATION)),
             _event_u8(native, event, f.HOPS),
             g.InterfaceId(_event_bytes(native, event, f.SOURCE_INTERFACE)),
+            _event_bytes(native, event, f.APP_DATA),
         )
     if diagnostic is g.DiagnosticEventKind.LINK_ESTABLISHED:
         return g.DiagnosticEventLinkEstablished(

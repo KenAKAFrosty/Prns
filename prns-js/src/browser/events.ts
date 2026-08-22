@@ -216,6 +216,7 @@ export function parseEvent(raw: unknown): ParsedPrnsEvent {
       Tag(
         "Diagnostic",
         Tag("AnnounceHeard", {
+          appData: copyBytes(bytesField(data, "appData")),
           destination: destinationHash(bytesField(data, "destination")),
           hops: hopCount(numberField(data, "hops")),
           sourceInterface: interfaceId(bytesField(data, "sourceInterface")),

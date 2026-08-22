@@ -391,6 +391,7 @@ function decode_diagnostic_event(event::Ptr{Cvoid})
             DestinationHash(event_bytes(event, EventFieldDestination)),
             UInt8(event_u64(event, EventFieldHops)),
             InterfaceId(event_bytes(event, EventFieldSourceInterface)),
+            event_bytes(event, EventFieldAppData),
         )
     kind == DiagnosticEventKindLinkEstablished &&
         return DiagnosticEventLinkEstablished(

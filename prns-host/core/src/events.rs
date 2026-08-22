@@ -115,6 +115,7 @@ pub enum DiagnosticEvent {
         destination: DestinationHash,
         hops: u8,
         source_interface: InterfaceId,
+        app_data: Vec<u8>,
     },
     LinkEstablished {
         link_id: LinkId,

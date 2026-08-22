@@ -26,7 +26,7 @@ export type ReleaseDestinationOutcomeName = 'released' | 'useRecorded' | 'useRef
 export type LinkClosedReasonName = 'timeout' | 'peerClosed' | 'malformedRtt'
 
 export type PrnsNodeEvent =
-  | { type: 'announce'; destination: Buffer; hops: number; sourceInterface: Buffer }
+  | { type: 'announce'; appData: Buffer; destination: Buffer; hops: number; sourceInterface: Buffer }
   | { type: 'singleDelivery'; destination: Buffer; plaintext: Buffer; sourceInterface: Buffer }
   | { type: 'linkDelivery'; linkId: Buffer; plaintext: Buffer; sourceInterface: Buffer }
   | { type: 'request'; destination: Buffer; linkId: Buffer; requestId: Buffer; requester?: Buffer; pathHash: Buffer; rttMillis: number; data: Buffer; token: RespondTokenSpec }

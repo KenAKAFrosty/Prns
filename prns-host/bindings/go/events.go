@@ -674,10 +674,15 @@ func decodeAnnounceHeard(event nativeEvent) (DiagnosticEvent, error) {
 	if err != nil {
 		return nil, err
 	}
+	appData, err := requiredBytes(event, EventFieldAppData)
+	if err != nil {
+		return nil, err
+	}
 	return DiagnosticEventAnnounceHeard{
 		Destination:     destination,
 		Hops:            uint8(hops),
 		SourceInterface: source,
+		AppData:         appData,
 	}, nil
 }
 

@@ -12,7 +12,7 @@ For Prns, a checked item has registered black-box or live evidence against stock
 RNS 1.4.2. An unchecked item marks a gap in Prns's registered evidence, not
 necessarily missing Prns behavior and never a verdict on another implementation.
 Internal unit tests or implementation support alone do not check an item. Prns
-currently has registered evidence for 23 of these 28 operations. Each linked
+currently has registered evidence for 24 of these 28 operations. Each linked
 `[x]` opens the executable case providing the primary evidence for that check;
 one suite may substantiate several observable operations.
 
@@ -24,7 +24,7 @@ one suite may substantiate several observable operations.
 - [\[x\]](../validation/interop/cases/napi-tcp-server-interop-smoke.sh) **SINGLE announcements**
   - Have each side announce a SINGLE destination and confirm the other side addresses
     it successfully.
-- [ ] **Announce application data**
+- [\[x\]](../validation/interop/cases/napi-announce-app-data-interop-smoke.sh) **Announce application data**
   - Send exact application bytes in announcements both ways and confirm each receiver
     reports them unchanged.
 - [ ] **PLAIN destinations**

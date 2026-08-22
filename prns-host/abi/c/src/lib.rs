@@ -3262,6 +3262,10 @@ fn event_bytes(event: &PrnsEvent, field: AbiEventField) -> Option<&[u8]> {
             AbiEventField::SourceInterface,
         ) => Some(source_interface.as_bytes()),
         (
+            EventValue::Diagnostic(DiagnosticEvent::AnnounceHeard { app_data, .. }),
+            AbiEventField::AppData,
+        ) => Some(app_data),
+        (
             EventValue::Diagnostic(DiagnosticEvent::LinkEstablished { link_id, .. }),
             AbiEventField::LinkId,
         )
@@ -3946,6 +3950,65 @@ mod tests {
                 expected
             );
         }
+        unsafe {
+            prns_event_release(event);
+            prns_event_stream_release(stream);
+        }
+    }
+
+    #[test]
+    fn capsule_projects_announce_application_data() {
+        let (mut host, publisher) = host_capsule(limits());
+        let mut stream = ptr::null_mut();
+        assert_eq!(
+            unsafe { prns_host_claim_diagnostics(&mut host, &mut stream) },
+            status(AbiStatus::Ok)
+        );
+        let destination = DestinationHash::new([7; 16]);
+        let source_interface = InterfaceId::new([8; 8]);
+        let app_data = vec![0, 1, 2, 255];
+        publisher.publish_diagnostic(DiagnosticEvent::AnnounceHeard {
+            destination,
+            hops: 3,
+            source_interface,
+            app_data: app_data.clone(),
+        });
+        let mut event = ptr::null_mut();
+        assert_eq!(
+            unsafe { prns_event_stream_next(stream, 0, &mut event) },
+            status(AbiStatus::Ok)
+        );
+        assert_eq!(
+            unsafe { prns_event_kind(event) },
+            AbiDiagnosticEventKind::AnnounceHeard as u32
+        );
+        for (field, expected) in [
+            (AbiEventField::Destination, destination.as_bytes().as_slice()),
+            (
+                AbiEventField::SourceInterface,
+                source_interface.as_bytes().as_slice(),
+            ),
+            (AbiEventField::AppData, app_data.as_slice()),
+        ] {
+            let mut view = PrnsByteView {
+                data: ptr::null(),
+                length: 0,
+            };
+            assert_eq!(
+                unsafe { prns_event_bytes(event, field as u32, &mut view) },
+                status(AbiStatus::Ok)
+            );
+            assert_eq!(
+                unsafe { slice::from_raw_parts(view.data, view.length) },
+                expected
+            );
+        }
+        let mut hops = 0;
+        assert_eq!(
+            unsafe { prns_event_u64(event, AbiEventField::Hops as u32, &mut hops) },
+            status(AbiStatus::Ok)
+        );
+        assert_eq!(hops, 3);
         unsafe {
             prns_event_release(event);
             prns_event_stream_release(stream);

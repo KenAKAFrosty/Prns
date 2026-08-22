@@ -40,6 +40,7 @@ export function parseEvent(raw) {
     const event = Tag(rawEventType(stringField(object, "type")), object);
     return match_into().from(event, {
         announce: (data) => Tag("Diagnostic", Tag("AnnounceHeard", {
+            appData: copyBytes(bytesField(data, "appData")),
             destination: destinationHash(bytesField(data, "destination")),
             hops: hopCount(numberField(data, "hops")),
             sourceInterface: interfaceId(bytesField(data, "sourceInterface")),

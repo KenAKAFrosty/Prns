@@ -2928,7 +2928,7 @@ fn publish_message(sink: &dyn NativeEventSink, message: Message<'_>) -> bool {
     sink.publish_application(event)
 }
 
-fn translate_diagnostic(diagnostic: Diagnostic) -> Option<DiagnosticEvent> {
+fn translate_diagnostic(diagnostic: Diagnostic<'_>) -> Option<DiagnosticEvent> {
     Some(match diagnostic {
         Diagnostic::PersistenceRestored {
             routes,
@@ -2959,10 +2959,12 @@ fn translate_diagnostic(diagnostic: Diagnostic) -> Option<DiagnosticEvent> {
             destination,
             hops,
             source_interface,
+            app_data,
         } => DiagnosticEvent::AnnounceHeard {
             destination: host_destination(destination),
             hops,
             source_interface: host_interface(source_interface),
+            app_data: app_data.to_vec(),
         },
         Diagnostic::LinkEstablished(established) => DiagnosticEvent::LinkEstablished {
             link_id: host_link(established.link_id),

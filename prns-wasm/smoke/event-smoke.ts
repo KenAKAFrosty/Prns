@@ -219,9 +219,11 @@ async function main(): Promise<void> {
     "parsed Link plaintext owns its bytes",
   );
 
+  const announceAppData = new Uint8Array([0, 112, 114, 110, 115, 255]);
   runtime.events.push(
     {
       type: "announce",
+      appData: announceAppData,
       destination,
       hops: 2,
       sourceInterface,
@@ -237,6 +239,19 @@ async function main(): Promise<void> {
     `${announce.value.tag},${route.value.tag}` ===
       "AnnounceHeard,RouteExpired",
     "diagnostic cases are tagged and command settlement stays private",
+  );
+  assert(announce.value.tag === "AnnounceHeard", "announce diagnostic is tagged");
+  assert(
+    bytesEqual(announce.value.data.appData, announceAppData),
+    "announce application data is preserved",
+  );
+  announceAppData.fill(0);
+  assert(
+    bytesEqual(
+      announce.value.data.appData,
+      new Uint8Array([0, 112, 114, 110, 115, 255]),
+    ),
+    "parsed announce application data owns its bytes",
   );
 
   runtime.events.push({ type: "futureEvent", value: 1 });

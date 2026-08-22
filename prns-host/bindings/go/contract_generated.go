@@ -441,6 +441,7 @@ const (
 	EventFieldDropped EventField = 37
 	EventFieldPersistenceCause EventField = 38
 	EventFieldPersistenceTarget EventField = 39
+	EventFieldAppData EventField = 40
 )
 
 type DestinationHash [DestinationHashLength]byte
@@ -1353,6 +1354,7 @@ type DiagnosticEventAnnounceHeard struct {
 	Destination DestinationHash
 	Hops uint8
 	SourceInterface InterfaceId
+	AppData []byte
 }
 
 func (DiagnosticEventAnnounceHeard) diagnosticEvent() {}

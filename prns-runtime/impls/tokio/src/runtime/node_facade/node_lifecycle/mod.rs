@@ -154,7 +154,9 @@ async fn run_node_tasks(
     }
 }
 
-fn persistence_restored_diagnostic(report: &persistence::PersistenceRestoreReport) -> Diagnostic {
+fn persistence_restored_diagnostic(
+    report: &persistence::PersistenceRestoreReport,
+) -> Diagnostic<'static> {
     Diagnostic::PersistenceRestored {
         routes: report.routes.seeded_count,
         destination_identities: report.destination_identities.seeded_count,

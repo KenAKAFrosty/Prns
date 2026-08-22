@@ -458,7 +458,8 @@ func decodeDiagnosticEvent(_ pointer: OpaquePointer) throws -> DiagnosticEvent {
         return .announceHeard(
             destination: try DestinationHash(event.bytes(.destination)),
             hops: hops,
-            sourceInterface: try InterfaceId(event.bytes(.sourceInterface))
+            sourceInterface: try InterfaceId(event.bytes(.sourceInterface)),
+            appData: try event.bytes(.appData)
         )
     case .linkEstablished:
         return .linkEstablished(

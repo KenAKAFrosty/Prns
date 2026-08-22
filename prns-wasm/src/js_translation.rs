@@ -32,6 +32,7 @@ pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
         }
         Journaled::AnnounceHeard { observation, .. } => {
             set_str(&object, "type", "announce");
+            set_bytes(&object, "appData", observation.app_data);
             set_bytes(&object, "destination", observation.destination.as_bytes());
             set_u32(&object, "hops", u32::from(observation.hops.0));
             set_bytes(
