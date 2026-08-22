@@ -1165,6 +1165,19 @@ inputs = ["validation/interop/cases/napi-channel-interop-smoke.sh", "validation/
 artifacts = "validation-artifacts/results/interop-napi-channel"
 
 [[suite]]
+id = "interop-napi-link-closure"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "linux"
+toolchain = "node"
+interpreter = "smoke"
+timeout_seconds = 420
+command = ["bash", "validation/interop/cases/napi-link-closure-interop-smoke.sh"]
+inputs = ["validation/interop/cases/napi-link-closure-interop-smoke.sh", "validation/interop/peers/rns_link_closure_server.py", "prns-napi/tests/interop/link_closure_client.mjs"]
+artifacts = "validation-artifacts/results/interop-napi-link-closure"
+
+[[suite]]
 id = "interop-napi-ratchet"
 domain = "interop"
 group = "essential"
@@ -1189,6 +1202,19 @@ timeout_seconds = 420
 command = ["bash", "validation/interop/cases/napi-large-request-interop-smoke.sh"]
 inputs = ["validation/interop/cases/napi-large-request-interop-smoke.sh", "validation/interop/peers/rns_large_request_server.py", "prns-napi/tests/interop/large_request_client.mjs"]
 artifacts = "validation-artifacts/results/interop-napi-large-request"
+
+[[suite]]
+id = "interop-napi-resource-rejection"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "linux"
+toolchain = "node"
+interpreter = "smoke"
+timeout_seconds = 420
+command = ["bash", "validation/interop/cases/napi-resource-rejection-interop-smoke.sh"]
+inputs = ["validation/interop/cases/napi-resource-rejection-interop-smoke.sh", "validation/interop/peers/rns_resource_rejection_peer.py", "prns-napi/tests/interop/resource_rejection_peer.mjs"]
+artifacts = "validation-artifacts/results/interop-napi-resource-rejection"
 
 [[suite]]
 id = "interop-napi-udp"

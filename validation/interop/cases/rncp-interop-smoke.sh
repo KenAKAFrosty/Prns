@@ -183,6 +183,8 @@ import RNS
 work = pathlib.Path(sys.argv[1])
 work.joinpath("prns-send.bin").write_bytes(b"prns-to-stock\n" * 12000)
 work.joinpath("stock-send.bin").write_bytes(b"stock-to-prns\n" * 12000)
+work.joinpath("prns-compressed.bin").write_bytes(b"prns-compressed-resource\n" * 12000)
+work.joinpath("stock-compressed.bin").write_bytes(b"stock-compressed-resource\n" * 12000)
 work.joinpath("stock-fetch/stock.txt").write_bytes(b"served-by-stock\n" * 12000)
 work.joinpath("prns-fetch/prns.txt").write_bytes(b"served-by-prns\n" * 12000)
 work.joinpath("interrupt-prns.bin").write_bytes(os.urandom(32 * 1024 * 1024))
@@ -227,6 +229,13 @@ for _ in $(seq 1 100); do
     sleep 0.1
 done
 cmp "$WORK/prns-send.bin" "$WORK/stock-receive/prns-send.bin" || { echo "FAIL: stock rncp did not receive Prns bytes"; cat "$LISTENER_LOG"; exit 1; }
+"$BIN" cp --config "$CONFIG" -i "$PRNS_ID" -S "$WORK/prns-compressed.bin" "$STOCK_DESTINATION"
+for _ in $(seq 1 100); do
+    [ -f "$WORK/stock-receive/prns-compressed.bin" ] && break
+    sleep 0.1
+done
+cmp "$WORK/prns-compressed.bin" "$WORK/stock-receive/prns-compressed.bin" || { echo "FAIL: stock rncp did not reconstruct the compressed Prns bytes"; cat "$RNSD_LOG"; exit 1; }
+grep -q "RNCP_COMPRESSED_RECEIVED name=prns-compressed.bin" "$RNSD_LOG" || { echo "FAIL: stock RNS did not observe compressed transport from Prns"; cat "$RNSD_LOG"; exit 1; }
 "$BIN" cp --config "$CONFIG" -i "$PRNS_ID" -S -P -C "$WORK/prns-segmented.bin" "$STOCK_DESTINATION"
 for _ in $(seq 1 200); do
     [ -f "$WORK/stock-receive/prns-segmented.bin" ] && break
@@ -237,7 +246,7 @@ grep -q "RNCP_SEGMENTED_RECEIVED name=prns-segmented.bin segments=" "$RNSD_LOG" 
 
 PRNS_DESTINATION="$($BIN cp --config "$CONFIG" -i "$PRNS_ID" -p | sed -n 's/^Listening on : <\([0-9a-f]*\)>$/\1/p')"
 [ -n "$PRNS_DESTINATION" ] || { echo "FAIL: Prns listener destination unavailable"; exit 1; }
-"$PYTHON" "$ORACLE" cancel-send "$CLIENT_CONFIG" "$CLIENT_ID" "$PRNS_DESTINATION" "$WORK/cancel-stock.bin" "$WORK/boundary-1.bin" "$WORK/boundary-464.bin" "$WORK/boundary-465.bin" "$WORK/stock-send.bin" "$WORK/stock-segmented.bin" > "$WORK/cancel-result.out" 2>&1 &
+"$PYTHON" "$ORACLE" cancel-send "$CLIENT_CONFIG" "$CLIENT_ID" "$PRNS_DESTINATION" "$WORK/cancel-stock.bin" "$WORK/boundary-1.bin" "$WORK/boundary-464.bin" "$WORK/boundary-465.bin" "$WORK/stock-send.bin" "$WORK/stock-compressed.bin" "$WORK/stock-segmented.bin" > "$WORK/cancel-result.out" 2>&1 &
 STOCK_COMMAND_PID=$!
 for _ in $(seq 1 200); do
     grep -q "RNCP_CANCEL_PATH_REQUESTED" "$WORK/cancel-result.out" && break
@@ -251,6 +260,7 @@ wait_stock_command || { echo "FAIL: stock resource cancellation did not settle";
 RESULT="$(cat "$WORK/cancel-result.out")"
 [[ "$RESULT" == *"RNCP_CANCEL_OK"* ]] || { echo "FAIL: stock resource cancellation did not settle"; echo "$RESULT"; exit 1; }
 [[ "$RESULT" == *"segmented_recoveries=1"* ]] || { echo "FAIL: stock RNS did not complete a multi-segment recovery into Prns"; echo "$RESULT"; exit 1; }
+[[ "$RESULT" == *"compressed_recoveries=1"* ]] || { echo "FAIL: stock RNS did not send a compressed Resource into Prns"; echo "$RESULT"; exit 1; }
 for _ in $(seq 1 100); do
     STAGING="$(find "$WORK/prns-receive" -maxdepth 1 -name '.rncp.*.staging' -print -quit)"
     [ -z "$STAGING" ] && break
@@ -258,7 +268,7 @@ for _ in $(seq 1 100); do
 done
 [ ! -f "$WORK/prns-receive/cancel-stock.bin" ] || { echo "FAIL: cancelled stock bytes were published"; exit 1; }
 [ -z "$(find "$WORK/prns-receive" -maxdepth 1 -name '.rncp.*.staging' -print -quit)" ] || { echo "FAIL: cancelled stock transfer left staging state"; exit 1; }
-for name in boundary-1.bin boundary-464.bin boundary-465.bin stock-send.bin stock-segmented.bin; do
+for name in boundary-1.bin boundary-464.bin boundary-465.bin stock-send.bin stock-compressed.bin stock-segmented.bin; do
     for _ in $(seq 1 100); do
         [ -f "$WORK/prns-receive/$name" ] && break
         sleep 0.1
@@ -316,4 +326,4 @@ fi
 [ ! -f "$WORK/auth-receive/prns-send.bin" ] || { echo "FAIL: unlisted stock bytes were published"; exit 1; }
 stop_listener
 
-echo "PASS: Prnsd cp rejects partial publication, settles cancellation, recovers, and exchanges boundary, bulk, and completed multi-segment files with stock RNS 1.4.2 rncp"
+echo "PASS: Prnsd cp rejects partial publication, settles cancellation, and exchanges exact compressed, boundary, bulk, and completed multi-segment files with stock RNS 1.4.2 rncp"

@@ -12,7 +12,7 @@ For Prns, a checked item has registered black-box or live evidence against stock
 RNS 1.4.2. An unchecked item marks a gap in Prns's registered evidence, not
 necessarily missing Prns behavior and never a verdict on another implementation.
 Internal unit tests or implementation support alone do not check an item. Prns
-currently has registered evidence for 19 of these 28 operations.
+currently has registered evidence for 22 of these 28 operations.
 
 ## Identity and destinations
 
@@ -45,7 +45,7 @@ currently has registered evidence for 19 of these 28 operations.
 - [x] **Link identification**
   - Have each initiator identify itself and confirm the responder observes and
     authorizes the exact identity.
-- [ ] **Link closure**
+- [x] **Link closure**
   - Have each side close a Link and confirm its peer observes a clean remote closure.
 - [x] **Packet-backed requests**
   - Send a small named-path request from each side and confirm the exact response.
@@ -59,7 +59,7 @@ currently has registered evidence for 19 of these 28 operations.
 
 - [x] **Resource transfer and metadata**
   - Transfer an exact single-segment Resource with metadata in both directions.
-- [ ] **Resource compression**
+- [x] **Resource compression**
   - Transfer compressible Resources both ways and confirm compressed transport plus
     exact reconstructed bytes.
 - [x] **Multi-segment Resources**
@@ -68,7 +68,7 @@ currently has registered evidence for 19 of these 28 operations.
 - [x] **Resource cancellation**
   - Cancel an active transfer, confirm no partial publication, then complete a fresh
     transfer.
-- [ ] **Resource rejection**
+- [x] **Resource rejection**
   - Refuse an offered Resource and confirm the sender sees rejection with no payload
     publication.
 - [x] **Channel messages**

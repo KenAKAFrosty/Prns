@@ -95,6 +95,11 @@ def serve(config_dir, listener_path, save_path, fetch_path):
         segments = resource.get_segments()
         if name == "prns-segmented.bin" and segments <= 1:
             raise RuntimeError("Prns segmented transfer completed as a single segment")
+        if name == "prns-compressed.bin":
+            if not resource.is_compressed():
+                raise RuntimeError("Prns compressible Resource arrived uncompressed")
+            if resource.get_transfer_size() >= resource.get_data_size():
+                raise RuntimeError("Prns compressed Resource did not reduce transport bytes")
         target = save_path.joinpath(name)
         counter = 0
         while target.exists():
@@ -103,6 +108,12 @@ def serve(config_dir, listener_path, save_path, fetch_path):
         shutil.move(resource.data.name, target)
         if name == "prns-segmented.bin":
             print(f"RNCP_SEGMENTED_RECEIVED name={name} segments={segments}", flush=True)
+        if name == "prns-compressed.bin":
+            print(
+                f"RNCP_COMPRESSED_RECEIVED name={name} "
+                f"transport={resource.get_transfer_size()} data={resource.get_data_size()}",
+                flush=True,
+            )
 
     def established(link):
         link.set_resource_strategy(RNS.Link.ACCEPT_APP)
@@ -197,6 +208,7 @@ def cancel_send(config_dir, identity_path, destination_hash, source_path, *recov
     source.close()
     time.sleep(0.25)
     segmented_recoveries = 0
+    compressed_recoveries = 0
     for recovery_path in map(pathlib.Path, recovery_paths):
         recovery_link = RNS.Link(destination)
         wait_for(
@@ -210,8 +222,14 @@ def cancel_send(config_dir, identity_path, destination_hash, source_path, *recov
             recovery_source,
             recovery_link,
             metadata={"name": recovery_path.name.encode("utf-8")},
-            auto_compress=False,
+            auto_compress=recovery_path.name == "stock-compressed.bin",
         )
+        if recovery_path.name == "stock-compressed.bin":
+            if not recovery.is_compressed():
+                raise RuntimeError("stock compressible Resource was not compressed")
+            if recovery.get_transfer_size() >= recovery.get_data_size():
+                raise RuntimeError("stock compressed Resource did not reduce transport bytes")
+            compressed_recoveries += 1
         wait_for(
             lambda: recovery.status >= RNS.Resource.COMPLETE,
             30,
@@ -231,7 +249,8 @@ def cancel_send(config_dir, identity_path, destination_hash, source_path, *recov
         recovery_link.teardown()
     print(
         f"RNCP_CANCEL_OK progress={resource.get_progress():.6f} "
-        f"recovery_files={len(recovery_paths)} segmented_recoveries={segmented_recoveries}"
+        f"recovery_files={len(recovery_paths)} segmented_recoveries={segmented_recoveries} "
+        f"compressed_recoveries={compressed_recoveries}"
     )
 
 
