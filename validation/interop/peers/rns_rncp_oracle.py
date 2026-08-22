@@ -92,12 +92,17 @@ def serve(config_dir, listener_path, save_path, fetch_path):
         if resource.status != RNS.Resource.COMPLETE or resource.metadata is None:
             return
         name = os.path.basename(resource.metadata["name"].decode("utf-8"))
+        segments = resource.get_segments()
+        if name == "prns-segmented.bin" and segments <= 1:
+            raise RuntimeError("Prns segmented transfer completed as a single segment")
         target = save_path.joinpath(name)
         counter = 0
         while target.exists():
             counter += 1
             target = save_path.joinpath(f"{name}.{counter}")
         shutil.move(resource.data.name, target)
+        if name == "prns-segmented.bin":
+            print(f"RNCP_SEGMENTED_RECEIVED name={name} segments={segments}", flush=True)
 
     def established(link):
         link.set_resource_strategy(RNS.Link.ACCEPT_APP)
@@ -191,14 +196,15 @@ def cancel_send(config_dir, identity_path, destination_hash, source_path, *recov
     link.teardown()
     source.close()
     time.sleep(0.25)
-    recovery_link = RNS.Link(destination)
-    wait_for(
-        lambda: recovery_link.status == RNS.Link.ACTIVE,
-        10,
-        "recovery link did not activate",
-    )
-    recovery_link.identify(local_identity)
+    segmented_recoveries = 0
     for recovery_path in map(pathlib.Path, recovery_paths):
+        recovery_link = RNS.Link(destination)
+        wait_for(
+            lambda: recovery_link.status == RNS.Link.ACTIVE,
+            10,
+            f"recovery link for {recovery_path.name} did not activate",
+        )
+        recovery_link.identify(local_identity)
         recovery_source = open(recovery_path, "rb")
         recovery = RNS.Resource(
             recovery_source,
@@ -215,11 +221,17 @@ def cancel_send(config_dir, identity_path, destination_hash, source_path, *recov
             raise RuntimeError(
                 f"recovery transfer {recovery_path.name} failed with status {recovery.status}"
             )
+        if recovery_path.stat().st_size > RNS.Resource.MAX_EFFICIENT_SIZE:
+            if recovery.get_segments() <= 1:
+                raise RuntimeError(
+                    f"recovery transfer {recovery_path.name} did not cross a segment boundary"
+                )
+            segmented_recoveries += 1
         recovery_source.close()
-    recovery_link.teardown()
+        recovery_link.teardown()
     print(
         f"RNCP_CANCEL_OK progress={resource.get_progress():.6f} "
-        f"recovery_files={len(recovery_paths)}"
+        f"recovery_files={len(recovery_paths)} segmented_recoveries={segmented_recoveries}"
     )
 
 

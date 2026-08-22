@@ -1074,6 +1074,19 @@ inputs = ["validation/interop/cases/local-transit-smoke.sh", "validation/interop
 artifacts = "validation-artifacts/results/interop-local-transit"
 
 [[suite]]
+id = "interop-mixed-multihop"
+domain = "interop"
+group = "essential"
+tiers = ["release", "scheduled"]
+platform = "linux"
+toolchain = "stable"
+interpreter = "smoke"
+timeout_seconds = 600
+command = ["bash", "validation/interop/cases/mixed-multihop-interop-smoke.sh"]
+inputs = ["validation/interop/cases/mixed-multihop-interop-smoke.sh", "validation/interop/peers/rns_multihop_transport.py", "validation/interop/peers/rns_multihop_endpoint.py", "validation/integration/examples/mixed_multihop_daemon.rs"]
+artifacts = "validation-artifacts/results/interop-mixed-multihop"
+
+[[suite]]
 id = "interop-ifac-tcp"
 domain = "interop"
 group = "essential"
@@ -1137,6 +1150,58 @@ timeout_seconds = 420
 command = ["bash", "validation/interop/cases/napi-tcp-client-interop-smoke.sh"]
 inputs = ["validation/interop/cases/napi-tcp-client-interop-smoke.sh", "validation/interop/peers/rns_tcp_server_peer.py", "prns-napi/tests/interop/tcp_client_probe.mjs"]
 artifacts = "validation-artifacts/results/interop-napi-tcp-client"
+
+[[suite]]
+id = "interop-napi-channel"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "linux"
+toolchain = "node"
+interpreter = "smoke"
+timeout_seconds = 420
+command = ["bash", "validation/interop/cases/napi-channel-interop-smoke.sh"]
+inputs = ["validation/interop/cases/napi-channel-interop-smoke.sh", "validation/interop/peers/rns_channel_server.py", "prns-napi/tests/interop/channel_client.mjs"]
+artifacts = "validation-artifacts/results/interop-napi-channel"
+
+[[suite]]
+id = "interop-napi-ratchet"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "linux"
+toolchain = "node"
+interpreter = "smoke"
+timeout_seconds = 420
+command = ["bash", "validation/interop/cases/napi-ratchet-interop-smoke.sh"]
+inputs = ["validation/interop/cases/napi-ratchet-interop-smoke.sh", "validation/interop/peers/rns_ratchet_server.py", "prns-napi/tests/interop/ratchet_client.mjs"]
+artifacts = "validation-artifacts/results/interop-napi-ratchet"
+
+[[suite]]
+id = "interop-napi-large-request"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "linux"
+toolchain = "node"
+interpreter = "smoke"
+timeout_seconds = 420
+command = ["bash", "validation/interop/cases/napi-large-request-interop-smoke.sh"]
+inputs = ["validation/interop/cases/napi-large-request-interop-smoke.sh", "validation/interop/peers/rns_large_request_server.py", "prns-napi/tests/interop/large_request_client.mjs"]
+artifacts = "validation-artifacts/results/interop-napi-large-request"
+
+[[suite]]
+id = "interop-napi-udp"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "linux"
+toolchain = "node"
+interpreter = "smoke"
+timeout_seconds = 420
+command = ["bash", "validation/interop/cases/napi-udp-interop-smoke.sh"]
+inputs = ["validation/interop/cases/napi-udp-interop-smoke.sh", "validation/interop/peers/rns_udp_peer.py", "prns-napi/tests/interop/udp_peer.mjs"]
+artifacts = "validation-artifacts/results/interop-napi-udp"
 
 [[suite]]
 id = "interop-rnid-local"

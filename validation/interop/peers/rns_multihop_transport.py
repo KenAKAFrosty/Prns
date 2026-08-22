@@ -1,0 +1,49 @@
+import os
+import pathlib
+import sys
+import tempfile
+import time
+
+import RNS
+
+
+EXPECTED_RNS_VERSION = "1.4.2"
+
+
+def main():
+    if getattr(RNS, "__version__", "") != EXPECTED_RNS_VERSION:
+        raise RuntimeError(f"expected RNS {EXPECTED_RNS_VERSION}")
+    listen_port = int(os.environ["RNS_MULTIHOP_LISTEN_PORT"])
+    peer_port = int(os.environ["RNS_MULTIHOP_PEER_PORT"])
+    config_dir = pathlib.Path(tempfile.mkdtemp(prefix="rns-multihop-transport-"))
+    config_dir.joinpath("config").write_text(
+        "[reticulum]\n"
+        "enable_transport = Yes\n"
+        "share_instance = No\n"
+        "panic_on_interface_error = No\n"
+        "[logging]\n"
+        "loglevel = 2\n"
+        "[interfaces]\n"
+        "[[Left Endpoint Server]]\n"
+        "type = TCPServerInterface\n"
+        "enabled = Yes\n"
+        "listen_ip = 127.0.0.1\n"
+        f"listen_port = {listen_port}\n"
+        "[[Prns Transport Client]]\n"
+        "type = TCPClientInterface\n"
+        "enabled = Yes\n"
+        "target_host = 127.0.0.1\n"
+        f"target_port = {peer_port}\n",
+        encoding="utf-8",
+    )
+    RNS.Reticulum(configdir=str(config_dir), loglevel=RNS.LOG_ERROR)
+    print(
+        f"MULTIHOP_TRANSPORT_UP listen=127.0.0.1:{listen_port} peer=127.0.0.1:{peer_port}",
+        flush=True,
+    )
+    while True:
+        time.sleep(0.25)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
