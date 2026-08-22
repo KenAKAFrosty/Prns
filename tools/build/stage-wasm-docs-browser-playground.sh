@@ -34,6 +34,9 @@ else
     npm --prefix "$wasm_dir" run build:playground
 fi
 
+if [[ -e "$public_dir/sdk" ]]; then
+    rm -rf -- "$public_dir/sdk"
+fi
 mkdir -p "$public_dir/sdk" "$public_dir/pkg"
 cp "$example_dir/index.html" "$public_dir/index.html"
 cp "$example_dir/styles.css" "$public_dir/styles.css"
@@ -43,9 +46,15 @@ cp "$build_dir/prns-wasm/examples/browser-playground/outcomes.js" "$public_dir/o
 cp "$build_dir/prns-wasm/examples/browser-playground/presentation.js" "$public_dir/presentation.js"
 cp "$build_dir/prns-wasm/examples/browser-playground/state.js" "$public_dir/state.js"
 cp "$build_dir/prns-wasm/examples/browser-playground/view.js" "$public_dir/view.js"
-cp "$example_dir/sdk/index.js" "$public_dir/sdk/index.js"
 cp -R "$build_dir/prns-js/src/." "$public_dir/sdk/"
+cp "$example_dir/sdk/index.js" "$public_dir/sdk/index.js"
+cp "$example_dir/sdk/package.json" "$public_dir/sdk/package.json"
 cp "$build_dir/pkg/prns_wasm.js" "$public_dir/pkg/prns_wasm.js"
 cp "$build_dir/pkg/prns_wasm_bg.wasm" "$public_dir/pkg/prns_wasm_bg.wasm"
+
+sdk_entry_native="$(native_path "$public_dir/sdk/index.js")"
+node --input-type=module \
+    -e 'const { pathToFileURL } = await import("node:url"); await import(pathToFileURL(process.argv[1]).href)' \
+    "$sdk_entry_native"
 
 echo "staged the browser transport playground at $public_dir"

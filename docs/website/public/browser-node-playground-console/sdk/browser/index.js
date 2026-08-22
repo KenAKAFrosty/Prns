@@ -892,6 +892,7 @@ function webSocketCommandFailure(failure) {
 function retainedBrowserEventBytes(event) {
     return match_into().from(event, {
         SingleDelivery: ({ plaintext }) => plaintext.length,
+        LinkDelivery: ({ plaintext }) => plaintext.length,
         Request: ({ data }) => data.length,
         Response: ({ data }) => data.length,
         ResponseSegment: ({ data }) => data.length,

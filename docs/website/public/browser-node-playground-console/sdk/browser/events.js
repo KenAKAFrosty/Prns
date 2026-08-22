@@ -16,6 +16,7 @@ const RAW_EVENT_TYPES = new Set([
     "responseSegment",
     "channelMessage",
     "singleDelivery",
+    "linkDelivery",
     "delivered",
     "linkClosed",
     "linkInterfaceMismatch",
@@ -111,6 +112,11 @@ export function parseEvent(raw) {
         })),
         singleDelivery: (data) => Tag("Application", Tag("SingleDelivery", {
             destination: destinationHash(bytesField(data, "destination")),
+            plaintext: copyBytes(bytesField(data, "plaintext")),
+            sourceInterface: interfaceId(bytesField(data, "sourceInterface")),
+        })),
+        linkDelivery: (data) => Tag("Application", Tag("LinkDelivery", {
+            linkId: linkId(bytesField(data, "linkId")),
             plaintext: copyBytes(bytesField(data, "plaintext")),
             sourceInterface: interfaceId(bytesField(data, "sourceInterface")),
         })),
