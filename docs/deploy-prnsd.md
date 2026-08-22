@@ -85,7 +85,7 @@ docker run -d \
   --mount type=volume,source=prnsd-data,target=/var/lib/prnsd \
   --publish 4242:4242/tcp \
   --publish 4284:4284/tcp \
-  ghcr.io/kenakafrosty/prnsd:0.3.6
+  ghcr.io/kenakafrosty/prnsd:0.3.7
 ```
 
 The `unless-stopped` policy restarts the node with Docker after a host reboot, and still honors a manual `docker stop`.
@@ -108,7 +108,7 @@ docker run -d \
   --env PRNSD_BACKBONE_DISCOVERABLE=Yes \
   --env PRNSD_REACHABLE_HOST=backbone.example.com \
   --env PRNSD_REACHABLE_PORT=4242 \
-  ghcr.io/kenakafrosty/prnsd:0.3.6
+  ghcr.io/kenakafrosty/prnsd:0.3.7
 ```
 
 `PRNSD_REACHABLE_PORT` is the external port that other nodes use; it may differ from the container's internal listener port. Discovery remains disabled when no complete public endpoint is available. Partial or malformed endpoint settings fail startup instead of creating an invalid advertisement.
@@ -189,7 +189,7 @@ Keep the backup private because it contains the node identity and ratchets. Rest
 Back up the volume, pull the desired release, and recreate the container while retaining the volume:
 
 ```sh
-export PRNSD_IMAGE='ghcr.io/kenakafrosty/prnsd:0.3.6'
+export PRNSD_IMAGE='ghcr.io/kenakafrosty/prnsd:0.3.7'
 docker pull "$PRNSD_IMAGE"
 docker stop --time 30 prnsd
 docker rm prnsd

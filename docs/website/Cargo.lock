@@ -2311,7 +2311,7 @@ dependencies = [
 
 [[package]]
 name = "prns-core"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "aes",
  "cbc",
@@ -2341,7 +2341,7 @@ dependencies = [
 
 [[package]]
 name = "prns-macros"
-version = "0.3.6"
+version = "0.3.7"
 
 [[package]]
 name = "proc-macro-crate"

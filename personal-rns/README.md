@@ -16,7 +16,7 @@ For a Tokio application using TCP:
 cargo add personal-rns --features tokio-host,tcp
 ```
 
-For the exact source behind the public 0.3.6 prerelease:
+For the exact source behind the public 0.3.7 prerelease:
 
 ```console
 cargo add personal-rns --git https://github.com/KenAKAFrosty/Prns --features tokio-host,tcp
