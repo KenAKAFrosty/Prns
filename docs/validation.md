@@ -4,6 +4,10 @@ For the beginner verification ladder, start with
 [Testing changes](testing.md). This document owns the deeper suite registry,
 evidence, proof, interoperability, and release aggregation model.
 
+The [stock-RNS interoperability test checklist](interop-checklist.md) records
+the working set of behaviors Prns exercises against the reference
+implementation.
+
 The `list`, `matrix`, and `run` commands accept an explicit host selector:
 
 ```console
