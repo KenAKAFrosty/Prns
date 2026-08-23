@@ -80,10 +80,10 @@ marks a gap in Prns's registered evidence, not necessarily missing Prns behavior
 
 ## Routing and transport
 
-- [\[x\]](../validation/interop/cases/mixed-multihop-interop-smoke.sh) **Path discovery**
+- [\[x\]](../validation/interop/cases/mixed_multihop_interop_smoke.py) **Path discovery**
   - Discover an initially unknown destination through a transport, report its hops,
     and reach it.
-- [\[x\]](../validation/interop/cases/mixed-multihop-interop-smoke.sh) **Mixed multi-hop forwarding**
+- [\[x\]](../validation/interop/cases/mixed_multihop_interop_smoke.py) **Mixed multi-hop forwarding**
   - Exchange exact payloads between stock endpoints through stock and candidate
     transports in series.
 - [ ] **Transport tunnel recovery**
@@ -99,7 +99,7 @@ marks a gap in Prns's registered evidence, not necessarily missing Prns behavior
 - [\[x\]](../validation/interop/cases/local_interop_smoke.py) **Shared-instance client and server**
   - Run both shared-instance roles against stock RNS and carry valid application
     traffic each way.
-- [\[x\]](../validation/interop/cases/ifac-tcp-interop-smoke.sh) **IFAC authentication**
+- [\[x\]](../validation/interop/cases/ifac_tcp_interop_smoke.py) **IFAC authentication**
   - Confirm matching credentials exchange traffic while missing or incorrect
     credentials are rejected.
 

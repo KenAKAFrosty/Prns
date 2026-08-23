@@ -48,6 +48,11 @@ class InteropHarnessTests(unittest.TestCase):
         )
         self.assertEqual(output, "configured\n")
 
+    def test_environment_can_remove_inherited_case_configuration(self) -> None:
+        with mock.patch.dict(os.environ, {"CASE_VALUE": "inherited"}, clear=True):
+            configured = environment({}, without=("CASE_VALUE",))
+        self.assertNotIn("CASE_VALUE", configured)
+
     def test_missing_output_marker_is_structured(self) -> None:
         with self.assertRaises(InteropFailure) as raised:
             require_output_marker("other output\n", "EXPECTED", "missing result")
@@ -104,6 +109,30 @@ class InteropHarnessTests(unittest.TestCase):
             )
             with self.assertRaises(InteropFailure) as raised:
                 case.wait_for(peer, "NEVER", 2)
+        self.assertEqual(raised.exception.kind, FailureKind.PEER_EXITED)
+
+    def test_required_peer_exit_interrupts_an_evidence_wait(self) -> None:
+        with InteropCase() as case:
+            evidence = case.start(
+                PeerSpec(
+                    "evidence peer",
+                    (sys.executable, "-c", "import time; time.sleep(30)"),
+                    environment({}),
+                )
+            )
+            required = case.start(
+                PeerSpec(
+                    "required peer",
+                    (sys.executable, "-c", "raise SystemExit(7)"),
+                    environment({}),
+                )
+            )
+            with self.assertRaises(InteropFailure) as raised:
+                case.wait_for_all(
+                    [(evidence, "NEVER")],
+                    2,
+                    required_peers=(required,),
+                )
         self.assertEqual(raised.exception.kind, FailureKind.PEER_EXITED)
 
     def test_marker_timeout_is_structured(self) -> None:

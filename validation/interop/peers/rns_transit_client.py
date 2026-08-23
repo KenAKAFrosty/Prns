@@ -22,13 +22,14 @@ import time
 import RNS
 
 LOCAL_PORT = int(os.environ["PRNS_LOCAL_PORT"])
+RPC_PORT = int(os.environ.get("PRNS_RPC_PORT", str(LOCAL_PORT + 1)))
 
 CONFIG = f"""[reticulum]
   enable_transport = No
   share_instance = Yes
   shared_instance_type = tcp
   shared_instance_port = {LOCAL_PORT}
-  instance_control_port = {LOCAL_PORT + 1}
+  instance_control_port = {RPC_PORT}
   rpc_key = 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a
   panic_on_interface_error = No
 

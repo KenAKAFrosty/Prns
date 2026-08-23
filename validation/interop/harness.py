@@ -71,8 +71,13 @@ class PortLease:
         self.release()
 
 
-def environment(values: Mapping[str, object]) -> dict[str, str]:
+def environment(
+    values: Mapping[str, object],
+    without: Sequence[str] = (),
+) -> dict[str, str]:
     configured = os.environ.copy()
+    for name in without:
+        configured.pop(name, None)
     configured.update({key: str(value) for key, value in values.items()})
     return configured
 
@@ -241,6 +246,7 @@ class InteropCase:
         self,
         evidence: Sequence[tuple[Peer, str]],
         timeout_seconds: float,
+        required_peers: Sequence[Peer] = (),
     ) -> None:
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
@@ -251,7 +257,9 @@ class InteropCase:
             ]
             if not pending:
                 return
-            for peer, marker in pending:
+            monitored = [(peer, marker) for peer, marker in pending]
+            monitored.extend((peer, "required operation completed") for peer in required_peers)
+            for peer, marker in monitored:
                 return_code = peer.process.poll()
                 if return_code is not None:
                     raise InteropFailure(

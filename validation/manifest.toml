@@ -1081,8 +1081,8 @@ platform = "linux"
 toolchain = "stable"
 interpreter = "smoke"
 timeout_seconds = 420
-command = ["bash", "validation/interop/cases/local-transit-smoke.sh"]
-inputs = ["validation/interop/cases/local-transit-smoke.sh", "validation/interop/peers/rns_transit_client.py", "validation/interop/peers/rns_transit_peer.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.local_transit_interop_smoke"]
+inputs = ["validation/interop/cases/local_transit_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_transit_client.py", "validation/interop/peers/rns_transit_peer.py", "validation/integration/examples/local_transit_daemon.rs"]
 artifacts = "validation-artifacts/results/interop-local-transit"
 
 [[suite]]
@@ -1094,8 +1094,8 @@ platform = "linux"
 toolchain = "stable"
 interpreter = "smoke"
 timeout_seconds = 600
-command = ["bash", "validation/interop/cases/mixed-multihop-interop-smoke.sh"]
-inputs = ["validation/interop/cases/mixed-multihop-interop-smoke.sh", "validation/interop/peers/rns_multihop_transport.py", "validation/interop/peers/rns_multihop_endpoint.py", "validation/integration/examples/mixed_multihop_daemon.rs"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.mixed_multihop_interop_smoke"]
+inputs = ["validation/interop/cases/mixed_multihop_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_multihop_transport.py", "validation/interop/peers/rns_multihop_endpoint.py", "validation/integration/examples/mixed_multihop_daemon.rs"]
 artifacts = "validation-artifacts/results/interop-mixed-multihop"
 
 [[suite]]
@@ -1107,8 +1107,8 @@ platform = "linux"
 toolchain = "stable"
 interpreter = "smoke"
 timeout_seconds = 600
-command = ["bash", "validation/interop/cases/ifac-tcp-interop-smoke.sh"]
-inputs = ["validation/interop/cases/ifac-tcp-interop-smoke.sh", "validation/interop/cases/local-transit-smoke.sh", "validation/interop/peers/rns_transit_client.py", "validation/interop/peers/rns_transit_peer.py", "validation/interop/peers/rns_ifac_hostile.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.ifac_tcp_interop_smoke"]
+inputs = ["validation/interop/cases/ifac_tcp_interop_smoke.py", "validation/interop/cases/local_transit_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_transit_client.py", "validation/interop/peers/rns_transit_peer.py", "validation/interop/peers/rns_ifac_hostile.py", "validation/integration/examples/local_transit_daemon.rs"]
 artifacts = "validation-artifacts/results/interop-ifac-tcp"
 
 [[suite]]
