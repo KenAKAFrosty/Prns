@@ -1199,8 +1199,8 @@ platform = "linux"
 toolchain = "node"
 interpreter = "smoke"
 timeout_seconds = 420
-command = ["bash", "validation/interop/cases/napi-announce-app-data-interop-smoke.sh"]
-inputs = ["validation/interop/cases/napi-announce-app-data-interop-smoke.sh", "validation/interop/peers/rns_announce_app_data_peer.py", "prns-napi/tests/interop/announce_app_data_peer.mjs"]
+command = ["__RUNNER_PYTHON__", "validation/interop/cases/napi-announce-app-data-interop-smoke.py"]
+inputs = ["validation/interop/cases/napi-announce-app-data-interop-smoke.py", "validation/interop/peers/rns_announce_app_data_peer.py", "prns-napi/tests/interop/announce_app_data_peer.mjs"]
 artifacts = "validation-artifacts/results/interop-napi-announce-app-data"
 
 [[suite]]

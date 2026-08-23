@@ -24,7 +24,7 @@ one suite may substantiate several observable operations.
 - [\[x\]](../validation/interop/cases/napi-tcp-server-interop-smoke.sh) **SINGLE announcements**
   - Have each side announce a SINGLE destination and confirm the other side addresses
     it successfully.
-- [\[x\]](../validation/interop/cases/napi-announce-app-data-interop-smoke.sh) **Announce application data**
+- [\[x\]](../validation/interop/cases/napi-announce-app-data-interop-smoke.py) **Announce application data**
   - Send exact application bytes in announcements both ways and confirm each receiver
     reports them unchanged.
 - [ ] **PLAIN destinations**
