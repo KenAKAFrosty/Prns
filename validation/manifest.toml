@@ -1216,6 +1216,19 @@ inputs = ["validation/interop/cases/napi-announce-app-data-interop-smoke.py", "v
 artifacts = "validation-artifacts/results/interop-napi-announce-app-data"
 
 [[suite]]
+id = "interop-plain-group-destinations"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+interpreter = "smoke"
+timeout_seconds = 600
+command = ["__RUNNER_PYTHON__", "validation/interop/cases/plain-group-destinations-interop-smoke.py"]
+inputs = ["validation/interop/cases/plain-group-destinations-interop-smoke.py", "validation/interop/peers/rns_plain_group_peer.py", "validation/integration/examples/plain_group_interop_peer.rs"]
+artifacts = "validation-artifacts/results/interop-plain-group-destinations"
+
+[[suite]]
 id = "interop-napi-ratchet"
 domain = "interop"
 group = "essential"

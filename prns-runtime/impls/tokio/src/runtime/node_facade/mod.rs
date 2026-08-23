@@ -18,9 +18,10 @@ use crate::engine::{
     AllowRequester, AllowRequesterFailure, AnnounceNow, AnnounceNowFailure, CloseLink, CommandId,
     EstablishLink, EstablishLinkFailure, Identify, IdentifyFailure, IssuedCommand, LinkEstablished,
     PacketReceiptDelivered, PathFound, PathRequestId, PrnsCommand, RequestPath, RequestPathFailure,
-    SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload, SendToChannel,
-    SendToChannelBody, SendToChannelFailure, SendToLink, SendToLinkFailure, SendToLinkPayload,
-    Settlement, PATH_REQUEST_ID_LEN,
+    SendGroup, SendGroupFailure, SendGroupPayload, SendPlainPacket, SendPlainPacketFailure,
+    SendPlainPacketPayload, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
+    SendToChannel, SendToChannelBody, SendToChannelFailure, SendToLink, SendToLinkFailure,
+    SendToLinkPayload, Settlement, PATH_REQUEST_ID_LEN,
 };
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
@@ -158,6 +159,44 @@ impl PrnsNodeHandle {
             .await
         {
             Some(Settlement::SendSinglePacket(result)) => result.map_err(SendError::Failed),
+            Some(_) | None => Err(SendError::NodeStopped),
+        }
+    }
+
+    pub async fn send_plain_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendPlainPacketFailure>> {
+        let payload =
+            SendPlainPacketPayload::from_slice(data).map_err(|()| SendError::PayloadTooLarge)?;
+        match self
+            .settle(PrnsCommand::SendPlainPacket(SendPlainPacket {
+                destination,
+                payload,
+            }))
+            .await
+        {
+            Some(Settlement::SendPlainPacket(result)) => result.map_err(SendError::Failed),
+            Some(_) | None => Err(SendError::NodeStopped),
+        }
+    }
+
+    pub async fn send_group_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendGroupFailure>> {
+        let payload =
+            SendGroupPayload::from_slice(data).map_err(|()| SendError::PayloadTooLarge)?;
+        match self
+            .settle(PrnsCommand::SendGroup(SendGroup {
+                destination,
+                payload,
+            }))
+            .await
+        {
+            Some(Settlement::SendGroup(result)) => result.map_err(SendError::Failed),
             Some(_) | None => Err(SendError::NodeStopped),
         }
     }
@@ -354,6 +393,22 @@ impl super::PrnsNodeApi for PrnsNodeHandle {
         data: &[u8],
     ) -> Result<PacketReceiptDelivered, SendError<SendSinglePacketFailure>> {
         self.send_single_packet(destination, data).await
+    }
+
+    async fn send_plain_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendPlainPacketFailure>> {
+        self.send_plain_packet(destination, data).await
+    }
+
+    async fn send_group_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendGroupFailure>> {
+        self.send_group_packet(destination, data).await
     }
 
     fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> bool {

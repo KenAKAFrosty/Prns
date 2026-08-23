@@ -1,9 +1,9 @@
 use crate::engine::{
     AllowRequesterFailure, AnnounceNowFailure, CloseLinkFailure, EstablishLinkFailure,
     IdentifyFailure, Journaled, LinkClosedReason, RequestPathFailure, RespondFailure,
-    RouteRemovalCause, SendGroupFailure, SendRequestFailure, SendResourceFailure,
-    SendSinglePacketFailure, SendToChannelFailure, SendToLinkFailure, SetResourceStrategyFailure,
-    Settlement,
+    RouteRemovalCause, SendGroupFailure, SendPlainPacketFailure, SendRequestFailure,
+    SendResourceFailure, SendSinglePacketFailure, SendToChannelFailure, SendToLinkFailure,
+    SetResourceStrategyFailure, Settlement,
 };
 use crate::routing::links::resources::table::ApplyHashmapUpdateError;
 use crate::routing::links::resources::ResourceFailureCause;
@@ -26,6 +26,7 @@ prns_macros::iterable_enum! {
         SetResourceStrategy,
         SendToChannel,
         AllowRequester,
+        SendPlainPacket,
     }
 }
 
@@ -315,6 +316,10 @@ impl From<&Settlement> for SettledOperation {
                 operation: Operation::SendGroup,
                 outcome: result.runtime_outcome(),
             },
+            Settlement::SendPlainPacket(result) => Self {
+                operation: Operation::SendPlainPacket,
+                outcome: result.runtime_outcome(),
+            },
             Settlement::RequestPath(result) => Self {
                 operation: Operation::RequestPath,
                 outcome: result.runtime_outcome(),
@@ -388,6 +393,14 @@ impl From<&SendGroupFailure> for RuntimeOperationOutcome {
         match failure {
             SendGroupFailure::Rejected(_) => Self::Rejected,
             SendGroupFailure::WriteFailed(_) => Self::WriteFailed,
+        }
+    }
+}
+
+impl From<&SendPlainPacketFailure> for RuntimeOperationOutcome {
+    fn from(failure: &SendPlainPacketFailure) -> Self {
+        match failure {
+            SendPlainPacketFailure::WriteFailed(_) => Self::WriteFailed,
         }
     }
 }

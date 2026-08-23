@@ -12,7 +12,7 @@ For Prns, a checked item has registered black-box or live evidence against stock
 RNS 1.4.2. An unchecked item marks a gap in Prns's registered evidence, not
 necessarily missing Prns behavior and never a verdict on another implementation.
 Internal unit tests or implementation support alone do not check an item. Prns
-currently has registered evidence for 24 of these 28 operations. Each linked
+currently has registered evidence for 26 of these 28 operations. Each linked
 `[x]` opens the executable case providing the primary evidence for that check;
 one suite may substantiate several observable operations.
 
@@ -27,9 +27,9 @@ one suite may substantiate several observable operations.
 - [\[x\]](../validation/interop/cases/napi-announce-app-data-interop-smoke.py) **Announce application data**
   - Send exact application bytes in announcements both ways and confirm each receiver
     reports them unchanged.
-- [ ] **PLAIN destinations**
+- [\[x\]](../validation/interop/cases/plain-group-destinations-interop-smoke.py) **PLAIN destinations**
   - Exchange exact PLAIN payloads both ways without an identity or shared key.
-- [ ] **GROUP destinations**
+- [\[x\]](../validation/interop/cases/plain-group-destinations-interop-smoke.py) **GROUP destinations**
   - Configure the same group key and exchange exact GROUP payloads both ways.
 - [\[x\]](../validation/interop/cases/napi-ratchet-interop-smoke.sh) **Ratchets**
   - Require ratchets and prove packets across two distinct announced ratchet

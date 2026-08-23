@@ -1,6 +1,6 @@
 use crate::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, PacketReceiptDelivered, PrnsCommand,
-    SendSinglePacketFailure,
+    SendGroupFailure, SendPlainPacketFailure, SendSinglePacketFailure,
 };
 pub use crate::engine::{DropRouteOutcome, DropRoutesViaOutcome};
 use crate::identity::{
@@ -111,6 +111,18 @@ pub trait PrnsNodeApi {
         destination: DestinationHash,
         data: &[u8],
     ) -> Result<PacketReceiptDelivered, SendError<SendSinglePacketFailure>>;
+
+    async fn send_plain_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendPlainPacketFailure>>;
+
+    async fn send_group_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendGroupFailure>>;
 
     fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> bool;
 

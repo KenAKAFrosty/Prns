@@ -11,8 +11,8 @@ use tokio::sync::oneshot;
 
 use crate::engine::{
     CommandId, EstablishLinkFailure, Journaled, LinkEstablished, PacketReceiptDelivered,
-    PersistenceFlushTarget, PrnsCommand, ProofRequest, SendSinglePacketFailure,
-    SetTransportIdentityError,
+    PersistenceFlushTarget, PrnsCommand, ProofRequest, SendGroupFailure, SendPlainPacketFailure,
+    SendSinglePacketFailure, SetTransportIdentityError,
 };
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{IdentityHash, Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -459,6 +459,22 @@ where
         data: &[u8],
     ) -> Result<PacketReceiptDelivered, SendError<SendSinglePacketFailure>> {
         self.handle.send_single_packet(destination, data).await
+    }
+
+    pub async fn send_plain_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendPlainPacketFailure>> {
+        self.handle.send_plain_packet(destination, data).await
+    }
+
+    pub async fn send_group_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendGroupFailure>> {
+        self.handle.send_group_packet(destination, data).await
     }
 
     pub async fn establish_link(

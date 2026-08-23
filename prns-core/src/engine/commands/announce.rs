@@ -69,7 +69,8 @@ impl Settleable for AnnounceNow {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
-            | Settlement::AllowRequester(_) => None,
+            | Settlement::AllowRequester(_)
+            | Settlement::SendPlainPacket(_) => None,
         }
     }
 }

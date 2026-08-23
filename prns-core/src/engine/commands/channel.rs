@@ -59,7 +59,8 @@ impl Settleable for SendToChannel {
             | Settlement::Respond(_)
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
-            | Settlement::AllowRequester(_) => None,
+            | Settlement::AllowRequester(_)
+            | Settlement::SendPlainPacket(_) => None,
         }
     }
 }
