@@ -19,6 +19,7 @@ Env: ``PEER_TCP_PORT`` is the loopback port the TCP server listens on (the bridg
 import os
 import sys
 import tempfile
+import threading
 import time
 
 import RNS
@@ -58,18 +59,20 @@ class ClientSeeker:
 
     def __init__(self):
         self.link = None
+        self.link_creation = threading.Lock()
 
     def received_announce(self, destination_hash, announced_identity, app_data):
-        if self.link is not None:
-            return
-        destination = RNS.Destination(
-            announced_identity,
-            RNS.Destination.OUT,
-            RNS.Destination.SINGLE,
-            "prns",
-            "client",
-        )
-        self.link = RNS.Link(destination, established_callback=self.on_up)
+        with self.link_creation:
+            if self.link is not None:
+                return
+            destination = RNS.Destination(
+                announced_identity,
+                RNS.Destination.OUT,
+                RNS.Destination.SINGLE,
+                "prns",
+                "client",
+            )
+            self.link = RNS.Link(destination, established_callback=self.on_up)
 
     def on_up(self, link):
         print("LINK_OUT_UP", flush=True)

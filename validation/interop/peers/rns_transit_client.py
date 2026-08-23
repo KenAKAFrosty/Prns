@@ -17,6 +17,7 @@ Env: ``PRNS_LOCAL_PORT`` is the bridge's loopback shared-instance port.
 import os
 import sys
 import tempfile
+import threading
 import time
 
 import RNS
@@ -43,18 +44,20 @@ class PeerSeeker:
 
     def __init__(self):
         self.link = None
+        self.link_creation = threading.Lock()
 
     def received_announce(self, destination_hash, announced_identity, app_data):
-        if self.link is not None:
-            return
-        destination = RNS.Destination(
-            announced_identity,
-            RNS.Destination.OUT,
-            RNS.Destination.SINGLE,
-            "prns",
-            "peer",
-        )
-        self.link = RNS.Link(destination, established_callback=self.on_up)
+        with self.link_creation:
+            if self.link is not None:
+                return
+            destination = RNS.Destination(
+                announced_identity,
+                RNS.Destination.OUT,
+                RNS.Destination.SINGLE,
+                "prns",
+                "peer",
+            )
+            self.link = RNS.Link(destination, established_callback=self.on_up)
 
     def on_up(self, link):
         print("LINK_OUT_UP", flush=True)
