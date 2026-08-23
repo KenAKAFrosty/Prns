@@ -21,8 +21,11 @@ class FailureKind(Enum):
     MISSING_REFERENCE_INTERPRETER = "missing reference interpreter"
     COMMAND_FAILED = "command failed"
     EVIDENCE_MISSING = "evidence missing"
+    EVIDENCE_UNEXPECTED = "evidence unexpected"
     PEER_START_FAILED = "peer start failed"
     PEER_EXITED = "peer exited"
+    PEER_EXIT_TIMEOUT = "peer exit timeout"
+    PATH_TIMEOUT = "path timeout"
     LISTENER_TIMEOUT = "listener timeout"
     MARKER_TIMEOUT = "marker timeout"
 
@@ -121,6 +124,14 @@ def require_output_marker(output: str, marker: str, failure: str) -> None:
     rendered = output.rstrip()
     detail = f"{failure}\n{rendered}" if rendered else failure
     raise InteropFailure(FailureKind.EVIDENCE_MISSING, detail)
+
+
+def forbid_output_marker(output: str, marker: str, failure: str) -> None:
+    if marker not in output:
+        return
+    rendered = output.rstrip()
+    detail = f"{failure}\n{rendered}" if rendered else failure
+    raise InteropFailure(FailureKind.EVIDENCE_UNEXPECTED, detail)
 
 
 def require_hex_output(output: str, byte_length: int, failure: str) -> str:
@@ -277,6 +288,37 @@ class InteropCase:
             FailureKind.LISTENER_TIMEOUT,
             f"timed out waiting for {peer.spec.name} at {host}:{port}",
         )
+
+    def wait_for_path(self, peer: Peer, path: Path, timeout_seconds: float) -> None:
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            if path.exists():
+                return
+            return_code = peer.process.poll()
+            if return_code is not None:
+                raise InteropFailure(
+                    FailureKind.PEER_EXITED,
+                    f"{peer.spec.name} exited with status {return_code} before creating {path}",
+                )
+            time.sleep(0.1)
+        raise InteropFailure(
+            FailureKind.PATH_TIMEOUT,
+            f"timed out waiting for {peer.spec.name} to create {path}",
+        )
+
+    def wait_for_exit(self, peer: Peer, timeout_seconds: float) -> None:
+        try:
+            return_code = peer.process.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as error:
+            raise InteropFailure(
+                FailureKind.PEER_EXIT_TIMEOUT,
+                f"timed out waiting for {peer.spec.name} to exit",
+            ) from error
+        if return_code != 0:
+            raise InteropFailure(
+                FailureKind.PEER_EXITED,
+                f"{peer.spec.name} exited with status {return_code}",
+            )
 
     def stop(self, peer: Peer) -> None:
         try:

@@ -16,6 +16,7 @@ from validation.interop.harness import (
     PortLease,
     cargo_binary,
     environment,
+    forbid_output_marker,
     reference_python,
     require_hex_output,
     require_output_marker,
@@ -52,6 +53,12 @@ class InteropHarnessTests(unittest.TestCase):
             require_output_marker("other output\n", "EXPECTED", "missing result")
         self.assertEqual(raised.exception.kind, FailureKind.EVIDENCE_MISSING)
         self.assertIn("other output", raised.exception.detail)
+
+    def test_forbidden_output_marker_is_structured(self) -> None:
+        with self.assertRaises(InteropFailure) as raised:
+            forbid_output_marker("unexpected marker\n", "marker", "unexpected result")
+        self.assertEqual(raised.exception.kind, FailureKind.EVIDENCE_UNEXPECTED)
+        self.assertIn("unexpected marker", raised.exception.detail)
 
     def test_hex_output_requires_the_expected_length(self) -> None:
         self.assertEqual(require_hex_output("a5" * 16 + "\n", 16, "missing hash"), "a5" * 16)
@@ -128,6 +135,20 @@ class InteropHarnessTests(unittest.TestCase):
             ):
                 case.wait_for_listener(peer, "127.0.0.1", 48123, 1)
         connection.close.assert_called_once_with()
+
+    def test_case_waits_for_path_and_successful_peer_exit(self) -> None:
+        with InteropCase() as case:
+            peer = case.start(
+                PeerSpec(
+                    "finite peer",
+                    (sys.executable, "-c", "pass"),
+                    environment({}),
+                )
+            )
+            ready = case.work / "ready"
+            ready.touch()
+            case.wait_for_path(peer, ready, 1)
+            case.wait_for_exit(peer, 1)
 
     def test_failure_prints_peer_logs(self) -> None:
         stderr = io.StringIO()

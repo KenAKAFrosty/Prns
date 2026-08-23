@@ -1055,8 +1055,8 @@ platform = "linux"
 toolchain = "stable"
 interpreter = "rpc"
 timeout_seconds = 420
-command = ["bash", "validation/interop/cases/blackhole-exchange-interop-smoke.sh"]
-inputs = ["validation/interop/cases/blackhole-exchange-interop-smoke.sh", "validation/interop/peers/rns_blackhole_exchange.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.blackhole_exchange_interop_smoke"]
+inputs = ["validation/interop/cases/blackhole_exchange_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_blackhole_exchange.py", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-blackhole"
 
 [[suite]]
@@ -1068,8 +1068,8 @@ platform = "linux"
 toolchain = "stable"
 interpreter = "rpc"
 timeout_seconds = 300
-command = ["bash", "validation/interop/cases/rnode-tcp-interop-smoke.sh"]
-inputs = ["validation/interop/cases/rnode-tcp-interop-smoke.sh", "validation/interop/peers/rns_rnode_tcp_device.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.rnode_tcp_interop_smoke"]
+inputs = ["validation/interop/cases/rnode_tcp_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_rnode_tcp_device.py", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-rnode-tcp"
 
 [[suite]]
@@ -1120,8 +1120,8 @@ platform = "linux"
 toolchain = "stable"
 interpreter = "smoke"
 timeout_seconds = 300
-command = ["bash", "validation/interop/cases/local-client-smoke.sh"]
-inputs = ["validation/interop/cases/local-client-smoke.sh"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.local_client_smoke"]
+inputs = ["validation/interop/cases/local_client_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_shared_instance_server.py", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-inverse-instance"
 
 [[suite]]
