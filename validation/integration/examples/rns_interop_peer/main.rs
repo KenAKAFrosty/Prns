@@ -9,6 +9,7 @@ mod plain_group;
 mod ratchet;
 mod resource_rejection;
 mod tcp;
+mod tunnel_recovery;
 mod udp;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +26,8 @@ enum Scenario {
     ResourceRejectionServer,
     TcpClient,
     TcpServer,
+    TunnelRecoveryClient,
+    TunnelRecoveryServer,
     Udp,
 }
 
@@ -46,6 +49,8 @@ impl Scenario {
             "resource-rejection-server" => Ok(Self::ResourceRejectionServer),
             "tcp-client" => Ok(Self::TcpClient),
             "tcp-server" => Ok(Self::TcpServer),
+            "tunnel-recovery-client" => Ok(Self::TunnelRecoveryClient),
+            "tunnel-recovery-server" => Ok(Self::TunnelRecoveryServer),
             "udp" => Ok(Self::Udp),
             unknown => Err(UnknownScenario(unknown.to_owned())),
         }
@@ -85,6 +90,8 @@ async fn main() {
         Scenario::ResourceRejectionServer => report(resource_rejection::run_server().await),
         Scenario::TcpClient => report(tcp::run_client().await),
         Scenario::TcpServer => report(tcp::run_server().await),
+        Scenario::TunnelRecoveryClient => report(tunnel_recovery::run_client().await),
+        Scenario::TunnelRecoveryServer => report(tunnel_recovery::run_server().await),
         Scenario::Udp => report(udp::run().await),
     }
 }
