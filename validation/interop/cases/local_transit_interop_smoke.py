@@ -4,15 +4,12 @@ from typing import Mapping
 
 from validation.interop.harness import (
     InteropCase,
-    Peer,
     PeerSpec,
     PortLease,
     cargo_example,
     case_main,
     environment,
-    forbid_output_marker,
     reference_python,
-    require_output_marker,
 )
 
 
@@ -20,7 +17,6 @@ ROOT = Path(__file__).resolve().parents[3]
 MANIFEST = ROOT / "validation/integration/Cargo.toml"
 STOCK_PEER = ROOT / "validation/interop/peers/rns_transit_peer.py"
 STOCK_CLIENT = ROOT / "validation/interop/peers/rns_transit_client.py"
-HOSTILE_PEER = ROOT / "validation/interop/peers/rns_ifac_hostile.py"
 IFAC_VARIABLES = (
     "PRNS_IFAC_NETWORK_NAME",
     "PRNS_IFAC_PASSPHRASE",
@@ -52,53 +48,6 @@ def transit_environment(
     return environment(configured, without=IFAC_VARIABLES)
 
 
-def prove_ifac_rejection(
-    case: InteropCase,
-    python: Path,
-    peer_port: int,
-    peer: Peer,
-    ifac: IfacConfiguration,
-) -> None:
-    hostile_environment = transit_environment({"PEER_TCP_PORT": peer_port}, ifac)
-    for mode in ("missing", "wrong"):
-        hostile = case.start(
-            PeerSpec(
-                f"stock RNS {mode} IFAC peer",
-                (str(python), str(HOSTILE_PEER), mode),
-                hostile_environment,
-            )
-        )
-        case.wait_for(hostile, f"HOSTILE_SENT {mode}", 10)
-        case.require_running(
-            hostile,
-            1,
-            f"{mode} IFAC peer did not remain connected for protocol inspection",
-        )
-        result = case.read_log(hostile)
-        require_output_marker(
-            result,
-            f"HOSTILE_SENT {mode}",
-            f"{mode} IFAC peer did not report its hostile announce",
-        )
-        forbid_output_marker(
-            result,
-            "HOSTILE_PEER_ANNOUNCE",
-            f"{mode} IFAC peer received an authenticated announce",
-        )
-        forbid_output_marker(
-            result,
-            "HOSTILE_LINK_ACTIVE",
-            f"{mode} IFAC peer established an authenticated Link",
-        )
-        forbid_output_marker(
-            case.read_log(peer),
-            "HOSTILE_RECEIVED",
-            f"{mode} IFAC peer injected an announce into stock RNS",
-        )
-        case.require_no_protocol_violations(peer, hostile)
-        case.stop(hostile)
-
-
 def run_transit(ifac: IfacConfiguration | None) -> None:
     python = reference_python()
     daemon = cargo_example(MANIFEST, "local_transit_daemon")
@@ -117,8 +66,6 @@ def run_transit(ifac: IfacConfiguration | None) -> None:
             peer_port,
         )
         case.wait_for(peer, "PEER_DEST ", 20)
-        if ifac is not None:
-            prove_ifac_rejection(case, python, peer_port.port, peer, ifac)
         local_port.release()
         rpc_port.release()
         bridge = case.start(

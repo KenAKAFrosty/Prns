@@ -1026,7 +1026,7 @@ toolchain = "stable"
 interpreter = "interop_smoke"
 timeout_seconds = 300
 command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.local_interop_smoke"]
-inputs = ["validation/interop/cases/local_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_shared_instance_client.py", "validation/integration/examples/local_shared_instance.rs"]
+inputs = ["validation/interop/cases/local_interop_smoke.py", "validation/interop/cases/local_client_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_shared_instance_client.py", "validation/interop/peers/rns_shared_instance_server.py", "validation/integration/examples/local_shared_instance.rs", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-local-instance"
 
 [[suite]]
@@ -1169,7 +1169,7 @@ toolchain = "stable"
 interpreter = "interop_smoke"
 timeout_seconds = 600
 command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.ifac_tcp_interop_smoke"]
-inputs = ["validation/interop/cases/ifac_tcp_interop_smoke.py", "validation/interop/cases/local_transit_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_transit_client.py", "validation/interop/peers/rns_transit_peer.py", "validation/interop/peers/rns_ifac_hostile.py", "validation/integration/examples/local_transit_daemon.rs"]
+inputs = ["validation/interop/cases/ifac_tcp_interop_smoke.py", "validation/interop/cases/local_transit_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_transit_client.py", "validation/interop/peers/rns_transit_peer.py", "validation/interop/peers/rns_ifac_hostile.py", "validation/integration/examples/local_transit_daemon.rs", "validation/integration/examples/rns_interop_peer"]
 artifacts = "validation-artifacts/results/interop-ifac-tcp"
 
 [[suite]]

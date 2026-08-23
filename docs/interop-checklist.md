@@ -69,8 +69,9 @@ marks a gap in Prns's registered evidence, not necessarily missing Prns behavior
   - Cross the stock segment boundary both ways and confirm multiple completed
     segments plus exact bytes.
 - [\[x\]](../validation/interop/cases/rncp_interop_smoke.py) **Resource cancellation**
-  - Cancel an active transfer, confirm no partial publication, then complete a fresh
-    transfer.
+  - Cancel an active stock-to-candidate transfer and interrupt an active
+    candidate-to-stock transfer, confirm no partial publication, then complete fresh
+    transfers both ways.
 - [\[x\]](../validation/interop/cases/resource_rejection_interop_smoke.py) **Resource rejection**
   - Refuse an offered Resource and confirm the sender sees rejection with no payload
     publication.
@@ -149,4 +150,5 @@ python3 validation/run.py list --domain interop --platform current
 python3 validation/run.py run --suite interop-route-replacement
 ```
 
-This page is a human-readable audit, not another configuration source.
+> NOTE: The validation manifest is the source of truth for which suites the runner
+executes. This page is a human-readable short reference, not another configuration source.

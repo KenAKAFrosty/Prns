@@ -1,6 +1,7 @@
 import re
 from pathlib import Path
 
+from validation.interop.cases.local_client_smoke import run as run_client_role
 from validation.interop.harness import (
     FailureKind,
     InteropCase,
@@ -18,10 +19,10 @@ ROOT = Path(__file__).resolve().parents[3]
 MANIFEST = ROOT / "validation/integration/Cargo.toml"
 STOCK_CLIENT = ROOT / "validation/interop/peers/rns_shared_instance_client.py"
 ANNOUNCED = re.compile(r"^ANNOUNCED dest=([0-9a-f]{32})$", re.MULTILINE)
-SUCCESS = "PASS: the Prns LocalServer heard a real RNS client's announce"
+SUCCESS = "PASS: both Prns shared-instance roles carried proven stock-RNS application traffic"
 
 
-def run() -> None:
+def run_server_role() -> None:
     python = reference_python()
     daemon = cargo_example(MANIFEST, "local_shared_instance")
     with PortLease() as local, PortLease() as control, InteropCase() as case:
@@ -59,6 +60,18 @@ def run() -> None:
             f"HEARD dest={announced.group(1)} hops=0 kind=Some(LocalClient)",
             10,
         )
+        case.wait_for_all(
+            [
+                (client, "STOCK_TO_PRNS_SHARED_OK bytes=27 proof=1"),
+                (server, "PRNS_SHARED_SERVER_TRAFFIC_OK bytes=27"),
+            ],
+            30,
+        )
+
+
+def run() -> None:
+    run_server_role()
+    run_client_role()
 
 
 if __name__ == "__main__":

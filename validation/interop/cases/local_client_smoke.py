@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 
 from validation.interop.harness import (
@@ -18,7 +19,8 @@ from validation.interop.harness import (
 ROOT = Path(__file__).resolve().parents[3]
 PRNSD_MANIFEST = ROOT / "prnsd/Cargo.toml"
 STOCK_SERVER = ROOT / "validation/interop/peers/rns_shared_instance_server.py"
-SUCCESS = "PASS: prnsd joined stock RNS as a client, started no interfaces, and decoded its control-RPC status"
+SUCCESS = "PASS: prnsd joined stock RNS as a client and carried proven application traffic"
+READY = re.compile(r"^STOCK_INSTANCE_UP ([0-9a-f]{32})$", re.MULTILINE)
 
 
 def configuration(
@@ -91,7 +93,11 @@ def run() -> None:
                 environment({}),
             )
         )
-        case.wait_for(stock, "STOCK_INSTANCE_UP", 20)
+        case.wait_for(stock, "STOCK_INSTANCE_UP ", 20)
+        ready = READY.search(case.read_log(stock))
+        if ready is None:
+            raise RuntimeError("stock shared-instance server did not report a valid destination")
+        stock_destination = ready.group(1)
         daemon = case.start(
             PeerSpec(
                 "Prnsd shared-instance client",
@@ -120,6 +126,34 @@ def run() -> None:
             'event="interface_started"',
             "prnsd started its configured interface while joined to stock RNS",
         )
+        probe = run_checked(
+            (
+                str(prnsd),
+                "probe",
+                "--config",
+                str(prns_config),
+                "-s",
+                "24",
+                "-n",
+                "1",
+                "-t",
+                "5",
+                "rnstransport.probe",
+                stock_destination,
+            ),
+            "Prns shared-instance client did not deliver application traffic to stock RNS",
+        )
+        require_output_marker(
+            probe,
+            f"Valid reply from <{stock_destination}>",
+            "Prns shared-instance client did not settle the stock RNS proof",
+        )
+        require_output_marker(
+            probe,
+            "Sent 1, received 1, packet loss 0%",
+            "Prns shared-instance client did not report lossless application traffic",
+        )
+        case.wait_for(stock, "STOCK_SHARED_CLIENT_TRAFFIC_OK bytes=24", 10)
 
 
 if __name__ == "__main__":

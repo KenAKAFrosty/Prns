@@ -39,6 +39,7 @@ def run() -> None:
         case.wait_for_all(
             [
                 (stock, "STOCK_CHANNEL_OK messages=2 ordered=1"),
+                (stock, "STOCK_CHANNEL_ACKNOWLEDGED messages=2"),
                 (prns, "PRNS_CHANNEL_OK messages=2 ordered=1 proven=2"),
             ],
             45,

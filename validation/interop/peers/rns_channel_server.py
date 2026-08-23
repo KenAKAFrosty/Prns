@@ -5,6 +5,7 @@ import tempfile
 import time
 
 import RNS
+from RNS.Channel import MessageState
 from rns_protocol_evidence import start_reference_reticulum
 
 
@@ -56,7 +57,7 @@ def main():
         "prns",
         "channel",
     )
-    state = {"received": [], "failure": None, "channel": None}
+    state = {"received": [], "failure": None, "channel": None, "outbound": []}
 
     def receive(message):
         index = len(state["received"])
@@ -80,7 +81,7 @@ def main():
             if not channel.is_ready_to_send():
                 state["failure"] = "stock channel send window did not open"
                 return
-            channel.send(InteropMessage(payload))
+            state["outbound"].append(channel.send(InteropMessage(payload)))
 
     destination.set_link_established_callback(established)
     print(f"CHANNEL_SERVER_UP {destination.hash.hex()}", flush=True)
@@ -88,7 +89,13 @@ def main():
     while time.time() < deadline:
         if state["failure"] is not None:
             raise RuntimeError(state["failure"])
-        if state["received"] == EXPECTED_FROM_PRNS:
+        outbound_delivered = sum(
+            envelope.outlet.get_packet_state(envelope.packet)
+            == MessageState.MSGSTATE_DELIVERED
+            for envelope in state["outbound"]
+        )
+        if state["received"] == EXPECTED_FROM_PRNS and outbound_delivered == len(SENT_FROM_STOCK):
+            print("STOCK_CHANNEL_ACKNOWLEDGED messages=2", flush=True)
             time.sleep(1)
             return 0
         destination.announce()

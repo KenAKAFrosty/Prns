@@ -74,9 +74,12 @@ def hold(config_dir):
         time.sleep(0.25)
 
 
-def serve(config_dir, listener_path, save_path, fetch_path):
+def serve(config_dir, listener_path, expected_client_path, save_path, fetch_path):
     start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     listener = RNS.Identity.from_file(listener_path)
+    expected_client = RNS.Identity.from_file(expected_client_path)
+    if expected_client is None:
+        raise RuntimeError("expected Prns RNCP identity did not load")
     save_path = pathlib.Path(save_path).resolve()
     fetch_path = pathlib.Path(fetch_path).resolve()
     destination = RNS.Destination(
@@ -92,6 +95,8 @@ def serve(config_dir, listener_path, save_path, fetch_path):
             return
         name = os.path.basename(resource.metadata["name"].decode("utf-8"))
         segments = resource.get_segments()
+        if name == "prns-send.bin" and segments != 1:
+            raise RuntimeError(f"Prns single-segment transfer used {segments} segments")
         if name == "prns-segmented.bin" and segments <= 1:
             raise RuntimeError("Prns segmented transfer completed as a single segment")
         if name == "prns-compressed.bin":
@@ -105,6 +110,8 @@ def serve(config_dir, listener_path, save_path, fetch_path):
             counter += 1
             target = save_path.joinpath(f"{name}.{counter}")
         shutil.move(resource.data.name, target)
+        if name == "prns-send.bin":
+            print(f"RNCP_SINGLE_SEGMENT_RECEIVED name={name} segments={segments}", flush=True)
         if name == "prns-segmented.bin":
             print(f"RNCP_SEGMENTED_RECEIVED name={name} segments={segments}", flush=True)
         if name == "prns-compressed.bin":
@@ -114,12 +121,36 @@ def serve(config_dir, listener_path, save_path, fetch_path):
                 flush=True,
             )
 
+    active_resources = []
+    progress_reported = set()
+
+    def identified(link, identity):
+        if identity.hash == expected_client.hash:
+            print(f"RNCP_PRNS_IDENTIFIED {identity.hash.hex()}", flush=True)
+
+    def authorize(resource):
+        identity = resource.link.get_remote_identity()
+        if identity is None:
+            print("RNCP_PRNS_UNAUTHORIZED anonymous", flush=True)
+            return False
+        if identity.hash != expected_client.hash:
+            print(f"RNCP_PRNS_UNAUTHORIZED {identity.hash.hex()}", flush=True)
+            return False
+        return True
+
+    def started(resource):
+        active_resources.append(resource)
+
     def established(link):
         link.set_resource_strategy(RNS.Link.ACCEPT_APP)
-        link.set_resource_callback(lambda resource: True)
+        link.set_remote_identified_callback(identified)
+        link.set_resource_callback(authorize)
+        link.set_resource_started_callback(started)
         link.set_resource_concluded_callback(concluded)
 
     def fetch(path, data, request_id, link_id, remote_identity, requested_at):
+        if remote_identity is None or remote_identity.hash != expected_client.hash:
+            return False
         candidate = fetch_path.joinpath(str(data).lstrip("/")).resolve()
         if fetch_path not in candidate.parents or not candidate.is_file():
             return False
@@ -127,6 +158,7 @@ def serve(config_dir, listener_path, save_path, fetch_path):
             if active.link_id == link_id:
                 metadata = {"name": candidate.name.encode("utf-8")}
                 RNS.Resource(open(candidate, "rb"), active, metadata=metadata)
+                print(f"RNCP_PRNS_FETCH_AUTHORIZED {remote_identity.hash.hex()}", flush=True)
                 return True
         return None
 
@@ -139,6 +171,11 @@ def serve(config_dir, listener_path, save_path, fetch_path):
     destination.announce()
     print(f"RNCP_SERVER_READY {destination.hash.hex()}", flush=True)
     while True:
+        for resource in active_resources:
+            marker = bytes(resource.hash)
+            if marker not in progress_reported and resource.get_progress() > 0:
+                progress_reported.add(marker)
+                print(f"RNCP_RESOURCE_ACTIVE progress={resource.get_progress():.6f}", flush=True)
         time.sleep(0.25)
 
 
@@ -235,6 +272,7 @@ def cancel_send(config_dir, identity_path, destination_hash, source_path, *recov
     time.sleep(0.25)
     segmented_recoveries = 0
     compressed_recoveries = 0
+    single_segment_recoveries = 0
     for recovery_path in map(pathlib.Path, recovery_paths):
         recovery_link = RNS.Link(destination)
         wait_for(
@@ -256,6 +294,12 @@ def cancel_send(config_dir, identity_path, destination_hash, source_path, *recov
             if recovery.get_transfer_size() >= recovery.get_data_size():
                 raise RuntimeError("stock compressed Resource did not reduce transport bytes")
             compressed_recoveries += 1
+        if recovery_path.stat().st_size <= RNS.Resource.MAX_EFFICIENT_SIZE:
+            if recovery.get_segments() != 1:
+                raise RuntimeError(
+                    f"recovery transfer {recovery_path.name} used {recovery.get_segments()} segments"
+                )
+            single_segment_recoveries += 1
         wait_for(
             lambda: recovery.status >= RNS.Resource.COMPLETE,
             30,
@@ -276,7 +320,8 @@ def cancel_send(config_dir, identity_path, destination_hash, source_path, *recov
     print(
         f"RNCP_CANCEL_OK progress={resource.get_progress():.6f} "
         f"recovery_files={len(recovery_paths)} segmented_recoveries={segmented_recoveries} "
-        f"compressed_recoveries={compressed_recoveries}"
+        f"compressed_recoveries={compressed_recoveries} "
+        f"single_segment_recoveries={single_segment_recoveries}"
     )
 
 

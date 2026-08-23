@@ -2,6 +2,7 @@ mod announce_app_data;
 mod buffer_stream;
 mod channel;
 mod common;
+mod ifac;
 mod large_request;
 mod link_closure;
 mod link_packet;
@@ -17,6 +18,7 @@ enum Scenario {
     AnnounceAppData,
     BufferStream,
     Channel,
+    IfacServer,
     LargeRequest,
     LinkClosure,
     LinkPacket,
@@ -40,6 +42,7 @@ impl Scenario {
             "announce-app-data" => Ok(Self::AnnounceAppData),
             "buffer-stream" => Ok(Self::BufferStream),
             "channel" => Ok(Self::Channel),
+            "ifac-server" => Ok(Self::IfacServer),
             "large-request" => Ok(Self::LargeRequest),
             "link-closure" => Ok(Self::LinkClosure),
             "link-packet" => Ok(Self::LinkPacket),
@@ -81,6 +84,7 @@ async fn main() {
         Scenario::AnnounceAppData => report(announce_app_data::run().await),
         Scenario::BufferStream => report(buffer_stream::run().await),
         Scenario::Channel => report(channel::run().await),
+        Scenario::IfacServer => report(ifac::run_server().await),
         Scenario::LargeRequest => report(large_request::run().await),
         Scenario::LinkClosure => report(link_closure::run().await),
         Scenario::LinkPacket => report(link_packet::run().await),

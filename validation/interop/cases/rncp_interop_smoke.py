@@ -147,6 +147,7 @@ def run() -> None:
         stock_identity = case.work / "stock.rid"
         client_identity = case.work / "client.rid"
         candidate_identity = case.work / "prns.rid"
+        denied_candidate_identity = case.work / "denied-prns.rid"
         stock_receive = case.work / "stock-receive"
         candidate_receive = case.work / "prns-receive"
         stock_fetch = case.work / "stock-fetch"
@@ -192,6 +193,40 @@ def run() -> None:
             (str(python), str(STOCK_ORACLE), "prepare-fixtures", str(case.work)),
             "stock RNS did not prepare RNCP transfer fixtures",
         )
+        run_checked(
+            (str(prnsd), "id", "-g", str(candidate_identity)),
+            "Prnsd did not prepare its RNCP sender identity",
+        )
+        candidate_identity_hash = require_hex_output(
+            run_checked(
+                (
+                    str(python),
+                    str(STOCK_ORACLE),
+                    "identity-hash",
+                    str(candidate_identity),
+                ),
+                "stock RNS could not read the Prns RNCP sender identity",
+            ),
+            16,
+            "stock RNS did not report a valid Prns RNCP sender identity hash",
+        )
+        run_checked(
+            (str(prnsd), "id", "-g", str(denied_candidate_identity)),
+            "Prnsd did not prepare the unlisted RNCP sender identity",
+        )
+        denied_candidate_identity_hash = require_hex_output(
+            run_checked(
+                (
+                    str(python),
+                    str(STOCK_ORACLE),
+                    "identity-hash",
+                    str(denied_candidate_identity),
+                ),
+                "stock RNS could not read the unlisted Prns RNCP identity",
+            ),
+            16,
+            "stock RNS did not report a valid unlisted Prns RNCP identity hash",
+        )
 
         bus_port.release()
         control_port.release()
@@ -205,6 +240,7 @@ def run() -> None:
                     "serve",
                     str(config),
                     str(stock_identity),
+                    str(candidate_identity),
                     str(stock_receive),
                     str(stock_fetch),
                 ),
@@ -242,6 +278,7 @@ def run() -> None:
             )
         )
         case.wait_for(interrupted, "Transferring file", 10)
+        case.wait_for(server, "RNCP_RESOURCE_ACTIVE progress=", 10)
         interrupted_status = case.terminate(interrupted)
         if interrupted_status == 0:
             raise InteropFailure(
@@ -276,6 +313,49 @@ def run() -> None:
             candidate_send,
             received_candidate_send,
             "stock rncp received different Prns bytes",
+        )
+        case.wait_for(
+            server,
+            "RNCP_SINGLE_SEGMENT_RECEIVED name=prns-send.bin segments=1",
+            10,
+        )
+        case.wait_for(server, f"RNCP_PRNS_IDENTIFIED {candidate_identity_hash}", 10)
+
+        denied_candidate_source = case.work / "denied-prns.bin"
+        denied_candidate_source.write_bytes(b"denied-prns-to-stock\n" * 1024)
+        denied_candidate = case.start(
+            PeerSpec(
+                "unlisted Prns RNCP sender",
+                (
+                    str(prnsd),
+                    "cp",
+                    "--config",
+                    str(config),
+                    "-i",
+                    str(denied_candidate_identity),
+                    "-w",
+                    "5",
+                    str(denied_candidate_source),
+                    stock_destination,
+                ),
+                environment({}),
+            )
+        )
+        denied_candidate_status = case.wait_for_status(denied_candidate, 15)
+        if denied_candidate_status == 0:
+            raise InteropFailure(
+                FailureKind.COMMAND_FAILED,
+                "stock RNS accepted an unlisted Prns RNCP sender",
+            )
+        case.wait_for(
+            server,
+            f"RNCP_PRNS_UNAUTHORIZED {denied_candidate_identity_hash}",
+            10,
+        )
+        require_path_absent(
+            stock_receive / denied_candidate_source.name,
+            1,
+            "stock RNS published bytes from an unlisted Prns RNCP sender",
         )
 
         candidate_compressed = case.work / "prns-compressed.bin"
@@ -407,6 +487,11 @@ def run() -> None:
             "compressed_recoveries=1",
             "stock RNS did not send a compressed Resource into Prns",
         )
+        require_output_marker(
+            cancellation_result,
+            "single_segment_recoveries=5",
+            "stock RNS did not send single-segment Resources into Prns",
+        )
         wait_for_no_staging(candidate_receive, 10)
         if (candidate_receive / cancel_source.name).exists():
             raise InteropFailure(
@@ -445,6 +530,7 @@ def run() -> None:
             candidate_fetched / "stock.txt",
             "Prnsd fetched different stock rncp bytes",
         )
+        case.wait_for(server, f"RNCP_PRNS_FETCH_AUTHORIZED {candidate_identity_hash}", 10)
         case.stop(listener)
 
         public_fetch_identity = case.work / "public-fetch.rid"
