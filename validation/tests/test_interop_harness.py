@@ -5,6 +5,7 @@ import os
 import sys
 import unittest
 from contextlib import redirect_stderr
+from pathlib import Path
 from unittest import mock
 
 from validation.interop.harness import (
@@ -13,8 +14,11 @@ from validation.interop.harness import (
     InteropFailure,
     PeerSpec,
     PortLease,
+    cargo_binary,
     environment,
     reference_python,
+    require_hex_output,
+    require_output_marker,
     run_checked,
 )
 
@@ -34,6 +38,36 @@ class InteropHarnessTests(unittest.TestCase):
             )
         self.assertEqual(raised.exception.kind, FailureKind.COMMAND_FAILED)
         self.assertIn("command-evidence", raised.exception.detail)
+
+    def test_checked_command_accepts_an_explicit_environment(self) -> None:
+        output = run_checked(
+            [sys.executable, "-c", "import os; print(os.environ['CASE_VALUE'])"],
+            "command failed",
+            command_environment={"CASE_VALUE": "configured"},
+        )
+        self.assertEqual(output, "configured\n")
+
+    def test_missing_output_marker_is_structured(self) -> None:
+        with self.assertRaises(InteropFailure) as raised:
+            require_output_marker("other output\n", "EXPECTED", "missing result")
+        self.assertEqual(raised.exception.kind, FailureKind.EVIDENCE_MISSING)
+        self.assertIn("other output", raised.exception.detail)
+
+    def test_hex_output_requires_the_expected_length(self) -> None:
+        self.assertEqual(require_hex_output("a5" * 16 + "\n", 16, "missing hash"), "a5" * 16)
+        with self.assertRaises(InteropFailure) as raised:
+            require_hex_output("a5" * 15, 16, "missing hash")
+        self.assertEqual(raised.exception.kind, FailureKind.EVIDENCE_MISSING)
+
+    def test_cargo_binary_uses_manifest_target_directory(self) -> None:
+        metadata = '{"target_directory": "/tmp/cargo-target"}'
+        with mock.patch(
+            "validation.interop.harness.run_checked",
+            side_effect=["", metadata],
+        ) as checked:
+            binary = cargo_binary(Path("crate/Cargo.toml"), "peer")
+        self.assertEqual(binary, Path("/tmp/cargo-target/debug/peer"))
+        self.assertEqual(checked.call_args_list[0].args[0][-3:], ["--bin", "peer", "--locked"])
 
     def test_case_waits_for_marker_and_stops_peer(self) -> None:
         with InteropCase() as case:
@@ -77,6 +111,23 @@ class InteropHarnessTests(unittest.TestCase):
             with self.assertRaises(InteropFailure) as raised:
                 case.wait_for(peer, "NEVER", 0.1)
         self.assertEqual(raised.exception.kind, FailureKind.MARKER_TIMEOUT)
+
+    def test_case_waits_for_listener_and_closes_the_probe(self) -> None:
+        connection = mock.Mock()
+        with InteropCase() as case:
+            peer = case.start(
+                PeerSpec(
+                    "listener peer",
+                    (sys.executable, "-c", "import time; time.sleep(30)"),
+                    environment({}),
+                )
+            )
+            with mock.patch(
+                "validation.interop.harness.socket.create_connection",
+                return_value=connection,
+            ):
+                case.wait_for_listener(peer, "127.0.0.1", 48123, 1)
+        connection.close.assert_called_once_with()
 
     def test_failure_prints_peer_logs(self) -> None:
         stderr = io.StringIO()

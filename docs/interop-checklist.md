@@ -51,7 +51,7 @@ marks a gap in Prns's registered evidence, not necessarily missing Prns behavior
   - Send a small named-path request from each side and confirm the exact response.
 - [\[x\]](../validation/interop/cases/large_request_interop_smoke.py) **Resource-backed responses**
   - Return an oversized response in both directions and confirm exact completion.
-- [\[x\]](../validation/interop/cases/remote-management-interop-smoke.sh) **Request authorization**
+- [\[x\]](../validation/interop/cases/remote_management_interop_smoke.py) **Request authorization**
   - Confirm an allowed identity succeeds while an unknown identity receives no
     protected response.
 
@@ -96,7 +96,7 @@ marks a gap in Prns's registered evidence, not necessarily missing Prns behavior
   - Run the candidate in both TCP roles against stock RNS and exchange proven packets.
 - [\[x\]](../validation/interop/cases/udp_interop_smoke.py) **UDP**
   - Configure complementary endpoints and exchange exact proven payloads both ways.
-- [\[x\]](../validation/interop/cases/local-interop-smoke.sh) **Shared-instance client and server**
+- [\[x\]](../validation/interop/cases/local_interop_smoke.py) **Shared-instance client and server**
   - Run both shared-instance roles against stock RNS and carry valid application
     traffic each way.
 - [\[x\]](../validation/interop/cases/ifac-tcp-interop-smoke.sh) **IFAC authentication**

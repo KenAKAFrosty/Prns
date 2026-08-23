@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Real-RNS inverse-parity smoke: a stock RNS shared instance runs first, then prnsd detects
 # it and joins as an honorable client over its bus — standing up none of its own interfaces, the way
-# a stock RNS app defers to a running instance. The mirror of local-interop-smoke.sh (which proves
+# a stock RNS app defers to a running instance. The mirror of local_interop_smoke.py (which proves
 # Prns-as-server). The lane uses explicit ephemeral TCP ports so a developer's real default shared
 # instance can keep running alongside validation.
 #

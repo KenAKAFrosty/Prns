@@ -1003,8 +1003,8 @@ platform = "linux"
 toolchain = "stable"
 interpreter = "smoke"
 timeout_seconds = 300
-command = ["bash", "validation/interop/cases/local-interop-smoke.sh"]
-inputs = ["validation/interop/cases/local-interop-smoke.sh", "validation/interop/peers/rns_shared_instance_client.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.local_interop_smoke"]
+inputs = ["validation/interop/cases/local_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_shared_instance_client.py", "validation/integration/examples/local_shared_instance.rs"]
 artifacts = "validation-artifacts/results/interop-local-instance"
 
 [[suite]]
@@ -1016,8 +1016,8 @@ platform = "linux"
 toolchain = "stable"
 interpreter = "rpc"
 timeout_seconds = 300
-command = ["bash", "validation/interop/cases/local-rpc-interop-smoke.sh"]
-inputs = ["validation/interop/cases/local-rpc-interop-smoke.sh", "validation/interop/peers/rns_shared_rpc_client.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.local_rpc_interop_smoke"]
+inputs = ["validation/interop/cases/local_rpc_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_shared_rpc_client.py", "validation/integration/examples/local_shared_rpc_instance.rs"]
 artifacts = "validation-artifacts/results/interop-shared-rpc"
 
 [[suite]]
@@ -1029,8 +1029,8 @@ platform = "linux"
 toolchain = "stable"
 interpreter = "rpc"
 timeout_seconds = 360
-command = ["bash", "validation/interop/cases/remote-management-interop-smoke.sh"]
-inputs = ["validation/interop/cases/remote-management-interop-smoke.sh", "validation/interop/peers/rns_remote_management_client.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.remote_management_interop_smoke"]
+inputs = ["validation/interop/cases/remote_management_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_remote_management_client.py", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-remote-management"
 
 [[suite]]
@@ -1042,8 +1042,8 @@ platform = "linux"
 toolchain = "stable"
 interpreter = "rpc"
 timeout_seconds = 360
-command = ["bash", "validation/interop/cases/probe-responder-interop-smoke.sh"]
-inputs = ["validation/interop/cases/probe-responder-interop-smoke.sh", "validation/interop/peers/rns_probe_client.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.probe_responder_interop_smoke"]
+inputs = ["validation/interop/cases/probe_responder_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_probe_client.py", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-probe-responder"
 
 [[suite]]

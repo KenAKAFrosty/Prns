@@ -20,8 +20,10 @@ PEER_STOP_TIMEOUT_SECONDS = 5
 class FailureKind(Enum):
     MISSING_REFERENCE_INTERPRETER = "missing reference interpreter"
     COMMAND_FAILED = "command failed"
+    EVIDENCE_MISSING = "evidence missing"
     PEER_START_FAILED = "peer start failed"
     PEER_EXITED = "peer exited"
+    LISTENER_TIMEOUT = "listener timeout"
     MARKER_TIMEOUT = "marker timeout"
 
 
@@ -92,6 +94,7 @@ def run_checked(
     command: Sequence[str],
     failure: str,
     working_directory: Path = ROOT,
+    command_environment: Mapping[str, str] | None = None,
 ) -> str:
     try:
         result = subprocess.run(
@@ -101,6 +104,7 @@ def run_checked(
             stderr=subprocess.STDOUT,
             text=True,
             check=False,
+            env=command_environment,
         )
     except OSError as error:
         raise InteropFailure(FailureKind.COMMAND_FAILED, f"{failure}: {error}") from error
@@ -111,18 +115,41 @@ def run_checked(
     return result.stdout
 
 
-def cargo_example(manifest: Path, example: str) -> Path:
+def require_output_marker(output: str, marker: str, failure: str) -> None:
+    if marker in output:
+        return
+    rendered = output.rstrip()
+    detail = f"{failure}\n{rendered}" if rendered else failure
+    raise InteropFailure(FailureKind.EVIDENCE_MISSING, detail)
+
+
+def require_hex_output(output: str, byte_length: int, failure: str) -> str:
+    rendered = output.strip()
+    try:
+        decoded = bytes.fromhex(rendered)
+    except ValueError as error:
+        raise InteropFailure(FailureKind.EVIDENCE_MISSING, failure) from error
+    if len(decoded) != byte_length:
+        raise InteropFailure(FailureKind.EVIDENCE_MISSING, failure)
+    return rendered
+
+
+def _cargo_artifact(
+    manifest: Path,
+    selection: Sequence[str],
+    artifact_path: Sequence[str],
+    artifact_name: str,
+) -> Path:
     run_checked(
         [
             "cargo",
             "build",
             "--manifest-path",
             str(manifest),
-            "--example",
-            example,
+            *selection,
             "--locked",
         ],
-        f"Cargo example {example} did not build",
+        f"Cargo artifact {artifact_name} did not build",
     )
     metadata = json.loads(
         run_checked(
@@ -135,11 +162,19 @@ def cargo_example(manifest: Path, example: str) -> Path:
                 "--format-version",
                 "1",
             ],
-            f"Cargo metadata did not locate example {example}",
+            f"Cargo metadata did not locate {artifact_name}",
         )
     )
-    executable = example + (".exe" if os.name == "nt" else "")
-    return Path(metadata["target_directory"]) / "debug" / "examples" / executable
+    executable = artifact_name + (".exe" if os.name == "nt" else "")
+    return Path(metadata["target_directory"]).joinpath("debug", *artifact_path, executable)
+
+
+def cargo_binary(manifest: Path, binary: str) -> Path:
+    return _cargo_artifact(manifest, ("--bin", binary), (), binary)
+
+
+def cargo_example(manifest: Path, example: str) -> Path:
+    return _cargo_artifact(manifest, ("--example", example), ("examples",), example)
 
 
 def candidate_peer() -> Path:
@@ -215,6 +250,33 @@ class InteropCase:
             time.sleep(0.1)
         missing = ", ".join(marker for peer, marker in evidence if marker not in self.read_log(peer))
         raise InteropFailure(FailureKind.MARKER_TIMEOUT, f"timed out waiting for {missing}")
+
+    def wait_for_listener(
+        self,
+        peer: Peer,
+        host: str,
+        port: int,
+        timeout_seconds: float,
+    ) -> None:
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            return_code = peer.process.poll()
+            if return_code is not None:
+                raise InteropFailure(
+                    FailureKind.PEER_EXITED,
+                    f"{peer.spec.name} exited with status {return_code} before {host}:{port} listened",
+                )
+            try:
+                connection = socket.create_connection((host, port), timeout=0.1)
+            except OSError:
+                time.sleep(0.1)
+                continue
+            connection.close()
+            return
+        raise InteropFailure(
+            FailureKind.LISTENER_TIMEOUT,
+            f"timed out waiting for {peer.spec.name} at {host}:{port}",
+        )
 
     def stop(self, peer: Peer) -> None:
         try:
