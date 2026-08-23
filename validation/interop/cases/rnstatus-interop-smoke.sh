@@ -4,7 +4,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 source "$ROOT/validation/interop/lib/cargo-artifacts.sh"
 PRNSD="$(cargo_debug_binary "$ROOT/prnsd/Cargo.toml" prnsd)"
-PYTHON="${RPC_SMOKE_PYTHON:-$ROOT/validation/.venv/rns-rpc-1.4.2/bin/python}"
+PYTHON="${RPC_SMOKE_PYTHON:?RPC_SMOKE_PYTHON is set by validation/run.py}"
 SERVER="$ROOT/validation/interop/peers/rns_rnstatus_server.py"
 WORK="$(mktemp -d)"
 CONFIG="$WORK/config"
@@ -85,4 +85,4 @@ REMOTE_RESULT="$("$PRNSD" status --config "$CONFIG" -R "$TRANSPORT_HASH" -i "$MA
     exit 1
 }
 
-echo "PASS: Prnsd status queried stock RNS 1.4.2 local RPC and authenticated remote management"
+echo "PASS: Prnsd status queried stock RNS local RPC and authenticated remote management"

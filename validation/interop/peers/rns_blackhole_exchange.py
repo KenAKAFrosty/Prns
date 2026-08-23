@@ -5,14 +5,7 @@ import time
 import RNS
 from RNS.vendor import umsgpack
 
-EXPECTED_RNS_VERSION = "1.4.2"
 ENTRY_HASH = bytes.fromhex("33445566778899aabbccddeeff001122")
-
-
-def require_reference_version():
-    version = getattr(RNS, "__version__", "")
-    if version != EXPECTED_RNS_VERSION:
-        raise RuntimeError(f"expected RNS {EXPECTED_RNS_VERSION}, got {version!r}")
 
 
 def seed_publisher(config_dir):
@@ -174,7 +167,6 @@ def verify_source_file(path, source_hash):
 
 
 def main():
-    require_reference_version()
     command = sys.argv[1]
     commands = {
         "prepare-prns-publisher": prepare_prns_publisher,

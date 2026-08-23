@@ -4,15 +4,6 @@ import time
 
 import RNS
 
-EXPECTED_RNS_VERSION = "1.4.2"
-
-
-def require_reference_version():
-    version = getattr(RNS, "__version__", "")
-    if version != EXPECTED_RNS_VERSION:
-        raise RuntimeError(
-            f"expected RNS {EXPECTED_RNS_VERSION}, got {version!r}"
-        )
 
 
 def prepare(config_dir, bus_port, control_port):
@@ -61,7 +52,6 @@ def serve(config_dir):
 
 
 def main():
-    require_reference_version()
     command = sys.argv[1]
     if command == "prepare":
         prepare(*sys.argv[2:])

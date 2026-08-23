@@ -34,7 +34,9 @@ except ModuleNotFoundError:  # pragma: no cover - the workspace MSRV has tomllib
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST_PATH = ROOT / "validation" / "manifest.toml"
 TRIAGE_PATH = ROOT / "validation" / "mutation" / "triage.toml"
+MANIFEST_SCHEMA = 1
 EVIDENCE_SCHEMA = 1
+MUTATION_TRIAGE_SCHEMA = 1
 VALID_TIERS = {"pr", "release", "scheduled"}
 VALID_PLATFORMS = {"any", "linux", "macos", "windows", "android-device"}
 VALID_TOOLCHAINS = {
@@ -73,8 +75,8 @@ def load_toml(path: Path) -> dict:
 
 def load_manifest(path: Path = MANIFEST_PATH) -> dict:
     manifest = load_toml(path)
-    if manifest.get("schema") != 1:
-        raise ValidationError("validation manifest schema must be 1")
+    if manifest.get("schema") != MANIFEST_SCHEMA:
+        raise ValidationError(f"validation manifest schema must be {MANIFEST_SCHEMA}")
     return manifest
 
 
@@ -264,6 +266,12 @@ def validation_asset_inventory() -> set[str]:
         path.relative_to(ROOT).as_posix()
         for path in tracked_or_untracked_sources()
         if path.name.endswith("-smoke.sh")
+        or (
+            path.parent == ROOT / "validation" / "interop" / "cases"
+            and path.suffix == ".py"
+            and path.name != "__init__.py"
+        )
+        or path == ROOT / "validation" / "interop" / "harness.py"
         or ("validation/oracles/python" in path.as_posix() and path.suffix == ".py")
         or ("validation/oracles/tests" in path.as_posix() and path.suffix == ".rs")
         or ("validation/interop/peers" in path.as_posix() and path.suffix == ".py")
@@ -331,8 +339,8 @@ def validate_triage(path: Path | None = None) -> list[str]:
     errors: list[str] = []
     path = path or TRIAGE_PATH
     triage = load_toml(path)
-    if triage.get("schema") != 1:
-        errors.append("mutation triage schema must be 1")
+    if triage.get("schema") != MUTATION_TRIAGE_SCHEMA:
+        errors.append(f"mutation triage schema must be {MUTATION_TRIAGE_SCHEMA}")
     seen = set()
     today = dt.date.today()
     for index, accepted in enumerate(triage.get("accepted", [])):
@@ -542,16 +550,50 @@ def validate_manifest(manifest: dict, check_tools: bool = False) -> list[str]:
         errors.append(f"stale validation asset exemptions: {sorted(stale_exemptions)!r}")
 
     errors.extend(validate_triage())
-    try:
-        requirements = (ROOT / "validation/oracles/requirements.txt").read_text().splitlines()
-        lock = (ROOT / "validation/oracles/requirements.lock").read_text().splitlines()
-    except OSError as error:
-        errors.append(f"cannot read oracle reference pins: {error}")
-    else:
+    requirements_versions: dict[str, set[str]] = {}
+    for name, specification in manifest.get("interpreters", {}).items():
+        version = specification.get("version")
+        venv = specification.get("venv")
+        requirements_path = specification.get("requirements")
+        if not isinstance(version, str) or not version:
+            errors.append(f"interpreter {name} needs an exact version")
+            continue
+        if not isinstance(venv, str) or "{version}" not in venv:
+            errors.append(f"interpreter {name} venv must derive from {{version}}")
+        if not isinstance(requirements_path, str) or not requirements_path:
+            errors.append(f"interpreter {name} needs a requirements path")
+            continue
+        requirements_versions.setdefault(requirements_path, set()).add(version)
+    for requirements_path, versions in sorted(requirements_versions.items()):
+        if len(versions) != 1:
+            errors.append(
+                f"interpreters sharing {requirements_path} disagree on RNS versions: {sorted(versions)!r}"
+            )
+            continue
+        expected_pin = f"rns=={next(iter(versions))}"
+        requirements_file = ROOT / requirements_path
+        lock_file = requirements_file.with_suffix(".lock")
+        try:
+            requirements = requirements_file.read_text().splitlines()
+            lock = lock_file.read_text().splitlines()
+        except OSError as error:
+            errors.append(f"cannot read oracle reference pins: {error}")
+            continue
         if requirements != lock:
-            errors.append("validation/oracles/requirements.txt must project requirements.lock")
-        if "rns==1.4.2" not in lock:
-            errors.append("validation/oracles/requirements.lock must pin rns==1.4.2")
+            errors.append(
+                f"{requirements_file.relative_to(ROOT)} must project {lock_file.relative_to(ROOT)}"
+            )
+        if expected_pin not in lock:
+            errors.append(f"{lock_file.relative_to(ROOT)} must pin {expected_pin}")
+
+    for suite in suites.values():
+        uses_stock_peer = any(
+            source.startswith("validation/interop/peers/rns_")
+            and source.endswith(".py")
+            for source in suite.get("inputs", [])
+        )
+        if uses_stock_peer and suite.get("interpreter") not in manifest.get("interpreters", {}):
+            errors.append(f"{suite['id']} uses a stock RNS peer without a registered interpreter")
 
     required_commands = {
         sys.executable if suite["command"][0] == RUNNER_PYTHON_ARGUMENT else suite["command"][0]
@@ -698,13 +740,17 @@ def venv_python(venv: Path) -> Path:
     return venv / "bin" / "python"
 
 
+def interpreter_venv(specification: dict) -> Path:
+    return ROOT / specification["venv"].replace("{version}", specification["version"])
+
+
 def resolve_interpreter(manifest: dict, name: str) -> str:
     specification = manifest.get("interpreters", {}).get(name)
     if not isinstance(specification, dict):
         raise ValidationError(f"unknown interpreter {name!r}")
     environment = specification["environment"]
     configured = os.environ.get(environment)
-    candidate = Path(configured) if configured else venv_python(ROOT / specification["venv"])
+    candidate = Path(configured) if configured else venv_python(interpreter_venv(specification))
     if not candidate.is_file() or not os.access(candidate, os.X_OK):
         raise ValidationError(
             f"{environment} does not name an executable RNS interpreter; run "
@@ -1461,7 +1507,7 @@ def prepare_oracles(manifest: dict) -> None:
     if uv is None:
         raise ValidationError("uv is required to prepare pinned oracle environments")
     for name, specification in manifest.get("interpreters", {}).items():
-        venv = ROOT / specification["venv"]
+        venv = interpreter_venv(specification)
         print(
             f"[oracles] {name}: creating {venv.relative_to(ROOT)} with stock RNS "
             f"{specification['version']} from {specification['requirements']}."

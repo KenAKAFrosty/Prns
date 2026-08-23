@@ -7,7 +7,6 @@ import time
 import RNS
 
 
-EXPECTED_RNS_VERSION = "1.4.2"
 RESOURCE_PAYLOAD = b"stock-resource-that-must-be-rejected" * 4096
 READY_MESSAGE_TYPE = 0x1338
 
@@ -137,7 +136,7 @@ def send_to_prns(port):
         channel.add_message_handler(ready)
 
     class PrnsSeeker:
-        aspect_filter = "prns.resource.reject.napi"
+        aspect_filter = "prns.resource.reject.interop"
 
         def received_announce(self, destination_hash, announced_identity, app_data):
             if state["link"] is not None:
@@ -149,7 +148,7 @@ def send_to_prns(port):
                 "prns",
                 "resource",
                 "reject",
-                "napi",
+                "interop",
             )
             state["link"] = RNS.Link(destination, established_callback=established)
 
@@ -182,8 +181,6 @@ def send_to_prns(port):
 
 
 def main():
-    if getattr(RNS, "__version__", "") != EXPECTED_RNS_VERSION:
-        raise RuntimeError(f"expected RNS {EXPECTED_RNS_VERSION}")
     role = os.environ["PRNS_REJECTION_ROLE"]
     port = int(os.environ["PRNS_REJECTION_PORT"])
     if role == "reject-prns":

@@ -4,7 +4,7 @@ set -eu
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 source "$ROOT/validation/interop/lib/cargo-artifacts.sh"
 PRNSD="$(cargo_debug_binary "$ROOT/prnsd/Cargo.toml" prnsd)"
-PYTHON="${RPC_SMOKE_PYTHON:-$ROOT/validation/.venv/rns-rpc-1.4.2/bin/python}"
+PYTHON="${RPC_SMOKE_PYTHON:?RPC_SMOKE_PYTHON is set by validation/run.py}"
 CLIENT="$ROOT/validation/interop/peers/rns_blackhole_exchange.py"
 WORK="$(mktemp -d)"
 PRNS_PID=""
@@ -86,7 +86,7 @@ if [[ "$UPDATER_RESULT" != *"BLACKHOLE_UPDATER_OK"* ]]; then
     exit 1
 fi
 
-echo "PASS: stock RNS 1.4.2 fetched Prnsd's blackhole list"
+echo "PASS: stock RNS fetched Prnsd's blackhole list"
 echo "$PUBLISHER_RESULT" | grep "BLACKHOLE_PUBLISHER_OK"
-echo "PASS: Prnsd fetched and persisted stock RNS 1.4.2's blackhole list"
+echo "PASS: Prnsd fetched and persisted stock RNS's blackhole list"
 echo "$UPDATER_RESULT" | grep "BLACKHOLE_UPDATER_OK"

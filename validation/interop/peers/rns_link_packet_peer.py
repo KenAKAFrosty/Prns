@@ -6,7 +6,6 @@ import time
 import RNS
 
 
-EXPECTED_RNS_VERSION = "1.4.2"
 EXPECTED_FROM_PRNS = b"prns-direct-link-packet"
 SENT_FROM_STOCK = b"stock-direct-link-packet"
 
@@ -29,8 +28,6 @@ def configuration(port):
 
 
 def main():
-    if getattr(RNS, "__version__", "") != EXPECTED_RNS_VERSION:
-        raise RuntimeError(f"expected RNS {EXPECTED_RNS_VERSION}")
     port = int(os.environ["PRNS_LINK_PACKET_PORT"])
     config_dir = pathlib.Path(os.environ["PRNS_LINK_PACKET_CONFIG_DIR"])
     config_dir.mkdir()
@@ -68,7 +65,7 @@ def main():
         state["outbound_receipt"] = RNS.Packet(link, SENT_FROM_STOCK).send()
 
     class PrnsSeeker:
-        aspect_filter = "prns.link.packet.napi"
+        aspect_filter = "prns.link.packet.interop"
 
         def received_announce(self, destination_hash, announced_identity, app_data):
             del app_data
@@ -81,7 +78,7 @@ def main():
                 "prns",
                 "link",
                 "packet",
-                "napi",
+                "interop",
             )
             if remote.hash != destination_hash:
                 state["failure"] = (

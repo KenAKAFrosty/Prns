@@ -4,7 +4,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 source "$ROOT/validation/interop/lib/cargo-artifacts.sh"
 PRNSD="$(cargo_debug_binary "$ROOT/prnsd/Cargo.toml" prnsd)"
-PYTHON="${RPC_SMOKE_PYTHON:-$ROOT/validation/.venv/rns-rpc-1.4.2/bin/python}"
+PYTHON="${RPC_SMOKE_PYTHON:?RPC_SMOKE_PYTHON is set by validation/run.py}"
 CLIENT="$ROOT/validation/interop/peers/rns_remote_management_client.py"
 WORK="$(mktemp -d)"
 SERVER_CONFIG="$WORK/server"
@@ -40,7 +40,7 @@ TRANSPORT_HASH="$($PYTHON "$CLIENT" identity-hash "$SERVER_CONFIG/storage/transp
 
 RESULT="$($PYTHON "$CLIENT" query "$CLIENT_CONFIG" "$TRANSPORT_HASH" "$MANAGEMENT_IDENTITY" 2>&1)"
 if [[ "$RESULT" == *"REMOTE_MANAGEMENT_OK"* ]]; then
-    echo "PASS: stock RNS 1.4.2 rejected hostile management requests and recovered for valid status, paths, and rates"
+    echo "PASS: stock RNS rejected hostile management requests and recovered for valid status, paths, and rates"
     echo "$RESULT" | grep "REMOTE_MANAGEMENT_OK"
     exit 0
 fi

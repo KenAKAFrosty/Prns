@@ -2,16 +2,15 @@
 # Stock-RNS shared-instance control-RPC smoke.
 #
 # Stands up a Prns-owned LocalServer plus the RPC compatibility shim, then lets
-# a stock RNS client connect and call Reticulum's own get_* methods. The active
-# lane exercises RNS 1.4.2 MessagePack; compatibility runs may select the
+# a stock RNS client connect and call Reticulum's own get_* methods. The
+# manifest-pinned lane exercises stock RNS MessagePack; compatibility runs may select the
 # earlier pickle dialect with RPC_SMOKE_LEGACY_PICKLE=1.
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 source "$ROOT/validation/interop/lib/cargo-artifacts.sh"
 DAEMON="$(cargo_debug_example "$ROOT/validation/integration/Cargo.toml" local_shared_rpc_instance)"
-VENV_PY="${RPC_SMOKE_PYTHON:-$ROOT/validation/.venv/rns-rpc-1.4.2/bin/python}"
-EXPECTED_RNS_VERSION="${RPC_SMOKE_EXPECTED_RNS_VERSION:-1.4.2}"
+VENV_PY="${RPC_SMOKE_PYTHON:?RPC_SMOKE_PYTHON is set by validation/run.py}"
 CLIENT="$ROOT/validation/interop/peers/rns_shared_rpc_client.py"
 RPC_KEY="${PRNS_RPC_KEY:-$(printf '5a%.0s' $(seq 1 32))}"
 DAEMON_LOG="$(mktemp)"
@@ -67,7 +66,7 @@ DAEMON_PID=$!
 
 for _ in $(seq 1 50); do grep -q "READY" "$DAEMON_LOG" && break; sleep 0.2; done
 grep -q "READY" "$DAEMON_LOG" || { echo "FAIL: daemon never became READY"; cat "$DAEMON_LOG"; exit 1; }
-echo "daemon ready; running the RNS $EXPECTED_RNS_VERSION RPC oracle..."
+echo "daemon ready; running the stock RNS RPC oracle..."
 
 PRNS_LOCAL_PORT="$LOCAL_PORT" \
 PRNS_RPC_PORT="$RPC_PORT" \
@@ -76,12 +75,12 @@ PRNS_RPC_KEY="$RPC_KEY" \
 status=$?
 
 if [ "$status" -eq 0 ] && grep -q "RPC_ORACLE_OK" "$CLIENT_LOG"; then
-    echo "PASS: stock RNS $EXPECTED_RNS_VERSION decoded Prns control-RPC replies"
+    echo "PASS: stock RNS decoded Prns control-RPC replies"
     grep "RPC_ORACLE_OK" "$CLIENT_LOG" | head -1
     exit 0
 fi
 
-echo "FAIL: RNS $EXPECTED_RNS_VERSION RPC oracle failed"
+echo "FAIL: stock RNS RPC oracle failed"
 echo "--- client log ---"; cat "$CLIENT_LOG"
 echo "--- daemon log ---"; tail -30 "$DAEMON_LOG"
 exit 1

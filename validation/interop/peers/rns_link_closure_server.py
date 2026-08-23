@@ -7,7 +7,6 @@ import time
 import RNS
 
 
-EXPECTED_RNS_VERSION = "1.4.2"
 READY_MESSAGE_TYPE = 0x1339
 
 
@@ -42,8 +41,6 @@ def configuration(port):
 
 
 def main():
-    if getattr(RNS, "__version__", "") != EXPECTED_RNS_VERSION:
-        raise RuntimeError(f"expected RNS {EXPECTED_RNS_VERSION}")
     port = int(os.environ["PRNS_LINK_CLOSURE_PORT"])
     config_dir = pathlib.Path(tempfile.mkdtemp(prefix="rns-link-closure-server-"))
     config_dir.joinpath("config").write_text(configuration(port), encoding="utf-8")

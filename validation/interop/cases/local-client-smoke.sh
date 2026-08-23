@@ -13,7 +13,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 source "$ROOT/validation/interop/lib/cargo-artifacts.sh"
 PRNSD="$(cargo_debug_binary "$ROOT/prnsd/Cargo.toml" prnsd)"
-VENV_PY="${SMOKE_PYTHON:-$ROOT/validation/.venv/rns-1.4.2/bin/python}"
+VENV_PY="${SMOKE_PYTHON:?SMOKE_PYTHON is set by validation/run.py}"
 STOCK_DIR="$(mktemp -d)"
 PRNS_DIR="$(mktemp -d)"
 STOCK_LOG="$(mktemp)"

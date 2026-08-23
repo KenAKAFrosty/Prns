@@ -5,16 +5,9 @@ import sys
 import RNS
 from RNS.Utilities.rnid import create_rsg, validate_rsg
 
-EXPECTED_RNS_VERSION = "1.4.2"
 ENCRYPTION_CHUNK_LEN = 1024 * 1024 * RNS.Identity.AES256_BLOCKSIZE
 DECRYPTION_CHUNK_LEN = ENCRYPTION_CHUNK_LEN + RNS.Cryptography.Token.TOKEN_OVERHEAD * 2
 PRIVATE = bytes([0x22]) * 32 + bytes([0x11]) * 32
-
-
-def require_reference_version():
-    version = getattr(RNS, "__version__", "")
-    if version != EXPECTED_RNS_VERSION:
-        raise RuntimeError(f"expected RNS {EXPECTED_RNS_VERSION}, got {version!r}")
 
 
 def prepare(private_path, public_path, message_path, signature_path, plaintext_path, encrypted_path):
@@ -160,7 +153,6 @@ def verify_encoded_rsg(private_path, file_path, output_path, encoding):
 
 
 def main():
-    require_reference_version()
     command, *arguments = sys.argv[1:]
     if command == "prepare" and len(arguments) == 6:
         prepare(*arguments)

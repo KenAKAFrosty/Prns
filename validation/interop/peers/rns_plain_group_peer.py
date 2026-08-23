@@ -6,7 +6,6 @@ import time
 import RNS
 
 
-EXPECTED_RNS_VERSION = "1.4.2"
 GROUP_IDENTITY_SECRET = bytes([0x22]) * 32 + bytes([0x11]) * 32
 GROUP_KEY = bytes([0x42]) * 64
 EXPECTED_PLAIN = bytes([0xFF, 0x70, 0x72, 0x6E, 0x73, 0x2D, 0x70, 0x6C, 0x61, 0x69, 0x6E, 0x00])
@@ -33,8 +32,6 @@ def configuration(port):
 
 
 def main():
-    if getattr(RNS, "__version__", "") != EXPECTED_RNS_VERSION:
-        raise RuntimeError(f"expected RNS {EXPECTED_RNS_VERSION}")
     port = int(os.environ["PRNS_PLAIN_GROUP_PORT"])
     config_dir = pathlib.Path(os.environ["PRNS_PLAIN_GROUP_CONFIG_DIR"])
     config_dir.mkdir()

@@ -3,7 +3,7 @@ set -eu
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 source "$ROOT/validation/interop/lib/cargo-artifacts.sh"
-PYTHON="${SMOKE_PYTHON:-$ROOT/validation/.venv/rns-1.4.2/bin/python}"
+PYTHON="${SMOKE_PYTHON:?SMOKE_PYTHON is set by validation/run.py}"
 DAEMON="$(cargo_debug_example "$ROOT/validation/integration/Cargo.toml" mixed_multihop_daemon)"
 TRANSPORT="$ROOT/validation/interop/peers/rns_multihop_transport.py"
 ENDPOINT="$ROOT/validation/interop/peers/rns_multihop_endpoint.py"

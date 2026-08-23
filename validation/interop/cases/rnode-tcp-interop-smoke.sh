@@ -4,7 +4,7 @@ set -eu
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 source "$ROOT/validation/interop/lib/cargo-artifacts.sh"
 PRNSD="$(cargo_debug_binary "$ROOT/prnsd/Cargo.toml" prnsd)"
-PYTHON="${RPC_SMOKE_PYTHON:-$ROOT/validation/.venv/rns-rpc-1.4.2/bin/python}"
+PYTHON="${RPC_SMOKE_PYTHON:?RPC_SMOKE_PYTHON is set by validation/run.py}"
 DEVICE="$ROOT/validation/interop/peers/rns_rnode_tcp_device.py"
 WORK="$(mktemp -d)"
 PRNS_PID=""
@@ -58,7 +58,7 @@ wait "$DEVICE_PID" || { DEVICE_PID=""; echo "FAIL: reference RNode TCP device re
 DEVICE_PID=""
 grep -q "RNODE_TCP_DEVICE_OK" "$RESULT" || { echo "FAIL: missing RNode TCP success marker"; cat "$RESULT"; exit 1; }
 
-echo "PASS: Prnsd rejected hostile RNode bring-up sequences and recovered against a split-frame RNS 1.4.2 oracle"
+echo "PASS: Prnsd rejected hostile RNode bring-up sequences and recovered against the stock RNS split-frame oracle"
 grep "RNODE_TCP_DEVICE_OK" "$RESULT"
 
 exit 0

@@ -7,7 +7,6 @@ import time
 import RNS
 
 
-EXPECTED_RNS_VERSION = "1.4.2"
 MESSAGE_TYPE = 0x1337
 EXPECTED_FROM_PRNS = [b"prns-channel-zero", b"prns-channel-one"]
 SENT_FROM_STOCK = [b"stock-channel-zero", b"stock-channel-one"]
@@ -44,8 +43,6 @@ def configuration(port):
 
 
 def main():
-    if getattr(RNS, "__version__", "") != EXPECTED_RNS_VERSION:
-        raise RuntimeError(f"expected RNS {EXPECTED_RNS_VERSION}")
     port = int(os.environ["PRNS_CHANNEL_PORT"])
     config_dir = pathlib.Path(tempfile.mkdtemp(prefix="rns-channel-server-"))
     config_dir.joinpath("config").write_text(configuration(port), encoding="utf-8")

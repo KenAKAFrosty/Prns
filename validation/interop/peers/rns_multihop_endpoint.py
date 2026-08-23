@@ -8,7 +8,6 @@ import time
 import RNS
 
 
-EXPECTED_RNS_VERSION = "1.4.2"
 PAYLOAD_SIZE = 64 * 1024
 EXPECTED_HOPS = 3
 
@@ -56,8 +55,6 @@ def configuration(role, port):
 
 
 def main():
-    if getattr(RNS, "__version__", "") != EXPECTED_RNS_VERSION:
-        raise RuntimeError(f"expected RNS {EXPECTED_RNS_VERSION}")
     role = os.environ["RNS_MULTIHOP_ROLE"]
     if role not in ("left", "right"):
         raise RuntimeError(f"unknown endpoint role {role}")

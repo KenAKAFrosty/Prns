@@ -6,7 +6,6 @@ import time
 import RNS
 
 
-EXPECTED_RNS_VERSION = "1.4.2"
 EXPECTED_FROM_PRNS = bytes([0x00, 0x70, 0x72, 0x6E, 0x73, 0xFF])
 SENT_FROM_STOCK = bytes([0xFF, 0x73, 0x74, 0x6F, 0x63, 0x6B, 0x00])
 
@@ -29,8 +28,6 @@ def configuration(port):
 
 
 def main():
-    if getattr(RNS, "__version__", "") != EXPECTED_RNS_VERSION:
-        raise RuntimeError(f"expected RNS {EXPECTED_RNS_VERSION}")
     port = int(os.environ["PRNS_ANNOUNCE_APP_DATA_PORT"])
     config_dir = pathlib.Path(os.environ["PRNS_ANNOUNCE_APP_DATA_CONFIG_DIR"])
     config_dir.mkdir()
@@ -49,7 +46,7 @@ def main():
     state = {"received": False, "failure": None}
 
     class PrnsAnnounceHandler:
-        aspect_filter = "prns.announce.appdata.napi"
+        aspect_filter = "prns.announce.appdata.interop"
 
         def received_announce(self, destination_hash, announced_identity, app_data):
             remote = RNS.Destination(
@@ -59,7 +56,7 @@ def main():
                 "prns",
                 "announce",
                 "appdata",
-                "napi",
+                "interop",
             )
             if remote.hash != destination_hash:
                 state["failure"] = "Prns destination hash did not match its announce"

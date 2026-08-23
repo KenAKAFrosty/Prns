@@ -17,7 +17,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 source "$ROOT/validation/interop/lib/cargo-artifacts.sh"
 DAEMON="$(cargo_debug_example "$ROOT/validation/integration/Cargo.toml" local_transit_daemon)"
-VENV_PY="${SMOKE_PYTHON:-$ROOT/validation/.venv/rns-1.4.2/bin/python}"
+VENV_PY="${SMOKE_PYTHON:?SMOKE_PYTHON is set by validation/run.py}"
 PEER="$ROOT/validation/interop/peers/rns_transit_peer.py"
 CLIENT="$ROOT/validation/interop/peers/rns_transit_client.py"
 IFAC_HOSTILE="$ROOT/validation/interop/peers/rns_ifac_hostile.py"

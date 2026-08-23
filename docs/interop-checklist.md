@@ -8,51 +8,48 @@ behavior rather than internal APIs or implementation structure. When an
 operation is meaningful in both directions, the proof should exercise both
 directions.
 
-For Prns, a checked item has registered black-box or live evidence against stock
-RNS 1.4.2. An unchecked item marks a gap in Prns's registered evidence, not
-necessarily missing Prns behavior and never a verdict on another implementation.
-Internal unit tests or implementation support alone do not check an item. Prns
-currently has registered evidence for 26 of these 28 operations. Each linked
-`[x]` opens the executable case providing the primary evidence for that check;
-one suite may substantiate several observable operations.
+For Prns, a checked item has registered black-box or live evidence against the
+stock RNS release pinned by
+[`validation/manifest.toml`](../validation/manifest.toml). An unchecked item
+marks a gap in Prns's registered evidence, not necessarily missing Prns behavior. Internal unit tests or implementation support alone do not check an item. Prns currently has registered evidence for 26 of these 28 operations. Each linked `[x]` opens the executable case providing the primary evidence for that check; one suite may substantiate several observable operations.
 
 ## Identity and destinations
 
 - [\[x\]](../validation/interop/cases/rnid-local-interop-smoke.sh) **Identity compatibility**
   - Load the same identity in both binaries, then confirm matching hashes,
     cross-compatible signatures, and cross-compatible encryption.
-- [\[x\]](../validation/interop/cases/napi-tcp-server-interop-smoke.sh) **SINGLE announcements**
+- [\[x\]](../validation/interop/cases/tcp_interop_smoke.py) **SINGLE announcements**
   - Have each side announce a SINGLE destination and confirm the other side addresses
     it successfully.
-- [\[x\]](../validation/interop/cases/napi-announce-app-data-interop-smoke.py) **Announce application data**
+- [\[x\]](../validation/interop/cases/announce_app_data_interop_smoke.py) **Announce application data**
   - Send exact application bytes in announcements both ways and confirm each receiver
     reports them unchanged.
-- [\[x\]](../validation/interop/cases/plain-group-destinations-interop-smoke.py) **PLAIN destinations**
+- [\[x\]](../validation/interop/cases/plain_group_destinations_interop_smoke.py) **PLAIN destinations**
   - Exchange exact PLAIN payloads both ways without an identity or shared key.
-- [\[x\]](../validation/interop/cases/plain-group-destinations-interop-smoke.py) **GROUP destinations**
+- [\[x\]](../validation/interop/cases/plain_group_destinations_interop_smoke.py) **GROUP destinations**
   - Configure the same group key and exchange exact GROUP payloads both ways.
-- [\[x\]](../validation/interop/cases/napi-ratchet-interop-smoke.sh) **Ratchets**
+- [\[x\]](../validation/interop/cases/ratchet_interop_smoke.py) **Ratchets**
   - Require ratchets and prove packets across two distinct announced ratchet
     generations.
 
 ## Packets and links
 
-- [\[x\]](../validation/interop/cases/napi-udp-interop-smoke.sh) **Proven SINGLE packets**
+- [\[x\]](../validation/interop/cases/udp_interop_smoke.py) **Proven SINGLE packets**
   - Exchange exact payloads both ways and confirm valid delivery proofs.
-- [\[x\]](../validation/interop/cases/napi-link-closure-interop-smoke.sh) **Link establishment**
+- [\[x\]](../validation/interop/cases/link_packet_interop_smoke.py) **Link establishment**
   - Initiate a Link from each implementation and exchange traffic only after both peers
     report it active.
-- [\[x\]](../validation/interop/cases/napi-link-packet-interop-smoke.sh) **Link packets**
+- [\[x\]](../validation/interop/cases/link_packet_interop_smoke.py) **Link packets**
   - Initiate a Link from each implementation, send an exact direct Link packet to
     its responder, and confirm delivery plus the responder's proof.
 - [\[x\]](../validation/interop/cases/rncp-interop-smoke.sh) **Link identification**
   - Have each initiator identify itself and confirm the responder observes and
     authorizes the exact identity.
-- [\[x\]](../validation/interop/cases/napi-link-closure-interop-smoke.sh) **Link closure**
+- [\[x\]](../validation/interop/cases/link_closure_interop_smoke.py) **Link closure**
   - Have each side close a Link and confirm its peer observes a clean remote closure.
-- [\[x\]](../validation/interop/cases/napi-large-request-interop-smoke.sh) **Packet-backed requests**
+- [\[x\]](../validation/interop/cases/large_request_interop_smoke.py) **Packet-backed requests**
   - Send a small named-path request from each side and confirm the exact response.
-- [\[x\]](../validation/interop/cases/napi-large-request-interop-smoke.sh) **Resource-backed responses**
+- [\[x\]](../validation/interop/cases/large_request_interop_smoke.py) **Resource-backed responses**
   - Return an oversized response in both directions and confirm exact completion.
 - [\[x\]](../validation/interop/cases/remote-management-interop-smoke.sh) **Request authorization**
   - Confirm an allowed identity succeeds while an unknown identity receives no
@@ -71,10 +68,10 @@ one suite may substantiate several observable operations.
 - [\[x\]](../validation/interop/cases/rncp-interop-smoke.sh) **Resource cancellation**
   - Cancel an active transfer, confirm no partial publication, then complete a fresh
     transfer.
-- [\[x\]](../validation/interop/cases/napi-resource-rejection-interop-smoke.sh) **Resource rejection**
+- [\[x\]](../validation/interop/cases/resource_rejection_interop_smoke.py) **Resource rejection**
   - Refuse an offered Resource and confirm the sender sees rejection with no payload
     publication.
-- [\[x\]](../validation/interop/cases/napi-channel-interop-smoke.sh) **Channel messages**
+- [\[x\]](../validation/interop/cases/channel_interop_smoke.py) **Channel messages**
   - Exchange multiple typed messages both ways and confirm exact order and
     acknowledgements.
 - [ ] **Buffer streams**
@@ -95,9 +92,9 @@ one suite may substantiate several observable operations.
 
 ## Common adapters
 
-- [\[x\]](../validation/interop/cases/napi-tcp-server-interop-smoke.sh) **TCP client and server**
+- [\[x\]](../validation/interop/cases/tcp_interop_smoke.py) **TCP client and server**
   - Run the candidate in both TCP roles against stock RNS and exchange proven packets.
-- [\[x\]](../validation/interop/cases/napi-udp-interop-smoke.sh) **UDP**
+- [\[x\]](../validation/interop/cases/udp_interop_smoke.py) **UDP**
   - Configure complementary endpoints and exchange exact proven payloads both ways.
 - [\[x\]](../validation/interop/cases/local-interop-smoke.sh) **Shared-instance client and server**
   - Run both shared-instance roles against stock RNS and carry valid application

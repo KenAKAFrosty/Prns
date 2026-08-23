@@ -1,4 +1,3 @@
-import hashlib
 import os
 import pathlib
 import sys
@@ -8,24 +7,11 @@ import time
 import RNS
 
 
-EXPECTED_RNS_VERSION = "1.4.2"
 RESPONSE_SIZE = 128 * 1024
 
 
-def deterministic_payload(seed):
-    blocks = []
-    generated = 0
-    counter = 0
-    while generated < RESPONSE_SIZE:
-        block = hashlib.sha256(seed + counter.to_bytes(8, "big")).digest()
-        blocks.append(block)
-        generated += len(block)
-        counter += 1
-    return b"".join(blocks)[:RESPONSE_SIZE]
-
-
-STOCK_RESPONSE = deterministic_payload(b"stock-large-response")
-EXPECTED_PRNS_RESPONSE = deterministic_payload(b"prns-large-response")
+STOCK_RESPONSE = bytes((index * 17 + 3) % 256 for index in range(RESPONSE_SIZE))
+EXPECTED_PRNS_RESPONSE = bytes((index * 29 + 7) % 256 for index in range(RESPONSE_SIZE))
 
 
 def configuration(port):
@@ -46,8 +32,6 @@ def configuration(port):
 
 
 def main():
-    if getattr(RNS, "__version__", "") != EXPECTED_RNS_VERSION:
-        raise RuntimeError(f"expected RNS {EXPECTED_RNS_VERSION}")
     port = int(os.environ["PRNS_LARGE_REQUEST_PORT"])
     config_dir = pathlib.Path(tempfile.mkdtemp(prefix="rns-large-request-server-"))
     config_dir.joinpath("config").write_text(configuration(port), encoding="utf-8")

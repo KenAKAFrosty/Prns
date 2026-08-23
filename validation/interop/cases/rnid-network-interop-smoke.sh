@@ -2,7 +2,7 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-PYTHON="${RPC_SMOKE_PYTHON:-$ROOT/validation/.venv/rns-rpc-1.4.2/bin/python}"
+PYTHON="${RPC_SMOKE_PYTHON:?RPC_SMOKE_PYTHON is set by validation/run.py}"
 SERVER="$ROOT/validation/interop/peers/rns_rnid_network_server.py"
 WORK="$(mktemp -d)"
 CONFIG="$WORK/config"
@@ -118,4 +118,4 @@ grep -q "RNID_ANNOUNCE_RECEIVED .* $ANNOUNCE_HASH" "$SERVER_LOG" || {
     exit 1
 }
 
-echo "PASS: Prnsd id resolved and announced identities through a stock RNS 1.4.2 shared instance"
+echo "PASS: Prnsd id resolved and announced identities through a stock RNS shared instance"

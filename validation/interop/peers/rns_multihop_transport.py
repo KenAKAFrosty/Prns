@@ -7,12 +7,9 @@ import time
 import RNS
 
 
-EXPECTED_RNS_VERSION = "1.4.2"
 
 
 def main():
-    if getattr(RNS, "__version__", "") != EXPECTED_RNS_VERSION:
-        raise RuntimeError(f"expected RNS {EXPECTED_RNS_VERSION}")
     listen_port = int(os.environ["RNS_MULTIHOP_LISTEN_PORT"])
     peer_port = int(os.environ["RNS_MULTIHOP_PEER_PORT"])
     config_dir = pathlib.Path(tempfile.mkdtemp(prefix="rns-multihop-transport-"))

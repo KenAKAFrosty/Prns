@@ -7,7 +7,6 @@ import time
 import RNS
 
 
-EXPECTED_RNS_VERSION = "1.4.2"
 EXPECTED_FROM_PRNS = [b"prns-ratchet-zero", b"prns-ratchet-one"]
 SENT_FROM_STOCK = b"stock-ratchet-proof"
 
@@ -30,8 +29,6 @@ def configuration(port):
 
 
 def main():
-    if getattr(RNS, "__version__", "") != EXPECTED_RNS_VERSION:
-        raise RuntimeError(f"expected RNS {EXPECTED_RNS_VERSION}")
     port = int(os.environ["PRNS_RATCHET_PORT"])
     config_dir = pathlib.Path(tempfile.mkdtemp(prefix="rns-ratchet-server-"))
     config_dir.joinpath("config").write_text(configuration(port), encoding="utf-8")

@@ -1,0 +1,263 @@
+from __future__ import annotations
+
+import json
+import os
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
+from typing import Callable, Mapping, Sequence
+
+
+ROOT = Path(__file__).resolve().parents[2]
+PEER_STOP_TIMEOUT_SECONDS = 5
+
+
+class FailureKind(Enum):
+    MISSING_REFERENCE_INTERPRETER = "missing reference interpreter"
+    COMMAND_FAILED = "command failed"
+    PEER_START_FAILED = "peer start failed"
+    PEER_EXITED = "peer exited"
+    MARKER_TIMEOUT = "marker timeout"
+
+
+class InteropFailure(RuntimeError):
+    def __init__(self, kind: FailureKind, detail: str):
+        self.kind = kind
+        self.detail = detail
+        super().__init__(f"{kind.value}: {detail}")
+
+
+@dataclass(frozen=True)
+class PeerSpec:
+    name: str
+    command: tuple[str, ...]
+    environment: Mapping[str, str]
+
+
+@dataclass
+class Peer:
+    spec: PeerSpec
+    process: subprocess.Popen[bytes]
+    log_path: Path
+    log_file: object
+
+
+class PortLease:
+    def __init__(self):
+        self._listener = socket.socket()
+        self._listener.bind(("127.0.0.1", 0))
+        self.port = self._listener.getsockname()[1]
+
+    def release(self) -> None:
+        if self._listener is None:
+            return
+        self._listener.close()
+        self._listener = None
+
+    def __enter__(self) -> PortLease:
+        return self
+
+    def __exit__(self, _kind, _value, _traceback) -> None:
+        self.release()
+
+
+def environment(values: Mapping[str, object]) -> dict[str, str]:
+    configured = os.environ.copy()
+    configured.update({key: str(value) for key, value in values.items()})
+    return configured
+
+
+def reference_python(environment_name: str = "SMOKE_PYTHON") -> Path:
+    configured = os.environ.get(environment_name)
+    if configured is None:
+        raise InteropFailure(
+            FailureKind.MISSING_REFERENCE_INTERPRETER,
+            f"{environment_name} is unset; launch this case through validation/run.py",
+        )
+    candidate = Path(configured)
+    if not candidate.is_file() or not os.access(candidate, os.X_OK):
+        raise InteropFailure(
+            FailureKind.MISSING_REFERENCE_INTERPRETER,
+            f"{environment_name} does not name an executable: {candidate}",
+        )
+    return candidate
+
+
+def run_checked(
+    command: Sequence[str],
+    failure: str,
+    working_directory: Path = ROOT,
+) -> str:
+    try:
+        result = subprocess.run(
+            command,
+            cwd=working_directory,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+    except OSError as error:
+        raise InteropFailure(FailureKind.COMMAND_FAILED, f"{failure}: {error}") from error
+    if result.returncode != 0:
+        output = result.stdout.rstrip()
+        detail = f"{failure}\n{output}" if output else failure
+        raise InteropFailure(FailureKind.COMMAND_FAILED, detail)
+    return result.stdout
+
+
+def cargo_example(manifest: Path, example: str) -> Path:
+    run_checked(
+        [
+            "cargo",
+            "build",
+            "--manifest-path",
+            str(manifest),
+            "--example",
+            example,
+            "--locked",
+        ],
+        f"Cargo example {example} did not build",
+    )
+    metadata = json.loads(
+        run_checked(
+            [
+                "cargo",
+                "metadata",
+                "--manifest-path",
+                str(manifest),
+                "--no-deps",
+                "--format-version",
+                "1",
+            ],
+            f"Cargo metadata did not locate example {example}",
+        )
+    )
+    executable = example + (".exe" if os.name == "nt" else "")
+    return Path(metadata["target_directory"]) / "debug" / "examples" / executable
+
+
+def candidate_peer() -> Path:
+    return cargo_example(
+        ROOT / "validation/integration/Cargo.toml",
+        "rns_interop_peer",
+    )
+
+
+class InteropCase:
+    def __init__(self):
+        self._temporary = tempfile.TemporaryDirectory()
+        self.work = Path(self._temporary.name)
+        self._peers: list[Peer] = []
+
+    def start(self, spec: PeerSpec, listen_port: PortLease | None = None) -> Peer:
+        if listen_port is not None:
+            listen_port.release()
+        log_name = "".join(
+            character if character.isalnum() or character in "-." else "-"
+            for character in spec.name
+        )
+        log_path = self.work / f"{len(self._peers):02d}-{log_name}.log"
+        log_file = log_path.open("wb", buffering=0)
+        try:
+            process = subprocess.Popen(
+                spec.command,
+                cwd=ROOT,
+                env=spec.environment,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+            )
+        except OSError as error:
+            log_file.close()
+            raise InteropFailure(
+                FailureKind.PEER_START_FAILED,
+                f"could not start {spec.name}: {error}",
+            ) from error
+        peer = Peer(spec, process, log_path, log_file)
+        self._peers.append(peer)
+        return peer
+
+    def read_log(self, peer: Peer) -> str:
+        try:
+            return peer.log_path.read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            return ""
+
+    def wait_for(self, peer: Peer, marker: str, timeout_seconds: float) -> None:
+        self.wait_for_all([(peer, marker)], timeout_seconds)
+
+    def wait_for_all(
+        self,
+        evidence: Sequence[tuple[Peer, str]],
+        timeout_seconds: float,
+    ) -> None:
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            pending = [
+                (peer, marker)
+                for peer, marker in evidence
+                if marker not in self.read_log(peer)
+            ]
+            if not pending:
+                return
+            for peer, marker in pending:
+                return_code = peer.process.poll()
+                if return_code is not None:
+                    raise InteropFailure(
+                        FailureKind.PEER_EXITED,
+                        f"{peer.spec.name} exited with status {return_code} before {marker}",
+                    )
+            time.sleep(0.1)
+        missing = ", ".join(marker for peer, marker in evidence if marker not in self.read_log(peer))
+        raise InteropFailure(FailureKind.MARKER_TIMEOUT, f"timed out waiting for {missing}")
+
+    def stop(self, peer: Peer) -> None:
+        try:
+            if peer.process.poll() is None:
+                try:
+                    peer.process.terminate()
+                except ProcessLookupError:
+                    pass
+                try:
+                    peer.process.wait(timeout=PEER_STOP_TIMEOUT_SECONDS)
+                except subprocess.TimeoutExpired:
+                    try:
+                        peer.process.kill()
+                    except ProcessLookupError:
+                        pass
+                    peer.process.wait()
+        finally:
+            peer.log_file.close()
+
+    def print_logs(self) -> None:
+        for peer in self._peers:
+            contents = self.read_log(peer)
+            if not contents:
+                continue
+            print(f"{peer.spec.name} log:", file=sys.stderr)
+            print(contents, file=sys.stderr, end="" if contents.endswith("\n") else "\n")
+
+    def __enter__(self) -> InteropCase:
+        return self
+
+    def __exit__(self, kind, _value, _traceback) -> None:
+        for peer in reversed(self._peers):
+            self.stop(peer)
+        if kind is not None:
+            self.print_logs()
+        self._temporary.cleanup()
+
+
+def case_main(run: Callable[[], None], success_message: str) -> int:
+    try:
+        run()
+    except (InteropFailure, OSError) as error:
+        print(f"FAIL: {error}", file=sys.stderr)
+        return 1
+    print(success_message)
+    return 0

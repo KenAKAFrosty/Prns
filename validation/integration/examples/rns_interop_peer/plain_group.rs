@@ -11,6 +11,8 @@ use personal_rns::runtime::{
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::TcpClientInterface;
 
+use super::common::{required_environment, COMPLETION_GRACE, COMPLETION_TIMEOUT};
+
 const GROUP_IDENTITY: IdentityHash = IdentityHash::new([
     0x4C, 0xD0, 0xCC, 0x45, 0xA7, 0x40, 0x5D, 0xBD, 0x5C, 0xF9, 0xB5, 0xBE, 0x1E, 0xF9, 0x2F, 0x10,
 ]);
@@ -27,8 +29,6 @@ const SENT_PLAIN: &[u8] = &[
 const SENT_GROUP: &[u8] = &[
     0x00, 0x70, 0x72, 0x6E, 0x73, 0x2D, 0x67, 0x72, 0x6F, 0x75, 0x70, 0xFF,
 ];
-const COMPLETION_GRACE: Duration = Duration::from_secs(1);
-const COMPLETION_TIMEOUT: Duration = Duration::from_secs(35);
 const SEND_INTERVAL: Duration = Duration::from_millis(300);
 
 enum Observation {
@@ -44,32 +44,24 @@ enum Observation {
     GroupSendFailed(SendError<SendGroupFailure>),
 }
 
-enum CompletionFailure {
+#[allow(dead_code)]
+#[derive(Debug)]
+pub enum Failure {
+    MissingTarget,
+    InvalidPlainDestination,
+    InvalidGroupDestination,
     UnexpectedPlain,
     UnexpectedGroup,
     PlainSend(SendError<SendPlainPacketFailure>),
     GroupSend(SendError<SendGroupFailure>),
     EventStreamClosed,
+    Timeout,
+    NodeStopped,
 }
 
-impl core::fmt::Display for CompletionFailure {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::UnexpectedPlain => formatter.write_str("unexpected stock PLAIN delivery"),
-            Self::UnexpectedGroup => formatter.write_str("unexpected stock GROUP delivery"),
-            Self::PlainSend(error) => write!(formatter, "Prns PLAIN send failed: {error:?}"),
-            Self::GroupSend(error) => write!(formatter, "Prns GROUP send failed: {error:?}"),
-            Self::EventStreamClosed => formatter.write_str("Prns event stream closed"),
-        }
-    }
-}
-
-#[tokio::main]
-async fn main() {
-    let Ok(target) = std::env::var("PRNS_PLAIN_GROUP_TARGET") else {
-        eprintln!("FAILED PRNS_PLAIN_GROUP_TARGET not set");
-        std::process::exit(1);
-    };
+pub async fn run() -> Result<(), Failure> {
+    let target =
+        required_environment("PRNS_PLAIN_GROUP_TARGET").map_err(|_| Failure::MissingTarget)?;
     let plain = PreConfiguredDestination::Plain {
         app_name: "prns",
         aspects: &["destination", "plain"],
@@ -80,14 +72,12 @@ async fn main() {
         identity: GROUP_IDENTITY,
         shared_key: &GROUP_KEY,
     };
-    let Ok(plain_hash) = plain.destination_hash() else {
-        eprintln!("FAILED invalid PLAIN destination name");
-        std::process::exit(1);
-    };
-    let Ok(group_hash) = group.destination_hash() else {
-        eprintln!("FAILED invalid GROUP destination name");
-        std::process::exit(1);
-    };
+    let plain_hash = plain
+        .destination_hash()
+        .map_err(|_| Failure::InvalidPlainDestination)?;
+    let group_hash = group
+        .destination_hash()
+        .map_err(|_| Failure::InvalidGroupDestination)?;
     let client = TcpClientInterface::new(target);
     let (observed_tx, mut observed_rx) = tokio::sync::mpsc::unbounded_channel();
     let delivered_tx = observed_tx.clone();
@@ -151,14 +141,10 @@ async fn main() {
                 } if destination == group_hash && plaintext == EXPECTED_GROUP => {
                     group_received = true;
                 }
-                Observation::Plain { .. } => return Err(CompletionFailure::UnexpectedPlain),
-                Observation::Group { .. } => return Err(CompletionFailure::UnexpectedGroup),
-                Observation::PlainSendFailed(error) => {
-                    return Err(CompletionFailure::PlainSend(error));
-                }
-                Observation::GroupSendFailed(error) => {
-                    return Err(CompletionFailure::GroupSend(error));
-                }
+                Observation::Plain { .. } => return Err(Failure::UnexpectedPlain),
+                Observation::Group { .. } => return Err(Failure::UnexpectedGroup),
+                Observation::PlainSendFailed(error) => return Err(Failure::PlainSend(error)),
+                Observation::GroupSendFailed(error) => return Err(Failure::GroupSend(error)),
             }
             if plain_received && group_received {
                 println!("PRNS_PLAIN_GROUP_OK received_plain=1 received_group=1");
@@ -166,24 +152,16 @@ async fn main() {
                 return Ok(());
             }
         }
-        Err(CompletionFailure::EventStreamClosed)
+        Err(Failure::EventStreamClosed)
     };
 
     tokio::select! {
         result = node.run() => {
-            eprintln!("FAILED Prns node stopped: {result:?}");
-            std::process::exit(1);
+            let _ = result;
+            Err(Failure::NodeStopped)
         }
-        result = tokio::time::timeout(COMPLETION_TIMEOUT, completion) => match result {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => {
-                eprintln!("FAILED {error}");
-                std::process::exit(1);
-            }
-            Err(_) => {
-                eprintln!("FAILED Prns PLAIN/GROUP interop timed out");
-                std::process::exit(1);
-            }
-        },
+        result = tokio::time::timeout(COMPLETION_TIMEOUT, completion) => {
+            result.map_err(|_| Failure::Timeout)?
+        }
     }
 }

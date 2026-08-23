@@ -14,7 +14,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 source "$ROOT/validation/interop/lib/cargo-artifacts.sh"
 DAEMON="$(cargo_debug_example "$ROOT/validation/integration/Cargo.toml" local_shared_instance)"
-VENV_PY="${SMOKE_PYTHON:-$ROOT/validation/.venv/rns-1.4.2/bin/python}"
+VENV_PY="${SMOKE_PYTHON:?SMOKE_PYTHON is set by validation/run.py}"
 CLIENT="$ROOT/validation/interop/peers/rns_shared_instance_client.py"
 DAEMON_LOG="$(mktemp)"
 CLIENT_LOG="$(mktemp)"
