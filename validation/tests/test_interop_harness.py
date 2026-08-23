@@ -18,12 +18,15 @@ from validation.interop.harness import (
     environment,
     forbid_output_marker,
     reference_python,
+    reference_utility,
     require_evidence,
     require_hex_output,
+    require_listening_destination,
     require_output_marker,
     run_checked,
     run_checked_bytes,
     run_expect_status,
+    run_expect_status_with_streams,
 )
 
 
@@ -33,6 +36,14 @@ class InteropHarnessTests(unittest.TestCase):
             with self.assertRaises(InteropFailure) as raised:
                 reference_python()
         self.assertEqual(raised.exception.kind, FailureKind.MISSING_REFERENCE_INTERPRETER)
+
+    def test_reference_utility_is_resolved_beside_the_reference_python(self) -> None:
+        with mock.patch("validation.interop.harness.reference_python") as python:
+            python.return_value = Path("/oracle/bin/python")
+            with mock.patch("validation.interop.harness.Path.is_file", return_value=True):
+                with mock.patch("validation.interop.harness.os.access", return_value=True):
+                    utility = reference_utility("rncp")
+        self.assertEqual(utility, Path("/oracle/bin/rncp"))
 
     def test_checked_command_preserves_output_on_failure(self) -> None:
         with self.assertRaises(InteropFailure) as raised:
@@ -68,6 +79,19 @@ class InteropHarnessTests(unittest.TestCase):
             )
         self.assertEqual(raised.exception.kind, FailureKind.COMMAND_FAILED)
         self.assertIn("expected status 7, got 8", raised.exception.detail)
+
+    def test_expected_status_command_can_preserve_separate_streams(self) -> None:
+        streams = run_expect_status_with_streams(
+            [
+                sys.executable,
+                "-c",
+                "import sys; print('output'); print('error', file=sys.stderr); raise SystemExit(7)",
+            ],
+            7,
+            "command returned the wrong status",
+        )
+        self.assertEqual(streams.standard_output, "output\n")
+        self.assertEqual(streams.standard_error, "error\n")
 
     def test_checked_binary_command_preserves_binary_standard_io(self) -> None:
         output = run_checked_bytes(
@@ -107,6 +131,14 @@ class InteropHarnessTests(unittest.TestCase):
         self.assertEqual(require_hex_output("a5" * 16 + "\n", 16, "missing hash"), "a5" * 16)
         with self.assertRaises(InteropFailure) as raised:
             require_hex_output("a5" * 15, 16, "missing hash")
+        self.assertEqual(raised.exception.kind, FailureKind.EVIDENCE_MISSING)
+
+    def test_listening_destination_requires_the_stock_utility_shape(self) -> None:
+        destination = "a5" * 16
+        output = f"Listening on : <{destination}>\n"
+        self.assertEqual(require_listening_destination(output, "missing listener"), destination)
+        with self.assertRaises(InteropFailure) as raised:
+            require_listening_destination("Listening elsewhere\n", "missing listener")
         self.assertEqual(raised.exception.kind, FailureKind.EVIDENCE_MISSING)
 
     def test_cargo_binary_uses_manifest_target_directory(self) -> None:
@@ -216,6 +248,29 @@ class InteropHarnessTests(unittest.TestCase):
             ready.touch()
             case.wait_for_path(peer, ready, 1)
             case.wait_for_exit(peer, 1)
+
+    def test_case_returns_a_nonzero_peer_status(self) -> None:
+        with InteropCase() as case:
+            peer = case.start(
+                PeerSpec(
+                    "failed peer",
+                    (sys.executable, "-c", "raise SystemExit(7)"),
+                    environment({}),
+                )
+            )
+            self.assertEqual(case.wait_for_status(peer, 1), 7)
+
+    def test_case_can_prove_a_peer_remains_running_then_terminate_it(self) -> None:
+        with InteropCase() as case:
+            peer = case.start(
+                PeerSpec(
+                    "waiting peer",
+                    (sys.executable, "-c", "import time; time.sleep(30)"),
+                    environment({}),
+                )
+            )
+            case.require_running(peer, 0.1, "peer did not remain active")
+            self.assertNotEqual(case.terminate(peer), 0)
 
     def test_failure_prints_peer_logs(self) -> None:
         stderr = io.StringIO()

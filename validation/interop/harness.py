@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -19,6 +20,7 @@ PEER_STOP_TIMEOUT_SECONDS = 5
 
 class FailureKind(Enum):
     MISSING_REFERENCE_INTERPRETER = "missing reference interpreter"
+    MISSING_REFERENCE_UTILITY = "missing reference utility"
     COMMAND_FAILED = "command failed"
     EVIDENCE_MISSING = "evidence missing"
     EVIDENCE_UNEXPECTED = "evidence unexpected"
@@ -50,6 +52,12 @@ class Peer:
     process: subprocess.Popen[bytes]
     log_path: Path
     log_file: object
+
+
+@dataclass(frozen=True)
+class CommandStreams:
+    standard_output: str
+    standard_error: str
 
 
 class PortLease:
@@ -98,6 +106,18 @@ def reference_python(environment_name: str = "SMOKE_PYTHON") -> Path:
     return candidate
 
 
+def reference_utility(name: str, environment_name: str = "RPC_SMOKE_PYTHON") -> Path:
+    python = reference_python(environment_name)
+    executable = name + (".exe" if os.name == "nt" else "")
+    candidate = python.parent / executable
+    if not candidate.is_file() or not os.access(candidate, os.X_OK):
+        raise InteropFailure(
+            FailureKind.MISSING_REFERENCE_UTILITY,
+            f"stock RNS utility {name} is unavailable at {candidate}",
+        )
+    return candidate
+
+
 def run_checked(
     command: Sequence[str],
     failure: str,
@@ -126,6 +146,35 @@ def run_expect_status(
         detail = f"{status_failure}\n{output}" if output else status_failure
         raise InteropFailure(FailureKind.COMMAND_FAILED, detail)
     return result.stdout
+
+
+def run_expect_status_with_streams(
+    command: Sequence[str],
+    expected_status: int,
+    failure: str,
+    working_directory: Path = ROOT,
+    command_environment: Mapping[str, str] | None = None,
+) -> CommandStreams:
+    try:
+        result = subprocess.run(
+            command,
+            cwd=working_directory,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            env=command_environment,
+        )
+    except OSError as error:
+        raise InteropFailure(FailureKind.COMMAND_FAILED, f"{failure}: {error}") from error
+    if result.returncode != expected_status:
+        rendered = "\n".join(
+            output.rstrip() for output in (result.stdout, result.stderr) if output.rstrip()
+        )
+        status_failure = f"{failure}: expected status {expected_status}, got {result.returncode}"
+        detail = f"{status_failure}\n{rendered}" if rendered else status_failure
+        raise InteropFailure(FailureKind.COMMAND_FAILED, detail)
+    return CommandStreams(result.stdout, result.stderr)
 
 
 def _run_text_command(
@@ -204,6 +253,15 @@ def require_hex_output(output: str, byte_length: int, failure: str) -> str:
     if len(decoded) != byte_length:
         raise InteropFailure(FailureKind.EVIDENCE_MISSING, failure)
     return rendered
+
+
+def require_listening_destination(output: str, failure: str) -> str:
+    match = re.search(r"^Listening on : <([0-9a-f]{32})>$", output, re.MULTILINE)
+    if match is None:
+        rendered = output.rstrip()
+        detail = f"{failure}\n{rendered}" if rendered else failure
+        raise InteropFailure(FailureKind.EVIDENCE_MISSING, detail)
+    return match.group(1)
 
 
 def _cargo_artifact(
@@ -371,34 +429,52 @@ class InteropCase:
         )
 
     def wait_for_exit(self, peer: Peer, timeout_seconds: float) -> None:
-        try:
-            return_code = peer.process.wait(timeout=timeout_seconds)
-        except subprocess.TimeoutExpired as error:
-            raise InteropFailure(
-                FailureKind.PEER_EXIT_TIMEOUT,
-                f"timed out waiting for {peer.spec.name} to exit",
-            ) from error
+        return_code = self.wait_for_status(peer, timeout_seconds)
         if return_code != 0:
             raise InteropFailure(
                 FailureKind.PEER_EXITED,
                 f"{peer.spec.name} exited with status {return_code}",
             )
 
+    def wait_for_status(self, peer: Peer, timeout_seconds: float) -> int:
+        try:
+            return peer.process.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as error:
+            raise InteropFailure(
+                FailureKind.PEER_EXIT_TIMEOUT,
+                f"timed out waiting for {peer.spec.name} to exit",
+            ) from error
+
+    def require_running(self, peer: Peer, duration_seconds: float, failure: str) -> None:
+        deadline = time.monotonic() + duration_seconds
+        while time.monotonic() < deadline:
+            return_code = peer.process.poll()
+            if return_code is not None:
+                raise InteropFailure(
+                    FailureKind.PEER_EXITED,
+                    f"{failure}: {peer.spec.name} exited with status {return_code}",
+                )
+            time.sleep(0.05)
+
+    def terminate(self, peer: Peer) -> int:
+        if peer.process.poll() is not None:
+            return peer.process.returncode
+        try:
+            peer.process.terminate()
+        except ProcessLookupError:
+            return peer.process.wait()
+        try:
+            return peer.process.wait(timeout=PEER_STOP_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            try:
+                peer.process.kill()
+            except ProcessLookupError:
+                pass
+            return peer.process.wait()
+
     def stop(self, peer: Peer) -> None:
         try:
-            if peer.process.poll() is None:
-                try:
-                    peer.process.terminate()
-                except ProcessLookupError:
-                    pass
-                try:
-                    peer.process.wait(timeout=PEER_STOP_TIMEOUT_SECONDS)
-                except subprocess.TimeoutExpired:
-                    try:
-                        peer.process.kill()
-                    except ProcessLookupError:
-                        pass
-                    peer.process.wait()
+            self.terminate(peer)
         finally:
             peer.log_file.close()
 

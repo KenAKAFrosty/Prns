@@ -42,7 +42,7 @@ marks a gap in Prns's registered evidence, not necessarily missing Prns behavior
 - [\[x\]](../validation/interop/cases/link_packet_interop_smoke.py) **Link packets**
   - Initiate a Link from each implementation, send an exact direct Link packet to
     its responder, and confirm delivery plus the responder's proof.
-- [\[x\]](../validation/interop/cases/rncp-interop-smoke.sh) **Link identification**
+- [\[x\]](../validation/interop/cases/rncp_interop_smoke.py) **Link identification**
   - Have each initiator identify itself and confirm the responder observes and
     authorizes the exact identity.
 - [\[x\]](../validation/interop/cases/link_closure_interop_smoke.py) **Link closure**
@@ -57,15 +57,15 @@ marks a gap in Prns's registered evidence, not necessarily missing Prns behavior
 
 ## Resources and streams
 
-- [\[x\]](../validation/interop/cases/rncp-interop-smoke.sh) **Resource transfer and metadata**
+- [\[x\]](../validation/interop/cases/rncp_interop_smoke.py) **Resource transfer and metadata**
   - Transfer an exact single-segment Resource with metadata in both directions.
-- [\[x\]](../validation/interop/cases/rncp-interop-smoke.sh) **Resource compression**
+- [\[x\]](../validation/interop/cases/rncp_interop_smoke.py) **Resource compression**
   - Transfer compressible Resources both ways and confirm compressed transport plus
     exact reconstructed bytes.
-- [\[x\]](../validation/interop/cases/rncp-interop-smoke.sh) **Multi-segment Resources**
+- [\[x\]](../validation/interop/cases/rncp_interop_smoke.py) **Multi-segment Resources**
   - Cross the stock segment boundary both ways and confirm multiple completed
     segments plus exact bytes.
-- [\[x\]](../validation/interop/cases/rncp-interop-smoke.sh) **Resource cancellation**
+- [\[x\]](../validation/interop/cases/rncp_interop_smoke.py) **Resource cancellation**
   - Cancel an active transfer, confirm no partial publication, then complete a fresh
     transfer.
 - [\[x\]](../validation/interop/cases/resource_rejection_interop_smoke.py) **Resource rejection**

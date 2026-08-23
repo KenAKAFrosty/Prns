@@ -1,5 +1,6 @@
-import pathlib
+import hashlib
 import os
+import pathlib
 import shutil
 import sys
 import time
@@ -144,6 +145,33 @@ def identity_hash(path):
     print(RNS.Identity.from_file(path).hash.hex())
 
 
+def prepare_fixtures(work_path):
+    work = pathlib.Path(work_path)
+    work.joinpath("prns-send.bin").write_bytes(b"prns-to-stock\n" * 12000)
+    work.joinpath("stock-send.bin").write_bytes(b"stock-to-prns\n" * 12000)
+    work.joinpath("prns-compressed.bin").write_bytes(b"prns-compressed-resource\n" * 12000)
+    work.joinpath("stock-compressed.bin").write_bytes(b"stock-compressed-resource\n" * 12000)
+    work.joinpath("stock-fetch/stock.txt").write_bytes(b"served-by-stock\n" * 12000)
+    work.joinpath("prns-fetch/prns.txt").write_bytes(b"served-by-prns\n" * 12000)
+    work.joinpath("interrupt-prns.bin").write_bytes(os.urandom(32 * 1024 * 1024))
+    work.joinpath("cancel-stock.bin").write_bytes(os.urandom(32 * 1024 * 1024))
+    segment_crossing_size = RNS.Resource.MAX_EFFICIENT_SIZE + 4096
+    for name, seed in (("prns-segmented.bin", b"prns"), ("stock-segmented.bin", b"stock")):
+        blocks = []
+        generated = 0
+        counter = 0
+        while generated < segment_crossing_size:
+            block = hashlib.sha256(seed + counter.to_bytes(8, "big")).digest()
+            blocks.append(block)
+            generated += len(block)
+            counter += 1
+        work.joinpath(name).write_bytes(b"".join(blocks)[:segment_crossing_size])
+    for size in (1, 464, 465):
+        work.joinpath(f"boundary-{size}.bin").write_bytes(
+            bytes((index * 37) & 0xFF for index in range(size))
+        )
+
+
 def wait_for(predicate, timeout, failure):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -260,6 +288,8 @@ if __name__ == "__main__":
         hold(*sys.argv[2:])
     elif sys.argv[1] == "identity-hash":
         identity_hash(*sys.argv[2:])
+    elif sys.argv[1] == "prepare-fixtures":
+        prepare_fixtures(*sys.argv[2:])
     elif sys.argv[1] == "cancel-send":
         cancel_send(*sys.argv[2:])
     else:
