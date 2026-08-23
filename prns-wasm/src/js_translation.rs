@@ -519,7 +519,7 @@ fn settlement_to_js(object: &Object, settlement: Settlement) {
         ))) => {
             set_command_failure(object, "RequestAllowListFull", None);
         }
-        Settlement::SendGroup(_) => {
+        Settlement::SendGroup(_) | Settlement::SendPlainPacket(_) => {
             set_str(object, "result", "untracked");
         }
     }

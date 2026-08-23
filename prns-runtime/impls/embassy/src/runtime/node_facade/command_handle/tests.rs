@@ -1,10 +1,19 @@
 use super::{CompletionPool, NO_AWAITER};
-use crate::engine::{CommandId, PacketReceiptDelivered, Settlement};
+use crate::engine::{
+    CommandId, IssuedCommand, PacketReceiptDelivered, PrnsCommand, SendGroupFailure,
+    SendGroupRejection, SendPlainPacketFailure, Settlement, MAX_SEND_GROUP_PLAINTEXT_LEN,
+    MAX_SEND_PLAIN_PACKET_PAYLOAD_LEN,
+};
+use crate::runtime::SendError;
 use crate::units::RttMillis;
+use crate::wire::DestinationHash;
+use embassy_futures::{block_on, join::join};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::Channel;
 use portable_atomic::Ordering;
 
 type Pool<const N: usize> = CompletionPool<CriticalSectionRawMutex, N>;
+const PEER: DestinationHash = DestinationHash::new([0xAB; 16]);
 
 fn delivered(ms: u64) -> Settlement {
     Settlement::SendSinglePacket(Ok(PacketReceiptDelivered {
@@ -102,4 +111,55 @@ fn a_late_release_never_clobbers_a_newer_claimant() {
         pool.settle(second, delivered(2)),
         "the stale release left the new claimant intact"
     );
+}
+
+#[test]
+fn plain_and_group_payloads_beyond_their_mdu_are_rejected_before_enqueueing() {
+    let commands = Channel::<CriticalSectionRawMutex, IssuedCommand, 1>::new();
+    let completions = Pool::<1>::new();
+    let handle = super::PrnsNodeHandle::new(commands.sender(), &completions);
+    let plain_oversize = [0u8; MAX_SEND_PLAIN_PACKET_PAYLOAD_LEN + 1];
+    let group_oversize = [0u8; MAX_SEND_GROUP_PLAINTEXT_LEN + 1];
+
+    block_on(async {
+        assert_eq!(
+            handle.send_plain_packet(PEER, &plain_oversize).await,
+            Err(SendError::<SendPlainPacketFailure>::PayloadTooLarge),
+        );
+        assert_eq!(
+            handle.send_group_packet(PEER, &group_oversize).await,
+            Err(SendError::<SendGroupFailure>::PayloadTooLarge),
+        );
+    });
+    assert!(commands.try_receive().is_err());
+}
+
+#[test]
+fn awaited_plain_and_group_sends_preserve_commands_and_typed_settlements() {
+    let commands = Channel::<CriticalSectionRawMutex, IssuedCommand, 1>::new();
+    let completions = Pool::<1>::new();
+    let handle = super::PrnsNodeHandle::new(commands.sender(), &completions);
+
+    let (plain, ()) = block_on(join(handle.send_plain_packet(PEER, b"plain"), async {
+        let issued = commands.receiver().receive().await;
+        let PrnsCommand::SendPlainPacket(command) = issued.command else {
+            panic!("plain command")
+        };
+        assert_eq!(command.destination, PEER);
+        assert_eq!(command.payload.as_slice(), b"plain");
+        assert!(completions.settle(issued.id, Settlement::SendPlainPacket(Ok(()))));
+    }));
+    assert_eq!(plain, Ok(()));
+
+    let failure = SendGroupFailure::Rejected(SendGroupRejection::NoGroupKey);
+    let (group, ()) = block_on(join(handle.send_group_packet(PEER, b"group"), async {
+        let issued = commands.receiver().receive().await;
+        let PrnsCommand::SendGroup(command) = issued.command else {
+            panic!("group command")
+        };
+        assert_eq!(command.destination, PEER);
+        assert_eq!(command.payload.as_slice(), b"group");
+        assert!(completions.settle(issued.id, Settlement::SendGroup(Err(failure))));
+    }));
+    assert_eq!(group, Err(SendError::Failed(failure)));
 }

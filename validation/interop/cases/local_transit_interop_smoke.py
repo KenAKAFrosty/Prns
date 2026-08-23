@@ -22,6 +22,11 @@ IFAC_VARIABLES = (
     "PRNS_IFAC_PASSPHRASE",
     "PRNS_IFAC_SIZE_BYTES",
 )
+TRANSFER_TIMEOUT_SECONDS = 140
+PEER_EXIT_TIMEOUT_SECONDS = 10
+RESOURCE_BYTES = 1_000_000
+RESOURCE_RECEIVED = f"RESOURCE_OK {RESOURCE_BYTES}"
+RESOURCE_SENT = f"RESOURCE_SENT_OK {RESOURCE_BYTES}"
 SUCCESS = "PASS: real RNS apps transferred multi-part resources through the shared instance both ways"
 
 
@@ -98,12 +103,16 @@ def run_transit(ifac: IfacConfiguration | None) -> None:
         )
         case.wait_for_all(
             [
-                (peer, "RESOURCE_OK "),
-                (client, "RESOURCE_OK "),
+                (peer, RESOURCE_RECEIVED),
+                (peer, RESOURCE_SENT),
+                (client, RESOURCE_RECEIVED),
+                (client, RESOURCE_SENT),
                 (bridge, "EGRESS_METRICS "),
             ],
-            80,
+            TRANSFER_TIMEOUT_SECONDS,
         )
+        case.wait_for_exit(peer, PEER_EXIT_TIMEOUT_SECONDS)
+        case.wait_for_exit(client, PEER_EXIT_TIMEOUT_SECONDS)
 
 
 def run() -> None:

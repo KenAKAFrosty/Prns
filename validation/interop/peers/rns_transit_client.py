@@ -25,6 +25,8 @@ from rns_protocol_evidence import start_reference_reticulum
 
 LOCAL_PORT = int(os.environ["PRNS_LOCAL_PORT"])
 RPC_PORT = int(os.environ.get("PRNS_RPC_PORT", str(LOCAL_PORT + 1)))
+RESOURCE_BYTES = 1_000_000
+TRANSFER_TIMEOUT_SECONDS = 120
 
 CONFIG = f"""[reticulum]
   enable_transport = No
@@ -43,7 +45,8 @@ CONFIG = f"""[reticulum]
 class PeerSeeker:
     aspect_filter = "prns.peer"
 
-    def __init__(self):
+    def __init__(self, transfer):
+        self.transfer = transfer
         self.link = None
         self.link_creation = threading.Lock()
 
@@ -62,7 +65,21 @@ class PeerSeeker:
 
     def on_up(self, link):
         print("LINK_OUT_UP", flush=True)
-        RNS.Resource(os.urandom(1000000), link, auto_compress=False)
+
+        def outgoing_concluded(resource):
+            if resource.status == RNS.Resource.COMPLETE:
+                self.transfer["outgoing_complete"] = True
+                print("RESOURCE_SENT_OK " + str(RESOURCE_BYTES), flush=True)
+            else:
+                self.transfer["failure"] = f"outgoing resource status={resource.status}"
+                print("RESOURCE_SEND_FAIL status=" + str(resource.status), flush=True)
+
+        RNS.Resource(
+            os.urandom(RESOURCE_BYTES),
+            link,
+            auto_compress=False,
+            callback=outgoing_concluded,
+        )
 
 
 def main() -> int:
@@ -78,14 +95,19 @@ def main() -> int:
     )
     mine.set_proof_strategy(RNS.Destination.PROVE_ALL)
 
-    received = {"hit": False}
+    transfer = {
+        "incoming_complete": False,
+        "outgoing_complete": False,
+        "failure": None,
+    }
 
     def resource_concluded(resource):
         if resource.status == RNS.Resource.COMPLETE:
             data = resource.data.read() if hasattr(resource.data, "read") else resource.data
             print("RESOURCE_OK " + str(len(data)), flush=True)
-            received["hit"] = True
+            transfer["incoming_complete"] = True
         else:
+            transfer["failure"] = f"incoming resource status={resource.status}"
             print("RESOURCE_FAIL status=" + str(resource.status), flush=True)
 
     def link_established(link):
@@ -97,15 +119,25 @@ def main() -> int:
     mine.set_link_established_callback(link_established)
     print("CLIENT_DEST " + mine.hash.hex(), flush=True)
 
-    RNS.Transport.register_announce_handler(PeerSeeker())
+    RNS.Transport.register_announce_handler(PeerSeeker(transfer))
 
-    deadline = time.time() + 60
-    while time.time() < deadline and not received["hit"]:
+    deadline = time.monotonic() + TRANSFER_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if transfer["failure"] is not None:
+            return 4
+        if transfer["incoming_complete"] and transfer["outgoing_complete"]:
+            time.sleep(1.0)
+            return 0
         mine.announce()
         time.sleep(1.0)
 
-    time.sleep(1.0)
-    return 0 if received["hit"] else 4
+    print(
+        "RESOURCE_TIMEOUT "
+        f"incoming={int(transfer['incoming_complete'])} "
+        f"outgoing={int(transfer['outgoing_complete'])}",
+        flush=True,
+    )
+    return 4
 
 
 if __name__ == "__main__":

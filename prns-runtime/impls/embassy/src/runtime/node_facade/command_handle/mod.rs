@@ -8,7 +8,9 @@ use portable_atomic::{AtomicU64, Ordering};
 
 use crate::engine::{
     CloseLink, CommandId, IssuedCommand, PacketReceiptDelivered, PrnsCommand, Respond, RespondData,
-    RespondPayload, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload, Settlement,
+    RespondPayload, SendGroup, SendGroupFailure, SendGroupPayload, SendPlainPacket,
+    SendPlainPacketFailure, SendPlainPacketPayload, SendSinglePacket, SendSinglePacketFailure,
+    SendSinglePacketPayload, Settlement,
 };
 use crate::routing::links::LinkId;
 use crate::wire::DestinationHash;
@@ -153,6 +155,64 @@ impl<'a, M: RawMutex, const COMMANDS: usize, const N: usize> PrnsNodeHandle<'a, 
         }
     }
 
+    pub async fn send_plain_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendPlainPacketFailure>> {
+        let payload =
+            SendPlainPacketPayload::from_slice(data).map_err(|()| SendError::PayloadTooLarge)?;
+        let id = self.pool.mint();
+        let slot = self.pool.claim(id).ok_or(SendError::Busy)?;
+        let _guard = SlotGuard {
+            pool: self.pool,
+            slot,
+            id,
+        };
+        self.commands
+            .try_send(IssuedCommand {
+                id,
+                command: PrnsCommand::SendPlainPacket(SendPlainPacket {
+                    destination,
+                    payload,
+                }),
+            })
+            .map_err(|_| SendError::NodeStopped)?;
+        match self.pool.parked(slot).await {
+            Settlement::SendPlainPacket(result) => result.map_err(SendError::Failed),
+            _ => Err(SendError::NodeStopped),
+        }
+    }
+
+    pub async fn send_group_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendGroupFailure>> {
+        let payload =
+            SendGroupPayload::from_slice(data).map_err(|()| SendError::PayloadTooLarge)?;
+        let id = self.pool.mint();
+        let slot = self.pool.claim(id).ok_or(SendError::Busy)?;
+        let _guard = SlotGuard {
+            pool: self.pool,
+            slot,
+            id,
+        };
+        self.commands
+            .try_send(IssuedCommand {
+                id,
+                command: PrnsCommand::SendGroup(SendGroup {
+                    destination,
+                    payload,
+                }),
+            })
+            .map_err(|_| SendError::NodeStopped)?;
+        match self.pool.parked(slot).await {
+            Settlement::SendGroup(result) => result.map_err(SendError::Failed),
+            _ => Err(SendError::NodeStopped),
+        }
+    }
+
     /// Responds inline; returns `false` when the body exceeds the link MDU or the command lane is full.
     pub fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> bool {
         match RespondData::from_slice(packed) {
@@ -231,6 +291,22 @@ impl<M: RawMutex, const COMMANDS: usize, const N: usize> PrnsNodeApi
         data: &[u8],
     ) -> Result<PacketReceiptDelivered, SendError<SendSinglePacketFailure>> {
         self.send_single_packet(destination, data).await
+    }
+
+    async fn send_plain_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendPlainPacketFailure>> {
+        self.send_plain_packet(destination, data).await
+    }
+
+    async fn send_group_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendGroupFailure>> {
+        self.send_group_packet(destination, data).await
     }
 
     fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> bool {

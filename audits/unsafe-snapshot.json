@@ -14991,11 +14991,11 @@
       "name": "prns-host-c",
       "source": "prns-host/abi/c",
       "unsafe": {
-        "blocks": 282,
+        "blocks": 295,
         "externs": 70,
         "functions": 18,
         "impls": 2,
-        "tokens": 372
+        "tokens": 385
       },
       "version": "0.3.6"
     },

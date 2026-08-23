@@ -278,7 +278,7 @@ jobs:
           fi
       - name: exercise C and C++ host contract on macOS
         if: contains(matrix.settings.target, 'apple-darwin')
-        run: bash validation/interop/cases/host-c-contract-smoke.sh
+        run: python3 -m validation.interop.cases.host_c_contract_smoke
       - name: normalize Apple native binaries
         if: contains(matrix.settings.target, 'apple-darwin')
         shell: bash
