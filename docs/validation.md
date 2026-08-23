@@ -110,7 +110,7 @@ readiness unless an Android application release explicitly places it in scope.
 
 Ordinary `cargo test` never searches for or silently uses a local Python
 environment. Oracle and live interop suites require explicit interpreters that
-contain the centrally pinned RNS version. Prepare reproducible local
+contain the RNS version pinned for that evidence domain. Prepare reproducible local
 environments with:
 
 ```console
