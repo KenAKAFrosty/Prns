@@ -3983,7 +3983,10 @@ mod tests {
             AbiDiagnosticEventKind::AnnounceHeard as u32
         );
         for (field, expected) in [
-            (AbiEventField::Destination, destination.as_bytes().as_slice()),
+            (
+                AbiEventField::Destination,
+                destination.as_bytes().as_slice(),
+            ),
             (
                 AbiEventField::SourceInterface,
                 source_interface.as_bytes().as_slice(),
