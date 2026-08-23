@@ -9,7 +9,7 @@ use ::core::net::Ipv6Addr;
 use embassy_futures::join::join;
 use embassy_futures::select::{select, select4, select5, Either, Either4, Either5};
 use embassy_net::udp::{BindError as UdpBindError, RecvError, UdpMetadata, UdpSocket};
-use embassy_net::{IpAddress, MulticastError, Stack};
+use embassy_net::{IpAddress, Stack};
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
 use embassy_sync::blocking_mutex::CriticalSectionMutex;
 use embassy_sync::signal::Signal;
@@ -42,12 +42,13 @@ use service_discovery::{
     EMBEDDED_SERVICE_DISCOVERY_CAPACITY as SERVICE_DISCOVERY_INSTANCES,
 };
 pub use service_discovery::{
-    UdpServiceDiscovery, UdpServiceDiscoveryConstructionError, UdpServiceDiscoveryStorage,
-    EMBEDDED_SERVICE_DISCOVERY_CAPACITY, UDP_SERVICE_DISCOVERY_PACKET_BYTES,
-    UDP_SERVICE_DISCOVERY_RECEIVE_PACKET_BYTES, UDP_SERVICE_DISCOVERY_RX_QUEUED_PACKETS,
-    UDP_SERVICE_DISCOVERY_RX_SOCKET_BYTES, UDP_SERVICE_DISCOVERY_RX_SOCKET_METADATA,
-    UDP_SERVICE_DISCOVERY_SOCKET_COUNT, UDP_SERVICE_DISCOVERY_TX_QUEUED_PACKETS,
-    UDP_SERVICE_DISCOVERY_TX_SOCKET_BYTES, UDP_SERVICE_DISCOVERY_TX_SOCKET_METADATA,
+    MdnsMulticastFamily, UdpServiceDiscovery, UdpServiceDiscoveryConstructionError,
+    UdpServiceDiscoveryStorage, EMBEDDED_SERVICE_DISCOVERY_CAPACITY,
+    UDP_SERVICE_DISCOVERY_PACKET_BYTES, UDP_SERVICE_DISCOVERY_RECEIVE_PACKET_BYTES,
+    UDP_SERVICE_DISCOVERY_RX_QUEUED_PACKETS, UDP_SERVICE_DISCOVERY_RX_SOCKET_BYTES,
+    UDP_SERVICE_DISCOVERY_RX_SOCKET_METADATA, UDP_SERVICE_DISCOVERY_SOCKET_COUNT,
+    UDP_SERVICE_DISCOVERY_TX_QUEUED_PACKETS, UDP_SERVICE_DISCOVERY_TX_SOCKET_BYTES,
+    UDP_SERVICE_DISCOVERY_TX_SOCKET_METADATA,
 };
 
 const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
@@ -68,7 +69,6 @@ enum SegmentActivationError {
     MulticastDiscoveryBind(UdpBindError),
     UnicastDiscoveryBind(UdpBindError),
     DataBind(UdpBindError),
-    MulticastJoin(MulticastError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,10 +163,18 @@ fn activate_segment(segment: &mut AutoWifiSegment<'_>) -> Result<(), SegmentActi
         .data
         .bind(contract::DEFAULT_DATA_PORT)
         .map_err(SegmentActivationError::DataBind)?;
-    segment
+    // Classic AutoWifi multicast discovery is best-effort. On some STA stacks (notably
+    // ESP32-C6 + embassy-net) IPv6 group join fails while unicast LL + mDNS still work;
+    // do not fail the whole segment and leave :29717 unbound/unread.
+    if let Err(error) = segment
         .stack
         .join_multicast_group(IpAddress::Ipv6(contract::DISCOVERY_GROUP))
-        .map_err(SegmentActivationError::MulticastJoin)
+    {
+        crate::diagnostic_log::warn!(
+            "wifi-auto: IPv6 discovery multicast join failed ({error:?}); continuing with unicast + mDNS"
+        );
+    }
+    Ok(())
 }
 
 async fn activate_secondary_segment<const MEMBERS: usize>(
@@ -778,6 +786,9 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
     ) {
         if let Ok((len, meta)) = received {
             if let IpAddress::Ipv6(src) = meta.endpoint.addr {
+                crate::diagnostic_log::info!(
+                    "wifi-auto: unicast discovery from {src} len={len}"
+                );
                 let peering_token_reply = ingest_beacon(
                     &mut self.brain,
                     &mut state.peers,
@@ -958,6 +969,16 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                 self.status,
             )
             .await;
+            // mDNS/browse targets are not the only peers we must keep alive: hosts often
+            // discover us via announce+probe, so they never appear in discovered_targets.
+            // Without unicast refresh, and with IPv6 multicast beacons blocked on many APs,
+            // those peers time out after PEERING_TIMEOUT_MS.
+            send_unicast_peer_refresh(
+                &self.primary.unicast_discovery,
+                &self.brain,
+                self.status,
+            )
+            .await;
         }
         BeaconMaintenanceOutcome::Completed
     }
@@ -1029,7 +1050,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
     {
         wait_for_primary_stack(&self.primary.stack, self.status).await;
         match activate_segment(&mut self.primary) {
-            Ok(()) => crate::diagnostic_log::debug!("wifi-auto: primary segment active"),
+            Ok(()) => crate::diagnostic_log::info!("wifi-auto: primary segment active"),
             Err(error) => {
                 crate::diagnostic_log::warn!(
                     "wifi-auto: primary segment activation failed: {error:?}"
@@ -1526,10 +1547,10 @@ async fn send_peering_token_reply<const MEMBERS: usize>(
     match select(status.wait_until_disabled(), send).await {
         Either::First(()) | Either::Second(Ok(Ok(()))) => {}
         Either::Second(Ok(Err(error))) => {
-            crate::diagnostic_log::debug!("wifi-auto: reciprocal peering reply failed: {error:?}");
+            crate::diagnostic_log::warn!("wifi-auto: reciprocal peering reply failed: {error:?}");
         }
         Either::Second(Err(_timeout)) => {
-            crate::diagnostic_log::debug!("wifi-auto: reciprocal peering reply timed out");
+            crate::diagnostic_log::warn!("wifi-auto: reciprocal peering reply timed out");
         }
     }
 }
@@ -1569,6 +1590,30 @@ async fn send_discovery_probes<const MEMBERS: usize>(
         Either::First(()) | Either::Second(Ok(())) => {}
         Either::Second(Err(_timeout)) => {
             crate::diagnostic_log::debug!("wifi-auto: discovery probe budget exhausted");
+        }
+    }
+}
+
+async fn send_unicast_peer_refresh<const MEMBERS: usize>(
+    unicast_discovery_socket: &UdpSocket<'_>,
+    brain: &contract::FixedAutoInterfaceProtocol<MEMBERS>,
+    status: AutoWifiStatus<MEMBERS>,
+) {
+    let token = brain.our_peering_token();
+    let send = with_timeout(SEND_TIMEOUT, async {
+        for address in brain.known_peer_addresses() {
+            let _send_result = unicast_discovery_socket
+                .send_to(
+                    token.as_bytes(),
+                    (IpAddress::Ipv6(address), contract::UNICAST_DISCOVERY_PORT),
+                )
+                .await;
+        }
+    });
+    match select(status.wait_until_disabled(), send).await {
+        Either::First(()) | Either::Second(Ok(())) => {}
+        Either::Second(Err(_timeout)) => {
+            crate::diagnostic_log::debug!("wifi-auto: unicast peer refresh budget exhausted");
         }
     }
 }

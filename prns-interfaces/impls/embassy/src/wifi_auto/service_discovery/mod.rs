@@ -1,13 +1,14 @@
 mod catalog;
 mod codec;
 
-use ::core::net::Ipv6Addr;
+use ::core::net::{Ipv4Addr, Ipv6Addr};
 
 use super::AutoWifiStatus;
 use catalog::{CatalogUpdate, ResolutionQuery, ServiceCatalog, ServiceResolution};
 use codec::{
     build_publication_packet, build_query_packet, encoded_name, query_relevance, DiscoveryInstance,
-    QueryRelevance, DNS_TYPE_PTR, MDNS_HOP_LIMIT, MDNS_IPV6_GROUP, MDNS_PORT, SERVICE_LABELS,
+    QueryRelevance, DNS_TYPE_PTR, MDNS_HOP_LIMIT, MDNS_IPV4_GROUP, MDNS_IPV6_GROUP, MDNS_PORT,
+    SERVICE_LABELS,
 };
 use embassy_futures::select::{select, select5, Either, Either5};
 use embassy_net::udp::UdpSocket;
@@ -56,6 +57,26 @@ pub(crate) enum EmbeddedDiscoveryParticipation {
     Central,
 }
 
+/// Which IP multicast family carries embedded DNS-SD.
+///
+/// Publication content is an IPv6 link-local AAAA (peering tokens still hash over LL) plus the
+/// station's IPv4 A when DHCP/static v4 is up. The wire group is independent: use [`Self::Ipv4`]
+/// when the AP blocks IPv6 link-local multicast.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MdnsMulticastFamily {
+    Ipv6,
+    Ipv4,
+}
+
+impl MdnsMulticastFamily {
+    fn group_address(self) -> IpAddress {
+        match self {
+            Self::Ipv6 => IpAddress::Ipv6(MDNS_IPV6_GROUP),
+            Self::Ipv4 => IpAddress::Ipv4(MDNS_IPV4_GROUP),
+        }
+    }
+}
+
 pub(crate) type DiscoveryParticipationReceiver =
     Receiver<'static, CriticalSectionRawMutex, EmbeddedDiscoveryParticipation, DISCOVERY_WATCHERS>;
 
@@ -89,6 +110,7 @@ pub struct UdpServiceDiscovery<'a, const TARGETS: usize> {
     socket: UdpSocket<'a>,
     stack: Stack<'a>,
     address: Ipv6Addr,
+    multicast: MdnsMulticastFamily,
     participation: DiscoveryParticipationReceiver,
     status: AutoWifiStatus<TARGETS>,
     storage: &'a mut UdpServiceDiscoveryStorage<TARGETS>,
@@ -105,12 +127,33 @@ impl<'a, const TARGETS: usize> UdpServiceDiscovery<'a, TARGETS> {
         storage: &'a mut UdpServiceDiscoveryStorage<TARGETS>,
         fill_random: fn(&mut [u8]),
     ) -> Result<Self, UdpServiceDiscoveryConstructionError> {
+        Self::with_multicast(
+            socket,
+            stack,
+            address,
+            status,
+            storage,
+            fill_random,
+            MdnsMulticastFamily::Ipv6,
+        )
+    }
+
+    pub fn with_multicast(
+        socket: UdpSocket<'a>,
+        stack: Stack<'a>,
+        address: Ipv6Addr,
+        status: AutoWifiStatus<TARGETS>,
+        storage: &'a mut UdpServiceDiscoveryStorage<TARGETS>,
+        fill_random: fn(&mut [u8]),
+        multicast: MdnsMulticastFamily,
+    ) -> Result<Self, UdpServiceDiscoveryConstructionError> {
         validate_publication_address(address)?;
         let participation = status.discovery_participation_receiver()?;
         Ok(Self {
             socket,
             stack,
             address,
+            multicast,
             participation,
             status,
             storage,
@@ -159,23 +202,25 @@ impl<'a, const TARGETS: usize> UdpServiceDiscovery<'a, TARGETS> {
         }
         if let Err(error) = self
             .stack
-            .join_multicast_group(IpAddress::Ipv6(MDNS_IPV6_GROUP))
+            .join_multicast_group(self.multicast.group_address())
         {
             crate::diagnostic_log::warn!(
-                "wifi-auto: embedded UDP DNS-SD multicast join failed: {error:?}"
+                "wifi-auto: embedded UDP DNS-SD multicast join failed ({:?}): {error:?}",
+                self.multicast
             );
             return PublicationActivation::Retry;
         }
-        crate::diagnostic_log::debug!("wifi-auto: embedded UDP DNS-SD active");
+        crate::diagnostic_log::info!(
+            "wifi-auto: embedded UDP DNS-SD active ({:?})",
+            self.multicast
+        );
         PublicationActivation::Active
     }
 
     async fn serve(&mut self, instance: &DiscoveryInstance) {
         let mut packet = [0u8; UDP_SERVICE_DISCOVERY_PACKET_BYTES];
-        let Ok(packet_len) =
-            build_publication_packet(&mut packet, instance, self.address, PUBLICATION_TTL_SECONDS)
+        let Some(packet_len) = self.encode_publication(&mut packet, instance, PUBLICATION_TTL_SECONDS)
         else {
-            crate::diagnostic_log::error!("wifi-auto: embedded UDP DNS-SD packet does not fit");
             return;
         };
         self.publish(
@@ -187,6 +232,7 @@ impl<'a, const TARGETS: usize> UdpServiceDiscovery<'a, TARGETS> {
 
         let mut announcement = Ticker::every(ANNOUNCEMENT_INTERVAL);
         let mut browse = Ticker::every(BROWSE_INTERVAL);
+        let mut unrelated_rx: u32 = 0;
         loop {
             match select5(
                 self.socket.recv_from(&mut self.storage.receive_packet),
@@ -197,26 +243,57 @@ impl<'a, const TARGETS: usize> UdpServiceDiscovery<'a, TARGETS> {
             )
             .await
             {
-                Either5::First(Ok((length, _))) => {
+                Either5::First(Ok((length, meta))) => {
                     match query_relevance(&self.storage.receive_packet[..length], instance) {
                         QueryRelevance::Relevant => {
-                            self.publish(&packet[..packet_len], PublicationPurpose::QueryResponse)
+                            crate::diagnostic_log::info!(
+                                "wifi-auto: DNS-SD relevant query from={meta:?} len={length}"
+                            );
+                            if let Some(packet_len) = self.encode_publication(
+                                &mut packet,
+                                instance,
+                                PUBLICATION_TTL_SECONDS,
+                            ) {
+                                self.publish(
+                                    &packet[..packet_len],
+                                    PublicationPurpose::QueryResponse,
+                                )
                                 .await;
+                            }
                         }
                         QueryRelevance::Response => {
+                            crate::diagnostic_log::info!(
+                                "wifi-auto: DNS-SD response from={meta:?} len={length}"
+                            );
                             self.apply_response(length, instance);
                         }
-                        QueryRelevance::Unrelated | QueryRelevance::Malformed => {}
+                        QueryRelevance::Malformed => {
+                            crate::diagnostic_log::info!(
+                                "wifi-auto: DNS-SD malformed from={meta:?} len={length}"
+                            );
+                        }
+                        QueryRelevance::Unrelated => {
+                            unrelated_rx = unrelated_rx.saturating_add(1);
+                            if unrelated_rx == 1 || unrelated_rx % 32 == 0 {
+                                crate::diagnostic_log::info!(
+                                    "wifi-auto: DNS-SD unrelated rx count={unrelated_rx} last_from={meta:?} len={length}"
+                                );
+                            }
+                        }
                     }
                 }
                 Either5::First(Err(error)) => {
-                    crate::diagnostic_log::debug!(
+                    crate::diagnostic_log::info!(
                         "wifi-auto: embedded UDP DNS-SD packet dropped: {error:?}"
                     );
                 }
                 Either5::Second(()) => {
-                    self.publish(&packet[..packet_len], PublicationPurpose::Refresh)
-                        .await;
+                    if let Some(packet_len) =
+                        self.encode_publication(&mut packet, instance, PUBLICATION_TTL_SECONDS)
+                    {
+                        self.publish(&packet[..packet_len], PublicationPurpose::Refresh)
+                            .await;
+                    }
                 }
                 Either5::Third(()) => {
                     self.prune_targets();
@@ -229,20 +306,43 @@ impl<'a, const TARGETS: usize> UdpServiceDiscovery<'a, TARGETS> {
 
     async fn deactivate(&mut self, instance: &DiscoveryInstance) {
         let mut goodbye = [0u8; UDP_SERVICE_DISCOVERY_PACKET_BYTES];
-        match build_publication_packet(&mut goodbye, instance, self.address, 0) {
-            Ok(goodbye_len) => {
-                self.publish(&goodbye[..goodbye_len], PublicationPurpose::Withdrawal)
-                    .await;
-            }
-            Err(error) => {
-                crate::diagnostic_log::error!(
-                    "wifi-auto: embedded UDP DNS-SD withdrawal does not fit: {error:?}"
-                );
-            }
+        if let Some(goodbye_len) = self.encode_publication(&mut goodbye, instance, 0) {
+            self.publish(&goodbye[..goodbye_len], PublicationPurpose::Withdrawal)
+                .await;
         }
         self.clear_targets();
         self.socket.close();
         self.leave_multicast_group();
+    }
+
+    fn encode_publication(
+        &self,
+        packet: &mut [u8; UDP_SERVICE_DISCOVERY_PACKET_BYTES],
+        instance: &DiscoveryInstance,
+        ttl_seconds: u32,
+    ) -> Option<usize> {
+        match build_publication_packet(
+            packet,
+            instance,
+            self.address,
+            self.station_ipv4(),
+            ttl_seconds,
+        ) {
+            Ok(packet_len) => Some(packet_len),
+            Err(error) => {
+                crate::diagnostic_log::error!(
+                    "wifi-auto: embedded UDP DNS-SD packet does not fit: {error:?}"
+                );
+                None
+            }
+        }
+    }
+
+    fn station_ipv4(&self) -> Option<Ipv4Addr> {
+        self.stack.config_v4().map(|config| {
+            let address = config.address.address();
+            Ipv4Addr::from(address.octets())
+        })
     }
 
     fn apply_response(&mut self, packet_length: usize, instance: &DiscoveryInstance) {
@@ -256,18 +356,21 @@ impl<'a, const TARGETS: usize> UdpServiceDiscovery<'a, TARGETS> {
         {
             CatalogUpdate::Applied => {}
             CatalogUpdate::Malformed => {
-                crate::diagnostic_log::debug!(
-                    "wifi-auto: embedded UDP DNS-SD response was malformed"
+                crate::diagnostic_log::info!(
+                    "wifi-auto: DNS-SD response parse malformed len={packet_length}"
                 );
                 return;
             }
         }
         let current_targets = self.storage.catalog.targets(now_ms, self.address);
+        let (resolved, pending, incompatible, expired) =
+            self.storage.catalog.resolution_counts(now_ms);
+        crate::diagnostic_log::info!(
+            "wifi-auto: DNS-SD catalog services={} targets={} resolved={resolved} pending={pending} incompatible={incompatible} expired={expired}",
+            self.storage.catalog.len(),
+            current_targets.len()
+        );
         if current_targets != previous_targets {
-            crate::diagnostic_log::debug!(
-                "wifi-auto: embedded UDP DNS-SD targets={}",
-                current_targets.len()
-            );
             self.status.publish_discovery_targets(current_targets);
         }
     }
@@ -295,6 +398,11 @@ impl<'a, const TARGETS: usize> UdpServiceDiscovery<'a, TARGETS> {
         };
         let query_count = self.storage.catalog.len().saturating_add(1);
         let now_ms = Instant::now().as_millis();
+        crate::diagnostic_log::info!(
+            "wifi-auto: DNS-SD browse send start catalog={} queries={query_count}",
+            self.storage.catalog.len()
+        );
+        let mut sent = 0u8;
         let sends = with_timeout(SEND_TIMEOUT, async {
             let mut query_packet = [0u8; UDP_SERVICE_DISCOVERY_PACKET_BYTES];
             for _ in 0..query_count {
@@ -321,28 +429,55 @@ impl<'a, const TARGETS: usize> UdpServiceDiscovery<'a, TARGETS> {
                 else {
                     continue;
                 };
-                let _send_result = self
+                match self
                     .socket
                     .send_to(
                         &query_packet[..query_length],
-                        (IpAddress::Ipv6(MDNS_IPV6_GROUP), MDNS_PORT),
+                        (self.multicast.group_address(), MDNS_PORT),
                     )
-                    .await;
+                    .await
+                {
+                    Ok(()) => sent = sent.saturating_add(1),
+                    Err(error) => {
+                        crate::diagnostic_log::info!(
+                            "wifi-auto: DNS-SD browse send failed type={} err={error:?}",
+                            query.record_type
+                        );
+                    }
+                }
             }
         });
         match sends.await {
-            Ok(()) => {}
+            Ok(()) => {
+                crate::diagnostic_log::info!("wifi-auto: DNS-SD browse send done sent={sent}");
+            }
             Err(_timeout) => {
-                crate::diagnostic_log::debug!(
-                    "wifi-auto: embedded UDP DNS-SD query budget exhausted"
+                crate::diagnostic_log::info!(
+                    "wifi-auto: DNS-SD browse send budget exhausted sent={sent}"
                 );
             }
         }
     }
 
     async fn publish(&self, packet: &[u8], purpose: PublicationPurpose) {
-        if self.send(packet).await == PublicationSend::Failed {
-            crate::diagnostic_log::debug!("wifi-auto: embedded UDP DNS-SD {purpose:?} failed");
+        match self.send(packet).await {
+            PublicationSend::Sent => match purpose {
+                PublicationPurpose::Refresh => {}
+                PublicationPurpose::InitialAnnouncement
+                | PublicationPurpose::QueryResponse
+                | PublicationPurpose::Withdrawal => {
+                    crate::diagnostic_log::info!(
+                        "wifi-auto: DNS-SD publish {purpose:?} bytes={}",
+                        packet.len()
+                    );
+                }
+            },
+            PublicationSend::Failed => {
+                crate::diagnostic_log::info!(
+                    "wifi-auto: DNS-SD publish {purpose:?} failed bytes={}",
+                    packet.len()
+                );
+            }
         }
     }
 
@@ -350,7 +485,7 @@ impl<'a, const TARGETS: usize> UdpServiceDiscovery<'a, TARGETS> {
         match with_timeout(
             SEND_TIMEOUT,
             self.socket
-                .send_to(packet, (IpAddress::Ipv6(MDNS_IPV6_GROUP), MDNS_PORT)),
+                .send_to(packet, (self.multicast.group_address(), MDNS_PORT)),
         )
         .await
         {
@@ -360,7 +495,10 @@ impl<'a, const TARGETS: usize> UdpServiceDiscovery<'a, TARGETS> {
     }
 
     fn leave_multicast_group(&self) {
-        if let Err(error) = self.stack.leave_multicast_group(MDNS_IPV6_GROUP) {
+        if let Err(error) = self
+            .stack
+            .leave_multicast_group(self.multicast.group_address())
+        {
             crate::diagnostic_log::debug!(
                 "wifi-auto: embedded UDP DNS-SD multicast leave failed: {error:?}"
             );

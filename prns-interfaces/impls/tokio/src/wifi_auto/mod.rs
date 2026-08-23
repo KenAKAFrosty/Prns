@@ -1655,6 +1655,10 @@ impl Supervisor {
             return UdpPeeringProbePreparation::EndpointContractMismatch;
         };
         let Some(auto_interface_protocol) = self.brains.get(&target.scope_id()) else {
+            crate::diagnostic_log::debug!(
+                "wifi-auto: UDP probe skipped for {discovery_endpoint}; no brain for ifindex {}",
+                target.scope_id()
+            );
             return UdpPeeringProbePreparation::LocalInterfaceUnavailable;
         };
         if auto_interface_protocol
@@ -1663,6 +1667,7 @@ impl Supervisor {
         {
             return UdpPeeringProbePreparation::PeerAlreadyKnown;
         }
+        crate::diagnostic_log::debug!("wifi-auto: UDP probing discovered service {discovery_endpoint}");
         UdpPeeringProbePreparation::Ready(UdpPeeringProbe {
             target,
             peering_token: *auto_interface_protocol.our_peering_token().as_bytes(),
@@ -1992,14 +1997,19 @@ fn endpoint_is_eligible(
     if network_discovery_owner == NetworkDiscoveryOwner::Platform {
         return true;
     }
-    local_prefixes.iter().any(|local_prefix| {
-        if let SocketAddr::V6(ipv6_socket_address) = socket_address {
-            if ipv6_socket_address.ip().is_unicast_link_local()
-                && ipv6_socket_address.scope_id() != local_prefix.index
-            {
-                return false;
-            }
+    // Link-local UDP peers are scoped to an interface: same ifindex means same link.
+    // Do not also require an IPv6 prefix/netmask match — some hosts omit usable LL netmasks
+    // from if_addrs, which would falsely reject mDNS-discovered LL targets.
+    if let SocketAddr::V6(ipv6_socket_address) = socket_address {
+        if ipv6_socket_address.ip().is_unicast_link_local() {
+            let scope_id = ipv6_socket_address.scope_id();
+            return scope_id != 0
+                && local_prefixes
+                    .iter()
+                    .any(|local_prefix| local_prefix.index == scope_id);
         }
+    }
+    local_prefixes.iter().any(|local_prefix| {
         is_same_subnet(local_prefix.addr, local_prefix.netmask, socket_address.ip())
     })
 }
@@ -3101,6 +3111,34 @@ mod tests {
             other_interface,
             NetworkDiscoveryOwner::Host,
             &[prefix]
+        ));
+    }
+
+    #[test]
+    fn link_local_udp_is_eligible_from_matching_ifindex_even_without_v6_prefix() {
+        // Host NICs often expose only IPv4 in local_prefixes for a given ifindex, or
+        // report an unusable LL netmask. Scope match alone is enough for LL UDP peers.
+        let v4_only = LocalPrefix {
+            addr: "192.168.1.36".parse().unwrap(),
+            netmask: "255.255.255.0".parse().unwrap(),
+            index: 14,
+        };
+        let peer = DiscoveryEndpoint::udp(SocketAddr::V6(SocketAddrV6::new(
+            "fe80::12bd:a3ff:fe9d:f90c".parse().unwrap(),
+            contract::UNICAST_DISCOVERY_PORT,
+            0,
+            14,
+        )))
+        .unwrap();
+        assert!(endpoint_is_eligible(
+            peer,
+            NetworkDiscoveryOwner::Host,
+            &[v4_only]
+        ));
+        assert!(!endpoint_is_eligible(
+            peer,
+            NetworkDiscoveryOwner::Host,
+            &[]
         ));
     }
 

@@ -177,10 +177,12 @@ async fn run_central_session(
                     Ok(service_event) => service_event,
                     Err(_backend_stopped) => break CentralDiscoverySessionEnd::BackendStopped,
                 };
+                let local_link_local_scopes = local_link_local_scope_ids(auto_wifi_device_policy);
                 match apply_service_event(
                     &mut discovery_snapshot,
                     &service_event,
                     &central_publications,
+                    &local_link_local_scopes,
                 ) {
                     ServiceEventOutcome::SnapshotChanged => {
                         let _ = service_discovery_publisher
@@ -213,11 +215,15 @@ fn apply_service_event(
     discovery_snapshot: &mut DiscoverySnapshot,
     service_event: &ServiceEvent,
     central_publications: &CentralPublications,
+    local_link_local_scopes: &[u32],
 ) -> ServiceEventOutcome {
     match service_event {
-        ServiceEvent::ServiceResolved(resolved_service) => {
-            apply_resolved_service(discovery_snapshot, resolved_service, central_publications)
-        }
+        ServiceEvent::ServiceResolved(resolved_service) => apply_resolved_service(
+            discovery_snapshot,
+            resolved_service,
+            central_publications,
+            local_link_local_scopes,
+        ),
         ServiceEvent::ServiceRemoved(removed_service_type, removed_service_fullname) => {
             match classify_service_type(removed_service_type) {
                 ServiceTypeClassification::Supported(discovery_transport) => {
@@ -253,36 +259,57 @@ fn apply_resolved_service(
     discovery_snapshot: &mut DiscoverySnapshot,
     resolved_service: &ResolvedService,
     central_publications: &CentralPublications,
+    local_link_local_scopes: &[u32],
 ) -> ServiceEventOutcome {
     let discovery_transport = match classify_service_type(&resolved_service.ty_domain) {
         ServiceTypeClassification::Supported(discovery_transport) => discovery_transport,
         ServiceTypeClassification::Unsupported => return ServiceEventOutcome::SnapshotUnchanged,
     };
-    let service_advertisement =
-        match build_service_advertisement(resolved_service, central_publications) {
-            Ok(service_advertisement) => service_advertisement,
-            Err(
-                ServiceAdvertisementRejection::WrongServiceType
-                | ServiceAdvertisementRejection::OwnService
-                | ServiceAdvertisementRejection::InvalidServiceName(_),
-            ) => return ServiceEventOutcome::SnapshotUnchanged,
-            Err(
-                ServiceAdvertisementRejection::InvalidVersion(_)
-                | ServiceAdvertisementRejection::CandidateTransport(_)
-                | ServiceAdvertisementRejection::NoEligibleEndpoints,
-            ) => {
-                let Ok(discovery_service_name) = DiscoveryServiceName::from_fullname(
-                    resolved_service.get_fullname(),
-                    discovery_transport,
-                ) else {
-                    return ServiceEventOutcome::SnapshotUnchanged;
-                };
-                return match discovery_snapshot.remove(&discovery_service_name) {
-                    AdvertisementRemoval::Removed => ServiceEventOutcome::SnapshotChanged,
-                    AdvertisementRemoval::NotPresent => ServiceEventOutcome::SnapshotUnchanged,
-                };
-            }
-        };
+    let service_advertisement = match build_service_advertisement(
+        resolved_service,
+        central_publications,
+        local_link_local_scopes,
+    ) {
+        Ok(service_advertisement) => {
+            crate::diagnostic_log::debug!(
+                "wifi-auto: mDNS resolved {} endpoints={:?}",
+                resolved_service.get_fullname(),
+                service_advertisement
+                    .endpoints()
+                    .iter()
+                    .map(|endpoint| endpoint.to_string())
+                    .collect::<std::vec::Vec<_>>()
+            );
+            service_advertisement
+        }
+        Err(
+            ServiceAdvertisementRejection::WrongServiceType
+            | ServiceAdvertisementRejection::OwnService
+            | ServiceAdvertisementRejection::InvalidServiceName(_),
+        ) => return ServiceEventOutcome::SnapshotUnchanged,
+        Err(
+            ServiceAdvertisementRejection::InvalidVersion(_)
+            | ServiceAdvertisementRejection::CandidateTransport(_)
+            | ServiceAdvertisementRejection::NoEligibleEndpoints,
+        ) => {
+            crate::diagnostic_log::debug!(
+                "wifi-auto: mDNS resolved {} with no eligible endpoints (addrs={} local_scopes={:?})",
+                resolved_service.get_fullname(),
+                resolved_service.get_addresses().len(),
+                local_link_local_scopes
+            );
+            let Ok(discovery_service_name) = DiscoveryServiceName::from_fullname(
+                resolved_service.get_fullname(),
+                discovery_transport,
+            ) else {
+                return ServiceEventOutcome::SnapshotUnchanged;
+            };
+            return match discovery_snapshot.remove(&discovery_service_name) {
+                AdvertisementRemoval::Removed => ServiceEventOutcome::SnapshotChanged,
+                AdvertisementRemoval::NotPresent => ServiceEventOutcome::SnapshotUnchanged,
+            };
+        }
+    };
     if discovery_snapshot.get(service_advertisement.service()) == Some(&service_advertisement) {
         return ServiceEventOutcome::SnapshotUnchanged;
     }
@@ -318,9 +345,18 @@ fn collect_eligible_ip_addresses(
     Ok(eligible_ip_addresses)
 }
 
+fn local_link_local_scope_ids(auto_wifi_device_policy: &AutoWifiDevicePolicy) -> std::vec::Vec<u32> {
+    super::link_local_nics(auto_wifi_device_policy)
+        .into_iter()
+        .map(|network_interface| network_interface.index)
+        .filter(|scope_id| *scope_id != 0)
+        .collect()
+}
+
 fn build_service_advertisement(
     resolved_service: &ResolvedService,
     central_publications: &CentralPublications,
+    local_link_local_scopes: &[u32],
 ) -> Result<ServiceAdvertisement, ServiceAdvertisementRejection> {
     let discovery_transport = match classify_service_type(&resolved_service.ty_domain) {
         ServiceTypeClassification::Supported(discovery_transport) => discovery_transport,
@@ -341,15 +377,16 @@ fn build_service_advertisement(
     let discovery_service_name =
         DiscoveryServiceName::from_fullname(resolved_service.get_fullname(), discovery_transport)
             .map_err(ServiceAdvertisementRejection::InvalidServiceName)?;
+    let fallback_scope_ids =
+        fallback_link_local_scope_ids(resolved_service, local_link_local_scopes);
     let mut discovery_endpoints = BTreeSet::new();
     for scoped_ip_address in resolved_service.get_addresses() {
-        if let Some(discovery_endpoint) = validated_discovery_endpoint(
+        discovery_endpoints.extend(discovery_endpoints_for_address(
             scoped_ip_address,
             resolved_service.get_port(),
             discovery_transport,
-        ) {
-            discovery_endpoints.insert(discovery_endpoint);
-        }
+            &fallback_scope_ids,
+        ));
     }
     let mut service_advertisement = ServiceAdvertisement::new(discovery_service_name);
     for discovery_endpoint in discovery_endpoints {
@@ -373,27 +410,92 @@ fn build_service_advertisement(
     Ok(service_advertisement)
 }
 
-fn validated_discovery_endpoint(
+/// Prefer scopes carried on the resolved record; otherwise use local LL NIC ifindexes.
+///
+/// IPv4 mDNS often delivers an AAAA without a usable IPv6 scope. Unicast UDP peering still needs
+/// a non-zero ifindex, so fill from the receive-side interface ids or the host's AutoWifi NICs.
+fn fallback_link_local_scope_ids(
+    resolved_service: &ResolvedService,
+    local_link_local_scopes: &[u32],
+) -> std::vec::Vec<u32> {
+    let mut scope_ids = BTreeSet::new();
+    for scoped_ip_address in resolved_service.get_addresses() {
+        match scoped_ip_address {
+            ScopedIp::V4(ipv4_address) => {
+                for interface_id in ipv4_address.interface_ids() {
+                    if interface_id.index != 0 {
+                        scope_ids.insert(interface_id.index);
+                    }
+                }
+            }
+            ScopedIp::V6(ipv6_address) if ipv6_address.scope_id().index != 0 => {
+                scope_ids.insert(ipv6_address.scope_id().index);
+            }
+            _ => {}
+        }
+    }
+    for scope_id in local_link_local_scopes
+        .iter()
+        .copied()
+        .filter(|scope_id| *scope_id != 0)
+    {
+        scope_ids.insert(scope_id);
+    }
+    scope_ids.into_iter().collect()
+}
+
+fn discovery_endpoints_for_address(
     scoped_ip_address: &ScopedIp,
     service_port: u16,
     discovery_transport: DiscoveryTransport,
-) -> Option<DiscoveryEndpoint> {
-    let socket_address = match scoped_ip_address {
+    fallback_scope_ids: &[u32],
+) -> BTreeSet<DiscoveryEndpoint> {
+    let mut discovery_endpoints = BTreeSet::new();
+    match scoped_ip_address {
         ScopedIp::V4(ipv4_address) => {
-            SocketAddr::new(IpAddr::V4(*ipv4_address.addr()), service_port)
+            let socket_address = SocketAddr::new(IpAddr::V4(*ipv4_address.addr()), service_port);
+            if let Some(discovery_endpoint) =
+                validated_socket_endpoint(socket_address, discovery_transport)
+            {
+                discovery_endpoints.insert(discovery_endpoint);
+            }
         }
         ScopedIp::V6(ipv6_address) => {
             let ip_address = *ipv6_address.addr();
-            let scope_id = if ip_address.is_unicast_link_local() {
-                ipv6_address.scope_id().index
+            if ip_address.is_unicast_link_local() {
+                let reported_scope_id = ipv6_address.scope_id().index;
+                let scope_ids = if reported_scope_id != 0 {
+                    std::slice::from_ref(&reported_scope_id)
+                } else {
+                    fallback_scope_ids
+                };
+                for &scope_id in scope_ids {
+                    let socket_address =
+                        SocketAddr::V6(SocketAddrV6::new(ip_address, service_port, 0, scope_id));
+                    if let Some(discovery_endpoint) =
+                        validated_socket_endpoint(socket_address, discovery_transport)
+                    {
+                        if reported_scope_id == 0 {
+                            crate::diagnostic_log::debug!(
+                                "wifi-auto: mDNS link-local missing scope; using ifindex {scope_id}"
+                            );
+                        }
+                        discovery_endpoints.insert(discovery_endpoint);
+                    }
+                }
             } else {
-                0
-            };
-            SocketAddr::V6(SocketAddrV6::new(ip_address, service_port, 0, scope_id))
+                let socket_address =
+                    SocketAddr::V6(SocketAddrV6::new(ip_address, service_port, 0, 0));
+                if let Some(discovery_endpoint) =
+                    validated_socket_endpoint(socket_address, discovery_transport)
+                {
+                    discovery_endpoints.insert(discovery_endpoint);
+                }
+            }
         }
-        _ => return None,
-    };
-    validated_socket_endpoint(socket_address, discovery_transport)
+        _ => {}
+    }
+    discovery_endpoints
 }
 
 fn validated_socket_endpoint(
@@ -1017,6 +1119,33 @@ mod tests {
     }
 
     #[test]
+    fn missing_link_local_scope_is_filled_from_local_nics() {
+        let central_publications = central_publications();
+        let peer_service = resolved_service(
+            DiscoveryTransport::Udp,
+            "prns-scopefill",
+            &["fe80::12bd:a3ff:fe9d:f90c".parse().unwrap()],
+            contract::UNICAST_DISCOVERY_PORT,
+            &[(contract::TXT_VERSION_KEY, contract::TXT_VERSION_VALUE)],
+        );
+        assert_eq!(
+            build_service_advertisement(&peer_service, &central_publications, &[]),
+            Err(ServiceAdvertisementRejection::NoEligibleEndpoints)
+        );
+
+        let service_advertisement =
+            build_service_advertisement(&peer_service, &central_publications, &[14])
+                .expect("local ifindex fills missing LL scope");
+        assert_eq!(service_advertisement.endpoints().len(), 1);
+        assert_eq!(
+            service_advertisement.endpoints()[0].socket_addr(),
+            "[fe80::12bd:a3ff:fe9d:f90c%14]:29717"
+                .parse()
+                .unwrap()
+        );
+    }
+
+    #[test]
     fn udp_departure_removes_its_record_from_the_combined_snapshot() {
         let central_publications = central_publications();
         let udp_service_name =
@@ -1039,6 +1168,7 @@ mod tests {
                     udp_service_name.as_str().to_owned(),
                 ),
                 &central_publications,
+                &[],
             ),
             ServiceEventOutcome::SnapshotChanged
         );
@@ -1056,7 +1186,7 @@ mod tests {
             &[(contract::TXT_VERSION_KEY, contract::TXT_VERSION_VALUE)],
         );
         let peer_service_advertisement =
-            build_service_advertisement(&peer_service, &central_publications)
+            build_service_advertisement(&peer_service, &central_publications, &[])
                 .expect("peer is accepted");
         assert_eq!(peer_service_advertisement.endpoints().len(), 1);
         assert_eq!(
@@ -1072,7 +1202,7 @@ mod tests {
             &[],
         );
         assert_eq!(
-            build_service_advertisement(&local_service, &central_publications),
+            build_service_advertisement(&local_service, &central_publications, &[]),
             Err(ServiceAdvertisementRejection::OwnService)
         );
     }
@@ -1088,7 +1218,7 @@ mod tests {
             &[],
         );
         assert_eq!(
-            build_service_advertisement(&public_service, &central_publications),
+            build_service_advertisement(&public_service, &central_publications, &[]),
             Err(ServiceAdvertisementRejection::NoEligibleEndpoints)
         );
 
@@ -1100,7 +1230,7 @@ mod tests {
             &[(contract::TXT_VERSION_KEY, "2")],
         );
         assert_eq!(
-            build_service_advertisement(&incompatible_service, &central_publications),
+            build_service_advertisement(&incompatible_service, &central_publications, &[]),
             Err(ServiceAdvertisementRejection::InvalidVersion(
                 DiscoveryVersionError::Unsupported(2)
             ))
@@ -1117,7 +1247,7 @@ mod tests {
             contract::TCP_RENDEZVOUS_PORT,
             &[],
         );
-        build_service_advertisement(&legacy_service, &central_publications)
+        build_service_advertisement(&legacy_service, &central_publications, &[])
             .expect("implicit v1 record is accepted");
     }
 
@@ -1192,6 +1322,7 @@ mod tests {
                 &mut discovery_snapshot,
                 &ServiceEvent::ServiceResolved(Box::new(first_service)),
                 &central_publications,
+                &[],
             ),
             ServiceEventOutcome::SnapshotChanged
         );
@@ -1208,6 +1339,7 @@ mod tests {
                 &mut discovery_snapshot,
                 &ServiceEvent::ServiceResolved(Box::new(repeated_service)),
                 &central_publications,
+                &[],
             ),
             ServiceEventOutcome::SnapshotUnchanged
         );
@@ -1224,6 +1356,7 @@ mod tests {
                 &mut discovery_snapshot,
                 &ServiceEvent::ServiceResolved(Box::new(overflow_service)),
                 &central_publications,
+                &[],
             ),
             ServiceEventOutcome::RejectedAtCapacity
         );
@@ -1241,6 +1374,7 @@ mod tests {
                 &mut discovery_snapshot,
                 &ServiceEvent::ServiceResolved(Box::new(replacement_service)),
                 &central_publications,
+                &[],
             ),
             ServiceEventOutcome::SnapshotChanged
         );
@@ -1265,6 +1399,7 @@ mod tests {
                 &mut discovery_snapshot,
                 &ServiceEvent::ServiceResolved(Box::new(incompatible_service)),
                 &central_publications,
+                &[],
             ),
             ServiceEventOutcome::SnapshotChanged
         );
@@ -1282,6 +1417,7 @@ mod tests {
                 &mut discovery_snapshot,
                 &ServiceEvent::ServiceResolved(Box::new(restored_service)),
                 &central_publications,
+                &[],
             ),
             ServiceEventOutcome::SnapshotChanged
         );
@@ -1294,6 +1430,7 @@ mod tests {
                     first_service_name.as_str().to_owned(),
                 ),
                 &central_publications,
+                &[],
             ),
             ServiceEventOutcome::SnapshotChanged
         );
