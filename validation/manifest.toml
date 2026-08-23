@@ -479,6 +479,18 @@ inputs = ["Cargo.toml", "Cargo.lock"]
 artifacts = "validation-artifacts/results/root-clippy"
 
 [[suite]]
+id = "prnsd-observability-check"
+domain = "native"
+group = "feature-config"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1200
+command = ["cargo", "check", "--manifest-path", "prnsd/Cargo.toml", "--locked", "--no-default-features", "--features", "tokio-cloud-host,observability"]
+inputs = ["prnsd/Cargo.toml", "prnsd/Cargo.lock", "prnsd/src", "personal-rns/Cargo.toml", "prns-runtime/impls/tokio/Cargo.toml", "prns-runtime/impls/tokio/src"]
+artifacts = "validation-artifacts/results/prnsd-observability-check"
+
+[[suite]]
 id = "guide-rust"
 domain = "integration"
 tiers = ["pr", "release", "scheduled"]

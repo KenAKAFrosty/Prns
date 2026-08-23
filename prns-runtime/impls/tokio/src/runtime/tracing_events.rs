@@ -176,10 +176,12 @@ fn emit_diagnostic(diagnostic: &Diagnostic<'_>) {
             destination,
             hops,
             source_interface,
+            app_data,
         } => tracing::debug!(
             target: "prns.runtime",
             event = "announce_heard",
             hops,
+            app_data_bytes = app_data.len(),
             interface_kind = ?source_interface.kind(),
             destination = ?destination.as_bytes(),
             interface_id = ?source_interface.as_bytes(),
@@ -405,6 +407,10 @@ mod tests {
             self.0.insert(field.name(), value.to_string());
         }
 
+        fn record_u64(&mut self, field: &Field, value: u64) {
+            self.0.insert(field.name(), value.to_string());
+        }
+
         fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
             self.0.insert(field.name(), format!("{value:?}"));
         }
@@ -447,5 +453,27 @@ mod tests {
             Some("self_ratchet_rotated_detail")
         );
         assert!(events[1].fields.contains_key("destination"));
+    }
+
+    #[test]
+    fn announce_trace_records_application_data_size_without_its_bytes() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = Registry::default().with(Capture(captured.clone()));
+        tracing::subscriber::with_default(subscriber, || {
+            emit(&PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
+                destination: DestinationHash::new([0xA5; 16]),
+                hops: 2,
+                source_interface: crate::interfaces::InterfaceId::new([0x5A; 8]),
+                app_data: &[0x00, 0x70, 0x72, 0x6E, 0x73, 0xFF],
+            }));
+        });
+
+        let events = captured.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].fields.get("app_data_bytes").map(String::as_str),
+            Some("6")
+        );
+        assert!(!events[0].fields.contains_key("app_data"));
     }
 }
