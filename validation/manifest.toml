@@ -189,9 +189,11 @@ tiers = ["pr", "release", "scheduled"]
 platform = "linux"
 toolchain = "stable"
 timeout_seconds = 600
-command = ["bash", "validation/interop/cases/host-c-contract-smoke.sh"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.host_c_contract_smoke"]
 inputs = [
-  "validation/interop/cases/host-c-contract-smoke.sh",
+  "VERSION",
+  "validation/interop/cases/host_c_contract_smoke.py",
+  "validation/interop/host_contract.py",
   "prns-host/abi/c",
   "prns-host/conformance/interface-configs-v1.json",
   "prns-host/conformance/persistent-two-node-v1.json",
@@ -277,9 +279,11 @@ tiers = ["pr", "release", "scheduled"]
 platform = "linux"
 toolchain = "go"
 timeout_seconds = 600
-command = ["bash", "validation/interop/cases/host-go-contract-smoke.sh"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.host_go_contract_smoke"]
 inputs = [
-  "validation/interop/cases/host-go-contract-smoke.sh",
+  "validation/interop/cases/host_go_contract_smoke.py",
+  "validation/interop/host_contract.py",
+  "tools/release/package-host-native.py",
   "prns-host/abi/c",
   "prns-host/bindings/go",
   "prns-host/conformance/interface-configs-v1.json",
@@ -297,9 +301,11 @@ tiers = ["pr", "release", "scheduled"]
 platform = "linux"
 toolchain = "swift"
 timeout_seconds = 600
-command = ["bash", "validation/interop/cases/host-swift-contract-smoke.sh"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.host_swift_contract_smoke"]
 inputs = [
-  "validation/interop/cases/host-swift-contract-smoke.sh",
+  "validation/interop/cases/host_swift_contract_smoke.py",
+  "validation/interop/host_contract.py",
+  "tools/release/package-host-native.py",
   "prns-host/abi/c",
   "prns-host/bindings/swift",
   "prns-host/conformance/interface-configs-v1.json",
