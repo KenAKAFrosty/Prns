@@ -4,6 +4,7 @@ import sys
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 
 EXPECTED_FROM_PRNS = b"prns-direct-link-packet"
@@ -32,7 +33,7 @@ def main():
     config_dir = pathlib.Path(os.environ["PRNS_LINK_PACKET_CONFIG_DIR"])
     config_dir.mkdir()
     config_dir.joinpath("config").write_text(configuration(port), encoding="utf-8")
-    RNS.Reticulum(configdir=str(config_dir), loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     identity = RNS.Identity()
     destination = RNS.Destination(
         identity,

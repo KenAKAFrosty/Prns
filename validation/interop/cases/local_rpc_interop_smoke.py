@@ -36,7 +36,7 @@ def run_case(python: Path, daemon: Path, local_port: int, rpc_port: int) -> None
             )
         )
         case.wait_for(server, "READY shared-instance", 10)
-        client = case.start(
+        client = case.start_reference_rns(
             PeerSpec(
                 "stock RNS RPC oracle",
                 (str(python), str(STOCK_CLIENT)),

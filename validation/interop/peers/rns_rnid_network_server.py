@@ -3,6 +3,7 @@ import sys
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 LOOKUP_PRIVATE = bytes([0x33]) * 32 + bytes([0x44]) * 32
 ANNOUNCE_PRIVATE = bytes([0x55]) * 32 + bytes([0x66]) * 32
@@ -41,7 +42,7 @@ class AnnounceObserver:
 
 
 def serve(config_dir):
-    RNS.Reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     lookup_identity = RNS.Identity.from_bytes(LOOKUP_PRIVATE)
     lookup_destination = RNS.Destination(
         lookup_identity,

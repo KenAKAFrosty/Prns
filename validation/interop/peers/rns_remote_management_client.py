@@ -3,6 +3,7 @@ import sys
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 
 
@@ -85,7 +86,7 @@ def rejected_requests(cases):
 
 
 def query(client_config, transport_hash, identity_path):
-    RNS.Reticulum(configdir=client_config, loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=client_config, loglevel=RNS.LOG_ERROR)
     transport_identity_hash = bytes.fromhex(transport_hash)
     destination_hash = RNS.Destination.hash_from_name_and_identity(
         "rnstransport.remote.management", transport_identity_hash

@@ -5,6 +5,7 @@ import tempfile
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 
 READY_MESSAGE_TYPE = 0x1339
@@ -44,7 +45,7 @@ def main():
     port = int(os.environ["PRNS_LINK_CLOSURE_PORT"])
     config_dir = pathlib.Path(tempfile.mkdtemp(prefix="rns-link-closure-server-"))
     config_dir.joinpath("config").write_text(configuration(port), encoding="utf-8")
-    RNS.Reticulum(configdir=str(config_dir), loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     identity = RNS.Identity()
     prns_closes = RNS.Destination(
         identity,

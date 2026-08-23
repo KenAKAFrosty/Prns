@@ -23,6 +23,7 @@ import threading
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 PORT = int(os.environ["PEER_TCP_PORT"])
 IFAC_NETWORK_NAME = os.environ.get("PRNS_IFAC_NETWORK_NAME", "")
@@ -90,7 +91,7 @@ def main() -> int:
     configdir = tempfile.mkdtemp(prefix="rns-peer-")
     with open(os.path.join(configdir, "config"), "w") as handle:
         handle.write(CONFIG)
-    RNS.Reticulum(configdir=configdir, loglevel=RNS.LOG_WARNING)
+    start_reference_reticulum(configdir=configdir, loglevel=RNS.LOG_WARNING)
 
     identity = RNS.Identity()
     mine = RNS.Destination(

@@ -35,7 +35,7 @@ def run() -> None:
             )
         )
         case.wait_for(server, "READY shared-instance", 10)
-        client = case.start(
+        client = case.start_reference_rns(
             PeerSpec(
                 "stock RNS shared-instance client",
                 (str(python), str(STOCK_CLIENT)),

@@ -5,6 +5,7 @@ import tempfile
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 
 
@@ -30,7 +31,7 @@ def main():
         f"forward_port = {peer_port}\n",
         encoding="utf-8",
     )
-    RNS.Reticulum(configdir=str(config_dir), loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     identity = RNS.Identity()
     destination = RNS.Destination(
         identity,

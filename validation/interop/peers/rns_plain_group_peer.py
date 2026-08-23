@@ -4,6 +4,7 @@ import sys
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 
 GROUP_IDENTITY_SECRET = bytes([0x22]) * 32 + bytes([0x11]) * 32
@@ -36,7 +37,7 @@ def main():
     config_dir = pathlib.Path(os.environ["PRNS_PLAIN_GROUP_CONFIG_DIR"])
     config_dir.mkdir()
     config_dir.joinpath("config").write_text(configuration(port), encoding="utf-8")
-    RNS.Reticulum(configdir=str(config_dir), loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
 
     plain_in = RNS.Destination(
         None,

@@ -5,6 +5,7 @@ import tempfile
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 
 EXPECTED_FROM_PRNS = [b"prns-ratchet-zero", b"prns-ratchet-one"]
@@ -32,7 +33,7 @@ def main():
     port = int(os.environ["PRNS_RATCHET_PORT"])
     config_dir = pathlib.Path(tempfile.mkdtemp(prefix="rns-ratchet-server-"))
     config_dir.joinpath("config").write_text(configuration(port), encoding="utf-8")
-    RNS.Reticulum(configdir=str(config_dir), loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     identity = RNS.Identity()
     destination = RNS.Destination(
         identity,

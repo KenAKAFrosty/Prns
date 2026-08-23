@@ -5,6 +5,7 @@ import sys
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 
 RESOURCE_PAYLOAD_SIZE = 64 * 1024
@@ -72,7 +73,7 @@ def start_reticulum(role, port):
     config_dir.joinpath("config").write_text(
         configuration(role, port), encoding="utf-8"
     )
-    RNS.Reticulum(configdir=str(config_dir), loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
 
 
 def local_identity(mode):

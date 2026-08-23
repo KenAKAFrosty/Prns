@@ -17,6 +17,7 @@ import tempfile
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 from RNS.vendor import umsgpack as mp
 
 LEGACY_PICKLE = os.environ.get("RPC_SMOKE_LEGACY_PICKLE") == "1"
@@ -178,7 +179,10 @@ def main() -> int:
         handle.write(config)
 
     hostile_cases = 0 if LEGACY_PICKLE else hostile_preflight(rpc_port, rpc_key_bytes)
-    reticulum = RNS.Reticulum(configdir=configdir, loglevel=RNS.LOG_WARNING)
+    reticulum = start_reference_reticulum(
+        configdir=configdir,
+        loglevel=RNS.LOG_WARNING,
+    )
     time.sleep(1.0)
     covered = set()
 

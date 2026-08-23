@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import sys
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from validation.interop.harness import (
@@ -22,12 +24,34 @@ from validation.interop.harness import (
     require_evidence,
     require_hex_output,
     require_listening_destination,
+    require_no_protocol_violations_output,
     require_output_marker,
     run_checked,
     run_checked_bytes,
     run_expect_status,
     run_expect_status_with_streams,
 )
+from validation.interop.peers.rns_protocol_evidence import (
+    PROTOCOL_EVIDENCE_FINAL,
+    PROTOCOL_EVIDENCE_READY,
+    PROTOCOL_EVIDENCE_SCHEMA,
+    protocol_evidence_snapshot,
+)
+
+
+def protocol_snapshot(count: int) -> dict[str, object]:
+    return {
+        "schema": PROTOCOL_EVIDENCE_SCHEMA,
+        "interfaces": [
+            {
+                "name": "test interface",
+                "type": "TestInterface",
+                "protocol_violations": count,
+                "ifac_violations": 0,
+                "packet_filter_hits": 0,
+            }
+        ],
+    }
 
 
 class InteropHarnessTests(unittest.TestCase):
@@ -271,6 +295,110 @@ class InteropHarnessTests(unittest.TestCase):
             )
             case.require_running(peer, 0.1, "peer did not remain active")
             self.assertNotEqual(case.terminate(peer), 0)
+
+    def test_reference_rns_protocol_evidence_is_queried_while_running(self) -> None:
+        snapshot = json.dumps(protocol_snapshot(0))
+        connection = mock.MagicMock()
+        connection.__enter__.return_value = connection
+        connection.makefile.return_value = io.BytesIO((snapshot + "\n").encode("utf-8"))
+        script = f"import time; print('{PROTOCOL_EVIDENCE_READY}48123',flush=True); time.sleep(30)"
+        with mock.patch(
+            "validation.interop.harness.socket.create_connection",
+            return_value=connection,
+        ):
+            with InteropCase() as case:
+                peer = case.start_reference_rns(
+                    PeerSpec(
+                        "live reference RNS",
+                        (sys.executable, "-c", script),
+                        environment({}),
+                    )
+                )
+                case.wait_for(peer, PROTOCOL_EVIDENCE_READY, 2)
+
+    def test_reference_rns_final_protocol_evidence_supports_exited_peers(self) -> None:
+        final = PROTOCOL_EVIDENCE_FINAL + json.dumps(protocol_snapshot(0))
+        with InteropCase() as case:
+            peer = case.start_reference_rns(
+                PeerSpec(
+                    "finite reference RNS",
+                    (sys.executable, "-c", f"print({final!r},flush=True)"),
+                    environment({}),
+                )
+            )
+            case.wait_for_exit(peer, 2)
+
+    def test_reference_rns_protocol_violation_fails_the_case(self) -> None:
+        final = PROTOCOL_EVIDENCE_FINAL + json.dumps(protocol_snapshot(1))
+        stderr = io.StringIO()
+        with self.assertRaises(InteropFailure) as raised, redirect_stderr(stderr):
+            with InteropCase() as case:
+                peer = case.start_reference_rns(
+                    PeerSpec(
+                        "violating reference RNS",
+                        (sys.executable, "-c", f"print({final!r},flush=True)"),
+                        environment({}),
+                    )
+                )
+                case.wait_for_exit(peer, 2)
+        self.assertEqual(raised.exception.kind, FailureKind.EVIDENCE_UNEXPECTED)
+        self.assertIn("protocol violations", raised.exception.detail)
+
+    def test_protocol_snapshot_uses_rns_interface_counters(self) -> None:
+        interface = SimpleNamespace(
+            protocol_violations=2,
+            ifac_violations=3,
+            packet_filter_hits=4,
+        )
+        interface.__str__ = lambda: "ignored"
+        rns = SimpleNamespace(Transport=SimpleNamespace(interfaces=[interface]))
+        with mock.patch.dict(sys.modules, {"RNS": rns}):
+            snapshot = protocol_evidence_snapshot()
+        self.assertEqual(
+            snapshot,
+            {
+                "schema": PROTOCOL_EVIDENCE_SCHEMA,
+                "interfaces": [
+                    {
+                        "name": str(interface),
+                        "type": "SimpleNamespace",
+                        "protocol_violations": 2,
+                        "ifac_violations": 3,
+                        "packet_filter_hits": 4,
+                    }
+                ],
+            },
+        )
+
+    def test_final_protocol_evidence_can_be_required_from_command_output(self) -> None:
+        output = PROTOCOL_EVIDENCE_FINAL + json.dumps(protocol_snapshot(0)) + "\n"
+        require_no_protocol_violations_output(output, "finite stock command")
+        violating = PROTOCOL_EVIDENCE_FINAL + json.dumps(protocol_snapshot(1)) + "\n"
+        with self.assertRaises(InteropFailure) as raised:
+            require_no_protocol_violations_output(violating, "finite stock command")
+        self.assertEqual(raised.exception.kind, FailureKind.EVIDENCE_UNEXPECTED)
+
+    def test_protocol_evidence_requires_the_rns_1_5_counter(self) -> None:
+        snapshot = protocol_snapshot(0)
+        interface = snapshot["interfaces"][0]
+        interface.pop("protocol_violations")
+        output = PROTOCOL_EVIDENCE_FINAL + json.dumps(snapshot) + "\n"
+        with self.assertRaises(InteropFailure) as raised:
+            require_no_protocol_violations_output(output, "finite stock command")
+        self.assertEqual(raised.exception.kind, FailureKind.EVIDENCE_MISSING)
+        interface["protocol_violations"] = False
+        output = PROTOCOL_EVIDENCE_FINAL + json.dumps(snapshot) + "\n"
+        with self.assertRaises(InteropFailure) as raised:
+            require_no_protocol_violations_output(output, "finite stock command")
+        self.assertEqual(raised.exception.kind, FailureKind.EVIDENCE_MISSING)
+
+    def test_non_protocol_counters_remain_informational(self) -> None:
+        snapshot = protocol_snapshot(0)
+        interface = snapshot["interfaces"][0]
+        interface["ifac_violations"] = 2
+        interface["packet_filter_hits"] = 3
+        output = PROTOCOL_EVIDENCE_FINAL + json.dumps(snapshot) + "\n"
+        require_no_protocol_violations_output(output, "finite stock command")
 
     def test_failure_prints_peer_logs(self) -> None:
         stderr = io.StringIO()

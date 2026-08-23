@@ -9,6 +9,7 @@ from validation.interop.harness import (
     environment,
     reference_python,
     require_hex_output,
+    require_no_protocol_violations_output,
     require_output_marker,
     run_checked,
 )
@@ -74,6 +75,7 @@ def run() -> None:
             "PROBE_RESPONDER_OK",
             "stock RNS probe did not report successful proof validation",
         )
+        require_no_protocol_violations_output(result, "stock RNS probe client")
 
 
 if __name__ == "__main__":

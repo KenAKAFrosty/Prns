@@ -5,6 +5,7 @@ import tempfile
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 
 RESOURCE_PAYLOAD = b"stock-resource-that-must-be-rejected" * 4096
@@ -61,7 +62,7 @@ def client_configuration(port):
 def start_reticulum(configuration, prefix):
     config_dir = pathlib.Path(tempfile.mkdtemp(prefix=prefix))
     config_dir.joinpath("config").write_text(configuration, encoding="utf-8")
-    RNS.Reticulum(configdir=str(config_dir), loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
 
 
 def reject_prns(port):

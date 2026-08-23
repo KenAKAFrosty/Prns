@@ -46,7 +46,7 @@ def run() -> None:
         )
         bus_port.release()
         control_port.release()
-        server = case.start(
+        server = case.start_reference_rns(
             PeerSpec(
                 "stock RNS rnprobe server",
                 (str(python), str(STOCK_SERVER), "serve", str(config)),

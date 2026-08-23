@@ -17,6 +17,7 @@ import tempfile
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 
 def main() -> int:
@@ -33,7 +34,7 @@ def main() -> int:
                 f"instance_control_port = {control_port}\n"
             )
     # Quiet RNS's own chatter to stderr; stdout carries only our ANNOUNCED line.
-    RNS.Reticulum(configdir=configdir, loglevel=RNS.LOG_WARNING)
+    start_reference_reticulum(configdir=configdir, loglevel=RNS.LOG_WARNING)
     # Let the client settle its connection to the shared instance before announcing.
     time.sleep(1.5)
 

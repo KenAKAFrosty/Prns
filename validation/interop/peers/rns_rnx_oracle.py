@@ -3,6 +3,7 @@ import sys
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 LISTENER_PRIVATE = bytes([0x31]) * 32 + bytes([0x32]) * 32
 CLIENT_PRIVATE = bytes([0x41]) * 32 + bytes([0x42]) * 32
@@ -59,7 +60,7 @@ def prepare(
 
 
 def serve(config_dir, listener_path):
-    RNS.Reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     listener = RNS.Identity.from_file(listener_path)
     destination = RNS.Destination(
         listener,

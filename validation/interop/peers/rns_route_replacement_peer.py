@@ -4,6 +4,7 @@ import sys
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 
 TARGET_NAME = "prns.route.replacement.target"
@@ -53,7 +54,7 @@ def start_reticulum(configuration):
     config_dir = pathlib.Path(os.environ["RNS_ROUTE_CONFIG_DIR"])
     config_dir.mkdir()
     config_dir.joinpath("config").write_text(configuration, encoding="utf-8")
-    RNS.Reticulum(configdir=str(config_dir), loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
 
 
 def prepare_identity(path):

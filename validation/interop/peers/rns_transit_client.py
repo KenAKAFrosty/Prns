@@ -21,6 +21,7 @@ import threading
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 LOCAL_PORT = int(os.environ["PRNS_LOCAL_PORT"])
 RPC_PORT = int(os.environ.get("PRNS_RPC_PORT", str(LOCAL_PORT + 1)))
@@ -68,7 +69,7 @@ def main() -> int:
     configdir = tempfile.mkdtemp(prefix="rns-client-")
     with open(os.path.join(configdir, "config"), "w") as handle:
         handle.write(CONFIG)
-    RNS.Reticulum(configdir=configdir, loglevel=RNS.LOG_WARNING)
+    start_reference_reticulum(configdir=configdir, loglevel=RNS.LOG_WARNING)
     time.sleep(1.5)
 
     identity = RNS.Identity()

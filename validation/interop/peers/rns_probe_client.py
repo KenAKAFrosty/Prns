@@ -4,6 +4,7 @@ import sys
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 
 
@@ -61,7 +62,7 @@ def wait_for(predicate, timeout, failure):
 
 
 def probe(client_config, transport_hash):
-    RNS.Reticulum(configdir=client_config, loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=client_config, loglevel=RNS.LOG_ERROR)
     transport_identity_hash = bytes.fromhex(transport_hash)
     destination_hash = RNS.Destination.hash_from_name_and_identity(
         "rnstransport.probe", transport_identity_hash

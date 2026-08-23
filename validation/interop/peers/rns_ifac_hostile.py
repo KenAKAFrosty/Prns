@@ -6,6 +6,7 @@ import tempfile
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 
 PORT = int(os.environ["PEER_TCP_PORT"])
@@ -62,7 +63,7 @@ def main():
 {ifac}"""
     with open(os.path.join(configdir, "config"), "w", encoding="utf-8") as handle:
         handle.write(config)
-    RNS.Reticulum(configdir=configdir, loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=configdir, loglevel=RNS.LOG_ERROR)
     RNS.Transport.register_announce_handler(PeerDetector())
     identity = RNS.Identity()
     destination = RNS.Destination(

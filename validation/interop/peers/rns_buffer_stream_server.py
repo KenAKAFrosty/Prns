@@ -6,6 +6,7 @@ import threading
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 
 PAYLOAD_SIZE = 4096
@@ -38,7 +39,7 @@ def main():
     port = int(os.environ["PRNS_BUFFER_STREAM_PORT"])
     config_dir = pathlib.Path(tempfile.mkdtemp(prefix="rns-buffer-stream-server-"))
     config_dir.joinpath("config").write_text(configuration(port), encoding="utf-8")
-    RNS.Reticulum(configdir=str(config_dir), loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     identity = RNS.Identity()
     destination = RNS.Destination(
         identity,

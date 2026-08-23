@@ -6,6 +6,7 @@ import threading
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 
 INITIAL_PAYLOAD = b"tunnel-route-initial"
@@ -50,7 +51,7 @@ def start_reticulum(configuration):
     config_dir = pathlib.Path(os.environ["PRNS_TUNNEL_CONFIG_DIR"])
     config_dir.mkdir()
     config_dir.joinpath("config").write_text(configuration, encoding="utf-8")
-    return RNS.Reticulum(configdir=str(config_dir), loglevel=RNS.LOG_ERROR)
+    return start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
 
 
 def relay(port):

@@ -84,7 +84,7 @@ def run() -> None:
         control.release()
         stock_listener.release()
         prns_listener.release()
-        stock = case.start(
+        stock = case.start_reference_rns(
             PeerSpec(
                 "stock RNS shared-instance server",
                 (str(python), str(STOCK_SERVER), str(stock_config)),

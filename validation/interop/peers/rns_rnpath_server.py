@@ -3,6 +3,7 @@ import sys
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 RATE_HASH = bytes.fromhex("33333333333333333333333333333333")
 
@@ -58,7 +59,7 @@ def prepare(
 
 
 def serve(config_dir):
-    RNS.Reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     now = time.time()
     RNS.Transport.announce_rate_table[RATE_HASH] = {
         "last": now - 10,
@@ -74,7 +75,7 @@ def serve(config_dir):
 
 
 def peer(config_dir):
-    RNS.Reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     identity = RNS.Identity()
     destination = RNS.Destination(
         identity,

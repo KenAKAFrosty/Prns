@@ -4,6 +4,7 @@ import time
 
 import RNS
 from RNS.vendor import umsgpack
+from rns_protocol_evidence import start_reference_reticulum
 
 ENTRY_HASH = bytes.fromhex("33445566778899aabbccddeeff001122")
 
@@ -105,7 +106,7 @@ def wait_for(predicate, timeout, failure):
 
 
 def query(config_dir, source_hash):
-    RNS.Reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     source_hash = bytes.fromhex(source_hash)
     destination_hash = RNS.Destination.hash_from_name_and_identity(
         "rnstransport.info.blackhole", source_hash
@@ -149,7 +150,7 @@ def query(config_dir, source_hash):
 
 
 def serve(config_dir):
-    RNS.Reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     print("BLACKHOLE_SERVER_READY", flush=True)
     while True:
         time.sleep(1)

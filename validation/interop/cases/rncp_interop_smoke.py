@@ -196,7 +196,7 @@ def run() -> None:
         bus_port.release()
         control_port.release()
         network_port.release()
-        server = case.start(
+        server = case.start_reference_rns(
             PeerSpec(
                 "stock RNS RNCP server",
                 (
@@ -214,7 +214,7 @@ def run() -> None:
         case.wait_for(server, f"RNCP_SERVER_READY {stock_destination}", 10)
         client_bus_port.release()
         client_control_port.release()
-        client = case.start(
+        client = case.start_reference_rns(
             PeerSpec(
                 "stock RNS RNCP client instance",
                 (str(python), str(STOCK_ORACLE), "hold", str(client_config)),
@@ -360,7 +360,7 @@ def run() -> None:
             case.work / "stock-segmented.bin",
         )
         cancel_source = case.work / "cancel-stock.bin"
-        cancellation = case.start(
+        cancellation = case.start_reference_rns(
             PeerSpec(
                 "stock RNS RNCP cancellation sender",
                 (

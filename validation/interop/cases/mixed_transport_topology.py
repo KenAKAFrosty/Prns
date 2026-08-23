@@ -64,7 +64,7 @@ def run_mixed_transport(scenario: MixedTransportScenario) -> None:
                 values["RNS_MULTIHOP_START"] = start_path
             return environment(values)
 
-        right = case.start(
+        right = case.start_reference_rns(
             PeerSpec(
                 "right stock RNS endpoint",
                 (str(python), str(STOCK_ENDPOINT), scenario.endpoint_mode),
@@ -91,7 +91,7 @@ def run_mixed_transport(scenario: MixedTransportScenario) -> None:
             prns_port,
         )
         case.wait_for(prns, "MIXED_MULTIHOP_READY", 10)
-        transport = case.start(
+        transport = case.start_reference_rns(
             PeerSpec(
                 "stock RNS multihop transport",
                 (str(python), str(STOCK_TRANSPORT)),
@@ -106,7 +106,7 @@ def run_mixed_transport(scenario: MixedTransportScenario) -> None:
             left_port,
         )
         case.wait_for(transport, "MULTIHOP_TRANSPORT_UP", 10)
-        left = case.start(
+        left = case.start_reference_rns(
             PeerSpec(
                 "left stock RNS endpoint",
                 (str(python), str(STOCK_ENDPOINT), scenario.endpoint_mode),

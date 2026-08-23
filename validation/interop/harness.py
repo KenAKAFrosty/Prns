@@ -13,6 +13,12 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
+from validation.interop.peers.rns_protocol_evidence import (
+    PROTOCOL_EVIDENCE_FINAL,
+    PROTOCOL_EVIDENCE_READY,
+    PROTOCOL_EVIDENCE_SCHEMA,
+)
+
 
 ROOT = Path(__file__).resolve().parents[2]
 PEER_STOP_TIMEOUT_SECONDS = 5
@@ -264,6 +270,75 @@ def require_listening_destination(output: str, failure: str) -> str:
     return match.group(1)
 
 
+def require_no_protocol_violations_output(output: str, peer_name: str) -> None:
+    matches = re.findall(
+        rf"^{re.escape(PROTOCOL_EVIDENCE_FINAL)}(.+)$",
+        output,
+        re.MULTILINE,
+    )
+    if not matches:
+        raise InteropFailure(
+            FailureKind.EVIDENCE_MISSING,
+            f"{peer_name} did not provide final RNS protocol evidence",
+        )
+    try:
+        snapshot = json.loads(matches[-1])
+    except json.JSONDecodeError as error:
+        raise InteropFailure(
+            FailureKind.EVIDENCE_MISSING,
+            f"{peer_name} returned malformed final RNS protocol evidence",
+        ) from error
+    if not isinstance(snapshot, dict):
+        raise InteropFailure(
+            FailureKind.EVIDENCE_MISSING,
+            f"{peer_name} returned malformed final RNS protocol evidence: {snapshot!r}",
+        )
+    require_no_protocol_violations_snapshot(snapshot, peer_name)
+
+
+def require_no_protocol_violations_snapshot(
+    snapshot: Mapping[str, object],
+    peer_name: str,
+) -> None:
+    interfaces = snapshot.get("interfaces")
+    schema = snapshot.get("schema")
+    if (
+        type(schema) is not int
+        or schema != PROTOCOL_EVIDENCE_SCHEMA
+        or not isinstance(interfaces, list)
+    ):
+        raise InteropFailure(
+            FailureKind.EVIDENCE_MISSING,
+            f"{peer_name} returned malformed RNS protocol evidence: {snapshot!r}",
+        )
+    if not interfaces:
+        raise InteropFailure(
+            FailureKind.EVIDENCE_MISSING,
+            f"{peer_name} reported no RNS interfaces",
+        )
+    violations = []
+    for interface in interfaces:
+        if not isinstance(interface, dict):
+            raise InteropFailure(
+                FailureKind.EVIDENCE_MISSING,
+                f"{peer_name} returned a malformed RNS interface row: {interface!r}",
+            )
+        count = interface.get("protocol_violations")
+        if type(count) is not int:
+            raise InteropFailure(
+                FailureKind.EVIDENCE_MISSING,
+                f"{peer_name} did not expose the RNS 1.5 protocol counter: {interface!r}",
+            )
+        if count != 0:
+            violations.append(interface)
+    if violations:
+        raise InteropFailure(
+            FailureKind.EVIDENCE_UNEXPECTED,
+            f"{peer_name} recorded RNS protocol violations: {violations!r}",
+        )
+    print(f'RNS_PROTOCOL_CLEAN peer="{peer_name}" interfaces={len(interfaces)}')
+
+
 def _cargo_artifact(
     manifest: Path,
     selection: Sequence[str],
@@ -319,6 +394,7 @@ class InteropCase:
         self._temporary = tempfile.TemporaryDirectory()
         self.work = Path(self._temporary.name)
         self._peers: list[Peer] = []
+        self._reference_rns_peers: list[Peer] = []
 
     def start(self, spec: PeerSpec, listen_port: PortLease | None = None) -> Peer:
         if listen_port is not None:
@@ -345,6 +421,15 @@ class InteropCase:
             ) from error
         peer = Peer(spec, process, log_path, log_file)
         self._peers.append(peer)
+        return peer
+
+    def start_reference_rns(
+        self,
+        spec: PeerSpec,
+        listen_port: PortLease | None = None,
+    ) -> Peer:
+        peer = self.start(spec, listen_port)
+        self._reference_rns_peers.append(peer)
         return peer
 
     def read_log(self, peer: Peer) -> str:
@@ -456,6 +541,61 @@ class InteropCase:
                 )
             time.sleep(0.05)
 
+    def require_no_protocol_violations(self, *peers: Peer) -> None:
+        for peer in peers:
+            snapshot = self._protocol_evidence(peer)
+            require_no_protocol_violations_snapshot(snapshot, peer.spec.name)
+
+    def _protocol_evidence(self, peer: Peer) -> dict[str, object]:
+        final = self._final_protocol_evidence(peer)
+        if final is not None:
+            return final
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            log = self.read_log(peer)
+            match = re.search(
+                rf"^{re.escape(PROTOCOL_EVIDENCE_READY)}([0-9]+)$",
+                log,
+                re.MULTILINE,
+            )
+            if match is not None:
+                try:
+                    with socket.create_connection(
+                        ("127.0.0.1", int(match.group(1))), timeout=1
+                    ) as connection:
+                        with connection.makefile("rb") as stream:
+                            response = stream.readline()
+                    decoded = json.loads(response)
+                    if isinstance(decoded, dict):
+                        return decoded
+                except (OSError, json.JSONDecodeError):
+                    final = self._final_protocol_evidence(peer)
+                    if final is not None:
+                        return final
+            if peer.process.poll() is not None:
+                final = self._final_protocol_evidence(peer)
+                if final is not None:
+                    return final
+            time.sleep(0.05)
+        raise InteropFailure(
+            FailureKind.EVIDENCE_MISSING,
+            f"{peer.spec.name} did not provide RNS protocol evidence",
+        )
+
+    def _final_protocol_evidence(self, peer: Peer) -> dict[str, object] | None:
+        matches = re.findall(
+            rf"^{re.escape(PROTOCOL_EVIDENCE_FINAL)}(.+)$",
+            self.read_log(peer),
+            re.MULTILINE,
+        )
+        if not matches:
+            return None
+        try:
+            decoded = json.loads(matches[-1])
+        except json.JSONDecodeError:
+            return None
+        return decoded if isinstance(decoded, dict) else None
+
     def terminate(self, peer: Peer) -> int:
         if peer.process.poll() is not None:
             return peer.process.returncode
@@ -490,11 +630,19 @@ class InteropCase:
         return self
 
     def __exit__(self, kind, _value, _traceback) -> None:
+        evidence_failure = None
+        if kind is None:
+            try:
+                self.require_no_protocol_violations(*self._reference_rns_peers)
+            except InteropFailure as error:
+                evidence_failure = error
         for peer in reversed(self._peers):
             self.stop(peer)
-        if kind is not None:
+        if kind is not None or evidence_failure is not None:
             self.print_logs()
         self._temporary.cleanup()
+        if evidence_failure is not None:
+            raise evidence_failure
 
 
 def case_main(run: Callable[[], None], success_message: str) -> int:

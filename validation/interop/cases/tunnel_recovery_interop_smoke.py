@@ -18,7 +18,7 @@ SUCCESS = "PASS: stock RNS and Prns restored tunneled routes in both roles witho
 
 def stock_relay_direction(python: Path, candidate: Path) -> None:
     with PortLease() as port, InteropCase() as case:
-        stock = case.start(
+        stock = case.start_reference_rns(
             PeerSpec(
                 "stock RNS tunnel relay",
                 (str(python), str(STOCK_PEER), "relay"),
@@ -62,7 +62,7 @@ def prns_relay_direction(python: Path, candidate: Path) -> None:
             port,
         )
         case.wait_for(prns, "PRNS_TUNNEL_RELAY_UP", 10)
-        stock = case.start(
+        stock = case.start_reference_rns(
             PeerSpec(
                 "stock RNS tunnel client",
                 (str(python), str(STOCK_PEER), "client"),

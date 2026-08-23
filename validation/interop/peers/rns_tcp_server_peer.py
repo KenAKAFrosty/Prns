@@ -16,6 +16,7 @@ import tempfile
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 PORT = os.environ["PRNS_TCP_LISTEN_PORT"]
 
@@ -44,7 +45,7 @@ def main() -> int:
     configdir = tempfile.mkdtemp(prefix="rns-tcpserver-")
     with open(os.path.join(configdir, "config"), "w") as handle:
         handle.write(CONFIG)
-    RNS.Reticulum(configdir=configdir, loglevel=RNS.LOG_WARNING)
+    start_reference_reticulum(configdir=configdir, loglevel=RNS.LOG_WARNING)
 
     identity = RNS.Identity()
     destination = RNS.Destination(

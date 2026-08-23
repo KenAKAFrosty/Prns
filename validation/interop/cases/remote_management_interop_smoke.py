@@ -9,6 +9,7 @@ from validation.interop.harness import (
     environment,
     reference_python,
     require_hex_output,
+    require_no_protocol_violations_output,
     require_output_marker,
     run_checked,
 )
@@ -81,6 +82,7 @@ def run() -> None:
             "REMOTE_MANAGEMENT_OK",
             "stock RNS did not report successful remote-management recovery",
         )
+        require_no_protocol_violations_output(result, "stock RNS remote-management client")
 
 
 if __name__ == "__main__":

@@ -13,7 +13,6 @@ from validation.interop.harness import (
     forbid_output_marker,
     reference_python,
     require_output_marker,
-    run_checked,
 )
 
 
@@ -62,11 +61,20 @@ def prove_ifac_rejection(
 ) -> None:
     hostile_environment = transit_environment({"PEER_TCP_PORT": peer_port}, ifac)
     for mode in ("missing", "wrong"):
-        result = run_checked(
-            (str(python), str(HOSTILE_PEER), mode),
-            f"{mode} IFAC peer did not exercise the TCP interface",
-            command_environment=hostile_environment,
+        hostile = case.start(
+            PeerSpec(
+                f"stock RNS {mode} IFAC peer",
+                (str(python), str(HOSTILE_PEER), mode),
+                hostile_environment,
+            )
         )
+        case.wait_for(hostile, f"HOSTILE_SENT {mode}", 10)
+        case.require_running(
+            hostile,
+            1,
+            f"{mode} IFAC peer did not remain connected for protocol inspection",
+        )
+        result = case.read_log(hostile)
         require_output_marker(
             result,
             f"HOSTILE_SENT {mode}",
@@ -87,6 +95,8 @@ def prove_ifac_rejection(
             "HOSTILE_RECEIVED",
             f"{mode} IFAC peer injected an announce into stock RNS",
         )
+        case.require_no_protocol_violations(peer, hostile)
+        case.stop(hostile)
 
 
 def run_transit(ifac: IfacConfiguration | None) -> None:
@@ -98,7 +108,7 @@ def run_transit(ifac: IfacConfiguration | None) -> None:
         PortLease() as rpc_port,
         InteropCase() as case,
     ):
-        peer = case.start(
+        peer = case.start_reference_rns(
             PeerSpec(
                 "stock RNS transit peer",
                 (str(python), str(STOCK_PEER)),
@@ -126,7 +136,7 @@ def run_transit(ifac: IfacConfiguration | None) -> None:
             )
         )
         case.wait_for(bridge, "READY bridge", 10)
-        client = case.start(
+        client = case.start_reference_rns(
             PeerSpec(
                 "stock RNS local transit client",
                 (str(python), str(STOCK_CLIENT)),

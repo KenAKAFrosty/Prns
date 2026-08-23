@@ -6,6 +6,7 @@ import sys
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 LISTENER_PRIVATE = bytes([0x31]) * 32 + bytes([0x32]) * 32
 CLIENT_PRIVATE = bytes([0x41]) * 32 + bytes([0x42]) * 32
@@ -67,14 +68,14 @@ def prepare(
 
 
 def hold(config_dir):
-    RNS.Reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     print("RNCP_CLIENT_READY", flush=True)
     while True:
         time.sleep(0.25)
 
 
 def serve(config_dir, listener_path, save_path, fetch_path):
-    RNS.Reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     listener = RNS.Identity.from_file(listener_path)
     save_path = pathlib.Path(save_path).resolve()
     fetch_path = pathlib.Path(fetch_path).resolve()
@@ -182,7 +183,7 @@ def wait_for(predicate, timeout, failure):
 
 
 def cancel_send(config_dir, identity_path, destination_hash, source_path, *recovery_paths):
-    RNS.Reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     destination_hash = bytes.fromhex(destination_hash)
     if not RNS.Transport.has_path(destination_hash):
         RNS.Transport.request_path(destination_hash)

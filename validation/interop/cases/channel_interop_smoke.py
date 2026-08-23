@@ -20,7 +20,7 @@ def run() -> None:
     python = reference_python()
     candidate = candidate_peer()
     with PortLease() as port, InteropCase() as case:
-        stock = case.start(
+        stock = case.start_reference_rns(
             PeerSpec(
                 "stock RNS Channel server",
                 (str(python), str(STOCK_PEER)),

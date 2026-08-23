@@ -44,7 +44,7 @@ def run() -> None:
         long_stop = case.work / "stop-long"
         long_verify = case.work / "verify-long"
         short_announce = case.work / "announce-short"
-        long_endpoint = case.start(
+        long_endpoint = case.start_reference_rns(
             PeerSpec(
                 "long-path stock RNS endpoint",
                 (str(python), str(STOCK_PEER), "long"),
@@ -62,7 +62,7 @@ def run() -> None:
             long_port,
         )
         case.wait_for(long_endpoint, "ROUTE_ENDPOINT_UP role=long", 10)
-        short_endpoint = case.start(
+        short_endpoint = case.start_reference_rns(
             PeerSpec(
                 "short-path stock RNS endpoint",
                 (str(python), str(STOCK_PEER), "short"),
@@ -78,7 +78,7 @@ def run() -> None:
             short_port,
         )
         case.wait_for(short_endpoint, "ROUTE_ENDPOINT_UP role=short", 10)
-        relay = case.start(
+        relay = case.start_reference_rns(
             PeerSpec(
                 "stock RNS long-path transport",
                 (str(python), str(STOCK_TRANSPORT)),
@@ -108,7 +108,7 @@ def run() -> None:
             requester_port,
         )
         case.wait_for(prns, "MIXED_MULTIHOP_READY", 10)
-        requester = case.start(
+        requester = case.start_reference_rns(
             PeerSpec(
                 "stock RNS route requester",
                 (str(python), str(STOCK_PEER), "requester"),

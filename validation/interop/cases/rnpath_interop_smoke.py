@@ -99,7 +99,7 @@ def run() -> None:
         bus_port.release()
         control_port.release()
         network_port.release()
-        server = case.start(
+        server = case.start_reference_rns(
             PeerSpec(
                 "stock RNS rnpath server",
                 (str(python), str(STOCK_SERVER), "serve", str(config)),
@@ -107,7 +107,7 @@ def run() -> None:
             )
         )
         case.wait_for(server, "RNPATH_SERVER_READY", 10)
-        peer = case.start(
+        peer = case.start_reference_rns(
             PeerSpec(
                 "stock RNS rnpath peer",
                 (str(python), str(STOCK_SERVER), "peer", str(peer_config)),

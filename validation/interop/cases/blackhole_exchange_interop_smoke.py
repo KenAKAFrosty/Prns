@@ -9,6 +9,7 @@ from validation.interop.harness import (
     environment,
     reference_python,
     require_hex_output,
+    require_no_protocol_violations_output,
     require_output_marker,
     run_checked,
 )
@@ -73,6 +74,10 @@ def run() -> None:
                 "BLACKHOLE_PUBLISHER_OK",
                 "stock RNS did not validate Prnsd's blackhole list",
             )
+            require_no_protocol_violations_output(
+                publisher_result,
+                "stock RNS blackhole query",
+            )
             case.stop(publisher)
 
         with PortLease() as stock_port:
@@ -93,7 +98,7 @@ def run() -> None:
                 16,
                 "stock RNS blackhole publisher did not create a valid source identity",
             )
-            stock = case.start(
+            stock = case.start_reference_rns(
                 PeerSpec(
                     "stock RNS blackhole publisher",
                     (str(python), str(STOCK_PEER), "serve", str(stock_server)),
