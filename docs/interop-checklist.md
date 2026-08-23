@@ -11,7 +11,7 @@ directions.
 For Prns, a checked item has registered black-box or live evidence against the
 stock RNS release pinned by
 [`validation/manifest.toml`](../validation/manifest.toml). An unchecked item
-marks a gap in Prns's registered evidence, not necessarily missing Prns behavior. Internal unit tests or implementation support alone do not check an item. Prns currently has registered evidence for 28 of these 28 operations. Each linked `[x]` opens the executable case providing the primary evidence for that check; one suite may substantiate several observable operations.
+marks a gap in Prns's registered evidence, not necessarily missing Prns behavior. Internal unit tests or implementation support alone do not check an item. Prns currently has registered evidence for 31 of these 31 operations. Each linked `[x]` opens the executable case providing the primary evidence for that check; one suite may substantiate several observable operations.
 
 ## Identity and destinations
 
@@ -36,6 +36,9 @@ marks a gap in Prns's registered evidence, not necessarily missing Prns behavior
 
 - [\[x\]](../validation/interop/cases/udp_interop_smoke.py) **Proven SINGLE packets**
   - Exchange exact payloads both ways and confirm valid delivery proofs.
+- [\[x\]](../validation/interop/cases/transport_single_interop_smoke.py) **Transported proven SINGLE packets**
+  - Exchange exact proven SINGLE packets between stock endpoints through stock and
+    candidate transports in series.
 - [\[x\]](../validation/interop/cases/link_packet_interop_smoke.py) **Link establishment**
   - Initiate a Link from each implementation and exchange traffic only after both peers
     report it active.
@@ -83,9 +86,15 @@ marks a gap in Prns's registered evidence, not necessarily missing Prns behavior
 - [\[x\]](../validation/interop/cases/mixed_multihop_interop_smoke.py) **Path discovery**
   - Discover an initially unknown destination through a transport, report its hops,
     and reach it.
+- [\[x\]](../validation/interop/cases/cold_path_request_interop_smoke.py) **On-demand path requests**
+  - Begin with only the destination hash, discover it through stock and candidate
+    transports, then deliver a proven packet.
 - [\[x\]](../validation/interop/cases/mixed_multihop_interop_smoke.py) **Mixed multi-hop forwarding**
   - Exchange exact payloads between stock endpoints through stock and candidate
     transports in series.
+- [\[x\]](../validation/interop/cases/route_replacement_interop_smoke.py) **Competing route replacement**
+  - Present longer and shorter live routes to one destination and confirm traffic
+    follows the accepted replacement.
 - [\[x\]](../validation/interop/cases/tunnel_recovery_interop_smoke.py) **Transport tunnel recovery**
   - Reconnect with the same transport identity and confirm the restored route works
     without a fresh endpoint announcement.
@@ -118,6 +127,26 @@ Its tests aim to treat both implementations as opaque processes and assert only
 their inputs, outputs, and observable state.
 
 For Prns, [`validation/manifest.toml`](../validation/manifest.toml) is the
-authoritative inventory of registered suites. The [validation
-guide](validation.md) explains how to run them and collect reproducible evidence;
-this page is a human-readable audit, not another configuration source.
+authoritative inventory of registered suites. From the repository root, first
+check that the required development tools, including the Rust toolchain, are
+available:
+
+```console
+./tools/prns doctor getting-started
+```
+
+Then run all interop suites supported by the current host with:
+
+```console
+python3 validation/run.py run --domain interop --platform current
+```
+
+To run one focused suite, list the available suite IDs and then select one:
+
+```console
+python3 validation/run.py list --domain interop --platform current
+
+python3 validation/run.py run --suite interop-route-replacement
+```
+
+This page is a human-readable audit, not another configuration source.

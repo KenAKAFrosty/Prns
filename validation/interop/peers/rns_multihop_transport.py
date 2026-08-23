@@ -1,18 +1,16 @@
 import os
 import pathlib
 import sys
-import tempfile
 import time
 
 import RNS
 
 
-
-
 def main():
     listen_port = int(os.environ["RNS_MULTIHOP_LISTEN_PORT"])
     peer_port = int(os.environ["RNS_MULTIHOP_PEER_PORT"])
-    config_dir = pathlib.Path(tempfile.mkdtemp(prefix="rns-multihop-transport-"))
+    config_dir = pathlib.Path(os.environ["RNS_MULTIHOP_CONFIG_DIR"])
+    config_dir.mkdir()
     config_dir.joinpath("config").write_text(
         "[reticulum]\n"
         "enable_transport = Yes\n"
@@ -24,11 +22,13 @@ def main():
         "[[Left Endpoint Server]]\n"
         "type = TCPServerInterface\n"
         "enabled = Yes\n"
+        "mode = gateway\n"
         "listen_ip = 127.0.0.1\n"
         f"listen_port = {listen_port}\n"
         "[[Prns Transport Client]]\n"
         "type = TCPClientInterface\n"
         "enabled = Yes\n"
+        "recursive_prs = Yes\n"
         "target_host = 127.0.0.1\n"
         f"target_port = {peer_port}\n",
         encoding="utf-8",

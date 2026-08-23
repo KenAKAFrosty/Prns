@@ -1105,8 +1105,47 @@ toolchain = "stable"
 interpreter = "smoke"
 timeout_seconds = 600
 command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.mixed_multihop_interop_smoke"]
-inputs = ["validation/interop/cases/mixed_multihop_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_multihop_transport.py", "validation/interop/peers/rns_multihop_endpoint.py", "validation/integration/examples/mixed_multihop_daemon.rs"]
+inputs = ["validation/interop/cases/mixed_multihop_interop_smoke.py", "validation/interop/cases/mixed_transport_topology.py", "validation/interop/harness.py", "validation/interop/peers/rns_multihop_transport.py", "validation/interop/peers/rns_multihop_endpoint.py", "validation/integration/examples/mixed_multihop_daemon.rs"]
 artifacts = "validation-artifacts/results/interop-mixed-multihop"
+
+[[suite]]
+id = "interop-transport-single"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "linux"
+toolchain = "stable"
+interpreter = "smoke"
+timeout_seconds = 420
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.transport_single_interop_smoke"]
+inputs = ["validation/interop/cases/transport_single_interop_smoke.py", "validation/interop/cases/mixed_transport_topology.py", "validation/interop/harness.py", "validation/interop/peers/rns_multihop_transport.py", "validation/interop/peers/rns_multihop_endpoint.py", "validation/integration/examples/mixed_multihop_daemon.rs"]
+artifacts = "validation-artifacts/results/interop-transport-single"
+
+[[suite]]
+id = "interop-cold-path-request"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "linux"
+toolchain = "stable"
+interpreter = "smoke"
+timeout_seconds = 420
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.cold_path_request_interop_smoke"]
+inputs = ["validation/interop/cases/cold_path_request_interop_smoke.py", "validation/interop/cases/mixed_transport_topology.py", "validation/interop/harness.py", "validation/interop/peers/rns_multihop_transport.py", "validation/interop/peers/rns_multihop_endpoint.py", "validation/integration/examples/mixed_multihop_daemon.rs"]
+artifacts = "validation-artifacts/results/interop-cold-path-request"
+
+[[suite]]
+id = "interop-route-replacement"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "linux"
+toolchain = "stable"
+interpreter = "smoke"
+timeout_seconds = 420
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.route_replacement_interop_smoke"]
+inputs = ["validation/interop/cases/route_replacement_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_multihop_transport.py", "validation/interop/peers/rns_route_replacement_peer.py", "validation/integration/examples/mixed_multihop_daemon.rs"]
+artifacts = "validation-artifacts/results/interop-route-replacement"
 
 [[suite]]
 id = "interop-ifac-tcp"
