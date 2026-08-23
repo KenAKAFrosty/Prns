@@ -1148,6 +1148,19 @@ inputs = ["validation/interop/cases/tcp_interop_smoke.py", "validation/interop/h
 artifacts = "validation-artifacts/results/interop-tcp"
 
 [[suite]]
+id = "interop-buffer-stream"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "linux"
+toolchain = "stable"
+interpreter = "smoke"
+timeout_seconds = 420
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.buffer_stream_interop_smoke"]
+inputs = ["validation/interop/cases/buffer_stream_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_buffer_stream_server.py", "validation/integration/examples/rns_interop_peer"]
+artifacts = "validation-artifacts/results/interop-buffer-stream"
+
+[[suite]]
 id = "interop-channel"
 domain = "interop"
 group = "essential"

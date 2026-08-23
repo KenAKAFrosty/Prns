@@ -11,7 +11,7 @@ directions.
 For Prns, a checked item has registered black-box or live evidence against the
 stock RNS release pinned by
 [`validation/manifest.toml`](../validation/manifest.toml). An unchecked item
-marks a gap in Prns's registered evidence, not necessarily missing Prns behavior. Internal unit tests or implementation support alone do not check an item. Prns currently has registered evidence for 26 of these 28 operations. Each linked `[x]` opens the executable case providing the primary evidence for that check; one suite may substantiate several observable operations.
+marks a gap in Prns's registered evidence, not necessarily missing Prns behavior. Internal unit tests or implementation support alone do not check an item. Prns currently has registered evidence for 27 of these 28 operations. Each linked `[x]` opens the executable case providing the primary evidence for that check; one suite may substantiate several observable operations.
 
 ## Identity and destinations
 
@@ -74,7 +74,7 @@ marks a gap in Prns's registered evidence, not necessarily missing Prns behavior
 - [\[x\]](../validation/interop/cases/channel_interop_smoke.py) **Channel messages**
   - Exchange multiple typed messages both ways and confirm exact order and
     acknowledgements.
-- [ ] **Buffer streams**
+- [\[x\]](../validation/interop/cases/buffer_stream_interop_smoke.py) **Buffer streams**
   - Exchange exact bytes across different write and read boundaries and confirm clean
     EOF both ways.
 

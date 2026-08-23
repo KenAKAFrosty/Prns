@@ -1,4 +1,5 @@
 mod announce_app_data;
+mod buffer_stream;
 mod channel;
 mod common;
 mod large_request;
@@ -13,6 +14,7 @@ mod udp;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Scenario {
     AnnounceAppData,
+    BufferStream,
     Channel,
     LargeRequest,
     LinkClosure,
@@ -33,6 +35,7 @@ impl Scenario {
     fn parse(value: &str) -> Result<Self, UnknownScenario> {
         match value {
             "announce-app-data" => Ok(Self::AnnounceAppData),
+            "buffer-stream" => Ok(Self::BufferStream),
             "channel" => Ok(Self::Channel),
             "large-request" => Ok(Self::LargeRequest),
             "link-closure" => Ok(Self::LinkClosure),
@@ -71,6 +74,7 @@ async fn main() {
     };
     match scenario {
         Scenario::AnnounceAppData => report(announce_app_data::run().await),
+        Scenario::BufferStream => report(buffer_stream::run().await),
         Scenario::Channel => report(channel::run().await),
         Scenario::LargeRequest => report(large_request::run().await),
         Scenario::LinkClosure => report(link_closure::run().await),
