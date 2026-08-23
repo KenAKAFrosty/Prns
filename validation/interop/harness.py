@@ -104,8 +104,38 @@ def run_checked(
     working_directory: Path = ROOT,
     command_environment: Mapping[str, str] | None = None,
 ) -> str:
+    result = _run_text_command(command, failure, working_directory, command_environment)
+    if result.returncode != 0:
+        output = result.stdout.rstrip()
+        detail = f"{failure}\n{output}" if output else failure
+        raise InteropFailure(FailureKind.COMMAND_FAILED, detail)
+    return result.stdout
+
+
+def run_expect_status(
+    command: Sequence[str],
+    expected_status: int,
+    failure: str,
+    working_directory: Path = ROOT,
+    command_environment: Mapping[str, str] | None = None,
+) -> str:
+    result = _run_text_command(command, failure, working_directory, command_environment)
+    if result.returncode != expected_status:
+        output = result.stdout.rstrip()
+        status_failure = f"{failure}: expected status {expected_status}, got {result.returncode}"
+        detail = f"{status_failure}\n{output}" if output else status_failure
+        raise InteropFailure(FailureKind.COMMAND_FAILED, detail)
+    return result.stdout
+
+
+def _run_text_command(
+    command: Sequence[str],
+    failure: str,
+    working_directory: Path,
+    command_environment: Mapping[str, str] | None,
+) -> subprocess.CompletedProcess[str]:
     try:
-        result = subprocess.run(
+        return subprocess.run(
             command,
             cwd=working_directory,
             stdout=subprocess.PIPE,
@@ -116,11 +146,37 @@ def run_checked(
         )
     except OSError as error:
         raise InteropFailure(FailureKind.COMMAND_FAILED, f"{failure}: {error}") from error
+
+
+def run_checked_bytes(
+    command: Sequence[str],
+    failure: str,
+    standard_input: bytes | None = None,
+    working_directory: Path = ROOT,
+    command_environment: Mapping[str, str] | None = None,
+) -> bytes:
+    try:
+        result = subprocess.run(
+            command,
+            cwd=working_directory,
+            input=standard_input,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            env=command_environment,
+        )
+    except OSError as error:
+        raise InteropFailure(FailureKind.COMMAND_FAILED, f"{failure}: {error}") from error
     if result.returncode != 0:
-        output = result.stdout.rstrip()
+        output = result.stderr.decode("utf-8", errors="replace").rstrip()
         detail = f"{failure}\n{output}" if output else failure
         raise InteropFailure(FailureKind.COMMAND_FAILED, detail)
     return result.stdout
+
+
+def require_evidence(condition: bool, failure: str) -> None:
+    if not condition:
+        raise InteropFailure(FailureKind.EVIDENCE_MISSING, failure)
 
 
 def require_output_marker(output: str, marker: str, failure: str) -> None:

@@ -1263,8 +1263,8 @@ platform = "linux"
 toolchain = "stable"
 interpreter = "rpc"
 timeout_seconds = 300
-command = ["bash", "validation/interop/cases/rnid-local-interop-smoke.sh"]
-inputs = ["validation/interop/cases/rnid-local-interop-smoke.sh", "validation/interop/peers/rns_rnid_oracle.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.rnid_local_interop_smoke"]
+inputs = ["validation/interop/cases/rnid_local_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_rnid_oracle.py", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-rnid-local"
 
 [[suite]]
@@ -1276,8 +1276,8 @@ platform = "linux"
 toolchain = "stable"
 interpreter = "rpc"
 timeout_seconds = 420
-command = ["bash", "validation/interop/cases/rnid-network-interop-smoke.sh"]
-inputs = ["validation/interop/cases/rnid-network-interop-smoke.sh", "validation/interop/peers/rns_rnid_network_server.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.rnid_network_interop_smoke"]
+inputs = ["validation/interop/cases/rnid_network_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_rnid_network_server.py", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-rnid-network"
 
 [[suite]]
@@ -1289,8 +1289,8 @@ platform = "linux"
 toolchain = "stable"
 interpreter = "rpc"
 timeout_seconds = 420
-command = ["bash", "validation/interop/cases/rnstatus-interop-smoke.sh"]
-inputs = ["validation/interop/cases/rnstatus-interop-smoke.sh", "validation/interop/peers/rns_rnstatus_server.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.rnstatus_interop_smoke"]
+inputs = ["validation/interop/cases/rnstatus_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_rnstatus_server.py", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-rnstatus"
 
 [[suite]]
@@ -1315,8 +1315,8 @@ platform = "linux"
 toolchain = "stable"
 interpreter = "rpc"
 timeout_seconds = 420
-command = ["bash", "validation/interop/cases/rnprobe-interop-smoke.sh"]
-inputs = ["validation/interop/cases/rnprobe-interop-smoke.sh", "validation/interop/peers/rns_rnprobe_server.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.rnprobe_interop_smoke"]
+inputs = ["validation/interop/cases/rnprobe_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_rnprobe_server.py", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-rnprobe"
 
 [[suite]]

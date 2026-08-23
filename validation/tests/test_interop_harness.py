@@ -18,9 +18,12 @@ from validation.interop.harness import (
     environment,
     forbid_output_marker,
     reference_python,
+    require_evidence,
     require_hex_output,
     require_output_marker,
     run_checked,
+    run_checked_bytes,
+    run_expect_status,
 )
 
 
@@ -48,10 +51,45 @@ class InteropHarnessTests(unittest.TestCase):
         )
         self.assertEqual(output, "configured\n")
 
+    def test_expected_status_command_preserves_output(self) -> None:
+        output = run_expect_status(
+            [sys.executable, "-c", "print('expected-evidence'); raise SystemExit(7)"],
+            7,
+            "command returned the wrong status",
+        )
+        self.assertEqual(output, "expected-evidence\n")
+
+    def test_expected_status_command_rejects_another_status(self) -> None:
+        with self.assertRaises(InteropFailure) as raised:
+            run_expect_status(
+                [sys.executable, "-c", "raise SystemExit(8)"],
+                7,
+                "command returned the wrong status",
+            )
+        self.assertEqual(raised.exception.kind, FailureKind.COMMAND_FAILED)
+        self.assertIn("expected status 7, got 8", raised.exception.detail)
+
+    def test_checked_binary_command_preserves_binary_standard_io(self) -> None:
+        output = run_checked_bytes(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read()[::-1])",
+            ],
+            "binary command failed",
+            standard_input=b"\x00\xff\x17",
+        )
+        self.assertEqual(output, b"\x17\xff\x00")
+
     def test_environment_can_remove_inherited_case_configuration(self) -> None:
         with mock.patch.dict(os.environ, {"CASE_VALUE": "inherited"}, clear=True):
             configured = environment({}, without=("CASE_VALUE",))
         self.assertNotIn("CASE_VALUE", configured)
+
+    def test_missing_evidence_is_structured(self) -> None:
+        with self.assertRaises(InteropFailure) as raised:
+            require_evidence(False, "missing result")
+        self.assertEqual(raised.exception.kind, FailureKind.EVIDENCE_MISSING)
 
     def test_missing_output_marker_is_structured(self) -> None:
         with self.assertRaises(InteropFailure) as raised:

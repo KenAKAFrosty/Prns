@@ -15,7 +15,7 @@ marks a gap in Prns's registered evidence, not necessarily missing Prns behavior
 
 ## Identity and destinations
 
-- [\[x\]](../validation/interop/cases/rnid-local-interop-smoke.sh) **Identity compatibility**
+- [\[x\]](../validation/interop/cases/rnid_local_interop_smoke.py) **Identity compatibility**
   - Load the same identity in both binaries, then confirm matching hashes,
     cross-compatible signatures, and cross-compatible encryption.
 - [\[x\]](../validation/interop/cases/tcp_interop_smoke.py) **SINGLE announcements**
