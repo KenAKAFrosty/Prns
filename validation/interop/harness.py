@@ -22,6 +22,7 @@ from validation.interop.peers.rns_protocol_evidence import (
 
 ROOT = Path(__file__).resolve().parents[2]
 PEER_STOP_TIMEOUT_SECONDS = 5
+WORKSPACE_CLEANUP_TIMEOUT_SECONDS = 10.0
 
 
 class FailureKind(Enum):
@@ -168,6 +169,8 @@ def run_expect_status_with_streams(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
             env=command_environment,
         )
@@ -196,6 +199,8 @@ def _run_text_command(
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
             env=command_environment,
         )
@@ -626,6 +631,17 @@ class InteropCase:
             print(f"{peer.spec.name} log:", file=sys.stderr)
             print(contents, file=sys.stderr, end="" if contents.endswith("\n") else "\n")
 
+    def _cleanup_workspace(self) -> None:
+        deadline = time.monotonic() + WORKSPACE_CLEANUP_TIMEOUT_SECONDS
+        while True:
+            try:
+                self._temporary.cleanup()
+                return
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.05)
+
     def __enter__(self) -> InteropCase:
         return self
 
@@ -640,7 +656,7 @@ class InteropCase:
             self.stop(peer)
         if kind is not None or evidence_failure is not None:
             self.print_logs()
-        self._temporary.cleanup()
+        self._cleanup_workspace()
         if evidence_failure is not None:
             raise evidence_failure
 
