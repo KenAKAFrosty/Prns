@@ -212,7 +212,15 @@ bash "$root/docs/website/tools/verify-web-flasher-production-boundary.sh" \
     "$candidate/website" \
     "$boundary_root/embedded"
 cd "$root"
-cargo doc --locked --no-deps --workspace --jobs 1
+rustdoc_packages="$root/target/flasher-rustdoc-workspace-packages.txt"
+cargo metadata --locked --no-deps --format-version 1 |
+    python3 "$root/tools/release/flasher_rustdoc.py" \
+        --list-workspace-packages > "$rustdoc_packages"
+test -s "$rustdoc_packages"
+rm -rf -- "$root/target/doc"
+while IFS= read -r package; do
+    cargo doc --locked --no-deps --package "$package" --jobs 1
+done < "$rustdoc_packages"
 python3 "$root/tools/release/flasher_rustdoc.py" \
     "$root/target/doc" \
     --current-crate docs
