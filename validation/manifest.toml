@@ -208,9 +208,10 @@ tiers = ["pr", "release", "scheduled"]
 platform = "linux"
 toolchain = "dotnet"
 timeout_seconds = 600
-command = ["bash", "validation/interop/cases/host-dotnet-contract-smoke.sh"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.host_dotnet_contract_smoke"]
 inputs = [
-  "validation/interop/cases/host-dotnet-contract-smoke.sh",
+  "validation/interop/cases/host_dotnet_contract_smoke.py",
+  "validation/interop/host_contract.py",
   "prns-host/abi/c",
   "prns-host/bindings/dotnet",
   "prns-host/conformance/interface-configs-v1.json",
@@ -255,9 +256,10 @@ tiers = ["pr", "release", "scheduled"]
 platform = "linux"
 toolchain = "python"
 timeout_seconds = 600
-command = ["bash", "validation/interop/cases/host-python-contract-smoke.sh"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.host_python_contract_smoke"]
 inputs = [
-  "validation/interop/cases/host-python-contract-smoke.sh",
+  "validation/interop/cases/host_python_contract_smoke.py",
+  "validation/interop/host_contract.py",
   "prns-host/abi/c",
   "prns-host/bindings/python",
   "prns-host/conformance/interface-configs-v1.json",
@@ -315,9 +317,10 @@ tiers = ["pr", "release", "scheduled"]
 platform = "linux"
 toolchain = "julia"
 timeout_seconds = 600
-command = ["bash", "validation/interop/cases/host-julia-contract-smoke.sh"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.host_julia_contract_smoke"]
 inputs = [
-  "validation/interop/cases/host-julia-contract-smoke.sh",
+  "validation/interop/cases/host_julia_contract_smoke.py",
+  "validation/interop/host_contract.py",
   "prns-host/abi/c",
   "prns-host/bindings/julia",
   "prns-host/conformance/interface-configs-v1.json",
@@ -335,9 +338,10 @@ tiers = ["pr", "release", "scheduled"]
 platform = "linux"
 toolchain = "jvm"
 timeout_seconds = 900
-command = ["bash", "validation/interop/cases/host-jvm-contract-smoke.sh"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.host_jvm_contract_smoke"]
 inputs = [
-  "validation/interop/cases/host-jvm-contract-smoke.sh",
+  "validation/interop/cases/host_jvm_contract_smoke.py",
+  "validation/interop/host_contract.py",
   "prns-host/abi/c",
   "prns-host/bindings/jvm",
   "prns-host/conformance/interface-configs-v1.json",
@@ -366,7 +370,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 300
 command = ["__RUNNER_PYTHON__", "-m", "unittest", "discover", "-s", "validation/tests", "-p", "test_*.py", "-v"]
-inputs = ["validation/run.py", "validation/tests/test_runner.py"]
+inputs = ["validation/run.py", "validation/tests"]
 artifacts = "validation-artifacts/results/validation-self-tests"
 
 [[suite]]
