@@ -152,7 +152,9 @@ jobs:
           done < <(find target/candidate/cli -maxdepth 1 -type f -name 'hopspot-flash-*' | sort)
           while IFS= read -r relative; do
             subjects+=(--subject "$relative" "target/candidate/$relative")
-          done < <(jq -r '[.targets[].parts[].path] | unique[]' target/candidate/flash-manifest.json)
+          done < <(
+            ./tools/prns release manifest artifacts -- target/candidate/flash-manifest.json
+          )
           ./tools/prns release attestation checksums -- \
             "${subjects[@]}" \
             --output target/release/attestation-subjects.sha256
@@ -178,7 +180,7 @@ jobs:
           done \
             < <(find target/candidate/cli -maxdepth 1 -type f -name 'hopspot-flash-*' | sort)
           mapfile -t firmware_paths < <(
-            jq -r '[.targets[].parts[].path] | unique[]' target/candidate/flash-manifest.json
+            ./tools/prns release manifest artifacts -- target/candidate/flash-manifest.json
           )
           for relative in "${firmware_paths[@]}"; do
             test -f "target/candidate/$relative"

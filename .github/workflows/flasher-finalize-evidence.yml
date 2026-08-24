@@ -198,7 +198,13 @@ jobs:
               --bundle "$bundle" \
               --signer-workflow "$signer_workflow" \
               --deny-self-hosted-runners
-          done < <(jq -r '[.targets[].parts[].path] | unique[]' target/candidate/flash-manifest.json)
+          done < <(
+            jq -r '
+              .subjects[]
+              | select(.name | startswith("firmware/"))
+              | .name
+            ' "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.metadata.json"
+          )
       - name: Select and verify the exact successful protected public review
         id: public_review
         env:

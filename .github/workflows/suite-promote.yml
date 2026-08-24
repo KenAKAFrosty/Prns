@@ -271,7 +271,13 @@ jobs:
               --bundle "$flasher_attestation" \
               --signer-workflow "$flasher_signer" \
               --deny-self-hosted-runners
-          done < <(jq -r '[.targets[].parts[].path] | unique[]' "$candidate/flash-manifest.json")
+          done < <(
+            jq -r '
+              .subjects[]
+              | select(.name | startswith("firmware/"))
+              | .name
+            ' "$assets/prns-flasher-attestation-v${version}.metadata.json"
+          )
       - name: Verify GitHub provenance for every native archive and OCI digest
         env:
           GH_TOKEN: ${{ github.token }}
