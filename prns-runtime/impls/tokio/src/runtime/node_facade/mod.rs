@@ -53,7 +53,7 @@ pub use persistence::{
     PreparedFlush, RatchetSeedReport, RegionFlush, RouteSeedProgress, RouteSeedReport, SaveOnLearn,
     SaveOnLearnWiring, TunnelSeedReport,
 };
-pub use remote_control::{RemoteControlError, RemoteControlHandle};
+pub use remote_control::RemoteControlHandle;
 pub use request_response::{RequestOptions, ResponseSendError};
 pub use resource_admission::{ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor};
 pub use resource_transfer::{

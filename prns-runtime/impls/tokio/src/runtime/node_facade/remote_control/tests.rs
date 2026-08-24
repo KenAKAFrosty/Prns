@@ -5,10 +5,11 @@ use crate::manifold::driver::HostCommand;
 use crate::routing::links::LinkId;
 use crate::runtime::request_endpoints::RequestEndpointId;
 use crate::runtime::{SendError, REMOTE_CONTROL_ENDPOINT_ID};
-use crate::units::{ByteLimit, RttMillis};
+use crate::units::RttMillis;
 use prns_core::remote_control::{
-    RemoteControlDescription, RemoteControlProtocolError, RemoteControlRequestKind,
-    RemoteControlResponse, RemoteControlResponseParseError,
+    RemoteControlDescription, RemoteControlProtocolError, RemoteControlProtocolVersion,
+    RemoteControlRequestKind, RemoteControlResponse, RemoteControlResponseKind,
+    RemoteControlResponseParseError,
 };
 
 use super::super::PrnsNodeHandle;
@@ -40,10 +41,18 @@ async fn describe_owns_the_remote_control_exchange_and_returns_the_typed_descrip
         request.path_hash,
         RequestEndpointId::of(REMOTE_CONTROL_ENDPOINT_ID),
     );
-    assert_eq!(request.data.as_slice(), &[0x01, 0x01]);
+    assert_eq!(
+        request.data.as_slice(),
+        &[
+            RemoteControlProtocolVersion::V1.wire_value(),
+            crate::runtime::RemoteControlDescribe::REQUEST
+                .kind()
+                .wire_value(),
+        ],
+    );
     assert_eq!(
         request.maximum_response_bytes,
-        ByteLimit::Maximum(RemoteControlResponse::MAX_ENCODED_LEN as u64),
+        crate::runtime::RemoteControlDescribe::MAXIMUM_RESPONSE_BYTES,
     );
     let response = RemoteControlResponse::Describe(RemoteControlDescription::default());
     assert!(request
@@ -105,9 +114,13 @@ async fn describe_preserves_transport_and_response_failures() {
     let Some(HostCommand::RequestAny(request)) = command_rx.recv().await else {
         panic!("describe issues a request command");
     };
+    let truncated_response = std::vec![
+        RemoteControlProtocolVersion::V1.wire_value(),
+        RemoteControlResponseKind::Describe.wire_value(),
+    ];
     assert!(request
         .completion
-        .send(Ok((std::vec![0x01, 0x01], RttMillis::new(39))))
+        .send(Ok((truncated_response, RttMillis::new(39))))
         .is_ok());
     assert!(matches!(
         requesting.await,

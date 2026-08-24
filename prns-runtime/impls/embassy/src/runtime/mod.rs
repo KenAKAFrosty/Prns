@@ -18,6 +18,7 @@ pub use node_facade::Fleet as EmbassyFleet;
 pub use node_facade::{
     minimum_manifold_notification_capacity, CompletionPool, Fleet, InboundDeliveryError,
     InterfaceLane, LaneClaimError, ManifoldLaneSet, ManifoldWiring, OutboundFrame, PrnsNode,
-    PrnsNodeHandle, RequestRoutingCapacity, StaticManifoldLane, SupervisorLane,
+    PrnsNodeHandle, RemoteControlHandle, RequestResponseData, RequestRoutingCapacity,
+    StaticManifoldLane, SupervisorLane,
 };
 pub use shared_flash::SharedNorFlash;

@@ -2,8 +2,8 @@ pub use crate::{
     request_endpoints, CommandId, DestinationHash, Diagnostic, InterfaceStatus, ManuallyAttached,
     Message, NoPersistence, PacketReceiptDelivered, PreConfiguredDestination, PrnsCommand,
     PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, ProofStrategy, RatchetPolicy, RemoteControlEndpoint,
-    RemoteControlEndpointState, ResourceMemoryLimits, ResourceStrategy, RuntimeHealth, SendError,
-    Zeroizing, IDENTITY_SECRET_KEY_LEN, REMOTE_CONTROL_ENDPOINT_ID,
+    RemoteControlEndpointState, RemoteControlError, ResourceMemoryLimits, ResourceStrategy,
+    RuntimeHealth, SendError, Zeroizing, IDENTITY_SECRET_KEY_LEN, REMOTE_CONTROL_ENDPOINT_ID,
 };
 
 pub use crate::remote_control::{
@@ -39,7 +39,7 @@ pub use crate::Esp32S3;
 #[cfg(feature = "tokio-host")]
 pub use crate::{
     fill_os_entropy, try_generate_identity_secret, AttachIntent, Attachable, AttachedInterface,
-    AttachedSupervisor, Fleet, PrnsNode, PrnsNodeHandle, RemoteControlError, RemoteControlHandle,
+    AttachedSupervisor, Fleet, PrnsNode, PrnsNodeHandle, RemoteControlHandle,
 };
 
 #[cfg(feature = "tokio-host")]
@@ -50,10 +50,10 @@ pub use crate::runtime::{
 };
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
-pub use crate::{Fleet, PrnsNode, PrnsNodeHandle};
+pub use crate::{Fleet, PrnsNode, PrnsNodeHandle, RemoteControlHandle};
 
 #[cfg(all(feature = "embassy-host", feature = "tokio-host"))]
-pub use crate::{EmbassyPrnsNode, EmbassyPrnsNodeHandle};
+pub use crate::{EmbassyPrnsNode, EmbassyPrnsNodeHandle, EmbassyRemoteControlHandle};
 
 #[cfg(all(feature = "ax25", feature = "tokio-host"))]
 pub use crate::ax25_kiss::Ax25KissInterface;

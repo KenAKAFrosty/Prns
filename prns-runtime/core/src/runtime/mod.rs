@@ -44,7 +44,8 @@ pub use node::{
     PreConfiguredDestination, PrnsNodeRecipe, ServeMyRequestEndpoints,
 };
 pub use remote_control::{
-    RemoteControlEndpoint, RemoteControlEndpointState, REMOTE_CONTROL_ENDPOINT_ID,
+    RemoteControlDescribe, RemoteControlEndpoint, RemoteControlEndpointState, RemoteControlError,
+    REMOTE_CONTROL_ENDPOINT_ID,
 };
 
 #[doc(hidden)]

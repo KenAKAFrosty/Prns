@@ -119,22 +119,29 @@ pub(super) async fn run_router<
     M,
     const COMMANDS: usize,
     const COMPLETIONS: usize,
+    const REQUEST_COMPLETIONS: usize,
+    const RESPONSE_BYTES: usize,
     const REQUESTS: usize,
     const REQUEST_BYTES: usize,
 >(
     state: &St,
     requests: Receiver<'_, M, RunnerRequest<REQUEST_BYTES>, REQUESTS>,
-    commands: PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS>,
+    commands: PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
 ) where
     R: RequestEndpointSet<St>,
     M: RawMutex,
 {
     loop {
-        dispatch::<St, R, M, COMMANDS, COMPLETIONS, REQUEST_BYTES>(
-            state,
-            commands,
-            requests.receive().await,
-        )
+        dispatch::<
+            St,
+            R,
+            M,
+            COMMANDS,
+            COMPLETIONS,
+            REQUEST_COMPLETIONS,
+            RESPONSE_BYTES,
+            REQUEST_BYTES,
+        >(state, commands, requests.receive().await)
         .await;
     }
 }
@@ -145,10 +152,12 @@ async fn dispatch<
     M,
     const COMMANDS: usize,
     const COMPLETIONS: usize,
+    const REQUEST_COMPLETIONS: usize,
+    const RESPONSE_BYTES: usize,
     const REQUEST_BYTES: usize,
 >(
     state: &St,
-    commands: PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS>,
+    commands: PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
     request: RunnerRequest<REQUEST_BYTES>,
 ) where
     R: RequestEndpointSet<St>,
@@ -283,7 +292,7 @@ mod tests {
             data: HeaplessVec::<u8, 16>::new(),
         };
 
-        block_on(dispatch::<(), StaticRoutes, M, 1, 1, 16>(
+        block_on(dispatch::<(), StaticRoutes, M, 1, 1, 0, 0, 16>(
             &(),
             handle,
             request,
@@ -322,7 +331,7 @@ mod tests {
             data: HeaplessVec::<u8, 16>::new(),
         };
 
-        block_on(dispatch::<(), DestinationRoutes, M, 1, 1, 16>(
+        block_on(dispatch::<(), DestinationRoutes, M, 1, 1, 0, 0, 16>(
             &(),
             handle,
             request,

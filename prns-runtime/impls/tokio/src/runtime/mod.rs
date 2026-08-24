@@ -37,12 +37,12 @@ pub use node_facade::{
     NonRoutingIdentityError, PersistenceEvent, PersistenceFlushStatus, PersistenceIntent,
     PersistenceRestoreReport, PersistenceTrigger, PersistenceWorker, PrepareFlushError,
     PreparedFlush, PreparedResourceReceiver, PrnsNode, PrnsNodeHandle, RatchetSeedReport,
-    RegionFlush, RegisterRequestEndpointError, RemoteControlError, RemoteControlHandle,
-    RequestOptions, RequestPathError, ResourceAdmissionPeer, ResourceOfferAdmission,
-    ResourceOfferMonitor, ResourceProgress, ResourceReceipt, ResourceReceiveError,
-    ResourceSendError, ResponseSendError, RouteSeedProgress, RouteSeedReport,
-    RuntimeRequestHandlerError, SaveOnLearn, SaveOnLearnWiring, SegmentCompression,
-    SharedInstanceIdentityError, StreamId, TunnelSeedReport, AUTO_COMPRESS_MAX_LEN,
+    RegionFlush, RegisterRequestEndpointError, RemoteControlHandle, RequestOptions,
+    RequestPathError, ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor,
+    ResourceProgress, ResourceReceipt, ResourceReceiveError, ResourceSendError, ResponseSendError,
+    RouteSeedProgress, RouteSeedReport, RuntimeRequestHandlerError, SaveOnLearn, SaveOnLearnWiring,
+    SegmentCompression, SharedInstanceIdentityError, StreamId, TunnelSeedReport,
+    AUTO_COMPRESS_MAX_LEN,
 };
 #[cfg(feature = "rnx")]
 pub use process_commands::ProcessCommands;

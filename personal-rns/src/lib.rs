@@ -81,8 +81,8 @@ pub use prns_runtime::routing::links::resources::{ResourceMemoryLimits, Resource
 pub use prns_runtime::routing::ProofStrategy;
 pub use prns_runtime::runtime::{
     Diagnostic, ManuallyAttached, Message, NoPersistence, PreConfiguredDestination, PrnsEvent,
-    PrnsNodeApi, PrnsNodeRecipe, RemoteControlEndpoint, RemoteControlEndpointState, RuntimeHealth,
-    SendError, REMOTE_CONTROL_ENDPOINT_ID,
+    PrnsNodeApi, PrnsNodeRecipe, RemoteControlEndpoint, RemoteControlEndpointState,
+    RemoteControlError, RuntimeHealth, SendError, REMOTE_CONTROL_ENDPOINT_ID,
 };
 pub use prns_runtime::wire::{DestinationHash, TransportId};
 
@@ -98,7 +98,7 @@ pub use prns_runtime_tokio::runtime::{
     load_or_create_browser_rendezvous_id, load_or_create_browser_selection_seed,
     load_or_create_identity_secret, try_generate_identity_secret, AttachIntent, Attachable,
     AttachedInterface, AttachedSupervisor, Fleet, IdentitySecretFileError, LocalIdentityFileError,
-    OsEntropyError, PrnsNode, PrnsNodeHandle, RemoteControlError, RemoteControlHandle,
+    OsEntropyError, PrnsNode, PrnsNodeHandle, RemoteControlHandle,
 };
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
@@ -106,7 +106,8 @@ pub use prns_runtime_embassy::runtime::{
     EmbeddedCompactionPolicy, EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic,
     EmbeddedPersistenceFailure, EmbeddedPersistencePolicy, EmbeddedPersistenceRestoreReport,
     EmbeddedPersistenceTarget, FixedRouteSnapshotKeys, Fleet, PrnsNode, PrnsNodeHandle,
-    RouteSnapshotKeyError, RouteSnapshotKeys, SharedNorFlash,
+    RemoteControlHandle, RequestResponseData, RouteSnapshotKeyError, RouteSnapshotKeys,
+    SharedNorFlash,
 };
 
 #[cfg(all(feature = "embassy-host", feature = "tokio-host"))]
@@ -114,8 +115,8 @@ pub use prns_runtime_embassy::runtime::{
     EmbeddedCompactionPolicy, EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic,
     EmbeddedPersistenceFailure, EmbeddedPersistencePolicy, EmbeddedPersistenceRestoreReport,
     EmbeddedPersistenceTarget, FixedRouteSnapshotKeys, PrnsNode as EmbassyPrnsNode,
-    PrnsNodeHandle as EmbassyPrnsNodeHandle, RouteSnapshotKeyError, RouteSnapshotKeys,
-    SharedNorFlash,
+    PrnsNodeHandle as EmbassyPrnsNodeHandle, RemoteControlHandle as EmbassyRemoteControlHandle,
+    RequestResponseData, RouteSnapshotKeyError, RouteSnapshotKeys, SharedNorFlash,
 };
 
 #[cfg(all(

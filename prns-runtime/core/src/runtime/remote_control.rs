@@ -1,11 +1,67 @@
+use crate::engine::SendRequestFailure;
 use crate::remote_control::{
-    RemoteControlAccessTable, RemoteControlDescription, RemoteControlProtocolError,
-    RemoteControlRequest, RemoteControlResponse,
+    RemoteControlAccessTable, RemoteControlDescription, RemoteControlMessageWriteError,
+    RemoteControlProtocolError, RemoteControlRequest, RemoteControlResponse,
+    RemoteControlResponseParseError,
 };
+use crate::units::ByteLimit;
 
 use super::request_endpoints::{Decline, RequestContext, RequestEndpoint, RequestEndpointPolicy};
+use super::SendError;
 
 pub const REMOTE_CONTROL_ENDPOINT_ID: &str = "/remote-control";
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum RemoteControlError {
+    Encode(RemoteControlMessageWriteError),
+    Request(SendError<SendRequestFailure>),
+    Response(RemoteControlResponseParseError),
+    Remote(RemoteControlProtocolError),
+}
+
+impl core::fmt::Display for RemoteControlError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Encode(error) => write!(
+                formatter,
+                "remote control request encoding failed: {error:?}"
+            ),
+            Self::Request(error) => write!(formatter, "remote control request failed: {error:?}"),
+            Self::Response(error) => {
+                write!(formatter, "remote control response was invalid: {error:?}")
+            }
+            Self::Remote(error) => write!(
+                formatter,
+                "remote control peer refused the request: {error:?}"
+            ),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for RemoteControlError {}
+
+pub struct RemoteControlDescribe;
+
+impl RemoteControlDescribe {
+    pub const REQUEST: RemoteControlRequest = RemoteControlRequest::Describe;
+    pub const RESPONSE_CAPACITY: usize = RemoteControlResponse::MAX_ENCODED_LEN;
+    pub const MAXIMUM_RESPONSE_BYTES: ByteLimit =
+        ByteLimit::Maximum(Self::RESPONSE_CAPACITY as u64);
+
+    pub fn write_request(out: &mut [u8]) -> Result<usize, RemoteControlError> {
+        Self::REQUEST
+            .write_into(out)
+            .map_err(RemoteControlError::Encode)
+    }
+
+    pub fn parse_response(bytes: &[u8]) -> Result<RemoteControlDescription, RemoteControlError> {
+        match RemoteControlResponse::parse(bytes).map_err(RemoteControlError::Response)? {
+            RemoteControlResponse::Describe(description) => Ok(description),
+            RemoteControlResponse::ProtocolError(error) => Err(RemoteControlError::Remote(error)),
+        }
+    }
+}
 
 pub trait RemoteControlEndpointState {
     type AccessTable: RemoteControlAccessTable;
@@ -55,7 +111,8 @@ mod tests {
         read_remote_control_access_snapshot, write_remote_control_access_snapshot,
     };
     use crate::remote_control::{
-        FixedRemoteControlAccessTable, RemoteControlIdentity, RemoteControlRequestKind,
+        FixedRemoteControlAccessTable, RemoteControlIdentity, RemoteControlProtocolVersion,
+        RemoteControlRequestKind,
     };
     use crate::routing::links::request::RequestId;
     use crate::routing::links::LinkId;
@@ -134,6 +191,42 @@ mod tests {
             .write_into(&mut request)
             .unwrap();
         request
+    }
+
+    #[test]
+    fn describe_exchange_owns_its_wire_contract() {
+        let mut request = [0u8; RemoteControlDescribe::REQUEST.encoded_len()];
+        assert_eq!(
+            RemoteControlDescribe::write_request(&mut request),
+            Ok(request.len()),
+        );
+        assert_eq!(
+            request,
+            [
+                RemoteControlProtocolVersion::V1.wire_value(),
+                RemoteControlDescribe::REQUEST.kind().wire_value(),
+            ],
+        );
+        assert_eq!(
+            RemoteControlDescribe::MAXIMUM_RESPONSE_BYTES,
+            ByteLimit::Maximum(RemoteControlResponse::MAX_ENCODED_LEN as u64),
+        );
+
+        let response = RemoteControlResponse::Describe(RemoteControlDescription::default());
+        let mut encoded = [0u8; RemoteControlResponse::MAX_ENCODED_LEN];
+        let encoded_len = response.write_into(&mut encoded).unwrap();
+        assert_eq!(
+            RemoteControlDescribe::parse_response(&encoded[..encoded_len]),
+            Ok(RemoteControlDescription::default()),
+        );
+
+        let protocol_error = RemoteControlProtocolError::UnknownRequestKind { found: 0xA5 };
+        let response = RemoteControlResponse::ProtocolError(protocol_error);
+        let encoded_len = response.write_into(&mut encoded).unwrap();
+        assert_eq!(
+            RemoteControlDescribe::parse_response(&encoded[..encoded_len]),
+            Err(RemoteControlError::Remote(protocol_error)),
+        );
     }
 
     #[test]
