@@ -115,6 +115,10 @@ fn expand_export_path(value: &str, home: &Path) -> PathBuf {
 }
 
 fn collect_xtensa_toolchain_bins(root: &Path, path_entries: &mut Vec<PathBuf>) {
+    let flat_bin = root.join("bin");
+    if flat_bin.is_dir() {
+        path_entries.push(flat_bin);
+    }
     let Ok(releases) = fs::read_dir(root) else {
         return;
     };
@@ -128,13 +132,25 @@ fn collect_xtensa_toolchain_bins(root: &Path, path_entries: &mut Vec<PathBuf>) {
 }
 
 fn find_on_path(binary: &str, path: &OsString) -> Option<PathBuf> {
-    env::split_paths(path)
-        .map(|dir| dir.join(binary))
-        .find(|candidate| candidate.is_file())
+    env::split_paths(path).find_map(|dir| {
+        let candidate = dir.join(binary);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        if !env::consts::EXE_SUFFIX.is_empty() {
+            let candidate = dir.join(format!("{binary}{}", env::consts::EXE_SUFFIX));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+        None
+    })
 }
 
 fn home_dir() -> Option<PathBuf> {
-    env::var_os("HOME").map(PathBuf::from)
+    env::var_os("HOME")
+        .or_else(|| env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
 }
 
 pub(crate) fn rust_host_triple() -> Result<String, AppError> {
