@@ -13,9 +13,11 @@
 
 mod core;
 mod impls;
+mod message;
 
 pub use self::core::*;
 pub use impls::*;
+pub use message::*;
 
 #[cfg(test)]
 mod tests;

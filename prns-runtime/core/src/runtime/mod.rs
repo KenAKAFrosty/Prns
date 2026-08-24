@@ -5,6 +5,7 @@ mod identity_blackhole;
 pub mod node;
 pub mod node_introspection;
 pub mod packet_phy_retention;
+mod remote_control;
 pub mod request_endpoints;
 #[cfg(feature = "rns-management")]
 pub mod rns_management;
@@ -41,6 +42,9 @@ pub use node::{
     assemble_node, configure_preconfigured_destination, AssembledNode,
     ConfigurePreconfiguredDestinationError, ManuallyAttached, NoPersistence,
     PreConfiguredDestination, PrnsNodeRecipe, ServeMyRequestEndpoints,
+};
+pub use remote_control::{
+    RemoteControlEndpoint, RemoteControlEndpointState, REMOTE_CONTROL_ENDPOINT_ID,
 };
 
 #[doc(hidden)]

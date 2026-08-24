@@ -2898,7 +2898,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
 }
 
 #[test]
-fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
+fn an_identified_request_policy_passes_packets_only_after_the_peer_identifies() {
     use crate::engine::{
         Identify, PacketReceiptDelivered, Respond, RespondData, SendRequest, SendRequestData,
         SendRequestFailure,
@@ -2933,11 +2933,8 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
         .register_request_handler(
             &personal_node_destination(),
             "/status",
-            RequestPolicy::AllowList,
+            RequestPolicy::RequireIdentified,
         )
-        .unwrap();
-    responder
-        .allow_requester(&personal_node_destination(), "/status", asker)
         .unwrap();
 
     let command = |engine: &mut EngineState<TestStorageLayout>,

@@ -1,9 +1,21 @@
 pub use crate::{
     request_endpoints, CommandId, DestinationHash, Diagnostic, InterfaceStatus, ManuallyAttached,
     Message, NoPersistence, PacketReceiptDelivered, PreConfiguredDestination, PrnsCommand,
-    PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, ProofStrategy, RatchetPolicy, ResourceMemoryLimits,
-    ResourceStrategy, RuntimeHealth, SendError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
+    PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, ProofStrategy, RatchetPolicy, RemoteControlEndpoint,
+    RemoteControlEndpointState, ResourceMemoryLimits, ResourceStrategy, RuntimeHealth, SendError,
+    Zeroizing, IDENTITY_SECRET_KEY_LEN, REMOTE_CONTROL_ENDPOINT_ID,
 };
+
+pub use crate::remote_control::{
+    RemoteControlAccessTable, RemoteControlDescription, RemoteControlIdentity,
+    RemoteControlMessageWriteError, RemoteControlProtocolError, RemoteControlProtocolErrorKind,
+    RemoteControlProtocolVersion, RemoteControlRequest, RemoteControlRequestKind,
+    RemoteControlRequestParseError, RemoteControlRequestSet, RemoteControlResponse,
+    RemoteControlResponseKind, RemoteControlResponseParseError,
+};
+
+#[cfg(feature = "alloc")]
+pub use crate::remote_control::HeapRemoteControlAccessTable;
 
 pub use crate::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, PersistenceFlushCause, PersistenceFlushTarget,

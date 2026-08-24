@@ -81,7 +81,8 @@ pub use prns_runtime::routing::links::resources::{ResourceMemoryLimits, Resource
 pub use prns_runtime::routing::ProofStrategy;
 pub use prns_runtime::runtime::{
     Diagnostic, ManuallyAttached, Message, NoPersistence, PreConfiguredDestination, PrnsEvent,
-    PrnsNodeApi, PrnsNodeRecipe, RuntimeHealth, SendError,
+    PrnsNodeApi, PrnsNodeRecipe, RemoteControlEndpoint, RemoteControlEndpointState, RuntimeHealth,
+    SendError, REMOTE_CONTROL_ENDPOINT_ID,
 };
 pub use prns_runtime::wire::{DestinationHash, TransportId};
 

@@ -26,11 +26,11 @@ impl RequestPathHash {
     }
 }
 
-/// RNS 1.4.2 `Destination.ALLOW_NONE / ALLOW_ALL / ALLOW_LIST`. `AllowNone` is the reference's registration default: the handler exists but answers no one until the policy says otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequestPolicy {
     AllowNone,
     AllowAll,
+    RequireIdentified,
     AllowList,
 }
 
@@ -154,7 +154,6 @@ impl<C: RequestHandlerTable> RequestHandlers<C> {
         Ok(())
     }
 
-    /// RNS 1.4.2 `Link.handle_request`'s gate, exactly: no handler refuses, `AllowNone` refuses, `AllowAll` permits, `AllowList` permits only a link whose peer has identified as a listed identity.
     pub fn permits(
         &self,
         destination: &DestinationHash,
@@ -167,6 +166,7 @@ impl<C: RequestHandlerTable> RequestHandlers<C> {
         match self.table.policies()[slot] {
             RequestPolicy::AllowNone => false,
             RequestPolicy::AllowAll => true,
+            RequestPolicy::RequireIdentified => remote_identity.is_some(),
             RequestPolicy::AllowList => remote_identity
                 .is_some_and(|identity| self.table.allowed_contains_at(slot, identity)),
         }
@@ -220,6 +220,12 @@ mod tests {
             !handlers.permits(&dest(1), &RequestPathHash::of("/other"), None),
             "an unregistered path stays silent",
         );
+
+        handlers
+            .register(dest(1), path, RequestPolicy::RequireIdentified)
+            .unwrap();
+        assert!(!handlers.permits(&dest(1), &path, None));
+        assert!(handlers.permits(&dest(1), &path, Some(&identity(0xAA))));
 
         handlers
             .register(dest(1), path, RequestPolicy::AllowList)

@@ -12,6 +12,7 @@ use crate::wire::DestinationHash;
 pub enum RequestEndpointPolicy {
     AllowNone,
     AllowAll,
+    RequireIdentified,
     AllowList(&'static [IdentityHash]),
 }
 
@@ -21,6 +22,7 @@ impl RequestEndpointPolicy {
         match self {
             RequestEndpointPolicy::AllowNone => RequestPolicy::AllowNone,
             RequestEndpointPolicy::AllowAll => RequestPolicy::AllowAll,
+            RequestEndpointPolicy::RequireIdentified => RequestPolicy::RequireIdentified,
             RequestEndpointPolicy::AllowList(_) => RequestPolicy::AllowList,
         }
     }
@@ -443,6 +445,15 @@ mod tests {
         }
     }
 
+    struct Identified;
+    impl RequestEndpoint<App> for Identified {
+        const ENDPOINT_ID: &'static str = "/identified";
+        const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::RequireIdentified;
+        async fn handle(_cx: RequestContext<'_, App>) -> Result<(), Decline> {
+            Ok(())
+        }
+    }
+
     struct Ack;
     impl RequestEndpoint<App> for Ack {
         const ENDPOINT_ID: &'static str = "/ack";
@@ -460,8 +471,10 @@ mod tests {
 
     #[test]
     fn the_endpoint_set_is_the_registration_set_the_recipe_stands_up() {
-        let registrations = registrations(crate::request_endpoints![Health, Greet, Admin, Ack]);
-        assert_eq!(registrations.len(), 4);
+        let registrations = registrations(crate::request_endpoints![
+            Health, Greet, Admin, Identified, Ack
+        ]);
+        assert_eq!(registrations.len(), 5);
         assert_eq!(
             registrations[0],
             ("/health", RequestEndpointPolicy::AllowAll)
@@ -469,6 +482,11 @@ mod tests {
         assert_eq!(registrations[2].0, "/admin");
         assert_eq!(registrations[2].1.engine_policy(), RequestPolicy::AllowList);
         assert_eq!(registrations[2].1.seed_list(), &[ADMIN]);
+        assert_eq!(
+            registrations[3].1.engine_policy(),
+            RequestPolicy::RequireIdentified,
+        );
+        assert!(registrations[3].1.seed_list().is_empty());
         assert_eq!(registrations[0].1.engine_policy(), RequestPolicy::AllowAll);
         assert!(registrations[0].1.seed_list().is_empty());
     }
