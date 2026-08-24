@@ -84,12 +84,12 @@ lxmf.addEventListener("message", async (event) => {
 console.log(`ECHO_DESTINATION ${toHex(lxmf.deliveryDest.destinationHash)}`);
 console.log("ECHO_WAITING_FOR_SENDER");
 await waitForReadySignal();
-await lxmf.announce("Bergie KISS echo bot");
+await lxmf.startAnnouncing("Bergie KISS echo bot", { intervalMs: 60_000 });
 console.log("ECHO_ANNOUNCED");
 failureTimer = setTimeout(async () => {
   console.error("ECHO_TIMEOUT");
   await stop(1);
-}, 30000);
+}, 160000);
 process.on("SIGTERM", () => {
   stop(0).catch(() => {});
 });

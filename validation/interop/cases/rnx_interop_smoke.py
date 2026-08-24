@@ -25,6 +25,10 @@ STOCK_ORACLE = ROOT / "validation/interop/peers/rns_rnx_oracle.py"
 SUCCESS = "PASS: Prnsd x exchanges authenticated execution requests and results with stock RNS rnx"
 
 
+def portable_emit_command(python: Path, text: str) -> str:
+    return f"'{python}' -c \"import sys; sys.stdout.write('{text}')\""
+
+
 def run() -> None:
     python = reference_python("RPC_SMOKE_PYTHON")
     stock_rnx = reference_utility("rnx")
@@ -161,7 +165,7 @@ def run() -> None:
                 "-w",
                 "5",
                 candidate_destination,
-                "printf stock-to-prns",
+                portable_emit_command(python, "stock-to-prns"),
             ),
             "stock rnx could not execute through the Prns listener",
         )
@@ -183,7 +187,7 @@ def run() -> None:
                     "-w",
                     "2",
                     candidate_destination,
-                    "printf denied",
+                    portable_emit_command(python, "denied"),
                 ),
                 environment({}),
             )

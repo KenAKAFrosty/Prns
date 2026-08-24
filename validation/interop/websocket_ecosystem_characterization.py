@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -150,8 +151,11 @@ EXPECTED_RUNTIME = {
 
 
 def run(command: list[str], cwd: Path) -> str:
+    executable = shutil.which(command[0])
+    if executable is None:
+        raise RuntimeError(f"required command {command[0]!r} is unavailable")
     completed = subprocess.run(
-        command,
+        [executable, *command[1:]],
         cwd=cwd,
         env=environment({"PYTHONDONTWRITEBYTECODE": "1"}),
         check=False,
@@ -184,6 +188,8 @@ def checkout(upstream: Upstream, checkout_root: Path) -> Path:
         return destination
     destination.mkdir(parents=True)
     run(["git", "init", "--quiet"], destination)
+    run(["git", "config", "core.autocrlf", "false"], destination)
+    run(["git", "config", "core.eol", "lf"], destination)
     run(["git", "remote", "add", "origin", upstream.repository], destination)
     run(
         ["git", "fetch", "--quiet", "--depth", "1", "origin", upstream.commit],

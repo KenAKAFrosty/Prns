@@ -110,6 +110,7 @@ def serve(config_dir, listener_path, expected_client_path, save_path, fetch_path
         while target.exists():
             counter += 1
             target = save_path.joinpath(f"{name}.{counter}")
+        resource.data.close()
         shutil.move(resource.data.name, target)
         if name == "prns-send.bin":
             print(f"RNCP_SINGLE_SEGMENT_RECEIVED name={name} segments={segments}", flush=True)

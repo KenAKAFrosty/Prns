@@ -53,7 +53,7 @@ const stop = async (code) => {
 
 
 const waitForIdentity = async () => {
-  const deadline = Date.now() + 15000;
+  const deadline = Date.now() + 130000;
   while (Date.now() < deadline) {
     const peerIdentity = await Destination.recall(targetHash);
     if (peerIdentity) return peerIdentity;

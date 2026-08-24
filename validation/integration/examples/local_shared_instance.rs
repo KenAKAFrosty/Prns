@@ -27,6 +27,11 @@ enum Observation {
     Delivery,
 }
 
+enum WatchOutcome {
+    TrafficObserved,
+    ObservationsClosed,
+}
+
 fn hex16(bytes: &[u8]) -> String {
     let mut rendered = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -118,26 +123,30 @@ async fn main() {
                 eprintln!("node stopped: {error}");
             }
         }
-        observed = tokio::time::timeout(Duration::from_secs(30), async move {
-            let mut announcement = false;
-            let mut delivery = false;
-            while let Some(observation) = observed_rx.recv().await {
-                match observation {
-                    Observation::Announce => announcement = true,
-                    Observation::Delivery => delivery = true,
+        () = async move {
+            let watch = async {
+                let mut announcement = false;
+                let mut delivery = false;
+                while let Some(observation) = observed_rx.recv().await {
+                    match observation {
+                        Observation::Announce => announcement = true,
+                        Observation::Delivery => delivery = true,
+                    }
+                    if announcement && delivery {
+                        return WatchOutcome::TrafficObserved;
+                    }
                 }
-                if announcement && delivery {
-                    return true;
+                WatchOutcome::ObservationsClosed
+            };
+            match tokio::time::timeout(Duration::from_secs(30), watch).await {
+                Ok(WatchOutcome::TrafficObserved) => {
+                    println!("PRNS_SHARED_SERVER_TRAFFIC_OK bytes={}", EXPECTED_FROM_STOCK.len());
+                    std::future::pending::<()>().await
                 }
+                Ok(WatchOutcome::ObservationsClosed) | Err(_) => {}
             }
-            false
-        }) => {
-            if matches!(observed, Ok(true)) {
-                println!("PRNS_SHARED_SERVER_TRAFFIC_OK bytes={}", EXPECTED_FROM_STOCK.len());
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            } else {
-                eprintln!("node stopped: shared-instance traffic timed out");
-            }
+        } => {
+            eprintln!("node stopped: shared-instance traffic timed out");
         }
     }
 }
