@@ -10,6 +10,7 @@ from rns_protocol_evidence import start_reference_reticulum
 
 LISTENER_PRIVATE = bytes([0x31]) * 32 + bytes([0x32]) * 32
 CLIENT_PRIVATE = bytes([0x41]) * 32 + bytes([0x42]) * 32
+RECEIVER_RECEIPT_DELIVERY_SECONDS = 1.0
 
 
 def prepare(
@@ -315,6 +316,7 @@ def cancel_send(config_dir, identity_path, destination_hash, source_path, *recov
                     f"recovery transfer {recovery_path.name} did not cross a segment boundary"
                 )
             segmented_recoveries += 1
+        time.sleep(RECEIVER_RECEIPT_DELIVERY_SECONDS)
         recovery_source.close()
         recovery_link.teardown()
     print(

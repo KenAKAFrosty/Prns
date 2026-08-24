@@ -115,8 +115,8 @@ environments with:
 
 ```console
 python3 validation/run.py prepare-oracles
-python3 validation/run.py run --domain oracles --tier pr
-python3 validation/run.py run --domain interop --tier pr
+python3 validation/run.py run --domain oracles --tier pr --platform current
+python3 validation/run.py run --domain interop --tier pr --platform current
 ```
 
 The runner sets `SMOKE_PYTHON` and `RPC_SMOKE_PYTHON` for each registered suite

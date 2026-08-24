@@ -4,6 +4,7 @@ import io
 import json
 import os
 import sys
+import threading
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
@@ -67,7 +68,8 @@ class InteropHarnessTests(unittest.TestCase):
             with mock.patch("validation.interop.harness.Path.is_file", return_value=True):
                 with mock.patch("validation.interop.harness.os.access", return_value=True):
                     utility = reference_utility("rncp")
-        self.assertEqual(utility, Path("/oracle/bin/rncp"))
+        executable = "rncp.exe" if os.name == "nt" else "rncp"
+        self.assertEqual(utility, Path("/oracle/bin") / executable)
 
     def test_checked_command_preserves_output_on_failure(self) -> None:
         with self.assertRaises(InteropFailure) as raised:
@@ -82,9 +84,54 @@ class InteropHarnessTests(unittest.TestCase):
         output = run_checked(
             [sys.executable, "-c", "import os; print(os.environ['CASE_VALUE'])"],
             "command failed",
-            command_environment={"CASE_VALUE": "configured"},
+            command_environment={**os.environ, "CASE_VALUE": "configured"},
         )
         self.assertEqual(output, "configured\n")
+
+    def test_checked_command_requires_utf8_output(self) -> None:
+        with self.assertRaises(InteropFailure) as raised:
+            run_checked(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys; sys.stdout.buffer.write(bytes([0x66, 0x8f]))",
+                ],
+                "command emitted invalid text",
+            )
+        self.assertEqual(raised.exception.kind, FailureKind.COMMAND_OUTPUT_INVALID)
+        self.assertIn("combined output is not UTF-8 at byte 1", raised.exception.detail)
+
+    def test_checked_command_decodes_multibyte_utf8_output(self) -> None:
+        output = run_checked(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.stdout.buffer.write('Φ𐑐'.encode('utf-8'))",
+            ],
+            "command emitted invalid text",
+        )
+        self.assertEqual(output, "Φ𐑐")
+
+    def test_checked_command_configures_python_utf8_output(self) -> None:
+        output = run_checked(
+            [sys.executable, "-c", "import sys; print(sys.stdout.encoding)"],
+            "command did not report its encoding",
+            command_environment={**os.environ, "PYTHONIOENCODING": "cp1252"},
+        )
+        self.assertEqual(output.strip().lower(), "utf-8")
+
+    def test_failed_command_renders_invalid_bytes_as_diagnostics(self) -> None:
+        with self.assertRaises(InteropFailure) as raised:
+            run_checked(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys; sys.stderr.buffer.write(bytes([0x66, 0x8f])); raise SystemExit(7)",
+                ],
+                "command failed",
+            )
+        self.assertEqual(raised.exception.kind, FailureKind.COMMAND_FAILED)
+        self.assertIn("f�", raised.exception.detail)
 
     def test_expected_status_command_preserves_output(self) -> None:
         output = run_expect_status(
@@ -116,6 +163,20 @@ class InteropHarnessTests(unittest.TestCase):
         )
         self.assertEqual(streams.standard_output, "output\n")
         self.assertEqual(streams.standard_error, "error\n")
+
+    def test_expected_status_command_requires_utf8_on_each_stream(self) -> None:
+        with self.assertRaises(InteropFailure) as raised:
+            run_expect_status_with_streams(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys; sys.stderr.buffer.write(bytes([0x8f])); raise SystemExit(7)",
+                ],
+                7,
+                "command emitted invalid text",
+            )
+        self.assertEqual(raised.exception.kind, FailureKind.COMMAND_OUTPUT_INVALID)
+        self.assertIn("standard error is not UTF-8 at byte 0", raised.exception.detail)
 
     def test_checked_binary_command_preserves_binary_standard_io(self) -> None:
         output = run_checked_bytes(
@@ -172,7 +233,8 @@ class InteropHarnessTests(unittest.TestCase):
             side_effect=["", metadata],
         ) as checked:
             binary = cargo_binary(Path("crate/Cargo.toml"), "peer")
-        self.assertEqual(binary, Path("/tmp/cargo-target/debug/peer"))
+        executable = "peer.exe" if os.name == "nt" else "peer"
+        self.assertEqual(binary, Path("/tmp/cargo-target/debug") / executable)
         self.assertEqual(checked.call_args_list[0].args[0][-3:], ["--bin", "peer", "--locked"])
 
     def test_case_waits_for_marker_and_stops_peer(self) -> None:
@@ -419,6 +481,53 @@ class InteropHarnessTests(unittest.TestCase):
                 raise InteropFailure(FailureKind.COMMAND_FAILED, "forced")
         self.assertIn("evidence peer log:", stderr.getvalue())
         self.assertIn("evidence", stderr.getvalue())
+
+    def test_workspace_cleanup_retries_a_transient_error(self) -> None:
+        case = InteropCase()
+        case._temporary.cleanup()
+        temporary = mock.Mock()
+        temporary.cleanup.side_effect = [OSError("busy"), None]
+        case._temporary = temporary
+        with mock.patch("validation.interop.harness.time.sleep") as sleep:
+            case._cleanup_workspace()
+        self.assertEqual(temporary.cleanup.call_count, 2)
+        sleep.assert_called_once_with(0.05)
+
+    def test_workspace_cleanup_reraises_at_the_deadline(self) -> None:
+        case = InteropCase()
+        case._temporary.cleanup()
+        temporary = mock.Mock()
+        failure = OSError("still busy")
+        temporary.cleanup.side_effect = failure
+        case._temporary = temporary
+        with (
+            mock.patch(
+                "validation.interop.harness.time.monotonic",
+                side_effect=(10.0, 20.0),
+            ),
+            mock.patch("validation.interop.harness.time.sleep") as sleep,
+            self.assertRaises(OSError) as raised,
+        ):
+            case._cleanup_workspace()
+        self.assertIs(raised.exception, failure)
+        temporary.cleanup.assert_called_once_with()
+        sleep.assert_not_called()
+
+    @unittest.skipUnless(os.name == "nt", "requires Windows file-handle semantics")
+    def test_workspace_cleanup_waits_for_a_windows_handle_release(self) -> None:
+        case = InteropCase()
+        held = (case.work / "held.log").open("wb")
+        release = threading.Timer(0.1, held.close)
+        release.start()
+        try:
+            case._cleanup_workspace()
+        finally:
+            release.join()
+            if not held.closed:
+                held.close()
+            if case.work.exists():
+                case._temporary.cleanup()
+        self.assertFalse(case.work.exists())
 
     def test_port_lease_holds_and_releases_the_port(self) -> None:
         listener = mock.Mock()
