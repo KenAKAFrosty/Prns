@@ -39,7 +39,7 @@ pub use crate::Esp32S3;
 #[cfg(feature = "tokio-host")]
 pub use crate::{
     fill_os_entropy, try_generate_identity_secret, AttachIntent, Attachable, AttachedInterface,
-    AttachedSupervisor, Fleet, PrnsNode, PrnsNodeHandle,
+    AttachedSupervisor, Fleet, PrnsNode, PrnsNodeHandle, RemoteControlError, RemoteControlHandle,
 };
 
 #[cfg(feature = "tokio-host")]

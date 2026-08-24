@@ -132,24 +132,11 @@ async fn main() {
             .await
             .expect("controller identity was not sent");
 
-        let request = RemoteControlRequest::Describe;
-        let mut request_bytes = std::vec![0u8; request.encoded_len()];
-        request
-            .write_into(&mut request_bytes)
-            .expect("describe request did not encode");
-        let (response, rtt) = controller_handle
-            .request(
-                link_id,
-                RequestEndpointId::of(REMOTE_CONTROL_ENDPOINT_ID),
-                &request_bytes,
-            )
+        let (description, rtt) = controller_handle
+            .remote_control(link_id)
+            .describe()
             .await
             .expect("describe request did not settle");
-        let RemoteControlResponse::Describe(description) =
-            RemoteControlResponse::parse(&response).expect("describe response did not decode")
-        else {
-            panic!("target returned a protocol error");
-        };
         assert!(description
             .supported_requests()
             .supports(RemoteControlRequestKind::Describe));

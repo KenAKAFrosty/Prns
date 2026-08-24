@@ -3,6 +3,7 @@ mod handle_capabilities;
 mod interface_lifecycle;
 mod node_lifecycle;
 mod persistence;
+mod remote_control;
 mod request_response;
 mod resource_admission;
 mod resource_transfer;
@@ -52,6 +53,7 @@ pub use persistence::{
     PreparedFlush, RatchetSeedReport, RegionFlush, RouteSeedProgress, RouteSeedReport, SaveOnLearn,
     SaveOnLearnWiring, TunnelSeedReport,
 };
+pub use remote_control::{RemoteControlError, RemoteControlHandle};
 pub use request_response::{RequestOptions, ResponseSendError};
 pub use resource_admission::{ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor};
 pub use resource_transfer::{

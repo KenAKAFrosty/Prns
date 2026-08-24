@@ -46,11 +46,12 @@ pub use prns_runtime_tokio::runtime::{
     PersistenceEvent, PersistenceFlushStatus, PersistenceIntent, PersistenceRestoreReport,
     PersistenceTrigger, PersistenceWorker, PoolWorkers, PrepareFlushError, PreparedFlush,
     PreparedResourceReceiver, PrnsNode, PrnsNodeHandle, RatchetSeedReport, RegionFlush,
-    RegisterRequestEndpointError, RequestOptions, RequestPathError, ResourceAdmissionPeer,
-    ResourceOfferAdmission, ResourceOfferMonitor, ResourceProgress, ResourceReceipt,
-    ResourceReceiveError, ResourceSendError, ResponseSendError, RouteSeedProgress, RouteSeedReport,
-    RuntimeRequestHandlerError, SaveOnLearn, SaveOnLearnWiring, SegmentCompression,
-    SharedInstanceIdentityError, StreamId, Subscription, TunnelSeedReport, AUTO_COMPRESS_MAX_LEN,
+    RegisterRequestEndpointError, RemoteControlError, RemoteControlHandle, RequestOptions,
+    RequestPathError, ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor,
+    ResourceProgress, ResourceReceipt, ResourceReceiveError, ResourceSendError, ResponseSendError,
+    RouteSeedProgress, RouteSeedReport, RuntimeRequestHandlerError, SaveOnLearn, SaveOnLearnWiring,
+    SegmentCompression, SharedInstanceIdentityError, StreamId, Subscription, TunnelSeedReport,
+    AUTO_COMPRESS_MAX_LEN,
 };
 
 #[cfg(all(feature = "rnx", feature = "tokio-host"))]
