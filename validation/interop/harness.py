@@ -254,13 +254,23 @@ def _command_environment(
     return configured
 
 
+def translate_newlines(decoded: str) -> str:
+    """Apply the universal-newline translation `text=True` used to provide.
+
+    Decoding bytes keeps the platform line ending, so a child that prints on Windows
+    yields carriage-return line feeds where callers and expected values assume line
+    feeds alone.
+    """
+    return decoded.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def decode_command_output(
     output: bytes,
     stream: CommandStream,
     failure: str,
 ) -> str:
     try:
-        return output.decode(COMMAND_OUTPUT_ENCODING)
+        return translate_newlines(output.decode(COMMAND_OUTPUT_ENCODING))
     except UnicodeDecodeError as error:
         raise InteropFailure(
             FailureKind.COMMAND_OUTPUT_INVALID,
@@ -269,7 +279,7 @@ def decode_command_output(
 
 
 def decode_command_diagnostic(output: bytes) -> str:
-    return output.decode(COMMAND_OUTPUT_ENCODING, errors="replace")
+    return translate_newlines(output.decode(COMMAND_OUTPUT_ENCODING, errors="replace"))
 
 
 def cleanup_temporary_directory(
