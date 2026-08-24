@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 
+from flasher_manifest import FLASH_MANIFEST_SCHEMA
 from flasher_public_review import discover_evidence, sha256
 
 
@@ -85,6 +86,14 @@ def suite_custody_inventory(assets: Path) -> dict[str, str]:
 
 def expected_candidate_assets(candidate: Path, version: str) -> dict[str, Path]:
     manifest = json.loads((candidate / "flash-manifest.json").read_text(encoding="utf-8"))
+    schema = manifest.get("schema") if isinstance(manifest, dict) else None
+    if (
+        not isinstance(schema, int)
+        or isinstance(schema, bool)
+        or schema < 1
+        or schema > FLASH_MANIFEST_SCHEMA
+    ):
+        raise ValueError("signed candidate manifest schema is unsupported")
     release = manifest.get("release") if isinstance(manifest, dict) else None
     if not isinstance(release, dict) or release.get("version") != version:
         raise ValueError("signed candidate manifest differs from the release version")
@@ -112,7 +121,6 @@ def expected_candidate_assets(candidate: Path, version: str) -> dict[str, Path]:
         "flasher_acceptance_contract.py": candidate
         / "qualification"
         / "flasher_acceptance_contract.py",
-        "flasher_manifest.py": candidate / "qualification" / "flasher_manifest.py",
         "flasher_tester_roster.py": candidate / "qualification" / "flasher_tester_roster.py",
         "package-flasher-qualification-evidence.py": candidate
         / "qualification"
@@ -131,6 +139,10 @@ def expected_candidate_assets(candidate: Path, version: str) -> dict[str, Path]:
         "reproducibility.json": candidate / "metadata" / "reproducibility.json",
         "release-history.json": candidate / "metadata" / "release-history.json",
     }
+    if schema >= 3:
+        sources["flasher_manifest.py"] = (
+            candidate / "qualification" / "flasher_manifest.py"
+        )
     for target, extension in CLI_TARGETS.items():
         name = f"hopspot-flash-{version}-{target}{extension}"
         sources[name] = candidate / "cli" / name

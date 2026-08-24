@@ -1689,6 +1689,36 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         suite_sums.write_bytes(candidate_sums)
         suite_signature.write_bytes(candidate_signature)
 
+    def test_release_asset_contract_tracks_candidate_manifest_schema(self) -> None:
+        self.assertEqual(self.sign_candidate().returncode, 0)
+        script = SCRIPTS / "verify-flasher-release-assets.py"
+        spec = importlib.util.spec_from_file_location(
+            "verify_flasher_release_assets", script
+        )
+        if spec is None or spec.loader is None:
+            self.fail(f"could not import {script}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        schema_three = module.expected_candidate_assets(self.fixture.root, VERSION)
+        self.assertIn("flasher_manifest.py", schema_three)
+
+        self.fixture.manifest["schema"] = 2
+        write_json(self.fixture.manifest_path, self.fixture.manifest)
+        (self.fixture.root / "qualification" / "flasher_manifest.py").unlink()
+        schema_two = module.expected_candidate_assets(self.fixture.root, VERSION)
+        self.assertNotIn("flasher_manifest.py", schema_two)
+
+        self.fixture.manifest["schema"] = 3
+        write_json(self.fixture.manifest_path, self.fixture.manifest)
+        with self.assertRaisesRegex(ValueError, "flasher_manifest.py"):
+            module.expected_candidate_assets(self.fixture.root, VERSION)
+
+        self.fixture.manifest["schema"] = 4
+        write_json(self.fixture.manifest_path, self.fixture.manifest)
+        with self.assertRaisesRegex(ValueError, "schema is unsupported"):
+            module.expected_candidate_assets(self.fixture.root, VERSION)
+
     def test_workflows_preserve_exact_candidate_custody_boundaries(self) -> None:
         candidate = (ROOT / ".github/workflows/flasher-candidate.yml").read_text()
         signing = (ROOT / ".github/workflows/flasher-sign.yml").read_text()
