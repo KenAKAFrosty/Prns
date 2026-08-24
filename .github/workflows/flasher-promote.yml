@@ -165,7 +165,13 @@ jobs:
               --bundle "$bundle" \
               --signer-workflow "$signer_workflow" \
               --deny-self-hosted-runners
-          done < <(jq -r '[.targets[].parts[].path] | unique[]' target/signed-candidate/flash-manifest.json)
+          done < <(
+            jq -r '
+              .subjects[]
+              | select(.name | startswith("firmware/"))
+              | .name
+            ' "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.metadata.json"
+          )
       - name: Verify the exact successful protected review and public age
         env:
           GH_TOKEN: ${{ github.token }}
@@ -315,7 +321,13 @@ jobs:
             gh attestation verify "$candidate/$relative" --repo "$GITHUB_REPOSITORY" \
               --bundle "$attestation" --signer-workflow "$signer" \
               --deny-self-hosted-runners
-          done < <(jq -r '[.targets[].parts[].path] | unique[]' "$candidate/flash-manifest.json")
+          done < <(
+            jq -r '
+              .subjects[]
+              | select(.name | startswith("firmware/"))
+              | .name
+            ' "$assets/prns-flasher-attestation-v${ROLLBACK_BASELINE_VERSION}.metadata.json"
+          )
 
           ./tools/prns release rollback -- stage \
             --candidate "$candidate" \
@@ -734,8 +746,8 @@ jobs:
             test "$(stat -c '%s' "$destination")" = "$size"
             test "$(sha256sum "$destination" | awk '{print $1}')" = "$checksum"
           done < <(
-            jq -r '.targets[].parts[] | [.path, (.size | tostring), .sha256] | @tsv' \
-              "$live/flash-manifest.json"
+            ./tools/prns release manifest artifacts -- \
+              "$live/flash-manifest.json" --format identities
           )
       - name: Prove stable release state and immutable shell installer
         env:

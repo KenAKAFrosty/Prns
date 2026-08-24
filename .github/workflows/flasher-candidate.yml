@@ -181,7 +181,13 @@ jobs:
               gh attestation verify "$candidate/$relative" --repo "$GITHUB_REPOSITORY" \
                 --bundle "$attestation" --signer-workflow "$signer" \
                 --deny-self-hosted-runners
-            done < <(jq -r '[.targets[].parts[].path] | unique[]' "$candidate/flash-manifest.json")
+            done < <(
+              jq -r '
+                .subjects[]
+                | select(.name | startswith("firmware/"))
+                | .name
+              ' "$assets/prns-flasher-attestation-v${HISTORY_VERSION}.metadata.json"
+            )
 
             live="target/live-stable"
             mkdir -p "$live"

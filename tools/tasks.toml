@@ -582,6 +582,16 @@ entrypoint = ["python3", "tools/release/flasher-release-record.py"]
 requires = ["python3"]
 
 [[task]]
+id = "release.manifest.artifacts"
+summary = "List every transport-specific firmware artifact in a signed flash manifest."
+domain = "release"
+effect = "read-only"
+platforms = ["any"]
+audience = ["ci", "operator", "release"]
+entrypoint = ["python3", "tools/release/list-flasher-manifest-artifacts.py"]
+requires = ["python3"]
+
+[[task]]
 id = "release.rollback"
 summary = "Stage, validate, record, or compare-and-swap a release rollback plan."
 domain = "release"

@@ -949,6 +949,74 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("exact canonical inputs", result.stderr)
 
+    def test_manifest_artifact_listing_covers_every_transport(self) -> None:
+        paths = run_script(
+            "list-flasher-manifest-artifacts.py", self.fixture.manifest_path
+        )
+        self.assertEqual(paths.returncode, 0, paths.stderr)
+        expected = sorted(
+            path.relative_to(self.fixture.root).as_posix()
+            for path in self.fixture.firmware_paths
+        )
+        self.assertEqual(paths.stdout.splitlines(), expected)
+
+        identities = run_script(
+            "list-flasher-manifest-artifacts.py",
+            self.fixture.manifest_path,
+            "--format",
+            "identities",
+        )
+        self.assertEqual(identities.returncode, 0, identities.stderr)
+        self.assertEqual(
+            identities.stdout.splitlines(),
+            [
+                f"{relative}\t{(self.fixture.root / relative).stat().st_size}\t"
+                f"{sha256(self.fixture.root / relative)}"
+                for relative in expected
+            ],
+        )
+
+    def test_v037_archive_coverage_is_exact_and_one_time(self) -> None:
+        script = SCRIPTS / "flasher-release-record.py"
+        spec = importlib.util.spec_from_file_location("flasher_release_record", script)
+        if spec is None or spec.loader is None:
+            self.fail(f"could not import {script}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        exception = module.V037_ARCHIVE_COVERAGE
+        archive = {
+            "name": "prns-flasher-candidate-v0.3.7-signed.tar.gz",
+            "sha256": exception["signed_bundle_sha256"],
+        }
+        attested = {(archive["name"], archive["sha256"])}
+        coverage = module.archive_coverage(
+            version=exception["version"],
+            source_commit=exception["source_commit"],
+            signed_bundle=archive,
+            attestation_bundle_sha256=exception["attestation_bundle_sha256"],
+            attestation_workflow_run_id=exception["attestation_workflow_run_id"],
+            attested_subjects=attested,
+            missing=set(exception["subjects"]),
+            unexpected=set(),
+        )
+        self.assertIsNotNone(coverage)
+        self.assertEqual(len(coverage["subjects"]), 7)
+
+        wrong_missing = set(exception["subjects"])
+        wrong_missing.pop()
+        self.assertIsNone(
+            module.archive_coverage(
+                version=exception["version"],
+                source_commit=exception["source_commit"],
+                signed_bundle=archive,
+                attestation_bundle_sha256=exception["attestation_bundle_sha256"],
+                attestation_workflow_run_id=exception["attestation_workflow_run_id"],
+                attested_subjects=attested,
+                missing=wrong_missing,
+                unexpected=set(),
+            )
+        )
+
     def test_candidate_run_must_be_successful_default_branch_provenance(self) -> None:
         run_document = {
             "id": 42,
@@ -1626,6 +1694,20 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         signing = (ROOT / ".github/workflows/flasher-sign.yml").read_text()
         evidence = (ROOT / ".github/workflows/flasher-finalize-evidence.yml").read_text()
         promotion = (ROOT / ".github/workflows/flasher-promote.yml").read_text()
+        rollback = (ROOT / ".github/workflows/flasher-rollback.yml").read_text()
+        suite_promotion = (ROOT / ".github/workflows/suite-promote.yml").read_text()
+        for workflow in (
+            candidate,
+            signing,
+            evidence,
+            promotion,
+            rollback,
+            suite_promotion,
+        ):
+            self.assertNotIn(".targets[].parts", workflow)
+        self.assertIn("release manifest artifacts", signing)
+        self.assertIn("release manifest artifacts", promotion)
+        self.assertIn(".subjects[]", candidate)
         self.assertNotIn("gh release create", candidate)
         self.assertIn("candidate_run_id:", signing)
         self.assertIn("unsigned_bundle_sha256:", signing)
