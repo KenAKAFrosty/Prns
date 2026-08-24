@@ -25,6 +25,7 @@ PRNSD_MANIFEST = ROOT / "prnsd/Cargo.toml"
 STOCK_SERVER = ROOT / "validation/interop/peers/rns_rnpath_server.py"
 BLACKHOLE_HASH = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 RATE_HASH = "33333333333333333333333333333333"
+PATH_DROP_TIMEOUT_SECONDS = 30.0
 SUCCESS = "PASS: Prnsd path queried and mutated the stock RNS utility surfaces"
 
 
@@ -47,6 +48,29 @@ def require_row(
         if row.get("hash") == expected_hash:
             return row
     raise InteropFailure(FailureKind.EVIDENCE_MISSING, failure)
+
+
+def drop_path_when_present(prnsd: Path, config: Path, destination_hash: str) -> None:
+    """Drop a route the stock instance may still be installing or removing.
+
+    A shared instance does not guarantee that a mutation is visible to the next query, so a
+    route read from the path table can already be gone by the time the drop is issued. Retry
+    the read and the drop together, and re-raise once the deadline passes so a route that is
+    genuinely undroppable still fails the case.
+    """
+    deadline = time.monotonic() + PATH_DROP_TIMEOUT_SECONDS
+    while True:
+        wait_for_path_table(prnsd, config, destination_hash)
+        try:
+            run_checked(
+                (str(prnsd), "path", "--config", str(config), "-d", destination_hash),
+                "Prnsd could not drop a stock RNS path",
+            )
+            return
+        except InteropFailure:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
 
 
 def wait_for_path_table(prnsd: Path, config: Path, destination_hash: str) -> str:
@@ -283,11 +307,7 @@ def run() -> None:
             (str(prnsd), "path", "--config", str(config), "-x", via_hash),
             "Prnsd could not drop stock RNS paths through a transport",
         )
-        wait_for_path_table(prnsd, config, peer_hash)
-        run_checked(
-            (str(prnsd), "path", "--config", str(config), "-d", peer_hash),
-            "Prnsd could not drop a stock RNS path",
-        )
+        drop_path_when_present(prnsd, config, peer_hash)
         run_checked(
             (str(prnsd), "path", "--config", str(config), "-D"),
             "Prnsd could not drop stock RNS announce queues",
