@@ -50,6 +50,10 @@ TOP_LEVEL_FIELDS = {
     "browser_fallbacks",
     "installation_smoke",
 }
+MAINTAINER_OVERRIDE_SCHEMA = 4
+MAINTAINER_OVERRIDE_VERSION = "0.3.7"
+OVERRIDE_TOP_LEVEL_FIELDS = {"schema", "candidate", "maintainer_override"}
+OVERRIDE_FIELDS = {"basis", "approved_by", "approved_at"}
 CANDIDATE_FIELDS = {
     "version",
     "channel",
@@ -259,6 +263,39 @@ class EvidenceStore:
             errors.append(f"offline qualification evidence root is missing objects: {missing}")
         if unexpected:
             errors.append(f"offline qualification evidence root contains unreferenced objects: {unexpected}")
+
+    def validate_override_inventory(self, errors: list[str]) -> None:
+        """Validate every supplemental object without claiming schema-5 matrix coverage."""
+        if self.root.is_symlink() or not self.root.is_dir():
+            errors.append("offline qualification evidence root is missing or is not a directory")
+            return
+        try:
+            entries = list(self.root.iterdir())
+        except OSError as error:
+            errors.append(f"offline qualification evidence root cannot be read: {error}")
+            return
+        if not entries:
+            errors.append("maintainer override requires nonempty supplemental evidence")
+            return
+        for entry in entries:
+            if (
+                EVIDENCE_REFERENCE.fullmatch(f"artifact://qualification/{entry.name}") is None
+                or entry.is_symlink()
+                or not entry.is_file()
+            ):
+                errors.append(
+                    "offline qualification evidence root must contain only regular files named by lowercase SHA-256"
+                )
+                continue
+            try:
+                if entry.stat().st_size == 0:
+                    errors.append(f"supplemental evidence object is empty: {entry.name}")
+                elif sha256(entry) != entry.name:
+                    errors.append(
+                        f"supplemental evidence object name differs from its bytes: {entry.name}"
+                    )
+            except OSError as error:
+                errors.append(f"supplemental evidence object cannot be read: {error}")
 
 
 def validate_evidence(
@@ -782,6 +819,59 @@ def validate_installation_smokes(
         errors.append(f"missing native installation/version smokes: {missing}")
 
 
+def validate_maintainer_override(
+    acceptance: dict,
+    raw_roster: object,
+    manifest: dict,
+    arguments: argparse.Namespace,
+    prerelease_published_at: datetime,
+    now: datetime,
+) -> list[str]:
+    errors: list[str] = []
+    reject_unknown_fields(acceptance, OVERRIDE_TOP_LEVEL_FIELDS, "acceptance", errors)
+    version, _ = validate_candidate_identity(
+        acceptance,
+        manifest,
+        arguments.manifest,
+        arguments.manifest_signature,
+        arguments.signed_bundle,
+        arguments.prerelease_published_at,
+        errors,
+    )
+    if version != MAINTAINER_OVERRIDE_VERSION:
+        errors.append(
+            f"maintainer override is restricted to version {MAINTAINER_OVERRIDE_VERSION}"
+        )
+    override = acceptance.get("maintainer_override")
+    if not isinstance(override, dict):
+        errors.append("maintainer_override must be an object")
+        return errors
+    reject_unknown_fields(override, OVERRIDE_FIELDS, "maintainer_override", errors)
+    if not is_evidence_text(override.get("basis")):
+        errors.append("maintainer_override basis must state the approval grounds")
+    release_owner = raw_roster.get("release_owner") if isinstance(raw_roster, dict) else None
+    approved_by = override.get("approved_by")
+    if not is_evidence_text(approved_by) or approved_by != release_owner:
+        errors.append(
+            "maintainer_override approved_by must be the signed roster release_owner"
+        )
+    try:
+        approved_at = parse_utc_timestamp(
+            override.get("approved_at"), "maintainer_override approved_at"
+        )
+    except ValueError as error:
+        errors.append(str(error))
+    else:
+        if approved_at < prerelease_published_at:
+            errors.append(
+                "maintainer_override approved_at predates the exact public prerelease"
+            )
+        if approved_at > now:
+            errors.append("maintainer_override approved_at cannot be in the future")
+    EvidenceStore(arguments.evidence_root).validate_override_inventory(errors)
+    return errors
+
+
 def validate(arguments: argparse.Namespace, now: datetime | None = None) -> list[str]:
     errors: list[str] = []
     acceptance = json.loads(arguments.acceptance.read_text(encoding="utf-8"))
@@ -809,6 +899,13 @@ def validate(arguments: argparse.Namespace, now: datetime | None = None) -> list
     version = version_value.get("version") if isinstance(version_value, dict) else ""
     tester_roster, roster_errors = validate_roster(roster, str(version))
     errors.extend(f"signed tester roster: {error}" for error in roster_errors)
+    if acceptance.get("schema") == MAINTAINER_OVERRIDE_SCHEMA:
+        errors.extend(
+            validate_maintainer_override(
+                acceptance, roster, manifest, arguments, published_at, current
+            )
+        )
+        return errors
     evidence_store = EvidenceStore(arguments.evidence_root)
     reject_unknown_fields(acceptance, TOP_LEVEL_FIELDS, "acceptance", errors)
     if acceptance.get("schema") != ACCEPTANCE_SCHEMA:
@@ -883,7 +980,11 @@ def main() -> int:
         for error in errors:
             print(f"acceptance validation failed: {error}", file=sys.stderr)
         return 1
-    print("physical flasher acceptance matrix is complete for the exact signed candidate")
+    document = json.loads(arguments.acceptance.read_text(encoding="utf-8"))
+    if isinstance(document, dict) and document.get("schema") == MAINTAINER_OVERRIDE_SCHEMA:
+        print("version-bound maintainer override is bound to the exact signed candidate")
+    else:
+        print("physical flasher acceptance matrix is complete for the exact signed candidate")
     return 0
 
 

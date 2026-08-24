@@ -722,6 +722,61 @@ class AcceptanceValidatorTests(unittest.TestCase):
         self.assertTrue(any("unknown fields: ['maintainer_override']" in error for error in errors))
         self.assertTrue(any("acceptance runs must be an array" in error for error in errors))
 
+    def override_acceptance(self) -> dict:
+        record = {
+            "schema": 4,
+            "candidate": self.acceptance["candidate"],
+            "maintainer_override": {
+                "basis": "release-owner approval backed by reviewed supplemental observations",
+                "approved_by": "github:release-owner",
+                "approved_at": COMPLETED_AT,
+            },
+        }
+        record["candidate"]["version"] = "0.3.7"
+        self.manifest_document["release"]["version"] = "0.3.7"
+        self.manifest_path.write_text(
+            json.dumps(self.manifest_document, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        self.roster["release"]["version"] = "0.3.7"
+        self.roster_path.write_text(
+            json.dumps(self.roster, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        record["candidate"]["manifest_sha256"] = hashlib.sha256(
+            self.manifest_path.read_bytes()
+        ).hexdigest()
+        return record
+
+    def test_version_bound_maintainer_override_accepts_reviewed_evidence(self) -> None:
+        self.assertEqual(self.validate(self.override_acceptance()), [])
+
+    def test_version_bound_maintainer_override_rejects_other_versions(self) -> None:
+        record = self.override_acceptance()
+        record["candidate"]["version"] = "0.3.8"
+        self.manifest_document["release"]["version"] = "0.3.8"
+        self.manifest_path.write_text(
+            json.dumps(self.manifest_document, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        record["candidate"]["manifest_sha256"] = hashlib.sha256(
+            self.manifest_path.read_bytes()
+        ).hexdigest()
+        self.assertTrue(
+            any("restricted to version 0.3.7" in error for error in self.validate(record))
+        )
+
+    def test_version_bound_maintainer_override_requires_release_owner(self) -> None:
+        record = self.override_acceptance()
+        record["maintainer_override"]["approved_by"] = "github:someone-else"
+        self.assertTrue(
+            any("signed roster release_owner" in error for error in self.validate(record))
+        )
+
+    def test_version_bound_maintainer_override_requires_valid_evidence_objects(self) -> None:
+        record = self.override_acceptance()
+        next(self.evidence_root.iterdir()).write_bytes(b"changed after review")
+        self.assertTrue(
+            any("name differs from its bytes" in error for error in self.validate(record))
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
