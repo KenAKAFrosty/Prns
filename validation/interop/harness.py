@@ -22,12 +22,17 @@ from validation.interop.peers.rns_protocol_evidence import (
 
 ROOT = Path(__file__).resolve().parents[2]
 PEER_STOP_TIMEOUT_SECONDS = 5
+COMMAND_OUTPUT_ENCODING = "utf-8"
+PYTHON_IO_ENCODING = f"{COMMAND_OUTPUT_ENCODING}:strict"
+WORKSPACE_CLEANUP_TIMEOUT_SECONDS = 10.0
+WORKSPACE_CLEANUP_RETRY_SECONDS = 0.05
 
 
 class FailureKind(Enum):
     MISSING_REFERENCE_INTERPRETER = "missing reference interpreter"
     MISSING_REFERENCE_UTILITY = "missing reference utility"
     COMMAND_FAILED = "command failed"
+    COMMAND_OUTPUT_INVALID = "command output invalid"
     EVIDENCE_MISSING = "evidence missing"
     EVIDENCE_UNEXPECTED = "evidence unexpected"
     PEER_START_FAILED = "peer start failed"
@@ -66,6 +71,18 @@ class CommandStreams:
     standard_error: str
 
 
+class CommandOutputCapture(Enum):
+    MERGED = "merged"
+    SEPARATE = "separate"
+
+
+class CommandStream(Enum):
+    COMBINED = "combined output"
+    STANDARD_OUTPUT = "standard output"
+    STANDARD_ERROR = "standard error"
+    PROCESS_LOG = "process log"
+
+
 class PortLease:
     def __init__(self):
         self._listener = socket.socket()
@@ -93,6 +110,7 @@ def environment(
     for name in without:
         configured.pop(name, None)
     configured.update({key: str(value) for key, value in values.items()})
+    configured["PYTHONIOENCODING"] = PYTHON_IO_ENCODING
     return configured
 
 
@@ -130,12 +148,18 @@ def run_checked(
     working_directory: Path = ROOT,
     command_environment: Mapping[str, str] | None = None,
 ) -> str:
-    result = _run_text_command(command, failure, working_directory, command_environment)
+    result = _run_command(
+        command,
+        failure,
+        working_directory,
+        command_environment,
+        CommandOutputCapture.MERGED,
+    )
     if result.returncode != 0:
-        output = result.stdout.rstrip()
+        output = decode_command_diagnostic(result.stdout).rstrip()
         detail = f"{failure}\n{output}" if output else failure
         raise InteropFailure(FailureKind.COMMAND_FAILED, detail)
-    return result.stdout
+    return decode_command_output(result.stdout, CommandStream.COMBINED, failure)
 
 
 def run_expect_status(
@@ -145,13 +169,19 @@ def run_expect_status(
     working_directory: Path = ROOT,
     command_environment: Mapping[str, str] | None = None,
 ) -> str:
-    result = _run_text_command(command, failure, working_directory, command_environment)
+    result = _run_command(
+        command,
+        failure,
+        working_directory,
+        command_environment,
+        CommandOutputCapture.MERGED,
+    )
     if result.returncode != expected_status:
-        output = result.stdout.rstrip()
+        output = decode_command_diagnostic(result.stdout).rstrip()
         status_failure = f"{failure}: expected status {expected_status}, got {result.returncode}"
         detail = f"{status_failure}\n{output}" if output else status_failure
         raise InteropFailure(FailureKind.COMMAND_FAILED, detail)
-    return result.stdout
+    return decode_command_output(result.stdout, CommandStream.COMBINED, failure)
 
 
 def run_expect_status_with_streams(
@@ -161,46 +191,100 @@ def run_expect_status_with_streams(
     working_directory: Path = ROOT,
     command_environment: Mapping[str, str] | None = None,
 ) -> CommandStreams:
-    try:
-        result = subprocess.run(
-            command,
-            cwd=working_directory,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-            env=command_environment,
-        )
-    except OSError as error:
-        raise InteropFailure(FailureKind.COMMAND_FAILED, f"{failure}: {error}") from error
+    result = _run_command(
+        command,
+        failure,
+        working_directory,
+        command_environment,
+        CommandOutputCapture.SEPARATE,
+    )
+    standard_error = result.stderr or b""
     if result.returncode != expected_status:
         rendered = "\n".join(
-            output.rstrip() for output in (result.stdout, result.stderr) if output.rstrip()
+            output
+            for output in (
+                decode_command_diagnostic(result.stdout).rstrip(),
+                decode_command_diagnostic(standard_error).rstrip(),
+            )
+            if output
         )
         status_failure = f"{failure}: expected status {expected_status}, got {result.returncode}"
         detail = f"{status_failure}\n{rendered}" if rendered else status_failure
         raise InteropFailure(FailureKind.COMMAND_FAILED, detail)
-    return CommandStreams(result.stdout, result.stderr)
+    return CommandStreams(
+        decode_command_output(result.stdout, CommandStream.STANDARD_OUTPUT, failure),
+        decode_command_output(standard_error, CommandStream.STANDARD_ERROR, failure),
+    )
 
 
-def _run_text_command(
+def _run_command(
     command: Sequence[str],
     failure: str,
     working_directory: Path,
     command_environment: Mapping[str, str] | None,
-) -> subprocess.CompletedProcess[str]:
+    capture: CommandOutputCapture,
+) -> subprocess.CompletedProcess[bytes]:
+    standard_error = (
+        subprocess.STDOUT
+        if capture is CommandOutputCapture.MERGED
+        else subprocess.PIPE
+    )
     try:
         return subprocess.run(
             command,
             cwd=working_directory,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
+            stderr=standard_error,
             check=False,
-            env=command_environment,
+            env=_command_environment(command_environment),
         )
     except OSError as error:
         raise InteropFailure(FailureKind.COMMAND_FAILED, f"{failure}: {error}") from error
+
+
+def _command_environment(
+    command_environment: Mapping[str, str] | None,
+) -> dict[str, str]:
+    configured = (
+        os.environ.copy()
+        if command_environment is None
+        else dict(command_environment)
+    )
+    configured["PYTHONIOENCODING"] = PYTHON_IO_ENCODING
+    return configured
+
+
+def decode_command_output(
+    output: bytes,
+    stream: CommandStream,
+    failure: str,
+) -> str:
+    try:
+        return output.decode(COMMAND_OUTPUT_ENCODING)
+    except UnicodeDecodeError as error:
+        raise InteropFailure(
+            FailureKind.COMMAND_OUTPUT_INVALID,
+            f"{failure}: {stream.value} is not UTF-8 at byte {error.start}",
+        ) from error
+
+
+def decode_command_diagnostic(output: bytes) -> str:
+    return output.decode(COMMAND_OUTPUT_ENCODING, errors="replace")
+
+
+def cleanup_temporary_directory(
+    temporary: tempfile.TemporaryDirectory,
+) -> None:
+    deadline = time.monotonic() + WORKSPACE_CLEANUP_TIMEOUT_SECONDS
+    while True:
+        try:
+            temporary.cleanup()
+            return
+        except OSError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(min(WORKSPACE_CLEANUP_RETRY_SECONDS, remaining))
 
 
 def run_checked_bytes(
@@ -218,12 +302,12 @@ def run_checked_bytes(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,
-            env=command_environment,
+            env=_command_environment(command_environment),
         )
     except OSError as error:
         raise InteropFailure(FailureKind.COMMAND_FAILED, f"{failure}: {error}") from error
     if result.returncode != 0:
-        output = result.stderr.decode("utf-8", errors="replace").rstrip()
+        output = decode_command_diagnostic(result.stderr).rstrip()
         detail = f"{failure}\n{output}" if output else failure
         raise InteropFailure(FailureKind.COMMAND_FAILED, detail)
     return result.stdout
@@ -626,6 +710,9 @@ class InteropCase:
             print(f"{peer.spec.name} log:", file=sys.stderr)
             print(contents, file=sys.stderr, end="" if contents.endswith("\n") else "\n")
 
+    def _cleanup_workspace(self) -> None:
+        cleanup_temporary_directory(self._temporary)
+
     def __enter__(self) -> InteropCase:
         return self
 
@@ -640,7 +727,7 @@ class InteropCase:
             self.stop(peer)
         if kind is not None or evidence_failure is not None:
             self.print_logs()
-        self._temporary.cleanup()
+        self._cleanup_workspace()
         if evidence_failure is not None:
             raise evidence_failure
 

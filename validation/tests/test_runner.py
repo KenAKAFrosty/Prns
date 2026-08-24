@@ -561,6 +561,15 @@ expires = "2099-01-01"
         macos = runner.selected_suites(self.manifest, [], None, None, "macos")
         self.assertTrue(all(suite["platform"] == "macos" for suite in macos))
 
+    def test_interop_case_suites_are_portable(self) -> None:
+        suites = [
+            suite
+            for suite in self.manifest["suite"]
+            if suite["id"].startswith("interop-")
+        ]
+        self.assertTrue(suites)
+        self.assertTrue(all(suite["platform"] == "any" for suite in suites))
+
     def test_platform_selector_is_available_to_list_matrix_and_run(self) -> None:
         parser = runner.build_parser()
         for command in ("list", "matrix", "run"):
