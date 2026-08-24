@@ -38,7 +38,7 @@ def run() -> None:
             )
         )
         case.wait_for_all(
-            [(stock, "RECEIVED 20"), (prns, "PRNS_TCP_CLIENT_OK proof=1")],
+            [(stock, "STOCK_TCP_SERVER_OK received=1"), (prns, "PRNS_TCP_CLIENT_OK proof=1")],
             45,
         )
     with PortLease() as port, InteropCase() as case:
