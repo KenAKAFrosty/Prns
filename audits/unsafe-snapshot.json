@@ -13900,14 +13900,24 @@
         "engine": [
           "default"
         ],
-        "esp32-c6": [],
-        "esp32-s3-heltec": [],
-        "esp32-s3-heltec-r8": [],
-        "esp32-s3-tbeam": [],
+        "esp32-c6": [
+          "embedded"
+        ],
+        "esp32-s3-heltec": [
+          "embedded"
+        ],
+        "esp32-s3-heltec-r8": [
+          "embedded"
+        ],
+        "esp32-s3-tbeam": [
+          "embedded"
+        ],
         "ios": [
           "host"
         ],
-        "nrf52840": [],
+        "nrf52840": [
+          "embedded"
+        ],
         "wasm": []
       },
       "name": "personal-hopspot-core",
