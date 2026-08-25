@@ -17,7 +17,7 @@ import { test } from "node:test";
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const napiRoot = resolve(packageRoot, "../prns-napi");
 const productVersion = readFileSync(resolve(packageRoot, "../VERSION"), "utf8").trim();
-if (existsSync(napiRoot)) {
+if (existsSync(napiRoot) && !process.env.NAPI_RS_NATIVE_LIBRARY_PATH) {
   const bindings = readdirSync(napiRoot)
     .filter((file) => file.endsWith(".node"))
     .sort();
@@ -144,6 +144,9 @@ test("packaged native API completes the persistent two-node journey", async () =
     const eventClaim = server.claimEvents();
     assert.equal(eventClaim.tag, "Claimed");
     const events = eventClaim.data;
+    const diagnosticClaim = client.claimDiagnostics();
+    assert.equal(diagnosticClaim.tag, "Claimed");
+    const diagnostics = diagnosticClaim.data;
 
     assertSucceeded(
       await server.attachInterface(
@@ -175,11 +178,27 @@ test("packaged native API completes the persistent two-node journey", async () =
       }
     }
     assert.equal(routed, true, "announced destination did not become routable");
+    const announce = await nextTagged(diagnostics, "AnnounceHeard");
+    assert.deepEqual(
+      Buffer.from(announce.data.appData),
+      Buffer.from(fixture.destination.announceAppDataHex, "hex"),
+    );
 
     const established = assertSucceeded(
       await client.establishLink(destinationHash),
       "LinkEstablished",
     );
+    const linkPayload = Buffer.from("native direct Link payload");
+    const linkDeliveryResult = client.sendLinkPacket(
+      established.data.linkId,
+      linkPayload,
+    );
+    const linkDelivery = await nextTagged(events, "LinkDelivery");
+    assert.deepEqual(Buffer.from(linkDelivery.data.linkId), established.data.linkId);
+    assert.deepEqual(Buffer.from(linkDelivery.data.plaintext), linkPayload);
+    assert.equal(linkDelivery.data.sourceInterface.length, 8);
+    assertSucceeded(await linkDeliveryResult, "PacketDelivered");
+
     const requestPayload = Buffer.from(fixture.request.payloadHex, "hex");
     const responsePayload = Buffer.from(fixture.request.responseHex, "hex");
     const requestResult = client.request(

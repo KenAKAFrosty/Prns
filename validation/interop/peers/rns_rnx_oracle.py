@@ -3,8 +3,8 @@ import sys
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
-EXPECTED_RNS_VERSION = "1.4.2"
 LISTENER_PRIVATE = bytes([0x31]) * 32 + bytes([0x32]) * 32
 CLIENT_PRIVATE = bytes([0x41]) * 32 + bytes([0x42]) * 32
 
@@ -18,8 +18,6 @@ def prepare(
     listener_path,
     client_path,
 ):
-    if getattr(RNS, "__version__", "") != EXPECTED_RNS_VERSION:
-        raise RuntimeError(f"expected RNS {EXPECTED_RNS_VERSION}")
     config_dir = pathlib.Path(config_dir)
     client_config_dir = pathlib.Path(client_config_dir)
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -62,7 +60,7 @@ def prepare(
 
 
 def serve(config_dir, listener_path):
-    RNS.Reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     listener = RNS.Identity.from_file(listener_path)
     destination = RNS.Destination(
         listener,

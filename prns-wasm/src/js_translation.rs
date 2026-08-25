@@ -32,6 +32,7 @@ pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
         }
         Journaled::AnnounceHeard { observation, .. } => {
             set_str(&object, "type", "announce");
+            set_bytes(&object, "appData", observation.app_data);
             set_bytes(&object, "destination", observation.destination.as_bytes());
             set_u32(&object, "hops", u32::from(observation.hops.0));
             set_bytes(
@@ -149,8 +150,14 @@ pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
             set_str(&object, "detail", &format!("{delivery:?}"));
         }
         Journaled::Delivered(Delivery::Link(delivery)) => {
-            set_str(&object, "type", "delivered");
-            set_str(&object, "detail", &format!("{delivery:?}"));
+            set_str(&object, "type", "linkDelivery");
+            set_bytes(&object, "linkId", delivery.link_id.as_bytes());
+            set_bytes(&object, "plaintext", delivery.plaintext);
+            set_bytes(
+                &object,
+                "sourceInterface",
+                delivery.source_interface.as_bytes(),
+            );
         }
         Journaled::LinkClosed { link_id, reason } => {
             set_str(&object, "type", "linkClosed");
@@ -512,7 +519,7 @@ fn settlement_to_js(object: &Object, settlement: Settlement) {
         ))) => {
             set_command_failure(object, "RequestAllowListFull", None);
         }
-        Settlement::SendGroup(_) => {
+        Settlement::SendGroup(_) | Settlement::SendPlainPacket(_) => {
             set_str(object, "result", "untracked");
         }
     }

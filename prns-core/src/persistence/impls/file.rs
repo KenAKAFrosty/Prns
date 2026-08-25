@@ -57,6 +57,7 @@ fn region_file_name(region: SnapshotRegion) -> &'static str {
         SnapshotRegion::Tunnels => "tunnels",
         SnapshotRegion::SelfRatchets => "self_ratchets",
         SnapshotRegion::DestinationIdentities => "known_destinations",
+        SnapshotRegion::RemoteControlAccess => "remote_control_access",
     }
 }
 

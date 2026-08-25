@@ -515,7 +515,8 @@
         { "name": "ResourceAvailable", "value": 104 },
         { "name": "ResourceSegment", "value": 105 },
         { "name": "ResourceNeedsDecompression", "value": 106 },
-        { "name": "ChannelMessage", "value": 107 }
+        { "name": "ChannelMessage", "value": 107 },
+        { "name": "LinkDelivery", "value": 108 }
       ]
     },
     {
@@ -601,7 +602,8 @@
         { "name": "Refused", "value": 36 },
         { "name": "Dropped", "value": 37 },
         { "name": "PersistenceCause", "value": 38 },
-        { "name": "PersistenceTarget", "value": 39 }
+        { "name": "PersistenceTarget", "value": 39 },
+        { "name": "AppData", "value": 40 }
       ]
     }
   ],
@@ -1206,6 +1208,15 @@
             { "name": "messageType", "type": "u16" },
             { "name": "data", "type": "bytes" }
           ]
+        },
+        {
+          "name": "LinkDelivery",
+          "value": 108,
+          "fields": [
+            { "name": "linkId", "type": "LinkId" },
+            { "name": "sourceInterface", "type": "InterfaceId" },
+            { "name": "plaintext", "type": "bytes" }
+          ]
         }
       ]
     },
@@ -1218,7 +1229,8 @@
           "fields": [
             { "name": "destination", "type": "DestinationHash" },
             { "name": "hops", "type": "u8" },
-            { "name": "sourceInterface", "type": "InterfaceId" }
+            { "name": "sourceInterface", "type": "InterfaceId" },
+            { "name": "appData", "type": "bytes" }
           ]
         },
         {

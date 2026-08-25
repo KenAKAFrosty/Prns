@@ -8,7 +8,7 @@ use embedded_storage_async::nor_flash::NorFlash;
 use heapless::Vec as HeaplessVec;
 use static_cell::StaticCell;
 
-use crate::engine::{IssuedCommand, Journaled, ProofRequest, MAX_SEND_REQUEST_DATA_LEN};
+use crate::engine::{IssuedCommand, ProofRequest, MAX_SEND_REQUEST_DATA_LEN};
 use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceIfac};
 use crate::manifold::driver::{
     run_pooled, InterfaceLifecycle, PooledEgress, PooledWiring, ResumableHost,
@@ -25,6 +25,7 @@ use super::super::{
     ManuallyAttached, NoInterfaceInspectionStore, NoManifoldPersistence, PreConfiguredDestination,
     PrnsEvent, PrnsNodeRecipe, RouteSnapshotKeys,
 };
+use super::command_handle::JournalRoute;
 use super::command_handle::PrnsNodeHandle;
 use prns_runtime::runtime::placement::assemble_node_in_place;
 use prns_runtime::runtime::{assemble_node, AssembledNode, NoPersistence};
@@ -36,6 +37,8 @@ pub struct ManifoldWiring<
     const COMMANDS: usize,
     const LIFECYCLE: usize,
     const COMPLETIONS: usize,
+    const REQUEST_COMPLETIONS: usize = 0,
+    const RESPONSE_BYTES: usize = 0,
 > where
     M: RawMutex + 'static,
 {
@@ -46,7 +49,8 @@ pub struct ManifoldWiring<
     pub(super) notify: Receiver<'static, M, InterfaceId, NOTIFY>,
     pub(super) commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
     pub(super) lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
-    pub(super) handle: PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS>,
+    pub(super) handle:
+        PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
 }
 
 pub struct PrnsNode<
@@ -64,6 +68,8 @@ pub struct PrnsNode<
     const COMPLETIONS: usize,
     const ROUTED_REQUESTS: usize = 4,
     const ROUTED_REQUEST_BYTES: usize = MAX_SEND_REQUEST_DATA_LEN,
+    const REQUEST_COMPLETIONS: usize = 0,
+    const RESPONSE_BYTES: usize = 0,
 > where
     S: StorageLayout,
     M: RawMutex + 'static,
@@ -74,7 +80,7 @@ pub struct PrnsNode<
     notify: Receiver<'static, M, InterfaceId, NOTIFY>,
     commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
     lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
-    handle: PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS>,
+    handle: PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
     host: H,
     descriptors: HeaplessVec<InterfaceDescriptor, INTERFACE_CAPACITY>,
     ifacs: HeaplessVec<InterfaceIfac, LANE_COUNT>,
@@ -112,6 +118,8 @@ impl<
         const COMMANDS: usize,
         const LIFECYCLE: usize,
         const COMPLETIONS: usize,
+        const REQUEST_COMPLETIONS: usize,
+        const RESPONSE_BYTES: usize,
     >
     PrnsNode<
         St,
@@ -128,6 +136,8 @@ impl<
         COMPLETIONS,
         4,
         MAX_SEND_REQUEST_DATA_LEN,
+        REQUEST_COMPLETIONS,
+        RESPONSE_BYTES,
     >
 where
     R: RequestEndpointSet<St>,
@@ -138,7 +148,16 @@ where
 {
     pub fn new<'d, D>(
         recipe: PrnsNodeRecipe<D, St, R, F, ManuallyAttached, S>,
-        wiring: ManifoldWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        wiring: ManifoldWiring<
+            M,
+            LANE_COUNT,
+            NOTIFY,
+            COMMANDS,
+            LIFECYCLE,
+            COMPLETIONS,
+            REQUEST_COMPLETIONS,
+            RESPONSE_BYTES,
+        >,
         host: H,
     ) -> Self
     where
@@ -163,6 +182,8 @@ impl<
         const COMPLETIONS: usize,
         const ROUTED_REQUESTS: usize,
         const ROUTED_REQUEST_BYTES: usize,
+        const REQUEST_COMPLETIONS: usize,
+        const RESPONSE_BYTES: usize,
     >
     PrnsNode<
         St,
@@ -179,6 +200,8 @@ impl<
         COMPLETIONS,
         ROUTED_REQUESTS,
         ROUTED_REQUEST_BYTES,
+        REQUEST_COMPLETIONS,
+        RESPONSE_BYTES,
     >
 where
     R: RequestEndpointSet<St>,
@@ -190,7 +213,16 @@ where
     pub fn init_static<'d, D>(
         cell: &'static StaticCell<Self>,
         recipe: PrnsNodeRecipe<D, St, R, F, ManuallyAttached, S>,
-        wiring: ManifoldWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        wiring: ManifoldWiring<
+            M,
+            LANE_COUNT,
+            NOTIFY,
+            COMMANDS,
+            LIFECYCLE,
+            COMPLETIONS,
+            REQUEST_COMPLETIONS,
+            RESPONSE_BYTES,
+        >,
         host: H,
     ) -> &'static mut Self
     where
@@ -209,7 +241,16 @@ where
     pub fn init_static_with_persistence<'d, D, P>(
         cell: &'static StaticCell<Self>,
         recipe: PrnsNodeRecipe<D, St, R, F, ManuallyAttached, S, P>,
-        wiring: ManifoldWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        wiring: ManifoldWiring<
+            M,
+            LANE_COUNT,
+            NOTIFY,
+            COMMANDS,
+            LIFECYCLE,
+            COMPLETIONS,
+            REQUEST_COMPLETIONS,
+            RESPONSE_BYTES,
+        >,
         host: H,
     ) -> (&'static mut Self, P)
     where
@@ -259,7 +300,16 @@ where
 
     pub fn new_with_request_capacity<'d, D>(
         recipe: PrnsNodeRecipe<D, St, R, F, ManuallyAttached, S>,
-        wiring: ManifoldWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        wiring: ManifoldWiring<
+            M,
+            LANE_COUNT,
+            NOTIFY,
+            COMMANDS,
+            LIFECYCLE,
+            COMPLETIONS,
+            REQUEST_COMPLETIONS,
+            RESPONSE_BYTES,
+        >,
         host: H,
         _capacity: RequestRoutingCapacity<ROUTED_REQUESTS, ROUTED_REQUEST_BYTES>,
     ) -> Self
@@ -271,7 +321,16 @@ where
 
     fn build<'d, D>(
         recipe: PrnsNodeRecipe<D, St, R, F, ManuallyAttached, S>,
-        wiring: ManifoldWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS>,
+        wiring: ManifoldWiring<
+            M,
+            LANE_COUNT,
+            NOTIFY,
+            COMMANDS,
+            LIFECYCLE,
+            COMPLETIONS,
+            REQUEST_COMPLETIONS,
+            RESPONSE_BYTES,
+        >,
         host: H,
     ) -> Self
     where
@@ -310,7 +369,10 @@ where
     }
 
     #[must_use]
-    pub fn handle(&self) -> PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS> {
+    pub fn handle(
+        &self,
+    ) -> PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>
+    {
         self.handle
     }
 
@@ -434,10 +496,8 @@ where
                 lifecycle,
             },
             |journaled| {
-                if let Journaled::CommandSettled { id, settlement } = &journaled {
-                    if handle.settle(*id, settlement.clone()) {
-                        return;
-                    }
+                if let JournalRoute::Awaiter = handle.route_journaled(&journaled) {
+                    return;
                 }
                 if let Some(request) = RunnerRequest::copy_from(&journaled) {
                     let _ = request_sender.try_send(request);
@@ -451,12 +511,17 @@ where
             store,
             &mut persistence,
         );
-        let router =
-            run_router::<St, R, M, COMMANDS, COMPLETIONS, ROUTED_REQUESTS, ROUTED_REQUEST_BYTES>(
-                &state,
-                request_channel.receiver(),
-                handle,
-            );
+        let router = run_router::<
+            St,
+            R,
+            M,
+            COMMANDS,
+            COMPLETIONS,
+            REQUEST_COMPLETIONS,
+            RESPONSE_BYTES,
+            ROUTED_REQUESTS,
+            ROUTED_REQUEST_BYTES,
+        >(&state, request_channel.receiver(), handle);
         join(join(manifold, router), drive).await;
     }
 
@@ -680,10 +745,8 @@ where
                 lifecycle: *lifecycle,
             },
             |journaled| {
-                if let Journaled::CommandSettled { id, settlement } = &journaled {
-                    if handle.settle(*id, settlement.clone()) {
-                        return;
-                    }
+                if let JournalRoute::Awaiter = handle.route_journaled(&journaled) {
+                    return;
                 }
                 if let Some(request) = RunnerRequest::copy_from(&journaled) {
                     let _ = request_sender.try_send(request);
@@ -697,12 +760,17 @@ where
             store,
             persistence,
         );
-        let router =
-            run_router::<St, R, M, COMMANDS, COMPLETIONS, ROUTED_REQUESTS, ROUTED_REQUEST_BYTES>(
-                state,
-                request_channel.receiver(),
-                *handle,
-            );
+        let router = run_router::<
+            St,
+            R,
+            M,
+            COMMANDS,
+            COMPLETIONS,
+            REQUEST_COMPLETIONS,
+            RESPONSE_BYTES,
+            ROUTED_REQUESTS,
+            ROUTED_REQUEST_BYTES,
+        >(state, request_channel.receiver(), *handle);
         join(manifold, router).await;
     }
 }

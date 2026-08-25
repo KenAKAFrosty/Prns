@@ -93,6 +93,7 @@ pub use crate::routing::announce::emit::{
 pub use crate::routing::announce::held::HeldDropCause;
 pub use crate::routing::announce::AnnounceObservation;
 pub use crate::routing::delivery::send_group::{SendGroupEntropy, SendGroupWriteError};
+pub use crate::routing::delivery::send_plain::SendPlainPacketWriteError;
 pub use crate::routing::delivery::send_single::{
     EncryptOwed, FinishSendSinglePacketOutcome, SendSinglePacketDispatch, SendSinglePacketEntropy,
     SendSinglePacketPrepared, SendSinglePacketWriteError, SendSinglePacketWriteOutcome,

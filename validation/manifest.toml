@@ -10,15 +10,27 @@ nightly = "nightly-2025-11-21"
 
 [interpreters.smoke]
 environment = "SMOKE_PYTHON"
-venv = "validation/.venv/rns-1.4.2"
+venv = "validation/.venv/rns-{version}"
 requirements = "validation/oracles/requirements.txt"
 version = "1.4.2"
 
 [interpreters.rpc]
 environment = "RPC_SMOKE_PYTHON"
-venv = "validation/.venv/rns-rpc-1.4.2"
+venv = "validation/.venv/rns-rpc-{version}"
 requirements = "validation/oracles/requirements.txt"
 version = "1.4.2"
+
+[interpreters.interop_smoke]
+environment = "SMOKE_PYTHON"
+venv = "validation/.venv/rns-interop-{version}"
+requirements = "validation/interop/requirements.txt"
+version = "1.5.0"
+
+[interpreters.interop_rpc]
+environment = "RPC_SMOKE_PYTHON"
+venv = "validation/.venv/rns-interop-rpc-{version}"
+requirements = "validation/interop/requirements.txt"
+version = "1.5.0"
 
 [registry]
 cargo_lock_workspaces = [
@@ -189,9 +201,11 @@ tiers = ["pr", "release", "scheduled"]
 platform = "linux"
 toolchain = "stable"
 timeout_seconds = 600
-command = ["bash", "validation/interop/cases/host-c-contract-smoke.sh"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.host_c_contract_smoke"]
 inputs = [
-  "validation/interop/cases/host-c-contract-smoke.sh",
+  "VERSION",
+  "validation/interop/cases/host_c_contract_smoke.py",
+  "validation/interop/host_contract.py",
   "prns-host/abi/c",
   "prns-host/conformance/interface-configs-v1.json",
   "prns-host/conformance/persistent-two-node-v1.json",
@@ -208,9 +222,10 @@ tiers = ["pr", "release", "scheduled"]
 platform = "linux"
 toolchain = "dotnet"
 timeout_seconds = 600
-command = ["bash", "validation/interop/cases/host-dotnet-contract-smoke.sh"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.host_dotnet_contract_smoke"]
 inputs = [
-  "validation/interop/cases/host-dotnet-contract-smoke.sh",
+  "validation/interop/cases/host_dotnet_contract_smoke.py",
+  "validation/interop/host_contract.py",
   "prns-host/abi/c",
   "prns-host/bindings/dotnet",
   "prns-host/conformance/interface-configs-v1.json",
@@ -255,9 +270,10 @@ tiers = ["pr", "release", "scheduled"]
 platform = "linux"
 toolchain = "python"
 timeout_seconds = 600
-command = ["bash", "validation/interop/cases/host-python-contract-smoke.sh"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.host_python_contract_smoke"]
 inputs = [
-  "validation/interop/cases/host-python-contract-smoke.sh",
+  "validation/interop/cases/host_python_contract_smoke.py",
+  "validation/interop/host_contract.py",
   "prns-host/abi/c",
   "prns-host/bindings/python",
   "prns-host/conformance/interface-configs-v1.json",
@@ -275,9 +291,11 @@ tiers = ["pr", "release", "scheduled"]
 platform = "linux"
 toolchain = "go"
 timeout_seconds = 600
-command = ["bash", "validation/interop/cases/host-go-contract-smoke.sh"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.host_go_contract_smoke"]
 inputs = [
-  "validation/interop/cases/host-go-contract-smoke.sh",
+  "validation/interop/cases/host_go_contract_smoke.py",
+  "validation/interop/host_contract.py",
+  "tools/release/package-host-native.py",
   "prns-host/abi/c",
   "prns-host/bindings/go",
   "prns-host/conformance/interface-configs-v1.json",
@@ -295,9 +313,11 @@ tiers = ["pr", "release", "scheduled"]
 platform = "linux"
 toolchain = "swift"
 timeout_seconds = 600
-command = ["bash", "validation/interop/cases/host-swift-contract-smoke.sh"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.host_swift_contract_smoke"]
 inputs = [
-  "validation/interop/cases/host-swift-contract-smoke.sh",
+  "validation/interop/cases/host_swift_contract_smoke.py",
+  "validation/interop/host_contract.py",
+  "tools/release/package-host-native.py",
   "prns-host/abi/c",
   "prns-host/bindings/swift",
   "prns-host/conformance/interface-configs-v1.json",
@@ -315,9 +335,10 @@ tiers = ["pr", "release", "scheduled"]
 platform = "linux"
 toolchain = "julia"
 timeout_seconds = 600
-command = ["bash", "validation/interop/cases/host-julia-contract-smoke.sh"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.host_julia_contract_smoke"]
 inputs = [
-  "validation/interop/cases/host-julia-contract-smoke.sh",
+  "validation/interop/cases/host_julia_contract_smoke.py",
+  "validation/interop/host_contract.py",
   "prns-host/abi/c",
   "prns-host/bindings/julia",
   "prns-host/conformance/interface-configs-v1.json",
@@ -335,9 +356,10 @@ tiers = ["pr", "release", "scheduled"]
 platform = "linux"
 toolchain = "jvm"
 timeout_seconds = 900
-command = ["bash", "validation/interop/cases/host-jvm-contract-smoke.sh"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.host_jvm_contract_smoke"]
 inputs = [
-  "validation/interop/cases/host-jvm-contract-smoke.sh",
+  "validation/interop/cases/host_jvm_contract_smoke.py",
+  "validation/interop/host_contract.py",
   "prns-host/abi/c",
   "prns-host/bindings/jvm",
   "prns-host/conformance/interface-configs-v1.json",
@@ -355,7 +377,7 @@ platform = "any"
 toolchain = "stable"
 timeout_seconds = 60
 command = ["__RUNNER_PYTHON__", "validation/run.py", "verify"]
-inputs = ["validation/manifest.toml", "validation/run.py", "validation/evidence-schema.json", "validation/BASELINE.md", "validation/mutation/triage.toml", "validation/oracles/requirements.lock", "validation/oracles/requirements.txt", "validation/oracles/tests/support/mod.rs"]
+inputs = ["validation/manifest.toml", "validation/run.py", "validation/evidence-schema.json", "validation/BASELINE.md", "validation/mutation/triage.toml", "validation/interop/requirements.lock", "validation/interop/requirements.txt", "validation/oracles/requirements.lock", "validation/oracles/requirements.txt", "validation/oracles/tests/support/mod.rs"]
 artifacts = "validation-artifacts/results/registry"
 
 [[suite]]
@@ -366,7 +388,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 300
 command = ["__RUNNER_PYTHON__", "-m", "unittest", "discover", "-s", "validation/tests", "-p", "test_*.py", "-v"]
-inputs = ["validation/run.py", "validation/tests/test_runner.py"]
+inputs = ["validation/run.py", "validation/tests"]
 artifacts = "validation-artifacts/results/validation-self-tests"
 
 [[suite]]
@@ -477,6 +499,18 @@ timeout_seconds = 1200
 command = ["cargo", "clippy", "--workspace", "--all-targets", "--locked", "--", "-D", "warnings"]
 inputs = ["Cargo.toml", "Cargo.lock"]
 artifacts = "validation-artifacts/results/root-clippy"
+
+[[suite]]
+id = "prnsd-observability-check"
+domain = "native"
+group = "feature-config"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+timeout_seconds = 1200
+command = ["cargo", "check", "--manifest-path", "prnsd/Cargo.toml", "--locked", "--no-default-features", "--features", "tokio-cloud-host,observability"]
+inputs = ["prnsd/Cargo.toml", "prnsd/Cargo.lock", "prnsd/src", "personal-rns/Cargo.toml", "prns-runtime/impls/tokio/Cargo.toml", "prns-runtime/impls/tokio/src"]
+artifacts = "validation-artifacts/results/prnsd-observability-check"
 
 [[suite]]
 id = "guide-rust"
@@ -987,12 +1021,12 @@ id = "interop-local-instance"
 domain = "interop"
 group = "essential"
 tiers = ["pr", "release", "scheduled"]
-platform = "linux"
+platform = "any"
 toolchain = "stable"
-interpreter = "smoke"
+interpreter = "interop_smoke"
 timeout_seconds = 300
-command = ["bash", "validation/interop/cases/local-interop-smoke.sh"]
-inputs = ["validation/interop/cases/local-interop-smoke.sh", "validation/interop/peers/rns_shared_instance_client.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.local_interop_smoke"]
+inputs = ["validation/interop/cases/local_interop_smoke.py", "validation/interop/cases/local_client_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_shared_instance_client.py", "validation/interop/peers/rns_shared_instance_server.py", "validation/integration/examples/local_shared_instance.rs", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-local-instance"
 
 [[suite]]
@@ -1000,12 +1034,12 @@ id = "interop-shared-rpc"
 domain = "interop"
 group = "essential"
 tiers = ["pr", "release", "scheduled"]
-platform = "linux"
+platform = "any"
 toolchain = "stable"
-interpreter = "rpc"
+interpreter = "interop_rpc"
 timeout_seconds = 300
-command = ["bash", "validation/interop/cases/local-rpc-interop-smoke.sh"]
-inputs = ["validation/interop/cases/local-rpc-interop-smoke.sh", "validation/interop/peers/rns_shared_rpc_client.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.local_rpc_interop_smoke"]
+inputs = ["validation/interop/cases/local_rpc_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_shared_rpc_client.py", "validation/integration/examples/local_shared_rpc_instance.rs"]
 artifacts = "validation-artifacts/results/interop-shared-rpc"
 
 [[suite]]
@@ -1013,12 +1047,12 @@ id = "interop-remote-management"
 domain = "interop"
 group = "essential"
 tiers = ["pr", "release", "scheduled"]
-platform = "linux"
+platform = "any"
 toolchain = "stable"
-interpreter = "rpc"
+interpreter = "interop_rpc"
 timeout_seconds = 360
-command = ["bash", "validation/interop/cases/remote-management-interop-smoke.sh"]
-inputs = ["validation/interop/cases/remote-management-interop-smoke.sh", "validation/interop/peers/rns_remote_management_client.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.remote_management_interop_smoke"]
+inputs = ["validation/interop/cases/remote_management_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_remote_management_client.py", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-remote-management"
 
 [[suite]]
@@ -1026,12 +1060,12 @@ id = "interop-probe-responder"
 domain = "interop"
 group = "essential"
 tiers = ["pr", "release", "scheduled"]
-platform = "linux"
+platform = "any"
 toolchain = "stable"
-interpreter = "rpc"
+interpreter = "interop_rpc"
 timeout_seconds = 360
-command = ["bash", "validation/interop/cases/probe-responder-interop-smoke.sh"]
-inputs = ["validation/interop/cases/probe-responder-interop-smoke.sh", "validation/interop/peers/rns_probe_client.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.probe_responder_interop_smoke"]
+inputs = ["validation/interop/cases/probe_responder_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_probe_client.py", "validation/interop/peers/rns_protocol_evidence.py", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-probe-responder"
 
 [[suite]]
@@ -1039,12 +1073,12 @@ id = "interop-blackhole"
 domain = "interop"
 group = "essential"
 tiers = ["pr", "release", "scheduled"]
-platform = "linux"
+platform = "any"
 toolchain = "stable"
-interpreter = "rpc"
+interpreter = "interop_rpc"
 timeout_seconds = 420
-command = ["bash", "validation/interop/cases/blackhole-exchange-interop-smoke.sh"]
-inputs = ["validation/interop/cases/blackhole-exchange-interop-smoke.sh", "validation/interop/peers/rns_blackhole_exchange.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.blackhole_exchange_interop_smoke"]
+inputs = ["validation/interop/cases/blackhole_exchange_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_blackhole_exchange.py", "validation/interop/peers/rns_protocol_evidence.py", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-blackhole"
 
 [[suite]]
@@ -1052,12 +1086,12 @@ id = "interop-rnode-tcp"
 domain = "interop"
 group = "essential"
 tiers = ["pr", "release", "scheduled"]
-platform = "linux"
+platform = "any"
 toolchain = "stable"
-interpreter = "rpc"
+interpreter = "interop_rpc"
 timeout_seconds = 300
-command = ["bash", "validation/interop/cases/rnode-tcp-interop-smoke.sh"]
-inputs = ["validation/interop/cases/rnode-tcp-interop-smoke.sh", "validation/interop/peers/rns_rnode_tcp_device.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.rnode_tcp_interop_smoke"]
+inputs = ["validation/interop/cases/rnode_tcp_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_rnode_tcp_device.py", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-rnode-tcp"
 
 [[suite]]
@@ -1065,25 +1099,77 @@ id = "interop-local-transit"
 domain = "interop"
 group = "essential"
 tiers = ["pr", "release", "scheduled"]
-platform = "linux"
+platform = "any"
 toolchain = "stable"
-interpreter = "smoke"
+interpreter = "interop_smoke"
 timeout_seconds = 420
-command = ["bash", "validation/interop/cases/local-transit-smoke.sh"]
-inputs = ["validation/interop/cases/local-transit-smoke.sh", "validation/interop/peers/rns_transit_client.py", "validation/interop/peers/rns_transit_peer.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.local_transit_interop_smoke"]
+inputs = ["validation/interop/cases/local_transit_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_transit_client.py", "validation/interop/peers/rns_transit_peer.py", "validation/integration/examples/local_transit_daemon.rs"]
 artifacts = "validation-artifacts/results/interop-local-transit"
+
+[[suite]]
+id = "interop-mixed-multihop"
+domain = "interop"
+group = "essential"
+tiers = ["release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+interpreter = "interop_smoke"
+timeout_seconds = 600
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.mixed_multihop_interop_smoke"]
+inputs = ["validation/interop/cases/mixed_multihop_interop_smoke.py", "validation/interop/cases/mixed_transport_topology.py", "validation/interop/harness.py", "validation/interop/peers/rns_multihop_transport.py", "validation/interop/peers/rns_multihop_endpoint.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/integration/examples/mixed_multihop_daemon.rs"]
+artifacts = "validation-artifacts/results/interop-mixed-multihop"
+
+[[suite]]
+id = "interop-transport-single"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "any"
+toolchain = "stable"
+interpreter = "interop_smoke"
+timeout_seconds = 420
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.transport_single_interop_smoke"]
+inputs = ["validation/interop/cases/transport_single_interop_smoke.py", "validation/interop/cases/mixed_transport_topology.py", "validation/interop/harness.py", "validation/interop/peers/rns_multihop_transport.py", "validation/interop/peers/rns_multihop_endpoint.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/integration/examples/mixed_multihop_daemon.rs"]
+artifacts = "validation-artifacts/results/interop-transport-single"
+
+[[suite]]
+id = "interop-cold-path-request"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "any"
+toolchain = "stable"
+interpreter = "interop_smoke"
+timeout_seconds = 420
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.cold_path_request_interop_smoke"]
+inputs = ["validation/interop/cases/cold_path_request_interop_smoke.py", "validation/interop/cases/mixed_transport_topology.py", "validation/interop/harness.py", "validation/interop/peers/rns_multihop_transport.py", "validation/interop/peers/rns_multihop_endpoint.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/integration/examples/mixed_multihop_daemon.rs"]
+artifacts = "validation-artifacts/results/interop-cold-path-request"
+
+[[suite]]
+id = "interop-route-replacement"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "any"
+toolchain = "stable"
+interpreter = "interop_smoke"
+timeout_seconds = 420
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.route_replacement_interop_smoke"]
+inputs = ["validation/interop/cases/route_replacement_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_multihop_transport.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_route_replacement_peer.py", "validation/integration/examples/mixed_multihop_daemon.rs"]
+artifacts = "validation-artifacts/results/interop-route-replacement"
 
 [[suite]]
 id = "interop-ifac-tcp"
 domain = "interop"
 group = "essential"
 tiers = ["pr", "release", "scheduled"]
-platform = "linux"
+platform = "any"
 toolchain = "stable"
-interpreter = "smoke"
+interpreter = "interop_smoke"
 timeout_seconds = 600
-command = ["bash", "validation/interop/cases/ifac-tcp-interop-smoke.sh"]
-inputs = ["validation/interop/cases/ifac-tcp-interop-smoke.sh", "validation/interop/cases/local-transit-smoke.sh", "validation/interop/peers/rns_transit_client.py", "validation/interop/peers/rns_transit_peer.py", "validation/interop/peers/rns_ifac_hostile.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.ifac_tcp_interop_smoke"]
+inputs = ["validation/interop/cases/ifac_tcp_interop_smoke.py", "validation/interop/cases/local_transit_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_transit_client.py", "validation/interop/peers/rns_transit_peer.py", "validation/interop/peers/rns_ifac_hostile.py", "validation/integration/examples/local_transit_daemon.rs", "validation/integration/examples/rns_interop_peer"]
 artifacts = "validation-artifacts/results/interop-ifac-tcp"
 
 [[suite]]
@@ -1091,64 +1177,181 @@ id = "interop-inverse-instance"
 domain = "interop"
 group = "essential"
 tiers = ["pr", "release", "scheduled"]
-platform = "linux"
+platform = "any"
 toolchain = "stable"
-interpreter = "smoke"
+interpreter = "interop_smoke"
 timeout_seconds = 300
-command = ["bash", "validation/interop/cases/local-client-smoke.sh"]
-inputs = ["validation/interop/cases/local-client-smoke.sh"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.local_client_smoke"]
+inputs = ["validation/interop/cases/local_client_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_shared_instance_server.py", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-inverse-instance"
 
 [[suite]]
-id = "interop-tcp-server"
+id = "interop-tcp"
 domain = "interop"
 group = "essential"
 tiers = ["pr", "release", "scheduled"]
-platform = "linux"
+platform = "any"
 toolchain = "stable"
-interpreter = "smoke"
-timeout_seconds = 420
-command = ["bash", "validation/interop/cases/tcp-server-interop-smoke.sh"]
-inputs = ["validation/interop/cases/tcp-server-interop-smoke.sh", "validation/interop/peers/rns_tcp_client_peer.py"]
-artifacts = "validation-artifacts/results/interop-tcp-server"
+interpreter = "interop_smoke"
+timeout_seconds = 600
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.tcp_interop_smoke"]
+inputs = ["validation/interop/cases/tcp_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_tcp_client_peer.py", "validation/interop/peers/rns_tcp_server_peer.py", "validation/integration/examples/rns_interop_peer"]
+artifacts = "validation-artifacts/results/interop-tcp"
 
 [[suite]]
-id = "interop-napi-tcp-server"
+id = "interop-buffer-stream"
 domain = "interop"
 group = "essential"
 tiers = ["pr", "release"]
-platform = "linux"
-toolchain = "node"
-interpreter = "smoke"
+platform = "any"
+toolchain = "stable"
+interpreter = "interop_smoke"
 timeout_seconds = 420
-command = ["bash", "validation/interop/cases/napi-tcp-server-interop-smoke.sh"]
-inputs = ["validation/interop/cases/napi-tcp-server-interop-smoke.sh", "validation/interop/peers/rns_tcp_client_peer.py", "prns-napi/tests/interop/tcp_server_host.mjs"]
-artifacts = "validation-artifacts/results/interop-napi-tcp-server"
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.buffer_stream_interop_smoke"]
+inputs = ["validation/interop/cases/buffer_stream_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_buffer_stream_server.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/integration/examples/rns_interop_peer"]
+artifacts = "validation-artifacts/results/interop-buffer-stream"
 
 [[suite]]
-id = "interop-napi-tcp-client"
+id = "interop-tunnel-recovery"
 domain = "interop"
 group = "essential"
 tiers = ["pr", "release"]
-platform = "linux"
-toolchain = "node"
-interpreter = "smoke"
+platform = "any"
+toolchain = "stable"
+interpreter = "interop_smoke"
 timeout_seconds = 420
-command = ["bash", "validation/interop/cases/napi-tcp-client-interop-smoke.sh"]
-inputs = ["validation/interop/cases/napi-tcp-client-interop-smoke.sh", "validation/interop/peers/rns_tcp_server_peer.py", "prns-napi/tests/interop/tcp_client_probe.mjs"]
-artifacts = "validation-artifacts/results/interop-napi-tcp-client"
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.tunnel_recovery_interop_smoke"]
+inputs = ["validation/interop/cases/tunnel_recovery_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_tunnel_recovery_peer.py", "validation/integration/examples/rns_interop_peer"]
+artifacts = "validation-artifacts/results/interop-tunnel-recovery"
+
+[[suite]]
+id = "interop-channel"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "any"
+toolchain = "stable"
+interpreter = "interop_smoke"
+timeout_seconds = 420
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.channel_interop_smoke"]
+inputs = ["validation/interop/cases/channel_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_channel_server.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/integration/examples/rns_interop_peer"]
+artifacts = "validation-artifacts/results/interop-channel"
+
+[[suite]]
+id = "interop-link-closure"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "any"
+toolchain = "stable"
+interpreter = "interop_smoke"
+timeout_seconds = 420
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.link_closure_interop_smoke"]
+inputs = ["validation/interop/cases/link_closure_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_link_closure_server.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/integration/examples/rns_interop_peer"]
+artifacts = "validation-artifacts/results/interop-link-closure"
+
+[[suite]]
+id = "interop-link-packet"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "any"
+toolchain = "stable"
+interpreter = "interop_smoke"
+timeout_seconds = 420
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.link_packet_interop_smoke"]
+inputs = ["validation/interop/cases/link_packet_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_link_packet_peer.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/integration/examples/rns_interop_peer"]
+artifacts = "validation-artifacts/results/interop-link-packet"
+
+[[suite]]
+id = "interop-announce-app-data"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "any"
+toolchain = "stable"
+interpreter = "interop_smoke"
+timeout_seconds = 420
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.announce_app_data_interop_smoke"]
+inputs = ["validation/interop/cases/announce_app_data_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_announce_app_data_peer.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/integration/examples/rns_interop_peer"]
+artifacts = "validation-artifacts/results/interop-announce-app-data"
+
+[[suite]]
+id = "interop-plain-group-destinations"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "stable"
+interpreter = "interop_smoke"
+timeout_seconds = 600
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.plain_group_destinations_interop_smoke"]
+inputs = ["validation/interop/cases/plain_group_destinations_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_plain_group_peer.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/integration/examples/rns_interop_peer"]
+artifacts = "validation-artifacts/results/interop-plain-group-destinations"
+
+[[suite]]
+id = "interop-ratchet"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "any"
+toolchain = "stable"
+interpreter = "interop_smoke"
+timeout_seconds = 420
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.ratchet_interop_smoke"]
+inputs = ["validation/interop/cases/ratchet_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_ratchet_server.py", "validation/integration/examples/rns_interop_peer"]
+artifacts = "validation-artifacts/results/interop-ratchet"
+
+[[suite]]
+id = "interop-large-request"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "any"
+toolchain = "stable"
+interpreter = "interop_smoke"
+timeout_seconds = 600
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.large_request_interop_smoke"]
+inputs = ["validation/interop/cases/large_request_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_large_request_server.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/integration/examples/rns_interop_peer"]
+artifacts = "validation-artifacts/results/interop-large-request"
+
+[[suite]]
+id = "interop-resource-rejection"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "any"
+toolchain = "stable"
+interpreter = "interop_smoke"
+timeout_seconds = 600
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.resource_rejection_interop_smoke"]
+inputs = ["validation/interop/cases/resource_rejection_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_resource_rejection_peer.py", "validation/integration/examples/rns_interop_peer"]
+artifacts = "validation-artifacts/results/interop-resource-rejection"
+
+[[suite]]
+id = "interop-udp"
+domain = "interop"
+group = "essential"
+tiers = ["pr", "release"]
+platform = "any"
+toolchain = "stable"
+interpreter = "interop_smoke"
+timeout_seconds = 420
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.udp_interop_smoke"]
+inputs = ["validation/interop/cases/udp_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_udp_peer.py", "validation/integration/examples/rns_interop_peer"]
+artifacts = "validation-artifacts/results/interop-udp"
 
 [[suite]]
 id = "interop-rnid-local"
 domain = "interop"
 group = "utility"
 tiers = ["release", "scheduled"]
-platform = "linux"
+platform = "any"
 toolchain = "stable"
-interpreter = "rpc"
+interpreter = "interop_rpc"
 timeout_seconds = 300
-command = ["bash", "validation/interop/cases/rnid-local-interop-smoke.sh"]
-inputs = ["validation/interop/cases/rnid-local-interop-smoke.sh", "validation/interop/peers/rns_rnid_oracle.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.rnid_local_interop_smoke"]
+inputs = ["validation/interop/cases/rnid_local_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_rnid_oracle.py", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-rnid-local"
 
 [[suite]]
@@ -1156,12 +1359,12 @@ id = "interop-rnid-network"
 domain = "interop"
 group = "utility"
 tiers = ["release", "scheduled"]
-platform = "linux"
+platform = "any"
 toolchain = "stable"
-interpreter = "rpc"
+interpreter = "interop_rpc"
 timeout_seconds = 420
-command = ["bash", "validation/interop/cases/rnid-network-interop-smoke.sh"]
-inputs = ["validation/interop/cases/rnid-network-interop-smoke.sh", "validation/interop/peers/rns_rnid_network_server.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.rnid_network_interop_smoke"]
+inputs = ["validation/interop/cases/rnid_network_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_rnid_network_server.py", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-rnid-network"
 
 [[suite]]
@@ -1169,12 +1372,12 @@ id = "interop-rnstatus"
 domain = "interop"
 group = "utility"
 tiers = ["release", "scheduled"]
-platform = "linux"
+platform = "any"
 toolchain = "stable"
-interpreter = "rpc"
+interpreter = "interop_rpc"
 timeout_seconds = 420
-command = ["bash", "validation/interop/cases/rnstatus-interop-smoke.sh"]
-inputs = ["validation/interop/cases/rnstatus-interop-smoke.sh", "validation/interop/peers/rns_rnstatus_server.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.rnstatus_interop_smoke"]
+inputs = ["validation/interop/cases/rnstatus_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_rnstatus_server.py", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-rnstatus"
 
 [[suite]]
@@ -1182,12 +1385,12 @@ id = "interop-rnpath"
 domain = "interop"
 group = "utility"
 tiers = ["release", "scheduled"]
-platform = "linux"
+platform = "any"
 toolchain = "stable"
-interpreter = "rpc"
+interpreter = "interop_rpc"
 timeout_seconds = 600
-command = ["bash", "validation/interop/cases/rnpath-interop-smoke.sh"]
-inputs = ["validation/interop/cases/rnpath-interop-smoke.sh", "validation/interop/peers/rns_rnpath_server.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.rnpath_interop_smoke"]
+inputs = ["validation/interop/cases/rnpath_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_rnpath_server.py", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-rnpath"
 
 [[suite]]
@@ -1195,12 +1398,12 @@ id = "interop-rnprobe"
 domain = "interop"
 group = "utility"
 tiers = ["release", "scheduled"]
-platform = "linux"
+platform = "any"
 toolchain = "stable"
-interpreter = "rpc"
+interpreter = "interop_rpc"
 timeout_seconds = 420
-command = ["bash", "validation/interop/cases/rnprobe-interop-smoke.sh"]
-inputs = ["validation/interop/cases/rnprobe-interop-smoke.sh", "validation/interop/peers/rns_rnprobe_server.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.rnprobe_interop_smoke"]
+inputs = ["validation/interop/cases/rnprobe_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_rnprobe_server.py", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-rnprobe"
 
 [[suite]]
@@ -1208,12 +1411,12 @@ id = "interop-rncp"
 domain = "interop"
 group = "utility"
 tiers = ["release", "scheduled"]
-platform = "linux"
+platform = "any"
 toolchain = "stable"
-interpreter = "rpc"
+interpreter = "interop_rpc"
 timeout_seconds = 600
-command = ["bash", "validation/interop/cases/rncp-interop-smoke.sh"]
-inputs = ["validation/interop/cases/rncp-interop-smoke.sh", "validation/interop/peers/rns_rncp_oracle.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.rncp_interop_smoke"]
+inputs = ["validation/interop/cases/rncp_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_rncp_oracle.py", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-rncp"
 
 [[suite]]
@@ -1221,24 +1424,25 @@ id = "interop-rnx"
 domain = "interop"
 group = "utility"
 tiers = ["release", "scheduled"]
-platform = "linux"
+platform = "any"
 toolchain = "stable"
-interpreter = "rpc"
+interpreter = "interop_rpc"
 timeout_seconds = 600
-command = ["bash", "validation/interop/cases/rnx-interop-smoke.sh"]
-inputs = ["validation/interop/cases/rnx-interop-smoke.sh", "validation/interop/peers/rns_rnx_oracle.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.cases.rnx_interop_smoke"]
+inputs = ["validation/interop/cases/rnx_interop_smoke.py", "validation/interop/harness.py", "validation/interop/peers/rns_protocol_evidence.py", "validation/interop/peers/rns_rnx_oracle.py", "prnsd/Cargo.toml", "prnsd/src"]
 artifacts = "validation-artifacts/results/interop-rnx"
 
 [[suite]]
 id = "interop-websocket-ecosystem-characterization"
 domain = "interop"
-group = "linux-network"
+group = "ecosystem"
 tiers = ["scheduled"]
-platform = "linux"
+platform = "any"
 toolchain = "python"
 timeout_seconds = 600
-command = ["__RUNNER_PYTHON__", "validation/interop/websocket_ecosystem_characterization.py"]
+command = ["__RUNNER_PYTHON__", "-m", "validation.interop.websocket_ecosystem_characterization"]
 inputs = [
+  "validation/interop/harness.py",
   "validation/interop/websocket_ecosystem_characterization.py",
   "validation/interop/peers/websocket_ecosystem/aerik.mjs",
   "validation/interop/peers/websocket_ecosystem/bergie.mjs",
@@ -1255,17 +1459,19 @@ artifacts = "validation-artifacts/results/interop-websocket-ecosystem-characteri
 [[suite]]
 id = "interop-websocket-bergie-lxmf-e2e"
 domain = "interop"
-group = "linux-network"
+group = "ecosystem"
 tiers = ["scheduled"]
-platform = "linux"
+platform = "any"
 toolchain = "python"
 timeout_seconds = 600
 command = [
   "__RUNNER_PYTHON__",
-  "validation/interop/websocket_ecosystem_characterization.py",
+  "-m",
+  "validation.interop.websocket_ecosystem_characterization",
   "--lxmf-application-e2e",
 ]
 inputs = [
+  "validation/interop/harness.py",
   "validation/interop/websocket_ecosystem_characterization.py",
   "validation/interop/websocket_bergie_lxmf_e2e.py",
   "validation/interop/peers/websocket_ecosystem/bergie_lxmf/echo.mjs",

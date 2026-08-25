@@ -29,7 +29,10 @@ impl RequestEndpoint<DaemonRequestState> for StatusRoute {
     const ENDPOINT_ID: &'static str = STATUS_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[]);
 
-    async fn handle(mut context: RequestContext<'_, DaemonRequestState>) -> Result<(), Decline> {
+    async fn handle(
+        mut context: RequestContext<'_, DaemonRequestState>,
+        _node: &impl personal_rns::runtime::PrnsNodeApi,
+    ) -> Result<(), Decline> {
         let request = decode_status_request(context.data).map_err(|_| Decline::Ignore)?;
         let handle = context.state.handle();
         let link_count = match request {
@@ -53,7 +56,10 @@ impl RequestEndpoint<DaemonRequestState> for PathRoute {
     const ENDPOINT_ID: &'static str = PATH_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[]);
 
-    async fn handle(mut context: RequestContext<'_, DaemonRequestState>) -> Result<(), Decline> {
+    async fn handle(
+        mut context: RequestContext<'_, DaemonRequestState>,
+        _node: &impl personal_rns::runtime::PrnsNodeApi,
+    ) -> Result<(), Decline> {
         let request = decode_path_request(context.data).map_err(|_| Decline::Ignore)?;
         let handle = context.state.handle();
         let response = match request {

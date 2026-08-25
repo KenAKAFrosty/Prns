@@ -35,7 +35,10 @@ struct Echo;
 impl RequestEndpoint<Responder> for Echo {
     const ENDPOINT_ID: &'static str = QUERY_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
-    async fn handle(mut cx: RequestContext<'_, Responder>) -> Result<(), Decline> {
+    async fn handle(
+        mut cx: RequestContext<'_, Responder>,
+        _node: &impl personal_rns::runtime::PrnsNodeApi,
+    ) -> Result<(), Decline> {
         let asked = cx.data;
         let _ = cx.write_packed(asked);
         cx.respond(b"-pong")
@@ -46,7 +49,10 @@ struct Fat;
 impl RequestEndpoint<Responder> for Fat {
     const ENDPOINT_ID: &'static str = "/test/fat";
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
-    async fn handle(mut cx: RequestContext<'_, Responder>) -> Result<(), Decline> {
+    async fn handle(
+        mut cx: RequestContext<'_, Responder>,
+        _node: &impl personal_rns::runtime::PrnsNodeApi,
+    ) -> Result<(), Decline> {
         cx.respond(fat_body())
     }
 }

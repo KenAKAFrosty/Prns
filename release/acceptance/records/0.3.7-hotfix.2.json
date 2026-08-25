@@ -1,0 +1,69 @@
+{
+  "candidate": {
+    "channel": "stable",
+    "manifest_sha256": "98e7481831580bd4bf07ec46a47e24a99d0ecfbe67f4a5404dcef61464e36527",
+    "manifest_signature_sha256": "66ef0e85314fc94703f2d1aa204db81037ff8a999cd14ac1d956365bc30e0697",
+    "prerelease_published_at": "2026-08-25T18:39:35Z",
+    "signed_candidate_sha256": "da3ea5d1dedf34a9054c22d230289e92986cd0305a9b864ef7bebf97248bca24",
+    "signing_key_id": "1BF5C4D8B140811A",
+    "source_commit": "8fbb8ba72cea5a123caabf0c1a24c9a43d3bb2b1",
+    "version": "0.3.7-hotfix.2"
+  },
+  "hardware_deferrals": [],
+  "hotfix": {
+    "base_manifest_sha256": "46707d484128fd3b97bafb61065223fab4abe772cb8fa58b9e76a4c506e7ebef",
+    "base_release_record_sha256": "c538f432275ea81f020193698680333bbb0b9765fe928604431eb2ff2bed4069",
+    "base_signed_candidate_sha256": "a28833cf0e652cf93e024b4f6a34587d9a986b34f6945d69162bc843265d6608",
+    "base_source_commit": "f6dab7b3fcb7fe78ccfccfc8ea49dac05df14ee1",
+    "base_version": "0.3.7-hotfix.1",
+    "changed_boards": [
+      "t-beam-supreme"
+    ],
+    "deferred_hardware": [],
+    "physical_boards": [
+      "t-beam-supreme"
+    ],
+    "summary": "LilyGO T-Beam Supreme TCP-client socket-capacity correction.",
+    "version": "0.3.7-hotfix.2"
+  },
+  "runs": [
+    {
+      "architecture": "aarch64",
+      "board": "t-beam-supreme",
+      "checks": {
+        "tcp-client-enabled-boot": "pass"
+      },
+      "client": {
+        "name": "hopspot-flash",
+        "version": "0.3.7-hotfix.2"
+      },
+      "completed_at": "2026-08-25T18:50:25Z",
+      "evidence": {
+        "redaction": {
+          "credentials_removed": true,
+          "device_identifiers_removed": true,
+          "local_paths_removed": true,
+          "private_network_data_removed": true,
+          "reviewer": "github:KenAKAFrosty"
+        },
+        "reference": "artifact://qualification/d46c92ee5617cbd736f05ae6b6775724ac84a22adfd93884f39fc31e7469cdb0",
+        "sha256": "d46c92ee5617cbd736f05ae6b6775724ac84a22adfd93884f39fc31e7469cdb0"
+      },
+      "hardware_identity": "Physical ESP32-S3 LilyGO T-Beam Supreme; unique device identifiers redacted",
+      "hardware_model": "LilyGO T-Beam Supreme",
+      "hardware_revision": "ESP32-S3 revision v0.2",
+      "os": "macos",
+      "os_version": "26.4",
+      "result": "pass",
+      "scenarios": {
+        "correct-board": "pass",
+        "fresh-install": "pass",
+        "post-flash-boot": "pass",
+        "sparse-write": "pass"
+      },
+      "surface": "cli",
+      "tester": "github:KenAKAFrosty"
+    }
+  ],
+  "schema": 6
+}

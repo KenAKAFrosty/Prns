@@ -4,6 +4,10 @@ For the beginner verification ladder, start with
 [Testing changes](testing.md). This document owns the deeper suite registry,
 evidence, proof, interoperability, and release aggregation model.
 
+The [stock-RNS interoperability test checklist](interop-checklist.md) records
+the working set of behaviors Prns exercises against the reference
+implementation.
+
 The `list`, `matrix`, and `run` commands accept an explicit host selector:
 
 ```console
@@ -106,13 +110,13 @@ readiness unless an Android application release explicitly places it in scope.
 
 Ordinary `cargo test` never searches for or silently uses a local Python
 environment. Oracle and live interop suites require explicit interpreters that
-contain the centrally pinned RNS version. Prepare reproducible local
+contain the RNS version pinned for that evidence domain. Prepare reproducible local
 environments with:
 
 ```console
 python3 validation/run.py prepare-oracles
-python3 validation/run.py run --domain oracles --tier pr
-python3 validation/run.py run --domain interop --tier pr
+python3 validation/run.py run --domain oracles --tier pr --platform current
+python3 validation/run.py run --domain interop --tier pr --platform current
 ```
 
 The runner sets `SMOKE_PYTHON` and `RPC_SMOKE_PYTHON` for each registered suite

@@ -1321,6 +1321,7 @@ type ParsedRawEvent =
 
 type RawNativeEventType =
   | "singleDelivery"
+  | "linkDelivery"
   | "request"
   | "response"
   | "responseSegment"
@@ -1359,6 +1360,7 @@ type RawNativeEvent = {
 const RAW_NATIVE_EVENT_TYPES: ReadonlySet<string> =
   new Set<RawNativeEventType>([
     "singleDelivery",
+    "linkDelivery",
     "request",
     "response",
     "responseSegment",
@@ -1411,6 +1413,17 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
           destination: contract.destinationHash(
             bytes("destination", data.destination),
           ),
+          sourceInterface: contract.interfaceId(
+            bytes("sourceInterface", data.sourceInterface),
+          ),
+          plaintext: bytes("plaintext", data.plaintext).slice(),
+        }),
+      ),
+    linkDelivery: (data) =>
+      casework.Tag(
+        "Application",
+        casework.Tag("LinkDelivery", {
+          linkId: contract.linkId(bytes("linkId", data.linkId)),
           sourceInterface: contract.interfaceId(
             bytes("sourceInterface", data.sourceInterface),
           ),
@@ -1523,6 +1536,7 @@ function parseRawEvent(raw: unknown): ParsedRawEvent {
       casework.Tag(
         "Diagnostic",
         casework.Tag("AnnounceHeard", {
+          appData: bytes("appData", data.appData).slice(),
           destination: contract.destinationHash(
             bytes("destination", data.destination),
           ),
@@ -1882,6 +1896,7 @@ function validateLimits(limits: PrnsLimits): PrnsLimits {
 function retainedEventBytes(event: ApplicationEvent): number {
   return casework.match_into<number>().from(event, {
     SingleDelivery: ({ plaintext }) => plaintext.length,
+    LinkDelivery: ({ plaintext }) => plaintext.length,
     Request: ({ data }) => data.length,
     Response: ({ data }) => data.length,
     ResponseSegment: ({ data }) => data.length,

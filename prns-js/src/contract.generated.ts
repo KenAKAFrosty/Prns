@@ -1070,6 +1070,14 @@ export type ApplicationEvent =
         readonly messageType: number;
         readonly data: Uint8Array;
       }
+    >
+  | Tag<
+      "LinkDelivery",
+      {
+        readonly linkId: LinkId;
+        readonly sourceInterface: InterfaceId;
+        readonly plaintext: Uint8Array;
+      }
     >;
 
 export type DiagnosticEvent =
@@ -1079,6 +1087,7 @@ export type DiagnosticEvent =
         readonly destination: DestinationHash;
         readonly hops: number;
         readonly sourceInterface: InterfaceId;
+        readonly appData: Uint8Array;
       }
     >
   | Tag<

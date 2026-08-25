@@ -5,6 +5,7 @@
 mod destination_identities;
 pub mod envelope;
 mod impls;
+mod remote_control_access;
 mod routing_table;
 mod self_ratchets;
 mod store;
@@ -53,6 +54,11 @@ pub use envelope::{
 };
 #[allow(unused_imports)]
 pub use impls::*;
+pub use remote_control_access::{
+    read_remote_control_access_snapshot, remote_control_access_snapshot_len,
+    write_remote_control_access_snapshot, PersistedRemoteControlIdentities,
+    REMOTE_CONTROL_IDENTITY_WIRE_LEN,
+};
 pub use routing_table::{
     maximum_persisted_route_row_wire_len, maximum_route_upsert_payload_len,
     persisted_route_row_wire_len, read_routing_table_snapshot, routing_table_snapshot_len,
@@ -78,6 +84,7 @@ pub enum SnapshotRegion {
     Tunnels,
     SelfRatchets,
     DestinationIdentities,
+    RemoteControlAccess,
 }
 
 impl SnapshotRegion {
@@ -88,6 +95,7 @@ impl SnapshotRegion {
             SnapshotRegion::Tunnels => 0x03,
             SnapshotRegion::SelfRatchets => 0x04,
             SnapshotRegion::DestinationIdentities => 0x05,
+            SnapshotRegion::RemoteControlAccess => 0x06,
         }
     }
 }

@@ -8,10 +8,13 @@ use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use crate::units::RttMillis;
 use crate::wire::DestinationHash;
 
+use super::PrnsNodeApi;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequestEndpointPolicy {
     AllowNone,
     AllowAll,
+    RequireIdentified,
     AllowList(&'static [IdentityHash]),
 }
 
@@ -21,6 +24,7 @@ impl RequestEndpointPolicy {
         match self {
             RequestEndpointPolicy::AllowNone => RequestPolicy::AllowNone,
             RequestEndpointPolicy::AllowAll => RequestPolicy::AllowAll,
+            RequestEndpointPolicy::RequireIdentified => RequestPolicy::RequireIdentified,
             RequestEndpointPolicy::AllowList(_) => RequestPolicy::AllowList,
         }
     }
@@ -315,7 +319,10 @@ pub trait RequestEndpoint<AppState = ()> {
     /// You can use whatever string value you like (it's hashed and truncated so the wire length will be stable), but it's common convention to use URL/filesystem-like syntax, e.g., "/example/thing"
     const ENDPOINT_ID: &'static str;
     const POLICY: RequestEndpointPolicy;
-    async fn handle(context: RequestContext<'_, AppState>) -> Result<(), Decline>;
+    async fn handle(
+        context: RequestContext<'_, AppState>,
+        node: &impl PrnsNodeApi,
+    ) -> Result<(), Decline>;
 }
 
 /// A compile-time set of endpoints, produced by [`request_endpoints!`](crate::request_endpoints); you probably want
@@ -323,8 +330,11 @@ pub trait RequestEndpoint<AppState = ()> {
 #[allow(async_fn_in_trait)]
 pub trait RequestEndpointSet<S> {
     const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)];
-    async fn dispatch(cx: RequestContext<'_, S>, path_hash: RequestPathHash)
-        -> Result<(), Decline>;
+    async fn dispatch(
+        cx: RequestContext<'_, S>,
+        node: &impl PrnsNodeApi,
+        path_hash: RequestPathHash,
+    ) -> Result<(), Decline>;
 }
 
 /// The empty route set — what [`request_endpoints!`](crate::request_endpoints) with no arms hands back, and what a node
@@ -333,6 +343,7 @@ impl<S> RequestEndpointSet<S> for () {
     const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] = &[];
     async fn dispatch(
         _cx: RequestContext<'_, S>,
+        _node: &impl PrnsNodeApi,
         _path_hash: RequestPathHash,
     ) -> Result<(), Decline> {
         Err(Decline::Ignore)
@@ -349,6 +360,7 @@ pub const fn no_request_endpoints() {}
 /// the runner dispatches with only `&state` and the endpoint-set type `R` — no `Router` wrapper.
 pub async fn dispatch_request<'a, S, R: RequestEndpointSet<S>>(
     state: &'a S,
+    node: &impl PrnsNodeApi,
     path_hash: RequestPathHash,
     request: InboundRequest<'a>,
     sink: &'a mut dyn ResponseSink,
@@ -362,7 +374,7 @@ pub async fn dispatch_request<'a, S, R: RequestEndpointSet<S>>(
         respond_token: request.respond_token(),
         sink,
     };
-    R::dispatch(cx, path_hash).await
+    R::dispatch(cx, node, path_hash).await
 }
 
 /// Compose route types into a [`RequestEndpointSet`] value, e.g., `request_endpoints![Health, Echo, Status]`. Each arm awaits
@@ -387,6 +399,7 @@ macro_rules! request_endpoints {
 
             async fn dispatch(
                 cx: $crate::runtime::request_endpoints::RequestContext<'_, S>,
+                node: &impl $crate::runtime::PrnsNodeApi,
                 path_hash: $crate::routing::request_handlers::RequestPathHash,
             ) -> ::core::result::Result<(), $crate::runtime::request_endpoints::Decline> {
                 $(
@@ -395,7 +408,7 @@ macro_rules! request_endpoints {
                             <$endpoint as $crate::runtime::request_endpoints::RequestEndpoint<S>>::ENDPOINT_ID,
                         )
                     {
-                        return <$endpoint as $crate::runtime::request_endpoints::RequestEndpoint<S>>::handle(cx).await;
+                        return <$endpoint as $crate::runtime::request_endpoints::RequestEndpoint<S>>::handle(cx, node).await;
                     }
                 )+
                 ::core::result::Result::Err($crate::runtime::request_endpoints::Decline::Ignore)
@@ -417,7 +430,10 @@ mod tests {
     impl RequestEndpoint<App> for Health {
         const ENDPOINT_ID: &'static str = "/health";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
-        async fn handle(mut cx: RequestContext<'_, App>) -> Result<(), Decline> {
+        async fn handle(
+            mut cx: RequestContext<'_, App>,
+            _node: &impl PrnsNodeApi,
+        ) -> Result<(), Decline> {
             cx.respond("ok")
         }
     }
@@ -426,7 +442,10 @@ mod tests {
     impl RequestEndpoint<App> for Greet {
         const ENDPOINT_ID: &'static str = "/greet";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
-        async fn handle(mut cx: RequestContext<'_, App>) -> Result<(), Decline> {
+        async fn handle(
+            mut cx: RequestContext<'_, App>,
+            _node: &impl PrnsNodeApi,
+        ) -> Result<(), Decline> {
             let greeting = cx.state.greeting;
             cx.respond(greeting)
         }
@@ -438,8 +457,23 @@ mod tests {
     impl RequestEndpoint<App> for Admin {
         const ENDPOINT_ID: &'static str = "/admin";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[ADMIN]);
-        async fn handle(_cx: RequestContext<'_, App>) -> Result<(), Decline> {
+        async fn handle(
+            _cx: RequestContext<'_, App>,
+            _node: &impl PrnsNodeApi,
+        ) -> Result<(), Decline> {
             Err(Decline::CloseLink)
+        }
+    }
+
+    struct Identified;
+    impl RequestEndpoint<App> for Identified {
+        const ENDPOINT_ID: &'static str = "/identified";
+        const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::RequireIdentified;
+        async fn handle(
+            _cx: RequestContext<'_, App>,
+            _node: &impl PrnsNodeApi,
+        ) -> Result<(), Decline> {
+            Ok(())
         }
     }
 
@@ -447,7 +481,10 @@ mod tests {
     impl RequestEndpoint<App> for Ack {
         const ENDPOINT_ID: &'static str = "/ack";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
-        async fn handle(mut cx: RequestContext<'_, App>) -> Result<(), Decline> {
+        async fn handle(
+            mut cx: RequestContext<'_, App>,
+            _node: &impl PrnsNodeApi,
+        ) -> Result<(), Decline> {
             cx.respond([0u8; 0])
         }
     }
@@ -460,8 +497,10 @@ mod tests {
 
     #[test]
     fn the_endpoint_set_is_the_registration_set_the_recipe_stands_up() {
-        let registrations = registrations(crate::request_endpoints![Health, Greet, Admin, Ack]);
-        assert_eq!(registrations.len(), 4);
+        let registrations = registrations(crate::request_endpoints![
+            Health, Greet, Admin, Identified, Ack
+        ]);
+        assert_eq!(registrations.len(), 5);
         assert_eq!(
             registrations[0],
             ("/health", RequestEndpointPolicy::AllowAll)
@@ -469,6 +508,11 @@ mod tests {
         assert_eq!(registrations[2].0, "/admin");
         assert_eq!(registrations[2].1.engine_policy(), RequestPolicy::AllowList);
         assert_eq!(registrations[2].1.seed_list(), &[ADMIN]);
+        assert_eq!(
+            registrations[3].1.engine_policy(),
+            RequestPolicy::RequireIdentified,
+        );
+        assert!(registrations[3].1.seed_list().is_empty());
         assert_eq!(registrations[0].1.engine_policy(), RequestPolicy::AllowAll);
         assert!(registrations[0].1.seed_list().is_empty());
     }
@@ -503,7 +547,8 @@ mod tests {
                     RttMillis::new(0),
                     b"",
                 );
-                dispatch_request::<App, R>(state, RequestPathHash::of(path), request, sink).await
+                dispatch_request::<App, R>(state, &(), RequestPathHash::of(path), request, sink)
+                    .await
             }
 
             let endpoints = crate::request_endpoints![Health, Greet, Admin, Ack];

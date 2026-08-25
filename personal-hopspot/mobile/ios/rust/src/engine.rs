@@ -579,6 +579,7 @@ async fn run_engine(
                 destination,
                 hops,
                 source_interface,
+                app_data: _,
             }) => {
                 diagnostic(
                     "route",

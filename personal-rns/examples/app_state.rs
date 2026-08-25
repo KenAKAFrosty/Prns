@@ -18,7 +18,10 @@ impl RequestEndpoint<StatusBoard> for Status {
     const ENDPOINT_ID: &'static str = STATUS_ENDPOINT_ID;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(mut context: RequestContext<'_, StatusBoard>) -> Result<(), Decline> {
+    async fn handle(
+        mut context: RequestContext<'_, StatusBoard>,
+        _node: &impl personal_rns::runtime::PrnsNodeApi,
+    ) -> Result<(), Decline> {
         let hits = context.state.hits.get() + 1;
         context.state.hits.set(hits);
         let reply = format!("{}, visitor {hits}", context.state.greeting);

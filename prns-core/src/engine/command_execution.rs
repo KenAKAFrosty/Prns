@@ -10,10 +10,11 @@ use crate::engine::{
     EngineReaction, EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome, FanTarget,
     FinishSendSinglePacketOutcome, IdentifyFailure, IdentifyRejection, InstantMillis,
     IssuedCommand, Journaled, PathRequestWriteOutcome, RequestPathFailure, RespondFailure,
-    RespondRejection, SendGroupEntropy, SendGroupFailure, SendRequestFailure, SendRequestRejection,
-    SendSinglePacketEntropy, SendSinglePacketFailure, SendSinglePacketWriteError,
-    SendSinglePacketWriteOutcome, SendToChannelFailure, SendToChannelRejection, SendToLinkFailure,
-    SendToLinkRejection, SetResourceStrategyFailure, Settlement, WakeSchedules,
+    RespondRejection, SendGroupEntropy, SendGroupFailure, SendPlainPacketFailure,
+    SendRequestFailure, SendRequestRejection, SendSinglePacketEntropy, SendSinglePacketFailure,
+    SendSinglePacketWriteError, SendSinglePacketWriteOutcome, SendToChannelFailure,
+    SendToChannelRejection, SendToLinkFailure, SendToLinkRejection, SetResourceStrategyFailure,
+    Settlement, WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::AttachedInterfaces;
@@ -182,6 +183,19 @@ impl<S: StorageLayout> EngineState<S> {
                     id,
                     Settlement::SendGroup(Err(SendGroupFailure::Rejected(rejection))),
                 );
+            }
+            CommandOutcome::OwesSendPlainPacket { id, send } => {
+                let mut buf = [0u8; BROADCAST_MTU];
+                let settlement = match self.write_commanded_send_plain_packet(&send, &mut buf) {
+                    Ok(wire_bytes) => {
+                        fan_frame(interfaces, FanTarget::All, &buf[..wire_bytes], sink);
+                        Settlement::SendPlainPacket(Ok(()))
+                    }
+                    Err(error) => {
+                        Settlement::SendPlainPacket(Err(SendPlainPacketFailure::WriteFailed(error)))
+                    }
+                };
+                settle(sink, id, settlement);
             }
             CommandOutcome::OwesPathRequest { id, request } => {
                 let mut buf = [0u8; BROADCAST_MTU];

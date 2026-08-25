@@ -119,22 +119,29 @@ pub(super) async fn run_router<
     M,
     const COMMANDS: usize,
     const COMPLETIONS: usize,
+    const REQUEST_COMPLETIONS: usize,
+    const RESPONSE_BYTES: usize,
     const REQUESTS: usize,
     const REQUEST_BYTES: usize,
 >(
     state: &St,
     requests: Receiver<'_, M, RunnerRequest<REQUEST_BYTES>, REQUESTS>,
-    commands: PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS>,
+    commands: PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
 ) where
     R: RequestEndpointSet<St>,
     M: RawMutex,
 {
     loop {
-        dispatch::<St, R, M, COMMANDS, COMPLETIONS, REQUEST_BYTES>(
-            state,
-            commands,
-            requests.receive().await,
-        )
+        dispatch::<
+            St,
+            R,
+            M,
+            COMMANDS,
+            COMPLETIONS,
+            REQUEST_COMPLETIONS,
+            RESPONSE_BYTES,
+            REQUEST_BYTES,
+        >(state, commands, requests.receive().await)
         .await;
     }
 }
@@ -145,10 +152,12 @@ async fn dispatch<
     M,
     const COMMANDS: usize,
     const COMPLETIONS: usize,
+    const REQUEST_COMPLETIONS: usize,
+    const RESPONSE_BYTES: usize,
     const REQUEST_BYTES: usize,
 >(
     state: &St,
-    commands: PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS>,
+    commands: PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
     request: RunnerRequest<REQUEST_BYTES>,
 ) where
     R: RequestEndpointSet<St>,
@@ -165,7 +174,7 @@ async fn dispatch<
     );
     let responder = inbound.respond_token();
     let mut body = RunnerResponse::Buffered(RespondData::new());
-    match dispatch_request::<St, R>(state, request.path_hash, inbound, &mut body).await {
+    match dispatch_request::<St, R>(state, &commands, request.path_hash, inbound, &mut body).await {
         Ok(()) => match body {
             RunnerResponse::Buffered(body) => {
                 commands.respond_owned_packed(responder, body);
@@ -203,7 +212,10 @@ mod tests {
         const ENDPOINT_ID: &'static str = "/destination";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-        async fn handle(mut context: RequestContext<'_, ()>) -> Result<(), Decline> {
+        async fn handle(
+            mut context: RequestContext<'_, ()>,
+            _node: &impl crate::runtime::PrnsNodeApi,
+        ) -> Result<(), Decline> {
             let destination = context.destination;
             context.respond(destination.as_bytes())
         }
@@ -215,10 +227,11 @@ mod tests {
 
         async fn dispatch(
             context: RequestContext<'_, ()>,
+            node: &impl crate::runtime::PrnsNodeApi,
             path_hash: RequestPathHash,
         ) -> Result<(), Decline> {
             if path_hash == RequestPathHash::of(DestinationEcho::ENDPOINT_ID) {
-                DestinationEcho::handle(context).await
+                DestinationEcho::handle(context, node).await
             } else {
                 Err(Decline::Ignore)
             }
@@ -245,7 +258,10 @@ mod tests {
         const ENDPOINT_ID: &'static str = "/page";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-        async fn handle(mut context: RequestContext<'_, ()>) -> Result<(), Decline> {
+        async fn handle(
+            mut context: RequestContext<'_, ()>,
+            _node: &impl crate::runtime::PrnsNodeApi,
+        ) -> Result<(), Decline> {
             context.respond_static_messagepack_bytes(&PAGE)
         }
     }
@@ -256,10 +272,11 @@ mod tests {
 
         async fn dispatch(
             context: RequestContext<'_, ()>,
+            node: &impl crate::runtime::PrnsNodeApi,
             path_hash: RequestPathHash,
         ) -> Result<(), Decline> {
             if path_hash == RequestPathHash::of(StaticPage::ENDPOINT_ID) {
-                StaticPage::handle(context).await
+                StaticPage::handle(context, node).await
             } else {
                 Err(Decline::Ignore)
             }
@@ -283,7 +300,7 @@ mod tests {
             data: HeaplessVec::<u8, 16>::new(),
         };
 
-        block_on(dispatch::<(), StaticRoutes, M, 1, 1, 16>(
+        block_on(dispatch::<(), StaticRoutes, M, 1, 1, 0, 0, 16>(
             &(),
             handle,
             request,
@@ -322,7 +339,7 @@ mod tests {
             data: HeaplessVec::<u8, 16>::new(),
         };
 
-        block_on(dispatch::<(), DestinationRoutes, M, 1, 1, 16>(
+        block_on(dispatch::<(), DestinationRoutes, M, 1, 1, 0, 0, 16>(
             &(),
             handle,
             request,

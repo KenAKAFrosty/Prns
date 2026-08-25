@@ -324,6 +324,7 @@ public enum ApplicationEventKind : uint
     ResourceSegment = 105,
     ResourceNeedsDecompression = 106,
     ChannelMessage = 107,
+    LinkDelivery = 108,
 }
 
 public enum DiagnosticEventKind : uint
@@ -406,6 +407,7 @@ public enum EventField : uint
     Dropped = 37,
     PersistenceCause = 38,
     PersistenceTarget = 39,
+    AppData = 40,
 }
 
 public readonly struct DestinationHash : IEquatable<DestinationHash>
@@ -1496,6 +1498,11 @@ public abstract record ApplicationEvent
         ushort MessageType,
         ReadOnlyMemory<byte> Data
     ) : ApplicationEvent;
+    public sealed record LinkDelivery(
+        LinkId LinkId,
+        InterfaceId SourceInterface,
+        ReadOnlyMemory<byte> Plaintext
+    ) : ApplicationEvent;
 
     public TResult Match<TResult>(
         Func<ApplicationEvent.SingleDelivery, TResult> singleDelivery,
@@ -1505,7 +1512,8 @@ public abstract record ApplicationEvent
         Func<ApplicationEvent.ResourceAvailable, TResult> resourceAvailable,
         Func<ApplicationEvent.ResourceSegment, TResult> resourceSegment,
         Func<ApplicationEvent.ResourceNeedsDecompression, TResult> resourceNeedsDecompression,
-        Func<ApplicationEvent.ChannelMessage, TResult> channelMessage
+        Func<ApplicationEvent.ChannelMessage, TResult> channelMessage,
+        Func<ApplicationEvent.LinkDelivery, TResult> linkDelivery
     ) =>
         this switch
         {
@@ -1517,6 +1525,7 @@ public abstract record ApplicationEvent
             ResourceSegment value => resourceSegment(value),
             ResourceNeedsDecompression value => resourceNeedsDecompression(value),
             ChannelMessage value => channelMessage(value),
+            LinkDelivery value => linkDelivery(value),
             _ => throw new InvalidOperationException("Unknown contract case."),
         };
 }
@@ -1528,7 +1537,8 @@ public abstract record DiagnosticEvent
     public sealed record AnnounceHeard(
         DestinationHash Destination,
         byte Hops,
-        InterfaceId SourceInterface
+        InterfaceId SourceInterface,
+        ReadOnlyMemory<byte> AppData
     ) : DiagnosticEvent;
     public sealed record LinkEstablished(
         LinkId LinkId,

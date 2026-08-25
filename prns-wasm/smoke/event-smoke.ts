@@ -174,7 +174,8 @@ async function main(): Promise<void> {
     plaintext,
     sourceInterface,
   });
-  const delivered = await claimed(prns.claimEvents()).next();
+  const events = claimed(prns.claimEvents());
+  const delivered = await events.next();
   assert(!delivered.done, "single delivery streams");
   const event = delivered.value;
   assert(event.tag === "SingleDelivery", "single delivery is tagged");
@@ -190,9 +191,39 @@ async function main(): Promise<void> {
     "parsed plaintext owns its bytes",
   );
 
+  const activeLink = new Uint8Array(16).fill(6);
+  const linkPlaintext = new TextEncoder().encode("hello from a direct Link packet");
+  runtime.events.push({
+    type: "linkDelivery",
+    linkId: activeLink,
+    plaintext: linkPlaintext,
+    sourceInterface,
+  });
+  const linkDelivered = await events.next();
+  assert(!linkDelivered.done, "Link delivery streams");
+  const linkEvent = linkDelivered.value;
+  assert(linkEvent.tag === "LinkDelivery", "Link delivery is tagged");
+  assert(bytesEqual(linkEvent.data.linkId, activeLink), "Link ID is preserved");
+  assert(
+    bytesEqual(linkEvent.data.sourceInterface, sourceInterface),
+    "Link source interface is preserved",
+  );
+  assert(
+    bytesEqual(linkEvent.data.plaintext, linkPlaintext),
+    "Link plaintext is preserved",
+  );
+  linkPlaintext.fill(0);
+  assert(
+    new TextDecoder().decode(linkEvent.data.plaintext) ===
+      "hello from a direct Link packet",
+    "parsed Link plaintext owns its bytes",
+  );
+
+  const announceAppData = new Uint8Array([0, 112, 114, 110, 115, 255]);
   runtime.events.push(
     {
       type: "announce",
+      appData: announceAppData,
       destination,
       hops: 2,
       sourceInterface,
@@ -208,6 +239,19 @@ async function main(): Promise<void> {
     `${announce.value.tag},${route.value.tag}` ===
       "AnnounceHeard,RouteExpired",
     "diagnostic cases are tagged and command settlement stays private",
+  );
+  assert(announce.value.tag === "AnnounceHeard", "announce diagnostic is tagged");
+  assert(
+    bytesEqual(announce.value.data.appData, announceAppData),
+    "announce application data is preserved",
+  );
+  announceAppData.fill(0);
+  assert(
+    bytesEqual(
+      announce.value.data.appData,
+      new Uint8Array([0, 112, 114, 110, 115, 255]),
+    ),
+    "parsed announce application data owns its bytes",
   );
 
   runtime.events.push({ type: "futureEvent", value: 1 });

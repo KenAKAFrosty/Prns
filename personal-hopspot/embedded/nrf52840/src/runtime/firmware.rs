@@ -53,7 +53,6 @@ const PARTIAL_REFRESH_LIMIT: u32 = 64;
 const FULL_REFRESH_MAX_AGE_MS: u64 = 30 * 60 * 1_000;
 const TELEMETRY_MIN_INTERVAL_MS: u64 = 5_000;
 const STATS_POLL: Duration = Duration::from_secs(1);
-const EINK_ANIMATION_MS: u64 = 0;
 const NOTICE_MS: u64 = 900;
 const USB_CONFIG_DESCRIPTOR_BYTES: usize = 64;
 const USB_BOS_DESCRIPTOR_BYTES: usize = 64;
@@ -415,7 +414,6 @@ pub async fn run(spawner: Spawner) -> ! {
                     gnss: None,
                     state: &ui_state,
                     interface_menu_details: &interface_menu_details,
-                    animation_ms: EINK_ANIMATION_MS,
                 },
             );
             let hash = board::frame_hash(panel.buffer());

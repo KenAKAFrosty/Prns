@@ -3,16 +3,8 @@ import sys
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
-EXPECTED_RNS_VERSION = "1.4.2"
-
-
-def require_reference_version():
-    version = getattr(RNS, "__version__", "")
-    if version != EXPECTED_RNS_VERSION:
-        raise RuntimeError(
-            f"expected RNS {EXPECTED_RNS_VERSION}, got {version!r}"
-        )
 
 
 def prepare(config_dir, bus_port, control_port, management_identity_path):
@@ -37,7 +29,7 @@ def prepare(config_dir, bus_port, control_port, management_identity_path):
 
 
 def serve(config_dir):
-    RNS.Reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     print("RNSTATUS_SERVER_READY", flush=True)
     while True:
         time.sleep(1)
@@ -51,7 +43,6 @@ def identity_hash(path):
 
 
 def main():
-    require_reference_version()
     command = sys.argv[1]
     if command == "prepare":
         prepare(*sys.argv[2:])

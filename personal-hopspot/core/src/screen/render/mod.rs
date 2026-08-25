@@ -33,7 +33,6 @@ pub struct RenderFrame<'frame, 'docs> {
     pub gnss: Option<GnssSnapshot>,
     pub state: &'frame UiState,
     pub interface_menu_details: &'frame InterfaceMenuDetails,
-    pub animation_ms: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,12 +62,11 @@ pub fn render<D: DrawTarget<Color = BinaryColor>>(display: &mut D, frame: Render
         gnss,
         state,
         interface_menu_details,
-        animation_ms,
     } = frame;
     let cards = content.cards;
     let local_docs = content.local_docs;
     let _ = display.clear(BinaryColor::Off);
-    draw_title_bar(display, battery, animation_ms);
+    draw_title_bar(display, battery);
 
     if let Some(notice) = state.notice() {
         draw_notice(display, notice);
@@ -175,7 +173,7 @@ pub fn render<D: DrawTarget<Color = BinaryColor>>(display: &mut D, frame: Render
 
 pub fn splash<D: DrawTarget<Color = BinaryColor>>(display: &mut D, content: SplashContent) {
     let _ = display.clear(BinaryColor::Off);
-    draw_title_bar(display, PowerSnapshot::UNKNOWN, 0);
+    draw_title_bar(display, PowerSnapshot::UNKNOWN);
     let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
     let mut y = CARD_TOP + 4;
     for line in content.lines() {

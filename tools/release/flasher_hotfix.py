@@ -581,7 +581,13 @@ def main() -> int:
     identity.add_argument("--version")
     identity.add_argument(
         "--format",
-        choices=("json", "version", "base-version", "changed-boards"),
+        choices=(
+            "json",
+            "version",
+            "base-version",
+            "roster-version",
+            "changed-boards",
+        ),
         default="json",
     )
     compose_parser = subparsers.add_parser("compose")
@@ -613,6 +619,8 @@ def main() -> int:
                 print(version)
             elif arguments.format == "base-version":
                 print(spec.base_version if spec is not None else version)
+            elif arguments.format == "roster-version":
+                print(spec.roster_version if spec is not None else version)
             else:
                 for board in spec.changed_boards if spec is not None else ():
                     print(board)

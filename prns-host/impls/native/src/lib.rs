@@ -15,10 +15,9 @@ use personal_rns::config::{
 };
 use personal_rns::engine::{
     AllowRequester, AllowRequesterFailure, AllowRequesterRejection, AnnounceAppData, AnnounceNow,
-    AnnounceNowFailure, AnnounceNowRejection, AnnounceTarget,
-    DeliveryEvidence as EngineDeliveryEvidence, DeliveryProof, EstablishLinkFailure,
-    EstablishLinkRejection, IdentifyFailure, IdentifyRejection,
-    LinkClosedReason as EngineLinkClosedReason,
+    AnnounceNowRejection, AnnounceTarget, DeliveryEvidence as EngineDeliveryEvidence,
+    DeliveryProof, EstablishLinkFailure, EstablishLinkRejection, IdentifyFailure,
+    IdentifyRejection, LinkClosedReason as EngineLinkClosedReason,
     PersistenceFlushCause as EnginePersistenceFlushCause,
     PersistenceFlushTarget as EnginePersistenceFlushTarget, RequestPathFailure,
     RequestResponseTimeout, RouteRemovalCause, SendRequestFailure, SendRequestRejection,
@@ -36,8 +35,8 @@ use personal_rns::routing::request_handlers::RequestPolicy as EngineRequestPolic
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::request_endpoints::RespondToken;
 use personal_rns::runtime::{
-    Diagnostic, Message, NodePersistence, PersistenceIntent, PrnsEvent, RequestOptions,
-    RequestPathError, ResourceSendError, SegmentCompression,
+    AnnounceNowError, Diagnostic, Message, NodePersistence, PersistenceIntent, PrnsEvent,
+    RequestOptions, RequestPathError, ResourceSendError, SegmentCompression,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::{TcpClientInterface, TcpServer};
@@ -58,7 +57,7 @@ use prns_host::{
     DestinationProofStrategy, DestinationRatchetPolicy, DiagnosticEvent, HostCommand, HostConfig,
     HostRole, HostSnapshot, IdentityConfig, IdentityHash, InterfaceConfig, InterfaceHealth,
     InterfaceId, InterfaceKind, InterfaceMode, InterfaceRoutingPolicy, InterfaceSnapshot,
-    LinkClosedReason, LinkId, PacketHash, PersistenceConfig, PersistenceFlushCause,
+    LinkClosedReason, LinkDelivery, LinkId, PacketHash, PersistenceConfig, PersistenceFlushCause,
     PersistenceFlushTarget, PersistenceSnapshot, RequestAvailable, RequestHandlerConfig, RequestId,
     RequestPathHash, RequestPolicy, ResourceAvailable, ResourceCompression, ResourceHash,
     ResourceNeedsDecompression, ResourceSegmentAvailable, ResourceStrategy, ResourceStreamId,
@@ -2465,18 +2464,17 @@ fn engine_bitrate(bitrate: Bitrate) -> Result<BitrateBps, CommandFailure> {
     }
 }
 
-fn announce_failure(error: SendError<AnnounceNowFailure>) -> CommandFailure {
+fn announce_failure(error: AnnounceNowError) -> CommandFailure {
     match error {
-        SendError::NodeStopped => CommandFailure::NodeStopped,
-        SendError::Busy => CommandFailure::Busy,
-        SendError::PayloadTooLarge => CommandFailure::AnnounceAppDataTooLong,
-        SendError::Failed(AnnounceNowFailure::Rejected(rejection)) => match rejection {
+        AnnounceNowError::NodeStopped => CommandFailure::NodeStopped,
+        AnnounceNowError::Busy => CommandFailure::Busy,
+        AnnounceNowError::Rejected(rejection) => match rejection {
             AnnounceNowRejection::UnknownDestination => CommandFailure::UnknownDestination,
             AnnounceNowRejection::NotASingleDestination => CommandFailure::NotSingleDestination,
             AnnounceNowRejection::AppDataTooLong => CommandFailure::AnnounceAppDataTooLong,
             AnnounceNowRejection::UnknownInterface => CommandFailure::UnknownInterface,
         },
-        SendError::Failed(AnnounceNowFailure::WriteFailed(error)) => CommandFailure::WriteFailed {
+        AnnounceNowError::WriteFailed(error) => CommandFailure::WriteFailed {
             detail: format!("{error:?}"),
         },
     }
@@ -2817,7 +2815,14 @@ fn publish_message(sink: &dyn NativeEventSink, message: Message<'_>) -> bool {
                 plaintext: delivery.plaintext.to_vec(),
             })
         }
-        Message::Delivered(other) => {
+        Message::Delivered(Delivery::Link(delivery)) => {
+            ApplicationEvent::LinkDelivery(LinkDelivery {
+                link_id: host_link(delivery.link_id),
+                source_interface: host_interface(delivery.source_interface),
+                plaintext: delivery.plaintext.to_vec(),
+            })
+        }
+        Message::Delivered(other @ (Delivery::Plain(_) | Delivery::Group(_))) => {
             sink.publish_diagnostic(DiagnosticEvent::Delivered {
                 detail: format!("{other:?}"),
             });
@@ -2921,7 +2926,7 @@ fn publish_message(sink: &dyn NativeEventSink, message: Message<'_>) -> bool {
     sink.publish_application(event)
 }
 
-fn translate_diagnostic(diagnostic: Diagnostic) -> Option<DiagnosticEvent> {
+fn translate_diagnostic(diagnostic: Diagnostic<'_>) -> Option<DiagnosticEvent> {
     Some(match diagnostic {
         Diagnostic::PersistenceRestored {
             routes,
@@ -2952,10 +2957,12 @@ fn translate_diagnostic(diagnostic: Diagnostic) -> Option<DiagnosticEvent> {
             destination,
             hops,
             source_interface,
+            app_data,
         } => DiagnosticEvent::AnnounceHeard {
             destination: host_destination(destination),
             hops,
             source_interface: host_interface(source_interface),
+            app_data: app_data.to_vec(),
         },
         Diagnostic::LinkEstablished(established) => DiagnosticEvent::LinkEstablished {
             link_id: host_link(established.link_id),

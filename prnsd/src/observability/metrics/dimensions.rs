@@ -178,6 +178,7 @@ pub(super) fn runtime_operation_name(operation: RuntimeOperation) -> &'static st
         RuntimeOperation::SetResourceStrategy => "set_resource_strategy",
         RuntimeOperation::SendToChannel => "send_to_channel",
         RuntimeOperation::AllowRequester => "allow_requester",
+        RuntimeOperation::SendPlainPacket => "send_plain_packet",
     }
 }
 

@@ -2,12 +2,18 @@ use prns_host::EventDelivery;
 
 pub enum OwnedEvent {
     Announce {
+        app_data: Vec<u8>,
         destination: [u8; 16],
         hops: u8,
         source_interface: [u8; 8],
     },
     SingleDelivery {
         destination: [u8; 16],
+        plaintext: Vec<u8>,
+        source_interface: [u8; 8],
+    },
+    LinkDelivery {
+        link_id: [u8; 16],
         plaintext: Vec<u8>,
         source_interface: [u8; 8],
     },
@@ -136,7 +142,9 @@ pub enum OwnedEvent {
 impl OwnedEvent {
     pub fn application_bytes(&self) -> Option<usize> {
         match self {
-            Self::SingleDelivery { plaintext, .. } => Some(plaintext.len()),
+            Self::SingleDelivery { plaintext, .. } | Self::LinkDelivery { plaintext, .. } => {
+                Some(plaintext.len())
+            }
             Self::Request { data, .. }
             | Self::Response { data, .. }
             | Self::ResponseSegment { data, .. } => Some(data.len()),
@@ -198,6 +206,11 @@ impl OwnedEvent {
                 plaintext: event.plaintext,
                 source_interface: event.source_interface.into_bytes(),
             }),
+            prns_host::ApplicationEvent::LinkDelivery(event) => Some(Self::LinkDelivery {
+                link_id: event.link_id.into_bytes(),
+                plaintext: event.plaintext,
+                source_interface: event.source_interface.into_bytes(),
+            }),
             prns_host::ApplicationEvent::Request(event) => Some(Self::Request {
                 destination: event.destination.into_bytes(),
                 link_id: event.link_id.into_bytes(),
@@ -249,10 +262,12 @@ impl OwnedEvent {
     pub fn capture_host_diagnostic(event: prns_host::DiagnosticEvent) -> Self {
         match event {
             prns_host::DiagnosticEvent::AnnounceHeard {
+                app_data,
                 destination,
                 hops,
                 source_interface,
             } => Self::Announce {
+                app_data,
                 destination: destination.into_bytes(),
                 hops,
                 source_interface: source_interface.into_bytes(),

@@ -61,6 +61,14 @@ where
         PreConfiguredDestination::Plain { app_name, aspects } => engine
             .register_plain_destination(app_name, aspects)
             .map_err(ConfigurePreconfiguredDestinationError::Register),
+        PreConfiguredDestination::Group {
+            app_name,
+            aspects,
+            identity,
+            shared_key,
+        } => engine
+            .register_group_destination(&identity, app_name, aspects, shared_key)
+            .map_err(ConfigurePreconfiguredDestinationError::Register),
         PreConfiguredDestination::Single {
             app_name,
             aspects,
@@ -283,6 +291,7 @@ mod tests {
 
         async fn dispatch(
             _cx: RequestContext<'_, ()>,
+            _node: &impl crate::runtime::PrnsNodeApi,
             _path_hash: RequestPathHash,
         ) -> Result<(), Decline> {
             Err(Decline::Ignore)
@@ -380,6 +389,47 @@ mod tests {
         assert!(node.engine.network_transport_enabled());
         assert_eq!(node.engine.held_identity_hashes().len(), 1);
         assert_eq!(node.engine.upstream_app_destinations().count(), 1);
+    }
+
+    #[test]
+    fn group_recipe_registers_its_address_and_shared_key_together() {
+        let mut engine = EngineState::<Storage>::default();
+        let identity = IdentityHash::new([0x44; 16]);
+        let configured = configure_preconfigured_destination::<(), (), Storage>(
+            &mut engine,
+            PreConfiguredDestination::Group {
+                app_name: "test",
+                aspects: &["group"],
+                identity,
+                shared_key: &[0x42; 64],
+            },
+        )
+        .unwrap();
+        let expected = PreConfiguredDestination::Group {
+            app_name: "test",
+            aspects: &["group"],
+            identity,
+            shared_key: &[0x42; 64],
+        }
+        .destination_hash()
+        .unwrap();
+        assert_eq!(configured, expected);
+        assert_eq!(
+            engine.ingest_send_group(
+                crate::engine::CommandId(9),
+                crate::engine::SendGroup {
+                    destination: configured,
+                    payload: crate::engine::SendGroupPayload::new(),
+                }
+            ),
+            crate::engine::CommandOutcome::OwesSendGroup {
+                id: crate::engine::CommandId(9),
+                send: crate::engine::SendGroup {
+                    destination: configured,
+                    payload: crate::engine::SendGroupPayload::new(),
+                },
+            }
+        );
     }
 
     #[test]

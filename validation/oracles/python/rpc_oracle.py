@@ -10,7 +10,6 @@ import RNS
 import RNS.vendor.umsgpack as msgpack
 
 
-EXPECTED_RNS_VERSION = "1.4.2"
 RPC_FRAME_MAX_LENGTH = 16_777_216
 
 
@@ -169,10 +168,6 @@ def integer_boundaries():
 
 
 def main():
-    if getattr(RNS, "__version__", "") != EXPECTED_RNS_VERSION:
-        raise RuntimeError(
-            f"expected RNS {EXPECTED_RNS_VERSION}, got {getattr(RNS, '__version__', '')!r}"
-        )
     canonical = capture_requests()
     headers = [
         {"length": str(length), "hex": capture_header(length)}

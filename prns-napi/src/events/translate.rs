@@ -11,11 +11,13 @@ pub fn event_to_object(env: &Env, event: OwnedEvent) -> napi::Result<Object<'sta
     let mut object = Object::new(env)?;
     match event {
         OwnedEvent::Announce {
+            app_data,
             destination,
             hops,
             source_interface,
         } => {
             object.set("type", "announce")?;
+            object.set("appData", Buffer::from(app_data))?;
             object.set("destination", bytes(&destination))?;
             object.set("hops", u32::from(hops))?;
             object.set("sourceInterface", bytes(&source_interface))?;
@@ -27,6 +29,16 @@ pub fn event_to_object(env: &Env, event: OwnedEvent) -> napi::Result<Object<'sta
         } => {
             object.set("type", "singleDelivery")?;
             object.set("destination", bytes(&destination))?;
+            object.set("plaintext", Buffer::from(plaintext))?;
+            object.set("sourceInterface", bytes(&source_interface))?;
+        }
+        OwnedEvent::LinkDelivery {
+            link_id,
+            plaintext,
+            source_interface,
+        } => {
+            object.set("type", "linkDelivery")?;
+            object.set("linkId", bytes(&link_id))?;
             object.set("plaintext", Buffer::from(plaintext))?;
             object.set("sourceInterface", bytes(&source_interface))?;
         }

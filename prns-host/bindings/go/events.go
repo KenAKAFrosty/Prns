@@ -260,6 +260,24 @@ func decodeApplicationEvent(event nativeEvent) (ApplicationEvent, error) {
 			SourceInterface: source,
 			Plaintext:       plaintext,
 		}, nil
+	case ApplicationEventKindLinkDelivery:
+		linkID, err := fixedValue[LinkId](event, EventFieldLinkId)
+		if err != nil {
+			return nil, err
+		}
+		source, err := fixedValue[InterfaceId](event, EventFieldSourceInterface)
+		if err != nil {
+			return nil, err
+		}
+		plaintext, err := requiredBytes(event, EventFieldPlaintext)
+		if err != nil {
+			return nil, err
+		}
+		return ApplicationEventLinkDelivery{
+			LinkId:          linkID,
+			SourceInterface: source,
+			Plaintext:       plaintext,
+		}, nil
 	case ApplicationEventKindRequest:
 		return decodeRequest(event)
 	case ApplicationEventKindResponse:
@@ -656,10 +674,15 @@ func decodeAnnounceHeard(event nativeEvent) (DiagnosticEvent, error) {
 	if err != nil {
 		return nil, err
 	}
+	appData, err := requiredBytes(event, EventFieldAppData)
+	if err != nil {
+		return nil, err
+	}
 	return DiagnosticEventAnnounceHeard{
 		Destination:     destination,
 		Hops:            uint8(hops),
 		SourceInterface: source,
+		AppData:         appData,
 	}, nil
 }
 

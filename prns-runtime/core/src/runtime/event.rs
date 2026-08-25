@@ -25,7 +25,7 @@ use crate::wire::DestinationHash;
 #[derive(Debug)]
 pub enum PrnsEvent<'a> {
     Message(Message<'a>),
-    Diagnostic(Diagnostic),
+    Diagnostic(Diagnostic<'a>),
 }
 
 /// The data plane: bytes the app owns.
@@ -84,10 +84,8 @@ pub enum Message<'a> {
     },
 }
 
-/// The control/observability plane: what the engine did, not what arrived. Fully owned —
-/// no borrow into the inbound frame, so it can outlive the reaction if an app buffers it.
 #[derive(Debug)]
-pub enum Diagnostic {
+pub enum Diagnostic<'a> {
     /// An announce just minted a fresh self-ratchet: flush this destination's record to the
     /// vault now — a secret peers may already encrypt toward must never exist only in memory.
     SelfRatchetRotated {
@@ -97,6 +95,7 @@ pub enum Diagnostic {
         destination: DestinationHash,
         hops: u8,
         source_interface: InterfaceId,
+        app_data: &'a [u8],
     },
     /// The recipe's persistence store was seeded into this boot's engine before the first frame moved.
     PersistenceRestored {
@@ -260,6 +259,7 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
                     destination: observation.destination,
                     hops: observation.hops.0,
                     source_interface: observation.source_interface,
+                    app_data: observation.app_data,
                 })
             }
             Journaled::SelfRatchetRotated { destination } => {
@@ -323,5 +323,37 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
                 PrnsEvent::Diagnostic(Diagnostic::RouteRemoved { destination, cause })
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::routing::announce::{AnnounceObservation, AnnounceRateAccounting};
+    use crate::units::HopCount;
+
+    #[test]
+    fn announce_event_preserves_application_data() {
+        let app_data = b"opaque announce application data";
+        let event = PrnsEvent::from(Journaled::AnnounceHeard {
+            observation: AnnounceObservation {
+                destination: DestinationHash::new([1; 16]),
+                announced_identity: IdentityHash::new([2; 16]),
+                hops: HopCount(3),
+                source_interface: InterfaceId::new([4; 8]),
+                arrived_at: InstantMillis(5),
+                app_data,
+                is_path_response: false,
+            },
+            rate_accounting: AnnounceRateAccounting::NotApplied,
+        });
+
+        assert!(matches!(
+            event,
+            PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
+                app_data: observed,
+                ..
+            }) if observed == app_data
+        ));
     }
 }

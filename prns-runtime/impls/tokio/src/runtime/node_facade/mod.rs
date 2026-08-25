@@ -3,6 +3,7 @@ mod handle_capabilities;
 mod interface_lifecycle;
 mod node_lifecycle;
 mod persistence;
+mod remote_control;
 mod request_response;
 mod resource_admission;
 mod resource_transfer;
@@ -15,12 +16,13 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 
 use crate::engine::{
-    AllowRequester, AllowRequesterFailure, AnnounceNow, AnnounceNowFailure, CloseLink, CommandId,
-    EstablishLink, EstablishLinkFailure, Identify, IdentifyFailure, IssuedCommand, LinkEstablished,
+    AllowRequester, AllowRequesterFailure, AnnounceNow, CloseLink, CommandId, EstablishLink,
+    EstablishLinkFailure, Identify, IdentifyFailure, IssuedCommand, LinkEstablished,
     PacketReceiptDelivered, PathFound, PathRequestId, PrnsCommand, RequestPath, RequestPathFailure,
-    SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload, SendToChannel,
-    SendToChannelBody, SendToChannelFailure, SendToLink, SendToLinkFailure, SendToLinkPayload,
-    Settlement, PATH_REQUEST_ID_LEN,
+    SendGroup, SendGroupFailure, SendGroupPayload, SendPlainPacket, SendPlainPacketFailure,
+    SendPlainPacketPayload, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
+    SendToChannel, SendToChannelBody, SendToChannelFailure, SendToLink, SendToLinkFailure,
+    SendToLinkPayload, Settlement, PATH_REQUEST_ID_LEN,
 };
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
@@ -51,6 +53,7 @@ pub use persistence::{
     PreparedFlush, RatchetSeedReport, RegionFlush, RouteSeedProgress, RouteSeedReport, SaveOnLearn,
     SaveOnLearnWiring, TunnelSeedReport,
 };
+pub use remote_control::RemoteControlHandle;
 pub use request_response::{RequestOptions, ResponseSendError};
 pub use resource_admission::{ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor};
 pub use resource_transfer::{
@@ -162,6 +165,44 @@ impl PrnsNodeHandle {
         }
     }
 
+    pub async fn send_plain_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendPlainPacketFailure>> {
+        let payload =
+            SendPlainPacketPayload::from_slice(data).map_err(|()| SendError::PayloadTooLarge)?;
+        match self
+            .settle(PrnsCommand::SendPlainPacket(SendPlainPacket {
+                destination,
+                payload,
+            }))
+            .await
+        {
+            Some(Settlement::SendPlainPacket(result)) => result.map_err(SendError::Failed),
+            Some(_) | None => Err(SendError::NodeStopped),
+        }
+    }
+
+    pub async fn send_group_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendGroupFailure>> {
+        let payload =
+            SendGroupPayload::from_slice(data).map_err(|()| SendError::PayloadTooLarge)?;
+        match self
+            .settle(PrnsCommand::SendGroup(SendGroup {
+                destination,
+                payload,
+            }))
+            .await
+        {
+            Some(Settlement::SendGroup(result)) => result.map_err(SendError::Failed),
+            Some(_) | None => Err(SendError::NodeStopped),
+        }
+    }
+
     /// Bring a link up to `destination` and await it: `Ok(LinkId)` once the peer's proof validates, or the typed reason it never established. The resolved id is the handle every link-scoped verb takes.
     #[cfg_attr(
         feature = "tracing",
@@ -263,13 +304,13 @@ impl PrnsNodeHandle {
         }
     }
 
-    pub async fn announce_now(
-        &self,
-        announce: AnnounceNow,
-    ) -> Result<(), SendError<AnnounceNowFailure>> {
+    pub async fn announce_now(&self, announce: AnnounceNow) -> Result<(), super::AnnounceNowError> {
         match self.settle(PrnsCommand::AnnounceNow(announce)).await {
-            Some(Settlement::AnnounceNow(result)) => result.map_err(SendError::Failed),
-            Some(_) | None => Err(SendError::NodeStopped),
+            Some(Settlement::AnnounceNow(Ok(()))) => Ok(()),
+            Some(Settlement::AnnounceNow(Err(failure))) => {
+                Err(super::AnnounceNowError::from_failure(failure))
+            }
+            Some(_) | None => Err(super::AnnounceNowError::NodeStopped),
         }
     }
 
@@ -348,12 +389,32 @@ impl super::PrnsNodeApi for PrnsNodeHandle {
         self.issue(command)
     }
 
+    async fn announce_now(&self, announce: AnnounceNow) -> Result<(), super::AnnounceNowError> {
+        self.announce_now(announce).await
+    }
+
     async fn send_single_packet(
         &self,
         destination: DestinationHash,
         data: &[u8],
     ) -> Result<PacketReceiptDelivered, SendError<SendSinglePacketFailure>> {
         self.send_single_packet(destination, data).await
+    }
+
+    async fn send_plain_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendPlainPacketFailure>> {
+        self.send_plain_packet(destination, data).await
+    }
+
+    async fn send_group_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendGroupFailure>> {
+        self.send_group_packet(destination, data).await
     }
 
     fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> bool {

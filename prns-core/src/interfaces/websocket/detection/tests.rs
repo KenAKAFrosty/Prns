@@ -236,6 +236,34 @@ fn multiple_valid_interpretations_remain_ambiguous() {
 }
 
 #[test]
+fn an_ambiguous_message_holds_detection_open_until_more_data_commits() {
+    let mut hdlc_lookalike = vec![rns_serial_framing::FLAG];
+    hdlc_lookalike.extend_from_slice(&packet(&[]));
+    hdlc_lookalike.push(rns_serial_framing::FLAG);
+    let ambiguous_announce = packet(&hdlc_lookalike);
+    let clean_announce = packet(&[0x44]);
+    let mut detector = WebSocketWireDetector::new();
+    let mut sink = FrameBuffer::<FRAME_CAP>::new();
+    assert_eq!(
+        detector.inspect_message(
+            &encoded(WebSocketWireFraming::Kiss, &ambiguous_announce),
+            &mut sink,
+        ),
+        Ok(WebSocketWireDetection::AmbiguousEvidence)
+    );
+    let frame = detected_frame(
+        detector
+            .inspect_message(
+                &encoded(WebSocketWireFraming::Kiss, &clean_announce),
+                &mut sink,
+            )
+            .expect("detection succeeds"),
+    );
+    assert_eq!(frame.framing(), WebSocketWireFraming::Kiss);
+    assert_eq!(sink.as_slice(), clean_announce.as_slice());
+}
+
+#[test]
 fn opaque_ifac_and_malformed_frames_do_not_select_a_codec() {
     let mut authenticated = packet(&[0x22]);
     authenticated[0] |= 0x80;

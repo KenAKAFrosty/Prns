@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from functools import partial
 import hashlib
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+import importlib.util
 import json
 from pathlib import Path
 import sys
@@ -50,6 +51,18 @@ REPOSITORY = "example/Prns"
 def write_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def historical_verifier_module():
+    script = SCRIPTS / "verify-historical-flasher-release.py"
+    spec = importlib.util.spec_from_file_location(
+        "verify_historical_flasher_release", script
+    )
+    if spec is None or spec.loader is None:
+        raise AssertionError(f"could not import {script}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def descriptor(version: str, manifest_sha256: str) -> dict:
@@ -135,6 +148,29 @@ def signed_candidate(
 
 
 class FlasherRollbackTests(unittest.TestCase):
+    def test_historical_hotfix_uses_hotfix_aware_asset_policy(self) -> None:
+        module = historical_verifier_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            candidate = root / "candidate"
+            historical = (
+                root / "snapshot" / "tools" / "release" / "verify-flasher-release-assets.py"
+            )
+            candidate.mkdir()
+            historical.parent.mkdir(parents=True)
+            historical.write_text("historical verifier\n", encoding="utf-8")
+
+            self.assertEqual(
+                module.release_asset_verifier(candidate, root / "snapshot"),
+                historical.resolve(),
+            )
+
+            write_json(candidate / "metadata" / "hotfix.json", {"schema": 1})
+            self.assertEqual(
+                module.release_asset_verifier(candidate, root / "snapshot"),
+                (SCRIPTS / "verify-flasher-release-assets.py").resolve(),
+            )
+
     def test_bootstrap_guard_distinguishes_suite_and_flasher_custody(self) -> None:
         signed_candidate = {"name": "prns-flasher-candidate-v0.3.0-signed.tar.gz"}
         prerelease = {

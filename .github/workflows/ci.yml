@@ -471,6 +471,10 @@ jobs:
         run: uv venv /tmp/rns && uv pip install --python /tmp/rns/bin/python -r validation/oracles/requirements.txt
       - name: install the control-RPC reference RNS (rns==1.4.2)
         run: uv venv /tmp/rns-rpc && uv pip install --python /tmp/rns-rpc/bin/python -r validation/oracles/requirements.txt
+      - name: install the interop reference RNS (rns==1.5.0)
+        run: uv venv /tmp/rns-interop && uv pip install --python /tmp/rns-interop/bin/python -r validation/interop/requirements.txt
+      - name: install the interop control-RPC reference RNS (rns==1.5.0)
+        run: uv venv /tmp/rns-interop-rpc && uv pip install --python /tmp/rns-interop-rpc/bin/python -r validation/interop/requirements.txt
       - name: PR deterministic oracle lane
         run: python3 validation/run.py run --domain oracles --tier pr --expected-sha "$GITHUB_SHA"
         env:
@@ -479,8 +483,8 @@ jobs:
       - name: PR live interop lane
         run: python3 validation/run.py run --domain interop --tier pr --expected-sha "$GITHUB_SHA"
         env:
-          SMOKE_PYTHON: /tmp/rns/bin/python
-          RPC_SMOKE_PYTHON: /tmp/rns-rpc/bin/python
+          SMOKE_PYTHON: /tmp/rns-interop/bin/python
+          RPC_SMOKE_PYTHON: /tmp/rns-interop-rpc/bin/python
       - name: upload oracle evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

@@ -10,8 +10,7 @@ both directions, the network-to-local-client direction being the one a shared in
 inward to an app, and the one whose shallow egress lane used to shed resource parts under the burst.
 
 Prints ``PEER_DEST <hex>`` once, ``RESOURCE_OK <len>`` when an inbound resource completes, and
-``LINK_OUT_UP`` when its own link to the client goes active. Exits 0 if it received, non-zero on
-timeout. RNS's own logs go to stderr.
+``LINK_OUT_UP`` when its own link to the client goes active. RNS's own logs go to stderr.
 
 Env: ``PEER_TCP_PORT`` is the loopback port the TCP server listens on (the bridge dials it).
 """
@@ -19,11 +18,15 @@ Env: ``PEER_TCP_PORT`` is the loopback port the TCP server listens on (the bridg
 import os
 import sys
 import tempfile
+import threading
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 PORT = int(os.environ["PEER_TCP_PORT"])
+RESOURCE_BYTES = 1_000_000
+TRANSFER_TIMEOUT_SECONDS = 120
 IFAC_NETWORK_NAME = os.environ.get("PRNS_IFAC_NETWORK_NAME", "")
 IFAC_PASSPHRASE = os.environ.get("PRNS_IFAC_PASSPHRASE", "")
 IFAC_SIZE_BYTES = int(os.environ.get("PRNS_IFAC_SIZE_BYTES", "16"))
@@ -56,24 +59,41 @@ CONFIG = f"""[reticulum]
 class ClientSeeker:
     aspect_filter = "prns.client"
 
-    def __init__(self):
+    def __init__(self, transfer):
+        self.transfer = transfer
         self.link = None
+        self.link_creation = threading.Lock()
 
     def received_announce(self, destination_hash, announced_identity, app_data):
-        if self.link is not None:
-            return
-        destination = RNS.Destination(
-            announced_identity,
-            RNS.Destination.OUT,
-            RNS.Destination.SINGLE,
-            "prns",
-            "client",
-        )
-        self.link = RNS.Link(destination, established_callback=self.on_up)
+        with self.link_creation:
+            if self.link is not None:
+                return
+            destination = RNS.Destination(
+                announced_identity,
+                RNS.Destination.OUT,
+                RNS.Destination.SINGLE,
+                "prns",
+                "client",
+            )
+            self.link = RNS.Link(destination, established_callback=self.on_up)
 
     def on_up(self, link):
         print("LINK_OUT_UP", flush=True)
-        RNS.Resource(os.urandom(1000000), link, auto_compress=False)
+
+        def outgoing_concluded(resource):
+            if resource.status == RNS.Resource.COMPLETE:
+                self.transfer["outgoing_complete"] = True
+                print("RESOURCE_SENT_OK " + str(RESOURCE_BYTES), flush=True)
+            else:
+                self.transfer["failure"] = f"outgoing resource status={resource.status}"
+                print("RESOURCE_SEND_FAIL status=" + str(resource.status), flush=True)
+
+        RNS.Resource(
+            os.urandom(RESOURCE_BYTES),
+            link,
+            auto_compress=False,
+            callback=outgoing_concluded,
+        )
 
 
 class HostileDetector:
@@ -87,7 +107,7 @@ def main() -> int:
     configdir = tempfile.mkdtemp(prefix="rns-peer-")
     with open(os.path.join(configdir, "config"), "w") as handle:
         handle.write(CONFIG)
-    RNS.Reticulum(configdir=configdir, loglevel=RNS.LOG_WARNING)
+    start_reference_reticulum(configdir=configdir, loglevel=RNS.LOG_WARNING)
 
     identity = RNS.Identity()
     mine = RNS.Destination(
@@ -95,14 +115,19 @@ def main() -> int:
     )
     mine.set_proof_strategy(RNS.Destination.PROVE_ALL)
 
-    received = {"hit": False}
+    transfer = {
+        "incoming_complete": False,
+        "outgoing_complete": False,
+        "failure": None,
+    }
 
     def resource_concluded(resource):
         if resource.status == RNS.Resource.COMPLETE:
             data = resource.data.read() if hasattr(resource.data, "read") else resource.data
             print("RESOURCE_OK " + str(len(data)), flush=True)
-            received["hit"] = True
+            transfer["incoming_complete"] = True
         else:
+            transfer["failure"] = f"incoming resource status={resource.status}"
             print("RESOURCE_FAIL status=" + str(resource.status), flush=True)
 
     def link_established(link):
@@ -114,16 +139,26 @@ def main() -> int:
     mine.set_link_established_callback(link_established)
     print("PEER_DEST " + mine.hash.hex(), flush=True)
 
-    RNS.Transport.register_announce_handler(ClientSeeker())
+    RNS.Transport.register_announce_handler(ClientSeeker(transfer))
     RNS.Transport.register_announce_handler(HostileDetector())
 
-    deadline = time.time() + 60
-    while time.time() < deadline and not received["hit"]:
+    deadline = time.monotonic() + TRANSFER_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if transfer["failure"] is not None:
+            return 3
+        if transfer["incoming_complete"] and transfer["outgoing_complete"]:
+            time.sleep(1.0)
+            return 0
         mine.announce()
         time.sleep(1.0)
 
-    time.sleep(1.0)
-    return 0 if received["hit"] else 3
+    print(
+        "RESOURCE_TIMEOUT "
+        f"incoming={int(transfer['incoming_complete'])} "
+        f"outgoing={int(transfer['outgoing_complete'])}",
+        flush=True,
+    )
+    return 3
 
 
 if __name__ == "__main__":

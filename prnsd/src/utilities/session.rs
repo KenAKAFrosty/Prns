@@ -14,9 +14,9 @@ use personal_rns::request_endpoints;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{
-    ConfigurePreconfiguredDestinationError, ManuallyAttached, NodeRunError,
+    AnnounceNowError, ConfigurePreconfiguredDestinationError, ManuallyAttached, NodeRunError,
     NonRoutingIdentityError, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle,
-    PrnsNodeRecipe, RequestPathError, SendError, ServeMyRequestEndpoints,
+    PrnsNodeRecipe, RequestPathError, ServeMyRequestEndpoints,
 };
 use personal_rns::shared_instance::{
     connect_existing_shared_instance, ExistingSharedInstanceUnavailable, SharedInstanceRpcClient,
@@ -211,10 +211,7 @@ impl UtilityBusClient {
         self.handle.destination_identity(query).await
     }
 
-    pub async fn announce(
-        &self,
-        destination: DestinationHash,
-    ) -> Result<(), SendError<personal_rns::engine::AnnounceNowFailure>> {
+    pub async fn announce(&self, destination: DestinationHash) -> Result<(), AnnounceNowError> {
         self.handle
             .announce_now(AnnounceNow {
                 destination,

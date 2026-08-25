@@ -4,16 +4,8 @@ import sys
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
-EXPECTED_RNS_VERSION = "1.4.2"
-
-
-def require_reference_version():
-    version = getattr(RNS, "__version__", "")
-    if version != EXPECTED_RNS_VERSION:
-        raise RuntimeError(
-            f"expected RNS {EXPECTED_RNS_VERSION}, got {version!r}"
-        )
 
 
 def prepare(server_config, client_config, port):
@@ -70,7 +62,7 @@ def wait_for(predicate, timeout, failure):
 
 
 def probe(client_config, transport_hash):
-    RNS.Reticulum(configdir=client_config, loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=client_config, loglevel=RNS.LOG_ERROR)
     transport_identity_hash = bytes.fromhex(transport_hash)
     destination_hash = RNS.Destination.hash_from_name_and_identity(
         "rnstransport.probe", transport_identity_hash
@@ -104,7 +96,6 @@ def probe(client_config, transport_hash):
 
 
 def main():
-    require_reference_version()
     command = sys.argv[1]
     if command == "prepare":
         prepare(*sys.argv[2:])

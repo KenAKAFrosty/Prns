@@ -5,6 +5,7 @@ mod identity_blackhole;
 pub mod node;
 pub mod node_introspection;
 pub mod packet_phy_retention;
+mod remote_control;
 pub mod request_endpoints;
 #[cfg(feature = "rns-management")]
 pub mod rns_management;
@@ -27,7 +28,7 @@ cfg_if::cfg_if! {
 
 pub use crate::engine::BlackholeSeedReport;
 pub use command::{
-    ClearAnnounceQueuesOutcome, DestinationIdentityRetentionControl,
+    AnnounceNowError, ClearAnnounceQueuesOutcome, DestinationIdentityRetentionControl,
     DestinationIdentityRetentionControlError, DropRouteOutcome, DropRoutesViaOutcome, PrnsNodeApi,
     RoutingControl, RoutingControlError, SendError,
 };
@@ -41,6 +42,11 @@ pub use node::{
     assemble_node, configure_preconfigured_destination, AssembledNode,
     ConfigurePreconfiguredDestinationError, ManuallyAttached, NoPersistence,
     PreConfiguredDestination, PrnsNodeRecipe, ServeMyRequestEndpoints,
+};
+pub use remote_control::{
+    RemoteControlAnnounce, RemoteControlAnnounceFailure, RemoteControlDescribe,
+    RemoteControlEndpoint, RemoteControlEndpointState, RemoteControlError,
+    REMOTE_CONTROL_ENDPOINT_ID,
 };
 
 #[doc(hidden)]

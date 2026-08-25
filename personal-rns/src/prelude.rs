@@ -1,9 +1,23 @@
 pub use crate::{
-    request_endpoints, CommandId, DestinationHash, Diagnostic, InterfaceStatus, ManuallyAttached,
-    Message, NoPersistence, PacketReceiptDelivered, PreConfiguredDestination, PrnsCommand,
-    PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, ProofStrategy, RatchetPolicy, ResourceMemoryLimits,
+    request_endpoints, AnnounceNowError, CommandId, DestinationHash, Diagnostic, InterfaceStatus,
+    ManuallyAttached, Message, NoPersistence, PacketReceiptDelivered, PreConfiguredDestination,
+    PrnsCommand, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, ProofStrategy, RatchetPolicy,
+    RemoteControlAnnounce, RemoteControlAnnounceFailure, RemoteControlDescribe,
+    RemoteControlEndpoint, RemoteControlEndpointState, RemoteControlError, ResourceMemoryLimits,
     ResourceStrategy, RuntimeHealth, SendError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
+    REMOTE_CONTROL_ENDPOINT_ID,
 };
+
+pub use crate::remote_control::{
+    RemoteControlAccessTable, RemoteControlAnnounceOutcome, RemoteControlDescription,
+    RemoteControlIdentity, RemoteControlMessageWriteError, RemoteControlProtocolError,
+    RemoteControlProtocolErrorKind, RemoteControlProtocolVersion, RemoteControlRequest,
+    RemoteControlRequestKind, RemoteControlRequestParseError, RemoteControlRequestSet,
+    RemoteControlResponse, RemoteControlResponseKind, RemoteControlResponseParseError,
+};
+
+#[cfg(feature = "alloc")]
+pub use crate::remote_control::HeapRemoteControlAccessTable;
 
 pub use crate::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, PersistenceFlushCause, PersistenceFlushTarget,
@@ -27,7 +41,7 @@ pub use crate::Esp32S3;
 #[cfg(feature = "tokio-host")]
 pub use crate::{
     fill_os_entropy, try_generate_identity_secret, AttachIntent, Attachable, AttachedInterface,
-    AttachedSupervisor, Fleet, PrnsNode, PrnsNodeHandle,
+    AttachedSupervisor, Fleet, PrnsNode, PrnsNodeHandle, RemoteControlHandle,
 };
 
 #[cfg(feature = "tokio-host")]
@@ -38,10 +52,10 @@ pub use crate::runtime::{
 };
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
-pub use crate::{Fleet, PrnsNode, PrnsNodeHandle};
+pub use crate::{Fleet, PrnsNode, PrnsNodeHandle, RemoteControlHandle};
 
 #[cfg(all(feature = "embassy-host", feature = "tokio-host"))]
-pub use crate::{EmbassyPrnsNode, EmbassyPrnsNodeHandle};
+pub use crate::{EmbassyPrnsNode, EmbassyPrnsNodeHandle, EmbassyRemoteControlHandle};
 
 #[cfg(all(feature = "ax25", feature = "tokio-host"))]
 pub use crate::ax25_kiss::Ax25KissInterface;

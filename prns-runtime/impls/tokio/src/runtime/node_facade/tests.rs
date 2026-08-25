@@ -2,7 +2,8 @@ use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 use crate::engine::{
     AnnounceNow, AnnounceNowFailure, EstablishLink, EstablishLinkFailure, Identify,
-    PacketReceiptDelivered, PathFound, PrnsCommand, Settlement,
+    PacketReceiptDelivered, PathFound, PrnsCommand, SendGroupFailure, SendPlainPacketFailure,
+    Settlement, MAX_SEND_GROUP_PLAINTEXT_LEN, MAX_SEND_PLAIN_PACKET_PAYLOAD_LEN,
     MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN,
 };
 use crate::identity::IdentityHash;
@@ -42,6 +43,21 @@ async fn payload_beyond_the_mdu_is_rejected_before_the_wire() {
 }
 
 #[tokio::test]
+async fn plain_and_group_payloads_beyond_their_mdu_are_rejected_before_the_wire() {
+    let (prns, _command_rx) = handle();
+    let plain_oversize = [0u8; MAX_SEND_PLAIN_PACKET_PAYLOAD_LEN + 1];
+    assert_eq!(
+        prns.send_plain_packet(PEER, &plain_oversize).await,
+        Err(SendError::<SendPlainPacketFailure>::PayloadTooLarge),
+    );
+    let group_oversize = [0u8; MAX_SEND_GROUP_PLAINTEXT_LEN + 1];
+    assert_eq!(
+        prns.send_group_packet(PEER, &group_oversize).await,
+        Err(SendError::<SendGroupFailure>::PayloadTooLarge),
+    );
+}
+
+#[tokio::test]
 async fn a_send_on_a_stopped_node_settles_as_node_stopped() {
     let (prns, command_rx) = handle();
     drop(command_rx);
@@ -68,6 +84,36 @@ async fn an_awaited_send_issues_the_completion_carrying_command() {
     }
 
     assert_eq!(send.await.expect("the send task joins"), Ok(delivered(7)),);
+}
+
+#[tokio::test]
+async fn awaited_plain_and_group_sends_issue_their_distinct_commands() {
+    let (prns, mut command_rx) = handle();
+    let issuer = prns.clone();
+    let plain = tokio::spawn(async move { issuer.send_plain_packet(PEER, b"plain").await });
+    match command_rx.recv().await.expect("plain command") {
+        HostCommand::AwaitedEngine { issued, completion } => {
+            assert!(matches!(issued.command, PrnsCommand::SendPlainPacket(_)));
+            completion
+                .send(Settlement::SendPlainPacket(Ok(())))
+                .expect("plain awaiter");
+        }
+        _ => panic!("plain send uses an awaited engine command"),
+    }
+    assert_eq!(plain.await.expect("plain task"), Ok(()));
+
+    let issuer = prns.clone();
+    let group = tokio::spawn(async move { issuer.send_group_packet(PEER, b"group").await });
+    match command_rx.recv().await.expect("group command") {
+        HostCommand::AwaitedEngine { issued, completion } => {
+            assert!(matches!(issued.command, PrnsCommand::SendGroup(_)));
+            completion
+                .send(Settlement::SendGroup(Ok(())))
+                .expect("group awaiter");
+        }
+        _ => panic!("group send uses an awaited engine command"),
+    }
+    assert_eq!(group.await.expect("group task"), Ok(()));
 }
 
 #[tokio::test]
@@ -300,9 +346,9 @@ async fn announce_now_awaits_and_surfaces_its_typed_settlement() {
         .expect("the awaiter is still parked");
     assert_eq!(
         announced.await.expect("the announce task joins"),
-        Err(SendError::Failed(AnnounceNowFailure::Rejected(
+        Err(crate::runtime::AnnounceNowError::Rejected(
             crate::engine::AnnounceNowRejection::UnknownDestination,
-        ))),
+        )),
     );
 }
 

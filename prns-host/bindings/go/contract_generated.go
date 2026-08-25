@@ -354,6 +354,7 @@ const (
 	ApplicationEventKindResourceSegment ApplicationEventKind = 105
 	ApplicationEventKindResourceNeedsDecompression ApplicationEventKind = 106
 	ApplicationEventKindChannelMessage ApplicationEventKind = 107
+	ApplicationEventKindLinkDelivery ApplicationEventKind = 108
 )
 
 type DiagnosticEventKind uint32
@@ -440,6 +441,7 @@ const (
 	EventFieldDropped EventField = 37
 	EventFieldPersistenceCause EventField = 38
 	EventFieldPersistenceTarget EventField = 39
+	EventFieldAppData EventField = 40
 )
 
 type DestinationHash [DestinationHashLength]byte
@@ -1336,6 +1338,14 @@ type ApplicationEventChannelMessage struct {
 
 func (ApplicationEventChannelMessage) applicationEvent() {}
 
+type ApplicationEventLinkDelivery struct {
+	LinkId LinkId
+	SourceInterface InterfaceId
+	Plaintext []byte
+}
+
+func (ApplicationEventLinkDelivery) applicationEvent() {}
+
 type DiagnosticEvent interface {
 	diagnosticEvent()
 }
@@ -1344,6 +1354,7 @@ type DiagnosticEventAnnounceHeard struct {
 	Destination DestinationHash
 	Hops uint8
 	SourceInterface InterfaceId
+	AppData []byte
 }
 
 func (DiagnosticEventAnnounceHeard) diagnosticEvent() {}

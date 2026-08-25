@@ -3,12 +3,20 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
+import shutil
 import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+
+from validation.interop.harness import (
+    CommandStream,
+    cleanup_temporary_directory,
+    decode_command_diagnostic,
+    decode_command_output,
+    environment,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -143,15 +151,15 @@ EXPECTED_RUNTIME = {
 
 
 def run(command: list[str], cwd: Path) -> str:
-    environment = os.environ.copy()
-    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    executable = shutil.which(command[0])
+    if executable is None:
+        raise RuntimeError(f"required command {command[0]!r} is unavailable")
     completed = subprocess.run(
-        command,
+        [executable, *command[1:]],
         cwd=cwd,
-        env=environment,
+        env=environment({"PYTHONDONTWRITEBYTECODE": "1"}),
         check=False,
         capture_output=True,
-        text=True,
         timeout=120,
     )
     if completed.returncode != 0:
@@ -161,13 +169,17 @@ def run(command: list[str], cwd: Path) -> str:
                     "command": command,
                     "cwd": str(cwd),
                     "exit_code": completed.returncode,
-                    "stdout": completed.stdout,
-                    "stderr": completed.stderr,
+                    "stdout": decode_command_diagnostic(completed.stdout),
+                    "stderr": decode_command_diagnostic(completed.stderr),
                 },
                 sort_keys=True,
             )
         )
-    return completed.stdout.strip()
+    return decode_command_output(
+        completed.stdout,
+        CommandStream.STANDARD_OUTPUT,
+        "ecosystem command emitted invalid output",
+    ).strip()
 
 
 def checkout(upstream: Upstream, checkout_root: Path) -> Path:
@@ -176,6 +188,8 @@ def checkout(upstream: Upstream, checkout_root: Path) -> Path:
         return destination
     destination.mkdir(parents=True)
     run(["git", "init", "--quiet"], destination)
+    run(["git", "config", "core.autocrlf", "false"], destination)
+    run(["git", "config", "core.eol", "lf"], destination)
     run(["git", "remote", "add", "origin", upstream.repository], destination)
     run(
         ["git", "fetch", "--quiet", "--depth", "1", "origin", upstream.commit],
@@ -193,7 +207,9 @@ def verify_checkout(upstream: Upstream, repository: Path) -> None:
         )
 
     for package_license in upstream.package_licenses:
-        package = json.loads((repository / package_license.path).read_text())
+        package = json.loads(
+            (repository / package_license.path).read_text(encoding="utf-8")
+        )
         actual_license = package.get("license")
         if actual_license != package_license.identifier:
             raise RuntimeError(
@@ -281,7 +297,7 @@ def prns_interoperability(upstream: Upstream, repository: Path) -> dict | None:
 def lxmf_application_interoperability(
     upstream: Upstream, repository: Path
 ) -> dict | None:
-    from websocket_bergie_lxmf_e2e import exercise
+    from validation.interop.websocket_bergie_lxmf_e2e import exercise
 
     peers = upstream.lxmf_application_peers
     if peers is None:
@@ -295,8 +311,8 @@ def lxmf_application_interoperability(
 
 
 def firmware_source_characterization(repository: Path) -> dict:
-    console = (repository / "WebSocketConsole.cpp").read_text()
-    server = (repository / "WebSocketServer.cpp").read_text()
+    console = (repository / "WebSocketConsole.cpp").read_text(encoding="utf-8")
+    server = (repository / "WebSocketServer.cpp").read_text(encoding="utf-8")
     required_console_fragments = (
         "constexpr uint8_t FEND = 0xC0;",
         "serial_fifo_push(data[i]);",
@@ -391,8 +407,11 @@ def main() -> int:
         print(json.dumps(operation(arguments.checkout_root), sort_keys=True))
         return 0
 
-    with tempfile.TemporaryDirectory(prefix="prns-websocket-ecosystem-") as directory:
-        print(json.dumps(operation(Path(directory)), sort_keys=True))
+    temporary = tempfile.TemporaryDirectory(prefix="prns-websocket-ecosystem-")
+    try:
+        print(json.dumps(operation(Path(temporary.name)), sort_keys=True))
+    finally:
+        cleanup_temporary_directory(temporary)
     return 0
 
 

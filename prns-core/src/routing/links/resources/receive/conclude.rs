@@ -847,13 +847,20 @@ mod seam_tests {
             &packed[..len],
         ));
         handlers
-            .register(destination, path_hash, RequestPolicy::AllowAll)
+            .register(destination, path_hash, RequestPolicy::RequireIdentified)
             .unwrap();
-        assert!(request_is_permitted(
+        assert!(!request_is_permitted(
             &handlers,
             correlation,
             Some(destination),
             None,
+            &packed[..len],
+        ));
+        assert!(request_is_permitted(
+            &handlers,
+            correlation,
+            Some(destination),
+            Some(crate::identity::IdentityHash::new([0x53; 16])),
             &packed[..len],
         ));
     }

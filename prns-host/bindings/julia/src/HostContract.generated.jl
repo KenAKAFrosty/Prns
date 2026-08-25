@@ -286,6 +286,7 @@ end
     ApplicationEventKindResourceSegment = 105
     ApplicationEventKindResourceNeedsDecompression = 106
     ApplicationEventKindChannelMessage = 107
+    ApplicationEventKindLinkDelivery = 108
 end
 
 @enum DiagnosticEventKind::UInt32 begin
@@ -364,6 +365,7 @@ end
     EventFieldDropped = 37
     EventFieldPersistenceCause = 38
     EventFieldPersistenceTarget = 39
+    EventFieldAppData = 40
 end
 
 struct DestinationHash
@@ -1114,10 +1116,17 @@ struct ApplicationEventChannelMessage <: ApplicationEvent
     data::Vector{UInt8}
 end
 
+struct ApplicationEventLinkDelivery <: ApplicationEvent
+    link_id::LinkId
+    source_interface::InterfaceId
+    plaintext::Vector{UInt8}
+end
+
 struct DiagnosticEventAnnounceHeard <: DiagnosticEvent
     destination::DestinationHash
     hops::UInt8
     source_interface::InterfaceId
+    app_data::Vector{UInt8}
 end
 
 struct DiagnosticEventLinkEstablished <: DiagnosticEvent

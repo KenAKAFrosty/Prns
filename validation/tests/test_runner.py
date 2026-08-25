@@ -140,6 +140,31 @@ class RegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(runner.ValidationError, "duplicate suite id"):
             runner.suite_map({"suite": [suite, suite]})
 
+    def test_manifest_schema_has_an_independent_version_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.toml"
+            path.write_text(
+                f"schema = {runner.MANIFEST_SCHEMA + 1}\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                runner.ValidationError,
+                f"validation manifest schema must be {runner.MANIFEST_SCHEMA}",
+            ):
+                runner.load_manifest(path)
+
+    def test_mutation_triage_schema_has_an_independent_version_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "triage.toml"
+            path.write_text(
+                f"schema = {runner.MUTATION_TRIAGE_SCHEMA + 1}\n",
+                encoding="utf-8",
+            )
+            self.assertIn(
+                f"mutation triage schema must be {runner.MUTATION_TRIAGE_SCHEMA}",
+                runner.validate_triage(path),
+            )
+
     def test_invalid_tier_and_platform_are_rejected(self) -> None:
         manifest = copy.deepcopy(self.manifest)
         manifest["suite"][0]["tiers"] = ["eventually"]
@@ -249,6 +274,16 @@ class RegistryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             command = runner.command_for(suite, 1, Path(directory) / "results" / suite["id"])
         self.assertEqual(command, [sys.executable, "-c", "pass"])
+
+    def test_interpreter_environment_path_derives_from_its_version(self) -> None:
+        specification = {
+            "version": "1.2.3",
+            "venv": "validation/.venv/rns-{version}",
+        }
+        self.assertEqual(
+            runner.interpreter_venv(specification),
+            runner.ROOT / "validation/.venv/rns-1.2.3",
+        )
 
     def test_runner_python_argument_is_rejected_outside_command_element_zero(self) -> None:
         manifest = copy.deepcopy(self.manifest)
@@ -525,6 +560,15 @@ expires = "2099-01-01"
 
         macos = runner.selected_suites(self.manifest, [], None, None, "macos")
         self.assertTrue(all(suite["platform"] == "macos" for suite in macos))
+
+    def test_interop_case_suites_are_portable(self) -> None:
+        suites = [
+            suite
+            for suite in self.manifest["suite"]
+            if suite["id"].startswith("interop-")
+        ]
+        self.assertTrue(suites)
+        self.assertTrue(all(suite["platform"] == "any" for suite in suites))
 
     def test_platform_selector_is_available_to_list_matrix_and_run(self) -> None:
         parser = runner.build_parser()

@@ -1,12 +1,13 @@
 pub use prns_runtime::runtime::{
-    assemble_node, configure_preconfigured_destination, request_endpoints, AssembledNode,
-    BlackholeSeedReport, ClearAnnounceQueuesOutcome, ConfigurePreconfiguredDestinationError,
-    DestinationIdentityRetentionControl, DestinationIdentityRetentionControlError, Diagnostic,
-    DropRouteOutcome, DropRoutesViaOutcome, IdentityBlackholeControl,
-    IdentityBlackholeControlError, IdentityBlackholeSource, IdentityBlackholeSourceError,
-    ManuallyAttached, Message, NoPersistence, PreConfiguredDestination, PrnsEvent, PrnsNodeApi,
-    PrnsNodeRecipe, RoutingControl, RoutingControlError, RuntimeHealth, SendError,
-    ServeMyRequestEndpoints,
+    assemble_node, configure_preconfigured_destination, request_endpoints, AnnounceNowError,
+    AssembledNode, BlackholeSeedReport, ClearAnnounceQueuesOutcome,
+    ConfigurePreconfiguredDestinationError, DestinationIdentityRetentionControl,
+    DestinationIdentityRetentionControlError, Diagnostic, DropRouteOutcome, DropRoutesViaOutcome,
+    IdentityBlackholeControl, IdentityBlackholeControlError, IdentityBlackholeSource,
+    IdentityBlackholeSourceError, ManuallyAttached, Message, NoPersistence,
+    PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, RemoteControlAnnounce,
+    RemoteControlAnnounceFailure, RemoteControlDescribe, RemoteControlError, RoutingControl,
+    RoutingControlError, RuntimeHealth, SendError, ServeMyRequestEndpoints,
 };
 
 #[cfg(feature = "alloc")]
@@ -46,11 +47,12 @@ pub use prns_runtime_tokio::runtime::{
     PersistenceEvent, PersistenceFlushStatus, PersistenceIntent, PersistenceRestoreReport,
     PersistenceTrigger, PersistenceWorker, PoolWorkers, PrepareFlushError, PreparedFlush,
     PreparedResourceReceiver, PrnsNode, PrnsNodeHandle, RatchetSeedReport, RegionFlush,
-    RegisterRequestEndpointError, RequestOptions, RequestPathError, ResourceAdmissionPeer,
-    ResourceOfferAdmission, ResourceOfferMonitor, ResourceProgress, ResourceReceipt,
-    ResourceReceiveError, ResourceSendError, ResponseSendError, RouteSeedProgress, RouteSeedReport,
-    RuntimeRequestHandlerError, SaveOnLearn, SaveOnLearnWiring, SegmentCompression,
-    SharedInstanceIdentityError, StreamId, Subscription, TunnelSeedReport, AUTO_COMPRESS_MAX_LEN,
+    RegisterRequestEndpointError, RemoteControlHandle, RequestOptions, RequestPathError,
+    ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor, ResourceProgress,
+    ResourceReceipt, ResourceReceiveError, ResourceSendError, ResponseSendError, RouteSeedProgress,
+    RouteSeedReport, RuntimeRequestHandlerError, SaveOnLearn, SaveOnLearnWiring,
+    SegmentCompression, SharedInstanceIdentityError, StreamId, Subscription, TunnelSeedReport,
+    AUTO_COMPRESS_MAX_LEN,
 };
 
 #[cfg(all(feature = "rnx", feature = "tokio-host"))]
@@ -63,8 +65,9 @@ pub use prns_runtime_embassy::runtime::{
     EmbeddedPersistenceDiagnostic, EmbeddedPersistenceFailure, EmbeddedPersistencePolicy,
     EmbeddedPersistenceRestoreReport, EmbeddedPersistenceTarget, FixedRouteSnapshotKeys, Fleet,
     InboundDeliveryError, InterfaceLane, LaneClaimError, ManifoldLaneSet, ManifoldWiring,
-    OutboundFrame, PrnsNode, PrnsNodeHandle, RequestRoutingCapacity, RouteSnapshotKeyError,
-    RouteSnapshotKeys, SharedNorFlash, StaticManifoldLane, SupervisorLane,
+    OutboundFrame, PrnsNode, PrnsNodeHandle, RemoteControlHandle, RequestResponseData,
+    RequestRoutingCapacity, RouteSnapshotKeyError, RouteSnapshotKeys, SharedNorFlash,
+    StaticManifoldLane, SupervisorLane,
 };
 
 #[cfg(all(feature = "embassy-host", feature = "tokio-host"))]
@@ -75,5 +78,6 @@ pub use prns_runtime_embassy::runtime::{
     EmbeddedPersistenceRestoreReport, EmbeddedPersistenceTarget, FixedRouteSnapshotKeys,
     InboundDeliveryError, InterfaceLane, LaneClaimError, ManifoldLaneSet, ManifoldWiring,
     OutboundFrame, PrnsNode as EmbassyPrnsNode, PrnsNodeHandle as EmbassyPrnsNodeHandle,
-    RouteSnapshotKeyError, RouteSnapshotKeys, SharedNorFlash, StaticManifoldLane, SupervisorLane,
+    RemoteControlHandle as EmbassyRemoteControlHandle, RequestResponseData, RouteSnapshotKeyError,
+    RouteSnapshotKeys, SharedNorFlash, StaticManifoldLane, SupervisorLane,
 };

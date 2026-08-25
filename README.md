@@ -158,7 +158,10 @@ Among what you gain: brand-new interfaces, a built-in operator CLI, observabilit
 - [Flash a Hopspot](https://reticulum.rs/flash) to get self-contained Reticulum running on your embedded devices.
 - [Put your own high-performance backbone online](prnsd/README.md#deploy-it) with Docker or Railway.
 - [Measure both implementations side by side](benchmarks/README.md) with the benchmark suite.
-- [Verify the interoperability yourself](docs/validation.md), against real RNS nodes on your own machine.
+- [Review the stock-RNS interoperability test
+  checklist](docs/interop-checklist.md), then
+  [verify it yourself](docs/validation.md) against real RNS nodes on your own
+  machine.
 
 
 

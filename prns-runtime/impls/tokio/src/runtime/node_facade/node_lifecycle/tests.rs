@@ -511,7 +511,10 @@ fn a_runtime_destination_registers_only_its_selected_route_types() {
         const ENDPOINT_ID: &'static str = "/first";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[]);
 
-        async fn handle(_context: RequestContext<'_, ()>) -> Result<(), Decline> {
+        async fn handle(
+            _context: RequestContext<'_, ()>,
+            _node: &impl crate::runtime::PrnsNodeApi,
+        ) -> Result<(), Decline> {
             Ok(())
         }
     }
@@ -521,7 +524,10 @@ fn a_runtime_destination_registers_only_its_selected_route_types() {
         const ENDPOINT_ID: &'static str = "/second";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[]);
 
-        async fn handle(_context: RequestContext<'_, ()>) -> Result<(), Decline> {
+        async fn handle(
+            _context: RequestContext<'_, ()>,
+            _node: &impl crate::runtime::PrnsNodeApi,
+        ) -> Result<(), Decline> {
             Ok(())
         }
     }
