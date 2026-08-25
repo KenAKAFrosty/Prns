@@ -50,7 +50,7 @@ name = "persistence"
 required-features = ["tokio-host", "tcp"]
 
 [[example]]
-name = "remote_control_describe"
+name = "remote_control"
 required-features = ["tokio-host", "tcp"]
 
 [features]
