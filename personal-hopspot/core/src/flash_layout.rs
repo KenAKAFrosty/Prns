@@ -38,6 +38,43 @@ pub const S3_16_MIB_FLASH_LAYOUT: HopspotS3FlashLayout = HopspotS3FlashLayout {
 };
 
 pub const NRF52840_RADIO_PROFILE_PAGES: [u32; 2] = [0xE9000, 0xEA000];
+pub const NRF52840_BLE_IDENTITY_FLASH_OFFSET: u32 = 0xE8000;
+pub const NRF52840_NODE_IDENTITY_FLASH_OFFSET: u32 = 0xEB000;
+pub const T114_RECOVERY_BOOTLOADER_FLASH_OFFSET: u32 = 0xEC000;
+pub const T096_APPLICATION_DATA_END: u32 = 0xEC000;
+pub const T096_FACTORY_RESERVED_FLASH_OFFSET: u32 = 0xED000;
+pub const T096_RECOVERY_BOOTLOADER_FLASH_OFFSET: u32 = 0xF4000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Nrf52840FirmwareMemory {
+    pub application_flash: FirmwareAddressRange,
+    pub application_ram: FirmwareAddressRange,
+    pub minimum_runtime_stack_bytes: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FirmwareAddressRange {
+    pub start: u32,
+    pub end: u32,
+}
+
+impl FirmwareAddressRange {
+    #[must_use]
+    pub const fn new(start: u32, end: u32) -> Self {
+        assert!(start < end);
+        Self { start, end }
+    }
+
+    #[must_use]
+    pub const fn byte_len(self) -> u32 {
+        self.end - self.start
+    }
+}
+
+const NRF52840_APPLICATION_FLASH_ORIGIN: u32 = 0x26000;
+const NRF52840_APPLICATION_RAM_ORIGIN: u32 = 0x2000E000;
+const NRF52840_RAM_END: u32 = 0x20040000;
+const NRF52840_MINIMUM_RUNTIME_STACK_BYTES: u32 = 68 * 1024;
 pub const T_ECHO_MIN_ARENA_BYTES: usize = 19 * HOPSPOT_FLASH_PAGE_BYTES;
 pub const T_ECHO_JOURNAL_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
     [0xC0000, 0xC1000],
@@ -55,6 +92,22 @@ pub const T096_JOURNAL_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
         FlashArenaRange::new(0xE6000, 0xE8000),
     ],
 );
+pub const T096_FIRMWARE_MEMORY: Nrf52840FirmwareMemory = Nrf52840FirmwareMemory {
+    application_flash: FirmwareAddressRange::new(
+        NRF52840_APPLICATION_FLASH_ORIGIN,
+        T096_JOURNAL_LAYOUT.timebase_regions[0],
+    ),
+    application_ram: FirmwareAddressRange::new(NRF52840_APPLICATION_RAM_ORIGIN, NRF52840_RAM_END),
+    minimum_runtime_stack_bytes: NRF52840_MINIMUM_RUNTIME_STACK_BYTES,
+};
+pub const T114_FIRMWARE_MEMORY: Nrf52840FirmwareMemory = Nrf52840FirmwareMemory {
+    application_flash: FirmwareAddressRange::new(
+        NRF52840_APPLICATION_FLASH_ORIGIN,
+        NRF52840_BLE_IDENTITY_FLASH_OFFSET,
+    ),
+    application_ram: FirmwareAddressRange::new(NRF52840_APPLICATION_RAM_ORIGIN, NRF52840_RAM_END),
+    minimum_runtime_stack_bytes: NRF52840_MINIMUM_RUNTIME_STACK_BYTES,
+};
 pub const T1000E_JOURNAL_LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
     [0xEA000, 0xEB000],
     [
@@ -94,8 +147,16 @@ const _: () = {
     );
 
     assert!(T_ECHO_JOURNAL_LAYOUT.arenas[1].end == NRF52840_RADIO_PROFILE_PAGES[0]);
+    assert!(T096_FIRMWARE_MEMORY.application_flash.end == T096_JOURNAL_LAYOUT.timebase_regions[0]);
+    assert!(T096_JOURNAL_LAYOUT.arenas[1].end == NRF52840_BLE_IDENTITY_FLASH_OFFSET);
+    assert!(T114_FIRMWARE_MEMORY.application_flash.end == NRF52840_BLE_IDENTITY_FLASH_OFFSET);
+    assert!(NRF52840_BLE_IDENTITY_FLASH_OFFSET + PAGE == NRF52840_RADIO_PROFILE_PAGES[0]);
     assert!(NRF52840_RADIO_PROFILE_PAGES[0] + PAGE == NRF52840_RADIO_PROFILE_PAGES[1]);
-    assert!(NRF52840_RADIO_PROFILE_PAGES[1] + PAGE == 0xEB000);
+    assert!(NRF52840_RADIO_PROFILE_PAGES[1] + PAGE == NRF52840_NODE_IDENTITY_FLASH_OFFSET);
+    assert!(NRF52840_NODE_IDENTITY_FLASH_OFFSET + PAGE == T114_RECOVERY_BOOTLOADER_FLASH_OFFSET);
+    assert!(NRF52840_NODE_IDENTITY_FLASH_OFFSET + PAGE == T096_APPLICATION_DATA_END);
+    assert!(T096_APPLICATION_DATA_END + PAGE == T096_FACTORY_RESERVED_FLASH_OFFSET);
+    assert!(T096_FACTORY_RESERVED_FLASH_OFFSET < T096_RECOVERY_BOOTLOADER_FLASH_OFFSET);
 };
 
 #[cfg(test)]
@@ -153,14 +214,36 @@ mod tests {
         assert_eq!(NRF52840_RADIO_PROFILE_PAGES, [0xE9000, 0xEA000]);
         assert_eq!(
             NRF52840_RADIO_PROFILE_PAGES[1] + HOPSPOT_FLASH_PAGE_BYTES as u32,
-            0xEB000
+            NRF52840_NODE_IDENTITY_FLASH_OFFSET
         );
-        assert_eq!(0xEB000 + HOPSPOT_FLASH_PAGE_BYTES as u32, 0xEC000);
-        assert_eq!(0xEC000 + HOPSPOT_FLASH_PAGE_BYTES as u32, 0xED000);
+        assert_eq!(
+            NRF52840_NODE_IDENTITY_FLASH_OFFSET + HOPSPOT_FLASH_PAGE_BYTES as u32,
+            T096_APPLICATION_DATA_END
+        );
+        assert_eq!(
+            T096_APPLICATION_DATA_END + HOPSPOT_FLASH_PAGE_BYTES as u32,
+            T096_FACTORY_RESERVED_FLASH_OFFSET
+        );
     }
 
     #[test]
     fn headless_nrf52840_journals_are_contiguous_and_end_at_identity_storage() {
+        assert_eq!(
+            T096_FIRMWARE_MEMORY,
+            Nrf52840FirmwareMemory {
+                application_flash: FirmwareAddressRange::new(0x26000, 0xE2000),
+                application_ram: FirmwareAddressRange::new(0x2000E000, 0x20040000),
+                minimum_runtime_stack_bytes: 68 * 1024,
+            }
+        );
+        assert_eq!(
+            T114_FIRMWARE_MEMORY,
+            Nrf52840FirmwareMemory {
+                application_flash: FirmwareAddressRange::new(0x26000, 0xE8000),
+                application_ram: FirmwareAddressRange::new(0x2000E000, 0x20040000),
+                minimum_runtime_stack_bytes: 68 * 1024,
+            }
+        );
         for (layout, expected_start, expected_end) in [
             (T096_JOURNAL_LAYOUT, 0xE2000, 0xE8000),
             (T1000E_JOURNAL_LAYOUT, 0xEA000, 0xF0000),

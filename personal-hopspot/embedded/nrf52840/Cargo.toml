@@ -101,3 +101,6 @@ unsafe_op_in_unsafe_fn = "deny"
 
 [lints.clippy]
 undocumented_unsafe_blocks = "deny"
+
+[build-dependencies]
+personal-hopspot-core = { path = "../../core", default-features = false }
