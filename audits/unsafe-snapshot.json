@@ -6084,11 +6084,11 @@
       "name": "esp-radio",
       "source": "personal-hopspot/embedded/esp32/vendor/esp-radio-0.18.0",
       "unsafe": {
-        "blocks": 437,
-        "externs": 511,
+        "blocks": 439,
+        "externs": 513,
         "functions": 12,
         "impls": 3,
-        "tokens": 1021
+        "tokens": 1027
       },
       "version": "0.18.0"
     },
@@ -6325,7 +6325,7 @@
         ]
       },
       "name": "esp-wifi-sys-esp32s3",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "source": "personal-hopspot/embedded/esp32/vendor/esp-wifi-sys-esp32s3-0.2.0",
       "unsafe": {
         "blocks": 231,
         "externs": 224,
@@ -13996,11 +13996,11 @@
       "name": "personal-hopspot-esp32",
       "source": "personal-hopspot/embedded/esp32",
       "unsafe": {
-        "blocks": 777,
-        "externs": 553,
-        "functions": 121,
-        "impls": 37,
-        "tokens": 1619
+        "blocks": 1012,
+        "externs": 779,
+        "functions": 123,
+        "impls": 39,
+        "tokens": 2086
       },
       "version": "0.1.0"
     },
@@ -14966,11 +14966,11 @@
       "name": "prns-ffi",
       "source": "prns-ffi",
       "unsafe": {
-        "blocks": 123,
+        "blocks": 124,
         "externs": 3,
         "functions": 0,
         "impls": 22,
-        "tokens": 184
+        "tokens": 185
       },
       "version": "0.3.7"
     },

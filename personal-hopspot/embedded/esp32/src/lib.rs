@@ -67,6 +67,8 @@ mod identity;
 mod persistence;
 
 #[cfg(any(test, target_arch = "xtensa"))]
+mod display_runtime;
+#[cfg(any(test, target_arch = "xtensa"))]
 mod station_recovery;
 #[cfg(any(test, target_arch = "xtensa"))]
 mod station_security;

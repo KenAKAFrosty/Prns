@@ -11,10 +11,7 @@ use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_time::{Delay, Duration, Timer};
-use embedded_graphics::draw_target::DrawTarget;
-use embedded_graphics::pixelcolor::BinaryColor;
-use embedded_graphics::prelude::{OriginDimensions, Point, Size};
-use embedded_graphics::Pixel;
+use embedded_graphics::geometry::Point;
 use embedded_hal_bus::spi::ExclusiveDevice;
 
 use personal_rns::interfaces::InterfaceId;
@@ -203,18 +200,15 @@ const SH1106_ADDR: u8 = 0x3d;
 /// starts at column 2. This is the one detail that makes the SH1106 incompatible with the SSD1306
 /// driver's full-width horizontal-addressing flush.
 const SH1106_COL_OFFSET: u8 = 2;
-/// SH1106 panel: 128 columns × 64 rows = 8 pages of 128 bytes. The UI draws into a 64×128 portrait
-/// canvas, so the `DrawTarget` reports 64×128 and rotates each pixel 90° into this physical buffer.
+/// SH1106 panel: 128 columns × 64 rows = 8 pages of 128 bytes.
 const SH1106_W: u32 = 128;
 const SH1106_H: u32 = 64;
 
-/// A minimal SH1106 OLED driver over I2C: a 1 KiB framebuffer that implements the same
-/// `embedded_graphics` `DrawTarget<Color = BinaryColor>` the shared UI renders into, flushed page by
-/// page (the SH1106 only supports page addressing). No external crate — the published `sh1106` crate
-/// is stuck on embedded-hal 0.2, which this esp-hal stack does not implement.
+/// A minimal SH1106 OLED driver over I2C with a board-local packed framebuffer.
 pub struct Sh1106I2c<I> {
     i2c: I,
     buf: [u8; (SH1106_W * SH1106_H / 8) as usize],
+    transform: screen::PanelTransform,
 }
 
 impl<I: embedded_hal::i2c::I2c> Sh1106I2c<I> {
@@ -222,6 +216,15 @@ impl<I: embedded_hal::i2c::I2c> Sh1106I2c<I> {
         Self {
             i2c,
             buf: [0u8; (SH1106_W * SH1106_H / 8) as usize],
+            transform: screen::PanelTransform::centered_clockwise_quarter_turn(
+                screen::LogicalSize::new(
+                    screen::face_64x128::LOGICAL_WIDTH,
+                    screen::face_64x128::LOGICAL_HEIGHT,
+                ),
+                screen::PanelSize::new(SH1106_W, SH1106_H),
+                screen::PanelScale::OneToOne,
+            )
+            .expect("the T-Beam face viewport fits its panel"),
         }
     }
 
@@ -256,37 +259,28 @@ impl<I: embedded_hal::i2c::I2c> Sh1106I2c<I> {
     fn set_display_on(&mut self, on: bool) -> Result<(), ()> {
         self.cmd(0xae | u8::from(on))
     }
-}
 
-impl<I> OriginDimensions for Sh1106I2c<I> {
-    fn size(&self) -> Size {
-        Size::new(SH1106_H, SH1106_W)
-    }
-}
-
-impl<I: embedded_hal::i2c::I2c> DrawTarget for Sh1106I2c<I> {
-    type Color = BinaryColor;
-    type Error = core::convert::Infallible;
-
-    fn draw_iter<T>(&mut self, pixels: T) -> Result<(), Self::Error>
-    where
-        T: IntoIterator<Item = Pixel<Self::Color>>,
-    {
-        for Pixel(Point { x, y }, color) in pixels {
-            if x < 0 || y < 0 || x >= SH1106_H as i32 || y >= SH1106_W as i32 {
-                continue;
-            }
-            let px = (SH1106_W - 1) - y as u32;
-            let py = x as u32;
-            let idx = (px + (py / 8) * SH1106_W) as usize;
-            let bit = 1u8 << (py % 8);
-            if color == BinaryColor::On {
-                self.buf[idx] |= bit;
-            } else {
-                self.buf[idx] &= !bit;
+    fn write_face(&mut self, frame: &screen::face_64x128::Frame) {
+        for y in 0..SH1106_H {
+            for x in 0..SH1106_W {
+                let mapped = self
+                    .transform
+                    .map_panel_point(screen::PhysicalPoint::new(x, y))
+                    .expect("the T-Beam panel point is in bounds");
+                let on = matches!(
+                    mapped,
+                    screen::MappedPoint::Source(point)
+                        if frame.pixel_is_on(Point::new(point.x() as i32, point.y() as i32))
+                );
+                let idx = (x + (y / 8) * SH1106_W) as usize;
+                let bit = 1u8 << (y % 8);
+                if on {
+                    self.buf[idx] |= bit;
+                } else {
+                    self.buf[idx] &= !bit;
+                }
             }
         }
-        Ok(())
     }
 }
 
@@ -301,20 +295,36 @@ impl Esp32S3Board for TBeamSupremeBoard {
     const BOOT_BANNER: &'static str = "HOPSPOT_TBEAM_SUPREME";
     const USB_INTERFACE_ID: InterfaceId = USB_INTERFACE_ID;
     const FLASH_LAYOUT: screen::HopspotS3FlashLayout = screen::S3_8_MIB_FLASH_LAYOUT;
+    const USER_BLANKING: screen::UserBlanking = screen::UserBlanking::Available;
     type Display = Sh1106I2c<TBeamI2c>;
+    type DisplayError = s3::DisplayIoError;
+    type Presentation = s3::ImmediatePresentationState;
     type Battery = Axp2101Battery;
     type Gnss = TBeamSupremeGnss;
 
-    fn flush(display: &mut Self::Display) {
-        let _ = display.flush();
+    fn presentation() -> Self::Presentation {
+        s3::ImmediatePresentationState::new()
     }
 
-    fn wake_display(display: &mut Self::Display) {
-        let _ = display.set_display_on(true);
+    async fn present(
+        display: &mut Self::Display,
+        frame: &screen::face_64x128::Frame,
+        kind: screen::presentation::RefreshKind,
+    ) -> Result<(), s3::DisplayIoError> {
+        debug_assert_eq!(kind, screen::presentation::RefreshKind::ImmediateDisplay);
+        display.write_face(frame);
+        display
+            .flush()
+            .map_err(|_| s3::DisplayIoError::Presentation)
     }
 
-    fn darken_display(display: &mut Self::Display) {
-        let _ = display.set_display_on(false);
+    fn set_display_awake(
+        display: &mut Self::Display,
+        awake: bool,
+    ) -> Result<(), s3::DisplayIoError> {
+        display
+            .set_display_on(awake)
+            .map_err(|_| s3::DisplayIoError::Blanking)
     }
 
     async fn bringup(
@@ -378,8 +388,12 @@ impl Esp32S3Board for TBeamSupremeBoard {
             s3::BootPhase::OledFailed
         });
         if oled_ok {
-            screen::splash(&mut display, screen::SplashContent::Brand);
-            let _ = display.flush();
+            let mut splash = screen::face_64x128::Frame::new();
+            screen::face_64x128::splash(&mut splash, screen::face_64x128::SplashContent::Brand);
+            display.write_face(&splash);
+            if let Err(error) = display.flush() {
+                log::error!("OLED splash failed: {error:?}");
+            }
         }
 
         let lora_radio = {
@@ -437,7 +451,7 @@ impl Esp32S3Board for TBeamSupremeBoard {
             face: BoardFace {
                 display: BoardDisplay {
                     device: display,
-                    initialized: oled_ok,
+                    available: oled_ok,
                 },
                 battery,
                 button: Input::new(

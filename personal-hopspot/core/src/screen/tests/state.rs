@@ -60,22 +60,22 @@ fn persistence_notices_are_brief_across_deferred_failed_and_recovered_states() {
     let mut persistence = PersistenceNotice::new();
 
     assert!(!persistence.update(&mut state, PersistenceState::Durable, 0));
-    assert_eq!(state.notice(), None);
+    assert_eq!(state.visible_notice(), None);
     assert!(persistence.update(&mut state, PersistenceState::Deferred, 1_000));
-    assert_eq!(state.notice(), Some(UiNotice::SaveDeferred));
+    assert_eq!(state.visible_notice(), Some(UiNotice::SaveDeferred));
     assert!(!persistence.update(&mut state, PersistenceState::Deferred, 5_999));
-    assert_eq!(state.notice(), Some(UiNotice::SaveDeferred));
+    assert_eq!(state.visible_notice(), Some(UiNotice::SaveDeferred));
     assert!(persistence.update(&mut state, PersistenceState::Deferred, 6_000));
-    assert_eq!(state.notice(), None);
+    assert_eq!(state.visible_notice(), None);
 
     assert!(persistence.update(&mut state, PersistenceState::Failed, 7_000));
-    assert_eq!(state.notice(), Some(UiNotice::SaveFailed));
+    assert_eq!(state.visible_notice(), Some(UiNotice::SaveFailed));
     assert!(persistence.update(&mut state, PersistenceState::Recovered, 8_000));
-    assert_eq!(state.notice(), Some(UiNotice::StateRecovered));
+    assert_eq!(state.visible_notice(), Some(UiNotice::StateRecovered));
     assert!(persistence.update(&mut state, PersistenceState::Durable, 9_000));
-    assert_eq!(state.notice(), Some(UiNotice::Saved));
+    assert_eq!(state.visible_notice(), Some(UiNotice::Saved));
     assert!(persistence.update(&mut state, PersistenceState::Durable, 14_000));
-    assert_eq!(state.notice(), None);
+    assert_eq!(state.visible_notice(), None);
 }
 
 #[test]
@@ -86,11 +86,11 @@ fn persistence_timer_only_clears_the_notice_it_owns() {
     persistence.update(&mut state, PersistenceState::Failed, 1_000);
     state.show_notice(UiNotice::Announcing);
     assert!(!persistence.update(&mut state, PersistenceState::Failed, 6_000));
-    assert_eq!(state.notice(), Some(UiNotice::Announcing));
+    assert_eq!(state.visible_notice(), Some(UiNotice::Announcing));
     assert!(!state.clear_notice_if(UiNotice::SaveFailed));
-    assert_eq!(state.notice(), Some(UiNotice::Announcing));
+    assert_eq!(state.visible_notice(), Some(UiNotice::Announcing));
     assert!(state.clear_notice_if(UiNotice::Announcing));
-    assert_eq!(state.notice(), None);
+    assert_eq!(state.visible_notice(), None);
 }
 
 #[test]
@@ -124,7 +124,7 @@ fn short_press_dismisses_notice_without_moving_focus() {
         state.handle_input(InputEvent::ShortPress, content),
         UiAction::None
     );
-    assert_eq!(state.notice(), None);
+    assert_eq!(state.visible_notice(), None);
     assert!(state.global_selected());
 }
 
@@ -289,10 +289,10 @@ fn long_press_on_sleep_enters_sleep_and_next_press_wakes() {
 }
 
 #[test]
-fn display_capable_menu_offers_display_controls_before_sleep() {
+fn blankable_display_menu_offers_display_controls_before_sleep() {
     let cards = test_cards::<4>(CardKind::Usb);
     let content = test_content(&cards);
-    let mut state = test_ui_state_with_display_power();
+    let mut state = test_ui_state_with_user_blanking();
     state.handle_input(InputEvent::LongPress, content);
     state.handle_input(InputEvent::ShortPress, content);
     state.handle_input(InputEvent::ShortPress, content);
@@ -302,12 +302,8 @@ fn display_capable_menu_offers_display_controls_before_sleep() {
         Some(DISPLAY_OFF_MENU_ITEM)
     );
     assert_eq!(
-        state.global_menu_item_label(GlobalMenuItem::DisplayOff),
-        "Screen Off"
-    );
-    assert_eq!(
         state.handle_input(InputEvent::LongPress, content),
-        UiAction::DisplayOff
+        UiAction::BlankDisplay
     );
     assert!(state.global_selected());
 

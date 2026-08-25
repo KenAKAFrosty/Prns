@@ -1,9 +1,8 @@
 use heapless::Vec as HVec;
 use personal_hopspot_core::{
-    render, snapshots_to_cards, snapshots_to_interface_menu_details, splash, AccessPointState,
-    Card, CardActivityTracker, DisplayPowerControl, InputEvent, MobileRgbaFrameBuffer,
-    PowerSnapshot, RenderFrame, ScreenContent, SplashContent, UiAction, UiConfiguration, UiNotice,
-    UiState,
+    expand_face_rgba, face_64x128, snapshots_to_cards, snapshots_to_interface_menu_details,
+    AccessPointState, Card, CardActivityTracker, InputEvent, PowerSnapshot, ScreenContent,
+    ScreenRenderInput, UiAction, UiConfiguration, UiNotice, UiState, UserBlanking,
 };
 use personal_rns::interfaces::InterfaceSnapshot;
 use personal_rns::storage::{GrowableHeap, StorageLayout};
@@ -18,7 +17,7 @@ const NOTICE_TIMEOUT: Duration = Duration::from_millis(900);
 fn ui_state() -> UiState {
     UiState::new(UiConfiguration {
         storage_limits: <GrowableHeap as StorageLayout>::LIMITS,
-        display_power_control: DisplayPowerControl::Unavailable,
+        user_blanking: UserBlanking::Unavailable,
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: personal_hopspot_core::SharedInstanceConfigExport::Available,
         gnss: personal_hopspot_core::GnssAvailability::Unavailable,
@@ -27,28 +26,31 @@ fn ui_state() -> UiState {
 
 pub struct HopspotFace {
     state: UiState,
-    framebuffer: MobileRgbaFrameBuffer,
+    frame: face_64x128::Frame,
     battery: PowerSnapshot,
     activity: CardActivityTracker<MAX_CARDS>,
     activity_started: Instant,
     notice_started: Option<Instant>,
+    notice_pending: bool,
 }
 
 impl HopspotFace {
     pub fn new() -> Self {
         Self {
             state: ui_state(),
-            framebuffer: MobileRgbaFrameBuffer::new(),
+            frame: face_64x128::Frame::new(),
             battery: PowerSnapshot::UNKNOWN,
             activity: CardActivityTracker::new(),
             activity_started: Instant::now(),
             notice_started: None,
+            notice_pending: false,
         }
     }
 
     fn show_notice(&mut self, notice: UiNotice) {
         self.state.show_notice(notice);
-        self.notice_started = Some(Instant::now());
+        self.notice_started = None;
+        self.notice_pending = true;
     }
 
     pub fn set_battery(&mut self, battery: PowerSnapshot) {
@@ -87,7 +89,7 @@ impl HopspotFace {
             UiAction::Announce => self.show_notice(UiNotice::Announcing),
             UiAction::CopySharedInstanceConfig => {}
             UiAction::None
-            | UiAction::DisplayOff
+            | UiAction::BlankDisplay
             | UiAction::ToggleDisplayAutoOff
             | UiAction::ControlGnss(_)
             | UiAction::ToggleStationUplink
@@ -136,26 +138,36 @@ impl HopspotFace {
             self.state.clear_notice();
             self.notice_started = None;
         }
-        self.framebuffer.clear();
         if cards.is_empty() {
-            splash(&mut self.framebuffer, SplashContent::Starting);
+            face_64x128::splash(&mut self.frame, face_64x128::SplashContent::Starting);
         } else {
             let interface_menu_details = snapshots_to_interface_menu_details(
                 self.state.selected_card(content.cards),
                 snapshots,
             );
-            render(
-                &mut self.framebuffer,
-                RenderFrame {
+            face_64x128::render(
+                &mut self.frame,
+                ScreenRenderInput {
                     content,
                     battery: self.battery,
                     gnss: None,
                     state: &self.state,
                     interface_menu_details: &interface_menu_details,
+                    animation_ms: self
+                        .activity_started
+                        .elapsed()
+                        .as_millis()
+                        .min(u128::from(u64::MAX)) as u64,
                 },
             );
         }
-        self.framebuffer.expand_rgba(out_rgba);
+        expand_face_rgba(&self.frame, out_rgba);
+        if self.notice_pending && !cards.is_empty() {
+            self.notice_pending = false;
+            if self.state.visible_notice().is_some() {
+                self.notice_started = Some(Instant::now());
+            }
+        }
     }
 }
 
@@ -177,11 +189,12 @@ mod tests {
         fn detached() -> Self {
             Self {
                 state: ui_state(),
-                framebuffer: MobileRgbaFrameBuffer::new(),
+                frame: face_64x128::Frame::new(),
                 battery: PowerSnapshot::UNKNOWN,
                 activity: CardActivityTracker::new(),
                 activity_started: Instant::now(),
                 notice_started: None,
+                notice_pending: false,
             }
         }
     }
@@ -252,6 +265,20 @@ mod tests {
             .0
             .iter()
             .any(|px| *px != MOBILE_DARK_RGBA));
+    }
+
+    #[test]
+    fn notice_expiry_starts_after_the_notice_is_rendered() {
+        let mut face = HopspotFace::detached();
+        face.show_notice(UiNotice::Announcing);
+        assert!(face.notice_started.is_none());
+        assert!(face.notice_pending);
+
+        let mut out = fresh_buffer();
+        face.render_cards(&stub_cards(), &[], &mut out);
+
+        assert!(face.notice_started.is_some());
+        assert!(!face.notice_pending);
     }
 
     #[test]

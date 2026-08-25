@@ -25,7 +25,6 @@ use static_cell::StaticCell;
 use crate::boards::status_led::StatusLed;
 
 use crate::boards::{DisplayBringup, DisplayIoError};
-
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
     TWISPI0 => spim::InterruptHandler<peripherals::TWISPI0>;

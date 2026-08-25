@@ -26,13 +26,8 @@ type TechoSpiDevice = ExclusiveDevice<Spim<'static>, Output<'static>, Delay>;
 pub(crate) type TechoRadio =
     Sx126x<TechoSpiDevice, Input<'static>, Input<'static>, Output<'static>, Delay>;
 
-pub(crate) type TechoEink = super::ssd1681::Ssd1681<
-    TechoSpiDevice,
-    Input<'static>,
-    Output<'static>,
-    Output<'static>,
-    Delay,
->;
+pub(crate) type TechoEink =
+    super::ssd1681::Ssd1681<TechoSpiDevice, Input<'static>, Output<'static>, Output<'static>>;
 
 pub(crate) struct TechoUsbHardware {
     pub(crate) driver: Driver<'static, &'static SoftwareVbusDetect>,
@@ -56,7 +51,7 @@ pub(crate) struct TechoControls {
 }
 
 pub(crate) struct TechoDisplayHardware {
-    pub(crate) driver: Option<TechoEink>,
+    pub(crate) driver: Result<TechoEink, super::ssd1681::Ssd1681Error>,
     pub(crate) panel: Display1in54,
     pub(crate) _rail: Output<'static>,
 }
@@ -220,8 +215,7 @@ impl TechoDeferredHardware {
         Timer::after(Duration::from_millis(150)).await;
         let eink_spi = ExclusiveDevice::new(eink_bus, eink_cs, Delay).unwrap();
         let panel = Display1in54::default();
-        let eink =
-            super::ssd1681::Ssd1681::new(eink_spi, eink_busy, eink_dc, eink_reset, Delay).ok();
+        let eink = super::ssd1681::Ssd1681::new(eink_spi, eink_busy, eink_dc, eink_reset).await;
 
         TechoRuntimeHardware {
             radio,

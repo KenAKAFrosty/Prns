@@ -49,3 +49,4 @@ benchmarks/.benchmark-runs/
 # Reticulum runtime storage (per-node identity + state); regenerated at runtime
 **/.reticulum/
 **/.wrangler/
+/.idea

@@ -5,20 +5,22 @@ mod identity;
 
 use personal_rns::interfaces::InterfaceId;
 
-pub(crate) use super::button::{drive as drive_button, EVENTS as INPUT_EVENTS};
+pub(crate) use super::button::{
+    drive as drive_button, EVENTS as INPUT_EVENTS, EVENT_CAPACITY as INPUT_EVENT_CAPACITY,
+};
+pub(crate) use super::observe_display_error;
 pub(crate) use crate::storage::Nrf52840Storage as Storage;
 pub(crate) use display::St7735Display as DisplayDriver;
 pub(crate) use gnss::{
     control as control_gnss, drive as drive_gnss, snapshot as gnss_snapshot, T096Gnss as Gnss,
 };
 pub(crate) use hardware::{
-    T096Battery as Battery, T096Board as Board, T096Display as ReadyDisplay,
-    T096DisplayBringup as Display, T096Hardware as Hardware, T096LoraInterface as LoraInterface,
+    T096Battery as Battery, T096Board as Board, T096DisplayBringup as Display,
+    T096Hardware as Hardware, T096LoraInterface as LoraInterface,
 };
 pub(crate) use identity::{
     bootstrap_ble_identity, bootstrap_node_identity, startup_notice as identity_startup_notice,
 };
-
 pub(crate) const JOURNAL_LAYOUT: personal_rns::persistence::FlashJournalLayout =
     personal_hopspot_core::HELTEC_DISPLAY_NRF52840_JOURNAL_LAYOUT;
 pub(crate) const USB_MANUFACTURER: &str = "Stay Personal";

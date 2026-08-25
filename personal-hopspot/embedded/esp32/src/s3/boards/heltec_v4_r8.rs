@@ -105,22 +105,36 @@ impl Esp32S3Board for HeltecV4R8Board {
     const BOOT_BANNER: &'static str = "HOPSPOT_HELTECV4_R8";
     const USB_INTERFACE_ID: InterfaceId = USB_INTERFACE_ID;
     const FLASH_LAYOUT: screen::HopspotS3FlashLayout = screen::S3_16_MIB_FLASH_LAYOUT;
+    const USER_BLANKING: screen::UserBlanking = screen::UserBlanking::Available;
     type Display = HeltecDisplay;
+    type DisplayError = s3::DisplayIoError;
+    type Presentation = s3::ImmediatePresentationState;
     type Battery = HeltecR8Battery;
     type Gnss = NoGnss;
 
-    fn flush(display: &mut Self::Display) {
-        if let Err(error) = display.flush() {
-            log::error!("OLED render failed: {error:?}");
-        }
+    fn presentation() -> Self::Presentation {
+        s3::ImmediatePresentationState::new()
     }
 
-    fn wake_display(display: &mut Self::Display) {
-        let _ = display.set_display_on(true);
+    async fn present(
+        display: &mut Self::Display,
+        frame: &screen::face_64x128::Frame,
+        kind: screen::presentation::RefreshKind,
+    ) -> Result<(), s3::DisplayIoError> {
+        debug_assert_eq!(kind, screen::presentation::RefreshKind::ImmediateDisplay);
+        s3::write_face_to_draw_target(display, frame);
+        display
+            .flush()
+            .map_err(|_| s3::DisplayIoError::Presentation)
     }
 
-    fn darken_display(display: &mut Self::Display) {
-        let _ = display.set_display_on(false);
+    fn set_display_awake(
+        display: &mut Self::Display,
+        awake: bool,
+    ) -> Result<(), s3::DisplayIoError> {
+        display
+            .set_display_on(awake)
+            .map_err(|_| s3::DisplayIoError::Blanking)
     }
 
     async fn bringup(
@@ -173,7 +187,9 @@ impl Esp32S3Board for HeltecV4R8Board {
             }
         };
         if oled_ok {
-            screen::splash(&mut display, screen::SplashContent::Brand);
+            let mut splash = screen::face_64x128::Frame::new();
+            screen::face_64x128::splash(&mut splash, screen::face_64x128::SplashContent::Brand);
+            s3::write_face_to_draw_target(&mut display, &splash);
             if let Err(error) = display.flush() {
                 log::error!("OLED splash failed: {error:?}");
             }
@@ -230,7 +246,7 @@ impl Esp32S3Board for HeltecV4R8Board {
             face: BoardFace {
                 display: BoardDisplay {
                     device: display,
-                    initialized: oled_ok,
+                    available: oled_ok,
                 },
                 battery,
                 button: Input::new(

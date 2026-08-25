@@ -5,9 +5,9 @@ use core::future::Future;
 use embassy_futures::join::join5;
 #[cfg(feature = "board-t096")]
 use embassy_futures::join::{join3, join4};
-use embassy_futures::select::{select3, Either3};
+use embassy_futures::select::{select4, Either4};
 use embassy_nrf::gpio::Input;
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use personal_hopspot_core as hopspot;
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
 use personal_rns::interfaces::lora::{RadioProfile, DEFAULT_915_PROFILE};
@@ -21,24 +21,60 @@ use personal_rns::storage::StorageLayout;
 use personal_rns::wire::DestinationHash;
 
 use crate::boards::selected as board;
-use crate::boards::{DisplayBringup, DisplayIoError};
+use crate::boards::DisplayBringup;
 
 use super::bluetooth::{self, BluetoothAutoStatus, BLE_SHARED, BLE_SUPERVISOR_ID, MEMBERS};
 use super::{BLE_MANIFOLD_LANE, COMMANDS, COMPLETION, INTERFACE_STORE, LORA_CONTROL};
 
 pub(super) const INTERFACE_CAPACITY: usize = 2 + MEMBERS;
 pub(super) const LANE_COUNT: usize = 3;
+
+type ProfileStore = hopspot::RadioProfileStore<super::super::learned_state::BoardFlash>;
 const NOTICE_MS: u64 = 900;
 
-async fn apply_display_power(
-    display: &mut board::ReadyDisplay,
-    command: hopspot::DisplayPowerCommand,
-) -> Result<(), DisplayIoError> {
-    match command {
-        hopspot::DisplayPowerCommand::NoChange => Ok(()),
-        hopspot::DisplayPowerCommand::Wake => display.wake().await,
-        hopspot::DisplayPowerCommand::Darken => display.darken().await,
+#[derive(Clone, Copy)]
+struct PendingNotice {
+    owner: hopspot::UiNotice,
+    duration_ms: u64,
+}
+
+fn show_notice(
+    state: &mut hopspot::UiState,
+    pending: &mut Option<PendingNotice>,
+    armed: &mut Option<(u64, hopspot::UiNotice)>,
+    notice: hopspot::UiNotice,
+    duration_ms: u64,
+) {
+    state.show_notice(notice);
+    *armed = None;
+    *pending = Some(PendingNotice {
+        owner: notice,
+        duration_ms,
+    });
+}
+
+fn arm_notice_after_presentation(
+    state: &hopspot::UiState,
+    pending: &mut Option<PendingNotice>,
+    armed: &mut Option<(u64, hopspot::UiNotice)>,
+    completed_at_ms: u64,
+) {
+    let Some(staged) = pending.take() else {
+        return;
+    };
+    if state.visible_notice() == Some(staged.owner) {
+        *armed = Some((
+            completed_at_ms.saturating_add(staged.duration_ms),
+            staged.owner,
+        ));
     }
+}
+
+fn presentation_deadline_timer(deadline: Option<hopspot::presentation::MonotonicMillis>) -> Timer {
+    let instant = deadline
+        .and_then(|deadline| Instant::try_from_millis(deadline.get()))
+        .unwrap_or(Instant::MAX);
+    Timer::at(instant)
 }
 
 pub(super) struct LoadedProfile {
@@ -59,8 +95,6 @@ pub(super) struct FaceInput {
     pub(super) lora_spectrum: &'static LoRaSpectrumStatus,
     pub(super) node_page_destination: DestinationHash,
 }
-
-type ProfileStore = hopspot::RadioProfileStore<super::super::learned_state::BoardFlash>;
 
 pub(super) const fn heartbeat_timing() -> &'static super::super::heartbeat::HeartbeatTiming {
     &super::super::heartbeat::NORMAL
@@ -94,6 +128,7 @@ pub(super) async fn load_profile(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 pub(super) fn face(input: FaceInput) -> impl Future {
     let FaceInput {
         display,
@@ -115,7 +150,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
         };
         let mut ui_state = hopspot::UiState::new(hopspot::UiConfiguration {
             storage_limits: <board::Storage as StorageLayout>::LIMITS,
-            display_power_control: hopspot::DisplayPowerControl::Available,
+            user_blanking: hopspot::UserBlanking::Unavailable,
             access_point: hopspot::AccessPointState::Unsupported,
             shared_instance_config_export: hopspot::SharedInstanceConfigExport::Unavailable,
             #[cfg(feature = "board-t096")]
@@ -127,6 +162,17 @@ pub(super) fn face(input: FaceInput) -> impl Future {
         let mut battery_gauge = hopspot::BatteryGauge::lipo();
         let mut persistence_notice = hopspot::PersistenceNotice::new();
         let mut working_lora_profile = lora_profile;
+        let policy = hopspot::presentation::PresentationPolicy::ImmediateDisplay(
+            hopspot::presentation::ImmediateDisplayPolicy::new(
+                hopspot::presentation::RetryBackoff::NextRenderOpportunity,
+            ),
+        );
+        let mut presentation = hopspot::presentation::ExactPresentationState::new(
+            hopspot::face_64x128::Frame::new(),
+            hopspot::face_64x128::Frame::new(),
+            policy,
+        );
+        let mut presentation_urgency = hopspot::presentation::PresentationUrgency::Immediate;
         let startup_notice = identity_startup_notice.or(profile_startup_notice);
         let mut pending_startup_notice = identity_startup_notice
             .is_some()
@@ -135,13 +181,11 @@ pub(super) fn face(input: FaceInput) -> impl Future {
         if let Some(notice) = startup_notice {
             ui_state.show_notice(notice);
         }
-        let mut notice_until_ms =
-            startup_notice.map(|notice| (embassy_time::Instant::now().as_millis() + 5_000, notice));
-        let mut display_power = hopspot::DisplayPowerState::new(
-            hopspot::DisplayPowerControl::Available,
-            embassy_time::Instant::now().as_millis(),
-            hopspot::DEFAULT_DISPLAY_AUTO_OFF,
-        );
+        let mut notice_until_ms = None;
+        let mut pending_notice = startup_notice.map(|owner| PendingNotice {
+            owner,
+            duration_ms: 5_000,
+        });
         loop {
             let battery_mv = battery.sample_millivolts().await;
             let battery_state = battery_gauge.update(
@@ -155,9 +199,16 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                 if now_ms >= until {
                     notice_until_ms = None;
                     if ui_state.clear_notice_if(owner) {
+                        presentation_urgency =
+                            hopspot::presentation::PresentationUrgency::Immediate;
                         if let Some(notice) = pending_startup_notice.take() {
-                            ui_state.show_notice(notice);
-                            notice_until_ms = Some((now_ms + 5_000, notice));
+                            show_notice(
+                                &mut ui_state,
+                                &mut pending_notice,
+                                &mut notice_until_ms,
+                                notice,
+                                5_000,
+                            );
                         }
                     } else {
                         pending_startup_notice = None;
@@ -170,11 +221,20 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                 local_docs: None,
             };
             ui_state.sync(content);
+            let notice_before_persistence = ui_state.visible_notice();
             persistence_notice.update(
                 &mut ui_state,
                 super::super::learned_state::persistence_state(),
                 now_ms,
             );
+            if ui_state.visible_notice() != notice_before_persistence {
+                notice_until_ms = None;
+                pending_notice = ui_state.visible_notice().map(|owner| PendingNotice {
+                    owner,
+                    duration_ms: NOTICE_MS,
+                });
+                presentation_urgency = hopspot::presentation::PresentationUrgency::Immediate;
+            }
             let mut details = hopspot::snapshots_to_interface_menu_details(
                 ui_state.selected_card(content.cards),
                 &snapshots,
@@ -208,197 +268,237 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                     radio_recoveries: spectrum.radio_recoveries,
                 });
             }
-            if let Err(DisplayIoError::Spi) =
-                apply_display_power(&mut display, display_power.tick(now_ms)).await
-            {
-                display.force_dark();
-                display_power.mark_unavailable();
-            }
-            if display_power.is_lit() {
-                #[cfg(feature = "board-t096")]
-                let gnss = ui_state.gnss_visible().then(board::gnss_snapshot);
-                #[cfg(feature = "board-t114")]
-                let gnss = None;
-                hopspot::render(
-                    &mut display,
-                    hopspot::RenderFrame {
-                        content,
-                        battery: battery_state,
-                        gnss,
-                        state: &ui_state,
-                        interface_menu_details: &details,
-                    },
-                );
-                let _panel_update = display.flush();
-            }
-            match select3(
+            #[cfg(feature = "board-t096")]
+            let gnss = ui_state.gnss_visible().then(board::gnss_snapshot);
+            #[cfg(feature = "board-t114")]
+            let gnss = None;
+            hopspot::face_64x128::render(
+                presentation
+                    .working_mut()
+                    .expect("the serialized display owner has no in-flight render"),
+                hopspot::ScreenRenderInput {
+                    content,
+                    battery: battery_state,
+                    gnss,
+                    state: &ui_state,
+                    interface_menu_details: &details,
+                    animation_ms: now_ms,
+                },
+            );
+            let presentation_deadline = match presentation.plan(
+                hopspot::presentation::MonotonicMillis::new(now_ms),
+                presentation_urgency,
+            ) {
+                Ok(hopspot::presentation::ExactPresentationDecision::Present(attempt)) => {
+                    let result = display.flush(attempt.candidate());
+                    let completed_at_ms = embassy_time::Instant::now().as_millis();
+                    let completed_at = hopspot::presentation::MonotonicMillis::new(completed_at_ms);
+                    match result {
+                        Ok(()) => {
+                            presentation
+                                .attempt_succeeded(attempt, completed_at)
+                                .expect("display presentation feedback matches its attempt");
+                            arm_notice_after_presentation(
+                                &ui_state,
+                                &mut pending_notice,
+                                &mut notice_until_ms,
+                                completed_at_ms,
+                            );
+                            presentation_urgency =
+                                hopspot::presentation::PresentationUrgency::Telemetry;
+                        }
+                        Err(error) => {
+                            presentation
+                                .attempt_failed(attempt, completed_at)
+                                .expect("display presentation feedback matches its attempt");
+                            board::observe_display_error(error);
+                        }
+                    }
+                    None
+                }
+                Ok(hopspot::presentation::ExactPresentationDecision::Unchanged) => {
+                    arm_notice_after_presentation(
+                        &ui_state,
+                        &mut pending_notice,
+                        &mut notice_until_ms,
+                        now_ms,
+                    );
+                    presentation_urgency = hopspot::presentation::PresentationUrgency::Telemetry;
+                    None
+                }
+                Ok(hopspot::presentation::ExactPresentationDecision::DeferredUntil(deadline)) => {
+                    Some(deadline)
+                }
+                Err(error) => panic!("display presentation planning failed: {error:?}"),
+            };
+            match select4(
                 board::INPUT_EVENTS.receive(),
                 INTERFACE_STORE.changed(),
                 Timer::after(Duration::from_secs(1)),
+                presentation_deadline_timer(presentation_deadline),
             )
             .await
             {
-                Either3::First(event) => {
-                    let now_ms = embassy_time::Instant::now().as_millis();
-                    if display_power.button_pressed(now_ms, hopspot::DEFAULT_DISPLAY_AUTO_OFF)
-                        == hopspot::DisplayButtonOutcome::WakeAndConsume
-                    {
-                        if let Err(DisplayIoError::Spi) =
-                            apply_display_power(&mut display, hopspot::DisplayPowerCommand::Wake)
-                                .await
-                        {
-                            display.force_dark();
-                            display_power.mark_unavailable();
-                        } else {
-                            let notice = hopspot::UiNotice::Awake;
-                            ui_state.show_notice(notice);
-                            notice_until_ms = Some((now_ms + NOTICE_MS, notice));
-                        }
-                        continue;
-                    }
-                    match ui_state.handle_input(event, content) {
-                        hopspot::UiAction::Announce => {
-                            let notice = hopspot::UiNotice::Announcing;
-                            ui_state.show_notice(notice);
-                            notice_until_ms = Some((now_ms + NOTICE_MS, notice));
-                            let _issued = ui_handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
-                                destination: node_page_destination,
-                                target: AnnounceTarget::AllInterfaces,
-                                app_data: AnnounceAppData::Registered,
-                            }));
-                        }
-                        hopspot::UiAction::Sleep => {
-                            let notice = hopspot::UiNotice::Sleeping;
-                            ui_state.show_notice(notice);
-                            notice_until_ms = Some((now_ms + NOTICE_MS, notice));
-                            display_power.schedule_system_sleep(now_ms.saturating_add(NOTICE_MS));
-                            lora_status.disable();
-                            usb_status.disable();
-                            BluetoothAutoStatus::new(&BLE_SHARED).disable();
-                            #[cfg(feature = "board-t096")]
-                            board::control_gnss(hopspot::GnssReceiverCommand::Disable);
-                        }
-                        hopspot::UiAction::Wake => {
-                            if let Err(DisplayIoError::Spi) = apply_display_power(
-                                &mut display,
-                                display_power.wake(now_ms, hopspot::DEFAULT_DISPLAY_AUTO_OFF),
-                            )
-                            .await
-                            {
-                                display.force_dark();
-                                display_power.mark_unavailable();
+                Either4::First(first_event) => {
+                    let mut next_event = Some(first_event);
+                    for _ in 0..board::INPUT_EVENT_CAPACITY {
+                        let Some(event) = next_event else {
+                            break;
+                        };
+                        presentation_urgency =
+                            hopspot::presentation::PresentationUrgency::Immediate;
+                        match ui_state.handle_input(event, content) {
+                            hopspot::UiAction::Announce => {
+                                let notice = hopspot::UiNotice::Announcing;
+                                show_notice(
+                                    &mut ui_state,
+                                    &mut pending_notice,
+                                    &mut notice_until_ms,
+                                    notice,
+                                    NOTICE_MS,
+                                );
+                                let _issued =
+                                    ui_handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
+                                        destination: node_page_destination,
+                                        target: AnnounceTarget::AllInterfaces,
+                                        app_data: AnnounceAppData::Registered,
+                                    }));
                             }
-                            let notice = hopspot::UiNotice::Awake;
-                            ui_state.show_notice(notice);
-                            notice_until_ms = Some((now_ms + NOTICE_MS, notice));
-                            lora_status.enable();
-                            usb_status.enable();
-                            BluetoothAutoStatus::new(&BLE_SHARED).enable();
-                            #[cfg(feature = "board-t096")]
-                            if ui_state.gnss_visible() {
-                                board::control_gnss(hopspot::GnssReceiverCommand::Enable);
+                            hopspot::UiAction::Sleep => {
+                                let notice = hopspot::UiNotice::Sleeping;
+                                show_notice(
+                                    &mut ui_state,
+                                    &mut pending_notice,
+                                    &mut notice_until_ms,
+                                    notice,
+                                    NOTICE_MS,
+                                );
+                                lora_status.disable();
+                                usb_status.disable();
+                                BluetoothAutoStatus::new(&BLE_SHARED).disable();
+                                #[cfg(feature = "board-t096")]
+                                board::control_gnss(hopspot::GnssReceiverCommand::Disable);
                             }
-                        }
-                        hopspot::UiAction::DisplayOff => {
-                            let notice = hopspot::UiNotice::DisplayOff;
-                            ui_state.show_notice(notice);
-                            notice_until_ms = Some((now_ms + NOTICE_MS, notice));
-                            display_power.schedule_display_off(now_ms.saturating_add(NOTICE_MS));
-                        }
-                        hopspot::UiAction::ToggleDisplayAutoOff => {
-                            if let Some(auto_off) = display_power
-                                .toggle_auto_off(now_ms, hopspot::DEFAULT_DISPLAY_AUTO_OFF)
-                            {
-                                let notice = match auto_off {
-                                    hopspot::DisplayAutoOff::Enabled => {
-                                        hopspot::UiNotice::DisplayAutoOffOn
-                                    }
-                                    hopspot::DisplayAutoOff::Disabled => {
-                                        hopspot::UiNotice::DisplayAutoOffOff
-                                    }
-                                };
-                                ui_state.show_notice(notice);
-                                notice_until_ms = Some((now_ms + NOTICE_MS, notice));
-                            }
-                        }
-                        #[cfg(feature = "board-t096")]
-                        hopspot::UiAction::ControlGnss(command) => board::control_gnss(command),
-                        #[cfg(feature = "board-t114")]
-                        hopspot::UiAction::ControlGnss(_) => {}
-                        hopspot::UiAction::ToggleSelectedInterface => {
-                            if let Some(card) = ui_state.selected_card(content.cards) {
-                                let status = if card.id() == lora_status.id() {
-                                    Some(lora_status)
-                                } else if card.id() == usb_status.id() {
-                                    Some(usb_status)
-                                } else if card.id() == BLE_SUPERVISOR_ID {
-                                    let status = BluetoothAutoStatus::new(&BLE_SHARED);
-                                    let notice = if status.is_enabled() {
-                                        hopspot::UiNotice::TurningOff
-                                    } else {
-                                        hopspot::UiNotice::TurningOn
-                                    };
-                                    ui_state.show_notice(notice);
-                                    notice_until_ms = Some((now_ms + NOTICE_MS, notice));
-                                    status.toggle_enabled();
-                                    None
-                                } else {
-                                    None
-                                };
-                                if let Some(status) = status {
-                                    let notice = if status.is_enabled() {
-                                        hopspot::UiNotice::TurningOff
-                                    } else {
-                                        hopspot::UiNotice::TurningOn
-                                    };
-                                    ui_state.show_notice(notice);
-                                    notice_until_ms = Some((now_ms + NOTICE_MS, notice));
-                                    status.toggle_enabled();
+                            hopspot::UiAction::Wake => {
+                                let notice = hopspot::UiNotice::Awake;
+                                show_notice(
+                                    &mut ui_state,
+                                    &mut pending_notice,
+                                    &mut notice_until_ms,
+                                    notice,
+                                    NOTICE_MS,
+                                );
+                                lora_status.enable();
+                                usb_status.enable();
+                                BluetoothAutoStatus::new(&BLE_SHARED).enable();
+                                #[cfg(feature = "board-t096")]
+                                if ui_state.gnss_visible() {
+                                    board::control_gnss(hopspot::GnssReceiverCommand::Enable);
                                 }
                             }
-                        }
-                        hopspot::UiAction::OpenLoRaEditor => {
-                            ui_state.open_lora_editor(working_lora_profile);
-                        }
-                        hopspot::UiAction::SetLoRaProfile(profile) => {
-                            let result = hopspot::apply_and_persist_radio_profile(
-                                async {
-                                    LORA_CONTROL.apply(profile).await == LoRaApplyOutcome::Applied
-                                },
-                                || async { profile_store.save(profile).await.is_ok() },
-                            )
-                            .await;
-                            if result.applied() {
-                                working_lora_profile = profile;
+                            #[cfg(feature = "board-t096")]
+                            hopspot::UiAction::ControlGnss(command) => board::control_gnss(command),
+                            #[cfg(feature = "board-t114")]
+                            hopspot::UiAction::ControlGnss(_) => {}
+                            hopspot::UiAction::ToggleSelectedInterface => {
+                                if let Some(card) = ui_state.selected_card(content.cards) {
+                                    let status = if card.id() == lora_status.id() {
+                                        Some(lora_status)
+                                    } else if card.id() == usb_status.id() {
+                                        Some(usb_status)
+                                    } else if card.id() == BLE_SUPERVISOR_ID {
+                                        let status = BluetoothAutoStatus::new(&BLE_SHARED);
+                                        let notice = if status.is_enabled() {
+                                            hopspot::UiNotice::TurningOff
+                                        } else {
+                                            hopspot::UiNotice::TurningOn
+                                        };
+                                        show_notice(
+                                            &mut ui_state,
+                                            &mut pending_notice,
+                                            &mut notice_until_ms,
+                                            notice,
+                                            NOTICE_MS,
+                                        );
+                                        status.toggle_enabled();
+                                        None
+                                    } else {
+                                        None
+                                    };
+                                    if let Some(status) = status {
+                                        let notice = if status.is_enabled() {
+                                            hopspot::UiNotice::TurningOff
+                                        } else {
+                                            hopspot::UiNotice::TurningOn
+                                        };
+                                        show_notice(
+                                            &mut ui_state,
+                                            &mut pending_notice,
+                                            &mut notice_until_ms,
+                                            notice,
+                                            NOTICE_MS,
+                                        );
+                                        status.toggle_enabled();
+                                    }
+                                }
                             }
-                            let notice = result.notice();
-                            ui_state.show_notice(notice);
-                            notice_until_ms = Some((now_ms + NOTICE_MS, notice));
-                        }
-                        hopspot::UiAction::ResetLoRaProfile => {
-                            let result = hopspot::apply_and_persist_radio_profile(
-                                async {
-                                    LORA_CONTROL.apply(DEFAULT_915_PROFILE).await
-                                        == LoRaApplyOutcome::Applied
-                                },
-                                || async { profile_store.reset().await.is_ok() },
-                            )
-                            .await;
-                            if result.applied() {
-                                working_lora_profile = DEFAULT_915_PROFILE;
+                            hopspot::UiAction::OpenLoRaEditor => {
+                                ui_state.open_lora_editor(working_lora_profile);
                             }
-                            let notice = result.notice();
-                            ui_state.show_notice(notice);
-                            notice_until_ms = Some((now_ms + NOTICE_MS, notice));
+                            hopspot::UiAction::SetLoRaProfile(profile) => {
+                                let result = hopspot::apply_and_persist_radio_profile(
+                                    async {
+                                        LORA_CONTROL.apply(profile).await
+                                            == LoRaApplyOutcome::Applied
+                                    },
+                                    || async { profile_store.save(profile).await.is_ok() },
+                                )
+                                .await;
+                                if result.applied() {
+                                    working_lora_profile = profile;
+                                }
+                                let notice = result.notice();
+                                show_notice(
+                                    &mut ui_state,
+                                    &mut pending_notice,
+                                    &mut notice_until_ms,
+                                    notice,
+                                    NOTICE_MS,
+                                );
+                            }
+                            hopspot::UiAction::ResetLoRaProfile => {
+                                let result = hopspot::apply_and_persist_radio_profile(
+                                    async {
+                                        LORA_CONTROL.apply(DEFAULT_915_PROFILE).await
+                                            == LoRaApplyOutcome::Applied
+                                    },
+                                    || async { profile_store.reset().await.is_ok() },
+                                )
+                                .await;
+                                if result.applied() {
+                                    working_lora_profile = DEFAULT_915_PROFILE;
+                                }
+                                let notice = result.notice();
+                                show_notice(
+                                    &mut ui_state,
+                                    &mut pending_notice,
+                                    &mut notice_until_ms,
+                                    notice,
+                                    NOTICE_MS,
+                                );
+                            }
+                            hopspot::UiAction::None
+                            | hopspot::UiAction::BlankDisplay
+                            | hopspot::UiAction::ToggleDisplayAutoOff
+                            | hopspot::UiAction::ToggleStationUplink
+                            | hopspot::UiAction::SwapRadioMode
+                            | hopspot::UiAction::OpenDocs
+                            | hopspot::UiAction::CopySharedInstanceConfig => {}
                         }
-                        hopspot::UiAction::None
-                        | hopspot::UiAction::ToggleStationUplink
-                        | hopspot::UiAction::SwapRadioMode
-                        | hopspot::UiAction::OpenDocs
-                        | hopspot::UiAction::CopySharedInstanceConfig => {}
+                        next_event = board::INPUT_EVENTS.try_receive().ok();
                     }
                 }
-                Either3::Second(()) | Either3::Third(()) => {}
+                Either4::Second(()) | Either4::Third(()) | Either4::Fourth(()) => {}
             }
         }
     }

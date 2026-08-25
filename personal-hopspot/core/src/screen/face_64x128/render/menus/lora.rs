@@ -283,7 +283,7 @@ fn draw_lora_frequency<D: DrawTarget<Color = BinaryColor>>(
     }
 }
 
-pub(in crate::screen::render) fn draw_lora_editor<D: DrawTarget<Color = BinaryColor>>(
+pub(in crate::screen) fn draw_lora_editor<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     screen: LoRaScreen,
     profile: &RadioProfile,

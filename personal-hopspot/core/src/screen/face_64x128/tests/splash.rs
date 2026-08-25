@@ -1,5 +1,5 @@
-use crate::screen::render::layout::{FONT_6X10_CHAR_W, SPLASH_TEXT_X, WIDTH};
-use crate::screen::render::SplashContent;
+use crate::screen::face_64x128::render::layout::{FONT_6X10_CHAR_W, SPLASH_TEXT_X, WIDTH};
+use crate::screen::face_64x128::render::SplashContent;
 
 #[test]
 fn every_splash_line_fits_its_rendered_font() {

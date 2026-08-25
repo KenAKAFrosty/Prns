@@ -1,66 +1,43 @@
-use core::convert::Infallible;
-
-use embedded_graphics::pixelcolor::BinaryColor;
-use embedded_graphics::prelude::*;
-use embedded_graphics::primitives::Rectangle;
+use embedded_graphics::geometry::Point;
+use embedded_graphics::prelude::{DrawTarget, Pixel};
 use epd_waveshare::color::Color as EpdColor;
 use epd_waveshare::epd1in54_v2::Display1in54;
+use personal_hopspot_core::{
+    face_64x128, LogicalSize, MappedPoint, PanelScale, PanelSize, PanelTransform, PhysicalPoint,
+};
 
-const PANEL_SIZE: i32 = 200;
-const SCREEN_WIDTH: i32 = 64;
-const SCREEN_HEIGHT: i32 = 128;
-const SCALE_NUM: i32 = 3;
-const SCALE_DEN: i32 = 2;
-const SCALED_SHORT: i32 = SCREEN_WIDTH * SCALE_NUM / SCALE_DEN;
-const SCALED_LONG: i32 = SCREEN_HEIGHT * SCALE_NUM / SCALE_DEN;
-const SCALED_ORIGIN_X: i32 = (PANEL_SIZE - SCALED_LONG) / 2;
-const SCALED_ORIGIN_Y: i32 = (PANEL_SIZE - SCALED_SHORT) / 2;
-
-pub(crate) struct EinkScreen<'a> {
-    pub(crate) panel: &'a mut Display1in54,
+pub(crate) fn transform() -> PanelTransform {
+    PanelTransform::centered_counterclockwise_quarter_turn(
+        LogicalSize::new(face_64x128::LOGICAL_WIDTH, face_64x128::LOGICAL_HEIGHT),
+        PanelSize::new(200, 200),
+        PanelScale::ThreeToTwo,
+    )
+    .expect("the T-Echo face viewport fits its panel")
 }
 
-impl OriginDimensions for EinkScreen<'_> {
-    fn size(&self) -> Size {
-        Size::new(SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32)
-    }
-}
-
-impl DrawTarget for EinkScreen<'_> {
-    type Color = BinaryColor;
-    type Error = Infallible;
-
-    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
-    where
-        I: IntoIterator<Item = Pixel<Self::Color>>,
-    {
-        for Pixel(point, color) in pixels {
-            let panel_color = match color {
-                BinaryColor::On => EpdColor::Black,
-                BinaryColor::Off => EpdColor::White,
+pub(crate) fn write_face(
+    frame: &face_64x128::Frame,
+    transform: &PanelTransform,
+    panel: &mut Display1in54,
+) {
+    let viewport = transform.viewport();
+    let origin = viewport.origin();
+    let size = viewport.size();
+    let pixels = (origin.y()..origin.y() + size.height()).flat_map(|y| {
+        (origin.x()..origin.x() + size.width()).map(move |x| {
+            let mapped = transform
+                .map_panel_point(PhysicalPoint::new(x, y))
+                .expect("the viewport is inside the T-Echo panel");
+            let color = match mapped {
+                MappedPoint::Source(point)
+                    if frame.pixel_is_on(Point::new(point.x() as i32, point.y() as i32)) =>
+                {
+                    EpdColor::Black
+                }
+                MappedPoint::Source(_) | MappedPoint::Margin => EpdColor::White,
             };
-            let sx0 = point.x * SCALE_NUM / SCALE_DEN;
-            let sx1 = (point.x + 1) * SCALE_NUM / SCALE_DEN;
-            let sy0 = point.y * SCALE_NUM / SCALE_DEN;
-            let sy1 = (point.y + 1) * SCALE_NUM / SCALE_DEN;
-            let top_left = Point::new(
-                SCALED_ORIGIN_X + sy0,
-                SCALED_ORIGIN_Y + (SCALED_SHORT - sx1),
-            );
-            let size = Size::new((sy1 - sy0) as u32, (sx1 - sx0) as u32);
-            let _ = self
-                .panel
-                .fill_solid(&Rectangle::new(top_left, size), panel_color);
-        }
-        Ok(())
-    }
-}
-
-pub(crate) fn frame_hash(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325;
-    for &byte in bytes {
-        hash ^= byte as u64;
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
+            Pixel(Point::new(x as i32, y as i32), color)
+        })
+    });
+    let _ = panel.draw_iter(pixels);
 }

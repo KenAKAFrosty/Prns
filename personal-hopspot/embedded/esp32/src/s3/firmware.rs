@@ -3,6 +3,113 @@ use personal_rns::remote_control::{
     RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlService,
 };
 
+#[derive(Clone, Copy)]
+struct PendingNotice {
+    owner: screen::UiNotice,
+    duration_ms: u64,
+}
+
+fn show_notice(
+    state: &mut screen::UiState,
+    pending: &mut Option<PendingNotice>,
+    armed: &mut Option<(u64, screen::UiNotice)>,
+    notice: screen::UiNotice,
+    duration_ms: u64,
+) {
+    state.show_notice(notice);
+    *armed = None;
+    *pending = Some(PendingNotice {
+        owner: notice,
+        duration_ms,
+    });
+}
+
+fn arm_notice_after_presentation(
+    state: &screen::UiState,
+    pending: &mut Option<PendingNotice>,
+    armed: &mut Option<(u64, screen::UiNotice)>,
+    completed_at_ms: u64,
+) -> Option<screen::UiNotice> {
+    let staged = pending.take()?;
+    if state.visible_notice() != Some(staged.owner) {
+        return None;
+    }
+    *armed = Some((
+        completed_at_ms.saturating_add(staged.duration_ms),
+        staged.owner,
+    ));
+    Some(staged.owner)
+}
+
+fn complete_notice_presentation(
+    state: &screen::UiState,
+    pending: &mut Option<PendingNotice>,
+    armed: &mut Option<(u64, screen::UiNotice)>,
+    blanking: Option<&mut screen::DisplayBlankingState>,
+    pending_blank: &mut Option<(screen::UiNotice, u64, screen::DisplayBlankReason)>,
+    completed_at_ms: u64,
+) {
+    let Some(owner) = arm_notice_after_presentation(state, pending, armed, completed_at_ms) else {
+        return;
+    };
+    let Some((blank_owner, delay_ms, reason)) = pending_blank.take() else {
+        return;
+    };
+    if blank_owner != owner {
+        return;
+    }
+    let Some(blanking) = blanking else {
+        return;
+    };
+    let deadline =
+        screen::presentation::MonotonicMillis::new(completed_at_ms.saturating_add(delay_ms));
+    match reason {
+        screen::DisplayBlankReason::DisplayOnly => blanking.schedule_display_off(deadline),
+        screen::DisplayBlankReason::SystemSleep => blanking.schedule_system_sleep(deadline),
+    }
+}
+
+fn presentation_deadline_timer(deadline: Option<screen::presentation::MonotonicMillis>) -> Timer {
+    let instant = deadline
+        .and_then(|deadline| embassy_time::Instant::try_from_millis(deadline.get()))
+        .unwrap_or(embassy_time::Instant::MAX);
+    Timer::at(instant)
+}
+
+fn apply_blanking_decision<B: Esp32S3Board>(
+    state: &mut screen::DisplayBlankingState,
+    display: &mut B::Display,
+    mut decision: screen::DisplayBlankingDecision,
+    now: screen::presentation::MonotonicMillis,
+) {
+    while let screen::DisplayBlankingDecision::Start(attempt) = decision {
+        let awake = attempt.command() == screen::DisplayBlankingCommand::Restore;
+        let operation = B::set_display_awake(display, awake);
+        if let Err(error) = &operation {
+            log::error!("display blanking failed: {error:?}");
+        }
+        let feedback = state.complete(
+            attempt,
+            now,
+            screen::DisplayBlankingResult {
+                outcome: if operation.is_ok() {
+                    screen::DisplayOperationOutcome::Succeeded
+                } else {
+                    screen::DisplayOperationOutcome::Failed
+                },
+                buffer_knowledge: screen::DisplayBufferKnowledge::Preserved,
+            },
+        );
+        match feedback {
+            Ok(feedback) => decision = feedback.decision(),
+            Err(error) => {
+                log::error!("display blanking feedback rejected: {error:?}");
+                return;
+            }
+        }
+    }
+}
+
 pub(crate) async fn run<B: Esp32S3Board>(spawner: Spawner)
 where
     B::Display: 'static,
@@ -36,7 +143,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     } = hardware.face;
     let BoardDisplay {
         device: mut display,
-        initialized: oled_ok,
+        available: display_available,
     } = display;
     let mut battery_source = battery;
     let gnss = hardware.gnss;
@@ -407,14 +514,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             RadioMode::AccessPoint => screen::AccessPointState::Active,
             RadioMode::Ble => screen::AccessPointState::Inactive,
         };
-        let display_power_control = if oled_ok {
-            screen::DisplayPowerControl::Available
-        } else {
-            screen::DisplayPowerControl::Unavailable
-        };
         let mut ui_state = screen::UiState::new(screen::UiConfiguration {
             storage_limits: <EngineStorageType as StorageLayout>::LIMITS,
-            display_power_control,
+            user_blanking: if display_available {
+                B::USER_BLANKING
+            } else {
+                screen::UserBlanking::Unavailable
+            },
             access_point,
             shared_instance_config_export: screen::SharedInstanceConfigExport::Unavailable,
             gnss: B::Gnss::AVAILABILITY,
@@ -442,13 +548,32 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let mut ticks_to_battery_sample: u8 = 0;
         let mut ticks_to_battery_display: u8 = 0;
         let mut activity = screen::CardActivityTracker::<8>::new();
-        let mut notice_until_ms =
-            startup_notice.map(|notice| (embassy_time::Instant::now().as_millis() + 5_000, notice));
-        let mut display_power = screen::DisplayPowerState::new(
-            display_power_control,
-            embassy_time::Instant::now().as_millis(),
-            screen::DEFAULT_DISPLAY_AUTO_OFF,
-        );
+        let mut notice_until_ms = None;
+        let mut pending_notice = startup_notice.map(|owner| PendingNotice {
+            owner,
+            duration_ms: 5_000,
+        });
+        let display_started_at =
+            screen::presentation::MonotonicMillis::new(embassy_time::Instant::now().as_millis());
+        let mut display_blanking =
+            (display_available && B::USER_BLANKING == screen::UserBlanking::Available).then(|| {
+                screen::DisplayBlankingState::new(
+                    display_started_at,
+                    screen::presentation::NonZeroDuration::new(DEFAULT_DISPLAY_AUTO_OFF_MS)
+                        .expect("display auto-off duration is nonzero"),
+                    screen::presentation::NonZeroDuration::new(RENDER_INTERVAL.as_millis())
+                        .expect("display blanking retry duration is nonzero"),
+                )
+            });
+        let mut presentation = B::presentation();
+        let mut presentation_urgency = screen::presentation::PresentationUrgency::Immediate;
+        let mut presentation_deadline = None;
+        let mut input_batch_remaining = 0usize;
+        let mut pending_blank_after_notice: Option<(
+            screen::UiNotice,
+            u64,
+            screen::DisplayBlankReason,
+        )> = None;
         let mut render_tick = Ticker::every(RENDER_INTERVAL);
         let mut settle_after_draw = false;
         let mut persistence_notice = screen::PersistenceNotice::new();
@@ -517,47 +642,144 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 menu_ap_ssid,
             );
             ui_state.sync(content);
+            let notice_before_persistence = ui_state.visible_notice();
             persistence_notice.update(
                 &mut ui_state,
                 crate::persistence::persistence_state(),
                 now_ms,
             );
+            if ui_state.visible_notice() != notice_before_persistence {
+                notice_until_ms = None;
+                pending_notice = ui_state.visible_notice().map(|owner| PendingNotice {
+                    owner,
+                    duration_ms: NOTICE_MS,
+                });
+                presentation_urgency = screen::presentation::PresentationUrgency::Immediate;
+            }
             if let Some((until, owner)) = notice_until_ms {
                 if now_ms >= until {
                     notice_until_ms = None;
                     if ui_state.clear_notice_if(owner) {
+                        presentation_urgency = screen::presentation::PresentationUrgency::Immediate;
                         if let Some(notice) = pending_startup_notice.take() {
-                            ui_state.show_notice(notice);
-                            notice_until_ms = Some((now_ms + 5_000, notice));
+                            show_notice(
+                                &mut ui_state,
+                                &mut pending_notice,
+                                &mut notice_until_ms,
+                                notice,
+                                5_000,
+                            );
                         }
                     } else {
                         pending_startup_notice = None;
                     }
                 }
             }
-            if display_power.tick(now_ms) == screen::DisplayPowerCommand::Darken {
-                B::darken_display(&mut display);
+            let now = screen::presentation::MonotonicMillis::new(now_ms);
+            if let Some(blanking) = display_blanking.as_mut() {
+                match blanking.tick(now) {
+                    Ok(decision) => {
+                        apply_blanking_decision::<B>(blanking, &mut display, decision, now);
+                    }
+                    Err(error) => log::error!("display blanking tick rejected: {error:?}"),
+                }
             }
-            if display_power.is_lit() {
+            let display_visible = crate::display_runtime::display_is_visible(
+                display_available,
+                display_blanking
+                    .as_ref()
+                    .map(|blanking| blanking.visibility()),
+            );
+            // Input queued during a slow physical refresh is applied in order without
+            // presenting obsolete intermediate faces. Bound the batch so a sustained
+            // producer cannot prevent display progress indefinitely.
+            let coalescing_input_batch = input_batch_remaining != 0 && !BUTTON_EVENTS.is_empty();
+            if !coalescing_input_batch {
+                input_batch_remaining = 0;
+            }
+            if !coalescing_input_batch && display_visible {
                 if first_render_pending {
                     boot_stage(BootPhase::DisplayFirstRenderBegin);
                 }
-                screen::render(
-                    &mut display,
-                    screen::RenderFrame {
+                screen::face_64x128::render(
+                    presentation
+                        .working_mut()
+                        .expect("the serialized S3 display has no in-flight render"),
+                    screen::ScreenRenderInput {
                         content,
                         battery: battery_state,
                         gnss: ui_state.gnss_visible().then(B::Gnss::snapshot).flatten(),
                         state: &ui_state,
                         interface_menu_details: &interface_menu_details,
+                        animation_ms: now_ms,
                     },
                 );
-                B::flush(&mut display);
-                if first_render_pending {
-                    boot_stage(BootPhase::DisplayFirstRenderComplete);
-                    first_render_pending = false;
+                match presentation.plan(now, presentation_urgency) {
+                    Ok(S3PresentationDecision::Present(attempt)) => {
+                        presentation_deadline = None;
+                        let kind = presentation.kind(&attempt);
+                        let result =
+                            B::present(&mut display, presentation.candidate(&attempt), kind).await;
+                        let completed_at_ms = embassy_time::Instant::now().as_millis();
+                        let completed_at =
+                            screen::presentation::MonotonicMillis::new(completed_at_ms);
+                        match result {
+                            Ok(()) => {
+                                if let Err(error) =
+                                    presentation.attempt_succeeded(attempt, completed_at)
+                                {
+                                    log::error!(
+                                        "display presentation feedback rejected: {error:?}"
+                                    );
+                                }
+                                presentation_urgency =
+                                    screen::presentation::PresentationUrgency::Telemetry;
+                                complete_notice_presentation(
+                                    &ui_state,
+                                    &mut pending_notice,
+                                    &mut notice_until_ms,
+                                    display_blanking.as_mut(),
+                                    &mut pending_blank_after_notice,
+                                    completed_at_ms,
+                                );
+                                if first_render_pending {
+                                    boot_stage(BootPhase::DisplayFirstRenderComplete);
+                                    first_render_pending = false;
+                                }
+                            }
+                            Err(error) => {
+                                log::error!("display presentation failed: {error:?}");
+                                if let Err(feedback_error) =
+                                    presentation.attempt_failed(attempt, completed_at)
+                                {
+                                    log::error!(
+                                        "display presentation failure feedback rejected: {feedback_error:?}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Ok(S3PresentationDecision::Unchanged) => {
+                        presentation_deadline = None;
+                        presentation_urgency = screen::presentation::PresentationUrgency::Telemetry;
+                        complete_notice_presentation(
+                            &ui_state,
+                            &mut pending_notice,
+                            &mut notice_until_ms,
+                            display_blanking.as_mut(),
+                            &mut pending_blank_after_notice,
+                            now_ms,
+                        );
+                    }
+                    Ok(S3PresentationDecision::DeferredUntil(deadline)) => {
+                        presentation_deadline = Some(deadline);
+                    }
+                    Err(error) => {
+                        presentation_deadline = None;
+                        log::error!("display presentation planning failed: {error:?}");
+                    }
                 }
-            } else if first_render_pending {
+            } else if !coalescing_input_batch && first_render_pending {
                 boot_stage(BootPhase::DisplayFirstRenderUnavailable);
                 first_render_pending = false;
             }
@@ -566,65 +788,119 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 settle_after_draw = false;
             }
 
-            match select3(
+            match select4(
                 BUTTON_EVENTS.receive(),
                 render_tick.next(),
                 INTERFACE_STORE.changed(),
+                presentation_deadline_timer(presentation_deadline),
             )
             .await
             {
-                Either3::Third(()) => {
+                Either4::Fourth(()) => {
+                    presentation_deadline = None;
+                }
+                Either4::Third(()) => {
                     settle_after_draw = true;
                 }
-                Either3::Second(()) => {
+                Either4::Second(()) => {
                     ticks_to_battery_sample = ticks_to_battery_sample.saturating_sub(1);
                     ticks_to_battery_display = ticks_to_battery_display.saturating_sub(1);
                 }
-                Either3::First(event) => {
+                Either4::First(event) => {
+                    if input_batch_remaining == 0 {
+                        input_batch_remaining = BUTTON_EVENT_CAPACITY.saturating_sub(1);
+                    } else {
+                        input_batch_remaining -= 1;
+                    }
                     let now_ms = embassy_time::Instant::now().as_millis();
-                    if display_power.button_pressed(now_ms, screen::DEFAULT_DISPLAY_AUTO_OFF)
-                        == screen::DisplayButtonOutcome::WakeAndConsume
-                    {
-                        B::wake_display(&mut display);
-                        ui_state.show_notice(screen::UiNotice::Awake);
-                        notice_until_ms = Some((now_ms + NOTICE_MS, screen::UiNotice::Awake));
-                        // Waking a dark-but-running display is the whole action for this press. Do
-                        // not forward it to `UiState`, where a short press would also move focus.
-                        continue;
+                    let now = screen::presentation::MonotonicMillis::new(now_ms);
+                    presentation_urgency = screen::presentation::PresentationUrgency::Immediate;
+                    pending_blank_after_notice = None;
+                    if let Some(blanking) = display_blanking.as_mut() {
+                        match blanking.button_pressed(now) {
+                            Ok(button) => {
+                                let outcome = button.outcome();
+                                apply_blanking_decision::<B>(
+                                    blanking,
+                                    &mut display,
+                                    button.blanking(),
+                                    now,
+                                );
+                                if outcome == screen::DisplayButtonOutcome::WakeAndConsume {
+                                    show_notice(
+                                        &mut ui_state,
+                                        &mut pending_notice,
+                                        &mut notice_until_ms,
+                                        screen::UiNotice::Awake,
+                                        NOTICE_MS,
+                                    );
+                                    // Waking a dark-but-running display is the whole action for
+                                    // this press. Do not also move UI focus.
+                                    continue;
+                                }
+                            }
+                            Err(error) => {
+                                log::error!("display button blanking rejected: {error:?}");
+                            }
+                        }
                     }
                     match ui_state.handle_input(event, content) {
-                        screen::UiAction::DisplayOff => {
-                            ui_state.show_notice(screen::UiNotice::DisplayOff);
-                            notice_until_ms =
-                                Some((now_ms + NOTICE_MS, screen::UiNotice::DisplayOff));
-                            display_power.schedule_display_off(now_ms.saturating_add(NOTICE_MS));
+                        screen::UiAction::BlankDisplay => {
+                            show_notice(
+                                &mut ui_state,
+                                &mut pending_notice,
+                                &mut notice_until_ms,
+                                screen::UiNotice::DisplayOff,
+                                NOTICE_MS,
+                            );
+                            pending_blank_after_notice = Some((
+                                screen::UiNotice::DisplayOff,
+                                NOTICE_MS,
+                                screen::DisplayBlankReason::DisplayOnly,
+                            ));
                         }
                         screen::UiAction::ToggleDisplayAutoOff => {
-                            if let Some(auto_off) = display_power
-                                .toggle_auto_off(now_ms, screen::DEFAULT_DISPLAY_AUTO_OFF)
-                            {
-                                let notice = match auto_off {
-                                    screen::DisplayAutoOff::Enabled => {
-                                        screen::UiNotice::DisplayAutoOffOn
+                            if let Some(blanking) = display_blanking.as_mut() {
+                                match blanking.toggle_auto_off(now) {
+                                    Ok(auto_off) => {
+                                        let notice = match auto_off {
+                                            screen::DisplayAutoOff::Enabled => {
+                                                screen::UiNotice::DisplayAutoOffOn
+                                            }
+                                            screen::DisplayAutoOff::Disabled => {
+                                                screen::UiNotice::DisplayAutoOffOff
+                                            }
+                                        };
+                                        show_notice(
+                                            &mut ui_state,
+                                            &mut pending_notice,
+                                            &mut notice_until_ms,
+                                            notice,
+                                            NOTICE_MS,
+                                        );
                                     }
-                                    screen::DisplayAutoOff::Disabled => {
-                                        screen::UiNotice::DisplayAutoOffOff
+                                    Err(error) => {
+                                        log::error!("display auto-off toggle rejected: {error:?}");
                                     }
-                                };
-                                ui_state.show_notice(notice);
-                                notice_until_ms = Some((now_ms + NOTICE_MS, notice));
+                                }
                             }
                         }
                         screen::UiAction::ControlGnss(command) => {
                             B::Gnss::control(command);
                         }
                         screen::UiAction::Sleep => {
-                            ui_state.show_notice(screen::UiNotice::Sleeping);
-                            notice_until_ms =
-                                Some((now_ms + NOTICE_MS, screen::UiNotice::Sleeping));
-                            display_power.schedule_system_sleep(
-                                now_ms.saturating_add(DISPLAY_SLEEP_DELAY_MS),
+                            show_notice(
+                                &mut ui_state,
+                                &mut pending_notice,
+                                &mut notice_until_ms,
+                                screen::UiNotice::Sleeping,
+                                NOTICE_MS,
                             );
+                            pending_blank_after_notice = Some((
+                                screen::UiNotice::Sleeping,
+                                DISPLAY_SLEEP_DELAY_MS,
+                                screen::DisplayBlankReason::SystemSleep,
+                            ));
                             usb_status.disable();
                             if let Some(status) = lora_card_status {
                                 status.disable();
@@ -646,13 +922,26 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             B::Gnss::control(screen::GnssReceiverCommand::Disable);
                         }
                         screen::UiAction::Wake => {
-                            if display_power.wake(now_ms, screen::DEFAULT_DISPLAY_AUTO_OFF)
-                                == screen::DisplayPowerCommand::Wake
-                            {
-                                B::wake_display(&mut display);
+                            if let Some(blanking) = display_blanking.as_mut() {
+                                match blanking.request_visible(now) {
+                                    Ok(decision) => apply_blanking_decision::<B>(
+                                        blanking,
+                                        &mut display,
+                                        decision,
+                                        now,
+                                    ),
+                                    Err(error) => {
+                                        log::error!("display restore request rejected: {error:?}");
+                                    }
+                                }
                             }
-                            ui_state.show_notice(screen::UiNotice::Awake);
-                            notice_until_ms = Some((now_ms + NOTICE_MS, screen::UiNotice::Awake));
+                            show_notice(
+                                &mut ui_state,
+                                &mut pending_notice,
+                                &mut notice_until_ms,
+                                screen::UiNotice::Awake,
+                                NOTICE_MS,
+                            );
                             usb_status.enable();
                             if let Some(status) = lora_card_status {
                                 status.enable();
@@ -677,11 +966,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                         }
                         screen::UiAction::Announce => {
                             boot_stage(BootPhase::AnnounceBegin);
-                            ui_state.show_notice(screen::UiNotice::Announcing);
-                            notice_until_ms = Some((
-                                embassy_time::Instant::now().as_millis() + NOTICE_MS,
+                            show_notice(
+                                &mut ui_state,
+                                &mut pending_notice,
+                                &mut notice_until_ms,
                                 screen::UiNotice::Announcing,
-                            ));
+                                NOTICE_MS,
+                            );
                             let node_queued = handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
                                 destination: node_page_destination,
                                 target: AnnounceTarget::AllInterfaces,
@@ -702,11 +993,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                     } else {
                                         screen::UiNotice::TurningOn
                                     };
-                                    ui_state.show_notice(notice);
-                                    notice_until_ms = Some((
-                                        embassy_time::Instant::now().as_millis() + NOTICE_MS,
+                                    show_notice(
+                                        &mut ui_state,
+                                        &mut pending_notice,
+                                        &mut notice_until_ms,
                                         notice,
-                                    ));
+                                        NOTICE_MS,
+                                    );
                                 };
                                 if card.id() == usb_status.id() {
                                     show_toggle_notice(usb_status.is_enabled());
@@ -761,11 +1054,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 } else {
                                     screen::UiNotice::ReconnectingAp
                                 };
-                                ui_state.show_notice(notice);
-                                notice_until_ms = Some((
-                                    embassy_time::Instant::now().as_millis() + NOTICE_MS,
+                                show_notice(
+                                    &mut ui_state,
+                                    &mut pending_notice,
+                                    &mut notice_until_ms,
                                     notice,
-                                ));
+                                    NOTICE_MS,
+                                );
                                 status.toggle_station_uplink();
                             }
                         }
@@ -797,11 +1092,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 working_lora_profile = profile;
                             }
                             let notice = result.notice();
-                            ui_state.show_notice(notice);
-                            notice_until_ms = Some((
-                                embassy_time::Instant::now().as_millis() + NOTICE_MS,
+                            show_notice(
+                                &mut ui_state,
+                                &mut pending_notice,
+                                &mut notice_until_ms,
                                 notice,
-                            ));
+                                NOTICE_MS,
+                            );
                         }
                         #[cfg(feature = "lora")]
                         screen::UiAction::ResetLoRaProfile => {
@@ -825,11 +1122,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 working_lora_profile = DEFAULT_915_PROFILE;
                             }
                             let notice = result.notice();
-                            ui_state.show_notice(notice);
-                            notice_until_ms = Some((
-                                embassy_time::Instant::now().as_millis() + NOTICE_MS,
+                            show_notice(
+                                &mut ui_state,
+                                &mut pending_notice,
+                                &mut notice_until_ms,
                                 notice,
-                            ));
+                                NOTICE_MS,
+                            );
                         }
                         screen::UiAction::SwapRadioMode => {
                             let next = match radio_mode {

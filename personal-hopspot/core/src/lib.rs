@@ -50,8 +50,8 @@ pub use identity::{
     BLE_IDENTITY_STORAGE, NODE_IDENTITY_STORAGE,
 };
 pub use mobile::{
-    InvalidMobileInputCode, MobileActionCode, MobileEngineFailure, MobileEngineState,
-    MobileInputCode, MobileRgbaFrameBuffer, MOBILE_DARK_RGBA, MOBILE_LIT_RGBA, MOBILE_PANEL_HEIGHT,
+    expand_face_rgba, InvalidMobileInputCode, MobileActionCode, MobileEngineFailure,
+    MobileEngineState, MobileInputCode, MOBILE_DARK_RGBA, MOBILE_LIT_RGBA, MOBILE_PANEL_HEIGHT,
     MOBILE_PANEL_WIDTH, MOBILE_PIXEL_COUNT, MOBILE_RGBA_BYTES,
 };
 pub use persistence::PersistenceState;
@@ -69,15 +69,17 @@ pub use radio_profile_store::{
     LoadedRadioProfile, RadioProfileLoadNotice, RadioProfileStore, RadioProfileStoreError,
 };
 pub use screen::{
-    apply_and_persist_radio_profile, card_label, card_label_max_chars, render, splash,
-    tcp_card_label, AccessPointState, BluetoothRecoveryMenuDetails, CanvasDimensions, Card,
-    CardActivityTracker, CardKind, CardLabel, DisplayAutoOff, DisplayAutoOffDuration,
-    DisplayButtonOutcome, DisplayDarkReason, DisplayPowerCommand, DisplayPowerControl,
-    DisplayPowerState, EinkRefresh, EinkRefreshPolicy, EinkRefreshUrgency, GnssAvailability,
-    InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, LogicalPoint,
-    PersistenceNotice, QuarterTurn, RadioProfileChangeResult, RenderFrame, RotatedCanvasMapping,
-    ScreenContent, SharedInstanceConfigExport, SplashContent, UiAction, UiConfiguration, UiNotice,
-    UiState, WifiNetworkStatus, WifiStationStatus, DEFAULT_DISPLAY_AUTO_OFF,
+    apply_and_persist_radio_profile, card_label, card_label_max_chars, face_64x128, presentation,
+    tcp_card_label, AccessPointState, BluetoothRecoveryMenuDetails, Card, CardActivityTracker,
+    CardKind, CardLabel, DisplayAutoOff, DisplayBlankReason, DisplayBlankingAttempt,
+    DisplayBlankingCommand, DisplayBlankingDecision, DisplayBlankingError, DisplayBlankingFeedback,
+    DisplayBlankingResult, DisplayBlankingState, DisplayBufferKnowledge, DisplayButtonDecision,
+    DisplayButtonOutcome, DisplayOperationOutcome, DisplayVisibility, GnssAvailability, InputEvent,
+    InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, LogicalPoint, LogicalSize,
+    MappedPoint, PanelScale, PanelSize, PanelTransform, PanelViewport, PersistenceNotice,
+    PhysicalPoint, PointMapError, RadioProfileChangeResult, ScreenContent, ScreenRenderInput,
+    SharedInstanceConfigExport, TransformError, UiAction, UiConfiguration, UiNotice, UiState,
+    UserBlanking, WifiNetworkStatus, WifiStationStatus,
 };
 pub use soft_ap::SoftApLeaseTable;
 

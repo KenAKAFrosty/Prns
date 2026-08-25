@@ -61,6 +61,7 @@ prns-core = { path = "../../../prns-core", default-features = false }
 embedded-graphics = "0.8"
 epd-waveshare = { version = "0.6", default-features = false, features = ["graphics", "epd2in13_v3"] }
 embedded-hal = "1.0"
+embedded-hal-async = "1.0"
 embedded-hal-bus = { version = "0.3", features = ["async"] }
 
 cortex-m = { version = "0.7", features = ["inline-asm"] }

@@ -19,6 +19,9 @@ mod status_led;
 mod button;
 
 #[cfg(any(feature = "board-t096", feature = "board-t114"))]
+use core::sync::atomic::{AtomicU32, Ordering};
+
+#[cfg(any(feature = "board-t096", feature = "board-t114"))]
 pub(crate) enum DisplayBringup<Display, Error> {
     Ready(Display),
     Unavailable(Error),
@@ -53,6 +56,18 @@ impl RemoteControlIdentityFlash {
             fill_entropy(bytes);
             Ok(())
         })
+    }
+}
+
+#[cfg(any(feature = "board-t096", feature = "board-t114"))]
+static DISPLAY_IO_FAILURES: AtomicU32 = AtomicU32::new(0);
+
+#[cfg(any(feature = "board-t096", feature = "board-t114"))]
+pub(crate) fn observe_display_error(error: DisplayIoError) {
+    match error {
+        DisplayIoError::Spi => {
+            DISPLAY_IO_FAILURES.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 

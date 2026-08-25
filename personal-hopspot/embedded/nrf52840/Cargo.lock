@@ -2124,6 +2124,7 @@ dependencies = [
  "embassy-usb",
  "embedded-graphics",
  "embedded-hal 1.0.0",
+ "embedded-hal-async",
  "embedded-hal-bus",
  "embedded-io-async 0.6.1",
  "epd-waveshare",

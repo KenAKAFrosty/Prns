@@ -12,11 +12,11 @@ use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
 use embedded_graphics::text::{Baseline, Text};
 
-use crate::{GnssSnapshot, PowerSnapshot};
+use crate::PowerSnapshot;
 
-use super::limits::build_limit_rows;
-use super::model::{InterfaceMenuDetails, ScreenContent};
-use super::state::{focus_item_count, visible_start_for, UiMode, UiState};
+use crate::screen::limits::build_limit_rows;
+use crate::screen::state::{focus_item_count, visible_start_for, UiMode};
+use crate::screen::ScreenRenderInput;
 use cards::{draw_card_peek, draw_card_with_selection, draw_footer, draw_global_row};
 use glyphs::draw_title_bar;
 use gnss::draw_gnss_panel;
@@ -26,14 +26,6 @@ use menus::{
     draw_global_menu, draw_interface_menu, draw_limits_page, draw_notice, draw_radio_confirm,
     draw_sleeping,
 };
-
-pub struct RenderFrame<'frame, 'docs> {
-    pub content: ScreenContent<'frame, 'docs>,
-    pub battery: PowerSnapshot,
-    pub gnss: Option<GnssSnapshot>,
-    pub state: &'frame UiState,
-    pub interface_menu_details: &'frame InterfaceMenuDetails,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SplashContent {
@@ -55,20 +47,24 @@ impl SplashContent {
     }
 }
 
-pub fn render<D: DrawTarget<Color = BinaryColor>>(display: &mut D, frame: RenderFrame<'_, '_>) {
-    let RenderFrame {
+pub(in crate::screen) fn render<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    frame: ScreenRenderInput<'_, '_>,
+) {
+    let ScreenRenderInput {
         content,
         battery,
         gnss,
         state,
         interface_menu_details,
+        animation_ms: _,
     } = frame;
     let cards = content.cards;
     let local_docs = content.local_docs;
     let _ = display.clear(BinaryColor::Off);
     draw_title_bar(display, battery);
 
-    if let Some(notice) = state.notice() {
+    if let Some(notice) = state.visible_notice() {
         draw_notice(display, notice);
         return;
     }
@@ -171,7 +167,10 @@ pub fn render<D: DrawTarget<Color = BinaryColor>>(display: &mut D, frame: Render
     }
 }
 
-pub fn splash<D: DrawTarget<Color = BinaryColor>>(display: &mut D, content: SplashContent) {
+pub(in crate::screen) fn splash<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    content: SplashContent,
+) {
     let _ = display.clear(BinaryColor::Off);
     draw_title_bar(display, PowerSnapshot::UNKNOWN);
     let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);

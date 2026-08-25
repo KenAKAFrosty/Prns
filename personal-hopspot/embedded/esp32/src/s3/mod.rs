@@ -22,7 +22,7 @@ use esp_hal::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
 use esp_hal::Async;
 
 use embassy_executor::Spawner;
-use embassy_futures::select::{select3, Either3};
+use embassy_futures::select::{select3, select4, Either3, Either4};
 use embassy_net::tcp::TcpSocket;
 use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_net::{
@@ -116,10 +116,14 @@ use crate::storage::EngineStorageType;
 
 use personal_hopspot_core as screen;
 
+pub(crate) use crate::display_runtime::{
+    ImmediatePresentationState, S3PresentationDecision, S3PresentationState,
+};
 #[cfg(feature = "lora")]
 pub(crate) use board::LoraRadio;
 pub(crate) use board::{
-    BoardDisplay, BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware, S3ManifoldHardware,
+    write_face_to_draw_target, BoardDisplay, BoardFace, DisplayIoError, Esp32S3Board,
+    S3BoardHardware, S3InterfaceHardware, S3ManifoldHardware,
 };
 pub(crate) use gnss::{GnssProvider, GnssShared, NoGnss};
 
@@ -207,6 +211,7 @@ const RENDER_TICKS_PER_BATTERY_DISPLAY: u8 =
     (BATTERY_DISPLAY_INTERVAL_MS / RENDER_INTERVAL_MS) as u8;
 const NOTICE_MS: u64 = 900;
 const DISPLAY_SLEEP_DELAY_MS: u64 = 2_500;
+const DEFAULT_DISPLAY_AUTO_OFF_MS: u64 = 60_000;
 
 const BUTTON_LONG_PRESS: Duration = Duration::from_millis(500);
 const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
@@ -297,7 +302,8 @@ static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new
 static OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 static BLE_OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
-static BUTTON_EVENTS: Channel<Mtx, screen::InputEvent, 4> = Channel::new();
+const BUTTON_EVENT_CAPACITY: usize = 4;
+static BUTTON_EVENTS: Channel<Mtx, screen::InputEvent, BUTTON_EVENT_CAPACITY> = Channel::new();
 /// Per-interface engine counts the manifold (core 1) pushes into and the render task (core 0) reads —
 /// a `CriticalSectionRawMutex` store so the `&'static` shared across cores stays `Sync`. Capacity is a
 /// power of two above the interface ceiling, so a live interface's counts never get dropped.

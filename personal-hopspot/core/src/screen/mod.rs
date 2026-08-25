@@ -1,31 +1,37 @@
-//! The "Personal Hopspot" status screen: portrait 64x128, drawn against any `embedded_graphics` `DrawTarget<Color = BinaryColor>`, so the same pixels land on the S3's SSD1306 OLED and on the desktop simulator window.
+//! Display-independent Personal Hopspot UI state plus the canonical 64 by 128 face and its
+//! presentation contracts.
 
-mod eink;
-mod geometry;
+mod blanking;
+pub mod face_64x128;
 mod limits;
 mod model;
-mod power;
-mod render;
+pub mod presentation;
+mod render_input;
 mod state;
+mod transform;
 
-pub use eink::{EinkRefresh, EinkRefreshPolicy, EinkRefreshUrgency};
-pub use geometry::{CanvasDimensions, LogicalPoint, QuarterTurn, RotatedCanvasMapping};
+pub use blanking::{
+    DisplayAutoOff, DisplayBlankReason, DisplayBlankingAttempt, DisplayBlankingCommand,
+    DisplayBlankingDecision, DisplayBlankingError, DisplayBlankingFeedback, DisplayBlankingResult,
+    DisplayBlankingState, DisplayBufferKnowledge, DisplayButtonDecision, DisplayButtonOutcome,
+    DisplayOperationOutcome, DisplayVisibility,
+};
+pub use face_64x128::render::cards::card_label_max_chars;
 pub(crate) use model::sort_cards_for_display;
 pub use model::{
     card_label, tcp_card_label, BluetoothRecoveryMenuDetails, Card, CardActivityTracker, CardKind,
     CardLabel, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, ScreenContent,
     WifiNetworkStatus, WifiStationStatus,
 };
-pub use power::{
-    DisplayAutoOff, DisplayAutoOffDuration, DisplayButtonOutcome, DisplayDarkReason,
-    DisplayPowerCommand, DisplayPowerState, DEFAULT_DISPLAY_AUTO_OFF,
-};
-pub use render::cards::card_label_max_chars;
-pub use render::{render, splash, RenderFrame, SplashContent};
+pub use render_input::ScreenRenderInput;
 pub use state::{
-    apply_and_persist_radio_profile, AccessPointState, DisplayPowerControl, GnssAvailability,
-    InputEvent, PersistenceNotice, RadioProfileChangeResult, SharedInstanceConfigExport, UiAction,
-    UiConfiguration, UiNotice, UiState,
+    apply_and_persist_radio_profile, AccessPointState, GnssAvailability, InputEvent,
+    PersistenceNotice, RadioProfileChangeResult, SharedInstanceConfigExport, UiAction,
+    UiConfiguration, UiNotice, UiState, UserBlanking,
+};
+pub use transform::{
+    LogicalPoint, LogicalSize, MappedPoint, PanelScale, PanelSize, PanelTransform, PanelViewport,
+    PhysicalPoint, PointMapError, TransformError,
 };
 
 #[cfg(test)]

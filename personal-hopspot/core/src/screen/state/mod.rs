@@ -91,7 +91,7 @@ pub enum InputEvent {
 pub enum UiAction {
     None,
     Announce,
-    DisplayOff,
+    BlankDisplay,
     ToggleDisplayAutoOff,
     Sleep,
     Wake,
@@ -180,7 +180,7 @@ impl UiNotice {
     pub(in crate::screen) const fn lines(self) -> NoticeLines {
         match self {
             Self::Announcing => NoticeLines::one("Announcing"),
-            Self::DisplayOff => NoticeLines::one("Screen Off"),
+            Self::DisplayOff => NoticeLines::one("Display Off"),
             Self::DisplayAutoOffOn => NoticeLines::two("Auto-off", "On"),
             Self::DisplayAutoOffOff => NoticeLines::two("Auto-off", "Off"),
             Self::TurningOff => NoticeLines::one("Turning Off"),
@@ -288,7 +288,7 @@ impl Default for PersistenceNotice {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DisplayPowerControl {
+pub enum UserBlanking {
     Unavailable,
     Available,
 }
@@ -314,7 +314,7 @@ pub enum GnssAvailability {
 
 pub struct UiConfiguration {
     pub storage_limits: DisplayedStorageLimits,
-    pub display_power_control: DisplayPowerControl,
+    pub user_blanking: UserBlanking,
     pub access_point: AccessPointState,
     pub shared_instance_config_export: SharedInstanceConfigExport,
     pub gnss: GnssAvailability,
@@ -325,7 +325,7 @@ pub struct UiState {
     pub(in crate::screen) selected_focus: usize,
     pub(in crate::screen) visible_start: usize,
     pub(in crate::screen) mode: UiMode,
-    pub(in crate::screen) display_power_control: DisplayPowerControl,
+    pub(in crate::screen) user_blanking: UserBlanking,
     pub(in crate::screen) access_point: AccessPointState,
     pub(in crate::screen) shared_instance_config_export: SharedInstanceConfigExport,
     pub(in crate::screen) gnss: GnssAvailability,
@@ -363,7 +363,7 @@ impl UiState {
             selected_focus: 0,
             visible_start: 0,
             mode: UiMode::Cards,
-            display_power_control: configuration.display_power_control,
+            user_blanking: configuration.user_blanking,
             access_point: configuration.access_point,
             shared_instance_config_export: configuration.shared_instance_config_export,
             gnss: configuration.gnss,
@@ -389,7 +389,8 @@ impl UiState {
         true
     }
 
-    pub(in crate::screen) fn notice(&self) -> Option<UiNotice> {
+    #[must_use]
+    pub const fn visible_notice(&self) -> Option<UiNotice> {
         self.notice
     }
 
@@ -458,7 +459,7 @@ impl UiState {
         match item {
             GlobalMenuItem::Gnss => self.gnss == GnssAvailability::Available,
             GlobalMenuItem::DisplayOff | GlobalMenuItem::DisplayAutoOff => {
-                self.display_power_control == DisplayPowerControl::Available
+                self.user_blanking == UserBlanking::Available
             }
             GlobalMenuItem::RadioMode => self.access_point != AccessPointState::Unsupported,
             GlobalMenuItem::Announce
@@ -485,7 +486,7 @@ impl UiState {
             GlobalMenuItem::Limits => "Limits",
             GlobalMenuItem::Gnss if self.gnss_visible => "GPS Off",
             GlobalMenuItem::Gnss => "GPS On",
-            GlobalMenuItem::DisplayOff => "Screen Off",
+            GlobalMenuItem::DisplayOff => "Display Off",
             GlobalMenuItem::DisplayAutoOff => "Auto Off",
             GlobalMenuItem::Sleep => "Sleep",
             GlobalMenuItem::RadioMode => match self.access_point {
@@ -606,7 +607,7 @@ impl UiState {
                     }
                     Some(GlobalMenuItem::DisplayOff) => {
                         self.mode = UiMode::Cards;
-                        UiAction::DisplayOff
+                        UiAction::BlankDisplay
                     }
                     Some(GlobalMenuItem::DisplayAutoOff) => {
                         self.mode = UiMode::Cards;
