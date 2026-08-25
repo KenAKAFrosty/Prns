@@ -1772,6 +1772,7 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, signing)
         self.assertIn("release/acceptance/records/${RELEASE_VERSION}.json", evidence)
+        self.assertIn('PYTHONDONTWRITEBYTECODE: "1"', evidence)
         self.assertIn("./tools/prns release record -- create", evidence)
         self.assertIn("./tools/prns release record -- verify", evidence)
         self.assertIn("published-evidence", evidence)
