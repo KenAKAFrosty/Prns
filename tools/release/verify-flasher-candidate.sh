@@ -30,7 +30,7 @@ roster_version="$version"
 if [[ -f "$candidate/qualification/hotfix.json" ]]; then
     roster_version="$(
         "$root/tools/prns" release hotfix -- identity \
-            --repository "$root" --version "$version" --format base-version
+            --repository "$root" --version "$version" --format roster-version
     )"
 fi
 python3 "$root/tools/release/validate-flasher-tester-roster.py" \

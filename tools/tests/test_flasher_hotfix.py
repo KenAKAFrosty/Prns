@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -297,11 +298,34 @@ class HotfixCustodyTests(unittest.TestCase):
     def test_later_hotfix_may_inherit_an_earlier_hotfix(self) -> None:
         self.spec["release"]["version"] = "0.3.7-hotfix.2"
         self.spec["release"]["base_version"] = HOTFIX_VERSION
-        path = self.root / "0.3.7-hotfix.2.json"
+        path = (
+            self.repository
+            / "release"
+            / "flash"
+            / "hotfixes"
+            / "0.3.7-hotfix.2.json"
+        )
         write_json(path, self.spec)
         parsed = parse_spec(path, {"heltec-v4", "heltec-v4-r8"})
         self.assertEqual(parsed.roster_version, BASE_VERSION)
         self.assertEqual(parsed.base_version, HOTFIX_VERSION)
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS / "flasher_hotfix.py"),
+                "identity",
+                "--repository",
+                str(self.repository),
+                "--version",
+                "0.3.7-hotfix.2",
+                "--format",
+                "roster-version",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.stdout.strip(), BASE_VERSION)
 
 
 if __name__ == "__main__":
