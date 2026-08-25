@@ -8,7 +8,7 @@ use static_cell::{ConstStaticCell, StaticCell};
 
 use personal_hopspot_core as hopspot;
 use personal_rns::engine::IssuedCommand;
-#[cfg(not(feature = "board-t096"))]
+#[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
 use personal_rns::interfaces::lora::DEFAULT_915_PROFILE;
 use personal_rns::interfaces::lora::{AirtimePolicy, LORA_MAX_PAYLOAD};
 use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
@@ -167,6 +167,8 @@ pub async fn run(spawner: Spawner) -> ! {
     #[cfg(feature = "board-t096")]
     let identity_startup_notice =
         board::identity_startup_notice(node_bootstrap.persistence(), ble_bootstrap.persistence());
+    #[cfg(feature = "board-t114")]
+    let identity_startup_notice = board::identity_startup_notice(node_bootstrap.persistence());
     let node_identity = node_bootstrap.into_identity();
     #[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
     let ble_identity = Some(ble_bootstrap.into_identity());
@@ -183,10 +185,13 @@ pub async fn run(spawner: Spawner) -> ! {
     } = hardware;
     #[cfg(feature = "board-t114")]
     let Hardware {
+        flash,
         usb: usb_driver,
         radio,
+        display,
+        battery,
+        button,
         mut status_led,
-        ..
     } = hardware;
     #[cfg(feature = "board-t1000e")]
     let Hardware {
@@ -239,7 +244,11 @@ pub async fn run(spawner: Spawner) -> ! {
 
     let transport_secret = node_identity.transport_secret();
     let destination_secret = node_identity.into_destination_secret();
-    #[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
+    #[cfg(any(
+        feature = "board-t096",
+        feature = "board-t114",
+        feature = "board-mesh-tower-v2"
+    ))]
     let node_page_destination = hopspot::HopspotDestinationSet::new(
         destination_secret.clone(),
         ANNOUNCE_APP_DATA,
@@ -251,11 +260,13 @@ pub async fn run(spawner: Spawner) -> ! {
     let mut manifold_lanes = ManifoldLanes::new();
     #[cfg(feature = "board-t096")]
     let (loaded_lora_profile, persistence) = selected::load_profile(sd).await;
+    #[cfg(feature = "board-t114")]
+    let loaded_lora_profile = selected::load_profile(flash).await;
     #[cfg(feature = "board-t1000e")]
     let persistence = board::new_persistence(flash);
-    #[cfg(feature = "board-t096")]
+    #[cfg(any(feature = "board-t096", feature = "board-t114"))]
     let lora_profile = loaded_lora_profile.profile;
-    #[cfg(not(feature = "board-t096"))]
+    #[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
     let lora_profile = DEFAULT_915_PROFILE;
     let lora_id = LoraInterface::interface_id(&lora_profile);
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
@@ -410,7 +421,21 @@ pub async fn run(spawner: Spawner) -> ! {
         .await;
     }
     #[cfg(feature = "board-t114")]
-    selected::run(io, lora.run(lora_seam)).await;
+    {
+        let face = selected::face(selected::FaceInput {
+            display,
+            battery,
+            profile_store: loaded_lora_profile.store,
+            identity_startup_notice,
+            profile_startup_notice: loaded_lora_profile.startup_notice,
+            lora_profile,
+            lora_status,
+            usb_status,
+            lora_spectrum,
+            node_page_destination,
+        });
+        selected::run(io, lora.run(lora_seam), face, button).await;
+    }
     #[cfg(feature = "board-t1000e")]
     selected::run(io, lora.run(lora_seam), gnss).await;
     #[cfg(feature = "board-mesh-tower-v2")]

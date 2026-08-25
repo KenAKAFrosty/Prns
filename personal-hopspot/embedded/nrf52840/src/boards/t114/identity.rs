@@ -1,10 +1,11 @@
 use embassy_nrf::nvmc::{Error as NvmcError, Nvmc};
 use personal_hopspot_core::{
     bootstrap_flash_node_identity, FlashIdentityError, HopspotNodeIdentity, IdentityBootstrap,
+    IdentityPersistence, UiNotice,
 };
 use personal_rns::identity::vault::FlashVault;
 
-const NODE_IDENTITY_FLASH_OFFSET: u32 = 0xEB000;
+pub(super) const NODE_IDENTITY_FLASH_OFFSET: u32 = 0xEB000;
 const VAULT_SLOTS: usize = 1;
 
 pub(crate) type Error = FlashIdentityError<NvmcError>;
@@ -15,4 +16,14 @@ pub(crate) fn bootstrap_node_identity(
 ) -> IdentityBootstrap<HopspotNodeIdentity, Error> {
     let mut vault = FlashVault::<_, VAULT_SLOTS>::new(nvmc, NODE_IDENTITY_FLASH_OFFSET);
     bootstrap_flash_node_identity(&mut vault, fill_entropy)
+}
+
+pub(crate) fn startup_notice(persistence: &IdentityPersistence<Error>) -> Option<UiNotice> {
+    if persistence.is_ephemeral() {
+        Some(UiNotice::IdentityUnstable)
+    } else if persistence.is_recovered() {
+        Some(UiNotice::IdentityReset)
+    } else {
+        None
+    }
 }
