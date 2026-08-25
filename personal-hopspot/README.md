@@ -75,7 +75,7 @@ T-Echo firmware:
 
     ./tools/prns device techo flash
 
-Heltec T114 developer firmware with its factory TFT status and control face:
+Heltec T114 developer firmware with its factory TFT status and control face, plus Bluetooth Auto:
 
     ./tools/prns build hopspot t114
 

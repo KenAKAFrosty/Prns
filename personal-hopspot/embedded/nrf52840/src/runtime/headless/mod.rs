@@ -37,7 +37,11 @@ use board::{
 
 use super::entropy::{initialize_runtime_entropy, runtime_entropy, RUNTIME_ENTROPY_SEED_LEN};
 
-#[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
+#[cfg(any(
+    feature = "board-t096",
+    feature = "board-t114",
+    feature = "board-mesh-tower-v2"
+))]
 mod bluetooth;
 #[cfg(feature = "board-mesh-tower-v2")]
 #[path = "mesh_tower_v2.rs"]
@@ -60,7 +64,11 @@ const LANE_COUNT: usize = selected::LANE_COUNT;
 const LANE_DEPTH: usize = 1;
 const LORA_TX_QUEUE_BYTES: usize = 1024;
 const LORA_OUTBOUND_DEPTH: usize = Storage::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
-#[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
+#[cfg(any(
+    feature = "board-t096",
+    feature = "board-t114",
+    feature = "board-mesh-tower-v2"
+))]
 const BLE_OUTBOUND_DEPTH: usize = Storage::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
 const NOTIFY_CAP: usize = minimum_manifold_notification_capacity(LANE_COUNT, LANE_DEPTH);
 const COMMANDS_CAP: usize = 2;
@@ -75,7 +83,11 @@ const PACKET_PHY_RETENTION_CAPACITY: usize = match <Storage as StorageLayout>::L
 const PACKET_PHY_INDEX_BUCKETS: usize =
     personal_rns::routing::dedup::dedup_index_buckets(PACKET_PHY_RETENTION_CAPACITY);
 
-#[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
+#[cfg(any(
+    feature = "board-t096",
+    feature = "board-t114",
+    feature = "board-mesh-tower-v2"
+))]
 const _: () = assert!(Storage::LINK_SESSIONS > bluetooth::MEMBERS);
 
 type Mtx = CriticalSectionRawMutex;
@@ -113,7 +125,11 @@ static LORA_MANIFOLD_LANE: StaticManifoldLane<
     LANE_DEPTH,
     LORA_OUTBOUND_DEPTH,
 > = StaticManifoldLane::new();
-#[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
+#[cfg(any(
+    feature = "board-t096",
+    feature = "board-t114",
+    feature = "board-mesh-tower-v2"
+))]
 static BLE_MANIFOLD_LANE: StaticManifoldLane<
     Mtx,
     { bluetooth::BLE_HW_MTU },
@@ -140,7 +156,7 @@ async fn manifold_task(node: &'static mut Node, persistence: &'static mut board:
 
 #[allow(clippy::too_many_lines)]
 pub async fn run(spawner: Spawner) -> ! {
-    #[cfg(any(feature = "board-t114", feature = "board-t1000e"))]
+    #[cfg(feature = "board-t1000e")]
     let ((node_bootstrap, runtime_entropy_seed), hardware) = Board::initialize(|nvmc, rng| {
         let mut fill_entropy = |bytes: &mut [u8]| rng.blocking_fill_bytes(bytes);
         let node_bootstrap = board::bootstrap_node_identity(nvmc, &mut fill_entropy);
@@ -150,7 +166,11 @@ pub async fn run(spawner: Spawner) -> ! {
         (node_bootstrap, runtime_entropy_seed)
     })
     .await;
-    #[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
+    #[cfg(any(
+        feature = "board-t096",
+        feature = "board-t114",
+        feature = "board-mesh-tower-v2"
+    ))]
     let ((node_bootstrap, ble_bootstrap, runtime_entropy_seed), hardware) =
         Board::initialize(|nvmc, rng| {
             let mut fill_entropy = |bytes: &mut [u8]| rng.blocking_fill_bytes(bytes);
@@ -164,13 +184,15 @@ pub async fn run(spawner: Spawner) -> ! {
         .await;
     initialize_runtime_entropy(&runtime_entropy_seed);
     drop(runtime_entropy_seed);
-    #[cfg(feature = "board-t096")]
+    #[cfg(any(feature = "board-t096", feature = "board-t114"))]
     let identity_startup_notice =
         board::identity_startup_notice(node_bootstrap.persistence(), ble_bootstrap.persistence());
-    #[cfg(feature = "board-t114")]
-    let identity_startup_notice = board::identity_startup_notice(node_bootstrap.persistence());
     let node_identity = node_bootstrap.into_identity();
-    #[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
+    #[cfg(any(
+        feature = "board-t096",
+        feature = "board-t114",
+        feature = "board-mesh-tower-v2"
+    ))]
     let ble_identity = Some(ble_bootstrap.into_identity());
     #[cfg(feature = "board-t096")]
     let Hardware {
@@ -185,8 +207,8 @@ pub async fn run(spawner: Spawner) -> ! {
     } = hardware;
     #[cfg(feature = "board-t114")]
     let Hardware {
-        flash,
         usb: usb_driver,
+        vbus,
         radio,
         display,
         battery,
@@ -239,7 +261,11 @@ pub async fn run(spawner: Spawner) -> ! {
     );
     let mut usb = builder.build();
 
-    #[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
+    #[cfg(any(
+        feature = "board-t096",
+        feature = "board-t114",
+        feature = "board-mesh-tower-v2"
+    ))]
     let sd = bluetooth::enable(spawner, vbus, ble_identity);
 
     let transport_secret = node_identity.transport_secret();
@@ -261,7 +287,7 @@ pub async fn run(spawner: Spawner) -> ! {
     #[cfg(feature = "board-t096")]
     let (loaded_lora_profile, persistence) = selected::load_profile(sd).await;
     #[cfg(feature = "board-t114")]
-    let loaded_lora_profile = selected::load_profile(flash).await;
+    let loaded_lora_profile = selected::load_profile(sd).await;
     #[cfg(feature = "board-t1000e")]
     let persistence = board::new_persistence(flash);
     #[cfg(any(feature = "board-t096", feature = "board-t114"))]
@@ -307,7 +333,11 @@ pub async fn run(spawner: Spawner) -> ! {
     let lora_lane = manifold_lanes
         .claim_interface(&LORA_MANIFOLD_LANE, lora.descriptor())
         .expect("LoRa lane is available");
-    #[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
+    #[cfg(any(
+        feature = "board-t096",
+        feature = "board-t114",
+        feature = "board-mesh-tower-v2"
+    ))]
     let ble_supervisor_lane = ble_identity.as_ref().map(|_| {
         manifold_lanes
             .claim_supervisor(
@@ -378,7 +408,11 @@ pub async fn run(spawner: Spawner) -> ! {
 
     let lora_seam = lora_lane.into_seam(NOTIFY.sender(), runtime_entropy);
     let usb_seam = usb_lane.into_seam(NOTIFY.sender(), runtime_entropy);
-    #[cfg(any(feature = "board-t096", feature = "board-mesh-tower-v2"))]
+    #[cfg(any(
+        feature = "board-t096",
+        feature = "board-t114",
+        feature = "board-mesh-tower-v2"
+    ))]
     let bluetooth = bluetooth::prepare(ble_identity, ble_supervisor_lane);
     let heartbeat = async move {
         loop {
@@ -434,7 +468,14 @@ pub async fn run(spawner: Spawner) -> ! {
             lora_spectrum,
             node_page_destination,
         });
-        selected::run(io, lora.run(lora_seam), face, button).await;
+        selected::run(
+            io,
+            lora.run(lora_seam),
+            face,
+            bluetooth::run(sd, bluetooth),
+            button,
+        )
+        .await;
     }
     #[cfg(feature = "board-t1000e")]
     selected::run(io, lora.run(lora_seam), gnss).await;

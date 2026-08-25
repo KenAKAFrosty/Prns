@@ -1,10 +1,11 @@
+use core::fmt::Write as _;
 use core::future::Future;
 
-use embassy_futures::join::join4;
+use embassy_futures::join::join5;
 use embassy_futures::select::{select3, Either3};
 use embassy_nrf::gpio::Input;
-use embassy_nrf::nvmc::Nvmc;
 use embassy_time::{Duration, Timer};
+use nrf_softdevice::Softdevice;
 use personal_hopspot_core as hopspot;
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
 use personal_rns::interfaces::lora::{RadioProfile, DEFAULT_915_PROFILE};
@@ -19,10 +20,11 @@ use personal_rns::wire::DestinationHash;
 
 use crate::boards::selected as board;
 
-use super::{COMMANDS, COMPLETION, INTERFACE_STORE, LORA_CONTROL};
+use super::bluetooth::{self, BluetoothAutoStatus, BLE_SHARED, BLE_SUPERVISOR_ID, MEMBERS};
+use super::{BLE_MANIFOLD_LANE, COMMANDS, COMPLETION, INTERFACE_STORE, LORA_CONTROL};
 
-pub(super) const INTERFACE_CAPACITY: usize = 2;
-pub(super) const LANE_COUNT: usize = INTERFACE_CAPACITY;
+pub(super) const INTERFACE_CAPACITY: usize = 2 + MEMBERS;
+pub(super) const LANE_COUNT: usize = 3;
 
 pub(super) struct LoadedProfile {
     pub(super) store: board::ProfileStore,
@@ -51,8 +53,8 @@ pub(super) async fn maintain() {
     board::maintain().await;
 }
 
-pub(super) async fn load_profile(flash: Nvmc<'static>) -> LoadedProfile {
-    let mut store = board::new_profile_store(flash);
+pub(super) async fn load_profile(sd: &'static Softdevice) -> LoadedProfile {
+    let mut store = board::new_profile_store(sd);
     let loaded = match store.load(DEFAULT_915_PROFILE).await {
         Ok(loaded) => loaded,
         Err(_) => hopspot::LoadedRadioProfile {
@@ -97,7 +99,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
             shared_instance_config_export: hopspot::SharedInstanceConfigExport::Unavailable,
             gnss: hopspot::GnssAvailability::Unavailable,
         });
-        let mut activity = hopspot::CardActivityTracker::<INTERFACE_CAPACITY>::new();
+        let mut activity = hopspot::CardActivityTracker::<{ MEMBERS + 4 }>::new();
         let mut battery_gauge = hopspot::BatteryGauge::lipo();
         let mut working_lora_profile = lora_profile;
         let startup_notice = identity_startup_notice.or(profile_startup_notice);
@@ -114,7 +116,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
             let battery_mv = battery.sample_millivolts().await;
             let battery_state = battery_gauge.update(
                 Some(battery_mv),
-                hopspot::ExternalPowerState::from_presence(board::usb_vbus_present()),
+                hopspot::ExternalPowerState::from_presence(bluetooth::usb_vbus_present()),
             );
             let snapshots = snapshots(lora_status, usb_status);
             let mut cards = cards(&snapshots, lora_status.id(), usb_status.id());
@@ -142,6 +144,18 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                 ui_state.selected_card(content.cards),
                 &snapshots,
             );
+            if ui_state
+                .selected_card(content.cards)
+                .is_some_and(|card| card.id() == BLE_SUPERVISOR_ID)
+            {
+                let recovery = BluetoothAutoStatus::new(&BLE_SHARED).recovery_counters();
+                details.push_bluetooth_recovery(hopspot::BluetoothRecoveryMenuDetails {
+                    receive_pressure: recovery.ingress_pressure,
+                    setup_failures: recovery.setup_failures,
+                    transport_closures: recovery.transport_closures,
+                });
+                details.push_egress_pressure(BLE_MANIFOLD_LANE.egress_pressure_events());
+            }
             if ui_state
                 .selected_card(content.cards)
                 .is_some_and(|card| card.id() == lora_status.id())
@@ -197,6 +211,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                             notice_until_ms = Some((now_ms + 900, notice));
                             lora_status.disable();
                             usb_status.disable();
+                            BluetoothAutoStatus::new(&BLE_SHARED).disable();
                         }
                         hopspot::UiAction::Wake => {
                             let notice = hopspot::UiNotice::Awake;
@@ -204,6 +219,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                             notice_until_ms = Some((now_ms + 900, notice));
                             lora_status.enable();
                             usb_status.enable();
+                            BluetoothAutoStatus::new(&BLE_SHARED).enable();
                         }
                         hopspot::UiAction::ToggleSelectedInterface => {
                             if let Some(card) = ui_state.selected_card(content.cards) {
@@ -211,6 +227,17 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                                     Some(lora_status)
                                 } else if card.id() == usb_status.id() {
                                     Some(usb_status)
+                                } else if card.id() == BLE_SUPERVISOR_ID {
+                                    let status = BluetoothAutoStatus::new(&BLE_SHARED);
+                                    let notice = if status.is_enabled() {
+                                        hopspot::UiNotice::TurningOff
+                                    } else {
+                                        hopspot::UiNotice::TurningOn
+                                    };
+                                    ui_state.show_notice(notice);
+                                    notice_until_ms = Some((now_ms + 900, notice));
+                                    status.toggle_enabled();
+                                    None
                                 } else {
                                     None
                                 };
@@ -276,25 +303,38 @@ pub(super) fn face(input: FaceInput) -> impl Future {
     }
 }
 
-pub(super) fn run<I, L, F>(io: I, lora: L, face: F, button: Input<'static>) -> impl Future
+pub(super) fn run<I, L, F, B>(
+    io: I,
+    lora: L,
+    face: F,
+    bluetooth: B,
+    button: Input<'static>,
+) -> impl Future
 where
     I: Future,
     L: Future,
     F: Future,
+    B: Future,
 {
-    join4(io, lora, face, board::drive_button(button))
+    join5(io, lora, face, bluetooth, board::drive_button(button))
 }
 
 fn snapshots(
     lora: &EmbassyInterfaceStatus,
     usb: &EmbassyInterfaceStatus,
-) -> heapless::Vec<InterfaceSnapshot, INTERFACE_CAPACITY> {
-    let entries: [(&dyn InterfaceStatus, Membership); INTERFACE_CAPACITY] = [
-        (lora, Membership::Independent),
-        (usb, Membership::Independent),
-    ];
+) -> heapless::Vec<InterfaceSnapshot, { MEMBERS + 4 }> {
+    let ble = BluetoothAutoStatus::new(&BLE_SHARED);
+    let mut entries: heapless::Vec<(&dyn InterfaceStatus, Membership), { MEMBERS + 4 }> =
+        heapless::Vec::new();
+    let _ = entries.push((lora, Membership::Independent));
+    let _ = entries.push((usb, Membership::Independent));
+    let supervisor_id = ble.id();
+    let _ = entries.push((&ble, Membership::Independent));
+    for member in ble.members() {
+        let _ = entries.push((member, Membership::FleetMember { supervisor_id }));
+    }
     let mut snapshots = heapless::Vec::new();
-    for (status, membership) in entries {
+    for (status, membership) in &entries {
         let counts = INTERFACE_STORE.counts(status.id());
         let _ = snapshots.push(InterfaceSnapshot {
             id: status.id(),
@@ -308,7 +348,7 @@ fn snapshots(
             destinations: counts.destinations,
             links: counts.links,
             transported_links: counts.transported_links,
-            membership,
+            membership: *membership,
         });
     }
     snapshots
@@ -318,14 +358,19 @@ fn cards(
     snapshots: &[InterfaceSnapshot],
     lora_id: InterfaceId,
     usb_id: InterfaceId,
-) -> heapless::Vec<hopspot::Card, INTERFACE_CAPACITY> {
+) -> heapless::Vec<hopspot::Card, { MEMBERS + 4 }> {
     hopspot::snapshots_to_cards(snapshots, |id| {
         if id == lora_id {
             Some((hopspot::CardKind::LoRa, hopspot::card_label("LoRa")))
         } else if id == usb_id {
             Some((hopspot::CardKind::Usb, hopspot::card_label("USB")))
+        } else if id == BLE_SUPERVISOR_ID {
+            Some((hopspot::CardKind::Ble, hopspot::card_label("BLE")))
         } else {
-            None
+            let bytes = id.as_bytes();
+            let mut label = hopspot::CardLabel::new();
+            let _ = write!(label, "Peer {:02x}{:02x}", bytes[1], bytes[2]);
+            Some((hopspot::CardKind::Peer, label))
         }
     })
 }
