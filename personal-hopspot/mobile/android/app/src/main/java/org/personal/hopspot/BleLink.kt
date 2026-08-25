@@ -892,9 +892,7 @@ class BleLink(private val context: Context) {
                 if (link.peerProtocol == BlePeerProtocol.Columba && payload.size == COLUMBA_IDENTITY_LEN) {
                     BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                 } else {
-                    // Prefer with-response writes so peers that defer GATT authorization
-                    // (e.g. nRF52 SoftDevice) always receive DATA on the ingress path.
-                    BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                    BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
                 }
             return clientWriteAdmission(link, char, payload, writeType, "data")
         }
