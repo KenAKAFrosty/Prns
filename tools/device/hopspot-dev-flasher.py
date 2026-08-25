@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import partial
 import hashlib
 import http.server
 import importlib.util
@@ -74,6 +75,17 @@ def process_output(value: bytes | None) -> str:
     return (value or b"").decode("utf-8", errors="replace").strip()
 
 
+def extended_length(path: Path) -> Path:
+    if os.name != "nt":
+        return path
+    value = os.path.abspath(path)
+    if value.startswith("\\\\?\\"):
+        return Path(value)
+    if value.startswith("\\\\"):
+        return Path("\\\\?\\UNC" + value[1:])
+    return Path("\\\\?\\" + value)
+
+
 def stop_process(process: subprocess.Popen[bytes]) -> None:
     if process.poll() is not None:
         return
@@ -99,8 +111,9 @@ def run_process(
     capture: bool = False,
     label: str,
 ) -> tuple[bytes, bytes]:
+    parts = [os.fspath(part) for part in command]
     process = subprocess.Popen(
-        [os.fspath(part) for part in command],
+        [shutil.which(parts[0]) or parts[0], *parts[1:]],
         cwd=cwd,
         env=environment,
         stdin=subprocess.DEVNULL,
@@ -355,7 +368,7 @@ def temporary_run_directory() -> Iterator[Path]:
     try:
         yield path
     finally:
-        shutil.rmtree(path, ignore_errors=True)
+        shutil.rmtree(extended_length(path), ignore_errors=True)
 
 
 def clean_build_environment() -> dict[str, str]:
@@ -674,7 +687,7 @@ def stage_signed_release(
     channel_signature: Path,
     public_key: Path,
 ) -> None:
-    releases = website_stage / "releases"
+    releases = extended_length(website_stage) / "releases"
     release = releases / validated.version
     channels = releases / "channels"
     release.mkdir(parents=True, exist_ok=True)
@@ -694,7 +707,7 @@ def stage_signed_release(
 def assert_secret_removed(run_directory: Path, secret_key: Path) -> None:
     if secret_key.exists():
         raise DeveloperFlasherError("ephemeral secret key still exists before server startup")
-    for path in sorted(run_directory.rglob("*")):
+    for path in sorted(extended_length(run_directory).rglob("*")):
         if not path.is_file():
             continue
         value = path.read_bytes()
@@ -717,7 +730,13 @@ def load_candidate_server() -> ModuleType:
 def serve(website_stage: Path, port: int) -> None:
     module = load_candidate_server()
     try:
-        server: http.server.ThreadingHTTPServer = module.create_server(website_stage, port)
+        website = module.validate_website_root(website_stage)
+        handler = partial(
+            module.CandidateHandler,
+            directory=os.fspath(extended_length(website)),
+        )
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", port), handler)
+        server.daemon_threads = True
     except (OSError, ValueError) as error:
         raise DeveloperFlasherError(f"loopback server startup failed: {error}") from error
     address, bound_port = server.server_address

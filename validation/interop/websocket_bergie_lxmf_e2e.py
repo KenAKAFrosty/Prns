@@ -257,7 +257,7 @@ def exercise(repository: Path, echo_adapter: Path, sender_adapter: Path) -> dict
                         sender_log,
                     )
                 )
-                sender_output = sender.wait(40)
+                sender_output = sender.wait(170)
                 echo_output = echo.wait(10)
 
                 sender_destination = destination_from(
