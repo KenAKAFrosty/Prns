@@ -88,8 +88,8 @@ impl HopspotFace {
             UiAction::Announce => self.show_notice(UiNotice::Announcing),
             UiAction::CopySharedInstanceConfig => {}
             UiAction::None
-            | UiAction::OledOff
-            | UiAction::ToggleOledAutoOff
+            | UiAction::DisplayOff
+            | UiAction::ToggleDisplayAutoOff
             | UiAction::ControlGnss(_)
             | UiAction::ToggleStationUplink
             | UiAction::OpenLoRaEditor

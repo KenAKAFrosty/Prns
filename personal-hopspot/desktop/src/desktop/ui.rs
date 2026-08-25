@@ -552,11 +552,11 @@ pub(super) fn run_window(handles: WindowHandles) {
                              notice_until: &mut Option<Instant>| match action
     {
         UiAction::None => {}
-        UiAction::OledOff => {
-            ui_state.show_notice(screen::UiNotice::OledOff);
+        UiAction::DisplayOff => {
+            ui_state.show_notice(screen::UiNotice::DisplayOff);
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
         }
-        UiAction::ToggleOledAutoOff => {}
+        UiAction::ToggleDisplayAutoOff => {}
         UiAction::ControlGnss(_) => {}
         UiAction::Sleep => {
             ui_state.show_notice(screen::UiNotice::Sleeping);

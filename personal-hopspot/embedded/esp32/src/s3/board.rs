@@ -54,7 +54,8 @@ pub(crate) trait Esp32S3Board {
     type Gnss: GnssProvider;
 
     fn flush(display: &mut Self::Display);
-    fn set_display_awake(display: &mut Self::Display, awake: bool);
+    fn wake_display(display: &mut Self::Display);
+    fn darken_display(display: &mut Self::Display);
     async fn bringup(
         peripherals: esp_hal::peripherals::Peripherals,
     ) -> S3BoardHardware<Self::Display, Self::Battery, Self::Gnss>;

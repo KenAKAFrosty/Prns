@@ -56,8 +56,8 @@ impl MobileActionCode {
             UiAction::Announce => Self::Announce,
             UiAction::CopySharedInstanceConfig => Self::CopySharedInstanceConfig,
             UiAction::None
-            | UiAction::OledOff
-            | UiAction::ToggleOledAutoOff
+            | UiAction::DisplayOff
+            | UiAction::ToggleDisplayAutoOff
             | UiAction::Sleep
             | UiAction::Wake
             | UiAction::ControlGnss(_)
