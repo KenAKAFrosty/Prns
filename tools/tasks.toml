@@ -67,7 +67,7 @@ setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview 
 
 [[task]]
 id = "build.hopspot.t114"
-summary = "Build the display-equipped Heltec T114 firmware and package its recovery-compatible developer UF2."
+summary = "Build the display-equipped Heltec T114 firmware with S140 6.1.1 Bluetooth Auto and package its recovery-compatible developer UF2."
 domain = "build"
 effect = "workspace-write"
 platforms = ["linux", "macos"]

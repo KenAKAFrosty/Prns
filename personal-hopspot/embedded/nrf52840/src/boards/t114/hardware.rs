@@ -3,17 +3,17 @@ use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
 use embassy_nrf::interrupt::{self, InterruptExt, Priority};
 use embassy_nrf::mode::Blocking;
 use embassy_nrf::nvmc::Nvmc;
-use embassy_nrf::pac;
 use embassy_nrf::rng::Rng;
 use embassy_nrf::saadc::{self, ChannelConfig, Config as SaadcConfig, Gain, Reference, Saadc};
 use embassy_nrf::spim::{self, Spim};
-use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
+use embassy_nrf::usb::vbus_detect::SoftwareVbusDetect;
 use embassy_nrf::usb::Driver;
 use embassy_nrf::{bind_interrupts, config, peripherals, usb};
 use embassy_time::{Delay, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use personal_rns::lora::LoRaInterface;
 use personal_rns::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
+use static_cell::StaticCell;
 
 use crate::boards::status_led::StatusLed;
 
@@ -21,7 +21,6 @@ use super::display::DisplayIoError;
 
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
-    CLOCK_POWER => usb::vbus_detect::InterruptHandler;
     TWISPI0 => spim::InterruptHandler<peripherals::TWISPI0>;
     TWISPI1 => spim::InterruptHandler<peripherals::TWISPI1>;
     SAADC => saadc::InterruptHandler;
@@ -35,11 +34,11 @@ pub(crate) type T114LoraInterface = LoRaInterface<'static, T114Radio>;
 
 pub(crate) type T114Display = super::DisplayDriver<T114SpiDevice>;
 
-type T114UsbDriver = Driver<'static, HardwareVbusDetect>;
+type T114UsbDriver = Driver<'static, &'static SoftwareVbusDetect>;
 
 pub(crate) struct T114Hardware {
-    pub(crate) flash: Nvmc<'static>,
     pub(crate) usb: T114UsbDriver,
+    pub(crate) vbus: &'static SoftwareVbusDetect,
     pub(crate) radio: T114Radio,
     pub(crate) display: T114Display,
     pub(crate) battery: T114Battery,
@@ -75,18 +74,20 @@ impl T114Board {
         nrf_config.time_interrupt_priority = Priority::P2;
         let peripherals = embassy_nrf::init(nrf_config);
 
-        let (identity, flash) = {
+        let identity = {
             let mut nvmc = Nvmc::new(peripherals.NVMC);
             let mut rng = Rng::new_blocking(peripherals.RNG);
-            let identity = bootstrap(&mut nvmc, &mut rng);
-            (identity, nvmc)
+            bootstrap(&mut nvmc, &mut rng)
         };
 
         interrupt::USBD.set_priority(Priority::P2);
         interrupt::TWISPI0.set_priority(Priority::P3);
         interrupt::TWISPI1.set_priority(Priority::P3);
         interrupt::SAADC.set_priority(Priority::P3);
-        let usb = Driver::new(peripherals.USBD, Irqs, HardwareVbusDetect::new(Irqs));
+        static SOFTWARE_VBUS: StaticCell<SoftwareVbusDetect> = StaticCell::new();
+        let vbus: &'static SoftwareVbusDetect =
+            &*SOFTWARE_VBUS.init(SoftwareVbusDetect::new(true, true));
+        let usb = Driver::new(peripherals.USBD, Irqs, vbus);
 
         let mut display_spim_config = spim::Config::default();
         display_spim_config.frequency = spim::Frequency::M8;
@@ -177,8 +178,8 @@ impl T114Board {
         (
             identity,
             T114Hardware {
-                flash,
                 usb,
+                vbus,
                 radio,
                 display,
                 battery,
@@ -187,10 +188,6 @@ impl T114Board {
             },
         )
     }
-}
-
-pub(crate) fn usb_vbus_present() -> bool {
-    pac::POWER.usbregstatus().read().vbusdetect()
 }
 
 const fn battery_millivolts(raw: i16) -> u32 {

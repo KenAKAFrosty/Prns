@@ -1,12 +1,14 @@
 #[cfg(any(
     feature = "board-t-echo",
     feature = "board-t096",
+    feature = "board-t114",
     feature = "board-mesh-tower-v2"
 ))]
 mod bluetooth_auto;
 #[cfg(any(
     feature = "board-t-echo",
     feature = "board-t096",
+    feature = "board-t114",
     feature = "board-mesh-tower-v2"
 ))]
 mod bluetooth_gatt_server;

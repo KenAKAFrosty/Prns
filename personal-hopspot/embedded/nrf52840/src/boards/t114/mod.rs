@@ -9,10 +9,12 @@ pub(crate) use super::button::{drive as drive_button, EVENTS as INPUT_EVENTS};
 pub(crate) use crate::storage::Nrf52840Storage as Storage;
 pub(crate) use display::St7789Display as DisplayDriver;
 pub(crate) use hardware::{
-    usb_vbus_present, T114Battery as Battery, T114Board as Board, T114Display as Display,
-    T114Hardware as Hardware, T114LoraInterface as LoraInterface,
+    T114Battery as Battery, T114Board as Board, T114Display as Display, T114Hardware as Hardware,
+    T114LoraInterface as LoraInterface,
 };
-pub(crate) use identity::{bootstrap_node_identity, startup_notice as identity_startup_notice};
+pub(crate) use identity::{
+    bootstrap_ble_identity, bootstrap_node_identity, startup_notice as identity_startup_notice,
+};
 pub(crate) use profile::{new as new_profile_store, Store as ProfileStore};
 
 pub(crate) const USB_MANUFACTURER: &str = "Stay Personal";
@@ -28,6 +30,7 @@ pub(crate) async fn maintain() {}
 
 const _: () = {
     const PAGE_BYTES: u32 = embassy_nrf::nvmc::PAGE_SIZE as u32;
+    assert!(identity::BLE_IDENTITY_FLASH_OFFSET + PAGE_BYTES == RADIO_PROFILE_PAGES[0]);
     assert!(RADIO_PROFILE_PAGES[0] + PAGE_BYTES == RADIO_PROFILE_PAGES[1]);
     assert!(RADIO_PROFILE_PAGES[1] + PAGE_BYTES == identity::NODE_IDENTITY_FLASH_OFFSET);
 };
