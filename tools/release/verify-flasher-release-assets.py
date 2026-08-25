@@ -122,7 +122,6 @@ def expected_candidate_assets(candidate: Path, version: str) -> dict[str, Path]:
         / "qualification"
         / "flasher_acceptance_contract.py",
         "flasher_tester_roster.py": candidate / "qualification" / "flasher_tester_roster.py",
-        "flasher_hotfix.py": candidate / "qualification" / "flasher_hotfix.py",
         "package-flasher-qualification-evidence.py": candidate
         / "qualification"
         / "package-flasher-qualification-evidence.py",
@@ -144,9 +143,15 @@ def expected_candidate_assets(candidate: Path, version: str) -> dict[str, Path]:
         sources["flasher_manifest.py"] = (
             candidate / "qualification" / "flasher_manifest.py"
         )
-    if (candidate / "metadata" / "hotfix.json").is_file():
+    hotfix_metadata = candidate / "metadata" / "hotfix.json"
+    hotfix_helper = candidate / "qualification" / "flasher_hotfix.py"
+    if hotfix_helper.is_file():
+        sources["flasher_hotfix.py"] = hotfix_helper
+    elif hotfix_metadata.is_file():
+        raise ValueError("signed hotfix candidate release asset is missing: flasher_hotfix.py")
+    if hotfix_metadata.is_file():
         sources[f"hotfix-inheritance-v{version}.json"] = (
-            candidate / "metadata" / "hotfix.json"
+            hotfix_metadata
         )
         sources[f"hotfix-spec-v{version}.json"] = (
             candidate / "qualification" / "hotfix.json"

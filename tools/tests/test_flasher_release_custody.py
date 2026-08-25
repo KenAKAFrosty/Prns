@@ -1744,6 +1744,26 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         self.assertIn(flasher_record, hotfix)
         self.assertIn(f"{flasher_record}.minisig", hotfix)
 
+    def test_historical_candidate_need_not_contain_the_new_hotfix_helper(self) -> None:
+        self.assertEqual(self.sign_candidate().returncode, 0)
+        script = SCRIPTS / "verify-flasher-release-assets.py"
+        spec = importlib.util.spec_from_file_location(
+            "verify_flasher_release_assets", script
+        )
+        if spec is None or spec.loader is None:
+            self.fail(f"could not import {script}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        helper = self.fixture.root / "qualification" / "flasher_hotfix.py"
+        helper.unlink()
+        historical = module.expected_candidate_assets(self.fixture.root, VERSION)
+        self.assertNotIn("flasher_hotfix.py", historical)
+
+        write_json(self.fixture.root / "metadata" / "hotfix.json", {})
+        with self.assertRaisesRegex(ValueError, "flasher_hotfix.py"):
+            module.expected_candidate_assets(self.fixture.root, VERSION)
+
     def test_workflows_preserve_exact_candidate_custody_boundaries(self) -> None:
         candidate = (ROOT / ".github/workflows/flasher-candidate.yml").read_text()
         signing = (ROOT / ".github/workflows/flasher-sign.yml").read_text()
