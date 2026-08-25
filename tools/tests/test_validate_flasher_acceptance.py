@@ -469,7 +469,7 @@ class AcceptanceValidatorTests(unittest.TestCase):
             surfaces=("web",),
             required_scenarios=("fresh-install", "post-flash-boot"),
             required_checks=("tcp-client-enabled-boot",),
-            summary="Fixture target-scoped firmware hotfix qualification.",
+            summary="Fixture scoped firmware hotfix qualification.",
         )
         candidate = {
             "version": hotfix_version,

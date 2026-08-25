@@ -37,6 +37,12 @@ mod interface_cards;
 mod learned_state;
 #[cfg(feature = "board-t-echo")]
 pub(crate) mod node;
+#[cfg(any(
+    feature = "board-t-echo",
+    feature = "board-t096",
+    feature = "board-t114",
+    feature = "board-mesh-tower-v2"
+))]
 pub(crate) mod software_vbus;
 
 #[cfg(feature = "board-t-echo")]
