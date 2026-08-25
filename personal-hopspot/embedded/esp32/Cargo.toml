@@ -18,6 +18,7 @@ resolver = "2"
 [patch.crates-io]
 esp-alloc = { path = "vendor/esp-alloc-0.10.0" }
 esp-radio = { path = "vendor/esp-radio-0.18.0" }
+esp-wifi-sys-esp32s3 = { path = "vendor/esp-wifi-sys-esp32s3-0.2.0" }
 esp-radio-rtos-driver = { path = "vendor/esp-radio-rtos-driver-0.3.0" }
 esp-phy = { path = "vendor/esp-phy-0.2.0" }
 # Backport esp-rs/esp-hal#6027 and #6032 until these fixes are published. The affected 0.3.0

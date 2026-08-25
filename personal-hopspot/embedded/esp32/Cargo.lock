@@ -1391,8 +1391,6 @@ checksum = "57649401fc2f906a16e2268de88693724a125adcd0eba89b594a157affcee2d5"
 [[package]]
 name = "esp-wifi-sys-esp32s3"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d8321f44b57d8112cbd8607cc83b85783b9195289acb45532728e3e229e7786"
 
 [[package]]
 name = "esp32"
