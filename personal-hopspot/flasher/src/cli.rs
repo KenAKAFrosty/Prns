@@ -2,10 +2,15 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
+const CLI_VERSION: &str = match option_env!("PRNS_FLASH_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
 #[derive(Parser)]
 #[command(
     name = "hopspot-flash",
-    version,
+    version = CLI_VERSION,
     about = "Guided, verified firmware flasher for Personal Hopspot boards.",
     long_about = "Run without a subcommand for a guided flow. Published firmware is signature- and hash-verified before a device is opened."
 )]

@@ -148,7 +148,9 @@ jobs:
         env:
           PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
         run: |
-          test "$(cat VERSION)" = "$RELEASE_VERSION"
+          test "$(cat target/candidate/VERSION)" = "$RELEASE_VERSION"
+          ./tools/prns release hotfix -- verify-candidate \
+            --repository . --candidate target/candidate
           ./tools/prns release candidate verify -- target/candidate
           published_at="$(jq -r '.publishedAt' target/release/prerelease.json)"
           source_commit="$(jq -r '.release.commit' target/candidate/flash-manifest.json)"

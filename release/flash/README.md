@@ -35,7 +35,8 @@ The release is intentionally split into three immutable layers:
    asset binds the signing run, exact rerun attempt, protected job, source revision, publication
    timestamp, candidate hashes, and approval timestamp. Every qualification observation must occur
    after publication.
-3. After physical qualification, the protected evidence workflow validates schema-5 acceptance,
+3. After physical qualification, the protected evidence workflow validates schema-5 ordinary or
+   schema-6 target-scoped acceptance,
    signs it, generates a release record binding every custody layer, signs that record, and adds the
    deterministic qualification-evidence archive plus four signed evidence documents to the
    prerelease. It also revalidates one exact successful public-review run attempt and binds that
@@ -48,6 +49,26 @@ later and are recorded as separate custody envelopes. Minisign trusted comments 
 SHA-256 rather than wall-clock time, allowing an interrupted protected upload to reproduce exact
 bytes; Sigstore retains its independent timestamped provenance. Packaging an already-signed
 directory remains deterministic: the same files produce the same signed-candidate archive bytes.
+
+## Target-scoped hotfixes
+
+A flasher-only correction may use an immutable `SUITE_VERSION-hotfix.N` identity without changing
+the suite `VERSION`. Its committed specification lives under `release/flash/hotfixes/` and pins the
+exact stable base release, source commit, manifest, release record, and signed candidate hashes.
+The candidate workflow accepts that identity only on the stable retained-history lane.
+
+Only `changed_boards` are rebuilt. Every other target and firmware payload is copied from the
+verified base release into the new immutable version path, then its size, SHA-256, target metadata,
+and complete inheritance record are recomputed before signing. At least one shipping board must
+remain inherited. The CLI and hosted flasher are still reproduced for the hotfix identity, and the
+normal dependency, signing, public-review, rollback, and exact-byte promotion gates remain in
+force.
+
+Schema-6 acceptance contains only the committed physical boards, surfaces, scenarios, and checks.
+If the specification explicitly defers hardware for a changed board, the release owner must approve
+the exact committed basis and follow-up after the public prerelease exists. The record names that
+board as deferred and does not claim a hardware pass. See
+[`hotfixes/README.md`](hotfixes/README.md) for the contract and dispatch inputs.
 
 Production candidate jobs force Rust 1.96.0, Node 24.18.0, Dioxus CLI 0.7.5,
 `cargo-binstall` 1.21.0, `espup` 0.17.1, ESP Rust 1.95.0, the SHA-256-pinned Espressif
@@ -97,6 +118,8 @@ absent; they do not create or weaken those settings.
    stable release and the live stable URL does not contain a canonical schema-1 descriptor. Suite
    release records and unpromoted signed candidates do not establish website history. The current
    coming-soon HTML fallback counts as absent, while a network error fails closed.
+   For a target-scoped release, also set `hotfix_version` to the committed suffix identity; retain
+   mode must name the exact `base_version` and release-record hash from that specification.
 2. Download `prns-flasher-candidate-vVERSION-unsigned.tar.gz`, calculate its lowercase SHA-256, and
    review the candidate/audit output, `metadata/sparse-sizes.json`, and
    `metadata/reproducibility.json`. Record the workflow run ID and exact hash independently. The
@@ -159,7 +182,8 @@ recorded evidence-archive SHA-256. The workflow:
   protected job;
 - extracts the evidence archive safely and recomputes every referenced object's SHA-256;
 - validates eighteen full transport-aware physical rows, three Firefox Web Serial smokes, one Safari
-  fallback, and all five installer/exact-version smokes;
+  fallback, and all five installer/exact-version smokes for an ordinary release; schema-6 hotfixes
+  instead require only their committed targeted runs and explicit hardware deferrals;
 - signs `acceptance-vVERSION.json`;
 - creates and signs `flasher-release-record-vVERSION.json`.
 

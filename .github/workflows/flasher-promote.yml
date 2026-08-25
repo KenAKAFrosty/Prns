@@ -178,7 +178,9 @@ jobs:
         run: |
           record="target/release/flasher-release-record-v${RELEASE_VERSION}.json"
           source_commit="$(jq -r '.release.source_commit' "$record")"
-          test "$(cat VERSION)" = "$RELEASE_VERSION"
+          test "$(cat target/signed-candidate/VERSION)" = "$RELEASE_VERSION"
+          ./tools/prns release hotfix -- verify-candidate \
+            --repository . --candidate target/signed-candidate
           test -f target/signed-candidate/channels/stable.json
           mkdir -p target/public-review
           gh release view "v${RELEASE_VERSION}" \
