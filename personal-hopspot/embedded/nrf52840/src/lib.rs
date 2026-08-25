@@ -37,20 +37,26 @@ compile_error!("MeshTower V2 requires softdevice-s140-v6; HT-n5262 ships S140 6.
 #[cfg(all(feature = "board-t096", not(feature = "softdevice-s140-v6")))]
 compile_error!("T096 requires softdevice-s140-v6; HT-n5262G ships S140 6.1.1");
 
+#[cfg(all(feature = "board-t114", not(feature = "softdevice-s140-v6")))]
+compile_error!("T114 requires softdevice-s140-v6; HT-n5262 ships S140 6.1.1");
+
 #[cfg(all(feature = "board-mesh-tower-v2", feature = "softdevice-s140-v7"))]
 compile_error!("MeshTower V2 does not support S140 7.x");
 
 #[cfg(all(feature = "board-t096", feature = "softdevice-s140-v7"))]
 compile_error!("T096 does not support S140 7.x");
 
+#[cfg(all(feature = "board-t114", feature = "softdevice-s140-v7"))]
+compile_error!("T114 does not support S140 7.x");
+
 #[cfg(all(feature = "softdevice-s140-v6", feature = "softdevice-s140-v7"))]
 compile_error!("S140 compatibility features are mutually exclusive");
 
 #[cfg(all(
-    any(feature = "board-t114", feature = "board-t1000e"),
+    feature = "board-t1000e",
     any(feature = "softdevice-s140-v6", feature = "softdevice-s140-v7")
 ))]
-compile_error!("only T-Echo, T096, and MeshTower V2 support S140 compatibility features");
+compile_error!("T1000-E does not support S140 compatibility features");
 
 mod boards;
 #[cfg(any(

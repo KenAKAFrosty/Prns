@@ -77,10 +77,10 @@ pub(super) fn run(sd: &'static Softdevice, runtime: Runtime) -> impl core::futur
     }
 }
 
-#[cfg(feature = "board-t096")]
+#[cfg(any(feature = "board-t096", feature = "board-t114"))]
 pub(super) fn usb_vbus_present() -> bool {
     super::super::bluetooth_auto::usb_vbus_present()
 }
 
-#[cfg(feature = "board-t096")]
+#[cfg(any(feature = "board-t096", feature = "board-t114"))]
 pub(super) use personal_rns::bluetooth_auto::BluetoothAutoStatus;
