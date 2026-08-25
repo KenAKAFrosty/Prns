@@ -76,9 +76,10 @@ bash validation/platforms/no-std-esp-build.sh
 (The last rung is a bash script; on Windows run it from Git Bash, which
 installs with Git for Windows.)
 
-The Linux `embedded-builds` validation suite adds the Embassy interface cross-builds, both
-S140 6.1.1 and 7.3.0 T-Echo firmware layouts, the display-equipped Heltec T114 with Bluetooth Auto, and the headless MeshTower V2
-developer UF2s:
+The Linux `embedded-builds` validation suite adds the Embassy interface
+cross-builds, both S140 6.1.1 and 7.3.0 T-Echo firmware layouts, the
+display-equipped Heltec T096 and T114 with Bluetooth Auto and display auto-off,
+and the headless MeshTower V2 developer UF2s:
 
 ```console
 python3 validation/run.py run --suite embedded-builds --platform linux
