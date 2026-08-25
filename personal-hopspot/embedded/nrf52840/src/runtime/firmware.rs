@@ -569,8 +569,8 @@ pub async fn run(spawner: Spawner) -> ! {
                         hopspot::UiAction::OpenDocs => {}
                         hopspot::UiAction::SwapRadioMode => {}
                         hopspot::UiAction::ToggleStationUplink => {}
-                        hopspot::UiAction::OledOff => {}
-                        hopspot::UiAction::ToggleOledAutoOff => {}
+                        hopspot::UiAction::DisplayOff => {}
+                        hopspot::UiAction::ToggleDisplayAutoOff => {}
                         hopspot::UiAction::CopySharedInstanceConfig => {}
                         hopspot::UiAction::ControlGnss(_) => {}
                         hopspot::UiAction::None => {}
