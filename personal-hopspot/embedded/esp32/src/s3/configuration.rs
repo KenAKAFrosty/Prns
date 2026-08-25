@@ -40,6 +40,14 @@ pub(super) enum HopspotWifiConfigSource {
 }
 
 pub(super) fn hopspot_wifi_config() -> (HopspotWifiConfig, HopspotWifiConfigSource) {
+    #[cfg(feature = "wifi-security-probe")]
+    if option_env!("HOPSPOT_WIFI_SECURITY_STATION_PROBE").is_some() {
+        return (
+            HopspotWifiConfig::from_build_env(),
+            HopspotWifiConfigSource::BuildEnvironment,
+        );
+    }
+
     match read_hopspot_config_slot() {
         Some(config) => (config, HopspotWifiConfigSource::Provisioning),
         None => (

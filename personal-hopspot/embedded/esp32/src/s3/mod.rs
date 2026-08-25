@@ -51,8 +51,8 @@ use esp_radio::wifi::ap::AccessPointConfig;
 use esp_radio::wifi::scan::{ScanConfig, ScanTypeConfig};
 use esp_radio::wifi::sta::StationConfig;
 use esp_radio::wifi::{
-    Config as WifiConfig, ControllerConfig, DisconnectReason, Interface as WifiStaDevice,
-    PowerSaveMode, WifiController, WifiError,
+    AuthenticationMethod, Config as WifiConfig, ControllerConfig, DisconnectReason,
+    Interface as WifiStaDevice, PowerSaveMode, WifiController, WifiError,
 };
 
 use esp_radio::esp_now::{
@@ -109,7 +109,8 @@ use prns_interfaces_embassy::bluetooth_auto::PEER_CAPACITY as EMBEDDED_BLE_PEER_
 
 use crate::station_recovery::{
     AccessPoint as StationAccessPoint, ConnectionFailure, ConnectionOutcome, DiscoveryScope,
-    ScanFailure, ScanOutcome, StationAttempt, StationRecovery, StationYield,
+    PersonalAuthentication, ScanFailure, ScanOutcome, StationAttempt, StationRecovery,
+    StationYield,
 };
 use crate::storage::EngineStorageType;
 
@@ -599,9 +600,14 @@ const RADIO_MODE_BLE: u32 = 0x424C_4501;
 static mut RADIO_MODE_FLAG: u32 = 0;
 
 fn boot_radio_mode(_station_configured: bool) -> RadioMode {
+    #[cfg(feature = "wifi-security-probe")]
+    return RadioMode::AccessPoint;
+
     // SAFETY: Boot reads the aligned RTC-fast persistent word before concurrent tasks start;
     // volatile semantics are not required because reset is the only cross-execution boundary.
+    #[cfg(not(feature = "wifi-security-probe"))]
     let flag = unsafe { core::ptr::addr_of!(RADIO_MODE_FLAG).read() };
+    #[cfg(not(feature = "wifi-security-probe"))]
     if flag == RADIO_MODE_AP {
         RadioMode::AccessPoint
     } else {

@@ -43,6 +43,8 @@ esp-now = ["esp-radio/esp-now", "esp-radio/coex", "esp-rtos/esp-radio", "persona
 lora = ["personal-rns/lora"]
 usb = ["personal-rns/usb"]
 tcp = ["wifi-auto", "personal-rns/tcp-dns", "embassy-net/dns"]
+# Developer-only interoperability fixture. Shipping board packages do not enable it.
+wifi-security-probe = []
 
 [dependencies]
 cfg-if = "1.0"
