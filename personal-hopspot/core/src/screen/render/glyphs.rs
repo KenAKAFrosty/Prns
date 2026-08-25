@@ -11,7 +11,14 @@ use crate::{ChargingState, ExternalPowerState, PowerSnapshot};
 use super::layout::*;
 use super::primitives::{draw_pattern_colored, fill, line, line_colored, stroke};
 
-/// The battery glyph, drawn in the background color (it sits on the inverted title bar): a 15x9 outline + left terminal nub, then four filled segment bars to the nearest quarter, an incoming plug cue for charging, or a dash for unknown.
+/// How wide the title-bar battery zone is: "100%" in FONT_5X8 exactly.
+const BATTERY_ZONE_W: i32 = 4 * FONT_5X8_CHAR_W;
+
+/// The battery readout, drawn in the background color (it sits on the inverted title bar): the
+/// percentage as text, right-aligned in a 20px zone so the digits do not wander as they shrink,
+/// a blinking plug cue at the left of the zone while charging, or `--%` for unknown. The exact
+/// number is shown because the gauge already knows it; quantized bars threw that precision away
+/// right when it matters most, at the bottom of the discharge.
 pub(in crate::screen) fn draw_battery<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     x: i32,
@@ -19,75 +26,33 @@ pub(in crate::screen) fn draw_battery<D: DrawTarget<Color = BinaryColor>>(
     state: PowerSnapshot,
     charging_tier_visible: bool,
 ) {
-    let outline = stroke(BinaryColor::Off);
-    let solid = fill(BinaryColor::Off);
-    let _ = Rectangle::new(Point::new(x, y), Size::new(15, 9))
-        .into_styled(outline)
-        .draw(display);
-    let _ = Rectangle::new(Point::new(x - 2, y + 3), Size::new(2, 3))
-        .into_styled(solid)
-        .draw(display);
+    let mut text: heapless::String<4> = heapless::String::new();
     match state.battery() {
-        Some(pct)
-            if matches!(state.external_power(), ExternalPowerState::Present { .. })
-                && pct.get() >= 100 =>
-        {
-            draw_full_battery(display, x, y);
-        }
-        Some(pct)
-            if matches!(
-                state.external_power(),
-                ExternalPowerState::Present {
-                    charging: ChargingState::Charging
-                }
-            ) =>
-        {
-            let pct = pct.get();
-            let filled = (pct as u32 * 4 / 100).min(3);
-            for i in (4 - filled)..4 {
-                draw_battery_segment(display, x, y, i);
-            }
-            if charging_tier_visible {
-                draw_battery_segment(display, x, y, 3 - filled);
-            }
-        }
         Some(pct) => {
-            // Segments fill to the nearest quarter, anchored at the RIGHT so the leftmost bar empties first as the cell drains (matching the panel's orientation).
-            let pct = pct.get();
-            let filled = ((pct as u32 * 4 + 50) / 100).min(4);
-            for i in (4 - filled)..4 {
-                draw_battery_segment(display, x, y, i);
-            }
+            let _ = core::fmt::write(&mut text, format_args!("{}%", pct.get()));
         }
         None => {
-            let _ = Line::new(Point::new(x + 4, y + 4), Point::new(x + 10, y + 4))
-                .into_styled(outline)
-                .draw(display);
+            let _ = text.push_str("--%");
         }
     }
-    if matches!(state.external_power(), ExternalPowerState::Present { .. })
-        && state.battery().is_none_or(|percent| percent.get() < 100)
-    {
+    let text_x = x + BATTERY_ZONE_W - text.len() as i32 * FONT_5X8_CHAR_W;
+    let small = MonoTextStyle::new(&FONT_5X8, BinaryColor::Off);
+    let _ = Text::with_baseline(&text, Point::new(text_x, y), small, Baseline::Top).draw(display);
+    // External power keeps a compact plug cue at the left of the zone while the cell is below
+    // full (or unknown): steady when merely present, blinking on the shared cadence while the
+    // battery is actively charging. At 100% the text fills the whole zone and the cue is dropped:
+    // a full cell reads as done.
+    let below_full = state.battery().is_none_or(|percent| percent.get() < 100);
+    let plug = match state.external_power() {
+        ExternalPowerState::Present {
+            charging: ChargingState::Charging,
+        } => charging_tier_visible,
+        ExternalPowerState::Present { .. } => true,
+        ExternalPowerState::Absent | ExternalPowerState::Unknown => false,
+    };
+    if plug && below_full && text_x - x >= FONT_5X8_CHAR_W {
         draw_charging_plug(display, x, y);
     }
-}
-
-fn draw_battery_segment<D: DrawTarget<Color = BinaryColor>>(
-    display: &mut D,
-    x: i32,
-    y: i32,
-    segment: u32,
-) {
-    let bar_x = x + 2 + segment as i32 * 3;
-    let _ = Rectangle::new(Point::new(bar_x, y + 2), Size::new(2, 5))
-        .into_styled(fill(BinaryColor::Off))
-        .draw(display);
-}
-
-fn draw_full_battery<D: DrawTarget<Color = BinaryColor>>(display: &mut D, x: i32, y: i32) {
-    let _ = Rectangle::new(Point::new(x, y), Size::new(15, 9))
-        .into_styled(fill(BinaryColor::Off))
-        .draw(display);
 }
 
 fn battery_charge_tier_visible(animation_ms: u64) -> bool {
@@ -97,13 +62,13 @@ fn battery_charge_tier_visible(animation_ms: u64) -> bool {
 fn draw_charging_plug<D: DrawTarget<Color = BinaryColor>>(display: &mut D, x: i32, y: i32) {
     let outline = stroke(BinaryColor::Off);
     let solid = fill(BinaryColor::Off);
-    let _ = Rectangle::new(Point::new(x + 15, y + 2), Size::new(4, 5))
+    let _ = Rectangle::new(Point::new(x, y + 2), Size::new(3, 5))
         .into_styled(solid)
         .draw(display);
-    let _ = Line::new(Point::new(x + 19, y + 3), Point::new(x + 14, y + 3))
+    let _ = Line::new(Point::new(x + 2, y + 3), Point::new(x + 4, y + 3))
         .into_styled(outline)
         .draw(display);
-    let _ = Line::new(Point::new(x + 19, y + 5), Point::new(x + 14, y + 5))
+    let _ = Line::new(Point::new(x + 2, y + 5), Point::new(x + 4, y + 5))
         .into_styled(outline)
         .draw(display);
 }
@@ -120,7 +85,7 @@ pub(super) fn draw_title_bar<D: DrawTarget<Color = BinaryColor>>(
     let _ = Text::with_baseline("Personal", Point::new(2, 1), small, Baseline::Top).draw(display);
     draw_battery(
         display,
-        44,
+        WIDTH - BATTERY_ZONE_W,
         1,
         battery,
         battery_charge_tier_visible(animation_ms),
