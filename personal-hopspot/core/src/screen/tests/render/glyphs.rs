@@ -130,6 +130,30 @@ fn charging_battery_hides_the_plug_on_the_off_phase() {
 }
 
 #[test]
+fn externally_powered_battery_keeps_the_plug_steady_when_charging_is_unknown() {
+    let mut display = MockDisplay::new();
+    display.set_allow_overdraw(true);
+
+    draw_battery(
+        &mut display,
+        2,
+        0,
+        PowerSnapshot::new(
+            Some(BatteryPercent::saturating(53)),
+            ExternalPowerState::from_presence(true),
+        ),
+        false,
+    );
+
+    // Presence-only hosts cannot distinguish charging from idle. Their plug remains visible even
+    // during the phase where an actively charging battery would blink it off.
+    assert_eq!(display.get_pixel(Point::new(2, 4)), Some(BinaryColor::Off));
+    assert_eq!(display.get_pixel(Point::new(3, 2)), Some(BinaryColor::Off));
+    assert_eq!(display.get_pixel(Point::new(6, 3)), Some(BinaryColor::Off));
+    assert_eq!(display.get_pixel(Point::new(6, 5)), Some(BinaryColor::Off));
+}
+
+#[test]
 fn full_charging_battery_drops_the_plug_for_the_full_width_number() {
     let mut display = MockDisplay::new();
 

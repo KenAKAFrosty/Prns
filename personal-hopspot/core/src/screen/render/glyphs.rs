@@ -12,7 +12,7 @@ use super::layout::*;
 use super::primitives::{draw_pattern_colored, fill, line, line_colored, stroke};
 
 /// How wide the title-bar battery zone is: "100%" in FONT_5X8 exactly.
-const BATTERY_ZONE_W: i32 = 20;
+const BATTERY_ZONE_W: i32 = 4 * FONT_5X8_CHAR_W;
 
 /// The battery readout, drawn in the background color (it sits on the inverted title bar): the
 /// percentage as text, right-aligned in a 20px zone so the digits do not wander as they shrink,
@@ -35,7 +35,7 @@ pub(in crate::screen) fn draw_battery<D: DrawTarget<Color = BinaryColor>>(
             let _ = text.push_str("--%");
         }
     }
-    let text_x = x + BATTERY_ZONE_W - text.len() as i32 * 5;
+    let text_x = x + BATTERY_ZONE_W - text.len() as i32 * FONT_5X8_CHAR_W;
     let small = MonoTextStyle::new(&FONT_5X8, BinaryColor::Off);
     let _ = Text::with_baseline(&text, Point::new(text_x, y), small, Baseline::Top).draw(display);
     // External power keeps a compact plug cue at the left of the zone while the cell is below
@@ -50,7 +50,7 @@ pub(in crate::screen) fn draw_battery<D: DrawTarget<Color = BinaryColor>>(
         ExternalPowerState::Present { .. } => true,
         ExternalPowerState::Absent | ExternalPowerState::Unknown => false,
     };
-    if plug && below_full && text_x - x >= 5 {
+    if plug && below_full && text_x - x >= FONT_5X8_CHAR_W {
         draw_charging_plug(display, x, y);
     }
 }
@@ -85,7 +85,7 @@ pub(super) fn draw_title_bar<D: DrawTarget<Color = BinaryColor>>(
     let _ = Text::with_baseline("Personal", Point::new(2, 1), small, Baseline::Top).draw(display);
     draw_battery(
         display,
-        44,
+        WIDTH - BATTERY_ZONE_W,
         1,
         battery,
         battery_charge_tier_visible(animation_ms),
