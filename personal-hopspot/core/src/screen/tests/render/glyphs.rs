@@ -9,6 +9,12 @@ fn charging(percent: u8) -> PowerSnapshot {
     )
 }
 
+fn battery_display() -> MockDisplay<BinaryColor> {
+    let mut display = MockDisplay::new();
+    display.set_allow_overdraw(true);
+    display
+}
+
 #[test]
 fn usb_icon_draws_full_width_tongue() {
     let mut display = MockDisplay::new();
@@ -47,20 +53,9 @@ fn ble_icon_reads_as_bluetooth_rune() {
     ]);
 }
 
-/// What the readout should look like: the same text draw the implementation makes, nothing else.
-fn expected_battery_text(text: &str, x: i32, y: i32) -> MockDisplay<BinaryColor> {
-    use embedded_graphics::mono_font::iso_8859_1::FONT_5X8;
-    use embedded_graphics::mono_font::MonoTextStyle;
-    use embedded_graphics::text::{Baseline, Text};
-    let mut display = MockDisplay::new();
-    let small = MonoTextStyle::new(&FONT_5X8, BinaryColor::Off);
-    let _ = Text::with_baseline(text, Point::new(x, y), small, Baseline::Top).draw(&mut display);
-    display
-}
-
 #[test]
-fn level_battery_shows_the_exact_percent() {
-    let mut display = MockDisplay::new();
+fn level_battery_keeps_the_silhouette_and_shows_the_exact_number() {
+    let mut display = battery_display();
 
     draw_battery(
         &mut display,
@@ -70,69 +65,115 @@ fn level_battery_shows_the_exact_percent() {
             Some(BatteryPercent::saturating(97)),
             ExternalPowerState::Absent,
         ),
-        true,
     );
 
-    // Three characters, right-aligned in the 20px zone: text begins at 2 + 20 - 15.
-    assert_eq!(display, expected_battery_text("97%", 7, 0));
+    // The original 15x9 silhouette and left terminal remain.
+    assert_eq!(display.get_pixel(Point::new(2, 0)), Some(BinaryColor::Off));
+    assert_eq!(display.get_pixel(Point::new(16, 8)), Some(BinaryColor::Off));
+    assert_eq!(display.get_pixel(Point::new(0, 4)), Some(BinaryColor::Off));
+    // "97" is centered inside: the 9 starts at x=6 and the 7 at x=10.
+    for x in 6..=8 {
+        assert_eq!(display.get_pixel(Point::new(x, 2)), Some(BinaryColor::Off));
+    }
+    assert_eq!(display.get_pixel(Point::new(6, 3)), Some(BinaryColor::Off));
+    assert_eq!(display.get_pixel(Point::new(7, 3)), None);
+    assert_eq!(display.get_pixel(Point::new(8, 3)), Some(BinaryColor::Off));
+    for x in 10..=12 {
+        assert_eq!(display.get_pixel(Point::new(x, 2)), Some(BinaryColor::Off));
+    }
+    assert_eq!(display.get_pixel(Point::new(10, 5)), None);
+    assert_eq!(display.get_pixel(Point::new(12, 5)), Some(BinaryColor::Off));
 }
 
 #[test]
-fn percent_stays_right_aligned_as_digits_shrink() {
-    let mut display = MockDisplay::new();
+fn one_and_three_digit_levels_stay_centered_inside_the_battery() {
+    let mut one_digit = battery_display();
 
     draw_battery(
-        &mut display,
+        &mut one_digit,
         2,
         0,
         PowerSnapshot::new(
             Some(BatteryPercent::saturating(7)),
             ExternalPowerState::Absent,
         ),
-        true,
     );
 
-    // Two characters: text begins at 2 + 20 - 10. A drained cell reads "7%", never "70%".
-    assert_eq!(display, expected_battery_text("7%", 12, 0));
+    // A single 7 occupies x=8..10 in the center, with no implied trailing zero.
+    for x in 8..=10 {
+        assert_eq!(
+            one_digit.get_pixel(Point::new(x, 2)),
+            Some(BinaryColor::Off)
+        );
+    }
+    assert_eq!(one_digit.get_pixel(Point::new(8, 5)), None);
+    assert_eq!(
+        one_digit.get_pixel(Point::new(10, 5)),
+        Some(BinaryColor::Off)
+    );
+
+    let mut three_digits = battery_display();
+    draw_battery(
+        &mut three_digits,
+        2,
+        0,
+        PowerSnapshot::new(
+            Some(BatteryPercent::saturating(100)),
+            ExternalPowerState::Absent,
+        ),
+    );
+
+    // "100" fills eleven of the thirteen interior pixels without touching the shell edge.
+    assert_eq!(three_digits.get_pixel(Point::new(3, 4)), None);
+    assert_eq!(
+        three_digits.get_pixel(Point::new(5, 2)),
+        Some(BinaryColor::Off)
+    );
+    assert_eq!(
+        three_digits.get_pixel(Point::new(8, 2)),
+        Some(BinaryColor::Off)
+    );
+    assert_eq!(
+        three_digits.get_pixel(Point::new(14, 6)),
+        Some(BinaryColor::Off)
+    );
+    assert_eq!(three_digits.get_pixel(Point::new(15, 4)), None);
 }
 
 #[test]
-fn unknown_battery_reads_as_dashes_not_a_number() {
-    let mut display = MockDisplay::new();
+fn unknown_battery_keeps_the_shell_and_reads_as_dashes() {
+    let mut display = battery_display();
 
-    draw_battery(&mut display, 2, 0, PowerSnapshot::UNKNOWN, true);
+    draw_battery(&mut display, 2, 0, PowerSnapshot::UNKNOWN);
 
-    assert_eq!(display, expected_battery_text("--%", 7, 0));
+    assert_eq!(display.get_pixel(Point::new(2, 0)), Some(BinaryColor::Off));
+    assert_eq!(display.get_pixel(Point::new(16, 8)), Some(BinaryColor::Off));
+    for x in 6..=8 {
+        assert_eq!(display.get_pixel(Point::new(x, 4)), Some(BinaryColor::Off));
+    }
+    for x in 10..=12 {
+        assert_eq!(display.get_pixel(Point::new(x, 4)), Some(BinaryColor::Off));
+    }
+    assert_eq!(display.get_pixel(Point::new(9, 4)), None);
 }
 
 #[test]
-fn charging_battery_shows_the_plug_on_the_visible_phase() {
-    let mut display = MockDisplay::new();
-    display.set_allow_overdraw(true);
+fn charging_battery_shows_the_steady_plug() {
+    let mut display = battery_display();
 
-    draw_battery(&mut display, 2, 0, charging(62), true);
+    draw_battery(&mut display, 2, 0, charging(62));
 
-    // The plug body sits at the left edge of the zone, prongs pointing at the digits.
-    assert_eq!(display.get_pixel(Point::new(2, 4)), Some(BinaryColor::Off));
-    assert_eq!(display.get_pixel(Point::new(3, 2)), Some(BinaryColor::Off));
-    assert_eq!(display.get_pixel(Point::new(6, 3)), Some(BinaryColor::Off));
-    assert_eq!(display.get_pixel(Point::new(6, 5)), Some(BinaryColor::Off));
-}
-
-#[test]
-fn charging_battery_hides_the_plug_on_the_off_phase() {
-    let mut display = MockDisplay::new();
-
-    draw_battery(&mut display, 2, 0, charging(62), false);
-
-    // Off phase is the text alone; the blink carries the "charging" signal.
-    assert_eq!(display, expected_battery_text("62%", 7, 0));
+    // The original plug returns at the right edge of the battery body.
+    for x in 17..=20 {
+        assert_eq!(display.get_pixel(Point::new(x, 4)), Some(BinaryColor::Off));
+    }
+    assert_eq!(display.get_pixel(Point::new(21, 3)), Some(BinaryColor::Off));
+    assert_eq!(display.get_pixel(Point::new(23, 4)), None);
 }
 
 #[test]
 fn externally_powered_battery_keeps_the_plug_steady_when_charging_is_unknown() {
-    let mut display = MockDisplay::new();
-    display.set_allow_overdraw(true);
+    let mut display = battery_display();
 
     draw_battery(
         &mut display,
@@ -142,25 +183,25 @@ fn externally_powered_battery_keeps_the_plug_steady_when_charging_is_unknown() {
             Some(BatteryPercent::saturating(53)),
             ExternalPowerState::from_presence(true),
         ),
-        false,
     );
 
-    // Presence-only hosts cannot distinguish charging from idle. Their plug remains visible even
-    // during the phase where an actively charging battery would blink it off.
-    assert_eq!(display.get_pixel(Point::new(2, 4)), Some(BinaryColor::Off));
-    assert_eq!(display.get_pixel(Point::new(3, 2)), Some(BinaryColor::Off));
-    assert_eq!(display.get_pixel(Point::new(6, 3)), Some(BinaryColor::Off));
-    assert_eq!(display.get_pixel(Point::new(6, 5)), Some(BinaryColor::Off));
+    // Presence-only hosts cannot distinguish charging from idle. External power is the only fact
+    // the steady plug communicates, so that is sufficient to keep it visible.
+    assert_eq!(display.get_pixel(Point::new(17, 4)), Some(BinaryColor::Off));
+    assert_eq!(display.get_pixel(Point::new(21, 3)), Some(BinaryColor::Off));
 }
 
 #[test]
-fn full_charging_battery_drops_the_plug_for_the_full_width_number() {
-    let mut display = MockDisplay::new();
+fn full_charging_battery_keeps_100_and_the_plug() {
+    let mut display = battery_display();
 
-    draw_battery(&mut display, 2, 0, charging(100), true);
+    draw_battery(&mut display, 2, 0, charging(100));
 
-    // "100%" fills the whole zone; a full cell reads as done, no cue needed.
-    assert_eq!(display, expected_battery_text("100%", 2, 0));
+    assert_eq!(display.get_pixel(Point::new(2, 0)), Some(BinaryColor::Off));
+    assert_eq!(display.get_pixel(Point::new(5, 2)), Some(BinaryColor::Off));
+    assert_eq!(display.get_pixel(Point::new(14, 6)), Some(BinaryColor::Off));
+    assert_eq!(display.get_pixel(Point::new(17, 4)), Some(BinaryColor::Off));
+    assert_eq!(display.get_pixel(Point::new(21, 3)), Some(BinaryColor::Off));
 }
 
 #[test]

@@ -194,7 +194,6 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                     gnss: ui_state.gnss_visible().then(board::gnss_snapshot),
                     state: &ui_state,
                     interface_menu_details: &details,
-                    animation_ms: now_ms,
                 },
             );
             // A transient panel fault must not take the networking node down. The display retains the
