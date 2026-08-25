@@ -1721,6 +1721,49 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "schema is unsupported"):
             module.expected_candidate_assets(self.fixture.root, VERSION)
 
+    def test_hotfix_asset_contract_does_not_require_a_suite_release_record(self) -> None:
+        script = SCRIPTS / "verify-flasher-release-assets.py"
+        spec = importlib.util.spec_from_file_location(
+            "verify_flasher_release_assets", script
+        )
+        if spec is None or spec.loader is None:
+            self.fail(f"could not import {script}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        suite_record = f"release-record-v{VERSION}.json"
+        flasher_record = f"flasher-release-record-v{VERSION}.json"
+        regular = module.required_custody_assets(self.fixture.root, VERSION)
+        self.assertIn(suite_record, regular)
+        self.assertIn(flasher_record, regular)
+
+        write_json(self.fixture.root / "metadata" / "hotfix.json", {})
+        hotfix = module.required_custody_assets(self.fixture.root, VERSION)
+        self.assertNotIn(suite_record, hotfix)
+        self.assertNotIn(f"{suite_record}.minisig", hotfix)
+        self.assertIn(flasher_record, hotfix)
+        self.assertIn(f"{flasher_record}.minisig", hotfix)
+
+    def test_historical_candidate_need_not_contain_the_new_hotfix_helper(self) -> None:
+        self.assertEqual(self.sign_candidate().returncode, 0)
+        script = SCRIPTS / "verify-flasher-release-assets.py"
+        spec = importlib.util.spec_from_file_location(
+            "verify_flasher_release_assets", script
+        )
+        if spec is None or spec.loader is None:
+            self.fail(f"could not import {script}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        helper = self.fixture.root / "qualification" / "flasher_hotfix.py"
+        helper.unlink()
+        historical = module.expected_candidate_assets(self.fixture.root, VERSION)
+        self.assertNotIn("flasher_hotfix.py", historical)
+
+        write_json(self.fixture.root / "metadata" / "hotfix.json", {})
+        with self.assertRaisesRegex(ValueError, "flasher_hotfix.py"):
+            module.expected_candidate_assets(self.fixture.root, VERSION)
+
     def test_workflows_preserve_exact_candidate_custody_boundaries(self) -> None:
         candidate = (ROOT / ".github/workflows/flasher-candidate.yml").read_text()
         signing = (ROOT / ".github/workflows/flasher-sign.yml").read_text()
@@ -1772,6 +1815,7 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, signing)
         self.assertIn("release/acceptance/records/${RELEASE_VERSION}.json", evidence)
+        self.assertIn('PYTHONDONTWRITEBYTECODE: "1"', evidence)
         self.assertIn("./tools/prns release record -- create", evidence)
         self.assertIn("./tools/prns release record -- verify", evidence)
         self.assertIn("published-evidence", evidence)

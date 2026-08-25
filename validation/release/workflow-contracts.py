@@ -807,6 +807,7 @@ def validate() -> list[str]:
     ).read_text(encoding="utf-8")
     for finalization_gate in (
         "qualification_evidence_sha256:",
+        'PYTHONDONTWRITEBYTECODE: "1"',
         "qualification-evidence-v${RELEASE_VERSION}.tar.gz",
         "target/candidate/qualification/tester-roster.json",
         "--evidence-root target/qualification-evidence",
