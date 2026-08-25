@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 
 from flasher_manifest import require_schema, target_artifacts
+from flasher_hotfix import HotfixSpec
 
 
 ESP_SERIAL_BOARDS = (
@@ -462,4 +463,110 @@ def scaffold(
         "web_serial_smoke": web_serial_smoke,
         "browser_fallbacks": browser_fallbacks,
         "installation_smoke": installation_smoke,
+    }
+
+
+def hotfix_scaffold(
+    manifest: dict,
+    manifest_path: Path,
+    manifest_signature_path: Path,
+    signed_bundle_path: Path,
+    prerelease_published_at: str,
+    tester_roster: object,
+    spec: HotfixSpec,
+) -> dict:
+    parse_utc_timestamp(prerelease_published_at, "prerelease publishedAt")
+    require_schema(manifest)
+    release = manifest.get("release")
+    signing = manifest.get("signing")
+    targets = manifest.get("targets")
+    if (
+        not isinstance(release, dict)
+        or release.get("version") != spec.version
+        or release.get("channel") not in {"stable", "preview"}
+        or not isinstance(signing, dict)
+        or not isinstance(targets, list)
+    ):
+        raise ValueError("hotfix manifest identity is malformed")
+    target_by_board = {
+        target.get("board_slug"): target
+        for target in targets
+        if isinstance(target, dict) and isinstance(target.get("board_slug"), str)
+    }
+    runs = []
+    physical_assignments = getattr(tester_roster, "physical", {})
+    for board in spec.physical_boards:
+        target = target_by_board.get(board)
+        if target is None:
+            raise ValueError(f"hotfix manifest is missing changed board {board}")
+        for surface in spec.surfaces:
+            assignment = physical_assignments.get((board, surface))
+            if assignment is None:
+                raise ValueError(f"tester roster is missing {board}/{surface}")
+            run = {
+                "board": board,
+                "surface": surface,
+                "os": assignment.os_name,
+                "architecture": assignment.architecture,
+                "os_version": NOT_RUN,
+                "hardware_identity": NOT_RUN,
+                "hardware_model": target.get("display_name", NOT_RUN),
+                "hardware_revision": NOT_RUN,
+                "client": {
+                    "name": "prns-web-flasher"
+                    if surface == "web"
+                    else "hopspot-flash",
+                    "version": spec.version,
+                },
+                "scenarios": {
+                    scenario: "not-run" for scenario in spec.required_scenarios
+                },
+                "checks": {check: "not-run" for check in spec.required_checks},
+                "result": "not-run",
+                "tester": assignment.tester,
+                "completed_at": NOT_RUN,
+                "evidence": evidence_placeholder(),
+            }
+            if surface == "web":
+                run["browser"] = {
+                    "name": assignment.browser_name,
+                    "channel": "stable",
+                    "version": NOT_RUN,
+                }
+            runs.append(run)
+    return {
+        "schema": 6,
+        "candidate": {
+            "version": spec.version,
+            "channel": release.get("channel"),
+            "source_commit": release.get("commit"),
+            "signing_key_id": signing.get("key_id"),
+            "manifest_sha256": sha256(manifest_path),
+            "manifest_signature_sha256": sha256(manifest_signature_path),
+            "signed_candidate_sha256": sha256(signed_bundle_path),
+            "prerelease_published_at": prerelease_published_at,
+        },
+        "hotfix": {
+            "version": spec.version,
+            "base_version": spec.base_version,
+            "base_source_commit": spec.base_source_commit,
+            "base_manifest_sha256": spec.base_manifest_sha256,
+            "base_release_record_sha256": spec.base_release_record_sha256,
+            "base_signed_candidate_sha256": spec.base_signed_candidate_sha256,
+            "changed_boards": list(spec.changed_boards),
+            "physical_boards": list(spec.physical_boards),
+            "deferred_hardware": [
+                deferral.document() for deferral in spec.deferred_hardware
+            ],
+            "summary": spec.summary,
+        },
+        "runs": runs,
+        "hardware_deferrals": [
+            {
+                **deferral.document(),
+                "approved_by": NOT_RUN,
+                "approved_at": NOT_RUN,
+            }
+            for deferral in spec.deferred_hardware
+        ],
     }

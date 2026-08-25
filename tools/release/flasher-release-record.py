@@ -33,6 +33,45 @@ CLI_TARGETS = {
     "x86_64-pc-windows-msvc": ".zip",
 }
 FLASHER_CANDIDATE_WORKFLOW = ".github/workflows/flasher-candidate.yml"
+V037_ARCHIVE_COVERAGE = {
+    "version": "0.3.7",
+    "source_commit": "95404f41675b4a38907af09253460aeea518e5f2",
+    "signed_bundle_sha256": "5815c0e037e6eb76aee65aa53871accf542e7e3b5ce447bcf1f6a0d41952c0a4",
+    "attestation_bundle_sha256": "744e21da34de9e525c4d607ea4c4f0641b3681ab5a69f96245dadeb87d029bad",
+    "attestation_workflow_run_id": 32617066008,
+    "subjects": frozenset(
+        {
+            (
+                "firmware/hopspot/t-echo/0.3.7/t-echo-s140-6.1.1.uf2",
+                "43b5daf111306078f4d67a9c38715be489583f0398f07ac93a3851c6a7913f38",
+            ),
+            (
+                "firmware/hopspot/t-echo/0.3.7/t-echo-s140-7.3.0.uf2",
+                "ec080887c1d053a20b72cadfd56a90f52699bde22b793ac98251bd32566bc856",
+            ),
+            (
+                "firmware/hopspot/t096/0.3.7/t096-s140-6.1.1.uf2",
+                "8ac1e8e15008cef68ad06a4aebbfa6e6298ee381da833745f9019dbffe72597b",
+            ),
+            (
+                "firmware/hopspot/t1000-e/0.3.7/t1000e.bin",
+                "89f9668b217321bca790a9f0aebe59f519c9396b9b6b3e350a7b250ec51da198",
+            ),
+            (
+                "firmware/hopspot/t1000-e/0.3.7/t1000e.dat",
+                "edbfd54cc967870f8a53f242d2a38119a0eb6d71fc7d74d0ac2d96d57e155408",
+            ),
+            (
+                "firmware/hopspot/t1000-e/0.3.7/t1000e.uf2",
+                "aedaf3498f68f8f86f996e5505da7283fb832481b71e58b4cb5fbf5fbb533736",
+            ),
+            (
+                "firmware/hopspot/t114/0.3.7/heltec-t114-s140-6.1.1.uf2",
+                "33b428b73e1994cfe76508d4c922a08f0d92b4885448ee4f9389eb440b3a5ecb",
+            ),
+        }
+    ),
+}
 
 
 def file_identity(path: Path) -> dict[str, str | int]:
@@ -103,6 +142,41 @@ def bind_candidate_to_signed_archive(candidate: Path, signed_bundle: Path) -> No
             raise ValueError(
                 "candidate directory bytes differ from the exact signed candidate archive"
             )
+
+
+def archive_coverage(
+    *,
+    version: str,
+    source_commit: str,
+    signed_bundle: dict,
+    attestation_bundle_sha256: str,
+    attestation_workflow_run_id: int,
+    attested_subjects: set[tuple[str, str]],
+    missing: set[tuple[str, str]],
+    unexpected: set[tuple[str, str]],
+) -> dict | None:
+    exception = V037_ARCHIVE_COVERAGE
+    identity_matches = (
+        version == exception["version"]
+        and source_commit == exception["source_commit"]
+        and signed_bundle.get("sha256") == exception["signed_bundle_sha256"]
+        and attestation_bundle_sha256 == exception["attestation_bundle_sha256"]
+        and attestation_workflow_run_id == exception["attestation_workflow_run_id"]
+    )
+    if not identity_matches or unexpected or missing != exception["subjects"]:
+        return None
+    archive_identity = (str(signed_bundle.get("name")), str(signed_bundle.get("sha256")))
+    if archive_identity not in attested_subjects:
+        return None
+    return {
+        "schema": 1,
+        "scope": "v0.3.7-nordic-attestation-enumeration",
+        "protection": "exact-files-in-github-attested-signed-candidate",
+        "subjects": [
+            {"name": name, "sha256": checksum}
+            for name, checksum in sorted(missing)
+        ],
+    }
 
 
 def public_review_identity(
@@ -296,6 +370,22 @@ def build_record(arguments: argparse.Namespace) -> dict:
         raise ValueError("candidate build metadata is unavailable")
     if not tester_roster_path.is_file():
         raise ValueError("candidate tester roster is unavailable")
+    hotfix_identity = None
+    hotfix_metadata_path = candidate / "metadata" / "hotfix.json"
+    if hotfix_metadata_path.is_file():
+        hotfix_spec_path = candidate / "qualification" / "hotfix.json"
+        if not hotfix_spec_path.is_file():
+            raise ValueError("candidate hotfix specification is unavailable")
+        hotfix_identity = {
+            "inheritance": {
+                "path": "metadata/hotfix.json",
+                "sha256": sha256(hotfix_metadata_path),
+            },
+            "specification": {
+                "path": "qualification/hotfix.json",
+                "sha256": sha256(hotfix_spec_path),
+            },
+        }
 
     attestation_bundle = load_object(arguments.attestation_bundle, "attestation bundle")
     actual_subjects = attestation_subjects(attestation_bundle)
@@ -391,12 +481,24 @@ def build_record(arguments: argparse.Namespace) -> dict:
     attested_subjects = {
         (subject["name"], subject["sha256"]) for subject in actual_subjects
     }
+    archive_coverage_record = None
     if attested_subjects != expected_subjects:
-        missing = sorted(expected_subjects - attested_subjects)
-        unexpected = sorted(attested_subjects - expected_subjects)
+        missing = expected_subjects - attested_subjects
+        unexpected = attested_subjects - expected_subjects
+        archive_coverage_record = archive_coverage(
+            version=version,
+            source_commit=source_commit,
+            signed_bundle=signed_bundle,
+            attestation_bundle_sha256=sha256(arguments.attestation_bundle),
+            attestation_workflow_run_id=attestation["workflow_run_id"],
+            attested_subjects=attested_subjects,
+            missing=missing,
+            unexpected=unexpected,
+        )
+    if attested_subjects != expected_subjects and archive_coverage_record is None:
         raise ValueError(
             f"GitHub attestation subjects differ from release paths; "
-            f"missing={missing}, unexpected={unexpected}"
+            f"missing={sorted(missing)}, unexpected={sorted(unexpected)}"
         )
 
     public_review = public_review_identity(
@@ -448,6 +550,7 @@ def build_record(arguments: argparse.Namespace) -> dict:
                 "path": "qualification/tester-roster.json",
                 "sha256": sha256(tester_roster_path),
             },
+            **({"hotfix": hotfix_identity} if hotfix_identity is not None else {}),
             "firmware": sorted(
                 firmware, key=lambda item: (item["board_slug"], item["path"])
             ),
@@ -458,6 +561,11 @@ def build_record(arguments: argparse.Namespace) -> dict:
         "attestation": {
             "metadata": attestation,
             "metadata_file": file_identity(arguments.attestation_metadata),
+            **(
+                {"archive_coverage": archive_coverage_record}
+                if archive_coverage_record is not None
+                else {}
+            ),
         },
     }
 

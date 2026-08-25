@@ -15,6 +15,7 @@ pub mod node_pages;
 mod persistence;
 mod radio_profile_store;
 mod screen;
+mod soft_ap;
 
 pub use destinations::{
     hopspot_destination_hashes, HopspotDestinationHashes, HopspotDestinationSet,
@@ -65,6 +66,7 @@ pub use screen::{
     SharedInstanceConfigExport, SplashContent, UiAction, UiConfiguration, UiNotice, UiState,
     WifiNetworkStatus, WifiStationStatus,
 };
+pub use soft_ap::SoftApLeaseTable;
 
 use personal_rns::engine::{
     EngineProtocolPolicy, LinkMtuDiscovery, LocalHopCountOverride, ProofForm,

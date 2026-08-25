@@ -185,7 +185,13 @@ jobs:
             gh attestation verify "$candidate/$relative" --repo "$GITHUB_REPOSITORY" \
               --bundle "$attestation" --signer-workflow "$signer" \
               --deny-self-hosted-runners
-          done < <(jq -r '[.targets[].parts[].path] | unique[]' "$candidate/flash-manifest.json")
+          done < <(
+            jq -r '
+              .subjects[]
+              | select(.name | startswith("firmware/"))
+              | .name
+            ' "$assets/prns-flasher-attestation-v${TARGET_VERSION}.metadata.json"
+          )
 
           ./tools/prns release rollback -- stage \
             --candidate "$candidate" \
@@ -284,8 +290,11 @@ jobs:
                 --bundle "$attestation" --signer-workflow "$signer" \
                 --deny-self-hosted-runners
             done < <(
-              jq -r '[.targets[].parts[].path] | unique[]' \
-                "$candidate/flash-manifest.json"
+              jq -r '
+                .subjects[]
+                | select(.name | startswith("firmware/"))
+                | .name
+              ' "$assets/prns-flasher-attestation-v${EXPECTED_LIVE_VERSION}.metadata.json"
             )
             ./tools/prns release rollback -- stage-coming-soon \
               --repository . \

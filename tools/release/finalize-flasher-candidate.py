@@ -13,6 +13,7 @@ import sys
 from flasher_sparse_sizes import SHIPPING_BOARDS
 from flasher_sparse_sizes import build_report as build_sparse_size_report
 from flasher_sparse_sizes import render_summary as render_sparse_size_summary
+from flasher_hotfix import resolve_release_identity, verify_candidate as verify_hotfix_candidate
 from flasher_website_history import allowed_historical_signatures
 from flasher_manifest import FLASH_MANIFEST_SCHEMA
 
@@ -38,10 +39,10 @@ def digest(path: Path) -> str:
 
 
 def read_version(candidate: Path) -> str:
-    expected = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
     candidate_version = (candidate / "VERSION").read_text(encoding="utf-8").strip()
+    expected, _ = resolve_release_identity(ROOT, candidate_version)
     if candidate_version != expected or not candidate_version or candidate_version.lower() == "next":
-        raise ValueError("candidate VERSION must equal the publishable repository VERSION")
+        raise ValueError("candidate VERSION has no publishable repository release identity")
     if any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-+" for character in candidate_version):
         raise ValueError("candidate VERSION is not path-safe")
     return candidate_version
@@ -249,6 +250,7 @@ def main() -> int:
             arguments.commit,
             arguments.key_id,
         )
+        verify_hotfix_candidate(ROOT, candidate)
         archives = require_cli_archives(candidate, version)
         render_installers(candidate, version, archives)
 

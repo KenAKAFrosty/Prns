@@ -6,41 +6,48 @@ TARGET="${1:-}"
 OUT_ROOT="${2:-$ROOT/target/flash-artifacts}"
 
 usage() {
-    echo "usage: $0 <board-slug> [out-root]" >&2
-    echo "supported board-slugs: heltec-v4, heltec-v4-r8, t-beam-supreme, xiao-esp32-c6, t-echo, t114" >&2
+    echo "usage: $0 <board-slug|--all> [out-root]" >&2
+    echo "board slugs come from the shipping entries in release/flash/boards.json" >&2
+}
+
+cd "$ROOT"
+shipping_targets="$(
+    cargo run --quiet --locked -p hopspot-flash -- list |
+        awk '{print $1}'
+)"
+if [[ -z "$shipping_targets" ]]; then
+    echo "shipping board catalog is empty" >&2
+    exit 2
+fi
+
+build_target() {
+    local board="$1"
+    cargo run --locked -p hopspot-flash -- build "$board" --out-root "$OUT_ROOT"
 }
 
 case "$TARGET" in
-    heltec-v4)
-        cd "$ROOT"
-        cargo run --locked -p hopspot-flash -- build heltec-v4 --out-root "$OUT_ROOT"
-        ;;
-    heltec-v4-r8)
-        cd "$ROOT"
-        cargo run --locked -p hopspot-flash -- build heltec-v4-r8 --out-root "$OUT_ROOT"
-        ;;
-    t-beam-supreme)
-        cd "$ROOT"
-        cargo run --locked -p hopspot-flash -- build t-beam-supreme --out-root "$OUT_ROOT"
-        ;;
-    xiao-esp32-c6)
-        cd "$ROOT"
-        cargo run --locked -p hopspot-flash -- build xiao-esp32-c6 --out-root "$OUT_ROOT"
-        ;;
-    t-echo)
-        cd "$ROOT"
-        cargo run --locked -p hopspot-flash -- build t-echo --out-root "$OUT_ROOT"
-        ;;
-    t114)
-        cd "$ROOT"
-        cargo run --locked -p hopspot-flash -- build t114 --out-root "$OUT_ROOT"
+    --all)
+        while IFS= read -r board; do
+            build_target "$board"
+        done <<< "$shipping_targets"
         ;;
     "")
         usage
         exit 2
         ;;
     *)
-        usage
-        exit 2
+        shipping=false
+        while IFS= read -r board; do
+            if [[ "$TARGET" == "$board" ]]; then
+                shipping=true
+                break
+            fi
+        done <<< "$shipping_targets"
+        if [[ "$shipping" != true ]]; then
+            echo "not a shipping board slug: $TARGET" >&2
+            usage
+            exit 2
+        fi
+        build_target "$TARGET"
         ;;
 esac
