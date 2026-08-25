@@ -2,11 +2,11 @@ mod display;
 mod gnss;
 mod hardware;
 mod identity;
-mod input;
 mod persistence;
 
 use personal_rns::interfaces::InterfaceId;
 
+pub(crate) use super::button::{drive as drive_button, EVENTS as INPUT_EVENTS};
 pub(crate) use crate::storage::Nrf52840Storage as Storage;
 pub(crate) use display::St7735Display as DisplayDriver;
 pub(crate) use gnss::{
@@ -19,7 +19,6 @@ pub(crate) use hardware::{
 pub(crate) use identity::{
     bootstrap_ble_identity, bootstrap_node_identity, startup_notice as identity_startup_notice,
 };
-pub(crate) use input::{drive_button, EVENTS as INPUT_EVENTS};
 pub(crate) use persistence::{new as new_persistence, persistence_state, Persistence, SharedFlash};
 
 pub(crate) const USB_MANUFACTURER: &str = "Stay Personal";

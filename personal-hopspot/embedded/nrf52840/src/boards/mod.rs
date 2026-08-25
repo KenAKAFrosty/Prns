@@ -6,6 +6,9 @@
 ))]
 mod status_led;
 
+#[cfg(any(feature = "board-t096", feature = "board-t114"))]
+mod button;
+
 #[cfg(feature = "board-mesh-tower-v2")]
 pub(crate) mod mesh_tower_v2;
 #[cfg(feature = "board-t096")]
