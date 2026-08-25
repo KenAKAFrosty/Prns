@@ -123,8 +123,11 @@ const WIFI_LINK_CHECK_INTERVAL: Duration = Duration::from_secs(2);
 const WIFI_INTER_CHANNEL_DELAY: Duration = Duration::from_millis(25);
 const WIFI_CHANNEL_SCAN_TIMEOUT: Duration = Duration::from_millis(500);
 const WIFI_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
-const WIFI_SCAN_MIN_DWELL: HalDuration = HalDuration::from_millis(5);
-const WIFI_SCAN_MAX_DWELL: HalDuration = HalDuration::from_millis(20);
+// Some SAE-only access points do not answer the S3 driver's directed probe request. Keep active
+// scanning so provisioned hidden SSIDs remain discoverable, but stay on each channel for a full
+// beacon interval so pure WPA3 networks are also observed from their beacons.
+const WIFI_SCAN_MIN_DWELL: HalDuration = HalDuration::from_millis(120);
+const WIFI_SCAN_MAX_DWELL: HalDuration = HalDuration::from_millis(120);
 const DRIVER_STOP_RETRY_DELAY: Duration = Duration::from_millis(25);
 const ESP_OK: i32 = 0;
 const ESP_ERR_WIFI_NOT_INIT: i32 = 12_289;
