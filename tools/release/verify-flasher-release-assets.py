@@ -199,6 +199,28 @@ def verify_remote_inventory(assets: Path, inventory_path: Path) -> None:
             raise ValueError(f"downloaded asset bytes differ from GitHub digest: {name}")
 
 
+def required_custody_assets(candidate: Path, version: str) -> set[str]:
+    names = {
+        f"prns-flasher-candidate-v{version}-signed.tar.gz",
+        f"prns-flasher-candidate-run-v{version}.json",
+        f"prns-flasher-attestation-v{version}.json",
+        f"prns-flasher-attestation-v{version}.metadata.json",
+        f"acceptance-v{version}.json",
+        f"acceptance-v{version}.json.minisig",
+        f"qualification-evidence-v{version}.tar.gz",
+        f"flasher-release-record-v{version}.json",
+        f"flasher-release-record-v{version}.json.minisig",
+    }
+    if not (candidate / "metadata" / "hotfix.json").is_file():
+        names.update(
+            {
+                f"release-record-v{version}.json",
+                f"release-record-v{version}.json.minisig",
+            }
+        )
+    return names
+
+
 def verify(
     candidate: Path, assets: Path, version: str, remote_inventory: Path | None = None
 ) -> None:
@@ -208,19 +230,7 @@ def verify(
     release = manifest.get("release")
     if not isinstance(release, dict):
         raise ValueError("signed candidate release identity is unavailable")
-    custody_names = {
-        f"prns-flasher-candidate-v{version}-signed.tar.gz",
-        f"prns-flasher-candidate-run-v{version}.json",
-        f"prns-flasher-attestation-v{version}.json",
-        f"prns-flasher-attestation-v{version}.metadata.json",
-        f"acceptance-v{version}.json",
-        f"acceptance-v{version}.json.minisig",
-        f"qualification-evidence-v{version}.tar.gz",
-        f"release-record-v{version}.json",
-        f"release-record-v{version}.json.minisig",
-        f"flasher-release-record-v{version}.json",
-        f"flasher-release-record-v{version}.json.minisig",
-    }
+    custody_names = required_custody_assets(candidate, version)
     if not assets.is_dir():
         raise ValueError("downloaded GitHub Release asset directory is unavailable")
     entries = list(assets.iterdir())
