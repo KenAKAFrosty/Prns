@@ -127,15 +127,19 @@ pub fn persistence_state() -> PersistenceState {
 }
 
 fn observe(diagnostic: EmbeddedPersistenceDiagnostic) {
+    if let Some(state) = PersistenceState::from_embedded_diagnostic(&diagnostic) {
+        PERSISTENCE_STATE.store(state.encode(), Ordering::Release);
+    }
+
     match diagnostic {
         EmbeddedPersistenceDiagnostic::Restored(report) => {
-            PERSISTENCE_STATE.store(PersistenceState::Durable.encode(), Ordering::Release);
             log::info!(
-                "state restored route_records_seeded={} route_records_refused={} route_records_dropped={} ratchets={} warning={:?}",
+                "state restored route_records_seeded={} route_records_refused={} route_records_dropped={} ratchets_seeded={} ratchets_refused={} warning={:?}",
                 report.route_seeded_count,
                 report.route_refused_count,
                 report.route_dropped_count,
                 report.ratchet_seeded_count,
+                report.ratchet_refused_count,
                 report.warning
             );
         }
@@ -144,13 +148,10 @@ fn observe(diagnostic: EmbeddedPersistenceDiagnostic) {
             at,
             state_not_saved,
         } => {
-            let state = if state_not_saved {
-                PersistenceState::Deferred
-            } else {
-                PersistenceState::Durable
-            };
-            PERSISTENCE_STATE.store(state.encode(), Ordering::Release);
-            log::info!("state persisted records={records} at={}", at.0);
+            log::info!(
+                "state persisted records={records} at={} state_not_saved={state_not_saved}",
+                at.0
+            );
         }
         EmbeddedPersistenceDiagnostic::CompactionStarted {
             at,
@@ -167,23 +168,18 @@ fn observe(diagnostic: EmbeddedPersistenceDiagnostic) {
             at,
             state_not_saved,
         } => {
-            let state = if state_not_saved {
-                PersistenceState::Deferred
-            } else {
-                PersistenceState::Durable
-            };
-            PERSISTENCE_STATE.store(state.encode(), Ordering::Release);
-            log::info!("state compaction completed records={records} at={}", at.0);
+            log::info!(
+                "state compaction completed records={records} at={} state_not_saved={state_not_saved}",
+                at.0
+            );
         }
         EmbeddedPersistenceDiagnostic::DurabilityDeferred { target, until } => {
-            PERSISTENCE_STATE.store(PersistenceState::Deferred.encode(), Ordering::Release);
             log::warn!(
                 "state durability deferred target={target:?} until={}",
                 until.0
             );
         }
         EmbeddedPersistenceDiagnostic::WriteFailed { failure, retry_at } => {
-            PERSISTENCE_STATE.store(PersistenceState::Failed.encode(), Ordering::Release);
             log::error!(
                 "state persistence failed {failure:?}; retry_at={}",
                 retry_at.0

@@ -127,6 +127,7 @@ prns_macros::iterable_enum! {
         ProfileReset,
         IdentityReset,
         IdentityUnstable,
+        StateRecovered,
         SaveDeferred,
         SaveFailed,
     }
@@ -195,6 +196,7 @@ impl UiNotice {
             Self::ProfileReset => NoticeLines::two("Profile", "Reset"),
             Self::IdentityReset => NoticeLines::two("Identity", "Reset"),
             Self::IdentityUnstable => NoticeLines::two("Identity", "Unstable"),
+            Self::StateRecovered => NoticeLines::two("State", "Recovered"),
             Self::SaveDeferred => {
                 NoticeLines::three("Save deferred", "Flash cooldown", "Auto retry")
             }
@@ -268,6 +270,7 @@ impl PersistenceNotice {
         }
         let notice = match persistence {
             PersistenceState::Durable => UiNotice::Saved,
+            PersistenceState::Recovered => UiNotice::StateRecovered,
             PersistenceState::Deferred => UiNotice::SaveDeferred,
             PersistenceState::Failed => UiNotice::SaveFailed,
         };
