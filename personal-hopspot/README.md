@@ -75,6 +75,10 @@ T-Echo firmware:
 
     ./tools/prns device techo flash
 
+Heltec T114 developer firmware with its factory TFT status and control face:
+
+    ./tools/prns build hopspot t114
+
 ## Local developer web flasher
 
 Build and serve the current working tree for one or more cataloged boards with:
