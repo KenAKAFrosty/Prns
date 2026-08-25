@@ -1150,7 +1150,7 @@ def validate(arguments: argparse.Namespace, now: datetime | None = None) -> list
         except ValueError as error:
             errors.append(str(error))
         if hotfix_spec is None:
-            errors.append("schema-6 acceptance requires a target-scoped hotfix candidate")
+            errors.append("schema-6 acceptance requires a scoped hotfix candidate")
     roster_version = hotfix_spec.roster_version if hotfix_spec is not None else str(version)
     tester_roster, roster_errors = validate_roster(roster, roster_version)
     errors.extend(f"signed tester roster: {error}" for error in roster_errors)
@@ -1254,7 +1254,7 @@ def main() -> int:
         print("version-bound maintainer override is bound to the exact signed candidate")
     elif isinstance(document, dict) and document.get("schema") == HOTFIX_ACCEPTANCE_SCHEMA:
         print(
-            "target-scoped hotfix acceptance is complete for physical targets and explicit hardware deferrals"
+            "scoped hotfix acceptance is complete for physical targets and explicit hardware deferrals"
         )
     else:
         print("physical flasher acceptance matrix is complete for the exact signed candidate")

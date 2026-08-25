@@ -1,4 +1,4 @@
-"""Target-scoped flasher hotfix identity and inherited-artifact custody."""
+"""Scoped flasher hotfix identity and inherited-artifact custody."""
 
 from __future__ import annotations
 
@@ -217,8 +217,8 @@ def parse_spec(path: Path, shipping_boards: set[str] | None = None) -> HotfixSpe
         raise ValueError("hotfix specification filename must equal its release version")
 
     changed_boards = require_tokens(document.get("changed_boards"), "changed_boards")
-    if shipping_boards is not None and not set(changed_boards) < shipping_boards:
-        raise ValueError("changed_boards must be a strict subset of the shipping board set")
+    if shipping_boards is not None and not set(changed_boards) <= shipping_boards:
+        raise ValueError("changed_boards must be a subset of the shipping board set")
     surfaces = require_tokens(qualification.get("surfaces"), "qualification surfaces")
     if not set(surfaces) <= SURFACES:
         raise ValueError("hotfix qualification surfaces must be cli and/or web")
@@ -637,7 +637,7 @@ def main() -> int:
                 arguments.repository.resolve(), arguments.candidate.resolve()
             )
             print(
-                "verified target-scoped hotfix inheritance"
+                "verified scoped hotfix artifact custody"
                 if spec is not None
                 else "verified ordinary flasher release identity"
             )

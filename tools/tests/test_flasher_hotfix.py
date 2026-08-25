@@ -242,18 +242,59 @@ class HotfixCustodyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "differs from its manifest"):
             verify_candidate(self.repository, self.candidate)
 
-    def test_spec_rejects_declaring_every_shipping_board_changed(self) -> None:
+    def test_spec_accepts_declaring_every_shipping_board_changed(self) -> None:
         self.spec["changed_boards"] = [
+            "heltec-v4",
+            "heltec-v4-r8",
+            "t-beam-supreme",
+        ]
+        self.spec["qualification"]["physical_boards"] = [
             "heltec-v4",
             "heltec-v4-r8",
             "t-beam-supreme",
         ]
         path = self.root / f"{HOTFIX_VERSION}.json"
         write_json(path, self.spec)
-        with self.assertRaisesRegex(ValueError, "strict subset"):
-            parse_spec(
-                path, {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"}
-            )
+        parsed = parse_spec(
+            path, {"heltec-v4", "heltec-v4-r8", "t-beam-supreme"}
+        )
+        self.assertEqual(
+            parsed.changed_boards,
+            ("heltec-v4", "heltec-v4-r8", "t-beam-supreme"),
+        )
+
+    def test_compose_supports_a_fleet_hotfix_without_inherited_artifacts(self) -> None:
+        self.spec["changed_boards"] = [
+            "heltec-v4",
+            "heltec-v4-r8",
+            "t-beam-supreme",
+        ]
+        self.spec["qualification"]["physical_boards"] = [
+            "heltec-v4",
+            "heltec-v4-r8",
+            "t-beam-supreme",
+        ]
+        write_json(
+            self.repository
+            / "release"
+            / "flash"
+            / "hotfixes"
+            / f"{HOTFIX_VERSION}.json",
+            self.spec,
+        )
+        self.write_changed_board("heltec-v4-r8", b"hotfix-r8")
+        self.write_changed_board("t-beam-supreme", b"hotfix-tbeam")
+
+        metadata = compose(
+            self.repository, self.history, self.candidate, HOTFIX_VERSION
+        )
+
+        self.assertEqual(metadata["inherited_boards"], [])
+        self.assertEqual(metadata["inherited_artifacts"], [])
+        self.finish_candidate()
+        verified = verify_candidate(self.repository, self.candidate)
+        self.assertIsNotNone(verified)
+        self.assertEqual(verified.changed_boards, tuple(self.spec["changed_boards"]))
 
     def test_every_declared_changed_board_must_change_an_artifact(self) -> None:
         self.spec["changed_boards"] = ["heltec-v4", "heltec-v4-r8"]
