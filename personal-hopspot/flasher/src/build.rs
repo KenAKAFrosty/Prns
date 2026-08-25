@@ -940,16 +940,22 @@ fn sparse_size_gate(board_slug: &str) -> Option<(u64, u64)> {
 }
 
 fn release_version(repo: &Path) -> Result<String, AppError> {
-    fs::read_to_string(repo.join("VERSION"))
-        .map(|value| value.trim().to_string())
-        .map_err(|error| AppError::developer_repository(format!("could not read VERSION: {error}")))
-        .and_then(|version| {
-            if version.is_empty() || version.eq_ignore_ascii_case("next") {
-                Err(AppError::developer_repository("VERSION is not publishable"))
-            } else {
-                Ok(version)
-            }
-        })
+    let version = match std::env::var("PRNS_FLASH_VERSION") {
+        Ok(version) => version,
+        Err(std::env::VarError::NotPresent) => {
+            fs::read_to_string(repo.join("VERSION")).map_err(|error| {
+                AppError::developer_repository(format!("could not read VERSION: {error}"))
+            })?
+        }
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(AppError::developer_repository(
+                "PRNS_FLASH_VERSION must be UTF-8",
+            ));
+        }
+    };
+    ReleaseVersion::parse(version.trim().to_string())
+        .map(|version| version.as_str().to_string())
+        .map_err(|error| AppError::developer_repository(error.to_string()))
 }
 
 fn resolve_build_version(repo: &Path, build_version: BuildVersion<'_>) -> Result<String, AppError> {

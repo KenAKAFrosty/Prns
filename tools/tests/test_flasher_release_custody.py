@@ -422,6 +422,7 @@ class CandidateFixture:
             "verify-flasher-candidate-files.py": SCRIPTS / "verify-flasher-candidate-files.py",
             "validate-flasher-tester-roster.py": SCRIPTS / "validate-flasher-tester-roster.py",
             "flasher_tester_roster.py": SCRIPTS / "flasher_tester_roster.py",
+            "flasher_hotfix.py": SCRIPTS / "flasher_hotfix.py",
             "package-flasher-qualification-evidence.py": SCRIPTS
             / "package-flasher-qualification-evidence.py",
         }
@@ -1505,6 +1506,7 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             self.fixture.root / "qualification" / "create-flasher-acceptance.py",
             self.fixture.root / "qualification" / "validate-flasher-acceptance.py",
             self.fixture.root / "qualification" / "flasher_acceptance_contract.py",
+            self.fixture.root / "qualification" / "flasher_hotfix.py",
             self.fixture.root / "qualification" / "flasher_manifest.py",
             self.fixture.root / "qualification" / "serve-flasher-candidate.py",
             self.fixture.root / "qualification" / "verify-flasher-candidate-files.py",

@@ -246,6 +246,7 @@ jobs:
             target/candidate/qualification/create-flasher-acceptance.py
             target/candidate/qualification/validate-flasher-acceptance.py
             target/candidate/qualification/flasher_acceptance_contract.py
+            target/candidate/qualification/flasher_hotfix.py
             target/candidate/qualification/flasher_manifest.py
             target/candidate/qualification/serve-flasher-candidate.py
             target/candidate/qualification/verify-flasher-candidate-files.py
@@ -259,6 +260,16 @@ jobs:
             target/candidate/metadata/reproducibility.json
             target/candidate/metadata/release-history.json
           )
+          if [[ -f target/candidate/metadata/hotfix.json ]]; then
+            cp target/candidate/metadata/hotfix.json \
+              "target/release/hotfix-inheritance-v${version}.json"
+            cp target/candidate/qualification/hotfix.json \
+              "target/release/hotfix-spec-v${version}.json"
+            assets+=(
+              "target/release/hotfix-inheritance-v${version}.json"
+              "target/release/hotfix-spec-v${version}.json"
+            )
+          fi
           declare -A expected_names=()
           for asset in "${assets[@]}"; do
             test -f "$asset"

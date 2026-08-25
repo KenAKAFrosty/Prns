@@ -370,6 +370,22 @@ def build_record(arguments: argparse.Namespace) -> dict:
         raise ValueError("candidate build metadata is unavailable")
     if not tester_roster_path.is_file():
         raise ValueError("candidate tester roster is unavailable")
+    hotfix_identity = None
+    hotfix_metadata_path = candidate / "metadata" / "hotfix.json"
+    if hotfix_metadata_path.is_file():
+        hotfix_spec_path = candidate / "qualification" / "hotfix.json"
+        if not hotfix_spec_path.is_file():
+            raise ValueError("candidate hotfix specification is unavailable")
+        hotfix_identity = {
+            "inheritance": {
+                "path": "metadata/hotfix.json",
+                "sha256": sha256(hotfix_metadata_path),
+            },
+            "specification": {
+                "path": "qualification/hotfix.json",
+                "sha256": sha256(hotfix_spec_path),
+            },
+        }
 
     attestation_bundle = load_object(arguments.attestation_bundle, "attestation bundle")
     actual_subjects = attestation_subjects(attestation_bundle)
@@ -534,6 +550,7 @@ def build_record(arguments: argparse.Namespace) -> dict:
                 "path": "qualification/tester-roster.json",
                 "sha256": sha256(tester_roster_path),
             },
+            **({"hotfix": hotfix_identity} if hotfix_identity is not None else {}),
             "firmware": sorted(
                 firmware, key=lambda item: (item["board_slug"], item["path"])
             ),

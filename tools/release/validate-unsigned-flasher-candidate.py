@@ -12,6 +12,7 @@ import sys
 
 from flasher_build_metadata import validate_metadata
 from flasher_browser_test_trust import find_browser_test_trust_leaks
+from flasher_hotfix import verify_candidate as verify_hotfix_candidate
 from flasher_reproducibility import validate_report as validate_reproducibility_report
 from flasher_sparse_sizes import build_report as build_sparse_size_report
 from flasher_website_history import allowed_historical_signatures, validate_candidate_history
@@ -139,7 +140,7 @@ def verify_required_release_files(root: Path) -> None:
             raise ValueError(f"candidate contains a mutable hosted release path: {mutable}")
 
 
-def verify_qualification_kit(root: Path, version: str, tester_roster: Path) -> None:
+def verify_qualification_kit(root: Path, roster_version: str, tester_roster: Path) -> None:
     repository = Path(__file__).resolve().parents[2]
     release_tools = repository / "tools" / "release"
     exact_sources = {
@@ -150,6 +151,7 @@ def verify_qualification_kit(root: Path, version: str, tester_roster: Path) -> N
         / "flasher_acceptance_contract.py",
         "qualification/flasher_manifest.py": release_tools / "flasher_manifest.py",
         "qualification/flasher_tester_roster.py": release_tools / "flasher_tester_roster.py",
+        "qualification/flasher_hotfix.py": release_tools / "flasher_hotfix.py",
         "qualification/package-flasher-qualification-evidence.py": release_tools
         / "package-flasher-qualification-evidence.py",
         "qualification/serve-flasher-candidate.py": release_tools / "serve-flasher-candidate.py",
@@ -173,7 +175,7 @@ def verify_qualification_kit(root: Path, version: str, tester_roster: Path) -> N
             "--roster",
             str(root / "qualification" / "tester-roster.json"),
             "--version",
-            version,
+            roster_version,
         ],
         text=True,
         capture_output=True,
@@ -283,11 +285,16 @@ def verify(arguments: argparse.Namespace) -> dict:
 
     repository_version = arguments.repository_version.read_text(encoding="utf-8").strip()
     version = (root / "VERSION").read_text(encoding="utf-8").strip()
-    if version != repository_version or not version or version.lower() == "next":
-        raise ValueError("candidate VERSION differs from the publishable repository VERSION")
+    if not version or version.lower() == "next":
+        raise ValueError("candidate VERSION is not publishable")
     if any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-+" for character in version):
         raise ValueError("candidate VERSION is not path-safe")
-    verify_qualification_kit(root, version, arguments.tester_roster.resolve())
+    hotfix = verify_hotfix_candidate(arguments.source_repository.resolve(), root)
+    if hotfix is None and version != repository_version:
+        raise ValueError("ordinary candidate VERSION differs from repository VERSION")
+    if hotfix is not None and hotfix.roster_version != repository_version:
+        raise ValueError("hotfix prefix differs from repository VERSION")
+    verify_qualification_kit(root, repository_version, arguments.tester_roster.resolve())
     if not (
         len(arguments.expected_commit) == 40
         and all(character in "0123456789abcdef" for character in arguments.expected_commit)
@@ -296,7 +303,7 @@ def verify(arguments: argparse.Namespace) -> dict:
     verify_source_snapshot(
         repository=arguments.source_repository,
         commit=arguments.expected_commit,
-        version=version,
+        version=repository_version,
         archive=root / "website" / "source.zip",
         checksum=root / "website" / "source.zip.sha256",
         metadata=root / "metadata" / "source.json",

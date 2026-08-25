@@ -612,6 +612,16 @@ entrypoint = ["python3", "tools/release/flasher-website-history.py"]
 requires = ["python3"]
 
 [[task]]
+id = "release.hotfix"
+summary = "Resolve, compose, or verify a target-scoped flasher hotfix."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["ci", "operator", "release"]
+entrypoint = ["python3", "tools/release/flasher_hotfix.py"]
+requires = ["python3"]
+
+[[task]]
 id = "release.toolchain.esp.install"
 summary = "Install the exact Linux ESP release toolchain into an isolated destination."
 domain = "release"

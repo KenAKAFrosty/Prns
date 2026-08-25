@@ -122,6 +122,7 @@ def expected_candidate_assets(candidate: Path, version: str) -> dict[str, Path]:
         / "qualification"
         / "flasher_acceptance_contract.py",
         "flasher_tester_roster.py": candidate / "qualification" / "flasher_tester_roster.py",
+        "flasher_hotfix.py": candidate / "qualification" / "flasher_hotfix.py",
         "package-flasher-qualification-evidence.py": candidate
         / "qualification"
         / "package-flasher-qualification-evidence.py",
@@ -142,6 +143,13 @@ def expected_candidate_assets(candidate: Path, version: str) -> dict[str, Path]:
     if schema >= 3:
         sources["flasher_manifest.py"] = (
             candidate / "qualification" / "flasher_manifest.py"
+        )
+    if (candidate / "metadata" / "hotfix.json").is_file():
+        sources[f"hotfix-inheritance-v{version}.json"] = (
+            candidate / "metadata" / "hotfix.json"
+        )
+        sources[f"hotfix-spec-v{version}.json"] = (
+            candidate / "qualification" / "hotfix.json"
         )
     for target, extension in CLI_TARGETS.items():
         name = f"hopspot-flash-{version}-{target}{extension}"
