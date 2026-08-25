@@ -282,15 +282,11 @@ pub async fn run(spawner: Spawner) -> ! {
     let usb_fut = usb.run();
 
     let heartbeat = async {
-        let mut n = 0u32;
         loop {
-            Timer::after(Duration::from_secs(1)).await;
-            n = n.wrapping_add(1);
-            if n & 1 == 0 {
-                led.set_low();
-            } else {
-                led.set_high();
-            }
+            led.set_low();
+            Timer::after(super::heartbeat::NORMAL.illuminated()).await;
+            led.set_high();
+            Timer::after(super::heartbeat::NORMAL.dark()).await;
         }
     };
 
