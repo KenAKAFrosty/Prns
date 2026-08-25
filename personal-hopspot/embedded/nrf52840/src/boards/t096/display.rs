@@ -5,6 +5,9 @@ use embassy_time::{Duration, Timer};
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::{DrawTarget, OriginDimensions, Pixel, Point, Size};
 use embedded_hal::spi::SpiDevice;
+use personal_hopspot_core::{CanvasDimensions, QuarterTurn, RotatedCanvasMapping};
+
+use crate::boards::DisplayIoError;
 
 const LOGICAL_WIDTH: u32 = 64;
 const LOGICAL_HEIGHT: u32 = 128;
@@ -21,11 +24,18 @@ const CONTENT_Y: u16 = (PANEL_HEIGHT - CONTENT_HEIGHT) / 2;
 // makes that a 160x80 landscape surface and moves the 24-pixel offset onto the row address.
 const ROTATION_ONE_COLUMN_OFFSET: u16 = 0;
 const ROTATION_ONE_ROW_OFFSET: u16 = 24;
+const CANVAS_MAPPING: RotatedCanvasMapping = RotatedCanvasMapping::new(
+    CanvasDimensions::new(LOGICAL_WIDTH, LOGICAL_HEIGHT),
+    CanvasDimensions::new(CONTENT_WIDTH as u32, CONTENT_HEIGHT as u32),
+    QuarterTurn::Clockwise,
+);
 
 const SWRESET: u8 = 0x01;
+const SLPIN: u8 = 0x10;
 const SLPOUT: u8 = 0x11;
 const NORON: u8 = 0x13;
 const INVOFF: u8 = 0x20;
+const DISPOFF: u8 = 0x28;
 const DISPON: u8 = 0x29;
 const CASET: u8 = 0x2a;
 const RASET: u8 = 0x2b;
@@ -48,11 +58,6 @@ const GMCTRN1: u8 = 0xe1;
 // MY | MV | BGR: TFT_eSPI's rotation 1 for ST7735_REDTAB160x80, the configuration used by
 // Meshtastic's hardware-validated T096 support.
 const LANDSCAPE_MADCTL: u8 = 0x80 | 0x20 | 0x08;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum DisplayIoError {
-    Spi,
-}
 
 pub(crate) struct St7735Display<SPI> {
     spi: SPI,
@@ -140,12 +145,39 @@ where
 
         self.clear_panel()?;
         self.initialized = true;
+        self.has_displayed_frame = false;
         self.backlight.set_low();
         Ok(())
     }
 
-    pub(crate) const fn is_initialized(&self) -> bool {
-        self.initialized
+    pub(crate) async fn wake(&mut self) -> Result<(), DisplayIoError> {
+        if !self.initialized {
+            return self.initialize().await;
+        }
+        self.command(SLPOUT, &[])?;
+        Timer::after(Duration::from_millis(120)).await;
+        self.command(DISPON, &[])?;
+        Timer::after(Duration::from_millis(100)).await;
+        self.has_displayed_frame = false;
+        self.backlight.set_low();
+        Ok(())
+    }
+
+    pub(crate) async fn darken(&mut self) -> Result<(), DisplayIoError> {
+        self.backlight.set_high();
+        if !self.initialized {
+            return Ok(());
+        }
+        self.command(DISPOFF, &[])?;
+        self.command(SLPIN, &[])?;
+        Timer::after(Duration::from_millis(120)).await;
+        Ok(())
+    }
+
+    pub(crate) fn force_dark(&mut self) {
+        self.backlight.set_high();
+        self.initialized = false;
+        self.has_displayed_frame = false;
     }
 
     /// Flush the 64x128 shared portrait canvas, rotated clockwise and centered on the 160x80 TFT.
@@ -163,10 +195,10 @@ where
         self.write_command(RAMWR)?;
         let mut row = [0u8; CONTENT_WIDTH as usize * 2];
         for physical_y in 0..CONTENT_HEIGHT {
-            let logical_x = u32::from(physical_y);
             for physical_x in 0..CONTENT_WIDTH {
-                let logical_y = u32::from(CONTENT_WIDTH - 1 - physical_x);
-                let color = if self.pixel_is_on(logical_x, logical_y) {
+                let logical =
+                    CANVAS_MAPPING.logical_point(u32::from(physical_x), u32::from(physical_y));
+                let color = if self.pixel_is_on(logical.x, logical.y) {
                     [0xff, 0xff]
                 } else {
                     [0x00, 0x00]

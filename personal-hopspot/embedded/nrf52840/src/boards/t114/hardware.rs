@@ -17,7 +17,7 @@ use static_cell::StaticCell;
 
 use crate::boards::status_led::StatusLed;
 
-use super::display::DisplayIoError;
+use crate::boards::{DisplayBringup, DisplayIoError};
 
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
@@ -33,6 +33,7 @@ type T114Radio = Sx126x<T114SpiDevice, Input<'static>, Input<'static>, Output<'s
 pub(crate) type T114LoraInterface = LoRaInterface<'static, T114Radio>;
 
 pub(crate) type T114Display = super::DisplayDriver<T114SpiDevice>;
+pub(crate) type T114DisplayBringup = DisplayBringup<T114Display, DisplayIoError>;
 
 type T114UsbDriver = Driver<'static, &'static SoftwareVbusDetect>;
 
@@ -40,7 +41,7 @@ pub(crate) struct T114Hardware {
     pub(crate) usb: T114UsbDriver,
     pub(crate) vbus: &'static SoftwareVbusDetect,
     pub(crate) radio: T114Radio,
-    pub(crate) display: T114Display,
+    pub(crate) display: T114DisplayBringup,
     pub(crate) battery: T114Battery,
     pub(crate) button: Input<'static>,
     pub(crate) status_led: StatusLed,
@@ -85,8 +86,7 @@ impl T114Board {
         interrupt::TWISPI1.set_priority(Priority::P3);
         interrupt::SAADC.set_priority(Priority::P3);
         static SOFTWARE_VBUS: StaticCell<SoftwareVbusDetect> = StaticCell::new();
-        let vbus: &'static SoftwareVbusDetect =
-            &*SOFTWARE_VBUS.init(SoftwareVbusDetect::new(true, true));
+        let vbus = crate::runtime::software_vbus::initialize(&SOFTWARE_VBUS);
         let usb = Driver::new(peripherals.USBD, Irqs, vbus);
 
         let mut display_spim_config = spim::Config::default();
@@ -104,17 +104,20 @@ impl T114Board {
         let display_reset = Output::new(peripherals.P0_02, Level::High, OutputDrive::Standard);
         let display_power = Output::new(peripherals.P0_03, Level::Low, OutputDrive::Standard);
         let display_backlight = Output::new(peripherals.P0_15, Level::High, OutputDrive::Standard);
-        let mut display = super::Display::new(
+        let mut display = super::DisplayDriver::new(
             display_spi,
             display_dc,
             display_reset,
             display_power,
             display_backlight,
         );
-        match display.initialize().await {
-            Ok(()) => {}
-            Err(DisplayIoError::Spi) => {}
-        }
+        let display = match display.initialize().await {
+            Ok(()) => DisplayBringup::Ready(display),
+            Err(error) => {
+                display.force_dark();
+                DisplayBringup::Unavailable(error)
+            }
+        };
 
         let mut battery_channel = ChannelConfig::single_ended(peripherals.P0_04);
         battery_channel.reference = Reference::INTERNAL;
