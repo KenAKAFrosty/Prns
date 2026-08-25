@@ -16,8 +16,6 @@ use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
 use personal_rns::manifold::embassy::{EmbassyHost, EmbassyInterfaceStatus, InterfaceLifecycle};
 use personal_rns::manifold::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
-#[cfg(not(any(feature = "board-t096", feature = "board-t1000e")))]
-use personal_rns::runtime::NoPersistence;
 use personal_rns::runtime::{
     minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
     EmbassyInterfaceStore, ManifoldLaneSet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
@@ -136,16 +134,11 @@ static BLE_MANIFOLD_LANE: StaticManifoldLane<
 static USB_MANIFOLD_LANE: StaticManifoldLane<Mtx, EMBEDDED_MAX_WIRE_FRAME_LEN, LANE_DEPTH> =
     StaticManifoldLane::new();
 
-#[cfg(not(any(feature = "board-t096", feature = "board-t1000e")))]
 #[embassy_executor::task]
-async fn manifold_task(node: &'static mut Node) {
-    node.run_manifold_with_interface_store(&INTERFACE_STORE)
-        .await
-}
-
-#[cfg(any(feature = "board-t096", feature = "board-t1000e"))]
-#[embassy_executor::task]
-async fn manifold_task(node: &'static mut Node, persistence: &'static mut board::Persistence) {
+async fn manifold_task(
+    node: &'static mut Node,
+    persistence: &'static mut super::learned_state::BoardPersistence,
+) {
     let _ = node.restore_embedded_persistence(persistence).await;
     node.run_manifold_with_persistence_and_interface_store(&INTERFACE_STORE, persistence)
         .await
@@ -265,6 +258,16 @@ pub async fn run(spawner: Spawner) -> ! {
     ))]
     let sd = bluetooth::enable(spawner, vbus, ble_identity);
 
+    #[cfg(any(
+        feature = "board-t096",
+        feature = "board-t114",
+        feature = "board-mesh-tower-v2"
+    ))]
+    let shared_flash = super::learned_state::take_flash(sd);
+    #[cfg(feature = "board-t1000e")]
+    let shared_flash = super::learned_state::take_flash(flash);
+    let persistence = super::learned_state::new(shared_flash);
+
     let transport_secret = node_identity.transport_secret();
     let destination_secret = node_identity.into_destination_secret();
     #[cfg(any(
@@ -281,12 +284,8 @@ pub async fn run(spawner: Spawner) -> ! {
     .expect("the hopspot destination names are valid")
     .node_page;
     let mut manifold_lanes = ManifoldLanes::new();
-    #[cfg(feature = "board-t096")]
-    let (loaded_lora_profile, persistence) = selected::load_profile(sd).await;
-    #[cfg(feature = "board-t114")]
-    let loaded_lora_profile = selected::load_profile(sd).await;
-    #[cfg(feature = "board-t1000e")]
-    let persistence = board::new_persistence(flash);
+    #[cfg(any(feature = "board-t096", feature = "board-t114"))]
+    let loaded_lora_profile = selected::load_profile(shared_flash).await;
     #[cfg(any(feature = "board-t096", feature = "board-t114"))]
     let lora_profile = loaded_lora_profile.profile;
     #[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
@@ -356,7 +355,6 @@ pub async fn run(spawner: Spawner) -> ! {
     );
     let host = EmbassyHost::new(runtime_entropy as fn(&mut [u8]));
     static NODE: StaticCell<Node> = StaticCell::new();
-    #[cfg(any(feature = "board-t096", feature = "board-t1000e"))]
     let recipe = PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
         pre_configured_destinations: hopspot::HopspotDestinationSet::new(
@@ -372,36 +370,12 @@ pub async fn run(spawner: Spawner) -> ! {
         persistence,
         on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
     };
-    #[cfg(not(any(feature = "board-t096", feature = "board-t1000e")))]
-    let recipe = PrnsNodeRecipe {
-        transport_identity: Some(transport_secret),
-        pre_configured_destinations: hopspot::HopspotDestinationSet::new(
-            destination_secret,
-            ANNOUNCE_APP_DATA,
-            NODE_ANNOUNCE_APP_DATA,
-        )
-        .into_preconfigured_destinations(),
-        app_state: (),
-        storage: Storage,
-        request_endpoints: hopspot::node_pages::NodePageRoutes,
-        interfaces: personal_rns::runtime::ManuallyAttached,
-        persistence: NoPersistence,
-        on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
-    };
-    #[cfg(any(feature = "board-t096", feature = "board-t1000e"))]
     let (node, persistence) =
         PrnsNode::init_static_with_persistence(&NODE, recipe, manifold_wiring, host);
-    #[cfg(not(any(feature = "board-t096", feature = "board-t1000e")))]
-    let node = PrnsNode::init_static(&NODE, recipe, manifold_wiring, host);
     node.set_protocol_policy(hopspot::EMBEDDED_HOPSPOT_PROTOCOL_POLICY);
-    #[cfg(any(feature = "board-t096", feature = "board-t1000e"))]
-    {
-        static PERSISTENCE: StaticCell<board::Persistence> = StaticCell::new();
-        let persistence = PERSISTENCE.init(persistence);
-        spawner.spawn(manifold_task(node, persistence).expect("manifold task fits"));
-    }
-    #[cfg(not(any(feature = "board-t096", feature = "board-t1000e")))]
-    spawner.spawn(manifold_task(node).expect("manifold task fits"));
+    static PERSISTENCE: StaticCell<super::learned_state::BoardPersistence> = StaticCell::new();
+    let persistence = PERSISTENCE.init(persistence);
+    spawner.spawn(manifold_task(node, persistence).expect("manifold task fits"));
 
     let lora_seam = lora_lane.into_seam(NOTIFY.sender(), runtime_entropy);
     let usb_seam = usb_lane.into_seam(NOTIFY.sender(), runtime_entropy);

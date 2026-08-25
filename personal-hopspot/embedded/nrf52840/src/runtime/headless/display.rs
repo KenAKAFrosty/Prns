@@ -7,12 +7,7 @@ use embassy_futures::join::join5;
 use embassy_futures::join::{join3, join4};
 use embassy_futures::select::{select3, Either3};
 use embassy_nrf::gpio::Input;
-#[cfg(feature = "board-t096")]
-use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
-#[cfg(feature = "board-t096")]
-use nrf_softdevice::Flash;
-use nrf_softdevice::Softdevice;
 use personal_hopspot_core as hopspot;
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
 use personal_rns::interfaces::lora::{RadioProfile, DEFAULT_915_PROFILE};
@@ -22,19 +17,13 @@ use personal_rns::interfaces::{
 use personal_rns::lora::{LoRaApplyOutcome, LoRaSpectrumStatus};
 use personal_rns::manifold::embassy::EmbassyInterfaceStatus;
 use personal_rns::runtime::PrnsNodeHandle;
-#[cfg(feature = "board-t096")]
-use personal_rns::runtime::SharedNorFlash;
 use personal_rns::storage::StorageLayout;
 use personal_rns::wire::DestinationHash;
-#[cfg(feature = "board-t096")]
-use static_cell::StaticCell;
 
 use crate::boards::selected as board;
 use crate::boards::{DisplayBringup, DisplayIoError};
 
 use super::bluetooth::{self, BluetoothAutoStatus, BLE_SHARED, BLE_SUPERVISOR_ID, MEMBERS};
-#[cfg(feature = "board-t096")]
-use super::Mtx;
 use super::{BLE_MANIFOLD_LANE, COMMANDS, COMPLETION, INTERFACE_STORE, LORA_CONTROL};
 
 pub(super) const INTERFACE_CAPACITY: usize = 2 + MEMBERS;
@@ -53,7 +42,7 @@ async fn apply_display_power(
 }
 
 pub(super) struct LoadedProfile {
-    pub(super) store: board::ProfileStore,
+    pub(super) store: ProfileStore,
     pub(super) profile: RadioProfile,
     pub(super) startup_notice: Option<hopspot::UiNotice>,
 }
@@ -61,7 +50,7 @@ pub(super) struct LoadedProfile {
 pub(super) struct FaceInput {
     pub(super) display: board::Display,
     pub(super) battery: board::Battery,
-    pub(super) profile_store: board::ProfileStore,
+    pub(super) profile_store: ProfileStore,
     pub(super) identity_startup_notice: Option<hopspot::UiNotice>,
     pub(super) profile_startup_notice: Option<hopspot::UiNotice>,
     pub(super) lora_profile: RadioProfile,
@@ -70,6 +59,8 @@ pub(super) struct FaceInput {
     pub(super) lora_spectrum: &'static LoRaSpectrumStatus,
     pub(super) node_page_destination: DestinationHash,
 }
+
+type ProfileStore = hopspot::RadioProfileStore<super::super::learned_state::BoardFlash>;
 
 pub(super) const fn heartbeat_illuminated_ms() -> u64 {
     100
@@ -80,9 +71,10 @@ pub(super) async fn maintain() {
     board::maintain().await;
 }
 
-#[cfg(feature = "board-t114")]
-pub(super) async fn load_profile(sd: &'static Softdevice) -> LoadedProfile {
-    let mut store = board::new_profile_store(sd);
+pub(super) async fn load_profile(
+    shared_flash: super::super::learned_state::BoardFlash,
+) -> LoadedProfile {
+    let mut store = hopspot::RadioProfileStore::new(shared_flash, board::RADIO_PROFILE_PAGES);
     let loaded = match store.load(DEFAULT_915_PROFILE).await {
         Ok(loaded) => loaded,
         Err(_) => hopspot::LoadedRadioProfile {
@@ -100,35 +92,6 @@ pub(super) async fn load_profile(sd: &'static Softdevice) -> LoadedProfile {
         profile: loaded.profile,
         startup_notice,
     }
-}
-
-#[cfg(feature = "board-t096")]
-pub(super) async fn load_profile(sd: &'static Softdevice) -> (LoadedProfile, board::Persistence) {
-    let flash = Flash::take(sd);
-    static FLASH_STORAGE: StaticCell<Mutex<Mtx, Flash>> = StaticCell::new();
-    let shared_flash = SharedNorFlash::new(FLASH_STORAGE.init(Mutex::new(flash)), 1024 * 1024);
-    let persistence = board::new_persistence(shared_flash);
-    let mut store = hopspot::RadioProfileStore::new(shared_flash, board::RADIO_PROFILE_PAGES);
-    let loaded = match store.load(DEFAULT_915_PROFILE).await {
-        Ok(loaded) => loaded,
-        Err(_) => hopspot::LoadedRadioProfile {
-            profile: DEFAULT_915_PROFILE,
-            follows_default: true,
-            notice: Some(hopspot::RadioProfileLoadNotice::Reset),
-        },
-    };
-    let startup_notice = loaded.notice.map(|notice| match notice {
-        hopspot::RadioProfileLoadNotice::Recovered => hopspot::UiNotice::ProfileRecovered,
-        hopspot::RadioProfileLoadNotice::Reset => hopspot::UiNotice::ProfileReset,
-    });
-    (
-        LoadedProfile {
-            store,
-            profile: loaded.profile,
-            startup_notice,
-        },
-        persistence,
-    )
 }
 
 pub(super) fn face(input: FaceInput) -> impl Future {
@@ -162,7 +125,6 @@ pub(super) fn face(input: FaceInput) -> impl Future {
         });
         let mut activity = hopspot::CardActivityTracker::<{ MEMBERS + 4 }>::new();
         let mut battery_gauge = hopspot::BatteryGauge::lipo();
-        #[cfg(feature = "board-t096")]
         let mut persistence_notice = hopspot::PersistenceNotice::new();
         let mut working_lora_profile = lora_profile;
         let startup_notice = identity_startup_notice.or(profile_startup_notice);
@@ -208,8 +170,11 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                 local_docs: None,
             };
             ui_state.sync(content);
-            #[cfg(feature = "board-t096")]
-            persistence_notice.update(&mut ui_state, board::persistence_state(), now_ms);
+            persistence_notice.update(
+                &mut ui_state,
+                super::super::learned_state::persistence_state(),
+                now_ms,
+            );
             let mut details = hopspot::snapshots_to_interface_menu_details(
                 ui_state.selected_card(content.cards),
                 &snapshots,

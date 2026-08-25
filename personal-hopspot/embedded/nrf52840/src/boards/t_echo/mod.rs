@@ -2,7 +2,6 @@ mod display;
 mod hardware;
 mod identity;
 mod input;
-mod persistence;
 mod ssd1681;
 
 use personal_rns::interfaces::InterfaceId;
@@ -18,10 +17,9 @@ pub(crate) use identity::{
     bootstrap_ble_identity, bootstrap_node_identity, startup_notice as identity_startup_notice,
 };
 pub(crate) use input::{drive_button, drive_frontlight, EVENTS as INPUT_EVENTS};
-pub(crate) use persistence::{
-    new as new_persistence, persistence_state, TechoPersistence as Persistence,
-};
 
+pub(crate) const JOURNAL_LAYOUT: personal_rns::persistence::FlashJournalLayout =
+    personal_hopspot_core::T_ECHO_JOURNAL_LAYOUT;
 pub(crate) const RADIO_PROFILE_PAGES: [u32; 2] =
     personal_hopspot_core::NRF52840_RADIO_PROFILE_PAGES;
 pub(crate) const USB_MANUFACTURER: &str = "Stay Personal";

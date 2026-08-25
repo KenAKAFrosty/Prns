@@ -1,8 +1,6 @@
 use embassy_executor::Spawner;
 use embassy_futures::join::{join, join3, join5};
 use embassy_futures::select::{select3, Either3};
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::mutex::Mutex;
 use embassy_time::{Duration, Timer};
 use embassy_usb::{Builder, Config as UsbConfig};
 use static_cell::{ConstStaticCell, StaticCell};
@@ -11,7 +9,7 @@ use embedded_graphics::prelude::*;
 use epd_waveshare::color::Color as EpdColor;
 
 use nrf_softdevice::ble::l2cap;
-use nrf_softdevice::{Flash, Softdevice};
+use nrf_softdevice::Softdevice;
 
 use personal_hopspot_core as hopspot;
 use personal_rns::bluetooth_auto::{BluetoothAuto, BluetoothAutoStatus};
@@ -23,9 +21,7 @@ use personal_rns::interfaces::{ConnectionState, InterfaceStatus};
 use personal_rns::lora::{LoRaApplyOutcome, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
 use personal_rns::manifold::embassy::{EmbassyHost, EmbassyInterfaceStatus};
 use personal_rns::manifold::interface_seam::Interface;
-use personal_rns::runtime::{
-    Fleet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, SharedNorFlash,
-};
+use personal_rns::runtime::{Fleet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe};
 use personal_rns::storage::StorageLayout;
 use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
 use personal_rns::usb_auto::{
@@ -59,7 +55,10 @@ const USB_CONFIG_DESCRIPTOR_BYTES: usize = 64;
 const USB_BOS_DESCRIPTOR_BYTES: usize = 64;
 
 #[embassy_executor::task]
-async fn manifold_task(node: &'static mut Node, persistence: &'static mut board::Persistence) {
+async fn manifold_task(
+    node: &'static mut Node,
+    persistence: &'static mut super::learned_state::BoardPersistence,
+) {
     let _ = node.restore_embedded_persistence(persistence).await;
     node.run_manifold_with_persistence_and_interface_store(&INTERFACE_STORE, persistence)
         .await
@@ -126,10 +125,7 @@ pub async fn run(spawner: Spawner) -> ! {
     let l2cap: &'static l2cap::L2cap<L2capPacket> = L2CAP.init(l2cap::L2cap::init(sd));
     let sd: &'static Softdevice = sd;
     spawner.spawn(softdevice_task(sd, vbus).expect("softdevice task fits"));
-    let flash = Flash::take(sd);
-    static FLASH_STORAGE: StaticCell<Mutex<CriticalSectionRawMutex, Flash>> = StaticCell::new();
-    let flash = FLASH_STORAGE.init(Mutex::new(flash));
-    let shared_flash = SharedNorFlash::new(flash, 1024 * 1024);
+    let shared_flash = super::learned_state::take_flash(sd);
     let mut lora_profile_store =
         hopspot::RadioProfileStore::new(shared_flash, board::RADIO_PROFILE_PAGES);
     let loaded_lora_profile = match lora_profile_store.load(DEFAULT_915_PROFILE).await {
@@ -251,13 +247,13 @@ pub async fn run(spawner: Spawner) -> ! {
         storage: Storage,
         request_endpoints: hopspot::node_pages::NodePageRoutes,
         interfaces: personal_rns::runtime::ManuallyAttached,
-        persistence: board::new_persistence(shared_flash),
+        persistence: super::learned_state::new(shared_flash),
         on_event: ignore_events as for<'a> fn(PrnsEvent<'a>, &()),
     };
     let (node, persistence) =
         PrnsNode::init_static_with_persistence(&NODE, recipe, manifold_wiring, host);
     node.set_protocol_policy(personal_hopspot_core::EMBEDDED_HOPSPOT_PROTOCOL_POLICY);
-    static PERSISTENCE: StaticCell<board::Persistence> = StaticCell::new();
+    static PERSISTENCE: StaticCell<super::learned_state::BoardPersistence> = StaticCell::new();
     let persistence = PERSISTENCE.init(persistence);
     spawner.spawn(manifold_task(node, persistence).expect("manifold task fits"));
     let lora_seam = lora_lane.into_seam(NOTIFY.sender(), runtime_entropy);
@@ -352,7 +348,11 @@ pub async fn run(spawner: Spawner) -> ! {
                 local_docs: None,
             };
             ui_state.sync(content);
-            if persistence_notice.update(&mut ui_state, board::persistence_state(), now_ms) {
+            if persistence_notice.update(
+                &mut ui_state,
+                super::learned_state::persistence_state(),
+                now_ms,
+            ) {
                 refresh_urgency = hopspot::EinkRefreshUrgency::Immediate;
             }
             if let Some((until, owner)) = notice_until_ms {
