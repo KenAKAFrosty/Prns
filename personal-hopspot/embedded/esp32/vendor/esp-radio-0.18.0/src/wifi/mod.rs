@@ -449,8 +449,8 @@ impl AuthenticationMethod {
             // we const-assert we know all the auth-methods the wifi driver knows and it shouldn't
             // return anything else.
             //
-            // From observation the drivers return `wifi_auth_mode_t_WIFI_AUTH_OPEN` if the method
-            // is unsupported by the chip-specific radio archive.
+            // From observation, the driver can report `wifi_auth_mode_t_WIFI_AUTH_OPEN` when a
+            // scanned authentication method is unsupported by the linked chip-specific supplicant.
             _ => AuthenticationMethod::None,
         }
     }
@@ -3321,9 +3321,9 @@ ignored."
                 ftm_responder: false,
                 pmf_cfg: wifi_pmf_config_t {
                     capable: true,
-                    required: false,
+                    required: config.pmf_required,
                 },
-                sae_pwe_h2e: 0,
+                sae_pwe_h2e: wifi_sae_pwe_method_t_WPA3_SAE_PWE_BOTH,
                 csa_count: 3,
                 dtim_period: config.dtim_period,
                 transition_disable: 0,
@@ -3367,15 +3367,15 @@ ignored."
                 },
                 pmf_cfg: wifi_pmf_config_t {
                     capable: true,
-                    required: false,
+                    required: config.pmf_required,
                 },
-                sae_pwe_h2e: 3,
+                sae_pwe_h2e: wifi_sae_pwe_method_t_WPA3_SAE_PWE_BOTH,
                 _bitfield_align_1: [0; 0],
                 _bitfield_1: __BindgenBitfieldUnit::new([0; 4]),
                 failure_retry_cnt: config.failure_retry_cnt,
                 _bitfield_align_2: [0; 0],
                 _bitfield_2: __BindgenBitfieldUnit::new([0; 4]),
-                sae_pk_mode: 0, // ??
+                sae_pk_mode: wifi_sae_pk_mode_t_WPA3_SAE_PK_MODE_DISABLED,
                 sae_h2e_identifier: [0; 32],
             },
         };
@@ -3420,7 +3420,7 @@ ignored."
                 failure_retry_cnt: config.failure_retry_cnt,
                 _bitfield_align_2: [0; 0],
                 _bitfield_2: __BindgenBitfieldUnit::new([0; 4]),
-                sae_pk_mode: 0, // ??
+                sae_pk_mode: wifi_sae_pk_mode_t_WPA3_SAE_PK_MODE_DISABLED,
                 sae_h2e_identifier: [0; 32],
             },
         };
