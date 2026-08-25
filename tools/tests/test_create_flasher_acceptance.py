@@ -301,7 +301,7 @@ class AcceptanceScaffoldTests(unittest.TestCase):
                 json.loads(path.read_text(encoding="utf-8"))["schema"]
                 for path in records.glob("0.3.*.json")
             },
-            {4},
+            {4, 6},
         )
         self.assertEqual(
             {
