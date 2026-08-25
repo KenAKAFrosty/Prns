@@ -2,7 +2,7 @@ use embassy_executor::Spawner;
 use embassy_futures::join::join4;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
-use embassy_time::{Duration, Timer};
+use embassy_time::Timer;
 use embassy_usb::{Builder, Config as UsbConfig};
 use static_cell::{ConstStaticCell, StaticCell};
 
@@ -388,10 +388,10 @@ pub async fn run(spawner: Spawner) -> ! {
     let heartbeat = async move {
         loop {
             status_led.illuminate();
-            let illuminated = selected::heartbeat_illuminated_ms();
-            Timer::after(Duration::from_millis(illuminated)).await;
+            let timing = selected::heartbeat_timing();
+            Timer::after(timing.illuminated()).await;
             status_led.extinguish();
-            Timer::after(Duration::from_millis(1_000 - illuminated)).await;
+            Timer::after(timing.dark()).await;
             selected::maintain().await;
         }
     };

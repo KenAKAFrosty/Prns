@@ -14,8 +14,8 @@ use super::{PrnsNodeHandle, COMMANDS, COMPLETION};
 pub(super) const INTERFACE_CAPACITY: usize = 2 + bluetooth::MEMBERS;
 pub(super) const LANE_COUNT: usize = 3;
 
-pub(super) const fn heartbeat_illuminated_ms() -> u64 {
-    100
+pub(super) const fn heartbeat_timing() -> &'static super::super::heartbeat::HeartbeatTiming {
+    &super::super::heartbeat::NORMAL
 }
 
 pub(super) async fn maintain() {

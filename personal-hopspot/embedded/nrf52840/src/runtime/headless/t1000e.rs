@@ -5,14 +5,18 @@ use personal_hopspot_core as hopspot;
 
 use crate::boards::selected as board;
 
+use super::super::heartbeat::{self, HeartbeatTiming};
+
 pub(super) const INTERFACE_CAPACITY: usize = 2;
 pub(super) const LANE_COUNT: usize = INTERFACE_CAPACITY;
 
-pub(super) fn heartbeat_illuminated_ms() -> u64 {
+const GNSS_FIXED_HEARTBEAT: HeartbeatTiming = HeartbeatTiming::with_illuminated_millis(900);
+
+pub(super) fn heartbeat_timing() -> &'static HeartbeatTiming {
     if matches!(board::gnss_snapshot(), hopspot::GnssSnapshot::Fixed(_)) {
-        900
+        &GNSS_FIXED_HEARTBEAT
     } else {
-        100
+        &heartbeat::NORMAL
     }
 }
 

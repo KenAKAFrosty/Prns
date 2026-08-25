@@ -62,8 +62,8 @@ pub(super) struct FaceInput {
 
 type ProfileStore = hopspot::RadioProfileStore<super::super::learned_state::BoardFlash>;
 
-pub(super) const fn heartbeat_illuminated_ms() -> u64 {
-    100
+pub(super) const fn heartbeat_timing() -> &'static super::super::heartbeat::HeartbeatTiming {
+    &super::super::heartbeat::NORMAL
 }
 
 pub(super) async fn maintain() {
