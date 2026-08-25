@@ -22,7 +22,7 @@ use static_cell::StaticCell;
 
 use crate::boards::status_led::StatusLed;
 
-use super::display::DisplayIoError;
+use crate::boards::{DisplayBringup, DisplayIoError};
 
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
@@ -39,6 +39,7 @@ type T096Radio = Sx126x<T096SpiDevice, Input<'static>, Input<'static>, Output<'s
 pub(crate) type T096LoraInterface = LoRaInterface<'static, T096Radio>;
 
 pub(crate) type T096Display = super::DisplayDriver<T096SpiDevice>;
+pub(crate) type T096DisplayBringup = DisplayBringup<T096Display, DisplayIoError>;
 
 type T096UsbDriver = Driver<'static, &'static SoftwareVbusDetect>;
 
@@ -46,7 +47,7 @@ pub(crate) struct T096Hardware {
     pub(crate) usb: T096UsbDriver,
     pub(crate) vbus: &'static SoftwareVbusDetect,
     pub(crate) radio: T096Radio,
-    pub(crate) display: T096Display,
+    pub(crate) display: T096DisplayBringup,
     pub(crate) battery: T096Battery,
     pub(crate) button: Input<'static>,
     pub(crate) status_led: StatusLed,
@@ -105,8 +106,7 @@ impl T096Board {
         interrupt::SAADC.set_priority(Priority::P3);
         interrupt::UARTE1.set_priority(Priority::P3);
         static SOFTWARE_VBUS: StaticCell<SoftwareVbusDetect> = StaticCell::new();
-        let vbus: &'static SoftwareVbusDetect =
-            &*SOFTWARE_VBUS.init(SoftwareVbusDetect::new(true, true));
+        let vbus = crate::runtime::software_vbus::initialize(&SOFTWARE_VBUS);
         let usb = Driver::new(peripherals.USBD, Irqs, vbus);
 
         // VEXT feeds the radio, display, GNSS, and external headers. Keep GNSS disabled and held in
@@ -166,13 +166,14 @@ impl T096Board {
         let display_reset = Output::new(peripherals.P0_13, Level::High, OutputDrive::Standard);
         let display_backlight = Output::new(peripherals.P1_12, Level::High, OutputDrive::Standard);
         let mut display =
-            super::Display::new(display_spi, display_dc, display_reset, display_backlight);
-        match display.initialize().await {
-            Ok(()) => {}
-            // Display initialization is optional to node operation. Its uninitialized marker
-            // keeps the face task dormant while LoRa, USB, BLE, and GNSS remain available.
-            Err(DisplayIoError::Spi) => {}
-        }
+            super::DisplayDriver::new(display_spi, display_dc, display_reset, display_backlight);
+        let display = match display.initialize().await {
+            Ok(()) => DisplayBringup::Ready(display),
+            Err(error) => {
+                display.force_dark();
+                DisplayBringup::Unavailable(error)
+            }
+        };
 
         // AIN1 sees VBAT through Heltec's gated 390k/100k divider. Gain 1/5 against the 0.6 V
         // internal reference yields the 3.0 V ADC range used by Heltec's reference firmware.

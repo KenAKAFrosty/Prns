@@ -117,8 +117,7 @@ impl TechoBoard {
         interrupt::SAADC.set_priority(Priority::P3);
 
         static SOFTWARE_VBUS: StaticCell<SoftwareVbusDetect> = StaticCell::new();
-        let vbus: &'static SoftwareVbusDetect =
-            &*SOFTWARE_VBUS.init(SoftwareVbusDetect::new(true, true));
+        let vbus = crate::runtime::software_vbus::initialize(&SOFTWARE_VBUS);
         let usb_driver = Driver::new(peripherals.USBD, Irqs, vbus);
 
         // Battery sense: VBAT on a 2:1 divider into AIN2 (P0.04), sampled by the SAADC against the 3.0 V
