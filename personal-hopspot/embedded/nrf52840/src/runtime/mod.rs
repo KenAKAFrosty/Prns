@@ -35,6 +35,7 @@ mod headless;
 mod interface_cards;
 #[cfg(feature = "board-t-echo")]
 pub(crate) mod node;
+pub(crate) mod software_vbus;
 
 #[cfg(feature = "board-t-echo")]
 pub use firmware::run;

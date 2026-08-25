@@ -5,6 +5,9 @@ use embassy_time::Timer;
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::{DrawTarget, OriginDimensions, Pixel, Point, Size};
 use embedded_hal::spi::SpiDevice;
+use personal_hopspot_core::{CanvasDimensions, QuarterTurn, RotatedCanvasMapping};
+
+use crate::boards::DisplayIoError;
 
 const LOGICAL_WIDTH: u32 = 64;
 const LOGICAL_HEIGHT: u32 = 128;
@@ -18,11 +21,18 @@ const CONTENT_X: u16 = (PANEL_WIDTH - CONTENT_WIDTH) / 2;
 const CONTENT_Y: u16 = (PANEL_HEIGHT - CONTENT_HEIGHT) / 2;
 const COLUMN_OFFSET: u16 = 40;
 const ROW_OFFSET: u16 = 52;
+const CANVAS_MAPPING: RotatedCanvasMapping = RotatedCanvasMapping::new(
+    CanvasDimensions::new(LOGICAL_WIDTH, LOGICAL_HEIGHT),
+    CanvasDimensions::new(CONTENT_WIDTH as u32, CONTENT_HEIGHT as u32),
+    QuarterTurn::CounterClockwise,
+);
 
 const SWRESET: u8 = 0x01;
+const SLPIN: u8 = 0x10;
 const SLPOUT: u8 = 0x11;
 const NORON: u8 = 0x13;
 const INVON: u8 = 0x21;
+const DISPOFF: u8 = 0x28;
 const DISPON: u8 = 0x29;
 const CASET: u8 = 0x2a;
 const RASET: u8 = 0x2b;
@@ -37,11 +47,6 @@ const _: () = {
     assert!(CONTENT_X + CONTENT_WIDTH <= PANEL_WIDTH);
     assert!(CONTENT_Y + CONTENT_HEIGHT <= PANEL_HEIGHT);
 };
-
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) enum DisplayIoError {
-    Spi,
-}
 
 pub(crate) struct St7789Display<SPI> {
     spi: SPI,
@@ -106,12 +111,39 @@ where
 
         self.clear_panel()?;
         self.initialized = true;
+        self.has_displayed_frame = false;
         self.backlight.set_low();
         Ok(())
     }
 
-    pub(crate) const fn is_initialized(&self) -> bool {
-        self.initialized
+    pub(crate) async fn wake(&mut self) -> Result<(), DisplayIoError> {
+        if self.initialized {
+            self.backlight.set_low();
+            return Ok(());
+        }
+        self.initialize().await
+    }
+
+    pub(crate) async fn darken(&mut self) -> Result<(), DisplayIoError> {
+        self.backlight.set_high();
+        let result = if self.initialized {
+            self.command(DISPOFF, &[])
+                .and_then(|()| self.command(SLPIN, &[]))
+        } else {
+            Ok(())
+        };
+        Timer::after_millis(120).await;
+        self.panel_power.set_high();
+        self.initialized = false;
+        self.has_displayed_frame = false;
+        result
+    }
+
+    pub(crate) fn force_dark(&mut self) {
+        self.backlight.set_high();
+        self.panel_power.set_high();
+        self.initialized = false;
+        self.has_displayed_frame = false;
     }
 
     pub(crate) fn flush(&mut self) -> Result<(), DisplayIoError> {
@@ -128,12 +160,10 @@ where
         self.write_command(RAMWR)?;
         let mut row = [0u8; CONTENT_WIDTH as usize * 2];
         for physical_y in 0..CONTENT_HEIGHT {
-            let logical_x = LOGICAL_WIDTH
-                - 1
-                - u32::from(physical_y) * LOGICAL_WIDTH / u32::from(CONTENT_HEIGHT);
             for physical_x in 0..CONTENT_WIDTH {
-                let logical_y = u32::from(physical_x) * LOGICAL_HEIGHT / u32::from(CONTENT_WIDTH);
-                let color = if self.pixel_is_on(logical_x, logical_y) {
+                let logical =
+                    CANVAS_MAPPING.logical_point(u32::from(physical_x), u32::from(physical_y));
+                let color = if self.pixel_is_on(logical.x, logical.y) {
                     [0xff, 0xff]
                 } else {
                     [0x00, 0x00]

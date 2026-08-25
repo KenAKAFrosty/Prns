@@ -46,14 +46,11 @@ mod bluetooth;
 #[cfg(feature = "board-mesh-tower-v2")]
 #[path = "mesh_tower_v2.rs"]
 mod selected;
-#[cfg(feature = "board-t096")]
-#[path = "t096.rs"]
+#[cfg(any(feature = "board-t096", feature = "board-t114"))]
+#[path = "display.rs"]
 mod selected;
 #[cfg(feature = "board-t1000e")]
 #[path = "t1000e.rs"]
-mod selected;
-#[cfg(feature = "board-t114")]
-#[path = "t114.rs"]
 mod selected;
 
 const USB_CONFIG_DESCRIPTOR_BYTES: usize = 64;
