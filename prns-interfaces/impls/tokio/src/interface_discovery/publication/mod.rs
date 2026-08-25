@@ -5,9 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use prns_core::crypto::{sealed_len, X25519SecretKey};
-use prns_core::engine::{
-    AnnounceAppData, AnnounceAppDataBytes, AnnounceNow, AnnounceNowFailure, AnnounceTarget,
-};
+use prns_core::engine::{AnnounceAppData, AnnounceAppDataBytes, AnnounceNow, AnnounceTarget};
 use prns_core::identity::{RemoteIdentity, ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN, ENCRYPTION_IV_LEN};
 use prns_core::interface_discovery::{
     frame_discovery_publication, prepare_discovery_publication_with_stamp_cache,
@@ -21,7 +19,7 @@ use prns_core::routing::announce::emit::MAX_ANNOUNCE_APP_DATA_LEN;
 use prns_core::wire::DestinationHash;
 use prns_runtime::manifold::driver::TokioHost;
 use prns_runtime::manifold::Host;
-use prns_runtime::runtime::{PrnsNodeHandle, SendError};
+use prns_runtime::runtime::{AnnounceNowError, PrnsNodeHandle};
 use tokio::sync::Notify;
 use tokio::task::{JoinError, JoinHandle};
 
@@ -71,7 +69,7 @@ pub enum TokioDiscoveryPublicationEvent<E> {
     },
     AnnounceFailed {
         interface: InterfaceId,
-        failure: SendError<AnnounceNowFailure>,
+        failure: AnnounceNowError,
     },
     Announced {
         interface: InterfaceId,
@@ -196,7 +194,7 @@ impl TokioInterfaceDiscoveryPublisher {
         Resolve: FnMut(InterfaceId) -> ResolveFuture,
         ResolveFuture: Future<Output = Result<DiscoveryAdvertisement, E>>,
         Send: FnMut(AnnounceAppDataBytes) -> SendFuture,
-        SendFuture: Future<Output = Result<(), SendError<AnnounceNowFailure>>>,
+        SendFuture: Future<Output = Result<(), AnnounceNowError>>,
         Report: FnMut(TokioDiscoveryPublicationEvent<E>),
     {
         loop {

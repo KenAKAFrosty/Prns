@@ -7,9 +7,9 @@ use crate::runtime::request_endpoints::RequestEndpointId;
 use crate::runtime::{SendError, REMOTE_CONTROL_ENDPOINT_ID};
 use crate::units::RttMillis;
 use prns_core::remote_control::{
-    RemoteControlDescription, RemoteControlProtocolError, RemoteControlProtocolVersion,
-    RemoteControlRequestKind, RemoteControlResponse, RemoteControlResponseKind,
-    RemoteControlResponseParseError,
+    RemoteControlAnnounceOutcome, RemoteControlDescription, RemoteControlProtocolError,
+    RemoteControlProtocolVersion, RemoteControlRequestKind, RemoteControlResponse,
+    RemoteControlResponseKind, RemoteControlResponseParseError,
 };
 
 use super::super::PrnsNodeHandle;
@@ -25,6 +25,42 @@ fn encoded_response(response: &RemoteControlResponse) -> std::vec::Vec<u8> {
     let mut encoded = std::vec![0u8; encoded_len];
     assert_eq!(response.write_into(encoded.as_mut_slice()), Ok(encoded_len));
     encoded
+}
+
+#[tokio::test]
+async fn announce_owns_the_remote_control_exchange_and_returns_its_rtt() {
+    let (handle, mut command_rx) = test_handle();
+    let link_id = LinkId::new([0x20; 16]);
+    let requesting = tokio::spawn(async move { handle.remote_control(link_id).announce().await });
+
+    let Some(HostCommand::RequestAny(request)) = command_rx.recv().await else {
+        panic!("announce issues a request command");
+    };
+    assert_eq!(request.link_id, link_id);
+    assert_eq!(
+        request.path_hash,
+        RequestEndpointId::of(REMOTE_CONTROL_ENDPOINT_ID),
+    );
+    assert_eq!(
+        request.data.as_slice(),
+        &[
+            RemoteControlProtocolVersion::V1.wire_value(),
+            crate::runtime::RemoteControlAnnounce::REQUEST
+                .kind()
+                .wire_value(),
+        ],
+    );
+    assert_eq!(
+        request.maximum_response_bytes,
+        crate::runtime::RemoteControlAnnounce::MAXIMUM_RESPONSE_BYTES,
+    );
+    let response = RemoteControlResponse::Announce(RemoteControlAnnounceOutcome::Announced);
+    assert!(request
+        .completion
+        .send(Ok((encoded_response(&response), RttMillis::new(36))))
+        .is_ok());
+
+    assert!(matches!(requesting.await, Ok(Ok(rtt)) if rtt == RttMillis::new(36)));
 }
 
 #[tokio::test]

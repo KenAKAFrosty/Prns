@@ -346,9 +346,9 @@ async fn announce_now_awaits_and_surfaces_its_typed_settlement() {
         .expect("the awaiter is still parked");
     assert_eq!(
         announced.await.expect("the announce task joins"),
-        Err(SendError::Failed(AnnounceNowFailure::Rejected(
+        Err(crate::runtime::AnnounceNowError::Rejected(
             crate::engine::AnnounceNowRejection::UnknownDestination,
-        ))),
+        )),
     );
 }
 

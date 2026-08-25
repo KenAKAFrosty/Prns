@@ -1,5 +1,6 @@
 use super::{CompletionPool, JournalRoute, RequestSlotGuard, NO_AWAITER};
 use crate::engine::{
+    AnnounceAppData, AnnounceNow, AnnounceNowFailure, AnnounceNowRejection, AnnounceTarget,
     CommandId, DeliveryEvidence, IssuedCommand, Journaled, PacketReceiptDelivered, PrnsCommand,
     SendGroupFailure, SendGroupRejection, SendPlainPacketFailure, SendRequestFailure, Settlement,
     MAX_SEND_GROUP_PLAINTEXT_LEN, MAX_SEND_PLAIN_PACKET_PAYLOAD_LEN,
@@ -7,7 +8,7 @@ use crate::engine::{
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
-use crate::runtime::SendError;
+use crate::runtime::{AnnounceNowError, SendError};
 use crate::units::{ByteLimit, RttMillis};
 use crate::wire::DestinationHash;
 use embassy_futures::{block_on, join::join};
@@ -67,9 +68,10 @@ fn request_completions_are_independently_bounded() {
 
 #[test]
 fn response_capacity_costs_memory_only_when_request_slots_exist() {
+    const RESPONSE_CAPACITY: usize = crate::runtime::RemoteControlDescribe::RESPONSE_CAPACITY;
     type NoRequests = CompletionPool<CriticalSectionRawMutex, 4, 0, 0>;
-    type CapacityWithoutRequests = CompletionPool<CriticalSectionRawMutex, 4, 0, 258>;
-    type OneRequest = CompletionPool<CriticalSectionRawMutex, 4, 1, 258>;
+    type CapacityWithoutRequests = CompletionPool<CriticalSectionRawMutex, 4, 0, RESPONSE_CAPACITY>;
+    type OneRequest = CompletionPool<CriticalSectionRawMutex, 4, 1, RESPONSE_CAPACITY>;
 
     assert_eq!(
         core::mem::size_of::<NoRequests>(),
@@ -224,6 +226,33 @@ fn awaited_plain_and_group_sends_preserve_commands_and_typed_settlements() {
         assert!(completions.settle(issued.id, Settlement::SendGroup(Err(failure))));
     }));
     assert_eq!(group, Err(SendError::Failed(failure)));
+}
+
+#[test]
+fn announce_now_awaits_and_preserves_its_typed_settlement() {
+    let commands = Channel::<CriticalSectionRawMutex, IssuedCommand, 1>::new();
+    let completions = Pool::<1>::new();
+    let handle = super::PrnsNodeHandle::new(commands.sender(), &completions);
+    let announce = AnnounceNow {
+        destination: PEER,
+        target: AnnounceTarget::AllInterfaces,
+        app_data: AnnounceAppData::Registered,
+    };
+    let expected = announce.clone();
+    let failure = AnnounceNowFailure::Rejected(AnnounceNowRejection::UnknownDestination);
+
+    let (result, ()) = block_on(join(handle.announce_now(announce), async {
+        let issued = commands.receiver().receive().await;
+        assert_eq!(issued.command, PrnsCommand::AnnounceNow(expected));
+        assert!(completions.settle(issued.id, Settlement::AnnounceNow(Err(failure))));
+    }));
+
+    assert_eq!(
+        result,
+        Err(AnnounceNowError::Rejected(
+            AnnounceNowRejection::UnknownDestination,
+        )),
+    );
 }
 
 #[test]

@@ -16,8 +16,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 
 use crate::engine::{
-    AllowRequester, AllowRequesterFailure, AnnounceNow, AnnounceNowFailure, CloseLink, CommandId,
-    EstablishLink, EstablishLinkFailure, Identify, IdentifyFailure, IssuedCommand, LinkEstablished,
+    AllowRequester, AllowRequesterFailure, AnnounceNow, CloseLink, CommandId, EstablishLink,
+    EstablishLinkFailure, Identify, IdentifyFailure, IssuedCommand, LinkEstablished,
     PacketReceiptDelivered, PathFound, PathRequestId, PrnsCommand, RequestPath, RequestPathFailure,
     SendGroup, SendGroupFailure, SendGroupPayload, SendPlainPacket, SendPlainPacketFailure,
     SendPlainPacketPayload, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
@@ -304,13 +304,13 @@ impl PrnsNodeHandle {
         }
     }
 
-    pub async fn announce_now(
-        &self,
-        announce: AnnounceNow,
-    ) -> Result<(), SendError<AnnounceNowFailure>> {
+    pub async fn announce_now(&self, announce: AnnounceNow) -> Result<(), super::AnnounceNowError> {
         match self.settle(PrnsCommand::AnnounceNow(announce)).await {
-            Some(Settlement::AnnounceNow(result)) => result.map_err(SendError::Failed),
-            Some(_) | None => Err(SendError::NodeStopped),
+            Some(Settlement::AnnounceNow(Ok(()))) => Ok(()),
+            Some(Settlement::AnnounceNow(Err(failure))) => {
+                Err(super::AnnounceNowError::from_failure(failure))
+            }
+            Some(_) | None => Err(super::AnnounceNowError::NodeStopped),
         }
     }
 
@@ -387,6 +387,10 @@ impl PrnsNodeHandle {
 impl super::PrnsNodeApi for PrnsNodeHandle {
     fn issue(&self, command: PrnsCommand) -> Option<CommandId> {
         self.issue(command)
+    }
+
+    async fn announce_now(&self, announce: AnnounceNow) -> Result<(), super::AnnounceNowError> {
+        self.announce_now(announce).await
     }
 
     async fn send_single_packet(

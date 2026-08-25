@@ -10,7 +10,7 @@ const TARGET_ASPECTS: &[&str] = &["remote-control", "target"];
 const CONTROLLER_ASPECTS: &[&str] = &["remote-control", "controller"];
 
 struct TargetState {
-    access: HeapRemoteControlAccessTable,
+    access_table: HeapRemoteControlAccessTable,
     description: RemoteControlDescription,
 }
 
@@ -18,7 +18,7 @@ impl RemoteControlEndpointState for TargetState {
     type AccessTable = HeapRemoteControlAccessTable;
 
     fn remote_control_access(&self) -> &Self::AccessTable {
-        &self.access
+        &self.access_table
     }
 
     fn remote_control_description(&self) -> RemoteControlDescription {
@@ -47,8 +47,8 @@ async fn main() {
         ServeMyRequestEndpoints::No,
     );
 
-    let mut access = HeapRemoteControlAccessTable::default();
-    access
+    let mut access_table = HeapRemoteControlAccessTable::default();
+    access_table
         .upsert(controller_public_identity)
         .expect("growable access table refused an identity");
 
@@ -64,7 +64,7 @@ async fn main() {
         transport_identity: None,
         pre_configured_destinations: [target_destination],
         app_state: TargetState {
-            access,
+            access_table,
             description: RemoteControlDescription::default(),
         },
         storage: GrowableHeap,
@@ -96,20 +96,20 @@ async fn main() {
     let controller_handle = controller.handle();
 
     let announcer = target_handle.clone();
-    let _announce_task = tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(Duration::from_millis(200));
+    let announce_task = tokio::spawn(async move {
         loop {
-            ticker.tick().await;
             if announcer
-                .issue(PrnsCommand::AnnounceNow(AnnounceNow {
+                .announce_now(AnnounceNow {
                     destination: target_destination_hash,
                     target: AnnounceTarget::AllInterfaces,
                     app_data: AnnounceAppData::Registered,
-                }))
-                .is_none()
+                })
+                .await
+                .is_err()
             {
                 return;
             }
+            tokio::time::sleep(Duration::from_secs(2)).await;
         }
     });
 
@@ -123,6 +123,7 @@ async fn main() {
                 break;
             }
         }
+        announce_task.abort();
         let link_id = controller_handle
             .establish_link(target_destination_hash)
             .await
@@ -140,20 +141,30 @@ async fn main() {
         assert!(description
             .supported_requests()
             .supports(RemoteControlRequestKind::Describe));
+        assert!(description
+            .supported_requests()
+            .supports(RemoteControlRequestKind::Announce));
         println!("Authorized Describe returned {description:?} in {rtt:?}");
+
+        let announce_rtt = controller_handle
+            .remote_control(link_id)
+            .announce()
+            .await
+            .expect("announce request did not settle");
+        println!("Authorized Announce completed in {announce_rtt:?}");
     };
 
     tokio::select! {
         result = tokio::time::timeout(EXCHANGE_TIMEOUT, exchange) => {
-            result.expect("Describe did not complete within 10 seconds");
+            result.expect("RemoteControl exchange did not complete within 10 seconds");
         }
         result = target.run() => {
             result.expect("target failed");
-            panic!("target stopped before Describe completed");
+            panic!("target stopped before RemoteControl exchange completed");
         }
         result = controller.run() => {
             result.expect("controller failed");
-            panic!("controller stopped before Describe completed");
+            panic!("controller stopped before RemoteControl exchange completed");
         }
     }
 }

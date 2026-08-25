@@ -31,7 +31,10 @@ impl RequestEndpoint for Large {
     const ENDPOINT_ID: &'static str = REQUEST_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(mut context: RequestContext<'_, ()>) -> Result<(), Decline> {
+    async fn handle(
+        mut context: RequestContext<'_, ()>,
+        _node: &impl personal_rns::runtime::PrnsNodeApi,
+    ) -> Result<(), Decline> {
         let expected =
             messagepack_binary(REQUEST_FROM_STOCK).map_err(|_| Decline::ResponseTooLarge)?;
         if context.data != expected {

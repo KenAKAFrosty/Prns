@@ -1,12 +1,13 @@
 pub use prns_runtime::runtime::{
-    assemble_node, configure_preconfigured_destination, request_endpoints, AssembledNode,
-    BlackholeSeedReport, ClearAnnounceQueuesOutcome, ConfigurePreconfiguredDestinationError,
-    DestinationIdentityRetentionControl, DestinationIdentityRetentionControlError, Diagnostic,
-    DropRouteOutcome, DropRoutesViaOutcome, IdentityBlackholeControl,
-    IdentityBlackholeControlError, IdentityBlackholeSource, IdentityBlackholeSourceError,
-    ManuallyAttached, Message, NoPersistence, PreConfiguredDestination, PrnsEvent, PrnsNodeApi,
-    PrnsNodeRecipe, RemoteControlError, RoutingControl, RoutingControlError, RuntimeHealth,
-    SendError, ServeMyRequestEndpoints,
+    assemble_node, configure_preconfigured_destination, request_endpoints, AnnounceNowError,
+    AssembledNode, BlackholeSeedReport, ClearAnnounceQueuesOutcome,
+    ConfigurePreconfiguredDestinationError, DestinationIdentityRetentionControl,
+    DestinationIdentityRetentionControlError, Diagnostic, DropRouteOutcome, DropRoutesViaOutcome,
+    IdentityBlackholeControl, IdentityBlackholeControlError, IdentityBlackholeSource,
+    IdentityBlackholeSourceError, ManuallyAttached, Message, NoPersistence,
+    PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, RemoteControlAnnounce,
+    RemoteControlAnnounceFailure, RemoteControlDescribe, RemoteControlError, RoutingControl,
+    RoutingControlError, RuntimeHealth, SendError, ServeMyRequestEndpoints,
 };
 
 #[cfg(feature = "alloc")]

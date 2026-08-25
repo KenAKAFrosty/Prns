@@ -198,7 +198,7 @@ async fn dispatch<St, R: RequestEndpointSet<St>>(
     );
     let responder = inbound.respond_token();
     let mut body = RunnerResponse::Buffered(std::vec::Vec::new());
-    match dispatch_request::<St, R>(state, request.path_hash, inbound, &mut body).await {
+    match dispatch_request::<St, R>(state, commands, request.path_hash, inbound, &mut body).await {
         Ok(()) => {
             let _response_guard = response_lane.lock().await;
             let result = match body {
@@ -305,6 +305,7 @@ mod tests {
 
         async fn dispatch(
             _context: RequestContext<'_, ()>,
+            _node: &impl crate::runtime::PrnsNodeApi,
             _path_hash: RequestPathHash,
         ) -> Result<(), Decline> {
             std::panic::panic_any("request handler")
@@ -349,6 +350,7 @@ mod tests {
 
         async fn dispatch(
             mut context: RequestContext<'_, ()>,
+            _node: &impl crate::runtime::PrnsNodeApi,
             _path_hash: RequestPathHash,
         ) -> Result<(), Decline> {
             context.respond("pong")

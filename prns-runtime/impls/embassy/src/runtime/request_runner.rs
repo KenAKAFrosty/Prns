@@ -174,7 +174,7 @@ async fn dispatch<
     );
     let responder = inbound.respond_token();
     let mut body = RunnerResponse::Buffered(RespondData::new());
-    match dispatch_request::<St, R>(state, request.path_hash, inbound, &mut body).await {
+    match dispatch_request::<St, R>(state, &commands, request.path_hash, inbound, &mut body).await {
         Ok(()) => match body {
             RunnerResponse::Buffered(body) => {
                 commands.respond_owned_packed(responder, body);
@@ -212,7 +212,10 @@ mod tests {
         const ENDPOINT_ID: &'static str = "/destination";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-        async fn handle(mut context: RequestContext<'_, ()>) -> Result<(), Decline> {
+        async fn handle(
+            mut context: RequestContext<'_, ()>,
+            _node: &impl crate::runtime::PrnsNodeApi,
+        ) -> Result<(), Decline> {
             let destination = context.destination;
             context.respond(destination.as_bytes())
         }
@@ -224,10 +227,11 @@ mod tests {
 
         async fn dispatch(
             context: RequestContext<'_, ()>,
+            node: &impl crate::runtime::PrnsNodeApi,
             path_hash: RequestPathHash,
         ) -> Result<(), Decline> {
             if path_hash == RequestPathHash::of(DestinationEcho::ENDPOINT_ID) {
-                DestinationEcho::handle(context).await
+                DestinationEcho::handle(context, node).await
             } else {
                 Err(Decline::Ignore)
             }
@@ -254,7 +258,10 @@ mod tests {
         const ENDPOINT_ID: &'static str = "/page";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-        async fn handle(mut context: RequestContext<'_, ()>) -> Result<(), Decline> {
+        async fn handle(
+            mut context: RequestContext<'_, ()>,
+            _node: &impl crate::runtime::PrnsNodeApi,
+        ) -> Result<(), Decline> {
             context.respond_static_messagepack_bytes(&PAGE)
         }
     }
@@ -265,10 +272,11 @@ mod tests {
 
         async fn dispatch(
             context: RequestContext<'_, ()>,
+            node: &impl crate::runtime::PrnsNodeApi,
             path_hash: RequestPathHash,
         ) -> Result<(), Decline> {
             if path_hash == RequestPathHash::of(StaticPage::ENDPOINT_ID) {
-                StaticPage::handle(context).await
+                StaticPage::handle(context, node).await
             } else {
                 Err(Decline::Ignore)
             }

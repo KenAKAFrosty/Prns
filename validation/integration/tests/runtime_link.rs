@@ -31,7 +31,10 @@ struct Echo;
 impl RequestEndpoint<Responder> for Echo {
     const ENDPOINT_ID: &'static str = QUERY_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
-    async fn handle(mut cx: RequestContext<'_, Responder>) -> Result<(), Decline> {
+    async fn handle(
+        mut cx: RequestContext<'_, Responder>,
+        _node: &impl personal_rns::runtime::PrnsNodeApi,
+    ) -> Result<(), Decline> {
         let asked = cx.data;
         let _ = cx.write_packed(asked);
         cx.respond(b"-pong")

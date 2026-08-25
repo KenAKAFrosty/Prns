@@ -80,9 +80,11 @@ pub use prns_runtime::interfaces::InterfaceStatus;
 pub use prns_runtime::routing::links::resources::{ResourceMemoryLimits, ResourceStrategy};
 pub use prns_runtime::routing::ProofStrategy;
 pub use prns_runtime::runtime::{
-    Diagnostic, ManuallyAttached, Message, NoPersistence, PreConfiguredDestination, PrnsEvent,
-    PrnsNodeApi, PrnsNodeRecipe, RemoteControlEndpoint, RemoteControlEndpointState,
-    RemoteControlError, RuntimeHealth, SendError, REMOTE_CONTROL_ENDPOINT_ID,
+    AnnounceNowError, Diagnostic, ManuallyAttached, Message, NoPersistence,
+    PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, RemoteControlAnnounce,
+    RemoteControlAnnounceFailure, RemoteControlDescribe, RemoteControlEndpoint,
+    RemoteControlEndpointState, RemoteControlError, RuntimeHealth, SendError,
+    REMOTE_CONTROL_ENDPOINT_ID,
 };
 pub use prns_runtime::wire::{DestinationHash, TransportId};
 

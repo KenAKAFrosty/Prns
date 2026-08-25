@@ -2,8 +2,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceNowFailure, AnnounceTarget, RatchetPolicy,
-    SendSinglePacketFailure,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, RatchetPolicy, SendSinglePacketFailure,
 };
 use personal_rns::interfaces::{ConnectionState, InterfaceStatus};
 use personal_rns::request_endpoints;
@@ -12,8 +11,9 @@ use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::node_introspection::NodeIntrospection;
 use personal_rns::runtime::{
-    Diagnostic, ManuallyAttached, Message, NoPersistence, PreConfiguredDestination, PrnsEvent,
-    PrnsNode, PrnsNodeRecipe, SendError, ServeMyRequestEndpoints,
+    AnnounceNowError, Diagnostic, ManuallyAttached, Message, NoPersistence,
+    PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeRecipe, SendError,
+    ServeMyRequestEndpoints,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::tcp::{TcpClientInterface, TcpServer};
@@ -39,7 +39,7 @@ enum ClientObservation {
 pub enum ClientFailure {
     MissingTarget,
     InvalidDestination,
-    Announce(SendError<AnnounceNowFailure>),
+    Announce(AnnounceNowError),
     UnexpectedDelivery,
     EventStreamClosed,
     Timeout,

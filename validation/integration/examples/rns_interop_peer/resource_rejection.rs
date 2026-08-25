@@ -127,7 +127,10 @@ impl RequestEndpoint<ServerState> for Complete {
     const ENDPOINT_ID: &'static str = COMPLETE_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(mut context: RequestContext<'_, ServerState>) -> Result<(), Decline> {
+    async fn handle(
+        mut context: RequestContext<'_, ServerState>,
+        _node: &impl personal_rns::runtime::PrnsNodeApi,
+    ) -> Result<(), Decline> {
         let expected = messagepack_binary(b"stock-rejection-observed")
             .map_err(|_| Decline::ResponseTooLarge)?;
         if context.data != expected {

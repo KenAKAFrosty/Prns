@@ -8,11 +8,11 @@ use crate::engine::{
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
 use crate::runtime::request_endpoints::RequestEndpointId;
-use crate::runtime::{RemoteControlDescribe, REMOTE_CONTROL_ENDPOINT_ID};
+use crate::runtime::{RemoteControlAnnounce, RemoteControlDescribe, REMOTE_CONTROL_ENDPOINT_ID};
 use crate::units::RttMillis;
 use prns_core::remote_control::{
-    RemoteControlDescription, RemoteControlProtocolVersion, RemoteControlRequestKind,
-    RemoteControlResponse,
+    RemoteControlAnnounceOutcome, RemoteControlDescription, RemoteControlProtocolVersion,
+    RemoteControlRequestKind, RemoteControlResponse,
 };
 
 use super::super::command_handle::JournalRoute;
@@ -29,6 +29,64 @@ fn encoded_response(response: &RemoteControlResponse) -> heapless::Vec<u8, RESPO
         Ok(encoded.len()),
     );
     encoded
+}
+
+#[test]
+fn announce_uses_the_bounded_embassy_request_lane() {
+    let commands = Channel::<M, IssuedCommand, 1>::new();
+    let completions = CompletionPool::<M, 0, 1, RESPONSE_BYTES>::new();
+    let handle = PrnsNodeHandle::new(commands.sender(), &completions);
+    let link_id = LinkId::new([0x20; 16]);
+
+    let (result, ()) = block_on(join(handle.remote_control(link_id).announce(), async {
+        let issued = commands.receiver().receive().await;
+        let PrnsCommand::SendRequest(request) = issued.command else {
+            panic!("announce request command")
+        };
+        assert_eq!(request.link_id, link_id);
+        assert_eq!(
+            request.path_hash,
+            RequestEndpointId::of(REMOTE_CONTROL_ENDPOINT_ID),
+        );
+        assert_eq!(
+            request.data.as_slice(),
+            &[
+                RemoteControlProtocolVersion::V1.wire_value(),
+                RemoteControlAnnounce::REQUEST.kind().wire_value(),
+            ],
+        );
+        assert_eq!(
+            request.maximum_response_bytes,
+            RemoteControlAnnounce::MAXIMUM_RESPONSE_BYTES,
+        );
+
+        let response = encoded_response(&RemoteControlResponse::Announce(
+            RemoteControlAnnounceOutcome::Announced,
+        ));
+        let response_event = Journaled::ResponseReceived {
+            command_id: issued.id,
+            link_id,
+            request_id: RequestId([0x42; 16]),
+            data: response.as_slice(),
+        };
+        assert!(matches!(
+            handle.route_journaled(&response_event),
+            JournalRoute::Awaiter,
+        ));
+        let settled = Journaled::CommandSettled {
+            id: issued.id,
+            settlement: Settlement::SendRequest(Ok(PacketReceiptDelivered {
+                rtt: RttMillis::new(36),
+                evidence: DeliveryEvidence::Response,
+            })),
+        };
+        assert!(matches!(
+            handle.route_journaled(&settled),
+            JournalRoute::Awaiter,
+        ));
+    }));
+
+    assert!(matches!(result, Ok(rtt) if rtt == RttMillis::new(36)));
 }
 
 #[test]

@@ -11,7 +11,10 @@ pub(super) struct BenchSizedRequestEndpoint;
 impl RequestEndpoint<RequestServer> for BenchSizedRequestEndpoint {
     const ENDPOINT_ID: &'static str = REQUEST_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
-    async fn handle(mut cx: RequestContext<'_, RequestServer>) -> Result<(), Decline> {
+    async fn handle(
+        mut cx: RequestContext<'_, RequestServer>,
+        _node: &impl personal_rns::runtime::PrnsNodeApi,
+    ) -> Result<(), Decline> {
         let request = msgpack_bin_payload(cx.data);
         let wanted = request
             .get(..2)

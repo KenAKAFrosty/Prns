@@ -291,6 +291,7 @@ mod tests {
 
         async fn dispatch(
             _cx: RequestContext<'_, ()>,
+            _node: &impl crate::runtime::PrnsNodeApi,
             _path_hash: RequestPathHash,
         ) -> Result<(), Decline> {
             Err(Decline::Ignore)

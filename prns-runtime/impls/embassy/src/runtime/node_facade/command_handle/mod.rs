@@ -19,7 +19,7 @@ use crate::units::{ByteLimit, RttMillis};
 use crate::wire::DestinationHash;
 
 use super::super::request_endpoints::RespondToken;
-use super::super::{PrnsNodeApi, SendError};
+use super::super::{AnnounceNowError, PrnsNodeApi, SendError};
 
 const NO_AWAITER: u64 = u64::MAX;
 
@@ -386,6 +386,33 @@ impl<
         }
     }
 
+    pub async fn announce_now(
+        &self,
+        announce: crate::engine::AnnounceNow,
+    ) -> Result<(), AnnounceNowError> {
+        let id = self.pool.mint();
+        let slot = self
+            .pool
+            .claim_settlement(id)
+            .ok_or(AnnounceNowError::Busy)?;
+        let _guard = SlotGuard {
+            pool: self.pool,
+            slot,
+            id,
+        };
+        self.commands
+            .try_send(IssuedCommand {
+                id,
+                command: PrnsCommand::AnnounceNow(announce),
+            })
+            .map_err(|_| AnnounceNowError::NodeStopped)?;
+        match self.pool.parked(slot).await {
+            Settlement::AnnounceNow(Ok(())) => Ok(()),
+            Settlement::AnnounceNow(Err(failure)) => Err(AnnounceNowError::from_failure(failure)),
+            _ => Err(AnnounceNowError::NodeStopped),
+        }
+    }
+
     /// Responds inline; returns `false` when the body exceeds the link MDU or the command lane is full.
     pub fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> bool {
         match RespondData::from_slice(packed) {
@@ -597,6 +624,13 @@ impl<
 {
     fn issue(&self, command: PrnsCommand) -> Option<CommandId> {
         self.issue(command)
+    }
+
+    async fn announce_now(
+        &self,
+        announce: crate::engine::AnnounceNow,
+    ) -> Result<(), AnnounceNowError> {
+        self.announce_now(announce).await
     }
 
     async fn send_single_packet(

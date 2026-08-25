@@ -28,7 +28,7 @@ cfg_if::cfg_if! {
 
 pub use crate::engine::BlackholeSeedReport;
 pub use command::{
-    ClearAnnounceQueuesOutcome, DestinationIdentityRetentionControl,
+    AnnounceNowError, ClearAnnounceQueuesOutcome, DestinationIdentityRetentionControl,
     DestinationIdentityRetentionControlError, DropRouteOutcome, DropRoutesViaOutcome, PrnsNodeApi,
     RoutingControl, RoutingControlError, SendError,
 };
@@ -44,7 +44,8 @@ pub use node::{
     PreConfiguredDestination, PrnsNodeRecipe, ServeMyRequestEndpoints,
 };
 pub use remote_control::{
-    RemoteControlDescribe, RemoteControlEndpoint, RemoteControlEndpointState, RemoteControlError,
+    RemoteControlAnnounce, RemoteControlAnnounceFailure, RemoteControlDescribe,
+    RemoteControlEndpoint, RemoteControlEndpointState, RemoteControlError,
     REMOTE_CONTROL_ENDPOINT_ID,
 };
 

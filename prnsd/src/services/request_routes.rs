@@ -16,16 +16,17 @@ impl RequestEndpointSet<DaemonRequestState> for DaemonRequestRoutes {
 
     async fn dispatch(
         context: RequestContext<'_, DaemonRequestState>,
+        node: &impl personal_rns::runtime::PrnsNodeApi,
         path_hash: RequestPathHash,
     ) -> Result<(), Decline> {
         if path_hash == RequestPathHash::of(StatusRoute::ENDPOINT_ID) {
-            return StatusRoute::handle(context).await;
+            return StatusRoute::handle(context, node).await;
         }
         if path_hash == RequestPathHash::of(PathRoute::ENDPOINT_ID) {
-            return PathRoute::handle(context).await;
+            return PathRoute::handle(context, node).await;
         }
         if path_hash == RequestPathHash::of(ListRoute::ENDPOINT_ID) {
-            return ListRoute::handle(context).await;
+            return ListRoute::handle(context, node).await;
         }
         let nnpages = context.state.nnpages().clone();
         nnpages.respond(context, path_hash).await
