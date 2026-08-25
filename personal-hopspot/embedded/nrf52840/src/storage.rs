@@ -65,6 +65,36 @@ impl Nrf52840Storage {
     const ANNOUNCE_HISTORY_DEPTH: usize = 8;
     pub(crate) const RETAINED_ANNOUNCE_APP_DATA_BYTES: usize = 256;
     pub(crate) const RETAINED_RATCHETS_PER_DESTINATION: usize = 4;
+    const JOURNAL_WRITE_ALIGNMENT_BYTES: usize = 4;
+    const MAX_JOURNAL_RECORD_PADDING_BYTES: usize = Self::JOURNAL_WRITE_ALIGNMENT_BYTES - 1;
+    const COMPACTED_ROUTE_BASE_PAYLOAD_BYTES: usize =
+        personal_rns::persistence::maximum_route_upsert_payload_len(0, 0);
+    const COMPACTED_ROUTE_BASE_RECORD_BYTES: usize =
+        personal_rns::persistence::flash_journal_record_storage_len(
+            Self::COMPACTED_ROUTE_BASE_PAYLOAD_BYTES,
+            Self::JOURNAL_WRITE_ALIGNMENT_BYTES,
+        );
+    const MAX_COMPACTED_ROUTE_RECORD_BYTES: usize =
+        Self::COMPACTED_ROUTE_BASE_RECORD_BYTES + Self::MAX_JOURNAL_RECORD_PADDING_BYTES;
+    const SELF_RATCHET_PAYLOAD_BYTES: usize = personal_rns::wire::TRUNCATED_HASH_BYTE_LEN
+        + personal_rns::persistence::self_ratchets_snapshot_len(
+            Self::RETAINED_RATCHETS_PER_DESTINATION,
+        );
+    const SELF_RATCHET_RECORD_BYTES: usize =
+        personal_rns::persistence::flash_journal_record_storage_len(
+            Self::SELF_RATCHET_PAYLOAD_BYTES,
+            Self::JOURNAL_WRITE_ALIGNMENT_BYTES,
+        );
+    pub(crate) const MAX_CRITICAL_FLASH_JOURNAL_BYTES: usize =
+        Self::UPSTREAM_APP_DESTINATIONS * Self::SELF_RATCHET_RECORD_BYTES;
+    pub(crate) const MAX_COMPACTED_FLASH_JOURNAL_BYTES: usize = Self::TRACKED_DESTINATIONS
+        * Self::MAX_COMPACTED_ROUTE_RECORD_BYTES
+        + Self::RETAINED_ANNOUNCE_APP_DATA_BYTES
+        + Self::MAX_CRITICAL_FLASH_JOURNAL_BYTES
+        + personal_rns::persistence::flash_journal_record_storage_len(
+            0,
+            Self::JOURNAL_WRITE_ALIGNMENT_BYTES,
+        );
     const RESOURCE_TRANSFER_BYTES: usize = 1504;
     pub const MAX_OUTGOING_RESOURCE_REACTION_FRAMES: usize =
         max_outgoing_resource_reaction_frames(Self::RESOURCE_TRANSFER_BYTES);

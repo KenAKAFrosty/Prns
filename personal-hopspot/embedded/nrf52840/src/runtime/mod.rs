@@ -33,6 +33,7 @@ pub(crate) mod gnss;
 mod headless;
 #[cfg(feature = "board-t-echo")]
 mod interface_cards;
+mod learned_state;
 #[cfg(feature = "board-t-echo")]
 pub(crate) mod node;
 pub(crate) mod software_vbus;

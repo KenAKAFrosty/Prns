@@ -2,7 +2,6 @@ mod display;
 mod gnss;
 mod hardware;
 mod identity;
-mod persistence;
 
 use personal_rns::interfaces::InterfaceId;
 
@@ -19,10 +18,9 @@ pub(crate) use hardware::{
 pub(crate) use identity::{
     bootstrap_ble_identity, bootstrap_node_identity, startup_notice as identity_startup_notice,
 };
-pub(crate) use persistence::{new as new_persistence, persistence_state, Persistence, SharedFlash};
 
-pub(crate) type ProfileStore = personal_hopspot_core::RadioProfileStore<SharedFlash>;
-
+pub(crate) const JOURNAL_LAYOUT: personal_rns::persistence::FlashJournalLayout =
+    personal_hopspot_core::HELTEC_DISPLAY_NRF52840_JOURNAL_LAYOUT;
 pub(crate) const USB_MANUFACTURER: &str = "Stay Personal";
 pub(crate) const USB_PRODUCT: &str = "Personal Hopspot (Heltec T096)";
 pub(crate) const USB_SERIAL_NUMBER: &str = "PERSONAL-RNS-T096-HOP";
