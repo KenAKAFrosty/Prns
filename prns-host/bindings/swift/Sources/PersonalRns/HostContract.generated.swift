@@ -3,7 +3,7 @@ import Foundation
 public enum HostContract {
     public static let abi: UInt32 = 1
     public static let schemaVersion: UInt32 = 1
-    public static let productVersion = "0.3.6"
+    public static let productVersion = "0.3.7"
     public static let destinationHashLength = 16
     public static let identityHashLength = 16
     public static let interfaceIdLength = 8

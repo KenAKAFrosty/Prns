@@ -41,6 +41,7 @@ from flasher_tester_roster import (  # noqa: E402
     validate_roster,
 )
 from flasher_manifest import require_schema
+from flasher_hotfix import HotfixSpec, verify_candidate as verify_hotfix_candidate
 
 TOP_LEVEL_FIELDS = {
     "schema",
@@ -50,6 +51,11 @@ TOP_LEVEL_FIELDS = {
     "browser_fallbacks",
     "installation_smoke",
 }
+MAINTAINER_OVERRIDE_SCHEMA = 4
+MAINTAINER_OVERRIDE_VERSION = "0.3.7"
+HOTFIX_ACCEPTANCE_SCHEMA = 6
+OVERRIDE_TOP_LEVEL_FIELDS = {"schema", "candidate", "maintainer_override"}
+OVERRIDE_FIELDS = {"basis", "approved_by", "approved_at"}
 CANDIDATE_FIELDS = {
     "version",
     "channel",
@@ -127,6 +133,33 @@ INSTALLATION_FIELDS = {
     "tester",
     "completed_at",
     "evidence",
+}
+HOTFIX_TOP_LEVEL_FIELDS = {
+    "schema",
+    "candidate",
+    "hotfix",
+    "runs",
+    "hardware_deferrals",
+}
+HOTFIX_IDENTITY_FIELDS = {
+    "version",
+    "base_version",
+    "base_source_commit",
+    "base_manifest_sha256",
+    "base_release_record_sha256",
+    "base_signed_candidate_sha256",
+    "changed_boards",
+    "physical_boards",
+    "deferred_hardware",
+    "summary",
+}
+HOTFIX_RUN_FIELDS = RUN_FIELDS | {"checks"}
+HOTFIX_DEFERRAL_FIELDS = {
+    "board",
+    "basis",
+    "follow_up",
+    "approved_by",
+    "approved_at",
 }
 PLACEHOLDER_PREFIXES = ("REPLACE", "TODO", "TBD", "UNKNOWN", "NOT_RUN", "NOT-RUN")
 EVIDENCE_REFERENCE = re.compile(r"^artifact://qualification/([0-9a-f]{64})$")
@@ -259,6 +292,39 @@ class EvidenceStore:
             errors.append(f"offline qualification evidence root is missing objects: {missing}")
         if unexpected:
             errors.append(f"offline qualification evidence root contains unreferenced objects: {unexpected}")
+
+    def validate_override_inventory(self, errors: list[str]) -> None:
+        """Validate every supplemental object without claiming schema-5 matrix coverage."""
+        if self.root.is_symlink() or not self.root.is_dir():
+            errors.append("offline qualification evidence root is missing or is not a directory")
+            return
+        try:
+            entries = list(self.root.iterdir())
+        except OSError as error:
+            errors.append(f"offline qualification evidence root cannot be read: {error}")
+            return
+        if not entries:
+            errors.append("maintainer override requires nonempty supplemental evidence")
+            return
+        for entry in entries:
+            if (
+                EVIDENCE_REFERENCE.fullmatch(f"artifact://qualification/{entry.name}") is None
+                or entry.is_symlink()
+                or not entry.is_file()
+            ):
+                errors.append(
+                    "offline qualification evidence root must contain only regular files named by lowercase SHA-256"
+                )
+                continue
+            try:
+                if entry.stat().st_size == 0:
+                    errors.append(f"supplemental evidence object is empty: {entry.name}")
+                elif sha256(entry) != entry.name:
+                    errors.append(
+                        f"supplemental evidence object name differs from its bytes: {entry.name}"
+                    )
+            except OSError as error:
+                errors.append(f"supplemental evidence object cannot be read: {error}")
 
 
 def validate_evidence(
@@ -782,6 +848,273 @@ def validate_installation_smokes(
         errors.append(f"missing native installation/version smokes: {missing}")
 
 
+def validate_maintainer_override(
+    acceptance: dict,
+    raw_roster: object,
+    manifest: dict,
+    arguments: argparse.Namespace,
+    prerelease_published_at: datetime,
+    now: datetime,
+) -> list[str]:
+    errors: list[str] = []
+    reject_unknown_fields(acceptance, OVERRIDE_TOP_LEVEL_FIELDS, "acceptance", errors)
+    version, _ = validate_candidate_identity(
+        acceptance,
+        manifest,
+        arguments.manifest,
+        arguments.manifest_signature,
+        arguments.signed_bundle,
+        arguments.prerelease_published_at,
+        errors,
+    )
+    if version != MAINTAINER_OVERRIDE_VERSION:
+        errors.append(
+            f"maintainer override is restricted to version {MAINTAINER_OVERRIDE_VERSION}"
+        )
+    override = acceptance.get("maintainer_override")
+    if not isinstance(override, dict):
+        errors.append("maintainer_override must be an object")
+        return errors
+    reject_unknown_fields(override, OVERRIDE_FIELDS, "maintainer_override", errors)
+    if not is_evidence_text(override.get("basis")):
+        errors.append("maintainer_override basis must state the approval grounds")
+    release_owner = raw_roster.get("release_owner") if isinstance(raw_roster, dict) else None
+    approved_by = override.get("approved_by")
+    if not is_evidence_text(approved_by) or approved_by != release_owner:
+        errors.append(
+            "maintainer_override approved_by must be the signed roster release_owner"
+        )
+    try:
+        approved_at = parse_utc_timestamp(
+            override.get("approved_at"), "maintainer_override approved_at"
+        )
+    except ValueError as error:
+        errors.append(str(error))
+    else:
+        if approved_at < prerelease_published_at:
+            errors.append(
+                "maintainer_override approved_at predates the exact public prerelease"
+            )
+        if approved_at > now:
+            errors.append("maintainer_override approved_at cannot be in the future")
+    EvidenceStore(arguments.evidence_root).validate_override_inventory(errors)
+    return errors
+
+
+def validate_hotfix_runs(
+    acceptance: dict,
+    manifest: dict,
+    spec: HotfixSpec,
+    roster: TesterRoster,
+    evidence_store: EvidenceStore,
+    prerelease_published_at: datetime,
+    now: datetime,
+    errors: list[str],
+) -> None:
+    targets = manifest_targets(manifest, errors)
+    required = {
+        (board, surface)
+        for board in spec.physical_boards
+        for surface in spec.surfaces
+    }
+    seen: set[tuple[str, str]] = set()
+    runs = acceptance.get("runs")
+    if not isinstance(runs, list):
+        errors.append("hotfix runs must be an array")
+        return
+    for index, run in enumerate(runs):
+        label = f"runs[{index}]"
+        if not isinstance(run, dict):
+            errors.append(f"{label} must be an object")
+            continue
+        reject_unknown_fields(run, HOTFIX_RUN_FIELDS, label, errors)
+        board = run.get("board")
+        surface = run.get("surface")
+        os_name = run.get("os")
+        architecture = run.get("architecture")
+        if not all(
+            isinstance(value, str)
+            for value in (board, surface, os_name, architecture)
+        ):
+            errors.append(f"{label} board, surface, OS, and architecture must be strings")
+            continue
+        key = (board, surface)
+        if key not in required:
+            errors.append(f"{label} is outside the committed hotfix scope")
+            continue
+        if key in seen:
+            errors.append(f"duplicate hotfix qualification result for {key}")
+        seen.add(key)
+        assignment = roster.physical.get(key)
+        if assignment is not None and (os_name, architecture) != (
+            assignment.os_name,
+            assignment.architecture,
+        ):
+            errors.append(f"{label} host differs from the signed base roster assignment")
+        validate_assignment(run, assignment, label, errors)
+        if run.get("result") != "pass":
+            errors.append(f"{label} is not a passing hotfix qualification run")
+        require_text(
+            run,
+            {
+                "os_version",
+                "hardware_identity",
+                "hardware_model",
+                "hardware_revision",
+                "tester",
+            },
+            label,
+            errors,
+        )
+        validate_completed_at(run, label, prerelease_published_at, now, errors)
+        validate_evidence(run.get("evidence"), label, evidence_store, errors)
+        target = targets.get(board, {})
+        if run.get("hardware_model") != target.get("display_name"):
+            errors.append(f"{label} hardware_model differs from the signed manifest")
+        expected_client = "prns-web-flasher" if surface == "web" else "hopspot-flash"
+        validate_client(run.get("client"), expected_client, spec.version, label, errors)
+        if surface == "web":
+            expected_browser = (
+                assignment.browser_name
+                if assignment is not None and assignment.browser_name is not None
+                else "unsupported-browser"
+            )
+            validate_browser(run.get("browser"), expected_browser, label, errors)
+        elif "browser" in run:
+            errors.append(f"{label} CLI run must not claim browser evidence")
+        scenarios = run.get("scenarios")
+        observed = validate_scenarios(
+            scenarios, set(spec.required_scenarios), f"{label}.scenarios", errors
+        )
+        if observed != set(spec.required_scenarios):
+            errors.append(f"{label} does not prove the committed hotfix scenarios")
+        checks = run.get("checks")
+        observed_checks = validate_scenarios(
+            checks, set(spec.required_checks), f"{label}.checks", errors
+        )
+        if observed_checks != set(spec.required_checks):
+            errors.append(f"{label} does not prove the committed hotfix checks")
+    missing = sorted(required - seen)
+    if missing:
+        errors.append(f"missing physical hotfix runs: {missing}")
+
+
+def validate_hotfix_deferrals(
+    acceptance: dict,
+    spec: HotfixSpec,
+    release_owner: object,
+    prerelease_published_at: datetime,
+    now: datetime,
+    errors: list[str],
+) -> None:
+    entries = acceptance.get("hardware_deferrals")
+    if not isinstance(entries, list):
+        errors.append("hotfix hardware_deferrals must be an array")
+        return
+    expected = {entry.board: entry for entry in spec.deferred_hardware}
+    seen: set[str] = set()
+    for index, entry in enumerate(entries):
+        label = f"hardware_deferrals[{index}]"
+        if not isinstance(entry, dict):
+            errors.append(f"{label} must be an object")
+            continue
+        reject_unknown_fields(entry, HOTFIX_DEFERRAL_FIELDS, label, errors)
+        board = entry.get("board")
+        if not isinstance(board, str) or board not in expected:
+            errors.append(f"{label} is outside the committed hardware-deferral scope")
+            continue
+        if board in seen:
+            errors.append(f"duplicate hotfix hardware deferral for {board}")
+        seen.add(board)
+        committed = expected[board]
+        if entry.get("basis") != committed.basis:
+            errors.append(f"{label} basis differs from the committed hotfix specification")
+        if entry.get("follow_up") != committed.follow_up:
+            errors.append(f"{label} follow_up differs from the committed hotfix specification")
+        if entry.get("approved_by") != release_owner:
+            errors.append(f"{label} approved_by must be the signed base-roster release owner")
+        validate_completed_at(
+            {"completed_at": entry.get("approved_at")},
+            label,
+            prerelease_published_at,
+            now,
+            errors,
+        )
+    missing = sorted(set(expected) - seen)
+    if missing:
+        errors.append(f"missing committed hardware deferrals: {missing}")
+
+
+def validate_hotfix_acceptance(
+    acceptance: dict,
+    manifest: dict,
+    arguments: argparse.Namespace,
+    raw_roster: object,
+    roster: TesterRoster,
+    spec: HotfixSpec,
+    prerelease_published_at: datetime,
+    now: datetime,
+) -> list[str]:
+    errors: list[str] = []
+    reject_unknown_fields(acceptance, HOTFIX_TOP_LEVEL_FIELDS, "acceptance", errors)
+    version, _ = validate_candidate_identity(
+        acceptance,
+        manifest,
+        arguments.manifest,
+        arguments.manifest_signature,
+        arguments.signed_bundle,
+        arguments.prerelease_published_at,
+        errors,
+    )
+    if version != spec.version:
+        errors.append("hotfix acceptance version differs from its committed specification")
+    hotfix = acceptance.get("hotfix")
+    expected_hotfix = {
+        "version": spec.version,
+        "base_version": spec.base_version,
+        "base_source_commit": spec.base_source_commit,
+        "base_manifest_sha256": spec.base_manifest_sha256,
+        "base_release_record_sha256": spec.base_release_record_sha256,
+        "base_signed_candidate_sha256": spec.base_signed_candidate_sha256,
+        "changed_boards": list(spec.changed_boards),
+        "physical_boards": list(spec.physical_boards),
+        "deferred_hardware": [
+            deferral.document() for deferral in spec.deferred_hardware
+        ],
+        "summary": spec.summary,
+    }
+    if not isinstance(hotfix, dict):
+        errors.append("hotfix identity must be an object")
+    else:
+        reject_unknown_fields(hotfix, HOTFIX_IDENTITY_FIELDS, "hotfix", errors)
+        if hotfix != expected_hotfix:
+            errors.append("acceptance hotfix identity differs from its committed specification")
+    release_owner = raw_roster.get("release_owner") if isinstance(raw_roster, dict) else None
+    if not is_evidence_text(release_owner):
+        errors.append("signed base roster has no release owner")
+    evidence_store = EvidenceStore(arguments.evidence_root)
+    validate_hotfix_runs(
+        acceptance,
+        manifest,
+        spec,
+        roster,
+        evidence_store,
+        prerelease_published_at,
+        now,
+        errors,
+    )
+    validate_hotfix_deferrals(
+        acceptance,
+        spec,
+        release_owner,
+        prerelease_published_at,
+        now,
+        errors,
+    )
+    evidence_store.validate_inventory(errors)
+    return errors
+
+
 def validate(arguments: argparse.Namespace, now: datetime | None = None) -> list[str]:
     errors: list[str] = []
     acceptance = json.loads(arguments.acceptance.read_text(encoding="utf-8"))
@@ -807,8 +1140,41 @@ def validate(arguments: argparse.Namespace, now: datetime | None = None) -> list
     current = current.astimezone(timezone.utc)
     version_value = manifest.get("release")
     version = version_value.get("version") if isinstance(version_value, dict) else ""
-    tester_roster, roster_errors = validate_roster(roster, str(version))
+    hotfix_spec: HotfixSpec | None = None
+    if acceptance.get("schema") == HOTFIX_ACCEPTANCE_SCHEMA:
+        try:
+            hotfix_spec = verify_hotfix_candidate(
+                Path(__file__).resolve().parents[2],
+                arguments.manifest.resolve().parent,
+            )
+        except ValueError as error:
+            errors.append(str(error))
+        if hotfix_spec is None:
+            errors.append("schema-6 acceptance requires a target-scoped hotfix candidate")
+    roster_version = hotfix_spec.roster_version if hotfix_spec is not None else str(version)
+    tester_roster, roster_errors = validate_roster(roster, roster_version)
     errors.extend(f"signed tester roster: {error}" for error in roster_errors)
+    if hotfix_spec is not None:
+        errors.extend(
+            validate_hotfix_acceptance(
+                acceptance,
+                manifest,
+                arguments,
+                roster,
+                tester_roster,
+                hotfix_spec,
+                published_at,
+                current,
+            )
+        )
+        return errors
+    if acceptance.get("schema") == MAINTAINER_OVERRIDE_SCHEMA:
+        errors.extend(
+            validate_maintainer_override(
+                acceptance, roster, manifest, arguments, published_at, current
+            )
+        )
+        return errors
     evidence_store = EvidenceStore(arguments.evidence_root)
     reject_unknown_fields(acceptance, TOP_LEVEL_FIELDS, "acceptance", errors)
     if acceptance.get("schema") != ACCEPTANCE_SCHEMA:
@@ -883,7 +1249,15 @@ def main() -> int:
         for error in errors:
             print(f"acceptance validation failed: {error}", file=sys.stderr)
         return 1
-    print("physical flasher acceptance matrix is complete for the exact signed candidate")
+    document = json.loads(arguments.acceptance.read_text(encoding="utf-8"))
+    if isinstance(document, dict) and document.get("schema") == MAINTAINER_OVERRIDE_SCHEMA:
+        print("version-bound maintainer override is bound to the exact signed candidate")
+    elif isinstance(document, dict) and document.get("schema") == HOTFIX_ACCEPTANCE_SCHEMA:
+        print(
+            "target-scoped hotfix acceptance is complete for physical targets and explicit hardware deferrals"
+        )
+    else:
+        print("physical flasher acceptance matrix is complete for the exact signed candidate")
     return 0
 
 

@@ -8,11 +8,12 @@ from pathlib import Path, PurePosixPath
 import re
 import shutil
 
-from flasher_manifest import FLASH_MANIFEST_SCHEMA, require_schema
+from flasher_manifest import FLASH_MANIFEST_SCHEMA
 
 
 FLASHER_RELEASE_RECORD_NAME = re.compile(r"flasher-release-record-v.+\.json")
 SIGNED_CANDIDATE_NAME = re.compile(r"prns-flasher-candidate-v.+-signed\.tar\.gz")
+RETAINED_FLASH_MANIFEST_SCHEMAS = frozenset({2, FLASH_MANIFEST_SCHEMA})
 
 
 def sha256(path: Path) -> str:
@@ -173,6 +174,14 @@ def load_object(path: Path, label: str) -> dict:
     return value
 
 
+def require_retained_schema(manifest: dict) -> None:
+    if manifest.get("schema") not in RETAINED_FLASH_MANIFEST_SCHEMAS:
+        supported = ", ".join(
+            str(schema) for schema in sorted(RETAINED_FLASH_MANIFEST_SCHEMAS)
+        )
+        raise ValueError(f"retained flash manifest must use schema {supported}")
+
+
 def validate_metadata_identity(
     metadata: dict,
     *,
@@ -227,7 +236,7 @@ def validate_metadata_identity(
                 raise ValueError(f"retained release {version} lacks {required}")
         manifest = load_object(directory / "flash-manifest.json", "retained manifest")
         release = manifest.get("release")
-        require_schema(manifest)
+        require_retained_schema(manifest)
         if not isinstance(release, dict) or release.get("version") != version:
             raise ValueError(f"retained release directory {version} has the wrong manifest")
 
@@ -256,10 +265,18 @@ def load_history(root: Path) -> dict:
     return metadata
 
 
-def candidate_version(candidate: Path) -> tuple[str, dict]:
+def candidate_version(
+    candidate: Path, *, allow_retained_schema: bool = False
+) -> tuple[str, dict]:
     manifest = load_object(candidate / "flash-manifest.json", "candidate manifest")
     release = manifest.get("release")
-    if manifest.get("schema") != FLASH_MANIFEST_SCHEMA or not isinstance(release, dict):
+    schema = manifest.get("schema")
+    supported_schemas = (
+        RETAINED_FLASH_MANIFEST_SCHEMAS
+        if allow_retained_schema
+        else frozenset({FLASH_MANIFEST_SCHEMA})
+    )
+    if schema not in supported_schemas or not isinstance(release, dict):
         raise ValueError(f"candidate manifest is not schema {FLASH_MANIFEST_SCHEMA}")
     return canonical_version(release.get("version")), manifest
 
@@ -279,8 +296,12 @@ def historical_release_root(candidate: Path, current_version: str) -> Path:
     return source
 
 
-def validate_candidate_history(candidate: Path) -> dict:
-    current_version, _ = candidate_version(candidate)
+def validate_candidate_history(
+    candidate: Path, *, allow_retained_schema: bool = False
+) -> dict:
+    current_version, _ = candidate_version(
+        candidate, allow_retained_schema=allow_retained_schema
+    )
     metadata = load_object(
         candidate / "metadata" / "release-history.json", "candidate release-history metadata"
     )
@@ -355,8 +376,8 @@ def stable_descriptor_identity(path: Path) -> dict[str, str] | None:
 
 def prepare_retained(candidate: Path, release_record: Path, output: Path) -> dict:
     require_empty_output(output)
-    version, manifest = candidate_version(candidate)
-    validate_candidate_history(candidate)
+    version, manifest = candidate_version(candidate, allow_retained_schema=True)
+    validate_candidate_history(candidate, allow_retained_schema=True)
     record = load_object(release_record, "release record")
     release = record.get("release")
     archive = record.get("candidate", {}).get("archive") if isinstance(record.get("candidate"), dict) else None

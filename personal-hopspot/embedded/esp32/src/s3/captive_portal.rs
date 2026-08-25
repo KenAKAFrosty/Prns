@@ -5,12 +5,18 @@ pub(super) const HTTP_SERVER_WORKERS: usize = 4;
 const EMBASSY_INTERNAL_SOCKET_COUNT: usize = 1;
 const WIFI_AUTO_UDP_SOCKET_COUNT: usize = 3;
 const CAPTIVE_PORTAL_UDP_SOCKET_COUNT: usize = 2;
-const TCP_RENDEZVOUS_SOCKET_COUNT: usize = 1;
+const TCP_RENDEZVOUS_SOCKET_COUNT: usize = TCP_RENDEZVOUS_CLIENT_CAPACITY;
 const AP_STACK_SOCKET_CAPACITY: usize = EMBASSY_INTERNAL_SOCKET_COUNT
     + WIFI_AUTO_UDP_SOCKET_COUNT
     + CAPTIVE_PORTAL_UDP_SOCKET_COUNT
     + HTTP_SERVER_WORKERS
     + TCP_RENDEZVOUS_SOCKET_COUNT;
+const DHCP_FIRST_LEASE_HOST: u8 = 2;
+// Retain more leases than the four simultaneous associations so a departed station can be
+// replaced without immediately recycling an address that another active client still holds.
+const DHCP_LEASE_HISTORY_CAPACITY: usize = 32;
+const _: () = assert!(TCP_RENDEZVOUS_CLIENT_CAPACITY <= u8::MAX as usize);
+const _: () = assert!(DHCP_FIRST_LEASE_HOST as usize + DHCP_LEASE_HISTORY_CAPACITY <= 255);
 
 /// A random per-boot SoftAP SSID suffix, cached so every `set_config` within a boot reuses the same
 /// name (regenerating per call would flap the SSID). 0 = unset. Random rather than MAC-derived so the
@@ -35,7 +41,7 @@ pub(super) fn ap_ssid() -> String {
 pub(super) fn ap_config(channel: Option<u8>) -> AccessPointConfig {
     let config = AccessPointConfig::default()
         .with_ssid(ap_ssid())
-        .with_max_connections(4);
+        .with_max_connections(TCP_RENDEZVOUS_CLIENT_CAPACITY as u16);
     match channel {
         Some(channel) => config.with_channel(channel),
         None => config,
@@ -93,11 +99,10 @@ pub(super) fn build_ap_netif(
     ap_stack
 }
 
-/// A minimal DHCPv4 server for the SoftAP. A device joining "Hopspot" DISCOVERs/REQUESTs and we lease it
-/// 192.168.4.2 with the SoftAP (192.168.4.1) as its router + DNS. The lease is incidental; the *gateway*
-/// is the point: once the joiner's default route is the Heltec, its Wi-Fi Auto client auto-dials the TCP
-/// rendezvous on the gateway (port 42699), sidestepping the SoftAP's broken multicast entirely. One
-/// static lease is enough to start; the wire format is hand-rolled (embassy-net ships only a client).
+/// A minimal DHCPv4 server for the SoftAP. Devices joining "Hopspot" receive stable per-MAC leases,
+/// with the SoftAP (192.168.4.1) as router + DNS. The gateway is the important part: each joiner's
+/// Wi-Fi Auto client auto-dials the TCP rendezvous on port 42699, sidestepping the SoftAP's broken
+/// multicast. The wire format is hand-rolled (embassy-net ships only a client).
 #[embassy_executor::task]
 pub(super) async fn dhcp_server_task(stack: Stack<'static>) -> ! {
     let rx_meta: &'static mut [PacketMetadata] = alloc::vec![PacketMetadata::EMPTY; 4].leak();
@@ -113,6 +118,9 @@ pub(super) async fn dhcp_server_task(stack: Stack<'static>) -> ! {
     }
     let req: &'static mut [u8] = alloc::vec![0u8; 600].leak();
     let reply: &'static mut [u8] = alloc::vec![0u8; 512].leak();
+    let leases = crate::storage::allocate_psram(personal_hopspot_core::SoftApLeaseTable::<
+        DHCP_LEASE_HISTORY_CAPACITY,
+    >::new());
     loop {
         let (len, _meta) = match sock.recv_from(&mut req[..]).await {
             Ok(received) => received,
@@ -130,16 +138,27 @@ pub(super) async fn dhcp_server_task(stack: Stack<'static>) -> ! {
             Some(3) => ("REQUEST", "ACK", 5),
             _ => continue,
         };
-        let n = build_dhcp_reply(&req[..len], &mut reply[..], reply_type);
-        let m = &req[28..34];
+        let mut mac = [0u8; 6];
+        mac.copy_from_slice(&req[28..34]);
+        let Some(lease_index) = leases.assign(mac, embassy_time::Instant::now().as_millis()) else {
+            log::warn!("dhcp: lease pool is empty");
+            continue;
+        };
+        let lease = [
+            AP_IPV4[0],
+            AP_IPV4[1],
+            AP_IPV4[2],
+            DHCP_FIRST_LEASE_HOST + lease_index as u8,
+        ];
+        let n = build_dhcp_reply(&req[..len], &mut reply[..], reply_type, lease);
         log::info!(
             "dhcp: {request_name} from {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-            m[0],
-            m[1],
-            m[2],
-            m[3],
-            m[4],
-            m[5]
+            mac[0],
+            mac[1],
+            mac[2],
+            mac[3],
+            mac[4],
+            mac[5]
         );
         let delivery = match sock
             .send_to(
@@ -172,13 +191,17 @@ pub(super) async fn dhcp_server_task(stack: Stack<'static>) -> ! {
         };
         if let Some(delivery) = delivery {
             log::info!(
-                "dhcp: {reply_name} 192.168.4.2 sent via {delivery} to {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-                m[0],
-                m[1],
-                m[2],
-                m[3],
-                m[4],
-                m[5]
+                "dhcp: {reply_name} {}.{}.{}.{} sent via {delivery} to {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                lease[0],
+                lease[1],
+                lease[2],
+                lease[3],
+                mac[0],
+                mac[1],
+                mac[2],
+                mac[3],
+                mac[4],
+                mac[5]
             );
         }
     }
@@ -204,16 +227,16 @@ fn dhcp_message_type(mut opts: &[u8]) -> Option<u8> {
     None
 }
 
-/// Build a BOOTREPLY (OFFER/ACK) leasing 192.168.4.2 with the SoftAP (192.168.4.1) as server, router,
-/// and DNS; returns the reply length. `msg_type` is 2 (OFFER) or 5 (ACK).
-fn build_dhcp_reply(req: &[u8], out: &mut [u8], msg_type: u8) -> usize {
+/// Build a BOOTREPLY (OFFER/ACK) with the selected lease and the SoftAP (192.168.4.1) as server,
+/// router, and DNS; returns the reply length. `msg_type` is 2 (OFFER) or 5 (ACK).
+fn build_dhcp_reply(req: &[u8], out: &mut [u8], msg_type: u8, lease: [u8; 4]) -> usize {
     out.fill(0);
     out[0] = 2; // op = BOOTREPLY
     out[1] = 1; // htype = ethernet
     out[2] = 6; // hlen
     out[4..8].copy_from_slice(&req[4..8]); // xid
     out[10] = 0x80; // flags: broadcast (client has no IP yet)
-    out[16..20].copy_from_slice(&[192, 168, 4, 2]); // yiaddr (the lease)
+    out[16..20].copy_from_slice(&lease); // yiaddr (the lease)
     out[20..24].copy_from_slice(&AP_IPV4); // siaddr (server)
     out[28..44].copy_from_slice(&req[28..44]); // chaddr
     out[236..240].copy_from_slice(&[0x63, 0x82, 0x53, 0x63]); // magic cookie

@@ -8,7 +8,7 @@ public static class HostContract
 {
     public const uint Abi = 1;
     public const uint SchemaVersion = 1;
-    public const string ProductVersion = "0.3.6";
+    public const string ProductVersion = "0.3.7";
     public const int DestinationHashLength = 16;
     public const int IdentityHashLength = 16;
     public const int InterfaceIdLength = 8;

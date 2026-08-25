@@ -59,7 +59,7 @@ Source-built desktop applications provide `libprns_host` through the dynamic loa
 Android applications use the same API and bytecode. After public package promotion, the intended Gradle shape adds JNA's Android artifact, excludes the desktop JNA runtime selected by the Maven POM, and places the Personal RNS libraries from the Android release artifact in the normal ABI directories:
 
 ```kotlin
-implementation("rs.reticulum:personal-rns:0.3.6") {
+implementation("rs.reticulum:personal-rns:0.3.7") {
     exclude(group = "net.java.dev.jna", module = "jna")
 }
 implementation("net.java.dev.jna:jna:5.19.1@aar")

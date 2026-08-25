@@ -1,7 +1,7 @@
 name = "PersonalRns"
 uuid = "5b95b365-10bb-47b4-89e0-955ab75dbc2f"
 authors = ["Personal RNS contributors"]
-version = "0.3.6"
+version = "0.3.7"
 
 [deps]
 Artifacts = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"

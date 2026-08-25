@@ -301,14 +301,14 @@ class AcceptanceScaffoldTests(unittest.TestCase):
                 json.loads(path.read_text(encoding="utf-8"))["schema"]
                 for path in records.glob("0.3.*.json")
             },
-            {4},
+            {4, 6},
         )
         self.assertEqual(
             {
                 json.loads(path.read_text(encoding="utf-8"))["schema"]
                 for path in rosters.glob("0.3.*.json")
             },
-            {2},
+            {2, 3},
         )
 
     def test_scaffold_assigns_complete_transport_aware_coverage(self) -> None:
@@ -339,6 +339,47 @@ class AcceptanceScaffoldTests(unittest.TestCase):
                         set(row["scenarios"]),
                         CONTRACT.applicable_scenarios(target, surface, chip_counts),
                     )
+
+    def test_hotfix_scaffold_contains_only_committed_changed_board_checks(self) -> None:
+        self.manifest_document["release"]["version"] = "0.2.6-hotfix.1"
+        self.manifest_path.write_text(
+            json.dumps(self.manifest_document, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        roster, errors = VALIDATOR.validate_roster(complete_roster(), "0.2.6")
+        self.assertEqual(errors, [])
+        spec = CONTRACT.HotfixSpec(
+            path=self.root / "0.2.6-hotfix.1.json",
+            version="0.2.6-hotfix.1",
+            base_version="0.2.6",
+            base_source_commit="b" * 40,
+            base_manifest_sha256="c" * 64,
+            base_release_record_sha256="d" * 64,
+            base_signed_candidate_sha256="e" * 64,
+            changed_boards=("heltec-v4",),
+            physical_boards=("heltec-v4",),
+            deferred_hardware=(),
+            surfaces=("web",),
+            required_scenarios=("fresh-install", "post-flash-boot"),
+            required_checks=("tcp-client-enabled-boot",),
+            summary="Fixture target-scoped firmware hotfix qualification.",
+        )
+        record = CONTRACT.hotfix_scaffold(
+            self.manifest_document,
+            self.manifest_path,
+            self.signature_path,
+            self.signed_bundle_path,
+            PUBLISHED_AT,
+            roster,
+            spec,
+        )
+        self.assertEqual(record["schema"], 6)
+        self.assertEqual(
+            [(run["board"], run["surface"]) for run in record["runs"]],
+            [("heltec-v4", "web")],
+        )
+        self.assertEqual(
+            record["runs"][0]["checks"], {"tcp-client-enabled-boot": "not-run"}
+        )
 
     def test_unperformed_scaffold_fails_closed_in_validator(self) -> None:
         self.create()

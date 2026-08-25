@@ -422,6 +422,7 @@ class CandidateFixture:
             "verify-flasher-candidate-files.py": SCRIPTS / "verify-flasher-candidate-files.py",
             "validate-flasher-tester-roster.py": SCRIPTS / "validate-flasher-tester-roster.py",
             "flasher_tester_roster.py": SCRIPTS / "flasher_tester_roster.py",
+            "flasher_hotfix.py": SCRIPTS / "flasher_hotfix.py",
             "package-flasher-qualification-evidence.py": SCRIPTS
             / "package-flasher-qualification-evidence.py",
         }
@@ -949,6 +950,74 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("exact canonical inputs", result.stderr)
 
+    def test_manifest_artifact_listing_covers_every_transport(self) -> None:
+        paths = run_script(
+            "list-flasher-manifest-artifacts.py", self.fixture.manifest_path
+        )
+        self.assertEqual(paths.returncode, 0, paths.stderr)
+        expected = sorted(
+            path.relative_to(self.fixture.root).as_posix()
+            for path in self.fixture.firmware_paths
+        )
+        self.assertEqual(paths.stdout.splitlines(), expected)
+
+        identities = run_script(
+            "list-flasher-manifest-artifacts.py",
+            self.fixture.manifest_path,
+            "--format",
+            "identities",
+        )
+        self.assertEqual(identities.returncode, 0, identities.stderr)
+        self.assertEqual(
+            identities.stdout.splitlines(),
+            [
+                f"{relative}\t{(self.fixture.root / relative).stat().st_size}\t"
+                f"{sha256(self.fixture.root / relative)}"
+                for relative in expected
+            ],
+        )
+
+    def test_v037_archive_coverage_is_exact_and_one_time(self) -> None:
+        script = SCRIPTS / "flasher-release-record.py"
+        spec = importlib.util.spec_from_file_location("flasher_release_record", script)
+        if spec is None or spec.loader is None:
+            self.fail(f"could not import {script}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        exception = module.V037_ARCHIVE_COVERAGE
+        archive = {
+            "name": "prns-flasher-candidate-v0.3.7-signed.tar.gz",
+            "sha256": exception["signed_bundle_sha256"],
+        }
+        attested = {(archive["name"], archive["sha256"])}
+        coverage = module.archive_coverage(
+            version=exception["version"],
+            source_commit=exception["source_commit"],
+            signed_bundle=archive,
+            attestation_bundle_sha256=exception["attestation_bundle_sha256"],
+            attestation_workflow_run_id=exception["attestation_workflow_run_id"],
+            attested_subjects=attested,
+            missing=set(exception["subjects"]),
+            unexpected=set(),
+        )
+        self.assertIsNotNone(coverage)
+        self.assertEqual(len(coverage["subjects"]), 7)
+
+        wrong_missing = set(exception["subjects"])
+        wrong_missing.pop()
+        self.assertIsNone(
+            module.archive_coverage(
+                version=exception["version"],
+                source_commit=exception["source_commit"],
+                signed_bundle=archive,
+                attestation_bundle_sha256=exception["attestation_bundle_sha256"],
+                attestation_workflow_run_id=exception["attestation_workflow_run_id"],
+                attested_subjects=attested,
+                missing=wrong_missing,
+                unexpected=set(),
+            )
+        )
+
     def test_candidate_run_must_be_successful_default_branch_provenance(self) -> None:
         run_document = {
             "id": 42,
@@ -1437,6 +1506,7 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             self.fixture.root / "qualification" / "create-flasher-acceptance.py",
             self.fixture.root / "qualification" / "validate-flasher-acceptance.py",
             self.fixture.root / "qualification" / "flasher_acceptance_contract.py",
+            self.fixture.root / "qualification" / "flasher_hotfix.py",
             self.fixture.root / "qualification" / "flasher_manifest.py",
             self.fixture.root / "qualification" / "serve-flasher-candidate.py",
             self.fixture.root / "qualification" / "verify-flasher-candidate-files.py",
@@ -1621,11 +1691,98 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         suite_sums.write_bytes(candidate_sums)
         suite_signature.write_bytes(candidate_signature)
 
+    def test_release_asset_contract_tracks_candidate_manifest_schema(self) -> None:
+        self.assertEqual(self.sign_candidate().returncode, 0)
+        script = SCRIPTS / "verify-flasher-release-assets.py"
+        spec = importlib.util.spec_from_file_location(
+            "verify_flasher_release_assets", script
+        )
+        if spec is None or spec.loader is None:
+            self.fail(f"could not import {script}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        schema_three = module.expected_candidate_assets(self.fixture.root, VERSION)
+        self.assertIn("flasher_manifest.py", schema_three)
+
+        self.fixture.manifest["schema"] = 2
+        write_json(self.fixture.manifest_path, self.fixture.manifest)
+        (self.fixture.root / "qualification" / "flasher_manifest.py").unlink()
+        schema_two = module.expected_candidate_assets(self.fixture.root, VERSION)
+        self.assertNotIn("flasher_manifest.py", schema_two)
+
+        self.fixture.manifest["schema"] = 3
+        write_json(self.fixture.manifest_path, self.fixture.manifest)
+        with self.assertRaisesRegex(ValueError, "flasher_manifest.py"):
+            module.expected_candidate_assets(self.fixture.root, VERSION)
+
+        self.fixture.manifest["schema"] = 4
+        write_json(self.fixture.manifest_path, self.fixture.manifest)
+        with self.assertRaisesRegex(ValueError, "schema is unsupported"):
+            module.expected_candidate_assets(self.fixture.root, VERSION)
+
+    def test_hotfix_asset_contract_does_not_require_a_suite_release_record(self) -> None:
+        script = SCRIPTS / "verify-flasher-release-assets.py"
+        spec = importlib.util.spec_from_file_location(
+            "verify_flasher_release_assets", script
+        )
+        if spec is None or spec.loader is None:
+            self.fail(f"could not import {script}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        suite_record = f"release-record-v{VERSION}.json"
+        flasher_record = f"flasher-release-record-v{VERSION}.json"
+        regular = module.required_custody_assets(self.fixture.root, VERSION)
+        self.assertIn(suite_record, regular)
+        self.assertIn(flasher_record, regular)
+
+        write_json(self.fixture.root / "metadata" / "hotfix.json", {})
+        hotfix = module.required_custody_assets(self.fixture.root, VERSION)
+        self.assertNotIn(suite_record, hotfix)
+        self.assertNotIn(f"{suite_record}.minisig", hotfix)
+        self.assertIn(flasher_record, hotfix)
+        self.assertIn(f"{flasher_record}.minisig", hotfix)
+
+    def test_historical_candidate_need_not_contain_the_new_hotfix_helper(self) -> None:
+        self.assertEqual(self.sign_candidate().returncode, 0)
+        script = SCRIPTS / "verify-flasher-release-assets.py"
+        spec = importlib.util.spec_from_file_location(
+            "verify_flasher_release_assets", script
+        )
+        if spec is None or spec.loader is None:
+            self.fail(f"could not import {script}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        helper = self.fixture.root / "qualification" / "flasher_hotfix.py"
+        helper.unlink()
+        historical = module.expected_candidate_assets(self.fixture.root, VERSION)
+        self.assertNotIn("flasher_hotfix.py", historical)
+
+        write_json(self.fixture.root / "metadata" / "hotfix.json", {})
+        with self.assertRaisesRegex(ValueError, "flasher_hotfix.py"):
+            module.expected_candidate_assets(self.fixture.root, VERSION)
+
     def test_workflows_preserve_exact_candidate_custody_boundaries(self) -> None:
         candidate = (ROOT / ".github/workflows/flasher-candidate.yml").read_text()
         signing = (ROOT / ".github/workflows/flasher-sign.yml").read_text()
         evidence = (ROOT / ".github/workflows/flasher-finalize-evidence.yml").read_text()
         promotion = (ROOT / ".github/workflows/flasher-promote.yml").read_text()
+        rollback = (ROOT / ".github/workflows/flasher-rollback.yml").read_text()
+        suite_promotion = (ROOT / ".github/workflows/suite-promote.yml").read_text()
+        for workflow in (
+            candidate,
+            signing,
+            evidence,
+            promotion,
+            rollback,
+            suite_promotion,
+        ):
+            self.assertNotIn(".targets[].parts", workflow)
+        self.assertIn("release manifest artifacts", signing)
+        self.assertIn("release manifest artifacts", promotion)
+        self.assertIn(".subjects[]", candidate)
         self.assertNotIn("gh release create", candidate)
         self.assertIn("candidate_run_id:", signing)
         self.assertIn("unsigned_bundle_sha256:", signing)
@@ -1658,6 +1815,7 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, signing)
         self.assertIn("release/acceptance/records/${RELEASE_VERSION}.json", evidence)
+        self.assertIn('PYTHONDONTWRITEBYTECODE: "1"', evidence)
         self.assertIn("./tools/prns release record -- create", evidence)
         self.assertIn("./tools/prns release record -- verify", evidence)
         self.assertIn("published-evidence", evidence)

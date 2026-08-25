@@ -363,7 +363,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "prns-config"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "home",
  "prns-core",
@@ -373,7 +373,7 @@ dependencies = [
 
 [[package]]
 name = "prns-core"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "aes",
  "cbc",
@@ -393,11 +393,11 @@ dependencies = [
 
 [[package]]
 name = "prns-macros"
-version = "0.3.6"
+version = "0.3.7"
 
 [[package]]
 name = "prns-validation-oracles"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "prns-config",
  "prns-core",

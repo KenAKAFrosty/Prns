@@ -17,7 +17,6 @@ fn gnss_panel_stays_between_the_global_row_and_selected_interface() {
             gnss: Some(GnssSnapshot::Searching { satellites: 7 }),
             state: &state,
             interface_menu_details: &interface_menu_details,
-            animation_ms: 0,
         },
     );
 

@@ -26,9 +26,16 @@ cargo run --quiet --locked -p prns-flash-manifest --bin validate-flasher-candida
 python3 "$root/tools/release/flasher-website-history.py" validate-candidate \
     --candidate "$candidate"
 version="$(tr -d '[:space:]' < "$candidate/VERSION")"
+roster_version="$version"
+if [[ -f "$candidate/qualification/hotfix.json" ]]; then
+    roster_version="$(
+        "$root/tools/prns" release hotfix -- identity \
+            --repository "$root" --version "$version" --format roster-version
+    )"
+fi
 python3 "$root/tools/release/validate-flasher-tester-roster.py" \
     --roster "$candidate/qualification/tester-roster.json" \
-    --version "$version"
+    --version "$roster_version"
 if [[ -n "$acceptance" ]]; then
     evidence_work="$(mktemp -d)"
     trap 'rm -rf "$evidence_work"' EXIT HUP INT TERM

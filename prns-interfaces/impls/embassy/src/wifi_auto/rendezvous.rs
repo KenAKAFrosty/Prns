@@ -1,4 +1,4 @@
-use embassy_futures::select::{select3, Either3};
+use embassy_futures::select::{select3, select4, Either3, Either4};
 use embassy_net::tcp::{Error as TcpIoError, TcpSocket};
 use embassy_net::{IpAddress, IpEndpoint, Stack};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -16,6 +16,7 @@ pub const TCP_RENDEZVOUS_FRAMED_LEN: usize =
 pub const TCP_RENDEZVOUS_READ_BUFFER_BYTES: usize = 1_024;
 pub const TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES: usize = 1_024;
 pub const TCP_RENDEZVOUS_LIVENESS_TIMEOUT: Duration = Duration::from_secs(180);
+pub const TCP_RENDEZVOUS_CLIENT_CAPACITY: usize = 4;
 
 const KEEP_ALIVE: Duration = Duration::from_secs(5);
 const FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
@@ -138,6 +139,7 @@ pub(super) enum TcpRendezvousEvent<'a> {
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum TcpRendezvousSendError {
     FrameTooLarge { len: usize, capacity: usize },
+    ClientUnavailable { index: usize },
 }
 
 pub struct TcpRendezvousStorage<'a> {
@@ -180,6 +182,67 @@ pub struct TcpRendezvousClient<'a> {
     events: Receiver<'a, CriticalSectionRawMutex, TcpRendezvousWireSlot>,
     commands: Sender<'a, CriticalSectionRawMutex, TcpRendezvousWireSlot>,
     disconnect: &'a Signal<CriticalSectionRawMutex, u32>,
+}
+
+/// Four independent listeners share the SoftAP port through smoltcp. Once one listener accepts a
+/// peer it stops matching new SYNs, so the next idle listener receives the next connection. Keeping
+/// one SPSC event/command pair per listener also prevents a slow peer from consuming another
+/// peer's command stream.
+pub struct TcpRendezvousClients<'a> {
+    clients: [TcpRendezvousClient<'a>; TCP_RENDEZVOUS_CLIENT_CAPACITY],
+}
+
+pub(super) struct TcpRendezvousClientEvent<'a> {
+    pub index: usize,
+    pub slot: &'a mut TcpRendezvousWireSlot,
+}
+
+impl<'a> TcpRendezvousClients<'a> {
+    #[must_use]
+    pub fn new(clients: [TcpRendezvousClient<'a>; TCP_RENDEZVOUS_CLIENT_CAPACITY]) -> Self {
+        Self { clients }
+    }
+
+    pub(super) async fn next_event_slot(&mut self) -> TcpRendezvousClientEvent<'_> {
+        let [first, second, third, fourth] = &mut self.clients;
+        match select4(
+            first.next_event_slot(),
+            second.next_event_slot(),
+            third.next_event_slot(),
+            fourth.next_event_slot(),
+        )
+        .await
+        {
+            Either4::First(slot) => TcpRendezvousClientEvent { index: 0, slot },
+            Either4::Second(slot) => TcpRendezvousClientEvent { index: 1, slot },
+            Either4::Third(slot) => TcpRendezvousClientEvent { index: 2, slot },
+            Either4::Fourth(slot) => TcpRendezvousClientEvent { index: 3, slot },
+        }
+    }
+
+    pub(super) fn event_received(&mut self, index: usize) {
+        if let Some(client) = self.clients.get_mut(index) {
+            client.event_received();
+        }
+    }
+
+    pub(super) async fn send_frame(
+        &mut self,
+        index: usize,
+        session: u32,
+        bytes: &[u8],
+    ) -> Result<(), TcpRendezvousSendError> {
+        let Some(client) = self.clients.get_mut(index) else {
+            return Err(TcpRendezvousSendError::ClientUnavailable { index });
+        };
+        client.send_frame(session, bytes).await
+    }
+
+    pub(super) fn disconnect(&self, index: usize, session: u32) {
+        if let Some(client) = self.clients.get(index) {
+            client.disconnect(session);
+        }
+    }
 }
 
 pub fn tcp_rendezvous<'a>(
@@ -436,6 +499,25 @@ mod tests {
     use embassy_futures::block_on;
     use embassy_net::{Ipv4Address, Ipv6Address};
 
+    fn client_bridge<'a>(
+        storage: &'a mut TcpRendezvousStorage<'a>,
+    ) -> (
+        Sender<'a, CriticalSectionRawMutex, TcpRendezvousWireSlot>,
+        TcpRendezvousClient<'a>,
+    ) {
+        let disconnect = &storage.disconnect;
+        let (events_tx, events_rx) = storage.events.split();
+        let (commands_tx, _) = storage.commands.split();
+        (
+            events_tx,
+            TcpRendezvousClient {
+                events: events_rx,
+                commands: commands_tx,
+                disconnect,
+            },
+        )
+    }
+
     #[test]
     fn frame_capacity_is_enforced_before_queueing() {
         let mut slot = TcpRendezvousWireSlot::empty();
@@ -479,6 +561,43 @@ mod tests {
             assert_eq!(frame.session, 7);
             assert_eq!(frame.bytes(), b"reticulum");
             receiver.receive_done();
+        });
+    }
+
+    #[test]
+    fn client_fleet_reports_the_listener_that_produced_an_event() {
+        let mut event0 = [TcpRendezvousWireSlot::empty()];
+        let mut command0 = [TcpRendezvousWireSlot::empty()];
+        let mut event1 = [TcpRendezvousWireSlot::empty()];
+        let mut command1 = [TcpRendezvousWireSlot::empty()];
+        let mut event2 = [TcpRendezvousWireSlot::empty()];
+        let mut command2 = [TcpRendezvousWireSlot::empty()];
+        let mut event3 = [TcpRendezvousWireSlot::empty()];
+        let mut command3 = [TcpRendezvousWireSlot::empty()];
+        let mut storage0 = TcpRendezvousStorage::new(&mut event0, &mut command0);
+        let mut storage1 = TcpRendezvousStorage::new(&mut event1, &mut command1);
+        let mut storage2 = TcpRendezvousStorage::new(&mut event2, &mut command2);
+        let mut storage3 = TcpRendezvousStorage::new(&mut event3, &mut command3);
+        let (_, client0) = client_bridge(&mut storage0);
+        let (_, client1) = client_bridge(&mut storage1);
+        let (mut producer2, client2) = client_bridge(&mut storage2);
+        let (_, client3) = client_bridge(&mut storage3);
+        let mut clients = TcpRendezvousClients::new([client0, client1, client2, client3]);
+
+        block_on(async {
+            let id = InterfaceId::new([9u8; 8]);
+            let slot = producer2.send().await;
+            slot.set_control(WireKind::Connected, 17, id);
+            producer2.send_done();
+
+            let index = {
+                let event = clients.next_event_slot().await;
+                assert_eq!(event.index, 2);
+                assert_eq!(event.slot.session, 17);
+                assert_eq!(event.slot.id, id);
+                event.index
+            };
+            clients.event_received(index);
         });
     }
 

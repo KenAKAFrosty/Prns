@@ -75,22 +75,26 @@ if [[ "$(wasm-bindgen --version)" != "wasm-bindgen 0.2.126" ]]; then
     exit 2
 fi
 
-version="$(tr -d '[:space:]' < "$root/VERSION")"
+suite_version="$(tr -d '[:space:]' < "$root/VERSION")"
+version="${PRNS_FLASH_VERSION:-$suite_version}"
+python3 "$root/tools/release/flasher_hotfix.py" identity \
+    --repository "$root" --version "$version" >/dev/null
+export PRNS_FLASH_VERSION="$version"
 if [[ "$(cargo run --quiet --locked -p hopspot-flash -- --version)" != "hopspot-flash $version" ]]; then
-    echo "hopspot-flash package version must equal repository VERSION" >&2
+    echo "hopspot-flash compiled version must equal the requested flasher release version" >&2
     exit 2
 fi
-roster_source="$root/release/acceptance/rosters/${version}.json"
-if ! git -C "$root" ls-files --error-unmatch "release/acceptance/rosters/${version}.json" >/dev/null 2>&1; then
+roster_source="$root/release/acceptance/rosters/${suite_version}.json"
+if ! git -C "$root" ls-files --error-unmatch "release/acceptance/rosters/${suite_version}.json" >/dev/null 2>&1; then
     echo "a committed tester roster is required for release $version: $roster_source" >&2
     exit 2
 fi
 python3 "$root/tools/release/validate-flasher-tester-roster.py" \
     --roster "$roster_source" \
-    --version "$version"
+    --version "$suite_version"
 
 mkdir -p "$candidate" "$candidate/metadata" "$candidate/qualification" "$candidate/website"
-cp "$root/VERSION" "$candidate/VERSION"
+printf '%s\n' "$version" > "$candidate/VERSION"
 cp "$root/THIRD_PARTY_NOTICES.md" "$candidate/THIRD_PARTY_NOTICES.md"
 cp "$root/LICENSE-APACHE" "$candidate/LICENSE-APACHE"
 cp "$root/LICENSE-MIT" "$candidate/LICENSE-MIT"
@@ -107,6 +111,8 @@ cp "$root/tools/release/flasher_manifest.py" \
     "$candidate/qualification/flasher_manifest.py"
 cp "$root/tools/release/flasher_tester_roster.py" \
     "$candidate/qualification/flasher_tester_roster.py"
+cp "$root/tools/release/flasher_hotfix.py" \
+    "$candidate/qualification/flasher_hotfix.py"
 cp "$root/tools/release/package-flasher-qualification-evidence.py" \
     "$candidate/qualification/package-flasher-qualification-evidence.py"
 cp "$root/tools/release/serve-flasher-candidate.py" \
@@ -116,6 +122,15 @@ cp "$root/tools/release/verify-flasher-candidate-files.py" \
 cp "$root/tools/release/validate-flasher-tester-roster.py" \
     "$candidate/qualification/validate-flasher-tester-roster.py"
 cp "$roster_source" "$candidate/qualification/tester-roster.json"
+if [[ "$version" != "$suite_version" ]]; then
+    hotfix_spec="$root/release/flash/hotfixes/${version}.json"
+    if ! git -C "$root" ls-files --error-unmatch \
+        "release/flash/hotfixes/${version}.json" >/dev/null 2>&1; then
+        echo "a committed hotfix specification is required: $hotfix_spec" >&2
+        exit 2
+    fi
+    cp "$hotfix_spec" "$candidate/qualification/hotfix.json"
+fi
 python3 "$root/tools/release/write-flasher-build-metadata.py" \
     --output "$candidate/metadata/build.json" \
     --commit "$commit" \
@@ -123,11 +138,11 @@ python3 "$root/tools/release/write-flasher-build-metadata.py" \
 python3 "$root/tools/release/package-source-snapshot.py" \
     --repository "$root" \
     --commit "$commit" \
-    --version "$version" \
+    --version "$suite_version" \
     --output "$candidate/website/source.zip" \
     --metadata "$candidate/metadata/source.json"
 export PRNS_SOURCE_ARCHIVE="$candidate/website/source.zip"
-export PRNS_SOURCE_VERSION="$version"
+export PRNS_SOURCE_VERSION="$suite_version"
 export PRNS_SOURCE_COMMIT="$commit"
 export PRNS_SOURCE_SIZE
 PRNS_SOURCE_SIZE="$(wc -c < "$PRNS_SOURCE_ARCHIVE" | tr -d '[:space:]')"
@@ -177,9 +192,21 @@ if find "$boundary_root/embedded" \( -path '*/firmware/*' -o -path '*/assets/fla
 fi
 
 cd "$root"
-for board in heltec-v4 heltec-v4-r8 t-beam-supreme xiao-esp32-c6 t-echo; do
-    cargo run --locked -p hopspot-flash -- build "$board" --out-root "$candidate"
-done
+if [[ "$version" == "$suite_version" ]]; then
+    "$root/tools/prns" release firmware build -- --all "$candidate"
+else
+    while IFS= read -r board; do
+        "$root/tools/prns" release firmware build -- "$board" "$candidate"
+    done < <(
+        "$root/tools/prns" release hotfix -- identity \
+            --repository "$root" --version "$version" --format changed-boards
+    )
+    "$root/tools/prns" release hotfix -- compose \
+        --repository "$root" \
+        --history "$history" \
+        --candidate "$candidate" \
+        --version "$version"
+fi
 cargo run --locked -p hopspot-flash -- assemble-manifest \
     --out-root "$candidate" \
     --channel "$channel" \
@@ -214,7 +241,15 @@ bash "$root/docs/website/tools/verify-web-flasher-production-boundary.sh" \
     "$candidate/website" \
     "$boundary_root/embedded"
 cd "$root"
-cargo doc --locked --no-deps --workspace --jobs 1
+rustdoc_packages="$root/target/flasher-rustdoc-workspace-packages.txt"
+cargo metadata --locked --no-deps --format-version 1 |
+    python3 "$root/tools/release/flasher_rustdoc.py" \
+        --list-workspace-packages > "$rustdoc_packages"
+test -s "$rustdoc_packages"
+rm -rf -- "$root/target/doc"
+while IFS= read -r package; do
+    cargo doc --locked --no-deps --package "$package" --jobs 1
+done < "$rustdoc_packages"
 python3 "$root/tools/release/flasher_rustdoc.py" \
     "$root/target/doc" \
     --current-crate docs
