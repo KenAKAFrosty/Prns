@@ -141,11 +141,6 @@ impl HopspotFace {
         if cards.is_empty() {
             splash(&mut self.framebuffer, SplashContent::Connecting);
         } else {
-            let animation_ms = self
-                .activity_started
-                .elapsed()
-                .as_millis()
-                .min(u128::from(u64::MAX)) as u64;
             let interface_menu_details = snapshots_to_interface_menu_details(
                 self.state.selected_card(content.cards),
                 snapshots,
@@ -158,7 +153,6 @@ impl HopspotFace {
                     gnss: None,
                     state: &self.state,
                     interface_menu_details: &interface_menu_details,
-                    animation_ms,
                 },
             );
         }

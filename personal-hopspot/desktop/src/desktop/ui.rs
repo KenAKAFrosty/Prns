@@ -838,10 +838,6 @@ pub(super) fn run_window(handles: WindowHandles) {
                 &snapshots,
             );
             let battery = screen::BatteryGauge::lipo().sample(&mut screen::NoBattery);
-            let animation_ms = activity_started
-                .elapsed()
-                .as_millis()
-                .min(u128::from(u64::MAX)) as u64;
             screen::render(
                 &mut display,
                 screen::RenderFrame {
@@ -850,7 +846,6 @@ pub(super) fn run_window(handles: WindowHandles) {
                     gnss: None,
                     state: &ui_state,
                     interface_menu_details: &interface_menu_details,
-                    animation_ms,
                 },
             );
             window.update(&display);

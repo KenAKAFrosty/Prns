@@ -6,90 +6,129 @@ use embedded_graphics::primitives::{Line, Rectangle};
 use embedded_graphics::text::{Baseline, Text};
 
 use crate::screen::CardKind;
-use crate::{ChargingState, ExternalPowerState, PowerSnapshot};
+use crate::{ExternalPowerState, PowerSnapshot};
 
 use super::layout::*;
 use super::primitives::{draw_pattern_colored, fill, line, line_colored, stroke};
 
-/// How wide the title-bar battery zone is: "100%" in FONT_5X8 exactly.
-const BATTERY_ZONE_W: i32 = 4 * FONT_5X8_CHAR_W;
+const BATTERY_BODY_W: i32 = 15;
+const BATTERY_BODY_H: u32 = 9;
+const BATTERY_PLUG_W: i32 = 5;
+const BATTERY_ZONE_W: i32 = BATTERY_BODY_W + BATTERY_PLUG_W;
+const BATTERY_INNER_W: i32 = BATTERY_BODY_W - 2;
 
-/// The battery readout, drawn in the background color (it sits on the inverted title bar): the
-/// percentage as text, right-aligned in a 20px zone so the digits do not wander as they shrink,
-/// a blinking plug cue at the left of the zone while charging, or `--%` for unknown. The exact
-/// number is shown because the gauge already knows it; quantized bars threw that precision away
-/// right when it matters most, at the bottom of the discharge.
+const TINY_DIGITS: [[&str; 5]; 10] = [
+    ["###", "# #", "# #", "# #", "###"],
+    [" # ", "## ", " # ", " # ", "###"],
+    ["###", "  #", "###", "#  ", "###"],
+    ["###", "  #", "###", "  #", "###"],
+    ["# #", "# #", "###", "  #", "  #"],
+    ["###", "#  ", "###", "  #", "###"],
+    ["###", "#  ", "###", "# #", "###"],
+    ["###", "  #", "  #", "  #", "  #"],
+    ["###", "# #", "###", "# #", "###"],
+    ["###", "# #", "###", "  #", "###"],
+];
+
+/// The battery readout on the inverted title bar. The original outlined silhouette stays intact,
+/// but its four quantized bars are replaced by the exact level as one to three digits. The
+/// enclosure makes `%` implicit; unknown remains `--`. External power restores the original
+/// right-side plug as a steady, independent presence indicator.
 pub(in crate::screen) fn draw_battery<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     x: i32,
     y: i32,
     state: PowerSnapshot,
-    charging_tier_visible: bool,
 ) {
-    let mut text: heapless::String<4> = heapless::String::new();
-    match state.battery() {
-        Some(pct) => {
-            let _ = core::fmt::write(&mut text, format_args!("{}%", pct.get()));
-        }
-        None => {
-            let _ = text.push_str("--%");
-        }
-    }
-    let text_x = x + BATTERY_ZONE_W - text.len() as i32 * FONT_5X8_CHAR_W;
-    let small = MonoTextStyle::new(&FONT_5X8, BinaryColor::Off);
-    let _ = Text::with_baseline(&text, Point::new(text_x, y), small, Baseline::Top).draw(display);
-    // External power keeps a compact plug cue at the left of the zone while the cell is below
-    // full (or unknown): steady when merely present, blinking on the shared cadence while the
-    // battery is actively charging. At 100% the text fills the whole zone and the cue is dropped:
-    // a full cell reads as done.
-    let below_full = state.battery().is_none_or(|percent| percent.get() < 100);
-    let plug = match state.external_power() {
-        ExternalPowerState::Present {
-            charging: ChargingState::Charging,
-        } => charging_tier_visible,
-        ExternalPowerState::Present { .. } => true,
-        ExternalPowerState::Absent | ExternalPowerState::Unknown => false,
-    };
-    if plug && below_full && text_x - x >= FONT_5X8_CHAR_W {
+    let outline = stroke(BinaryColor::Off);
+    let _ = Rectangle::new(
+        Point::new(x, y),
+        Size::new(BATTERY_BODY_W as u32, BATTERY_BODY_H),
+    )
+    .into_styled(outline)
+    .draw(display);
+    let solid = fill(BinaryColor::Off);
+    let _ = Rectangle::new(Point::new(x - 2, y + 3), Size::new(2, 3))
+        .into_styled(solid)
+        .draw(display);
+    draw_battery_level(display, x, y, state.battery().map(|percent| percent.get()));
+
+    if matches!(state.external_power(), ExternalPowerState::Present { .. }) {
         draw_charging_plug(display, x, y);
     }
 }
 
-fn battery_charge_tier_visible(animation_ms: u64) -> bool {
-    (animation_ms / BATTERY_CHARGE_BLINK_MS).is_multiple_of(2)
+fn draw_battery_level<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    x: i32,
+    y: i32,
+    percent: Option<u8>,
+) {
+    let Some(percent) = percent else {
+        let unknown = ["   ", "   ", "###", "   ", "   "];
+        draw_pattern_colored(display, x + 4, y + 2, &unknown, BinaryColor::Off);
+        draw_pattern_colored(display, x + 8, y + 2, &unknown, BinaryColor::Off);
+        return;
+    };
+
+    let digits = if percent >= 100 {
+        3
+    } else if percent >= 10 {
+        2
+    } else {
+        1
+    };
+    let text_w = digits * 3 + (digits - 1);
+    let mut digit_x = x + 1 + (BATTERY_INNER_W - text_w) / 2;
+    let mut divisor = match digits {
+        3 => 100,
+        2 => 10,
+        _ => 1,
+    };
+    while divisor != 0 {
+        let digit = (percent / divisor) % 10;
+        draw_pattern_colored(
+            display,
+            digit_x,
+            y + 2,
+            &TINY_DIGITS[digit as usize],
+            BinaryColor::Off,
+        );
+        digit_x += 4;
+        divisor /= 10;
+    }
 }
 
 fn draw_charging_plug<D: DrawTarget<Color = BinaryColor>>(display: &mut D, x: i32, y: i32) {
     let outline = stroke(BinaryColor::Off);
     let solid = fill(BinaryColor::Off);
-    let _ = Rectangle::new(Point::new(x, y + 2), Size::new(3, 5))
+    let _ = Rectangle::new(Point::new(x + BATTERY_BODY_W, y + 2), Size::new(4, 5))
         .into_styled(solid)
         .draw(display);
-    let _ = Line::new(Point::new(x + 2, y + 3), Point::new(x + 4, y + 3))
-        .into_styled(outline)
-        .draw(display);
-    let _ = Line::new(Point::new(x + 2, y + 5), Point::new(x + 4, y + 5))
-        .into_styled(outline)
-        .draw(display);
+    let _ = Line::new(
+        Point::new(x + BATTERY_BODY_W + 4, y + 3),
+        Point::new(x + BATTERY_BODY_W - 1, y + 3),
+    )
+    .into_styled(outline)
+    .draw(display);
+    let _ = Line::new(
+        Point::new(x + BATTERY_BODY_W + 4, y + 5),
+        Point::new(x + BATTERY_BODY_W - 1, y + 5),
+    )
+    .into_styled(outline)
+    .draw(display);
 }
 
 pub(super) fn draw_title_bar<D: DrawTarget<Color = BinaryColor>>(
     display: &mut D,
     battery: PowerSnapshot,
-    animation_ms: u64,
 ) {
     let _ = Rectangle::new(Point::new(0, 0), Size::new(WIDTH as u32, TITLE_H as u32))
         .into_styled(fill(BinaryColor::On))
         .draw(display);
     let small = MonoTextStyle::new(&FONT_5X8, BinaryColor::Off);
     let _ = Text::with_baseline("Personal", Point::new(2, 1), small, Baseline::Top).draw(display);
-    draw_battery(
-        display,
-        WIDTH - BATTERY_ZONE_W,
-        1,
-        battery,
-        battery_charge_tier_visible(animation_ms),
-    );
+    draw_battery(display, WIDTH - BATTERY_ZONE_W, 1, battery);
     let big = MonoTextStyle::new(&FONT_9X15_BOLD, BinaryColor::Off);
     let _ = Text::with_baseline("Hopspot", Point::new(1, 10), big, Baseline::Top).draw(display);
 }

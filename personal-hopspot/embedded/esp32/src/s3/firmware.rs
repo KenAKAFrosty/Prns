@@ -397,6 +397,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         #[cfg(feature = "lora")]
         let mut working_lora_profile = lora_profile;
         let mut battery_state = screen::PowerSnapshot::UNKNOWN;
+        let mut sampled_battery_state = screen::PowerSnapshot::UNKNOWN;
         let mut battery_gauge = screen::BatteryGauge::lipo();
         let active_ap_ssid = (radio_mode == RadioMode::AccessPoint).then(ap_ssid);
         let local_docs = active_ap_ssid
@@ -405,7 +406,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 wifi_ssid,
                 docs_host: CAPTIVE_PORTAL_HOST,
             });
-        let mut ticks_to_battery: u8 = 0;
+        let mut ticks_to_battery_sample: u8 = 0;
+        let mut ticks_to_battery_display: u8 = 0;
         let mut activity = screen::CardActivityTracker::<8>::new();
         let mut notice_until_ms =
             startup_notice.map(|notice| (embassy_time::Instant::now().as_millis() + 5_000, notice));
@@ -419,9 +421,20 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let mut persistence_notice = screen::PersistenceNotice::new();
         let mut first_render_pending = true;
         loop {
-            if ticks_to_battery == 0 {
-                battery_state = battery_gauge.sample(&mut battery_source);
-                ticks_to_battery = RENDER_TICKS_PER_BATTERY;
+            if ticks_to_battery_sample == 0 {
+                sampled_battery_state = battery_gauge.sample(&mut battery_source);
+                ticks_to_battery_sample = RENDER_TICKS_PER_BATTERY_SAMPLE;
+            }
+            if ticks_to_battery_display == 0 {
+                battery_state = sampled_battery_state;
+                ticks_to_battery_display = RENDER_TICKS_PER_BATTERY_DISPLAY;
+            } else {
+                // The number is deliberately calm, but the plug should still react to the latest
+                // two-second charging/presence observation.
+                battery_state = screen::PowerSnapshot::new(
+                    battery_state.battery(),
+                    sampled_battery_state.external_power(),
+                );
             }
 
             let snapshots = build_snapshots(
@@ -504,7 +517,6 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                         gnss: ui_state.gnss_visible().then(B::Gnss::snapshot).flatten(),
                         state: &ui_state,
                         interface_menu_details: &interface_menu_details,
-                        animation_ms: now_ms,
                     },
                 );
                 B::flush(&mut display);
@@ -532,7 +544,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                     settle_after_draw = true;
                 }
                 Either3::Second(()) => {
-                    ticks_to_battery = ticks_to_battery.saturating_sub(1);
+                    ticks_to_battery_sample = ticks_to_battery_sample.saturating_sub(1);
+                    ticks_to_battery_display = ticks_to_battery_display.saturating_sub(1);
                 }
                 Either3::First(event) => {
                     let now_ms = embassy_time::Instant::now().as_millis();
