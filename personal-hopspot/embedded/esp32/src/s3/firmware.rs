@@ -375,13 +375,14 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             RadioMode::AccessPoint => screen::AccessPointState::Active,
             RadioMode::Ble => screen::AccessPointState::Inactive,
         };
+        let display_power_control = if oled_ok {
+            screen::DisplayPowerControl::Available
+        } else {
+            screen::DisplayPowerControl::Unavailable
+        };
         let mut ui_state = screen::UiState::new(screen::UiConfiguration {
             storage_limits: <EngineStorageType as StorageLayout>::LIMITS,
-            display_power_control: if oled_ok {
-                screen::DisplayPowerControl::Available
-            } else {
-                screen::DisplayPowerControl::Unavailable
-            },
+            display_power_control,
             access_point,
             shared_instance_config_export: screen::SharedInstanceConfigExport::Unavailable,
             gnss: B::Gnss::AVAILABILITY,
@@ -409,10 +410,10 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let mut activity = screen::CardActivityTracker::<8>::new();
         let mut notice_until_ms =
             startup_notice.map(|notice| (embassy_time::Instant::now().as_millis() + 5_000, notice));
-        let mut oled_power = screen::OledPowerState::new(
-            oled_ok,
+        let mut display_power = screen::DisplayPowerState::new(
+            display_power_control,
             embassy_time::Instant::now().as_millis(),
-            DEFAULT_OLED_AUTO_OFF_MS,
+            screen::DEFAULT_DISPLAY_AUTO_OFF,
         );
         let mut render_tick = Ticker::every(RENDER_INTERVAL);
         let mut settle_after_draw = false;
@@ -489,10 +490,10 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                     }
                 }
             }
-            if oled_power.tick(now_ms) == screen::OledPowerCommand::TurnOff {
-                B::set_display_awake(&mut display, false);
+            if display_power.tick(now_ms) == screen::DisplayPowerCommand::Darken {
+                B::darken_display(&mut display);
             }
-            if oled_power.is_lit() {
+            if display_power.is_lit() {
                 if first_render_pending {
                     boot_stage(BootPhase::DisplayFirstRenderBegin);
                 }
@@ -536,10 +537,10 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 }
                 Either3::First(event) => {
                     let now_ms = embassy_time::Instant::now().as_millis();
-                    if oled_power.button_pressed(now_ms, DEFAULT_OLED_AUTO_OFF_MS)
-                        == screen::OledButtonOutcome::WakeAndConsume
+                    if display_power.button_pressed(now_ms, screen::DEFAULT_DISPLAY_AUTO_OFF)
+                        == screen::DisplayButtonOutcome::WakeAndConsume
                     {
-                        B::set_display_awake(&mut display, true);
+                        B::wake_display(&mut display);
                         ui_state.show_notice(screen::UiNotice::Awake);
                         notice_until_ms = Some((now_ms + NOTICE_MS, screen::UiNotice::Awake));
                         // Waking a dark-but-running display is the whole action for this press. Do
@@ -547,19 +548,22 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                         continue;
                     }
                     match ui_state.handle_input(event, content) {
-                        screen::UiAction::OledOff => {
-                            ui_state.show_notice(screen::UiNotice::OledOff);
-                            notice_until_ms = Some((now_ms + NOTICE_MS, screen::UiNotice::OledOff));
-                            oled_power.schedule_display_off(now_ms.saturating_add(NOTICE_MS));
+                        screen::UiAction::DisplayOff => {
+                            ui_state.show_notice(screen::UiNotice::DisplayOff);
+                            notice_until_ms =
+                                Some((now_ms + NOTICE_MS, screen::UiNotice::DisplayOff));
+                            display_power.schedule_display_off(now_ms.saturating_add(NOTICE_MS));
                         }
-                        screen::UiAction::ToggleOledAutoOff => {
-                            if let Some(auto_off) =
-                                oled_power.toggle_auto_off(now_ms, DEFAULT_OLED_AUTO_OFF_MS)
+                        screen::UiAction::ToggleDisplayAutoOff => {
+                            if let Some(auto_off) = display_power
+                                .toggle_auto_off(now_ms, screen::DEFAULT_DISPLAY_AUTO_OFF)
                             {
                                 let notice = match auto_off {
-                                    screen::OledAutoOff::Enabled => screen::UiNotice::OledAutoOffOn,
-                                    screen::OledAutoOff::Disabled => {
-                                        screen::UiNotice::OledAutoOffOff
+                                    screen::DisplayAutoOff::Enabled => {
+                                        screen::UiNotice::DisplayAutoOffOn
+                                    }
+                                    screen::DisplayAutoOff::Disabled => {
+                                        screen::UiNotice::DisplayAutoOffOff
                                     }
                                 };
                                 ui_state.show_notice(notice);
@@ -573,8 +577,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             ui_state.show_notice(screen::UiNotice::Sleeping);
                             notice_until_ms =
                                 Some((now_ms + NOTICE_MS, screen::UiNotice::Sleeping));
-                            oled_power
-                                .schedule_system_sleep(now_ms.saturating_add(OLED_SLEEP_DELAY_MS));
+                            display_power.schedule_system_sleep(
+                                now_ms.saturating_add(DISPLAY_SLEEP_DELAY_MS),
+                            );
                             usb_status.disable();
                             if let Some(status) = lora_card_status {
                                 status.disable();
@@ -596,10 +601,10 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             B::Gnss::control(screen::GnssReceiverCommand::Disable);
                         }
                         screen::UiAction::Wake => {
-                            if oled_power.wake(now_ms, DEFAULT_OLED_AUTO_OFF_MS)
-                                == screen::OledPowerCommand::TurnOn
+                            if display_power.wake(now_ms, screen::DEFAULT_DISPLAY_AUTO_OFF)
+                                == screen::DisplayPowerCommand::Wake
                             {
-                                B::set_display_awake(&mut display, true);
+                                B::wake_display(&mut display);
                             }
                             ui_state.show_notice(screen::UiNotice::Awake);
                             notice_until_ms = Some((now_ms + NOTICE_MS, screen::UiNotice::Awake));

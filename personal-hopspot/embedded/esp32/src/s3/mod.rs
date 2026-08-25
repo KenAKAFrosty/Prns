@@ -196,8 +196,7 @@ const RADIO_INTERNAL_HEAP_BYTES: usize = 52 * 1024;
 const RENDER_INTERVAL: Duration = Duration::from_millis(500);
 const RENDER_TICKS_PER_BATTERY: u8 = 4;
 const NOTICE_MS: u64 = 900;
-const OLED_SLEEP_DELAY_MS: u64 = 2_500;
-const DEFAULT_OLED_AUTO_OFF_MS: u64 = 60_000;
+const DISPLAY_SLEEP_DELAY_MS: u64 = 2_500;
 
 const BUTTON_LONG_PRESS: Duration = Duration::from_millis(500);
 const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);

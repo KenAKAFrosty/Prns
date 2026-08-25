@@ -219,8 +219,12 @@ impl Esp32S3Board for HeltecBoard {
         }
     }
 
-    fn set_display_awake(display: &mut Self::Display, awake: bool) {
-        let _ = display.set_display_on(awake);
+    fn wake_display(display: &mut Self::Display) {
+        let _ = display.set_display_on(true);
+    }
+
+    fn darken_display(display: &mut Self::Display) {
+        let _ = display.set_display_on(false);
     }
 
     async fn bringup(
