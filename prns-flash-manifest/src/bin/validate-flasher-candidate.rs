@@ -50,6 +50,7 @@ struct ExpectedTools {
     cargo: String,
     node: String,
     dioxus: String,
+    wasm_bindgen: String,
     cargo_binstall: String,
     espup: String,
     esp_rustc: String,
@@ -65,6 +66,7 @@ struct ResolvedTools {
     node: String,
     npm: String,
     dioxus: String,
+    wasm_bindgen: String,
     cargo_binstall: String,
     espup: String,
     esp_rustc: String,
@@ -234,6 +236,7 @@ fn validate_build_metadata(bytes: &[u8], expected_commit: &str) -> Result<(), St
         || metadata.expected_tools.cargo != "1.96.0"
         || metadata.expected_tools.node != "24.18.0"
         || metadata.expected_tools.dioxus != "0.7.5"
+        || metadata.expected_tools.wasm_bindgen != "0.2.126"
         || metadata.expected_tools.cargo_binstall != "1.21.0"
         || metadata.expected_tools.espup != "0.17.1"
         || metadata.expected_tools.esp_rustc != "1.95.0"
@@ -246,6 +249,7 @@ fn validate_build_metadata(bytes: &[u8], expected_commit: &str) -> Result<(), St
         || !metadata.tools.cargo.starts_with("cargo 1.96.0 ")
         || metadata.tools.node != "v24.18.0"
         || !has_version_token(&metadata.tools.dioxus, "0.7.5")
+        || metadata.tools.wasm_bindgen != "wasm-bindgen 0.2.126"
         || !has_version_token(&metadata.tools.cargo_binstall, "1.21.0")
         || !has_version_token(&metadata.tools.espup, "0.17.1")
         || !metadata.tools.esp_rustc.starts_with("rustc 1.95.0")
@@ -659,6 +663,7 @@ mod tests {
                 "cargo": "1.96.0",
                 "node": "24.18.0",
                 "dioxus": "0.7.5",
+                "wasm_bindgen": "0.2.126",
                 "cargo_binstall": "1.21.0",
                 "espup": "0.17.1",
                 "esp_rustc": "1.95.0",
@@ -671,6 +676,7 @@ mod tests {
                 "node": "v24.18.0",
                 "npm": "11.0.0",
                 "dioxus": "dioxus 0.7.5",
+                "wasm_bindgen": "wasm-bindgen 0.2.126",
                 "cargo_binstall": "cargo-binstall 1.21.0",
                 "espup": "espup 0.17.1",
                 "esp_rustc": "rustc 1.95.0-nightly (fixture)",
@@ -721,9 +727,17 @@ mod tests {
         wrong_node["tools"]["node"] = json!("v24.18.1");
         assert!(validate_build_metadata(&encoded(&wrong_node), COMMIT).is_err());
 
+        let mut wrong_wasm_bindgen = metadata();
+        wrong_wasm_bindgen["tools"]["wasm_bindgen"] = json!("wasm-bindgen 0.2.127");
+        assert!(validate_build_metadata(&encoded(&wrong_wasm_bindgen), COMMIT).is_err());
+
         let mut wrong_expected_rust = metadata();
         wrong_expected_rust["expected_tools"]["rustc"] = json!("stable");
         assert!(validate_build_metadata(&encoded(&wrong_expected_rust), COMMIT).is_err());
+
+        let mut wrong_expected_wasm_bindgen = metadata();
+        wrong_expected_wasm_bindgen["expected_tools"]["wasm_bindgen"] = json!("latest");
+        assert!(validate_build_metadata(&encoded(&wrong_expected_wasm_bindgen), COMMIT).is_err());
 
         let mut wrong_esptool = metadata();
         wrong_esptool["web_packages"]["esptool-js"] = json!("0.6.1");

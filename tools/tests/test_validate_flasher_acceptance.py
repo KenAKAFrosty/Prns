@@ -17,6 +17,8 @@ if SPEC is None or SPEC.loader is None:
 VALIDATOR = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VALIDATOR)
 
+from flasher_hotfix import HardwareDeferral, HotfixSpec  # noqa: E402
+
 VERSION = "0.2.6"
 SOURCE_COMMIT = "a" * 40
 KEY_ID = "0123456789ABCDEF"
@@ -435,6 +437,143 @@ class AcceptanceValidatorTests(unittest.TestCase):
     def test_complete_transport_aware_record_passes(self) -> None:
         self.assertEqual(self.validate(), [])
 
+    def test_hotfix_accepts_one_physical_board_and_one_owner_approved_deferral(
+        self,
+    ) -> None:
+        hotfix_evidence_root = self.root / "hotfix-evidence"
+        hotfix_evidence_root.mkdir()
+        hotfix_version = f"{VERSION}-hotfix.1"
+        self.manifest_document["release"]["version"] = hotfix_version
+        self.manifest_path.write_text(
+            json.dumps(self.manifest_document, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        parsed_roster, roster_errors = VALIDATOR.validate_roster(self.roster, VERSION)
+        self.assertEqual(roster_errors, [])
+        spec = HotfixSpec(
+            path=self.root / f"{hotfix_version}.json",
+            version=hotfix_version,
+            base_version=VERSION,
+            base_source_commit="b" * 40,
+            base_manifest_sha256="c" * 64,
+            base_release_record_sha256="d" * 64,
+            base_signed_candidate_sha256="e" * 64,
+            changed_boards=("heltec-v4", "heltec-v4-r8"),
+            physical_boards=("heltec-v4",),
+            deferred_hardware=(
+                HardwareDeferral(
+                    board="heltec-v4-r8",
+                    basis="The changed implementation is shared with the physically checked target.",
+                    follow_up="Capture and review a post-flash R8 boot log after promotion.",
+                ),
+            ),
+            surfaces=("web",),
+            required_scenarios=("fresh-install", "post-flash-boot"),
+            required_checks=("tcp-client-enabled-boot",),
+            summary="Fixture target-scoped firmware hotfix qualification.",
+        )
+        candidate = {
+            "version": hotfix_version,
+            "channel": "stable",
+            "source_commit": SOURCE_COMMIT,
+            "signing_key_id": KEY_ID,
+            "manifest_sha256": hashlib.sha256(
+                self.manifest_path.read_bytes()
+            ).hexdigest(),
+            "manifest_signature_sha256": hashlib.sha256(
+                self.signature_path.read_bytes()
+            ).hexdigest(),
+            "signed_candidate_sha256": hashlib.sha256(
+                self.signed_bundle_path.read_bytes()
+            ).hexdigest(),
+            "prerelease_published_at": PUBLISHED_AT,
+        }
+        record = {
+            "schema": 6,
+            "candidate": candidate,
+            "hotfix": {
+                "version": spec.version,
+                "base_version": spec.base_version,
+                "base_source_commit": spec.base_source_commit,
+                "base_manifest_sha256": spec.base_manifest_sha256,
+                "base_release_record_sha256": spec.base_release_record_sha256,
+                "base_signed_candidate_sha256": spec.base_signed_candidate_sha256,
+                "changed_boards": list(spec.changed_boards),
+                "physical_boards": list(spec.physical_boards),
+                "deferred_hardware": [
+                    deferral.document() for deferral in spec.deferred_hardware
+                ],
+                "summary": spec.summary,
+            },
+            "runs": [
+                {
+                    "board": "heltec-v4",
+                    "surface": "web",
+                    "os": "linux",
+                    "architecture": "x86_64",
+                    "os_version": "linux-fixture-1",
+                    "hardware_identity": "lab-heltec-v4-01",
+                    "hardware_model": MODELS["heltec-v4"],
+                    "hardware_revision": "not-marked",
+                    "client": {
+                        "name": "prns-web-flasher",
+                        "version": hotfix_version,
+                    },
+                    "browser": {
+                        "name": "chrome",
+                        "channel": "stable",
+                        "version": "126.0.1",
+                    },
+                    "scenarios": {
+                        "fresh-install": "pass",
+                        "post-flash-boot": "pass",
+                    },
+                    "checks": {"tcp-client-enabled-boot": "pass"},
+                    "result": "pass",
+                    "tester": "github:solo-fixture",
+                    "completed_at": COMPLETED_AT,
+                    "evidence": evidence(hotfix_evidence_root, "hotfix-v4-web"),
+                }
+            ],
+            "hardware_deferrals": [
+                {
+                    **spec.deferred_hardware[0].document(),
+                    "approved_by": "github:release-owner",
+                    "approved_at": COMPLETED_AT,
+                }
+            ],
+        }
+        arguments = argparse.Namespace(
+            manifest=self.manifest_path,
+            manifest_signature=self.signature_path,
+            signed_bundle=self.signed_bundle_path,
+            evidence_root=hotfix_evidence_root,
+            prerelease_published_at=PUBLISHED_AT,
+        )
+        errors = VALIDATOR.validate_hotfix_acceptance(
+            record,
+            self.manifest_document,
+            arguments,
+            self.roster,
+            parsed_roster,
+            spec,
+            datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc),
+            datetime(2026, 7, 20, 14, 0, tzinfo=timezone.utc),
+        )
+        self.assertEqual(errors, [])
+
+        record["hardware_deferrals"][0]["approved_by"] = "github:someone-else"
+        errors = VALIDATOR.validate_hotfix_acceptance(
+            record,
+            self.manifest_document,
+            arguments,
+            self.roster,
+            parsed_roster,
+            spec,
+            datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc),
+            datetime(2026, 7, 20, 14, 0, tzinfo=timezone.utc),
+        )
+        self.assertTrue(any("approved_by" in error for error in errors))
+
     def test_t_echo_web_rejects_cli_device_claims(self) -> None:
         self.runs("t-echo", "web")[0]["scenarios"]["failed-sync"] = "pass"
         self.assertTrue(
@@ -721,6 +860,61 @@ class AcceptanceValidatorTests(unittest.TestCase):
         errors = self.validate(record)
         self.assertTrue(any("unknown fields: ['maintainer_override']" in error for error in errors))
         self.assertTrue(any("acceptance runs must be an array" in error for error in errors))
+
+    def override_acceptance(self) -> dict:
+        record = {
+            "schema": 4,
+            "candidate": self.acceptance["candidate"],
+            "maintainer_override": {
+                "basis": "release-owner approval backed by reviewed supplemental observations",
+                "approved_by": "github:release-owner",
+                "approved_at": COMPLETED_AT,
+            },
+        }
+        record["candidate"]["version"] = "0.3.7"
+        self.manifest_document["release"]["version"] = "0.3.7"
+        self.manifest_path.write_text(
+            json.dumps(self.manifest_document, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        self.roster["release"]["version"] = "0.3.7"
+        self.roster_path.write_text(
+            json.dumps(self.roster, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        record["candidate"]["manifest_sha256"] = hashlib.sha256(
+            self.manifest_path.read_bytes()
+        ).hexdigest()
+        return record
+
+    def test_version_bound_maintainer_override_accepts_reviewed_evidence(self) -> None:
+        self.assertEqual(self.validate(self.override_acceptance()), [])
+
+    def test_version_bound_maintainer_override_rejects_other_versions(self) -> None:
+        record = self.override_acceptance()
+        record["candidate"]["version"] = "0.3.8"
+        self.manifest_document["release"]["version"] = "0.3.8"
+        self.manifest_path.write_text(
+            json.dumps(self.manifest_document, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        record["candidate"]["manifest_sha256"] = hashlib.sha256(
+            self.manifest_path.read_bytes()
+        ).hexdigest()
+        self.assertTrue(
+            any("restricted to version 0.3.7" in error for error in self.validate(record))
+        )
+
+    def test_version_bound_maintainer_override_requires_release_owner(self) -> None:
+        record = self.override_acceptance()
+        record["maintainer_override"]["approved_by"] = "github:someone-else"
+        self.assertTrue(
+            any("signed roster release_owner" in error for error in self.validate(record))
+        )
+
+    def test_version_bound_maintainer_override_requires_valid_evidence_objects(self) -> None:
+        record = self.override_acceptance()
+        next(self.evidence_root.iterdir()).write_bytes(b"changed after review")
+        self.assertTrue(
+            any("name differs from its bytes" in error for error in self.validate(record))
+        )
 
 
 if __name__ == "__main__":

@@ -1,0 +1,41 @@
+{
+  "changed_boards": [
+    "heltec-v4",
+    "heltec-v4-r8"
+  ],
+  "qualification": {
+    "deferred_hardware": [
+      {
+        "basis": "The R8 target builds the same changed ESP32-S3 Wi-Fi, TCP, and SoftAP implementation as the physically checked S3R2 target; R8-specific board initialization is unchanged.",
+        "board": "heltec-v4-r8",
+        "follow_up": "Capture and review an R8 post-flash boot and TCP-enabled startup log after promotion."
+      }
+    ],
+    "physical_boards": [
+      "heltec-v4"
+    ],
+    "required_checks": [
+      "soft-ap-four-rendezvous-listeners",
+      "tcp-client-enabled-boot"
+    ],
+    "required_scenarios": [
+      "correct-board",
+      "fresh-install",
+      "post-flash-boot",
+      "sparse-write"
+    ],
+    "surfaces": [
+      "web"
+    ]
+  },
+  "release": {
+    "base_manifest_sha256": "6fd1d56c450f45a6569136e2c87906c3437a54df63aca2adc45af13b423d5177",
+    "base_release_record_sha256": "7961c2296769a20a9ef26bfb3bb040f07a6f9f0bf271e2c79ff30db80a2cd115",
+    "base_signed_candidate_sha256": "5815c0e037e6eb76aee65aa53871accf542e7e3b5ce447bcf1f6a0d41952c0a4",
+    "base_source_commit": "95404f41675b4a38907af09253460aeea518e5f2",
+    "base_version": "0.3.7",
+    "version": "0.3.7-hotfix.1"
+  },
+  "schema": 1,
+  "summary": "Heltec V4 S3R2 and S3R8 TCP-client socket-capacity correction and four-station SoftAP rendezvous capacity."
+}

@@ -27,7 +27,7 @@ from flasher_build_metadata import (
 )
 from flasher_candidate_output import resolve_output
 from flasher_reproducibility import validate_report
-from flasher_rustdoc import normalize_generic_pages
+from flasher_rustdoc import normalize_generic_pages, workspace_package_names
 from flasher_sparse_sizes import MERGED_BASELINES, SPARSE_BASELINES, build_report
 from source_snapshot import (
     REQUIRED_SOURCE_FILES,
@@ -369,15 +369,26 @@ class FlasherReproducibilityTests(unittest.TestCase):
             candidate_build.index('cp -R "$hosted_dist/." "$candidate/website/"'),
         )
 
-    def test_candidate_rustdoc_is_serial_and_normalized_before_staging(self) -> None:
+    def test_candidate_rustdoc_is_deterministically_ordered_and_normalized(
+        self,
+    ) -> None:
         candidate_build = (SCRIPTS / "build-flasher-candidate.sh").read_text(
             encoding="utf-8"
         )
-        documentation = "cargo doc --locked --no-deps --workspace --jobs 1"
+        metadata = "cargo metadata --locked --no-deps --format-version 1"
+        listing = "--list-workspace-packages"
+        documentation = 'cargo doc --locked --no-deps --package "$package" --jobs 1'
         normalization = 'flasher_rustdoc.py" \\\n    "$root/target/doc"'
         staging = 'cp -R "$root/target/doc/." "$candidate/website/api/"'
+        self.assertIn(metadata, candidate_build)
+        self.assertIn(listing, candidate_build)
         self.assertIn(documentation, candidate_build)
         self.assertIn(normalization, candidate_build)
+        self.assertNotIn("cargo doc --locked --no-deps --workspace", candidate_build)
+        self.assertLess(
+            candidate_build.index(metadata),
+            candidate_build.index(documentation),
+        )
         self.assertLess(
             candidate_build.index(documentation),
             candidate_build.index(normalization),
@@ -421,6 +432,25 @@ class FlasherReproducibilityTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "0 current-crate fields"):
                 normalize_generic_pages(output, "docs")
             self.assertEqual(help_page.read_bytes(), original_help)
+
+    def test_rustdoc_workspace_packages_are_unique_and_sorted(self) -> None:
+        metadata = {
+            "packages": [
+                {"id": "dependency", "name": "outside"},
+                {"id": "second", "name": "z-package"},
+                {"id": "first", "name": "a_package"},
+            ],
+            "workspace_members": ["second", "first"],
+        }
+        self.assertEqual(
+            workspace_package_names(metadata),
+            ["a_package", "z-package"],
+        )
+
+        metadata["workspace_members"] = ["first", "dependency", "second"]
+        metadata["packages"][0]["name"] = "a_package"
+        with self.assertRaisesRegex(ValueError, "repeats a workspace package name"):
+            workspace_package_names(metadata)
 
     def test_build_metadata_is_source_derived_and_exact_pinned(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

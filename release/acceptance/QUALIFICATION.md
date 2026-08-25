@@ -3,6 +3,12 @@
 These steps test the public prerelease bytes. An unsigned build, a rebuilt website, or a candidate
 whose archive digest differs from the public release does not count.
 
+When `CANDIDATE/qualification/hotfix.json` exists, follow only the schema-6 rows generated from
+that file. Test every listed physical row and targeted check; do not expand it into the ordinary
+eighteen-row matrix. A generated `hardware_deferrals` entry must retain its committed basis and
+follow-up exactly and be approved by the signed-roster release owner after publication. It is an
+explicitly unperformed hardware check, not evidence of a pass.
+
 ## 1. Establish the candidate identity
 
 Download these assets from the same `vVERSION` GitHub prerelease:

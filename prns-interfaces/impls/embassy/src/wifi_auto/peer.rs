@@ -92,19 +92,21 @@ impl<const MEMBERS: usize> WifiPeerTable<MEMBERS> {
         }
     }
 
-    pub(super) fn reserving_last_slot() -> Self {
+    pub(super) fn reserving_last_slots(count: usize) -> Self {
         let mut table = Self::new();
-        let Some(slot) = MEMBERS.checked_sub(1) else {
-            return table;
-        };
-        table.slots[slot] = WifiPeerSlot::Reserved;
+        let first_reserved = MEMBERS.saturating_sub(count.min(MEMBERS));
+        for slot in &mut table.slots[first_reserved..] {
+            *slot = WifiPeerSlot::Reserved;
+        }
         table
     }
 
-    pub(super) fn reserved_slot(&self) -> Option<usize> {
+    pub(super) fn reserved_slot(&self, index: usize) -> Option<usize> {
         self.slots
             .iter()
-            .position(|slot| matches!(slot, WifiPeerSlot::Reserved))
+            .enumerate()
+            .filter_map(|(slot, state)| matches!(state, WifiPeerSlot::Reserved).then_some(slot))
+            .nth(index)
     }
 
     pub(super) fn lookup(&self, address: Ipv6Addr) -> WifiPeerLookup {
@@ -199,11 +201,11 @@ mod tests {
 
     #[test]
     fn peer_table_operations_preserve_whole_values_and_reservations() {
-        let mut peers = WifiPeerTable::<3>::reserving_last_slot();
+        let mut peers = WifiPeerTable::<3>::reserving_last_slots(1);
         let first = WifiPeer::new(address(1), SegmentRole::Primary);
         let first_id = first.id();
 
-        assert_eq!(peers.reserved_slot(), Some(2));
+        assert_eq!(peers.reserved_slot(0), Some(2));
         assert_eq!(peers.lookup(address(1)), WifiPeerLookup::Vacant { slot: 0 });
         assert_eq!(
             peers.insert(0, first),
@@ -243,9 +245,21 @@ mod tests {
 
     #[test]
     fn zero_capacity_table_has_no_reservable_or_available_slot() {
-        let peers = WifiPeerTable::<0>::reserving_last_slot();
+        let peers = WifiPeerTable::<0>::reserving_last_slots(1);
 
-        assert_eq!(peers.reserved_slot(), None);
+        assert_eq!(peers.reserved_slot(0), None);
         assert_eq!(peers.lookup(address(1)), WifiPeerLookup::Full);
+    }
+
+    #[test]
+    fn peer_table_reserves_a_tail_range_for_rendezvous_clients() {
+        let peers = WifiPeerTable::<6>::reserving_last_slots(4);
+
+        assert_eq!(peers.reserved_slot(0), Some(2));
+        assert_eq!(peers.reserved_slot(1), Some(3));
+        assert_eq!(peers.reserved_slot(2), Some(4));
+        assert_eq!(peers.reserved_slot(3), Some(5));
+        assert_eq!(peers.reserved_slot(4), None);
+        assert_eq!(peers.lookup(address(9)), WifiPeerLookup::Vacant { slot: 0 });
     }
 }

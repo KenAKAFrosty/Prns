@@ -267,9 +267,18 @@ Crates keep explicit `version` fields in their own `Cargo.toml` files. The
 suite version in `VERSION` should match the primary public crate release unless
 there is a deliberate crate-specific release.
 
-Flash artifacts use the same build version by default when their manifest entry
-still says `version = "next"`. Release jobs may set `PRNS_FLASH_VERSION` when a
-firmware artifact intentionally needs a different prerelease or patch version.
+Flash artifacts use the suite version by default. A committed, immutable flasher-only
+hotfix may set `PRNS_FLASH_VERSION` to `SUITE_VERSION-hotfix.N`. The hotfix specification
+pins the current stable release as its base, names every rebuilt board, and records the
+targeted qualification contract. Firmware for all other boards is copied byte-for-byte
+from that verified base and checked again before signing; the suite `VERSION` and source
+snapshot version remain unchanged.
+
+Hotfixes retain reproducible builds, dependency review, signing, public review, rollback,
+and exact-byte promotion. They narrow only the rebuilt firmware set and the human physical
+matrix. A hardware deferral is permitted only when committed in the specification and
+explicitly approved in the acceptance record; it is never represented as a completed test.
+See [`release/flash/hotfixes/README.md`](../release/flash/hotfixes/README.md).
 
 Keep `publish = false` on crates until the release checklist for that crate is
 complete. The first public cargo publish should include an audited manifest,
