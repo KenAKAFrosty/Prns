@@ -135,6 +135,44 @@ pub(super) struct StationCredentials {
     pub(super) password: String,
 }
 
+fn observed_personal_authentication(
+    authentication: Option<AuthenticationMethod>,
+) -> PersonalAuthentication {
+    match authentication {
+        None => PersonalAuthentication::Unknown,
+        Some(AuthenticationMethod::None) => PersonalAuthentication::Open,
+        Some(AuthenticationMethod::Wep) => PersonalAuthentication::Wep,
+        Some(AuthenticationMethod::Wpa) => PersonalAuthentication::Wpa,
+        Some(AuthenticationMethod::Wpa2Personal) => PersonalAuthentication::Wpa2,
+        Some(AuthenticationMethod::WpaWpa2Personal) => PersonalAuthentication::WpaWpa2,
+        Some(AuthenticationMethod::Wpa3Personal | AuthenticationMethod::Wpa3ExtPsk) => {
+            PersonalAuthentication::Wpa3
+        }
+        Some(AuthenticationMethod::Wpa2Wpa3Personal | AuthenticationMethod::Wpa3ExtPskMixed) => {
+            PersonalAuthentication::Wpa2Wpa3
+        }
+        Some(_) => PersonalAuthentication::Unsupported,
+    }
+}
+
+fn configured_authentication(
+    authentication: &PersonalAuthentication,
+    password_is_empty: bool,
+) -> Option<AuthenticationMethod> {
+    match authentication {
+        PersonalAuthentication::Open if password_is_empty => Some(AuthenticationMethod::None),
+        PersonalAuthentication::Wep => Some(AuthenticationMethod::Wep),
+        PersonalAuthentication::Wpa => Some(AuthenticationMethod::Wpa),
+        PersonalAuthentication::Wpa2 => Some(AuthenticationMethod::Wpa2Personal),
+        PersonalAuthentication::WpaWpa2 => Some(AuthenticationMethod::WpaWpa2Personal),
+        PersonalAuthentication::Wpa3 => Some(AuthenticationMethod::Wpa3Personal),
+        PersonalAuthentication::Wpa2Wpa3 => Some(AuthenticationMethod::Wpa2Wpa3Personal),
+        PersonalAuthentication::Unknown
+        | PersonalAuthentication::Open
+        | PersonalAuthentication::Unsupported => None,
+    }
+}
+
 extern "C" {
     fn esp_wifi_disconnect_internal() -> i32;
     fn esp_wifi_scan_stop() -> i32;
@@ -262,10 +300,19 @@ pub(super) async fn wifi_connect_task(
         };
         match attempt {
             StationAttempt::Connect(attempt) => {
-                let access_point = attempt.access_point();
+                let access_point = attempt.access_point().clone();
                 let access_point_channel = access_point.channel;
-                let station = base
-                    .clone()
+                let mut station = base.clone();
+                if let Some(authentication) = configured_authentication(
+                    &access_point.authentication,
+                    credentials.password.is_empty(),
+                ) {
+                    station = station.with_auth_method(authentication);
+                }
+                if matches!(access_point.authentication, PersonalAuthentication::Wpa3) {
+                    station = station.with_pmf_required(true);
+                }
+                let station = station
                     .with_bssid(access_point.bssid)
                     .with_channel(access_point_channel);
                 let configured = {
@@ -298,8 +345,9 @@ pub(super) async fn wifi_connect_task(
                 boot_stage(BootPhase::WifiConnectionBegin);
                 let started_at = embassy_time::Instant::now().as_millis();
                 log::info!(
-                    "wifi: station connection begin channel={}",
-                    access_point.channel
+                    "wifi: station connection begin channel={} authentication={:?}",
+                    access_point.channel,
+                    access_point.authentication
                 );
                 let connected = embassy_futures::select::select(
                     with_timeout(WIFI_CONNECT_TIMEOUT, controller.connect_async()),
@@ -323,6 +371,7 @@ pub(super) async fn wifi_connect_task(
                             ConnectionOutcome::Connected(StationAccessPoint {
                                 bssid: connected.bssid,
                                 channel: connected.channel,
+                                authentication: access_point.authentication.clone(),
                             }),
                         );
                         if let Err(error) = controller.set_power_saving(PowerSaveMode::None) {
@@ -420,12 +469,20 @@ pub(super) async fn wifi_connect_task(
                             .map(|access_point| StationAccessPoint {
                                 bssid: access_point.bssid,
                                 channel: access_point.channel,
+                                authentication: observed_personal_authentication(
+                                    access_point.auth_method,
+                                ),
                             });
                         if best.is_some() || attempt.ends_sweep() {
                             boot_stage(BootPhase::WifiDiscoveryComplete);
                         }
                         if best.is_some() {
-                            log::info!("wifi: discovery found channel={channel}");
+                            if let Some(access_point) = best.as_ref() {
+                                log::info!(
+                                    "wifi: discovery found channel={channel} authentication={:?}",
+                                    access_point.authentication
+                                );
+                            }
                         } else if attempt.ends_sweep() {
                             log::warn!("wifi: configured network absent");
                         }

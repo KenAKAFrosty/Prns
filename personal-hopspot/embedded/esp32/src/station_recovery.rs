@@ -45,10 +45,25 @@ impl DiscoveryScope {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, allow(dead_code))]
+pub(crate) enum PersonalAuthentication {
+    Unknown,
+    Open,
+    Wep,
+    Wpa,
+    Wpa2,
+    WpaWpa2,
+    Wpa3,
+    Wpa2Wpa3,
+    Unsupported,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AccessPoint {
     pub(crate) bssid: [u8; 6],
     pub(crate) channel: u8,
+    pub(crate) authentication: PersonalAuthentication,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -295,6 +310,7 @@ mod tests {
         AccessPoint {
             bssid: [channel; 6],
             channel,
+            authentication: PersonalAuthentication::Wpa2,
         }
     }
 
