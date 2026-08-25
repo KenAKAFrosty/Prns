@@ -48,4 +48,4 @@ case prns.CommandFailed:
 }
 ```
 
-The module has no Go dependencies. Its eventual `0.3.6` tag uses the monorepo submodule form `prns-host/bindings/go/v0.3.6`.
+The module has no Go dependencies. Its eventual `0.3.7` tag uses the monorepo submodule form `prns-host/bindings/go/v0.3.7`.

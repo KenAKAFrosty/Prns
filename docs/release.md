@@ -144,15 +144,15 @@ The active native artifact matrix is:
 
 | Artifact | Platform |
 | --- | --- |
-| `prnsd-0.3.6-x86_64-unknown-linux-gnu.tar.gz` | Linux x86_64, glibc |
-| `prnsd-0.3.6-aarch64-unknown-linux-gnu.tar.gz` | Linux ARM64, glibc |
-| `prnsd-0.3.6-x86_64-apple-darwin.tar.gz` | macOS Intel |
-| `prnsd-0.3.6-aarch64-apple-darwin.tar.gz` | macOS Apple silicon |
-| `prnsd-0.3.6-x86_64-pc-windows-msvc.zip` | Windows x86_64 |
+| `prnsd-0.3.7-x86_64-unknown-linux-gnu.tar.gz` | Linux x86_64, glibc |
+| `prnsd-0.3.7-aarch64-unknown-linux-gnu.tar.gz` | Linux ARM64, glibc |
+| `prnsd-0.3.7-x86_64-apple-darwin.tar.gz` | macOS Intel |
+| `prnsd-0.3.7-aarch64-apple-darwin.tar.gz` | macOS Apple silicon |
+| `prnsd-0.3.7-x86_64-pc-windows-msvc.zip` | Windows x86_64 |
 
 Native archives contain the executable, licenses, third-party notices, Minisign public key, exact build identity, and the commit-bound `source.zip` plus its SHA-256 sidecar. Linux binaries are built natively on Ubuntu 24.04, making glibc 2.39 the supported baseline for this release. The full Linux build statically vendors its `libdbus` code. Every platform archive carries its complete linkage or import report as a signed-inventory asset.
 
-The signed `prnsd-image-v0.3.6.json` asset binds the multi-platform OCI digest to the suite version, source commit, and amd64 and ARM64 child digests. `railway-template-contract-v0.3.6.json` binds the Railway publication to that exact image.
+The signed `prnsd-image-v0.3.7.json` asset binds the multi-platform OCI digest to the suite version, source commit, and amd64 and ARM64 child digests. `railway-template-contract-v0.3.7.json` binds the Railway publication to that exact image.
 
 ### Public staging
 
@@ -226,8 +226,8 @@ The release checksum inventory and record are verified with the repository's Min
 minisign -Vm SHA256SUMS.txt \
   -x SHA256SUMS.txt.minisig \
   -p minisign.pub
-minisign -Vm release-record-v0.3.6.json \
-  -x release-record-v0.3.6.json.minisig \
+minisign -Vm release-record-v0.3.7.json \
+  -x release-record-v0.3.7.json.minisig \
   -p minisign.pub
 sha256sum --check SHA256SUMS.txt
 ```
@@ -236,17 +236,17 @@ On macOS, use `shasum -a 256 -c SHA256SUMS.txt`. On Windows, compare
 `(Get-FileHash ARCHIVE -Algorithm SHA256).Hash` against the matching
 `SHA256SUMS.txt` entry. The release record binds native archives, signed flasher candidate, source and image SPDX SBOMs, image and platform digests, linkage reports, and GitHub provenance bundles into the exact checksum inventory.
 
-The unified prerelease passes two protected evidence tracks before stable promotion. Physical flasher qualification adds `qualification-evidence-v0.3.6.tar.gz`, a signed acceptance document, and `flasher-release-record-v0.3.6.json`. Railway qualification adds `deployment-qualification-v0.3.6.json`. Promotion accepts only these narrowly named supplements and independently reverifies workflow custody, Minisign signatures, exact source, artifact digests, and live GitHub attestations.
+The unified prerelease passes two protected evidence tracks before stable promotion. Physical flasher qualification adds `qualification-evidence-v0.3.7.tar.gz`, a signed acceptance document, and `flasher-release-record-v0.3.7.json`. Railway qualification adds `deployment-qualification-v0.3.7.json`. Promotion accepts only these narrowly named supplements and independently reverifies workflow custody, Minisign signatures, exact source, artifact digests, and live GitHub attestations.
 
 ```sh
-gh attestation verify prnsd-0.3.6-x86_64-unknown-linux-gnu.tar.gz \
+gh attestation verify prnsd-0.3.7-x86_64-unknown-linux-gnu.tar.gz \
   --repo KenAKAFrosty/Prns
 gh attestation verify \
   oci://ghcr.io/kenakafrosty/prnsd@sha256:REPLACE_WITH_SIGNED_DIGEST \
   --repo KenAKAFrosty/Prns
 ```
 
-The suite uses the existing Minisign trust root and GitHub provenance. macOS notarization and Windows Authenticode are not present in `v0.3.6`; the archives are not platform-vendor-signed.
+The suite uses the existing Minisign trust root and GitHub provenance. macOS notarization and Windows Authenticode are not present in `v0.3.7`; the archives are not platform-vendor-signed.
 
 ## Pre-1.0 semver
 
@@ -267,9 +267,18 @@ Crates keep explicit `version` fields in their own `Cargo.toml` files. The
 suite version in `VERSION` should match the primary public crate release unless
 there is a deliberate crate-specific release.
 
-Flash artifacts use the same build version by default when their manifest entry
-still says `version = "next"`. Release jobs may set `PRNS_FLASH_VERSION` when a
-firmware artifact intentionally needs a different prerelease or patch version.
+Flash artifacts use the suite version by default. A committed, immutable flasher-only
+hotfix may set `PRNS_FLASH_VERSION` to `SUITE_VERSION-hotfix.N`. The hotfix specification
+pins the current stable release as its base, names every rebuilt board, and records the
+targeted qualification contract. Firmware for all other boards is copied byte-for-byte
+from that verified base and checked again before signing; the suite `VERSION` and source
+snapshot version remain unchanged.
+
+Hotfixes retain reproducible builds, dependency review, signing, public review, rollback,
+and exact-byte promotion. They narrow only the rebuilt firmware set and the human physical
+matrix. A hardware deferral is permitted only when committed in the specification and
+explicitly approved in the acceptance record; it is never represented as a completed test.
+See [`release/flash/hotfixes/README.md`](../release/flash/hotfixes/README.md).
 
 Keep `publish = false` on crates until the release checklist for that crate is
 complete. The first public cargo publish should include an audited manifest,

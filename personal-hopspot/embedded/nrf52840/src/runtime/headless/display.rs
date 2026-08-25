@@ -227,16 +227,9 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                         gnss,
                         state: &ui_state,
                         interface_menu_details: &details,
-                        animation_ms: now_ms,
                     },
                 );
-                match display.flush() {
-                    Ok(()) => {}
-                    Err(DisplayIoError::Spi) => {
-                        display.force_dark();
-                        display_power.mark_unavailable();
-                    }
-                }
+                let _panel_update = display.flush();
             }
             match select3(
                 board::INPUT_EVENTS.receive(),

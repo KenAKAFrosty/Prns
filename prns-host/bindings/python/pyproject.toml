@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-rns"
-version = "0.3.6"
+version = "0.3.7"
 description = "Correct, robust, fast Python bindings for Personal Reticulum"
 readme = "README.md"
 requires-python = ">=3.10"

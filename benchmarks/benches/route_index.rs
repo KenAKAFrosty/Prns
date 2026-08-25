@@ -13,7 +13,8 @@ use criterion::{criterion_group, criterion_main, BenchmarkGroup, BenchmarkId, Cr
 use personal_rns::engine::InstantMillis;
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::routing::routes::{
-    route_index_buckets, FixedArrayRouteTable, FixedIndexedRouteTable, RouteEntry, RouteTable,
+    route_index_buckets, FixedArrayRouteTable, FixedIndexedRouteTable, RouteEntry, RouteEvidenceId,
+    RouteTable,
 };
 use personal_rns::routing::{NextHop, RouteResponsiveness};
 use personal_rns::wire::DestinationHash;
@@ -24,6 +25,10 @@ fn dest_n(n: u32) -> DestinationHash {
     b[..8].copy_from_slice(&key.to_be_bytes());
     b[8..12].copy_from_slice(&n.to_be_bytes());
     DestinationHash::new(b)
+}
+
+fn evidence(n: u32) -> RouteEvidenceId {
+    RouteEvidenceId::new(n + 1).unwrap()
 }
 
 fn route_row() -> RouteEntry {
@@ -44,8 +49,8 @@ fn bench_mode<const N: usize, const B: usize>(
     let mut linear = FixedArrayRouteTable::<N>::default();
     let mut indexed = FixedIndexedRouteTable::<N, B>::default();
     for i in 0..N as u32 {
-        linear.push(dest_n(i), route_row()).unwrap();
-        indexed.push(dest_n(i), route_row()).unwrap();
+        linear.push(dest_n(i), evidence(i), route_row()).unwrap();
+        indexed.push(dest_n(i), evidence(i), route_row()).unwrap();
     }
 
     group.bench_with_input(BenchmarkId::new("linear", N), &N, |b, _| {

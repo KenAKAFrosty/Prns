@@ -35,6 +35,7 @@ jobs:
       RELEASE_VERSION: ${{ inputs.version }}
       ACCEPTANCE_COMMIT: ${{ inputs.acceptance_commit }}
       QUALIFICATION_EVIDENCE_SHA256: ${{ inputs.qualification_evidence_sha256 }}
+      PYTHONDONTWRITEBYTECODE: "1"
       RUSTUP_TOOLCHAIN: 1.96.0
     steps:
       - name: Checkout reviewed release implementation
@@ -148,7 +149,9 @@ jobs:
         env:
           PRNS_MINISIGN_BIN: ${{ runner.temp }}/prns-release-bin/minisign
         run: |
-          test "$(cat VERSION)" = "$RELEASE_VERSION"
+          test "$(cat target/candidate/VERSION)" = "$RELEASE_VERSION"
+          ./tools/prns release hotfix -- verify-candidate \
+            --repository . --candidate target/candidate
           ./tools/prns release candidate verify -- target/candidate
           published_at="$(jq -r '.publishedAt' target/release/prerelease.json)"
           source_commit="$(jq -r '.release.commit' target/candidate/flash-manifest.json)"
@@ -198,7 +201,13 @@ jobs:
               --bundle "$bundle" \
               --signer-workflow "$signer_workflow" \
               --deny-self-hosted-runners
-          done < <(jq -r '[.targets[].parts[].path] | unique[]' target/candidate/flash-manifest.json)
+          done < <(
+            jq -r '
+              .subjects[]
+              | select(.name | startswith("firmware/"))
+              | .name
+            ' "target/release/prns-flasher-attestation-v${RELEASE_VERSION}.metadata.json"
+          )
       - name: Select and verify the exact successful protected public review
         id: public_review
         env:

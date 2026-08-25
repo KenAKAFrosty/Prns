@@ -42,6 +42,19 @@ def extract_source(source_commit: str, destination: Path) -> None:
         source.extractall(destination, filter="data")
 
 
+def release_asset_verifier(candidate: Path, historical_snapshot: Path) -> Path:
+    """Select the asset policy without reviving the pre-hotfix suite requirement."""
+    if (candidate / "metadata" / "hotfix.json").is_file():
+        return existing(
+            ROOT / "tools/release/verify-flasher-release-assets.py",
+            "current hotfix-aware release-asset verifier",
+        )
+    return existing(
+        historical_snapshot / "tools/release/verify-flasher-release-assets.py",
+        "historical release-asset verifier",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--candidate", type=Path, required=True)
@@ -148,10 +161,7 @@ def main() -> int:
             verifier = existing(
                 snapshot / "tools/release/verify-flasher-release.sh", "historical release verifier"
             )
-            asset_verifier = existing(
-                snapshot / "tools/release/verify-flasher-release-assets.py",
-                "historical release-asset verifier",
-            )
+            asset_verifier = release_asset_verifier(paths["candidate"], snapshot)
             public_review_verifier = existing(
                 snapshot / "tools/release/flasher-public-review.py",
                 "historical public-review verifier",

@@ -1,6 +1,6 @@
 pub const HOST_SCHEMA_VERSION: u32 = 1;
 pub const HOST_SCHEMA_ABI: u32 = 1;
-pub const HOST_SCHEMA_PRODUCT_VERSION: &str = "0.3.6";
+pub const HOST_SCHEMA_PRODUCT_VERSION: &str = "0.3.7";
 pub const DESTINATION_HASH_LENGTH: usize = 16;
 pub const IDENTITY_HASH_LENGTH: usize = 16;
 pub const INTERFACE_ID_LENGTH: usize = 8;

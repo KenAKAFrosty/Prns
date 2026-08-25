@@ -1,0 +1,18 @@
+{
+  "candidate": {
+    "channel": "stable",
+    "manifest_sha256": "6fd1d56c450f45a6569136e2c87906c3437a54df63aca2adc45af13b423d5177",
+    "manifest_signature_sha256": "7b407cd7cd50c193a45f47ed97065877a443c4391903fc38bf881ad62ce6970d",
+    "prerelease_published_at": "2026-08-23T04:18:50Z",
+    "signed_candidate_sha256": "5815c0e037e6eb76aee65aa53871accf542e7e3b5ce447bcf1f6a0d41952c0a4",
+    "signing_key_id": "1BF5C4D8B140811A",
+    "source_commit": "95404f41675b4a38907af09253460aeea518e5f2",
+    "version": "0.3.7"
+  },
+  "maintainer_override": {
+    "approved_at": "2026-08-24T18:22:25Z",
+    "approved_by": "github:KenAKAFrosty",
+    "basis": "Pre-1.0 v0.3.7 is approved by the release owner for the exact public candidate after hardware-backed web-flasher qualification across 50 content-addressed observations covering macOS, Linux, Windows, seven board families, both T-Echo foundations, Chrome, Edge, Firefox, and Safari fallback. The exhaustive schema-5 CLI and injected-failure matrix is waived only for 0.3.7; no unperformed scenario or Railway qualification is claimed."
+  },
+  "schema": 4
+}

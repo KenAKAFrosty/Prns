@@ -1,6 +1,6 @@
 [package]
 name = "prns-core"
-version = "0.3.6"
+version = "0.3.7"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -59,7 +59,7 @@ _keyring-vault = ["std", "dep:keyring", "keyring/crypto-rust", "keyring/apple-na
 flash = ["dep:embedded-storage", "dep:embedded-storage-async"]
 
 [dependencies]
-prns-macros = { version = "=0.3.6", path = "../prns-macros" }
+prns-macros = { version = "=0.3.7", path = "../prns-macros" }
 cfg-if = "1.0"
 
 # Crypto: no_std, no internal RNG (entropy is supplied as data by the host), so these must build alloc-free

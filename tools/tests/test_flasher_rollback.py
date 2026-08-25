@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from functools import partial
 import hashlib
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+import importlib.util
 import json
 from pathlib import Path
 import sys
@@ -52,6 +53,18 @@ def write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def historical_verifier_module():
+    script = SCRIPTS / "verify-historical-flasher-release.py"
+    spec = importlib.util.spec_from_file_location(
+        "verify_historical_flasher_release", script
+    )
+    if spec is None or spec.loader is None:
+        raise AssertionError(f"could not import {script}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def descriptor(version: str, manifest_sha256: str) -> dict:
     return {
         "schema": 1,
@@ -76,10 +89,12 @@ def bootstrap_metadata() -> dict:
     }
 
 
-def signed_candidate(root: Path, version: str = VERSION) -> tuple[Path, Path]:
+def signed_candidate(
+    root: Path, version: str = VERSION, *, manifest_schema: int = 3
+) -> tuple[Path, Path]:
     root.mkdir(parents=True)
     manifest = {
-        "schema": 3,
+        "schema": manifest_schema,
         "release": {
             "version": version,
             "channel": "stable",
@@ -133,6 +148,29 @@ def signed_candidate(root: Path, version: str = VERSION) -> tuple[Path, Path]:
 
 
 class FlasherRollbackTests(unittest.TestCase):
+    def test_historical_hotfix_uses_hotfix_aware_asset_policy(self) -> None:
+        module = historical_verifier_module()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            candidate = root / "candidate"
+            historical = (
+                root / "snapshot" / "tools" / "release" / "verify-flasher-release-assets.py"
+            )
+            candidate.mkdir()
+            historical.parent.mkdir(parents=True)
+            historical.write_text("historical verifier\n", encoding="utf-8")
+
+            self.assertEqual(
+                module.release_asset_verifier(candidate, root / "snapshot"),
+                historical.resolve(),
+            )
+
+            write_json(candidate / "metadata" / "hotfix.json", {"schema": 1})
+            self.assertEqual(
+                module.release_asset_verifier(candidate, root / "snapshot"),
+                (SCRIPTS / "verify-flasher-release-assets.py").resolve(),
+            )
+
     def test_bootstrap_guard_distinguishes_suite_and_flasher_custody(self) -> None:
         signed_candidate = {"name": "prns-flasher-candidate-v0.3.0-signed.tar.gz"}
         prerelease = {
@@ -190,7 +228,9 @@ class FlasherRollbackTests(unittest.TestCase):
             validate_candidate_history(bootstrap_candidate)
 
             prior = workspace / "prior"
-            _, record = signed_candidate(prior)
+            _, record = signed_candidate(prior, manifest_schema=2)
+            with self.assertRaisesRegex(ValueError, "candidate manifest is not schema 3"):
+                validate_candidate_history(prior)
             retained = workspace / "retained"
             retained_metadata = prepare_retained(prior, record, retained)
             self.assertEqual(retained_metadata["mode"], "retained")
@@ -304,6 +344,7 @@ class FlasherRollbackTests(unittest.TestCase):
 
             live_descriptor = workspace / "stable.json"
             live_hash = "f" * 64
+
             write_json(live_descriptor, descriptor(NEXT_VERSION, live_hash))
             validate_descriptor(live_descriptor, NEXT_VERSION, live_hash)
             with self.assertRaisesRegex(ValueError, "compare-and-swap"):
@@ -489,6 +530,35 @@ class FlasherRollbackTests(unittest.TestCase):
                     expected_live_manifest_sha256=live_hash,
                     required_workflow_sha=WORKFLOW_SHA,
                     required_observed_live_state="target_baseline",
+                )
+
+    def test_rollback_stage_accepts_verified_historical_schema_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary)
+            historical = workspace / "historical"
+            manifest, record = signed_candidate(historical, manifest_schema=2)
+            identity = stage(
+                candidate=historical,
+                release_record=record,
+                release_record_sha256=sha256(record),
+                version=VERSION,
+                output=workspace / "historical-staged",
+                identity_output=workspace / "historical-stage.json",
+            )
+            self.assertEqual(identity["target"]["manifest_sha256"], sha256(manifest))
+
+            future = workspace / "future"
+            _, future_record = signed_candidate(future, manifest_schema=4)
+            with self.assertRaisesRegex(
+                ValueError, "rollback target is not the exact signed stable candidate"
+            ):
+                stage(
+                    candidate=future,
+                    release_record=future_record,
+                    release_record_sha256=sha256(future_record),
+                    version=VERSION,
+                    output=workspace / "future-staged",
+                    identity_output=workspace / "future-stage.json",
                 )
 
     def test_coming_soon_target_is_exact_and_binds_withdrawn_release(self) -> None:

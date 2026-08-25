@@ -1,6 +1,6 @@
 {
   "name": "hopspot",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "description": "The Personal RNS JavaScript API under the alternate Hopspot package name.",
   "license": "MIT OR Apache-2.0",
   "homepage": "https://reticulum.rs",
@@ -75,7 +75,7 @@
     "check": "npm test && npm pack --dry-run --cache ./target/npm-cache"
   },
   "dependencies": {
-    "personal-rns": "0.3.6"
+    "personal-rns": "0.3.7"
   },
   "publishConfig": {
     "access": "public"

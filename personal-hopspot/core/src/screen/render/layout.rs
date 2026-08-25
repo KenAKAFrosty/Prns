@@ -60,4 +60,3 @@ pub(in crate::screen) const FONT_4X6_CHAR_W: i32 = 4;
 pub(super) const GLOBAL_MENU_ITEM_STEP: i32 = 11;
 pub(in crate::screen) const SPLASH_TEXT_X: i32 = 2;
 pub(super) const SPLASH_LINE_STEP: i32 = 11;
-pub(super) const BATTERY_CHARGE_BLINK_MS: u64 = 600;

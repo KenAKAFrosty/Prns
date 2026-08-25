@@ -97,9 +97,10 @@ use personal_rns::tcp::{
 use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
 use personal_rns::wifi_auto::{
     tcp_rendezvous, AutoWifi, AutoWifiSegment, AutoWifiShared, AutoWifiStatus, AutoWifiTopology,
-    TcpRendezvousBuffers, TcpRendezvousServer, TcpRendezvousStorage, TcpRendezvousWireSlot,
-    UdpServiceDiscovery, UdpServiceDiscoveryStorage, TCP_RENDEZVOUS_FRAMED_LEN,
-    TCP_RENDEZVOUS_FRAME_CAP, TCP_RENDEZVOUS_READ_BUFFER_BYTES, TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES,
+    TcpRendezvousBuffers, TcpRendezvousClients, TcpRendezvousServer, TcpRendezvousStorage,
+    TcpRendezvousWireSlot, UdpServiceDiscovery, UdpServiceDiscoveryStorage,
+    TCP_RENDEZVOUS_CLIENT_CAPACITY, TCP_RENDEZVOUS_FRAMED_LEN, TCP_RENDEZVOUS_FRAME_CAP,
+    TCP_RENDEZVOUS_READ_BUFFER_BYTES, TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES,
     UDP_SERVICE_DISCOVERY_RX_SOCKET_BYTES, UDP_SERVICE_DISCOVERY_RX_SOCKET_METADATA,
     UDP_SERVICE_DISCOVERY_SOCKET_COUNT, UDP_SERVICE_DISCOVERY_TX_SOCKET_BYTES,
     UDP_SERVICE_DISCOVERY_TX_SOCKET_METADATA,
@@ -193,8 +194,16 @@ const RECLAIMED_HEAP_BYTES: usize = 72 * 1024;
 // lives in PSRAM.
 const RADIO_INTERNAL_HEAP_BYTES: usize = 52 * 1024;
 
-const RENDER_INTERVAL: Duration = Duration::from_millis(500);
-const RENDER_TICKS_PER_BATTERY: u8 = 4;
+const RENDER_INTERVAL_MS: u64 = 500;
+const RENDER_INTERVAL: Duration = Duration::from_millis(RENDER_INTERVAL_MS);
+/// Keep the existing two-second probe cadence so the Heltec's voltage-trend charging inference
+/// stays responsive. The exact level is human-facing and moves much more slowly, so publish it only
+/// every ten seconds; fresh external-power state still reaches the plug on every probe.
+const BATTERY_SAMPLE_INTERVAL_MS: u64 = 2_000;
+const BATTERY_DISPLAY_INTERVAL_MS: u64 = 10_000;
+const RENDER_TICKS_PER_BATTERY_SAMPLE: u8 = (BATTERY_SAMPLE_INTERVAL_MS / RENDER_INTERVAL_MS) as u8;
+const RENDER_TICKS_PER_BATTERY_DISPLAY: u8 =
+    (BATTERY_DISPLAY_INTERVAL_MS / RENDER_INTERVAL_MS) as u8;
 const NOTICE_MS: u64 = 900;
 const DISPLAY_SLEEP_DELAY_MS: u64 = 2_500;
 

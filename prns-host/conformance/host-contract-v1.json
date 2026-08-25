@@ -10,19 +10,19 @@
     {
       "outcome": "Compatible",
       "requiredAbi": 1,
-      "requiredProductVersion": "0.3.6",
+      "requiredProductVersion": "0.3.7",
       "requiredSchemaVersion": 1
     },
     {
       "outcome": "ContractMismatch",
       "requiredAbi": 2,
-      "requiredProductVersion": "0.3.6",
+      "requiredProductVersion": "0.3.7",
       "requiredSchemaVersion": 1
     },
     {
       "outcome": "ContractMismatch",
       "requiredAbi": 1,
-      "requiredProductVersion": "0.3.6",
+      "requiredProductVersion": "0.3.7",
       "requiredSchemaVersion": 2
     },
     {
@@ -1212,7 +1212,7 @@
       "status": true
     }
   ],
-  "productVersion": "0.3.6",
+  "productVersion": "0.3.7",
   "records": {
     "BackendInfo": [
       {

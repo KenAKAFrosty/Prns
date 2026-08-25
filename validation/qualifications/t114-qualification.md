@@ -5,6 +5,13 @@ Observed independently on 2026-08-19 against commit `c40e8cb0`, using the exact
 `./tools/prns build hopspot t114`. The device was a stock Heltec Mesh Node T114
 Rev. 2.x restored to its factory bootloader:
 
+The T114 combines the nRF52840 and SX1262 already represented in the embedded
+stack, but it needs its own board authority for pins, external crystal startup,
+TCXO and DIO2 RF-switch control, storage ranges, and UF2 memory layout. That
+initial target, shared SX126x receive-reentry fix, and hardware qualification
+were contributed by [Markik](https://github.com/mark-ik) in
+[PR #111](https://github.com/KenAKAFrosty/Prns/pull/111).
+
 ```text
 UF2 Bootloader 0.9.0-2-g836c8dc-dirty
 Model: HT-n5262

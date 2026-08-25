@@ -119,7 +119,6 @@ fn render_with_state<D: DrawTarget<Color = BinaryColor>>(
             gnss: None,
             state,
             interface_menu_details: &interface_menu_details,
-            animation_ms: 0,
         },
     );
 }
@@ -143,7 +142,6 @@ fn render_with_local_docs<D: DrawTarget<Color = BinaryColor>>(
             gnss: None,
             state,
             interface_menu_details: &interface_menu_details,
-            animation_ms: 0,
         },
     );
 }

@@ -1,6 +1,6 @@
 [package]
 name = "prns-runtime"
-version = "0.3.6"
+version = "0.3.7"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -30,15 +30,15 @@ rns-management = ["alloc", "prns-core/shared-instance-rpc"]
 resource-bzip2 = ["std", "dep:bzip2"]
 
 [dependencies]
-prns-core = { version = "=0.3.6", path = "../../prns-core", default-features = false }
-prns-macros = { version = "=0.3.6", path = "../../prns-macros" }
+prns-core = { version = "=0.3.7", path = "../../prns-core", default-features = false }
+prns-macros = { version = "=0.3.7", path = "../../prns-macros" }
 bzip2 = { version = "0.6", optional = true }
 cfg-if = "1.0"
 
 heapless = { version = "0.8", default-features = false }
 
 [dev-dependencies]
-prns-core = { version = "=0.3.6", path = "../../prns-core", default-features = false, features = ["test-support"] }
+prns-core = { version = "=0.3.7", path = "../../prns-core", default-features = false, features = ["test-support"] }
 futures-executor = "0.3"
 futures-test = "0.3"
 rmpv = "1.3"

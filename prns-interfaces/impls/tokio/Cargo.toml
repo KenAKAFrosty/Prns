@@ -1,6 +1,6 @@
 [package]
 name = "prns-interfaces-tokio"
-version = "0.3.6"
+version = "0.3.7"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KenAKAFrosty/Prns"
@@ -21,14 +21,14 @@ path = "src/lib.rs"
 
 [dependencies]
 cfg-if = "1.0"
-prns-config = { version = "=0.3.6", path = "../../../prns-config", optional = true }
+prns-config = { version = "=0.3.7", path = "../../../prns-config", optional = true }
 shlex = { version = "1", optional = true }
 # The permissively licensed Unix transport behind the Prns-owned opaque serial stream.
 # Windows opening and macOS/Windows USB enumeration stay in prns-ffi so platform FFI never
 # leaks into the safe host-interface crate.
 serial2-tokio = { version = "0.1.24", optional = true }
-prns-core = { version = "=0.3.6", path = "../../../prns-core", default-features = false, features = ["tokio-host"] }
-prns-runtime = { package = "prns-runtime-tokio", version = "=0.3.6", path = "../../../prns-runtime/impls/tokio", default-features = false }
+prns-core = { version = "=0.3.7", path = "../../../prns-core", default-features = false, features = ["tokio-host"] }
+prns-runtime = { package = "prns-runtime-tokio", version = "=0.3.7", path = "../../../prns-runtime/impls/tokio", default-features = false }
 heapless = { version = "0.8", default-features = false }
 tokio = { version = "1", optional = true, default-features = false, features = ["rt", "macros", "sync", "time", "io-util"] }
 socket2 = { version = "0.6", optional = true, features = ["all"] }
@@ -58,7 +58,7 @@ nusb = { version = "0.2.4", optional = true, features = ["tokio"] }
 netdev = { version = "0.45", optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "windows"))'.dependencies]
-prns-ffi = { version = "=0.3.6", path = "../../../prns-ffi", optional = true, default-features = false }
+prns-ffi = { version = "=0.3.7", path = "../../../prns-ffi", optional = true, default-features = false }
 
 [dev-dependencies]
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "test-util"] }

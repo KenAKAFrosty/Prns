@@ -29,6 +29,11 @@ on:
         required: false
         default: ""
         type: string
+      hotfix_version:
+        description: Committed target-scoped hotfix identity; empty for an ordinary VERSION release
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -64,6 +69,7 @@ jobs:
           HISTORY_MODE: ${{ inputs.history_mode }}
           HISTORY_VERSION: ${{ inputs.history_version }}
           HISTORY_RELEASE_RECORD_SHA256: ${{ inputs.history_release_record_sha256 }}
+          HOTFIX_VERSION: ${{ inputs.hotfix_version }}
         run: |
           default_branch="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')"
           test "$GITHUB_REF" = "refs/heads/${default_branch}"
@@ -79,6 +85,14 @@ jobs:
               ;;
             *) exit 2 ;;
           esac
+          if [[ -n "$HOTFIX_VERSION" ]]; then
+            test "${{ inputs.channel }}" = stable
+            ./tools/prns release hotfix -- identity \
+              --repository . --version "$HOTFIX_VERSION"
+            test "$(./tools/prns release hotfix -- identity \
+              --repository . --version "$HOTFIX_VERSION" --format base-version)" = \
+              "$HISTORY_VERSION"
+          fi
       - name: Install exact Minisign verifier
         run: ./tools/prns release toolchain minisign install -- "${RUNNER_TEMP}/prns-release-bin"
       - name: Prepare explicit bootstrap or verified retained history
@@ -181,7 +195,13 @@ jobs:
               gh attestation verify "$candidate/$relative" --repo "$GITHUB_REPOSITORY" \
                 --bundle "$attestation" --signer-workflow "$signer" \
                 --deny-self-hosted-runners
-            done < <(jq -r '[.targets[].parts[].path] | unique[]' "$candidate/flash-manifest.json")
+            done < <(
+              jq -r '
+                .subjects[]
+                | select(.name | startswith("firmware/"))
+                | .name
+              ' "$assets/prns-flasher-attestation-v${HISTORY_VERSION}.metadata.json"
+            )
 
             live="target/live-stable"
             mkdir -p "$live"
@@ -253,6 +273,15 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      - name: Resolve ordinary or target-scoped flasher version
+        env:
+          HOTFIX_VERSION: ${{ inputs.hotfix_version }}
+        shell: bash
+        run: |
+          requested="${HOTFIX_VERSION:-$(cat VERSION)}"
+          resolved="$(./tools/prns release hotfix -- identity \
+            --repository . --version "$requested" --format version)"
+          printf 'PRNS_FLASH_VERSION=%s\n' "$resolved" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.96.0
@@ -317,6 +346,14 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      - name: Resolve ordinary or target-scoped flasher version
+        env:
+          HOTFIX_VERSION: ${{ inputs.hotfix_version }}
+        run: |
+          requested="${HOTFIX_VERSION:-$(cat VERSION)}"
+          resolved="$(./tools/prns release hotfix -- identity \
+            --repository . --version "$requested" --format version)"
+          printf 'PRNS_FLASH_VERSION=%s\n' "$resolved" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: flasher-release-history-${{ github.run_id }}
@@ -449,6 +486,14 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      - name: Resolve ordinary or target-scoped flasher version
+        env:
+          HOTFIX_VERSION: ${{ inputs.hotfix_version }}
+        run: |
+          requested="${HOTFIX_VERSION:-$(cat VERSION)}"
+          resolved="$(./tools/prns release hotfix -- identity \
+            --repository . --version "$requested" --format version)"
+          printf 'PRNS_FLASH_VERSION=%s\n' "$resolved" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: flasher-cli-${{ matrix.build_pass }}-*
@@ -469,7 +514,7 @@ jobs:
           SOURCE_COMMIT: ${{ github.sha }}
         run: ./tools/prns release candidate finalize -- target/candidate --channel "$RELEASE_CHANNEL" --commit "$SOURCE_COMMIT" --key-id "$RELEASE_KEY_ID"
       - name: Create deterministic precomparison archive
-        run: ./tools/prns release candidate package -- target/candidate "target/prns-flasher-candidate-v$(cat VERSION)-precomparison.tar.gz"
+        run: ./tools/prns release candidate package -- target/candidate "target/prns-flasher-candidate-v${PRNS_FLASH_VERSION}-precomparison.tar.gz"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: flasher-assembled-${{ matrix.build_pass }}
@@ -486,6 +531,14 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      - name: Resolve ordinary or target-scoped flasher version
+        env:
+          HOTFIX_VERSION: ${{ inputs.hotfix_version }}
+        run: |
+          requested="${HOTFIX_VERSION:-$(cat VERSION)}"
+          resolved="$(./tools/prns release hotfix -- identity \
+            --repository . --version "$requested" --format version)"
+          printf 'PRNS_FLASH_VERSION=%s\n' "$resolved" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: flasher-assembled-primary
@@ -498,16 +551,16 @@ jobs:
         run: |
           mkdir -p target/release
           ./tools/prns release candidate compare -- \
-            --primary "target/repro/primary/prns-flasher-candidate-v$(cat VERSION)-precomparison.tar.gz" \
-            --reproduction "target/repro/reproduction/prns-flasher-candidate-v$(cat VERSION)-precomparison.tar.gz" \
-            --output "target/release/prns-flasher-candidate-v$(cat VERSION)-unsigned.tar.gz" \
+            --primary "target/repro/primary/prns-flasher-candidate-v${PRNS_FLASH_VERSION}-precomparison.tar.gz" \
+            --reproduction "target/repro/reproduction/prns-flasher-candidate-v${PRNS_FLASH_VERSION}-precomparison.tar.gz" \
+            --output "target/release/prns-flasher-candidate-v${PRNS_FLASH_VERSION}-unsigned.tar.gz" \
             --report target/release/reproducibility.json
       - name: Revalidate final unsigned candidate boundary
         env:
           SOURCE_COMMIT: ${{ github.sha }}
         run: |
           ./tools/prns release candidate extract -- \
-            "target/release/prns-flasher-candidate-v$(cat VERSION)-unsigned.tar.gz" \
+            "target/release/prns-flasher-candidate-v${PRNS_FLASH_VERSION}-unsigned.tar.gz" \
             target/verified-candidate
           ./tools/prns release candidate validate-unsigned -- target/verified-candidate \
             --expected-commit "$SOURCE_COMMIT" \

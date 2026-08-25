@@ -21,6 +21,13 @@ The generator refuses to overwrite a record. Never mark an unperformed scenario 
 validator rejects placeholders, future dates, unknown fields, incomplete matrices, non-passing
 results, and any candidate identity that differs from those three exact files.
 
+For a candidate carrying `qualification/hotfix.json`, the same command creates schema 6 instead of
+the full schema-5 matrix. Its `runs` contain only the specification's physical boards and surfaces,
+and each row must prove exactly the committed scenarios and targeted checks. A changed board listed
+under `hardware_deferrals` has no physical run: the release owner must copy the committed basis and
+follow-up unchanged, then set `approved_by` and an `approved_at` timestamp no earlier than the public
+prerelease. This records a deliberate deferred check; it never counts as hardware evidence.
+
 ## Physical runs
 
 `runs` contains one result for every board and surface (`web` or `cli`) plus separate S140 6.1.1

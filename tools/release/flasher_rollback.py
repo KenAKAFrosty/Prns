@@ -331,8 +331,12 @@ def stage(
         raise ValueError("target release record differs from the operator-supplied SHA-256")
     manifest = load_object(candidate / "flash-manifest.json", "target manifest")
     release = manifest.get("release")
+    manifest_schema = manifest.get("schema")
     if (
-        manifest.get("schema") != FLASH_MANIFEST_SCHEMA
+        not isinstance(manifest_schema, int)
+        or isinstance(manifest_schema, bool)
+        or manifest_schema < 1
+        or manifest_schema > FLASH_MANIFEST_SCHEMA
         or not isinstance(release, dict)
         or release.get("version") != version
         or release.get("channel") != "stable"
