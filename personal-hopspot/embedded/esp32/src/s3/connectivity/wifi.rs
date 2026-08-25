@@ -51,10 +51,15 @@ const WIFI_AUTO_UNICAST_DISCOVERY_TX_SOCKET_METADATA: usize =
     WIFI_AUTO_UNICAST_DISCOVERY_TX_QUEUED_PACKETS + 1;
 const WIFI_AUTO_UNICAST_DISCOVERY_TX_SOCKET_BYTES: usize =
     wifi_auto_contract::PEERING_TOKEN_BYTES * WIFI_AUTO_UNICAST_DISCOVERY_TX_QUEUED_PACKETS;
+// `embassy_net::new` installs one DNS resolver socket whenever the firmware enables DNS. That
+// socket exists even for an IPv4 TCP target, so it must be counted separately from the configured
+// client's socket or DNS-SD leaves the fixed socket table full before `TcpSocket::new` runs.
+const EMBASSY_DNS_RESOLVER_SOCKET_COUNT: usize = 1;
 const DHCP_CLIENT_SOCKET_COUNT: usize = 1;
 const WIFI_AUTO_DATAGRAM_SOCKET_COUNT: usize = 3;
 const CONFIGURED_TCP_CLIENT_SOCKET_COUNT: usize = 1;
-const STATION_STACK_SOCKET_CAPACITY: usize = DHCP_CLIENT_SOCKET_COUNT
+const STATION_STACK_SOCKET_CAPACITY: usize = EMBASSY_DNS_RESOLVER_SOCKET_COUNT
+    + DHCP_CLIENT_SOCKET_COUNT
     + WIFI_AUTO_DATAGRAM_SOCKET_COUNT
     + CONFIGURED_TCP_CLIENT_SOCKET_COUNT
     + UDP_SERVICE_DISCOVERY_SOCKET_COUNT as usize;
@@ -107,6 +112,7 @@ const _: () = assert!(WIFI_STATIC_RX_BUFFERS >= WIFI_RX_BA_WINDOW);
 const _: () = assert!(WIFI_DYNAMIC_RX_BUFFERS > WIFI_RX_BA_WINDOW as u16);
 const _: () = assert!(WIFI_DYNAMIC_RX_BUFFERS as usize >= WIFI_RX_QUEUE_FRAMES);
 const _: () = assert!(WIFI_DYNAMIC_TX_BUFFERS >= WIFI_TX_QUEUE_FRAMES as u16);
+const _: () = assert!(STATION_STACK_SOCKET_CAPACITY == 7);
 const _: () = assert!(
     WIFI_AUTO_UNICAST_DISCOVERY_TX_SOCKET_METADATA > WIFI_AUTO_UNICAST_DISCOVERY_TX_QUEUED_PACKETS
 );
@@ -226,33 +232,14 @@ pub(in crate::s3) fn build_wifi(
         for _ in 0..HTTP_SERVER_WORKERS {
             spawner.spawn(http_server_task(ap_stack).expect("http server task fits"));
         }
-        let rendezvous_events = Box::leak(Box::new([TcpRendezvousWireSlot::empty()]));
-        let rendezvous_commands = Box::leak(Box::new([TcpRendezvousWireSlot::empty()]));
-        let rendezvous_storage = Box::leak(Box::new(TcpRendezvousStorage::new(
-            rendezvous_events,
-            rendezvous_commands,
-        )));
-        let rendezvous_rx = Box::leak(Box::new([0u8; TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES]));
-        let rendezvous_tx = Box::leak(Box::new([0u8; TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES]));
-        let rendezvous_read = Box::leak(Box::new([0u8; TCP_RENDEZVOUS_READ_BUFFER_BYTES]));
-        let rendezvous_framed = Box::leak(Box::new([0u8; TCP_RENDEZVOUS_FRAMED_LEN]));
-        let rendezvous_decoder = Box::leak(Box::new(
-            personal_rns::interfaces::rns_serial_framing::RnsSerialDecoder::<
-                TCP_RENDEZVOUS_FRAME_CAP,
-            >::new(),
-        ));
-        let (rendezvous_server, rendezvous_client) = tcp_rendezvous(
-            ap_stack,
-            TcpRendezvousBuffers {
-                rx: rendezvous_rx,
-                tx: rendezvous_tx,
-                read: rendezvous_read,
-                framed: rendezvous_framed,
-                decoder: rendezvous_decoder,
-            },
-            rendezvous_storage,
-        );
-        spawner.spawn(tcp_rendezvous_task(rendezvous_server).expect("TCP rendezvous task fits"));
+        let (server0, client0) = build_tcp_rendezvous_listener(ap_stack);
+        let (server1, client1) = build_tcp_rendezvous_listener(ap_stack);
+        let (server2, client2) = build_tcp_rendezvous_listener(ap_stack);
+        let (server3, client3) = build_tcp_rendezvous_listener(ap_stack);
+        for server in [server0, server1, server2, server3] {
+            spawner.spawn(tcp_rendezvous_task(server).expect("TCP rendezvous task fits"));
+        }
+        let rendezvous_clients = TcpRendezvousClients::new([client0, client1, client2, client3]);
         let ap_discovery = wifi_auto_soft_ap_multicast_discovery_socket(ap_stack);
         let ap_unicast_discovery = wifi_auto_unicast_discovery_socket(ap_stack);
         let ap_data = wifi_auto_data_socket(ap_stack);
@@ -266,7 +253,7 @@ pub(in crate::s3) fn build_wifi(
                     mac: ap_mac,
                 },
                 secondary: station_segment,
-                rendezvous: Some(rendezvous_client),
+                rendezvous: Some(rendezvous_clients),
             },
             &WIFI_SHARED,
         );
@@ -315,7 +302,39 @@ fn start_udp_service_discovery(
     spawner.spawn(task);
 }
 
-#[embassy_executor::task]
+fn build_tcp_rendezvous_listener(
+    stack: Stack<'static>,
+) -> (
+    TcpRendezvousServer<'static>,
+    personal_rns::wifi_auto::TcpRendezvousClient<'static>,
+) {
+    let events = Box::leak(Box::new([TcpRendezvousWireSlot::empty()]));
+    let commands = Box::leak(Box::new([TcpRendezvousWireSlot::empty()]));
+    let storage = Box::leak(Box::new(TcpRendezvousStorage::new(events, commands)));
+    let rx = Box::leak(Box::new([0u8; TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES]));
+    let tx = Box::leak(Box::new([0u8; TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES]));
+    let read = Box::leak(Box::new([0u8; TCP_RENDEZVOUS_READ_BUFFER_BYTES]));
+    let framed = Box::leak(Box::new([0u8; TCP_RENDEZVOUS_FRAMED_LEN]));
+    let decoder =
+        Box::leak(Box::new(
+            personal_rns::interfaces::rns_serial_framing::RnsSerialDecoder::<
+                TCP_RENDEZVOUS_FRAME_CAP,
+            >::new(),
+        ));
+    tcp_rendezvous(
+        stack,
+        TcpRendezvousBuffers {
+            rx,
+            tx,
+            read,
+            framed,
+            decoder,
+        },
+        storage,
+    )
+}
+
+#[embassy_executor::task(pool_size = TCP_RENDEZVOUS_CLIENT_CAPACITY)]
 async fn tcp_rendezvous_task(server: TcpRendezvousServer<'static>) -> ! {
     server.run().await
 }

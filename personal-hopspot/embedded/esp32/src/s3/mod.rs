@@ -97,9 +97,10 @@ use personal_rns::tcp::{
 use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
 use personal_rns::wifi_auto::{
     tcp_rendezvous, AutoWifi, AutoWifiSegment, AutoWifiShared, AutoWifiStatus, AutoWifiTopology,
-    TcpRendezvousBuffers, TcpRendezvousServer, TcpRendezvousStorage, TcpRendezvousWireSlot,
-    UdpServiceDiscovery, UdpServiceDiscoveryStorage, TCP_RENDEZVOUS_FRAMED_LEN,
-    TCP_RENDEZVOUS_FRAME_CAP, TCP_RENDEZVOUS_READ_BUFFER_BYTES, TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES,
+    TcpRendezvousBuffers, TcpRendezvousClients, TcpRendezvousServer, TcpRendezvousStorage,
+    TcpRendezvousWireSlot, UdpServiceDiscovery, UdpServiceDiscoveryStorage,
+    TCP_RENDEZVOUS_CLIENT_CAPACITY, TCP_RENDEZVOUS_FRAMED_LEN, TCP_RENDEZVOUS_FRAME_CAP,
+    TCP_RENDEZVOUS_READ_BUFFER_BYTES, TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES,
     UDP_SERVICE_DISCOVERY_RX_SOCKET_BYTES, UDP_SERVICE_DISCOVERY_RX_SOCKET_METADATA,
     UDP_SERVICE_DISCOVERY_SOCKET_COUNT, UDP_SERVICE_DISCOVERY_TX_SOCKET_BYTES,
     UDP_SERVICE_DISCOVERY_TX_SOCKET_METADATA,
