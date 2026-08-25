@@ -1,6 +1,8 @@
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use personal_hopspot_core::{Nrf52840FirmwareMemory, T096_FIRMWARE_MEMORY, T114_FIRMWARE_MEMORY};
 
 const BOARD_T_ECHO_FEATURE: &str = "CARGO_FEATURE_BOARD_T_ECHO";
 const BOARD_T096_FEATURE: &str = "CARGO_FEATURE_BOARD_T096";
@@ -23,26 +25,33 @@ enum Softdevice {
     S140V7,
 }
 
+enum MemorySource {
+    File(&'static str),
+    Nrf52840(Nrf52840FirmwareMemory),
+}
+
 fn main() {
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let board = selected_board();
     let softdevice = selected_softdevice();
     let memory = match (board, softdevice) {
-        (Board::TEcho, Some(Softdevice::S140V6)) => Some("memory-s140-v6.x"),
-        (Board::TEcho, Some(Softdevice::S140V7)) => Some("memory-s140-v7.x"),
+        (Board::TEcho, Some(Softdevice::S140V6)) => MemorySource::File("memory-s140-v6.x"),
+        (Board::TEcho, Some(Softdevice::S140V7)) => MemorySource::File("memory-s140-v7.x"),
         (Board::TEcho, None) => panic!("T-Echo requires exactly one S140 compatibility feature"),
-        (Board::T096, Some(Softdevice::S140V6)) => Some("memory-t096.x"),
+        (Board::T096, Some(Softdevice::S140V6)) => MemorySource::Nrf52840(T096_FIRMWARE_MEMORY),
         (Board::T096, None) => panic!("T096 requires softdevice-s140-v6"),
         (Board::T096, Some(Softdevice::S140V7)) => {
             panic!("T096 does not support S140 7.x")
         }
-        (Board::T114, Some(Softdevice::S140V6)) => Some("memory-t114.x"),
+        (Board::T114, Some(Softdevice::S140V6)) => MemorySource::Nrf52840(T114_FIRMWARE_MEMORY),
         (Board::T114, None) => panic!("T114 requires softdevice-s140-v6"),
         (Board::T114, Some(Softdevice::S140V7)) => {
             panic!("T114 does not support S140 7.x")
         }
-        (Board::T1000e, None) => Some("memory-t1000e.x"),
-        (Board::MeshTowerV2, Some(Softdevice::S140V6)) => Some("memory-mesh-tower-v2.x"),
+        (Board::T1000e, None) => MemorySource::File("memory-t1000e.x"),
+        (Board::MeshTowerV2, Some(Softdevice::S140V6)) => {
+            MemorySource::File("memory-mesh-tower-v2.x")
+        }
         (Board::MeshTowerV2, None) => {
             panic!("MeshTower V2 requires softdevice-s140-v6")
         }
@@ -53,18 +62,31 @@ fn main() {
             panic!("T1000-E does not support S140 compatibility features")
         }
     };
-    if let Some(memory) = memory {
-        fs::copy(memory, out.join("memory.x")).unwrap();
+    match memory {
+        MemorySource::File(memory) => {
+            fs::copy(memory, out.join("memory.x")).unwrap();
+        }
+        MemorySource::Nrf52840(layout) => write_nrf52840_memory(&out, layout),
     }
     println!("cargo:rustc-link-search={}", out.display());
     println!("cargo:rustc-link-arg=-Tlink.x");
     println!("cargo:rerun-if-changed=memory-s140-v6.x");
     println!("cargo:rerun-if-changed=memory-s140-v7.x");
-    println!("cargo:rerun-if-changed=memory-t096.x");
-    println!("cargo:rerun-if-changed=memory-t114.x");
     println!("cargo:rerun-if-changed=memory-t1000e.x");
     println!("cargo:rerun-if-changed=memory-mesh-tower-v2.x");
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+fn write_nrf52840_memory(out: &Path, layout: Nrf52840FirmwareMemory) {
+    let application_flash_origin = layout.application_flash.start;
+    let application_flash_bytes = layout.application_flash.byte_len();
+    let application_ram_origin = layout.application_ram.start;
+    let application_ram_bytes = layout.application_ram.byte_len();
+    let minimum_runtime_stack_bytes = layout.minimum_runtime_stack_bytes;
+    let memory = format!(
+        "APPLICATION_FLASH_ORIGIN = {application_flash_origin:#010X};\nAPPLICATION_FLASH_BYTES = {application_flash_bytes:#X};\nAPPLICATION_RAM_ORIGIN = {application_ram_origin:#010X};\nAPPLICATION_RAM_BYTES = {application_ram_bytes:#X};\n\nMEMORY\n{{\n  FLASH : ORIGIN = APPLICATION_FLASH_ORIGIN, LENGTH = APPLICATION_FLASH_BYTES\n  RAM   : ORIGIN = APPLICATION_RAM_ORIGIN, LENGTH = APPLICATION_RAM_BYTES\n}}\n\nASSERT(\n  ORIGIN(RAM) + LENGTH(RAM) - _stack_end >= {minimum_runtime_stack_bytes},\n  \"nRF52840 static memory leaves too little runtime stack\"\n)\n"
+    );
+    fs::write(out.join("memory.x"), memory).unwrap();
 }
 
 fn selected_board() -> Board {
