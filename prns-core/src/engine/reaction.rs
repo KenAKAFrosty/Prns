@@ -97,6 +97,11 @@ pub enum Journaled<'a> {
         cause: HeldDropCause,
     },
     /// RNS 1.4.2's destination `set_packet_callback` delivery as data.
+    ///
+    /// Emitted synchronously before a corresponding [`ProofStrategy::ProveIf`](crate::routing::ProofStrategy::ProveIf)
+    /// decision is requested and before any proof directive reaches egress. A host that
+    /// durably records this callback in-stack therefore lands the inbound delivery before
+    /// acknowledging it.
     Delivered(Delivery<'a>),
 
     CommandSettled {

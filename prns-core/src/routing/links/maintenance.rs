@@ -126,6 +126,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.reconcile_pending_link_route_evidence();
         self.links.remove(link_id);
         self.channels.close(link_id);
+        self.pending_resource_offers.remove_link(link_id);
         self.incoming_assemblies.clear(link_id);
         self.outgoing_assemblies.clear(link_id);
         if let Some(interface) = fire_on {

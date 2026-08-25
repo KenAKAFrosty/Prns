@@ -2,7 +2,7 @@
 """Direction-B TCP parity smoke: a stock RNS node dials *our* TcpServer.
 
 A standalone stock ``RNS.Reticulum`` running only a ``TCPClientInterface`` pointed at the Prns
-``tcp_server_host`` example. It hears the host's ``hopspot.host`` destination announce (proving our
+``rns_interop_peer tcp-server`` scenario. It hears the host's ``hopspot.host`` destination announce (proving our
 server carries an announce *outbound* over a stock RNS client link), sends that destination a single
 packet (inbound data over the same link), and confirms the packet is *proven* (our ProveAll
 destination's proof carried back outbound). One proven round trip exercises our ``TcpServer`` in both
@@ -19,6 +19,7 @@ import tempfile
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 TARGET = os.environ["PRNS_TCP_TARGET"]
 HOST, PORT = TARGET.rsplit(":", 1)
@@ -75,7 +76,7 @@ def main() -> int:
     configdir = tempfile.mkdtemp(prefix="rns-tcpclient-")
     with open(os.path.join(configdir, "config"), "w") as handle:
         handle.write(CONFIG)
-    RNS.Reticulum(configdir=configdir, loglevel=RNS.LOG_WARNING)
+    start_reference_reticulum(configdir=configdir, loglevel=RNS.LOG_WARNING)
     print("CLIENT_UP", flush=True)
 
     seeker = HostSeeker()

@@ -1,10 +1,9 @@
 use std::time::Duration;
 
-use personal_rns::engine::AnnounceNowFailure;
 use personal_rns::identity::{IdentityHash, PublicIdentityMaterial, Zeroizing};
 use personal_rns::node_introspection::{DestinationIdentityQuery, DestinationIdentitySnapshot};
 use personal_rns::routing::announce::{derive_single_destination_hash, ExpandNameError};
-use personal_rns::runtime::SendError;
+use personal_rns::runtime::AnnounceNowError;
 use personal_rns::wire::DestinationHash;
 
 use super::args::RnidArgs;
@@ -26,7 +25,7 @@ pub enum IdentityNetworkError {
         identity: IdentityHash,
         timeout: Duration,
     },
-    Announce(SendError<AnnounceNowFailure>),
+    Announce(AnnounceNowError),
     Identity(LocalIdentityError),
 }
 

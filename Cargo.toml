@@ -6,6 +6,7 @@ members = [
     "prns-host/core",
     "prns-flash-manifest",
     "prns-nrf-dfu",
+    "prns-nrf-dfu-wasm",
     "prns-runtime/core",
     "personal-hopspot/core",
     "personal-hopspot/sdk/hopspot",

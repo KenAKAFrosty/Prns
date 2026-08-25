@@ -12,11 +12,17 @@ import sys
 
 from flasher_build_metadata import validate_metadata
 from flasher_browser_test_trust import find_browser_test_trust_leaks
+from flasher_hotfix import verify_candidate as verify_hotfix_candidate
 from flasher_reproducibility import validate_report as validate_reproducibility_report
 from flasher_sparse_sizes import build_report as build_sparse_size_report
 from flasher_website_history import allowed_historical_signatures, validate_candidate_history
 from source_snapshot import verify_source_snapshot
-from flasher_manifest import FLASH_MANIFEST_SCHEMA, target_artifacts, validate_uf2_artifact
+from flasher_manifest import (
+    FLASH_MANIFEST_SCHEMA,
+    target_artifacts,
+    validate_nrf_serial_dfu_recovery_artifact,
+    validate_uf2_artifact,
+)
 
 
 CLI_TARGETS = {
@@ -26,7 +32,16 @@ CLI_TARGETS = {
     "aarch64-unknown-linux-gnu": ".tar.gz",
     "x86_64-pc-windows-msvc": ".zip",
 }
-SHIPPING_BOARDS = {"heltec-v4", "heltec-v4-r8", "t-beam-supreme", "xiao-esp32-c6", "t-echo"}
+SHIPPING_BOARDS = {
+    "heltec-v4",
+    "heltec-v4-r8",
+    "t-beam-supreme",
+    "xiao-esp32-c6",
+    "t-echo",
+    "t114",
+    "t096",
+    "t1000-e",
+}
 REQUIRED_RELEASE_FILES = (
     "VERSION",
     "flash-manifest.json",
@@ -55,6 +70,10 @@ REQUIRED_RELEASE_FILES = (
     "website/index.html",
     "website/404.html",
     "website/assets/flasher/prns-flash.js",
+    "website/assets/flasher/nrf-dfu/prns_nrf_dfu_core.js",
+    "website/assets/flasher/nrf-dfu/prns_nrf_dfu_core.d.ts",
+    "website/assets/flasher/nrf-dfu/prns_nrf_dfu_core_bg.wasm",
+    "website/assets/flasher/nrf-dfu/prns_nrf_dfu_core_bg.wasm.d.ts",
     "website/source.zip",
     "website/source.zip.sha256",
     "website/browser-node-playground-console/pkg/prns_wasm_bg.wasm",
@@ -121,7 +140,7 @@ def verify_required_release_files(root: Path) -> None:
             raise ValueError(f"candidate contains a mutable hosted release path: {mutable}")
 
 
-def verify_qualification_kit(root: Path, version: str, tester_roster: Path) -> None:
+def verify_qualification_kit(root: Path, roster_version: str, tester_roster: Path) -> None:
     repository = Path(__file__).resolve().parents[2]
     release_tools = repository / "tools" / "release"
     exact_sources = {
@@ -132,6 +151,7 @@ def verify_qualification_kit(root: Path, version: str, tester_roster: Path) -> N
         / "flasher_acceptance_contract.py",
         "qualification/flasher_manifest.py": release_tools / "flasher_manifest.py",
         "qualification/flasher_tester_roster.py": release_tools / "flasher_tester_roster.py",
+        "qualification/flasher_hotfix.py": release_tools / "flasher_hotfix.py",
         "qualification/package-flasher-qualification-evidence.py": release_tools
         / "package-flasher-qualification-evidence.py",
         "qualification/serve-flasher-candidate.py": release_tools / "serve-flasher-candidate.py",
@@ -155,7 +175,7 @@ def verify_qualification_kit(root: Path, version: str, tester_roster: Path) -> N
             "--roster",
             str(root / "qualification" / "tester-roster.json"),
             "--version",
-            version,
+            roster_version,
         ],
         text=True,
         capture_output=True,
@@ -265,11 +285,16 @@ def verify(arguments: argparse.Namespace) -> dict:
 
     repository_version = arguments.repository_version.read_text(encoding="utf-8").strip()
     version = (root / "VERSION").read_text(encoding="utf-8").strip()
-    if version != repository_version or not version or version.lower() == "next":
-        raise ValueError("candidate VERSION differs from the publishable repository VERSION")
+    if not version or version.lower() == "next":
+        raise ValueError("candidate VERSION is not publishable")
     if any(character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-+" for character in version):
         raise ValueError("candidate VERSION is not path-safe")
-    verify_qualification_kit(root, version, arguments.tester_roster.resolve())
+    hotfix = verify_hotfix_candidate(arguments.source_repository.resolve(), root)
+    if hotfix is None and version != repository_version:
+        raise ValueError("ordinary candidate VERSION differs from repository VERSION")
+    if hotfix is not None and hotfix.roster_version != repository_version:
+        raise ValueError("hotfix prefix differs from repository VERSION")
+    verify_qualification_kit(root, repository_version, arguments.tester_roster.resolve())
     if not (
         len(arguments.expected_commit) == 40
         and all(character in "0123456789abcdef" for character in arguments.expected_commit)
@@ -278,7 +303,7 @@ def verify(arguments: argparse.Namespace) -> dict:
     verify_source_snapshot(
         repository=arguments.source_repository,
         commit=arguments.expected_commit,
-        version=version,
+        version=repository_version,
         archive=root / "website" / "source.zip",
         checksum=root / "website" / "source.zip.sha256",
         metadata=root / "metadata" / "source.json",
@@ -338,6 +363,7 @@ def verify(arguments: argparse.Namespace) -> dict:
         source = target.get("source")
         if source is not None:
             raise ValueError(f"embedded target {board_slug} must not carry source metadata")
+        payloads_by_kind = {}
         for part in parts:
             if not isinstance(part, dict):
                 raise ValueError("candidate manifest contains a malformed firmware part")
@@ -356,14 +382,23 @@ def verify(arguments: argparse.Namespace) -> dict:
             if not artifact.is_file() or artifact.stat().st_size != size or digest(artifact) != checksum:
                 raise ValueError(f"candidate firmware part does not match manifest: {relative}")
             payload = artifact.read_bytes()
+            kind = part.get("kind")
+            if isinstance(kind, str):
+                payloads_by_kind[kind] = payload
             if not hosted.is_file() or hosted.read_bytes() != payload:
                 raise ValueError(f"hosted firmware part differs from candidate payload: {relative}")
             if target.get("transport") == "uf2-mass-storage":
                 validate_uf2_artifact(part, payload)
-            if part.get("kind") == "application" and source_archive in payload:
+            if part.get("kind") in {"application", "dfu-application"} and source_archive in payload:
                 raise ValueError(
                     f"embedded target {board_slug} must not embed source.zip"
                 )
+        if target.get("transport") == "nrf-serial-dfu":
+            application = payloads_by_kind.get("dfu-application")
+            recovery = payloads_by_kind.get("uf2")
+            if application is None or recovery is None:
+                raise ValueError("Nordic serial DFU target is missing bound artifacts")
+            validate_nrf_serial_dfu_recovery_artifact(target, application, recovery)
 
     capability_metadata = json.loads(
         (root / "metadata" / "source-capabilities.json").read_text(encoding="utf-8")

@@ -14,6 +14,8 @@ pub(crate) use hardware::{
 };
 pub(crate) use identity::{bootstrap_ble_identity, bootstrap_node_identity};
 
+pub(crate) const JOURNAL_LAYOUT: personal_rns::persistence::FlashJournalLayout =
+    personal_hopspot_core::MESH_TOWER_V2_JOURNAL_LAYOUT;
 pub(crate) const USB_MANUFACTURER: &str = "Stay Personal";
 pub(crate) const USB_PRODUCT: &str = "Personal Hopspot (Heltec MeshTower V2)";
 pub(crate) const USB_SERIAL_NUMBER: &str = "PERSONAL-RNS-MTWR-HOP";

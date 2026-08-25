@@ -17,18 +17,23 @@ Env: ``PRNS_LOCAL_PORT`` is the bridge's loopback shared-instance port.
 import os
 import sys
 import tempfile
+import threading
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 LOCAL_PORT = int(os.environ["PRNS_LOCAL_PORT"])
+RPC_PORT = int(os.environ.get("PRNS_RPC_PORT", str(LOCAL_PORT + 1)))
+RESOURCE_BYTES = 1_000_000
+TRANSFER_TIMEOUT_SECONDS = 120
 
 CONFIG = f"""[reticulum]
   enable_transport = No
   share_instance = Yes
   shared_instance_type = tcp
   shared_instance_port = {LOCAL_PORT}
-  instance_control_port = {LOCAL_PORT + 1}
+  instance_control_port = {RPC_PORT}
   rpc_key = 5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a
   panic_on_interface_error = No
 
@@ -40,31 +45,48 @@ CONFIG = f"""[reticulum]
 class PeerSeeker:
     aspect_filter = "prns.peer"
 
-    def __init__(self):
+    def __init__(self, transfer):
+        self.transfer = transfer
         self.link = None
+        self.link_creation = threading.Lock()
 
     def received_announce(self, destination_hash, announced_identity, app_data):
-        if self.link is not None:
-            return
-        destination = RNS.Destination(
-            announced_identity,
-            RNS.Destination.OUT,
-            RNS.Destination.SINGLE,
-            "prns",
-            "peer",
-        )
-        self.link = RNS.Link(destination, established_callback=self.on_up)
+        with self.link_creation:
+            if self.link is not None:
+                return
+            destination = RNS.Destination(
+                announced_identity,
+                RNS.Destination.OUT,
+                RNS.Destination.SINGLE,
+                "prns",
+                "peer",
+            )
+            self.link = RNS.Link(destination, established_callback=self.on_up)
 
     def on_up(self, link):
         print("LINK_OUT_UP", flush=True)
-        RNS.Resource(os.urandom(1000000), link, auto_compress=False)
+
+        def outgoing_concluded(resource):
+            if resource.status == RNS.Resource.COMPLETE:
+                self.transfer["outgoing_complete"] = True
+                print("RESOURCE_SENT_OK " + str(RESOURCE_BYTES), flush=True)
+            else:
+                self.transfer["failure"] = f"outgoing resource status={resource.status}"
+                print("RESOURCE_SEND_FAIL status=" + str(resource.status), flush=True)
+
+        RNS.Resource(
+            os.urandom(RESOURCE_BYTES),
+            link,
+            auto_compress=False,
+            callback=outgoing_concluded,
+        )
 
 
 def main() -> int:
     configdir = tempfile.mkdtemp(prefix="rns-client-")
     with open(os.path.join(configdir, "config"), "w") as handle:
         handle.write(CONFIG)
-    RNS.Reticulum(configdir=configdir, loglevel=RNS.LOG_WARNING)
+    start_reference_reticulum(configdir=configdir, loglevel=RNS.LOG_WARNING)
     time.sleep(1.5)
 
     identity = RNS.Identity()
@@ -73,14 +95,19 @@ def main() -> int:
     )
     mine.set_proof_strategy(RNS.Destination.PROVE_ALL)
 
-    received = {"hit": False}
+    transfer = {
+        "incoming_complete": False,
+        "outgoing_complete": False,
+        "failure": None,
+    }
 
     def resource_concluded(resource):
         if resource.status == RNS.Resource.COMPLETE:
             data = resource.data.read() if hasattr(resource.data, "read") else resource.data
             print("RESOURCE_OK " + str(len(data)), flush=True)
-            received["hit"] = True
+            transfer["incoming_complete"] = True
         else:
+            transfer["failure"] = f"incoming resource status={resource.status}"
             print("RESOURCE_FAIL status=" + str(resource.status), flush=True)
 
     def link_established(link):
@@ -92,15 +119,25 @@ def main() -> int:
     mine.set_link_established_callback(link_established)
     print("CLIENT_DEST " + mine.hash.hex(), flush=True)
 
-    RNS.Transport.register_announce_handler(PeerSeeker())
+    RNS.Transport.register_announce_handler(PeerSeeker(transfer))
 
-    deadline = time.time() + 60
-    while time.time() < deadline and not received["hit"]:
+    deadline = time.monotonic() + TRANSFER_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if transfer["failure"] is not None:
+            return 4
+        if transfer["incoming_complete"] and transfer["outgoing_complete"]:
+            time.sleep(1.0)
+            return 0
         mine.announce()
         time.sleep(1.0)
 
-    time.sleep(1.0)
-    return 0 if received["hit"] else 4
+    print(
+        "RESOURCE_TIMEOUT "
+        f"incoming={int(transfer['incoming_complete'])} "
+        f"outgoing={int(transfer['outgoing_complete'])}",
+        flush=True,
+    )
+    return 4
 
 
 if __name__ == "__main__":

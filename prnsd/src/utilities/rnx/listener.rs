@@ -15,6 +15,7 @@ use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::request_endpoints::RequestEndpointSet;
 use personal_rns::runtime::rnx::{
     HeapRnxOutput, RnxAuthorization, RnxCommandHandler, RnxCompletion, RnxOutput,
+    RnxRequestEndpoint,
 };
 use personal_rns::runtime::{
     Diagnostic, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, ProcessCommands,
@@ -40,10 +41,12 @@ struct ListenerState {
     execution_slots: Semaphore,
 }
 
-struct RnxEndpoint;
-struct PublicRnxEndpoint;
+struct RnxCommand;
+struct PublicRnxCommand;
+type RnxEndpoint = RnxRequestEndpoint<RnxCommand>;
+type PublicRnxEndpoint = RnxRequestEndpoint<PublicRnxCommand>;
 
-impl RnxCommandHandler<ListenerState> for RnxEndpoint {
+impl RnxCommandHandler<ListenerState> for RnxCommand {
     const AUTHORIZATION: RnxAuthorization = RnxAuthorization::AllowList(&[]);
     type Output = HeapRnxOutput;
 
@@ -60,7 +63,7 @@ impl RnxCommandHandler<ListenerState> for RnxEndpoint {
     }
 }
 
-impl RnxCommandHandler<ListenerState> for PublicRnxEndpoint {
+impl RnxCommandHandler<ListenerState> for PublicRnxCommand {
     const AUTHORIZATION: RnxAuthorization = RnxAuthorization::Public;
     type Output = HeapRnxOutput;
 
@@ -107,19 +110,19 @@ pub(super) async fn run(mut args: RnxArgs) -> Result<(), RnxError> {
         eprintln!("prnsd x: no allowed identities configured; no commands will be accepted");
     }
     if args.no_auth {
-        listen_with_routes(args, configuration, secret, destination, || {
+        listen_with_endpoints(args, configuration, secret, destination, || {
             personal_rns::request_endpoints![PublicRnxEndpoint]
         })
         .await
     } else {
-        listen_with_routes(args, configuration, secret, destination, || {
+        listen_with_endpoints(args, configuration, secret, destination, || {
             personal_rns::request_endpoints![RnxEndpoint]
         })
         .await
     }
 }
 
-async fn listen_with_routes<R, F>(
+async fn listen_with_endpoints<R, F>(
     args: RnxArgs,
     configuration: LoadedConfiguration,
     secret: IdentitySecretKey,

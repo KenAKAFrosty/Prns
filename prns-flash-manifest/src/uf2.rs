@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use thiserror::Error;
 
-use crate::{NrfSerialDfuTarget, SoftdeviceIdentity, Uf2BoardIdPrefix, Uf2Variant};
+use crate::{NrfSerialDfuTarget, SoftdeviceIdentity, Uf2BoardIdMatch, Uf2Variant};
 
 const MAX_INFO_UF2_BYTES: usize = 4096;
 const MAX_INFO_UF2_LINE_BYTES: usize = 512;
@@ -14,7 +14,6 @@ const UF2_MAGIC_START_ZERO: u32 = 0x0a32_4655;
 const UF2_MAGIC_START_ONE: u32 = 0x9e5d_5157;
 const UF2_MAGIC_END: u32 = 0x0ab1_6f30;
 const UF2_FAMILY_ID_FLAG: u32 = 0x0000_2000;
-const T_ECHO_APPLICATION_FLASH_END: u32 = 0x000c_0000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Uf2BootloaderIdentity {
@@ -73,7 +72,7 @@ impl Uf2BootloaderIdentity {
             }
             match normalized_name.as_str() {
                 "boardid" => {
-                    let normalized = Uf2BoardIdPrefix::normalize(value);
+                    let normalized = Uf2BoardIdMatch::normalize(value);
                     let valid = !normalized.is_empty()
                         && normalized.len() <= 128
                         && normalized.bytes().all(|byte| {
@@ -88,12 +87,13 @@ impl Uf2BootloaderIdentity {
                 }
                 "softdevice" => {
                     let values = value.split_ascii_whitespace().collect::<Vec<_>>();
-                    let [family, marker, version] = values.as_slice() else {
-                        return Err(Uf2IdentityError::Softdevice);
+                    let (family, version) = match values.as_slice() {
+                        [family, marker, version] if marker.eq_ignore_ascii_case("version") => {
+                            (family, version)
+                        }
+                        [family, version] => (family, version),
+                        _ => return Err(Uf2IdentityError::Softdevice),
                     };
-                    if !marker.eq_ignore_ascii_case("version") {
-                        return Err(Uf2IdentityError::Softdevice);
-                    }
                     softdevice = Some(
                         SoftdeviceIdentity::parse(family, (*version).to_string())
                             .map_err(|_| Uf2IdentityError::Softdevice)?,
@@ -122,17 +122,8 @@ impl Uf2BootloaderIdentity {
         &self.softdevice
     }
 
-    pub fn matches_board(&self, prefix: &Uf2BoardIdPrefix) -> bool {
-        self.board_id == prefix.as_str()
-            || self
-                .board_id
-                .strip_prefix(prefix.as_str())
-                .is_some_and(|revision| {
-                    !revision.is_empty()
-                        && revision
-                            .bytes()
-                            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.')
-                })
+    pub fn matches_board(&self, board_id_match: &Uf2BoardIdMatch) -> bool {
+        board_id_match.matches(&self.board_id)
     }
 }
 
@@ -182,7 +173,7 @@ pub enum Uf2IdentityError {
 pub fn validate_uf2_artifact(variant: &Uf2Variant, bytes: &[u8]) -> Result<(), Uf2ArtifactError> {
     validate_uf2_bytes(
         variant.compatibility().application_base(),
-        T_ECHO_APPLICATION_FLASH_END,
+        variant.compatibility().application_end_exclusive(),
         variant.compatibility().family_id(),
         bytes,
     )
@@ -347,6 +338,7 @@ mod tests {
                     .expect("SoftDevice identity"),
                 fwid,
                 application_base,
+                0x000c_0000,
                 0xada5_2840,
             ),
             part: Uf2Part {
@@ -382,21 +374,55 @@ mod tests {
 
     #[test]
     fn descriptors_accept_lf_crlf_and_normalized_board_ids() {
-        let prefix = Uf2BoardIdPrefix::parse("nrf52840-techo-v".to_string()).expect("prefix");
+        let board_id_match = Uf2BoardIdMatch::parse(
+            crate::Uf2BoardIdMatchKind::RevisionPrefix,
+            "nrf52840-techo-v",
+        )
+        .expect("match rule");
         for (line_ending, board_id, version) in [
             ("\n", "nRF52840-TEcho-v1", "6.1.1"),
             ("\r\n", "nRF52840_TEcho_v2.1", "7.3.0"),
         ] {
             let identity = Uf2BootloaderIdentity::parse(&info(line_ending, board_id, version))
                 .expect("valid descriptor");
-            assert!(identity.matches_board(&prefix));
+            assert!(identity.matches_board(&board_id_match));
             assert_eq!(identity.softdevice().version().as_str(), version);
             assert_eq!(identity.bootloader_version(), "0.6.1-2-g1224915");
         }
-        let prefix = Uf2BoardIdPrefix::parse("nrf52840-t1000-e-v1".to_string()).expect("prefix");
+        let board_id_match =
+            Uf2BoardIdMatch::parse(crate::Uf2BoardIdMatchKind::Exact, "nrf52840-t1000-e-v1")
+                .expect("match rule");
         let identity = Uf2BootloaderIdentity::parse(&info("\n", "nRF52840-T1000-E-v1", "7.3.0"))
             .expect("valid descriptor");
-        assert!(identity.matches_board(&prefix));
+        assert!(identity.matches_board(&board_id_match));
+    }
+
+    #[test]
+    fn exact_heltec_board_ids_do_not_cross_match() {
+        let bytes = [
+            "UF2 Bootloader 0.9.0-2-g836c8dc-dirty",
+            "Model: HT-n5262",
+            "Board-ID: HT-n5262",
+            "Date: Jul  9 2024",
+            "SoftDevice: S140 6.1.1",
+        ]
+        .join("\n")
+        .into_bytes();
+        let t114_identity = Uf2BootloaderIdentity::parse(&bytes).expect("valid descriptor");
+        let t096_identity = Uf2BootloaderIdentity::parse(&info("\n", "HT-n5262G", "6.1.1"))
+            .expect("valid descriptor");
+        let t114_match = Uf2BoardIdMatch::parse(crate::Uf2BoardIdMatchKind::Exact, "ht-n5262")
+            .expect("T114 match rule");
+        let t096_match = Uf2BoardIdMatch::parse(crate::Uf2BoardIdMatchKind::Exact, "ht-n5262g")
+            .expect("T096 match rule");
+
+        assert!(t114_identity.matches_board(&t114_match));
+        assert!(!t114_identity.matches_board(&t096_match));
+        assert!(t096_identity.matches_board(&t096_match));
+        assert!(!t096_identity.matches_board(&t114_match));
+        assert_eq!(t114_identity.bootloader_version(), "0.9.0-2-g836c8dc-dirty");
+        assert_eq!(t114_identity.softdevice().family().as_str(), "s140");
+        assert_eq!(t114_identity.softdevice().version().as_str(), "6.1.1");
     }
 
     #[test]

@@ -5,7 +5,7 @@ import java.math.BigInteger
 object HostContract {
     const val ABI: Int = 1
     const val SCHEMA_VERSION: Int = 1
-    const val PRODUCT_VERSION = "0.3.6"
+    const val PRODUCT_VERSION = "0.3.7"
     const val DESTINATION_HASH_LENGTH = 16
     const val IDENTITY_HASH_LENGTH = 16
     const val INTERFACE_ID_LENGTH = 8
@@ -403,7 +403,8 @@ enum class ApplicationEventKind(val rawValue: Int) {
     RESOURCE_AVAILABLE(104),
     RESOURCE_SEGMENT(105),
     RESOURCE_NEEDS_DECOMPRESSION(106),
-    CHANNEL_MESSAGE(107);
+    CHANNEL_MESSAGE(107),
+    LINK_DELIVERY(108);
 
     companion object {
         fun fromRawValue(value: Int): ApplicationEventKind? = entries.firstOrNull { it.rawValue == value }
@@ -497,7 +498,8 @@ enum class EventField(val rawValue: Int) {
     REFUSED(36),
     DROPPED(37),
     PERSISTENCE_CAUSE(38),
-    PERSISTENCE_TARGET(39);
+    PERSISTENCE_TARGET(39),
+    APP_DATA(40);
 
     companion object {
         fun fromRawValue(value: Int): EventField? = entries.firstOrNull { it.rawValue == value }
@@ -1248,12 +1250,19 @@ data class ApplicationEventChannelMessage(
     val data: Bytes
 ) : ApplicationEvent
 
+data class ApplicationEventLinkDelivery(
+    val linkId: LinkId,
+    val sourceInterface: InterfaceId,
+    val plaintext: Bytes
+) : ApplicationEvent
+
 sealed interface DiagnosticEvent
 
 data class DiagnosticEventAnnounceHeard(
     val destination: DestinationHash,
     val hops: Int,
-    val sourceInterface: InterfaceId
+    val sourceInterface: InterfaceId,
+    val appData: Bytes
 ) : DiagnosticEvent
 
 data class DiagnosticEventLinkEstablished(

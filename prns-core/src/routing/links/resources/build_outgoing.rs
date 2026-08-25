@@ -4,9 +4,10 @@
 
 use crate::crypto::{BufferTooShort, Sha256PrefixState};
 use crate::routing::links::resources::{
-    map_hash, map_hash_name_word, ResourceBody, ResourceCompression, ResourceHash,
-    ResourceMetadata, ResourceProof, SaltNonce, COLLISION_GUARD_SIZE, MAP_HASH_LEN,
-    MAX_EFFICIENT_SIZE, METADATA_MAX_SIZE, RESOURCE_NONCE_LEN,
+    map_hash, map_hash_name_word, sealed_transfer_bytes, ResourceBody, ResourceBufferShape,
+    ResourceBufferShapeError, ResourceCompression, ResourceHash, ResourceMetadata, ResourceProof,
+    SaltNonce, COLLISION_GUARD_SIZE, MAP_HASH_LEN, MAX_EFFICIENT_SIZE, METADATA_MAX_SIZE,
+    METADATA_PREFIX_LEN, RESOURCE_NONCE_LEN,
 };
 use crate::routing::links::LinkKey;
 
@@ -16,6 +17,47 @@ pub fn winning_candidate(
     uncompressed_stream_len: usize,
 ) -> Option<&[u8]> {
     compressed_candidate.filter(|candidate| candidate.len() < uncompressed_stream_len)
+}
+
+fn uncompressed_stream_len(
+    envelope_len: usize,
+    body: &ResourceBody<'_>,
+) -> Result<usize, BuildOutgoingResourceError> {
+    let metadata_bytes = match body.metadata {
+        ResourceMetadata::Packed(packed) if packed.len() > METADATA_MAX_SIZE => {
+            return Err(BuildOutgoingResourceError::MetadataTooLarge);
+        }
+        ResourceMetadata::SentInFirstSegment { packed_len }
+            if packed_len as usize > METADATA_MAX_SIZE =>
+        {
+            return Err(BuildOutgoingResourceError::MetadataTooLarge);
+        }
+        ResourceMetadata::Packed(packed) => METADATA_PREFIX_LEN + packed.len(),
+        ResourceMetadata::None | ResourceMetadata::SentInFirstSegment { .. } => 0,
+    };
+    metadata_bytes
+        .checked_add(envelope_len)
+        .and_then(|len| len.checked_add(body.data.len()))
+        .filter(|len| *len <= MAX_EFFICIENT_SIZE)
+        .ok_or(BuildOutgoingResourceError::DataTooLarge)
+}
+
+/// Calculates the exact bulk buffers the outgoing build will consume, using
+/// the same compression winner and metadata rules as the build itself.
+pub fn outgoing_resource_buffer_shape(
+    envelope_len: usize,
+    body: &ResourceBody<'_>,
+    sdu: usize,
+) -> Result<ResourceBufferShape, BuildOutgoingResourceError> {
+    let uncompressed_len = uncompressed_stream_len(envelope_len, body)?;
+    let stream_len = winning_candidate(body.compressed_candidate, uncompressed_len)
+        .map_or(uncompressed_len, |candidate| candidate.len());
+    let transfer_bytes = sealed_transfer_bytes(stream_len);
+    ResourceBufferShape::try_for_transfer(transfer_bytes, sdu).map_err(|error| match error {
+        ResourceBufferShapeError::EmptyTransfer => BuildOutgoingResourceError::Seal(BufferTooShort),
+        ResourceBufferShapeError::SduTooSmall => BuildOutgoingResourceError::SduTooSmall,
+        ResourceBufferShapeError::SizeOverflow => BuildOutgoingResourceError::DataTooLarge,
+    })
 }
 
 /// Where a raw-staged stream waits inside its transfer region: past the seal IV and the stream nonce, exactly where [`seal_staged_resource`] pads and encrypts it in place.
@@ -86,6 +128,7 @@ pub enum BuildOutgoingResourceError {
     SduTooSmall,
     Seal(BufferTooShort),
     HashmapBufferTooShort,
+    BufferShapeMismatch,
     SaltRerollsExhausted,
 }
 
@@ -134,15 +177,8 @@ pub fn build_outgoing_resource_enveloped(
         compressed_candidate,
         metadata,
     } = body;
+    let uncompressed_stream_len = uncompressed_stream_len(envelope.len(), body)?;
     let metadata_prefix = match metadata {
-        ResourceMetadata::Packed(packed) if packed.len() > METADATA_MAX_SIZE => {
-            return Err(BuildOutgoingResourceError::MetadataTooLarge);
-        }
-        ResourceMetadata::SentInFirstSegment { packed_len }
-            if packed_len as usize > METADATA_MAX_SIZE =>
-        {
-            return Err(BuildOutgoingResourceError::MetadataTooLarge);
-        }
         ResourceMetadata::Packed(packed) => (packed.len() as u32).to_be_bytes(),
         ResourceMetadata::None | ResourceMetadata::SentInFirstSegment { .. } => [0; 4],
     };
@@ -150,11 +186,6 @@ pub fn build_outgoing_resource_enveloped(
         ResourceMetadata::Packed(packed) => (&metadata_prefix[1..], packed),
         ResourceMetadata::None | ResourceMetadata::SentInFirstSegment { .. } => (&[], &[]),
     };
-    let uncompressed_stream_len =
-        block_prefix.len() + block_packed.len() + envelope.len() + plaintext.len();
-    if uncompressed_stream_len > MAX_EFFICIENT_SIZE {
-        return Err(BuildOutgoingResourceError::DataTooLarge);
-    }
     if sdu == 0 {
         return Err(BuildOutgoingResourceError::SduTooSmall);
     }
@@ -435,6 +466,73 @@ mod tests {
             &hashmap[..4 * MAP_HASH_LEN],
             &bytes_from_hex(CASE2_HASHMAP)[..]
         );
+    }
+
+    #[test]
+    fn planned_buffer_shapes_are_exact_for_both_compression_outcomes() {
+        let sdu = resource_sdu(BROADCAST_MTU);
+        let compressible = case1_plaintext();
+        let candidate = bytes_from_hex(CASE1_BZ2);
+        let compressed_body = ResourceBody {
+            data: &compressible,
+            compressed_candidate: Some(&candidate),
+            metadata: ResourceMetadata::None,
+        };
+        let compressed_shape = outgoing_resource_buffer_shape(0, &compressed_body, sdu).unwrap();
+        assert_eq!(
+            compressed_shape,
+            ResourceBufferShape::try_for_transfer(144, sdu).unwrap(),
+        );
+
+        let incompressible = case2_plaintext();
+        let expanding_candidate = std::vec![0u8; 1_894];
+        let uncompressed_body = ResourceBody {
+            data: &incompressible,
+            compressed_candidate: Some(&expanding_candidate),
+            metadata: ResourceMetadata::None,
+        };
+        let uncompressed_shape =
+            outgoing_resource_buffer_shape(0, &uncompressed_body, sdu).unwrap();
+        assert_eq!(
+            uncompressed_shape,
+            ResourceBufferShape::try_for_transfer(1_568, sdu).unwrap(),
+        );
+
+        let packed = bytes_from_hex(META_PACKED);
+        let metadata_body = ResourceBody {
+            metadata: ResourceMetadata::Packed(&packed),
+            ..uncompressed_body
+        };
+        assert_eq!(
+            outgoing_resource_buffer_shape(20, &metadata_body, sdu).unwrap(),
+            ResourceBufferShape::try_for_transfer(1_600, sdu).unwrap(),
+        );
+        let later_segment_body = ResourceBody {
+            metadata: ResourceMetadata::SentInFirstSegment { packed_len: 21 },
+            ..uncompressed_body
+        };
+        assert_eq!(
+            outgoing_resource_buffer_shape(0, &later_segment_body, sdu).unwrap(),
+            uncompressed_shape,
+            "a later segment advertises metadata but does not store its block again",
+        );
+
+        let mut transfer = std::vec![0u8; compressed_shape.transfer_bytes()];
+        let mut hashmap = std::vec![0u8; compressed_shape.part_count() * MAP_HASH_LEN];
+        let built = build_outgoing_resource(
+            &compressed_body,
+            &link_key(),
+            &seal_iv(),
+            reference_nonces(),
+            sdu,
+            BuildRegions {
+                transfer: &mut transfer,
+                hashmap: &mut hashmap,
+            },
+        )
+        .unwrap();
+        assert_eq!(built.sealed_transfer_bytes, transfer.len());
+        assert_eq!(built.part_count * MAP_HASH_LEN, hashmap.len());
     }
 
     #[test]

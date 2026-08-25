@@ -43,6 +43,7 @@ fn ui_state() -> UiState {
         display_power_control: DisplayPowerControl::Unavailable,
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: screen::SharedInstanceConfigExport::Unavailable,
+        gnss: screen::GnssAvailability::Unavailable,
     })
 }
 
@@ -246,7 +247,7 @@ impl ksni::Tray for LinuxTray {
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
         let (rgba, size) = hopspot_tray_rgba();
         let mut argb = Vec::with_capacity(rgba.len());
-        for pixel in rgba.chunks_exact(4) {
+        for pixel in rgba.as_chunks::<4>().0 {
             argb.extend_from_slice(&[pixel[3], pixel[0], pixel[1], pixel[2]]);
         }
         vec![ksni::Icon {
@@ -551,11 +552,12 @@ pub(super) fn run_window(handles: WindowHandles) {
                              notice_until: &mut Option<Instant>| match action
     {
         UiAction::None => {}
-        UiAction::OledOff => {
-            ui_state.show_notice(screen::UiNotice::OledOff);
+        UiAction::DisplayOff => {
+            ui_state.show_notice(screen::UiNotice::DisplayOff);
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
         }
-        UiAction::ToggleOledAutoOff => {}
+        UiAction::ToggleDisplayAutoOff => {}
+        UiAction::ControlGnss(_) => {}
         UiAction::Sleep => {
             ui_state.show_notice(screen::UiNotice::Sleeping);
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
@@ -836,18 +838,14 @@ pub(super) fn run_window(handles: WindowHandles) {
                 &snapshots,
             );
             let battery = screen::BatteryGauge::lipo().sample(&mut screen::NoBattery);
-            let animation_ms = activity_started
-                .elapsed()
-                .as_millis()
-                .min(u128::from(u64::MAX)) as u64;
             screen::render(
                 &mut display,
                 screen::RenderFrame {
                     content,
                     battery,
+                    gnss: None,
                     state: &ui_state,
                     interface_menu_details: &interface_menu_details,
-                    animation_ms,
                 },
             );
             window.update(&display);

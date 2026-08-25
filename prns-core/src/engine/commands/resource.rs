@@ -69,7 +69,8 @@ impl Settleable for SetResourceStrategy {
             | Settlement::CloseLink(_)
             | Settlement::SendResource(_)
             | Settlement::SendToChannel(_)
-            | Settlement::AllowRequester(_) => None,
+            | Settlement::AllowRequester(_)
+            | Settlement::SendPlainPacket(_) => None,
         }
     }
 }

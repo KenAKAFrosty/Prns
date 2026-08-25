@@ -1,6 +1,6 @@
 [package]
 name = "prns-config"
-version = "0.3.6"
+version = "0.3.7"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KenAKAFrosty/Prns"
@@ -17,13 +17,13 @@ include = ["src/**", "tests/**", "!tests/**/__pycache__/**", "!tests/**/*.pyc", 
 [workspace]
 
 [dependencies]
-prns-core = { version = "=0.3.6", path = "../prns-core", default-features = false, features = ["interface-discovery", "std"] }
+prns-core = { version = "=0.3.7", path = "../prns-core", default-features = false, features = ["interface-discovery", "std"] }
 home = "0.5.12"
 shlex = "1"
 tempfile = "3.27"
 
 [dev-dependencies]
-prns-core = { version = "=0.3.6", path = "../prns-core", default-features = false, features = ["interface-discovery-archive"] }
+prns-core = { version = "=0.3.7", path = "../prns-core", default-features = false, features = ["interface-discovery-archive"] }
 proptest = "1"
 serde_json = "1"
 

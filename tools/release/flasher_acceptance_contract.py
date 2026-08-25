@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 
 from flasher_manifest import require_schema, target_artifacts
+from flasher_hotfix import HotfixSpec
 
 
 ESP_SERIAL_BOARDS = (
@@ -20,6 +21,9 @@ ESP_SERIAL_BOARDS = (
 SHIPPING_BOARDS = (
     *ESP_SERIAL_BOARDS,
     "t-echo",
+    "t114",
+    "t096",
+    "t1000-e",
 )
 SURFACES = ("cli", "web")
 OS_ARCHITECTURES = {
@@ -54,6 +58,8 @@ FALLBACK_SCENARIOS = {
     "esp-connect-unavailable",
     "no-broken-connect-action",
     "t-echo-uf2-route",
+    "t096-uf2-route",
+    "t1000-e-recovery-uf2-route",
 }
 
 ESP_COMMON_SCENARIOS = {
@@ -115,12 +121,53 @@ UF2_CLI_SCENARIOS = {
     "application-usb-enumeration",
 }
 
+NRF_SERIAL_DFU_COMMON_SCENARIOS = {
+    "fresh-install",
+    "update",
+    "correct-board",
+    "incorrect-board",
+    "signed-dfu-verification",
+    "corrupt-artifact",
+    "signature-rejection",
+    "exact-bootloader-selection",
+    "reliable-dfu-transfer",
+    "activation",
+    "recovery-uf2-fallback",
+    "lora",
+    "usb",
+    "post-flash-boot",
+}
+NRF_SERIAL_DFU_WEB_SCENARIOS = {
+    "permission-denial",
+    "managed-application-entry",
+    "bootloader-serial-selection",
+    "navigation-warning",
+    "recovery-guidance",
+}
+NRF_SERIAL_DFU_CLI_SCENARIOS = {
+    "zero-devices",
+    "one-device",
+    "multiple-devices",
+    "port-unavailable",
+    "bootloader-entry",
+    "bootloader-timeout",
+    "transfer-retry",
+    "recovery-guidance",
+}
+
 PER_RUN_BASELINE_SCENARIOS = {"fresh-install", "post-flash-boot"}
 ACCEPTANCE_SCHEMA = 5
 T_ECHO_COMPATIBILITY_VARIANTS = (
     "s140-6.1.1-fwid-0x00b6",
     "s140-7.3.0-fwid-0x0123",
 )
+T114_COMPATIBILITY_VARIANTS = ("s140-6.1.1-fwid-0x00b6",)
+T096_COMPATIBILITY_VARIANTS = ("s140-6.1.1-fwid-0x00b6",)
+UF2_COMPATIBILITY_VARIANTS = {
+    "t-echo": T_ECHO_COMPATIBILITY_VARIANTS,
+    "t114": T114_COMPATIBILITY_VARIANTS,
+    "t096": T096_COMPATIBILITY_VARIANTS,
+}
 NOT_RUN = "NOT_RUN"
 UTC_TIMESTAMP = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
 
@@ -159,12 +206,24 @@ def applicable_scenarios(
         scenarios = set(UF2_COMMON_SCENARIOS)
         scenarios.update(UF2_WEB_SCENARIOS if surface == "web" else UF2_CLI_SCENARIOS)
         return scenarios
+    if transport == "nrf-serial-dfu":
+        scenarios = set(NRF_SERIAL_DFU_COMMON_SCENARIOS)
+        scenarios.update(
+            NRF_SERIAL_DFU_WEB_SCENARIOS
+            if surface == "web"
+            else NRF_SERIAL_DFU_CLI_SCENARIOS
+        )
+        return scenarios
     return set()
 
 
 def required_compatibilities(target: dict) -> tuple[str | None, ...]:
     if target.get("transport") != "uf2-mass-storage":
         return (None,)
+    board = target.get("board_slug")
+    expected = UF2_COMPATIBILITY_VARIANTS.get(board)
+    if expected is None:
+        raise ValueError(f"UF2 acceptance has no pinned compatibility matrix for {board!r}")
     labels = []
     for variant in target_artifacts(target):
         family = variant.get("softdevice_family")
@@ -173,8 +232,12 @@ def required_compatibilities(target: dict) -> tuple[str | None, ...]:
         if not all(isinstance(value, str) for value in (family, version, fwid)):
             raise ValueError("UF2 acceptance compatibility identity is malformed")
         labels.append(f"{family}-{version}-fwid-{fwid}")
-    if tuple(labels) != T_ECHO_COMPATIBILITY_VARIANTS:
-        raise ValueError("UF2 acceptance requires the exact S140 v6 and v7 compatibility matrix")
+    if tuple(labels) != expected:
+        if board == "t-echo":
+            raise ValueError(
+                "T-Echo acceptance requires the exact S140 v6 and v7 compatibility matrix"
+            )
+        raise ValueError(f"{board} acceptance requires its exact pinned compatibility matrix")
     return tuple(labels)
 
 
@@ -243,7 +306,8 @@ def scaffold(
     if any(
         not isinstance(target.get("display_name"), str)
         or not target["display_name"].strip()
-        or target.get("transport") not in {"esp-serial", "uf2-mass-storage"}
+        or target.get("transport")
+        not in {"esp-serial", "uf2-mass-storage", "nrf-serial-dfu"}
         for target in targets.values()
     ):
         raise ValueError("manifest targets have malformed identity or transport fields")
@@ -399,4 +463,110 @@ def scaffold(
         "web_serial_smoke": web_serial_smoke,
         "browser_fallbacks": browser_fallbacks,
         "installation_smoke": installation_smoke,
+    }
+
+
+def hotfix_scaffold(
+    manifest: dict,
+    manifest_path: Path,
+    manifest_signature_path: Path,
+    signed_bundle_path: Path,
+    prerelease_published_at: str,
+    tester_roster: object,
+    spec: HotfixSpec,
+) -> dict:
+    parse_utc_timestamp(prerelease_published_at, "prerelease publishedAt")
+    require_schema(manifest)
+    release = manifest.get("release")
+    signing = manifest.get("signing")
+    targets = manifest.get("targets")
+    if (
+        not isinstance(release, dict)
+        or release.get("version") != spec.version
+        or release.get("channel") not in {"stable", "preview"}
+        or not isinstance(signing, dict)
+        or not isinstance(targets, list)
+    ):
+        raise ValueError("hotfix manifest identity is malformed")
+    target_by_board = {
+        target.get("board_slug"): target
+        for target in targets
+        if isinstance(target, dict) and isinstance(target.get("board_slug"), str)
+    }
+    runs = []
+    physical_assignments = getattr(tester_roster, "physical", {})
+    for board in spec.physical_boards:
+        target = target_by_board.get(board)
+        if target is None:
+            raise ValueError(f"hotfix manifest is missing changed board {board}")
+        for surface in spec.surfaces:
+            assignment = physical_assignments.get((board, surface))
+            if assignment is None:
+                raise ValueError(f"tester roster is missing {board}/{surface}")
+            run = {
+                "board": board,
+                "surface": surface,
+                "os": assignment.os_name,
+                "architecture": assignment.architecture,
+                "os_version": NOT_RUN,
+                "hardware_identity": NOT_RUN,
+                "hardware_model": target.get("display_name", NOT_RUN),
+                "hardware_revision": NOT_RUN,
+                "client": {
+                    "name": "prns-web-flasher"
+                    if surface == "web"
+                    else "hopspot-flash",
+                    "version": spec.version,
+                },
+                "scenarios": {
+                    scenario: "not-run" for scenario in spec.required_scenarios
+                },
+                "checks": {check: "not-run" for check in spec.required_checks},
+                "result": "not-run",
+                "tester": assignment.tester,
+                "completed_at": NOT_RUN,
+                "evidence": evidence_placeholder(),
+            }
+            if surface == "web":
+                run["browser"] = {
+                    "name": assignment.browser_name,
+                    "channel": "stable",
+                    "version": NOT_RUN,
+                }
+            runs.append(run)
+    return {
+        "schema": 6,
+        "candidate": {
+            "version": spec.version,
+            "channel": release.get("channel"),
+            "source_commit": release.get("commit"),
+            "signing_key_id": signing.get("key_id"),
+            "manifest_sha256": sha256(manifest_path),
+            "manifest_signature_sha256": sha256(manifest_signature_path),
+            "signed_candidate_sha256": sha256(signed_bundle_path),
+            "prerelease_published_at": prerelease_published_at,
+        },
+        "hotfix": {
+            "version": spec.version,
+            "base_version": spec.base_version,
+            "base_source_commit": spec.base_source_commit,
+            "base_manifest_sha256": spec.base_manifest_sha256,
+            "base_release_record_sha256": spec.base_release_record_sha256,
+            "base_signed_candidate_sha256": spec.base_signed_candidate_sha256,
+            "changed_boards": list(spec.changed_boards),
+            "physical_boards": list(spec.physical_boards),
+            "deferred_hardware": [
+                deferral.document() for deferral in spec.deferred_hardware
+            ],
+            "summary": spec.summary,
+        },
+        "runs": runs,
+        "hardware_deferrals": [
+            {
+                **deferral.document(),
+                "approved_by": NOT_RUN,
+                "approved_at": NOT_RUN,
+            }
+            for deferral in spec.deferred_hardware
+        ],
     }

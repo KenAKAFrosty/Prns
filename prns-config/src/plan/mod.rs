@@ -1,4 +1,5 @@
-//! The reference-to-ours mapping layer: a faithful [`crate::reference::ReferenceConfig`] becomes a [`DaemonPlan`], the host-agnostic description of the node a daemon should stand up.
+//! The reference-to-ours mapping layer: an RNS-compatible
+//! [`crate::reference::ReferenceConfig`] becomes the complete [`DaemonPlan`] for a node.
 
 mod error;
 mod interface;

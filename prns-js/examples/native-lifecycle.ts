@@ -51,6 +51,7 @@ async function runExample() {
 function describe(event: ApplicationEvent): string {
   return match_into<string>().from(event, {
     SingleDelivery: ({ plaintext }) => `single packet: ${plaintext.length} bytes`,
+    LinkDelivery: ({ plaintext }) => `Link packet: ${plaintext.length} bytes`,
     Request: ({ data }) => `request: ${data.length} bytes`,
     Response: ({ data }) => `response: ${data.length} bytes`,
     ResponseSegment: ({ segmentIndex, totalSegments }) =>

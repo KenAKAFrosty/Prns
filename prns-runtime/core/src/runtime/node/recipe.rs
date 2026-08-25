@@ -1,6 +1,6 @@
 use crate::engine::RatchetPolicy;
 use crate::identity::in_memory::InMemoryNodeIdentity;
-use crate::identity::{IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use crate::identity::{IdentityHash, IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::routing::announce::{
     derive_destination_hash, derive_plain_destination_hash, expand_name, ExpandNameError,
 };
@@ -21,6 +21,12 @@ pub enum PreConfiguredDestination<'a> {
     Plain {
         app_name: &'a str,
         aspects: &'a [&'a str],
+    },
+    Group {
+        app_name: &'a str,
+        aspects: &'a [&'a str],
+        identity: IdentityHash,
+        shared_key: &'a [u8],
     },
     Single {
         app_name: &'a str,
@@ -44,6 +50,15 @@ impl PreConfiguredDestination<'_> {
             PreConfiguredDestination::Plain { app_name, aspects } => Ok(
                 derive_plain_destination_hash(&expand_name(app_name, aspects)?),
             ),
+            PreConfiguredDestination::Group {
+                app_name,
+                aspects,
+                identity,
+                ..
+            } => Ok(derive_destination_hash(
+                identity,
+                &expand_name(app_name, aspects)?,
+            )),
             PreConfiguredDestination::Single {
                 app_name,
                 aspects,

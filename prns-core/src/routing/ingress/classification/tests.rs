@@ -1,7 +1,9 @@
 use super::*;
 use crate::engine::test_support::*;
 use crate::routing::ingress::testkit::{header_bytes, iface};
-use crate::wire::{ContextFlag, DestinationType, PropagationType, TransportId, HEADER_MIN_LEN};
+use crate::wire::{
+    ContextFlag, DestinationType, PropagationType, TransportId, HEADER_MIN_LEN, MAX_HOP_COUNT,
+};
 
 #[test]
 fn a_local_client_transit_is_discounted_one_hop() {
@@ -90,6 +92,34 @@ fn recognized_non_announce_packets_classify_from_the_header() {
             PacketType::Proof => assert!(matches!(classified, Ingress::Proof { .. })),
             PacketType::Announce => unreachable!(),
         }
+    }
+}
+
+#[test]
+fn packets_at_the_pathfinder_boundary_are_rejected_before_classification() {
+    for packet_type in [
+        PacketType::Data,
+        PacketType::Announce,
+        PacketType::LinkRequest,
+        PacketType::Proof,
+    ] {
+        let mut bytes = match packet_type {
+            PacketType::Announce => bytes_from_hex(RNS_1_4_2_ANNOUNCE),
+            PacketType::Data | PacketType::LinkRequest | PacketType::Proof => {
+                header_bytes(packet_type).to_vec()
+            }
+        };
+        bytes[1] = MAX_HOP_COUNT;
+        let packet = InboundPacket {
+            arrived_at: InstantMillis(9),
+            source_interface: iface(0x02),
+            bytes: &mut bytes,
+        };
+
+        assert!(
+            matches!(Ingress::classify(packet), Ingress::Malformed),
+            "{packet_type:?} at PATHFINDER_M must be rejected like RNS 1.4.2",
+        );
     }
 }
 
@@ -196,9 +226,9 @@ fn announce_packets_must_target_a_single_destination() {
 }
 
 #[test]
-fn announce_received_hops_saturates_at_wire_max() {
+fn the_last_valid_wire_hop_reaches_the_pathfinder_boundary() {
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-    raw[1] = u8::MAX;
+    raw[1] = MAX_HOP_COUNT - 1;
     let source_interface = iface(0x04);
     let arrived_at = InstantMillis(13);
     let packet = InboundPacket {
@@ -217,7 +247,7 @@ fn announce_received_hops_saturates_at_wire_max() {
     else {
         panic!("valid announce should classify as announce");
     };
-    assert_eq!(received_hops, u8::MAX);
+    assert_eq!(received_hops, MAX_HOP_COUNT);
     assert_eq!(classified_source, source_interface);
     assert_eq!(classified_arrival, arrived_at);
 }

@@ -66,6 +66,7 @@ test("the exact staged production bundle performs a hardware-free sparse flash",
       afterReset: target.after_reset,
       mountLabel: null,
       uf2Compatibility: null,
+      nrfSerialDfu: null,
       serialFilters: [{ usbVendorId: 0x303a }],
       provisioning: null,
       parts: target.parts.map((part) => ({
@@ -202,6 +203,7 @@ test("the exact staged production bundle traps same-document Back during an acti
       afterReset: target.after_reset,
       mountLabel: null,
       uf2Compatibility: null,
+      nrfSerialDfu: null,
       serialFilters: [{ usbVendorId: 0x303a }],
       provisioning: null,
       parts: target.parts.map((part) => ({

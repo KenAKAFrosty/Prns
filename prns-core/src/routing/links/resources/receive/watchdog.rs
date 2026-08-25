@@ -1,14 +1,214 @@
 //! The deadline watchdog: silent rounds re-request and shrink the window, exhausted retry budgets fail the transfer, and every retired slot bequeaths its window and rate to the link.
 
 use super::rounds::{expected_inflight_bits_per_second, shrink_window_after_silent_round};
-use crate::engine::{EngineReaction, EngineState, InstantMillis};
-use crate::routing::links::resources::table::IncomingResourceStatus;
-use crate::routing::links::resources::{ResourceFailureCause, ResourceHash};
+#[cfg(feature = "runtime-metrics")]
+use crate::engine::ResourceAdmissionEvent;
+use crate::engine::{
+    EngineReaction, EngineState, InstantMillis, Journaled, SendRequestFailure, Settlement,
+};
+use crate::routing::links::request::RequestId;
+use crate::routing::links::resources::table::{
+    IncomingResourceStatus, IncomingResourceStorageAdmission,
+};
+use crate::routing::links::resources::{ResourceCorrelation, ResourceFailureCause, ResourceHash};
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 
+enum PendingOfferDueAction {
+    Drop,
+    Reject,
+    RejectResponse {
+        request_id: RequestId,
+        failure: SendRequestFailure,
+    },
+}
+
 impl<S: StorageLayout> EngineState<S> {
+    pub(crate) fn pending_resource_deadline(&self) -> Option<InstantMillis> {
+        self.pending_resource_offers
+            .offers()
+            .iter()
+            .map(|offer| {
+                if !matches!(
+                    self.links.phase_for(&offer.link_id()),
+                    Some(LinkPhase::Active { .. })
+                ) {
+                    return InstantMillis(0);
+                }
+                match self
+                    .incoming_resources
+                    .storage_admission_for(offer.accepted())
+                {
+                    IncomingResourceStorageAdmission::Available
+                    | IncomingResourceStorageAdmission::Impossible
+                    | IncomingResourceStorageAdmission::Malformed => InstantMillis(0),
+                    IncomingResourceStorageAdmission::TemporarilyFull => {
+                        self.pending_offer_effective_deadline(offer)
+                    }
+                }
+            })
+            .min()
+    }
+
+    fn pending_offer_effective_deadline(
+        &self,
+        offer: &crate::routing::links::resources::pending::PendingResourceOffer,
+    ) -> InstantMillis {
+        let wait_deadline = offer.wait_deadline();
+        match offer.correlation() {
+            ResourceCorrelation::Response(request_id) => self
+                .receipts
+                .pending_request_deadline(request_id)
+                .map_or(InstantMillis(0), |request_deadline| {
+                    wait_deadline.min(request_deadline)
+                }),
+            ResourceCorrelation::Request { .. } | ResourceCorrelation::Unsolicited => wait_deadline,
+        }
+    }
+
+    fn fire_due_pending_resource_offers<F>(
+        &mut self,
+        now: InstantMillis,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) where
+        F: FnMut(&mut [u8]),
+    {
+        loop {
+            let due = self
+                .pending_resource_offers
+                .offers()
+                .iter()
+                .enumerate()
+                .find_map(|(index, offer)| {
+                    if !matches!(
+                        self.links.phase_for(&offer.link_id()),
+                        Some(LinkPhase::Active { .. })
+                    ) {
+                        return Some((index, PendingOfferDueAction::Drop));
+                    }
+                    let admission = self
+                        .incoming_resources
+                        .storage_admission_for(offer.accepted());
+                    if admission == IncomingResourceStorageAdmission::Malformed {
+                        return Some((index, PendingOfferDueAction::Drop));
+                    }
+                    let impossible = admission == IncomingResourceStorageAdmission::Impossible;
+                    let wait_deadline = offer.wait_deadline();
+                    match offer.correlation() {
+                        ResourceCorrelation::Response(request_id) => {
+                            let Some(request_deadline) =
+                                self.receipts.pending_request_deadline(request_id)
+                            else {
+                                return Some((index, PendingOfferDueAction::Reject));
+                            };
+                            if !impossible && wait_deadline > now && request_deadline > now {
+                                return None;
+                            }
+                            let failure =
+                                if request_deadline <= now && request_deadline <= wait_deadline {
+                                    SendRequestFailure::Timeout
+                                } else {
+                                    SendRequestFailure::ResourceCapacity
+                                };
+                            Some((
+                                index,
+                                PendingOfferDueAction::RejectResponse {
+                                    request_id,
+                                    failure,
+                                },
+                            ))
+                        }
+                        ResourceCorrelation::Request { .. } | ResourceCorrelation::Unsolicited => {
+                            (impossible || wait_deadline <= now)
+                                .then_some((index, PendingOfferDueAction::Reject))
+                        }
+                    }
+                });
+            let Some((index, action)) = due else {
+                break;
+            };
+            let offer = self.pending_resource_offers.remove_at(index);
+            #[cfg(feature = "runtime-metrics")]
+            if matches!(
+                &action,
+                PendingOfferDueAction::Reject | PendingOfferDueAction::RejectResponse { .. }
+            ) {
+                if offer.wait_deadline() <= now
+                    || matches!(
+                        &action,
+                        PendingOfferDueAction::RejectResponse {
+                            failure: SendRequestFailure::Timeout,
+                            ..
+                        }
+                    )
+                {
+                    self.record_resource_admission_event(ResourceAdmissionEvent::Expired);
+                }
+                self.record_resource_admission_event(ResourceAdmissionEvent::Rejected);
+            }
+            match action {
+                PendingOfferDueAction::Drop => continue,
+                PendingOfferDueAction::Reject => {
+                    self.reject_offered_resource(
+                        &offer.link_id(),
+                        &offer.hash(),
+                        now,
+                        fill_entropy,
+                        sink,
+                    );
+                }
+                PendingOfferDueAction::RejectResponse {
+                    request_id,
+                    failure,
+                } => {
+                    self.reject_offered_resource(
+                        &offer.link_id(),
+                        &offer.hash(),
+                        now,
+                        fill_entropy,
+                        sink,
+                    );
+                    let Some(receipt) = self.receipts.settle_by_request_id(request_id) else {
+                        continue;
+                    };
+                    sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                        id: receipt.command_id,
+                        settlement: Settlement::SendRequest(Err(failure)),
+                    }));
+                }
+            }
+        }
+
+        loop {
+            let incoming = &self.incoming_resources;
+            let Some(offer) = self.pending_resource_offers.pop_oldest_fitting(|offer| {
+                matches!(
+                    incoming.storage_admission_for(offer.accepted()),
+                    IncomingResourceStorageAdmission::Available
+                )
+            }) else {
+                break;
+            };
+            let outcome = self.admit_accepted_resource(
+                offer.link_id(),
+                offer.original_hash(),
+                offer.accepted(),
+                offer.first_arrived_at(),
+            );
+            if let crate::routing::ingress::IngestPacketOutcome::OwesResourcePull {
+                link_id,
+                hash,
+            } = outcome
+            {
+                #[cfg(feature = "runtime-metrics")]
+                self.record_resource_admission_event(ResourceAdmissionEvent::Promoted);
+                self.emit_resource_pull(&link_id, &hash, now, fill_entropy, sink);
+            }
+        }
+    }
+
     /// RNS 1.4.2's watchdog TRANSFERRING branch. A receiver that gives up goes silent, like the reference; the sender discovers through its own watchdog.
     pub(crate) fn fire_due_incoming_resources<F>(
         &mut self,
@@ -74,6 +274,7 @@ impl<S: StorageLayout> EngineState<S> {
     {
         self.fire_due_outgoing_resources(now, fill_entropy, sink);
         self.fire_due_incoming_resources(now, fill_entropy, sink);
+        self.fire_due_pending_resource_offers(now, fill_entropy, sink);
         let mut wake_schedule_changes = crate::engine::WakeSchedules::UNCHANGED;
         wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
         wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();

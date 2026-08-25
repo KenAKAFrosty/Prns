@@ -45,6 +45,14 @@ const _: () = assert!(
 const _: () = assert!(
     EngineStorageType::MAX_COMPACTED_FLASH_JOURNAL_BYTES <= crate::persistence::S3_ARENA_BYTES
 );
+#[cfg(target_arch = "xtensa")]
+const _: () = assert!(
+    core::mem::size_of::<
+        <EngineStorageType as personal_rns::storage::StorageLayout>::PendingResourceOffers,
+    >() == 3 * core::mem::size_of::<usize>()
+);
+#[cfg(target_arch = "xtensa")]
+const _: () = assert!(EngineStorageType::PENDING_RESOURCE_OFFER_ROW_BYTES <= 2 * 1024);
 
 /// A `Default`-able allocator that places allocations in PSRAM.
 ///
@@ -216,6 +224,9 @@ mod riscv {
     use personal_rns::routing::links::resources::assembly::{
         FixedIncomingAssemblyTable, FixedStaticOutgoingAssemblyTable,
     };
+    use personal_rns::routing::links::resources::pending::{
+        NoPendingResourceOfferTable, PendingResourceOffers,
+    };
     use personal_rns::routing::links::resources::table::{
         FixedResourceTable, IncomingResourceState, OutgoingResourceState,
     };
@@ -285,6 +296,9 @@ mod riscv {
 
     const _: () = assert!(C6Storage::LINK_SESSIONS > C6Storage::CHANNELS);
     const _: () = assert!(C6Storage::RESOURCE_ASSEMBLIES == 1);
+    const _: () = assert!(core::mem::size_of::<NoPendingResourceOfferTable>() == 0);
+    const _: () =
+        assert!(core::mem::size_of::<PendingResourceOffers<NoPendingResourceOfferTable>>() == 0);
 
     impl StorageLayout for C6Storage {
         const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
@@ -358,6 +372,7 @@ mod riscv {
             { Self::RESOURCE_TRANSFER_BYTES },
             { max_part_count(Self::RESOURCE_TRANSFER_BYTES) },
         >;
+        type PendingResourceOffers = NoPendingResourceOfferTable;
         type IncomingAssemblies = FixedIncomingAssemblyTable<{ Self::RESOURCE_ASSEMBLIES }>;
         type OutgoingAssemblies = FixedStaticOutgoingAssemblyTable<{ Self::RESOURCE_ASSEMBLIES }>;
         type Channels = FixedArrayChannelTable<

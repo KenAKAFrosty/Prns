@@ -6,9 +6,12 @@ use allocator_api2::vec::Vec;
 
 use crate::engine::InstantMillis;
 use crate::routing::links::resources::table::{
-    ResourceBuffers, ResourceRowState, ResourceTable, ResourceTablePushError,
+    ResourceBuffers, ResourceRowState, ResourceTable, ResourceTableAdmission,
+    ResourceTablePushError,
 };
-use crate::routing::links::resources::{max_part_count, ResourceHash, MAP_HASH_LEN};
+use crate::routing::links::resources::{
+    max_part_count, ResourceBufferShape, ResourceHash, MAP_HASH_LEN,
+};
 use crate::routing::links::LinkId;
 
 fn filled<T: Clone, A: Allocator>(value: T, len: usize, alloc: A) -> Box<[T], A> {
@@ -146,12 +149,29 @@ impl<
         )
     }
 
+    fn admission_for_shape(&self, shape: ResourceBufferShape) -> ResourceTableAdmission {
+        if shape.transfer_bytes() > TRANSFER_BYTES || shape.part_count() > MAX_PARTS {
+            ResourceTableAdmission::Impossible
+        } else if self.len >= SLOTS {
+            ResourceTableAdmission::TemporarilyFull
+        } else {
+            ResourceTableAdmission::Available
+        }
+    }
+
     fn push(
         &mut self,
         link_id: LinkId,
         hash: ResourceHash,
         state: State,
+        shape: ResourceBufferShape,
     ) -> Result<usize, ResourceTablePushError> {
+        if shape.transfer_bytes() > TRANSFER_BYTES {
+            return Err(ResourceTablePushError::TransferTooLarge);
+        }
+        if shape.part_count() > MAX_PARTS {
+            return Err(ResourceTablePushError::TooManyParts);
+        }
         if self.len >= SLOTS {
             return Err(ResourceTablePushError::TableFull);
         }
@@ -193,14 +213,24 @@ mod tests {
     fn hash(byte: u8) -> ResourceHash {
         ResourceHash::new([byte; 32])
     }
+    fn shape() -> ResourceBufferShape {
+        ResourceBufferShape::try_for_transfer(1024, 464).unwrap()
+    }
+
+    fn sized_shape(transfer_bytes: usize, sdu: usize) -> ResourceBufferShape {
+        ResourceBufferShape::try_for_transfer(transfer_bytes, sdu).unwrap()
+    }
 
     #[test]
     fn push_then_read_back_and_seal_into_the_boxed_transfer() {
         let mut table = Table::default();
         assert_eq!(table.capacity(), 2);
         assert_eq!(table.transfer_capacity(), 1024);
+        assert_eq!(table.active_buffer_bytes(), 0);
+        assert_eq!(table.buffer_memory_limit(), 2 * (1024 + 3 * 5));
 
-        let i = table.push(link(1), hash(0xA1), 7).unwrap();
+        let i = table.push(link(1), hash(0xA1), 7, shape()).unwrap();
+        assert_eq!(table.active_buffer_bytes(), 1024 + 3 * 5);
         table.set_hash(i, hash(0xB2));
         let buffers = table.buffers_mut(i);
         buffers.transfer[..4].copy_from_slice(&[1, 2, 3, 4]);
@@ -216,10 +246,10 @@ mod tests {
     #[test]
     fn a_full_table_refuses_the_next_push() {
         let mut table = Table::default();
-        table.push(link(1), hash(1), 1).unwrap();
-        table.push(link(2), hash(2), 2).unwrap();
+        table.push(link(1), hash(1), 1, shape()).unwrap();
+        table.push(link(2), hash(2), 2, shape()).unwrap();
         assert_eq!(
-            table.push(link(3), hash(3), 3),
+            table.push(link(3), hash(3), 3, shape()),
             Err(ResourceTablePushError::TableFull)
         );
     }
@@ -227,8 +257,8 @@ mod tests {
     #[test]
     fn swap_remove_moves_the_last_slot_and_clears_its_state() {
         let mut table = Table::default();
-        let a = table.push(link(1), hash(1), 11).unwrap();
-        table.push(link(2), hash(2), 22).unwrap();
+        let a = table.push(link(1), hash(1), 11, shape()).unwrap();
+        table.push(link(2), hash(2), 22, shape()).unwrap();
         table.buffers_mut(a).transfer[0] = 0xEE;
 
         table.swap_remove(a);
@@ -236,5 +266,18 @@ mod tests {
         assert_eq!(table.len(), 1);
         assert_eq!(table.states(), &[22]);
         assert_eq!(table.link_ids(), &[link(2)]);
+    }
+
+    #[test]
+    fn requested_shape_must_fit_the_fixed_psram_regions() {
+        let mut table = Table::default();
+        assert_eq!(
+            table.push(link(1), hash(1), 1, sized_shape(1025, 464),),
+            Err(ResourceTablePushError::TransferTooLarge),
+        );
+        assert_eq!(
+            table.push(link(1), hash(1), 1, sized_shape(1024, 256),),
+            Err(ResourceTablePushError::TooManyParts),
+        );
     }
 }

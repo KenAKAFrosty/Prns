@@ -69,6 +69,79 @@ fn invalid_config_exits_before_startup_and_renders_every_actionable_error() {
 }
 
 #[test]
+fn prns_resource_memory_limits_are_applied_before_daemon_readiness() {
+    let directory = TestDirectory::new();
+    fs::write(
+        directory.0.join("config"),
+        "[reticulum]\nshare_instance = No\n[prns]\nresource_mem_in = 2 KiB\nresource_mem_out = 0\n[logging]\nloglevel = 7\n",
+    )
+    .unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_prnsd"))
+        .args([
+            "run",
+            "--log-format",
+            "json",
+            "--config",
+            directory.0.to_str().unwrap(),
+        ])
+        .env_remove("RUST_LOG")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let (line_sender, line_receiver) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stderr)
+            .lines()
+            .map_while(Result::ok)
+        {
+            if line_sender.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut events = Vec::new();
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        match line_receiver.recv_timeout(remaining) {
+            Ok(line) => {
+                let ready = line.contains("\"event\":\"daemon_ready\"")
+                    || line.contains("\"event\":\"daemon_ready_degraded\"");
+                events.push(line);
+                if ready {
+                    break;
+                }
+            }
+            Err(
+                std::sync::mpsc::RecvTimeoutError::Timeout
+                | std::sync::mpsc::RecvTimeoutError::Disconnected,
+            ) => break,
+        }
+    }
+    let _ = child.kill();
+    child.wait().unwrap();
+    reader.join().unwrap();
+
+    let configured = events
+        .iter()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|event| event["event"] == "resource_memory_limits_configured")
+        .unwrap_or_else(|| panic!("missing Resource limit event:\n{}", events.join("\n")));
+    assert_eq!(configured["incoming_bytes"], 2 * 1024);
+    assert_eq!(configured["outgoing_bytes"], 0);
+    assert_eq!(configured["changes_require_restart"], true);
+    assert!(events.iter().any(|line| {
+        line.contains("\"event\":\"daemon_ready\"")
+            || line.contains("\"event\":\"daemon_ready_degraded\"")
+    }));
+    assert!(!events
+        .iter()
+        .any(|line| { line.contains("\"event\":\"config_warning\"") && line.contains("[prns]") }));
+}
+
+#[test]
 fn remaining_follow_ons_warn_while_blackhole_exchange_does_not() {
     let directory = TestDirectory::new();
     let path = directory.0.join("config");

@@ -425,13 +425,14 @@ dependencies = [
  "embedded-storage-async",
  "heapless",
  "personal-rns",
+ "prns-core",
  "prns-macros",
  "sha2 0.11.0",
 ]
 
 [[package]]
 name = "personal-rns"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "cfg-if",
  "prns-core",
@@ -446,7 +447,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "prns-core"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "aes",
  "cbc",
@@ -467,25 +468,25 @@ dependencies = [
 
 [[package]]
 name = "prns-host"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "prns-runtime",
 ]
 
 [[package]]
 name = "prns-host-cooperative"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "prns-host",
 ]
 
 [[package]]
 name = "prns-macros"
-version = "0.3.6"
+version = "0.3.7"
 
 [[package]]
 name = "prns-runtime"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "bzip2",
  "cfg-if",
@@ -496,7 +497,7 @@ dependencies = [
 
 [[package]]
 name = "prns-wasm"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "js-sys",
  "personal-hopspot-core",

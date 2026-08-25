@@ -776,8 +776,8 @@ mod tests {
     use super::*;
     use prns_flash_manifest::{
         board_catalog, BoardBuild, ChannelDescriptor, FlashManifest, FlashPart, FlashPartKind,
-        OfflineKeySigningInfo, ReleaseInfo, TargetManifest, Uf2VariantManifest,
-        FLASH_MANIFEST_SCHEMA,
+        NrfSerialDfuManifest, NrfSerialDfuRecoveryManifest, OfflineKeySigningInfo, ReleaseInfo,
+        TargetManifest, Uf2VariantManifest, FLASH_MANIFEST_SCHEMA,
     };
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -908,6 +908,42 @@ mod tests {
                         .collect(),
                     BoardBuild::NrfSerialDfu(_) => Vec::new(),
                 };
+                let nrf_serial_dfu = match &board.build {
+                    BoardBuild::NrfSerialDfu(build) => {
+                        let artifact = |name: &str, kind: FlashPartKind| {
+                            let relative =
+                                format!("firmware/hopspot/{}/{version}/{name}", board.slug);
+                            let bytes = format!("{seed}:{}:{name}", board.slug).into_bytes();
+                            write_fixture(directory.path(), &relative, &bytes);
+                            FlashPart {
+                                kind,
+                                path: relative,
+                                offset: None,
+                                size: bytes.len() as u64,
+                                sha256: sha256_hex(&bytes),
+                            }
+                        };
+                        Some(NrfSerialDfuManifest {
+                            serial: build.serial.clone(),
+                            compatibility: build.compatibility.clone(),
+                            application: artifact(
+                                &build.application_filename,
+                                FlashPartKind::DfuApplication,
+                            ),
+                            init_packet: artifact(
+                                &build.init_packet_filename,
+                                FlashPartKind::DfuInitPacket,
+                            ),
+                            recovery: NrfSerialDfuRecoveryManifest {
+                                mount_label: build.recovery.mount_label.clone(),
+                                board_id_prefix: build.recovery.board_identity.value.clone(),
+                                family_id: build.recovery.family_id.clone(),
+                                artifact: artifact(&build.recovery.filename, FlashPartKind::Uf2),
+                            },
+                        })
+                    }
+                    BoardBuild::Esp(_) | BoardBuild::Uf2(_) => None,
+                };
                 TargetManifest {
                     board_slug: board.slug.clone(),
                     display_name: board.display_name.clone(),
@@ -923,7 +959,7 @@ mod tests {
                     preparation_profile: board.preparation_profile.clone(),
                     parts,
                     variants,
-                    nrf_serial_dfu: None,
+                    nrf_serial_dfu,
                     provisioning: board.provisioning.clone(),
                     source: None,
                 }
@@ -1046,7 +1082,7 @@ mod tests {
 
         assert_eq!(imported.version, "0.2.6");
         assert_eq!(imported.channel, "preview");
-        assert_eq!(imported.artifact_count, 14);
+        assert_eq!(imported.artifact_count, 19);
         assert!(cache
             .path()
             .join("releases/0.2.6/heltec-v4/application.bin")

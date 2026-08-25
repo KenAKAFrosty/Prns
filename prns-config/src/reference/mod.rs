@@ -15,7 +15,8 @@ pub use parse::{parse, parse_named};
 pub use types::{
     RNodeRadio, RNodeSubinterface, ReferenceAnnounceRateTarget, ReferenceBlackholeExchange,
     ReferenceConfig, ReferenceConfigParams, ReferenceDiscoveryConfig, ReferenceInterface,
-    ReferenceInterfaceDiscovery, ReferenceMode, ReferenceRemoteManagement, ReferenceValue,
+    ReferenceInterfaceDiscovery, ReferenceMode, ReferencePrnsConfig, ReferenceRemoteManagement,
+    ReferenceValue,
 };
 pub(crate) use validation::supported_websocket_target;
 

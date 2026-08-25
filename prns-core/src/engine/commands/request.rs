@@ -45,6 +45,9 @@ pub enum SendRequestFailure {
     Culled,
     Timeout,
     ResponseTooLarge,
+    /// A valid Resource response could not be admitted within the receiver's
+    /// bounded memory and pending-offer limits.
+    ResourceCapacity,
 }
 
 pub const MAX_RESPOND_DATA_LEN: usize =
@@ -130,7 +133,8 @@ impl Settleable for SendRequest {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
-            | Settlement::AllowRequester(_) => None,
+            | Settlement::AllowRequester(_)
+            | Settlement::SendPlainPacket(_) => None,
         }
     }
 }
@@ -159,7 +163,8 @@ impl Settleable for Respond {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
-            | Settlement::AllowRequester(_) => None,
+            | Settlement::AllowRequester(_)
+            | Settlement::SendPlainPacket(_) => None,
         }
     }
 }
@@ -188,7 +193,8 @@ impl Settleable for AllowRequester {
             | Settlement::CloseLink(_)
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
-            | Settlement::SendToChannel(_) => None,
+            | Settlement::SendToChannel(_)
+            | Settlement::SendPlainPacket(_) => None,
         }
     }
 }

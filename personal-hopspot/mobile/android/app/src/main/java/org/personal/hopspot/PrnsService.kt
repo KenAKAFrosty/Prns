@@ -115,9 +115,9 @@ class PrnsService : Service() {
     }
 
     @Synchronized
-    fun setBattery(percent: Int, charging: Boolean) {
+    fun setBattery(percent: Int, externallyPowered: Boolean) {
         if (renderHandle != 0L) {
-            NativeBridge.nativeSetBattery(renderHandle, percent, charging)
+            NativeBridge.nativeSetBattery(renderHandle, percent, externallyPowered)
         }
     }
 

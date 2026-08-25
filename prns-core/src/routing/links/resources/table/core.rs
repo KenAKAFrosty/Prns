@@ -6,8 +6,9 @@ use crate::routing::links::resources::build_outgoing::{
 };
 use crate::routing::links::resources::streamed_open::OpenProgress;
 use crate::routing::links::resources::{
-    sealed_transfer_bytes, ResourceCompression, ResourceCorrelation, ResourceHash, ResourceProof,
-    ResourceSegment, SaltNonce, HASHMAP_MAX_LEN, MAP_HASH_LEN, MAX_EFFICIENT_SIZE,
+    checked_resource_buffer_bytes, sealed_transfer_bytes, ResourceBufferShape,
+    ResourceBufferShapeError, ResourceCompression, ResourceCorrelation, ResourceHash,
+    ResourceProof, ResourceSegment, SaltNonce, HASHMAP_MAX_LEN, MAP_HASH_LEN, MAX_EFFICIENT_SIZE,
     PART_TIMEOUT_FACTOR, RESOURCE_NONCE_LEN, WINDOW_MAX_SLOW, WINDOW_MIN, WINDOW_START,
 };
 use crate::routing::links::LinkId;
@@ -223,6 +224,9 @@ pub struct ResourceBuffers<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceTablePushError {
     TableFull,
+    MemoryLimit,
+    TransferTooLarge,
+    TooManyParts,
 }
 
 pub trait ResourceTable<State: ResourceRowState> {
@@ -230,6 +234,27 @@ pub trait ResourceTable<State: ResourceRowState> {
     fn transfer_capacity(&self) -> usize;
     fn part_capacity(&self) -> usize;
     fn len(&self) -> usize;
+
+    fn active_buffer_bytes(&self) -> usize {
+        (0..self.len()).fold(0usize, |total, index| {
+            let row = self
+                .transfer(index)
+                .len()
+                .saturating_add(self.part_names(index).len().saturating_mul(MAP_HASH_LEN))
+                .saturating_add(
+                    self.part_flags(index)
+                        .len()
+                        .saturating_mul(core::mem::size_of::<bool>()),
+                );
+            total.saturating_add(row)
+        })
+    }
+
+    fn buffer_memory_limit(&self) -> usize {
+        checked_resource_buffer_bytes(self.transfer_capacity(), self.part_capacity())
+            .and_then(|row| row.checked_mul(self.capacity()))
+            .unwrap_or(usize::MAX)
+    }
 
     fn is_empty(&self) -> bool {
         self.len() == 0
@@ -254,13 +279,26 @@ pub trait ResourceTable<State: ResourceRowState> {
         index: usize,
     ) -> (&mut [u8], &mut State::StreamedOpenSlot);
 
+    /// Classify a validated row shape without reserving it. The pending-offer
+    /// scheduler uses this to distinguish burst pressure from an offer that
+    /// can never fit this storage recipe.
+    fn admission_for_shape(&self, shape: ResourceBufferShape) -> ResourceTableAdmission;
+
     fn push(
         &mut self,
         link_id: LinkId,
         hash: ResourceHash,
         state: State,
+        shape: ResourceBufferShape,
     ) -> Result<usize, ResourceTablePushError>;
     fn swap_remove(&mut self, index: usize);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceTableAdmission {
+    Available,
+    TemporarilyFull,
+    Impossible,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,6 +306,20 @@ pub enum TrackOutgoingResourceError {
     TableFull,
     LinkBusy,
     Build(BuildOutgoingResourceError),
+}
+
+fn track_push_error(error: ResourceTablePushError) -> TrackOutgoingResourceError {
+    match error {
+        ResourceTablePushError::TableFull | ResourceTablePushError::MemoryLimit => {
+            TrackOutgoingResourceError::TableFull
+        }
+        ResourceTablePushError::TransferTooLarge => {
+            TrackOutgoingResourceError::Build(BuildOutgoingResourceError::Seal(BufferTooShort))
+        }
+        ResourceTablePushError::TooManyParts => {
+            TrackOutgoingResourceError::Build(BuildOutgoingResourceError::HashmapBufferTooShort)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -331,6 +383,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         &mut self,
         command: TrackedCommand,
         lane: TrackLane,
+        shape: ResourceBufferShape,
         build: impl FnOnce(BuildRegions<'_>) -> Result<BuiltResource, BuildOutgoingResourceError>,
     ) -> Result<ResourceHash, TrackOutgoingResourceError> {
         let TrackedCommand {
@@ -340,14 +393,17 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
             correlation,
             segment,
         } = command;
+        let expected_transfer_bytes = shape.transfer_bytes();
+        let expected_part_count = shape.part_count();
         let index = self
             .table
             .push(
                 link_id,
                 ResourceHash::new([0; 32]),
                 OutgoingResourceState::default(),
+                shape,
             )
-            .map_err(|ResourceTablePushError::TableFull| TrackOutgoingResourceError::TableFull)?;
+            .map_err(track_push_error)?;
 
         let buffers = self.table.buffers_mut(index);
 
@@ -355,7 +411,10 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
             transfer: buffers.transfer,
             hashmap: buffers.part_names.as_flattened_mut(),
         }) {
-            Ok(built) => {
+            Ok(built)
+                if built.sealed_transfer_bytes == expected_transfer_bytes
+                    && built.part_count == expected_part_count =>
+            {
                 self.table.set_hash(index, built.hash);
                 *self.table.state_mut(index) = OutgoingResourceState {
                     salt_nonce: built.salt_nonce,
@@ -382,6 +441,13 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                 };
                 self.refresh_earliest_timeout();
                 Ok(built.hash)
+            }
+            Ok(_) => {
+                self.table.swap_remove(index);
+                self.refresh_earliest_timeout();
+                Err(TrackOutgoingResourceError::Build(
+                    BuildOutgoingResourceError::BufferShapeMismatch,
+                ))
             }
             Err(error) => {
                 self.table.swap_remove(index);
@@ -416,14 +482,30 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                 BuildOutgoingResourceError::Seal(BufferTooShort),
             ));
         }
+        let transfer_bytes = sealed_transfer_bytes(stream_len);
+        let shape =
+            ResourceBufferShape::try_for_transfer(transfer_bytes, sdu).map_err(|error| {
+                TrackOutgoingResourceError::Build(match error {
+                    ResourceBufferShapeError::EmptyTransfer => {
+                        BuildOutgoingResourceError::Seal(BufferTooShort)
+                    }
+                    ResourceBufferShapeError::SduTooSmall => {
+                        BuildOutgoingResourceError::SduTooSmall
+                    }
+                    ResourceBufferShapeError::SizeOverflow => {
+                        BuildOutgoingResourceError::DataTooLarge
+                    }
+                })
+            })?;
         let index = self
             .table
             .push(
                 link_id,
                 ResourceHash::new([0; 32]),
                 OutgoingResourceState::default(),
+                shape,
             )
-            .map_err(|ResourceTablePushError::TableFull| TrackOutgoingResourceError::TableFull)?;
+            .map_err(track_push_error)?;
 
         prefill(self.table.buffers_mut(index).transfer);
         *self.table.state_mut(index) = OutgoingResourceState {
@@ -575,6 +657,14 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         self.table.len()
     }
 
+    pub fn active_buffer_bytes(&self) -> usize {
+        self.table.active_buffer_bytes()
+    }
+
+    pub fn buffer_memory_limit(&self) -> usize {
+        self.table.buffer_memory_limit()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.table.is_empty()
     }
@@ -606,12 +696,32 @@ pub struct AcceptedResource<'a> {
 pub enum AcceptIncomingResourceError {
     TableFull,
     AlreadyReceiving,
+    EmptyTransfer,
+    SduTooSmall,
+    PartCountMismatch,
     TransferTooLarge,
     TooManyParts,
     HashmapTooLong,
     /// The name bytes are not a whole number of 4-byte map hashes: a torn name at the tail.
     HashmapRagged,
     HashmapBeyondPartCount,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IncomingResourceAdmission {
+    Available,
+    AlreadyReceiving,
+    TemporarilyFull,
+    Impossible,
+    Malformed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IncomingResourceStorageAdmission {
+    Available,
+    TemporarilyFull,
+    Impossible,
+    Malformed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -639,7 +749,86 @@ pub struct IncomingResources<C: ResourceTable<IncomingResourceState>> {
     earliest_timeout: Option<InstantMillis>,
 }
 
+fn accepted_resource_shape(
+    offer: AcceptedResource<'_>,
+) -> Result<ResourceBufferShape, AcceptIncomingResourceError> {
+    let shape = ResourceBufferShape::try_for_transfer(offer.sealed_transfer_bytes, offer.sdu)
+        .map_err(|error| match error {
+            ResourceBufferShapeError::EmptyTransfer => AcceptIncomingResourceError::EmptyTransfer,
+            ResourceBufferShapeError::SduTooSmall => AcceptIncomingResourceError::SduTooSmall,
+            ResourceBufferShapeError::SizeOverflow => AcceptIncomingResourceError::TransferTooLarge,
+        })?;
+    if offer.part_count != shape.part_count() {
+        return Err(AcceptIncomingResourceError::PartCountMismatch);
+    }
+    if offer.initial_names.len() > HASHMAP_MAX_LEN * MAP_HASH_LEN {
+        return Err(AcceptIncomingResourceError::HashmapTooLong);
+    }
+    if !offer.initial_names.len().is_multiple_of(MAP_HASH_LEN) {
+        return Err(AcceptIncomingResourceError::HashmapRagged);
+    }
+    if offer.initial_names.len() / MAP_HASH_LEN > offer.part_count {
+        return Err(AcceptIncomingResourceError::HashmapBeyondPartCount);
+    }
+    Ok(shape)
+}
+
 impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
+    pub(crate) fn storage_admission_for(
+        &self,
+        offer: AcceptedResource<'_>,
+    ) -> IncomingResourceStorageAdmission {
+        let shape = match accepted_resource_shape(offer) {
+            Ok(shape) => shape,
+            Err(AcceptIncomingResourceError::TransferTooLarge) => {
+                return IncomingResourceStorageAdmission::Impossible
+            }
+            Err(
+                AcceptIncomingResourceError::TableFull
+                | AcceptIncomingResourceError::AlreadyReceiving
+                | AcceptIncomingResourceError::EmptyTransfer
+                | AcceptIncomingResourceError::SduTooSmall
+                | AcceptIncomingResourceError::PartCountMismatch
+                | AcceptIncomingResourceError::TooManyParts
+                | AcceptIncomingResourceError::HashmapTooLong
+                | AcceptIncomingResourceError::HashmapRagged
+                | AcceptIncomingResourceError::HashmapBeyondPartCount,
+            ) => return IncomingResourceStorageAdmission::Malformed,
+        };
+        match self.table.admission_for_shape(shape) {
+            ResourceTableAdmission::Available => IncomingResourceStorageAdmission::Available,
+            ResourceTableAdmission::TemporarilyFull => {
+                IncomingResourceStorageAdmission::TemporarilyFull
+            }
+            ResourceTableAdmission::Impossible => IncomingResourceStorageAdmission::Impossible,
+        }
+    }
+
+    pub(crate) fn admission_for(
+        &self,
+        link_id: &LinkId,
+        offer: AcceptedResource<'_>,
+    ) -> IncomingResourceAdmission {
+        let storage = self.storage_admission_for(offer);
+        let storage = match storage {
+            IncomingResourceStorageAdmission::Available => IncomingResourceAdmission::Available,
+            IncomingResourceStorageAdmission::TemporarilyFull => {
+                IncomingResourceAdmission::TemporarilyFull
+            }
+            IncomingResourceStorageAdmission::Impossible => {
+                return IncomingResourceAdmission::Impossible
+            }
+            IncomingResourceStorageAdmission::Malformed => {
+                return IncomingResourceAdmission::Malformed
+            }
+        };
+        if self.lookup(link_id, &offer.hash).is_some() {
+            IncomingResourceAdmission::AlreadyReceiving
+        } else {
+            storage
+        }
+    }
+
     /// The capacity and shape gate the engine asks at accept; policy gating happens before the offer ever reaches the table.
     /// The duplicate refusal is RNS 1.4.2 `Resource.accept`'s `has_incoming_resource` registration gate.
     pub fn accept(
@@ -647,20 +836,12 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
         link_id: LinkId,
         offer: AcceptedResource<'_>,
     ) -> Result<usize, AcceptIncomingResourceError> {
-        if offer.sealed_transfer_bytes > self.table.transfer_capacity() {
+        let shape = accepted_resource_shape(offer)?;
+        if shape.transfer_bytes() > self.table.transfer_capacity() {
             return Err(AcceptIncomingResourceError::TransferTooLarge);
         }
-        if offer.part_count > self.table.part_capacity() {
+        if shape.part_count() > self.table.part_capacity() {
             return Err(AcceptIncomingResourceError::TooManyParts);
-        }
-        if offer.initial_names.len() > HASHMAP_MAX_LEN * MAP_HASH_LEN {
-            return Err(AcceptIncomingResourceError::HashmapTooLong);
-        }
-        if !offer.initial_names.len().is_multiple_of(MAP_HASH_LEN) {
-            return Err(AcceptIncomingResourceError::HashmapRagged);
-        }
-        if offer.initial_names.len() / MAP_HASH_LEN > offer.part_count {
-            return Err(AcceptIncomingResourceError::HashmapBeyondPartCount);
         }
 
         if self.lookup(&link_id, &offer.hash).is_some() {
@@ -680,7 +861,7 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
                     segment_index: offer.segment_index,
                     total_segments: offer.total_segment_count,
                     sealed_transfer_bytes: offer.sealed_transfer_bytes,
-                    part_count: offer.part_count,
+                    part_count: shape.part_count(),
                     sdu: offer.sdu,
                     received_part_count: 0,
                     outstanding_part_count: 0,
@@ -706,8 +887,17 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
                     fast_rate_rounds: 0,
                     very_slow_rate_rounds: 0,
                 },
+                shape,
             )
-            .map_err(|ResourceTablePushError::TableFull| AcceptIncomingResourceError::TableFull)?;
+            .map_err(|error| match error {
+                ResourceTablePushError::TableFull | ResourceTablePushError::MemoryLimit => {
+                    AcceptIncomingResourceError::TableFull
+                }
+                ResourceTablePushError::TransferTooLarge => {
+                    AcceptIncomingResourceError::TransferTooLarge
+                }
+                ResourceTablePushError::TooManyParts => AcceptIncomingResourceError::TooManyParts,
+            })?;
 
         self.write_names(index, 0, offer.initial_names);
         self.refresh_earliest_timeout();
@@ -913,8 +1103,38 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
         self.table.len()
     }
 
+    pub fn active_buffer_bytes(&self) -> usize {
+        self.table.active_buffer_bytes()
+    }
+
+    pub fn buffer_memory_limit(&self) -> usize {
+        self.table.buffer_memory_limit()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.table.is_empty()
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl OutgoingResources<super::HeapResourceTable<OutgoingResourceState>> {
+    pub(crate) fn set_memory_limit(&mut self, bytes: usize) {
+        self.table.set_memory_limit(bytes);
+    }
+
+    pub(crate) fn memory_limit(&self) -> usize {
+        self.table.memory_limit()
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl IncomingResources<super::HeapResourceTable<IncomingResourceState>> {
+    pub(crate) fn set_memory_limit(&mut self, bytes: usize) {
+        self.table.set_memory_limit(bytes);
+    }
+
+    pub(crate) fn memory_limit(&self) -> usize {
+        self.table.memory_limit()
     }
 }
 
@@ -933,6 +1153,10 @@ mod tests {
 
     fn hash(byte: u8) -> ResourceHash {
         ResourceHash::new([byte; 32])
+    }
+
+    fn shape(transfer_bytes: usize, sdu: usize) -> ResourceBufferShape {
+        ResourceBufferShape::try_for_transfer(transfer_bytes, sdu).unwrap()
     }
 
     fn fabricated(hash_byte: u8, sealed_transfer_bytes: usize, part_count: usize) -> BuiltResource {
@@ -965,10 +1189,11 @@ mod tests {
                     segment,
                 },
                 lane,
+                shape(928, 464),
                 |regions| {
                     regions.transfer[..3].copy_from_slice(&[hash_byte; 3]);
                     regions.hashmap[..8].copy_from_slice(&[hash_byte; 8]);
-                    Ok(fabricated(hash_byte, 930, 2))
+                    Ok(fabricated(hash_byte, 928, 2))
                 },
             )
             .map(|_| lane)
@@ -1006,7 +1231,7 @@ mod tests {
 
         assert_eq!(tracked, TrackLane::Live);
         let index = outgoing.lookup(&link_id(1), &hash(0xAB)).unwrap();
-        assert_eq!(outgoing.sealed_transfer(index).len(), 930);
+        assert_eq!(outgoing.sealed_transfer(index).len(), 928);
         assert_eq!(&outgoing.sealed_transfer(index)[..3], &[0xAB; 3]);
         assert_eq!(outgoing.names_flat(index), &[0xAB; 8]);
         let state = outgoing.state(index);
@@ -1088,11 +1313,62 @@ mod tests {
                 segment: ResourceSegment::whole(930),
             },
             TrackLane::Live,
+            shape(928, 464),
             |_| Err(BuildOutgoingResourceError::SduTooSmall),
         );
         assert_eq!(
             refused.unwrap_err(),
             TrackOutgoingResourceError::Build(BuildOutgoingResourceError::SduTooSmall),
+        );
+        assert!(outgoing.is_empty());
+        track(&mut outgoing, 1, 0xAB).unwrap();
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn heap_budget_pressure_uses_the_existing_table_full_outcomes() {
+        let mut outgoing = OutgoingResources::<HeapResourceTable<OutgoingResourceState>>::default();
+        outgoing.set_memory_limit(0);
+        let refused = outgoing.track_built(
+            TrackedCommand {
+                link_id: link_id(1),
+                sdu: 464,
+                command_id: CommandId(7),
+                correlation: ResourceCorrelation::Unsolicited,
+                segment: ResourceSegment::whole(930),
+            },
+            TrackLane::Live,
+            shape(928, 464),
+            |_| unreachable!("budget pressure must refuse before building"),
+        );
+        assert_eq!(refused, Err(TrackOutgoingResourceError::TableFull));
+
+        let mut incoming = IncomingResources::<HeapResourceTable<IncomingResourceState>>::default();
+        incoming.set_memory_limit(0);
+        assert_eq!(
+            incoming.accept(link_id(1), offer(0xAB, &[])),
+            Err(AcceptIncomingResourceError::TableFull),
+        );
+    }
+
+    #[test]
+    fn a_build_cannot_commit_dimensions_other_than_its_reserved_shape() {
+        let mut outgoing = TestOutgoing::default();
+        let refused = outgoing.track_built(
+            TrackedCommand {
+                link_id: link_id(1),
+                sdu: 464,
+                command_id: CommandId(7),
+                correlation: ResourceCorrelation::Unsolicited,
+                segment: ResourceSegment::whole(930),
+            },
+            TrackLane::Live,
+            shape(928, 464),
+            |_| Ok(fabricated(0xAB, 927, 2)),
+        );
+        assert_eq!(
+            refused.unwrap_err(),
+            TrackOutgoingResourceError::Build(BuildOutgoingResourceError::BufferShapeMismatch,),
         );
         assert!(outgoing.is_empty());
         track(&mut outgoing, 1, 0xAB).unwrap();
@@ -1169,10 +1445,33 @@ mod tests {
         );
 
         let mut too_many = offer(0xCD, &[]);
+        too_many.sdu = 245;
         too_many.part_count = 4;
         assert_eq!(
             incoming.accept(link_id(1), too_many).unwrap_err(),
             AcceptIncomingResourceError::TooManyParts,
+        );
+
+        let mut mismatched_parts = offer(0xCD, &[]);
+        mismatched_parts.part_count = 2;
+        assert_eq!(
+            incoming.accept(link_id(1), mismatched_parts).unwrap_err(),
+            AcceptIncomingResourceError::PartCountMismatch,
+        );
+
+        let mut empty = offer(0xCD, &[]);
+        empty.sealed_transfer_bytes = 0;
+        empty.part_count = 0;
+        assert_eq!(
+            incoming.accept(link_id(1), empty).unwrap_err(),
+            AcceptIncomingResourceError::EmptyTransfer,
+        );
+
+        let mut zero_sdu = offer(0xCD, &[]);
+        zero_sdu.sdu = 0;
+        assert_eq!(
+            incoming.accept(link_id(1), zero_sdu).unwrap_err(),
+            AcceptIncomingResourceError::SduTooSmall,
         );
 
         let too_long_names = [0u8; (HASHMAP_MAX_LEN + 1) * MAP_HASH_LEN];

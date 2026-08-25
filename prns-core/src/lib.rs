@@ -6,6 +6,7 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+pub mod capabilities;
 pub mod crypto;
 pub mod engine;
 pub mod identity;
@@ -18,6 +19,7 @@ pub mod lemire_index;
 ))]
 pub mod message_pack;
 pub mod persistence;
+pub mod remote_control;
 pub mod rncp;
 #[cfg(feature = "rnx")]
 pub mod rnx;

@@ -1,4 +1,4 @@
-use crate::engine::test_support::{routable_descriptor, TestStorageLayout};
+use crate::engine::test_support::{routable_descriptor, test_entropy_bytes, TestStorageLayout};
 use crate::engine::{CommandId, EngineState, IngestIo};
 use crate::interfaces::{AttachedInterfaces, InboundPacket, InterfaceId};
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_ECHO};
@@ -126,7 +126,7 @@ fn authenticated_link_data_is_route_evidence() {
         BROADCAST_MTU,
         WireContext::None,
         b"valid return traffic",
-        &[0xA5; 16],
+        &test_entropy_bytes::<16>(0xA5),
         &mut frame,
     )
     .unwrap();

@@ -13,7 +13,10 @@ impl RequestEndpoint for Echo {
     const ENDPOINT_ID: &'static str = EXAMPLE_ENDPOINT_ID;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(mut context: RequestContext<'_, ()>) -> Result<(), Decline> {
+    async fn handle(
+        mut context: RequestContext<'_, ()>,
+        _node: &impl personal_rns::runtime::PrnsNodeApi,
+    ) -> Result<(), Decline> {
         let data_from_request = context.data;
         context.respond(data_from_request)
     }

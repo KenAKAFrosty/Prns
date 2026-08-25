@@ -43,8 +43,8 @@ use personal_rns::wifi_auto::AutoWifi;
 use personal_rns::ResourceStrategy;
 use personal_rns::{attach_plan_with_context, PlanOutcome, PlanRuntimeContext};
 use personal_rns::{
-    load_or_create_ble_identity, AttachedInterface, AttachedSupervisor, AutoBluetoothLe, AutoUsb,
-    PacketReceiptDelivered, PlanAttachments, PrnsNodeHandle,
+    load_or_create_ble_identity, AnnounceNowError, AttachedInterface, AttachedSupervisor,
+    AutoBluetoothLe, AutoUsb, PacketReceiptDelivered, PlanAttachments, PrnsNodeHandle,
 };
 use prns_host::{
     Bitrate as HostBitrate, CommandFailure as HostCommandFailure,
@@ -645,6 +645,9 @@ fn request_error(error: personal_rns::SendError<SendRequestFailure>) -> crate::e
         personal_rns::SendError::Failed(SendRequestFailure::ResponseTooLarge) => {
             code_err(ErrorCode::ResponseTooLarge, "response is too large")
         }
+        personal_rns::SendError::Failed(SendRequestFailure::ResourceCapacity) => {
+            code_err(ErrorCode::ResourceTableFull, "resource capacity exhausted")
+        }
     }
 }
 
@@ -798,6 +801,16 @@ fn response_send_error(error: ResponseSendError) -> crate::errors::CodeError {
             ErrorCode::WriteFailed,
             "response returned an unrelated settlement",
         ),
+    }
+}
+
+fn announce_error(error: AnnounceNowError) -> crate::errors::CodeError {
+    match error {
+        AnnounceNowError::NodeStopped => code_err(ErrorCode::NodeStopped, "node stopped"),
+        AnnounceNowError::Busy => code_err(ErrorCode::Busy, "engine busy"),
+        failure @ (AnnounceNowError::Rejected(_) | AnnounceNowError::WriteFailed(_)) => {
+            code_err(ErrorCode::AnnounceFailed, format!("{failure:?}"))
+        }
     }
 }
 
@@ -2283,7 +2296,7 @@ impl PrnsNode {
                 app_data: AnnounceAppData::Registered,
             })
             .await
-            .map_err(|error| send_error(ErrorCode::AnnounceFailed, error))
+            .map_err(announce_error)
     }
 
     async fn send_single_packet_inner(

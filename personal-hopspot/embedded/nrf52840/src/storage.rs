@@ -19,6 +19,9 @@ use personal_rns::routing::links::channel::table::impls::FixedArrayChannelTable;
 use personal_rns::routing::links::resources::assembly::{
     FixedIncomingAssemblyTable, FixedStaticOutgoingAssemblyTable,
 };
+use personal_rns::routing::links::resources::pending::{
+    NoPendingResourceOfferTable, PendingResourceOffers,
+};
 use personal_rns::routing::links::resources::table::{
     FixedResourceTable, IncomingResourceState, OutgoingResourceState,
 };
@@ -62,6 +65,36 @@ impl Nrf52840Storage {
     const ANNOUNCE_HISTORY_DEPTH: usize = 8;
     pub(crate) const RETAINED_ANNOUNCE_APP_DATA_BYTES: usize = 256;
     pub(crate) const RETAINED_RATCHETS_PER_DESTINATION: usize = 4;
+    const JOURNAL_WRITE_ALIGNMENT_BYTES: usize = 4;
+    const MAX_JOURNAL_RECORD_PADDING_BYTES: usize = Self::JOURNAL_WRITE_ALIGNMENT_BYTES - 1;
+    const COMPACTED_ROUTE_BASE_PAYLOAD_BYTES: usize =
+        personal_rns::persistence::maximum_route_upsert_payload_len(0, 0);
+    const COMPACTED_ROUTE_BASE_RECORD_BYTES: usize =
+        personal_rns::persistence::flash_journal_record_storage_len(
+            Self::COMPACTED_ROUTE_BASE_PAYLOAD_BYTES,
+            Self::JOURNAL_WRITE_ALIGNMENT_BYTES,
+        );
+    const MAX_COMPACTED_ROUTE_RECORD_BYTES: usize =
+        Self::COMPACTED_ROUTE_BASE_RECORD_BYTES + Self::MAX_JOURNAL_RECORD_PADDING_BYTES;
+    const SELF_RATCHET_PAYLOAD_BYTES: usize = personal_rns::wire::TRUNCATED_HASH_BYTE_LEN
+        + personal_rns::persistence::self_ratchets_snapshot_len(
+            Self::RETAINED_RATCHETS_PER_DESTINATION,
+        );
+    const SELF_RATCHET_RECORD_BYTES: usize =
+        personal_rns::persistence::flash_journal_record_storage_len(
+            Self::SELF_RATCHET_PAYLOAD_BYTES,
+            Self::JOURNAL_WRITE_ALIGNMENT_BYTES,
+        );
+    pub(crate) const MAX_CRITICAL_FLASH_JOURNAL_BYTES: usize =
+        Self::UPSTREAM_APP_DESTINATIONS * Self::SELF_RATCHET_RECORD_BYTES;
+    pub(crate) const MAX_COMPACTED_FLASH_JOURNAL_BYTES: usize = Self::TRACKED_DESTINATIONS
+        * Self::MAX_COMPACTED_ROUTE_RECORD_BYTES
+        + Self::RETAINED_ANNOUNCE_APP_DATA_BYTES
+        + Self::MAX_CRITICAL_FLASH_JOURNAL_BYTES
+        + personal_rns::persistence::flash_journal_record_storage_len(
+            0,
+            Self::JOURNAL_WRITE_ALIGNMENT_BYTES,
+        );
     const RESOURCE_TRANSFER_BYTES: usize = 1504;
     pub const MAX_OUTGOING_RESOURCE_REACTION_FRAMES: usize =
         max_outgoing_resource_reaction_frames(Self::RESOURCE_TRANSFER_BYTES);
@@ -72,6 +105,9 @@ impl Nrf52840Storage {
 
 const _: () = assert!(Nrf52840Storage::LINK_SESSIONS > Nrf52840Storage::CHANNELS);
 const _: () = assert!(Nrf52840Storage::RESOURCE_ASSEMBLIES == 1);
+const _: () = assert!(core::mem::size_of::<NoPendingResourceOfferTable>() == 0);
+const _: () =
+    assert!(core::mem::size_of::<PendingResourceOffers<NoPendingResourceOfferTable>>() == 0);
 
 impl StorageLayout for Nrf52840Storage {
     const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
@@ -153,6 +189,7 @@ impl StorageLayout for Nrf52840Storage {
         { Self::RESOURCE_TRANSFER_BYTES },
         { max_part_count(Self::RESOURCE_TRANSFER_BYTES) },
     >;
+    type PendingResourceOffers = NoPendingResourceOfferTable;
     type IncomingAssemblies = FixedIncomingAssemblyTable<{ Self::RESOURCE_ASSEMBLIES }>;
     type OutgoingAssemblies = FixedStaticOutgoingAssemblyTable<{ Self::RESOURCE_ASSEMBLIES }>;
     type Channels = FixedArrayChannelTable<

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import partial
 import hashlib
 import http.server
 import importlib.util
@@ -35,7 +36,7 @@ from developer_flasher_candidate import (
 ROOT = Path(__file__).resolve().parents[2]
 WEBSITE = ROOT / "docs" / "website"
 BOARD_CATALOG = ROOT / "release" / "flash" / "boards.json"
-BOARD_CATALOG_SCHEMA = 3
+BOARD_CATALOG_SCHEMA = 4
 SHIPPING_BOARD_AVAILABILITY = "shipping"
 BOARD_AVAILABILITIES = frozenset((SHIPPING_BOARD_AVAILABILITY, "qualification"))
 PINNED_MINISIGN = ROOT / ".build" / "toolchains" / "minisign" / "0.12" / "minisign"
@@ -74,6 +75,17 @@ def process_output(value: bytes | None) -> str:
     return (value or b"").decode("utf-8", errors="replace").strip()
 
 
+def extended_length(path: Path) -> Path:
+    if os.name != "nt":
+        return path
+    value = os.path.abspath(path)
+    if value.startswith("\\\\?\\"):
+        return Path(value)
+    if value.startswith("\\\\"):
+        return Path("\\\\?\\UNC" + value[1:])
+    return Path("\\\\?\\" + value)
+
+
 def stop_process(process: subprocess.Popen[bytes]) -> None:
     if process.poll() is not None:
         return
@@ -99,8 +111,9 @@ def run_process(
     capture: bool = False,
     label: str,
 ) -> tuple[bytes, bytes]:
+    parts = [os.fspath(part) for part in command]
     process = subprocess.Popen(
-        [os.fspath(part) for part in command],
+        [shutil.which(parts[0]) or parts[0], *parts[1:]],
         cwd=cwd,
         env=environment,
         stdin=subprocess.DEVNULL,
@@ -235,35 +248,37 @@ def require_unquarantined_source(identity: SourceIdentity) -> None:
         )
 
 
-def shipping_boards() -> tuple[str, ...]:
+def catalog_boards() -> tuple[dict, ...]:
     document = json.loads(BOARD_CATALOG.read_text(encoding="utf-8"))
     if document.get("schema") != BOARD_CATALOG_SCHEMA or not isinstance(
         document.get("boards"), list
     ):
-        raise DeveloperFlasherError("shipping board catalog is invalid")
+        raise DeveloperFlasherError("board catalog is invalid")
     entries = document["boards"]
     if not entries or not all(isinstance(board, dict) for board in entries):
-        raise DeveloperFlasherError("shipping board catalog is invalid")
+        raise DeveloperFlasherError("board catalog is invalid")
     if not all(board.get("availability") in BOARD_AVAILABILITIES for board in entries):
-        raise DeveloperFlasherError("shipping board catalog contains an invalid availability")
+        raise DeveloperFlasherError("board catalog contains an invalid availability")
     slugs = tuple(board.get("slug") for board in entries)
     if not all(isinstance(board, str) and board for board in slugs):
-        raise DeveloperFlasherError("shipping board catalog contains an invalid slug")
+        raise DeveloperFlasherError("board catalog contains an invalid slug")
     if len(set(slugs)) != len(slugs):
-        raise DeveloperFlasherError("shipping board catalog contains duplicate slugs")
+        raise DeveloperFlasherError("board catalog contains duplicate slugs")
+    return tuple(entries)
+
+
+def shipping_boards() -> tuple[str, ...]:
     return tuple(
         board["slug"]
-        for board in entries
+        for board in catalog_boards()
         if board.get("availability") == SHIPPING_BOARD_AVAILABILITY
     )
 
 
 def selected_targets(selection: Selection) -> tuple[ExpectedTarget, ...]:
-    document = json.loads(BOARD_CATALOG.read_text(encoding="utf-8"))
     transports = {
         board["slug"]: board["transport"]
-        for board in document["boards"]
-        if board.get("availability") == SHIPPING_BOARD_AVAILABILITY
+        for board in catalog_boards()
     }
     return tuple(ExpectedTarget(board, transports[board]) for board in selection.boards)
 
@@ -284,18 +299,24 @@ def parse_selection(arguments: Sequence[str]) -> Selection:
     parser.add_argument("--all", action="store_true", dest="all_boards")
     parser.add_argument("--port", type=parse_port, default=8765)
     parsed = parser.parse_args(arguments)
-    available = shipping_boards()
+    entries = catalog_boards()
+    available = tuple(board["slug"] for board in entries)
+    shipping = tuple(
+        board["slug"]
+        for board in entries
+        if board.get("availability") == SHIPPING_BOARD_AVAILABILITY
+    )
     if parsed.all_boards and parsed.boards:
         parser.error("--all cannot be combined with explicit boards")
     if parsed.all_boards:
-        return Selection(available, parsed.port)
+        return Selection(shipping, parsed.port)
     if not parsed.boards:
-        parser.error("select at least one shipping board or use --all")
+        parser.error("select at least one cataloged board or use --all")
     if len(set(parsed.boards)) != len(parsed.boards):
         parser.error("board selections must be unique")
     unknown = sorted(set(parsed.boards) - set(available))
     if unknown:
-        parser.error(f"unknown shipping board: {', '.join(unknown)}")
+        parser.error(f"unknown board: {', '.join(unknown)}")
     requested = set(parsed.boards)
     return Selection(tuple(board for board in available if board in requested), parsed.port)
 
@@ -347,7 +368,7 @@ def temporary_run_directory() -> Iterator[Path]:
     try:
         yield path
     finally:
-        shutil.rmtree(path, ignore_errors=True)
+        shutil.rmtree(extended_length(path), ignore_errors=True)
 
 
 def clean_build_environment() -> dict[str, str]:
@@ -545,6 +566,15 @@ def build_website(
         cwd=WEBSITE,
         label="local developer browser flasher build",
     )
+    run_process(
+        [
+            "bash",
+            ROOT / "tools" / "build" / "stage-web-flasher-nrf-dfu-wasm.sh",
+            flasher_assets / "nrf-dfu",
+        ],
+        cwd=ROOT,
+        label="local developer Nordic DFU browser core build",
+    )
 
 
 def generate_key(signer: Path, secrets: Path, environment: dict[str, str]) -> tuple[Path, Path, str]:
@@ -657,7 +687,7 @@ def stage_signed_release(
     channel_signature: Path,
     public_key: Path,
 ) -> None:
-    releases = website_stage / "releases"
+    releases = extended_length(website_stage) / "releases"
     release = releases / validated.version
     channels = releases / "channels"
     release.mkdir(parents=True, exist_ok=True)
@@ -677,7 +707,7 @@ def stage_signed_release(
 def assert_secret_removed(run_directory: Path, secret_key: Path) -> None:
     if secret_key.exists():
         raise DeveloperFlasherError("ephemeral secret key still exists before server startup")
-    for path in sorted(run_directory.rglob("*")):
+    for path in sorted(extended_length(run_directory).rglob("*")):
         if not path.is_file():
             continue
         value = path.read_bytes()
@@ -700,7 +730,13 @@ def load_candidate_server() -> ModuleType:
 def serve(website_stage: Path, port: int) -> None:
     module = load_candidate_server()
     try:
-        server: http.server.ThreadingHTTPServer = module.create_server(website_stage, port)
+        website = module.validate_website_root(website_stage)
+        handler = partial(
+            module.CandidateHandler,
+            directory=os.fspath(extended_length(website)),
+        )
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", port), handler)
+        server.daemon_threads = True
     except (OSError, ValueError) as error:
         raise DeveloperFlasherError(f"loopback server startup failed: {error}") from error
     address, bound_port = server.server_address

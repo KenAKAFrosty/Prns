@@ -1,6 +1,6 @@
 [package]
 name = "prns-integration-tests"
-version = "0.3.6"
+version = "0.3.7"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KenAKAFrosty/Prns"
@@ -12,7 +12,7 @@ publish = false
 [workspace]
 
 [dependencies]
-personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "tcp", "udp", "shared-instance", "wifi-auto", "wifi-direct"] }
+personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "tcp", "udp", "shared-instance", "wifi-auto", "wifi-direct", "runtime-metrics"] }
 personal-hopspot-core = { path = "../../personal-hopspot/core" }
 
 [dev-dependencies]

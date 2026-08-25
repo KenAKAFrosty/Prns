@@ -29,6 +29,12 @@ def complete_roster() -> dict:
         ("xiao-esp32-c6", "web"): ("windows", "x86_64"),
         ("t-echo", "cli"): ("linux", "aarch64"),
         ("t-echo", "web"): ("macos", "x86_64"),
+        ("t114", "cli"): ("linux", "x86_64"),
+        ("t114", "web"): ("macos", "aarch64"),
+        ("t096", "cli"): ("linux", "aarch64"),
+        ("t096", "web"): ("macos", "aarch64"),
+        ("t1000-e", "cli"): ("macos", "x86_64"),
+        ("t1000-e", "web"): ("windows", "x86_64"),
     }
     physical_assignments = []
     for (board, surface), (os_name, architecture) in hosts.items():
@@ -135,7 +141,9 @@ class TesterRosterValidatorTests(unittest.TestCase):
 
     def test_each_surface_must_cover_linux_macos_and_windows(self) -> None:
         roster = complete_roster()
-        roster["physical_assignments"][4]["os"] = "linux"
+        for assignment in roster["physical_assignments"]:
+            if assignment["surface"] == "cli" and assignment["os"] == "macos":
+                assignment["os"] = "linux"
         errors = self.validate(roster)
         self.assertTrue(
             any("cli physical assignments do not cover host OSes" in error for error in errors)

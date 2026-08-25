@@ -31,10 +31,11 @@ use peer::{
 };
 use rendezvous::TcpRendezvousEvent;
 pub use rendezvous::{
-    tcp_rendezvous, TcpRendezvousBuffers, TcpRendezvousClient, TcpRendezvousExitCause,
-    TcpRendezvousServer, TcpRendezvousStorage, TcpRendezvousWireSlot, TcpRendezvousWriteFailure,
-    TCP_RENDEZVOUS_FRAMED_LEN, TCP_RENDEZVOUS_FRAME_CAP, TCP_RENDEZVOUS_LIVENESS_TIMEOUT,
-    TCP_RENDEZVOUS_READ_BUFFER_BYTES, TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES,
+    tcp_rendezvous, TcpRendezvousBuffers, TcpRendezvousClient, TcpRendezvousClients,
+    TcpRendezvousExitCause, TcpRendezvousServer, TcpRendezvousStorage, TcpRendezvousWireSlot,
+    TcpRendezvousWriteFailure, TCP_RENDEZVOUS_CLIENT_CAPACITY, TCP_RENDEZVOUS_FRAMED_LEN,
+    TCP_RENDEZVOUS_FRAME_CAP, TCP_RENDEZVOUS_LIVENESS_TIMEOUT, TCP_RENDEZVOUS_READ_BUFFER_BYTES,
+    TCP_RENDEZVOUS_SOCKET_BUFFER_BYTES,
 };
 use service_discovery::{
     DiscoveryParticipationReceiver, EmbeddedDiscoveryParticipation,
@@ -590,7 +591,7 @@ pub struct AutoWifiSegment<'a> {
 pub struct AutoWifiTopology<'a> {
     pub primary: AutoWifiSegment<'a>,
     pub secondary: Option<AutoWifiSegment<'a>>,
-    pub rendezvous: Option<TcpRendezvousClient<'a>>,
+    pub rendezvous: Option<TcpRendezvousClients<'a>>,
 }
 
 pub struct AutoWifi<'a, const MEMBERS: usize> {
@@ -599,7 +600,7 @@ pub struct AutoWifi<'a, const MEMBERS: usize> {
     brain: contract::FixedAutoInterfaceProtocol<MEMBERS>,
     status: AutoWifiStatus<MEMBERS>,
     bitrate: BitrateBps,
-    rendezvous: Option<TcpRendezvousClient<'a>>,
+    rendezvous: Option<TcpRendezvousClients<'a>>,
 }
 
 type DatagramReceiveResult = Result<(usize, UdpMetadata), RecvError>;
@@ -613,7 +614,10 @@ enum AutoWifiEvent<'a, const FRAME: usize, const MEMBERS: usize> {
     SecondaryMulticast(DatagramReceiveResult),
     SecondaryUnicast(DatagramReceiveResult),
     SecondaryData(DatagramReceiveResult),
-    Rendezvous(&'a mut TcpRendezvousWireSlot),
+    Rendezvous {
+        client: usize,
+        slot: &'a mut TcpRendezvousWireSlot,
+    },
     DiscoveryTargets(EmbeddedDiscoveryTargets<MEMBERS>),
     Disabled,
 }
@@ -630,7 +634,7 @@ struct AutoWifiReceiveBuffers<'a> {
 struct AutoWifiRunState<const MEMBERS: usize> {
     topology: TopologyState,
     peers: WifiPeerTable<MEMBERS>,
-    tcp_peer: Option<TcpPeer>,
+    tcp_peers: [Option<TcpPeer>; TCP_RENDEZVOUS_CLIENT_CAPACITY],
     primary_token: [u8; contract::PEERING_TOKEN_BYTES],
     secondary_token: Option<[u8; contract::PEERING_TOKEN_BYTES]>,
     fanout_start: usize,
@@ -648,13 +652,13 @@ impl<const MEMBERS: usize> AutoWifiRunState<MEMBERS> {
             *contract::peering_token(&link_local).as_bytes()
         });
         let peers = match auto_wifi.rendezvous.as_ref() {
-            Some(_) => WifiPeerTable::reserving_last_slot(),
+            Some(_) => WifiPeerTable::reserving_last_slots(TCP_RENDEZVOUS_CLIENT_CAPACITY),
             None => WifiPeerTable::new(),
         };
         Self {
             topology,
             peers,
-            tcp_peer: None,
+            tcp_peers: [None; TCP_RENDEZVOUS_CLIENT_CAPACITY],
             primary_token,
             secondary_token,
             fanout_start: 0,
@@ -716,9 +720,9 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
     ) {
         clear_wifi_peers(&mut state.peers, &self.status, fleet).await;
-        clear_tcp_member(
+        clear_tcp_members(
             &mut self.rendezvous,
-            &mut state.tcp_peer,
+            &mut state.tcp_peers,
             &self.status,
             fleet,
         )
@@ -979,15 +983,22 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
         };
         let dispatch = dispatch_fanout(&mut plan, &mut sender, SEND_TIMEOUT);
         let _ = select(self.status.wait_until_disabled(), dispatch).await;
-        if let (Some(rendezvous), Some(peer)) = (self.rendezvous.as_mut(), state.tcp_peer) {
-            if target_includes(outbound.target(), peer.id) {
-                let send = rendezvous.send_frame(peer.session, outbound.bytes());
-                if matches!(
-                    select(self.status.wait_until_disabled(), send).await,
-                    Either::Second(Ok(()))
-                ) {
-                    self.status.member(peer.slot).add_tx(outbound.len() as u64);
-                }
+        let Some(rendezvous) = self.rendezvous.as_mut() else {
+            return;
+        };
+        for peer in state.tcp_peers.iter().flatten().copied() {
+            if !target_includes(outbound.target(), peer.id) {
+                continue;
+            }
+            let send = with_timeout(
+                SEND_TIMEOUT,
+                rendezvous.send_frame(peer.client, peer.session, outbound.bytes()),
+            );
+            if matches!(
+                select(self.status.wait_until_disabled(), send).await,
+                Either::Second(Ok(Ok(())))
+            ) {
+                self.status.member(peer.slot).add_tx(outbound.len() as u64);
             }
         }
     }
@@ -1140,12 +1151,13 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         receive_buffers.secondary_data,
                     );
                 }
-                AutoWifiEvent::Rendezvous(event_slot) => {
-                    let rejected_session = match event_slot.event() {
+                AutoWifiEvent::Rendezvous { client, slot } => {
+                    let rejected_session = match slot.event() {
                         Some(event) => {
                             handle_rendezvous_event(
-                                &mut state.tcp_peer,
-                                state.peers.reserved_slot(),
+                                &mut state.tcp_peers,
+                                client,
+                                state.peers.reserved_slot(client),
                                 &self.status,
                                 &mut fleet,
                                 self.bitrate,
@@ -1156,9 +1168,9 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                         None => None,
                     };
                     if let Some(rendezvous) = self.rendezvous.as_mut() {
-                        rendezvous.event_received();
+                        rendezvous.event_received(client);
                         if let Some(session) = rejected_session {
-                            rendezvous.disconnect(session);
+                            rendezvous.disconnect(client, session);
                         }
                     }
                 }
@@ -1187,7 +1199,7 @@ async fn next_auto_wifi_event<
 >(
     primary: &AutoWifiSegment<'_>,
     secondary: &Option<AutoWifiSegment<'_>>,
-    rendezvous: &'r mut Option<TcpRendezvousClient<'_>>,
+    rendezvous: &'r mut Option<TcpRendezvousClients<'_>>,
     status: AutoWifiStatus<MEMBERS>,
     fleet: &mut Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
     beacon: &mut Ticker,
@@ -1229,7 +1241,10 @@ async fn next_auto_wifi_event<
         Either::Second(Either4::First(SecondaryDatagram::Data(received))) => {
             AutoWifiEvent::SecondaryData(received)
         }
-        Either::Second(Either4::Second(event_slot)) => AutoWifiEvent::Rendezvous(event_slot),
+        Either::Second(Either4::Second(event)) => AutoWifiEvent::Rendezvous {
+            client: event.index,
+            slot: event.slot,
+        },
         Either::Second(Either4::Third(targets)) => AutoWifiEvent::DiscoveryTargets(targets),
         Either::Second(Either4::Fourth(())) => AutoWifiEvent::Disabled,
     }
@@ -1237,6 +1252,7 @@ async fn next_auto_wifi_event<
 
 #[derive(Clone, Copy)]
 struct TcpPeer {
+    client: usize,
     session: u32,
     id: InterfaceId,
     slot: usize,
@@ -1258,8 +1274,8 @@ enum PeeringTokenReply {
 }
 
 async fn next_rendezvous_event<'a>(
-    rendezvous: &'a mut Option<TcpRendezvousClient<'_>>,
-) -> &'a mut TcpRendezvousWireSlot {
+    rendezvous: &'a mut Option<TcpRendezvousClients<'_>>,
+) -> rendezvous::TcpRendezvousClientEvent<'a> {
     match rendezvous {
         Some(rendezvous) => rendezvous.next_event_slot().await,
         None => ::core::future::pending().await,
@@ -1273,7 +1289,8 @@ async fn handle_rendezvous_event<
     const NOTIFY: usize,
     const LIFECYCLE: usize,
 >(
-    tcp_peer: &mut Option<TcpPeer>,
+    tcp_peers: &mut [Option<TcpPeer>; TCP_RENDEZVOUS_CLIENT_CAPACITY],
+    client: usize,
     tcp_slot: Option<usize>,
     status: &AutoWifiStatus<MEMBERS>,
     fleet: &mut Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
@@ -1283,6 +1300,16 @@ async fn handle_rendezvous_event<
     match event {
         TcpRendezvousEvent::Connected { session, id } => {
             let Some(slot) = tcp_slot else {
+                return Some(session);
+            };
+            if tcp_peers
+                .iter()
+                .enumerate()
+                .any(|(index, peer)| index != client && peer.is_some_and(|peer| peer.id == id))
+            {
+                return Some(session);
+            }
+            let Some(tcp_peer) = tcp_peers.get_mut(client) else {
                 return Some(session);
             };
             if let Some(previous) = tcp_peer.take() {
@@ -1297,12 +1324,17 @@ async fn handle_rendezvous_event<
                 .await;
             status.member(slot).assign(id);
             status.record_peer_heard(Instant::now().as_millis());
-            *tcp_peer = Some(TcpPeer { session, id, slot });
+            *tcp_peer = Some(TcpPeer {
+                client,
+                session,
+                id,
+                slot,
+            });
             status.republish_peer_count();
             None
         }
         TcpRendezvousEvent::Frame { session, id, bytes } => {
-            let peer = (*tcp_peer)?;
+            let peer = tcp_peers.get(client).copied().flatten()?;
             if peer.session != session || peer.id != id {
                 return None;
             }
@@ -1313,6 +1345,7 @@ async fn handle_rendezvous_event<
             None
         }
         TcpRendezvousEvent::Disconnected { session, id } => {
+            let tcp_peer = tcp_peers.get_mut(client)?;
             let peer = (*tcp_peer)?;
             if peer.session != session || peer.id != id {
                 return None;
@@ -1326,26 +1359,28 @@ async fn handle_rendezvous_event<
     }
 }
 
-async fn clear_tcp_member<
+async fn clear_tcp_members<
     M: RawMutex + 'static,
     const FRAME: usize,
     const MEMBERS: usize,
     const NOTIFY: usize,
     const LIFECYCLE: usize,
 >(
-    rendezvous: &mut Option<TcpRendezvousClient<'_>>,
-    tcp_peer: &mut Option<TcpPeer>,
+    rendezvous: &mut Option<TcpRendezvousClients<'_>>,
+    tcp_peers: &mut [Option<TcpPeer>; TCP_RENDEZVOUS_CLIENT_CAPACITY],
     status: &AutoWifiStatus<MEMBERS>,
     fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
 ) {
-    let Some(peer) = tcp_peer.take() else {
-        return;
-    };
-    if let Some(rendezvous) = rendezvous.as_mut() {
-        rendezvous.disconnect(peer.session);
+    for (client, tcp_peer) in tcp_peers.iter_mut().enumerate() {
+        let Some(peer) = tcp_peer.take() else {
+            continue;
+        };
+        if let Some(rendezvous) = rendezvous.as_mut() {
+            rendezvous.disconnect(client, peer.session);
+        }
+        fleet.deregister_member(peer.id).await;
+        status.retire_member(peer.slot);
     }
-    fleet.deregister_member(peer.id).await;
-    status.retire_member(peer.slot);
     status.republish_peer_count();
 }
 

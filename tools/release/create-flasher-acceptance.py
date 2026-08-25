@@ -14,7 +14,8 @@ SCRIPT_DIRECTORY = Path(__file__).resolve().parent
 if str(SCRIPT_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIRECTORY))
 
-from flasher_acceptance_contract import scaffold  # noqa: E402
+from flasher_acceptance_contract import hotfix_scaffold, scaffold  # noqa: E402
+from flasher_hotfix import verify_candidate as verify_hotfix_candidate  # noqa: E402
 from flasher_tester_roster import validate_roster  # noqa: E402
 
 
@@ -34,19 +35,34 @@ def create(arguments: argparse.Namespace) -> None:
     roster = json.loads(arguments.tester_roster.read_text(encoding="utf-8"))
     release = manifest.get("release")
     version = release.get("version") if isinstance(release, dict) else ""
-    tester_roster, roster_errors = validate_roster(roster, str(version))
+    hotfix = verify_hotfix_candidate(
+        Path(__file__).resolve().parents[2], arguments.manifest.resolve().parent
+    )
+    roster_version = hotfix.roster_version if hotfix is not None else str(version)
+    tester_roster, roster_errors = validate_roster(roster, roster_version)
     if roster_errors:
         raise ValueError(
             "tester roster is invalid: " + "; ".join(roster_errors)
         )
-    record = scaffold(
-        manifest,
-        arguments.manifest,
-        arguments.manifest_signature,
-        arguments.signed_bundle,
-        arguments.prerelease_published_at,
-        tester_roster,
-    )
+    if hotfix is None:
+        record = scaffold(
+            manifest,
+            arguments.manifest,
+            arguments.manifest_signature,
+            arguments.signed_bundle,
+            arguments.prerelease_published_at,
+            tester_roster,
+        )
+    else:
+        record = hotfix_scaffold(
+            manifest,
+            arguments.manifest,
+            arguments.manifest_signature,
+            arguments.signed_bundle,
+            arguments.prerelease_published_at,
+            tester_roster,
+            hotfix,
+        )
 
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     try:

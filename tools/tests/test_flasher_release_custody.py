@@ -26,7 +26,10 @@ from script_command import script_command
 from flasher_build_metadata import EXPECTED_TOOLS, EXPECTED_WEB_PACKAGES
 from flasher_reproducibility import SEPARATE_ENVELOPES, payload_identity, payload_manifest
 from flasher_sparse_sizes import build_report as build_sparse_size_report
-from flasher_manifest import validate_uf2_artifact
+from flasher_manifest import (
+    validate_nrf_serial_dfu_recovery_artifact,
+    validate_uf2_artifact,
+)
 from source_snapshot import package_source_snapshot
 
 
@@ -143,6 +146,15 @@ class CandidateFixture:
         flasher_bundle = root / "website" / "assets" / "flasher" / "prns-flash.js"
         flasher_bundle.parent.mkdir(parents=True)
         flasher_bundle.write_text("export const fixture = true;\n", encoding="utf-8")
+        nrf_dfu_assets = flasher_bundle.parent / "nrf-dfu"
+        nrf_dfu_assets.mkdir()
+        for name in (
+            "prns_nrf_dfu_core.js",
+            "prns_nrf_dfu_core.d.ts",
+            "prns_nrf_dfu_core_bg.wasm",
+            "prns_nrf_dfu_core_bg.wasm.d.ts",
+        ):
+            (nrf_dfu_assets / name).write_bytes(f"fixture {name}\n".encode())
         browser_wasm = (
             root
             / "website"
@@ -178,11 +190,27 @@ class CandidateFixture:
         targets = []
         self.firmware_paths = []
         for index, board in enumerate(
-            ("heltec-v4", "heltec-v4-r8", "t-beam-supreme", "xiao-esp32-c6", "t-echo"), start=1
+            (
+                "heltec-v4",
+                "heltec-v4-r8",
+                "t-beam-supreme",
+                "xiao-esp32-c6",
+                "t-echo",
+                "t114",
+                "t096",
+                "t1000-e",
+            ),
+            start=1,
         ):
             filenames = (
                 ("t-echo-s140-6.1.1.uf2", "t-echo-s140-7.3.0.uf2")
                 if board == "t-echo"
+                else ("heltec-t114-s140-6.1.1.uf2",)
+                if board == "t114"
+                else ("t096-s140-6.1.1.uf2",)
+                if board == "t096"
+                else ("t1000e.bin", "t1000e.dat", "t1000e.uf2")
+                if board == "t1000-e"
                 else ("application.bin",)
             )
             artifacts = []
@@ -190,9 +218,13 @@ class CandidateFixture:
                 relative = f"firmware/{board}/{filename}"
                 artifact = root / relative
                 artifact.parent.mkdir(parents=True, exist_ok=True)
-                if board == "t-echo":
+                if board in {"t-echo", "t114", "t096"}:
                     application_base = 0x26000 if "6.1.1" in filename else 0x27000
                     artifact.write_bytes(uf2_payload(application_base))
+                elif board == "t1000-e" and filename == "t1000e.bin":
+                    artifact.write_bytes(bytes(range(256)))
+                elif board == "t1000-e" and filename == "t1000e.uf2":
+                    artifact.write_bytes(uf2_payload(0x27000))
                 else:
                     artifact.write_bytes(f"firmware-{index}-{board}-{filename}".encode())
                 self.firmware_paths.append(artifact)
@@ -224,17 +256,54 @@ class CandidateFixture:
                         ("0x00026000", "0x00027000"),
                     )
                 ]
+            elif board in {"t114", "t096"}:
+                parts = []
+                variants = [
+                    {
+                        **artifacts[0],
+                        "softdevice_family": "s140",
+                        "softdevice_version": "6.1.1",
+                        "fwid": "0x00b6",
+                        "application_base": "0x00026000",
+                        "family_id": "0xada52840",
+                    }
+                ]
+            elif board == "t1000-e":
+                parts = []
+                variants = []
             else:
                 parts = [{**artifacts[0], "kind": "application", "offset": 0x10000}]
                 variants = []
             target = {
                 "board_slug": board,
                 "transport": (
-                    "uf2-mass-storage" if board == "t-echo" else "esp-serial"
+                    "uf2-mass-storage"
+                    if board in {"t-echo", "t114", "t096"}
+                    else "nrf-serial-dfu"
+                    if board == "t1000-e"
+                    else "esp-serial"
                 ),
                 "parts": parts,
                 "variants": variants,
             }
+            if board == "t1000-e":
+                target["nrf_serial_dfu"] = {
+                    "application": {**artifacts[0], "kind": "dfu-application"},
+                    "init_packet": {**artifacts[1], "kind": "dfu-init-packet"},
+                    "compatibility": {
+                        "softdevice_family": "s140",
+                        "softdevice_version": "7.3.0",
+                        "fwid": "0x0123",
+                        "application_base": "0x00027000",
+                        "application_end_exclusive": "0x000ea000",
+                    },
+                    "recovery": {
+                        "mount_label": "T1000-E",
+                        "board_id_prefix": "nrf52840-t1000-e-v1",
+                        "family_id": "0xada52840",
+                        "artifact": {**artifacts[2], "kind": "uf2"},
+                    },
+                }
             targets.append(target)
         write_json(
             root / "metadata" / "source-capabilities.json",
@@ -257,6 +326,9 @@ class CandidateFixture:
                         "t-beam-supreme",
                         "xiao-esp32-c6",
                         "t-echo",
+                        "t114",
+                        "t096",
+                        "t1000-e",
                     )
                 ],
             },
@@ -305,6 +377,7 @@ class CandidateFixture:
                     "node": "v24.18.0",
                     "npm": "11.0.0",
                     "dioxus": "dioxus 0.7.5",
+                    "wasm_bindgen": "wasm-bindgen 0.2.126",
                     "cargo_binstall": "cargo-binstall 1.21.0",
                     "espup": "espup 0.17.1",
                     "esp_rustc": "rustc 1.95.0-nightly (fixture)",
@@ -349,6 +422,7 @@ class CandidateFixture:
             "verify-flasher-candidate-files.py": SCRIPTS / "verify-flasher-candidate-files.py",
             "validate-flasher-tester-roster.py": SCRIPTS / "validate-flasher-tester-roster.py",
             "flasher_tester_roster.py": SCRIPTS / "flasher_tester_roster.py",
+            "flasher_hotfix.py": SCRIPTS / "flasher_hotfix.py",
             "package-flasher-qualification-evidence.py": SCRIPTS
             / "package-flasher-qualification-evidence.py",
         }
@@ -365,6 +439,12 @@ class CandidateFixture:
             ("xiao-esp32-c6", "web"): ("windows", "x86_64"),
             ("t-echo", "cli"): ("linux", "aarch64"),
             ("t-echo", "web"): ("macos", "x86_64"),
+            ("t114", "cli"): ("linux", "x86_64"),
+            ("t114", "web"): ("macos", "aarch64"),
+            ("t096", "cli"): ("linux", "aarch64"),
+            ("t096", "web"): ("macos", "aarch64"),
+            ("t1000-e", "cli"): ("macos", "x86_64"),
+            ("t1000-e", "web"): ("windows", "x86_64"),
         }
         physical_assignments = []
         for (board, surface), (os_name, architecture) in physical_hosts.items():
@@ -641,6 +721,24 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("SHA-256 mismatch", result.stderr)
 
+    def test_unsigned_candidate_requires_the_nordic_dfu_browser_core(self) -> None:
+        adapter = (
+            self.fixture.root
+            / "website"
+            / "assets"
+            / "flasher"
+            / "nrf-dfu"
+            / "prns_nrf_dfu_core_bg.wasm"
+        )
+        adapter.unlink()
+        result = self.validate_unsigned()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "candidate required release file is missing or empty: "
+            "website/assets/flasher/nrf-dfu/prns_nrf_dfu_core_bg.wasm",
+            result.stderr,
+        )
+
     def test_release_boundary_rejects_structurally_invalid_uf2(self) -> None:
         target = next(
             target
@@ -653,6 +751,20 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         payload[0] = 0
         with self.assertRaisesRegex(ValueError, "invalid magic"):
             validate_uf2_artifact(variant, bytes(payload))
+
+    def test_release_boundary_binds_nordic_recovery_to_dfu_application(self) -> None:
+        target = next(
+            target
+            for target in self.fixture.manifest["targets"]
+            if target["board_slug"] == "t1000-e"
+        )
+        nrf_serial_dfu = target["nrf_serial_dfu"]
+        application = (self.fixture.root / nrf_serial_dfu["application"]["path"]).read_bytes()
+        recovery = (self.fixture.root / nrf_serial_dfu["recovery"]["artifact"]["path"]).read_bytes()
+        validate_nrf_serial_dfu_recovery_artifact(target, application, recovery)
+        tampered = bytes([application[0] ^ 0xFF]) + application[1:]
+        with self.assertRaisesRegex(ValueError, "disagrees with the exact DFU application"):
+            validate_nrf_serial_dfu_recovery_artifact(target, tampered, recovery)
 
     def test_embedded_firmware_cannot_carry_the_hosted_source_archive(self) -> None:
         target = next(
@@ -837,6 +949,74 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("exact canonical inputs", result.stderr)
+
+    def test_manifest_artifact_listing_covers_every_transport(self) -> None:
+        paths = run_script(
+            "list-flasher-manifest-artifacts.py", self.fixture.manifest_path
+        )
+        self.assertEqual(paths.returncode, 0, paths.stderr)
+        expected = sorted(
+            path.relative_to(self.fixture.root).as_posix()
+            for path in self.fixture.firmware_paths
+        )
+        self.assertEqual(paths.stdout.splitlines(), expected)
+
+        identities = run_script(
+            "list-flasher-manifest-artifacts.py",
+            self.fixture.manifest_path,
+            "--format",
+            "identities",
+        )
+        self.assertEqual(identities.returncode, 0, identities.stderr)
+        self.assertEqual(
+            identities.stdout.splitlines(),
+            [
+                f"{relative}\t{(self.fixture.root / relative).stat().st_size}\t"
+                f"{sha256(self.fixture.root / relative)}"
+                for relative in expected
+            ],
+        )
+
+    def test_v037_archive_coverage_is_exact_and_one_time(self) -> None:
+        script = SCRIPTS / "flasher-release-record.py"
+        spec = importlib.util.spec_from_file_location("flasher_release_record", script)
+        if spec is None or spec.loader is None:
+            self.fail(f"could not import {script}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        exception = module.V037_ARCHIVE_COVERAGE
+        archive = {
+            "name": "prns-flasher-candidate-v0.3.7-signed.tar.gz",
+            "sha256": exception["signed_bundle_sha256"],
+        }
+        attested = {(archive["name"], archive["sha256"])}
+        coverage = module.archive_coverage(
+            version=exception["version"],
+            source_commit=exception["source_commit"],
+            signed_bundle=archive,
+            attestation_bundle_sha256=exception["attestation_bundle_sha256"],
+            attestation_workflow_run_id=exception["attestation_workflow_run_id"],
+            attested_subjects=attested,
+            missing=set(exception["subjects"]),
+            unexpected=set(),
+        )
+        self.assertIsNotNone(coverage)
+        self.assertEqual(len(coverage["subjects"]), 7)
+
+        wrong_missing = set(exception["subjects"])
+        wrong_missing.pop()
+        self.assertIsNone(
+            module.archive_coverage(
+                version=exception["version"],
+                source_commit=exception["source_commit"],
+                signed_bundle=archive,
+                attestation_bundle_sha256=exception["attestation_bundle_sha256"],
+                attestation_workflow_run_id=exception["attestation_workflow_run_id"],
+                attested_subjects=attested,
+                missing=wrong_missing,
+                unexpected=set(),
+            )
+        )
 
     def test_candidate_run_must_be_successful_default_branch_provenance(self) -> None:
         run_document = {
@@ -1326,6 +1506,7 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
             self.fixture.root / "qualification" / "create-flasher-acceptance.py",
             self.fixture.root / "qualification" / "validate-flasher-acceptance.py",
             self.fixture.root / "qualification" / "flasher_acceptance_contract.py",
+            self.fixture.root / "qualification" / "flasher_hotfix.py",
             self.fixture.root / "qualification" / "flasher_manifest.py",
             self.fixture.root / "qualification" / "serve-flasher-candidate.py",
             self.fixture.root / "qualification" / "verify-flasher-candidate-files.py",
@@ -1510,11 +1691,98 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         suite_sums.write_bytes(candidate_sums)
         suite_signature.write_bytes(candidate_signature)
 
+    def test_release_asset_contract_tracks_candidate_manifest_schema(self) -> None:
+        self.assertEqual(self.sign_candidate().returncode, 0)
+        script = SCRIPTS / "verify-flasher-release-assets.py"
+        spec = importlib.util.spec_from_file_location(
+            "verify_flasher_release_assets", script
+        )
+        if spec is None or spec.loader is None:
+            self.fail(f"could not import {script}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        schema_three = module.expected_candidate_assets(self.fixture.root, VERSION)
+        self.assertIn("flasher_manifest.py", schema_three)
+
+        self.fixture.manifest["schema"] = 2
+        write_json(self.fixture.manifest_path, self.fixture.manifest)
+        (self.fixture.root / "qualification" / "flasher_manifest.py").unlink()
+        schema_two = module.expected_candidate_assets(self.fixture.root, VERSION)
+        self.assertNotIn("flasher_manifest.py", schema_two)
+
+        self.fixture.manifest["schema"] = 3
+        write_json(self.fixture.manifest_path, self.fixture.manifest)
+        with self.assertRaisesRegex(ValueError, "flasher_manifest.py"):
+            module.expected_candidate_assets(self.fixture.root, VERSION)
+
+        self.fixture.manifest["schema"] = 4
+        write_json(self.fixture.manifest_path, self.fixture.manifest)
+        with self.assertRaisesRegex(ValueError, "schema is unsupported"):
+            module.expected_candidate_assets(self.fixture.root, VERSION)
+
+    def test_hotfix_asset_contract_does_not_require_a_suite_release_record(self) -> None:
+        script = SCRIPTS / "verify-flasher-release-assets.py"
+        spec = importlib.util.spec_from_file_location(
+            "verify_flasher_release_assets", script
+        )
+        if spec is None or spec.loader is None:
+            self.fail(f"could not import {script}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        suite_record = f"release-record-v{VERSION}.json"
+        flasher_record = f"flasher-release-record-v{VERSION}.json"
+        regular = module.required_custody_assets(self.fixture.root, VERSION)
+        self.assertIn(suite_record, regular)
+        self.assertIn(flasher_record, regular)
+
+        write_json(self.fixture.root / "metadata" / "hotfix.json", {})
+        hotfix = module.required_custody_assets(self.fixture.root, VERSION)
+        self.assertNotIn(suite_record, hotfix)
+        self.assertNotIn(f"{suite_record}.minisig", hotfix)
+        self.assertIn(flasher_record, hotfix)
+        self.assertIn(f"{flasher_record}.minisig", hotfix)
+
+    def test_historical_candidate_need_not_contain_the_new_hotfix_helper(self) -> None:
+        self.assertEqual(self.sign_candidate().returncode, 0)
+        script = SCRIPTS / "verify-flasher-release-assets.py"
+        spec = importlib.util.spec_from_file_location(
+            "verify_flasher_release_assets", script
+        )
+        if spec is None or spec.loader is None:
+            self.fail(f"could not import {script}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        helper = self.fixture.root / "qualification" / "flasher_hotfix.py"
+        helper.unlink()
+        historical = module.expected_candidate_assets(self.fixture.root, VERSION)
+        self.assertNotIn("flasher_hotfix.py", historical)
+
+        write_json(self.fixture.root / "metadata" / "hotfix.json", {})
+        with self.assertRaisesRegex(ValueError, "flasher_hotfix.py"):
+            module.expected_candidate_assets(self.fixture.root, VERSION)
+
     def test_workflows_preserve_exact_candidate_custody_boundaries(self) -> None:
         candidate = (ROOT / ".github/workflows/flasher-candidate.yml").read_text()
         signing = (ROOT / ".github/workflows/flasher-sign.yml").read_text()
         evidence = (ROOT / ".github/workflows/flasher-finalize-evidence.yml").read_text()
         promotion = (ROOT / ".github/workflows/flasher-promote.yml").read_text()
+        rollback = (ROOT / ".github/workflows/flasher-rollback.yml").read_text()
+        suite_promotion = (ROOT / ".github/workflows/suite-promote.yml").read_text()
+        for workflow in (
+            candidate,
+            signing,
+            evidence,
+            promotion,
+            rollback,
+            suite_promotion,
+        ):
+            self.assertNotIn(".targets[].parts", workflow)
+        self.assertIn("release manifest artifacts", signing)
+        self.assertIn("release manifest artifacts", promotion)
+        self.assertIn(".subjects[]", candidate)
         self.assertNotIn("gh release create", candidate)
         self.assertIn("candidate_run_id:", signing)
         self.assertIn("unsigned_bundle_sha256:", signing)
@@ -1547,6 +1815,7 @@ class FlasherReleaseCustodyTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, signing)
         self.assertIn("release/acceptance/records/${RELEASE_VERSION}.json", evidence)
+        self.assertIn('PYTHONDONTWRITEBYTECODE: "1"', evidence)
         self.assertIn("./tools/prns release record -- create", evidence)
         self.assertIn("./tools/prns release record -- verify", evidence)
         self.assertIn("published-evidence", evidence)

@@ -754,6 +754,14 @@ fn oversized_response_failure_remains_typed() {
 }
 
 #[test]
+fn response_resource_capacity_uses_the_existing_table_full_outcome() {
+    assert_eq!(
+        request_failure(SendError::Failed(SendRequestFailure::ResourceCapacity)),
+        CommandFailure::ResourceTableFull
+    );
+}
+
+#[test]
 fn request_byte_limits_stay_in_the_interoperable_integer_range() {
     assert!(is_optional_safe_uint(None));
     assert!(is_optional_safe_uint(Some(SAFE_UINT_MAX)));

@@ -4,6 +4,7 @@ pub(crate) async fn run<B: Esp32S3Board>(spawner: Spawner)
 where
     B::Display: 'static,
     B::Battery: 'static,
+    B::Gnss: 'static,
 {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let p = esp_hal::init(config);
@@ -19,10 +20,11 @@ where
 #[allow(clippy::too_many_lines)]
 pub(super) async fn run_core<B: Esp32S3Board>(
     spawner: Spawner,
-    hardware: S3BoardHardware<B::Display, B::Battery>,
+    hardware: S3BoardHardware<B::Display, B::Battery, B::Gnss>,
 ) where
     B::Display: 'static,
     B::Battery: 'static,
+    B::Gnss: 'static,
 {
     let BoardFace {
         display,
@@ -34,6 +36,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         initialized: oled_ok,
     } = display;
     let mut battery_source = battery;
+    let gnss = hardware.gnss;
     let S3InterfaceHardware {
         usb_device,
         #[cfg(feature = "lora")]
@@ -372,15 +375,17 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             RadioMode::AccessPoint => screen::AccessPointState::Active,
             RadioMode::Ble => screen::AccessPointState::Inactive,
         };
+        let display_power_control = if oled_ok {
+            screen::DisplayPowerControl::Available
+        } else {
+            screen::DisplayPowerControl::Unavailable
+        };
         let mut ui_state = screen::UiState::new(screen::UiConfiguration {
             storage_limits: <EngineStorageType as StorageLayout>::LIMITS,
-            display_power_control: if oled_ok {
-                screen::DisplayPowerControl::Available
-            } else {
-                screen::DisplayPowerControl::Unavailable
-            },
+            display_power_control,
             access_point,
             shared_instance_config_export: screen::SharedInstanceConfigExport::Unavailable,
+            gnss: B::Gnss::AVAILABILITY,
         });
         let startup_notice = identity_startup_notice.or(profile_startup_notice);
         let mut pending_startup_notice = identity_startup_notice
@@ -392,7 +397,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         }
         #[cfg(feature = "lora")]
         let mut working_lora_profile = lora_profile;
-        let mut battery_state = screen::BatteryState::Unknown;
+        let mut battery_state = screen::PowerSnapshot::UNKNOWN;
+        let mut sampled_battery_state = screen::PowerSnapshot::UNKNOWN;
         let mut battery_gauge = screen::BatteryGauge::lipo();
         let active_ap_ssid = (radio_mode == RadioMode::AccessPoint).then(ap_ssid);
         let local_docs = active_ap_ssid
@@ -401,23 +407,35 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 wifi_ssid,
                 docs_host: CAPTIVE_PORTAL_HOST,
             });
-        let mut ticks_to_battery: u8 = 0;
+        let mut ticks_to_battery_sample: u8 = 0;
+        let mut ticks_to_battery_display: u8 = 0;
         let mut activity = screen::CardActivityTracker::<8>::new();
         let mut notice_until_ms =
             startup_notice.map(|notice| (embassy_time::Instant::now().as_millis() + 5_000, notice));
-        let mut oled_power = screen::OledPowerState::new(
-            oled_ok,
+        let mut display_power = screen::DisplayPowerState::new(
+            display_power_control,
             embassy_time::Instant::now().as_millis(),
-            DEFAULT_OLED_AUTO_OFF_MS,
+            screen::DEFAULT_DISPLAY_AUTO_OFF,
         );
         let mut render_tick = Ticker::every(RENDER_INTERVAL);
         let mut settle_after_draw = false;
         let mut persistence_notice = screen::PersistenceNotice::new();
         let mut first_render_pending = true;
         loop {
-            if ticks_to_battery == 0 {
-                battery_state = battery_gauge.sample(&mut battery_source);
-                ticks_to_battery = RENDER_TICKS_PER_BATTERY;
+            if ticks_to_battery_sample == 0 {
+                sampled_battery_state = battery_gauge.sample(&mut battery_source);
+                ticks_to_battery_sample = RENDER_TICKS_PER_BATTERY_SAMPLE;
+            }
+            if ticks_to_battery_display == 0 {
+                battery_state = sampled_battery_state;
+                ticks_to_battery_display = RENDER_TICKS_PER_BATTERY_DISPLAY;
+            } else {
+                // The number is deliberately calm, but the plug should still react to the latest
+                // two-second charging/presence observation.
+                battery_state = screen::PowerSnapshot::new(
+                    battery_state.battery(),
+                    sampled_battery_state.external_power(),
+                );
             }
 
             let snapshots = build_snapshots(
@@ -485,10 +503,10 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                     }
                 }
             }
-            if oled_power.tick(now_ms) == screen::OledPowerCommand::TurnOff {
-                B::set_display_awake(&mut display, false);
+            if display_power.tick(now_ms) == screen::DisplayPowerCommand::Darken {
+                B::darken_display(&mut display);
             }
-            if oled_power.is_lit() {
+            if display_power.is_lit() {
                 if first_render_pending {
                     boot_stage(BootPhase::DisplayFirstRenderBegin);
                 }
@@ -497,9 +515,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                     screen::RenderFrame {
                         content,
                         battery: battery_state,
+                        gnss: ui_state.gnss_visible().then(B::Gnss::snapshot).flatten(),
                         state: &ui_state,
                         interface_menu_details: &interface_menu_details,
-                        animation_ms: now_ms,
                     },
                 );
                 B::flush(&mut display);
@@ -527,14 +545,15 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                     settle_after_draw = true;
                 }
                 Either3::Second(()) => {
-                    ticks_to_battery = ticks_to_battery.saturating_sub(1);
+                    ticks_to_battery_sample = ticks_to_battery_sample.saturating_sub(1);
+                    ticks_to_battery_display = ticks_to_battery_display.saturating_sub(1);
                 }
                 Either3::First(event) => {
                     let now_ms = embassy_time::Instant::now().as_millis();
-                    if oled_power.button_pressed(now_ms, DEFAULT_OLED_AUTO_OFF_MS)
-                        == screen::OledButtonOutcome::WakeAndConsume
+                    if display_power.button_pressed(now_ms, screen::DEFAULT_DISPLAY_AUTO_OFF)
+                        == screen::DisplayButtonOutcome::WakeAndConsume
                     {
-                        B::set_display_awake(&mut display, true);
+                        B::wake_display(&mut display);
                         ui_state.show_notice(screen::UiNotice::Awake);
                         notice_until_ms = Some((now_ms + NOTICE_MS, screen::UiNotice::Awake));
                         // Waking a dark-but-running display is the whole action for this press. Do
@@ -542,31 +561,38 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                         continue;
                     }
                     match ui_state.handle_input(event, content) {
-                        screen::UiAction::OledOff => {
-                            ui_state.show_notice(screen::UiNotice::OledOff);
-                            notice_until_ms = Some((now_ms + NOTICE_MS, screen::UiNotice::OledOff));
-                            oled_power.schedule_display_off(now_ms.saturating_add(NOTICE_MS));
+                        screen::UiAction::DisplayOff => {
+                            ui_state.show_notice(screen::UiNotice::DisplayOff);
+                            notice_until_ms =
+                                Some((now_ms + NOTICE_MS, screen::UiNotice::DisplayOff));
+                            display_power.schedule_display_off(now_ms.saturating_add(NOTICE_MS));
                         }
-                        screen::UiAction::ToggleOledAutoOff => {
-                            if let Some(auto_off) =
-                                oled_power.toggle_auto_off(now_ms, DEFAULT_OLED_AUTO_OFF_MS)
+                        screen::UiAction::ToggleDisplayAutoOff => {
+                            if let Some(auto_off) = display_power
+                                .toggle_auto_off(now_ms, screen::DEFAULT_DISPLAY_AUTO_OFF)
                             {
                                 let notice = match auto_off {
-                                    screen::OledAutoOff::Enabled => screen::UiNotice::OledAutoOffOn,
-                                    screen::OledAutoOff::Disabled => {
-                                        screen::UiNotice::OledAutoOffOff
+                                    screen::DisplayAutoOff::Enabled => {
+                                        screen::UiNotice::DisplayAutoOffOn
+                                    }
+                                    screen::DisplayAutoOff::Disabled => {
+                                        screen::UiNotice::DisplayAutoOffOff
                                     }
                                 };
                                 ui_state.show_notice(notice);
                                 notice_until_ms = Some((now_ms + NOTICE_MS, notice));
                             }
                         }
+                        screen::UiAction::ControlGnss(command) => {
+                            B::Gnss::control(command);
+                        }
                         screen::UiAction::Sleep => {
                             ui_state.show_notice(screen::UiNotice::Sleeping);
                             notice_until_ms =
                                 Some((now_ms + NOTICE_MS, screen::UiNotice::Sleeping));
-                            oled_power
-                                .schedule_system_sleep(now_ms.saturating_add(OLED_SLEEP_DELAY_MS));
+                            display_power.schedule_system_sleep(
+                                now_ms.saturating_add(DISPLAY_SLEEP_DELAY_MS),
+                            );
                             usb_status.disable();
                             if let Some(status) = lora_card_status {
                                 status.disable();
@@ -585,12 +611,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 let status = BluetoothAutoStatus::new(&BLE_SHARED);
                                 status.disable();
                             }
+                            B::Gnss::control(screen::GnssReceiverCommand::Disable);
                         }
                         screen::UiAction::Wake => {
-                            if oled_power.wake(now_ms, DEFAULT_OLED_AUTO_OFF_MS)
-                                == screen::OledPowerCommand::TurnOn
+                            if display_power.wake(now_ms, screen::DEFAULT_DISPLAY_AUTO_OFF)
+                                == screen::DisplayPowerCommand::Wake
                             {
-                                B::set_display_awake(&mut display, true);
+                                B::wake_display(&mut display);
                             }
                             ui_state.show_notice(screen::UiNotice::Awake);
                             notice_until_ms = Some((now_ms + NOTICE_MS, screen::UiNotice::Awake));
@@ -611,6 +638,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             {
                                 let status = BluetoothAutoStatus::new(&BLE_SHARED);
                                 status.enable();
+                            }
+                            if ui_state.gnss_visible() {
+                                B::Gnss::control(screen::GnssReceiverCommand::Enable);
                             }
                         }
                         screen::UiAction::Announce => {
@@ -787,6 +817,14 @@ pub(super) async fn run_core<B: Esp32S3Board>(
 
     spawner.spawn(watchdog_task(rtc.rwdt).expect("watchdog task fits"));
 
+    if B::Gnss::AVAILABILITY == screen::GnssAvailability::Available {
+        let run = crate::storage::allocate_psram(gnss.drive());
+        let run: core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>> =
+            // SAFETY: `allocate_psram` leaks this allocation, so it cannot move or be freed.
+            unsafe { core::pin::Pin::new_unchecked(run) };
+        spawner.spawn(gnss_task(run).expect("GNSS task fits"));
+    }
+
     #[cfg(feature = "lora")]
     spawner.spawn(lora_task(lora, lora_seam).expect("LoRa task fits"));
     if let Some((interface, seam)) = espnow {
@@ -855,6 +893,11 @@ async fn tcp_task(interface: TcpClient<'static>, seam: S3TcpSeam) {
 
 #[embassy_executor::task]
 async fn wifi_task(run: core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>>) {
+    run.await
+}
+
+#[embassy_executor::task]
+async fn gnss_task(run: core::pin::Pin<&'static mut dyn core::future::Future<Output = ()>>) {
     run.await
 }
 

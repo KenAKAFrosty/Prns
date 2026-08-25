@@ -860,11 +860,12 @@ mod tests {
     use super::super::*;
     use super::*;
     use crate::crypto::{x25519_diffie_hellman, x25519_public_key};
+    use crate::engine::test_support::test_entropy_bytes;
 
     type TestLinks = Links<FixedLinkTable<4>>;
 
     fn link_id(byte: u8) -> LinkId {
-        LinkId::new([byte; 16])
+        LinkId::new(test_entropy_bytes(byte))
     }
 
     fn dest(byte: u8) -> DestinationHash {

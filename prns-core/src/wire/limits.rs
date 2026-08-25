@@ -8,6 +8,16 @@ pub const SIGNATURE_BYTE_LEN: usize = 64;
 pub const BROADCAST_MTU: usize = 500;
 /// RNS 1.4.2 `Transport.PATHFINDER_M`: packets beyond this hop count are outside reach. A wire-protocol invariant, not a sizing knob.
 pub const MAX_HOP_COUNT: u8 = 128;
+
+/// Whether an inbound packet's on-wire hop field remains below the RNS 1.4.2
+/// `PATHFINDER_M` rejection boundary. A packet received with 127 wire hops
+/// reaches the 128-hop boundary after ingress; 128 on the wire is already out
+/// of reach.
+#[must_use]
+pub const fn wire_hop_count_is_valid(hops: u8) -> bool {
+    hops < MAX_HOP_COUNT
+}
+
 /// The type-1 (direct, no transport id) header: `flags, hops, destination, context`
 pub const HEADER_MIN_LEN: usize = 2 + TRUNCATED_HASH_BYTE_LEN + 1;
 /// RNS 1.4.2 `Reticulum.HEADER_MAXSIZE`. The type-2 (transport-routed) header: `flags, hops, transport id, destination, context`. Outbound payload budgets reserve this even when emitting type-1, because a relay re-emits the packet with the transport id added.

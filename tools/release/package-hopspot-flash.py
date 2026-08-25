@@ -59,9 +59,19 @@ def main() -> int:
     parser.add_argument("--out-dir", type=Path, required=True)
     arguments = parser.parse_args()
 
-    version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    version = os.environ.get("PRNS_FLASH_VERSION")
+    if version is None:
+        version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    else:
+        version = version.strip()
     if not version or version.lower() == "next":
-        parser.error("repository VERSION is not publishable")
+        parser.error("flasher release version is not publishable")
+    if any(
+        character
+        not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-+"
+        for character in version
+    ):
+        parser.error("flasher release version is not path-safe")
     binary = arguments.binary.resolve()
     if not binary.is_file():
         parser.error(f"binary does not exist: {binary}")

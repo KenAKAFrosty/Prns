@@ -1,4 +1,5 @@
 #![no_std]
+#![forbid(unsafe_code)]
 
 extern crate alloc;
 #[cfg(test)]
@@ -19,6 +20,7 @@ pub use image::{
     DfuDeviceType, DfuImage, DfuImageError, SoftdeviceFirmwareId, SoftdeviceRequirements,
 };
 pub use transfer::{
-    DfuBankLayout, DfuTransfer, PendingTransferFrame, RequiredWait, TransferError,
+    DfuBankLayout, DfuTransfer, PendingTransferFrame, ReliableFrameAttempt,
+    ReliableFrameAttemptError, ReliableFrameAttempts, RequiredWait, TransferError,
     TransferProgress, TransferState, RELIABLE_FRAME_ATTEMPT_LIMIT,
 };

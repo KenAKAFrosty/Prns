@@ -7,7 +7,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkGroup, BenchmarkId, Cr
 use personal_rns::engine::InstantMillis;
 use personal_rns::interfaces::InterfaceId;
 use personal_rns::routing::routes::{
-    LinearHeapRouteTable, RoaringHeapRouteTable, RouteEntry, RouteTable,
+    LinearHeapRouteTable, RoaringHeapRouteTable, RouteEntry, RouteEvidenceId, RouteTable,
 };
 use personal_rns::routing::{NextHop, RouteResponsiveness};
 use personal_rns::wire::DestinationHash;
@@ -18,6 +18,10 @@ fn destination(row: u32) -> DestinationHash {
     bytes[..8].copy_from_slice(&key.to_be_bytes());
     bytes[8..12].copy_from_slice(&row.to_be_bytes());
     DestinationHash::new(bytes)
+}
+
+fn evidence(row: u32) -> RouteEvidenceId {
+    RouteEvidenceId::new(row + 1).unwrap()
 }
 
 fn route(receiving_interface: InterfaceId) -> RouteEntry {
@@ -39,7 +43,11 @@ fn heap_routes<T: RouteTable + Default>(routes: usize, matching_every: Option<us
             Some(_) | None => InterfaceId::new([0xC3; 8]),
         };
         table
-            .push(destination(row as u32), route(receiving_interface))
+            .push(
+                destination(row as u32),
+                evidence(row as u32),
+                route(receiving_interface),
+            )
             .unwrap();
     }
     table

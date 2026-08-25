@@ -52,7 +52,8 @@ impl Settleable for SendGroup {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
-            | Settlement::AllowRequester(_) => None,
+            | Settlement::AllowRequester(_)
+            | Settlement::SendPlainPacket(_) => None,
         }
     }
 }

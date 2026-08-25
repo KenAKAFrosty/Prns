@@ -1,13 +1,16 @@
 use dioxus::prelude::*;
-use prns_flash_manifest::{EspSerialTarget, FlashPartKind, ReleaseTarget, Transport, Uf2Target};
+use prns_flash_manifest::{
+    EspSerialTarget, FlashPartKind, NrfSerialDfuTarget, ReleaseTarget, Transport, Uf2Target,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::platforms::BoardFlashTarget;
 
 use super::contract::{self, BridgeErrorCode, BridgePhase};
 use super::model::{
-    part_kind, DestructiveConfirmation, FlasherState, InstallMode, ReleaseCompatibility,
-    WebSerialCapability, WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY, WEB_SERIAL_PROBE_SUPPORTED,
+    part_kind, DestructiveConfirmation, FlasherState, InstallMode, NrfSerialDfuEntry,
+    ReleaseCompatibility, WebSerialCapability, WebUsbCapability,
+    WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY, WEB_SERIAL_PROBE_SUPPORTED, WEB_USB_PROBE_SUPPORTED,
 };
 use super::protocol;
 
@@ -25,6 +28,12 @@ try {
 } catch (_) {}
 "#;
 
+const CONTINUE_NRF_BOOTLOADER_SCRIPT: &str = r#"
+try {
+  await window.__prnsFlash?.continueNrfBootloaderSelection();
+} catch (_) {}
+"#;
+
 // Chrome for Android initially exposed Web Serial only for Bluetooth RFCOMM.
 // Chromium's February 2026 PSA targeted wired support for M149 on devices with the Android Serial API, with a limited rollout estimated for 2026Q2.
 //
@@ -39,6 +48,16 @@ if (!(window.isSecureContext && navigator.serial && navigator.serial.requestPort
 const wiredPortsUnreachable = navigator.userAgentData?.platform === "Android"
   || /\bAndroid\b/.test(navigator.userAgent);
 return wiredPortsUnreachable ? "{WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY}" : "{WEB_SERIAL_PROBE_SUPPORTED}";
+"#
+    )
+}
+
+fn web_usb_probe_script() -> String {
+    format!(
+        r#"
+return window.isSecureContext && navigator.usb && navigator.usb.requestDevice
+  ? "{WEB_USB_PROBE_SUPPORTED}"
+  : "unavailable";
 "#
     )
 }
@@ -69,6 +88,7 @@ pub(super) struct BridgeRequest {
     after_reset: Option<String>,
     mount_label: Option<String>,
     uf2_compatibility: Option<BridgeUf2Compatibility>,
+    nrf_serial_dfu: Option<BridgeNrfSerialDfu>,
     serial_filters: Vec<BridgeSerialFilter>,
     #[serde(skip_serializing_if = "Option::is_none")]
     install_mode: Option<InstallMode>,
@@ -82,6 +102,8 @@ pub(super) struct BridgeRequest {
 #[serde(rename_all = "camelCase")]
 struct BridgeSerialFilter {
     usb_vendor_id: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    usb_product_id: Option<u16>,
 }
 
 struct BridgeEspOptions {
@@ -99,6 +121,58 @@ struct BridgeUf2Compatibility {
     fwid: u16,
     application_base: u32,
     family_id: u32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeUsbIdentity {
+    vendor_id: u16,
+    product_id: u16,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeNrfManagedApplication {
+    usb: BridgeUsbIdentity,
+    manufacturer: String,
+    product: String,
+    serial_number: String,
+    interface_number: u8,
+    request: u8,
+    value: u16,
+    index: u16,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeNrfCompatibility {
+    softdevice_family: String,
+    softdevice_version: String,
+    softdevice_fwids: Vec<u16>,
+    device_type: u16,
+    device_revision: u16,
+    application_version: prns_flash_manifest::NrfDfuApplicationVersion,
+    application_base: u32,
+    application_end_exclusive: u32,
+    bank_layout: prns_flash_manifest::NrfDfuBankLayout,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BridgeNrfSerialDfu {
+    entry: NrfSerialDfuEntry,
+    touch_application_and_bootloader_usb: BridgeUsbIdentity,
+    touch_baud_rate: u32,
+    transfer_baud_rate: u32,
+    managed_application: BridgeNrfManagedApplication,
+    compatibility: BridgeNrfCompatibility,
+}
+
+#[derive(Clone, Copy)]
+struct CatalogedNrfRecoveryIdentity<'a> {
+    mount_label: &'a str,
+    board_id_match_kind: prns_flash_manifest::Uf2BoardIdMatchKind,
+    board_id: &'a str,
 }
 
 #[derive(Serialize)]
@@ -201,6 +275,68 @@ impl BridgeRequest {
                     softdevice,
                 )
             }
+            (
+                ReleaseTarget::NrfSerialDfu(nrf),
+                BoardFlashTarget::NrfSerialDfu {
+                    recovery_mount_label,
+                    recovery_board_id_match_kind,
+                    recovery_board_id,
+                },
+                ReleaseCompatibility::Uf2(softdevice),
+            ) => {
+                if install_mode != InstallMode::PreserveData
+                    || destructive_confirmation != DestructiveConfirmation::Unconfirmed
+                {
+                    return Err(
+                        "A Nordic recovery UF2 cannot request destructive ESP installation."
+                            .to_string(),
+                    );
+                }
+                Self::from_nrf_recovery_target(
+                    target.board_id().as_str(),
+                    target.display_name(),
+                    nrf,
+                    base_url,
+                    provisioning,
+                    CatalogedNrfRecoveryIdentity {
+                        mount_label: recovery_mount_label,
+                        board_id_match_kind: recovery_board_id_match_kind,
+                        board_id: recovery_board_id,
+                    },
+                    softdevice,
+                )
+            }
+            (
+                ReleaseTarget::NrfSerialDfu(nrf),
+                BoardFlashTarget::NrfSerialDfu {
+                    recovery_mount_label,
+                    recovery_board_id_match_kind,
+                    recovery_board_id,
+                },
+                ReleaseCompatibility::NrfSerialDfu(entry),
+            ) => {
+                if install_mode != InstallMode::PreserveData
+                    || destructive_confirmation != DestructiveConfirmation::Unconfirmed
+                    || provisioning.is_some()
+                {
+                    return Err(
+                        "Nordic serial DFU cannot request destructive ESP installation or provisioning."
+                            .to_string(),
+                    );
+                }
+                Self::from_nrf_serial_target(
+                    target.board_id().as_str(),
+                    target.display_name(),
+                    nrf,
+                    base_url,
+                    *entry,
+                    CatalogedNrfRecoveryIdentity {
+                        mount_label: recovery_mount_label,
+                        board_id_match_kind: recovery_board_id_match_kind,
+                        board_id: recovery_board_id,
+                    },
+                )
+            }
             _ => Err(
                 "The signed target disagrees with the cataloged board transport or chip family."
                     .to_string(),
@@ -251,8 +387,10 @@ impl BridgeRequest {
             after_reset: Some(target.after_reset().as_str().to_string()),
             mount_label: None,
             uf2_compatibility: None,
+            nrf_serial_dfu: None,
             serial_filters: vec![BridgeSerialFilter {
                 usb_vendor_id: options.web_serial_vendor_id,
+                usb_product_id: None,
             }],
             install_mode: Some(options.install_mode),
             erase_confirmed: Some(options.destructive_confirmation.is_confirmed()),
@@ -312,6 +450,7 @@ impl BridgeRequest {
                 application_base: compatibility.application_base(),
                 family_id: compatibility.family_id(),
             }),
+            nrf_serial_dfu: None,
             serial_filters: Vec::new(),
             install_mode: None,
             erase_confirmed: None,
@@ -324,6 +463,157 @@ impl BridgeRequest {
                 size: part.size(),
                 sha256: part.sha256().as_str().to_string(),
             }],
+        })
+    }
+
+    fn from_nrf_recovery_target(
+        board_slug: &str,
+        display_name: &str,
+        target: &NrfSerialDfuTarget,
+        base_url: &str,
+        provisioning: Option<BridgeProvisioning>,
+        recovery_identity: CatalogedNrfRecoveryIdentity<'_>,
+        softdevice: &prns_flash_manifest::SoftdeviceIdentity,
+    ) -> Result<Self, String> {
+        if provisioning.is_some() {
+            return Err("A Nordic recovery UF2 cannot carry ESP provisioning data.".to_string());
+        }
+        let compatibility = target.compatibility();
+        let recovery = target.recovery();
+        if compatibility.softdevice() != softdevice
+            || recovery.mount_label().as_str() != recovery_identity.mount_label
+            || recovery.board_id_match().kind() != recovery_identity.board_id_match_kind
+            || recovery.board_id_match().as_str() != recovery_identity.board_id
+        {
+            return Err(
+                "The signed Nordic recovery target disagrees with the detected foundation or cataloged bootloader."
+                    .to_string(),
+            );
+        }
+        let part = recovery.artifact();
+        let path = part.path().as_str();
+        Ok(Self {
+            schema: contract::schema(),
+            board_slug: board_slug.to_string(),
+            display_name: display_name.to_string(),
+            transport: Transport::Uf2MassStorage,
+            expected_chip: None,
+            flash_size: None,
+            flash_mode: None,
+            flash_frequency: None,
+            before_reset: None,
+            after_reset: None,
+            mount_label: Some(recovery_identity.mount_label.to_string()),
+            uf2_compatibility: Some(BridgeUf2Compatibility {
+                softdevice_family: compatibility.softdevice().family().as_str().to_string(),
+                softdevice_version: compatibility.softdevice().version().as_str().to_string(),
+                fwid: compatibility.fwid(),
+                application_base: compatibility.application_base(),
+                family_id: recovery.family_id(),
+            }),
+            nrf_serial_dfu: None,
+            serial_filters: Vec::new(),
+            install_mode: None,
+            erase_confirmed: None,
+            provisioning: None,
+            parts: vec![BridgePart {
+                kind: part_kind(FlashPartKind::Uf2),
+                path: path.to_string(),
+                url: immutable_part_url(base_url, path)?,
+                offset: None,
+                size: part.size(),
+                sha256: part.sha256().as_str().to_string(),
+            }],
+        })
+    }
+
+    fn from_nrf_serial_target(
+        board_slug: &str,
+        display_name: &str,
+        target: &NrfSerialDfuTarget,
+        base_url: &str,
+        entry: NrfSerialDfuEntry,
+        recovery_identity: CatalogedNrfRecoveryIdentity<'_>,
+    ) -> Result<Self, String> {
+        let recovery = target.recovery();
+        if recovery.mount_label().as_str() != recovery_identity.mount_label
+            || recovery.board_id_match().kind() != recovery_identity.board_id_match_kind
+            || recovery.board_id_match().as_str() != recovery_identity.board_id
+        {
+            return Err(
+                "The signed Nordic target disagrees with the cataloged recovery identity."
+                    .to_string(),
+            );
+        }
+        let serial = target.serial_transport();
+        let touch_usb = serial.touch_application_and_bootloader_usb();
+        let managed_usb = serial.managed_application_usb();
+        let compatibility = target.compatibility();
+        let part = |artifact: &prns_flash_manifest::NrfSerialDfuArtifact| -> Result<_, String> {
+            let path = artifact.path().as_str();
+            Ok(BridgePart {
+                kind: part_kind(artifact.kind()),
+                path: path.to_string(),
+                url: immutable_part_url(base_url, path)?,
+                offset: None,
+                size: artifact.size(),
+                sha256: artifact.sha256().as_str().to_string(),
+            })
+        };
+        Ok(Self {
+            schema: contract::schema(),
+            board_slug: board_slug.to_string(),
+            display_name: display_name.to_string(),
+            transport: Transport::NrfSerialDfu,
+            expected_chip: None,
+            flash_size: None,
+            flash_mode: None,
+            flash_frequency: None,
+            before_reset: None,
+            after_reset: None,
+            mount_label: None,
+            uf2_compatibility: None,
+            nrf_serial_dfu: Some(BridgeNrfSerialDfu {
+                entry,
+                touch_application_and_bootloader_usb: BridgeUsbIdentity {
+                    vendor_id: touch_usb.vendor_id(),
+                    product_id: touch_usb.product_id(),
+                },
+                touch_baud_rate: serial.touch_baud_rate(),
+                transfer_baud_rate: serial.transfer_baud_rate(),
+                managed_application: BridgeNrfManagedApplication {
+                    usb: BridgeUsbIdentity {
+                        vendor_id: managed_usb.vendor_id(),
+                        product_id: managed_usb.product_id(),
+                    },
+                    manufacturer: serial.managed_application_manufacturer().to_string(),
+                    product: serial.managed_application_product().to_string(),
+                    serial_number: serial.managed_application_serial_number().to_string(),
+                    interface_number: serial.managed_application_interface_number(),
+                    request: serial.managed_application_request(),
+                    value: serial.managed_application_value(),
+                    index: serial.managed_application_index(),
+                },
+                compatibility: BridgeNrfCompatibility {
+                    softdevice_family: compatibility.softdevice().family().as_str().to_string(),
+                    softdevice_version: compatibility.softdevice().version().as_str().to_string(),
+                    softdevice_fwids: vec![compatibility.fwid()],
+                    device_type: compatibility.device_type(),
+                    device_revision: compatibility.device_revision(),
+                    application_version: compatibility.application_version(),
+                    application_base: compatibility.application_base(),
+                    application_end_exclusive: compatibility.application_end_exclusive(),
+                    bank_layout: compatibility.bank_layout(),
+                },
+            }),
+            serial_filters: vec![BridgeSerialFilter {
+                usb_vendor_id: touch_usb.vendor_id(),
+                usb_product_id: Some(touch_usb.product_id()),
+            }],
+            install_mode: None,
+            erase_confirmed: None,
+            provisioning: None,
+            parts: vec![part(target.application())?, part(target.init_packet())?],
         })
     }
 }
@@ -401,6 +691,14 @@ pub(super) async fn web_serial_capability() -> WebSerialCapability {
         .unwrap_or(WebSerialCapability::Unavailable)
 }
 
+pub(super) async fn web_usb_capability() -> WebUsbCapability {
+    document::eval(&web_usb_probe_script())
+        .join::<String>()
+        .await
+        .map(|probe| WebUsbCapability::from_probe(&probe))
+        .unwrap_or(WebUsbCapability::Unavailable)
+}
+
 pub(super) fn clear_prepared() {
     document::eval("window.__prnsFlash?.clearPrepared();");
 }
@@ -475,6 +773,9 @@ pub(super) async fn run_flash(mut state: FlasherState) {
         }
         BoardFlashTarget::Uf2MassStorage { .. } => {
             "Requesting the verified UF2 download from this browser…".to_string()
+        }
+        BoardFlashTarget::NrfSerialDfu { .. } => {
+            "Waiting for the exact T1000-E USB device picker…".to_string()
         }
     });
     let mut bridge = document::eval(FLASH_SCRIPT);
@@ -593,19 +894,34 @@ fn event_message(
         BridgePhase::RequestingPort => {
             "Choose the board's USB serial port in the browser dialog.".to_string()
         }
-        BridgePhase::Connecting => "Connecting to the Espressif ROM bootloader…".to_string(),
-        BridgePhase::VerifyingTarget => format!(
-            "Checking detected {} against the selected chip and flash-capacity plan…",
-            event.detected_chip.as_deref().unwrap_or("the expected chip")
-        ),
+        BridgePhase::Connecting => match flash_target {
+            BoardFlashTarget::NrfSerialDfu { .. } => {
+                "Entering and reconnecting to the exact Nordic serial bootloader…".to_string()
+            }
+            _ => "Connecting to the Espressif ROM bootloader…".to_string(),
+        },
+        BridgePhase::AwaitingBootloaderPort => {
+            "Personal Hopspot entered its bootloader. Choose Continue, then select the exact T1000-E bootloader serial port.".to_string()
+        }
+        BridgePhase::VerifyingTarget => match flash_target {
+            BoardFlashTarget::NrfSerialDfu { .. } => format!(
+                "Checking detected {} against the exact T1000-E serial identity…",
+                event.detected_chip.as_deref().unwrap_or("Nordic target")
+            ),
+            _ => format!(
+                "Checking detected {} against the selected chip and flash-capacity plan…",
+                event.detected_chip.as_deref().unwrap_or("the expected chip")
+            ),
+        },
         BridgePhase::Erasing => {
             "Erasing the entire flash. Cancellation is disabled until every replacement part verifies and reset completes…".to_string()
         }
         BridgePhase::Writing => format!(
             "{}{}{}…",
-            match install_mode {
-                InstallMode::PreserveData => "Writing",
-                InstallMode::EraseAll => "Installing",
+            match (flash_target, install_mode) {
+                (BoardFlashTarget::NrfSerialDfu { .. }, _) => "Transferring",
+                (_, InstallMode::PreserveData) => "Writing",
+                (_, InstallMode::EraseAll) => "Installing",
             },
             event
                 .part
@@ -617,16 +933,27 @@ fn event_message(
                 _ => String::new(),
             },
         ),
-        BridgePhase::VerifyingFlash => {
-            "All sparse parts passed device-side MD5 verification. Preparing the final reset…"
-                .to_string()
-        }
-        BridgePhase::Resetting => {
-            "Verification passed. Resetting into Personal Hopspot…".to_string()
-        }
-        BridgePhase::Success => {
-            "Finished — Verified serial flash complete. The device disconnected and re-enumerated after reset; Personal Hopspot is starting. You can close this page.".to_string()
-        }
+        BridgePhase::VerifyingFlash => match flash_target {
+            BoardFlashTarget::NrfSerialDfu { .. } => {
+                "The Nordic bootloader accepted the complete application and finished its activation window."
+                    .to_string()
+            }
+            _ => "All sparse parts passed device-side MD5 verification. Preparing the final reset…"
+                .to_string(),
+        },
+        BridgePhase::Resetting => match flash_target {
+            BoardFlashTarget::NrfSerialDfu { .. } => {
+                "Closing the Nordic serial session after verified transfer completion…".to_string()
+            }
+            _ => "Verification passed. Resetting into Personal Hopspot…".to_string(),
+        },
+        BridgePhase::Success => match flash_target {
+            BoardFlashTarget::NrfSerialDfu { .. } => {
+                "Finished — verified Nordic serial DFU complete. Personal Hopspot is starting; you can close this page."
+                    .to_string()
+            }
+            _ => "Finished — Verified serial flash complete. The device disconnected and re-enumerated after reset; Personal Hopspot is starting. You can close this page.".to_string(),
+        },
         BridgePhase::DownloadRequested => match flash_target {
             BoardFlashTarget::Uf2MassStorage { mount_label, .. } => format!(
                 "Verified UF2 download requested. Check the browser's downloads, then copy it to {mount_label}."
@@ -634,6 +961,12 @@ fn event_message(
             BoardFlashTarget::EspSerial { .. } => {
                 "A verified download was requested without claiming a device write.".to_string()
             }
+            BoardFlashTarget::NrfSerialDfu {
+                recovery_mount_label,
+                ..
+            } => format!(
+                "Verified recovery UF2 download requested. Check the browser's downloads, then copy it to {recovery_mount_label}."
+            ),
         },
         BridgePhase::Cancelled => "Operation cancelled; no success was reported.".to_string(),
         BridgePhase::Failed => format!(
@@ -645,6 +978,10 @@ fn event_message(
 
 pub(super) fn focus_status() {
     document::eval(FOCUS_STATUS_SCRIPT);
+}
+
+pub(super) fn continue_nrf_bootloader_selection() {
+    document::eval(CONTINUE_NRF_BOOTLOADER_SCRIPT);
 }
 
 pub(super) fn is_busy(phase: BridgePhase) -> bool {
@@ -663,6 +1000,11 @@ pub(super) fn phase_label(phase: BridgePhase) -> &'static str {
 mod tests {
     use super::*;
     use crate::platforms::{board_target_by_slug, BoardFlashTarget};
+    use prns_flash_manifest::{
+        board_catalog, BoardBuild, FlashManifest, FlashPart, ManifestTargetSetPolicy,
+        NrfSerialDfuManifest, NrfSerialDfuRecoveryManifest, OfflineKeySigningInfo, ReleaseChannel,
+        ReleaseInfo, TargetManifest, ValidatedFlashManifest, FLASH_MANIFEST_SCHEMA,
+    };
     use std::collections::BTreeSet;
 
     const EVENT_FIELDS: [&str; 11] = [
@@ -684,6 +1026,185 @@ mod tests {
         supports_provisioning: true,
         supports_tcp_client_provisioning: true,
     };
+
+    fn t1000_manifest() -> Result<ValidatedFlashManifest, Box<dyn std::error::Error>> {
+        let catalog = board_catalog()?;
+        let board = catalog
+            .board("t1000-e")
+            .ok_or("missing T1000-E catalog target")?;
+        let BoardBuild::NrfSerialDfu(build) = &board.build else {
+            return Err("T1000-E catalog target is not Nordic serial DFU".into());
+        };
+        let part = |kind, filename: &str, hash: char| FlashPart {
+            kind,
+            path: format!("firmware/hopspot/t1000-e/0.3.7/{filename}"),
+            offset: None,
+            size: 256,
+            sha256: hash.to_string().repeat(64),
+        };
+        let target = TargetManifest {
+            board_slug: board.slug.clone(),
+            display_name: board.display_name.clone(),
+            silicon: board.silicon.clone(),
+            interfaces: board.interfaces.clone(),
+            transport: board.transport,
+            expected_chip: None,
+            flash_size: None,
+            flash_mode: None,
+            flash_frequency: None,
+            before_reset: None,
+            after_reset: None,
+            preparation_profile: board.preparation_profile.clone(),
+            parts: Vec::new(),
+            variants: Vec::new(),
+            nrf_serial_dfu: Some(NrfSerialDfuManifest {
+                serial: build.serial.clone(),
+                compatibility: build.compatibility.clone(),
+                application: part(
+                    FlashPartKind::DfuApplication,
+                    &build.application_filename,
+                    'a',
+                ),
+                init_packet: part(
+                    FlashPartKind::DfuInitPacket,
+                    &build.init_packet_filename,
+                    'b',
+                ),
+                recovery: NrfSerialDfuRecoveryManifest {
+                    mount_label: build.recovery.mount_label.clone(),
+                    board_id_prefix: build.recovery.board_identity.value.clone(),
+                    family_id: build.recovery.family_id.clone(),
+                    artifact: part(FlashPartKind::Uf2, &build.recovery.filename, 'c'),
+                },
+            }),
+            provisioning: None,
+            source: None,
+        };
+        let manifest = FlashManifest {
+            schema_version: FLASH_MANIFEST_SCHEMA,
+            release: ReleaseInfo {
+                version: "0.3.7".to_string(),
+                channel: ReleaseChannel::Preview,
+                commit: "0".repeat(40),
+            },
+            signing: OfflineKeySigningInfo {
+                key_id: "0123456789ABCDEF".to_string(),
+            },
+            targets: vec![target],
+        };
+        let policy = ManifestTargetSetPolicy::local_development(&catalog, &["t1000-e"])?;
+        Ok(ValidatedFlashManifest::from_json_with_target_set(
+            &serde_json::to_vec(&manifest)?,
+            &catalog,
+            &policy,
+        )?)
+    }
+
+    #[test]
+    fn local_t1000_projects_direct_dfu_and_only_the_manifest_bound_recovery_uf2(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let manifest = t1000_manifest()?;
+        let target = manifest.targets().first().ok_or("missing T1000-E target")?;
+        let ReleaseTarget::NrfSerialDfu(nrf) = target else {
+            return Err("T1000-E target is not Nordic serial DFU".into());
+        };
+        let catalog_target = BoardFlashTarget::NrfSerialDfu {
+            recovery_mount_label: "T1000-E",
+            recovery_board_id_match_kind: prns_flash_manifest::Uf2BoardIdMatchKind::Exact,
+            recovery_board_id: "nrf52840-t1000-e-v1",
+        };
+        let compatibility = ReleaseCompatibility::Uf2(nrf.compatibility().softdevice().clone());
+        let request = BridgeRequest::from_target(
+            target,
+            "https://reticulum.rs/releases/0.3.7/flash-manifest.json",
+            InstallMode::PreserveData,
+            DestructiveConfirmation::Unconfirmed,
+            None,
+            catalog_target,
+            &compatibility,
+        )?;
+        let wire = serde_json::to_value(request)?;
+        assert_eq!(wire["transport"], "uf2-mass-storage");
+        assert_eq!(wire["mountLabel"], "T1000-E");
+        assert_eq!(wire["uf2Compatibility"]["softdeviceVersion"], "7.3.0");
+        let parts = wire["parts"]
+            .as_array()
+            .ok_or("recovery parts are not an array")?;
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["kind"], "uf2");
+        assert_eq!(parts[0]["path"], nrf.recovery().artifact().path().as_str());
+
+        let direct = BridgeRequest::from_target(
+            target,
+            "https://reticulum.rs/releases/0.3.7/flash-manifest.json",
+            InstallMode::PreserveData,
+            DestructiveConfirmation::Unconfirmed,
+            None,
+            catalog_target,
+            &ReleaseCompatibility::NrfSerialDfu(NrfSerialDfuEntry::ManagedApplication),
+        )?;
+        let direct = serde_json::to_value(direct)?;
+        assert_eq!(direct["transport"], "nrf-serial-dfu");
+        assert_eq!(direct["nrfSerialDfu"]["entry"], "managed-application");
+        assert_eq!(
+            direct["serialFilters"],
+            serde_json::json!([{
+                "usbVendorId": 0x2886,
+                "usbProductId": 0x0057,
+            }])
+        );
+        assert_eq!(direct["nrfSerialDfu"]["touchBaudRate"], 1_200);
+        assert_eq!(direct["nrfSerialDfu"]["transferBaudRate"], 115_200);
+        assert_eq!(
+            direct["nrfSerialDfu"]["managedApplication"]["usb"],
+            serde_json::json!({
+                "vendorId": 0x1209,
+                "productId": 0x0001,
+            })
+        );
+        assert_eq!(
+            direct["nrfSerialDfu"]["managedApplication"]["request"],
+            0x50
+        );
+        assert_eq!(
+            direct["nrfSerialDfu"]["managedApplication"]["value"],
+            0x5052
+        );
+        assert_eq!(
+            direct["nrfSerialDfu"]["managedApplication"]["index"],
+            0x4e53
+        );
+        assert_eq!(
+            direct["nrfSerialDfu"]["compatibility"]["softdeviceFwids"],
+            serde_json::json!([0x0123])
+        );
+        assert_eq!(
+            direct["nrfSerialDfu"]["compatibility"]["applicationBase"],
+            0x27000
+        );
+        assert_eq!(
+            direct["nrfSerialDfu"]["compatibility"]["applicationEndExclusive"],
+            0xea000
+        );
+        assert_eq!(direct["parts"][0]["kind"], "dfu-application");
+        assert_eq!(direct["parts"][1]["kind"], "dfu-init-packet");
+
+        assert!(BridgeRequest::from_target(
+            target,
+            "https://reticulum.rs/releases/0.3.7/flash-manifest.json",
+            InstallMode::PreserveData,
+            DestructiveConfirmation::Unconfirmed,
+            None,
+            BoardFlashTarget::NrfSerialDfu {
+                recovery_mount_label: "WRONG",
+                recovery_board_id_match_kind: prns_flash_manifest::Uf2BoardIdMatchKind::Exact,
+                recovery_board_id: "nrf52840-t1000-e-v1",
+            },
+            &compatibility,
+        )
+        .is_err());
+        Ok(())
+    }
 
     #[test]
     fn rust_event_shape_and_messages_cover_the_shared_contract() {
@@ -767,7 +1288,7 @@ mod tests {
     #[test]
     fn typed_targets_preserve_the_javascript_request_shape(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        const UF2_REQUEST_FIELDS: [&str; 15] = [
+        const UF2_REQUEST_FIELDS: [&str; 16] = [
             "schema",
             "boardSlug",
             "displayName",
@@ -780,11 +1301,12 @@ mod tests {
             "afterReset",
             "mountLabel",
             "uf2Compatibility",
+            "nrfSerialDfu",
             "serialFilters",
             "provisioning",
             "parts",
         ];
-        const ESP_REQUEST_FIELDS: [&str; 17] = [
+        const ESP_REQUEST_FIELDS: [&str; 18] = [
             "schema",
             "boardSlug",
             "displayName",
@@ -797,6 +1319,7 @@ mod tests {
             "afterReset",
             "mountLabel",
             "uf2Compatibility",
+            "nrfSerialDfu",
             "serialFilters",
             "installMode",
             "eraseConfirmed",
@@ -1021,7 +1544,8 @@ mod tests {
             None,
             BoardFlashTarget::Uf2MassStorage {
                 mount_label: "TECHOBOOT",
-                board_id_prefix: "nrf52840-techo-v",
+                board_id_match_kind: prns_flash_manifest::Uf2BoardIdMatchKind::RevisionPrefix,
+                board_id: "nrf52840-techo-v",
             },
             &compatibility,
         )
@@ -1067,6 +1591,11 @@ mod tests {
         assert!(script.contains("navigator.serial.requestPort"));
         assert!(script.contains(&format!("\"{WEB_SERIAL_PROBE_SUPPORTED}\"")));
         assert!(script.contains(&format!("\"{WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY}\"")));
+
+        let usb = web_usb_probe_script();
+        assert!(usb.contains("window.isSecureContext"));
+        assert!(usb.contains("navigator.usb.requestDevice"));
+        assert!(usb.contains(&format!("\"{WEB_USB_PROBE_SUPPORTED}\"")));
     }
 
     #[test]

@@ -127,6 +127,7 @@ impl<'d, D: UsbDriver<'d>> WebUsbAutoClass<'d, D> {
         (
             WebUsbAutoTx {
                 write_ep: self.write_ep,
+                needs_zlp: false,
             },
             WebUsbAutoRx {
                 read_ep: self.read_ep,
@@ -164,6 +165,7 @@ fn endpoint_read(result: Result<usize, EndpointError>) -> Result<Option<usize>, 
 
 pub struct WebUsbAutoTx<'d, D: UsbDriver<'d>> {
     write_ep: D::EndpointIn,
+    needs_zlp: bool,
 }
 
 impl<'d, D: UsbDriver<'d>> embedded_io_async::ErrorType for WebUsbAutoTx<'d, D> {
@@ -172,16 +174,32 @@ impl<'d, D: UsbDriver<'d>> embedded_io_async::ErrorType for WebUsbAutoTx<'d, D> 
 
 impl<'d, D: UsbDriver<'d>> embedded_io_async::Write for WebUsbAutoTx<'d, D> {
     async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
         let len = core::cmp::min(buf.len(), self.write_ep.info().max_packet_size as usize);
         match self.write_ep.write(&buf[..len]).await {
-            Ok(()) => Ok(len),
+            Ok(()) => {
+                self.needs_zlp = len == self.write_ep.info().max_packet_size as usize;
+                Ok(len)
+            }
             Err(EndpointError::Disabled) => Err(WebUsbAutoError::Disconnected),
             Err(EndpointError::BufferOverflow) => Err(WebUsbAutoError::PacketTooLarge),
         }
     }
 
     async fn flush(&mut self) -> Result<(), Self::Error> {
-        Ok(())
+        if !self.needs_zlp {
+            return Ok(());
+        }
+        match self.write_ep.write(&[]).await {
+            Ok(()) => {
+                self.needs_zlp = false;
+                Ok(())
+            }
+            Err(EndpointError::Disabled) => Err(WebUsbAutoError::Disconnected),
+            Err(EndpointError::BufferOverflow) => Err(WebUsbAutoError::PacketTooLarge),
+        }
     }
 }
 

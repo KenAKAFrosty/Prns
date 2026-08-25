@@ -396,6 +396,13 @@ html, body {
         linear-gradient(135deg, rgb(110 231 183 / 0.08), transparent 42%),
         rgb(22 27 36 / 0.56);
 }
+.flash-board-card--qualification .platform-chip {
+    border-color: rgb(252 211 77 / 0.55);
+    box-shadow: 0 0 0 1px rgb(252 211 77 / 0.12) inset;
+}
+.flash-board-card--qualification .platform-chip__badge {
+    color: rgb(253 230 138);
+}
 .flash-board-card--bringup .platform-chip {
     border-style: dashed;
     border-color: rgb(96 165 250 / 0.55);

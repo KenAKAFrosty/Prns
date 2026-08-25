@@ -355,6 +355,68 @@ pub struct EnginePathRequestMetricsSnapshot {
 prns_macros::iterable_enum! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[repr(u8)]
+    pub enum ResourceAdmissionEvent {
+        Queued,
+        Promoted,
+        Expired,
+        Rejected,
+    }
+}
+
+impl ResourceAdmissionEvent {
+    const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceAdmissionEventCounts {
+    counts: [u64; ResourceAdmissionEvent::ALL.len()],
+}
+
+impl Default for ResourceAdmissionEventCounts {
+    fn default() -> Self {
+        Self {
+            counts: [0; ResourceAdmissionEvent::ALL.len()],
+        }
+    }
+}
+
+impl ResourceAdmissionEventCounts {
+    pub const fn get(&self, event: ResourceAdmissionEvent) -> u64 {
+        self.counts[event.index()]
+    }
+
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (ResourceAdmissionEvent, u64)> + '_ {
+        ResourceAdmissionEvent::ALL
+            .into_iter()
+            .map(|event| (event, self.get(event)))
+    }
+
+    fn record(&mut self, event: ResourceAdmissionEvent) {
+        let count = &mut self.counts[event.index()];
+        *count = count.saturating_add(1);
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ResourceDirectionMetricsSnapshot {
+    pub active_buffer_bytes: u64,
+    pub buffer_budget_bytes: u64,
+    pub active_rows: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EngineResourceMetricsSnapshot {
+    pub incoming: ResourceDirectionMetricsSnapshot,
+    pub outgoing: ResourceDirectionMetricsSnapshot,
+    pub pending_depth: u32,
+    pub admission_events: ResourceAdmissionEventCounts,
+}
+
+prns_macros::iterable_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
     pub enum IgnoreReasonKind {
         Consumed,
         Malformed,
@@ -469,12 +531,17 @@ pub struct EngineMetricsSnapshot {
     pub ignored_packets: IgnoreReasonCounts,
     pub announces: EngineAnnounceMetricsSnapshot,
     pub path_requests: EnginePathRequestMetricsSnapshot,
+    pub resources: EngineResourceMetricsSnapshot,
     pub route_count: u32,
     pub link_count: u32,
     pub transported_link_count: u32,
 }
 
 impl<S: StorageLayout> EngineState<S> {
+    pub(crate) fn record_resource_admission_event(&mut self, event: ResourceAdmissionEvent) {
+        self.resource_admission_event_counts.record(event);
+    }
+
     pub fn attach_metrics_interface(
         &mut self,
         interface: InterfaceId,
@@ -652,6 +719,104 @@ impl<S: StorageLayout> EngineState<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[expect(
+        unsafe_code,
+        reason = "poisoned MaybeUninit storage proves every metric field is explicitly initialized"
+    )]
+    fn in_place_initialization_overwrites_poisoned_runtime_metrics() {
+        use crate::storage::GrowableHeap;
+        use alloc::boxed::Box;
+
+        let mut slot = Box::<EngineState<GrowableHeap>>::new_uninit();
+        // SAFETY: the destination is a valid allocation of `MaybeUninit` bytes;
+        // no typed value is exposed until `init_in_place` overwrites every field.
+        unsafe {
+            slot.as_mut_ptr().write_bytes(0xA5, 1);
+        }
+        EngineState::init_in_place(slot.as_mut());
+        // SAFETY: `init_in_place`'s contract initializes every `EngineState` field.
+        let state = unsafe { slot.assume_init() };
+
+        let snapshot = state.metrics_snapshot();
+        assert_eq!(snapshot.ingested_packets, 0);
+        assert_eq!(snapshot.ingested_commands, 0);
+        assert_eq!(snapshot.ignored_packets, IgnoreReasonCounts::default());
+        assert_eq!(snapshot.announces, EngineAnnounceMetricsSnapshot::default());
+        assert_eq!(
+            snapshot.path_requests,
+            EnginePathRequestMetricsSnapshot::default()
+        );
+        assert_eq!(
+            snapshot.resources.admission_events,
+            ResourceAdmissionEventCounts::default()
+        );
+    }
+
+    #[test]
+    fn resource_snapshot_reads_live_tables_and_cumulative_admission_events() {
+        use crate::routing::links::resources::pending::PendingResourceOffer;
+        use crate::routing::links::resources::table::AcceptedResource;
+        use crate::routing::links::resources::{
+            ResourceCompression, ResourceCorrelation, ResourceHash, ResourceMemoryLimits, SaltNonce,
+        };
+        use crate::routing::links::LinkId;
+        use crate::storage::GrowableHeap;
+        use crate::units::RttMillis;
+
+        let mut state = EngineState::<GrowableHeap>::default();
+        state.set_resource_memory_limits(ResourceMemoryLimits {
+            incoming_bytes: 1_024,
+            outgoing_bytes: 2_048,
+        });
+        let link_id = LinkId::new([0x11; 16]);
+        let accepted = |byte| AcceptedResource {
+            hash: ResourceHash::new([byte; 32]),
+            salt_nonce: SaltNonce::new([0x22; 4]),
+            compression: ResourceCompression::Uncompressed,
+            has_metadata: false,
+            uncompressed_data_bytes: 128,
+            segment_index: 1,
+            total_segment_count: 1,
+            sealed_transfer_bytes: 144,
+            part_count: 1,
+            sdu: 464,
+            correlation: ResourceCorrelation::Unsolicited,
+            initial_names: &[0x33; 4],
+        };
+        state
+            .incoming_resources
+            .accept(link_id, accepted(1))
+            .unwrap();
+        let pending = PendingResourceOffer::try_from_accepted(
+            link_id,
+            ResourceHash::new([0x44; 32]),
+            accepted(2),
+            crate::engine::InstantMillis(1_000),
+            RttMillis::new(250),
+        )
+        .unwrap();
+        assert!(matches!(
+            state.pending_resource_offers.queue(pending),
+            crate::routing::links::resources::pending::QueuePendingResourceOfferOutcome::Queued
+        ));
+        for event in ResourceAdmissionEvent::ALL {
+            state.record_resource_admission_event(event);
+        }
+
+        let resources = state.metrics_snapshot().resources;
+        assert_eq!(resources.incoming.active_buffer_bytes, 149);
+        assert_eq!(resources.incoming.buffer_budget_bytes, 1_024);
+        assert_eq!(resources.incoming.active_rows, 1);
+        assert_eq!(resources.outgoing.active_buffer_bytes, 0);
+        assert_eq!(resources.outgoing.buffer_budget_bytes, 2_048);
+        assert_eq!(resources.outgoing.active_rows, 0);
+        assert_eq!(resources.pending_depth, 1);
+        for event in ResourceAdmissionEvent::ALL {
+            assert_eq!(resources.admission_events.get(event), 1);
+        }
+    }
 
     #[test]
     fn accepted_schedule_capacity_rejections_have_their_own_metric_outcome() {

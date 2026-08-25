@@ -47,7 +47,8 @@ jobs:
           default_branch="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')"
           test "$GITHUB_REF" = "refs/heads/${default_branch}"
           test "$GITHUB_SHA" = "$SOURCE_COMMIT"
-          test "$(cat VERSION)" = "$RELEASE_VERSION"
+          ./tools/prns release hotfix -- identity \
+            --repository . --version "$RELEASE_VERSION"
           [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           [[ "$SIGNED_CANDIDATE_SHA256" =~ ^[0-9a-f]{64}$ ]]
       - name: Install exact Minisign verifier
@@ -110,6 +111,8 @@ jobs:
             -x "$assets/SHA256SUMS.txt.minisig" \
             -p release/keys/minisign.pub
           ./tools/prns release candidate extract -- "$bundle" target/public-installation-candidate
+          ./tools/prns release hotfix -- verify-candidate \
+            --repository . --candidate target/public-installation-candidate
           flasher_checksums=target/public-installation-candidate/SHA256SUMS.txt
           "$PRNS_MINISIGN_BIN" -Vm "$flasher_checksums" \
             -x "$flasher_checksums.minisig" \
@@ -120,7 +123,7 @@ jobs:
             target/public-installation-candidate/flash-manifest.json)" = "$GITHUB_SHA"
           ./tools/prns release tester-roster validate -- \
             --roster target/public-installation-candidate/qualification/tester-roster.json \
-            --version "$RELEASE_VERSION"
+            --version "$(cat VERSION)"
           for installer in install.sh install.ps1; do
             expected="$(awk -v wanted="cli/$installer" \
               '$2 == wanted {print $1}' "$flasher_checksums")"
@@ -244,7 +247,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-          ref: ${{ inputs.source_commit }}
+          ref: ${{ github.sha }}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: flasher-installation-inputs-${{ github.run_id }}-${{ github.run_attempt }}

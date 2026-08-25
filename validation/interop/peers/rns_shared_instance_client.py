@@ -1,22 +1,34 @@
 #!/usr/bin/env python3
-"""Real-RNS interop smoke client for the local shared-instance interface.
-
-Connects to a running Prns ``LocalServer`` as a stock ``RNS.Reticulum`` shared-instance client (the
-pinned reference install): with a fresh config dir and the default ``share_instance = True``, RNS tries
-to bind the loopback shared-instance port, fails because the Prns daemon already holds it, and so
-connects to it as a local client instead — the exact path Sideband/NomadNet/MeshChat take. It then
-announces a destination, which crosses the connection to the Prns daemon as a genuine RNS announce.
-
-Prints ``ANNOUNCED dest=<hex>`` on stdout so the runner can match it against the daemon's ``HEARD``
-line. RNS's own logs go to stderr, leaving stdout clean for the one machine-readable line.
-"""
-
 import os
 import sys
 import tempfile
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
+
+
+EXPECTED_APP_DATA = b"prns-shared-server"
+PAYLOAD = b"stock-to-prns-shared-server"
+
+
+class ServerDetector:
+    aspect_filter = "personal.smoke"
+
+    def __init__(self):
+        self.receipt = None
+
+    def received_announce(self, destination_hash, announced_identity, app_data):
+        if app_data != EXPECTED_APP_DATA or self.receipt is not None:
+            return
+        destination = RNS.Destination(
+            announced_identity,
+            RNS.Destination.OUT,
+            RNS.Destination.SINGLE,
+            "personal",
+            "smoke",
+        )
+        self.receipt = RNS.Packet(destination, PAYLOAD).send()
 
 
 def main() -> int:
@@ -32,9 +44,9 @@ def main() -> int:
                 f"shared_instance_port = {instance_port}\n"
                 f"instance_control_port = {control_port}\n"
             )
-    # Quiet RNS's own chatter to stderr; stdout carries only our ANNOUNCED line.
-    RNS.Reticulum(configdir=configdir, loglevel=RNS.LOG_WARNING)
-    # Let the client settle its connection to the shared instance before announcing.
+    start_reference_reticulum(configdir=configdir, loglevel=RNS.LOG_WARNING)
+    detector = ServerDetector()
+    RNS.Transport.register_announce_handler(detector)
     time.sleep(1.5)
 
     identity = RNS.Identity()
@@ -47,12 +59,18 @@ def main() -> int:
     )
     print("ANNOUNCED dest=" + destination.hash.hex(), flush=True)
 
-    # Announce a handful of times; the daemon only needs to hear one.
-    for _ in range(12):
-        destination.announce()
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        destination.announce(app_data=b"stock-shared-client")
+        if (
+            detector.receipt is not None
+            and detector.receipt.get_status() == RNS.PacketReceipt.DELIVERED
+        ):
+            print(f"STOCK_TO_PRNS_SHARED_OK bytes={len(PAYLOAD)} proof=1", flush=True)
+            time.sleep(1)
+            return 0
         time.sleep(0.5)
-    time.sleep(1.0)
-    return 0
+    raise RuntimeError("stock RNS did not deliver application traffic to the Prns shared server")
 
 
 if __name__ == "__main__":

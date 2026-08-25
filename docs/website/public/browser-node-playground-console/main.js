@@ -499,6 +499,20 @@ class BrowserPlayground {
                     },
                 });
             },
+            LinkDelivery: ({ linkId, plaintext, sourceInterface }) => {
+                const metadata = `link ${hex(linkId)} · interface ${hex(sourceInterface)}`;
+                match(presentPacketContent(plaintext), {
+                    Empty: () => {
+                        this.#view.record("Network", "Link packet received", `${metadata}\n(empty payload)`);
+                    },
+                    Text: ({ value }) => {
+                        this.#view.record("Network", "Link packet received", `${metadata}\n${value}`);
+                    },
+                    Binary: ({ byteLength, hexadecimal }) => {
+                        this.#view.record("Network", "Binary Link packet received", `${metadata}\n${byteLength} bytes · ${hexadecimal}`);
+                    },
+                });
+            },
             Request: ({ destination, linkId, requestId, data }) => {
                 this.#view.record("Network", "Request received", `destination ${hex(destination)} · link ${hex(linkId)} · request ${hex(requestId)} · ${data.length} bytes`);
             },

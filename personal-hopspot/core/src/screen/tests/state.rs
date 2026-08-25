@@ -70,9 +70,11 @@ fn persistence_notices_are_brief_across_deferred_failed_and_recovered_states() {
 
     assert!(persistence.update(&mut state, PersistenceState::Failed, 7_000));
     assert_eq!(state.notice(), Some(UiNotice::SaveFailed));
-    assert!(persistence.update(&mut state, PersistenceState::Durable, 8_000));
+    assert!(persistence.update(&mut state, PersistenceState::Recovered, 8_000));
+    assert_eq!(state.notice(), Some(UiNotice::StateRecovered));
+    assert!(persistence.update(&mut state, PersistenceState::Durable, 9_000));
     assert_eq!(state.notice(), Some(UiNotice::Saved));
-    assert!(persistence.update(&mut state, PersistenceState::Durable, 13_000));
+    assert!(persistence.update(&mut state, PersistenceState::Durable, 14_000));
     assert_eq!(state.notice(), None);
 }
 
@@ -235,6 +237,37 @@ fn long_press_on_limits_opens_the_paged_limits_page() {
 }
 
 #[test]
+fn available_gnss_menu_toggles_the_live_panel_and_receiver_demand() {
+    let cards = test_cards::<2>(CardKind::Usb);
+    let content = test_content(&cards);
+    let mut state = test_ui_state_with_gnss();
+
+    state.handle_input(InputEvent::LongPress, content);
+    state.handle_input(InputEvent::ShortPress, content);
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(state.global_menu_selected_item(), Some(2));
+    assert_eq!(state.global_menu_item_label(GlobalMenuItem::Gnss), "GPS On");
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::ControlGnss(GnssReceiverCommand::Enable)
+    );
+    assert!(state.gnss_visible());
+
+    state.handle_input(InputEvent::LongPress, content);
+    state.handle_input(InputEvent::ShortPress, content);
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(
+        state.global_menu_item_label(GlobalMenuItem::Gnss),
+        "GPS Off"
+    );
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::ControlGnss(GnssReceiverCommand::Disable)
+    );
+    assert!(!state.gnss_visible());
+}
+
+#[test]
 fn long_press_on_sleep_enters_sleep_and_next_press_wakes() {
     let cards = test_cards::<4>(CardKind::Usb);
     let content = test_content(&cards);
@@ -256,7 +289,7 @@ fn long_press_on_sleep_enters_sleep_and_next_press_wakes() {
 }
 
 #[test]
-fn oled_capable_menu_offers_display_controls_before_sleep() {
+fn display_capable_menu_offers_display_controls_before_sleep() {
     let cards = test_cards::<4>(CardKind::Usb);
     let content = test_content(&cards);
     let mut state = test_ui_state_with_display_power();
@@ -264,20 +297,31 @@ fn oled_capable_menu_offers_display_controls_before_sleep() {
     state.handle_input(InputEvent::ShortPress, content);
     state.handle_input(InputEvent::ShortPress, content);
 
-    assert_eq!(state.global_menu_selected_item(), Some(OLED_OFF_MENU_ITEM));
+    assert_eq!(
+        state.global_menu_selected_item(),
+        Some(DISPLAY_OFF_MENU_ITEM)
+    );
+    assert_eq!(
+        state.global_menu_item_label(GlobalMenuItem::DisplayOff),
+        "Screen Off"
+    );
     assert_eq!(
         state.handle_input(InputEvent::LongPress, content),
-        UiAction::OledOff
+        UiAction::DisplayOff
     );
     assert!(state.global_selected());
 
     state.handle_input(InputEvent::LongPress, content);
-    for _ in 0..OLED_AUTO_OFF_MENU_ITEM {
+    for _ in 0..DISPLAY_AUTO_OFF_MENU_ITEM {
         state.handle_input(InputEvent::ShortPress, content);
     }
     assert_eq!(
+        state.global_menu_item_label(GlobalMenuItem::DisplayAutoOff),
+        "Auto Off"
+    );
+    assert_eq!(
         state.handle_input(InputEvent::LongPress, content),
-        UiAction::ToggleOledAutoOff
+        UiAction::ToggleDisplayAutoOff
     );
     assert!(state.global_selected());
 

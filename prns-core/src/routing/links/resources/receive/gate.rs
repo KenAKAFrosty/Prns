@@ -1,5 +1,7 @@
 //! RNS 1.4.2 `Resource.accept`: the strategy gate runs before a single part moves. The advertisement declares size and kind up front, so refusing is free.
 
+#[cfg(feature = "runtime-metrics")]
+use crate::engine::ResourceAdmissionEvent;
 use crate::engine::{CommandId, CommandOutcome, SetResourceStrategy, SetResourceStrategyRejection};
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis};
 use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome};
@@ -8,7 +10,12 @@ use crate::routing::links::data::{link_data_frame_ceiling, write_link_packet};
 use crate::routing::links::resources::advertisement::ResourceAdvertisement;
 use crate::routing::links::resources::assembly::SegmentFit;
 use crate::routing::links::resources::control::write_cancel_plaintext;
-use crate::routing::links::resources::table::{AcceptIncomingResourceError, AcceptedResource};
+use crate::routing::links::resources::pending::{
+    PendingResourceOffer, PendingResourceOfferError, QueuePendingResourceOfferOutcome,
+};
+use crate::routing::links::resources::table::{
+    AcceptIncomingResourceError, AcceptedResource, IncomingResourceAdmission,
+};
 use crate::routing::links::resources::{
     resource_sdu, ResourceCompression, ResourceCorrelation, ResourceHash, ResourceStrategy,
     MAX_EFFICIENT_SIZE, PART_REQUEST_MAX_RETRIES, RESOURCE_HASH_LEN,
@@ -216,8 +223,25 @@ impl<S: StorageLayout> EngineState<S> {
             correlation,
             initial_names: advertisement.hashmap,
         };
+        if self
+            .pending_resource_offers
+            .contains(&link_id, &accepted.hash)
+        {
+            self.links.note_inbound(&link_id, arrived_at);
+            return IngestPacketOutcome::ResourceAdmissionPending;
+        }
+        if matches!(&policy, GatePolicy::OfferToApp)
+            && self.incoming_resources.admission_for(&link_id, accepted)
+                == IncomingResourceAdmission::AlreadyReceiving
+        {
+            self.links.note_inbound(&link_id, arrived_at);
+            return IngestPacketOutcome::OwesResourcePull {
+                link_id,
+                hash: accepted.hash,
+            };
+        }
         match policy {
-            GatePolicy::Admit { .. } => self.admit_accepted_resource(
+            GatePolicy::Admit { .. } => self.admit_or_queue_accepted_resource(
                 link_id,
                 advertisement.original_hash,
                 accepted,
@@ -228,6 +252,89 @@ impl<S: StorageLayout> EngineState<S> {
                 original_hash: advertisement.original_hash,
                 accepted,
             },
+        }
+    }
+
+    pub(crate) fn admit_or_queue_accepted_resource(
+        &mut self,
+        link_id: LinkId,
+        original_hash: ResourceHash,
+        accepted: AcceptedResource<'_>,
+        arrived_at: InstantMillis,
+    ) -> IngestPacketOutcome<'static> {
+        match self.incoming_resources.admission_for(&link_id, accepted) {
+            IncomingResourceAdmission::Available | IncomingResourceAdmission::AlreadyReceiving => {
+                self.admit_accepted_resource(link_id, original_hash, accepted, arrived_at)
+            }
+            IncomingResourceAdmission::TemporarilyFull => {
+                let frozen_link_rtt = match self.links.phase_for(&link_id) {
+                    Some(LinkPhase::Active { rtt, .. }) => *rtt,
+                    _ => return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch),
+                };
+                let pending = match PendingResourceOffer::try_from_accepted(
+                    link_id,
+                    original_hash,
+                    accepted,
+                    arrived_at,
+                    frozen_link_rtt,
+                ) {
+                    Ok(pending) => pending,
+                    Err(
+                        PendingResourceOfferError::BufferShape(_)
+                        | PendingResourceOfferError::PartCountMismatch
+                        | PendingResourceOfferError::RequestSettingsNotApplicable
+                        | PendingResourceOfferError::HashmapTooLong
+                        | PendingResourceOfferError::HashmapRagged
+                        | PendingResourceOfferError::HashmapBeyondPartCount,
+                    ) => return IngestPacketOutcome::Ignored(IgnoreReason::Malformed),
+                };
+                let outcome = self.pending_resource_offers.queue(pending);
+                self.links.note_inbound(&link_id, arrived_at);
+                match outcome {
+                    QueuePendingResourceOfferOutcome::Queued => {
+                        #[cfg(feature = "runtime-metrics")]
+                        self.record_resource_admission_event(ResourceAdmissionEvent::Queued);
+                        IngestPacketOutcome::ResourceAdmissionPending
+                    }
+                    QueuePendingResourceOfferOutcome::RetryCoalesced => {
+                        IngestPacketOutcome::ResourceAdmissionPending
+                    }
+                    QueuePendingResourceOfferOutcome::TableFull => self.resource_capacity_rejected(
+                        link_id,
+                        accepted.hash,
+                        accepted.correlation,
+                    ),
+                }
+            }
+            IncomingResourceAdmission::Impossible => {
+                self.links.note_inbound(&link_id, arrived_at);
+                self.resource_capacity_rejected(link_id, accepted.hash, accepted.correlation)
+            }
+            IncomingResourceAdmission::Malformed => {
+                IngestPacketOutcome::Ignored(IgnoreReason::Malformed)
+            }
+        }
+    }
+
+    fn resource_capacity_rejected(
+        &mut self,
+        link_id: LinkId,
+        hash: ResourceHash,
+        correlation: ResourceCorrelation,
+    ) -> IngestPacketOutcome<'static> {
+        #[cfg(feature = "runtime-metrics")]
+        self.record_resource_admission_event(ResourceAdmissionEvent::Rejected);
+        let settled_request = match correlation {
+            ResourceCorrelation::Response(request_id) => self
+                .receipts
+                .settle_by_request_id(request_id)
+                .map(|receipt| receipt.command_id),
+            ResourceCorrelation::Request { .. } | ResourceCorrelation::Unsolicited => None,
+        };
+        IngestPacketOutcome::ResourceCapacityRejected {
+            link_id,
+            hash,
+            settled_request,
         }
     }
 
@@ -269,7 +376,10 @@ impl<S: StorageLayout> EngineState<S> {
                 return IngestPacketOutcome::OwesResourcePull { link_id, hash };
             }
             Err(
-                AcceptIncomingResourceError::HashmapTooLong
+                AcceptIncomingResourceError::EmptyTransfer
+                | AcceptIncomingResourceError::SduTooSmall
+                | AcceptIncomingResourceError::PartCountMismatch
+                | AcceptIncomingResourceError::HashmapTooLong
                 | AcceptIncomingResourceError::HashmapRagged
                 | AcceptIncomingResourceError::HashmapBeyondPartCount,
             ) => return IngestPacketOutcome::Ignored(IgnoreReason::Malformed),
@@ -355,7 +465,7 @@ enum GatePolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::test_support::{routable_descriptor, TestStorageLayout};
+    use crate::engine::test_support::{routable_descriptor, test_entropy_bytes, TestStorageLayout};
     use crate::engine::{Directive, EngineReaction};
     use crate::engine::{IssuedCommand, PrnsCommand, SetResourceStrategyFailure, Settlement};
     use crate::interfaces::AttachedInterfaces;
@@ -379,6 +489,7 @@ mod tests {
         );
         assert!(capture.frames.is_empty());
         assert!(receiver.incoming_resources.is_empty());
+        assert!(receiver.pending_resource_offers.is_empty());
     }
 
     #[test]
@@ -1153,6 +1264,7 @@ mod tests {
         let rejected_hash = parse_cancel_plaintext(opened).unwrap();
         assert_eq!(Some(rejected_hash), judged_hash);
         assert!(receiver.incoming_resources.is_empty());
+        assert!(receiver.pending_resource_offers.is_empty());
     }
 
     #[test]
@@ -1260,5 +1372,378 @@ mod tests {
         let after_retirement = feed(&mut receiver, &refreshed, 2_300);
         assert!(after_retirement.frames.is_empty());
         assert!(receiver.incoming_resources.is_empty());
+    }
+
+    fn reencrypt_advertisement(frame: &[u8], iv: u8) -> std::vec::Vec<u8> {
+        let (header, payload) = WirePacketHeader::parse(frame).unwrap();
+        let mut sealed = payload.to_vec();
+        let plaintext = link_key().open_in_place(&mut sealed).unwrap();
+        let mut refreshed = std::vec![0u8; BROADCAST_MTU];
+        let refreshed_len = write_link_packet(
+            &link_id(),
+            &link_key(),
+            BROADCAST_MTU,
+            header.context,
+            plaintext,
+            &test_entropy_bytes::<16>(iv),
+            &mut refreshed,
+        )
+        .unwrap();
+        refreshed.truncate(refreshed_len);
+        refreshed
+    }
+
+    fn fill_incoming_capacity(receiver: &mut EngineState<TestStorageLayout>) {
+        accept_everything(receiver);
+        for changed_byte in [0x00, 0x11] {
+            let mut payload = four_part_payload();
+            payload[0] ^= changed_byte;
+            assert_eq!(
+                feed(receiver, &advertisement_frame(&payload, None), 2_000)
+                    .frames
+                    .len(),
+                1,
+            );
+        }
+        assert_eq!(receiver.incoming_resources.len(), 2);
+    }
+
+    #[test]
+    fn a_burst_waits_once_then_promotes_immediately_when_capacity_returns() {
+        use crate::engine::WakeSchedule;
+        use crate::routing::links::resources::ResourceOffer;
+
+        let mut receiver = engine_with_active_link();
+        fill_incoming_capacity(&mut receiver);
+        set_strategy(&mut receiver, ResourceStrategy::AcceptIf);
+
+        let mut second_payload = four_part_payload();
+        second_payload[0] ^= 0x5A;
+        let second_advertisement = advertisement_frame(&second_payload, None);
+        let mut decisions = 0;
+        let queued = feed_judged(
+            &mut receiver,
+            &second_advertisement,
+            2_100,
+            &mut |_: &ResourceOffer| {
+                decisions += 1;
+                true
+            },
+        );
+        assert!(
+            queued.frames.is_empty(),
+            "waiting sends neither a pull nor a rejection"
+        );
+        assert_eq!(receiver.pending_resource_offers.len(), 1);
+
+        let retry = reencrypt_advertisement(&second_advertisement, 0xE4);
+        let coalesced = feed_judged(&mut receiver, &retry, 2_200, &mut |_: &ResourceOffer| {
+            panic!("a validated retry must not rerun AcceptIf")
+        });
+        assert!(coalesced.frames.is_empty());
+        assert_eq!(decisions, 1);
+        assert_eq!(receiver.pending_resource_offers.len(), 1);
+        assert_eq!(
+            receiver.pending_resource_offers.offers()[0].first_arrived_at(),
+            InstantMillis(2_100),
+        );
+
+        let first_hash = *receiver.incoming_resources.hash_at(0);
+        receiver.retire_incoming_resource(&link_id(), &first_hash);
+        assert_eq!(
+            receiver.resource_deadlines_wake(),
+            WakeSchedule::At(InstantMillis(0)),
+            "capacity release makes Resource maintenance immediately due",
+        );
+
+        let mut promoted_frames = std::vec::Vec::new();
+        receiver.fire_due_resource_deadlines(
+            InstantMillis(2_300),
+            &mut |bytes: &mut [u8]| bytes.fill(0xC5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    if let Some(frame) = crate::engine::test_support::filled_frame(fill) {
+                        promoted_frames.push(frame);
+                    }
+                }
+            },
+        );
+        assert_eq!(promoted_frames.len(), 1);
+        assert_eq!(
+            WirePacketHeader::parse(&promoted_frames[0])
+                .unwrap()
+                .0
+                .context,
+            WireContext::ResourceRequest,
+        );
+        assert!(receiver.pending_resource_offers.is_empty());
+        assert_eq!(receiver.incoming_resources.len(), 2);
+        let Some(LinkPhase::Active { last_inbound, .. }) = receiver.links.phase_for(&link_id())
+        else {
+            panic!("the test Link remains active")
+        };
+        assert_eq!(
+            *last_inbound,
+            InstantMillis(2_200),
+            "promotion does not forge inbound traffic at its later maintenance time",
+        );
+        #[cfg(feature = "runtime-metrics")]
+        {
+            let events = receiver.metrics_snapshot().resources.admission_events;
+            assert_eq!(events.get(ResourceAdmissionEvent::Queued), 1);
+            assert_eq!(events.get(ResourceAdmissionEvent::Promoted), 1);
+            assert_eq!(events.get(ResourceAdmissionEvent::Expired), 0);
+            assert_eq!(events.get(ResourceAdmissionEvent::Rejected), 0);
+        }
+    }
+
+    #[test]
+    fn an_offer_that_can_never_fit_is_rejected_without_waiting() {
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let mut sender = active_engine::<crate::storage::GrowableHeap>();
+        let oversized = std::vec![0xA5; 5_000];
+        let advertisement = advertise_from(&mut sender, &oversized, None);
+
+        let rejected = feed(&mut receiver, &advertisement, 2_000);
+        assert_eq!(rejected.frames.len(), 1);
+        assert_eq!(
+            WirePacketHeader::parse(&rejected.frames[0].1)
+                .unwrap()
+                .0
+                .context,
+            WireContext::ResourceReceiverCancel,
+        );
+        assert!(receiver.incoming_resources.is_empty());
+        assert!(receiver.pending_resource_offers.is_empty());
+    }
+
+    #[test]
+    fn an_expired_response_wait_rejects_and_settles_as_resource_capacity() {
+        use crate::routing::links::resources::ResourceCorrelation;
+
+        let mut receiver = engine_with_active_link();
+        fill_incoming_capacity(&mut receiver);
+        let request_id = track_pending_request(&mut receiver, CommandId(42), 1_800, 20_000);
+
+        let mut response_payload = four_part_payload();
+        response_payload[0] ^= 0x33;
+        let mut sender = engine_with_active_link();
+        let mut advertisement = None;
+        sender.ingest_send_resource_into(
+            &ResourceSend {
+                id: CommandId(7),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data: &response_payload,
+                    compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
+                },
+                correlation: ResourceCorrelation::Response(request_id),
+            },
+            InstantMillis(2_000),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA6),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    advertisement = crate::engine::test_support::filled_frame(fill);
+                }
+            },
+        );
+        let queued = feed(&mut receiver, &advertisement.unwrap(), 2_100);
+        assert!(queued.frames.is_empty());
+        assert_eq!(receiver.pending_resource_offers.len(), 1);
+        assert_eq!(
+            receiver.pending_resource_offers.offers()[0].wait_deadline(),
+            InstantMillis(7_100),
+        );
+
+        let mut frames = std::vec::Vec::new();
+        let mut settlements = std::vec::Vec::new();
+        receiver.fire_due_resource_deadlines(
+            InstantMillis(7_100),
+            &mut |bytes: &mut [u8]| bytes.fill(0xC6),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                    if let Some(frame) = crate::engine::test_support::filled_frame(fill) {
+                        frames.push(frame);
+                    }
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    settlements.push((id, settlement));
+                }
+                _ => {}
+            },
+        );
+        assert!(frames.iter().any(|frame| {
+            WirePacketHeader::parse(frame)
+                .is_ok_and(|(header, _)| header.context == WireContext::ResourceReceiverCancel)
+        }));
+        assert_eq!(
+            settlements,
+            [(
+                CommandId(42),
+                Settlement::SendRequest(Err(crate::engine::SendRequestFailure::ResourceCapacity,)),
+            )],
+        );
+        assert!(receiver.pending_resource_offers.is_empty());
+        assert!(!receiver.receipts.has_pending_request(request_id));
+        #[cfg(feature = "runtime-metrics")]
+        {
+            let events = receiver.metrics_snapshot().resources.admission_events;
+            assert_eq!(events.get(ResourceAdmissionEvent::Queued), 1);
+            assert_eq!(events.get(ResourceAdmissionEvent::Promoted), 0);
+            assert_eq!(events.get(ResourceAdmissionEvent::Expired), 1);
+            assert_eq!(events.get(ResourceAdmissionEvent::Rejected), 1);
+        }
+    }
+
+    #[test]
+    fn a_response_wait_never_outlives_its_request_deadline() {
+        use crate::routing::links::resources::ResourceCorrelation;
+
+        let mut receiver = engine_with_active_link();
+        fill_incoming_capacity(&mut receiver);
+        let request_id = track_pending_request(&mut receiver, CommandId(42), 1_800, 4_000);
+
+        let mut response_payload = four_part_payload();
+        response_payload[0] ^= 0x77;
+        let mut sender = engine_with_active_link();
+        let mut advertisement = None;
+        sender.ingest_send_resource_into(
+            &ResourceSend {
+                id: CommandId(7),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data: &response_payload,
+                    compressed_candidate: None,
+                    metadata: ResourceMetadata::None,
+                },
+                correlation: ResourceCorrelation::Response(request_id),
+            },
+            InstantMillis(2_000),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA7),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    advertisement = crate::engine::test_support::filled_frame(fill);
+                }
+            },
+        );
+        assert!(feed(&mut receiver, &advertisement.unwrap(), 2_100)
+            .frames
+            .is_empty());
+        assert_eq!(
+            receiver.resource_deadlines_wake(),
+            crate::engine::WakeSchedule::At(InstantMillis(4_000)),
+        );
+
+        let mut settlements = std::vec::Vec::new();
+        let wake = receiver.settle_timed_out_receipts(InstantMillis(4_000), &mut |reaction| {
+            if let EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) =
+                reaction
+            {
+                settlements.push((id, settlement));
+            }
+        });
+        assert_eq!(
+            settlements,
+            [(
+                CommandId(42),
+                Settlement::SendRequest(Err(crate::engine::SendRequestFailure::Timeout)),
+            )],
+        );
+        assert_eq!(
+            wake.resource_deadlines,
+            crate::engine::WakeSchedule::At(InstantMillis(0)),
+        );
+
+        let mut rejected = false;
+        receiver.fire_due_resource_deadlines(
+            InstantMillis(4_000),
+            &mut |bytes: &mut [u8]| bytes.fill(0xC8),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    if let Some(frame) = crate::engine::test_support::filled_frame(fill) {
+                        rejected |= WirePacketHeader::parse(&frame).is_ok_and(|(header, _)| {
+                            header.context == WireContext::ResourceReceiverCancel
+                        });
+                    }
+                }
+            },
+        );
+        assert!(rejected);
+        assert!(receiver.pending_resource_offers.is_empty());
+    }
+
+    #[test]
+    fn a_full_pending_queue_rejects_the_next_valid_offer() {
+        let mut receiver = engine_with_active_link();
+        fill_incoming_capacity(&mut receiver);
+
+        for changed_byte in [0x21, 0x22, 0x23, 0x24] {
+            let mut payload = four_part_payload();
+            payload[0] ^= changed_byte;
+            let waiting = feed(
+                &mut receiver,
+                &advertisement_frame(&payload, None),
+                2_100 + changed_byte as u64,
+            );
+            assert!(waiting.frames.is_empty());
+        }
+        assert_eq!(receiver.pending_resource_offers.len(), 4);
+
+        let mut overflow_payload = four_part_payload();
+        overflow_payload[0] ^= 0x25;
+        let rejected = feed(
+            &mut receiver,
+            &advertisement_frame(&overflow_payload, None),
+            2_200,
+        );
+        assert_eq!(rejected.frames.len(), 1);
+        assert_eq!(
+            WirePacketHeader::parse(&rejected.frames[0].1)
+                .unwrap()
+                .0
+                .context,
+            WireContext::ResourceReceiverCancel,
+        );
+        assert_eq!(receiver.pending_resource_offers.len(), 4);
+        #[cfg(feature = "runtime-metrics")]
+        {
+            let events = receiver.metrics_snapshot().resources.admission_events;
+            assert_eq!(events.get(ResourceAdmissionEvent::Queued), 4);
+            assert_eq!(events.get(ResourceAdmissionEvent::Rejected), 1);
+        }
+    }
+
+    #[test]
+    fn link_teardown_drops_its_waiting_offers_without_payload_state() {
+        let mut receiver = engine_with_active_link();
+        fill_incoming_capacity(&mut receiver);
+        let mut payload = four_part_payload();
+        payload[0] ^= 0x42;
+        assert!(
+            feed(&mut receiver, &advertisement_frame(&payload, None), 2_100,)
+                .frames
+                .is_empty()
+        );
+        assert_eq!(receiver.pending_resource_offers.len(), 1);
+
+        let mut close = [0u8; BROADCAST_MTU];
+        receiver
+            .write_owed_link_close(&link_id(), &test_entropy_bytes::<16>(0x91), &mut close)
+            .unwrap();
+        assert!(receiver.pending_resource_offers.is_empty());
+    }
+
+    #[test]
+    fn unauthenticated_advertisements_never_enter_the_wait_queue() {
+        let mut receiver = engine_with_active_link();
+        fill_incoming_capacity(&mut receiver);
+        let mut tampered = advertisement_frame(&four_part_payload(), None);
+        *tampered.last_mut().unwrap() ^= 0x80;
+
+        let ignored = feed(&mut receiver, &tampered, 2_100);
+        assert!(ignored.frames.is_empty());
+        assert!(receiver.pending_resource_offers.is_empty());
     }
 }

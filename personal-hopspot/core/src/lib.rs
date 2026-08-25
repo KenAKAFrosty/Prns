@@ -6,7 +6,6 @@ extern crate std;
 #[cfg(all(test, not(feature = "host")))]
 extern crate std;
 
-mod battery;
 mod destinations;
 mod flash_identity;
 mod flash_layout;
@@ -16,8 +15,8 @@ pub mod node_pages;
 mod persistence;
 mod radio_profile_store;
 mod screen;
+mod soft_ap;
 
-pub use battery::{BatteryGauge, BatteryPercent, BatterySource, BatteryState, NoBattery};
 pub use destinations::{
     hopspot_destination_hashes, HopspotDestinationHashes, HopspotDestinationSet,
 };
@@ -25,8 +24,19 @@ pub use flash_identity::{
     bootstrap_flash_ble_identity, bootstrap_flash_node_identity, FlashIdentityError,
 };
 pub use flash_layout::{
-    HopspotS3FlashLayout, HOPSPOT_FLASH_PAGE_BYTES, S3_16_MIB_FLASH_LAYOUT, S3_8_MIB_FLASH_LAYOUT,
-    T_ECHO_JOURNAL_LAYOUT, T_ECHO_MIN_ARENA_BYTES, T_ECHO_RADIO_PROFILE_PAGES,
+    FirmwareAddressRange, HopspotS3FlashLayout, Nrf52840FirmwareMemory,
+    HELTEC_DISPLAY_NRF52840_FIRMWARE_MEMORY, HELTEC_DISPLAY_NRF52840_JOURNAL_LAYOUT,
+    HOPSPOT_FLASH_PAGE_BYTES, MESH_TOWER_V2_BLE_IDENTITY_FLASH_OFFSET,
+    MESH_TOWER_V2_FIRMWARE_MEMORY, MESH_TOWER_V2_JOURNAL_LAYOUT,
+    MESH_TOWER_V2_RADIO_PROFILE_FLASH_OFFSET, MESH_TOWER_V2_RECOVERY_BOOTLOADER_FLASH_OFFSET,
+    NRF52840_BLE_IDENTITY_FLASH_OFFSET, NRF52840_MIN_ARENA_BYTES,
+    NRF52840_NODE_IDENTITY_FLASH_OFFSET, NRF52840_RADIO_PROFILE_PAGES, S3_16_MIB_FLASH_LAYOUT,
+    S3_8_MIB_FLASH_LAYOUT, T096_APPLICATION_DATA_END, T096_FACTORY_RESERVED_FLASH_OFFSET,
+    T096_RECOVERY_BOOTLOADER_FLASH_OFFSET, T1000E_FIRMWARE_MEMORY, T1000E_JOURNAL_LAYOUT,
+    T1000E_NODE_IDENTITY_FLASH_OFFSET, T1000E_RECOVERY_BOOTLOADER_FLASH_OFFSET,
+    T114_RECOVERY_BOOTLOADER_FLASH_OFFSET, T_ECHO_BLE_IDENTITY_FLASH_OFFSET, T_ECHO_JOURNAL_LAYOUT,
+    T_ECHO_MIN_ARENA_BYTES, T_ECHO_RESERVED_FLASH_END, T_ECHO_S140_V6_FIRMWARE_MEMORY,
+    T_ECHO_S140_V7_FIRMWARE_MEMORY,
 };
 #[cfg(feature = "host")]
 pub use identity::{
@@ -43,19 +53,31 @@ pub use mobile::{
     MOBILE_PANEL_WIDTH, MOBILE_PIXEL_COUNT, MOBILE_RGBA_BYTES,
 };
 pub use persistence::PersistenceState;
+pub use prns_core::capabilities::positioning::gnss::{
+    GnssFix, GnssReceiverCommand, GnssSnapshot, NmeaParser,
+};
+pub use prns_core::capabilities::positioning::{
+    AltitudeMillimeters, CoordinateOutOfRange, GeographicPosition, LatitudeE7, LongitudeE7,
+};
+pub use prns_core::capabilities::power::{
+    BatteryGauge, BatteryPercent, BatterySource, ChargingState, ExternalPowerState, NoBattery,
+    PowerSnapshot,
+};
 pub use radio_profile_store::{
     LoadedRadioProfile, RadioProfileLoadNotice, RadioProfileStore, RadioProfileStoreError,
 };
 pub use screen::{
     apply_and_persist_radio_profile, card_label, card_label_max_chars, render, splash,
-    tcp_card_label, AccessPointState, BluetoothRecoveryMenuDetails, Card, CardActivityTracker,
-    CardKind, CardLabel, DisplayPowerControl, EinkRefresh, EinkRefreshPolicy, EinkRefreshUrgency,
-    InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, OledAutoOff,
-    OledButtonOutcome, OledDarkReason, OledPowerCommand, OledPowerState, PersistenceNotice,
-    RadioProfileChangeResult, RenderFrame, ScreenContent, SharedInstanceConfigExport,
-    SplashContent, UiAction, UiConfiguration, UiNotice, UiState, WifiNetworkStatus,
-    WifiStationStatus,
+    tcp_card_label, AccessPointState, BluetoothRecoveryMenuDetails, CanvasDimensions, Card,
+    CardActivityTracker, CardKind, CardLabel, DisplayAutoOff, DisplayAutoOffDuration,
+    DisplayButtonOutcome, DisplayDarkReason, DisplayPowerCommand, DisplayPowerControl,
+    DisplayPowerState, EinkRefresh, EinkRefreshPolicy, EinkRefreshUrgency, GnssAvailability,
+    InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, LogicalPoint,
+    PersistenceNotice, QuarterTurn, RadioProfileChangeResult, RenderFrame, RotatedCanvasMapping,
+    ScreenContent, SharedInstanceConfigExport, SplashContent, UiAction, UiConfiguration, UiNotice,
+    UiState, WifiNetworkStatus, WifiStationStatus, DEFAULT_DISPLAY_AUTO_OFF,
 };
+pub use soft_ap::SoftApLeaseTable;
 
 use personal_rns::engine::{
     EngineProtocolPolicy, LinkMtuDiscovery, LocalHopCountOverride, ProofForm,

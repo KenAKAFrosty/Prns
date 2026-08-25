@@ -115,7 +115,7 @@ fn configure_local_development(version: &str, commit: &str) {
         .collect::<Vec<_>>()
         .join(",");
     if boards != selected {
-        panic!("{LOCAL_DEV_BOARDS_ENV} must use canonical shipping-board order");
+        panic!("{LOCAL_DEV_BOARDS_ENV} must use canonical catalog order");
     }
     let digest = required_environment(LOCAL_DEV_SOURCE_DIGEST_ENV);
     Sha256Digest::parse(digest.clone())

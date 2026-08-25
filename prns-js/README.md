@@ -12,7 +12,7 @@ For a published registry release:
 npm install personal-rns
 ```
 
-Prns 0.3.6 is available as a public GitHub prerelease. Registry publication has an independent qualification gate, so use the [source-checkout instructions](../docs/sdks.md#typescript-and-javascript) when you need the exact candidate before that gate completes.
+Prns 0.3.7 is available as a public GitHub prerelease. Registry publication has an independent qualification gate, so use the [source-checkout instructions](../docs/sdks.md#typescript-and-javascript) when you need the exact candidate before that gate completes.
 
 ## Create a host
 
@@ -66,6 +66,9 @@ for await (const event of claim.data) {
   match(event, {
     SingleDelivery: ({ destination, plaintext, sourceInterface }) => {
       receiveSingle(destination, plaintext, sourceInterface);
+    },
+    LinkDelivery: ({ linkId, plaintext, sourceInterface }) => {
+      receiveLinkPacket(linkId, plaintext, sourceInterface);
     },
     Request: receiveRequest,
     Response: receiveResponse,

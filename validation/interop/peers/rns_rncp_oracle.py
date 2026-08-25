@@ -1,14 +1,16 @@
-import pathlib
+import hashlib
 import os
+import pathlib
 import shutil
 import sys
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
-EXPECTED_RNS_VERSION = "1.4.2"
 LISTENER_PRIVATE = bytes([0x31]) * 32 + bytes([0x32]) * 32
 CLIENT_PRIVATE = bytes([0x41]) * 32 + bytes([0x42]) * 32
+RECEIVER_RECEIPT_DELIVERY_SECONDS = 1.0
 
 
 def prepare(
@@ -22,8 +24,6 @@ def prepare(
     listener_path,
     client_path,
 ):
-    if getattr(RNS, "__version__", "") != EXPECTED_RNS_VERSION:
-        raise RuntimeError(f"expected RNS {EXPECTED_RNS_VERSION}")
     config_dir = pathlib.Path(config_dir)
     client_config_dir = pathlib.Path(client_config_dir)
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -69,15 +69,18 @@ def prepare(
 
 
 def hold(config_dir):
-    RNS.Reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     print("RNCP_CLIENT_READY", flush=True)
     while True:
         time.sleep(0.25)
 
 
-def serve(config_dir, listener_path, save_path, fetch_path):
-    RNS.Reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
+def serve(config_dir, listener_path, expected_client_path, save_path, fetch_path):
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     listener = RNS.Identity.from_file(listener_path)
+    expected_client = RNS.Identity.from_file(expected_client_path)
+    if expected_client is None:
+        raise RuntimeError("expected Prns RNCP identity did not load")
     save_path = pathlib.Path(save_path).resolve()
     fetch_path = pathlib.Path(fetch_path).resolve()
     destination = RNS.Destination(
@@ -92,19 +95,64 @@ def serve(config_dir, listener_path, save_path, fetch_path):
         if resource.status != RNS.Resource.COMPLETE or resource.metadata is None:
             return
         name = os.path.basename(resource.metadata["name"].decode("utf-8"))
+        segments = resource.get_segments()
+        if name == "prns-send.bin" and segments != 1:
+            raise RuntimeError(f"Prns single-segment transfer used {segments} segments")
+        if name == "prns-segmented.bin" and segments <= 1:
+            raise RuntimeError("Prns segmented transfer completed as a single segment")
+        if name == "prns-compressed.bin":
+            if not resource.is_compressed():
+                raise RuntimeError("Prns compressible Resource arrived uncompressed")
+            if resource.get_transfer_size() >= resource.get_data_size():
+                raise RuntimeError("Prns compressed Resource did not reduce transport bytes")
         target = save_path.joinpath(name)
         counter = 0
         while target.exists():
             counter += 1
             target = save_path.joinpath(f"{name}.{counter}")
+        resource.data.close()
         shutil.move(resource.data.name, target)
+        if name == "prns-send.bin":
+            print(f"RNCP_SINGLE_SEGMENT_RECEIVED name={name} segments={segments}", flush=True)
+        if name == "prns-segmented.bin":
+            print(f"RNCP_SEGMENTED_RECEIVED name={name} segments={segments}", flush=True)
+        if name == "prns-compressed.bin":
+            print(
+                f"RNCP_COMPRESSED_RECEIVED name={name} "
+                f"transport={resource.get_transfer_size()} data={resource.get_data_size()}",
+                flush=True,
+            )
+
+    active_resources = []
+    progress_reported = set()
+
+    def identified(link, identity):
+        if identity.hash == expected_client.hash:
+            print(f"RNCP_PRNS_IDENTIFIED {identity.hash.hex()}", flush=True)
+
+    def authorize(resource):
+        identity = resource.link.get_remote_identity()
+        if identity is None:
+            print("RNCP_PRNS_UNAUTHORIZED anonymous", flush=True)
+            return False
+        if identity.hash != expected_client.hash:
+            print(f"RNCP_PRNS_UNAUTHORIZED {identity.hash.hex()}", flush=True)
+            return False
+        return True
+
+    def started(resource):
+        active_resources.append(resource)
 
     def established(link):
         link.set_resource_strategy(RNS.Link.ACCEPT_APP)
-        link.set_resource_callback(lambda resource: True)
+        link.set_remote_identified_callback(identified)
+        link.set_resource_callback(authorize)
+        link.set_resource_started_callback(started)
         link.set_resource_concluded_callback(concluded)
 
     def fetch(path, data, request_id, link_id, remote_identity, requested_at):
+        if remote_identity is None or remote_identity.hash != expected_client.hash:
+            return False
         candidate = fetch_path.joinpath(str(data).lstrip("/")).resolve()
         if fetch_path not in candidate.parents or not candidate.is_file():
             return False
@@ -112,6 +160,7 @@ def serve(config_dir, listener_path, save_path, fetch_path):
             if active.link_id == link_id:
                 metadata = {"name": candidate.name.encode("utf-8")}
                 RNS.Resource(open(candidate, "rb"), active, metadata=metadata)
+                print(f"RNCP_PRNS_FETCH_AUTHORIZED {remote_identity.hash.hex()}", flush=True)
                 return True
         return None
 
@@ -124,11 +173,43 @@ def serve(config_dir, listener_path, save_path, fetch_path):
     destination.announce()
     print(f"RNCP_SERVER_READY {destination.hash.hex()}", flush=True)
     while True:
+        for resource in active_resources:
+            marker = bytes(resource.hash)
+            if marker not in progress_reported and resource.get_progress() > 0:
+                progress_reported.add(marker)
+                print(f"RNCP_RESOURCE_ACTIVE progress={resource.get_progress():.6f}", flush=True)
         time.sleep(0.25)
 
 
 def identity_hash(path):
     print(RNS.Identity.from_file(path).hash.hex())
+
+
+def prepare_fixtures(work_path):
+    work = pathlib.Path(work_path)
+    work.joinpath("prns-send.bin").write_bytes(b"prns-to-stock\n" * 12000)
+    work.joinpath("stock-send.bin").write_bytes(b"stock-to-prns\n" * 12000)
+    work.joinpath("prns-compressed.bin").write_bytes(b"prns-compressed-resource\n" * 12000)
+    work.joinpath("stock-compressed.bin").write_bytes(b"stock-compressed-resource\n" * 12000)
+    work.joinpath("stock-fetch/stock.txt").write_bytes(b"served-by-stock\n" * 12000)
+    work.joinpath("prns-fetch/prns.txt").write_bytes(b"served-by-prns\n" * 12000)
+    work.joinpath("interrupt-prns.bin").write_bytes(os.urandom(32 * 1024 * 1024))
+    work.joinpath("cancel-stock.bin").write_bytes(os.urandom(32 * 1024 * 1024))
+    segment_crossing_size = RNS.Resource.MAX_EFFICIENT_SIZE + 4096
+    for name, seed in (("prns-segmented.bin", b"prns"), ("stock-segmented.bin", b"stock")):
+        blocks = []
+        generated = 0
+        counter = 0
+        while generated < segment_crossing_size:
+            block = hashlib.sha256(seed + counter.to_bytes(8, "big")).digest()
+            blocks.append(block)
+            generated += len(block)
+            counter += 1
+        work.joinpath(name).write_bytes(b"".join(blocks)[:segment_crossing_size])
+    for size in (1, 464, 465):
+        work.joinpath(f"boundary-{size}.bin").write_bytes(
+            bytes((index * 37) & 0xFF for index in range(size))
+        )
 
 
 def wait_for(predicate, timeout, failure):
@@ -141,7 +222,7 @@ def wait_for(predicate, timeout, failure):
 
 
 def cancel_send(config_dir, identity_path, destination_hash, source_path, *recovery_paths):
-    RNS.Reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     destination_hash = bytes.fromhex(destination_hash)
     if not RNS.Transport.has_path(destination_hash):
         RNS.Transport.request_path(destination_hash)
@@ -191,21 +272,36 @@ def cancel_send(config_dir, identity_path, destination_hash, source_path, *recov
     link.teardown()
     source.close()
     time.sleep(0.25)
-    recovery_link = RNS.Link(destination)
-    wait_for(
-        lambda: recovery_link.status == RNS.Link.ACTIVE,
-        10,
-        "recovery link did not activate",
-    )
-    recovery_link.identify(local_identity)
+    segmented_recoveries = 0
+    compressed_recoveries = 0
+    single_segment_recoveries = 0
     for recovery_path in map(pathlib.Path, recovery_paths):
+        recovery_link = RNS.Link(destination)
+        wait_for(
+            lambda: recovery_link.status == RNS.Link.ACTIVE,
+            10,
+            f"recovery link for {recovery_path.name} did not activate",
+        )
+        recovery_link.identify(local_identity)
         recovery_source = open(recovery_path, "rb")
         recovery = RNS.Resource(
             recovery_source,
             recovery_link,
             metadata={"name": recovery_path.name.encode("utf-8")},
-            auto_compress=False,
+            auto_compress=recovery_path.name == "stock-compressed.bin",
         )
+        if recovery_path.name == "stock-compressed.bin":
+            if not recovery.is_compressed():
+                raise RuntimeError("stock compressible Resource was not compressed")
+            if recovery.get_transfer_size() >= recovery.get_data_size():
+                raise RuntimeError("stock compressed Resource did not reduce transport bytes")
+            compressed_recoveries += 1
+        if recovery_path.stat().st_size <= RNS.Resource.MAX_EFFICIENT_SIZE:
+            if recovery.get_segments() != 1:
+                raise RuntimeError(
+                    f"recovery transfer {recovery_path.name} used {recovery.get_segments()} segments"
+                )
+            single_segment_recoveries += 1
         wait_for(
             lambda: recovery.status >= RNS.Resource.COMPLETE,
             30,
@@ -215,11 +311,20 @@ def cancel_send(config_dir, identity_path, destination_hash, source_path, *recov
             raise RuntimeError(
                 f"recovery transfer {recovery_path.name} failed with status {recovery.status}"
             )
+        if recovery_path.stat().st_size > RNS.Resource.MAX_EFFICIENT_SIZE:
+            if recovery.get_segments() <= 1:
+                raise RuntimeError(
+                    f"recovery transfer {recovery_path.name} did not cross a segment boundary"
+                )
+            segmented_recoveries += 1
+        time.sleep(RECEIVER_RECEIPT_DELIVERY_SECONDS)
         recovery_source.close()
-    recovery_link.teardown()
+        recovery_link.teardown()
     print(
         f"RNCP_CANCEL_OK progress={resource.get_progress():.6f} "
-        f"recovery_files={len(recovery_paths)}"
+        f"recovery_files={len(recovery_paths)} segmented_recoveries={segmented_recoveries} "
+        f"compressed_recoveries={compressed_recoveries} "
+        f"single_segment_recoveries={single_segment_recoveries}"
     )
 
 
@@ -232,6 +337,8 @@ if __name__ == "__main__":
         hold(*sys.argv[2:])
     elif sys.argv[1] == "identity-hash":
         identity_hash(*sys.argv[2:])
+    elif sys.argv[1] == "prepare-fixtures":
+        prepare_fixtures(*sys.argv[2:])
     elif sys.argv[1] == "cancel-send":
         cancel_send(*sys.argv[2:])
     else:

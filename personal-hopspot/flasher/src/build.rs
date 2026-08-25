@@ -445,22 +445,28 @@ fn build_uf2(
     let mut artifacts = Vec::with_capacity(variants.len());
     for variant in variants {
         let target_directory = crate_dir.join(&variant.target_directory);
+        let features = match variant.application_link.cargo_feature() {
+            Some(link_feature) => format!("{},{link_feature}", build.board_feature),
+            None => build.board_feature.clone(),
+        };
         let mut cargo = embedded_cargo_command();
         cargo
             .arg("build")
             .arg("--release")
             .arg("--locked")
             .arg("--no-default-features")
+            .arg("--bin")
+            .arg(&build.binary)
             .arg("--features")
-            .arg(format!("board-t-echo,{}", variant.cargo_feature))
+            .arg(features)
             .arg("--target-dir")
             .arg(&target_directory)
             .current_dir(&crate_dir);
-        run_status(&mut cargo, "T-Echo cargo build")?;
+        run_status(&mut cargo, &format!("{} cargo build", board.display_name))?;
         let elf = target_directory
             .join(&build.rust_target)
             .join("release")
-            .join(&build.package);
+            .join(&build.binary);
         let binary = work_dir.join(format!("{}.bin", variant.softdevice_version));
         run_status(
             Command::new(&objcopy)
@@ -503,9 +509,10 @@ fn build_uf2(
         None => validated_prepared_target(board, version, target)?,
     };
     let ReleaseTarget::Uf2(validated_uf2) = &target else {
-        return Err(AppError::developer_manifest(
-            "built T-Echo target did not validate as UF2",
-        ));
+        return Err(AppError::developer_manifest(format!(
+            "built {} target did not validate as UF2",
+            board.display_name
+        )));
     };
     if validated_uf2.variants().len() != artifacts.len() {
         return Err(AppError::developer_artifact(
@@ -678,7 +685,7 @@ fn build_nrf_serial_dfu(
         ),
         recovery: NrfSerialDfuRecoveryManifest {
             mount_label: build.recovery.mount_label.clone(),
-            board_id_prefix: build.recovery.board_id_prefix.clone(),
+            board_id_prefix: build.recovery.board_identity.value.clone(),
             family_id: build.recovery.family_id.clone(),
             artifact: release_artifact(
                 board,
@@ -933,16 +940,22 @@ fn sparse_size_gate(board_slug: &str) -> Option<(u64, u64)> {
 }
 
 fn release_version(repo: &Path) -> Result<String, AppError> {
-    fs::read_to_string(repo.join("VERSION"))
-        .map(|value| value.trim().to_string())
-        .map_err(|error| AppError::developer_repository(format!("could not read VERSION: {error}")))
-        .and_then(|version| {
-            if version.is_empty() || version.eq_ignore_ascii_case("next") {
-                Err(AppError::developer_repository("VERSION is not publishable"))
-            } else {
-                Ok(version)
-            }
-        })
+    let version = match std::env::var("PRNS_FLASH_VERSION") {
+        Ok(version) => version,
+        Err(std::env::VarError::NotPresent) => {
+            fs::read_to_string(repo.join("VERSION")).map_err(|error| {
+                AppError::developer_repository(format!("could not read VERSION: {error}"))
+            })?
+        }
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(AppError::developer_repository(
+                "PRNS_FLASH_VERSION must be UTF-8",
+            ));
+        }
+    };
+    ReleaseVersion::parse(version.trim().to_string())
+        .map(|version| version.as_str().to_string())
+        .map_err(|error| AppError::developer_repository(error.to_string()))
 }
 
 fn resolve_build_version(repo: &Path, build_version: BuildVersion<'_>) -> Result<String, AppError> {
@@ -1042,7 +1055,7 @@ mod tests {
     #[test]
     fn all_catalog_boards_have_a_build_recipe() -> Result<(), Box<dyn std::error::Error>> {
         let catalog = prns_flash_manifest::board_catalog()?;
-        assert_eq!(catalog.boards.len(), 6);
+        assert_eq!(catalog.boards.len(), 8);
         assert!(catalog.boards.iter().all(|board| {
             matches!(
                 (&board.transport, &board.build),
@@ -1068,6 +1081,21 @@ mod tests {
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].softdevice_version, "6.1.1");
         assert_eq!(compatible_uf2_build_variants(build, None).len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn a_rebootloadered_t114_matches_no_build_variant() -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = prns_flash_manifest::board_catalog()?;
+        let board = catalog.board("t114").ok_or("missing T114")?;
+        let BoardBuild::Uf2(build) = &board.build else {
+            return Err("T114 is not a UF2 build".into());
+        };
+        let stock = SoftdeviceIdentity::parse("s140", "6.1.1")?;
+        let rebootloadered = SoftdeviceIdentity::parse("s140", "7.3.0")?;
+
+        assert_eq!(compatible_uf2_build_variants(build, Some(&stock)).len(), 1);
+        assert!(compatible_uf2_build_variants(build, Some(&rebootloadered)).is_empty());
         Ok(())
     }
 

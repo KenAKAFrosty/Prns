@@ -15,7 +15,8 @@ use super::contract::BridgePhase;
 use super::model::{
     guided_steps, initial_status, parse_uf2_selection, preparation_guide,
     shares_serial_chip_identity, DestructiveConfirmation, FlasherState, InstallMode,
-    ReleaseCompatibility, ReleaseDetails, WebSerialCapability, WifiAction,
+    NrfSerialDfuEntry, ReleaseCompatibility, ReleaseDetails, WebSerialCapability, WebUsbCapability,
+    WifiAction,
 };
 use super::release;
 use super::trust;
@@ -26,7 +27,8 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
     let flash_target = target
         .flash_target
         .expect("the guided flasher only renders cataloged flash targets");
-    let is_esp = flash_target.uses_web_serial();
+    let is_esp = matches!(flash_target, BoardFlashTarget::EspSerial { .. });
+    let is_nrf = matches!(flash_target, BoardFlashTarget::NrfSerialDfu { .. });
     let supports_wifi = flash_target.supports_provisioning();
     let supports_tcp_client = flash_target.supports_tcp_client_provisioning();
 
@@ -47,6 +49,9 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
     let mut prepared = use_signal(|| false);
     let mut release_details = use_signal(|| None::<ReleaseDetails>);
     let mut web_serial = use_signal(|| WebSerialCapability::Checking);
+    let mut web_usb = use_signal(|| WebUsbCapability::Checking);
+    let mut nrf_entry = use_signal(|| NrfSerialDfuEntry::ManagedApplication);
+    let mut nrf_recovery = use_signal(|| false);
     let mut uf2_identity = use_signal(|| None::<prns_flash_manifest::Uf2BootloaderIdentity>);
     let mut uf2_identity_status = use_signal(|| {
         "Select INFO_UF2.TXT from the mounted bootloader drive to detect its SoftDevice foundation."
@@ -73,7 +78,7 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
     });
 
     use_effect(move || {
-        if is_esp {
+        if flash_target.uses_web_serial() {
             spawn(async move {
                 let capability = bridge::web_serial_capability().await;
                 web_serial.set(capability);
@@ -83,20 +88,48 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
             });
         }
     });
+    use_effect(move || {
+        if is_nrf {
+            spawn(async move {
+                web_usb.set(bridge::web_usb_capability().await);
+            });
+        }
+    });
 
     let busy = preparation_active() || bridge::is_busy(phase());
     let device_operation_active = busy && !preparation_active();
-    let browser_ready = !is_esp || web_serial().permits_esp_flash();
-    let browser_checking = is_esp && web_serial() == WebSerialCapability::Checking;
-    let browser_android = is_esp && web_serial() == WebSerialCapability::AndroidBluetoothOnly;
-    let browser_blocked = is_esp && web_serial() == WebSerialCapability::Unavailable;
+    let nrf_recovery_selected = is_nrf && nrf_recovery();
+    let direct_serial_selected = flash_target.uses_web_serial() && !nrf_recovery_selected;
+    let managed_nrf_selected =
+        is_nrf && !nrf_recovery_selected && nrf_entry() == NrfSerialDfuEntry::ManagedApplication;
+    let browser_ready = !direct_serial_selected
+        || (web_serial().permits_usb_serial_flash()
+            && (!managed_nrf_selected || web_usb() == WebUsbCapability::Supported));
+    let browser_checking = direct_serial_selected
+        && (web_serial() == WebSerialCapability::Checking
+            || (managed_nrf_selected && web_usb() == WebUsbCapability::Checking));
+    let browser_android =
+        direct_serial_selected && web_serial() == WebSerialCapability::AndroidBluetoothOnly;
+    let browser_blocked =
+        direct_serial_selected && web_serial() == WebSerialCapability::Unavailable;
+    let web_usb_blocked = managed_nrf_selected
+        && web_serial().permits_usb_serial_flash()
+        && web_usb() == WebUsbCapability::Unavailable;
+    let uf2_mount_label = match flash_target {
+        BoardFlashTarget::Uf2MassStorage { mount_label, .. } => Some(mount_label),
+        BoardFlashTarget::NrfSerialDfu {
+            recovery_mount_label,
+            ..
+        } if nrf_recovery_selected => Some(recovery_mount_label),
+        _ => None,
+    };
     let destructive_action_permitted = destructive_confirmation().permits(install_mode());
     let can_prepare = confirmed()
         && destructive_action_permitted
         && !busy
         && key_ready
         && browser_ready
-        && (is_esp || uf2_identity().is_some())
+        && (uf2_mount_label.is_none() || uf2_identity().is_some())
         && (!tcp_enabled() || !tcp_target().trim().is_empty());
     let can_flash = prepared() && !busy && browser_ready;
     let action_label = match (flash_target, install_mode()) {
@@ -105,12 +138,19 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
             "Connect, erase, and install"
         }
         (BoardFlashTarget::Uf2MassStorage { .. }, _) => "Download verified UF2",
+        (BoardFlashTarget::NrfSerialDfu { .. }, _) if nrf_recovery_selected => {
+            "Download verified recovery UF2"
+        }
+        (BoardFlashTarget::NrfSerialDfu { .. }, _) => "Connect and update tracker",
     };
     let cancellation_available = preparation_active()
         || install_mode() == InstallMode::PreserveData
         || matches!(
             phase(),
-            BridgePhase::RequestingPort | BridgePhase::Connecting | BridgePhase::VerifyingTarget
+            BridgePhase::RequestingPort
+                | BridgePhase::Connecting
+                | BridgePhase::AwaitingBootloaderPort
+                | BridgePhase::VerifyingTarget
         );
     let wifi_choices = match install_mode() {
         InstallMode::PreserveData => [
@@ -275,18 +315,101 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                     }
                 }
 
-                if let Some(profile) = target.preparation_profile {
-                    PreparationInstructions { profile, flash_target }
+                if is_nrf {
+                    fieldset { class: "flash-wifi-config mt-5",
+                        legend { class: "font-semibold text-paper", "Tracker entry path" }
+                        p { class: "mt-2 text-sm text-soft",
+                            "Direct Nordic DFU is the default. Select the firmware currently running so the browser uses one exact, fail-closed USB entry contract."
+                        }
+                        div { class: "mt-3 grid gap-3 text-sm text-soft",
+                            for (value, label, detail) in [
+                                (
+                                    NrfSerialDfuEntry::ManagedApplication,
+                                    "Personal Hopspot is running",
+                                    "Uses the exact Personal Hopspot WebUSB identity to enter the bootloader automatically.",
+                                ),
+                                (
+                                    NrfSerialDfuEntry::TouchApplicationOrBootloader,
+                                    "Seeed/Meshtastic firmware or bootloader",
+                                    "Uses the exact T1000-E Web Serial identity and a bounded 1200-baud bootloader entry.",
+                                ),
+                            ] {
+                                label { class: "flex cursor-pointer items-start gap-3 rounded-lg border border-line/60 bg-surface/40 p-4",
+                                    input {
+                                        r#type: "radio",
+                                        name: "nrf-entry",
+                                        checked: nrf_entry() == value,
+                                        disabled: device_operation_active || nrf_recovery_selected,
+                                        onchange: {
+                                            let event_state = state.clone();
+                                            move |_| {
+                                                nrf_entry.set(value);
+                                                invalidate_preparation(
+                                                    event_state.clone(),
+                                                    "Tracker entry path changed. Prepare and verify the signed release again.",
+                                                );
+                                            }
+                                        },
+                                    }
+                                    span {
+                                        strong { class: "block text-paper", "{label}" }
+                                        span { class: "mt-1 block text-xs text-mid", "{detail}" }
+                                    }
+                                }
+                            }
+                        }
+                        label { class: "mt-3 flex cursor-pointer items-start gap-3 rounded-lg border border-line/60 bg-surface/40 p-4 text-sm text-soft",
+                            input {
+                                r#type: "checkbox",
+                                checked: nrf_recovery_selected,
+                                disabled: device_operation_active,
+                                onchange: {
+                                    let event_state = state.clone();
+                                    move |event| {
+                                        let selected = event.checked();
+                                        nrf_recovery.set(selected);
+                                        uf2_identity.set(None);
+                                        uf2_identity_status.set(
+                                            "Select INFO_UF2.TXT from the mounted bootloader drive to detect its SoftDevice foundation."
+                                                .to_string(),
+                                        );
+                                        invalidate_preparation(
+                                            event_state.clone(),
+                                            if selected {
+                                                "Recovery UF2 selected. Enter the bootloader and select INFO_UF2.TXT."
+                                            } else {
+                                                "Direct Nordic DFU selected. Confirm the current firmware and prepare the signed release."
+                                            },
+                                        );
+                                    }
+                                },
+                            }
+                            span {
+                                strong { class: "block text-paper", "Use recovery UF2 fallback" }
+                                span { class: "mt-1 block text-xs text-mid",
+                                    "Keeps the verified recovery route available without weakening or silently replacing direct DFU."
+                                }
+                            }
+                        }
+                    }
                 }
 
-                if !is_esp {
+                if let Some(profile) = target.preparation_profile {
+                    PreparationInstructions {
+                        profile,
+                        flash_target,
+                        nrf_recovery: nrf_recovery_selected,
+                    }
+                }
+
+                if let Some(mount_label) = uf2_mount_label {
                     fieldset { class: "flash-wifi-config mt-5",
                         legend { class: "font-semibold text-paper", "Detect firmware foundation" }
                         p { class: "mt-2 text-sm text-soft",
-                            "Select INFO_UF2.TXT from TECHOBOOT. It is read entirely in this browser, never uploaded, and its contents are discarded after identity parsing."
+                            "Select INFO_UF2.TXT from {mount_label}. It is read entirely in this browser, never uploaded, and its contents are discarded after identity parsing."
                         }
                         input {
-                            class: "mt-3 block w-full text-sm text-soft",
+                            class: "mt-3 block w-full cursor-pointer text-sm text-soft file:mr-4 file:cursor-pointer file:rounded-lg file:border file:border-solid file:border-accent/50 file:bg-accent/15 file:px-4 file:py-2.5 file:text-sm file:font-semibold file:text-accent file:transition-colors hover:file:bg-accent/25 disabled:cursor-not-allowed disabled:file:cursor-not-allowed disabled:file:border-line/60 disabled:file:bg-layer/40 disabled:file:text-soft",
                             r#type: "file",
                             accept: ".txt,text/plain",
                             disabled: device_operation_active,
@@ -490,7 +613,7 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                         span { class: bridge::status_class(phase()), "{bridge::phase_label(phase())}" }
                     }
                     ol { class: "flash-step-list mt-4",
-                        for (index, step) in guided_steps(flash_target, install_mode()).iter().enumerate() {
+                        for (index, step) in guided_steps(flash_target, install_mode(), nrf_recovery_selected).iter().enumerate() {
                             li {
                                 span { class: "flash-step-list__index", "{index + 1}" }
                                 span { "{step}" }
@@ -520,7 +643,15 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                     }
                 } else if browser_blocked {
                     div { class: "flash-web-install-message mt-5",
-                        "Direct ESP flashing requires a secure current desktop browser with Web Serial: Chrome, Edge, or Firefox 151 or later. The standalone CLI provides the same verified release path."
+                        if is_nrf {
+                            "Direct Nordic DFU requires Web Serial, and Personal Hopspot entry also requires WebUSB. Use current desktop Chrome or Edge, switch to recovery UF2, or use the standalone CLI."
+                        } else {
+                            "Direct ESP flashing requires a secure current desktop browser with Web Serial: Chrome, Edge, or Firefox 151 or later. The standalone CLI provides the same verified release path."
+                        }
+                    }
+                } else if web_usb_blocked {
+                    div { class: "flash-web-install-message mt-5",
+                        "This browser has Web Serial but not the WebUSB capability needed to enter Personal Hopspot's bootloader. Open this page in current desktop Chrome or Edge for automatic entry. Otherwise, select the Seeed/Meshtastic path only if that is truly what the tracker runs, switch to recovery UF2, or use the standalone CLI."
                     }
                 }
 
@@ -600,6 +731,16 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                     };
                                     ReleaseCompatibility::Uf2(identity.softdevice().clone())
                                 }
+                                BoardFlashTarget::NrfSerialDfu { .. } if nrf_recovery_selected => {
+                                    let Some(identity) = uf2_identity() else {
+                                        status.set("Select a valid INFO_UF2.TXT before preparing the recovery release.".to_string());
+                                        return;
+                                    };
+                                    ReleaseCompatibility::Uf2(identity.softdevice().clone())
+                                }
+                                BoardFlashTarget::NrfSerialDfu { .. } => {
+                                    ReleaseCompatibility::NrfSerialDfu(nrf_entry())
+                                }
                             };
                             let mut preparation_state = event_state.clone();
                             let generation = preparation_state.begin_preparation();
@@ -643,6 +784,14 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                     "{action_label}"
                 }
                 if busy {
+                    if phase() == BridgePhase::AwaitingBootloaderPort {
+                        button {
+                            r#type: "button",
+                            class: "flash-primary-action",
+                            onclick: move |_| bridge::continue_nrf_bootloader_selection(),
+                            "Continue and choose bootloader port"
+                        }
+                    }
                     button {
                         r#type: "button",
                         class: "rounded-lg border border-line px-4 py-3 text-sm font-semibold text-soft",
@@ -660,11 +809,11 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
                                     if was_preparing {
                                         "Release preparation cancelled. Review the selection before retrying."
                                     } else {
-                                        "Cancellation requested; an active write will finish its safe operation before stopping."
+                                        "Cancellation requested; the current bounded protocol operation will settle before stopping."
                                     },
                                 );
                                 if !was_preparing {
-                                    status.set("Cancellation requested; an active write will finish its safe operation before stopping.".to_string());
+                                    status.set("Cancellation requested; the current bounded protocol operation will settle before stopping.".to_string());
                                 }
                                 bridge::focus_status();
                             }
@@ -724,8 +873,12 @@ fn BuildTrustMarker() -> Element {
 }
 
 #[component]
-fn PreparationInstructions(profile: PreparationProfile, flash_target: BoardFlashTarget) -> Element {
-    let guide = preparation_guide(profile, flash_target);
+fn PreparationInstructions(
+    profile: PreparationProfile,
+    flash_target: BoardFlashTarget,
+    nrf_recovery: bool,
+) -> Element {
+    let guide = preparation_guide(profile, flash_target, nrf_recovery);
 
     rsx! {
         section {
@@ -787,6 +940,7 @@ pub(super) fn BoardTargetCard(board: &'static BoardTarget, selected: bool) -> El
             } else {
                 p { class: "flash-interfaces-pending mt-4",
                     match board.tier {
+                        Tier::Qualification => "Hardware qualification in progress",
                         Tier::BringUp => "Bring-up in progress",
                         Tier::Roadmap => "Planned",
                         Tier::Shipping | Tier::SdkPreview | Tier::Flashable => "Coming later",
@@ -815,7 +969,7 @@ pub(super) fn UnavailablePanel() -> Element {
     rsx! {
         section { class: "rounded-card border border-line/60 bg-layer/40 p-5",
             h2 { class: "text-xl font-semibold text-paper", "Not flashable yet" }
-            p { class: "mt-3 text-soft", "This target is still in bring-up or roadmap tracking." }
+            p { class: "mt-3 text-soft", "This target is still in hardware qualification, bring-up, or roadmap tracking. It becomes flashable here once its signed release lane opens." }
         }
     }
 }

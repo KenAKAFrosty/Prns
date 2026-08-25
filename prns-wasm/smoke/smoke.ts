@@ -376,6 +376,8 @@ function describeEvent(event: PrnsEvent): string {
       `announce destination=${hex(destination)} hops=${hops} interface=${hex(sourceInterface)}`,
     SingleDelivery: ({ destination, plaintext, sourceInterface }) =>
       `single delivery destination=${hex(destination)} bytes=${plaintext.length} interface=${hex(sourceInterface)}`,
+    LinkDelivery: ({ linkId, plaintext, sourceInterface }) =>
+      `link delivery link=${hex(linkId)} bytes=${plaintext.length} interface=${hex(sourceInterface)}`,
     Request: ({ destination, linkId, requestId, data }) =>
       `request destination=${hex(destination)} link=${hex(linkId)} request=${hex(requestId)} bytes=${data.length}`,
     Response: ({ linkId, requestId, data }) =>

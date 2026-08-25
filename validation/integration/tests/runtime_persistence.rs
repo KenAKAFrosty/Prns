@@ -23,6 +23,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 const BITRATE: BitrateBps = BitrateBps::guess(1_000_000);
 const ANNOUNCE_DELIVERY_DEADLINE: Duration = Duration::from_secs(5);
+const SANITIZED_ANNOUNCE_DELIVERY_DEADLINE: Duration = Duration::from_secs(15);
 const ANNOUNCE_RETRY_INTERVAL: Duration = Duration::from_millis(200);
 
 #[derive(Debug)]
@@ -30,6 +31,14 @@ enum AnnounceDeliveryFailure {
     Deadline,
     ChannelClosed,
     UnsuccessfulSettlement,
+}
+
+fn announce_delivery_deadline() -> Duration {
+    if std::env::var_os("TSAN_OPTIONS").is_some() {
+        SANITIZED_ANNOUNCE_DELIVERY_DEADLINE
+    } else {
+        ANNOUNCE_DELIVERY_DEADLINE
+    }
 }
 
 fn secret(byte: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
@@ -56,7 +65,7 @@ async fn hear_announced_destination(
     heard_rx: &mut UnboundedReceiver<DestinationHash>,
     announce: &AnnounceNow,
 ) -> Result<(), AnnounceDeliveryFailure> {
-    let deadline = tokio::time::Instant::now() + ANNOUNCE_DELIVERY_DEADLINE;
+    let deadline = tokio::time::Instant::now() + announce_delivery_deadline();
     let mut retry_at = tokio::time::Instant::now() + ANNOUNCE_RETRY_INTERVAL;
     loop {
         tokio::select! {
@@ -532,7 +541,7 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
             .expect("the first announce settles successfully");
         hear_announced_destination(&commands_a, &mut heard_rx, &first_announce)
             .await
-            .expect("B hears the first announce within 5s");
+            .expect("B hears the first announce within the delivery deadline");
 
         let mut mark = FlushMark::default();
         let first = commands_b
@@ -576,7 +585,7 @@ async fn a_quiet_flush_skips_unchanged_regions_and_a_change_rewrites() {
         }
         hear_announced_destination(&commands_a, &mut heard_rx, &second_announce)
             .await
-            .expect("B hears the second announce within 5s");
+            .expect("B hears the second announce within the delivery deadline");
 
         let changed = commands_b
             .flush_changed_to_store(&mut store, &mut mark)

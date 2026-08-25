@@ -2,8 +2,9 @@ use jni::objects::{JByteBuffer, JClass, JString};
 use jni::sys::{jboolean, jint, jlong, jlongArray, jstring};
 use jni::JNIEnv;
 use personal_hopspot_core::{
-    BatteryPercent, BatteryState, MobileActionCode, MobileEngineFailure, MobileEngineState,
-    MobileInputCode, COALESCE_MS, MOBILE_PANEL_HEIGHT, MOBILE_PANEL_WIDTH, MOBILE_RGBA_BYTES,
+    BatteryPercent, ExternalPowerState, MobileActionCode, MobileEngineFailure, MobileEngineState,
+    MobileInputCode, PowerSnapshot, COALESCE_MS, MOBILE_PANEL_HEIGHT, MOBILE_PANEL_WIDTH,
+    MOBILE_RGBA_BYTES,
 };
 
 use crate::engine::{
@@ -258,7 +259,7 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeSetBattery(
     _class: JClass,
     handle: jlong,
     percent: jint,
-    charging: jboolean,
+    externally_powered: jboolean,
 ) {
     // SAFETY: as in `nativePostInput`, a non-null `handle` is a live `HopspotFace` from
     // `nativeInit`; `as_mut` yields `None` for null rather than dereferencing it.
@@ -267,11 +268,10 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeSetBattery(
     };
     let pct = percent.clamp(0, 100) as u8;
     let pct = BatteryPercent::saturating(pct);
-    let state = if charging != 0 {
-        BatteryState::Charging(pct)
-    } else {
-        BatteryState::Level(pct)
-    };
+    let state = PowerSnapshot::new(
+        Some(pct),
+        ExternalPowerState::from_presence(externally_powered != 0),
+    );
     face.set_battery(state);
 }
 

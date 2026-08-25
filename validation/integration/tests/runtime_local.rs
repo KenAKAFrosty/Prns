@@ -66,6 +66,7 @@ async fn an_app_dials_the_shared_instance_and_is_heard_at_a_discounted_hop() {
                 destination,
                 hops,
                 source_interface,
+                app_data: _,
             }) = event
             {
                 let _ = heard_tx.send((destination, hops, source_interface));

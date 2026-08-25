@@ -326,6 +326,15 @@ async fn acquire_release(
                     .part(),
             ),
         ],
+        (ReleaseTarget::NrfSerialDfu(target), ReleaseCompatibility::Uf2(softdevice))
+            if target.compatibility().softdevice() == softdevice =>
+        {
+            vec![ReleasePartRef::NrfSerialDfu(target.recovery().artifact())]
+        }
+        (ReleaseTarget::NrfSerialDfu(target), ReleaseCompatibility::NrfSerialDfu(_)) => vec![
+            ReleasePartRef::NrfSerialDfu(target.application()),
+            ReleasePartRef::NrfSerialDfu(target.init_packet()),
+        ],
         _ => {
             return Err(ReleaseAcquisitionError::review_selection(
                 "The detected compatibility foundation does not match the selected transport.",

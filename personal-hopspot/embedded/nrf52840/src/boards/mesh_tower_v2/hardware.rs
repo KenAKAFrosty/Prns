@@ -77,8 +77,7 @@ impl MeshTowerV2Board {
         interrupt::USBD.set_priority(Priority::P2);
         interrupt::TWISPI0.set_priority(Priority::P3);
         static SOFTWARE_VBUS: StaticCell<SoftwareVbusDetect> = StaticCell::new();
-        let vbus: &'static SoftwareVbusDetect =
-            &*SOFTWARE_VBUS.init(SoftwareVbusDetect::new(true, true));
+        let vbus = crate::runtime::software_vbus::initialize(&SOFTWARE_VBUS);
         let usb = Driver::new(peripherals.USBD, Irqs, vbus);
 
         let mut radio_spim_config = spim::Config::default();
@@ -144,6 +143,7 @@ impl MeshTowerV2Board {
                 rx_boost: true,
                 dio2_as_rf_switch: true,
                 external_rx_gain_db: 0,
+                external_power_amplifier: None,
                 enter_transmit: Some(enter_transmit),
                 enter_receive: Some(enter_receive),
             },

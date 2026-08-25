@@ -1,7 +1,9 @@
 use super::*;
 use crate::engine::test_support::*;
 use crate::engine::IngestIo;
-use crate::engine::{Directive, EngineReaction, EngineState, IngestPacketOutcome, RatchetPolicy};
+use crate::engine::{
+    Directive, EngineReaction, EngineState, IngestPacketOutcome, Journaled, RatchetPolicy,
+};
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::IdentityHash;
 use crate::interfaces::AttachedInterfaces;
@@ -169,6 +171,52 @@ fn the_app_decider_gates_the_prove_if_proof() {
 
     let (proved, _) = prove_if_proof_directive(|_| false);
     assert!(!proved, "the decider declined, so no proof goes out");
+}
+
+#[test]
+fn delivery_is_journaled_before_the_prove_if_decision_and_proof_egress() {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Step {
+        Delivered,
+        Decided,
+        ProofSent,
+    }
+
+    let (mut state, identity, destination) = prove_if_state();
+    let mut raw = sealed_single_packet(&identity, destination, b"persist-before-proof");
+    let steps = core::cell::RefCell::new(std::vec::Vec::new());
+    state.ingest_packet_into(
+        InboundPacket {
+            arrived_at: InstantMillis(1_000),
+            source_interface: InterfaceId::new([0xEE; 8]),
+            bytes: &mut raw,
+        },
+        IngestIo {
+            interfaces: AttachedInterfaces::new(&transporting_interfaces()),
+            now: InstantMillis(1_000),
+            fill_entropy: &mut |bytes| bytes.fill(0),
+            should_prove: &mut |_| {
+                steps.borrow_mut().push(Step::Decided);
+                true
+            },
+            should_accept_resource: &mut |_| false,
+            sink: &mut |reaction| match reaction {
+                EngineReaction::Journaled(Journaled::Delivered(_)) => {
+                    steps.borrow_mut().push(Step::Delivered);
+                }
+                EngineReaction::Directive(Directive::Send { .. }) => {
+                    steps.borrow_mut().push(Step::ProofSent);
+                }
+                _ => {}
+            },
+        },
+    );
+
+    assert_eq!(
+        *steps.borrow(),
+        [Step::Delivered, Step::Decided, Step::ProofSent],
+        "the host can persist delivery before policy or proof egress acknowledges it",
+    );
 }
 
 #[test]

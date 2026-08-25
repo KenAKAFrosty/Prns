@@ -313,7 +313,7 @@ where
             .ok();
         let logical_start = timebase_state
             .and_then(|state| state.high_water)
-            .unwrap_or(raw_now);
+            .map_or(raw_now, |high_water| high_water.max(raw_now));
         let mut scratch = Zeroizing::new([0u8; RECORD_SCRATCH_LEN]);
         let mut report = EmbeddedPersistenceRestoreReport {
             logical_start,
@@ -495,6 +495,13 @@ where
         } else {
             deadline = earlier(deadline, route_ready);
         }
+        let timebase_ready = self.last_timebase_success.map_or(now, |last| {
+            InstantMillis(
+                last.0
+                    .saturating_add(self.policy.timebase_record_interval_millis),
+            )
+        });
+        deadline = earlier(deadline, Some(timebase_ready));
         match (deadline, self.retry_not_before) {
             (Some(deadline), Some(retry)) => Some(InstantMillis(deadline.0.max(retry.0))),
             (deadline, None) => deadline,
@@ -571,6 +578,12 @@ where
             }
         }
         if !route_due {
+            let timebase_due = self.last_timebase_success.is_none_or(|last| {
+                now.0.saturating_sub(last.0) >= self.policy.timebase_record_interval_millis
+            });
+            if timebase_due {
+                self.record_timebase(now).await;
+            }
             return;
         }
         if self.snapshot_required {
@@ -879,18 +892,8 @@ where
     }
 
     async fn land_timebase(&mut self, batch: BatchKind, now: InstantMillis) {
-        let should_record = self.last_timebase_success.is_none_or(|last| {
-            now.0.saturating_sub(last.0) >= self.policy.timebase_record_interval_millis
-        });
-        if should_record {
-            let Some(journal) = self.journal.as_mut() else {
-                return;
-            };
-            if let Err(error) = journal.record_timebase(now).await {
-                self.note_write_failure(now, failure_from_journal(error));
-                return;
-            }
-            self.last_timebase_success = Some(now);
+        if !self.record_timebase(now).await {
+            return;
         }
         match batch {
             BatchKind::Routes => {
@@ -918,6 +921,26 @@ where
                 state_not_saved,
             });
         }
+    }
+
+    async fn record_timebase(&mut self, now: InstantMillis) -> bool {
+        let should_record = self.last_timebase_success.is_none_or(|last| {
+            now.0.saturating_sub(last.0) >= self.policy.timebase_record_interval_millis
+        });
+        if !should_record {
+            return true;
+        }
+        let Some(journal) = self.journal.as_mut() else {
+            return false;
+        };
+        if let Err(error) = journal.record_timebase(now).await {
+            self.note_write_failure(now, failure_from_journal(error));
+            return false;
+        }
+        self.last_timebase_success = Some(now);
+        self.retry_not_before = None;
+        self.write_failed = false;
+        true
     }
 
     fn note_codec_failure(&mut self, now: InstantMillis) {
@@ -1163,6 +1186,7 @@ fn earlier(first: Option<InstantMillis>, second: Option<InstantMillis>) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::persistence::TIMEBASE_HEADROOM_MILLIS;
     use embedded_storage::nor_flash::{ErrorType, NorFlashError, NorFlashErrorKind};
     use embedded_storage_async::nor_flash::ReadNorFlash;
     use std::cell::{Cell, RefCell};
@@ -1282,6 +1306,7 @@ mod tests {
             persistence.journal = Some(journal);
             persistence.next_compaction_not_before =
                 Some(InstantMillis(HOPSPOT_MINIMUM_COMPACTION_INTERVAL_MILLIS));
+            persistence.last_timebase_success = Some(InstantMillis(0));
             persistence
         })
     }
@@ -1422,7 +1447,7 @@ mod tests {
         );
         assert_eq!(
             persistence.next_deadline(InstantMillis(1_500)),
-            Some(InstantMillis(HOPSPOT_MINIMUM_COMPACTION_INTERVAL_MILLIS))
+            Some(InstantMillis(TIMEBASE_RECORD_INTERVAL_MILLIS))
         );
 
         let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
@@ -1522,6 +1547,87 @@ mod tests {
     }
 
     #[test]
+    fn restore_uses_the_later_of_flash_high_water_and_the_raw_clock() {
+        embassy_futures::block_on(async {
+            let recorded_at = InstantMillis(10_000);
+            let flash_high_water = InstantMillis(recorded_at.0 + TIMEBASE_HEADROOM_MILLIS);
+            let rtc_after_downtime = InstantMillis(flash_high_water.0 + 86_400_000);
+
+            for raw_now in [InstantMillis(0), rtc_after_downtime] {
+                let flash = TestFlash::new();
+                let mut scratch = [0u8; RECORD_SCRATCH_LEN];
+                let (mut journal, _) = FlashJournal::open(flash, LAYOUT, &mut scratch, |_| {})
+                    .await
+                    .unwrap();
+                journal.initialize_empty().await.unwrap();
+                journal.record_timebase(recorded_at).await.unwrap();
+
+                let mut persistence =
+                    EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
+                        journal.release(),
+                        LAYOUT,
+                        EmbeddedPersistencePolicy::hopspot_default(
+                            EmbeddedCompactionPolicy::hopspot(0),
+                        ),
+                        FixedRouteSnapshotKeys::new(),
+                        (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
+                    );
+                let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
+                let report = persistence.restore(&mut engine, raw_now).await;
+
+                assert_eq!(report.logical_start, raw_now.max(flash_high_water));
+            }
+        });
+    }
+
+    #[test]
+    fn idle_persistence_advances_the_flash_timebase_on_schedule() {
+        embassy_futures::block_on(async {
+            let mut persistence =
+                EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
+                    TestFlash::new(),
+                    LAYOUT,
+                    EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(
+                        0,
+                    )),
+                    FixedRouteSnapshotKeys::new(),
+                    (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
+                );
+            let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
+            let start = persistence.restore(&mut engine, InstantMillis(1_000)).await;
+
+            assert_eq!(
+                persistence.next_deadline(start.logical_start),
+                Some(start.logical_start)
+            );
+            persistence.progress(&mut engine, start.logical_start).await;
+            assert_eq!(persistence.last_timebase_success, Some(start.logical_start));
+
+            let next = InstantMillis(
+                start
+                    .logical_start
+                    .0
+                    .saturating_add(TIMEBASE_RECORD_INTERVAL_MILLIS),
+            );
+            assert_eq!(persistence.next_deadline(start.logical_start), Some(next));
+            persistence
+                .progress(&mut engine, InstantMillis(next.0 - 1))
+                .await;
+            assert_eq!(persistence.last_timebase_success, Some(start.logical_start));
+            persistence.progress(&mut engine, next).await;
+            assert_eq!(persistence.last_timebase_success, Some(next));
+
+            let mut flash = persistence.journal.take().unwrap().release();
+            assert_eq!(
+                FlashJournal::inspect_timebase(&mut flash, LAYOUT)
+                    .await
+                    .unwrap(),
+                Some(InstantMillis(next.0 + TIMEBASE_HEADROOM_MILLIS))
+            );
+        });
+    }
+
+    #[test]
     fn failed_compaction_attempt_consumes_the_daily_budget() {
         let diagnostics = Rc::new(RefCell::new(Vec::new()));
         let observed = Rc::clone(&diagnostics);
@@ -1545,7 +1651,10 @@ mod tests {
         persistence.note_write_failure(first, EmbeddedPersistenceFailure::Flash);
         assert_eq!(persistence.compaction, None);
         assert!(persistence.snapshot_required);
-        assert_eq!(persistence.next_deadline(first), Some(second));
+        assert_eq!(
+            persistence.next_deadline(first),
+            Some(InstantMillis(first.0 + TIMEBASE_RECORD_INTERVAL_MILLIS))
+        );
         embassy_futures::block_on(persistence.progress(&mut engine, InstantMillis(second.0 - 1)));
         assert_eq!(persistence.compaction, None);
         embassy_futures::block_on(persistence.progress(&mut engine, second));
@@ -1721,9 +1830,7 @@ mod tests {
         assert!(persistence.state_not_saved());
         assert_eq!(
             persistence.next_deadline(now),
-            Some(InstantMillis(
-                now.0 + HOPSPOT_MINIMUM_COMPACTION_INTERVAL_MILLIS
-            ))
+            Some(InstantMillis(now.0 + TIMEBASE_RECORD_INTERVAL_MILLIS))
         );
         let diagnostics = diagnostics.borrow();
         assert_eq!(

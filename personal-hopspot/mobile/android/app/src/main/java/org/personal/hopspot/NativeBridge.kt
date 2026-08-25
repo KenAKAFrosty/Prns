@@ -91,7 +91,7 @@ object NativeBridge {
 
     external fun nativeRender(handle: Long, buffer: ByteBuffer)
 
-    external fun nativeSetBattery(handle: Long, percent: Int, charging: Boolean)
+    external fun nativeSetBattery(handle: Long, percent: Int, externallyPowered: Boolean)
 
     external fun nativeUsbConnected(connected: Boolean)
 

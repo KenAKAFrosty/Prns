@@ -32,6 +32,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
         WakeSchedules {
             receipt_timeouts: self.receipt_timeouts_wake(),
+            resource_deadlines: self.resource_deadlines_wake(),
             ..WakeSchedules::UNCHANGED
         }
     }
@@ -239,6 +240,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.send_due_keepalives(now, interfaces, sink);
         WakeSchedules {
             link_deadlines: self.link_deadlines_wake(),
+            resource_deadlines: self.resource_deadlines_wake(),
             ..WakeSchedules::UNCHANGED
         }
     }

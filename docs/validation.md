@@ -4,6 +4,10 @@ For the beginner verification ladder, start with
 [Testing changes](testing.md). This document owns the deeper suite registry,
 evidence, proof, interoperability, and release aggregation model.
 
+The [stock-RNS interoperability test checklist](interop-checklist.md) records
+the working set of behaviors Prns exercises against the reference
+implementation.
+
 The `list`, `matrix`, and `run` commands accept an explicit host selector:
 
 ```console
@@ -54,10 +58,10 @@ opaque success token. Counts come from the live manifest and native source
 discovery, so the output also gives an operator a quick orientation:
 
 ```text
-[verify] Suite policy: 99 total suites (49 pull-request, 91 release, 96 scheduled); IDs, tiers, platforms, toolchains, commands, timeouts, and artifact paths are valid.
-[verify] Cargo ownership: 39 manifests are registered, valid, and repository-owned; 22 unique workspace roots own formatting.
-[verify] Native discovery: 18 Kani proofs and 8 fuzz targets exactly match their source owners.
-[verify] Asset ownership: 69 oracle/interop/smoke assets are registered; 1 documented exemption is current; nothing is orphaned.
+[verify] Suite policy: 108 total suites (53 pull-request, 98 release, 105 scheduled); IDs, tiers, platforms, toolchains, commands, timeouts, and artifact paths are valid.
+[verify] Cargo ownership: 54 manifests are registered, valid, and repository-owned; 24 first-party lockfile workspaces are inventoried; 22 unique workspace roots own formatting.
+[verify] Native discovery: 20 Kani proofs and 9 fuzz targets exactly match their source owners.
+[verify] Asset ownership: 71 oracle/interop/smoke assets are registered; 1 documented exemption is current; nothing is orphaned.
 VALIDATION_REGISTRY_OK
 ```
 
@@ -106,13 +110,13 @@ readiness unless an Android application release explicitly places it in scope.
 
 Ordinary `cargo test` never searches for or silently uses a local Python
 environment. Oracle and live interop suites require explicit interpreters that
-contain the centrally pinned RNS version. Prepare reproducible local
+contain the RNS version pinned for that evidence domain. Prepare reproducible local
 environments with:
 
 ```console
 python3 validation/run.py prepare-oracles
-python3 validation/run.py run --domain oracles --tier pr
-python3 validation/run.py run --domain interop --tier pr
+python3 validation/run.py run --domain oracles --tier pr --platform current
+python3 validation/run.py run --domain interop --tier pr --platform current
 ```
 
 The runner sets `SMOKE_PYTHON` and `RPC_SMOKE_PYTHON` for each registered suite

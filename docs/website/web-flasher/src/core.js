@@ -17,11 +17,17 @@ const VERSION_PATTERN = /^[A-Za-z0-9.+-]+$/;
 const PATH_COMPONENT_PATTERN = /^[A-Za-z0-9._+-]+$/;
 const MOUNT_LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
 const ESP_PARTS = ["bootloader", "partition-table", "application"];
+const NRF_SERIAL_DFU_PARTS = ["dfu-application", "dfu-init-packet"];
 const UF2_BLOCK_BYTES = 512;
 const UF2_PAYLOAD_BYTES = 256;
 const UF2_DATA_OFFSET = 32;
 const UF2_DATA_BYTES = 476;
-const UF2_APPLICATION_END = 0xc0000;
+const UF2_APPLICATION_ENDS = new Map([
+  ["t-echo", 0xc0000],
+  ["t114", 0xe9000],
+  ["t096", 0xe8000],
+  ["t1000-e", 0xea000],
+]);
 const UF2_COMPATIBILITIES = new Map([
   ["s140:6.1.1", Object.freeze({ fwid: 0x00b6, applicationBase: 0x26000, familyId: 0xada52840 })],
   ["s140:7.3.0", Object.freeze({ fwid: 0x0123, applicationBase: 0x27000, familyId: 0xada52840 })],
@@ -47,7 +53,10 @@ const RECOVERY_GUIDANCE = Object.freeze({
   unsupported_browser: "Open this page over HTTPS in current desktop Chrome, Edge, or Firefox 151 or later, or use the standalone CLI.",
   insecure_context: "Reopen the flasher over HTTPS or localhost before trying again.",
   permission_denied: "Review the selected board, retry, and choose its serial port in the browser prompt.",
+  bootloader_permission_denied: "The tracker is now in its bootloader. Prepare again, choose the stock/bootloader entry path, and grant that exact serial port.",
   connection_failure: "Disconnect the board, follow its BOOT/RESET preparation steps, reconnect it, and restart the complete operation.",
+  ambiguous_device: "Disconnect every other matching tracker or bootloader, then restart the complete operation.",
+  reconnect_timeout: "Reconnect the tracker, choose the entry path matching its current firmware, and restart the complete operation.",
   wrong_chip: "Re-check the printed board label, select the matching board and serial port, then prepare the release again.",
   wrong_flash_size: "Re-check the printed board label and serial port; do not write this plan to a device with a different flash capacity.",
   erase_failure: "The device may be blank. Reconnect it, re-enter BOOT mode, select Fresh install, confirm the destructive action again, and retry the complete fresh-install plan from the beginning.",
@@ -56,6 +65,8 @@ const RECOVERY_GUIDANCE = Object.freeze({
   artifact_hash_mismatch: "Do not connect the device. Reload this page and prepare again; if it repeats, use the CLI and report the release version.",
   device_lost: "Reconnect the board, follow its BOOT/RESET preparation steps, and restart the complete sparse plan from the beginning.",
   write_failure: "Re-enter BOOT mode, press RESET as instructed for this board, and restart the complete sparse plan.",
+  malformed_acknowledgement: "Reconnect the tracker and restart the complete Nordic DFU transfer; use recovery UF2 if the bootloader repeats malformed replies.",
+  retries_exhausted: "Reconnect the tracker and restart the complete Nordic DFU transfer; use recovery UF2 if the exact bootloader exhausts retries again.",
   verification_failure: "Do not boot the partial image. Re-enter BOOT mode and restart the complete sparse plan from the beginning.",
   reset_failure: "The firmware bytes are verified, but automatic reboot was not confirmed. Press RESET and check the next boot; if firmware does not start, re-enter BOOT mode and repeat the complete plan.",
   cancelled: "Review the current board state, re-enter bootloader mode if writing began, and restart the complete plan when ready.",
@@ -180,7 +191,7 @@ export function validateRequest(request) {
     throw new FlashBridgeError("invalid_request", "The signed release has no firmware parts.");
   }
   const transport = request.transport;
-  if (transport !== "esp-serial" && transport !== "uf2-mass-storage") {
+  if (!["esp-serial", "uf2-mass-storage", "nrf-serial-dfu"].includes(transport)) {
     throw new FlashBridgeError("invalid_request", "The signed release transport is unsupported.");
   }
 
@@ -212,12 +223,23 @@ export function validateRequest(request) {
         throw new FlashBridgeError("invalid_request", "An ESP firmware part exceeds physical flash.");
       }
       ranges.push([part.offset, end]);
-    } else if (part.kind !== "uf2" || part.offset !== null || request.parts.length !== 1) {
-      throw new FlashBridgeError("invalid_request", "A UF2 target must contain one offset-free UF2 file.");
+    } else if (transport === "uf2-mass-storage") {
+      if (part.kind !== "uf2" || part.offset !== null || request.parts.length !== 1) {
+        throw new FlashBridgeError("invalid_request", "A UF2 target must contain one offset-free UF2 file.");
+      }
+    } else if (
+      part.kind !== NRF_SERIAL_DFU_PARTS[partIndex]
+      || part.offset !== null
+      || request.parts.length !== NRF_SERIAL_DFU_PARTS.length
+    ) {
+      throw new FlashBridgeError(
+        "invalid_request",
+        "A Nordic serial DFU target must contain its ordered application and init packet.",
+      );
     }
   }
   if (transport === "esp-serial") {
-    if (!validSerialFilters(request.serialFilters)) {
+    if (!validEspSerialFilters(request.serialFilters)) {
       throw new FlashBridgeError("invalid_request", "The ESP serial device filter is invalid.");
     }
     if (request.parts.length !== ESP_PARTS.length) {
@@ -242,6 +264,7 @@ export function validateRequest(request) {
       || !["hard-reset", "watchdog-reset"].includes(request.afterReset)
       || request.mountLabel !== null
       || request.uf2Compatibility !== null
+      || request.nrfSerialDfu !== null
     ) {
       throw new FlashBridgeError("invalid_request", "The ESP target identity is incomplete.");
     }
@@ -267,7 +290,7 @@ export function validateRequest(request) {
         throw new FlashBridgeError("invalid_request", "The provisioning slot disagrees with the firmware contract.");
       }
     }
-  } else {
+  } else if (transport === "uf2-mass-storage") {
     if (
       typeof request.mountLabel !== "string"
       || !MOUNT_LABEL_PATTERN.test(request.mountLabel)
@@ -283,9 +306,25 @@ export function validateRequest(request) {
       || !Array.isArray(request.serialFilters)
       || request.serialFilters.length !== 0
       || !validUf2Compatibility(request.uf2Compatibility)
+      || request.nrfSerialDfu !== null
     ) {
       throw new FlashBridgeError("invalid_request", "The UF2 target identity is incomplete.");
     }
+  } else if (
+    request.expectedChip !== null
+    || request.flashSize !== null
+    || request.flashMode !== null
+    || request.flashFrequency !== null
+    || request.beforeReset !== null
+    || request.afterReset !== null
+    || request.mountLabel !== null
+    || request.uf2Compatibility !== null
+    || request.provisioning !== null
+    || request.installMode !== undefined
+    || request.eraseConfirmed !== undefined
+    || !validNrfSerialDfu(request.nrfSerialDfu, request.serialFilters)
+  ) {
+    throw new FlashBridgeError("invalid_request", "The Nordic serial DFU target identity is incomplete.");
   }
   return request;
 }
@@ -295,15 +334,90 @@ function validSerialFilters(filters) {
   const identities = new Set();
   for (const filter of filters) {
     if (!filter || typeof filter !== "object" || Array.isArray(filter)) return false;
-    const fields = Object.keys(filter).sort();
-    if (fields.join(",") !== "usbVendorId") return false;
+    const fields = Object.keys(filter).sort().join(",");
+    if (fields !== "usbVendorId" && fields !== "usbProductId,usbVendorId") return false;
     if (!Number.isSafeInteger(filter.usbVendorId) || filter.usbVendorId <= 0 || filter.usbVendorId > 0xffff) {
       return false;
     }
-    if (identities.has(filter.usbVendorId)) return false;
-    identities.add(filter.usbVendorId);
+    if (
+      filter.usbProductId !== undefined
+      && (!Number.isSafeInteger(filter.usbProductId)
+        || filter.usbProductId <= 0
+        || filter.usbProductId > 0xffff)
+    ) return false;
+    const identity = `${filter.usbVendorId}:${filter.usbProductId ?? "*"}`;
+    if (identities.has(identity)) return false;
+    identities.add(identity);
   }
   return true;
+}
+
+function validEspSerialFilters(filters) {
+  return validSerialFilters(filters)
+    && filters.every((filter) => filter.usbProductId === undefined);
+}
+
+function validUsbIdentity(value, vendorId, productId) {
+  return value
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && Object.keys(value).sort().join(",") === "productId,vendorId"
+    && value.vendorId === vendorId
+    && value.productId === productId;
+}
+
+function validNrfSerialDfu(value, filters) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  if (
+    Object.keys(value).sort().join(",")
+      !== "compatibility,entry,managedApplication,touchApplicationAndBootloaderUsb,touchBaudRate,transferBaudRate"
+    || !["touch-application-or-bootloader", "managed-application"].includes(value.entry)
+    || !validUsbIdentity(value.touchApplicationAndBootloaderUsb, 0x2886, 0x0057)
+    || value.touchBaudRate !== 1_200
+    || value.transferBaudRate !== 115_200
+  ) return false;
+
+  const managed = value.managedApplication;
+  if (
+    !managed
+    || typeof managed !== "object"
+    || Array.isArray(managed)
+    || Object.keys(managed).sort().join(",")
+      !== "index,interfaceNumber,manufacturer,product,request,serialNumber,usb,value"
+    || !validUsbIdentity(managed.usb, 0x1209, 0x0001)
+    || managed.manufacturer !== "Stay Personal"
+    || managed.product !== "Personal Hopspot (T1000-E)"
+    || managed.serialNumber !== "PERSONAL-RNS-T1000E-HOP"
+    || managed.interfaceNumber !== 0
+    || managed.request !== 0x50
+    || managed.value !== 0x5052
+    || managed.index !== 0x4e53
+  ) return false;
+
+  const compatibility = value.compatibility;
+  if (
+    !compatibility
+    || typeof compatibility !== "object"
+    || Array.isArray(compatibility)
+    || Object.keys(compatibility).sort().join(",")
+      !== "applicationBase,applicationEndExclusive,applicationVersion,bankLayout,deviceRevision,deviceType,softdeviceFamily,softdeviceFwids,softdeviceVersion"
+    || compatibility.softdeviceFamily !== "s140"
+    || compatibility.softdeviceVersion !== "7.3.0"
+    || !Array.isArray(compatibility.softdeviceFwids)
+    || compatibility.softdeviceFwids.length !== 1
+    || compatibility.softdeviceFwids[0] !== 0x0123
+    || compatibility.deviceType !== 0x0052
+    || compatibility.deviceRevision !== 52840
+    || compatibility.applicationVersion !== "not-enforced"
+    || compatibility.applicationBase !== 0x27000
+    || compatibility.applicationEndExclusive !== 0xea000
+    || compatibility.bankLayout !== "single"
+  ) return false;
+
+  return validSerialFilters(filters)
+    && filters.length === 1
+    && filters[0].usbVendorId === value.touchApplicationAndBootloaderUsb.vendorId
+    && filters[0].usbProductId === value.touchApplicationAndBootloaderUsb.productId;
 }
 
 function validUf2Compatibility(value) {
@@ -321,12 +435,16 @@ function validUf2Compatibility(value) {
     && value.familyId === expected.familyId;
 }
 
-export function validateUf2Artifact(bytes, compatibility) {
+export function validateUf2Artifact(bytes, compatibility, boardSlug) {
   if (!(bytes instanceof Uint8Array) || bytes.length === 0 || bytes.length % UF2_BLOCK_BYTES !== 0) {
     throw new FlashBridgeError("invalid_request", "The signed UF2 length is structurally invalid.");
   }
   if (!validUf2Compatibility(compatibility)) {
     throw new FlashBridgeError("invalid_request", "The signed UF2 compatibility identity is invalid.");
+  }
+  const applicationEnd = UF2_APPLICATION_ENDS.get(boardSlug);
+  if (applicationEnd === undefined) {
+    throw new FlashBridgeError("invalid_request", "The signed UF2 board has no pinned application region.");
   }
   const blocks = bytes.length / UF2_BLOCK_BYTES;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -347,7 +465,7 @@ export function validateUf2Artifact(bytes, compatibility) {
     if (address !== compatibility.applicationBase + index * UF2_PAYLOAD_BYTES) {
       throw new FlashBridgeError("invalid_request", "The signed UF2 application address is invalid.");
     }
-    if (payload !== UF2_PAYLOAD_BYTES || address + payload > UF2_APPLICATION_END) {
+    if (payload !== UF2_PAYLOAD_BYTES || address + payload > applicationEnd) {
       throw new FlashBridgeError("invalid_request", "The signed UF2 payload bounds are invalid.");
     }
     const padding = bytes.subarray(

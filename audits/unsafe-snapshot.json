@@ -90,6 +90,11 @@
       "manifest": "prns-wasm/Cargo.toml",
       "name": "wasm",
       "target": "wasm32-unknown-unknown"
+    },
+    {
+      "manifest": "prns-nrf-dfu-wasm/Cargo.toml",
+      "name": "nrf-dfu-browser",
+      "target": "wasm32-unknown-unknown"
     }
   ],
   "packages": [
@@ -1285,6 +1290,9 @@
     },
     {
       "graphs": {
+        "nrf-dfu-browser": [
+          "default"
+        ],
         "wasm": [
           "default"
         ]
@@ -1753,6 +1761,7 @@
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
+        "nrf-dfu-browser": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -5687,7 +5696,7 @@
         ]
       },
       "name": "esp-alloc",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "source": "personal-hopspot/embedded/esp32/vendor/esp-alloc-0.10.0",
       "unsafe": {
         "blocks": 41,
         "externs": 11,
@@ -5729,7 +5738,7 @@
         ]
       },
       "name": "esp-backtrace",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "source": "personal-hopspot/embedded/esp32/vendor/esp-backtrace-0.19.0",
       "unsafe": {
         "blocks": 12,
         "externs": 4,
@@ -6075,11 +6084,11 @@
       "name": "esp-radio",
       "source": "personal-hopspot/embedded/esp32/vendor/esp-radio-0.18.0",
       "unsafe": {
-        "blocks": 439,
+        "blocks": 437,
         "externs": 511,
         "functions": 12,
         "impls": 3,
-        "tokens": 1023
+        "tokens": 1021
       },
       "version": "0.18.0"
     },
@@ -6111,7 +6120,7 @@
         ]
       },
       "name": "esp-radio-rtos-driver",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "source": "personal-hopspot/embedded/esp32/vendor/esp-radio-rtos-driver-0.3.0",
       "unsafe": {
         "blocks": 124,
         "externs": 11,
@@ -6204,13 +6213,13 @@
         ]
       },
       "name": "esp-rtos",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "source": "personal-hopspot/embedded/esp32/vendor/esp-rtos-0.3.0",
       "unsafe": {
-        "blocks": 97,
+        "blocks": 98,
         "externs": 5,
         "functions": 9,
         "impls": 7,
-        "tokens": 124
+        "tokens": 125
       },
       "version": "0.3.0"
     },
@@ -13625,6 +13634,12 @@
           "race",
           "std"
         ],
+        "nrf-dfu-browser": [
+          "alloc",
+          "default",
+          "race",
+          "std"
+        ],
         "wasm": []
       },
       "name": "once_cell",
@@ -13971,11 +13986,11 @@
       "name": "personal-hopspot-esp32",
       "source": "personal-hopspot/embedded/esp32",
       "unsafe": {
-        "blocks": 491,
-        "externs": 517,
-        "functions": 15,
-        "impls": 15,
-        "tokens": 1100
+        "blocks": 777,
+        "externs": 553,
+        "functions": 121,
+        "impls": 37,
+        "tokens": 1619
       },
       "version": "0.1.0"
     },
@@ -14322,7 +14337,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.3.6"
+      "version": "0.3.7"
     },
     {
       "graphs": {
@@ -14720,7 +14735,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.3.6"
+      "version": "0.3.7"
     },
     {
       "graphs": {
@@ -14907,13 +14922,13 @@
       "name": "prns-core",
       "source": "prns-core",
       "unsafe": {
-        "blocks": 1,
+        "blocks": 3,
         "externs": 0,
         "functions": 0,
         "impls": 0,
-        "tokens": 1
+        "tokens": 3
       },
-      "version": "0.3.6"
+      "version": "0.3.7"
     },
     {
       "graphs": {
@@ -14941,13 +14956,13 @@
       "name": "prns-ffi",
       "source": "prns-ffi",
       "unsafe": {
-        "blocks": 119,
+        "blocks": 123,
         "externs": 3,
         "functions": 0,
         "impls": 22,
-        "tokens": 180
+        "tokens": 184
       },
-      "version": "0.3.6"
+      "version": "0.3.7"
     },
     {
       "graphs": {
@@ -14965,7 +14980,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.3.6"
+      "version": "0.3.7"
     },
     {
       "graphs": {
@@ -14976,13 +14991,13 @@
       "name": "prns-host-c",
       "source": "prns-host/abi/c",
       "unsafe": {
-        "blocks": 282,
+        "blocks": 295,
         "externs": 70,
         "functions": 18,
         "impls": 2,
-        "tokens": 372
+        "tokens": 385
       },
-      "version": "0.3.6"
+      "version": "0.3.7"
     },
     {
       "graphs": {
@@ -14997,7 +15012,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.3.6"
+      "version": "0.3.7"
     },
     {
       "graphs": {
@@ -15014,7 +15029,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.3.6"
+      "version": "0.3.7"
     },
     {
       "graphs": {
@@ -15148,7 +15163,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.3.6"
+      "version": "0.3.7"
     },
     {
       "graphs": {
@@ -15388,7 +15403,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.3.6"
+      "version": "0.3.7"
     },
     {
       "graphs": {
@@ -15420,7 +15435,37 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.3.6"
+      "version": "0.3.7"
+    },
+    {
+      "graphs": {
+        "nrf-dfu-browser": []
+      },
+      "name": "prns-nrf-dfu",
+      "source": "prns-nrf-dfu",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
+    },
+    {
+      "graphs": {
+        "nrf-dfu-browser": []
+      },
+      "name": "prns-nrf-dfu-wasm",
+      "source": "prns-nrf-dfu-wasm",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
     },
     {
       "graphs": {
@@ -15547,7 +15592,7 @@
         "impls": 0,
         "tokens": 2
       },
-      "version": "0.3.6"
+      "version": "0.3.7"
     },
     {
       "graphs": {
@@ -15609,7 +15654,7 @@
         "impls": 0,
         "tokens": 2
       },
-      "version": "0.3.6"
+      "version": "0.3.7"
     },
     {
       "graphs": {
@@ -15683,7 +15728,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.3.6"
+      "version": "0.3.7"
     },
     {
       "graphs": {
@@ -15700,7 +15745,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.3.6"
+      "version": "0.3.7"
     },
     {
       "graphs": {
@@ -15741,7 +15786,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.3.6"
+      "version": "0.3.7"
     },
     {
       "graphs": {
@@ -15869,6 +15914,10 @@
           "proc-macro"
         ],
         "ios": [
+          "default",
+          "proc-macro"
+        ],
+        "nrf-dfu-browser": [
           "default",
           "proc-macro"
         ],
@@ -16082,6 +16131,10 @@
           "proc-macro"
         ],
         "ios": [
+          "default",
+          "proc-macro"
+        ],
+        "nrf-dfu-browser": [
           "default",
           "proc-macro"
         ],
@@ -17231,6 +17284,7 @@
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "nrf-dfu-browser": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -19474,6 +19528,19 @@
           "visit",
           "visit-mut"
         ],
+        "nrf-dfu-browser": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "fold",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
         "nrf52840": [
           "clone-impls",
           "default",
@@ -19744,11 +19811,11 @@
       "name": "t-echo",
       "source": "personal-hopspot/embedded/nrf52840",
       "unsafe": {
-        "blocks": 1475,
+        "blocks": 1476,
         "externs": 13,
         "functions": 298,
         "impls": 15,
-        "tokens": 1802
+        "tokens": 1803
       },
       "version": "0.1.0"
     },
@@ -19852,6 +19919,10 @@
         "desktop-windows": [
           "default",
           "std"
+        ],
+        "nrf-dfu-browser": [
+          "default",
+          "std"
         ]
       },
       "name": "thiserror",
@@ -19912,7 +19983,8 @@
         "daemon-macos": [],
         "daemon-windows": [],
         "desktop-macos": [],
-        "desktop-windows": []
+        "desktop-windows": [],
+        "nrf-dfu-browser": []
       },
       "name": "thiserror-impl",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -21712,6 +21784,7 @@
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
+        "nrf-dfu-browser": [],
         "nrf52840": [],
         "wasm": []
       },
@@ -22266,6 +22339,10 @@
     },
     {
       "graphs": {
+        "nrf-dfu-browser": [
+          "default",
+          "std"
+        ],
         "wasm": [
           "default",
           "std"
@@ -22284,6 +22361,7 @@
     },
     {
       "graphs": {
+        "nrf-dfu-browser": [],
         "wasm": []
       },
       "name": "wasm-bindgen-macro",
@@ -22299,6 +22377,7 @@
     },
     {
       "graphs": {
+        "nrf-dfu-browser": [],
         "wasm": []
       },
       "name": "wasm-bindgen-macro-support",
@@ -22314,6 +22393,7 @@
     },
     {
       "graphs": {
+        "nrf-dfu-browser": [],
         "wasm": []
       },
       "name": "wasm-bindgen-shared",
@@ -23325,7 +23405,7 @@
         ]
       },
       "name": "xtensa-lx-rt",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "source": "personal-hopspot/embedded/esp32/vendor/xtensa-lx-rt-0.22.0",
       "unsafe": {
         "blocks": 2,
         "externs": 5,

@@ -18,8 +18,9 @@ use crate::routing::links::table::LinkRole;
 use crate::routing::upstream_app_destinations::LinkRequestPolicy;
 use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::routing::RouteResponsiveness;
+use crate::storage::TestFixedStorage;
 use crate::units::RttMillis;
-use crate::wire::DestinationHash;
+use crate::wire::{DestinationHash, PropagationType, TransportId, WirePacketHeader};
 
 impl EstablishLinkWriteOutcome {
     #[track_caller]
@@ -32,6 +33,7 @@ impl EstablishLinkWriteOutcome {
 }
 
 const PEER_DESTINATION_HEX: &str = "c3cfae69b36bb6e3bbfd96a3b5867a59";
+const RESPONDER_TRANSPORT_ID: TransportId = TransportId::new([0x3C; 16]);
 
 fn peer_destination() -> DestinationHash {
     DestinationHash::new(bytes_from_hex(PEER_DESTINATION_HEX).try_into().unwrap())
@@ -546,6 +548,178 @@ fn a_link_request_for_a_held_destination_owes_its_proof() {
         replayed,
         IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
         "a replayed request deduplicates away",
+    );
+}
+
+#[test]
+fn a_full_responder_link_table_withholds_the_proof_and_preserves_its_row() {
+    type OneLinkStorage = TestFixedStorage<64, 64, 4096, 8, 8, 128, 8, 8, 8, 8, 16, 1>;
+
+    let mut initiator = neighbor_with_a_route();
+    let make_request =
+        |initiator: &mut EngineState<TestStorageLayout>, command_id, entropy_fill: u8| {
+            let mut entropy = [entropy_fill; EstablishLinkEntropy::LEN];
+            entropy[32..].fill(entropy_fill.wrapping_add(1));
+            let mut wire = [0u8; BROADCAST_MTU];
+            let dispatch = initiator
+                .write_commanded_link_request(
+                    CommandId(command_id),
+                    &establish(),
+                    InstantMillis(1_000 + command_id),
+                    EstablishLinkEntropy::new(entropy),
+                    AttachedInterfaces::new(&arrival_interfaces()),
+                    &mut wire,
+                )
+                .dispatched();
+            (wire[..dispatch.wire_bytes].to_vec(), dispatch.link_id)
+        };
+
+    let mut responder = EngineState::<OneLinkStorage>::new(fixed_secret_key());
+    let identity = responder.held_identity_hashes()[0];
+    responder
+        .register_single_destination(
+            &identity,
+            "personal",
+            &["node"],
+            b"hello-personal",
+            ProofStrategy::ProveNone,
+            LinkRequestPolicy::AcceptAll,
+            crate::engine::RatchetPolicy::NoRatchets,
+        )
+        .unwrap();
+
+    let accept = |responder: &mut EngineState<OneLinkStorage>, wire: &mut [u8], arrived_at| {
+        let outcome = responder.ingest_packet_with(
+            InboundPacket {
+                arrived_at: InstantMillis(arrived_at),
+                source_interface: arrival(),
+                bytes: wire,
+            },
+            &mut |_| {},
+            AttachedInterfaces::new(&arrival_interfaces()),
+            &mut |_| {},
+            None,
+        );
+        let IngestPacketOutcome::OwesLinkProof(accepted) = outcome else {
+            panic!("the local destination must accept this link request");
+        };
+        accepted
+    };
+
+    let (mut first_wire, first_link_id) = make_request(&mut initiator, 7, 0x71);
+    let first = accept(&mut responder, &mut first_wire, 2_000);
+    let mut proof = [0u8; BROADCAST_MTU];
+    responder
+        .write_owed_link_proof(
+            &first,
+            X25519SecretKey::new([0x81; X25519SecretKey::LEN]),
+            BROADCAST_MTU,
+            &mut proof,
+        )
+        .unwrap();
+    assert_eq!(responder.links.len(), 1);
+
+    let (mut second_wire, second_link_id) = make_request(&mut initiator, 8, 0x72);
+    let second = accept(&mut responder, &mut second_wire, 3_000);
+    assert_eq!(
+        responder.write_owed_link_proof(
+            &second,
+            X25519SecretKey::new([0x82; X25519SecretKey::LEN]),
+            BROADCAST_MTU,
+            &mut proof,
+        ),
+        Err(WriteLinkProofError::LinkTableFull),
+    );
+    assert_eq!(responder.links.len(), 1);
+    assert!(responder.links.phase_for(&first_link_id).is_some());
+    assert!(responder.links.phase_for(&second_link_id).is_none());
+    let (mut third_wire, third_link_id) = make_request(&mut initiator, 9, 0x73);
+    let mut sent = std::vec::Vec::new();
+    responder.ingest_packet_into(
+        InboundPacket {
+            arrived_at: InstantMillis(4_000),
+            source_interface: arrival(),
+            bytes: &mut third_wire,
+        },
+        IngestIo {
+            interfaces: AttachedInterfaces::new(&arrival_interfaces()),
+            now: InstantMillis(4_000),
+            fill_entropy: &mut |bytes| bytes.fill(0x83),
+            should_prove: &mut |_| false,
+            should_accept_resource: &mut |_| false,
+            sink: &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
+                    sent.push(bytes.to_vec());
+                }
+            },
+        },
+    );
+
+    assert!(sent.is_empty(), "a proof cannot escape without a link row");
+    assert_eq!(responder.links.len(), 1);
+    assert!(responder.links.phase_for(&first_link_id).is_some());
+    assert!(responder.links.phase_for(&third_link_id).is_none());
+}
+
+#[test]
+fn a_foreign_stamped_link_request_is_not_delivered_to_a_local_destination() {
+    let mut initiator = neighbor_with_a_route();
+    let mut direct = [0u8; BROADCAST_MTU];
+    let dispatch = initiator
+        .write_commanded_link_request(
+            CommandId(7),
+            &establish(),
+            InstantMillis(1_000),
+            vector_establish_entropy(),
+            AttachedInterfaces::new(&arrival_interfaces()),
+            &mut direct,
+        )
+        .dispatched();
+    let direct = &direct[..dispatch.wire_bytes];
+    let (header, payload) = WirePacketHeader::parse(direct).unwrap();
+    let foreign_header = WirePacketHeader {
+        propagation: PropagationType::Transport,
+        transport_id: Some(TEST_TRANSPORT_ID),
+        ..header
+    };
+    let mut foreign = [0u8; BROADCAST_MTU];
+    let foreign_header_len = foreign_header.write(&mut foreign).unwrap();
+    foreign[foreign_header_len..foreign_header_len + payload.len()].copy_from_slice(payload);
+    let foreign_len = foreign_header_len + payload.len();
+
+    let mut responder = personal_node_announcer();
+    pin_transport_id(&mut responder, RESPONDER_TRANSPORT_ID);
+    let outcome = responder.ingest_packet_with(
+        InboundPacket {
+            arrived_at: InstantMillis(2_000),
+            source_interface: arrival(),
+            bytes: &mut foreign[..foreign_len],
+        },
+        &mut |_| {},
+        AttachedInterfaces::new(&arrival_interfaces()),
+        &mut |_| {},
+        None,
+    );
+    assert_eq!(
+        outcome,
+        IngestPacketOutcome::Ignored(IgnoreReason::OtherInstance),
+    );
+
+    let mut direct = direct.to_vec();
+    let outcome = responder.ingest_packet_with(
+        InboundPacket {
+            arrived_at: InstantMillis(2_100),
+            source_interface: arrival(),
+            bytes: &mut direct,
+        },
+        &mut |_| {},
+        AttachedInterfaces::new(&arrival_interfaces()),
+        &mut |_| {},
+        None,
+    );
+    assert!(
+        matches!(outcome, IngestPacketOutcome::OwesLinkProof(_)),
+        "the foreign copy must not consume dedup before the direct copy arrives",
     );
 }
 
@@ -1252,7 +1426,9 @@ fn encrypted_lrrtt_frame(
     frame.extend_from_slice(link_id.as_bytes());
     frame.push(0xFE);
     let mut sealed = [0u8; 64];
-    let n = key.seal(&[0xB5; 16], plaintext, &mut sealed).unwrap();
+    let n = key
+        .seal(&test_entropy_bytes::<16>(0xB5), plaintext, &mut sealed)
+        .unwrap();
     frame.extend_from_slice(&sealed[..n]);
     frame
 }
@@ -2722,7 +2898,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
 }
 
 #[test]
-fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
+fn an_identified_request_policy_passes_packets_only_after_the_peer_identifies() {
     use crate::engine::{
         Identify, PacketReceiptDelivered, Respond, RespondData, SendRequest, SendRequestData,
         SendRequestFailure,
@@ -2757,11 +2933,8 @@ fn a_request_passes_the_allow_gate_only_after_the_peer_identifies() {
         .register_request_handler(
             &personal_node_destination(),
             "/status",
-            RequestPolicy::AllowList,
+            RequestPolicy::RequireIdentified,
         )
-        .unwrap();
-    responder
-        .allow_requester(&personal_node_destination(), "/status", asker)
         .unwrap();
 
     let command = |engine: &mut EngineState<TestStorageLayout>,

@@ -1,5 +1,5 @@
 {
-  "schema": 3,
+  "schema": 4,
   "boards": [
     {
       "availability": "shipping",
@@ -159,17 +159,32 @@
       "build": {
         "kind": "uf2",
         "package": "t-echo",
+        "binary": "t-echo",
+        "board_feature": "board-t-echo",
         "rust_target": "thumbv7em-none-eabihf",
         "mount_label": "TECHOBOOT",
-        "board_id_prefix": "nrf52840-techo-v",
+        "board_identity": {
+          "match": "revision-prefix",
+          "value": "nrf52840-techo-v"
+        },
+        "application_usb": {
+          "usb": {
+            "vendor_id": "0x1209",
+            "product_id": "0x0001"
+          },
+          "manufacturer": "Stay Personal",
+          "product": "Personal Hopspot (T-Echo)",
+          "serial_number": "PERSONAL-RNS-TECHO-HOP"
+        },
         "variants": [
           {
             "softdevice_family": "s140",
             "softdevice_version": "6.1.1",
             "fwid": "0x00b6",
             "application_base": "0x00026000",
+            "application_end_exclusive": "0x000c0000",
             "family_id": "0xada52840",
-            "cargo_feature": "softdevice-s140-v6",
+            "application_link": "softdevice-s140-v6",
             "target_directory": "target/s140-v6",
             "filename": "t-echo-s140-6.1.1.uf2"
           },
@@ -178,8 +193,9 @@
             "softdevice_version": "7.3.0",
             "fwid": "0x0123",
             "application_base": "0x00027000",
+            "application_end_exclusive": "0x000c0000",
             "family_id": "0xada52840",
-            "cargo_feature": "softdevice-s140-v7",
+            "application_link": "softdevice-s140-v7",
             "target_directory": "target/s140-v7",
             "filename": "t-echo-s140-7.3.0.uf2"
           }
@@ -187,7 +203,101 @@
       }
     },
     {
-      "availability": "qualification",
+      "availability": "shipping",
+      "slug": "t114",
+      "display_name": "Heltec Mesh Node T114",
+      "silicon": "nRF52840 + SX1262",
+      "interfaces": ["LoRa", "USB Auto"],
+      "icon": "nordicsemiconductor",
+      "transport": "uf2-mass-storage",
+      "expected_chip": null,
+      "flash_size": null,
+      "preparation_profile": "t114-uf2",
+      "provisioning": null,
+      "build": {
+        "kind": "uf2",
+        "package": "t-echo",
+        "binary": "heltec-t114",
+        "board_feature": "board-t114",
+        "rust_target": "thumbv7em-none-eabihf",
+        "mount_label": "HT-n5262",
+        "board_identity": {
+          "match": "exact",
+          "value": "ht-n5262"
+        },
+        "application_usb": {
+          "usb": {
+            "vendor_id": "0x1209",
+            "product_id": "0x0001"
+          },
+          "manufacturer": "Stay Personal",
+          "product": "Personal Hopspot (Heltec T114)",
+          "serial_number": "PERSONAL-RNS-T114-HOP"
+        },
+        "variants": [
+          {
+            "softdevice_family": "s140",
+            "softdevice_version": "6.1.1",
+            "fwid": "0x00b6",
+            "application_base": "0x00026000",
+            "application_end_exclusive": "0x000e9000",
+            "family_id": "0xada52840",
+            "application_link": "bare-metal",
+            "target_directory": "target/t114",
+            "filename": "heltec-t114-s140-6.1.1.uf2"
+          }
+        ]
+      }
+    },
+    {
+      "availability": "shipping",
+      "slug": "t096",
+      "display_name": "Heltec Mesh Node T096",
+      "silicon": "nRF52840 + SX1262 + KCT8103L PA",
+      "interfaces": ["BLE Auto", "LoRa", "USB Auto"],
+      "icon": "nordicsemiconductor",
+      "transport": "uf2-mass-storage",
+      "expected_chip": null,
+      "flash_size": null,
+      "preparation_profile": "t096-uf2",
+      "provisioning": null,
+      "build": {
+        "kind": "uf2",
+        "package": "t-echo",
+        "binary": "t096",
+        "board_feature": "board-t096",
+        "rust_target": "thumbv7em-none-eabihf",
+        "mount_label": "HT-n5262G",
+        "board_identity": {
+          "match": "exact",
+          "value": "ht-n5262g"
+        },
+        "application_usb": {
+          "usb": {
+            "vendor_id": "0x1209",
+            "product_id": "0x0001"
+          },
+          "manufacturer": "Stay Personal",
+          "product": "Personal Hopspot (Heltec T096)",
+          "serial_number": "PERSONAL-RNS-T096-HOP"
+        },
+        "variants": [
+          {
+            "softdevice_family": "s140",
+            "softdevice_version": "6.1.1",
+            "fwid": "0x00b6",
+            "application_base": "0x00026000",
+            "application_end_exclusive": "0x000e8000",
+            "family_id": "0xada52840",
+            "application_link": "softdevice-s140-v6",
+            "target_directory": "target/t096",
+            "filename": "t096-s140-6.1.1.uf2"
+          }
+        ]
+      }
+    },
+    {
+      "availability": "shipping",
       "slug": "t1000-e",
       "display_name": "Seeed SenseCAP T1000-E",
       "silicon": "nRF52840 + LR1110",
@@ -251,7 +361,10 @@
         },
         "recovery": {
           "mount_label": "T1000-E",
-          "board_id_prefix": "nrf52840-t1000-e-v1",
+          "board_identity": {
+            "match": "exact",
+            "value": "nrf52840-t1000-e-v1"
+          },
           "family_id": "0xada52840",
           "filename": "t1000e.uf2"
         }

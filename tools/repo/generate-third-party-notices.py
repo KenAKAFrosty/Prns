@@ -58,6 +58,7 @@ GRAPHS = (
         "xtensa-esp32s3-none-elf",
     ),
     ("WASM", "prns-wasm/Cargo.toml", "wasm32-unknown-unknown"),
+    ("Nordic DFU browser core", "prns-nrf-dfu-wasm/Cargo.toml", "wasm32-unknown-unknown"),
     ("website Rust/WASM", "docs/website/Cargo.toml", "wasm32-unknown-unknown"),
     (
         "flasher macOS arm64",

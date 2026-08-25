@@ -10,14 +10,16 @@ use crate::engine::{
     EngineReaction, EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome, FanTarget,
     FinishSendSinglePacketOutcome, IdentifyFailure, IdentifyRejection, InstantMillis,
     IssuedCommand, Journaled, PathRequestWriteOutcome, RequestPathFailure, RespondFailure,
-    RespondRejection, SendGroupEntropy, SendGroupFailure, SendRequestFailure, SendRequestRejection,
-    SendSinglePacketEntropy, SendSinglePacketFailure, SendSinglePacketWriteError,
-    SendSinglePacketWriteOutcome, SendToChannelFailure, SendToChannelRejection, SendToLinkFailure,
-    SendToLinkRejection, SetResourceStrategyFailure, Settlement, WakeSchedules,
+    RespondRejection, SendGroupEntropy, SendGroupFailure, SendPlainPacketFailure,
+    SendRequestFailure, SendRequestRejection, SendSinglePacketEntropy, SendSinglePacketFailure,
+    SendSinglePacketWriteError, SendSinglePacketWriteOutcome, SendToChannelFailure,
+    SendToChannelRejection, SendToLinkFailure, SendToLinkRejection, SetResourceStrategyFailure,
+    Settlement, WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::AttachedInterfaces;
 use crate::interfaces::InterfaceId;
+use crate::routing::delivery::receipts::ReceiptKind;
 use crate::routing::links::channel::send::SendToChannelWriteError;
 use crate::routing::links::channel::CHANNEL_ENVELOPE_HEADER_LEN;
 use crate::routing::links::data::{link_data_frame_ceiling, LinkDataError, SendToLinkWriteError};
@@ -123,6 +125,10 @@ impl<S: StorageLayout> EngineState<S> {
                             sink,
                         );
                         if let Some(culled) = dispatch.culled {
+                            if matches!(culled.kind, ReceiptKind::SendRequest { .. }) {
+                                wake_schedule_changes.resource_deadlines =
+                                    self.resource_deadlines_wake();
+                            }
                             settle(sink, culled.command_id, culled_settlement(culled.kind));
                         }
                     }
@@ -177,6 +183,19 @@ impl<S: StorageLayout> EngineState<S> {
                     id,
                     Settlement::SendGroup(Err(SendGroupFailure::Rejected(rejection))),
                 );
+            }
+            CommandOutcome::OwesSendPlainPacket { id, send } => {
+                let mut buf = [0u8; BROADCAST_MTU];
+                let settlement = match self.write_commanded_send_plain_packet(&send, &mut buf) {
+                    Ok(wire_bytes) => {
+                        fan_frame(interfaces, FanTarget::All, &buf[..wire_bytes], sink);
+                        Settlement::SendPlainPacket(Ok(()))
+                    }
+                    Err(error) => {
+                        Settlement::SendPlainPacket(Err(SendPlainPacketFailure::WriteFailed(error)))
+                    }
+                };
+                settle(sink, id, settlement);
             }
             CommandOutcome::OwesPathRequest { id, request } => {
                 let mut buf = [0u8; BROADCAST_MTU];
@@ -266,6 +285,10 @@ impl<S: StorageLayout> EngineState<S> {
                         }));
                         match wrote {
                             Some(Ok(Some(culled))) => {
+                                if matches!(culled.kind, ReceiptKind::SendRequest { .. }) {
+                                    wake_schedule_changes.resource_deadlines =
+                                        self.resource_deadlines_wake();
+                                }
                                 settle(sink, culled.command_id, culled_settlement(culled.kind));
                             }
                             Some(Ok(None)) => {}
@@ -431,6 +454,10 @@ impl<S: StorageLayout> EngineState<S> {
                         }));
                         match wrote {
                             Some(Ok(Some(culled))) => {
+                                if matches!(culled.kind, ReceiptKind::SendRequest { .. }) {
+                                    wake_schedule_changes.resource_deadlines =
+                                        self.resource_deadlines_wake();
+                                }
                                 settle(sink, culled.command_id, culled_settlement(culled.kind));
                             }
                             Some(Ok(None)) => {}
@@ -561,6 +588,7 @@ impl<S: StorageLayout> EngineState<S> {
                 };
                 settle(sink, id, settlement);
                 wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
+                wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             CommandOutcome::CloseLinkRejected { id, rejection } => {
                 settle(
@@ -612,6 +640,7 @@ impl<S: StorageLayout> EngineState<S> {
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         let id = owed.command_id;
+        let mut culled_request = false;
         match self.finish_send_single_packet_deferred(owed, ephemeral_public, shared, buf) {
             FinishSendSinglePacketOutcome::Written(dispatch) => {
                 fan_frame(
@@ -621,6 +650,7 @@ impl<S: StorageLayout> EngineState<S> {
                     sink,
                 );
                 if let Some(culled) = dispatch.culled {
+                    culled_request = matches!(culled.kind, ReceiptKind::SendRequest { .. });
                     settle(sink, culled.command_id, culled_settlement(culled.kind));
                 }
             }
@@ -634,6 +664,9 @@ impl<S: StorageLayout> EngineState<S> {
         }
         let mut wake = WakeSchedules::UNCHANGED;
         wake.receipt_timeouts = self.receipt_timeouts_wake();
+        if culled_request {
+            wake.resource_deadlines = self.resource_deadlines_wake();
+        }
         wake
     }
 }

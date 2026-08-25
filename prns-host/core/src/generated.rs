@@ -1,6 +1,6 @@
 pub const HOST_SCHEMA_VERSION: u32 = 1;
 pub const HOST_SCHEMA_ABI: u32 = 1;
-pub const HOST_SCHEMA_PRODUCT_VERSION: &str = "0.3.6";
+pub const HOST_SCHEMA_PRODUCT_VERSION: &str = "0.3.7";
 pub const DESTINATION_HASH_LENGTH: usize = 16;
 pub const IDENTITY_HASH_LENGTH: usize = 16;
 pub const INTERFACE_ID_LENGTH: usize = 8;
@@ -1266,6 +1266,7 @@ pub enum ApplicationEventKind {
     ResourceSegment = 105,
     ResourceNeedsDecompression = 106,
     ChannelMessage = 107,
+    LinkDelivery = 108,
 }
 
 impl ApplicationEventKind {
@@ -1280,6 +1281,7 @@ impl ApplicationEventKind {
             Self::ResourceSegment => "ResourceSegment",
             Self::ResourceNeedsDecompression => "ResourceNeedsDecompression",
             Self::ChannelMessage => "ChannelMessage",
+            Self::LinkDelivery => "LinkDelivery",
         }
     }
 }
@@ -1297,6 +1299,7 @@ impl TryFrom<u32> for ApplicationEventKind {
             105 => Ok(Self::ResourceSegment),
             106 => Ok(Self::ResourceNeedsDecompression),
             107 => Ok(Self::ChannelMessage),
+            108 => Ok(Self::LinkDelivery),
             _ => Err(()),
         }
     }
@@ -1494,6 +1497,7 @@ pub enum EventField {
     Dropped = 37,
     PersistenceCause = 38,
     PersistenceTarget = 39,
+    AppData = 40,
 }
 
 impl EventField {
@@ -1539,6 +1543,7 @@ impl EventField {
             Self::Dropped => "Dropped",
             Self::PersistenceCause => "PersistenceCause",
             Self::PersistenceTarget => "PersistenceTarget",
+            Self::AppData => "AppData",
         }
     }
 }
@@ -1587,6 +1592,7 @@ impl TryFrom<u32> for EventField {
             37 => Ok(Self::Dropped),
             38 => Ok(Self::PersistenceCause),
             39 => Ok(Self::PersistenceTarget),
+            40 => Ok(Self::AppData),
             _ => Err(()),
         }
     }
@@ -1990,6 +1996,7 @@ mod tests {
             (ApplicationEventKind::ResourceSegment, 105, "ResourceSegment"),
             (ApplicationEventKind::ResourceNeedsDecompression, 106, "ResourceNeedsDecompression"),
             (ApplicationEventKind::ChannelMessage, 107, "ChannelMessage"),
+            (ApplicationEventKind::LinkDelivery, 108, "LinkDelivery"),
         ]);
     }
 
@@ -2084,6 +2091,7 @@ mod tests {
             (EventField::Dropped, 37, "Dropped"),
             (EventField::PersistenceCause, 38, "PersistenceCause"),
             (EventField::PersistenceTarget, 39, "PersistenceTarget"),
+            (EventField::AppData, 40, "AppData"),
         ]);
     }
 }

@@ -25,6 +25,7 @@ cargo build \
         --target-dir target/s140-v7
 )
 ./tools/prns build hopspot t1000e
+./tools/prns build hopspot t096
 ./tools/prns build hopspot t114
 ./tools/prns build hopspot mesh-tower-v2
 

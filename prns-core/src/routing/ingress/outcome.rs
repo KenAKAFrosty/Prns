@@ -203,6 +203,16 @@ pub enum IngestPacketOutcome<'p> {
         hash: ResourceHash,
         settled_request: Option<CommandId>,
     },
+    /// A validated and policy-approved advertisement is waiting for an
+    /// incoming Resource row, or a retry coalesced into that existing wait.
+    ResourceAdmissionPending,
+    /// The offer cannot wait: it can never fit, this target has no pending
+    /// queue, or the bounded queue is full.
+    ResourceCapacityRejected {
+        link_id: LinkId,
+        hash: ResourceHash,
+        settled_request: Option<CommandId>,
+    },
     OwesResourceAssembly {
         link_id: LinkId,
         hash: ResourceHash,

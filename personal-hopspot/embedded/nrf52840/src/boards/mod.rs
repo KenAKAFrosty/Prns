@@ -1,9 +1,25 @@
 #[cfg(any(
+    feature = "board-t096",
     feature = "board-t114",
     feature = "board-t1000e",
     feature = "board-mesh-tower-v2"
 ))]
 mod status_led;
+
+#[cfg(any(feature = "board-t096", feature = "board-t114"))]
+mod button;
+
+#[cfg(any(feature = "board-t096", feature = "board-t114"))]
+pub(crate) enum DisplayBringup<Display, Error> {
+    Ready(Display),
+    Unavailable(Error),
+}
+
+#[cfg(any(feature = "board-t096", feature = "board-t114"))]
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum DisplayIoError {
+    Spi,
+}
 
 #[cfg(feature = "board-mesh-tower-v2")]
 pub(crate) mod mesh_tower_v2;

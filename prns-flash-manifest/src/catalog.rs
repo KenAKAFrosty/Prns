@@ -3,19 +3,22 @@ use thiserror::Error;
 
 use crate::{
     AfterResetStrategy, BeforeResetStrategy, BoardId, ChipFamily, ImmutableArtifactPath,
-    PreparationProfile, ProvisioningFormat, SoftdeviceIdentity, Uf2BoardIdPrefix, Uf2MountLabel,
-    UsbVidPid, ValidatedNrfSerialDfuSerialTransport, CONFIG_OFFSET, CONFIG_PASSWORD_MAX_BYTES,
-    CONFIG_SIZE, CONFIG_SSID_MAX_BYTES, CONFIG_VERSION,
+    PreparationProfile, ProvisioningFormat, SoftdeviceIdentity, Uf2BoardIdMatch,
+    Uf2BoardIdMatchKind, Uf2MountLabel, UsbVidPid, ValidatedNrfSerialDfuSerialTransport,
+    CONFIG_OFFSET, CONFIG_PASSWORD_MAX_BYTES, CONFIG_SIZE, CONFIG_SSID_MAX_BYTES, CONFIG_VERSION,
 };
 
 const CATALOG_JSON: &str = include_str!("../../release/flash/boards.json");
-const BOARD_CATALOG_SCHEMA: u32 = 3;
-const SHIPPING_BOARD_SLUGS: [&str; 5] = [
+const BOARD_CATALOG_SCHEMA: u32 = 4;
+const SHIPPING_BOARD_SLUGS: [&str; 8] = [
     "heltec-v4",
     "heltec-v4-r8",
     "t-beam-supreme",
     "xiao-esp32-c6",
     "t-echo",
+    "t114",
+    "t096",
+    "t1000-e",
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -296,7 +299,7 @@ pub enum NrfDfuBankLayout {
 #[serde(deny_unknown_fields)]
 pub struct NrfSerialDfuRecoveryBuild {
     pub mount_label: String,
-    pub board_id_prefix: String,
+    pub board_identity: Uf2BoardIdentity,
     pub family_id: String,
     pub filename: String,
 }
@@ -320,10 +323,36 @@ pub struct EspBuild {
 #[serde(deny_unknown_fields)]
 pub struct Uf2Build {
     pub package: String,
+    pub binary: String,
+    pub board_feature: String,
     pub rust_target: String,
     pub mount_label: String,
-    pub board_id_prefix: String,
+    pub board_identity: Uf2BoardIdentity,
+    pub application_usb: Uf2ApplicationUsb,
     pub variants: Vec<Uf2BuildVariant>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Uf2BoardIdentity {
+    #[serde(rename = "match")]
+    pub match_kind: Uf2BoardIdMatchKind,
+    pub value: String,
+}
+
+impl Uf2BoardIdentity {
+    pub fn validated(&self) -> Result<Uf2BoardIdMatch, crate::DomainValueError> {
+        Uf2BoardIdMatch::parse(self.match_kind, self.value.clone())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Uf2ApplicationUsb {
+    pub usb: UsbVendorProductId,
+    pub manufacturer: String,
+    pub product: String,
+    pub serial_number: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -333,10 +362,29 @@ pub struct Uf2BuildVariant {
     pub softdevice_version: String,
     pub fwid: String,
     pub application_base: String,
+    pub application_end_exclusive: String,
     pub family_id: String,
-    pub cargo_feature: String,
+    pub application_link: Uf2ApplicationLink,
     pub target_directory: String,
     pub filename: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Uf2ApplicationLink {
+    SoftdeviceS140V6,
+    SoftdeviceS140V7,
+    BareMetal,
+}
+
+impl Uf2ApplicationLink {
+    pub const fn cargo_feature(self) -> Option<&'static str> {
+        match self {
+            Self::SoftdeviceS140V6 => Some("softdevice-s140-v6"),
+            Self::SoftdeviceS140V7 => Some("softdevice-s140-v7"),
+            Self::BareMetal => None,
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -347,8 +395,8 @@ pub enum CatalogError {
     Schema(u32),
     #[error("duplicate board slug {0:?}")]
     DuplicateSlug(String),
-    #[error("UF2 board-id prefixes overlap between {first:?} and {second:?}")]
-    OverlappingUf2BoardIdPrefixes { first: String, second: String },
+    #[error("UF2 Board-ID match rules overlap between {first:?} and {second:?}")]
+    OverlappingUf2BoardIdentities { first: String, second: String },
     #[error("board {board:?}: {message}")]
     InvalidBoard { board: String, message: String },
 }
@@ -373,7 +421,7 @@ impl BoardCatalog {
             validate_transport(board)?;
             validate_provisioning(board)?;
         }
-        validate_uf2_board_id_prefixes(&self.boards)?;
+        validate_uf2_board_identities(&self.boards)?;
         let shipping = self
             .shipping_boards()
             .map(|board| board.slug.as_str())
@@ -471,13 +519,11 @@ fn validate_transport(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
         (Transport::Uf2MassStorage, BoardBuild::Uf2(build)) => {
             if board.expected_chip.is_some()
                 || board.flash_size.is_some()
-                || PreparationProfile::parse(&board.preparation_profile)
-                    != Ok(PreparationProfile::TechoUf2)
                 || Uf2MountLabel::parse(build.mount_label.clone()).is_err()
-                || Uf2BoardIdPrefix::parse(build.board_id_prefix.clone()).is_err()
-                || build.package.trim().is_empty()
+                || build.board_identity.validated().is_err()
                 || build.rust_target != "thumbv7em-none-eabihf"
-                || !valid_uf2_build_variants(&build.variants)
+                || !valid_uf2_application_usb(&build.application_usb)
+                || !matches_pinned_uf2_recipe(board, build)
             {
                 return Err(invalid(
                     board,
@@ -503,22 +549,35 @@ fn validate_transport(board: &BoardCatalogEntry) -> Result<(), CatalogError> {
     Ok(())
 }
 
-/// Reject nested UF2 Board-ID prefixes so one drive can never identify as multiple boards.
-fn validate_uf2_board_id_prefixes(boards: &[BoardCatalogEntry]) -> Result<(), CatalogError> {
-    let prefixes = boards
+/// Reject UF2 Board-ID rules whose accepted identities overlap.
+fn validate_uf2_board_identities(boards: &[BoardCatalogEntry]) -> Result<(), CatalogError> {
+    let identities = boards
         .iter()
         .filter_map(|board| match &board.build {
-            BoardBuild::Uf2(build) => Some((board.slug.as_str(), build.board_id_prefix.as_str())),
+            BoardBuild::Uf2(build) => Some((board.slug.as_str(), &build.board_identity)),
             BoardBuild::Esp(_) => None,
             BoardBuild::NrfSerialDfu(build) => {
-                Some((board.slug.as_str(), build.recovery.board_id_prefix.as_str()))
+                Some((board.slug.as_str(), &build.recovery.board_identity))
             }
         })
         .collect::<Vec<_>>();
-    for (index, (slug, prefix)) in prefixes.iter().enumerate() {
-        for (other_slug, other_prefix) in &prefixes[index + 1..] {
-            if prefix.starts_with(other_prefix) || other_prefix.starts_with(prefix) {
-                return Err(CatalogError::OverlappingUf2BoardIdPrefixes {
+    for (index, (slug, identity)) in identities.iter().enumerate() {
+        let identity = identity
+            .validated()
+            .map_err(|_| CatalogError::InvalidBoard {
+                board: (*slug).to_string(),
+                message: "UF2 Board-ID match rule is invalid".to_string(),
+            })?;
+        for (other_slug, other_identity) in &identities[index + 1..] {
+            let other_identity =
+                other_identity
+                    .validated()
+                    .map_err(|_| CatalogError::InvalidBoard {
+                        board: (*other_slug).to_string(),
+                        message: "UF2 Board-ID match rule is invalid".to_string(),
+                    })?;
+            if identity.overlaps(&other_identity) {
+                return Err(CatalogError::OverlappingUf2BoardIdentities {
                     first: (*slug).to_string(),
                     second: (*other_slug).to_string(),
                 });
@@ -558,48 +617,171 @@ fn parse_hex_u32(value: &str) -> Option<u32> {
     .flatten()
 }
 
-fn valid_uf2_build_variants(variants: &[Uf2BuildVariant]) -> bool {
-    let expected = [
-        (
-            "s140",
-            "6.1.1",
-            "0x00b6",
-            "0x00026000",
-            "0xada52840",
-            "softdevice-s140-v6",
-            "target/s140-v6",
-            "t-echo-s140-6.1.1.uf2",
-        ),
-        (
-            "s140",
-            "7.3.0",
-            "0x0123",
-            "0x00027000",
-            "0xada52840",
-            "softdevice-s140-v7",
-            "target/s140-v7",
-            "t-echo-s140-7.3.0.uf2",
-        ),
-    ];
-    variants
-        .iter()
-        .map(|variant| {
-            (
-                variant.softdevice_family.as_str(),
-                variant.softdevice_version.as_str(),
-                variant.fwid.as_str(),
-                variant.application_base.as_str(),
-                variant.family_id.as_str(),
-                variant.cargo_feature.as_str(),
-                variant.target_directory.as_str(),
-                variant.filename.as_str(),
-            )
-        })
-        .eq(expected)
-        && variants.iter().all(|variant| {
-            parse_hex_u32(&variant.application_base).is_some()
+struct PinnedUf2Recipe {
+    preparation_profile: PreparationProfile,
+    package: &'static str,
+    binary: &'static str,
+    board_feature: &'static str,
+    manufacturer: &'static str,
+    product: &'static str,
+    serial_number: &'static str,
+    variants: &'static [PinnedUf2Variant],
+}
+
+struct PinnedUf2Variant {
+    softdevice_family: &'static str,
+    softdevice_version: &'static str,
+    fwid: &'static str,
+    application_base: &'static str,
+    application_end_exclusive: &'static str,
+    family_id: &'static str,
+    application_link: Uf2ApplicationLink,
+    target_directory: &'static str,
+    filename: &'static str,
+}
+
+const T_ECHO_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
+    preparation_profile: PreparationProfile::TechoUf2,
+    package: "t-echo",
+    binary: "t-echo",
+    board_feature: "board-t-echo",
+    manufacturer: "Stay Personal",
+    product: "Personal Hopspot (T-Echo)",
+    serial_number: "PERSONAL-RNS-TECHO-HOP",
+    variants: &[
+        PinnedUf2Variant {
+            softdevice_family: "s140",
+            softdevice_version: "6.1.1",
+            fwid: "0x00b6",
+            application_base: "0x00026000",
+            application_end_exclusive: "0x000c0000",
+            family_id: "0xada52840",
+            application_link: Uf2ApplicationLink::SoftdeviceS140V6,
+            target_directory: "target/s140-v6",
+            filename: "t-echo-s140-6.1.1.uf2",
+        },
+        PinnedUf2Variant {
+            softdevice_family: "s140",
+            softdevice_version: "7.3.0",
+            fwid: "0x0123",
+            application_base: "0x00027000",
+            application_end_exclusive: "0x000c0000",
+            family_id: "0xada52840",
+            application_link: Uf2ApplicationLink::SoftdeviceS140V7,
+            target_directory: "target/s140-v7",
+            filename: "t-echo-s140-7.3.0.uf2",
+        },
+    ],
+};
+
+const T114_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
+    preparation_profile: PreparationProfile::T114Uf2,
+    package: "t-echo",
+    binary: "heltec-t114",
+    board_feature: "board-t114",
+    manufacturer: "Stay Personal",
+    product: "Personal Hopspot (Heltec T114)",
+    serial_number: "PERSONAL-RNS-T114-HOP",
+    variants: &[PinnedUf2Variant {
+        softdevice_family: "s140",
+        softdevice_version: "6.1.1",
+        fwid: "0x00b6",
+        application_base: "0x00026000",
+        application_end_exclusive: "0x000e9000",
+        family_id: "0xada52840",
+        application_link: Uf2ApplicationLink::BareMetal,
+        target_directory: "target/t114",
+        filename: "heltec-t114-s140-6.1.1.uf2",
+    }],
+};
+
+const T096_UF2_RECIPE: PinnedUf2Recipe = PinnedUf2Recipe {
+    preparation_profile: PreparationProfile::T096Uf2,
+    package: "t-echo",
+    binary: "t096",
+    board_feature: "board-t096",
+    manufacturer: "Stay Personal",
+    product: "Personal Hopspot (Heltec T096)",
+    serial_number: "PERSONAL-RNS-T096-HOP",
+    variants: &[PinnedUf2Variant {
+        softdevice_family: "s140",
+        softdevice_version: "6.1.1",
+        fwid: "0x00b6",
+        application_base: "0x00026000",
+        application_end_exclusive: "0x000e8000",
+        family_id: "0xada52840",
+        application_link: Uf2ApplicationLink::SoftdeviceS140V6,
+        target_directory: "target/t096",
+        filename: "t096-s140-6.1.1.uf2",
+    }],
+};
+
+fn pinned_uf2_recipe(slug: &str) -> Option<&'static PinnedUf2Recipe> {
+    match slug {
+        "t-echo" => Some(&T_ECHO_UF2_RECIPE),
+        "t096" => Some(&T096_UF2_RECIPE),
+        "t114" => Some(&T114_UF2_RECIPE),
+        _ => None,
+    }
+}
+
+fn matches_pinned_uf2_recipe(board: &BoardCatalogEntry, build: &Uf2Build) -> bool {
+    let Some(recipe) = pinned_uf2_recipe(&board.slug) else {
+        return false;
+    };
+    PreparationProfile::parse(&board.preparation_profile) == Ok(recipe.preparation_profile)
+        && build.package == recipe.package
+        && build.binary == recipe.binary
+        && build.board_feature == recipe.board_feature
+        && build.application_usb.manufacturer == recipe.manufacturer
+        && build.application_usb.product == recipe.product
+        && build.application_usb.serial_number == recipe.serial_number
+        && build
+            .variants
+            .iter()
+            .map(|variant| {
+                (
+                    variant.softdevice_family.as_str(),
+                    variant.softdevice_version.as_str(),
+                    variant.fwid.as_str(),
+                    variant.application_base.as_str(),
+                    variant.application_end_exclusive.as_str(),
+                    variant.family_id.as_str(),
+                    variant.application_link,
+                    variant.target_directory.as_str(),
+                    variant.filename.as_str(),
+                )
+            })
+            .eq(recipe.variants.iter().map(|variant| {
+                (
+                    variant.softdevice_family,
+                    variant.softdevice_version,
+                    variant.fwid,
+                    variant.application_base,
+                    variant.application_end_exclusive,
+                    variant.family_id,
+                    variant.application_link,
+                    variant.target_directory,
+                    variant.filename,
+                )
+            }))
+        && build.variants.iter().all(|variant| {
+            parse_hex_u32(&variant.application_base)
+                .zip(parse_hex_u32(&variant.application_end_exclusive))
+                .is_some_and(|(base, end)| {
+                    base < end && base % 0x1000 == 0 && end % 0x1000 == 0 && end <= 0x0010_0000
+                })
                 && parse_hex_u32(&variant.family_id).is_some()
         })
+}
+
+fn valid_uf2_application_usb(application_usb: &Uf2ApplicationUsb) -> bool {
+    use prns_core::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
+    parse_usb_vendor_product_id(&application_usb.usb)
+        .is_some_and(|usb| usb.vendor_id == WEBUSB_VENDOR_ID && usb.product_id == WEBUSB_PRODUCT_ID)
+        && valid_usb_string(&application_usb.manufacturer)
+        && valid_usb_string(&application_usb.product)
+        && valid_usb_string(&application_usb.serial_number)
 }
 
 fn valid_nrf_serial_dfu_build(build: &NrfSerialDfuBuild) -> bool {
@@ -632,7 +814,7 @@ fn valid_nrf_serial_dfu_build(build: &NrfSerialDfuBuild) -> bool {
         && compatibility.device_revision != 0
         && application_region_is_valid
         && Uf2MountLabel::parse(recovery.mount_label.clone()).is_ok()
-        && Uf2BoardIdPrefix::parse(recovery.board_id_prefix.clone()).is_ok()
+        && recovery.board_identity.validated().is_ok()
         && parse_hex_u32(&recovery.family_id).is_some()
         && valid_artifact_filename(&recovery.filename, ".uf2")
         && recovery.filename != build.application_filename
@@ -739,6 +921,7 @@ mod tests {
     #[test]
     fn embedded_catalog_has_all_shipping_boards() -> Result<(), CatalogError> {
         let catalog = board_catalog()?;
+        assert_eq!(catalog.schema_version, 4);
         let slugs = catalog
             .shipping_boards()
             .map(|board| board.slug.as_str())
@@ -750,7 +933,10 @@ mod tests {
                 "heltec-v4-r8",
                 "t-beam-supreme",
                 "xiao-esp32-c6",
-                "t-echo"
+                "t-echo",
+                "t114",
+                "t096",
+                "t1000-e"
             ]
         );
         Ok(())
@@ -766,7 +952,15 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             shipping,
-            ["heltec-v4-r8", "t-beam-supreme", "xiao-esp32-c6", "t-echo"]
+            [
+                "heltec-v4-r8",
+                "t-beam-supreme",
+                "xiao-esp32-c6",
+                "t-echo",
+                "t114",
+                "t096",
+                "t1000-e"
+            ]
         );
         assert!(catalog.board("heltec-v4").is_some());
         Ok(())
@@ -814,6 +1008,8 @@ mod tests {
                     Some(("partitions-hopspot-4mb.csv", "4mb"))
                 ),
                 ("t-echo", None, None),
+                ("t114", None, None),
+                ("t096", None, None),
                 ("t1000-e", None, None),
             ]
         );
@@ -821,18 +1017,66 @@ mod tests {
     }
 
     #[test]
-    fn t1000e_qualification_contract_matches_the_recovery_bootloader() -> Result<(), CatalogError> {
+    fn t096_shipping_contract_matches_the_hardware_receipt() -> Result<(), CatalogError> {
+        let catalog = board_catalog()?;
+        let board = catalog
+            .board("t096")
+            .ok_or_else(|| CatalogError::InvalidBoard {
+                board: "t096".to_string(),
+                message: "missing shipping target".to_string(),
+            })?;
+        let BoardBuild::Uf2(build) = &board.build else {
+            return Err(invalid(board, "expected a UF2 build"));
+        };
+
+        assert_eq!(board.availability, BoardAvailability::Shipping);
+        assert_eq!(board.preparation_profile, "t096-uf2");
+        assert_eq!(build.package, "t-echo");
+        assert_eq!(build.binary, "t096");
+        assert_eq!(build.board_feature, "board-t096");
+        assert_eq!(build.rust_target, "thumbv7em-none-eabihf");
+        assert_eq!(build.mount_label, "HT-n5262G");
+        assert_eq!(build.board_identity.match_kind, Uf2BoardIdMatchKind::Exact);
+        assert_eq!(build.board_identity.value, "ht-n5262g");
+        assert_eq!(build.application_usb.usb.vendor_id, "0x1209");
+        assert_eq!(build.application_usb.usb.product_id, "0x0001");
+        assert_eq!(build.application_usb.manufacturer, "Stay Personal");
+        assert_eq!(
+            build.application_usb.product,
+            "Personal Hopspot (Heltec T096)"
+        );
+        assert_eq!(build.application_usb.serial_number, "PERSONAL-RNS-T096-HOP");
+        let [variant] = build.variants.as_slice() else {
+            return Err(invalid(board, "expected exactly one T096 variant"));
+        };
+        assert_eq!(variant.softdevice_family, "s140");
+        assert_eq!(variant.softdevice_version, "6.1.1");
+        assert_eq!(variant.fwid, "0x00b6");
+        assert_eq!(variant.application_base, "0x00026000");
+        assert_eq!(variant.application_end_exclusive, "0x000e8000");
+        assert_eq!(variant.family_id, "0xada52840");
+        assert_eq!(
+            variant.application_link,
+            Uf2ApplicationLink::SoftdeviceS140V6
+        );
+        assert_eq!(variant.target_directory, "target/t096");
+        assert_eq!(variant.filename, "t096-s140-6.1.1.uf2");
+        Ok(())
+    }
+
+    #[test]
+    fn t1000e_shipping_contract_matches_the_recovery_bootloader() -> Result<(), CatalogError> {
         let catalog = board_catalog()?;
         let board = catalog
             .board("t1000-e")
             .ok_or_else(|| CatalogError::InvalidBoard {
                 board: "t1000-e".to_string(),
-                message: "missing qualification target".to_string(),
+                message: "missing shipping target".to_string(),
             })?;
         let BoardBuild::NrfSerialDfu(build) = &board.build else {
             return Err(invalid(board, "expected Nordic serial DFU build"));
         };
-        assert_eq!(board.availability, BoardAvailability::Qualification);
+        assert_eq!(board.availability, BoardAvailability::Shipping);
         assert_eq!(build.package, "t-echo");
         assert_eq!(build.binary, "t1000e");
         assert_eq!(build.cargo_feature, "board-t1000e");
@@ -892,8 +1136,55 @@ mod tests {
         assert_eq!(build.compatibility.application_end_exclusive, "0x000ea000");
         assert_eq!(build.compatibility.bank_layout, NrfDfuBankLayout::Single);
         assert_eq!(build.recovery.mount_label, "T1000-E");
-        assert_eq!(build.recovery.board_id_prefix, "nrf52840-t1000-e-v1");
+        assert_eq!(
+            build.recovery.board_identity.match_kind,
+            Uf2BoardIdMatchKind::Exact
+        );
+        assert_eq!(build.recovery.board_identity.value, "nrf52840-t1000-e-v1");
         assert_eq!(build.recovery.family_id, "0xada52840");
+        Ok(())
+    }
+
+    #[test]
+    fn t114_shipping_contract_matches_the_hardware_receipt() -> Result<(), CatalogError> {
+        let catalog = board_catalog()?;
+        let board = catalog
+            .board("t114")
+            .ok_or_else(|| CatalogError::InvalidBoard {
+                board: "t114".to_string(),
+                message: "missing shipping target".to_string(),
+            })?;
+        let BoardBuild::Uf2(build) = &board.build else {
+            return Err(invalid(board, "expected a UF2 build"));
+        };
+        assert_eq!(board.availability, BoardAvailability::Shipping);
+        assert_eq!(board.preparation_profile, "t114-uf2");
+        assert_eq!(build.package, "t-echo");
+        assert_eq!(build.binary, "heltec-t114");
+        assert_eq!(build.board_feature, "board-t114");
+        assert_eq!(build.mount_label, "HT-n5262");
+        assert_eq!(build.board_identity.match_kind, Uf2BoardIdMatchKind::Exact);
+        assert_eq!(build.board_identity.value, "ht-n5262");
+        assert_eq!(build.application_usb.usb.vendor_id, "0x1209");
+        assert_eq!(build.application_usb.usb.product_id, "0x0001");
+        assert_eq!(build.application_usb.manufacturer, "Stay Personal");
+        assert_eq!(
+            build.application_usb.product,
+            "Personal Hopspot (Heltec T114)"
+        );
+        assert_eq!(build.application_usb.serial_number, "PERSONAL-RNS-T114-HOP");
+        let [variant] = build.variants.as_slice() else {
+            return Err(invalid(board, "expected exactly one T114 variant"));
+        };
+        assert_eq!(variant.softdevice_family, "s140");
+        assert_eq!(variant.softdevice_version, "6.1.1");
+        assert_eq!(variant.fwid, "0x00b6");
+        assert_eq!(variant.application_base, "0x00026000");
+        assert_eq!(variant.application_end_exclusive, "0x000e9000");
+        assert_eq!(variant.family_id, "0xada52840");
+        assert_eq!(variant.application_link, Uf2ApplicationLink::BareMetal);
+        assert_eq!(variant.target_directory, "target/t114");
+        assert_eq!(variant.filename, "heltec-t114-s140-6.1.1.uf2");
         Ok(())
     }
 
@@ -967,36 +1258,68 @@ mod tests {
             return Err("expected a UF2 build".into());
         };
         build.mount_label = "T114BOOT".to_string();
-        build.board_id_prefix = "nrf52840-heltec-t114-v".to_string();
+        build.board_identity = Uf2BoardIdentity {
+            match_kind: Uf2BoardIdMatchKind::RevisionPrefix,
+            value: "nrf52840-heltec-t114-v".to_string(),
+        };
         catalog.validate()?;
         Ok(())
     }
 
     #[test]
-    fn one_uf2_board_id_prefix_may_not_begin_with_another() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn uf2_board_id_match_rules_may_not_overlap() -> Result<(), Box<dyn std::error::Error>> {
         let mut catalog = board_catalog()?;
-        let mut second = catalog
+        let uf2_prefix = catalog
             .boards
             .iter()
-            .find(|board| board.transport == Transport::Uf2MassStorage)
-            .ok_or("expected a UF2 board")?
-            .clone();
-        second.slug = "nrf52840-second-board".to_string();
-        let BoardBuild::Uf2(build) = &mut second.build else {
-            return Err("expected a UF2 build".into());
+            .find_map(|board| match &board.build {
+                BoardBuild::Uf2(build)
+                    if build.board_identity.match_kind == Uf2BoardIdMatchKind::RevisionPrefix =>
+                {
+                    Some(build.board_identity.value.clone())
+                }
+                BoardBuild::Esp(_) | BoardBuild::NrfSerialDfu(_) => None,
+                BoardBuild::Uf2(_) => None,
+            })
+            .ok_or("expected a UF2 board")?;
+        let recovery = catalog
+            .boards
+            .iter_mut()
+            .find_map(|board| match &mut board.build {
+                BoardBuild::NrfSerialDfu(build) => Some(&mut build.recovery),
+                BoardBuild::Esp(_) | BoardBuild::Uf2(_) => None,
+            })
+            .ok_or("expected a Nordic serial DFU board")?;
+        recovery.board_identity = Uf2BoardIdentity {
+            match_kind: Uf2BoardIdMatchKind::Exact,
+            value: format!("{uf2_prefix}2"),
         };
-        build.board_id_prefix = format!("{}2", build.board_id_prefix);
-        catalog.boards.push(second);
         assert!(matches!(
             catalog.validate(),
-            Err(CatalogError::OverlappingUf2BoardIdPrefixes { .. })
+            Err(CatalogError::OverlappingUf2BoardIdentities { .. })
         ));
         Ok(())
     }
 
     #[test]
-    fn an_unnormalized_uf2_board_id_prefix_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+    fn a_uf2_board_outside_the_pinned_recipes_is_rejected() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut catalog = board_catalog()?;
+        let board = catalog
+            .boards
+            .iter_mut()
+            .find(|board| board.transport == Transport::Uf2MassStorage)
+            .ok_or("expected a UF2 board")?;
+        board.slug = "nrf52840-second-board".to_string();
+        assert!(matches!(
+            catalog.validate(),
+            Err(CatalogError::InvalidBoard { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn an_unnormalized_uf2_board_id_match_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
         let mut catalog = board_catalog()?;
         let board = catalog
             .boards
@@ -1006,7 +1329,7 @@ mod tests {
         let BoardBuild::Uf2(build) = &mut board.build else {
             return Err("expected a UF2 build".into());
         };
-        build.board_id_prefix = "nRF52840_TEcho_v".to_string();
+        build.board_identity.value = "nRF52840_TEcho_v".to_string();
         assert!(matches!(
             catalog.validate(),
             Err(CatalogError::InvalidBoard { .. })

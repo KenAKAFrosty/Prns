@@ -6,6 +6,7 @@ use crate::reference::{
     ReferenceConfig, ReferenceConfigParams, ReferenceInterface, ReferenceValue,
 };
 use crate::SourceLocations;
+use prns_core::routing::links::resources::ResourceMemoryLimits;
 
 #[test]
 fn global_flags_follow_the_reticulum_section() {
@@ -106,7 +107,32 @@ fn transport_is_off_and_sharing_on_by_default() {
         SharedInstance::Enabled { .. }
     ));
     assert_eq!(plan.probe_responder, ProbeResponderPlan::Disabled);
+    assert_eq!(
+        plan.resource_memory_limits,
+        prns_core::routing::links::resources::ResourceMemoryLimits::DEFAULT_HOST
+    );
     assert_eq!(named(&plan, "A").policy.announce_rate_limit, None);
+}
+
+#[test]
+fn prns_resource_memory_limits_reach_the_daemon_plan_independently() {
+    let incoming = plan_of("[prns]\nresource_mem_in = 2 MiB\n");
+    assert_eq!(
+        incoming.resource_memory_limits,
+        ResourceMemoryLimits {
+            incoming_bytes: 2 * 1024 * 1024,
+            outgoing_bytes: ResourceMemoryLimits::DEFAULT_HOST.outgoing_bytes,
+        }
+    );
+
+    let outgoing = plan_of("[prns]\nresource_mem_out = 0\n");
+    assert_eq!(
+        outgoing.resource_memory_limits,
+        ResourceMemoryLimits {
+            incoming_bytes: ResourceMemoryLimits::DEFAULT_HOST.incoming_bytes,
+            outgoing_bytes: 0,
+        }
+    );
 }
 
 #[test]

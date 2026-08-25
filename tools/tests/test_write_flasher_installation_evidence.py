@@ -35,6 +35,12 @@ def roster(version: str) -> dict:
         ("xiao-esp32-c6", "web", "windows", "x86_64"),
         ("t-echo", "cli", "macos", "aarch64"),
         ("t-echo", "web", "linux", "x86_64"),
+        ("t114", "cli", "linux", "x86_64"),
+        ("t114", "web", "macos", "aarch64"),
+        ("t096", "cli", "linux", "aarch64"),
+        ("t096", "web", "macos", "aarch64"),
+        ("t1000-e", "cli", "macos", "x86_64"),
+        ("t1000-e", "web", "windows", "x86_64"),
     )
     for board, surface, os_name, architecture in hosts:
         assignment = {

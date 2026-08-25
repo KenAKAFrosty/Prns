@@ -2,13 +2,11 @@ use std::fmt;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use personal_rns::engine::{
-    AnnounceNowFailure, EstablishLinkFailure, IdentifyFailure, SendRequestFailure,
-};
+use personal_rns::engine::{EstablishLinkFailure, IdentifyFailure, SendRequestFailure};
 use personal_rns::rnx::RnxCodecError;
 use personal_rns::routing::announce::ExpandNameError;
 use personal_rns::routing::request_handlers::RequestHandlerError;
-use personal_rns::runtime::{IdentitySecretFileError, NodeRunError, SendError};
+use personal_rns::runtime::{AnnounceNowError, IdentitySecretFileError, NodeRunError, SendError};
 use personal_rns::shared_instance::ExistingSharedInstanceUnavailable;
 use personal_rns::wire::DestinationHash;
 
@@ -45,7 +43,7 @@ pub enum RnxError {
     RemoteCouldNotExecute,
     SharedInstance(ExistingSharedInstanceUnavailable),
     RequestAcl(RequestHandlerError),
-    Announce(SendError<AnnounceNowFailure>),
+    Announce(AnnounceNowError),
     ListenerStopped,
     ListenerPanicked(NodeRunError),
     Stdin(std::io::Error),

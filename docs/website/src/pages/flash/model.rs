@@ -5,7 +5,7 @@ use std::sync::{
 
 use dioxus::prelude::{Signal, WritableExt};
 use prns_flash_manifest::{
-    FlashPartKind, SoftdeviceIdentity, Uf2BoardIdPrefix, Uf2BootloaderIdentity,
+    FlashPartKind, SoftdeviceIdentity, Uf2BoardIdMatch, Uf2BootloaderIdentity,
 };
 use serde::Serialize;
 
@@ -37,10 +37,19 @@ pub(super) enum DestructiveConfirmation {
 pub(super) enum ReleaseCompatibility {
     Esp,
     Uf2(SoftdeviceIdentity),
+    NrfSerialDfu(NrfSerialDfuEntry),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum NrfSerialDfuEntry {
+    TouchApplicationOrBootloader,
+    ManagedApplication,
 }
 
 pub(super) const WEB_SERIAL_PROBE_SUPPORTED: &str = "supported";
 pub(super) const WEB_SERIAL_PROBE_ANDROID_BLUETOOTH_ONLY: &str = "android-bluetooth-only";
+pub(super) const WEB_USB_PROBE_SUPPORTED: &str = "supported";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum WebSerialCapability {
@@ -50,8 +59,24 @@ pub(super) enum WebSerialCapability {
     Unavailable,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum WebUsbCapability {
+    Checking,
+    Supported,
+    Unavailable,
+}
+
+impl WebUsbCapability {
+    pub(super) fn from_probe(probe: &str) -> Self {
+        match probe {
+            WEB_USB_PROBE_SUPPORTED => Self::Supported,
+            _ => Self::Unavailable,
+        }
+    }
+}
+
 impl WebSerialCapability {
-    pub(super) const fn permits_esp_flash(self) -> bool {
+    pub(super) const fn permits_usb_serial_flash(self) -> bool {
         matches!(self, Self::Supported)
     }
 
@@ -173,6 +198,7 @@ pub(super) struct PreparationGuide {
 pub(super) fn preparation_guide(
     profile: PreparationProfile,
     target: BoardFlashTarget,
+    nrf_recovery: bool,
 ) -> PreparationGuide {
     match profile {
         PreparationProfile::EspUsbBoot => PreparationGuide {
@@ -183,25 +209,84 @@ pub(super) fn preparation_guide(
                 "If automatic connection fails, hold BOOT, tap RESET, release BOOT, then restart the complete connect-and-flash step.".to_string(),
             ],
         },
-        PreparationProfile::TechoUf2 => PreparationGuide {
-            lead: "This board uses its UF2 bootloader; the website reads its local descriptor and downloads the matching verified UF2 file.",
-            steps: match target {
-                BoardFlashTarget::Uf2MassStorage { mount_label, .. } => vec![
-                    format!(
-                        "Connect with a USB data cable and double-press RESET until the {mount_label} drive appears."
-                    ),
-                    format!(
-                        "Select INFO_UF2.TXT from {mount_label}. The file is parsed only in this browser and is not uploaded or retained."
-                    ),
-                    "Prepare the signed release after the detected SoftDevice foundation appears.".to_string(),
-                    format!(
-                        "Copy the downloaded UF2 to {mount_label} and wait for the copy to finish. The drive disappears when the device reboots."
-                    ),
-                ],
-                BoardFlashTarget::EspSerial { .. } => {
-                    unreachable!("the UF2 preparation profile requires a cataloged UF2 target")
-                }
-            },
+        PreparationProfile::TechoUf2 | PreparationProfile::T114Uf2 => {
+            uf2_preparation_guide(target)
+        }
+        PreparationProfile::T096Uf2 => uf2_preparation_guide(target),
+        PreparationProfile::T1000eNrfSerialDfu => {
+            t1000e_preparation_guide(target, nrf_recovery)
+        }
+    }
+}
+
+fn t1000e_preparation_guide(target: BoardFlashTarget, recovery: bool) -> PreparationGuide {
+    let BoardFlashTarget::NrfSerialDfu {
+        recovery_mount_label,
+        ..
+    } = target
+    else {
+        unreachable!("the T1000-E profile requires a cataloged Nordic serial DFU target")
+    };
+    if recovery {
+        return PreparationGuide {
+            lead: "Recovery UF2 is the durable fallback when direct browser or CLI DFU is unavailable. The large button is not a standalone RESET control under Personal Hopspot.",
+            steps: vec![
+                "For a tracker still running Seeed or Meshtastic firmware, disconnect its USB data cable, then press and keep holding the single large button."
+                    .to_string(),
+                "While holding the button, quickly plug in, unplug, and plug in the cable again. Keep holding throughout; this stock-firmware sequence may take several attempts."
+                    .to_string(),
+                format!(
+                    "Release the button when the green LED stays solid and the {recovery_mount_label} drive appears."
+                ),
+                format!(
+                    "Select INFO_UF2.TXT from {recovery_mount_label}. It is parsed only in this browser and is not uploaded or retained."
+                ),
+                format!(
+                    "Prepare the signed recovery image, download it, and copy it to {recovery_mount_label}. The drive disappears when the tracker reboots."
+                ),
+            ],
+        };
+    }
+    PreparationGuide {
+        lead: "The browser uses the exact entry path for the firmware currently running, then transfers the verified application through Nordic serial DFU. Recovery UF2 remains available below.",
+        steps: vec![
+            "Choose whether the tracker currently runs Seeed/Meshtastic firmware or Personal Hopspot. This selects an exact USB entry contract; it does not guess across ambiguous devices."
+                .to_string(),
+            "Prepare the signed release. The application and init packet are downloaded, hash-checked, and validated together in the Rust DFU core before device access."
+                .to_string(),
+            "Connect with a USB data cable and use the requested device picker. Personal Hopspot enters its bootloader through WebUSB; stock firmware and the serial bootloader use Web Serial."
+                .to_string(),
+            "If this browser has not previously been granted the bootloader serial port, use the one bounded Continue step when it appears."
+                .to_string(),
+            "The Rust core owns framing, acknowledgements, waits, progress, and the three-attempt retry limit. Success is reported only after the bootloader accepts the complete transfer."
+                .to_string(),
+        ],
+    }
+}
+
+fn uf2_preparation_guide(target: BoardFlashTarget) -> PreparationGuide {
+    PreparationGuide {
+        lead: "This board uses its UF2 bootloader; the website reads its local descriptor and downloads the matching verified UF2 file.",
+        steps: match target {
+            BoardFlashTarget::Uf2MassStorage { mount_label, .. } => vec![
+                format!(
+                    "Connect with a USB data cable and double-press RESET until the {mount_label} drive appears."
+                ),
+                format!(
+                    "Select INFO_UF2.TXT from {mount_label}. The file is parsed only in this browser and is not uploaded or retained."
+                ),
+                "Prepare the signed release after the detected SoftDevice foundation appears."
+                    .to_string(),
+                format!(
+                    "Copy the downloaded UF2 to {mount_label} and wait for the copy to finish. The drive disappears when the device reboots."
+                ),
+            ],
+            BoardFlashTarget::EspSerial { .. } => {
+                unreachable!("the UF2 preparation profile requires a cataloged UF2 target")
+            }
+            BoardFlashTarget::NrfSerialDfu { .. } => {
+                unreachable!("the UF2 preparation profile requires a cataloged UF2 target")
+            }
         },
     }
 }
@@ -209,6 +294,7 @@ pub(super) fn preparation_guide(
 pub(super) const fn guided_steps(
     target: BoardFlashTarget,
     install_mode: InstallMode,
+    nrf_recovery: bool,
 ) -> &'static [&'static str] {
     match (target, install_mode) {
         (BoardFlashTarget::Uf2MassStorage { .. }, _) => &[
@@ -217,6 +303,20 @@ pub(super) const fn guided_steps(
             "Prepare the matching release artifact; its Minisign signature, UF2 structure, byte count, and SHA-256 are checked locally.",
             "Download the verified UF2, follow the board preparation instructions, and copy it to the bootloader drive.",
             "The bootloader drive disappears when the device reboots.",
+        ],
+        (BoardFlashTarget::NrfSerialDfu { .. }, _) if nrf_recovery => &[
+            "Confirm the exact tracker and enter its recovery UF2 bootloader.",
+            "Select INFO_UF2.TXT so the browser can resolve the exact SoftDevice foundation without uploading the file.",
+            "Prepare the matching recovery artifact; its Minisign signature, UF2 structure, byte count, and SHA-256 are checked locally.",
+            "Download the verified UF2 and copy it to the bootloader drive.",
+            "The bootloader drive disappears when the tracker reboots.",
+        ],
+        (BoardFlashTarget::NrfSerialDfu { .. }, _) => &[
+            "Confirm the exact tracker and select the entry path matching its current firmware.",
+            "Prepare the release. The signed application and init packet are verified before device access.",
+            "Choose the exact USB device and let the browser enter or reconnect to its serial bootloader.",
+            "Transfer the application. Rust validates every acknowledgement and bounds each frame to three attempts.",
+            "Success is reported only after the bootloader accepts the complete application.",
         ],
         (BoardFlashTarget::EspSerial { .. }, InstallMode::PreserveData) => &[
             "Confirm the exact board pictured above.",
@@ -237,16 +337,25 @@ pub(super) fn parse_uf2_selection(
     bytes: &[u8],
     target: BoardFlashTarget,
 ) -> Result<Uf2BootloaderIdentity, String> {
-    let BoardFlashTarget::Uf2MassStorage {
-        board_id_prefix, ..
-    } = target
-    else {
-        return Err("An ESP target cannot use a UF2 bootloader descriptor.".to_string());
+    let (board_id_match_kind, board_id) = match target {
+        BoardFlashTarget::Uf2MassStorage {
+            board_id_match_kind,
+            board_id,
+            ..
+        } => (board_id_match_kind, board_id),
+        BoardFlashTarget::NrfSerialDfu {
+            recovery_board_id_match_kind,
+            recovery_board_id,
+            ..
+        } => (recovery_board_id_match_kind, recovery_board_id),
+        BoardFlashTarget::EspSerial { .. } => {
+            return Err("An ESP target cannot use a UF2 bootloader descriptor.".to_string())
+        }
     };
     let identity = Uf2BootloaderIdentity::parse(bytes).map_err(|error| error.to_string())?;
-    let prefix =
-        Uf2BoardIdPrefix::parse(board_id_prefix.to_string()).map_err(|error| error.to_string())?;
-    if !identity.matches_board(&prefix) {
+    let board_id_match = Uf2BoardIdMatch::parse(board_id_match_kind, board_id.to_string())
+        .map_err(|error| error.to_string())?;
+    if !identity.matches_board(&board_id_match) {
         return Err(format!(
             "INFO_UF2.TXT reports Board-ID {:?}, which does not match the selected board.",
             identity.board_id()
@@ -262,6 +371,9 @@ pub(super) const fn initial_status(target: BoardFlashTarget) -> &'static str {
         }
         BoardFlashTarget::Uf2MassStorage { .. } => {
             "Confirm the exact board before preparing its verified UF2 download."
+        }
+        BoardFlashTarget::NrfSerialDfu { .. } => {
+            "Confirm the exact tracker and its current firmware before preparing direct Nordic DFU."
         }
     }
 }
@@ -309,6 +421,7 @@ mod tests {
         let esp = preparation_guide(
             heltec.preparation_profile.expect("flashable profile"),
             heltec.flash_target.expect("flash target"),
+            false,
         );
         assert!(esp.steps.iter().any(|step| step.contains("hold BOOT")));
         assert!(esp.steps.iter().any(|step| step.contains("tap RESET")));
@@ -316,6 +429,7 @@ mod tests {
         let uf2 = preparation_guide(
             t_echo.preparation_profile.expect("flashable profile"),
             t_echo.flash_target.expect("flash target"),
+            false,
         );
         assert!(uf2
             .steps
@@ -364,6 +478,48 @@ mod tests {
     }
 
     #[test]
+    fn t1000e_direct_and_recovery_guides_are_distinct() {
+        let t1000e = board_target_by_slug("t1000-e").expect("shipping board");
+        let direct = preparation_guide(
+            t1000e.preparation_profile.expect("flashable profile"),
+            t1000e.flash_target.expect("flash target"),
+            false,
+        );
+        let recovery = preparation_guide(
+            t1000e.preparation_profile.expect("flashable profile"),
+            t1000e.flash_target.expect("flash target"),
+            true,
+        );
+
+        assert!(direct.lead.contains("Nordic serial DFU"));
+        assert!(direct
+            .steps
+            .iter()
+            .any(|step| step.contains("Personal Hopspot enters its bootloader")));
+        assert!(direct
+            .steps
+            .iter()
+            .any(|step| step.contains("three-attempt retry limit")));
+
+        assert!(recovery.lead.contains("durable fallback"));
+        assert!(recovery.lead.contains("not a standalone RESET control"));
+        assert!(recovery
+            .steps
+            .iter()
+            .any(|step| step.contains("keep holding")));
+        assert!(recovery
+            .steps
+            .iter()
+            .any(|step| step.contains("plug in, unplug, and plug in")));
+        assert!(recovery.steps.iter().any(|step| step.contains("green LED")));
+        assert!(recovery.steps.iter().any(|step| step.contains("T1000-E")));
+        assert!(!recovery
+            .steps
+            .iter()
+            .any(|step| step.contains("double-press RESET")));
+    }
+
+    #[test]
     fn uf2_selection_requires_a_matching_board_and_supported_descriptor_shape() {
         let t_echo = board_target_by_slug("t-echo").expect("shipping board");
         let target = t_echo.flash_target.expect("flash target");
@@ -391,10 +547,10 @@ mod tests {
 
     #[test]
     fn web_serial_capability_fails_closed_until_support_is_proven() {
-        assert!(!WebSerialCapability::Checking.permits_esp_flash());
-        assert!(!WebSerialCapability::AndroidBluetoothOnly.permits_esp_flash());
-        assert!(!WebSerialCapability::Unavailable.permits_esp_flash());
-        assert!(WebSerialCapability::Supported.permits_esp_flash());
+        assert!(!WebSerialCapability::Checking.permits_usb_serial_flash());
+        assert!(!WebSerialCapability::AndroidBluetoothOnly.permits_usb_serial_flash());
+        assert!(!WebSerialCapability::Unavailable.permits_usb_serial_flash());
+        assert!(WebSerialCapability::Supported.permits_usb_serial_flash());
     }
 
     #[test]
@@ -426,6 +582,14 @@ mod tests {
         assert!(matches!(
             WebSerialCapability::from_probe(""),
             WebSerialCapability::Unavailable
+        ));
+        assert!(matches!(
+            WebUsbCapability::from_probe(WEB_USB_PROBE_SUPPORTED),
+            WebUsbCapability::Supported
+        ));
+        assert!(matches!(
+            WebUsbCapability::from_probe("invented"),
+            WebUsbCapability::Unavailable
         ));
     }
 

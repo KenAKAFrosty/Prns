@@ -1,7 +1,13 @@
 pub(crate) mod section {
     pub const RETICULUM: &str = "reticulum";
+    pub const PRNS: &str = "prns";
     pub const LOGGING: &str = "logging";
     pub const INTERFACES: &str = "interfaces";
+}
+
+pub(crate) mod prns {
+    pub const RESOURCE_MEM_IN: &str = "resource_mem_in";
+    pub const RESOURCE_MEM_OUT: &str = "resource_mem_out";
 }
 
 pub(crate) mod global {

@@ -12,11 +12,13 @@ build = "build.rs"
 
 [features]
 default = []
+embedded = ["personal-rns/embassy-host"]
 host = ["personal-rns/tokio-host"]
 source-archive = ["personal-rns/large-static-responses"]
 
 [dependencies]
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["flash"] }
+prns-core = { path = "../../prns-core", default-features = false }
 prns-macros = { path = "../../prns-macros" }
 embedded-storage = "0.3"
 embedded-storage-async = "0.4"

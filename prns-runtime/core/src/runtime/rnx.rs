@@ -18,7 +18,7 @@ pub enum RnxAuthorization {
 }
 
 impl RnxAuthorization {
-    const fn route_policy(self) -> RequestEndpointPolicy {
+    const fn endpoint_policy(self) -> RequestEndpointPolicy {
         match self {
             Self::DenyAll => RequestEndpointPolicy::AllowNone,
             Self::AllowList(identities) => RequestEndpointPolicy::AllowList(identities),
@@ -234,21 +234,26 @@ pub trait RnxCommandHandler<State> {
     ) -> RnxCompletion;
 }
 
-impl<State, Endpoint> RequestEndpoint<State> for Endpoint
+pub struct RnxRequestEndpoint<Handler>(core::marker::PhantomData<Handler>);
+
+impl<State, Handler> RequestEndpoint<State> for RnxRequestEndpoint<Handler>
 where
-    Endpoint: RnxCommandHandler<State>,
+    Handler: RnxCommandHandler<State>,
 {
     const ENDPOINT_ID: &'static str = prns_core::rnx::COMMAND_PATH;
-    const POLICY: RequestEndpointPolicy = Endpoint::AUTHORIZATION.route_policy();
+    const POLICY: RequestEndpointPolicy = Handler::AUTHORIZATION.endpoint_policy();
 
-    async fn handle(mut context: RequestContext<'_, State>) -> Result<(), Decline> {
-        if context.destination != Endpoint::destination(context.state) {
+    async fn handle(
+        mut context: RequestContext<'_, State>,
+        _node: &impl super::PrnsNodeApi,
+    ) -> Result<(), Decline> {
+        if context.destination != Handler::destination(context.state) {
             return Err(Decline::Ignore);
         }
         let request = decode_execution_request_ref(context.data).map_err(|_| Decline::Ignore)?;
-        let mut storage = Endpoint::Output::default();
+        let mut storage = Handler::Output::default();
         let mut output = RnxOutput::new(&mut storage, request.stdout_limit, request.stderr_limit);
-        let completion = Endpoint::execute(context.state, request, &mut output).await;
+        let completion = Handler::execute(context.state, request, &mut output).await;
         let result = output.result(completion);
         encode_execution_result_into(result, &mut ContextSink(&mut context)).map_err(|error| {
             match error {
@@ -286,10 +291,10 @@ mod tests {
     const ADMIN: IdentityHash = IdentityHash::new([0x55; 16]);
 
     struct App;
-    struct DeniedEndpoint;
-    struct RnxEndpoint;
+    struct DeniedCommand;
+    struct RnxCommand;
 
-    impl RnxCommandHandler<App> for DeniedEndpoint {
+    impl RnxCommandHandler<App> for DeniedCommand {
         type Output = FixedRnxOutput<0, 0>;
 
         fn destination(_state: &App) -> DestinationHash {
@@ -305,7 +310,7 @@ mod tests {
         }
     }
 
-    impl RnxCommandHandler<App> for RnxEndpoint {
+    impl RnxCommandHandler<App> for RnxCommand {
         const AUTHORIZATION: RnxAuthorization = RnxAuthorization::AllowList(&[ADMIN]);
         type Output = FixedRnxOutput<4, 2>;
 
@@ -332,7 +337,7 @@ mod tests {
     }
 
     #[test]
-    fn the_endpoint_type_is_the_route_and_bounds_its_output() {
+    fn the_endpoint_adapter_bounds_its_output() {
         futures_executor::block_on(async {
             async fn dispatch<R: super::super::request_endpoints::RequestEndpointSet<App>>(
                 _endpoints: &R,
@@ -358,6 +363,7 @@ mod tests {
                 );
                 super::super::request_endpoints::dispatch_request::<App, R>(
                     &App,
+                    &(),
                     RequestPathHash::of(prns_core::rnx::COMMAND_PATH),
                     inbound,
                     sink,
@@ -365,10 +371,15 @@ mod tests {
                 .await
             }
 
-            let endpoints = crate::request_endpoints![RnxEndpoint];
-            assert_eq!(DeniedEndpoint::POLICY, RequestEndpointPolicy::AllowNone);
+            type DeniedEndpoint = RnxRequestEndpoint<DeniedCommand>;
+            type CommandEndpoint = RnxRequestEndpoint<RnxCommand>;
+            let endpoints = crate::request_endpoints![CommandEndpoint];
             assert_eq!(
-                RnxEndpoint::POLICY,
+                <DeniedEndpoint as RequestEndpoint<App>>::POLICY,
+                RequestEndpointPolicy::AllowNone,
+            );
+            assert_eq!(
+                <CommandEndpoint as RequestEndpoint<App>>::POLICY,
                 RequestEndpointPolicy::AllowList(&[ADMIN])
             );
             let mut encoded = heapless::Vec::<u8, 128>::new();

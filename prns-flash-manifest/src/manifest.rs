@@ -349,7 +349,8 @@ impl PartialOrd for FlashPartKind {
 mod tests {
     use super::*;
     use crate::{
-        board_catalog, BoardBuild, ReleaseTarget, ReleaseVersion, SoftdeviceIdentity, CONFIG_OFFSET,
+        board_catalog, BoardBuild, PreparationProfile, ReleaseTarget, ReleaseVersion,
+        SoftdeviceIdentity, CONFIG_OFFSET,
     };
 
     fn valid_manifest() -> Result<FlashManifest, crate::catalog::CatalogError> {
@@ -448,7 +449,7 @@ mod tests {
                     ),
                     recovery: NrfSerialDfuRecoveryManifest {
                         mount_label: build.recovery.mount_label.clone(),
-                        board_id_prefix: build.recovery.board_id_prefix.clone(),
+                        board_id_prefix: build.recovery.board_identity.value.clone(),
                         family_id: build.recovery.family_id.clone(),
                         artifact: part(board, FlashPartKind::Uf2, &build.recovery.filename, None),
                     },
@@ -532,6 +533,48 @@ mod tests {
     }
 
     #[test]
+    fn local_t096_manifest_constructs_the_exact_shipping_target(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let catalog = board_catalog()?;
+        let board = catalog.board("t096").ok_or("missing T096 catalog entry")?;
+        let mut manifest = valid_manifest()?;
+        manifest.targets = vec![target(board)];
+        let policy = ManifestTargetSetPolicy::local_development(&catalog, &["t096"])?;
+
+        manifest.validate_with_target_set(&catalog, &policy)?;
+        let encoded = serde_json::to_vec(&manifest)?;
+        let validated =
+            ValidatedFlashManifest::from_json_with_target_set(&encoded, &catalog, &policy)?;
+        let [target] = validated.targets() else {
+            return Err("expected one validated T096 target".into());
+        };
+        assert_eq!(target.board_id().as_str(), "t096");
+        assert_eq!(target.preparation_profile(), PreparationProfile::T096Uf2);
+        let ReleaseTarget::Uf2(target) = target else {
+            return Err("T096 did not convert to UF2".into());
+        };
+        let [variant] = target.variants() else {
+            return Err("expected one validated T096 UF2 variant".into());
+        };
+        assert_eq!(
+            variant.compatibility().softdevice(),
+            &SoftdeviceIdentity::parse("s140", "6.1.1")?
+        );
+        assert_eq!(variant.compatibility().fwid(), 0x00b6);
+        assert_eq!(variant.compatibility().application_base(), 0x0002_6000);
+        assert_eq!(
+            variant.compatibility().application_end_exclusive(),
+            0x000e_8000
+        );
+        assert_eq!(variant.compatibility().family_id(), 0xada5_2840);
+        assert_eq!(
+            variant.part().path().as_str(),
+            "firmware/hopspot/t096/0.2.6/t096-s140-6.1.1.uf2"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn local_target_set_policy_rejects_invalid_requests_and_manifest_sets(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let catalog = board_catalog()?;
@@ -580,7 +623,7 @@ mod tests {
         let validated = ValidatedFlashManifest::from_json(&encoded, &catalog)?;
         assert_eq!(validated.schema_version(), FLASH_MANIFEST_SCHEMA);
         assert_eq!(validated.release().version().as_str(), "0.2.6");
-        assert_eq!(validated.targets().len(), 5);
+        assert_eq!(validated.targets().len(), 8);
         assert_eq!(
             validated
                 .targets()

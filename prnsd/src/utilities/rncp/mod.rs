@@ -11,8 +11,8 @@ use std::time::Instant;
 pub use args::RncpArgs;
 use io::{canonical_directory, expand_user_path, resolve_fetch, CpIoError, ReceiveTarget};
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceNowFailure, AnnounceTarget, EstablishLinkFailure,
-    IdentifyFailure, RatchetPolicy, SendRequestFailure, SetResourceStrategyFailure,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, EstablishLinkFailure, IdentifyFailure,
+    RatchetPolicy, SendRequestFailure, SetResourceStrategyFailure,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentityHash, IdentitySigner};
@@ -28,7 +28,7 @@ use personal_rns::runtime::request_endpoints::{
     Decline, RequestContext, RequestEndpoint, RequestEndpointPolicy, RequestEndpointSet,
 };
 use personal_rns::runtime::{
-    load_or_create_identity_secret, IdentitySecretFileError, NodeRunError,
+    load_or_create_identity_secret, AnnounceNowError, IdentitySecretFileError, NodeRunError,
     PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, ResourceAdmissionPeer,
     ResourceOfferAdmission, ResourceReceiveError, ResourceSendError, SegmentCompression, SendError,
     ServeMyRequestEndpoints,
@@ -81,7 +81,10 @@ impl RequestEndpoint<ListenerState> for AuthenticatedFetch {
     const ENDPOINT_ID: &'static str = FETCH_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[]);
 
-    async fn handle(context: RequestContext<'_, ListenerState>) -> Result<(), Decline> {
+    async fn handle(
+        context: RequestContext<'_, ListenerState>,
+        _node: &impl personal_rns::runtime::PrnsNodeApi,
+    ) -> Result<(), Decline> {
         handle_fetch(context).await
     }
 }
@@ -90,7 +93,10 @@ impl RequestEndpoint<ListenerState> for PublicFetch {
     const ENDPOINT_ID: &'static str = FETCH_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(context: RequestContext<'_, ListenerState>) -> Result<(), Decline> {
+    async fn handle(
+        context: RequestContext<'_, ListenerState>,
+        _node: &impl personal_rns::runtime::PrnsNodeApi,
+    ) -> Result<(), Decline> {
         handle_fetch(context).await
     }
 }
@@ -900,7 +906,7 @@ pub enum RncpError {
     SendResource(ResourceSendError),
     ReceiveResource(ResourceReceiveError),
     RequestAcl(RequestHandlerError),
-    Announce(SendError<AnnounceNowFailure>),
+    Announce(AnnounceNowError),
     Codec(personal_rns::rncp::RncpCodecError),
     Io(CpIoError),
     AllowedIdentity(PathBuf),

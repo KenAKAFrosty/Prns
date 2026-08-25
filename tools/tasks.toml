@@ -55,8 +55,19 @@ entrypoint = ["bash", "tools/build/android.sh"]
 requires = ["bash", "cargo"]
 
 [[task]]
+id = "build.hopspot.t096"
+summary = "Build the Heltec T096 firmware and package its recovery-compatible developer UF2."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/hopspot-nrf52840.sh", "t096"]
+requires = ["bash", "cargo", "python3", "rustc"]
+setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview component declared by the firmware workspace are available."
+
+[[task]]
 id = "build.hopspot.t114"
-summary = "Build the headless Heltec T114 firmware and package its recovery-compatible developer UF2."
+summary = "Build the display-equipped Heltec T114 firmware with S140 6.1.1 Bluetooth Auto and package its recovery-compatible developer UF2."
 domain = "build"
 effect = "workspace-write"
 platforms = ["linux", "macos"]
@@ -186,6 +197,28 @@ platforms = ["any"]
 audience = ["developer", "ci"]
 entrypoint = ["bash", "tools/build/napi.sh", "test"]
 requires = ["bash", "cargo", "node", "npm"]
+
+[[task]]
+id = "build.web-flasher.nrf-dfu.stage"
+summary = "Build and stage the pinned Nordic DFU WASM core for the hosted web flasher."
+domain = "build"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/stage-web-flasher-nrf-dfu-wasm.sh"]
+requires = ["bash", "cargo", "wasm-bindgen"]
+setup = "cargo install wasm-bindgen-cli --version 0.2.126 --locked"
+
+[[task]]
+id = "build.web-flasher.nrf-dfu.test"
+summary = "Test the Nordic DFU core and its generated Node.js WASM boundary."
+domain = "build"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["bash", "tools/build/test-web-flasher-nrf-dfu-wasm.sh"]
+requires = ["bash", "cargo", "node", "wasm-bindgen"]
+setup = "cargo install wasm-bindgen-cli --version 0.2.126 --locked"
 
 [[task]]
 id = "build.wasm-docs.stage"
@@ -549,6 +582,16 @@ entrypoint = ["python3", "tools/release/flasher-release-record.py"]
 requires = ["python3"]
 
 [[task]]
+id = "release.manifest.artifacts"
+summary = "List every transport-specific firmware artifact in a signed flash manifest."
+domain = "release"
+effect = "read-only"
+platforms = ["any"]
+audience = ["ci", "operator", "release"]
+entrypoint = ["python3", "tools/release/list-flasher-manifest-artifacts.py"]
+requires = ["python3"]
+
+[[task]]
 id = "release.rollback"
 summary = "Stage, validate, record, or compare-and-swap a release rollback plan."
 domain = "release"
@@ -566,6 +609,16 @@ effect = "workspace-write"
 platforms = ["any"]
 audience = ["ci", "release"]
 entrypoint = ["python3", "tools/release/flasher-website-history.py"]
+requires = ["python3"]
+
+[[task]]
+id = "release.hotfix"
+summary = "Resolve, compose, or verify a target-scoped flasher hotfix."
+domain = "release"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["ci", "operator", "release"]
+entrypoint = ["python3", "tools/release/flasher_hotfix.py"]
 requires = ["python3"]
 
 [[task]]

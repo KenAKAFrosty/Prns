@@ -19,6 +19,124 @@ const MINIMUM_ERASE_WAIT_MICROSECONDS: u64 = 500_000;
 pub const RELIABLE_FRAME_ATTEMPT_LIMIT: u8 = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReliableFrameAttempt {
+    sequence_number: u8,
+    number: u8,
+}
+
+impl ReliableFrameAttempt {
+    pub const fn sequence_number(self) -> u8 {
+        self.sequence_number
+    }
+
+    pub const fn number(self) -> u8 {
+        self.number
+    }
+
+    pub const fn limit(self) -> u8 {
+        RELIABLE_FRAME_ATTEMPT_LIMIT
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReliableFrameAttemptState {
+    Ready,
+    Pending { sequence_number: u8, attempts: u8 },
+}
+
+#[derive(Debug)]
+pub struct ReliableFrameAttempts {
+    state: ReliableFrameAttemptState,
+}
+
+impl ReliableFrameAttempts {
+    pub const fn new() -> Self {
+        Self {
+            state: ReliableFrameAttemptState::Ready,
+        }
+    }
+
+    pub fn begin(
+        &mut self,
+        sequence_number: u8,
+    ) -> Result<ReliableFrameAttempt, ReliableFrameAttemptError> {
+        let number = match self.state {
+            ReliableFrameAttemptState::Ready => 1,
+            ReliableFrameAttemptState::Pending {
+                sequence_number: pending,
+                attempts,
+            } if pending == sequence_number && attempts < RELIABLE_FRAME_ATTEMPT_LIMIT => {
+                attempts + 1
+            }
+            ReliableFrameAttemptState::Pending {
+                sequence_number: pending,
+                attempts,
+            } if pending == sequence_number => {
+                return Err(ReliableFrameAttemptError::Exhausted {
+                    sequence_number,
+                    attempts,
+                });
+            }
+            ReliableFrameAttemptState::Pending {
+                sequence_number: pending,
+                ..
+            } => {
+                return Err(ReliableFrameAttemptError::FrameChanged {
+                    pending_sequence_number: pending,
+                    actual_sequence_number: sequence_number,
+                });
+            }
+        };
+        self.state = ReliableFrameAttemptState::Pending {
+            sequence_number,
+            attempts: number,
+        };
+        Ok(ReliableFrameAttempt {
+            sequence_number,
+            number,
+        })
+    }
+
+    pub fn accepted(&mut self, sequence_number: u8) -> Result<(), ReliableFrameAttemptError> {
+        match self.state {
+            ReliableFrameAttemptState::Ready => Err(ReliableFrameAttemptError::NoPendingAttempt),
+            ReliableFrameAttemptState::Pending {
+                sequence_number: pending,
+                ..
+            } if pending != sequence_number => Err(ReliableFrameAttemptError::FrameChanged {
+                pending_sequence_number: pending,
+                actual_sequence_number: sequence_number,
+            }),
+            ReliableFrameAttemptState::Pending { .. } => {
+                self.state = ReliableFrameAttemptState::Ready;
+                Ok(())
+            }
+        }
+    }
+}
+
+impl Default for ReliableFrameAttempts {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+pub enum ReliableFrameAttemptError {
+    #[error("DFU frame {sequence_number} exhausted its {attempts} reliable transmission attempts")]
+    Exhausted { sequence_number: u8, attempts: u8 },
+    #[error(
+        "DFU frame changed from sequence {pending_sequence_number} to {actual_sequence_number} before acknowledgement"
+    )]
+    FrameChanged {
+        pending_sequence_number: u8,
+        actual_sequence_number: u8,
+    },
+    #[error("no reliable DFU frame attempt is pending")]
+    NoPendingAttempt,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DfuBankLayout {
     Single,
     Dual,
@@ -272,7 +390,9 @@ mod tests {
         DfuDeviceType, DfuImage, DfuImageError, SoftdeviceFirmwareId, SoftdeviceRequirements,
     };
 
-    use super::{DfuBankLayout, DfuTransfer, TransferState};
+    use super::{
+        DfuBankLayout, DfuTransfer, ReliableFrameAttemptError, ReliableFrameAttempts, TransferState,
+    };
 
     fn image(firmware: &[u8]) -> Result<DfuImage<'_>, DfuImageError> {
         let fwid = SoftdeviceFirmwareId::new(0x0123)?;
@@ -322,6 +442,56 @@ mod tests {
             assert!(transfer.acknowledge(acknowledgement).is_ok());
         }
         assert_eq!(frames, 5);
+        Ok(())
+    }
+
+    #[test]
+    fn reliable_attempts_are_bounded_per_pending_frame() -> Result<(), Box<dyn Error>> {
+        let mut attempts = ReliableFrameAttempts::new();
+
+        assert_eq!(attempts.begin(1)?.number(), 1);
+        assert_eq!(attempts.begin(1)?.number(), 2);
+        assert_eq!(attempts.begin(1)?.number(), 3);
+        assert_eq!(
+            attempts.begin(1),
+            Err(ReliableFrameAttemptError::Exhausted {
+                sequence_number: 1,
+                attempts: 3,
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn accepted_frame_resets_attempts_for_the_next_sequence() -> Result<(), Box<dyn Error>> {
+        let mut attempts = ReliableFrameAttempts::new();
+
+        assert_eq!(attempts.begin(1)?.number(), 1);
+        assert_eq!(attempts.begin(1)?.number(), 2);
+        attempts.accepted(1)?;
+        assert_eq!(attempts.begin(2)?.number(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn pending_attempts_reject_a_different_sequence() -> Result<(), Box<dyn Error>> {
+        let mut attempts = ReliableFrameAttempts::new();
+        let _ = attempts.begin(1)?;
+
+        assert_eq!(
+            attempts.begin(2),
+            Err(ReliableFrameAttemptError::FrameChanged {
+                pending_sequence_number: 1,
+                actual_sequence_number: 2,
+            })
+        );
+        assert_eq!(
+            attempts.accepted(2),
+            Err(ReliableFrameAttemptError::FrameChanged {
+                pending_sequence_number: 1,
+                actual_sequence_number: 2,
+            })
+        );
         Ok(())
     }
 }

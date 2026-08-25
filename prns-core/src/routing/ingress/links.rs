@@ -872,6 +872,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.reconcile_pending_link_route_evidence();
         self.links.remove(&link_id);
         self.channels.close(&link_id);
+        self.pending_resource_offers.remove_link(&link_id);
         self.incoming_assemblies.clear(&link_id);
         self.outgoing_assemblies.clear(&link_id);
         if let Some(interface) = attached_interface {
@@ -898,6 +899,11 @@ impl<S: StorageLayout> EngineState<S> {
         else {
             return self.ingest_transported_link_request(header, &request, arrival);
         };
+        if let Some(transport_id) = header.transport_id {
+            if self.transport_id() != Some(transport_id) {
+                return IngestPacketOutcome::Ignored(IgnoreReason::OtherInstance);
+            }
+        }
         match registered.link_request_policy {
             LinkRequestPolicy::AcceptNone => {
                 return IngestPacketOutcome::Ignored(IgnoreReason::LinkRequestsRefused)

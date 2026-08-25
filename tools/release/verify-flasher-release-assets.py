@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 
+from flasher_manifest import FLASH_MANIFEST_SCHEMA
 from flasher_public_review import discover_evidence, sha256
 
 
@@ -85,6 +86,14 @@ def suite_custody_inventory(assets: Path) -> dict[str, str]:
 
 def expected_candidate_assets(candidate: Path, version: str) -> dict[str, Path]:
     manifest = json.loads((candidate / "flash-manifest.json").read_text(encoding="utf-8"))
+    schema = manifest.get("schema") if isinstance(manifest, dict) else None
+    if (
+        not isinstance(schema, int)
+        or isinstance(schema, bool)
+        or schema < 1
+        or schema > FLASH_MANIFEST_SCHEMA
+    ):
+        raise ValueError("signed candidate manifest schema is unsupported")
     release = manifest.get("release") if isinstance(manifest, dict) else None
     if not isinstance(release, dict) or release.get("version") != version:
         raise ValueError("signed candidate manifest differs from the release version")
@@ -112,7 +121,6 @@ def expected_candidate_assets(candidate: Path, version: str) -> dict[str, Path]:
         "flasher_acceptance_contract.py": candidate
         / "qualification"
         / "flasher_acceptance_contract.py",
-        "flasher_manifest.py": candidate / "qualification" / "flasher_manifest.py",
         "flasher_tester_roster.py": candidate / "qualification" / "flasher_tester_roster.py",
         "package-flasher-qualification-evidence.py": candidate
         / "qualification"
@@ -131,6 +139,23 @@ def expected_candidate_assets(candidate: Path, version: str) -> dict[str, Path]:
         "reproducibility.json": candidate / "metadata" / "reproducibility.json",
         "release-history.json": candidate / "metadata" / "release-history.json",
     }
+    if schema >= 3:
+        sources["flasher_manifest.py"] = (
+            candidate / "qualification" / "flasher_manifest.py"
+        )
+    hotfix_metadata = candidate / "metadata" / "hotfix.json"
+    hotfix_helper = candidate / "qualification" / "flasher_hotfix.py"
+    if hotfix_helper.is_file():
+        sources["flasher_hotfix.py"] = hotfix_helper
+    elif hotfix_metadata.is_file():
+        raise ValueError("signed hotfix candidate release asset is missing: flasher_hotfix.py")
+    if hotfix_metadata.is_file():
+        sources[f"hotfix-inheritance-v{version}.json"] = (
+            hotfix_metadata
+        )
+        sources[f"hotfix-spec-v{version}.json"] = (
+            candidate / "qualification" / "hotfix.json"
+        )
     for target, extension in CLI_TARGETS.items():
         name = f"hopspot-flash-{version}-{target}{extension}"
         sources[name] = candidate / "cli" / name
@@ -179,6 +204,28 @@ def verify_remote_inventory(assets: Path, inventory_path: Path) -> None:
             raise ValueError(f"downloaded asset bytes differ from GitHub digest: {name}")
 
 
+def required_custody_assets(candidate: Path, version: str) -> set[str]:
+    names = {
+        f"prns-flasher-candidate-v{version}-signed.tar.gz",
+        f"prns-flasher-candidate-run-v{version}.json",
+        f"prns-flasher-attestation-v{version}.json",
+        f"prns-flasher-attestation-v{version}.metadata.json",
+        f"acceptance-v{version}.json",
+        f"acceptance-v{version}.json.minisig",
+        f"qualification-evidence-v{version}.tar.gz",
+        f"flasher-release-record-v{version}.json",
+        f"flasher-release-record-v{version}.json.minisig",
+    }
+    if not (candidate / "metadata" / "hotfix.json").is_file():
+        names.update(
+            {
+                f"release-record-v{version}.json",
+                f"release-record-v{version}.json.minisig",
+            }
+        )
+    return names
+
+
 def verify(
     candidate: Path, assets: Path, version: str, remote_inventory: Path | None = None
 ) -> None:
@@ -188,19 +235,7 @@ def verify(
     release = manifest.get("release")
     if not isinstance(release, dict):
         raise ValueError("signed candidate release identity is unavailable")
-    custody_names = {
-        f"prns-flasher-candidate-v{version}-signed.tar.gz",
-        f"prns-flasher-candidate-run-v{version}.json",
-        f"prns-flasher-attestation-v{version}.json",
-        f"prns-flasher-attestation-v{version}.metadata.json",
-        f"acceptance-v{version}.json",
-        f"acceptance-v{version}.json.minisig",
-        f"qualification-evidence-v{version}.tar.gz",
-        f"release-record-v{version}.json",
-        f"release-record-v{version}.json.minisig",
-        f"flasher-release-record-v{version}.json",
-        f"flasher-release-record-v{version}.json.minisig",
-    }
+    custody_names = required_custody_assets(candidate, version)
     if not assets.is_dir():
         raise ValueError("downloaded GitHub Release asset directory is unavailable")
     entries = list(assets.iterdir())

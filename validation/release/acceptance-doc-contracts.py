@@ -20,7 +20,7 @@ from flasher_acceptance_contract import (  # noqa: E402
     REQUIRED_FALLBACKS,
     SHIPPING_BOARDS,
     SURFACES,
-    T_ECHO_COMPATIBILITY_VARIANTS,
+    UF2_COMPATIBILITY_VARIANTS,
     WEB_SERIAL_HOSTS,
     WEB_SERIAL_SCENARIOS,
 )
@@ -190,12 +190,6 @@ COUNT_CONTRACTS = (
         "installer",
         " installer/exact-version smokes",
     ),
-    CountContract(
-        "docs/release-dependency-audit.md",
-        "complete web/CLI ",
-        "boards",
-        "-board matrix",
-    ),
 )
 
 
@@ -212,11 +206,7 @@ def physical_row_count(root: Path) -> int:
         )
     return sum(
         len(SURFACES)
-        * (
-            len(T_ECHO_COMPATIBILITY_VARIANTS)
-            if transports[board] == "uf2-mass-storage"
-            else 1
-        )
+        * (len(UF2_COMPATIBILITY_VARIANTS[board]) if board in UF2_COMPATIBILITY_VARIANTS else 1)
         for board in SHIPPING_BOARDS
     )
 

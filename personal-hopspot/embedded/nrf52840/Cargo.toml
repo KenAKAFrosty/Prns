@@ -17,8 +17,8 @@ exclude = [
 [features]
 default = ["board-t-echo", "softdevice-s140-v7"]
 board-t-echo = []
-board-t096 = []
-board-t114 = ["cortex-m/critical-section-single-core"]
+board-t096 = ["softdevice-s140-v6"]
+board-t114 = ["softdevice-s140-v6"]
 board-t1000e = ["cortex-m/critical-section-single-core"]
 board-mesh-tower-v2 = ["embassy-nrf/nfc-pins-as-gpio"]
 softdevice-s140-v6 = ["dep:nrf-softdevice", "nrf-softdevice/s140-v6"]
@@ -55,7 +55,8 @@ required-features = ["board-mesh-tower-v2", "softdevice-s140-v6"]
 
 [dependencies]
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "flash", "lora", "bluetooth-auto", "usb"] }
-personal-hopspot-core = { path = "../../core", default-features = false }
+personal-hopspot-core = { path = "../../core", default-features = false, features = ["embedded"] }
+prns-core = { path = "../../../prns-core", default-features = false }
 
 embedded-graphics = "0.8"
 epd-waveshare = { version = "0.6", default-features = false, features = ["graphics", "epd2in13_v3"] }
@@ -67,6 +68,7 @@ cortex-m-rt = "0.7"
 panic-halt = "1.0"
 
 embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread"] }
+embassy-embedded-hal = "0.6"
 embassy-time = { version = "0.5" }
 embassy-nrf = { version = "0.10", features = ["nrf52840", "time-driver-rtc1", "gpiote", "unstable-pac"] }
 embassy-usb = { version = "0.6" }
@@ -99,3 +101,6 @@ unsafe_op_in_unsafe_fn = "deny"
 
 [lints.clippy]
 undocumented_unsafe_blocks = "deny"
+
+[build-dependencies]
+personal-hopspot-core = { path = "../../core", default-features = false }

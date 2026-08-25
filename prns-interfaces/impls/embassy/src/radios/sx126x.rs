@@ -189,6 +189,16 @@ where
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct ExternalPowerAmplifier {
+    /// Lowest supported antenna-referred output power.
+    pub minimum_output_power_dbm: i8,
+    /// Highest supported antenna-referred output power.
+    pub maximum_output_power_dbm: i8,
+    /// Convert an antenna-referred output-power request into the power programmed into the SX126x.
+    pub chip_power_dbm: fn(i8) -> i8,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct BoardConfig {
     /// `Some(v)` if a TCXO is fed from DIO3 at voltage `v`; `None` for a bare XTAL.
     pub tcxo_voltage: Option<TcxoVoltage>,
@@ -198,6 +208,9 @@ pub struct BoardConfig {
     /// Receive-path gain ahead of the SX126x, removed from RSSI reports so callers see the signal
     /// level at the antenna rather than the amplified level at the transceiver input.
     pub external_rx_gain_db: u8,
+    /// External transmit PA behavior. When present, profiles remain antenna-referred while the
+    /// driver programs the lower chip power required to produce that output through the PA.
+    pub external_power_amplifier: Option<ExternalPowerAmplifier>,
     /// Optional external PA/LNA switch into transmit. Invoked immediately before `SetTx`.
     pub enter_transmit: Option<fn()>,
     /// Optional external PA/LNA switch into receive. Invoked immediately before `SetRx`.
@@ -426,7 +439,13 @@ where
         self.freq_hz = frequency_hz;
         self.modulation = modulation;
         self.packet = packet;
-        self.tx_power_dbm = tx_power_dbm;
+        self.tx_power_dbm = self
+            .config
+            .external_power_amplifier
+            .map_or(tx_power_dbm, |amplifier| {
+                (amplifier.chip_power_dbm)(tx_power_dbm)
+            })
+            .clamp(MIN_TX_POWER_DBM, MAX_TX_POWER_DBM);
 
         self.hard_reset().await?;
         self.command(&[op::GET_STATUS, 0x00]).await?;
@@ -735,12 +754,21 @@ where
         profile: RadioProfile,
     ) -> Result<(), RadioProfileCompatibilityError> {
         let power_dbm = profile.tx_power.dbm();
-        if !(MIN_TX_POWER_DBM..=MAX_TX_POWER_DBM).contains(&power_dbm) {
+        let (minimum_dbm, maximum_dbm) = self.config.external_power_amplifier.map_or(
+            (MIN_TX_POWER_DBM, MAX_TX_POWER_DBM),
+            |amplifier| {
+                (
+                    amplifier.minimum_output_power_dbm,
+                    amplifier.maximum_output_power_dbm,
+                )
+            },
+        );
+        if !(minimum_dbm..=maximum_dbm).contains(&power_dbm) {
             return Err(
                 RadioProfileCompatibilityError::TransmitPowerOutsideRadioRange {
                     power_dbm,
-                    minimum_dbm: MIN_TX_POWER_DBM,
-                    maximum_dbm: MAX_TX_POWER_DBM,
+                    minimum_dbm,
+                    maximum_dbm,
                 },
             );
         }
@@ -1123,6 +1151,7 @@ mod tests {
             rx_boost: true,
             dio2_as_rf_switch: true,
             external_rx_gain_db: 0,
+            external_power_amplifier: None,
             enter_transmit: None,
             enter_receive: None,
         }
@@ -1185,6 +1214,51 @@ mod tests {
     }
 
     #[test]
+    fn external_pa_limits_and_chip_power_are_antenna_referred() {
+        fn chip_power_dbm(requested_output_dbm: i8) -> i8 {
+            requested_output_dbm - 14
+        }
+
+        let mut board = board();
+        board.external_power_amplifier = Some(ExternalPowerAmplifier {
+            minimum_output_power_dbm: 5,
+            maximum_output_power_dbm: 22,
+            chip_power_dbm,
+        });
+        let log: Log = Rc::new(RefCell::new(Vec::new()));
+        let mut radio = Sx126x::new(
+            MockSpi { log: log.clone() },
+            MockWait,
+            MockWait,
+            MockOut,
+            MockDelay,
+            board,
+        );
+
+        let mut profile = DEFAULT_915_PROFILE;
+        profile.tx_power = TxPower::new(4);
+        assert_eq!(
+            radio.validate_profile(profile),
+            Err(
+                RadioProfileCompatibilityError::TransmitPowerOutsideRadioRange {
+                    power_dbm: 4,
+                    minimum_dbm: 5,
+                    maximum_dbm: 22,
+                }
+            )
+        );
+
+        block_on(radio.init(radio_config(DEFAULT_915_PROFILE))).expect("init");
+        assert_eq!(radio.tx_power_dbm, 8);
+        assert!(
+            log.borrow()
+                .iter()
+                .any(|command| command.as_slice() == [op::SET_TX_PARAMS, 0x10, TX_RAMP_40_US]),
+            "22 dBm antenna-referred maps to 8 dBm at the chip"
+        );
+    }
+
+    #[test]
     fn sx126x_recovery_classifies_every_error() {
         for error in [
             Error::Spi,
@@ -1209,6 +1283,7 @@ mod tests {
             rx_boost: true,
             dio2_as_rf_switch: true,
             external_rx_gain_db: 0,
+            external_power_amplifier: None,
             enter_transmit: None,
             enter_receive: None,
         };

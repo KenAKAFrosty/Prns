@@ -38,6 +38,18 @@ MAIN_RELEASE_AUTHORITY_WORKFLOWS = (
     "suite-promote.yml",
     "suite-sign.yml",
 )
+TRUSTED_DISPATCH_CHECKOUTS = {
+    "flasher-installation-qualification.yml": ("inputs.source_commit",),
+    "host-sdk-public-qualification.yml": ("inputs.expected_sha",),
+    "prnsd-candidate.yml": ("inputs.commit_sha",),
+    "prnsd-image-candidate.yml": ("inputs.commit_sha",),
+    "prnsd-staging-qualification.yml": ("inputs.source_commit",),
+    "release-readiness.yml": (
+        "inputs.commit_sha",
+        "needs.inventory.outputs.commit",
+    ),
+    "suite-deployment-qualification.yml": ("inputs.source_commit",),
+}
 
 
 def workflow_jobs(text: str) -> tuple[tuple[str, str], ...]:
@@ -143,6 +155,19 @@ def validate() -> list[str]:
     unused = sorted(set(actions) - used)
     if unused:
         errors.append(f"action-pins.json contains unused actions: {unused}")
+
+    for workflow_name, untrusted_refs in TRUSTED_DISPATCH_CHECKOUTS.items():
+        release_workflow = (
+            ROOT / ".github" / "workflows" / workflow_name
+        ).read_text(encoding="utf-8")
+        if "ref: ${{ github.sha }}" not in release_workflow:
+            errors.append(f"{workflow_name} does not checkout the dispatched workflow SHA")
+        for untrusted_ref in untrusted_refs:
+            fragment = f"ref: ${{{{ {untrusted_ref} }}}}"
+            if fragment in release_workflow:
+                errors.append(
+                    f"{workflow_name} checks out untrusted dispatch ref {untrusted_ref}"
+                )
 
     for workflow_name in MAIN_RELEASE_AUTHORITY_WORKFLOWS:
         release_workflow = (
@@ -700,7 +725,7 @@ def validate() -> list[str]:
     for qualification_gate in (
         "Verify every public signature, hash, tag, and source commit",
         'test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"',
-        "compare/${EXPECTED_SHA}...${GITHUB_SHA}",
+        'test "$EXPECTED_SHA" = "$GITHUB_SHA"',
         "sha256sum --check SHA256SUMS",
         "ssh-keygen -Y verify",
         "git tag -v",
@@ -782,6 +807,7 @@ def validate() -> list[str]:
     ).read_text(encoding="utf-8")
     for finalization_gate in (
         "qualification_evidence_sha256:",
+        'PYTHONDONTWRITEBYTECODE: "1"',
         "qualification-evidence-v${RELEASE_VERSION}.tar.gz",
         "target/candidate/qualification/tester-roster.json",
         "--evidence-root target/qualification-evidence",

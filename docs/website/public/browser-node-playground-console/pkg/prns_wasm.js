@@ -375,6 +375,119 @@ export class UsbAutoDecoder {
 }
 if (Symbol.dispose) UsbAutoDecoder.prototype[Symbol.dispose] = UsbAutoDecoder.prototype.free;
 
+export class WebSocketFramingCodec {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        WebSocketFramingCodecFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_websocketframingcodec_free(ptr, 0);
+    }
+    /**
+     * @returns {boolean}
+     */
+    canReadOutbound() {
+        const ret = wasm.websocketframingcodec_canReadOutbound(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * @returns {boolean}
+     */
+    canStageMultipleOutbound() {
+        const ret = wasm.websocketframingcodec_canStageMultipleOutbound(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * @param {Uint8Array} message
+     * @returns {any}
+     */
+    decode(message) {
+        const ptr0 = passArray8ToWasm0(message, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.websocketframingcodec_decode(this.__wbg_ptr, ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * @returns {boolean}
+     */
+    isDetecting() {
+        const ret = wasm.websocketframingcodec_isDetecting(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * @returns {number}
+     */
+    messageCap() {
+        const ret = wasm.websocketframingcodec_messageCap(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @param {string} selection
+     */
+    constructor(selection) {
+        const ptr0 = passStringToWasm0(selection, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.websocketframingcodec_new(ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0];
+        WebSocketFramingCodecFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @returns {number}
+     */
+    rawFallbackDelayMillis() {
+        const ret = wasm.websocketframingcodec_rawFallbackDelayMillis(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {boolean}
+     */
+    rawFallbackIsArmed() {
+        const ret = wasm.websocketframingcodec_rawFallbackIsArmed(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * @returns {Uint8Array | undefined}
+     */
+    releaseRawFallback() {
+        const ret = wasm.websocketframingcodec_releaseRawFallback(this.__wbg_ptr);
+        let v1;
+        if (ret[0] !== 0) {
+            v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v1;
+    }
+    /**
+     * @param {Uint8Array} packet
+     * @returns {Uint8Array | undefined}
+     */
+    stageOutbound(packet) {
+        const ptr0 = passArray8ToWasm0(packet, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.websocketframingcodec_stageOutbound(this.__wbg_ptr, ptr0, len0);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        let v2;
+        if (ret[0] !== 0) {
+            v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v2;
+    }
+}
+if (Symbol.dispose) WebSocketFramingCodec.prototype[Symbol.dispose] = WebSocketFramingCodec.prototype.free;
+
 /**
  * @returns {number}
  */
@@ -807,6 +920,9 @@ const PrnsRuntimeFinalization = (typeof FinalizationRegistry === 'undefined')
 const UsbAutoDecoderFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_usbautodecoder_free(ptr, 1));
+const WebSocketFramingCodecFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_websocketframingcodec_free(ptr, 1));
 
 function addToExternrefTable0(obj) {
     const idx = wasm.__externref_table_alloc();

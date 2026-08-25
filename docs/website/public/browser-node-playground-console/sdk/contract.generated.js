@@ -1,6 +1,6 @@
 export const HOST_CONTRACT_ABI = 1;
 export const HOST_SCHEMA_VERSION = 1;
-export const PRODUCT_VERSION = "0.3.6";
+export const PRODUCT_VERSION = "0.3.7";
 export const DESTINATION_HASH_LENGTH = 16;
 export const IDENTITY_HASH_LENGTH = 16;
 export const INTERFACE_ID_LENGTH = 8;
@@ -26,6 +26,7 @@ export const CAPABILITY_NAME_VALUES = Object.freeze([
     "BrowserRendezvous",
     "I2p",
     "Weave",
+    "SuppliedPipe",
 ]);
 export function isCapabilityName(value) {
     return typeof value === "string" && CAPABILITY_NAME_VALUES.includes(value);
@@ -130,6 +131,15 @@ export const INTERFACE_MODE_VALUES = Object.freeze([
 export function isInterfaceMode(value) {
     return typeof value === "string" && INTERFACE_MODE_VALUES.includes(value);
 }
+export const WEB_SOCKET_FRAMING_SELECTION_VALUES = Object.freeze([
+    "RawPacket",
+    "Hdlc",
+    "Kiss",
+    "Auto",
+]);
+export function isWebSocketFramingSelection(value) {
+    return typeof value === "string" && WEB_SOCKET_FRAMING_SELECTION_VALUES.includes(value);
+}
 export const INTERFACE_HEALTH_VALUES = Object.freeze([
     "Initializing",
     "Connected",
@@ -196,6 +206,15 @@ const HOST_OPERATION_NAMES = [
     "hostIdentityHash",
     "hostDestinationCount",
     "hostDestinationHash",
+    "hostAttachSuppliedPipe",
+    "suppliedPipeClaimAttachment",
+    "suppliedPipeNextOpenRequest",
+    "suppliedPipeRegisterReadiness",
+    "suppliedPipeInterruptWait",
+    "suppliedPipeRelease",
+    "suppliedPipeOpenRequestProvide",
+    "suppliedPipeOpenRequestDecline",
+    "suppliedPipeOpenRequestRelease",
     "hostBeginResourceUpload",
     "resourceUploadWrite",
     "resourceUploadIsWritable",

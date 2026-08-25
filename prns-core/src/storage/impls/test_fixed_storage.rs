@@ -18,6 +18,7 @@ use crate::routing::links::resources::assembly::{
     FixedIncomingAssemblyTable, FixedOutgoingAssemblyTable,
 };
 use crate::routing::links::resources::max_part_count;
+use crate::routing::links::resources::pending::FixedPendingResourceOfferTable;
 use crate::routing::links::resources::table::{
     FixedResourceTable, IncomingResourceState, OutgoingResourceState,
 };
@@ -155,6 +156,7 @@ impl<
         RESOURCE_TRANSFER_BYTES,
         { max_part_count(RESOURCE_TRANSFER_BYTES) },
     >;
+    type PendingResourceOffers = FixedPendingResourceOfferTable<4>;
     type IncomingAssemblies = FixedIncomingAssemblyTable<MAX_LINKS>;
     type OutgoingAssemblies = FixedOutgoingAssemblyTable<MAX_LINKS>;
     type Channels =

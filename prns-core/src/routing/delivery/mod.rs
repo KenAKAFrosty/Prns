@@ -1,5 +1,6 @@
 pub mod receipts;
 pub mod send_group;
+pub mod send_plain;
 pub mod send_single;
 
 use crate::{

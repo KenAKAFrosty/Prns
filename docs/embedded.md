@@ -76,12 +76,15 @@ bash validation/platforms/no-std-esp-build.sh
 (The last rung is a bash script; on Windows run it from Git Bash, which
 installs with Git for Windows.)
 
-The Linux `embedded-builds` validation suite adds the Embassy interface cross-builds, both
-S140 6.1.1 and 7.3.0 T-Echo firmware layouts, and the headless Heltec T114 and MeshTower V2
-developer UF2s:
+The Linux `embedded-builds` validation suite adds the Embassy interface
+cross-builds, both S140 6.1.1 and 7.3.0 T-Echo firmware layouts, the
+display-equipped Heltec T096 and T114 with Bluetooth Auto and display auto-off,
+and the headless T1000-E and MeshTower V2 developer UF2s. Every embedded
+Hopspot board target restores learned routes and retained self-ratchet history
+from its board-owned flash journal:
 
 ```console
 python3 validation/run.py run --suite embedded-builds --platform linux
 ```
 
-Release qualification builds the Heltec V4, T-Beam Supreme, XIAO ESP32-C6, and T-Echo through the release-custody path. See the [testing guide](testing.md) before choosing a broader lane.
+Release qualification builds the flashable boards through the release-custody path. See the [testing guide](testing.md) before choosing a broader lane.

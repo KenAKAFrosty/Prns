@@ -1,9 +1,9 @@
 use crate::engine::{
     AllowRequesterFailure, AnnounceNowFailure, CloseLinkFailure, EstablishLinkFailure,
     IdentifyFailure, Journaled, LinkClosedReason, RequestPathFailure, RespondFailure,
-    RouteRemovalCause, SendGroupFailure, SendRequestFailure, SendResourceFailure,
-    SendSinglePacketFailure, SendToChannelFailure, SendToLinkFailure, SetResourceStrategyFailure,
-    Settlement,
+    RouteRemovalCause, SendGroupFailure, SendPlainPacketFailure, SendRequestFailure,
+    SendResourceFailure, SendSinglePacketFailure, SendToChannelFailure, SendToLinkFailure,
+    SetResourceStrategyFailure, Settlement,
 };
 use crate::routing::links::resources::table::ApplyHashmapUpdateError;
 use crate::routing::links::resources::ResourceFailureCause;
@@ -26,6 +26,7 @@ prns_macros::iterable_enum! {
         SetResourceStrategy,
         SendToChannel,
         AllowRequester,
+        SendPlainPacket,
     }
 }
 
@@ -315,6 +316,10 @@ impl From<&Settlement> for SettledOperation {
                 operation: Operation::SendGroup,
                 outcome: result.runtime_outcome(),
             },
+            Settlement::SendPlainPacket(result) => Self {
+                operation: Operation::SendPlainPacket,
+                outcome: result.runtime_outcome(),
+            },
             Settlement::RequestPath(result) => Self {
                 operation: Operation::RequestPath,
                 outcome: result.runtime_outcome(),
@@ -392,6 +397,14 @@ impl From<&SendGroupFailure> for RuntimeOperationOutcome {
     }
 }
 
+impl From<&SendPlainPacketFailure> for RuntimeOperationOutcome {
+    fn from(failure: &SendPlainPacketFailure) -> Self {
+        match failure {
+            SendPlainPacketFailure::WriteFailed(_) => Self::WriteFailed,
+        }
+    }
+}
+
 impl From<&RequestPathFailure> for RuntimeOperationOutcome {
     fn from(failure: &RequestPathFailure) -> Self {
         match failure {
@@ -440,6 +453,7 @@ impl From<&SendRequestFailure> for RuntimeOperationOutcome {
             SendRequestFailure::Culled => Self::Culled,
             SendRequestFailure::Timeout => Self::Timeout,
             SendRequestFailure::ResponseTooLarge => Self::ResponseTooLarge,
+            SendRequestFailure::ResourceCapacity => Self::Backpressure,
         }
     }
 }
@@ -578,6 +592,14 @@ mod tests {
                 RuntimeOperationOutcome::PeerRejected
             ),
             1
+        );
+    }
+
+    #[test]
+    fn response_resource_capacity_is_reported_as_backpressure() {
+        assert_eq!(
+            RuntimeOperationOutcome::from(&SendRequestFailure::ResourceCapacity),
+            RuntimeOperationOutcome::Backpressure,
         );
     }
 

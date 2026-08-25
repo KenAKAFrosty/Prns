@@ -35,10 +35,11 @@ cfg_if::cfg_if! {
         pub use metrics::{
             AnnounceCommandCounts, AnnounceCommandOutcome, AnnounceIngressCounts,
             AnnounceIngressOutcome, AnnounceOrigin, AnnounceSourceKind,
-            EngineAnnounceMetricsSnapshot, EngineMetricsSnapshot,
-            EnginePathRequestMetricsSnapshot, IgnoreReasonCounts, IgnoreReasonKind,
+            EngineAnnounceMetricsSnapshot, EngineMetricsSnapshot, EnginePathRequestMetricsSnapshot,
+            EngineResourceMetricsSnapshot, IgnoreReasonCounts, IgnoreReasonKind,
             InterfaceAnnounceMetricsSnapshot, InterfaceKindCounts, PathRequestIngressCounts,
             PathRequestIngressOutcome, PathRequestRelayCounts, PathRequestRelayOutcome,
+            ResourceAdmissionEvent, ResourceAdmissionEventCounts, ResourceDirectionMetricsSnapshot,
         };
     }
 }
@@ -92,6 +93,7 @@ pub use crate::routing::announce::emit::{
 pub use crate::routing::announce::held::HeldDropCause;
 pub use crate::routing::announce::AnnounceObservation;
 pub use crate::routing::delivery::send_group::{SendGroupEntropy, SendGroupWriteError};
+pub use crate::routing::delivery::send_plain::SendPlainPacketWriteError;
 pub use crate::routing::delivery::send_single::{
     EncryptOwed, FinishSendSinglePacketOutcome, SendSinglePacketDispatch, SendSinglePacketEntropy,
     SendSinglePacketPrepared, SendSinglePacketWriteError, SendSinglePacketWriteOutcome,

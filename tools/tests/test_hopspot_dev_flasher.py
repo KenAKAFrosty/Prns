@@ -112,7 +112,16 @@ class SelectionTests(unittest.TestCase):
     def test_all_selects_every_shipping_board(self) -> None:
         boards = DEV.shipping_boards()
         self.assertEqual(DEV.parse_selection(["--all"]).boards, boards)
-        self.assertNotIn("t1000-e", boards)
+        self.assertIn("t096", boards)
+        self.assertIn("t1000-e", boards)
+
+    def test_explicit_nordic_selection_uses_catalog_order(self) -> None:
+        selection = DEV.parse_selection(["t1000-e", "t096"])
+        self.assertEqual(selection.boards, ("t096", "t1000-e"))
+        self.assertEqual(
+            tuple((target.board_slug, target.transport) for target in DEV.selected_targets(selection)),
+            (("t096", "uf2-mass-storage"), ("t1000-e", "nrf-serial-dfu")),
+        )
 
     def test_missing_duplicate_unknown_and_invalid_port_are_rejected(self) -> None:
         for arguments in (
@@ -273,6 +282,55 @@ class CandidateSafetyTests(unittest.TestCase):
             self.assertEqual(constructor.call_args.args[0], ("127.0.0.1", 0))
 
 
+class WebsiteBuildTests(unittest.TestCase):
+    def test_local_site_stages_the_nordic_dfu_browser_core(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "dioxus"
+            output.mkdir()
+            (output / "index.html").write_text("site\n", encoding="utf-8")
+            website = root / "website"
+            public_key = root / "minisign.pub"
+            public_key.write_text("fixture key\n", encoding="utf-8")
+            identity = DEV.SourceIdentity(
+                head="0" * 40,
+                digest="a" * 64,
+                state="dirty",
+                version=f"0.3.1-dev.dirty.{'a' * 64}",
+            )
+
+            with (
+                mock.patch.object(
+                    DEV,
+                    "require_node_tools",
+                    return_value=(root / "tailwindcss", root / "esbuild"),
+                ),
+                mock.patch.object(DEV, "clear_dioxus_output", return_value=output),
+                mock.patch.object(DEV, "clean_build_environment", return_value={}),
+                mock.patch.object(DEV, "run_process") as run_process,
+            ):
+                DEV.build_website(
+                    website,
+                    identity,
+                    DEV.Selection(("t1000-e",), 8765),
+                    public_key,
+                )
+
+            command = run_process.call_args_list[-1].args[0]
+            self.assertEqual(
+                command,
+                [
+                    "bash",
+                    DEV.ROOT / "tools" / "build" / "stage-web-flasher-nrf-dfu-wasm.sh",
+                    website / "assets" / "flasher" / "nrf-dfu",
+                ],
+            )
+            self.assertEqual(
+                run_process.call_args_list[-1].kwargs["label"],
+                "local developer Nordic DFU browser core build",
+            )
+
+
 
 class CandidateValidationTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -347,6 +405,72 @@ class CandidateValidationTests(unittest.TestCase):
             "variants": [variant],
         }
 
+    def recovery_uf2_payload(self, application: bytes) -> bytes:
+        blocks = []
+        block_count = (len(application) + 255) // 256
+        for index in range(block_count):
+            block = bytearray(512)
+            words = {
+                0: 0x0A324655,
+                4: 0x9E5D5157,
+                8: 0x00002000,
+                12: 0x27000 + index * 256,
+                16: 256,
+                20: index,
+                24: block_count,
+                28: 0xADA52840,
+                508: 0x0AB16F30,
+            }
+            for offset, value in words.items():
+                block[offset : offset + 4] = value.to_bytes(4, "little")
+            start = index * 256
+            block[32 : 32 + min(256, len(application) - start)] = application[
+                start : start + 256
+            ]
+            blocks.append(bytes(block))
+        return b"".join(blocks)
+
+    def nrf_serial_dfu_target(self) -> dict:
+        application_payload = bytes(index % 251 for index in range(300))
+        application = self.artifact(
+            "firmware/t1000-e/t1000e.bin",
+            application_payload,
+            kind="dfu-application",
+        )
+        init_packet = self.artifact(
+            "firmware/t1000-e/t1000e.dat",
+            b"init packet",
+            kind="dfu-init-packet",
+        )
+        recovery = self.artifact(
+            "firmware/t1000-e/t1000e.uf2",
+            self.recovery_uf2_payload(application_payload),
+            kind="uf2",
+        )
+        return {
+            "board_slug": "t1000-e",
+            "transport": "nrf-serial-dfu",
+            "parts": [],
+            "variants": [],
+            "nrf_serial_dfu": {
+                "compatibility": {
+                    "softdevice_family": "s140",
+                    "softdevice_version": "7.3.0",
+                    "fwid": "0x0123",
+                    "application_base": "0x00027000",
+                    "application_end_exclusive": "0x000ea000",
+                },
+                "application": application,
+                "init_packet": init_packet,
+                "recovery": {
+                    "mount_label": "T1000-E",
+                    "board_id_prefix": "nrf52840-t1000-e-v1",
+                    "family_id": "0xada52840",
+                    "artifact": recovery,
+                },
+            },
+        }
+
     def write_manifest(self, targets: list[dict], schema: int = 3) -> Path:
         path = self.candidate / "flash-manifest.json"
         path.write_text(
@@ -385,6 +509,26 @@ class CandidateValidationTests(unittest.TestCase):
             (("heltec-v4", "esp-serial"), ("t-echo", "uf2-mass-storage")),
         )
         self.assertEqual(tuple(len(target.artifacts) for target in validated.targets), (1, 1))
+
+    def test_nordic_recovery_is_bound_to_the_exact_dfu_application(self) -> None:
+        target = self.nrf_serial_dfu_target()
+        validated = self.validate([target], ("t1000-e",))
+        self.assertEqual(
+            tuple(artifact.path.name for artifact in validated.targets[0].artifacts),
+            ("t1000e.bin", "t1000e.dat", "t1000e.uf2"),
+        )
+
+        application = target["nrf_serial_dfu"]["application"]
+        application_path = self.candidate / application["path"]
+        changed = bytearray(application_path.read_bytes())
+        changed[17] ^= 0x80
+        application_path.write_bytes(changed)
+        application["sha256"] = hashlib.sha256(changed).hexdigest()
+        with self.assertRaisesRegex(
+            DEV.DeveloperFlasherError,
+            "recovery UF2 block 0 disagrees with the exact DFU application",
+        ):
+            self.validate([target], ("t1000-e",))
 
     def test_schema_two_is_rejected_by_the_shared_contract(self) -> None:
         manifest = self.write_manifest([self.esp_target()], schema=2)

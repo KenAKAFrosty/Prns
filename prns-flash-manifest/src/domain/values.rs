@@ -1,11 +1,12 @@
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{ProvisioningDescriptor, TcpClientProvisioningDescriptor};
 
 const UF2_MOUNT_LABEL_MAX_BYTES: usize = 32;
-const UF2_BOARD_ID_PREFIX_MAX_BYTES: usize = 128;
+const UF2_BOARD_ID_MATCH_VALUE_MAX_BYTES: usize = 128;
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum DomainValueError {
@@ -13,8 +14,8 @@ pub enum DomainValueError {
     BoardId(String),
     #[error("UF2 mount label {0:?} is not a canonical cross-platform volume label")]
     Uf2MountLabel(String),
-    #[error("UF2 Board-ID prefix {0:?} is not a bounded canonical ASCII prefix")]
-    Uf2BoardIdPrefix(String),
+    #[error("UF2 Board-ID match {0:?} is not a bounded canonical identity")]
+    Uf2BoardIdMatch(String),
     #[error("release version {0:?} is not an immutable path-safe identifier")]
     ReleaseVersion(String),
     #[error("key ID {0:?} must be exactly 16 hexadecimal characters")]
@@ -105,18 +106,32 @@ impl Uf2MountLabel {
 
 validated_string!(Uf2MountLabel);
 
-/// Validated `Board-ID` prefix a UF2 bootloader publishes in `INFO_UF2.TXT`.
-#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Uf2BoardIdPrefix(String);
+/// How a catalog entry matches the `Board-ID` published in `INFO_UF2.TXT`.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Uf2BoardIdMatchKind {
+    Exact,
+    RevisionPrefix,
+}
 
-impl Uf2BoardIdPrefix {
+/// Validated, typed match rule for a UF2 bootloader `Board-ID`.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Uf2BoardIdMatch {
+    kind: Uf2BoardIdMatchKind,
+    value: String,
+}
+
+impl Uf2BoardIdMatch {
     pub fn normalize(value: &str) -> String {
         value.trim().to_ascii_lowercase().replace('_', "-")
     }
 
-    pub fn parse(value: impl Into<String>) -> Result<Self, DomainValueError> {
+    pub fn parse(
+        kind: Uf2BoardIdMatchKind,
+        value: impl Into<String>,
+    ) -> Result<Self, DomainValueError> {
         let value = value.into();
-        let valid = (1..=UF2_BOARD_ID_PREFIX_MAX_BYTES).contains(&value.len())
+        let canonical = (1..=UF2_BOARD_ID_MATCH_VALUE_MAX_BYTES).contains(&value.len())
             && value == Self::normalize(&value)
             && value
                 .bytes()
@@ -125,13 +140,70 @@ impl Uf2BoardIdPrefix {
             && value.bytes().all(|byte| {
                 byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'-')
             });
+        let valid = canonical
+            && match kind {
+                Uf2BoardIdMatchKind::Exact => true,
+                Uf2BoardIdMatchKind::RevisionPrefix => value.ends_with("-v"),
+            };
         valid
-            .then_some(Self(value.clone()))
-            .ok_or(DomainValueError::Uf2BoardIdPrefix(value))
+            .then_some(Self {
+                kind,
+                value: value.clone(),
+            })
+            .ok_or(DomainValueError::Uf2BoardIdMatch(value))
+    }
+
+    pub const fn kind(&self) -> Uf2BoardIdMatchKind {
+        self.kind
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.value
+    }
+
+    pub fn matches(&self, board_id: &str) -> bool {
+        match self.kind {
+            Uf2BoardIdMatchKind::Exact => board_id == self.value,
+            Uf2BoardIdMatchKind::RevisionPrefix => board_id
+                .strip_prefix(&self.value)
+                .is_some_and(valid_revision_suffix),
+        }
+    }
+
+    pub(crate) fn overlaps(&self, other: &Self) -> bool {
+        match (self.kind, other.kind) {
+            (Uf2BoardIdMatchKind::Exact, Uf2BoardIdMatchKind::Exact) => self.value == other.value,
+            (Uf2BoardIdMatchKind::Exact, Uf2BoardIdMatchKind::RevisionPrefix) => {
+                other.matches(&self.value)
+            }
+            (Uf2BoardIdMatchKind::RevisionPrefix, Uf2BoardIdMatchKind::Exact) => {
+                self.matches(&other.value)
+            }
+            (Uf2BoardIdMatchKind::RevisionPrefix, Uf2BoardIdMatchKind::RevisionPrefix) => {
+                self.value == other.value
+            }
+        }
     }
 }
 
-validated_string!(Uf2BoardIdPrefix);
+impl AsRef<str> for Uf2BoardIdMatch {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl fmt::Display for Uf2BoardIdMatch {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+fn valid_revision_suffix(value: &str) -> bool {
+    !value.is_empty()
+        && value.split('.').all(|component| {
+            !component.is_empty() && component.bytes().all(|byte| byte.is_ascii_digit())
+        })
+}
 
 /// Validated immutable release version.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -251,6 +323,8 @@ impl fmt::Display for ChipFamily {
 pub enum PreparationProfile {
     EspUsbBoot,
     TechoUf2,
+    T096Uf2,
+    T114Uf2,
     T1000eNrfDfu,
 }
 
@@ -259,6 +333,8 @@ impl PreparationProfile {
         match value {
             "esp-usb-boot" => Ok(Self::EspUsbBoot),
             "techo-uf2" => Ok(Self::TechoUf2),
+            "t096-uf2" => Ok(Self::T096Uf2),
+            "t114-uf2" => Ok(Self::T114Uf2),
             "t1000e-nrf-dfu" => Ok(Self::T1000eNrfDfu),
             _ => Err(DomainValueError::PreparationProfile(value.to_string())),
         }
@@ -268,6 +344,8 @@ impl PreparationProfile {
         match self {
             Self::EspUsbBoot => "esp-usb-boot",
             Self::TechoUf2 => "techo-uf2",
+            Self::T096Uf2 => "t096-uf2",
+            Self::T114Uf2 => "t114-uf2",
             Self::T1000eNrfDfu => "t1000e-nrf-dfu",
         }
     }
@@ -458,10 +536,17 @@ mod tests {
         assert!(Uf2MountLabel::parse("A".repeat(UF2_MOUNT_LABEL_MAX_BYTES + 1)).is_err());
 
         assert_eq!(
-            Uf2BoardIdPrefix::normalize(" nRF52840_TEcho_v2.1 "),
+            Uf2BoardIdMatch::normalize(" nRF52840_TEcho_v2.1 "),
             "nrf52840-techo-v2.1"
         );
-        assert!(Uf2BoardIdPrefix::parse("nrf52840-techo-v").is_ok());
+        assert!(
+            Uf2BoardIdMatch::parse(Uf2BoardIdMatchKind::RevisionPrefix, "nrf52840-techo-v").is_ok()
+        );
+        assert!(Uf2BoardIdMatch::parse(Uf2BoardIdMatchKind::Exact, "ht-n5262").is_ok());
+        assert!(
+            Uf2BoardIdMatch::parse(Uf2BoardIdMatchKind::RevisionPrefix, "nrf52840-techo-v1")
+                .is_err()
+        );
         for invalid in [
             "",
             "nRF52840_TEcho_v",
@@ -470,9 +555,16 @@ mod tests {
             "nrf52840/techo/v",
             "nrf52840-téchō-v",
         ] {
-            assert!(Uf2BoardIdPrefix::parse(invalid).is_err(), "{invalid}");
+            assert!(
+                Uf2BoardIdMatch::parse(Uf2BoardIdMatchKind::Exact, invalid).is_err(),
+                "{invalid}"
+            );
         }
-        assert!(Uf2BoardIdPrefix::parse("a".repeat(UF2_BOARD_ID_PREFIX_MAX_BYTES + 1)).is_err());
+        assert!(Uf2BoardIdMatch::parse(
+            Uf2BoardIdMatchKind::Exact,
+            "a".repeat(UF2_BOARD_ID_MATCH_VALUE_MAX_BYTES + 1)
+        )
+        .is_err());
     }
 
     #[test]

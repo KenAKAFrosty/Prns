@@ -14,6 +14,12 @@ import {
   validateRequest,
 } from "./core.js";
 import { BRIDGE_SCHEMA, BridgeEventSequence, RESPONSE_LIMITS } from "./contract.js";
+import {
+  cancelNrfBootloaderSelection,
+  continueNrfBootloaderSelection as continuePendingNrfBootloaderSelection,
+  createNrfDfuSession,
+  runNrfSerialDfu,
+} from "./nrf-serial-dfu.js";
 
 let prepared = null;
 let active = false;
@@ -166,6 +172,7 @@ export async function prepare(request, emit = () => {}, dependencies = {}) {
   cancelRequested = false;
   const fetchImpl = dependencies.fetchImpl ?? globalThis.fetch;
   const cryptoImpl = dependencies.cryptoImpl ?? globalThis.crypto;
+  let nrfDfu = null;
   try {
     validateRequest(request);
     if (request.transport === "esp-serial" && dependencies.loadEsptool !== false) {
@@ -237,7 +244,7 @@ export async function prepare(request, emit = () => {}, dependencies = {}) {
         throw new FlashBridgeError("artifact_hash_mismatch", "A firmware part failed SHA-256 verification.");
       }
       if (request.transport === "uf2-mass-storage") {
-        validateUf2Artifact(bytes, request.uf2Compatibility);
+        validateUf2Artifact(bytes, request.uf2Compatibility, request.boardSlug);
       }
       files.push({ ...part, bytes });
       completed += bytes.length;
@@ -252,6 +259,10 @@ export async function prepare(request, emit = () => {}, dependencies = {}) {
     }
 
     requireCurrentPreparation(generation);
+    if (request.transport === "nrf-serial-dfu") {
+      nrfDfu = await createNrfDfuSession(request.nrfSerialDfu, files, dependencies);
+      requireCurrentPreparation(generation);
+    }
     const config = provisioningImage(request.provisioning);
     if (config) {
       files.push({
@@ -279,7 +290,9 @@ export async function prepare(request, emit = () => {}, dependencies = {}) {
       serialFilters: request.serialFilters.map((filter) => ({ ...filter })),
       installMode: request.installMode,
       files,
+      nrfDfu,
     };
+    nrfDfu = null;
     events.emit({
       phase: "ready",
       current: completed,
@@ -288,6 +301,7 @@ export async function prepare(request, emit = () => {}, dependencies = {}) {
     });
     return { ready: true };
   } catch (error) {
+    nrfDfu?.session?.free?.();
     const failure = safeFailure(error);
     if (generation === preparationGeneration) {
       discardPrepared();
@@ -342,6 +356,9 @@ export async function flash(emit = () => {}, dependencies = {}) {
         "This browser does not provide Web Serial. Use current desktop Chrome, Edge, or Firefox 151 or later, or the CLI.",
       ),
     );
+  }
+  if (prepared.transport === "nrf-serial-dfu") {
+    return flashNrfSerialDfu(events, dependencies, environment);
   }
   const TransportImpl = dependencies.TransportImpl ?? DefaultTransport;
   const LoaderImpl = dependencies.LoaderImpl ?? DefaultLoader;
@@ -592,6 +609,7 @@ export function cancel() {
   if (!cancellationLocked) {
     cancelRequested = true;
   }
+  cancelNrfBootloaderSelection();
 }
 
 export function clearPrepared() {
@@ -600,6 +618,37 @@ export function clearPrepared() {
   cancelRequested = active && !cancellationLocked;
   if (!active) {
     discardPrepared();
+  }
+  cancelNrfBootloaderSelection();
+}
+
+export function continueNrfBootloaderSelection() {
+  return continuePendingNrfBootloaderSelection();
+}
+
+async function flashNrfSerialDfu(events, dependencies, environment) {
+  active = true;
+  cancelRequested = false;
+  cancellationLocked = false;
+  setNavigationGuard(true, environment);
+  try {
+    return await runNrfSerialDfu({
+      prepared,
+      events,
+      dependencies,
+      isCancelled: () => cancelRequested,
+    });
+  } catch (error) {
+    const failure = safeFailure(error);
+    if (!events.terminal) {
+      events.emit({ phase: failure.code === "cancelled" ? "cancelled" : "failed", ...failure });
+    }
+    throw error;
+  } finally {
+    active = false;
+    setNavigationGuard(false, environment);
+    discardPrepared();
+    cancellationLocked = false;
   }
 }
 
@@ -833,6 +882,7 @@ function discardPrepared() {
       file.bytes.fill(0);
     }
   }
+  prepared.nrfDfu?.session?.free?.();
   prepared = null;
 }
 

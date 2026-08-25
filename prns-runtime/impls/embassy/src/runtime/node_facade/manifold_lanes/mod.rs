@@ -388,13 +388,31 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
         const COMMANDS: usize,
         const LIFECYCLE: usize,
         const COMPLETIONS: usize,
+        const REQUEST_COMPLETIONS: usize,
+        const RESPONSE_BYTES: usize,
     >(
         self,
         notify: Receiver<'static, M, InterfaceId, NOTIFY>,
         commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
         lifecycle: Receiver<'static, M, InterfaceLifecycle, LIFECYCLE>,
-        handle: PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS>,
-    ) -> ManifoldWiring<M, LANE_COUNT, NOTIFY, COMMANDS, LIFECYCLE, COMPLETIONS> {
+        handle: PrnsNodeHandle<
+            'static,
+            M,
+            COMMANDS,
+            COMPLETIONS,
+            REQUEST_COMPLETIONS,
+            RESPONSE_BYTES,
+        >,
+    ) -> ManifoldWiring<
+        M,
+        LANE_COUNT,
+        NOTIFY,
+        COMMANDS,
+        LIFECYCLE,
+        COMPLETIONS,
+        REQUEST_COMPLETIONS,
+        RESPONSE_BYTES,
+    > {
         ManifoldWiring {
             inbound: self.inbound,
             egress: self.egress,

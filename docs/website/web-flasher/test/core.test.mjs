@@ -33,6 +33,7 @@ function request() {
     afterReset: "watchdog-reset",
     mountLabel: null,
     uf2Compatibility: null,
+    nrfSerialDfu: null,
     serialFilters: [{ usbVendorId: 0x303a }],
     provisioning: { action: "preserve", offset: 0xd000, size: 0x1000 },
     parts: [
@@ -41,6 +42,57 @@ function request() {
       { kind: "application", path: "firmware/hopspot/heltec-v4/0.2.6/app.bin", url: "/releases/0.2.6/firmware/hopspot/heltec-v4/0.2.6/app.bin", offset: 0x10000, size: 32, sha256: "c".repeat(64) },
     ],
   };
+}
+
+function nrfRequest() {
+  const value = request();
+  Object.assign(value, {
+    boardSlug: "t1000-e",
+    displayName: "Seeed Studio SenseCAP Card Tracker T1000-E",
+    transport: "nrf-serial-dfu",
+    expectedChip: null,
+    flashSize: null,
+    flashMode: null,
+    flashFrequency: null,
+    beforeReset: null,
+    afterReset: null,
+    provisioning: null,
+    serialFilters: [{ usbVendorId: 0x2886, usbProductId: 0x0057 }],
+    nrfSerialDfu: {
+      entry: "managed-application",
+      touchApplicationAndBootloaderUsb: { vendorId: 0x2886, productId: 0x0057 },
+      touchBaudRate: 1_200,
+      transferBaudRate: 115_200,
+      managedApplication: {
+        usb: { vendorId: 0x1209, productId: 0x0001 },
+        manufacturer: "Stay Personal",
+        product: "Personal Hopspot (T1000-E)",
+        serialNumber: "PERSONAL-RNS-T1000E-HOP",
+        interfaceNumber: 0,
+        request: 0x50,
+        value: 0x5052,
+        index: 0x4e53,
+      },
+      compatibility: {
+        softdeviceFamily: "s140",
+        softdeviceVersion: "7.3.0",
+        softdeviceFwids: [0x0123],
+        deviceType: 0x0052,
+        deviceRevision: 52840,
+        applicationVersion: "not-enforced",
+        applicationBase: 0x27000,
+        applicationEndExclusive: 0xea000,
+        bankLayout: "single",
+      },
+    },
+    parts: [
+      { kind: "dfu-application", path: "firmware/hopspot/t1000-e/0.3.7/app.bin", url: "/releases/0.3.7/firmware/hopspot/t1000-e/0.3.7/app.bin", offset: null, size: 32, sha256: "d".repeat(64) },
+      { kind: "dfu-init-packet", path: "firmware/hopspot/t1000-e/0.3.7/app.dat", url: "/releases/0.3.7/firmware/hopspot/t1000-e/0.3.7/app.dat", offset: null, size: 14, sha256: "e".repeat(64) },
+    ],
+  });
+  delete value.installMode;
+  delete value.eraseConfirmed;
+  return value;
 }
 
 test("valid sparse request is accepted", () => {
@@ -59,6 +111,30 @@ test("ESP serial filters are explicit, bounded, and unique", () => {
     const value = request();
     value.serialFilters = serialFilters;
     assert.throws(() => validateRequest(value), /serial device filter/);
+  }
+});
+
+test("T1000-E Nordic serial DFU identity is exact and closed", () => {
+  const value = nrfRequest();
+  assert.equal(validateRequest(value).nrfSerialDfu.entry, "managed-application");
+  value.nrfSerialDfu.entry = "touch-application-or-bootloader";
+  assert.equal(validateRequest(value).nrfSerialDfu.entry, "touch-application-or-bootloader");
+
+  for (const mutate of [
+    (candidate) => { candidate.serialFilters[0].usbProductId = 0x0058; },
+    (candidate) => { candidate.nrfSerialDfu.touchBaudRate = 2_400; },
+    (candidate) => { candidate.nrfSerialDfu.managedApplication.product = "T1000-E"; },
+    (candidate) => { candidate.nrfSerialDfu.managedApplication.request = 0x51; },
+    (candidate) => { candidate.nrfSerialDfu.compatibility.softdeviceFwids = [0x00b6]; },
+    (candidate) => { candidate.nrfSerialDfu.compatibility.applicationBase = 0x26000; },
+    (candidate) => { candidate.parts.reverse(); },
+  ]) {
+    const candidate = nrfRequest();
+    mutate(candidate);
+    assert.throws(
+      () => validateRequest(candidate),
+      /Nordic serial DFU target|ordered application and init packet/,
+    );
   }
 });
 
@@ -142,26 +218,71 @@ test("UF2 structure is bound to the exact detected foundation", () => {
     applicationBase: 0x27000,
     familyId: 0xada52840,
   };
-  assert.equal(validateUf2Artifact(uf2Block(v6.applicationBase, v6.familyId), v6).length, 512);
-  assert.equal(validateUf2Artifact(uf2Block(v7.applicationBase, v7.familyId), v7).length, 512);
+  assert.equal(validateUf2Artifact(uf2Block(v6.applicationBase, v6.familyId), v6, "t-echo").length, 512);
+  assert.equal(validateUf2Artifact(uf2Block(v7.applicationBase, v7.familyId), v7, "t-echo").length, 512);
 
   const corrupt = uf2Block(v7.applicationBase, v7.familyId);
   corrupt[0] = 0;
-  assert.throws(() => validateUf2Artifact(corrupt, v7), /block magic/);
+  assert.throws(() => validateUf2Artifact(corrupt, v7, "t-echo"), /block magic/);
 
   const reordered = uf2Block(v7.applicationBase, v7.familyId, 1, 2);
-  assert.throws(() => validateUf2Artifact(reordered, v7), /block sequence/);
+  assert.throws(() => validateUf2Artifact(reordered, v7, "t-echo"), /block sequence/);
   assert.throws(
-    () => validateUf2Artifact(uf2Block(v7.applicationBase + 256, v7.familyId), v7),
+    () => validateUf2Artifact(uf2Block(v7.applicationBase + 256, v7.familyId), v7, "t-echo"),
     /application address/,
   );
   assert.throws(
-    () => validateUf2Artifact(uf2Block(v7.applicationBase, 0x12345678), v7),
+    () => validateUf2Artifact(uf2Block(v7.applicationBase, 0x12345678), v7, "t-echo"),
     /family ID/,
   );
   assert.throws(
-    () => validateUf2Artifact(uf2Block(v6.applicationBase, v6.familyId), v7),
+    () => validateUf2Artifact(uf2Block(v6.applicationBase, v6.familyId), v7, "t-echo"),
     /application address/,
+  );
+});
+
+function uf2Image(applicationBase, familyId, blockCount) {
+  const bytes = new Uint8Array(blockCount * 512);
+  for (let index = 0; index < blockCount; index += 1) {
+    bytes.set(uf2Block(applicationBase, familyId, index, blockCount), index * 512);
+  }
+  return bytes;
+}
+
+test("the UF2 application region bound is pinned per board", () => {
+  const v6 = {
+    softdeviceFamily: "s140",
+    softdeviceVersion: "6.1.1",
+    fwid: 0x00b6,
+    applicationBase: 0x26000,
+    familyId: 0xada52840,
+  };
+  const pastTechoEnd = (0xc0000 - v6.applicationBase) / 256 + 1;
+  const image = uf2Image(v6.applicationBase, v6.familyId, pastTechoEnd);
+  assert.throws(() => validateUf2Artifact(image, v6, "t-echo"), /payload bounds/);
+  assert.equal(validateUf2Artifact(image, v6, "t096").length, image.length);
+  assert.equal(validateUf2Artifact(image, v6, "t114").length, image.length);
+  const pastT096End = (0xe8000 - v6.applicationBase) / 256 + 1;
+  assert.throws(
+    () => validateUf2Artifact(uf2Image(v6.applicationBase, v6.familyId, pastT096End), v6, "t096"),
+    /payload bounds/,
+  );
+  const v7 = {
+    softdeviceFamily: "s140",
+    softdeviceVersion: "7.3.0",
+    fwid: 0x0123,
+    applicationBase: 0x27000,
+    familyId: 0xada52840,
+  };
+  assert.equal(validateUf2Artifact(uf2Block(v7.applicationBase, v7.familyId), v7, "t1000-e").length, 512);
+  const pastT1000End = (0xea000 - v7.applicationBase) / 256 + 1;
+  assert.throws(
+    () => validateUf2Artifact(uf2Image(v7.applicationBase, v7.familyId, pastT1000End), v7, "t1000-e"),
+    /payload bounds/,
+  );
+  assert.throws(
+    () => validateUf2Artifact(uf2Block(v6.applicationBase, v6.familyId), v6, "nrf52840-second-board"),
+    /pinned application region/,
   );
 });
 

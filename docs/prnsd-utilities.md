@@ -83,7 +83,7 @@ pinned to the RNS 1.4.2 release, whose utility wire semantics remain compatible 
 Where a utility has two roles, the tests exercise both directions:
 
 ```sh
-python3 validation/run.py run --domain interop --tier release
+python3 validation/run.py run --domain interop --tier release --platform current
 ```
 
 `python3 validation/run.py list --domain interop` reads the authoritative manifest and shows
