@@ -70,9 +70,11 @@ fn persistence_notices_are_brief_across_deferred_failed_and_recovered_states() {
 
     assert!(persistence.update(&mut state, PersistenceState::Failed, 7_000));
     assert_eq!(state.notice(), Some(UiNotice::SaveFailed));
-    assert!(persistence.update(&mut state, PersistenceState::Durable, 8_000));
+    assert!(persistence.update(&mut state, PersistenceState::Recovered, 8_000));
+    assert_eq!(state.notice(), Some(UiNotice::StateRecovered));
+    assert!(persistence.update(&mut state, PersistenceState::Durable, 9_000));
     assert_eq!(state.notice(), Some(UiNotice::Saved));
-    assert!(persistence.update(&mut state, PersistenceState::Durable, 13_000));
+    assert!(persistence.update(&mut state, PersistenceState::Durable, 14_000));
     assert_eq!(state.notice(), None);
 }
 
