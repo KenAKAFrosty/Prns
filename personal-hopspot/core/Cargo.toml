@@ -12,6 +12,7 @@ build = "build.rs"
 
 [features]
 default = []
+embedded = ["personal-rns/embassy-host"]
 host = ["personal-rns/tokio-host"]
 source-archive = ["personal-rns/large-static-responses"]
 
