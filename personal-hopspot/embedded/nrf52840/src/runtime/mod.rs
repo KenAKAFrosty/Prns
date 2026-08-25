@@ -31,6 +31,7 @@ pub(crate) mod gnss;
     feature = "board-mesh-tower-v2"
 ))]
 mod headless;
+mod heartbeat;
 #[cfg(feature = "board-t-echo")]
 mod interface_cards;
 mod learned_state;
