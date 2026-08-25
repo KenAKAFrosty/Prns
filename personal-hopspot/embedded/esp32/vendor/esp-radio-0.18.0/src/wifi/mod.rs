@@ -7,8 +7,8 @@
 #![doc = concat!("- Station mode (aka STA mode or Wi-Fi client mode). ", chip_pretty!(), " connects to an access point.")]
 #![doc = concat!("- AP mode (aka Soft-AP mode or Access Point mode). Stations connect to the ", chip_pretty!(),".")]
 #![doc = concat!("- Station/AP-coexistence mode (", chip_pretty!(), " is concurrently an access point and a station connected to another access point).")]
-//! - Various security modes for the above (WPA, WPA2, ... Please note that WPA3 is currently not
-//!   supported)
+//! - Various security modes for the above. WPA3 availability depends on the chip-specific radio
+//!   archive; the Prns ESP32-S3 archive supports WPA3-SAE.
 //! - Scanning for access points (active & passive scanning).
 //! - Promiscuous mode for monitoring of IEEE802.11 Wi-Fi packets.
 //!
@@ -449,9 +449,8 @@ impl AuthenticationMethod {
             // we const-assert we know all the auth-methods the wifi driver knows and it shouldn't
             // return anything else.
             //
-            // In fact from observation the drivers will return
-            // `wifi_auth_mode_t_WIFI_AUTH_OPEN` if the method is unsupported (e.g. any WPA3 in our
-            // case, since the supplicant isn't compiled to support it)
+            // From observation the drivers return `wifi_auth_mode_t_WIFI_AUTH_OPEN` if the method
+            // is unsupported by the chip-specific radio archive.
             _ => AuthenticationMethod::None,
         }
     }

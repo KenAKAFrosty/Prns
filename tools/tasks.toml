@@ -55,6 +55,17 @@ entrypoint = ["bash", "tools/build/android.sh"]
 requires = ["bash", "cargo"]
 
 [[task]]
+id = "build.esp32s3-wpa3-radio"
+summary = "Rebuild and verify the pinned ESP32-S3 WPA3-SAE radio archives."
+domain = "build"
+effect = "workspace-write"
+platforms = ["linux", "macos"]
+audience = ["developer", "ci", "release"]
+entrypoint = ["bash", "tools/build/esp32s3-wpa3-radio.sh"]
+requires = ["bash", "cmake", "git", "make", "python3", "xtensa-esp-elf-gcc"]
+setup = "Set IDF_PATH to the exact ESP-IDF checkout named by the committed recipe, source its export.sh, and install that ESP-IDF release's pinned esp32s3 tools."
+
+[[task]]
 id = "build.hopspot.t096"
 summary = "Build the Heltec T096 firmware and package its recovery-compatible developer UF2."
 domain = "build"

@@ -17,6 +17,7 @@ fn main() {
         "smartconfig",
         "wapi",
         "wpa_supplicant",
+        "mbedcrypto",
         "printf",
         "regulatory",
     ];

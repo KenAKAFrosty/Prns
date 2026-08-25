@@ -53,3 +53,5 @@ optional = true
 [dependencies.log]
 version = "0.4.25"
 optional = true
+
+[workspace]

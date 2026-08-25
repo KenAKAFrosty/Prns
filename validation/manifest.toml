@@ -77,6 +77,7 @@ cargo_manifests = [
     "personal-hopspot/embedded/esp32/vendor/esp-radio-0.18.0/Cargo.toml",
     "personal-hopspot/embedded/esp32/vendor/esp-radio-rtos-driver-0.3.0/Cargo.toml",
     "personal-hopspot/embedded/esp32/vendor/esp-rtos-0.3.0/Cargo.toml",
+    "personal-hopspot/embedded/esp32/vendor/esp-wifi-sys-esp32s3-0.2.0/Cargo.toml",
     "personal-hopspot/embedded/esp32/vendor/trouble-host-0.6.0/Cargo.toml",
     "personal-hopspot/embedded/esp32/vendor/xtensa-lx-rt-0.22.0/Cargo.toml",
     "personal-hopspot/embedded/nrf52840/Cargo.toml",

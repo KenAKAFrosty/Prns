@@ -102,6 +102,12 @@ NPM = (
 )
 VENDORED = (
     (
+        "Mbed TLS ffb280bb63c78bfec1e1ab55040671768c85c923",
+        "Apache-2.0",
+        "release/licenses/mbedtls-Apache-2.0.txt",
+        ("ESP32-S3 Heltec", "ESP32-S3 Heltec R8", "ESP32-S3 T-Beam"),
+    ),
+    (
         "nrf-softdevice-s140-v6 0.1.2-prns.1",
         "LicenseRef-Nordic-SoftDevice",
         "personal-hopspot/embedded/nrf52840/vendor/nrf-softdevice/nrf-softdevice-s140-v6/LICENSE-NORDIC",
@@ -303,6 +309,10 @@ def notice_bundle() -> str:
     lines.extend(["", "## Vendored native code", ""])
     lines.extend(
         [
+            "- `Mbed TLS ffb280bb63c78bfec1e1ab55040671768c85c923` — "
+            "`Apache-2.0` alternative selected from its "
+            "`Apache-2.0 OR GPL-2.0-or-later` dual license; selected crypto objects are "
+            "statically linked into the ESP32-S3 WPA3-SAE radio artifact.",
             "- `libdbus 1.14.4` — `AFL-2.1` alternative selected from its "
             "`AFL-2.1 OR GPL-2.0-or-later` dual license; built from the source vendored by "
             "`libdbus-sys` and statically linked into the Linux `personal-rns` Node addon and "
