@@ -1408,6 +1408,9 @@ class BleLink(private val context: Context) {
         val ownedWorkers = linkWorkers.remove(connId).orEmpty().filter { it !== current }
         if (link == null) {
             ownedWorkers.forEach(Thread::interrupt)
+            // A Rust close request owns its slot until this acknowledgement. The physical link may
+            // already be gone, but the lifecycle transition still has to complete.
+            NativeBridge.nativeBleDisconnected(connId)
             return
         }
         inboundByAddr.remove(link.address, connId)

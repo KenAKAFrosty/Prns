@@ -105,6 +105,11 @@ impl BleBackend<{ AndroidBleBackend::MAX_PEERS }> for AndroidBleBackend {
     }
 
     async fn on_link_closed(&mut self, address: BleAddress) {
-        self.bridge.close_by_address(*address.octets());
+        if !self.bridge.close_by_address(*address.octets()) {
+            crate::diagnostic_log::error!(
+                "bluetooth: could not queue Android physical close for {:02x?}",
+                address.octets()
+            );
+        }
     }
 }

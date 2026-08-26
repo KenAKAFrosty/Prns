@@ -25,6 +25,7 @@ fn disabled_radio_exposes_no_android_ble_work() {
     assert!(bridge.shared.links.lock().unwrap().is_empty());
     assert!(bridge.shared.events.lock().unwrap().is_empty());
     assert!(bridge.shared.dial_requests.lock().unwrap().is_empty());
+    assert!(bridge.shared.close_requests.lock().unwrap().is_empty());
     assert!(bridge.shared.l2cap_opens.lock().unwrap().is_empty());
 }
 
@@ -67,7 +68,7 @@ async fn outbound_messages_remain_owned_until_commit() {
     assert!(bridge.link_up(9, [1, 2, 3, 4, 5, 7], None, true));
     let (control, data) = {
         let links = bridge.shared.links.lock().unwrap();
-        let endpoints = links.get(&9).unwrap();
+        let endpoints = links.get(&9).unwrap().active().unwrap();
         (endpoints.control_out.clone(), endpoints.data_out.clone())
     };
     control.push(vec![vec![1, 2], vec![3, 4, 5]]).await.unwrap();
@@ -97,7 +98,7 @@ async fn outbound_pressure_waits_for_commit_and_link_closure_wakes_waiters() {
     assert!(bridge.link_up(10, [1, 2, 3, 4, 5, 8], None, true));
     let data = {
         let links = bridge.shared.links.lock().unwrap();
-        links.get(&10).unwrap().data_out.clone()
+        links.get(&10).unwrap().active().unwrap().data_out.clone()
     };
     data.push((0..16).map(|byte| vec![byte]).collect())
         .await
@@ -192,6 +193,80 @@ fn lifecycle_overflow_rejects_a_link_explicitly() {
 
     assert!(!bridge.link_up(77, [6, 5, 4, 3, 2, 1], None, false));
     assert!(!bridge.shared.links.lock().unwrap().contains_key(&77));
+}
+
+#[test]
+fn policy_closes_stay_bounded_and_owned_until_kotlin_acknowledges() {
+    let bridge = AndroidBleBridge::new();
+    let address = [1, 2, 3, 4, 5, 6];
+    let conn_ids = 1..=super::bridge::PEER_CAPACITY as u32;
+    for conn_id in conn_ids.clone() {
+        assert!(bridge.link_up(conn_id, address, None, false));
+    }
+
+    assert!(bridge.close_by_address(address));
+    assert_eq!(
+        bridge.shared.close_requests.lock().unwrap().len(),
+        super::bridge::PEER_CAPACITY
+    );
+    assert_eq!(
+        bridge.shared.links.lock().unwrap().len(),
+        super::bridge::PEER_CAPACITY,
+        "closing links must retain their bridge slots"
+    );
+
+    assert!(bridge.close_by_address(address));
+    assert_eq!(
+        bridge.shared.close_requests.lock().unwrap().len(),
+        super::bridge::PEER_CAPACITY,
+        "repeated policy cleanup must coalesce"
+    );
+    assert!(!bridge.link_up(99, [6, 5, 4, 3, 2, 1], None, false));
+
+    let mut requested = std::vec::Vec::new();
+    while let Some(conn_id) = bridge.next_close() {
+        requested.push(conn_id);
+    }
+    requested.sort_unstable();
+    assert_eq!(requested, conn_ids.clone().collect::<std::vec::Vec<_>>());
+    assert_eq!(bridge.next_close(), None);
+    assert_eq!(
+        bridge.shared.links.lock().unwrap().len(),
+        super::bridge::PEER_CAPACITY
+    );
+
+    for conn_id in conn_ids {
+        bridge.disconnected(conn_id);
+    }
+    assert!(bridge.shared.links.lock().unwrap().is_empty());
+    assert!(bridge.link_up(99, [6, 5, 4, 3, 2, 1], None, false));
+}
+
+#[test]
+fn connection_ids_cannot_be_reused_before_disconnect_acknowledgement() {
+    let bridge = AndroidBleBridge::new();
+    let address = [1, 2, 3, 4, 5, 6];
+    assert!(bridge.link_up(7, address, None, false));
+    assert!(bridge.close_by_address(address));
+
+    assert!(!bridge.link_up(7, [6, 5, 4, 3, 2, 1], None, true));
+    bridge.disconnected(7);
+    assert!(bridge.link_up(7, [6, 5, 4, 3, 2, 1], None, true));
+}
+
+#[test]
+fn radio_reset_discards_pending_physical_closes() {
+    let bridge = AndroidBleBridge::new();
+    let address = [1, 2, 3, 4, 5, 6];
+    assert!(bridge.link_up(7, address, None, false));
+    assert!(bridge.close_by_address(address));
+    assert_eq!(bridge.shared.close_requests.lock().unwrap().len(), 1);
+
+    bridge.set_radio_mode(RadioMode::Off);
+
+    assert!(bridge.shared.links.lock().unwrap().is_empty());
+    assert!(bridge.shared.close_requests.lock().unwrap().is_empty());
+    assert_eq!(bridge.next_close(), None);
 }
 
 #[test]
