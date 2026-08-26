@@ -19,14 +19,19 @@ pub struct TransferRates {
 /// Frame-level receive accounting, for telling "nothing arrived" apart from "something arrived
 /// and was thrown away". Byte counters cannot make that distinction: a frame discarded before
 /// reassembly still moves `rx_bytes`, so a silent decode failure and a healthy link look alike
-/// from outside.
+/// from outside. These counters mark events at different receive layers, not a conservation
+/// equation: split frames, control envelopes, and malformed candidates mean `frames_in` need not
+/// equal the other counters' sum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct FrameAccounting {
-    /// Frames taken off the medium, after any self-addressed echo is filtered out.
+    /// Receive units taken off the medium, after any self-addressed echo is filtered out. A
+    /// datagram is one unit; a split LoRa packet contributes one unit per air frame.
     pub frames_in: u64,
-    /// Frames whose delivery header did not parse, so no sender could be attributed.
+    /// Complete receive units rejected as malformed by an interface envelope or initial RNS
+    /// ingress classification.
     pub malformed: u64,
-    /// Frames that parsed but whose stream segment failed to decode. Discarded at resync.
+    /// Receive units discarded by interface framing or reassembly before a complete RNS frame
+    /// could be handed off.
     pub undecodable: u64,
     /// Wire frames fully reassembled and handed to the engine. This counts the handoff, not the
     /// engine's verdict: a frame the engine goes on to ignore is still counted here, so

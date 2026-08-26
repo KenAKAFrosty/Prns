@@ -82,6 +82,7 @@ impl<R: EspNowRadio> Interface for EspNowInterface<'_, R> {
         let mut rx_buf = Box::new([0u8; ESP_NOW_V2_AIR_MTU]);
         let mut throughput = ThroughputLedger::new();
         let started = Instant::now();
+        status.account_frames();
         status.set_connection(ConnectionState::Connected);
         crate::diagnostic_log::info!("RNS_ESPNOW interface up, policy {policy:?}");
 
@@ -101,11 +102,13 @@ impl<R: EspNowRadio> Interface for EspNowInterface<'_, R> {
             {
                 Either3::First(len) => {
                     if len > 0 {
+                        status.count_frame_in();
                         let now = InstantMillis(started.elapsed().as_millis());
                         status.add_rx(len as u64);
                         throughput.record_rx(now, len as u64);
                         status.set_transfer_rates(throughput.rates());
                         seam.next_inbound(&rx_buf[..len]).await;
+                        status.count_frame_delivered();
                     }
                 }
                 Either3::Second(outbound) => {

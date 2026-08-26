@@ -212,6 +212,7 @@ where
         let mut presence_probe_at = Instant::now() + PRESENCE_PROBE_INTERVAL;
         let mut io_priority = IoPriority::Read;
 
+        status.account_frames();
         lifecycle.publish(status);
 
         loop {
@@ -257,13 +258,26 @@ where
                             status.add_rx(n as u64);
                             lifecycle.recover(status);
                             for &byte in &read_buf[..n] {
-                                let Ok(Some(frame)) = decoder.feed(byte) else {
-                                    continue;
+                                let frame = match decoder.feed(byte) {
+                                    Ok(Some(frame)) => frame,
+                                    Ok(None) => continue,
+                                    Err(_) => {
+                                        status.count_frame_undecodable();
+                                        continue;
+                                    }
                                 };
                                 if frame.is_empty() {
                                     continue;
                                 }
-                                match contract::react_to(contract::decode_message(frame)) {
+                                status.count_frame_in();
+                                let message = match contract::decode_message(frame) {
+                                    Ok(message) => message,
+                                    Err(_) => {
+                                        status.count_frame_malformed();
+                                        continue;
+                                    }
+                                };
+                                match contract::react_to(Ok(message)) {
                                     InboundReaction::AnswerHandshake => {
                                         let ack = Message::HelloAck {
                                             tag: node_tag,
@@ -294,6 +308,9 @@ where
                                     InboundReaction::Deliver(packet) => {
                                         if lifecycle.is_linked() && !packet.is_empty() {
                                             seam.next_inbound(packet).await;
+                                            status.count_frame_delivered();
+                                        } else if packet.is_empty() {
+                                            status.count_frame_malformed();
                                         }
                                     }
                                     InboundReaction::Ignore => {}
@@ -478,7 +495,9 @@ async fn write_message<W: Write>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prns_core::interfaces::{FrameSink, InterfaceOriginKind, InterfaceStatus, IFAC_MAX_SIZE};
+    use prns_core::interfaces::{
+        FrameAccounting, FrameSink, InterfaceOriginKind, InterfaceStatus, IFAC_MAX_SIZE,
+    };
     use prns_runtime::manifold::driver::{leaked_grant_lane, EmbassyInterfaceSeam};
     use prns_runtime::manifold::grant::{GrantConsumer, GrantProducer};
 
@@ -784,6 +803,15 @@ mod tests {
                 assert_eq!(
                     dispositions.borrow().as_slice(),
                     &[OutboundDisposition::Sent]
+                );
+                assert_eq!(
+                    status.frame_accounting(),
+                    Some(FrameAccounting {
+                        frames_in: 2,
+                        malformed: 0,
+                        undecodable: 0,
+                        delivered: 1,
+                    })
                 );
                 let next = with_timeout(WATCHDOG, out_tx.grant())
                     .await
