@@ -11,7 +11,8 @@ use static_cell::StaticCell;
 use crate::engine::{IssuedCommand, ProofRequest, MAX_SEND_REQUEST_DATA_LEN};
 use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceIfac};
 use crate::manifold::driver::{
-    run_pooled, InterfaceLifecycle, PooledEgress, PooledWiring, ResumableHost,
+    run_pooled, EmbassyInterfaceStatus, InterfaceLifecycle, PooledEgress, PooledWiring,
+    ResumableHost,
 };
 use crate::manifold::grant::ManifoldLaneReader;
 use crate::manifold::Host;
@@ -43,6 +44,7 @@ pub struct ManifoldWiring<
     M: RawMutex + 'static,
 {
     pub(super) inbound: HeaplessVec<(InterfaceId, &'static mut dyn ManifoldLaneReader), LANE_COUNT>,
+    pub(super) frame_accounting_statuses: HeaplessVec<&'static EmbassyInterfaceStatus, LANE_COUNT>,
     pub(super) egress: PooledEgress<LANE_COUNT>,
     pub(super) initial: HeaplessVec<InterfaceDescriptor, LANE_COUNT>,
     pub(super) ifacs: HeaplessVec<InterfaceIfac, LANE_COUNT>,
@@ -76,6 +78,7 @@ pub struct PrnsNode<
 {
     node: AssembledNode<St, R, F, S>,
     inbound: HeaplessVec<(InterfaceId, &'static mut dyn ManifoldLaneReader), LANE_COUNT>,
+    frame_accounting_statuses: HeaplessVec<&'static EmbassyInterfaceStatus, LANE_COUNT>,
     egress: PooledEgress<LANE_COUNT>,
     notify: Receiver<'static, M, InterfaceId, NOTIFY>,
     commands: Receiver<'static, M, IssuedCommand, COMMANDS>,
@@ -265,6 +268,7 @@ where
         let slot = cell.uninit();
         let ManifoldWiring {
             inbound,
+            frame_accounting_statuses,
             egress,
             initial,
             ifacs,
@@ -279,6 +283,8 @@ where
                 .cast::<MaybeUninit<AssembledNode<St, R, F, S>>>();
             let (_, ManuallyAttached, persistence) = assemble_node_in_place(assembled, recipe);
             core::ptr::addr_of_mut!((*node).inbound).write(inbound);
+            core::ptr::addr_of_mut!((*node).frame_accounting_statuses)
+                .write(frame_accounting_statuses);
             core::ptr::addr_of_mut!((*node).egress).write(egress);
             core::ptr::addr_of_mut!((*node).notify).write(notify);
             core::ptr::addr_of_mut!((*node).commands).write(commands);
@@ -353,6 +359,7 @@ where
         PrnsNode {
             node,
             inbound: wiring.inbound,
+            frame_accounting_statuses: wiring.frame_accounting_statuses,
             egress: wiring.egress,
             notify: wiring.notify,
             commands: wiring.commands,
@@ -464,6 +471,7 @@ where
         let PrnsNode {
             node,
             mut inbound,
+            frame_accounting_statuses,
             mut egress,
             notify,
             commands,
@@ -490,6 +498,7 @@ where
                 descriptors: &mut descriptors,
                 ifacs: &mut ifacs,
                 inbound: &mut inbound,
+                frame_accounting_statuses: &frame_accounting_statuses,
                 egress: &mut egress,
                 notify,
                 commands,
@@ -714,6 +723,7 @@ where
         let PrnsNode {
             node,
             inbound,
+            frame_accounting_statuses,
             egress,
             notify,
             commands,
@@ -739,6 +749,7 @@ where
                 descriptors,
                 ifacs,
                 inbound,
+                frame_accounting_statuses,
                 egress,
                 notify: *notify,
                 commands: *commands,

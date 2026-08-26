@@ -156,6 +156,7 @@ fn an_ifac_frame_crosses_the_seam_and_leaves_masked_through_the_peer() {
                 ifacs: &ifacs,
                 notify: notify.receiver(),
                 inbound_lanes: &mut inbound_lanes,
+                frame_accounting_statuses: &[],
                 commands: commands.receiver(),
                 egress,
             },

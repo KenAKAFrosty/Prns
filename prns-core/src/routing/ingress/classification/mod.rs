@@ -97,6 +97,11 @@ impl<'a> ClassifiedInboundPacket<'a> {
         }
     }
 
+    #[must_use]
+    pub fn is_malformed(&self) -> bool {
+        matches!(self.ingress, Ingress::Malformed)
+    }
+
     pub(crate) fn into_parts(self) -> (InterfaceId, Ingress<'a>) {
         (self.source_interface, self.ingress)
     }

@@ -23,7 +23,9 @@ use super::egress::{
     flush_due_pacers, ifac_for, route_reaction, soonest_pacer_release, InterfacePacer,
     ManifoldEgress, PooledEgress,
 };
+use super::interface_status::account_malformed_frame;
 use super::packet_phy::retain_packet_phy;
+use super::EmbassyInterfaceStatus;
 
 /// Changes the live descriptor set without reallocating the fixed lane pool.
 #[repr(C)]
@@ -80,6 +82,7 @@ pub struct PooledWiring<
     pub ifacs: &'run mut HeaplessVec<InterfaceIfac, LANE_COUNT>,
     pub inbound:
         &'run mut HeaplessVec<(InterfaceId, &'static mut dyn ManifoldLaneReader), LANE_COUNT>,
+    pub frame_accounting_statuses: &'run [&'static EmbassyInterfaceStatus],
     pub egress: &'run mut PooledEgress<LANE_COUNT>,
     pub notify: Receiver<'run, M, InterfaceId, NOTIFY>,
     pub commands: Receiver<'run, M, IssuedCommand, COMMANDS>,
@@ -119,6 +122,7 @@ pub(crate) async fn run_pooled<
         descriptors,
         ifacs,
         inbound,
+        frame_accounting_statuses,
         egress,
         notify,
         commands,
@@ -183,6 +187,7 @@ pub(crate) async fn run_pooled<
                             source_interface: source,
                             bytes,
                         });
+                        account_malformed_frame(frame_accounting_statuses, source, &packet);
                         retain_packet_phy(store, &packet, packet_phy);
                         let delta = engine.ingest_classified_into(
                             packet,

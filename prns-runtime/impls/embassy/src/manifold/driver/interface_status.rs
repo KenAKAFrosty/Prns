@@ -2,10 +2,24 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
+use crate::engine::ClassifiedInboundPacket;
 use crate::interfaces::{
     AirtimeUtilization, ConnectionState, FrameAccounting, InterfaceId, InterfaceStatus,
     TransferRates,
 };
+
+pub(super) fn account_malformed_frame(
+    statuses: &[&EmbassyInterfaceStatus],
+    source: InterfaceId,
+    packet: &ClassifiedInboundPacket<'_>,
+) {
+    if !packet.is_malformed() {
+        return;
+    }
+    if let Some(status) = statuses.iter().find(|status| status.id() == source) {
+        status.count_frame_malformed();
+    }
+}
 
 pub struct EmbassyInterfaceStatus {
     id: AtomicU64,
@@ -199,6 +213,8 @@ impl InterfaceStatus for EmbassyInterfaceStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::InstantMillis;
+    use crate::interfaces::InboundPacket;
     use embassy_futures::{block_on, join::join};
 
     #[test]
@@ -250,6 +266,36 @@ mod tests {
                 counts.delivered
             ),
             (2, 1, 1, 1)
+        );
+    }
+
+    #[test]
+    fn malformed_classification_is_charged_to_its_source_interface() {
+        let source = InterfaceId::new([0x5A; 8]);
+        let other = InterfaceId::new([0x6B; 8]);
+        let source_status = EmbassyInterfaceStatus::new(source, ConnectionState::Connected);
+        let other_status = EmbassyInterfaceStatus::new(other, ConnectionState::Connected);
+        source_status.account_frames();
+        other_status.account_frames();
+        let mut bytes = [0x01];
+        let packet = ClassifiedInboundPacket::classify(InboundPacket {
+            arrived_at: InstantMillis(1),
+            source_interface: source,
+            bytes: &mut bytes,
+        });
+
+        account_malformed_frame(&[&other_status, &source_status], source, &packet);
+
+        assert_eq!(
+            source_status.frame_accounting(),
+            Some(FrameAccounting {
+                malformed: 1,
+                ..FrameAccounting::default()
+            })
+        );
+        assert_eq!(
+            other_status.frame_accounting(),
+            Some(FrameAccounting::default())
         );
     }
 }

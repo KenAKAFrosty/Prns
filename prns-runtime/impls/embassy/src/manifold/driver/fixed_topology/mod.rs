@@ -21,7 +21,9 @@ use super::egress::{
     flush_due_pacers, ifac_for, route_reaction, soonest_pacer_release, EmbassyEgress,
     InterfacePacer, MAX_PACED_INTERFACES,
 };
+use super::interface_status::account_malformed_frame;
 use super::packet_phy::retain_packet_phy;
+use super::EmbassyInterfaceStatus;
 
 /// Borrowed lanes and channels for one fixed-topology manifold run.
 pub struct ManifoldWiring<'run, 'lane, M: RawMutex, const NOTIFY: usize, const COMMANDS: usize> {
@@ -30,6 +32,7 @@ pub struct ManifoldWiring<'run, 'lane, M: RawMutex, const NOTIFY: usize, const C
     /// A doorbell rather than a frame count: one receive drains every lane, a full channel means a sweep is pending, and a frame committed during a sweep either joins it or rings again.
     pub notify: Receiver<'run, M, InterfaceId, NOTIFY>,
     pub inbound_lanes: &'run mut [(InterfaceId, &'lane mut dyn ManifoldLaneReader)],
+    pub frame_accounting_statuses: &'run [&'lane EmbassyInterfaceStatus],
     pub commands: Receiver<'run, M, IssuedCommand, COMMANDS>,
     pub egress: EmbassyEgress<'run>,
 }
@@ -138,6 +141,7 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
         ifacs,
         notify,
         inbound_lanes,
+        frame_accounting_statuses,
         commands,
         mut egress,
     } = wiring;
@@ -185,6 +189,7 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
                             source_interface: source,
                             bytes,
                         });
+                        account_malformed_frame(frame_accounting_statuses, source, &packet);
                         retain_packet_phy(store, &packet, packet_phy);
                         let delta = engine.ingest_classified_into(
                             packet,

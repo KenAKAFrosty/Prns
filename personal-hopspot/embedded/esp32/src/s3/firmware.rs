@@ -228,18 +228,24 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         OUTBOUND_BURST_DEPTH,
     );
     let usb_lane = manifold_lanes
-        .claim_interface_with_outbound_buffer(
+        .claim_accounted_interface_with_outbound_buffer(
             &USB_MANIFOLD_LANE,
             device_descriptor(usb_id),
             usb_outbound,
+            usb_status,
         )
         .expect("USB lane is available");
-    let tcp_lane = tcp_cfg.map(|descriptor| {
+    let tcp_lane = tcp_cfg.zip(tcp_status).map(|(descriptor, status)| {
         let outbound = crate::storage::allocate_manifold_outbound::<EMBEDDED_MAX_WIRE_FRAME_LEN>(
             OUTBOUND_BURST_DEPTH,
         );
         manifold_lanes
-            .claim_interface_with_outbound_buffer(&TCP_MANIFOLD_LANE, descriptor, outbound)
+            .claim_accounted_interface_with_outbound_buffer(
+                &TCP_MANIFOLD_LANE,
+                descriptor,
+                outbound,
+                status,
+            )
             .expect("TCP lane is available")
     });
     let wifi_supervisor_lane = has_wifi.then(|| {
@@ -260,7 +266,12 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         crate::storage::allocate_manifold_outbound::<LORA_MAX_PAYLOAD>(OUTBOUND_BURST_DEPTH);
     #[cfg(feature = "lora")]
     let lora_lane = manifold_lanes
-        .claim_interface_with_outbound_buffer(&LORA_MANIFOLD_LANE, lora_cfg, lora_outbound)
+        .claim_accounted_interface_with_outbound_buffer(
+            &LORA_MANIFOLD_LANE,
+            lora_cfg,
+            lora_outbound,
+            lora_status,
+        )
         .expect("LoRa lane is available");
     let ble_supervisor_lane = (radio_mode == RadioMode::Ble && ble_identity.is_some()).then(|| {
         let outbound =
@@ -278,7 +289,12 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let outbound =
             crate::storage::allocate_manifold_outbound::<ESP_NOW_V2_AIR_MTU>(OUTBOUND_BURST_DEPTH);
         manifold_lanes
-            .claim_interface_with_outbound_buffer(&ESPNOW_MANIFOLD_LANE, descriptor, outbound)
+            .claim_accounted_interface_with_outbound_buffer(
+                &ESPNOW_MANIFOLD_LANE,
+                descriptor,
+                outbound,
+                espnow_status,
+            )
             .expect("ESP-NOW lane is available")
     });
 

@@ -21,7 +21,7 @@ pub async fn run(spawner: Spawner) {
     drop(identity_entropy);
 
     #[cfg(feature = "esp-now")]
-    let (_espnow_controller, espnow, _espnow_status) = {
+    let (_espnow_controller, espnow, espnow_status) = {
         let wifi_config = ControllerConfig::default()
             .with_static_rx_buf_num(4)
             .with_rx_ba_win(3);
@@ -54,11 +54,15 @@ pub async fn run(spawner: Spawner) {
 
     let mut manifold_lanes = ManifoldLanes::new();
     let usb_lane = manifold_lanes
-        .claim_interface(&USB_MANIFOLD_LANE, device_descriptor(USB_INTERFACE_ID))
+        .claim_accounted_interface(
+            &USB_MANIFOLD_LANE,
+            device_descriptor(USB_INTERFACE_ID),
+            &USB_STATUS,
+        )
         .expect("USB lane is available");
     #[cfg(feature = "esp-now")]
     let espnow_lane = manifold_lanes
-        .claim_interface(&ESPNOW_MANIFOLD_LANE, espnow.descriptor())
+        .claim_accounted_interface(&ESPNOW_MANIFOLD_LANE, espnow.descriptor(), espnow_status)
         .expect("ESP-NOW lane is available");
     #[cfg(feature = "bluetooth-auto")]
     let ble_supervisor_lane = ble_identity.as_ref().map(|_| {

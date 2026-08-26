@@ -214,7 +214,7 @@ pub async fn run(spawner: Spawner) -> ! {
     });
 
     let lora_lane = manifold_lanes
-        .claim_interface(&LORA_MANIFOLD_LANE, lora.descriptor())
+        .claim_accounted_interface(&LORA_MANIFOLD_LANE, lora.descriptor(), lora_status)
         .expect("LoRa lane is available");
     let ble_supervisor_lane = ble_identity.as_ref().map(|_| {
         manifold_lanes
@@ -222,7 +222,7 @@ pub async fn run(spawner: Spawner) -> ! {
             .expect("Bluetooth supervisor lane is available")
     });
     let usb_lane = manifold_lanes
-        .claim_interface(&USB_MANIFOLD_LANE, usb_dev.descriptor())
+        .claim_accounted_interface(&USB_MANIFOLD_LANE, usb_dev.descriptor(), usb_status)
         .expect("USB lane is available");
 
     let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);

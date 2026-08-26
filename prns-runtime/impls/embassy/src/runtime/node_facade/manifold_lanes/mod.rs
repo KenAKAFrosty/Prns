@@ -9,10 +9,12 @@ use portable_atomic::{AtomicBool, AtomicU32, Ordering};
 use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::engine::IssuedCommand;
-use crate::interfaces::{IfacContext, InterfaceDescriptor, InterfaceId, InterfaceIfac};
+use crate::interfaces::{
+    IfacContext, InterfaceDescriptor, InterfaceId, InterfaceIfac, InterfaceStatus,
+};
 use crate::manifold::driver::{
     embassy_grant_lane, EmbassyGrantConsumer, EmbassyGrantProducer, EmbassyInterfaceSeam,
-    InterfaceLifecycle, PooledEgress,
+    EmbassyInterfaceStatus, InterfaceLifecycle, PooledEgress,
 };
 use crate::manifold::grant::{FrameSlot, ManifoldLaneReader, ManifoldLaneWriter};
 use crate::manifold::interface_seam::EMBEDDED_MAX_LINK_MTU;
@@ -35,10 +37,24 @@ type LaneChannel<M, const FRAME: usize> = zerocopy_channel::Channel<'static, M, 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LaneClaimError {
     AlreadyClaimed,
-    DuplicateInterfaceId { id: InterfaceId },
-    LaneSetFull { capacity: usize },
-    NotificationCapacityExceeded { required: usize, capacity: usize },
-    FrameCapacityExceeded { required: usize, capacity: usize },
+    DuplicateInterfaceId {
+        id: InterfaceId,
+    },
+    LaneSetFull {
+        capacity: usize,
+    },
+    NotificationCapacityExceeded {
+        required: usize,
+        capacity: usize,
+    },
+    FrameCapacityExceeded {
+        required: usize,
+        capacity: usize,
+    },
+    FrameAccountingIdMismatch {
+        descriptor: InterfaceId,
+        status: InterfaceId,
+    },
     EmptyOutboundBuffer,
 }
 
@@ -163,6 +179,7 @@ pub struct ManifoldLaneSet<M: RawMutex + 'static, const LANE_COUNT: usize, const
     egress: PooledEgress<LANE_COUNT>,
     initial: HeaplessVec<InterfaceDescriptor, LANE_COUNT>,
     ifacs: HeaplessVec<InterfaceIfac, LANE_COUNT>,
+    frame_accounting_statuses: HeaplessVec<&'static EmbassyInterfaceStatus, LANE_COUNT>,
     notification_capacity: usize,
     mutex: PhantomData<M>,
 }
@@ -177,6 +194,7 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
             egress: PooledEgress::new(),
             initial: HeaplessVec::new(),
             ifacs: HeaplessVec::new(),
+            frame_accounting_statuses: HeaplessVec::new(),
             notification_capacity: 0,
             mutex: PhantomData,
         }
@@ -191,7 +209,22 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
         storage: &'static StaticManifoldLane<M, FRAME, INBOUND_DEPTH, OUTBOUND_DEPTH>,
         descriptor: InterfaceDescriptor,
     ) -> Result<InterfaceLane<M, FRAME>, LaneClaimError> {
-        self.claim_interface_configuration(storage, descriptor, None, None)
+        self.claim_interface_configuration(storage, descriptor, None, None, None)
+    }
+
+    /// Claims an interface lane and registers its status for engine-owned malformed-frame
+    /// accounting.
+    pub fn claim_accounted_interface<
+        const FRAME: usize,
+        const INBOUND_DEPTH: usize,
+        const OUTBOUND_DEPTH: usize,
+    >(
+        &mut self,
+        storage: &'static StaticManifoldLane<M, FRAME, INBOUND_DEPTH, OUTBOUND_DEPTH>,
+        descriptor: InterfaceDescriptor,
+        status: &'static EmbassyInterfaceStatus,
+    ) -> Result<InterfaceLane<M, FRAME>, LaneClaimError> {
+        self.claim_interface_configuration(storage, descriptor, None, None, Some(status))
     }
 
     /// Claims an interface whose outbound frame ring lives in caller-owned static storage.
@@ -205,7 +238,29 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
         descriptor: InterfaceDescriptor,
         outbound_buffer: &'static mut [FrameSlot<FRAME>],
     ) -> Result<InterfaceLane<M, FRAME>, LaneClaimError> {
-        self.claim_interface_configuration(storage, descriptor, None, Some(outbound_buffer))
+        self.claim_interface_configuration(storage, descriptor, None, Some(outbound_buffer), None)
+    }
+
+    /// Claims an accounted interface whose outbound frame ring lives in caller-owned static
+    /// storage.
+    pub fn claim_accounted_interface_with_outbound_buffer<
+        const FRAME: usize,
+        const INBOUND_DEPTH: usize,
+        const OUTBOUND_DEPTH: usize,
+    >(
+        &mut self,
+        storage: &'static StaticManifoldLane<M, FRAME, INBOUND_DEPTH, OUTBOUND_DEPTH>,
+        descriptor: InterfaceDescriptor,
+        outbound_buffer: &'static mut [FrameSlot<FRAME>],
+        status: &'static EmbassyInterfaceStatus,
+    ) -> Result<InterfaceLane<M, FRAME>, LaneClaimError> {
+        self.claim_interface_configuration(
+            storage,
+            descriptor,
+            None,
+            Some(outbound_buffer),
+            Some(status),
+        )
     }
 
     pub fn claim_interface_with_ifac<
@@ -218,7 +273,7 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
         descriptor: InterfaceDescriptor,
         context: IfacContext,
     ) -> Result<InterfaceLane<M, FRAME>, LaneClaimError> {
-        self.claim_interface_configuration(storage, descriptor, Some(context), None)
+        self.claim_interface_configuration(storage, descriptor, Some(context), None, None)
     }
 
     fn claim_interface_configuration<
@@ -231,8 +286,18 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
         mut descriptor: InterfaceDescriptor,
         context: Option<IfacContext>,
         external_outbound: Option<&'static mut [FrameSlot<FRAME>]>,
+        frame_accounting_status: Option<&'static EmbassyInterfaceStatus>,
     ) -> Result<InterfaceLane<M, FRAME>, LaneClaimError> {
         self.validate_claim::<INBOUND_DEPTH>(descriptor.id)?;
+        if let Some(status) = frame_accounting_status {
+            let status_id = status.id();
+            if status_id != descriptor.id {
+                return Err(LaneClaimError::FrameAccountingIdMismatch {
+                    descriptor: descriptor.id,
+                    status: status_id,
+                });
+            }
+        }
         if let Some(mtu) = descriptor.hardware_mtu {
             descriptor.hardware_mtu = Some(mtu.min(EMBEDDED_MAX_LINK_MTU));
         }
@@ -255,6 +320,11 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
         }
         if let Some(context) = context {
             if self.ifacs.push(InterfaceIfac { id, context }).is_err() {
+                unreachable!()
+            }
+        }
+        if let Some(status) = frame_accounting_status {
+            if self.frame_accounting_statuses.push(status).is_err() {
                 unreachable!()
             }
         }
@@ -418,6 +488,7 @@ impl<M: RawMutex + Sync + 'static, const LANE_COUNT: usize, const NOTIFY: usize>
             egress: self.egress,
             initial: self.initial,
             ifacs: self.ifacs,
+            frame_accounting_statuses: self.frame_accounting_statuses,
             notify,
             commands,
             lifecycle,

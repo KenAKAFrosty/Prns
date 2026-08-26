@@ -327,7 +327,7 @@ pub async fn run(spawner: Spawner) -> ! {
     });
 
     let lora_lane = manifold_lanes
-        .claim_interface(&LORA_MANIFOLD_LANE, lora.descriptor())
+        .claim_accounted_interface(&LORA_MANIFOLD_LANE, lora.descriptor(), lora_status)
         .expect("LoRa lane is available");
     #[cfg(any(
         feature = "board-t096",
@@ -344,7 +344,7 @@ pub async fn run(spawner: Spawner) -> ! {
             .expect("Bluetooth supervisor lane is available")
     });
     let usb_lane = manifold_lanes
-        .claim_interface(&USB_MANIFOLD_LANE, usb_device.descriptor())
+        .claim_accounted_interface(&USB_MANIFOLD_LANE, usb_device.descriptor(), usb_status)
         .expect("USB lane is available");
     let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
     let manifold_wiring = manifold_lanes.into_manifold_wiring(
