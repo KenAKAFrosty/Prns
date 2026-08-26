@@ -17,7 +17,9 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_time::{Delay, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use personal_rns::lora::LoRaInterface;
-use personal_rns::radios::sx126x::{BoardConfig, ExternalPowerAmplifier, Sx126x, TcxoVoltage};
+use personal_rns::radios::sx126x::{
+    BoardConfig, ExternalPowerAmplifier, FrontendControl, Sx126x, TcxoVoltage,
+};
 use static_cell::StaticCell;
 
 use crate::boards::status_led::StatusLed;
@@ -226,8 +228,10 @@ impl T096Board {
                     maximum_output_power_dbm: 22,
                     chip_power_dbm: t096_chip_power_dbm,
                 }),
-                enter_transmit: Some(enter_transmit),
-                enter_receive: Some(enter_receive),
+                frontend_control: FrontendControl::TxRx {
+                    enter_transmit,
+                    enter_receive,
+                },
             },
         );
 

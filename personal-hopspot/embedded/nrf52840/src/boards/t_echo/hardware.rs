@@ -11,7 +11,7 @@ use embassy_nrf::{bind_interrupts, config, peripherals, usb, Peri};
 use embassy_time::{Delay, Duration, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use epd_waveshare::epd1in54_v2::Display1in54;
-use personal_rns::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
+use personal_rns::radios::sx126x::{BoardConfig, FrontendControl, Sx126x, TcxoVoltage};
 use static_cell::StaticCell;
 
 bind_interrupts!(struct Irqs {
@@ -199,8 +199,7 @@ impl TechoDeferredHardware {
                 dio2_as_rf_switch: true,
                 external_rx_gain_db: 0,
                 external_power_amplifier: None,
-                enter_transmit: None,
-                enter_receive: None,
+                frontend_control: FrontendControl::NoDynamicControl,
             },
         );
 

@@ -198,6 +198,34 @@ pub struct ExternalPowerAmplifier {
     pub chip_power_dbm: fn(i8) -> i8,
 }
 
+/// Board-owned front-end switching that must surround every SX126x TX/RX transition.
+///
+/// The callbacks are one unit because a front-end that can enter transmit must also have a
+/// defined path back to receive. Boards with no software-driven transition use
+/// [`Self::NoDynamicControl`].
+#[derive(Debug, Clone, Copy)]
+pub enum FrontendControl {
+    NoDynamicControl,
+    TxRx {
+        enter_transmit: fn(),
+        enter_receive: fn(),
+    },
+}
+
+impl FrontendControl {
+    fn enter_transmit(self) {
+        if let Self::TxRx { enter_transmit, .. } = self {
+            enter_transmit();
+        }
+    }
+
+    fn enter_receive(self) {
+        if let Self::TxRx { enter_receive, .. } = self {
+            enter_receive();
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct BoardConfig {
     /// `Some(v)` if a TCXO is fed from DIO3 at voltage `v`; `None` for a bare XTAL.
@@ -211,10 +239,7 @@ pub struct BoardConfig {
     /// External transmit PA behavior. When present, profiles remain antenna-referred while the
     /// driver programs the lower chip power required to produce that output through the PA.
     pub external_power_amplifier: Option<ExternalPowerAmplifier>,
-    /// Optional external PA/LNA switch into transmit. Invoked immediately before `SetTx`.
-    pub enter_transmit: Option<fn()>,
-    /// Optional external PA/LNA switch into receive. Invoked immediately before `SetRx`.
-    pub enter_receive: Option<fn()>,
+    pub frontend_control: FrontendControl,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -483,7 +508,7 @@ where
             .await?;
         self.configure().await?;
         self.route_irqs_and_tune_rx().await?;
-        invoke_frontend(self.config.enter_receive);
+        self.config.frontend_control.enter_receive();
         Ok(())
     }
 
@@ -528,7 +553,7 @@ where
         // EasyDMA (and most SPI DMA) can only source from RAM; the caller's payload may be flash-resident (`&'static`), so stage it through the RAM `tx_staging` field.
         self.tx_staging[..len].copy_from_slice(payload);
 
-        invoke_frontend(self.config.enter_transmit);
+        self.config.frontend_control.enter_transmit();
         self.standby().await?;
         self.set_packet_params(len as u8).await?;
         self.write_tx_payload(len).await?;
@@ -557,7 +582,7 @@ where
 
     /// Arm continuous RX: restamp the RX-side max payload length, clear stale IRQs, enter SetRx continuous. [`read_frame`](Self::read_frame) waits WITHOUT re-arming, so a host-side select that cancels the read mid-listen leaves the radio receiving (the RxDone IRQ latches) rather than guillotining an in-flight multi-hundred-ms LoRa frame.
     pub async fn arm_rx(&mut self) -> Result<(), Error> {
-        invoke_frontend(self.config.enter_receive);
+        self.config.frontend_control.enter_receive();
         self.standby().await?;
         self.set_packet_params(0xFF).await?;
         self.clear_irq(irq::ALL).await?;
@@ -885,12 +910,6 @@ fn decode_rssi_dbm(encoded: u8) -> i16 {
     -i16::from(encoded) / 2
 }
 
-fn invoke_frontend(hook: Option<fn()>) {
-    if let Some(enter) = hook {
-        enter();
-    }
-}
-
 fn antenna_referred_rssi_dbm(encoded: u8, external_rx_gain_db: u8) -> i16 {
     decode_rssi_dbm(encoded).saturating_sub(i16::from(external_rx_gain_db))
 }
@@ -920,6 +939,7 @@ fn pa_config(power_dbm: i8) -> PaConfig {
 mod tests {
     use super::*;
     use core::future::Future;
+    use core::sync::atomic::{AtomicU8, Ordering};
     use core::task::{Context, Poll, Waker};
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -1152,8 +1172,7 @@ mod tests {
             dio2_as_rf_switch: true,
             external_rx_gain_db: 0,
             external_power_amplifier: None,
-            enter_transmit: None,
-            enter_receive: None,
+            frontend_control: FrontendControl::NoDynamicControl,
         }
     }
 
@@ -1193,6 +1212,31 @@ mod tests {
             sync_word_for_network(LoRaNetwork::Reticulum),
             RNODE_LORA_SYNC_WORD
         );
+    }
+
+    #[test]
+    fn external_frontend_control_keeps_tx_and_rx_transitions_together() {
+        static FRONTEND_STATE: AtomicU8 = AtomicU8::new(0);
+
+        fn enter_transmit() {
+            FRONTEND_STATE.store(1, Ordering::Relaxed);
+        }
+
+        fn enter_receive() {
+            FRONTEND_STATE.store(2, Ordering::Relaxed);
+        }
+
+        let control = FrontendControl::TxRx {
+            enter_transmit,
+            enter_receive,
+        };
+        control.enter_transmit();
+        assert_eq!(FRONTEND_STATE.load(Ordering::Relaxed), 1);
+        control.enter_receive();
+        assert_eq!(FRONTEND_STATE.load(Ordering::Relaxed), 2);
+
+        FrontendControl::NoDynamicControl.enter_transmit();
+        assert_eq!(FRONTEND_STATE.load(Ordering::Relaxed), 2);
     }
 
     #[test]
@@ -1284,8 +1328,7 @@ mod tests {
             dio2_as_rf_switch: true,
             external_rx_gain_db: 0,
             external_power_amplifier: None,
-            enter_transmit: None,
-            enter_receive: None,
+            frontend_control: FrontendControl::NoDynamicControl,
         };
         let mut radio = Sx126x::new(
             MockSpi { log: log.clone() },

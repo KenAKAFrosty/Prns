@@ -12,7 +12,7 @@ use embassy_nrf::{bind_interrupts, config, peripherals, usb};
 use embassy_time::{Delay, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use personal_rns::lora::LoRaInterface;
-use personal_rns::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
+use personal_rns::radios::sx126x::{BoardConfig, FrontendControl, Sx126x, TcxoVoltage};
 use static_cell::StaticCell;
 
 use crate::boards::status_led::StatusLed;
@@ -167,8 +167,7 @@ impl T114Board {
                 dio2_as_rf_switch: true,
                 external_rx_gain_db: 0,
                 external_power_amplifier: None,
-                enter_transmit: None,
-                enter_receive: None,
+                frontend_control: FrontendControl::NoDynamicControl,
             },
         );
 

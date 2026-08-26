@@ -15,7 +15,7 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_time::{Delay, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use personal_rns::lora::LoRaInterface;
-use personal_rns::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
+use personal_rns::radios::sx126x::{BoardConfig, FrontendControl, Sx126x, TcxoVoltage};
 use static_cell::StaticCell;
 
 use crate::boards::status_led::StatusLed;
@@ -144,8 +144,10 @@ impl MeshTowerV2Board {
                 dio2_as_rf_switch: true,
                 external_rx_gain_db: 0,
                 external_power_amplifier: None,
-                enter_transmit: Some(enter_transmit),
-                enter_receive: Some(enter_receive),
+                frontend_control: FrontendControl::TxRx {
+                    enter_transmit,
+                    enter_receive,
+                },
             },
         );
 
