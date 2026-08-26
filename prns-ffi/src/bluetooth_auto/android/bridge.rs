@@ -73,6 +73,7 @@ impl WorkSignal {
 }
 
 pub(super) struct Endpoints {
+    address: BleAddress,
     control_in_tx: Sender<Vec<u8>>,
     l2cap_in_tx: Sender<Vec<u8>>,
     data_in_tx: Sender<Vec<u8>>,
@@ -150,6 +151,7 @@ pub(super) struct Shared {
     pub(super) events: Mutex<VecDeque<Event>>,
     pub(super) events_ready: Notify,
     pub(super) dial_requests: Mutex<VecDeque<[u8; 6]>>,
+    pub(super) close_requests: Mutex<VecDeque<u32>>,
     pub(super) l2cap_opens: Arc<Mutex<VecDeque<(u32, u16)>>>,
     work: Arc<WorkSignal>,
     ingress_pressure_events: AtomicU64,
@@ -180,6 +182,7 @@ impl AndroidBleBridge {
                 events: Mutex::new(VecDeque::new()),
                 events_ready: Notify::new(),
                 dial_requests: Mutex::new(VecDeque::new()),
+                close_requests: Mutex::new(VecDeque::new()),
                 l2cap_opens: Arc::new(Mutex::new(VecDeque::new())),
                 work: Arc::new(WorkSignal::default()),
                 ingress_pressure_events: AtomicU64::new(0),
@@ -385,6 +388,7 @@ impl AndroidBleBridge {
             if let Some(replaced) = links.insert(
                 conn_id,
                 Endpoints {
+                    address: BleAddress::new(address),
                     control_in_tx: control_tx,
                     l2cap_in_tx: l2cap_tx,
                     data_in_tx: data_tx,
@@ -526,7 +530,46 @@ impl AndroidBleBridge {
                 link.close();
             }
         }
+        if let Ok(mut closes) = self.shared.close_requests.lock() {
+            closes.retain(|pending| *pending != conn_id);
+        }
         self.shared.work.wake();
+    }
+
+    /// Policy rejected a link: drop Rust endpoints and ask Java to tear down the physical radio.
+    pub fn close_by_address(&self, address: [u8; 6]) {
+        let target = BleAddress::new(address);
+        let mut closed = Vec::new();
+        if let Ok(mut links) = self.shared.links.lock() {
+            links.retain(|conn_id, endpoints| {
+                if endpoints.address == target {
+                    endpoints.close();
+                    closed.push(*conn_id);
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+        if closed.is_empty() {
+            return;
+        }
+        if let Ok(mut requests) = self.shared.close_requests.lock() {
+            for conn_id in closed {
+                if !requests.contains(&conn_id) {
+                    requests.push_back(conn_id);
+                }
+            }
+        }
+        self.shared.work.wake();
+    }
+
+    pub fn next_close(&self) -> Option<u32> {
+        self.shared
+            .close_requests
+            .lock()
+            .ok()
+            .and_then(|mut requests| requests.pop_front())
     }
 
     pub fn push_dial(&self, address: [u8; 6]) -> bool {

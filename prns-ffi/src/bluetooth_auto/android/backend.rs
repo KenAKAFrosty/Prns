@@ -103,4 +103,8 @@ impl BleBackend<{ AndroidBleBackend::MAX_PEERS }> for AndroidBleBackend {
             DialOutcome::Busy
         }
     }
+
+    async fn on_link_closed(&mut self, address: BleAddress) {
+        self.bridge.close_by_address(*address.octets());
+    }
 }

@@ -191,6 +191,14 @@ struct SendPeripheralDelegate(Retained<PeripheralDelegate>);
 // dispatch queue before and after transfer.
 unsafe impl Send for SendPeripheralDelegate {}
 
+impl SendPeripheralDelegate {
+    /// Queue-confined: call only from the CoreBluetooth serial dispatch queue.
+    fn has_inbound_sessions(&self) -> bool {
+        self.0.has_inbound_sessions()
+    }
+}
+
+
 enum Event {
     CentralPowered,
     GattServicePublished,

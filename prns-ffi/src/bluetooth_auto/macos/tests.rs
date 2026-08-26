@@ -6,7 +6,7 @@ use prns_core::interfaces::bluetooth_auto::{
 };
 use tokio::sync::{mpsc, oneshot};
 
-use super::backend::{dial_admission, DialAdmission, StartupReadiness};
+use super::backend::{dial_admission, scan_op, DialAdmission, ScanOp, StartupReadiness};
 use super::central::CentralPeerSession;
 use super::discovery::{
     candidate_strength, discover_disposition, CandidateStrength, DiscoverDisposition,
@@ -166,9 +166,34 @@ fn startup_requires_central_gatt_and_l2cap_readiness() {
 }
 
 #[test]
-fn dial_yields_only_when_peer_is_already_system_connected() {
-    assert_eq!(dial_admission(true), DialAdmission::YieldToSystemConnection);
-    assert_eq!(dial_admission(false), DialAdmission::AttachCentralSession);
+fn dial_yields_for_system_connection_or_live_inbound_session() {
+    assert_eq!(
+        dial_admission(true, false),
+        DialAdmission::YieldToSystemConnection
+    );
+    assert_eq!(
+        dial_admission(false, true),
+        DialAdmission::YieldToInboundSession
+    );
+    assert_eq!(
+        dial_admission(true, true),
+        DialAdmission::YieldToSystemConnection
+    );
+    assert_eq!(
+        dial_admission(false, false),
+        DialAdmission::AttachCentralSession
+    );
+}
+
+#[test]
+fn scan_op_starts_restarts_and_stops_without_spurious_work() {
+    assert_eq!(scan_op(true, false, false), ScanOp::Start);
+    assert_eq!(scan_op(true, false, true), ScanOp::Start);
+    assert_eq!(scan_op(true, true, false), ScanOp::None);
+    assert_eq!(scan_op(true, true, true), ScanOp::Restart);
+    assert_eq!(scan_op(false, true, false), ScanOp::Stop);
+    assert_eq!(scan_op(false, true, true), ScanOp::Stop);
+    assert_eq!(scan_op(false, false, true), ScanOp::None);
 }
 
 #[test]

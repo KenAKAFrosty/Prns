@@ -34,6 +34,36 @@ use super::{
 
 const POWER_ON_TIMEOUT: Duration = Duration::from_secs(10);
 const DIAL_TIMEOUT: Duration = Duration::from_secs(15);
+/// CoreBluetooth can leave `isScanning == true` while delivering no advertisements.
+/// Periodically bounce the scan (and re-assert advertising) so late peers stay visible
+/// without requiring a process restart.
+const RADIO_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ScanOp {
+    Start,
+    Restart,
+    Stop,
+    None,
+}
+
+pub(super) const fn scan_op(enabled: bool, is_scanning: bool, restart: bool) -> ScanOp {
+    if enabled {
+        if is_scanning {
+            if restart {
+                ScanOp::Restart
+            } else {
+                ScanOp::None
+            }
+        } else {
+            ScanOp::Start
+        }
+    } else if is_scanning {
+        ScanOp::Stop
+    } else {
+        ScanOp::None
+    }
+}
 
 #[derive(Default)]
 pub(super) struct StartupReadiness {
@@ -67,11 +97,20 @@ impl StartupReadiness {
 pub(super) enum DialAdmission {
     AttachCentralSession,
     YieldToSystemConnection,
+    /// Android (and other dual-role peers) keep advertising under a rotating RPA while already
+    /// connected to us as a GATT central. Outbound dials to that advertisement thrash the live
+    /// inbound link, so yield while any peripheral session is active.
+    YieldToInboundSession,
 }
 
-pub(super) const fn dial_admission(already_system_connected: bool) -> DialAdmission {
+pub(super) const fn dial_admission(
+    already_system_connected: bool,
+    inbound_sessions_active: bool,
+) -> DialAdmission {
     if already_system_connected {
         DialAdmission::YieldToSystemConnection
+    } else if inbound_sessions_active {
+        DialAdmission::YieldToInboundSession
     } else {
         DialAdmission::AttachCentralSession
     }
@@ -83,7 +122,33 @@ fn cancel_connection(central: &SendCentralManager, peripheral: &SendPeripheral) 
     unsafe { central.0.cancelPeripheralConnection(&peripheral.0) };
 }
 
-fn begin_dial(command: DialCommand) {
+fn apply_scanning(central: SendCentralManager, enabled: bool, restart: bool) {
+    // SAFETY: this authoritative CoreBluetooth state query runs on the retained manager's
+    // serial dispatch queue.
+    let is_scanning = unsafe { central.0.isScanning() };
+    match scan_op(enabled, is_scanning, restart) {
+        ScanOp::Restart => {
+            // SAFETY: the retained central manager is only messaged on its serial dispatch queue.
+            unsafe { central.0.stopScan() };
+            start_scan(&central.0);
+            crate::diagnostic_log::debug!(
+                "bluetooth: restarted Prns scan so late-arriving peers can be sighted"
+            );
+        }
+        ScanOp::Start => {
+            start_scan(&central.0);
+            crate::diagnostic_log::debug!("bluetooth: scanning for Prns peers");
+        }
+        ScanOp::Stop => {
+            // SAFETY: the retained central manager is only messaged on its serial dispatch queue.
+            unsafe { central.0.stopScan() };
+            crate::diagnostic_log::debug!("bluetooth: scanning stopped — at connection capacity");
+        }
+        ScanOp::None => {}
+    }
+}
+
+fn begin_dial(command: DialCommand, inbound_sessions_active: bool) {
     let DialCommand {
         central,
         delegate,
@@ -91,15 +156,27 @@ fn begin_dial(command: DialCommand) {
         peer_id,
         session,
     } = command;
-    if dial_admission(is_system_connected(&central, peer_id))
-        == DialAdmission::YieldToSystemConnection
-    {
-        crate::diagnostic_log::debug!(
-            "bluetooth: yielding dial to {:02x?} — peer is already connected system-wide; inbound session retains connection ownership",
-            peer_id.address().octets()
-        );
-        session.reject();
-        return;
+    match dial_admission(
+        is_system_connected(&central, peer_id),
+        inbound_sessions_active,
+    ) {
+        DialAdmission::YieldToSystemConnection => {
+            crate::diagnostic_log::debug!(
+                "bluetooth: yielding dial to {:02x?} — peer is already connected system-wide; inbound session retains connection ownership",
+                peer_id.address().octets()
+            );
+            session.reject();
+            return;
+        }
+        DialAdmission::YieldToInboundSession => {
+            crate::diagnostic_log::debug!(
+                "bluetooth: yielding dial to {:02x?} — inbound peripheral session owns the radio; Android RPA ads must not dual-role thrash the live link",
+                peer_id.address().octets()
+            );
+            session.reject();
+            return;
+        }
+        DialAdmission::AttachCentralSession => {}
     }
     // SAFETY: both retained Objective-C objects stay alive for the delegate assignment, which runs
     // on the CoreBluetooth serial dispatch queue.
@@ -143,6 +220,9 @@ pub struct MacosBleBackend {
     restored: RestoredPeripherals,
     dials: JoinSet<DialTaskOutcome>,
     queue: DispatchRetained<DispatchQueue>,
+    scan_enabled: bool,
+    advertise_enabled: bool,
+    radio_refresh_at: tokio::time::Instant,
 }
 
 struct NativeThread {
@@ -349,6 +429,9 @@ impl PreparedMacosBleBackend {
             restored: self.restored,
             dials: JoinSet::new(),
             queue,
+            scan_enabled: false,
+            advertise_enabled: false,
+            radio_refresh_at: tokio::time::Instant::now() + RADIO_REFRESH_INTERVAL,
         })
     }
 }
@@ -358,29 +441,17 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
     type Link = GattLink;
 
     async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), MacosBleError> {
+        self.advertise_enabled = mode.is_on();
         self.peripheral_delegate.0.set_advertising(mode);
         Ok(())
     }
 
     async fn set_scanning(&mut self, mode: ScanningMode) -> Result<(), MacosBleError> {
-        let enabled = mode.is_on();
+        self.scan_enabled = mode.is_on();
+        let restart = cfg!(target_os = "macos") && self.scan_enabled;
         let central = SendCentralManager(self.central.0.clone());
         self.queue.exec_async(move || {
-            let central = central;
-            // SAFETY: this authoritative CoreBluetooth state query runs on the retained manager's
-            // serial dispatch queue.
-            let is_scanning = unsafe { central.0.isScanning() };
-            if enabled && !is_scanning {
-                start_scan(&central.0);
-                crate::diagnostic_log::debug!("bluetooth: scanning for Prns peers");
-            } else if !enabled && is_scanning {
-                // SAFETY: the retained central manager is only messaged on its serial dispatch
-                // queue.
-                unsafe { central.0.stopScan() };
-                crate::diagnostic_log::debug!(
-                    "bluetooth: scanning stopped — at connection capacity"
-                );
-            }
+            apply_scanning(central, mode.is_on(), restart);
         });
         Ok(())
     }
@@ -399,6 +470,8 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                 };
             }
             let pending_dials = !self.dials.is_empty();
+            let refresh_radio =
+                cfg!(target_os = "macos") && (self.scan_enabled || self.advertise_enabled);
             tokio::select! {
                 event = self.events.recv() => match event {
                     Some(Event::Sighting { address, rssi }) => {
@@ -409,6 +482,13 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                         return BleEvent::Sighting { address, rssi };
                     }
                     Some(Event::Inbound(link)) => return BleEvent::Inbound(link),
+                    Some(Event::CentralPowered) if self.scan_enabled => {
+                        let central = SendCentralManager(self.central.0.clone());
+                        self.queue.exec_async(move || {
+                            apply_scanning(central, true, true);
+                        });
+                        continue;
+                    }
                     Some(_) => continue,
                     None => core::future::pending().await,
                 },
@@ -426,6 +506,24 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                         }
                         Err(_) => continue,
                     }
+                }
+                _ = tokio::time::sleep_until(self.radio_refresh_at), if refresh_radio => {
+                    if self.scan_enabled {
+                        let central = SendCentralManager(self.central.0.clone());
+                        self.queue.exec_async(move || {
+                            apply_scanning(central, true, true);
+                        });
+                    }
+                    // Re-assert advertising only when no inbound sessions are live — bouncing
+                    // stop/startAdvertising drops connected centrals on some stacks.
+                    if self.advertise_enabled {
+                        self.peripheral_delegate
+                            .0
+                            .refresh_advertising_if_idle();
+                    }
+                    self.radio_refresh_at =
+                        tokio::time::Instant::now() + RADIO_REFRESH_INTERVAL;
+                    continue;
                 }
             }
         }
@@ -456,8 +554,11 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
             session: CentralPeerSession::new(address, control_tx, completion_tx, data_inbound_tx),
         };
         crate::diagnostic_log::debug!("bluetooth: dialing {token:02x?} over LE (central role)");
+        let peripheral_for_admission =
+            SendPeripheralDelegate(self.peripheral_delegate.0.clone());
         self.queue.exec_async(move || {
-            begin_dial(command);
+            let inbound = peripheral_for_admission.has_inbound_sessions();
+            begin_dial(command, inbound);
         });
         let send_peripheral = SendPeripheral(peripheral);
         let send_peripheral_manager = SendPeripheralDelegate(self.peripheral_delegate.0.clone());
