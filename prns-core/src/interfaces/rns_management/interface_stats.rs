@@ -35,6 +35,8 @@ pub struct RnsInterfaceStatsEntry {
     name: Option<String>,
     snapshot: InterfaceSnapshot,
     access_code: Option<RnsInterfaceAccessCode>,
+    rssi: Option<i8>,
+    fleet_peers: Vec<RnsInterfaceStatsEntry>,
 }
 
 impl RnsInterfaceStatsEntry {
@@ -47,7 +49,19 @@ impl RnsInterfaceStatsEntry {
             name,
             snapshot,
             access_code,
+            rssi: None,
+            fleet_peers: Vec::new(),
         }
+    }
+
+    pub fn with_rssi(mut self, rssi: Option<i8>) -> Self {
+        self.rssi = rssi;
+        self
+    }
+
+    pub fn with_fleet_peers(mut self, fleet_peers: Vec<RnsInterfaceStatsEntry>) -> Self {
+        self.fleet_peers = fleet_peers;
+        self
     }
 }
 
@@ -170,7 +184,14 @@ fn encode_interface_entry(
         rx_bps: 0,
         tx_bps: 0,
     });
-    encoder.map(14)?;
+    let mut fields = 14usize;
+    if entry.rssi.is_some() {
+        fields = fields.saturating_add(1);
+    }
+    if !entry.fleet_peers.is_empty() {
+        fields = fields.saturating_add(1);
+    }
+    encoder.map(fields)?;
     encoder.string_field(interface::NAME, &name)?;
     encoder.string_field(interface::SHORT_NAME, &name)?;
     encoder.string_field(interface::TYPE, &interface_type(entry.snapshot.id))?;
@@ -206,6 +227,45 @@ fn encode_interface_entry(
     {
         Some(network_name) => encoder.string(network_name)?,
         None => encoder.nil(),
+    }
+    if let Some(rssi) = entry.rssi {
+        encoder.field(interface::RSSI)?;
+        encoder.signed(i64::from(rssi));
+    }
+    if !entry.fleet_peers.is_empty() {
+        encoder.field(interface::FLEET_PEERS)?;
+        encoder.array(entry.fleet_peers.len())?;
+        for peer in &entry.fleet_peers {
+            encode_fleet_peer_entry(encoder, peer)?;
+        }
+    }
+    Ok(())
+}
+
+fn encode_fleet_peer_entry(
+    encoder: &mut MessagePackEncoder,
+    entry: &RnsInterfaceStatsEntry,
+) -> Result<(), RnsManagementEncodeError> {
+    let name = entry
+        .name
+        .clone()
+        .unwrap_or_else(|| interface_name(entry.snapshot.id));
+    let rates = entry.snapshot.transfer_rates.unwrap_or(TransferRates {
+        rx_bps: 0,
+        tx_bps: 0,
+    });
+    let fields = if entry.rssi.is_some() { 7usize } else { 6usize };
+    encoder.map(fields)?;
+    encoder.string_field(interface::NAME, &name)?;
+    encoder.field(interface::STATUS)?;
+    encoder.boolean(is_online(entry.snapshot.connection));
+    encoder.unsigned_field(interface::RECEIVE_BYTES, entry.snapshot.rx_bytes)?;
+    encoder.unsigned_field(interface::TRANSMIT_BYTES, entry.snapshot.tx_bytes)?;
+    encoder.unsigned_field(interface::RECEIVE_SPEED, u64::from(rates.rx_bps))?;
+    encoder.unsigned_field(interface::TRANSMIT_SPEED, u64::from(rates.tx_bps))?;
+    if let Some(rssi) = entry.rssi {
+        encoder.field(interface::RSSI)?;
+        encoder.signed(i64::from(rssi));
     }
     Ok(())
 }

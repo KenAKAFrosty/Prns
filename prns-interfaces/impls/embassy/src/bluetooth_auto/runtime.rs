@@ -1414,6 +1414,7 @@ async fn apply_settled<
                 slot,
                 address,
                 lane,
+                ..
             } => {
                 if let Some(mut link) = held.take() {
                     if !matches!(lane, L2capPlan::None) {
