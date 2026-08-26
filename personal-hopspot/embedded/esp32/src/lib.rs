@@ -68,6 +68,8 @@ mod persistence;
 
 #[cfg(any(test, target_arch = "xtensa"))]
 mod station_recovery;
+#[cfg(any(test, target_arch = "xtensa"))]
+mod station_security;
 #[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]
 mod storage;
 #[cfg(any(test, target_arch = "xtensa"))]

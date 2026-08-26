@@ -373,6 +373,28 @@ impl Config {
 }
 
 impl AuthenticationMethod {
+    const fn requires_pmf(self) -> bool {
+        match self {
+            Self::Wpa3Personal
+            | Self::Owe
+            | Self::Wpa3EntSuiteB192Bit
+            | Self::Wpa3ExtPsk
+            | Self::Wpa3ExtPskMixed
+            | Self::Dpp
+            | Self::Wpa3Enterprise => true,
+            Self::None
+            | Self::Wep
+            | Self::Wpa
+            | Self::Wpa2Personal
+            | Self::WpaWpa2Personal
+            | Self::Wpa2Enterprise
+            | Self::Wpa2Wpa3Personal
+            | Self::WapiPersonal
+            | Self::Wpa2Wpa3Enterprise
+            | Self::WpaEnterprise => false,
+        }
+    }
+
     fn to_raw(self) -> wifi_auth_mode_t {
         match self {
             AuthenticationMethod::None => include::wifi_auth_mode_t_WIFI_AUTH_OPEN,
@@ -455,6 +477,15 @@ impl AuthenticationMethod {
         }
     }
 }
+
+const _: () = {
+    assert!(AuthenticationMethod::Wpa3Personal.requires_pmf());
+    assert!(AuthenticationMethod::Owe.requires_pmf());
+    assert!(AuthenticationMethod::Wpa3Enterprise.requires_pmf());
+    assert!(!AuthenticationMethod::Wpa2Personal.requires_pmf());
+    assert!(!AuthenticationMethod::Wpa2Wpa3Personal.requires_pmf());
+    assert!(!AuthenticationMethod::Wpa2Wpa3Enterprise.requires_pmf());
+};
 
 /// Wi-Fi Mode (Station and/or AccessPoint).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -3321,7 +3352,7 @@ ignored."
                 ftm_responder: false,
                 pmf_cfg: wifi_pmf_config_t {
                     capable: true,
-                    required: config.pmf_required,
+                    required: config.pmf_required || config.auth_method.requires_pmf(),
                 },
                 sae_pwe_h2e: wifi_sae_pwe_method_t_WPA3_SAE_PWE_BOTH,
                 csa_count: 3,
@@ -3367,7 +3398,7 @@ ignored."
                 },
                 pmf_cfg: wifi_pmf_config_t {
                     capable: true,
-                    required: config.pmf_required,
+                    required: config.pmf_required || config.auth_method.requires_pmf(),
                 },
                 sae_pwe_h2e: wifi_sae_pwe_method_t_WPA3_SAE_PWE_BOTH,
                 _bitfield_align_1: [0; 0],

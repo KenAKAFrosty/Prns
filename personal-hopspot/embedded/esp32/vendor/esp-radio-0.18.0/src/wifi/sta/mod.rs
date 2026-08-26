@@ -38,7 +38,8 @@ pub struct StationConfig {
     /// The authentication method for the Wi-Fi connection.
     pub(crate) auth_method: AuthenticationMethod,
     /// Whether the station must reject access points that do not support Protected Management
-    /// Frames (PMF). PMF capability itself is always enabled by the driver.
+    /// Frames (PMF). PMF capability is always enabled, and authentication modes that mandate PMF
+    /// enforce it regardless of this setting.
     #[builder_lite(unstable)]
     pub(crate) pmf_required: bool,
     /// The password for the Wi-Fi connection.

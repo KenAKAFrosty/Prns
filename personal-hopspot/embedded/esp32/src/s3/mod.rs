@@ -109,9 +109,9 @@ use prns_interfaces_embassy::bluetooth_auto::PEER_CAPACITY as EMBEDDED_BLE_PEER_
 
 use crate::station_recovery::{
     AccessPoint as StationAccessPoint, ConnectionFailure, ConnectionOutcome, DiscoveryScope,
-    PersonalAuthentication, ScanFailure, ScanOutcome, StationAttempt, StationRecovery,
-    StationYield,
+    ScanFailure, ScanOutcome, StationAttempt, StationRecovery, StationYield,
 };
+use crate::station_security::{ObservedAuthentication, StationSecurity};
 use crate::storage::EngineStorageType;
 
 use personal_hopspot_core as screen;

@@ -49,8 +49,8 @@ pub struct AccessPointConfig {
     pub(crate) protocols: Protocols,
     /// The authentication method to be used by the access point.
     pub(crate) auth_method: AuthenticationMethod,
-    /// Whether clients must negotiate Protected Management Frames (PMF). WPA3 access points
-    /// require this setting.
+    /// Whether clients must negotiate Protected Management Frames (PMF). Authentication modes
+    /// that mandate PMF, including pure WPA3, enforce it regardless of this setting.
     #[builder_lite(unstable)]
     pub(crate) pmf_required: bool,
     /// The password for securing the access point (if applicable).
