@@ -4,10 +4,11 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
-description = "Personal Hopspot ESP32 firmware: the Heltec V4 / V4-R8 and T-Beam Supreme (ESP32-S3) and the headless XIAO (ESP32-C6) faces."
+description = "Personal Hopspot ESP32 firmware: Heltec V4 / V4-R8 / E290 and T-Beam Supreme (ESP32-S3), plus the headless XIAO (ESP32-C6)."
 
 [workspace]
 members = [
+    "boards/heltec-e290",
     "boards/heltec-v4",
     "boards/heltec-v4-r8",
     "boards/t-beam-supreme",
@@ -59,6 +60,7 @@ personal-rns = { path = "../../../personal-rns", default-features = false, featu
 prns-interfaces-embassy = { path = "../../../prns-interfaces/impls/embassy", optional = true, default-features = false, features = ["bluetooth-auto-trouble", "log"] }
 allocator-api2 = { version = "0.3", default-features = false, features = ["alloc"] }
 embedded-hal = "1"
+embedded-hal-async = "1"
 embedded-hal-bus = { version = "0.3", features = ["async"] }
 esp-radio = { version = "0.18", default-features = false, features = ["esp32s3", "unstable", "esp-alloc"] }
 # Keep Trouble's packet pool in scarce internal RAM. The Embassy backend treats transient pool

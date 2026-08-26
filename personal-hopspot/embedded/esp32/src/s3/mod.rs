@@ -328,13 +328,14 @@ const BOOT_PHASE_MAGIC: u32 = 0x5052_0000;
 
 #[derive(Clone, Copy)]
 pub(crate) enum BootPhase {
-    // Only boards with a panel emit the OLED stages; a headless-only build constructs none of them.
+    // Only boards with a panel emit the display-hardware stages; a headless-only build constructs
+    // none of them.
     #[allow(dead_code)]
-    OledBegin = 1,
+    DisplayHardwareBegin = 1,
     #[allow(dead_code)]
-    OledReady = 2,
+    DisplayHardwareReady = 2,
     #[allow(dead_code)]
-    OledFailed = 3,
+    DisplayHardwareFailed = 3,
     WifiBegin = 4,
     WifiReady = 5,
     TcpBegin = 6,
@@ -363,9 +364,9 @@ pub(crate) enum BootPhase {
 impl BootPhase {
     fn label(self) -> &'static str {
         match self {
-            Self::OledBegin => "oled.begin",
-            Self::OledReady => "oled.ready",
-            Self::OledFailed => "oled.failed",
+            Self::DisplayHardwareBegin => "display.hardware.begin",
+            Self::DisplayHardwareReady => "display.hardware.ready",
+            Self::DisplayHardwareFailed => "display.hardware.failed",
             Self::WifiBegin => "wifi.begin",
             Self::WifiReady => "wifi.ready",
             Self::TcpBegin => "tcp.begin",

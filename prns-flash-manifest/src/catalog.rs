@@ -998,6 +998,11 @@ mod tests {
                     Some(("partitions-hopspot-16mb.csv", "16mb"))
                 ),
                 (
+                    "heltec-e290",
+                    Some(16_777_216),
+                    Some(("partitions-hopspot-16mb.csv", "16mb"))
+                ),
+                (
                     "t-beam-supreme",
                     Some(8_388_608),
                     Some(("partitions-hopspot-8mb.csv", "8mb"))
@@ -1013,6 +1018,48 @@ mod tests {
                 ("t1000-e", None, None),
             ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn e290_qualification_contract_is_complete_and_not_shipping() -> Result<(), CatalogError> {
+        let catalog = board_catalog()?;
+        let board = catalog
+            .board("heltec-e290")
+            .ok_or_else(|| CatalogError::InvalidBoard {
+                board: "heltec-e290".to_string(),
+                message: "missing qualification target".to_string(),
+            })?;
+        assert_eq!(board.availability, BoardAvailability::Qualification);
+        assert_eq!(board.display_name, "Heltec Vision Master E290-HF");
+        assert_eq!(board.expected_chip.as_deref(), Some("esp32s3"));
+        assert_eq!(board.flash_size, Some(16_777_216));
+        assert_eq!(board.preparation_profile, "esp-usb-boot");
+        assert_eq!(
+            board.interfaces,
+            [
+                "Wi-Fi Auto",
+                "TCP Client",
+                "BLE Auto",
+                "LoRa",
+                "ESP-NOW",
+                "USB Auto"
+            ]
+        );
+        let BoardBuild::Esp(build) = &board.build else {
+            return Err(invalid(board, "expected an ESP build"));
+        };
+        assert_eq!(build.package, "hopspot-heltec-e290");
+        assert_eq!(build.binary, "hopspot-heltec-e290");
+        assert_eq!(build.rust_target, "xtensa-esp32s3-none-elf");
+        assert_eq!(build.partition_table, "partitions-hopspot-16mb.csv");
+        assert_eq!(build.flash_mode, "dio");
+        assert_eq!(build.flash_frequency, "40m");
+        assert_eq!(build.before_reset, "usb-reset");
+        assert_eq!(build.after_reset, "watchdog-reset");
+        assert!(!catalog
+            .shipping_boards()
+            .any(|entry| entry.slug == board.slug));
         Ok(())
     }
 
@@ -1227,7 +1274,10 @@ mod tests {
             .filter(|board| board.supports_tcp_client_provisioning())
             .map(|board| board.slug.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(capable, ["heltec-v4", "heltec-v4-r8", "t-beam-supreme"]);
+        assert_eq!(
+            capable,
+            ["heltec-v4", "heltec-v4-r8", "heltec-e290", "t-beam-supreme"]
+        );
         Ok(())
     }
 

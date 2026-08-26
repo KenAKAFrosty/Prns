@@ -66,10 +66,20 @@ compatibility aliases.
 
 ESP32 firmware, from `embedded/esp32/` with the board on USB:
 
+    cargo heltec-e290-flash
     cargo heltec-v4-flash
     cargo heltec-v4-r8-flash
     cargo tbeam-supreme-flash
     cargo c6-flash
+
+The Heltec Vision Master E290-HF is a qualification target. It uses the V0.3.1
+ESP32-S3R8 design with the fitted HT-RA62-HF module and DEPG0290BNS800F6 V2.1
+panel; the LF radio assembly is not supported. Its initial target provides
+full-waveform e-paper updates, the GPIO21 key, LoRa, Bluetooth Auto, Wi-Fi Auto,
+TCP Client, ESP-NOW, and USB Auto. Battery telemetry, GNSS, QuickLink expansion,
+partial e-paper waveforms, and public signed-release flashing remain unavailable.
+Build it without touching hardware with `cargo heltec-e290 --locked`, or select
+the `heltec-e290` slug explicitly in the local developer flasher below.
 
 T-Echo firmware:
 

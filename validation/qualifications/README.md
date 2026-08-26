@@ -10,3 +10,4 @@ acceptance.
 - [Heltec Mesh Node T096](t096-qualification.md)
 - [Heltec Mesh Node T114](t114-qualification.md)
 - [Airtime-quantum LoRa CSMA/CA](lora-csma-qualification.md)
+- [Heltec Vision Master E290-HF](heltec-e290-qualification.md)

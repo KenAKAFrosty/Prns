@@ -503,6 +503,12 @@ struct PortDiagnostic {
 }
 
 #[derive(Serialize)]
+struct EspIdentityCandidate {
+    slug: String,
+    display_name: String,
+}
+
+#[derive(Serialize)]
 struct DoctorOutput<'a> {
     schema: u8,
     event: &'static str,
@@ -523,7 +529,8 @@ enum DoctorCheck {
         port: String,
         detected_chip: String,
         flash_size: u32,
-        same_chip_board_ambiguity: bool,
+        identity_candidate_count: usize,
+        identity_candidates: Vec<EspIdentityCandidate>,
         #[serde(skip_serializing_if = "Option::is_none")]
         note: Option<String>,
     },
@@ -580,19 +587,31 @@ fn doctor(
                 );
             }
             let report = esp::doctor(board, detected_ports.clone(), requested_port)?;
-            let ambiguous_peer = ambiguous_esp_identity_peer(catalog, board);
-            let same_chip_board_ambiguity = ambiguous_peer.is_some();
-            let note = ambiguous_peer.map(|peer| {
+            let ambiguous_candidates = ambiguous_esp_identity_candidates(catalog, board);
+            let note = (!ambiguous_candidates.is_empty()).then(|| {
+                let names = ambiguous_candidates
+                    .iter()
+                    .map(|candidate| candidate.display_name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 format!(
-                    "This identity check cannot distinguish {} from {} because they share the same detectable chip and flash capacity; physically confirm the selected board.",
-                    board.display_name, peer.display_name
+                    "This identity check cannot distinguish {} from these board models because they share the detected ESP chip and flash capacity: {names}. Physically confirm the selected board; ROM detection does not identify pinout, PSRAM mode, radio, or display.",
+                    board.display_name
                 )
             });
+            let identity_candidates = ambiguous_candidates
+                .into_iter()
+                .map(|candidate| EspIdentityCandidate {
+                    slug: candidate.slug.clone(),
+                    display_name: candidate.display_name.clone(),
+                })
+                .collect::<Vec<_>>();
             Some(DoctorCheck::EspSerial {
                 port: report.port_name,
                 detected_chip: report.detected_chip,
                 flash_size: report.flash_size,
-                same_chip_board_ambiguity,
+                identity_candidate_count: identity_candidates.len(),
+                identity_candidates,
                 note,
             })
         }
@@ -635,7 +654,7 @@ fn doctor(
         .map(|path| path.display().to_string())
         .collect::<Vec<_>>();
     let output = DoctorOutput {
-        schema: 2,
+        schema: 3,
         event: "doctor",
         phase: "complete",
         board: board_slug,
@@ -754,16 +773,20 @@ fn human_serial_ports<'a>(
         .collect()
 }
 
-fn ambiguous_esp_identity_peer<'a>(
+fn ambiguous_esp_identity_candidates<'a>(
     catalog: &'a BoardCatalog,
     board: &BoardCatalogEntry,
-) -> Option<&'a BoardCatalogEntry> {
-    catalog.boards.iter().find(|candidate| {
-        candidate.slug != board.slug
-            && candidate.transport == Transport::EspSerial
-            && candidate.expected_chip == board.expected_chip
-            && candidate.flash_size == board.flash_size
-    })
+) -> Vec<&'a BoardCatalogEntry> {
+    catalog
+        .boards
+        .iter()
+        .filter(|candidate| {
+            candidate.slug != board.slug
+                && candidate.transport == Transport::EspSerial
+                && candidate.expected_chip == board.expected_chip
+                && candidate.flash_size == board.flash_size
+        })
+        .collect()
 }
 
 fn json_line<T: Serialize>(value: &T) -> Result<String, AppError> {
@@ -793,9 +816,11 @@ fn print_board(board: &BoardCatalogEntry) {
     ui::print_key_value("silicon", &board.silicon);
     ui::print_key_value("transport", transport_label(board.transport));
     ui::print_key_value("interfaces", &board.interfaces.join(", "));
-    if board.slug == "heltec-v4" || board.slug == "heltec-v4-r8" {
+    if matches!(board.expected_chip.as_deref(), Some("esp32s3"))
+        && board.flash_size == Some(16 * 1024 * 1024)
+    {
         ui::print_note(
-            "Heltec V4 S3R2 and S3R8 share the same chip and 16MB flash; pick the matching firmware because the S3R2 pinout prevents Octal PSRAM from operating on the S3R8.",
+            "Several board models share this detectable ESP32-S3 and 16 MiB flash identity. Run doctor to list every candidate, then physically confirm the selected pinout, PSRAM, radio, and display.",
         );
     }
 }
@@ -838,7 +863,7 @@ mod doctor_tests {
     #[test]
     fn esp_doctor_json_exposes_same_chip_ambiguity() {
         let encoded = json_line(&DoctorOutput {
-            schema: 2,
+            schema: 3,
             event: "doctor",
             phase: "complete",
             board: Some("heltec-v4"),
@@ -852,43 +877,70 @@ mod doctor_tests {
                 port: "fake-port".to_string(),
                 detected_chip: "esp32s3".to_string(),
                 flash_size: 16 * 1024 * 1024,
-                same_chip_board_ambiguity: true,
-                note: Some("cannot distinguish these two board models".to_string()),
+                identity_candidate_count: 2,
+                identity_candidates: vec![
+                    EspIdentityCandidate {
+                        slug: "heltec-v4-r8".to_string(),
+                        display_name: "Heltec LoRa 32 V4 (S3R8)".to_string(),
+                    },
+                    EspIdentityCandidate {
+                        slug: "heltec-e290".to_string(),
+                        display_name: "Heltec Vision Master E290-HF".to_string(),
+                    },
+                ],
+                note: Some("cannot distinguish these board models".to_string()),
             }),
         })
         .expect("doctor output serializes");
         assert_eq!(
             encoded,
-            r#"{"schema":2,"event":"doctor","phase":"complete","board":"heltec-v4","requested_port":"fake-port","serial_ports":[{"name":"fake-port","kind":"usb"}],"techo_mounts":[],"check":{"transport":"esp-serial","port":"fake-port","detected_chip":"esp32s3","flash_size":16777216,"same_chip_board_ambiguity":true,"note":"cannot distinguish these two board models"}}"#
+            r#"{"schema":3,"event":"doctor","phase":"complete","board":"heltec-v4","requested_port":"fake-port","serial_ports":[{"name":"fake-port","kind":"usb"}],"techo_mounts":[],"check":{"transport":"esp-serial","port":"fake-port","detected_chip":"esp32s3","flash_size":16777216,"identity_candidate_count":2,"identity_candidates":[{"slug":"heltec-v4-r8","display_name":"Heltec LoRa 32 V4 (S3R8)"},{"slug":"heltec-e290","display_name":"Heltec Vision Master E290-HF"}],"note":"cannot distinguish these board models"}}"#
         );
     }
 
     #[test]
-    fn catalog_capacities_distinguish_shipping_esp_identities() {
+    fn catalog_identity_candidates_cover_zero_one_and_multiple_peers_deterministically() {
         let catalog = board_catalog().expect("catalog");
         assert_eq!(
-            ambiguous_esp_identity_peer(&catalog, catalog.board("heltec-v4").expect("Heltec"))
-                .map(|board| board.slug.as_str()),
-            Some("heltec-v4-r8")
+            ambiguous_esp_identity_candidates(
+                &catalog,
+                catalog.board("heltec-v4").expect("Heltec")
+            )
+            .into_iter()
+            .map(|board| board.slug.as_str())
+            .collect::<Vec<_>>(),
+            ["heltec-v4-r8", "heltec-e290"]
         );
         assert_eq!(
-            ambiguous_esp_identity_peer(
+            ambiguous_esp_identity_candidates(
                 &catalog,
-                catalog.board("heltec-v4-r8").expect("Heltec R8")
+                catalog.board("heltec-e290").expect("E290")
             )
-            .map(|board| board.slug.as_str()),
-            Some("heltec-v4")
+            .into_iter()
+            .map(|board| board.slug.as_str())
+            .collect::<Vec<_>>(),
+            ["heltec-v4", "heltec-v4-r8"]
         );
-        assert!(ambiguous_esp_identity_peer(
-            &catalog,
-            catalog.board("t-beam-supreme").expect("T-Beam")
-        )
-        .is_none());
-        assert!(ambiguous_esp_identity_peer(
+        assert!(ambiguous_esp_identity_candidates(
             &catalog,
             catalog.board("xiao-esp32-c6").expect("XIAO")
         )
-        .is_none());
+        .is_empty());
+
+        let mut two_board_catalog = catalog.clone();
+        two_board_catalog
+            .boards
+            .retain(|board| board.slug != "heltec-e290");
+        assert_eq!(
+            ambiguous_esp_identity_candidates(
+                &two_board_catalog,
+                two_board_catalog.board("heltec-v4").expect("Heltec")
+            )
+            .into_iter()
+            .map(|board| board.slug.as_str())
+            .collect::<Vec<_>>(),
+            ["heltec-v4-r8"]
+        );
     }
 
     #[test]
@@ -896,7 +948,7 @@ mod doctor_tests {
         let catalog = board_catalog().expect("catalog");
         let board = catalog.board("t-beam-supreme").expect("T-Beam");
         let output = DoctorOutput {
-            schema: 2,
+            schema: 3,
             event: "doctor",
             phase: "complete",
             board: Some("t-beam-supreme"),
@@ -916,7 +968,8 @@ mod doctor_tests {
                 port: "/dev/ttyACM0".to_string(),
                 detected_chip: "esp32s3".to_string(),
                 flash_size: 8 * 1024 * 1024,
-                same_chip_board_ambiguity: false,
+                identity_candidate_count: 0,
+                identity_candidates: Vec::new(),
                 note: None,
             }),
         };
@@ -932,7 +985,7 @@ mod doctor_tests {
         let catalog = board_catalog().expect("catalog");
         let board = catalog.board("t-echo").expect("T-Echo");
         let output = DoctorOutput {
-            schema: 2,
+            schema: 3,
             event: "doctor",
             phase: "complete",
             board: Some("t-echo"),

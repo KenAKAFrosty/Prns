@@ -50,6 +50,11 @@ GRAPHS = (
         "riscv32imac-unknown-none-elf",
     ),
     (
+        "esp32-s3-heltec-e290",
+        "personal-hopspot/embedded/esp32/boards/heltec-e290/Cargo.toml",
+        "xtensa-esp32s3-none-elf",
+    ),
+    (
         "esp32-s3-heltec",
         "personal-hopspot/embedded/esp32/boards/heltec-v4/Cargo.toml",
         "xtensa-esp32s3-none-elf",

@@ -69,6 +69,9 @@ mod persistence;
 #[cfg(any(test, target_arch = "xtensa"))]
 mod display_runtime;
 #[cfg(any(test, target_arch = "xtensa"))]
+#[path = "s3/boards/heltec_e290/ssd1680.rs"]
+mod heltec_e290_ssd1680;
+#[cfg(any(test, target_arch = "xtensa"))]
 mod station_recovery;
 #[cfg(any(test, target_arch = "xtensa"))]
 mod station_security;

@@ -725,7 +725,17 @@ mod tests {
 
     #[test]
     fn promoted_nordic_boards_come_from_the_shared_shipping_catalog() {
-        assert!(QUALIFICATION_BOARD_TARGETS.is_empty());
+        assert_eq!(
+            QUALIFICATION_BOARD_TARGETS
+                .iter()
+                .map(|board| (board.slug, board.tier, board.image().is_some()))
+                .collect::<Vec<_>>(),
+            [("heltec-e290", Tier::Qualification, false)]
+        );
+        assert_eq!(
+            QUALIFICATION_BOARD_TARGETS[0].is_flashable(),
+            cfg!(feature = "local-dev-flasher")
+        );
         let cards = SHIPPING_BOARD_TARGETS
             .iter()
             .filter(|board| matches!(board.slug, "t096" | "t1000-e"))

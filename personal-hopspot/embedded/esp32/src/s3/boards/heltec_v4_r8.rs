@@ -153,7 +153,7 @@ impl Esp32S3Board for HeltecV4R8Board {
             }
         );
 
-        s3::boot_stage(s3::BootPhase::OledBegin);
+        s3::boot_stage(s3::BootPhase::DisplayHardwareBegin);
         // OLED (V4-R8: Vext on GPIO40 active-low; pulse RST; I2C0 on 17/18).
         let mut _vext = Output::new(p.GPIO40, Level::Low, OutputConfig::default());
         let mut rst = Output::new(p.GPIO21, Level::High, OutputConfig::default());
@@ -176,12 +176,12 @@ impl Esp32S3Board for HeltecV4R8Board {
         .into_buffered_graphics_mode();
         let oled_ok = match display.init() {
             Ok(()) => {
-                s3::boot_stage(s3::BootPhase::OledReady);
+                s3::boot_stage(s3::BootPhase::DisplayHardwareReady);
                 log::info!("OLED initialized");
                 true
             }
             Err(error) => {
-                s3::boot_stage(s3::BootPhase::OledFailed);
+                s3::boot_stage(s3::BootPhase::DisplayHardwareFailed);
                 log::error!("OLED initialization failed: {error:?}");
                 false
             }

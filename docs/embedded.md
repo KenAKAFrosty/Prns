@@ -49,6 +49,13 @@ When adapting the recipe to a new board, decide these explicitly:
 
 Start from the nearest shipped board instead of copying the native two-node example and guessing at these obligations.
 
+The Heltec Vision Master E290-HF is also available as an explicit qualification
+target. From `personal-hopspot/embedded/esp32`, `cargo heltec-e290 --locked`
+builds its ESP32-S3R8 image without flashing. The target is limited to the
+V0.3.1 HF assembly, uses only full e-paper waveforms, and deliberately reports
+battery and GNSS as unavailable. It does not enter shipping or signed-release
+defaults while powered qualification remains open.
+
 ## Flash only when you mean to
 
 Building does not require a board. Flashing does, and writes the selected device. Install the pinned flasher, connect a XIAO ESP32-C6, verify the target, then opt into the flash command:
@@ -61,6 +68,11 @@ cargo c6-flash --locked
 ```
 
 The doctor step is read-only. The final command flashes and opens a serial monitor. For signed release firmware, board discovery, and the supported operator flow, use the flasher described in [Personal Hopspot](../personal-hopspot/README.md).
+
+Qualification boards must be named explicitly. For E290 developer testing, run
+`cargo run --locked -p hopspot-flash -- doctor heltec-e290` first, then use the
+local developer flasher with `heltec-e290`; `--all` continues to mean the exact
+shipping set.
 
 ## Verify embedded changes
 
