@@ -223,6 +223,10 @@ class BleLink(private val context: Context) {
 
     private val gattServerCallback = object : BluetoothGattServerCallback() {
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
+            if (newState == BluetoothProfile.STATE_CONNECTED) {
+                rememberDevice(device)
+                return
+            }
             if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 val connId = inboundByAddr.remove(device.address) ?: return
                 Log.i(TAG, "listener[$connId] ${device.address} disconnected")
@@ -905,6 +909,21 @@ class BleLink(private val context: Context) {
             while (running) {
                 if (!radioActive) {
                     generation = NativeBridge.nativeBleWaitForWork(generation, 0)
+                    continue
+                }
+                // Policy Reject queues closes before redials; drain them first so inbound
+                // occupancy does not block the opener from dialing as central.
+                var closed = false
+                while (true) {
+                    val connId = NativeBridge.nativeBleNextClose()
+                    if (connId < 0) {
+                        break
+                    }
+                    Log.i(TAG, "policy close[$connId]")
+                    closeLink(connId)
+                    closed = true
+                }
+                if (closed) {
                     continue
                 }
                 direct.clear()
