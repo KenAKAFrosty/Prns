@@ -338,7 +338,8 @@ fn ensure_peer(
         outbound.clone(),
     );
     let peer_status = peer.status();
-    let attached = fleet.add(peer);
+    let endpoint_name = format_weave_peer_name(endpoint);
+    let attached = fleet.add_named(peer, endpoint_name, None);
     peers.insert(
         endpoint,
         ManagedPeer {
@@ -381,6 +382,14 @@ fn teardown_peers(peers: &mut HashMap<EndpointId, ManagedPeer>, status: &WeaveIn
 
 fn publish_members(peers: &HashMap<EndpointId, ManagedPeer>, status: &WeaveInterfaceStatus) {
     status.set_members(peers.values().map(|peer| peer.status.clone()).collect());
+}
+
+fn format_weave_peer_name(endpoint: EndpointId) -> String {
+    let bytes = endpoint.as_bytes();
+    format!(
+        "endpoint {:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]
+    )
 }
 
 fn encoding_error(error: weave::EncodeError) -> io::Error {

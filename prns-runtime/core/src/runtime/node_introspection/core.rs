@@ -4,6 +4,9 @@ use prns_core::interfaces::{
     InterfaceSnapshot, Membership, TransferRates,
 };
 
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InterfaceIfacSnapshot<Label> {
     pub signature: [u8; 64],
@@ -17,6 +20,11 @@ pub struct InterfaceInventoryEntry<Label> {
     pub origin: InterfaceOriginKind,
     pub snapshot: InterfaceSnapshot,
     pub ifac: Option<InterfaceIfacSnapshot<Label>>,
+    /// Link-up RSSI in dBm when the interface recorded one (Bluetooth Auto peers).
+    pub rssi: Option<i8>,
+    /// Fleet members nested under a folded supervisor. Always empty on leaf entries.
+    #[cfg(feature = "alloc")]
+    pub members: Vec<InterfaceInventoryEntry<Label>>,
 }
 
 struct FoldedInterface<Label> {
@@ -25,6 +33,9 @@ struct FoldedInterface<Label> {
     origin: InterfaceOriginKind,
     root: Option<InterfaceSnapshot>,
     ifac: Option<InterfaceIfacSnapshot<Label>>,
+    rssi: Option<i8>,
+    #[cfg(feature = "alloc")]
+    members: Vec<InterfaceInventoryEntry<Label>>,
     member_connection: ConnectionState,
     member_mode: Option<InterfaceMode>,
     member_gravity: Option<InterfaceGravity>,
@@ -46,6 +57,9 @@ impl<Label> FoldedInterface<Label> {
             origin,
             root: None,
             ifac: None,
+            rssi: None,
+            #[cfg(feature = "alloc")]
+            members: Vec::new(),
             member_connection: ConnectionState::Unknown,
             member_mode: None,
             member_gravity: None,
@@ -60,7 +74,10 @@ impl<Label> FoldedInterface<Label> {
         }
     }
 
-    fn add(&mut self, entry: &mut InterfaceInventoryEntry<Label>) {
+    fn add(&mut self, entry: &mut InterfaceInventoryEntry<Label>)
+    where
+        Label: Clone,
+    {
         let snapshot = entry.snapshot;
         self.destinations = self.destinations.saturating_add(snapshot.destinations);
         self.links = self.links.saturating_add(snapshot.links);
@@ -77,6 +94,7 @@ impl<Label> FoldedInterface<Label> {
                 if entry.ifac.is_some() {
                     self.ifac = entry.ifac.take();
                 }
+                self.rssi = entry.rssi.or(self.rssi);
             }
             Membership::FleetMember { .. } => {
                 if self.root.is_none() && entry.origin == InterfaceOriginKind::Discovered {
@@ -98,11 +116,28 @@ impl<Label> FoldedInterface<Label> {
                     aggregate.rx_bps = aggregate.rx_bps.saturating_add(rates.rx_bps);
                     aggregate.tx_bps = aggregate.tx_bps.saturating_add(rates.tx_bps);
                 }
-                if self.name.is_none() {
-                    self.name = entry.name.take();
+                #[cfg(feature = "alloc")]
+                {
+                    if self.ifac.is_none() {
+                        self.ifac = entry.ifac.clone();
+                    }
+                    self.members.push(InterfaceInventoryEntry {
+                        name: entry.name.take(),
+                        origin: entry.origin,
+                        snapshot,
+                        ifac: entry.ifac.take(),
+                        rssi: entry.rssi,
+                        members: Vec::new(),
+                    });
                 }
-                if self.ifac.is_none() {
-                    self.ifac = entry.ifac.take();
+                #[cfg(not(feature = "alloc"))]
+                {
+                    if self.name.is_none() {
+                        self.name = entry.name.take();
+                    }
+                    if self.ifac.is_none() {
+                        self.ifac = entry.ifac.take();
+                    }
                 }
             }
         }
@@ -153,12 +188,15 @@ impl<Label> FoldedInterface<Label> {
                 membership: Membership::Independent,
             },
             ifac: self.ifac,
+            rssi: self.rssi,
+            #[cfg(feature = "alloc")]
+            members: self.members,
         }
     }
 }
 
 #[must_use]
-pub fn fold_logical_interface_inventory<Label: Ord>(
+pub fn fold_logical_interface_inventory<Label: Clone + Ord>(
     inventory: &mut [InterfaceInventoryEntry<Label>],
 ) -> &mut [InterfaceInventoryEntry<Label>] {
     inventory.sort_unstable_by(|left, right| {
@@ -263,6 +301,9 @@ mod tests {
                 membership,
             },
             ifac: None,
+            rssi: None,
+            #[cfg(feature = "alloc")]
+            members: Vec::new(),
         }
     }
 
@@ -275,7 +316,7 @@ mod tests {
             supervisor_id: supervisor,
         };
         let mut snapshots = [
-            snapshot(second, membership, 60, 3, 2, None),
+            snapshot(second, membership, 60, 3, 2, Some("second-peer")),
             snapshot(
                 supervisor,
                 Membership::Independent,
@@ -284,7 +325,11 @@ mod tests {
                 0,
                 Some("Public server"),
             ),
-            snapshot(first, membership, 40, 2, 1, None),
+            {
+                let mut peer = snapshot(first, membership, 40, 2, 1, Some("first-peer"));
+                peer.rssi = Some(-61);
+                peer
+            },
         ];
 
         let logical = fold_logical_interface_inventory(&mut snapshots);
@@ -297,6 +342,27 @@ mod tests {
         assert_eq!(logical[0].snapshot.destinations, 5);
         assert_eq!(logical[0].snapshot.links, 3);
         assert_eq!(logical[0].snapshot.membership, Membership::Independent);
+        #[cfg(feature = "alloc")]
+        {
+            assert_eq!(logical[0].members.len(), 2);
+            let member_names: alloc::vec::Vec<_> =
+                logical[0].members.iter().map(|peer| peer.name).collect();
+            assert!(member_names.contains(&Some("first-peer")));
+            assert!(member_names.contains(&Some("second-peer")));
+            let first_peer = logical[0]
+                .members
+                .iter()
+                .find(|peer| peer.snapshot.id == first)
+                .expect("first peer retained");
+            assert_eq!(first_peer.snapshot.rx_bytes, 40);
+            assert_eq!(first_peer.rssi, Some(-61));
+            let second_peer = logical[0]
+                .members
+                .iter()
+                .find(|peer| peer.snapshot.id == second)
+                .expect("second peer retained");
+            assert_eq!(second_peer.snapshot.rx_bytes, 60);
+        }
     }
 
     #[test]

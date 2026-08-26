@@ -62,6 +62,7 @@ pub enum PolicyAction {
         slot: usize,
         address: BleAddress,
         lane: L2capPlan,
+        peer_rssi: Option<i8>,
     },
     Evict {
         identity: BleIdentity,
@@ -293,6 +294,7 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionPolicy<MAX_PEERS
             slot,
             address,
             lane,
+            peer_rssi: established.peer_rssi,
         });
         self.reconcile(emit);
     }
@@ -610,6 +612,7 @@ mod tests {
                     slot: 0,
                     address: addr(2),
                     lane: L2capPlan::None,
+                    peer_rssi: None,
                 },
                 PolicyAction::SetAdvertising(AdvertisingMode::Off),
                 PolicyAction::SetScanning(ScanningMode::Off),
