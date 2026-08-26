@@ -28,7 +28,9 @@ pub struct FrameAccounting {
     pub malformed: u64,
     /// Frames that parsed but whose stream segment failed to decode. Discarded at resync.
     pub undecodable: u64,
-    /// Wire frames fully reassembled and handed upward to the engine.
+    /// Wire frames fully reassembled and handed to the engine. This counts the handoff, not the
+    /// engine's verdict: a frame the engine goes on to ignore is still counted here, so
+    /// `delivered` bounds what reached the engine rather than what it acted on.
     pub delivered: u64,
 }
 
