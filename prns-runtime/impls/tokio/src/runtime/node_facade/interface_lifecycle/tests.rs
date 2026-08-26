@@ -162,6 +162,8 @@ async fn runtime_attachment_carries_ifac_wire_and_status_metadata() {
                 size: IfacSize::WIDE,
                 network_name: Some("private-net".into()),
             }),
+            rssi: None,
+            members: std::vec::Vec::new(),
         }]
     );
 }
@@ -209,6 +211,7 @@ fn registered_status(view: StatusView, membership: Membership) -> RegisteredInte
         gravity: crate::interfaces::InterfaceGravity::new(-27),
         ifac: None,
         name: None,
+        rssi: None,
         byte_accounting: ByteAccounting::OwnTraffic,
         retired_member_bytes: RetiredMemberBytes::default(),
         retired_member_frame_accounting: RetiredMemberFrameAccounting::default(),

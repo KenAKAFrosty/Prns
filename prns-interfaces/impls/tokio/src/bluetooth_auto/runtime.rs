@@ -719,6 +719,7 @@ async fn apply_settle<B, const MAX_PEERS: usize>(
                 identity,
                 address,
                 lane,
+                peer_rssi,
                 ..
             } => {
                 if let Some(mut held) = link.take() {
@@ -727,7 +728,8 @@ async fn apply_settle<B, const MAX_PEERS: usize>(
                     let member = BluetoothPeer::with_policy(identity, source, sink, policy)
                         .report_close_to(address, closed.clone());
                     let status = member.status();
-                    let attached = fleet.add(member);
+                    let name = format_ble_peer_name(identity, address);
+                    let attached = fleet.add_named(member, name, peer_rssi);
                     members.insert(
                         identity,
                         TokioMember {
@@ -817,6 +819,15 @@ async fn drive_handshake<L: BleLink>(
         Ok(result) => result,
         Err(_) => Err(HandshakeFailure::Timeout),
     }
+}
+
+fn format_ble_peer_name(identity: BleIdentity, address: BleAddress) -> String {
+    let id = identity.as_bytes();
+    let addr = address.octets();
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}… @ {:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+        id[0], id[1], id[2], id[3], addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]
+    )
 }
 
 async fn arm_fast_lane<L: BleLink>(link: &mut L, lane: &L2capPlan) {

@@ -1019,7 +1019,8 @@ impl DiscoveredTcpDials {
                 RENDEZVOUS_RECONNECT,
             );
             let client_status = tcp_client.status();
-            let attached_client = fleet.add(tcp_client);
+            let attached_client =
+                fleet.add_named(tcp_client, desired_endpoint.to_string(), None);
             self.members.insert(
                 desired_endpoint,
                 AttachedStatus {
@@ -1281,7 +1282,8 @@ impl Supervisor {
                         self.policy,
                     );
                     let connection_status = tcp_connection.status();
-                    let attached_connection = self.fleet.add(tcp_connection);
+                    let attached_connection =
+                        self.fleet.add_named(tcp_connection, peer_address.to_string(), None);
                     self.accepted.push(AttachedStatus {
                         attached: attached_connection,
                         status: connection_status,
@@ -1561,7 +1563,8 @@ impl Supervisor {
             &self.settings.instance_tag,
         );
         let status = member.status();
-        let attached = self.fleet.add(member);
+        let peer_name = format!("{}%{}", peer_address.ip_address, peer_address.scope_id);
+        let attached = self.fleet.add_named(member, peer_name, None);
         crate::diagnostic_log::debug!(
             "wifi-auto: peer {}%{} discovered",
             peer_address.ip_address,
@@ -1695,9 +1698,9 @@ impl Supervisor {
             return;
         }
         let target = std::format!("127.0.0.1:{}", contract::TCP_RENDEZVOUS_PORT);
-        let client = TcpClientInterface::with_policy(target, self.policy, RENDEZVOUS_RECONNECT);
+        let client = TcpClientInterface::with_policy(target.clone(), self.policy, RENDEZVOUS_RECONNECT);
         let status = client.status();
-        let attached = self.fleet.add(client);
+        let attached = self.fleet.add_named(client, target, None);
         self.loopback = Some(AttachedStatus { attached, status });
         self.publish_status();
     }
@@ -1803,9 +1806,10 @@ impl Supervisor {
             crate::diagnostic_log::debug!(
                 "wifi-auto: dialing gateway rendezvous {target} on ifindex {index}"
             );
-            let client = TcpClientInterface::with_policy(target, self.policy, RENDEZVOUS_RECONNECT);
+            let client =
+                TcpClientInterface::with_policy(target.clone(), self.policy, RENDEZVOUS_RECONNECT);
             let status = client.status();
-            let attached = self.fleet.add(client);
+            let attached = self.fleet.add_named(client, target, None);
             self.gateways.insert(
                 index,
                 GatewayDial {

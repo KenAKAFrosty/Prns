@@ -115,6 +115,8 @@ async fn interface_stats_renders_each_held_interface_with_its_live_counters() {
                     size: prns_core::interfaces::IfacSize::WIDE,
                     network_name: Some("private-net".into()),
                 }),
+                rssi: None,
+                members: std::vec::Vec::new(),
             },
             InterfaceInventoryEntry {
                 name: Some("Remote bridge".into()),
@@ -139,6 +141,8 @@ async fn interface_stats_renders_each_held_interface_with_its_live_counters() {
                     membership: prns_core::interfaces::Membership::Independent,
                 },
                 ifac: None,
+                rssi: None,
+                members: std::vec::Vec::new(),
             },
         ],
     };
