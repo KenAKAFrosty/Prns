@@ -196,8 +196,12 @@ impl SendPeripheralDelegate {
     fn has_inbound_sessions(&self) -> bool {
         self.0.has_inbound_sessions()
     }
-}
 
+    /// Queue-confined: call only from the CoreBluetooth serial dispatch queue.
+    fn has_inbound_session(&self, peer_id: CoreBluetoothPeerId) -> bool {
+        self.0.has_inbound_session(peer_id)
+    }
+}
 
 enum Event {
     CentralPowered,

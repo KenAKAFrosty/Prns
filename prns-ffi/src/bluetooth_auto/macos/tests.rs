@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use objc2_core_bluetooth::CBCharacteristicProperties;
@@ -16,6 +17,7 @@ use super::gatt_link::{
     gatt_inbound_channel, gatt_inbound_channel_with_budget, GattInboundSendError,
 };
 use super::gatt_write::{write_admission, GattWriteAdmission, GattWriteMode, GattWritePlan};
+use super::peripheral::has_session_for_peer;
 use super::MacosBleError;
 use super::{CoreBluetoothPeerId, MacosBleBackend};
 
@@ -166,21 +168,24 @@ fn startup_requires_central_gatt_and_l2cap_readiness() {
 }
 
 #[test]
-fn dial_yields_for_system_connection_or_live_inbound_session() {
+fn dial_admission_is_scoped_to_the_target_peer() {
+    let inbound_peer = peer_id(1);
+    let unrelated_peer = peer_id(2);
+    let inbound_sessions = HashMap::from([(inbound_peer, ())]);
+
     assert_eq!(
         dial_admission(true, false),
         DialAdmission::YieldToSystemConnection
     );
     assert_eq!(
-        dial_admission(false, true),
+        dial_admission(false, has_session_for_peer(&inbound_sessions, inbound_peer)),
         DialAdmission::YieldToInboundSession
     );
     assert_eq!(
-        dial_admission(true, true),
-        DialAdmission::YieldToSystemConnection
-    );
-    assert_eq!(
-        dial_admission(false, false),
+        dial_admission(
+            false,
+            has_session_for_peer(&inbound_sessions, unrelated_peer)
+        ),
         DialAdmission::AttachCentralSession
     );
 }

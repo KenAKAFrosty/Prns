@@ -97,19 +97,18 @@ impl StartupReadiness {
 pub(super) enum DialAdmission {
     AttachCentralSession,
     YieldToSystemConnection,
-    /// Android (and other dual-role peers) keep advertising under a rotating RPA while already
-    /// connected to us as a GATT central. Outbound dials to that advertisement thrash the live
-    /// inbound link, so yield while any peripheral session is active.
+    /// The target peer already owns an inbound peripheral session. Dialing that same peer as a
+    /// central would create the dual-role link that handshake policy is trying to eliminate.
     YieldToInboundSession,
 }
 
 pub(super) const fn dial_admission(
     already_system_connected: bool,
-    inbound_sessions_active: bool,
+    target_has_inbound_session: bool,
 ) -> DialAdmission {
     if already_system_connected {
         DialAdmission::YieldToSystemConnection
-    } else if inbound_sessions_active {
+    } else if target_has_inbound_session {
         DialAdmission::YieldToInboundSession
     } else {
         DialAdmission::AttachCentralSession
@@ -148,7 +147,7 @@ fn apply_scanning(central: SendCentralManager, enabled: bool, restart: bool) {
     }
 }
 
-fn begin_dial(command: DialCommand, inbound_sessions_active: bool) {
+fn begin_dial(command: DialCommand, target_has_inbound_session: bool) {
     let DialCommand {
         central,
         delegate,
@@ -158,7 +157,7 @@ fn begin_dial(command: DialCommand, inbound_sessions_active: bool) {
     } = command;
     match dial_admission(
         is_system_connected(&central, peer_id),
-        inbound_sessions_active,
+        target_has_inbound_session,
     ) {
         DialAdmission::YieldToSystemConnection => {
             crate::diagnostic_log::debug!(
@@ -170,7 +169,7 @@ fn begin_dial(command: DialCommand, inbound_sessions_active: bool) {
         }
         DialAdmission::YieldToInboundSession => {
             crate::diagnostic_log::debug!(
-                "bluetooth: yielding dial to {:02x?} — inbound peripheral session owns the radio; Android RPA ads must not dual-role thrash the live link",
+                "bluetooth: yielding dial to {:02x?} — this peer already owns an inbound peripheral session",
                 peer_id.address().octets()
             );
             session.reject();
@@ -554,11 +553,10 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
             session: CentralPeerSession::new(address, control_tx, completion_tx, data_inbound_tx),
         };
         crate::diagnostic_log::debug!("bluetooth: dialing {token:02x?} over LE (central role)");
-        let peripheral_for_admission =
-            SendPeripheralDelegate(self.peripheral_delegate.0.clone());
+        let peripheral_for_admission = SendPeripheralDelegate(self.peripheral_delegate.0.clone());
         self.queue.exec_async(move || {
-            let inbound = peripheral_for_admission.has_inbound_sessions();
-            begin_dial(command, inbound);
+            let target_has_inbound_session = peripheral_for_admission.has_inbound_session(peer_id);
+            begin_dial(command, target_has_inbound_session);
         });
         let send_peripheral = SendPeripheral(peripheral);
         let send_peripheral_manager = SendPeripheralDelegate(self.peripheral_delegate.0.clone());

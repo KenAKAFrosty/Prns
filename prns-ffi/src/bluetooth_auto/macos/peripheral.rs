@@ -65,6 +65,13 @@ struct PeripheralPeerSession {
     data_tx: GattInboundSender,
 }
 
+pub(super) fn has_session_for_peer<V>(
+    sessions: &HashMap<CoreBluetoothPeerId, V>,
+    peer_id: CoreBluetoothPeerId,
+) -> bool {
+    sessions.contains_key(&peer_id)
+}
+
 impl PeripheralPeerSession {
     fn data_receiver_closed(&self) -> bool {
         // The control receiver is handshake-only and closes when a link settles. The data
@@ -456,6 +463,11 @@ impl PeripheralDelegate {
     /// Queue-confined: call only from the CoreBluetooth serial dispatch queue.
     pub(super) fn has_inbound_sessions(&self) -> bool {
         !self.ivars().sessions.borrow().is_empty()
+    }
+
+    /// Queue-confined: call only from the CoreBluetooth serial dispatch queue.
+    pub(super) fn has_inbound_session(&self, peer_id: CoreBluetoothPeerId) -> bool {
+        has_session_for_peer(&self.ivars().sessions.borrow(), peer_id)
     }
 
     pub(super) fn new(
