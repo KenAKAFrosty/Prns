@@ -128,6 +128,7 @@ impl<S: StorageLayout> EngineState<S> {
                     );
 
                 if should_hold_for_ingress_burst {
+                    effects.held_announce_release = self.held_announce_release_wake();
                     if !announce.signature_is_valid() {
                         return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
                     }
