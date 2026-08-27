@@ -137,11 +137,11 @@ impl<'a> Ingress<'a> {
             Ok((header, payload)) => (header, bytes.len() - payload.len()),
             Err(_) => return Self::Malformed,
         };
-        if !wire_hop_count_is_valid(header.hops) {
-            return Self::Malformed;
-        }
         if header.ifac_flag == IfacFlag::Authenticated {
             return Self::IfacRefused;
+        }
+        if !wire_hop_count_is_valid(header.hops) {
+            return Self::Malformed;
         }
         let (_, payload) = bytes.split_at_mut(payload_offset);
         let packet_hash = PacketHash::of_fields(
