@@ -48,6 +48,95 @@ pub enum RemoteControlNodeIdentityBootstrapError<VaultError, EntropyError> {
     TargetVerificationMismatch,
 }
 
+impl<VaultError, EntropyError> core::fmt::Display
+    for RemoteControlNodeIdentityBootstrapError<VaultError, EntropyError>
+where
+    VaultError: core::fmt::Display,
+    EntropyError: core::fmt::Display,
+{
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidLabel(_) => {
+                formatter.write_str("a RemoteControl identity label is invalid")
+            }
+            Self::ControllerLoad(error) => {
+                write!(
+                    formatter,
+                    "controller identity could not be loaded: {error}"
+                )
+            }
+            Self::TargetLoad(error) => {
+                write!(formatter, "target identity could not be loaded: {error}")
+            }
+            Self::ControllerEntropy(error) => {
+                write!(
+                    formatter,
+                    "controller identity could not be generated: {error}"
+                )
+            }
+            Self::TargetEntropy(error) => {
+                write!(formatter, "target identity could not be generated: {error}")
+            }
+            Self::InvalidPair(_) => {
+                formatter.write_str("controller and target resolve to the same identity")
+            }
+            Self::ControllerStore(error) => {
+                write!(
+                    formatter,
+                    "controller identity could not be stored: {error}"
+                )
+            }
+            Self::TargetStore(error) => {
+                write!(formatter, "target identity could not be stored: {error}")
+            }
+            Self::ControllerVerificationLoad(error) => write!(
+                formatter,
+                "stored controller identity could not be verified: {error}"
+            ),
+            Self::TargetVerificationLoad(error) => write!(
+                formatter,
+                "stored target identity could not be verified: {error}"
+            ),
+            Self::ControllerVerificationMissing => {
+                formatter.write_str("stored controller identity is missing")
+            }
+            Self::TargetVerificationMissing => {
+                formatter.write_str("stored target identity is missing")
+            }
+            Self::ControllerVerificationMismatch => formatter
+                .write_str("stored controller identity does not match the generated identity"),
+            Self::TargetVerificationMismatch => {
+                formatter.write_str("stored target identity does not match the generated identity")
+            }
+        }
+    }
+}
+
+impl<VaultError, EntropyError> core::error::Error
+    for RemoteControlNodeIdentityBootstrapError<VaultError, EntropyError>
+where
+    VaultError: core::error::Error + 'static,
+    EntropyError: core::error::Error + 'static,
+{
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::ControllerLoad(error)
+            | Self::TargetLoad(error)
+            | Self::ControllerStore(error)
+            | Self::TargetStore(error)
+            | Self::ControllerVerificationLoad(error)
+            | Self::TargetVerificationLoad(error) => Some(error),
+            Self::ControllerEntropy(error) | Self::TargetEntropy(error) => Some(error),
+            Self::InvalidLabel(_)
+            | Self::InvalidPair(_)
+            | Self::ControllerVerificationMissing
+            | Self::TargetVerificationMissing
+            | Self::ControllerVerificationMismatch
+            | Self::TargetVerificationMismatch => None,
+        }
+    }
+}
+
 pub struct RemoteControlNodeIdentityBootstrap {
     secrets: RemoteControlNodeIdentitySecrets,
     origins: RemoteControlNodeIdentityOrigins,

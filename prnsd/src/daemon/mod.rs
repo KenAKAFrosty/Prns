@@ -31,9 +31,13 @@ use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
 use personal_rns::interfaces::ConnectionState;
 use personal_rns::node_introspection::logical_interface_inventory;
+use personal_rns::remote_control::{
+    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlService,
+};
 use personal_rns::runtime::{
     wall_clock_timeline_origin, CryptoPoolConfig, Diagnostic, ManuallyAttached, NodePersistence,
     NodeRunError, PersistenceFlushStatus, PoolWorkers, PrnsEvent, PrnsNode, PrnsNodeRecipe,
+    RemoteControlFileIdentityBootstrapError,
 };
 use personal_rns::shared_instance::{RnsBlackholeFiles, SharedInstanceCredentials};
 use personal_rns::storage::GrowableHeap;
@@ -84,6 +88,7 @@ pub(crate) struct DaemonPresentation {
 #[derive(Debug)]
 pub(crate) enum DaemonRunError {
     TransportIdentityUnavailable(personal_rns::runtime::IdentitySecretFileError),
+    RemoteControlIdentityUnavailable(RemoteControlFileIdentityBootstrapError),
     PersistenceUnavailable(std::io::Error),
     PersistenceFlushFailed,
     PersistenceWorkerStopped,
@@ -100,6 +105,9 @@ impl core::fmt::Display for DaemonRunError {
                     formatter,
                     "required transport identity is unavailable: {error}"
                 )
+            }
+            Self::RemoteControlIdentityUnavailable(error) => {
+                write!(formatter, "required RemoteControl identities are unavailable: {error}")
             }
             Self::PersistenceUnavailable(error) => {
                 write!(formatter, "required persistence is unavailable: {error}")
@@ -121,6 +129,7 @@ impl std::error::Error for DaemonRunError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::TransportIdentityUnavailable(error) => Some(error),
+            Self::RemoteControlIdentityUnavailable(error) => Some(error),
             Self::PersistenceUnavailable(error) => Some(error),
             Self::PersistenceFlushFailed
             | Self::PersistenceWorkerStopped
@@ -208,6 +217,21 @@ pub(super) async fn run(
         };
 
     let storage_dir = config_dir.join("storage");
+    let remote_control_identity_bootstrap =
+        match identity::load_or_create_remote_control_identities(&storage_dir) {
+            Ok(bootstrap) => bootstrap,
+            Err(error) => {
+                tracing::error!(event = "remote_control_identity_unavailable", error = %error);
+                observability.shutdown().await;
+                return Err(DaemonRunError::RemoteControlIdentityUnavailable(error));
+            }
+        };
+    let (remote_control_identity_secrets, _) = remote_control_identity_bootstrap.into_parts();
+    let remote_control = RemoteControlService::new(
+        remote_control_identity_secrets,
+        RemoteControlPublicAppData::empty(),
+        RemoteControlInitialAccess::Nobody,
+    );
     let persistent_secret = match identity::load_or_create_transport_identity(&storage_dir) {
         Ok(secret) => secret,
         Err(error) => match cli.persistence_policy {
@@ -324,6 +348,7 @@ pub(super) async fn run(
     let request_nnpages = nnpages.clone();
     let mut prns = PrnsNode::new_with_handle(move |handle| PrnsNodeRecipe {
         transport_identity: transport_secret,
+        remote_control,
         pre_configured_destinations: std::iter::empty(),
         app_state: services::DaemonRequestState::new(
             handle,
