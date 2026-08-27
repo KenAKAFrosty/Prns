@@ -494,7 +494,7 @@ where
         } = self;
         let AssembledNode {
             mut engine,
-            remote_control,
+            mut remote_control,
             state,
             mut on_event,
             request_endpoints: _,
@@ -542,7 +542,12 @@ where
             RESPONSE_BYTES,
             ROUTED_REQUESTS,
             ROUTED_REQUEST_BYTES,
-        >(&state, &remote_control, request_channel.receiver(), handle);
+        >(
+            &state,
+            &mut remote_control,
+            request_channel.receiver(),
+            handle,
+        );
         join(join(manifold, router), drive).await;
     }
 

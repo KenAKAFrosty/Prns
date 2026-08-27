@@ -38,3 +38,17 @@ pub(crate) fn test_remote_control_service(
         RemoteControlInitialAccess::Nobody,
     )
 }
+
+#[cfg(test)]
+pub(crate) fn test_remote_control_grant(
+    request: prns_core::remote_control::RemoteControlRequestKind,
+) -> prns_core::remote_control::RemoteControlControllerGrant {
+    let identities = test_remote_control_service()
+        .identity_secrets()
+        .identities();
+    prns_core::remote_control::RemoteControlControllerGrant::new(
+        *identities.controller(),
+        prns_core::remote_control::RemoteControlRequestSet::only(request),
+    )
+    .unwrap()
+}

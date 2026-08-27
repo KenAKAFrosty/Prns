@@ -13,13 +13,24 @@ use crate::engine::{
     SendRequestData, SendRequestFailure, SendSinglePacket, SendSinglePacketFailure,
     SendSinglePacketPayload, SetRegisteredAnnounceAppData, Settlement,
 };
+use crate::remote_control::{
+    RemoteControlControllerGrant, RemoteControlControllerIdentity,
+    RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantOutcome,
+};
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::units::{ByteLimit, RttMillis};
 use crate::wire::DestinationHash;
 
+use super::super::remote_control_access::{
+    RemoteControlAccessCommand, RemoteControlAccessCompletion, RemoteControlAccessExchange,
+};
 use super::super::request_endpoints::RespondToken;
-use super::super::{AnnounceNowError, PrnsNodeApi, SendError, SetRegisteredAnnounceAppDataError};
+use super::super::{
+    AnnounceNowError, PrnsNodeApi, RemoteControlAccessControl,
+    RevokeRemoteControlControllerControlError, SendError, SetRegisteredAnnounceAppDataError,
+    SetRemoteControlControllerGrantControlError,
+};
 
 const NO_AWAITER: u64 = u64::MAX;
 
@@ -34,6 +45,7 @@ pub struct CompletionPool<
     slots: [Signal<M, Settlement>; COMPLETIONS],
     requests: BlockingMutex<M, RefCell<[RequestAwaited<RESPONSE_BYTES>; REQUEST_COMPLETIONS]>>,
     request_slots: [Signal<M, Settlement>; REQUEST_COMPLETIONS],
+    remote_control_access: RemoteControlAccessExchange<M>,
 }
 
 enum RequestAwaited<const RESPONSE_BYTES: usize> {
@@ -95,6 +107,7 @@ impl<
                 [const { RequestAwaited::Available }; REQUEST_COMPLETIONS],
             )),
             request_slots: [const { Signal::new() }; REQUEST_COMPLETIONS],
+            remote_control_access: RemoteControlAccessExchange::new(),
         }
     }
 
@@ -592,6 +605,20 @@ impl<
             _ => JournalRoute::Application,
         }
     }
+
+    pub(in crate::runtime) async fn next_remote_control_access_command(
+        &self,
+    ) -> RemoteControlAccessCommand {
+        self.pool.remote_control_access.next_command().await
+    }
+
+    pub(in crate::runtime) fn settle_remote_control_access(
+        &self,
+        id: CommandId,
+        completion: RemoteControlAccessCompletion,
+    ) -> bool {
+        self.pool.remote_control_access.settle(id, completion)
+    }
 }
 
 struct SlotGuard<
@@ -628,6 +655,84 @@ struct RequestSlotGuard<
     pool: &'a CompletionPool<M, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
     slot: usize,
     id: CommandId,
+}
+
+struct RemoteControlAccessSlotGuard<
+    'a,
+    M: RawMutex,
+    const COMPLETIONS: usize,
+    const REQUEST_COMPLETIONS: usize,
+    const RESPONSE_BYTES: usize,
+> {
+    pool: &'a CompletionPool<M, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
+    id: CommandId,
+}
+
+impl<
+        M: RawMutex,
+        const COMPLETIONS: usize,
+        const REQUEST_COMPLETIONS: usize,
+        const RESPONSE_BYTES: usize,
+    > Drop
+    for RemoteControlAccessSlotGuard<'_, M, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>
+{
+    fn drop(&mut self) {
+        self.pool.remote_control_access.release(self.id);
+    }
+}
+
+impl<
+        M: RawMutex + Sync,
+        const COMMANDS: usize,
+        const COMPLETIONS: usize,
+        const REQUEST_COMPLETIONS: usize,
+        const RESPONSE_BYTES: usize,
+    > RemoteControlAccessControl
+    for PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>
+{
+    async fn set_remote_control_controller_grant(
+        &self,
+        grant: RemoteControlControllerGrant,
+    ) -> Result<SetRemoteControlControllerGrantOutcome, SetRemoteControlControllerGrantControlError>
+    {
+        let id = self.pool.mint();
+        let command = RemoteControlAccessCommand::SetControllerGrant { id, grant };
+        if !self.pool.remote_control_access.submit(command) {
+            return Err(SetRemoteControlControllerGrantControlError::Busy);
+        }
+        let _guard = RemoteControlAccessSlotGuard {
+            pool: self.pool,
+            id,
+        };
+        match self.pool.remote_control_access.completion(id).await {
+            RemoteControlAccessCompletion::ControllerGrantSet(result) => result.map_err(Into::into),
+            RemoteControlAccessCompletion::ControllerRevoked(_) => {
+                Err(SetRemoteControlControllerGrantControlError::NodeStopped)
+            }
+        }
+    }
+
+    async fn revoke_remote_control_controller(
+        &self,
+        controller: RemoteControlControllerIdentity,
+    ) -> Result<RevokeRemoteControlControllerOutcome, RevokeRemoteControlControllerControlError>
+    {
+        let id = self.pool.mint();
+        let command = RemoteControlAccessCommand::RevokeController { id, controller };
+        if !self.pool.remote_control_access.submit(command) {
+            return Err(RevokeRemoteControlControllerControlError::Busy);
+        }
+        let _guard = RemoteControlAccessSlotGuard {
+            pool: self.pool,
+            id,
+        };
+        match self.pool.remote_control_access.completion(id).await {
+            RemoteControlAccessCompletion::ControllerRevoked(outcome) => Ok(outcome),
+            RemoteControlAccessCompletion::ControllerGrantSet(_) => {
+                Err(RevokeRemoteControlControllerControlError::NodeStopped)
+            }
+        }
+    }
 }
 
 impl<
