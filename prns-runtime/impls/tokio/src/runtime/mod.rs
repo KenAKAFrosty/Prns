@@ -26,7 +26,8 @@ pub use identity_bootstrap::{
     fill_os_entropy, generate_identity_secret, load_or_create_ble_identity,
     load_or_create_browser_rendezvous_id, load_or_create_browser_selection_seed,
     load_or_create_identity_secret, try_generate_identity_secret, IdentitySecretFileError,
-    LocalIdentityFileError, OsEntropyError,
+    LocalIdentityFileError, OsEntropyError, RemoteControlFileIdentityBootstrapError,
+    RemoteControlIdentityDirectory,
 };
 pub use interface_store::{InterfaceStore, Subscription};
 pub use node_facade::{
