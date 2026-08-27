@@ -394,14 +394,14 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             RadioMode::AccessPoint => screen::AccessPointState::Active,
             RadioMode::Ble => screen::AccessPointState::Inactive,
         };
-        let display_power_control = if oled_ok {
-            screen::DisplayPowerControl::Available
+        let user_blanking = if oled_ok {
+            screen::UserBlanking::Available
         } else {
-            screen::DisplayPowerControl::Unavailable
+            screen::UserBlanking::Unavailable
         };
         let mut ui_state = screen::UiState::new(screen::UiConfiguration {
             storage_limits: <EngineStorageType as StorageLayout>::LIMITS,
-            display_power_control,
+            user_blanking,
             access_point,
             shared_instance_config_export: screen::SharedInstanceConfigExport::Unavailable,
             gnss: B::Gnss::AVAILABILITY,
@@ -432,7 +432,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let mut notice_until_ms =
             startup_notice.map(|notice| (embassy_time::Instant::now().as_millis() + 5_000, notice));
         let mut display_power = screen::DisplayPowerState::new(
-            display_power_control,
+            user_blanking,
             embassy_time::Instant::now().as_millis(),
             screen::DEFAULT_DISPLAY_AUTO_OFF,
         );
@@ -580,7 +580,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                         continue;
                     }
                     match ui_state.handle_input(event, content) {
-                        screen::UiAction::DisplayOff => {
+                        screen::UiAction::BlankDisplay => {
                             ui_state.show_notice(screen::UiNotice::DisplayOff);
                             notice_until_ms =
                                 Some((now_ms + NOTICE_MS, screen::UiNotice::DisplayOff));

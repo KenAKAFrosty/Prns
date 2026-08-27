@@ -76,15 +76,14 @@ pub enum DisplayPowerState {
 impl DisplayPowerState {
     #[must_use]
     pub const fn new(
-        control: super::DisplayPowerControl,
+        control: super::UserBlanking,
         now_ms: u64,
         auto_off_after: DisplayAutoOffDuration,
     ) -> Self {
-        match control {
-            super::DisplayPowerControl::Available => {
-                Self::lit(DisplayAutoOff::Enabled, now_ms, auto_off_after)
-            }
-            super::DisplayPowerControl::Unavailable => Self::Unavailable,
+        if control.is_available() {
+            Self::lit(DisplayAutoOff::Enabled, now_ms, auto_off_after)
+        } else {
+            Self::Unavailable
         }
     }
 
@@ -251,11 +250,11 @@ mod tests {
     #[test]
     fn available_display_starts_with_auto_off_armed() {
         assert_eq!(
-            DisplayPowerState::new(super::super::DisplayPowerControl::Available, 10, AUTO_OFF),
+            DisplayPowerState::new(super::super::UserBlanking::available(), 10, AUTO_OFF),
             DisplayPowerState::LitUntilAutoOff { at_ms: 70 }
         );
         assert_eq!(
-            DisplayPowerState::new(super::super::DisplayPowerControl::Unavailable, 10, AUTO_OFF),
+            DisplayPowerState::new(super::super::UserBlanking::unavailable(), 10, AUTO_OFF),
             DisplayPowerState::Unavailable
         );
     }
@@ -263,7 +262,7 @@ mod tests {
     #[test]
     fn auto_off_becomes_display_only_dark_and_consumes_exactly_the_wake_press() {
         let mut state =
-            DisplayPowerState::new(super::super::DisplayPowerControl::Available, 0, AUTO_OFF);
+            DisplayPowerState::new(super::super::UserBlanking::available(), 0, AUTO_OFF);
         assert_eq!(state.tick(59), DisplayPowerCommand::NoChange);
         assert_eq!(state.tick(60), DisplayPowerCommand::Darken);
         assert_eq!(
@@ -288,7 +287,7 @@ mod tests {
     #[test]
     fn toggling_auto_off_has_no_deadline_when_disabled_and_rearms_when_enabled() {
         let mut state =
-            DisplayPowerState::new(super::super::DisplayPowerControl::Available, 0, AUTO_OFF);
+            DisplayPowerState::new(super::super::UserBlanking::available(), 0, AUTO_OFF);
         assert_eq!(
             state.toggle_auto_off(5, AUTO_OFF),
             Some(DisplayAutoOff::Disabled)
@@ -306,7 +305,7 @@ mod tests {
     #[test]
     fn pending_display_off_is_cancelled_by_a_forwarded_press() {
         let mut state =
-            DisplayPowerState::new(super::super::DisplayPowerControl::Available, 0, AUTO_OFF);
+            DisplayPowerState::new(super::super::UserBlanking::available(), 0, AUTO_OFF);
         state.schedule_display_off(5);
         assert_eq!(
             state,
@@ -326,7 +325,7 @@ mod tests {
     #[test]
     fn system_sleep_darkness_forwards_the_press_then_wake_powers_the_panel() {
         let mut state =
-            DisplayPowerState::new(super::super::DisplayPowerControl::Available, 0, AUTO_OFF);
+            DisplayPowerState::new(super::super::UserBlanking::available(), 0, AUTO_OFF);
         state.schedule_system_sleep(5);
         assert_eq!(state.tick(5), DisplayPowerCommand::Darken);
         assert_eq!(
@@ -347,7 +346,7 @@ mod tests {
     #[test]
     fn waking_before_the_sleep_deadline_does_not_power_cycle_the_lit_panel() {
         let mut state =
-            DisplayPowerState::new(super::super::DisplayPowerControl::Available, 0, AUTO_OFF);
+            DisplayPowerState::new(super::super::UserBlanking::available(), 0, AUTO_OFF);
         state.schedule_system_sleep(10);
         assert_eq!(
             state.button_pressed(5, AUTO_OFF),
@@ -360,7 +359,7 @@ mod tests {
     #[test]
     fn a_hardware_failure_makes_every_future_power_operation_unavailable() {
         let mut state =
-            DisplayPowerState::new(super::super::DisplayPowerControl::Available, 0, AUTO_OFF);
+            DisplayPowerState::new(super::super::UserBlanking::available(), 0, AUTO_OFF);
         state.mark_unavailable();
         assert_eq!(state, DisplayPowerState::Unavailable);
         assert_eq!(state.tick(u64::MAX), DisplayPowerCommand::NoChange);

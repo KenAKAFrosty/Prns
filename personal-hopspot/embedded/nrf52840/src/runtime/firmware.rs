@@ -297,7 +297,7 @@ pub async fn run(spawner: Spawner) -> ! {
         };
         let mut ui_state = hopspot::UiState::new(hopspot::UiConfiguration {
             storage_limits: <Storage as StorageLayout>::LIMITS,
-            display_power_control: hopspot::DisplayPowerControl::Unavailable,
+            user_blanking: hopspot::UserBlanking::Unavailable,
             access_point: hopspot::AccessPointState::Unsupported,
             shared_instance_config_export: hopspot::SharedInstanceConfigExport::Unavailable,
             gnss: hopspot::GnssAvailability::Unavailable,
@@ -564,7 +564,7 @@ pub async fn run(spawner: Spawner) -> ! {
                         hopspot::UiAction::OpenDocs => {}
                         hopspot::UiAction::SwapRadioMode => {}
                         hopspot::UiAction::ToggleStationUplink => {}
-                        hopspot::UiAction::DisplayOff => {}
+                        hopspot::UiAction::BlankDisplay => {}
                         hopspot::UiAction::ToggleDisplayAutoOff => {}
                         hopspot::UiAction::CopySharedInstanceConfig => {}
                         hopspot::UiAction::ControlGnss(_) => {}

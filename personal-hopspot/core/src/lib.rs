@@ -10,10 +10,12 @@ mod destinations;
 mod flash_identity;
 mod flash_layout;
 mod identity;
+#[cfg(feature = "display")]
 mod mobile;
 pub mod node_pages;
 mod persistence;
 mod radio_profile_store;
+#[cfg(feature = "display")]
 mod screen;
 mod soft_ap;
 
@@ -47,9 +49,10 @@ pub use identity::{
     HopspotNodeIdentity, IdentityBootstrap, IdentityPersistence, IdentityStorageName,
     BLE_IDENTITY_STORAGE, NODE_IDENTITY_STORAGE,
 };
+#[cfg(feature = "display")]
 pub use mobile::{
-    InvalidMobileInputCode, MobileActionCode, MobileEngineFailure, MobileEngineState,
-    MobileInputCode, MobileRgbaFrameBuffer, MOBILE_DARK_RGBA, MOBILE_LIT_RGBA, MOBILE_PANEL_HEIGHT,
+    expand_face_rgba, InvalidMobileInputCode, MobileActionCode, MobileEngineFailure,
+    MobileEngineState, MobileInputCode, MOBILE_DARK_RGBA, MOBILE_LIT_RGBA, MOBILE_PANEL_HEIGHT,
     MOBILE_PANEL_WIDTH, MOBILE_PIXEL_COUNT, MOBILE_RGBA_BYTES,
 };
 pub use persistence::PersistenceState;
@@ -66,6 +69,7 @@ pub use prns_core::capabilities::power::{
 pub use radio_profile_store::{
     LoadedRadioProfile, RadioProfileLoadNotice, RadioProfileStore, RadioProfileStoreError,
 };
+#[cfg(feature = "display")]
 pub use screen::{
     apply_and_persist_radio_profile, card_label, card_label_max_chars, render, splash,
     tcp_card_label, AccessPointState, BluetoothRecoveryMenuDetails, CanvasDimensions, Card,
@@ -75,14 +79,17 @@ pub use screen::{
     InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, LogicalPoint,
     PersistenceNotice, QuarterTurn, RadioProfileChangeResult, RenderFrame, RotatedCanvasMapping,
     ScreenContent, SharedInstanceConfigExport, SplashContent, UiAction, UiConfiguration, UiNotice,
-    UiState, WifiNetworkStatus, WifiStationStatus, DEFAULT_DISPLAY_AUTO_OFF,
+    UiState, UserBlanking, WifiNetworkStatus, WifiStationStatus, DEFAULT_DISPLAY_AUTO_OFF,
 };
+#[cfg(feature = "display")]
+pub use screen::{display, face_64x128};
 pub use soft_ap::SoftApLeaseTable;
 
 use personal_rns::engine::{
     EngineProtocolPolicy, LinkMtuDiscovery, LocalHopCountOverride, ProofForm,
     RecursivePathRequestDefault,
 };
+#[cfg(feature = "display")]
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceSnapshot, Membership};
 
 pub const EMBEDDED_HOPSPOT_PROTOCOL_POLICY: EngineProtocolPolicy = EngineProtocolPolicy {
@@ -95,8 +102,10 @@ pub const EMBEDDED_HOPSPOT_PROTOCOL_POLICY: EngineProtocolPolicy = EngineProtoco
 /// The faces' redraw-coalescing window, in milliseconds. A burst of engine changes inside this span
 /// folds into one repaint (~30 fps). It bounds how fast a face repaints when things change; it is not
 /// a frame clock — a face wakes on the store's signal and stays idle when nothing moves.
+#[cfg(feature = "display")]
 pub const COALESCE_MS: u64 = 33;
 
+#[cfg(feature = "display")]
 fn interface_kind_shows_supervisor_peers(id: InterfaceId) -> bool {
     id.kind().is_some_and(|kind| kind.member_kind().is_some())
 }
@@ -109,6 +118,7 @@ fn interface_kind_shows_supervisor_peers(id: InterfaceId) -> bool {
 /// into its supervisor's card, so the root shows one card per independent interface with the
 /// whole fleet's traffic summed under it. The link glyph sums terminated + carried links into one
 /// count of every live link. The returned list is already in face display order.
+#[cfg(feature = "display")]
 pub fn snapshots_to_cards<const N: usize>(
     snapshots: &[InterfaceSnapshot],
     mut classify: impl FnMut(InterfaceId) -> Option<(CardKind, CardLabel)>,
@@ -157,6 +167,7 @@ pub fn snapshots_to_cards<const N: usize>(
     cards
 }
 
+#[cfg(feature = "display")]
 fn push_snapshot_supervisor_peer_rows(
     details: &mut InterfaceMenuDetails,
     selected_card: Option<&Card>,
@@ -184,6 +195,7 @@ fn push_snapshot_supervisor_peer_rows(
     details.push_supervisor_peers(peers)
 }
 
+#[cfg(feature = "display")]
 pub fn snapshots_to_interface_menu_details(
     selected_card: Option<&Card>,
     snapshots: &[InterfaceSnapshot],
@@ -193,6 +205,7 @@ pub fn snapshots_to_interface_menu_details(
     details
 }
 
+#[cfg(feature = "display")]
 pub fn wifi_interface_menu_details(
     status: WifiNetworkStatus<'_>,
     selected_card: Option<&Card>,
@@ -211,6 +224,7 @@ pub fn wifi_interface_menu_details(
     details
 }
 
+#[cfg(feature = "display")]
 pub fn usb_interface_menu_details(connection: ConnectionState) -> InterfaceMenuDetails {
     let mut details = InterfaceMenuDetails::empty();
     let peer = matches!(
@@ -222,7 +236,7 @@ pub fn usb_interface_menu_details(connection: ConnectionState) -> InterfaceMenuD
     details
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "display"))]
 mod tests {
     use super::*;
     use personal_rns::interfaces::{InterfaceKind, TransferRates};

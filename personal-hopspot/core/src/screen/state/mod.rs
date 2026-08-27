@@ -20,7 +20,7 @@ pub(in crate::screen) enum GlobalMenuItem {
     Announce,
     Limits,
     Gnss,
-    DisplayOff,
+    BlankDisplay,
     DisplayAutoOff,
     Sleep,
     RadioMode,
@@ -31,7 +31,7 @@ const GLOBAL_MENU_ORDER: [GlobalMenuItem; 8] = [
     GlobalMenuItem::Announce,
     GlobalMenuItem::Limits,
     GlobalMenuItem::Gnss,
-    GlobalMenuItem::DisplayOff,
+    GlobalMenuItem::BlankDisplay,
     GlobalMenuItem::DisplayAutoOff,
     GlobalMenuItem::Sleep,
     GlobalMenuItem::RadioMode,
@@ -41,7 +41,7 @@ const GLOBAL_MENU_ORDER: [GlobalMenuItem; 8] = [
 #[cfg(test)]
 pub(in crate::screen) const ANNOUNCE_MENU_ITEM: usize = 0;
 #[cfg(test)]
-pub(in crate::screen) const DISPLAY_OFF_MENU_ITEM: usize = 2;
+pub(in crate::screen) const BLANK_DISPLAY_MENU_ITEM: usize = 2;
 #[cfg(test)]
 pub(in crate::screen) const DISPLAY_AUTO_OFF_MENU_ITEM: usize = 3;
 #[cfg(test)]
@@ -91,7 +91,7 @@ pub enum InputEvent {
 pub enum UiAction {
     None,
     Announce,
-    DisplayOff,
+    BlankDisplay,
     ToggleDisplayAutoOff,
     Sleep,
     Wake,
@@ -105,6 +105,12 @@ pub enum UiAction {
     SwapRadioMode,
     OpenDocs,
     CopySharedInstanceConfig,
+}
+
+impl UiAction {
+    #[doc(hidden)]
+    #[allow(non_upper_case_globals)]
+    pub const DisplayOff: Self = Self::BlankDisplay;
 }
 
 prns_macros::iterable_enum! {
@@ -288,10 +294,40 @@ impl Default for PersistenceNotice {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DisplayPowerControl {
+enum UserBlankingCapability {
     Unavailable,
     Available,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UserBlanking(UserBlankingCapability);
+
+impl UserBlanking {
+    #[must_use]
+    pub const fn unavailable() -> Self {
+        Self(UserBlankingCapability::Unavailable)
+    }
+
+    pub(in crate::screen) const fn available() -> Self {
+        Self(UserBlankingCapability::Available)
+    }
+
+    #[must_use]
+    pub const fn is_available(self) -> bool {
+        matches!(self.0, UserBlankingCapability::Available)
+    }
+
+    #[doc(hidden)]
+    #[allow(non_upper_case_globals)]
+    pub const Unavailable: Self = Self::unavailable();
+
+    #[doc(hidden)]
+    #[allow(non_upper_case_globals)]
+    pub const Available: Self = Self(UserBlankingCapability::Available);
+}
+
+#[doc(hidden)]
+pub type DisplayPowerControl = UserBlanking;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AccessPointState {
@@ -314,7 +350,7 @@ pub enum GnssAvailability {
 
 pub struct UiConfiguration {
     pub storage_limits: DisplayedStorageLimits,
-    pub display_power_control: DisplayPowerControl,
+    pub user_blanking: UserBlanking,
     pub access_point: AccessPointState,
     pub shared_instance_config_export: SharedInstanceConfigExport,
     pub gnss: GnssAvailability,
@@ -325,7 +361,7 @@ pub struct UiState {
     pub(in crate::screen) selected_focus: usize,
     pub(in crate::screen) visible_start: usize,
     pub(in crate::screen) mode: UiMode,
-    pub(in crate::screen) display_power_control: DisplayPowerControl,
+    pub(in crate::screen) user_blanking: UserBlanking,
     pub(in crate::screen) access_point: AccessPointState,
     pub(in crate::screen) shared_instance_config_export: SharedInstanceConfigExport,
     pub(in crate::screen) gnss: GnssAvailability,
@@ -363,7 +399,7 @@ impl UiState {
             selected_focus: 0,
             visible_start: 0,
             mode: UiMode::Cards,
-            display_power_control: configuration.display_power_control,
+            user_blanking: configuration.user_blanking,
             access_point: configuration.access_point,
             shared_instance_config_export: configuration.shared_instance_config_export,
             gnss: configuration.gnss,
@@ -457,8 +493,8 @@ impl UiState {
     fn global_menu_item_available(&self, item: GlobalMenuItem) -> bool {
         match item {
             GlobalMenuItem::Gnss => self.gnss == GnssAvailability::Available,
-            GlobalMenuItem::DisplayOff | GlobalMenuItem::DisplayAutoOff => {
-                self.display_power_control == DisplayPowerControl::Available
+            GlobalMenuItem::BlankDisplay | GlobalMenuItem::DisplayAutoOff => {
+                self.user_blanking.is_available()
             }
             GlobalMenuItem::RadioMode => self.access_point != AccessPointState::Unsupported,
             GlobalMenuItem::Announce
@@ -485,7 +521,7 @@ impl UiState {
             GlobalMenuItem::Limits => "Limits",
             GlobalMenuItem::Gnss if self.gnss_visible => "GPS Off",
             GlobalMenuItem::Gnss => "GPS On",
-            GlobalMenuItem::DisplayOff => "Screen Off",
+            GlobalMenuItem::BlankDisplay => "Screen Off",
             GlobalMenuItem::DisplayAutoOff => "Auto Off",
             GlobalMenuItem::Sleep => "Sleep",
             GlobalMenuItem::RadioMode => match self.access_point {
@@ -604,9 +640,9 @@ impl UiState {
                             crate::GnssReceiverCommand::Disable
                         })
                     }
-                    Some(GlobalMenuItem::DisplayOff) => {
+                    Some(GlobalMenuItem::BlankDisplay) => {
                         self.mode = UiMode::Cards;
-                        UiAction::DisplayOff
+                        UiAction::BlankDisplay
                     }
                     Some(GlobalMenuItem::DisplayAutoOff) => {
                         self.mode = UiMode::Cards;

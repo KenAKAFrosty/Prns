@@ -16,9 +16,9 @@ exclude = [
 
 [features]
 default = ["board-t-echo", "softdevice-s140-v7"]
-board-t-echo = []
-board-t096 = ["softdevice-s140-v6"]
-board-t114 = ["softdevice-s140-v6"]
+board-t-echo = ["personal-hopspot-core/display"]
+board-t096 = ["personal-hopspot-core/display", "softdevice-s140-v6"]
+board-t114 = ["personal-hopspot-core/display", "softdevice-s140-v6"]
 board-t1000e = ["cortex-m/critical-section-single-core"]
 board-mesh-tower-v2 = ["embassy-nrf/nfc-pins-as-gpio"]
 softdevice-s140-v6 = ["dep:nrf-softdevice", "nrf-softdevice/s140-v6"]

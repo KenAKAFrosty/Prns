@@ -446,7 +446,10 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeRender(
     }
     // SAFETY: `address`/`capacity` describe the JVM-owned direct buffer, pinned for
     // the duration of this call; we just checked it is non-null and at least
-    // `MOBILE_RGBA_BYTES` long, and nothing else aliases it while we render into it.
-    let out = unsafe { core::slice::from_raw_parts_mut(address, capacity) };
+    // `MOBILE_RGBA_BYTES` long, and nothing else aliases the rendered prefix.
+    let out = unsafe { core::slice::from_raw_parts_mut(address, MOBILE_RGBA_BYTES) };
+    let Ok(out) = <&mut [u8; MOBILE_RGBA_BYTES]>::try_from(out) else {
+        return;
+    };
     face.render(out);
 }

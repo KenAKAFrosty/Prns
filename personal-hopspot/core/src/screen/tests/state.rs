@@ -299,15 +299,15 @@ fn display_capable_menu_offers_display_controls_before_sleep() {
 
     assert_eq!(
         state.global_menu_selected_item(),
-        Some(DISPLAY_OFF_MENU_ITEM)
+        Some(BLANK_DISPLAY_MENU_ITEM)
     );
     assert_eq!(
-        state.global_menu_item_label(GlobalMenuItem::DisplayOff),
+        state.global_menu_item_label(GlobalMenuItem::BlankDisplay),
         "Screen Off"
     );
     assert_eq!(
         state.handle_input(InputEvent::LongPress, content),
-        UiAction::DisplayOff
+        UiAction::BlankDisplay
     );
     assert!(state.global_selected());
 

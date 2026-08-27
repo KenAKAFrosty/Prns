@@ -115,7 +115,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
         };
         let mut ui_state = hopspot::UiState::new(hopspot::UiConfiguration {
             storage_limits: <board::Storage as StorageLayout>::LIMITS,
-            display_power_control: hopspot::DisplayPowerControl::Available,
+            user_blanking: hopspot::UserBlanking::Available,
             access_point: hopspot::AccessPointState::Unsupported,
             shared_instance_config_export: hopspot::SharedInstanceConfigExport::Unavailable,
             #[cfg(feature = "board-t096")]
@@ -138,7 +138,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
         let mut notice_until_ms =
             startup_notice.map(|notice| (embassy_time::Instant::now().as_millis() + 5_000, notice));
         let mut display_power = hopspot::DisplayPowerState::new(
-            hopspot::DisplayPowerControl::Available,
+            hopspot::UserBlanking::Available,
             embassy_time::Instant::now().as_millis(),
             hopspot::DEFAULT_DISPLAY_AUTO_OFF,
         );
@@ -299,7 +299,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                                 board::control_gnss(hopspot::GnssReceiverCommand::Enable);
                             }
                         }
-                        hopspot::UiAction::DisplayOff => {
+                        hopspot::UiAction::BlankDisplay => {
                             let notice = hopspot::UiNotice::DisplayOff;
                             ui_state.show_notice(notice);
                             notice_until_ms = Some((now_ms + NOTICE_MS, notice));

@@ -18,7 +18,7 @@ name = "personal-hopspot-desktop"
 path = "src/main.rs"
 
 [dependencies]
-personal-hopspot-core = { path = "../core", default-features = false, features = ["host"] }
+personal-hopspot-core = { path = "../core", default-features = false, features = ["display", "host"] }
 embedded-graphics = "0.8"
 heapless = { version = "0.8", default-features = false }
 embedded-graphics-simulator = "0.8.0"

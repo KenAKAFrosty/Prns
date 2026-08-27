@@ -37,6 +37,7 @@ path = "src/lib.rs"
 
 [features]
 default = []
+display = ["personal-hopspot-core/display"]
 bluetooth-auto = ["dep:trouble-host", "dep:prns-interfaces-embassy", "esp-radio/ble", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/bluetooth-auto"]
 wifi-auto = ["esp-radio/wifi", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/wifi-auto"]
 esp-now = ["esp-radio/esp-now", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/esp-now"]
