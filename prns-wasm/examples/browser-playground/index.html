@@ -22,8 +22,8 @@
         <h1>Put a real browser node on your local mesh.</h1>
         <p class="lede">
           This deliberately small playground runs the shared Rust engine in
-          WebAssembly and lets you opt into Auto Wi-Fi, WebSocket, or Auto USB
-          when you are ready.
+          WebAssembly and lets you opt into Auto Wi-Fi, WebSocket, Bluetooth,
+          or Auto USB when you are ready.
         </p>
         <div class="scope-note">
           <strong>A live demo, not a messaging client.</strong>
@@ -67,6 +67,15 @@
           </strong>
           <span id="usb-detail" class="status-detail">
             Requires a Chromium-family browser
+          </span>
+        </article>
+        <article class="status-card">
+          <span class="status-label">Bluetooth</span>
+          <strong id="bluetooth-state" class="status-value" data-state="idle">
+            Waiting
+          </strong>
+          <span id="bluetooth-detail" class="status-detail">
+            Requires a Web Bluetooth browser
           </span>
         </article>
         <article class="status-card metric-card">
@@ -165,6 +174,34 @@
             <div class="button-row">
               <button id="usb-connect" type="button" disabled>Connect USB</button>
               <button id="usb-close" class="secondary" type="button" disabled>
+                Close
+              </button>
+            </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">Nearby radio transport</p>
+                <h2>Bluetooth LE</h2>
+              </div>
+              <span class="transport-mark">BLE</span>
+            </div>
+            <p class="panel-copy">
+              Connect as a Web Bluetooth central to an advertising native or
+              embedded Prns node. The selected peer carries ordinary Reticulum
+              traffic through the shared native GATT protocol.
+            </p>
+            <div class="button-row">
+              <button id="bluetooth-connect" type="button" disabled>
+                Connect Bluetooth
+              </button>
+              <button
+                id="bluetooth-close"
+                class="secondary"
+                type="button"
+                disabled
+              >
                 Close
               </button>
             </div>

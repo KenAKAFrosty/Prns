@@ -29,6 +29,20 @@ export function describeUsbConnectFailure(outcome) {
         RuntimeRejected: ({ operation, detail }) => `${operation}: ${detail}`,
     });
 }
+export function describeBluetoothConnectFailure(outcome) {
+    return match_into().from(outcome, {
+        HostOperationFailed: ({ operation, detail }) => `${operation}: ${detail}`,
+        HostApiUnavailable: ({ api }) => `${api} is unavailable in this browser`,
+        PermissionDenied: ({ stage, detail }) => `${stage}: ${detail}`,
+        Cancelled: ({ stage }) => `Cancelled during ${stage}`,
+        UnsupportedDevice: ({ capability }) => `Selected device lacks ${capability}`,
+        TimedOut: ({ stage, timeoutMs }) => `${stage} timed out after ${timeoutMs}ms`,
+        ConnectionFailed: ({ stage, detail }) => `${stage}: ${detail}`,
+        AlreadyActive: ({ target }) => `Already active for ${target}`,
+        StableIdentityUnavailable: ({ detail }) => detail,
+        RuntimeRejected: ({ operation, detail }) => `${operation}: ${detail}`,
+    });
+}
 export function describeWebSocketConnectFailure(outcome) {
     return match_into().from(outcome, {
         HostOperationFailed: ({ operation, detail }) => `${operation}: ${detail}`,

@@ -1,6 +1,7 @@
 import { Tag, match_into } from "./sdk/index.js";
 import type {
   AutoWifiFailure,
+  BluetoothConnectOutcome,
   CommandFailure,
   EntropyFailure,
   InterfaceCleanupFailure,
@@ -21,6 +22,8 @@ export type HostOperation =
   | "Close WebSocket"
   | "Connect USB Auto"
   | "Close USB Auto"
+  | "Connect Bluetooth"
+  | "Close Bluetooth"
   | "Close Auto Wi-Fi";
 
 export type HostOperationFailed = Tagged<
@@ -37,6 +40,11 @@ export type StartupFailure =
 
 export type UsbConnectFailure = Exclude<
   UsbAutoConnectOutcome,
+  Tagged<"Connected", unknown>
+>;
+
+export type BluetoothConnectFailure = Exclude<
+  BluetoothConnectOutcome,
   Tagged<"Connected", unknown>
 >;
 
@@ -93,6 +101,26 @@ export function describeUsbConnectFailure(
     UnsupportedDevice: ({ capability }) =>
       `Selected device lacks ${capability}`,
     ConnectionFailed: ({ stage, detail }) => `${stage}: ${detail}`,
+    RuntimeRejected: ({ operation, detail }) => `${operation}: ${detail}`,
+  });
+}
+
+export function describeBluetoothConnectFailure(
+  outcome: BluetoothConnectFailure | HostOperationFailed,
+): string {
+  return match_into<string>().from(outcome, {
+    HostOperationFailed: ({ operation, detail }) => `${operation}: ${detail}`,
+    HostApiUnavailable: ({ api }) =>
+      `${api} is unavailable in this browser`,
+    PermissionDenied: ({ stage, detail }) => `${stage}: ${detail}`,
+    Cancelled: ({ stage }) => `Cancelled during ${stage}`,
+    UnsupportedDevice: ({ capability }) =>
+      `Selected device lacks ${capability}`,
+    TimedOut: ({ stage, timeoutMs }) =>
+      `${stage} timed out after ${timeoutMs}ms`,
+    ConnectionFailed: ({ stage, detail }) => `${stage}: ${detail}`,
+    AlreadyActive: ({ target }) => `Already active for ${target}`,
+    StableIdentityUnavailable: ({ detail }) => detail,
     RuntimeRejected: ({ operation, detail }) => `${operation}: ${detail}`,
   });
 }

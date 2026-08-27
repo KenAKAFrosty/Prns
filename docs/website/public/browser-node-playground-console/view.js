@@ -1,6 +1,6 @@
 import { Tag, match } from "./sdk/index.js";
-import { describeAutoWifiFailure, describeInterfaceCloseFailure, describeSessionFailure, describeStartupFailure, describeUsbConnectFailure, describeWebSocketConnectFailure, } from "./outcomes.js";
-import { boundedDetail, formatBitrate, hex } from "./presentation.js";
+import { describeAutoWifiFailure, describeBluetoothConnectFailure, describeInterfaceCloseFailure, describeSessionFailure, describeStartupFailure, describeUsbConnectFailure, describeWebSocketConnectFailure, } from "./outcomes.js";
+import { boundedDetail, describeBluetoothUnavailable, formatBitrate, hex, } from "./presentation.js";
 const MAX_ACTIVITY_ENTRIES = 120;
 export class PlaygroundView {
     elements;
@@ -17,6 +17,8 @@ export class PlaygroundView {
         this.elements.webSocketClose.addEventListener("click", handlers.closeWebSocket);
         this.elements.usbConnect.addEventListener("click", handlers.connectUsb);
         this.elements.usbClose.addEventListener("click", handlers.closeUsb);
+        this.elements.bluetoothConnect.addEventListener("click", handlers.connectBluetooth);
+        this.elements.bluetoothClose.addEventListener("click", handlers.closeBluetooth);
         this.elements.announce.addEventListener("click", handlers.announce);
         this.elements.clearActivity.addEventListener("click", handlers.clearActivity);
     }
@@ -93,6 +95,57 @@ export class PlaygroundView {
             },
         });
     }
+    renderBluetooth(status) {
+        match(status, {
+            Waiting: () => {
+                setStatus(this.elements.bluetoothState, "Waiting", "idle");
+                this.elements.bluetoothDetail.textContent = "Waiting for the runtime";
+            },
+            Ready: () => {
+                setStatus(this.elements.bluetoothState, "Ready", "active");
+                this.elements.bluetoothDetail.textContent =
+                    "Choose Connect Bluetooth near an advertising Prns node";
+            },
+            Unavailable: () => {
+                setStatus(this.elements.bluetoothState, "Unavailable", "failed");
+                this.elements.bluetoothDetail.textContent =
+                    describeBluetoothUnavailable(navigator);
+            },
+            Connecting: () => {
+                setStatus(this.elements.bluetoothState, "Selecting device", "working");
+                this.elements.bluetoothDetail.textContent =
+                    "Choose a Prns node in the browser device prompt";
+            },
+            Session: (session) => {
+                this.#renderBluetoothSession(session);
+            },
+            SessionFailed: (failure) => {
+                setStatus(this.elements.bluetoothState, "Session failed", "failed");
+                this.elements.bluetoothDetail.textContent =
+                    describeSessionFailure(failure);
+            },
+            Closing: (session) => {
+                setStatus(this.elements.bluetoothState, "Closing", "working");
+                this.elements.bluetoothDetail.textContent =
+                    `interface ${hex(session.interfaceId)}`;
+            },
+            ConnectFailed: (failure) => {
+                setStatus(this.elements.bluetoothState, "Not connected", "failed");
+                this.elements.bluetoothDetail.textContent =
+                    describeBluetoothConnectFailure(failure);
+            },
+            Closed: () => {
+                setStatus(this.elements.bluetoothState, "Closed", "closed");
+                this.elements.bluetoothDetail.textContent =
+                    "The Bluetooth transport is closed";
+            },
+            CloseFailed: ({ failure }) => {
+                setStatus(this.elements.bluetoothState, "Close failed", "failed");
+                this.elements.bluetoothDetail.textContent =
+                    describeInterfaceCloseFailure(failure);
+            },
+        });
+    }
     renderWebSocket(status) {
         match(status, {
             Waiting: () => {
@@ -157,6 +210,9 @@ export class PlaygroundView {
         this.elements.webSocketUrl.readOnly = !availability.webSocketConnect;
         this.elements.usbConnect.disabled = !availability.usbConnect;
         this.elements.usbClose.disabled = !availability.usbClose;
+        this.elements.bluetoothConnect.disabled =
+            !availability.bluetoothConnect;
+        this.elements.bluetoothClose.disabled = !availability.bluetoothClose;
         this.elements.announce.disabled = !availability.announce;
     }
     record(kind, summary, detail) {
@@ -239,6 +295,28 @@ export class PlaygroundView {
             },
         });
     }
+    #renderBluetoothSession(session) {
+        const interfaceId = hex(session.interfaceId);
+        match(session.status, {
+            Negotiating: () => {
+                setStatus(this.elements.bluetoothState, "Negotiating", "working");
+                this.elements.bluetoothDetail.textContent = `interface ${interfaceId}`;
+            },
+            Active: () => {
+                setStatus(this.elements.bluetoothState, "Active", "active");
+                this.elements.bluetoothDetail.textContent = `interface ${interfaceId}`;
+            },
+            Closed: () => {
+                setStatus(this.elements.bluetoothState, "Closed", "closed");
+                this.elements.bluetoothDetail.textContent = `interface ${interfaceId}`;
+            },
+            Failed: (failure) => {
+                setStatus(this.elements.bluetoothState, "Session failed", "failed");
+                this.elements.bluetoothDetail.textContent =
+                    describeSessionFailure(failure);
+            },
+        });
+    }
     #renderWebSocketSession(session) {
         match(session.status, {
             Negotiating: () => {
@@ -293,6 +371,14 @@ export function bindPlaygroundView(document) {
     const usbDetail = document.getElementById("usb-detail");
     if (!(usbDetail instanceof HTMLElement)) {
         return Tag("MissingElement", { id: "usb-detail" });
+    }
+    const bluetoothState = document.getElementById("bluetooth-state");
+    if (!(bluetoothState instanceof HTMLElement)) {
+        return Tag("MissingElement", { id: "bluetooth-state" });
+    }
+    const bluetoothDetail = document.getElementById("bluetooth-detail");
+    if (!(bluetoothDetail instanceof HTMLElement)) {
+        return Tag("MissingElement", { id: "bluetooth-detail" });
     }
     const interfaceCount = document.getElementById("interface-count");
     if (!(interfaceCount instanceof HTMLElement)) {
@@ -354,6 +440,14 @@ export function bindPlaygroundView(document) {
     if (!(usbClose instanceof HTMLButtonElement)) {
         return Tag("MissingElement", { id: "usb-close" });
     }
+    const bluetoothConnect = document.getElementById("bluetooth-connect");
+    if (!(bluetoothConnect instanceof HTMLButtonElement)) {
+        return Tag("MissingElement", { id: "bluetooth-connect" });
+    }
+    const bluetoothClose = document.getElementById("bluetooth-close");
+    if (!(bluetoothClose instanceof HTMLButtonElement)) {
+        return Tag("MissingElement", { id: "bluetooth-close" });
+    }
     const announce = document.getElementById("announce");
     if (!(announce instanceof HTMLButtonElement)) {
         return Tag("MissingElement", { id: "announce" });
@@ -371,6 +465,8 @@ export function bindPlaygroundView(document) {
         webSocketDetail,
         usbState,
         usbDetail,
+        bluetoothState,
+        bluetoothDetail,
         interfaceCount,
         routeCount,
         packetCount,
@@ -386,6 +482,8 @@ export function bindPlaygroundView(document) {
         webSocketClose,
         usbConnect,
         usbClose,
+        bluetoothConnect,
+        bluetoothClose,
         announce,
         clearActivity,
     }));

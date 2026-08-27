@@ -7,7 +7,9 @@
   <body data-outcome="Pending">
     <script type="module">
       import {
+        BluetoothInterface,
         Prns,
+        Tag,
         linkId,
         persistentBrowser,
       } from "/prns-js/dist/browser/index.js";
@@ -193,6 +195,248 @@
         }
       }
 
+      async function bluetoothContractOutcome() {
+        let reassembler;
+        try {
+          const wasm = await import("/prns-wasm/smoke/pkg/prns_wasm.js");
+          await wasm.default();
+          if (
+            wasm.bluetoothServiceUuid() !==
+              "37145b00-442d-4a94-917f-8f42c5da28e3" ||
+            wasm.bluetoothControlUuid() !==
+              "37145b00-442d-4a94-917f-8f42c5da28e7" ||
+            wasm.bluetoothDataUuid() !==
+              "37145b00-442d-4a94-917f-8f42c5da28e8"
+          ) {
+            return "Failed:GattContract";
+          }
+          const identity = new Uint8Array(16).fill(17);
+          const hello = wasm.bluetoothDialerHello(identity);
+          const decoded = wasm.bluetoothDecodeControl(hello);
+          if (
+            decoded.type !== "hello" ||
+            !equalBytes(decoded.identity, identity)
+          ) {
+            return "Failed:HandshakeContract";
+          }
+          const packet = Uint8Array.from(
+            { length: 377 },
+            (_, index) => index % 251,
+          );
+          const fragments = wasm.bluetoothDataFragments(packet);
+          if (fragments.length < 2) {
+            return "Failed:FragmentationContract";
+          }
+          reassembler = new wasm.BluetoothReassembler();
+          let assembled;
+          for (let index = 0; index < fragments.length; index += 1) {
+            assembled = reassembler.absorb(fragments[index]);
+            if (index + 1 < fragments.length && assembled !== undefined) {
+              return "Failed:PrematureAssembly";
+            }
+          }
+          return equalBytes(assembled, packet)
+            ? "Shared"
+            : "Failed:ReassemblyContract";
+        } catch (error) {
+          return `Failed:${error instanceof Error ? error.message : error}`;
+        } finally {
+          reassembler?.free();
+        }
+      }
+
+      async function bluetoothSessionOutcome() {
+        let restoreBluetooth = () => undefined;
+        try {
+          const wasm = await import("/prns-wasm/smoke/pkg/prns_wasm.js");
+          await wasm.default();
+          const peerIdentity = new Uint8Array(16).fill(23);
+          const welcome = new Uint8Array([
+            0x02,
+            ...peerIdentity,
+            0x03,
+            0x00,
+            0x00,
+            0x01,
+            0xf4,
+            0x80,
+          ]);
+          const outboundPacket = Uint8Array.from(
+            { length: 377 },
+            (_, index) => (index * 3) % 251,
+          );
+          const inboundPacket = Uint8Array.from(
+            { length: 311 },
+            (_, index) => (index * 5) % 251,
+          );
+          const expectedOutbound = wasm.bluetoothDataFragments(outboundPacket);
+          const control = new BluetoothSmokeCharacteristic();
+          const data = new BluetoothSmokeCharacteristic();
+          const service = new BluetoothSmokeService(wasm, control, data);
+          const device = new BluetoothSmokeDevice(service);
+          const bluetooth = {
+            async requestDevice() {
+              return device;
+            },
+          };
+          const previous = Object.getOwnPropertyDescriptor(
+            navigator,
+            "bluetooth",
+          );
+          Object.defineProperty(navigator, "bluetooth", {
+            configurable: true,
+            value: bluetooth,
+          });
+          restoreBluetooth = () => {
+            if (previous === undefined) {
+              delete navigator.bluetooth;
+            } else {
+              Object.defineProperty(navigator, "bluetooth", previous);
+            }
+          };
+          const inbound = [];
+          let outbound = [{ bytes: outboundPacket }];
+          let outboundWaiter;
+          const host = {
+            bluetoothIdentityReadiness: () => Tag("Ready"),
+            runtimeReadiness: () => Tag("Ready"),
+            bluetoothServiceUuid: wasm.bluetoothServiceUuid,
+            bluetoothControlUuid: wasm.bluetoothControlUuid,
+            bluetoothDataUuid: wasm.bluetoothDataUuid,
+            bluetoothBitrateBps: wasm.bluetoothBitrateBps,
+            bluetoothHardwareMtu: wasm.bluetoothHardwareMtu,
+            bluetoothDialerHello: () =>
+              wasm.bluetoothDialerHello(new Uint8Array(16).fill(19)),
+            bluetoothDecodeControl: wasm.bluetoothDecodeControl,
+            bluetoothDataFragments: wasm.bluetoothDataFragments,
+            createBluetoothReassembler: () => new wasm.BluetoothReassembler(),
+            registerInterface: () =>
+              Tag("Registered", new Uint8Array(8).fill(29)),
+            deactivateInterface: () => {
+              outboundWaiter?.(Tag("InterfaceDetached"));
+              outboundWaiter = undefined;
+              return Tag("Detached");
+            },
+            ingest: (_interfaceId, bytes) => {
+              inbound.push(new Uint8Array(bytes));
+              return Tag("Accepted");
+            },
+            takeOutboundFor: () => {
+              const frames = outbound;
+              outbound = [];
+              return Tag("Outbound", frames);
+            },
+            waitForOutboundActivity: () =>
+              new Promise((resolve) => {
+                outboundWaiter = resolve;
+              }),
+          };
+          control.onWrite = (bytes) => {
+            const hello = wasm.bluetoothDecodeControl(bytes);
+            if (hello.type === "hello") {
+              queueMicrotask(() => control.notify(welcome));
+            }
+          };
+          const connected = await new BluetoothInterface(host).connect();
+          if (connected.tag !== "Connected") {
+            return `Failed:Connect:${connected.tag}`;
+          }
+          await waitForBluetoothSmoke(
+            () => data.writes.length === expectedOutbound.length,
+          );
+          for (const fragment of wasm.bluetoothDataFragments(inboundPacket)) {
+            data.notify(fragment);
+          }
+          await waitForBluetoothSmoke(() => inbound.length === 1);
+          const outboundMatches = expectedOutbound.every(
+            (fragment, index) => equalBytes(fragment, data.writes[index]),
+          );
+          const inboundMatches = equalBytes(inbound[0], inboundPacket);
+          const closed = await connected.data.close();
+          return outboundMatches && inboundMatches && closed.tag === "Closed"
+            ? "Bridged"
+            : "Failed:Mismatch";
+        } catch (error) {
+          return `Failed:${error instanceof Error ? error.message : error}`;
+        } finally {
+          restoreBluetooth();
+        }
+      }
+
+      class BluetoothSmokeCharacteristic extends EventTarget {
+        value;
+        writes = [];
+        onWrite;
+        properties = {
+          write: true,
+          writeWithoutResponse: false,
+        };
+
+        async startNotifications() {
+          return this;
+        }
+
+        async writeValueWithResponse(value) {
+          const bytes = value instanceof ArrayBuffer
+            ? new Uint8Array(value)
+            : new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+          const copied = new Uint8Array(bytes);
+          this.writes.push(copied);
+          this.onWrite?.(copied);
+        }
+
+        notify(bytes) {
+          const copied = new Uint8Array(bytes);
+          this.value = new DataView(copied.buffer);
+          this.dispatchEvent(new Event("characteristicvaluechanged"));
+        }
+      }
+
+      class BluetoothSmokeService {
+        #wasm;
+        #control;
+        #data;
+
+        constructor(wasm, control, data) {
+          this.#wasm = wasm;
+          this.#control = control;
+          this.#data = data;
+        }
+
+        async getCharacteristic(uuid) {
+          if (uuid === this.#wasm.bluetoothControlUuid()) {
+            return this.#control;
+          }
+          if (uuid === this.#wasm.bluetoothDataUuid()) {
+            return this.#data;
+          }
+          throw new DOMException("missing characteristic", "NotFoundError");
+        }
+      }
+
+      class BluetoothSmokeDevice extends EventTarget {
+        gatt;
+
+        constructor(service) {
+          super();
+          this.gatt = {
+            connect: async () => this.gatt,
+            disconnect: () => undefined,
+            getPrimaryService: async () => service,
+          };
+        }
+      }
+
+      async function waitForBluetoothSmoke(ready) {
+        const deadline = performance.now() + 2_000;
+        while (!ready()) {
+          if (performance.now() >= deadline) {
+            throw new Error("Bluetooth session smoke timed out");
+          }
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+      }
+
       function equalBytes(left, right) {
         return left instanceof Uint8Array &&
           right instanceof Uint8Array &&
@@ -216,8 +460,12 @@
         `${packagedCompression.detail}:${docsCompression.detail}`;
       const routePersistence = await routePersistenceOutcome();
       const webSocketFraming = await webSocketFramingOutcome();
+      const bluetoothContract = await bluetoothContractOutcome();
+      const bluetoothSession = await bluetoothSessionOutcome();
       document.body.dataset.routePersistence = routePersistence;
       document.body.dataset.webSocketFraming = webSocketFraming;
+      document.body.dataset.bluetoothContract = bluetoothContract;
+      document.body.dataset.bluetoothSession = bluetoothSession;
       document.body.dataset.compression =
         compression ? "Compressed" : "Failed";
       document.body.dataset.compressionDetail = compressionDetail;
@@ -360,6 +608,8 @@
           persistenceFailures === "Typed" &&
           routePersistence === "Restored" &&
           webSocketFraming === "Resolved" &&
+          bluetoothContract === "Shared" &&
+          bluetoothSession === "Bridged" &&
           compression
             ? "PASS"
             : "FAIL";
@@ -378,6 +628,8 @@
           persistenceFailures: document.body.dataset.persistenceFailures,
           routePersistence: document.body.dataset.routePersistence,
           webSocketFraming: document.body.dataset.webSocketFraming,
+          bluetoothContract: document.body.dataset.bluetoothContract,
+          bluetoothSession: document.body.dataset.bluetoothSession,
           compression: document.body.dataset.compression,
           compressionDetail: document.body.dataset.compressionDetail,
         }),

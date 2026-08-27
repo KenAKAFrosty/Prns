@@ -13,10 +13,12 @@ import {
 } from "../../prns-js/src/browser/index.js";
 import type {
   BleIdentity,
+  BluetoothSession,
   BluetoothReassemblerBinding,
   DestinationHash,
   IdentitySecretKey,
   InterfaceId,
+  InterfaceSessionStatus,
   PrnsRuntimeBinding,
   PrnsWasmModule,
   RuntimeAnnounceOptions,
@@ -30,6 +32,12 @@ import type {
   UsbAutoDecoderBinding,
 } from "../../prns-js/src/browser/index.js";
 import type { PacketContentPresentation } from "../examples/browser-playground/presentation.js";
+import {
+  bluetoothClosableSession,
+  bluetoothConnectAvailable,
+  observeBluetoothSession,
+} from "../examples/browser-playground/state.js";
+import type { BluetoothState } from "../examples/browser-playground/state.js";
 import {
   MockRuntimeBase,
   MockWebSocketFramingCodec,
@@ -292,7 +300,47 @@ async function main(): Promise<void> {
   }
 
   await validatePresentations();
+  validateBluetoothState();
   console.log("event smoke passed");
+}
+
+function validateBluetoothState(): void {
+  let status: InterfaceSessionStatus = Tag("Active");
+  const session: BluetoothSession = {
+    name: "bluetooth" as const,
+    interfaceId: interfaceId(new Uint8Array(8).fill(31)),
+    get status() {
+      return status;
+    },
+    close: async () => Tag("Closed"),
+  };
+  const active: BluetoothState = Tag("Session", session);
+  assert(
+    !bluetoothConnectAvailable(active),
+    "an active Bluetooth session cannot reconnect",
+  );
+  assert(
+    bluetoothClosableSession(active) === session,
+    "an active Bluetooth session can close",
+  );
+  status = Tag(
+    "Failed",
+    Tag("Disconnected", { detail: "fixture disconnected" }),
+  );
+  const observed = observeBluetoothSession(session);
+  assert(
+    observed.tag === "Failed" &&
+      observed.data.tag === "Disconnected",
+    "a failed Bluetooth session becomes an explicit failure observation",
+  );
+  assert(
+    bluetoothConnectAvailable(active),
+    "a failed Bluetooth session can reconnect without a close ceremony",
+  );
+  assert(
+    bluetoothClosableSession(active) === undefined,
+    "a failed Bluetooth session is not presented as closable",
+  );
 }
 
 async function rejects(operation: Promise<unknown>): Promise<boolean> {
@@ -323,6 +371,14 @@ async function validatePresentations(): Promise<void> {
     import.meta.url,
   );
   const presentation: {
+    describeBluetoothUnavailable(signals: {
+      readonly platform?: string;
+      readonly userAgent?: string;
+      readonly userAgentData?: {
+        readonly platform?: string;
+        readonly brands?: readonly { readonly brand: string }[];
+      };
+    }): string;
     presentPacketContent(plaintext: Uint8Array): PacketContentPresentation;
   } = await import(presentationUrl.href);
   const text = presentation.presentPacketContent(
@@ -342,6 +398,38 @@ async function validatePresentations(): Promise<void> {
       binary.data.byteLength === 2 &&
       binary.data.hexadecimal === "ff00",
     "invalid UTF-8 payload is presented as bounded binary data",
+  );
+  const linuxChromium = presentation.describeBluetoothUnavailable({
+    platform: "Linux x86_64",
+    userAgent: "Mozilla/5.0 Chrome/151.0.0.0 Safari/537.36",
+  });
+  assert(
+    linuxChromium.includes("--enable-experimental-web-platform-features"),
+    "Linux Chromium receives actionable Web Bluetooth guidance",
+  );
+  const linuxFirefox = presentation.describeBluetoothUnavailable({
+    platform: "Linux x86_64",
+    userAgent: "Mozilla/5.0 Firefox/142.0",
+  });
+  assert(
+    linuxFirefox === "Web Bluetooth is not exposed by this browser",
+    "Linux Firefox does not receive Chromium-specific guidance",
+  );
+  const androidChromium = presentation.describeBluetoothUnavailable({
+    platform: "Linux armv8l",
+    userAgent: "Mozilla/5.0 (Linux; Android 16) Chrome/151.0.0.0",
+  });
+  assert(
+    androidChromium === "Web Bluetooth is not exposed by this browser",
+    "Android is not mistaken for desktop Linux",
+  );
+  const chromeOs = presentation.describeBluetoothUnavailable({
+    platform: "Linux x86_64",
+    userAgent: "Mozilla/5.0 (X11; CrOS x86_64 16093.68.0) Chrome/151.0.0.0",
+  });
+  assert(
+    chromeOs === "Web Bluetooth is not exposed by this browser",
+    "ChromeOS is not mistaken for desktop Linux",
   );
 }
 
