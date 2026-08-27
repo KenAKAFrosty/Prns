@@ -45,10 +45,27 @@ impl RemoteControlNodeIdentitySecrets {
         controller: RemoteControlControllerIdentitySecret,
         target: RemoteControlTargetIdentitySecret,
     ) -> Result<Self, RemoteControlNodeIdentitySecretsError> {
-        if controller.parts.hash == target.parts.hash {
+        Self::validate_identity_hashes(&controller.parts.hash, &target.parts.hash)?;
+        Ok(Self { controller, target })
+    }
+
+    pub(crate) fn validate_secret_keys(
+        controller: &IdentitySecretKey,
+        target: &IdentitySecretKey,
+    ) -> Result<(), RemoteControlNodeIdentitySecretsError> {
+        let controller = InMemoryNodeIdentity::from_secret_key_bytes(controller);
+        let target = InMemoryNodeIdentity::from_secret_key_bytes(target);
+        Self::validate_identity_hashes(&controller.into_parts().hash, &target.into_parts().hash)
+    }
+
+    fn validate_identity_hashes(
+        controller: &IdentityHash,
+        target: &IdentityHash,
+    ) -> Result<(), RemoteControlNodeIdentitySecretsError> {
+        if controller == target {
             return Err(RemoteControlNodeIdentitySecretsError::ControllerAndTargetAreSameIdentity);
         }
-        Ok(Self { controller, target })
+        Ok(())
     }
 
     #[must_use]

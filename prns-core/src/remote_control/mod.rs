@@ -11,11 +11,13 @@
     clippy::wildcard_in_or_patterns
 )]
 
+mod bootstrap;
 mod core;
 mod impls;
 mod message;
 
 pub use self::core::*;
+pub use bootstrap::*;
 pub use impls::*;
 pub use message::*;
 
