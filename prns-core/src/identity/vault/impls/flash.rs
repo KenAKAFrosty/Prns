@@ -417,6 +417,9 @@ impl<E: core::fmt::Debug> core::fmt::Display for FlashVaultError<E> {
 mod tests {
     use super::*;
     use crate::identity::vault::{load_or_generate, IdentityOrigin};
+    use crate::remote_control::{
+        RemoteControlNodeIdentityBootstrap, REMOTE_CONTROL_IDENTITY_VAULT_SLOTS,
+    };
     use embedded_storage::nor_flash::{ErrorType, NorFlashError, NorFlashErrorKind, ReadNorFlash};
 
     const FAKE_WRITE: usize = 4;
@@ -655,6 +658,51 @@ mod tests {
         let (reloaded, origin) = load_or_generate(&mut rebooted, &label("primary"), fill).unwrap();
         assert_eq!(origin, IdentityOrigin::Loaded);
         assert_eq!(*minted, *reloaded);
+    }
+
+    #[test]
+    fn remote_control_identity_pair_fits_one_erase_page_and_survives_reboot() {
+        let mut fill = 0x31;
+        let (flash, identities) = {
+            let mut vault = FlashVault::<_, REMOTE_CONTROL_IDENTITY_VAULT_SLOTS>::new(
+                FakeFlash::<FAKE_ERASE>::new(),
+                0,
+            );
+            let bootstrap =
+                RemoteControlNodeIdentityBootstrap::load_or_generate(&mut vault, |bytes| {
+                    bytes.fill(fill);
+                    fill = fill.wrapping_add(0x11);
+                    Ok::<(), core::convert::Infallible>(())
+                })
+                .unwrap();
+            assert_eq!(
+                (
+                    bootstrap.origins().controller(),
+                    bootstrap.origins().target(),
+                ),
+                (IdentityOrigin::Generated, IdentityOrigin::Generated),
+            );
+            (vault.release(), bootstrap.secrets().identities())
+        };
+
+        let mut vault = FlashVault::<_, REMOTE_CONTROL_IDENTITY_VAULT_SLOTS>::new(flash, 0);
+        let mut entropy_calls = 0;
+        let bootstrap =
+            RemoteControlNodeIdentityBootstrap::load_or_generate(&mut vault, |_bytes| {
+                entropy_calls += 1;
+                Ok::<(), core::convert::Infallible>(())
+            })
+            .unwrap();
+
+        assert_eq!(entropy_calls, 0);
+        assert_eq!(bootstrap.secrets().identities(), identities);
+        assert_eq!(
+            (
+                bootstrap.origins().controller(),
+                bootstrap.origins().target(),
+            ),
+            (IdentityOrigin::Loaded, IdentityOrigin::Loaded),
+        );
     }
 
     #[test]

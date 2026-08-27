@@ -8,6 +8,7 @@ use super::{
     RemoteControlNodeIdentitySecretsError, RemoteControlTargetIdentitySecret,
 };
 
+pub const REMOTE_CONTROL_IDENTITY_VAULT_SLOTS: usize = 2;
 const CONTROLLER_IDENTITY_LABEL: &str = "controller";
 const TARGET_IDENTITY_LABEL: &str = "target";
 
