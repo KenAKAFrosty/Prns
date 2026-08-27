@@ -397,6 +397,7 @@ mod tests {
         RemoteControlControllerIdentity, RemoteControlControllerIdentitySecret,
         RemoteControlInitialAccess, RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData,
         RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlTargetIdentitySecret,
+        REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY,
     };
     use crate::routing::request_handlers::RequestPathHash;
     use crate::runtime::request_endpoints::{Decline, RequestContext, RequestEndpointPolicy};
@@ -590,8 +591,11 @@ mod tests {
         );
 
         assert!(node.engine.network_transport_enabled());
-        assert_eq!(node.engine.held_identity_hashes().len(), 1);
-        assert_eq!(node.engine.upstream_app_destinations().count(), 1);
+        assert_eq!(
+            node.engine.held_identity_hashes().len(),
+            REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY.saturating_add(1),
+        );
+        assert_eq!(node.engine.upstream_app_destinations().count(), 2);
     }
 
     #[test]

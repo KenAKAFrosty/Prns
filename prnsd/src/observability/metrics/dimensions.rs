@@ -165,6 +165,7 @@ pub(super) fn interface_kind_name(kind: InterfaceKind) -> &'static str {
 pub(super) fn runtime_operation_name(operation: RuntimeOperation) -> &'static str {
     match operation {
         RuntimeOperation::AnnounceNow => "announce_now",
+        RuntimeOperation::SetRegisteredAnnounceAppData => "set_registered_announce_app_data",
         RuntimeOperation::SendSinglePacket => "send_single_packet",
         RuntimeOperation::SendGroup => "send_group",
         RuntimeOperation::RequestPath => "request_path",
