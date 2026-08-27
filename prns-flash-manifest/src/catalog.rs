@@ -1369,4 +1369,62 @@ mod tests {
         ));
         Ok(())
     }
+    /// Every `-flash` alias must hand espflash the same partition table the catalog
+    /// declares for that board. Without `--partition-table` espflash falls back to its
+    /// built-in default, whose `nvs` spans `ble_id`/`hopcfg`/`node_id` and whose
+    /// `factory` spans `radio_cfg`/`prns_state`, so flashing a provisioned board through
+    /// the alias would take its identity with it. Aliases are matched to boards on the
+    /// catalog's own `package`, so a new board cannot be added without its table.
+    #[test]
+    fn esp_flash_aliases_pass_the_partition_table_the_catalog_declares() -> Result<(), CatalogError>
+    {
+        const CARGO_CONFIG: &str =
+            include_str!("../../personal-hopspot/embedded/esp32/.cargo/config.toml");
+
+        let catalog = board_catalog()?;
+        let mut checked = 0;
+        for line in CARGO_CONFIG.lines() {
+            let line = line.trim();
+            let Some((name, invocation)) = line.split_once('=') else {
+                continue;
+            };
+            let name = name.trim();
+            if !name.ends_with("-flash") || name.starts_with('#') {
+                continue;
+            }
+            let package = invocation
+                .split_whitespace()
+                .skip_while(|word| *word != "-p")
+                .nth(1)
+                .unwrap_or_else(|| panic!("alias `{name}` names no -p package"));
+            let board = catalog
+                .boards
+                .iter()
+                .find(|board| match &board.build {
+                    BoardBuild::Esp(build) => build.package == package,
+                    _ => false,
+                })
+                .unwrap_or_else(|| panic!("alias `{name}` builds unregistered `{package}`"));
+            let BoardBuild::Esp(build) = &board.build else {
+                unreachable!("filtered to ESP builds above");
+            };
+            let expected = format!("--partition-table {}", build.partition_table);
+            assert!(
+                invocation.contains(&expected),
+                "alias `{name}` must pass `{expected}`; without it espflash falls back to \
+                 its built-in default and overwrites the identity partitions"
+            );
+            checked += 1;
+        }
+        assert_eq!(
+            checked,
+            catalog
+                .boards
+                .iter()
+                .filter(|board| matches!(board.build, BoardBuild::Esp(_)))
+                .count(),
+            "every ESP board in the catalog needs exactly one checked `-flash` alias"
+        );
+        Ok(())
+    }
 }
