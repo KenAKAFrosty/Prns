@@ -981,7 +981,14 @@ fn render_source_page(state: SourcePageState) -> String {
             SOURCE_PAGE_AVAILABLE
                 .replace("{{SIZE}}", &format_archive_size(archive_bytes))
                 .replace("{{CHECKSUM_LINE}}\n", checksum_line)
-                .replace("{{SOURCE_COMMIT_LINE}}\n", "")
+                .replace(
+                    "{{SOURCE_COMMIT_LINE}}\n",
+                    &format!(
+                        "`F999Daemon build:`f `F6ebPrns v{} · commit {}`f\n\n",
+                        crate::build_identity::VERSION,
+                        crate::build_identity::COMMIT,
+                    ),
+                )
         }
     }
 }
@@ -1892,6 +1899,9 @@ mod tests {
         assert!(available.starts_with(SOURCE_PAGE_MARKER));
         assert!(available.contains(":/file/source.zip"));
         assert!(available.contains("(2.0 KB)"));
+        assert!(available.contains(crate::build_identity::VERSION));
+        assert!(available.contains(crate::build_identity::COMMIT));
+        assert!(available.contains("does not authenticate the node by itself"));
         assert!(!available.contains("source.zip.sha256"));
         assert!(!available.contains("{{"));
 
