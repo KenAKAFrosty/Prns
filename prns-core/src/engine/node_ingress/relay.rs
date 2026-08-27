@@ -5,13 +5,14 @@ use crate::engine::{
 };
 use crate::interfaces::{AttachedInterfaces, InterfaceId, InterfaceKind};
 use crate::routing::path_requests::write_path_request_wire_packet;
+use crate::routing::timing::{path_request_egress_eligible, PathRequestAudience};
 use crate::storage::StorageLayout;
 use crate::wire::{DestinationHash, BROADCAST_MTU};
 
 #[derive(Clone, Copy)]
 pub(super) enum RelayAudience {
-    Transports,
-    OnlineTransports,
+    AllNetworkInterfaces,
+    OnlineNetworkInterfaces,
     BoundaryAndGateway,
     LocalClients,
 }
@@ -42,18 +43,14 @@ impl<S: StorageLayout> EngineState<S> {
             return;
         };
         for descriptor in interfaces {
-            let in_audience = match audience {
-                RelayAudience::Transports | RelayAudience::OnlineTransports => true,
-                RelayAudience::BoundaryAndGateway => matches!(
-                    descriptor.mode,
-                    crate::interfaces::InterfaceMode::Boundary
-                        | crate::interfaces::InterfaceMode::Gateway
-                ),
-                RelayAudience::LocalClients => {
-                    descriptor.id.kind() == Some(InterfaceKind::LocalClient)
+            let path_audience = match audience {
+                RelayAudience::AllNetworkInterfaces | RelayAudience::OnlineNetworkInterfaces => {
+                    PathRequestAudience::Network
                 }
+                RelayAudience::BoundaryAndGateway => PathRequestAudience::BoundaryAndGateway,
+                RelayAudience::LocalClients => PathRequestAudience::LocalClients,
             };
-            if in_audience && descriptor.id != source && descriptor.capabilities.allows_transmit() {
+            if path_request_egress_eligible(descriptor, Some(source), path_audience) {
                 if !matches!(audience, RelayAudience::LocalClients)
                     && self.egress_path_request_limits.should_egress_limit(
                         descriptor.id,
@@ -67,7 +64,7 @@ impl<S: StorageLayout> EngineState<S> {
                     continue;
                 }
                 match audience {
-                    RelayAudience::OnlineTransports | RelayAudience::BoundaryAndGateway => {
+                    RelayAudience::OnlineNetworkInterfaces | RelayAudience::BoundaryAndGateway => {
                         let mut record_egress = || {
                             self.egress_path_request_limits
                                 .record_egress(descriptor.id, now);
@@ -81,7 +78,7 @@ impl<S: StorageLayout> EngineState<S> {
                             on_send: &mut record_egress,
                         }));
                     }
-                    RelayAudience::Transports => {
+                    RelayAudience::AllNetworkInterfaces => {
                         self.egress_path_request_limits
                             .record_egress(descriptor.id, now);
                         #[cfg(feature = "runtime-metrics")]

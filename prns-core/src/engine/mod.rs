@@ -63,6 +63,7 @@ pub use crate::routing::proof::{
 };
 pub use crate::routing::RouteRemovalCause;
 pub use crate::wire::WireError as EgressSerializeError;
+pub use command_execution::CommandTiming;
 pub use commands::*;
 pub use introspection::{AnnounceRateState, RouteSnapshot};
 pub use node_egress::ReemitAnnounce;

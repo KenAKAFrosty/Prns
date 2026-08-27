@@ -30,6 +30,22 @@ fn an_ifac_flagged_packet_is_dropped_at_the_door_like_rns_on_a_non_ifac_interfac
 }
 
 #[test]
+fn an_ifac_flagged_packet_is_refused_even_when_its_masked_hops_byte_is_out_of_range() {
+    let mut raw = crate::engine::test_support::bytes_from_hex(
+        crate::engine::test_support::RNS_1_4_2_ANNOUNCE,
+    );
+    raw[0] |= 0x80;
+    raw[1] = MAX_HOP_COUNT;
+    let packet = InboundPacket {
+        arrived_at: InstantMillis(7),
+        source_interface: iface(0x01),
+        bytes: &mut raw,
+    };
+
+    assert!(matches!(Ingress::classify(packet), Ingress::IfacRefused));
+}
+
+#[test]
 fn malformed_headers_classify_as_malformed() {
     let packet = InboundPacket {
         arrived_at: InstantMillis(7),

@@ -124,7 +124,7 @@ Announcements are automatic: every six hours by default, and only while there is
 
 You can change your NomadNet node's name with `prnsd nnpages rename "My Node"`. Changes to the name are live immediately, and persisted to disk.
 
-At any point you can use `prnsd nnpages seed` to re-generate the starter pages along with a default `settings.toml` (without touching anything you've already made yours). If you include the `--source` flag, it will also stage the exact shipped source code bundle. 
+At any point you can use `prnsd nnpages seed` to re-generate the starter pages along with a default `settings.toml` (without touching anything you've already made yours). Source hosting is deliberately opt-in: include `--source` to stage the exact shipped source code bundle. Once staged, a prnsd-managed archive and checksum advance automatically when a newer source-bearing prnsd release starts, but an operator-owned archive is never overwritten.
 
 By default, `prnsd` will find the active Reticulum configuration automatically; pass `--config` for a nondefault foreground or container daemon.
 

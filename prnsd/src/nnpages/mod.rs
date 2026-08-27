@@ -571,7 +571,9 @@ pub(crate) async fn run_cli(args: crate::cli::NnPagesArgs) -> Result<(), NnPages
                     }),
                 }
                 .map_err(NnPagesCliError::Seed)?;
-                let action = if staged.created.is_empty() {
+                let action = if !staged.replaced.is_empty() {
+                    "Updated"
+                } else if staged.created.is_empty() {
                     "Verified"
                 } else {
                     "Staged"
@@ -580,6 +582,10 @@ pub(crate) async fn run_cli(args: crate::cli::NnPagesArgs) -> Result<(), NnPages
                     "{action} {} ({}); checksum available at files/{SOURCE_CHECKSUM_FILE_NAME}.",
                     staged.archive_path.display(),
                     format_archive_size(staged.archive_bytes),
+                );
+            } else {
+                println!(
+                    "Source archive not requested; run `prnsd nnpages seed --source` to stage it."
                 );
             }
             let seeded_index = seed_default_page(&discovered.dir).map_err(NnPagesCliError::Seed)?;

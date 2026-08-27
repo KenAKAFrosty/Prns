@@ -21,6 +21,7 @@ use super::identity::load_identity;
 use super::{RnxArgs, RnxError, RnxOutcome};
 
 const REMOTE_EXECUTION_GRACE: Duration = Duration::from_secs(2);
+const DEFAULT_EXECUTION_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub(super) async fn run(
     mut args: RnxArgs,
@@ -30,26 +31,38 @@ pub(super) async fn run(
         LoadedConfiguration::load(args.config.as_deref()).map_err(RnxError::Configuration)?;
     let secret = load_identity(&configuration, args.identity.as_deref())?;
     let identity = InMemoryNodeIdentity::from_secret_key_bytes(&secret).identity_hash();
-    let timeout = args.timeout.get();
+    let execution_timeout = args
+        .timeout
+        .map_or(DEFAULT_EXECUTION_TIMEOUT, |timeout| timeout.get());
     let session = UtilityNodeSession::connect(
         &configuration,
         UtilityNodeIdentity::Private(secret),
-        timeout,
+        execution_timeout,
     )
     .await
     .map_err(RnxError::Session)?;
     session
         .run(move |client| async move {
+            let path_timeout = match args.timeout {
+                Some(timeout) => timeout.get(),
+                None => client
+                    .adaptive_path_timeout()
+                    .await
+                    .map_err(RnxError::Path)?,
+            };
             client
-                .ensure_path(destination, timeout)
+                .ensure_path(destination, path_timeout)
                 .await
                 .map_err(RnxError::Path)?;
             verify_destination(&client, destination).await?;
-            let established = client
-                .handle()
-                .establish_link_with_rtt(destination)
-                .await
-                .map_err(RnxError::Link)?;
+            let establish = client.handle().establish_link_with_rtt(destination);
+            let established = match args.timeout {
+                Some(timeout) => tokio::time::timeout(timeout.get(), establish)
+                    .await
+                    .map_err(|_| RnxError::LinkTimeout(timeout.get()))?
+                    .map_err(RnxError::Link)?,
+                None => establish.await.map_err(RnxError::Link)?,
+            };
             let link = established.link_id;
             if !args.no_id {
                 client
@@ -111,16 +124,14 @@ async fn execute_remote(
 ) -> Result<Option<i32>, RnxError> {
     let request = encode_execution_request(&ExecutionRequest {
         command,
-        timeout_seconds: Some(args.timeout.get().as_secs_f64()),
+        timeout_seconds: Some(execution_timeout(args).as_secs_f64()),
         stdout_limit: args.stdout,
         stderr_limit: args.stderr,
         stdin: args.stdin.as_ref().map(|stdin| stdin.as_bytes().to_vec()),
     })
     .map_err(RnxError::Encode)?;
     let link_rtt = Duration::from_millis(established.rtt_millis).saturating_mul(4);
-    let response_window = args
-        .timeout
-        .get()
+    let response_window = execution_timeout(args)
         .saturating_add(link_rtt)
         .saturating_add(REMOTE_EXECUTION_GRACE);
     let response_timeout =
@@ -147,6 +158,14 @@ async fn execute_remote(
         ExecutionResult::NotExecuted { .. } => Err(RnxError::RemoteCouldNotExecute),
         ExecutionResult::Executed(executed) => Ok(executed.return_code),
     }
+}
+
+fn execution_timeout(args: &RnxArgs) -> Duration {
+    execution_timeout_for(args.timeout.map(|timeout| timeout.get()))
+}
+
+fn execution_timeout_for(explicit: Option<Duration>) -> Duration {
+    explicit.unwrap_or(DEFAULT_EXECUTION_TIMEOUT)
 }
 
 fn print_result(result: &ExecutionResult, detailed: bool) -> Result<(), RnxError> {
@@ -228,5 +247,19 @@ async fn interactive(
                 Err(error) => eprintln!("prnsd x: {error}"),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adaptive_discovery_does_not_expand_the_remote_execution_budget() {
+        assert_eq!(execution_timeout_for(None), Duration::from_secs(15));
+        assert_eq!(
+            execution_timeout_for(Some(Duration::from_millis(2_500))),
+            Duration::from_millis(2_500)
+        );
     }
 }

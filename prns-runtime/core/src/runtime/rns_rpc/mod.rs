@@ -6,6 +6,8 @@ use prns_core::interfaces::shared_instance::rns_rpc::{
     DestinationDataOperation, LegacyRpcReplyPlan, RnsRpcReply, RnsRpcReplyEncodeError,
     RnsRpcRequest, RpcOperationOutcome, RpcRequest, RpcVerb,
 };
+use prns_core::interfaces::{BitrateBps, ConnectionState, InterfaceKind};
+use prns_core::routing::timing::{first_hop_timeout_ms, medium_path_timeout_ms};
 use prns_core::routing::{BlackholeExpiry, BlackholedIdentity};
 use prns_core::wire::DestinationHash;
 
@@ -119,7 +121,17 @@ where
             RnsRpcReply::next_hop(query.route(*destination_hash).await)
         }
 
-        RnsRpcRequest::FirstHopTimeout { .. } => RnsRpcReply::first_hop_timeout(),
+        RnsRpcRequest::FirstHopTimeout { destination_hash } => {
+            RnsRpcReply::timeout_millis(first_hop_timeout_for(query, *destination_hash).await)
+        }
+
+        RnsRpcRequest::LowestInterfaceBitrate => {
+            RnsRpcReply::lowest_interface_bitrate(lowest_interface_bitrate(query))
+        }
+
+        RnsRpcRequest::MediumPathTimeout => {
+            RnsRpcReply::timeout_millis(medium_path_timeout_ms(lowest_interface_bitrate(query)))
+        }
 
         RnsRpcRequest::LinkCount => RnsRpcReply::integer(i64::from(query.link_count().await)),
 
@@ -225,8 +237,59 @@ async fn reply_for_pickle(
             RnsRpcReply::next_hop(query.route(destination_hash).await)
         }
         LegacyRpcReplyPlan::LinkCount => RnsRpcReply::integer(i64::from(query.link_count().await)),
+        LegacyRpcReplyPlan::FirstHopTimeout(destination_hash) => {
+            RnsRpcReply::timeout_millis(first_hop_timeout_for(query, destination_hash).await)
+        }
+        LegacyRpcReplyPlan::LowestInterfaceBitrate => {
+            RnsRpcReply::lowest_interface_bitrate(lowest_interface_bitrate(query))
+        }
+        LegacyRpcReplyPlan::MediumPathTimeout => {
+            RnsRpcReply::timeout_millis(medium_path_timeout_ms(lowest_interface_bitrate(query)))
+        }
         LegacyRpcReplyPlan::Immediate(reply) => reply,
     }
+}
+
+async fn first_hop_timeout_for(
+    query: &impl NodeIntrospection,
+    destination: DestinationHash,
+) -> u64 {
+    let route = query.route(destination).await;
+    let inventory = query.interface_timing_inventory();
+    let bitrate = route.and_then(|route| {
+        inventory
+            .iter()
+            .find(|entry| {
+                entry.id == route.interface
+                    && timing_interface_online(entry.connection)
+                    && entry.capabilities.allows_transmit()
+            })
+            .map(|entry| entry.bitrate)
+    });
+    first_hop_timeout_ms(bitrate)
+}
+
+fn lowest_interface_bitrate(query: &impl NodeIntrospection) -> Option<BitrateBps> {
+    query
+        .interface_timing_inventory()
+        .into_iter()
+        .filter(|entry| {
+            timing_interface_online(entry.connection)
+                && entry.capabilities.allows_transmit()
+                && !matches!(
+                    entry.id.kind(),
+                    Some(InterfaceKind::LocalClient | InterfaceKind::LocalServer)
+                )
+        })
+        .map(|entry| entry.bitrate)
+        .min()
+}
+
+const fn timing_interface_online(connection: ConnectionState) -> bool {
+    matches!(
+        connection,
+        ConnectionState::Connected | ConnectionState::Degraded
+    )
 }
 
 fn interface_stats_with_transport(

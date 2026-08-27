@@ -52,7 +52,7 @@ jobs:
     timeout-minutes: 90
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 16
       matrix: ${{ fromJSON(needs.inventory.outputs.kani) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -76,7 +76,7 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 16
       matrix: ${{ fromJSON(needs.inventory.outputs.fuzz) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -106,7 +106,7 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 16
       matrix: ${{ fromJSON(needs.inventory.outputs.oracles) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -128,7 +128,7 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 16
       matrix: ${{ fromJSON(needs.inventory.outputs.interop) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -150,7 +150,7 @@ jobs:
     timeout-minutes: 90
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 16
       matrix: ${{ fromJSON(needs.inventory.outputs.hardening) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262

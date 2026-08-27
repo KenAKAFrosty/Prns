@@ -37,6 +37,7 @@ pub enum RnxError {
     NodeStopped(UtilityNodeStopped),
     Path(UtilityPathError),
     Link(SendError<EstablishLinkFailure>),
+    LinkTimeout(Duration),
     Identify(SendError<IdentifyFailure>),
     Request(SendError<SendRequestFailure>),
     ResponseTimeout(Duration),
@@ -91,6 +92,11 @@ impl fmt::Display for RnxError {
             Self::NodeStopped(source) => source.fmt(formatter),
             Self::Path(source) => source.fmt(formatter),
             Self::Link(source) => write!(formatter, "link establishment failed: {source:?}"),
+            Self::LinkTimeout(timeout) => write!(
+                formatter,
+                "link establishment timed out after {} seconds",
+                timeout.as_secs_f64()
+            ),
             Self::Identify(source) => write!(formatter, "link identification failed: {source:?}"),
             Self::Request(source) => write!(formatter, "execution request failed: {source:?}"),
             Self::ResponseTimeout(timeout) => write!(
@@ -126,7 +132,7 @@ impl RnxError {
                 241
             }
             Self::Path(_) => 242,
-            Self::Link(_) => 243,
+            Self::Link(_) | Self::LinkTimeout(_) => 243,
             Self::Identify(_) | Self::Request(_) => 244,
             Self::ResponseTimeout(_) => 246,
             Self::ResponseCodec(_) => 247,

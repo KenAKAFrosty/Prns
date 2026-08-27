@@ -37,6 +37,7 @@ fn start_new(
     paths: &ServicePaths,
     signature: u64,
 ) -> Result<(), CommandError> {
+    crate::configure_local_source_environment(root)?;
     let binary = build_daemon(invocation, root, manifest, false)?;
     start_built(invocation, root, paths, signature, binary)
 }

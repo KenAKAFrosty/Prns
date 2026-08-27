@@ -122,7 +122,7 @@ jobs:
   napi-build:
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 16
       matrix:
         settings:
           - host: windows-latest
@@ -213,7 +213,7 @@ jobs:
     needs: napi-build
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 16
       matrix:
         settings:
           - host: windows-latest
@@ -273,7 +273,7 @@ jobs:
     needs: napi-build
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 16
       matrix:
         settings:
           - host: ubuntu-latest

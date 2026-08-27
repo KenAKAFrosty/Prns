@@ -695,6 +695,7 @@ mod tests {
         assert_eq!(args.config, Some(PathBuf::from("/node")));
         assert!(args.table);
         assert_eq!(args.maximum_hops, Some(3));
+        assert_eq!(args.path_timeout, None);
         assert!(args.json);
         assert!(args.destination.is_some());
     }
@@ -743,6 +744,19 @@ mod tests {
     fn probe_does_not_expose_a_prefixed_alias() {
         let error = parse_from(["prnsd", "rnprobe"].into_iter().map(OsString::from)).unwrap_err();
         assert_eq!(error.exit_code(), 2);
+    }
+
+    #[test]
+    fn probe_omits_its_timeout_for_adaptive_selection() {
+        let Command::Probe(args) = parse(&[
+            "prnsd",
+            "probe",
+            "rnstransport.probe",
+            "00112233445566778899aabbccddeeff",
+        ]) else {
+            panic!("probe must remain a direct utility command");
+        };
+        assert_eq!(args.timeout, None);
     }
 
     #[test]
@@ -806,6 +820,7 @@ mod tests {
         assert!(args.allow_fetch);
         assert_eq!(args.allowed.len(), 1);
         assert_eq!(args.jail, Some(PathBuf::from("/srv/files")));
+        assert_eq!(args.timeout, None);
     }
 
     #[test]
@@ -836,7 +851,10 @@ mod tests {
         };
         assert!(args.interactive);
         assert!(args.mirror);
-        assert_eq!(args.timeout.get(), std::time::Duration::from_secs_f64(2.5));
+        assert_eq!(
+            args.timeout.unwrap().get(),
+            std::time::Duration::from_secs_f64(2.5)
+        );
         assert_eq!(
             args.result_timeout.unwrap().get(),
             std::time::Duration::from_secs(4)
@@ -859,6 +877,15 @@ mod tests {
         assert!(args.listen);
         assert!(args.no_announce);
         assert_eq!(args.allowed.len(), 1);
+        assert_eq!(args.timeout, None);
+    }
+
+    #[test]
+    fn utility_timeout_help_describes_the_adaptive_discovery_floor() {
+        for help in [path_help(), probe_help(), cp_help(), x_help()] {
+            assert!(help.contains("adaptive"));
+            assert!(help.contains("15-second"));
+        }
     }
 
     #[test]

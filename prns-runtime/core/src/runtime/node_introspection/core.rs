@@ -1,8 +1,16 @@
 use prns_core::interfaces::IfacSize;
 use prns_core::interfaces::{
-    ConnectionState, FrameAccounting, InterfaceGravity, InterfaceId, InterfaceMode,
-    InterfaceOriginKind, InterfaceSnapshot, Membership, TransferRates,
+    BitrateBps, ConnectionState, FrameAccounting, InterfaceCapabilities, InterfaceGravity,
+    InterfaceId, InterfaceMode, InterfaceOriginKind, InterfaceSnapshot, Membership, TransferRates,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InterfaceTimingSnapshot {
+    pub id: InterfaceId,
+    pub bitrate: BitrateBps,
+    pub capabilities: InterfaceCapabilities,
+    pub connection: ConnectionState,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameAccountingCoverage {

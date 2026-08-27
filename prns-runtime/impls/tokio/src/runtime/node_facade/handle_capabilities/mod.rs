@@ -245,6 +245,12 @@ impl NodeIntrospection for PrnsNodeHandle {
         PrnsNodeHandle::interface_inventory(self)
     }
 
+    fn interface_timing_inventory(
+        &self,
+    ) -> std::vec::Vec<crate::node_introspection::InterfaceTimingSnapshot> {
+        PrnsNodeHandle::interface_timing_inventory(self)
+    }
+
     async fn link_count(&self) -> u32 {
         self.introspect(|reply| NodeIntrospectionRequest::LinkCount { reply })
             .await

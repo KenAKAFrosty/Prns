@@ -1,13 +1,15 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use prns_core::interfaces::shared_instance as instance_core;
 use prns_core::interfaces::EffectiveInterfacePolicy;
-use prns_runtime::runtime::PrnsNodeHandle;
+use prns_runtime::runtime::{BitrateTimingOracle, PrnsNodeHandle};
 use tokio::net::TcpStream;
 
 use super::persistence::{RnsBlackholeFiles, RnsPersistedBlackholes};
 use super::rns_rpc::{
-    SharedInstanceCredentials, SharedInstanceRpcBindError, SharedInstanceRpcServer,
+    SharedInstanceCredentials, SharedInstanceRpcBindError, SharedInstanceRpcClient,
+    SharedInstanceRpcEndpoint, SharedInstanceRpcServer,
 };
 use super::supervision::{
     SharedInstanceClient, SharedInstanceServer, SharedInstanceServerBindError,
@@ -206,6 +208,41 @@ pub async fn connect_existing_shared_instance(
     }
 }
 
+/// Join the shared bus and install its authenticated control connection as the transparent
+/// timing source for path, link and single-packet watchdogs.
+pub async fn connect_existing_shared_instance_with_timing(
+    handle: &PrnsNodeHandle,
+    instance: SharedInstanceClientIntent,
+    timing: Arc<SharedInstanceRpcClient>,
+) -> Result<SharedInstanceRole, ExistingSharedInstanceUnavailable> {
+    let role = connect_existing_shared_instance(handle, instance).await?;
+    handle.install_bitrate_timing_oracle(timing);
+    Ok(role)
+}
+
+impl BitrateTimingOracle for SharedInstanceRpcClient {
+    fn first_hop_timeout(
+        &self,
+        destination: prns_core::wire::DestinationHash,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<Duration>> + Send + '_>> {
+        Box::pin(async move {
+            SharedInstanceRpcClient::first_hop_timeout(self, destination)
+                .await
+                .ok()
+        })
+    }
+
+    fn medium_path_timeout(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<Duration>> + Send + '_>> {
+        Box::pin(async move {
+            SharedInstanceRpcClient::medium_path_timeout(self)
+                .await
+                .ok()
+        })
+    }
+}
+
 async fn join_existing(
     handle: &PrnsNodeHandle,
     instance: &SharedInstanceIntent,
@@ -218,20 +255,39 @@ async fn join_existing(
                     .peer_addr()
                     .map(|addr| addr.to_string())
                     .unwrap_or(bus_addr);
-                return join_or_refuse(handle, stream, at, instance.on_existing, instance.policy)
-                    .map(Some);
+                let role =
+                    join_or_refuse(handle, stream, at, instance.on_existing, instance.policy)?;
+                install_existing_instance_timing(handle, instance);
+                return Ok(Some(role));
             }
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         SharedInstanceTransport::AbstractUnix { socket_path } => {
             if let Some(stream) = connect_abstract_bus(socket_path) {
                 let at = std::format!("\\0rns/{socket_path}");
-                return join_or_refuse(handle, stream, at, instance.on_existing, instance.policy)
-                    .map(Some);
+                let role =
+                    join_or_refuse(handle, stream, at, instance.on_existing, instance.policy)?;
+                install_existing_instance_timing(handle, instance);
+                return Ok(Some(role));
             }
         }
     }
     Ok(None)
+}
+
+fn install_existing_instance_timing(handle: &PrnsNodeHandle, instance: &SharedInstanceIntent) {
+    let endpoint = match &instance.transport {
+        SharedInstanceTransport::Tcp => SharedInstanceRpcEndpoint::tcp(instance.ports.control),
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        SharedInstanceTransport::AbstractUnix { socket_path } => {
+            SharedInstanceRpcEndpoint::abstract_unix(socket_path.clone())
+        }
+    };
+    handle.install_bitrate_timing_oracle(Arc::new(SharedInstanceRpcClient::new(
+        endpoint,
+        instance.credentials.rpc_key().clone(),
+        Duration::from_secs(15),
+    )));
 }
 
 fn join_or_refuse<S>(

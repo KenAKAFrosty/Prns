@@ -1,6 +1,7 @@
 use personal_rns::runtime::NoPersistence;
 use std::fmt;
 use std::future::Future;
+use std::sync::Arc;
 use std::time::Duration;
 
 use personal_rns::engine::{
@@ -19,7 +20,8 @@ use personal_rns::runtime::{
     PrnsNodeRecipe, RequestPathError, ServeMyRequestEndpoints,
 };
 use personal_rns::shared_instance::{
-    connect_existing_shared_instance, ExistingSharedInstanceUnavailable, SharedInstanceRpcClient,
+    connect_existing_shared_instance, connect_existing_shared_instance_with_timing,
+    ExistingSharedInstanceUnavailable, SharedInstanceRpcClient,
 };
 use personal_rns::storage::GrowableHeap;
 use personal_rns::units::HopCount;
@@ -44,7 +46,7 @@ pub struct UtilityNodeSession {
 
 pub struct UtilityNodeClient {
     handle: PrnsNodeHandle,
-    rpc: SharedInstanceRpcClient,
+    rpc: Arc<SharedInstanceRpcClient>,
 }
 
 pub struct UtilityBusSession {
@@ -77,14 +79,16 @@ impl UtilityNodeSession {
         node: UtilityNode,
         rpc_timeout: Duration,
     ) -> Result<Self, UtilityNodeSessionError> {
-        let rpc = configuration
-            .local_rpc_client(rpc_timeout)
-            .map_err(UtilityNodeSessionError::Configuration)?;
+        let rpc = Arc::new(
+            configuration
+                .local_rpc_client(rpc_timeout)
+                .map_err(UtilityNodeSessionError::Configuration)?,
+        );
         let bus = configuration
             .local_bus_client_intent()
             .map_err(UtilityNodeSessionError::Configuration)?;
         let handle = node.handle();
-        connect_existing_shared_instance(&handle, bus)
+        connect_existing_shared_instance_with_timing(&handle, bus, rpc.clone())
             .await
             .map_err(UtilityNodeSessionError::SharedInstanceUnavailable)?;
         Ok(Self {
@@ -112,7 +116,7 @@ impl UtilityNodeClient {
     }
 
     pub fn rpc(&self) -> &SharedInstanceRpcClient {
-        &self.rpc
+        self.rpc.as_ref()
     }
 
     pub async fn ensure_path(
@@ -129,6 +133,15 @@ impl UtilityNodeClient {
             .await
             .map_err(|_| UtilityPathError::Timeout { timeout })?
             .map_err(UtilityPathError::Request)
+    }
+
+    pub async fn adaptive_path_timeout(&self) -> Result<Duration, UtilityPathError> {
+        let medium = self
+            .rpc
+            .medium_path_timeout()
+            .await
+            .map_err(UtilityPathError::Rpc)?;
+        Ok(Duration::from_secs(15).max(medium))
     }
 }
 
@@ -314,6 +327,7 @@ impl From<TransientRemoteControlIdentityError> for UtilityNodeSessionError {
 #[derive(Debug)]
 pub enum UtilityPathError {
     Request(RequestPathError),
+    Rpc(personal_rns::shared_instance::SharedInstanceRpcClientError),
     Timeout { timeout: Duration },
 }
 
@@ -321,6 +335,9 @@ impl fmt::Display for UtilityPathError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Request(source) => write!(formatter, "path request failed: {source:?}"),
+            Self::Rpc(source) => {
+                write!(formatter, "could not obtain adaptive path timing: {source}")
+            }
             Self::Timeout { timeout } => write!(
                 formatter,
                 "path request timed out after {:.3} seconds",
@@ -330,4 +347,11 @@ impl fmt::Display for UtilityPathError {
     }
 }
 
-impl std::error::Error for UtilityPathError {}
+impl std::error::Error for UtilityPathError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Rpc(source) => Some(source),
+            Self::Request(_) | Self::Timeout { .. } => None,
+        }
+    }
+}

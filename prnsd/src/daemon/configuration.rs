@@ -9,9 +9,9 @@ mod bootstrap;
 
 pub(crate) use bootstrap::{
     format_archive_size, materialize_nnpages_settings, prepare_nnpages_layout, refresh_source_page,
-    seed_coming_from_rns_page, seed_default_page, seed_source_page, stage_bundled_source,
-    stage_source_archive, ManagedPageSeed, ServerBootstrapError, SourcePageRefresh, SourcePageSeed,
-    SourcePageState,
+    refresh_staged_bundled_source, seed_coming_from_rns_page, seed_default_page, seed_source_page,
+    stage_bundled_source, stage_source_archive, BundledSourceRefresh, ManagedPageSeed,
+    ServerBootstrapError, SourcePageRefresh, SourcePageSeed, SourcePageState,
 };
 
 pub(crate) const DEFAULT_CONFIG: &str = "[reticulum]\n\

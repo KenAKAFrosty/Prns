@@ -255,6 +255,7 @@ pub(super) fn print_help() {
         "    cargo prnsd stop\n",
         "    cargo prnsd interfaces validate\n",
         "    cargo prnsd nnpages seed\n",
+        "    cargo prnsd nnpages seed --source\n",
         "    cargo prnsd nnpages rename \"My Node\"\n",
         "    cargo prnsd status\n",
         "    cargo prnsd -- --help",

@@ -42,6 +42,9 @@ pub async fn run(args: RnpathArgs) -> Result<(), RnpathError> {
     }
     let configuration =
         LoadedConfiguration::load(args.config.as_deref()).map_err(RnpathError::Configuration)?;
+    let rpc_timeout = args
+        .path_timeout
+        .map_or(Duration::from_secs(15), |timeout| timeout.get());
     if args.verbose != 0 {
         for warning in &configuration.report.warnings {
             eprintln!("{warning}");
@@ -56,7 +59,7 @@ pub async fn run(args: RnpathArgs) -> Result<(), RnpathError> {
             },
         ) => {
             let client = configuration
-                .local_rpc_client(args.path_timeout.get())
+                .local_rpc_client(rpc_timeout)
                 .map_err(RnpathError::Configuration)?;
             let mut entries = client
                 .path_table(maximum_hops)
@@ -106,7 +109,7 @@ pub async fn run(args: RnpathArgs) -> Result<(), RnpathError> {
         }
         (RnpathTarget::Local, RnpathOperation::Rates { destination }) => {
             let client = configuration
-                .local_rpc_client(args.path_timeout.get())
+                .local_rpc_client(rpc_timeout)
                 .map_err(RnpathError::Configuration)?;
             let mut entries = client
                 .announce_rate_table()
@@ -158,7 +161,7 @@ pub async fn run(args: RnpathArgs) -> Result<(), RnpathError> {
         }
         (RnpathTarget::Local, RnpathOperation::DropPath(destination)) => {
             let client = configuration
-                .local_rpc_client(args.path_timeout.get())
+                .local_rpc_client(rpc_timeout)
                 .map_err(RnpathError::Configuration)?;
             if client
                 .drop_path(destination)
@@ -176,7 +179,7 @@ pub async fn run(args: RnpathArgs) -> Result<(), RnpathError> {
         }
         (RnpathTarget::Local, RnpathOperation::DropAnnounces) => {
             let client = configuration
-                .local_rpc_client(args.path_timeout.get())
+                .local_rpc_client(rpc_timeout)
                 .map_err(RnpathError::Configuration)?;
             println!("Dropping announce queues on all interfaces...");
             client
@@ -186,7 +189,7 @@ pub async fn run(args: RnpathArgs) -> Result<(), RnpathError> {
         }
         (RnpathTarget::Local, RnpathOperation::DropVia(transport)) => {
             let client = configuration
-                .local_rpc_client(args.path_timeout.get())
+                .local_rpc_client(rpc_timeout)
                 .map_err(RnpathError::Configuration)?;
             let dropped = client
                 .drop_all_via(transport)
@@ -204,7 +207,7 @@ pub async fn run(args: RnpathArgs) -> Result<(), RnpathError> {
         }
         (RnpathTarget::Local, RnpathOperation::ListBlackholes { filter }) => {
             let client = configuration
-                .local_rpc_client(args.path_timeout.get())
+                .local_rpc_client(rpc_timeout)
                 .map_err(RnpathError::Configuration)?;
             let now = unix_time_millis();
             let entries = client
@@ -222,7 +225,7 @@ pub async fn run(args: RnpathArgs) -> Result<(), RnpathError> {
             },
         ) => {
             let client = configuration
-                .local_rpc_client(args.path_timeout.get())
+                .local_rpc_client(rpc_timeout)
                 .map_err(RnpathError::Configuration)?;
             let until = duration.and_then(|duration| {
                 (duration.get() != 0.0)
@@ -248,7 +251,7 @@ pub async fn run(args: RnpathArgs) -> Result<(), RnpathError> {
         }
         (RnpathTarget::Local, RnpathOperation::Unblackhole(identity)) => {
             let client = configuration
-                .local_rpc_client(args.path_timeout.get())
+                .local_rpc_client(rpc_timeout)
                 .map_err(RnpathError::Configuration)?;
             match client
                 .unblackhole_identity(identity)
@@ -282,7 +285,12 @@ pub async fn run(args: RnpathArgs) -> Result<(), RnpathError> {
             display_blackholes(&configuration, &entries, filter.as_deref(), now)
         }
         (RnpathTarget::Local, RnpathOperation::RequestPath(destination)) => {
-            request_path(&configuration, destination, args.path_timeout.get()).await
+            request_path(
+                &configuration,
+                destination,
+                args.path_timeout.map(|timeout| timeout.get()),
+            )
+            .await
         }
         (_, RnpathOperation::Help) => Ok(()),
         (RnpathTarget::Remote { .. }, _) => Err(RnpathError::UnsupportedRemote),
@@ -292,14 +300,22 @@ pub async fn run(args: RnpathArgs) -> Result<(), RnpathError> {
 async fn request_path(
     configuration: &LoadedConfiguration,
     destination: personal_rns::wire::DestinationHash,
-    timeout: Duration,
+    explicit_timeout: Option<Duration>,
 ) -> Result<(), RnpathError> {
+    let rpc_timeout = explicit_timeout.unwrap_or(Duration::from_secs(15));
     let utility =
-        UtilityNodeSession::connect(configuration, UtilityNodeIdentity::Anonymous, timeout)
+        UtilityNodeSession::connect(configuration, UtilityNodeIdentity::Anonymous, rpc_timeout)
             .await
             .map_err(RnpathError::Session)?;
     let (found, next_hop, interface) = utility
         .run(move |utility| async move {
+            let timeout = match explicit_timeout {
+                Some(timeout) => timeout,
+                None => utility
+                    .adaptive_path_timeout()
+                    .await
+                    .map_err(|_| RnpathError::PathNotFound)?,
+            };
             let found = utility
                 .ensure_path(destination, timeout)
                 .await

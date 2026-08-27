@@ -7,10 +7,11 @@ use crate::identity::{
     seal_finish, EncryptError, IdentityHash, IdentitySigningPublicKey, RemoteIdentity,
     ENCRYPTION_IV_LEN,
 };
-use crate::interfaces::InterfaceId;
+use crate::interfaces::{AttachedInterfaces, InterfaceId};
 use crate::routing::dedup::PacketHash;
 use crate::routing::delivery::receipts::{CulledReceipt, OutstandingReceipt, ReceiptKind};
 use crate::routing::routes::RouteEvidenceHandle;
+use crate::routing::timing::{single_packet_timeout_ms, FirstHopTiming};
 use crate::routing::NextHop;
 use crate::storage::StorageLayout;
 use crate::wire::{
@@ -19,9 +20,9 @@ use crate::wire::{
 };
 
 /// RNS 1.4.2 `Reticulum.DEFAULT_PER_HOP_TIMEOUT` (6s), serving both as the first-hop fallback (`Transport.first_hop_timeout` without bitrate data) and the per-hop increment (`Packet.TIMEOUT_PER_HOP`).
-pub const DEFAULT_PER_HOP_TIMEOUT_SECONDS: u32 = 6;
-pub const DEFAULT_FIRST_HOP_TIMEOUT_MS: u64 = DEFAULT_PER_HOP_TIMEOUT_SECONDS as u64 * 1_000;
-pub const DEFAULT_PER_HOP_TIMEOUT_MS: u64 = DEFAULT_PER_HOP_TIMEOUT_SECONDS as u64 * 1_000;
+pub use crate::routing::timing::{
+    DEFAULT_FIRST_HOP_TIMEOUT_MS, DEFAULT_PER_HOP_TIMEOUT_MS, DEFAULT_PER_HOP_TIMEOUT_SECONDS,
+};
 
 pub const SEND_SINGLE_ENTROPY_LEN: usize = 32 + ENCRYPTION_IV_LEN;
 
@@ -167,9 +168,50 @@ impl<S: StorageLayout> EngineState<S> {
         entropy: SendSinglePacketEntropy,
         buf: &mut [u8],
     ) -> SendSinglePacketWriteOutcome {
+        self.write_commanded_send_single_packet_with_interfaces(
+            id,
+            send,
+            now,
+            entropy,
+            AttachedInterfaces::new(&[]),
+            buf,
+        )
+    }
+
+    pub fn write_commanded_send_single_packet_with_interfaces(
+        &mut self,
+        id: CommandId,
+        send: &SendSinglePacket,
+        now: InstantMillis,
+        entropy: SendSinglePacketEntropy,
+        interfaces: AttachedInterfaces<'_>,
+        buf: &mut [u8],
+    ) -> SendSinglePacketWriteOutcome {
+        self.write_commanded_send_single_packet_with_timing(
+            id,
+            send,
+            now,
+            entropy,
+            FirstHopTiming {
+                interfaces,
+                shared_instance_floor_ms: None,
+            },
+            buf,
+        )
+    }
+
+    pub fn write_commanded_send_single_packet_with_timing(
+        &mut self,
+        id: CommandId,
+        send: &SendSinglePacket,
+        now: InstantMillis,
+        entropy: SendSinglePacketEntropy,
+        timing: FirstHopTiming<'_>,
+        buf: &mut [u8],
+    ) -> SendSinglePacketWriteOutcome {
         use SendSinglePacketWriteOutcome::{Failed, Rejected, Written};
 
-        let Some(plan) = self.gather_send_single_plan(send, now) else {
+        let Some(plan) = self.gather_send_single_plan(send, now, timing) else {
             return Rejected {
                 rejection: SendSinglePacketWriteRejection::RouteVanished,
                 unspent_entropy: entropy,
@@ -218,6 +260,7 @@ impl<S: StorageLayout> EngineState<S> {
         &self,
         send: &SendSinglePacket,
         now: InstantMillis,
+        timing: FirstHopTiming<'_>,
     ) -> Option<SendSinglePacketPlan> {
         let stored = self.routing_table.stored_announce_for(&send.destination)?;
         let hops = stored.hops;
@@ -247,10 +290,18 @@ impl<S: StorageLayout> EngineState<S> {
         let recipient_identity_hash =
             RemoteIdentity::from_public_keys(public_keys.encryption, public_keys.signing)
                 .identity_hash();
+        let bitrate = timing
+            .interfaces
+            .descriptor_for(fire_on)
+            .filter(|descriptor| descriptor.capabilities.allows_transmit())
+            .map(|descriptor| descriptor.bitrate);
+        let computed = single_packet_timeout_ms(hops, bitrate);
+        let floor = timing.shared_instance_floor_ms.map(|first_hop| {
+            first_hop.saturating_add(DEFAULT_PER_HOP_TIMEOUT_MS.saturating_mul(u64::from(hops)))
+        });
         let timeout_at = InstantMillis(
             now.0
-                .saturating_add(DEFAULT_FIRST_HOP_TIMEOUT_MS)
-                .saturating_add(DEFAULT_PER_HOP_TIMEOUT_MS.saturating_mul(u64::from(hops))),
+                .saturating_add(floor.map_or(computed, |floor| computed.max(floor))),
         );
         Some(SendSinglePacketPlan {
             header,
@@ -293,6 +344,43 @@ impl<S: StorageLayout> EngineState<S> {
         now: InstantMillis,
         entropy: SendSinglePacketEntropy,
     ) -> SendSinglePacketPrepared {
+        self.prepare_send_single_packet_deferred_with_interfaces(
+            id,
+            send,
+            now,
+            entropy,
+            AttachedInterfaces::new(&[]),
+        )
+    }
+
+    pub fn prepare_send_single_packet_deferred_with_interfaces(
+        &self,
+        id: CommandId,
+        send: SendSinglePacket,
+        now: InstantMillis,
+        entropy: SendSinglePacketEntropy,
+        interfaces: AttachedInterfaces<'_>,
+    ) -> SendSinglePacketPrepared {
+        self.prepare_send_single_packet_deferred_with_timing(
+            id,
+            send,
+            now,
+            entropy,
+            FirstHopTiming {
+                interfaces,
+                shared_instance_floor_ms: None,
+            },
+        )
+    }
+
+    pub fn prepare_send_single_packet_deferred_with_timing(
+        &self,
+        id: CommandId,
+        send: SendSinglePacket,
+        now: InstantMillis,
+        entropy: SendSinglePacketEntropy,
+        timing: FirstHopTiming<'_>,
+    ) -> SendSinglePacketPrepared {
         let send = match self.ingest_send_single_packet(id, send) {
             CommandOutcome::OwesSendSinglePacket { send, .. } => send,
             CommandOutcome::SendSinglePacketRejected { id, rejection } => {
@@ -300,7 +388,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             _ => return SendSinglePacketPrepared::RouteVanished { id },
         };
-        let Some(plan) = self.gather_send_single_plan(&send, now) else {
+        let Some(plan) = self.gather_send_single_plan(&send, now, timing) else {
             return SendSinglePacketPrepared::RouteVanished { id };
         };
         let (ephemeral_secret, iv) = entropy.into_parts();
@@ -402,8 +490,8 @@ mod tests {
         AnnounceAppData, AnnounceIngest, AnnounceNow, AnnounceTarget, CommandOutcome,
         IngestPacketOutcome, IssuedCommand, PrnsCommand, RatchetPolicy, SendSinglePacketPayload,
     };
-    use crate::interfaces::AttachedInterfaces;
     use crate::interfaces::InboundPacket;
+    use crate::interfaces::{AttachedInterfaces, BitrateBps};
     use crate::routing::delivery::receipts::ExpiredReceipt;
     use crate::routing::delivery::{Delivery, SingleDelivery};
     use crate::routing::routes::RouteResponsiveness;
@@ -1434,5 +1522,76 @@ mod tests {
         );
         assert_eq!(state.receipts.pop_expired(InstantMillis(13_000)), None);
         assert_eq!(state.receipts.len(), 0);
+    }
+
+    #[test]
+    fn a_single_receipt_uses_the_selected_egress_bitrate() {
+        let mut state = hearer();
+        hear_announce(
+            &mut state,
+            &bytes_from_hex(RNS_1_4_2_RATCHETED_ANNOUNCE),
+            arrival(),
+        );
+        let mut selected = routable_descriptor(arrival());
+        selected.bitrate = BitrateBps::guess(250);
+        let mut unrelated = routable_descriptor(InterfaceId::new([0xB2; 8]));
+        unrelated.bitrate = BitrateBps::guess(5);
+        let interfaces = [selected, unrelated];
+        let mut buf = [0u8; BROADCAST_MTU];
+
+        state
+            .write_commanded_send_single_packet_with_interfaces(
+                CommandId(7),
+                &send_of(b"slow-egress"),
+                InstantMillis(1_000),
+                vector_send_entropy(),
+                AttachedInterfaces::new(&interfaces),
+                &mut buf,
+            )
+            .dispatched();
+
+        assert_eq!(state.receipts.pop_expired(InstantMillis(28_999)), None);
+        assert_eq!(
+            state
+                .receipts
+                .pop_expired(InstantMillis(29_000))
+                .map(|expired| expired.command_id),
+            Some(CommandId(7)),
+        );
+    }
+
+    #[test]
+    fn a_single_receipt_falls_back_when_the_selected_egress_cannot_transmit() {
+        let mut state = hearer();
+        hear_announce(
+            &mut state,
+            &bytes_from_hex(RNS_1_4_2_RATCHETED_ANNOUNCE),
+            arrival(),
+        );
+        let mut selected = routable_descriptor(arrival());
+        selected.bitrate = BitrateBps::guess(5);
+        selected.capabilities.egress = crate::interfaces::EgressCapability::Disabled;
+        let interfaces = [selected];
+        let mut buf = [0u8; BROADCAST_MTU];
+
+        state
+            .write_commanded_send_single_packet_with_interfaces(
+                CommandId(7),
+                &send_of(b"disabled-egress"),
+                InstantMillis(1_000),
+                vector_send_entropy(),
+                AttachedInterfaces::new(&interfaces),
+                &mut buf,
+            )
+            .dispatched();
+
+        assert_eq!(state.receipts.pop_expired(InstantMillis(12_999)), None);
+        assert_eq!(
+            state
+                .receipts
+                .pop_expired(InstantMillis(13_000))
+                .map(|expired| expired.command_id),
+            Some(CommandId(7)),
+        );
     }
 }

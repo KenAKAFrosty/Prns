@@ -13,8 +13,8 @@ use tokio::sync::oneshot;
 use crate::engine::Departure;
 use crate::interfaces::IfacContext;
 use crate::interfaces::{
-    ConnectionView, FrameAccounting, FrameAccountingRecorder, InterfaceId, InterfaceKind,
-    InterfaceOriginKind, InterfaceSnapshot, Membership, ReportsStatus, StatusView,
+    ConnectionView, FrameAccounting, FrameAccountingRecorder, InterfaceDescriptor, InterfaceId,
+    InterfaceKind, InterfaceOriginKind, InterfaceSnapshot, Membership, ReportsStatus, StatusView,
 };
 use crate::manifold::driver::{
     tokio_grant_lane, AddInterfaceCommand, HostCommand, TokioInterfaceSeam,
@@ -179,6 +179,7 @@ impl PrnsNodeHandle {
             view.map(|view| RegisteredInterface {
                 view,
                 placement,
+                descriptor: Some(descriptor),
                 mode: descriptor.mode,
                 gravity: descriptor.gravity,
                 ifac: ifac.as_ref().map(RuntimeIfac::snapshot),
@@ -245,6 +246,32 @@ impl PrnsNodeHandle {
                             membership: placement.membership,
                         },
                         ifac: ifac.clone(),
+                    }
+                })
+            })
+            .collect()
+    }
+
+    #[must_use]
+    pub fn interface_timing_inventory(
+        &self,
+    ) -> std::vec::Vec<crate::node_introspection::InterfaceTimingSnapshot> {
+        let Ok(map) = self.interfaces.lock() else {
+            return std::vec::Vec::new();
+        };
+        map.values()
+            .filter_map(|registered| {
+                registered
+                    .descriptor
+                    .map(|descriptor| (descriptor, (registered.view)()))
+            })
+            .flat_map(|(descriptor, vitals)| {
+                vitals.into_iter().map(move |vitals| {
+                    crate::node_introspection::InterfaceTimingSnapshot {
+                        id: vitals.id,
+                        bitrate: descriptor.bitrate,
+                        capabilities: descriptor.capabilities,
+                        connection: vitals.connection,
                     }
                 })
             })
@@ -341,6 +368,7 @@ impl PrnsNodeHandle {
             view.map(|view| RegisteredInterface {
                 view,
                 placement,
+                descriptor: None,
                 mode: policy.mode,
                 gravity: policy.gravity,
                 ifac: ifac_status,
@@ -576,6 +604,7 @@ impl Fleet {
             view.map(|view| RegisteredInterface {
                 view,
                 placement,
+                descriptor: Some(descriptor),
                 mode: descriptor.mode,
                 gravity: descriptor.gravity,
                 ifac: self.ifac.as_ref().map(RuntimeIfac::snapshot),
@@ -740,6 +769,7 @@ pub(super) async fn drive_interfaces(
 pub(super) struct RegisteredInterface {
     view: StatusView,
     placement: InterfacePlacement,
+    descriptor: Option<InterfaceDescriptor>,
     mode: crate::interfaces::InterfaceMode,
     gravity: crate::interfaces::InterfaceGravity,
     ifac: Option<InterfaceIfacSnapshot>,

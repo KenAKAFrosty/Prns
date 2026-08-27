@@ -174,6 +174,45 @@ pub(super) async fn run(
         event = "daemon_starting",
         version = env!("CARGO_PKG_VERSION"),
     );
+    match configuration::refresh_staged_bundled_source(&config_dir) {
+        Ok(configuration::BundledSourceRefresh::Updated(staged)) => {
+            tracing::info!(
+                event = "nnpages_source_archive_updated",
+                path = %staged.archive_path.display(),
+                archive_bytes = staged.archive_bytes,
+            );
+            if let Err(error) = configuration::refresh_source_page(&config_dir) {
+                tracing::warn!(
+                    event = "nnpages_source_page_refresh_failed",
+                    cause = "source_archive_update",
+                    error = %error,
+                );
+            }
+        }
+        Ok(configuration::BundledSourceRefresh::Current(staged)) => {
+            tracing::debug!(
+                event = "nnpages_source_archive_current",
+                path = %staged.archive_path.display(),
+                archive_bytes = staged.archive_bytes,
+            );
+        }
+        Ok(configuration::BundledSourceRefresh::OperatorOwned) => {
+            tracing::debug!(
+                event = "nnpages_source_archive_operator_owned",
+                "leaving the hosted source archive untouched"
+            );
+        }
+        Ok(
+            configuration::BundledSourceRefresh::NotStaged
+            | configuration::BundledSourceRefresh::BundleUnavailable,
+        ) => {}
+        Err(error) => {
+            tracing::warn!(
+                event = "nnpages_source_archive_update_failed",
+                error = %error,
+            );
+        }
+    }
     if let Some(path) = &config_path {
         tracing::info!(event = "config_loaded", path = %path.display());
     } else {

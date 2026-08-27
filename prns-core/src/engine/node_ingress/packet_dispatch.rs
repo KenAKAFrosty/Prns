@@ -334,7 +334,7 @@ impl<S: StorageLayout> EngineState<S> {
                     },
                     source,
                     interfaces,
-                    RelayAudience::OnlineTransports,
+                    RelayAudience::OnlineNetworkInterfaces,
                     now,
                     sink,
                 );
@@ -362,7 +362,7 @@ impl<S: StorageLayout> EngineState<S> {
                     },
                     source,
                     interfaces,
-                    RelayAudience::Transports,
+                    RelayAudience::AllNetworkInterfaces,
                     now,
                     sink,
                 );

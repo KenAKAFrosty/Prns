@@ -26,7 +26,7 @@ ENV RUSTUP_TOOLCHAIN=1.96.0
 ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 
 RUN test "$(rustc --version | cut -d ' ' -f 2)" = "1.96.0" \
-    && cargo build \
+    && PRNS_BUILD_COMMIT="${VCS_REF}" cargo build \
     --manifest-path prnsd/Cargo.toml \
     --locked \
     --release \

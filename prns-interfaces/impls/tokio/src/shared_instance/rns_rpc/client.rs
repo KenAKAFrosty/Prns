@@ -13,6 +13,7 @@ use prns_core::interfaces::shared_instance::rns_rpc::{
     PacketHashArgument, RnsInteger, RnsNumber, RnsRpcRequest, RnsRpcScalarReply,
     RnsRpcScalarReplyDecodeError, RpcAuthenticationKey, RpcDialect, RpcVerb, RNS_NO_INTERFACE_NAME,
 };
+use prns_core::interfaces::BitrateBps;
 use prns_core::routing::dedup::PacketHash;
 use prns_core::routing::BlackholedIdentity;
 use prns_core::units::InstantMillis;
@@ -328,13 +329,47 @@ impl SharedInstanceRpcClient {
                 operation: RpcVerb::GetFirstHopTimeout,
                 reply: RnsRpcScalarReply::Null,
             })?;
-        if seconds < 0.0 || !seconds.is_finite() {
-            return Err(SharedInstanceRpcClientError::UnexpectedScalarReply {
-                operation: RpcVerb::GetFirstHopTimeout,
-                reply: RnsRpcScalarReply::Float(seconds),
-            });
+        duration_from_seconds(seconds, RpcVerb::GetFirstHopTimeout)
+    }
+
+    pub async fn lowest_interface_bitrate(
+        &self,
+    ) -> Result<Option<BitrateBps>, SharedInstanceRpcClientError> {
+        let reply = self
+            .scalar(
+                RnsRpcRequest::LowestInterfaceBitrate,
+                RpcVerb::GetLowestInterfaceBitrate,
+            )
+            .await?;
+        match reply {
+            RnsRpcScalarReply::Null => Ok(None),
+            RnsRpcScalarReply::Integer(value) => value
+                .nonnegative_value()
+                .and_then(BitrateBps::new)
+                .map(Some)
+                .ok_or(SharedInstanceRpcClientError::UnexpectedScalarReply {
+                    operation: RpcVerb::GetLowestInterfaceBitrate,
+                    reply: RnsRpcScalarReply::Integer(value),
+                }),
+            reply => Err(SharedInstanceRpcClientError::UnexpectedScalarReply {
+                operation: RpcVerb::GetLowestInterfaceBitrate,
+                reply,
+            }),
         }
-        Ok(Duration::from_secs_f64(seconds))
+    }
+
+    pub async fn medium_path_timeout(&self) -> Result<Duration, SharedInstanceRpcClientError> {
+        let seconds = self
+            .numeric(
+                RnsRpcRequest::MediumPathTimeout,
+                RpcVerb::GetMediumPathTimeout,
+            )
+            .await?
+            .ok_or(SharedInstanceRpcClientError::UnexpectedScalarReply {
+                operation: RpcVerb::GetMediumPathTimeout,
+                reply: RnsRpcScalarReply::Null,
+            })?;
+        duration_from_seconds(seconds, RpcVerb::GetMediumPathTimeout)
     }
 
     pub async fn packet_phy(
@@ -681,6 +716,19 @@ impl SharedInstanceRpcClient {
     }
 }
 
+fn duration_from_seconds(
+    seconds: f64,
+    operation: RpcVerb,
+) -> Result<Duration, SharedInstanceRpcClientError> {
+    if seconds < 0.0 || !seconds.is_finite() {
+        return Err(SharedInstanceRpcClientError::UnexpectedScalarReply {
+            operation,
+            reply: RnsRpcScalarReply::Float(seconds),
+        });
+    }
+    Ok(Duration::from_secs_f64(seconds))
+}
+
 fn dialect_fallback_candidate(error: &SharedInstanceRpcClientError) -> bool {
     matches!(
         error,
@@ -732,6 +780,15 @@ mod tests {
             RpcAuthenticationKey::new(vec![key; 32]),
             IdentityHash::new([0x42; 16]),
         )
+    }
+
+    #[test]
+    fn fractional_timeout_seconds_decode_without_truncation() {
+        assert_eq!(
+            duration_from_seconds(18.013, RpcVerb::GetFirstHopTimeout),
+            Ok(Duration::from_millis(18_013)),
+        );
+        assert!(duration_from_seconds(-0.001, RpcVerb::GetMediumPathTimeout).is_err());
     }
 
     async fn serve_one(

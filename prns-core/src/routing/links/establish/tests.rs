@@ -8,7 +8,7 @@ use crate::engine::{
     WakeSchedule,
 };
 use crate::engine::{EstablishLinkFailure, WakeSchedules};
-use crate::interfaces::{InboundPacket, InterfaceDescriptor};
+use crate::interfaces::{BitrateBps, InboundPacket, InterfaceDescriptor};
 use crate::routing::announce::defaults::DEFAULT_ROUTE_EXPIRY_MILLIS;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::handshake::parse_link_request;
@@ -144,8 +144,63 @@ fn a_commanded_link_request_frames_tracks_and_arms_the_lane() {
     ));
     assert_eq!(
         state.link_deadlines_wake(),
-        WakeSchedule::At(InstantMillis(13_000)),
+        WakeSchedule::At(InstantMillis(13_001)),
         "one direct hop arms first-hop + one per-hop increment",
+    );
+}
+
+#[test]
+fn link_establishment_uses_the_selected_egress_bitrate() {
+    let mut state = neighbor_with_a_route();
+    let mut selected = routable_descriptor(arrival());
+    selected.bitrate = BitrateBps::guess(250);
+    let mut unrelated = routable_descriptor(InterfaceId::new([0xB2; 8]));
+    unrelated.bitrate = BitrateBps::guess(5);
+    let interfaces = [selected, unrelated];
+    let mut buf = [0u8; BROADCAST_MTU];
+
+    state
+        .write_commanded_link_request(
+            CommandId(7),
+            &establish(),
+            InstantMillis(1_000),
+            vector_establish_entropy(),
+            AttachedInterfaces::new(&interfaces),
+            &mut buf,
+        )
+        .dispatched();
+
+    assert_eq!(
+        state.link_deadlines_wake(),
+        WakeSchedule::At(InstantMillis(29_000)),
+        "22 seconds for the selected 250 bps first hop plus one 6-second hop",
+    );
+}
+
+#[test]
+fn link_establishment_falls_back_when_the_selected_egress_cannot_transmit() {
+    let mut state = neighbor_with_a_route();
+    let mut selected = routable_descriptor(arrival());
+    selected.bitrate = BitrateBps::guess(5);
+    selected.capabilities.egress = crate::interfaces::EgressCapability::Disabled;
+    let interfaces = [selected];
+    let mut buf = [0u8; BROADCAST_MTU];
+
+    state
+        .write_commanded_link_request(
+            CommandId(7),
+            &establish(),
+            InstantMillis(1_000),
+            vector_establish_entropy(),
+            AttachedInterfaces::new(&interfaces),
+            &mut buf,
+        )
+        .dispatched();
+
+    assert_eq!(
+        state.link_deadlines_wake(),
+        WakeSchedule::At(InstantMillis(13_000)),
+        "an unusable route descriptor retains the six-second first-hop fallback",
     );
 }
 
@@ -218,7 +273,7 @@ fn the_command_lane_fires_the_link_request_at_the_route_interface() {
     );
     assert_eq!(
         delta.link_deadlines,
-        WakeSchedule::At(InstantMillis(13_000)),
+        WakeSchedule::At(InstantMillis(13_001)),
     );
 }
 
@@ -248,7 +303,7 @@ fn a_silent_handshake_settles_its_command_at_the_deadline() {
 
     let mut settled = std::vec::Vec::new();
     let early = state.fire_due_link_deadlines(
-        InstantMillis(12_999),
+        InstantMillis(13_000),
         AttachedInterfaces::new(&arrival_interfaces()),
         &mut |bytes: &mut [u8]| bytes.fill(0xE1),
         &mut |reaction| settled.extend(settled_of(reaction)),
@@ -256,11 +311,11 @@ fn a_silent_handshake_settles_its_command_at_the_deadline() {
     assert!(settled.is_empty(), "the deadline has not passed yet");
     assert_eq!(
         early.link_deadlines,
-        WakeSchedule::At(InstantMillis(13_000)),
+        WakeSchedule::At(InstantMillis(13_001)),
     );
 
     let after = state.fire_due_link_deadlines(
-        InstantMillis(13_000),
+        InstantMillis(13_001),
         AttachedInterfaces::new(&arrival_interfaces()),
         &mut |bytes: &mut [u8]| bytes.fill(0xE1),
         &mut |reaction| settled.extend(settled_of(reaction)),
@@ -309,7 +364,7 @@ fn a_timed_out_link_request_marks_its_destination_unresponsive() {
     );
 
     let _ = state.fire_due_link_deadlines(
-        InstantMillis(13_000),
+        InstantMillis(13_001),
         AttachedInterfaces::new(&arrival_interfaces()),
         &mut |bytes: &mut [u8]| bytes.fill(0xE1),
         &mut |_| {},
@@ -2225,6 +2280,46 @@ fn a_duplicate_transported_link_request_is_dropped_as_a_duplicate() {
         outcome,
         IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
         "RNS 1.4.2 remembers transported link requests; the echo is a duplicate, not a capacity event",
+    );
+}
+
+#[test]
+fn a_transported_link_proof_allowance_uses_the_outbound_interface() {
+    let iface_to_b = InterfaceId::new([0xB7; 8]);
+    let mut inbound = routable_descriptor(arrival());
+    inbound.bitrate = BitrateBps::guess(5);
+    let mut outbound = routable_descriptor(iface_to_b);
+    outbound.bitrate = BitrateBps::guess(250);
+    let relay_view = [inbound, outbound];
+    let (mut relay, _responder) = relay_that_routes_to_the_responder(iface_to_b);
+    let mut initiator = EngineState::<TestStorageLayout>::new(second_secret_key());
+    let request = transported_request_wire(&mut initiator);
+    let link_id = parse_link_request(&request).unwrap().link_id;
+
+    let mut wire = request;
+    assert!(matches!(
+        relay.ingest_packet_with(
+            InboundPacket {
+                arrived_at: InstantMillis(1_100),
+                source_interface: arrival(),
+                bytes: &mut wire,
+            },
+            &mut |_| {},
+            AttachedInterfaces::new(&relay_view),
+            &mut |_| {},
+            None,
+        ),
+        IngestPacketOutcome::TransportedLinkRequest { .. }
+    ));
+
+    assert_eq!(
+        relay
+            .transported_links
+            .entry_for(&link_id)
+            .unwrap()
+            .proof_timeout,
+        InstantMillis(23_100),
+        "the 16-second outbound airtime allowance is followed by one six-second hop; the 5 bps arrival lane is irrelevant",
     );
 }
 

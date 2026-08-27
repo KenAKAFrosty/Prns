@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod build_identity;
 mod cli;
 mod command_context;
 mod daemon;

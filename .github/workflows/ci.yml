@@ -290,8 +290,6 @@ jobs:
         working-directory: prnsd
 
   no-std-embedded:
-    # The forcing-function gate: the core stays no_std + alloc-free and cross-compiles
-    # to the ESP32-C6 (riscv32imac). Reuses the committed script verbatim.
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -303,26 +301,28 @@ jobs:
           components: llvm-tools-preview
           targets: riscv32imac-unknown-none-elf, thumbv7em-none-eabihf
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
-      - run: bash validation/platforms/no-std-esp-build.sh
-      - name: prns-interfaces-embassy — cross-build (ESP32-C6 / riscv32imac)
-        run: cargo build --locked --target riscv32imac-unknown-none-elf --features "tcp,wifi-auto,lora,esp-now,bluetooth-auto,usb"
-        working-directory: prns-interfaces/impls/embassy
-      - name: prns-interfaces-embassy — cross-build (nRF52840 / thumbv7em)
-        run: cargo build --locked --target thumbv7em-none-eabihf --features "lora,bluetooth-auto,usb"
-        working-directory: prns-interfaces/impls/embassy
-      - name: t-echo firmware — cross-build both S140 foundations (nRF52840 / thumbv7em)
-        run: |
-          cargo build --release --locked --no-default-features \
-            --features board-t-echo,softdevice-s140-v6 \
-            --target-dir target/s140-v6
-          cargo build --release --locked --no-default-features \
-            --features board-t-echo,softdevice-s140-v7 \
-            --target-dir target/s140-v7
-        working-directory: personal-hopspot/embedded/nrf52840
-      - name: heltec t114 firmware — build recovery-compatible developer UF2
-        run: ./tools/prns build hopspot t114
-      - name: heltec meshtower v2 firmware — build recovery-compatible developer UF2
-        run: ./tools/prns build hopspot mesh-tower-v2
+      - name: complete no_std and nRF52840 firmware matrix
+        run: python3 validation/run.py run --suite embedded-builds --expected-sha "$GITHUB_SHA"
+
+  esp32-firmware:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+      - name: Install checksum-pinned ESP compiler and tools
+        run: ./tools/prns release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: personal-hopspot/embedded/esp32
+          shared-key: esp32-firmware-check
+      - name: compile every ESP32 shipping face on its real architecture
+        run: python3 validation/run.py run --suite esp32-firmware-check --expected-sha "$GITHUB_SHA"
 
   android-service:
     # Android is now more than a foreground Activity shell: the Hopspot app packages a foreground
@@ -549,6 +549,7 @@ jobs:
       - release-workflow-contracts
       - msrv
       - no-std-embedded
+      - esp32-firmware
       - android-service
       - macos-ble
       - windows-desktop
@@ -565,6 +566,7 @@ jobs:
       WORKFLOWS_RESULT: ${{ needs.release-workflow-contracts.result }}
       MSRV_RESULT: ${{ needs.msrv.result }}
       EMBEDDED_RESULT: ${{ needs.no-std-embedded.result }}
+      ESP32_RESULT: ${{ needs.esp32-firmware.result }}
       ANDROID_RESULT: ${{ needs.android-service.result }}
       APPLE_RESULT: ${{ needs.macos-ble.result }}
       WINDOWS_RESULT: ${{ needs.windows-desktop.result }}
@@ -582,6 +584,7 @@ jobs:
             "$WORKFLOWS_RESULT" \
             "$MSRV_RESULT" \
             "$EMBEDDED_RESULT" \
+            "$ESP32_RESULT" \
             "$ANDROID_RESULT" \
             "$APPLE_RESULT" \
             "$WINDOWS_RESULT" \
