@@ -1,62 +1,37 @@
 #![expect(clippy::expect_used, clippy::panic)]
 
+mod common;
+
 use core::time::Duration;
 
 use personal_rns::prelude::*;
 
 const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(10);
-const TARGET_ASPECTS: &[&str] = &["remote-control", "target"];
-
-struct TargetState {
-    access_table: HeapRemoteControlAccessTable,
-    description: RemoteControlDescription,
-}
-
-impl RemoteControlEndpointState for TargetState {
-    type AccessTable = HeapRemoteControlAccessTable;
-
-    fn remote_control_access(&self) -> &Self::AccessTable {
-        &self.access_table
-    }
-
-    fn remote_control_description(&self) -> RemoteControlDescription {
-        self.description
-    }
-}
 
 #[tokio::main]
 async fn main() {
-    let target_secret = try_generate_identity_secret().expect("target identity generation failed");
-    let target_remote_control_identities = RemoteControlNodeIdentitySecrets::new(
-        RemoteControlControllerIdentitySecret::from(
-            try_generate_identity_secret().expect("target controller identity generation failed"),
-        ),
-        RemoteControlTargetIdentitySecret::from(target_secret.clone()),
-    )
-    .expect("target controller and target identities are distinct");
-    let target_destination =
-        destination(target_secret, TARGET_ASPECTS, ServeMyRequestEndpoints::Yes);
-    let target_destination_hash = target_destination
-        .destination_hash()
-        .expect("invalid target destination name");
-
-    let controller_secret =
-        try_generate_identity_secret().expect("controller identity generation failed");
-    let controller_remote_control_identities = RemoteControlNodeIdentitySecrets::new(
-        RemoteControlControllerIdentitySecret::from(controller_secret),
-        RemoteControlTargetIdentitySecret::from(
-            try_generate_identity_secret().expect("controller target identity generation failed"),
-        ),
-    )
-    .expect("controller and controller target identities are distinct");
-    let controller_identities = controller_remote_control_identities.identities();
+    let target_identity_secrets = common::remote_control_identity_secrets(0xD0, 0xD1);
+    let target_identities = target_identity_secrets.identities();
+    let target_destination_hash = target_identities.target().endpoint().destination_hash();
+    let controller_identity_secrets = common::remote_control_identity_secrets(0xD2, 0xD3);
+    let controller_identities = controller_identity_secrets.identities();
     let controller_identity = controller_identities.controller().identity_hash();
     let controller_public_identity = *controller_identities.controller();
-
-    let mut access_table = HeapRemoteControlAccessTable::default();
-    access_table
-        .upsert(controller_public_identity)
-        .expect("growable access table refused an identity");
+    let allowed_controllers = [controller_public_identity];
+    let target_remote_control = RemoteControlService::new(
+        target_identity_secrets,
+        RemoteControlPublicAppData::try_from(b"target".as_slice()).expect("target app data fits"),
+        RemoteControlInitialAccess::Controllers(
+            RemoteControlAllowedControllers::try_from(allowed_controllers.as_slice())
+                .expect("one controller is allowed"),
+        ),
+    );
+    let controller_remote_control = RemoteControlService::new(
+        controller_identity_secrets,
+        RemoteControlPublicAppData::try_from(b"controller".as_slice())
+            .expect("controller app data fits"),
+        RemoteControlInitialAccess::Nobody,
+    );
 
     let server = TcpServer::bind("127.0.0.1:0")
         .await
@@ -66,29 +41,25 @@ async fn main() {
         .expect("could not read server address")
         .to_string();
 
-    let mut target = PrnsNode::new(PrnsNodeRecipe {
+    let target = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        pre_configured_destinations: [target_destination],
-        app_state: TargetState {
-            access_table,
-            description: RemoteControlDescription::default(),
-        },
+        remote_control: target_remote_control,
+        pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+        app_state: (),
         storage: GrowableHeap,
-        request_endpoints: request_endpoints![RemoteControlEndpoint],
+        request_endpoints: request_endpoints![],
         on_event: |_event, _state| {},
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
     });
-    target
-        .configure_remote_control_identities(target_remote_control_identities)
-        .expect("target identities did not fit the identity vault");
     let target_handle = target.handle();
     let _server = target_handle.supervise(server);
 
     let (heard_sender, mut heard_receiver) = tokio::sync::mpsc::unbounded_channel();
-    let mut controller = PrnsNode::new(PrnsNodeRecipe {
+    let controller = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        pre_configured_destinations: [],
+        remote_control: controller_remote_control,
+        pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
@@ -102,9 +73,6 @@ async fn main() {
         },
         persistence: NoPersistence,
     });
-    controller
-        .configure_remote_control_identities(controller_remote_control_identities)
-        .expect("controller identities did not fit the identity vault");
     let controller_handle = controller.handle();
 
     let announcer = target_handle.clone();
@@ -178,24 +146,5 @@ async fn main() {
             result.expect("controller failed");
             panic!("controller stopped before RemoteControl exchange completed");
         }
-    }
-}
-
-fn destination(
-    identity: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
-    aspects: &'static [&'static str],
-    request_endpoints: ServeMyRequestEndpoints,
-) -> PreConfiguredDestination<'static> {
-    PreConfiguredDestination::Single {
-        app_name: "prns-example",
-        aspects,
-        identity,
-        announce_app_data: b"",
-        proof: ProofStrategy::ProveAll,
-        link_requests: LinkRequestPolicy::AcceptAll,
-        ratchet: RatchetPolicy::NoRatchets,
-        resource_strategy: ResourceStrategy::AcceptNone,
-        maximum_request_bytes: Default::default(),
-        request_endpoints,
     }
 }

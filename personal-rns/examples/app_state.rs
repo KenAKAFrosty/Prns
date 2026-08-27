@@ -1,5 +1,7 @@
 #![expect(clippy::expect_used, clippy::panic)]
 
+mod common;
+
 use core::time::Duration;
 use std::cell::Cell;
 
@@ -54,6 +56,7 @@ async fn main() {
         .to_string();
     let responder = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
+        remote_control: common::remote_control_service(0xD0, 0xD1),
         pre_configured_destinations: [responder_destination],
         app_state: StatusBoard {
             greeting: "hello",
@@ -72,6 +75,7 @@ async fn main() {
     let client = TcpClientInterface::new(server_address);
     let requester = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
+        remote_control: common::remote_control_service(0xD2, 0xD3),
         pre_configured_destinations: [requester_destination()],
         app_state: AnnounceRelay {
             heard: heard_sender,

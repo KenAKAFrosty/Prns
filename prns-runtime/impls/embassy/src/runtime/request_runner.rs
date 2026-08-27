@@ -9,12 +9,14 @@ use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::units::RttMillis;
 use crate::wire::DestinationHash;
+use prns_runtime::runtime::placement::dispatch_remote_control_request;
 
 use super::node_facade::PrnsNodeHandle;
 use super::request_endpoints::{
     dispatch_request, Decline, InboundRequest, RequestEndpointSet, ResponseCapacityExceeded,
     ResponseSink,
 };
+use super::AssembledRemoteControl;
 
 #[allow(clippy::large_enum_variant)]
 enum RunnerResponse {
@@ -125,6 +127,7 @@ pub(super) async fn run_router<
     const REQUEST_BYTES: usize,
 >(
     state: &St,
+    remote_control: &AssembledRemoteControl,
     requests: Receiver<'_, M, RunnerRequest<REQUEST_BYTES>, REQUESTS>,
     commands: PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
 ) where
@@ -141,7 +144,7 @@ pub(super) async fn run_router<
             REQUEST_COMPLETIONS,
             RESPONSE_BYTES,
             REQUEST_BYTES,
-        >(state, commands, requests.receive().await)
+        >(state, remote_control, commands, requests.receive().await)
         .await;
     }
 }
@@ -157,6 +160,7 @@ async fn dispatch<
     const REQUEST_BYTES: usize,
 >(
     state: &St,
+    remote_control: &AssembledRemoteControl,
     commands: PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
     request: RunnerRequest<REQUEST_BYTES>,
 ) where
@@ -174,7 +178,21 @@ async fn dispatch<
     );
     let responder = inbound.respond_token();
     let mut body = RunnerResponse::Buffered(RespondData::new());
-    match dispatch_request::<St, R>(state, &commands, request.path_hash, inbound, &mut body).await {
+    let dispatched = if request.destination == remote_control.target_endpoint().destination_hash()
+        && request.path_hash == remote_control.request_endpoint_id()
+    {
+        dispatch_remote_control_request(
+            state,
+            remote_control.access(),
+            &commands,
+            inbound,
+            &mut body,
+        )
+        .await
+    } else {
+        dispatch_request::<St, R>(state, &commands, request.path_hash, inbound, &mut body).await
+    };
+    match dispatched {
         Ok(()) => match body {
             RunnerResponse::Buffered(body) => {
                 commands.respond_owned_packed(responder, body);
@@ -197,13 +215,23 @@ async fn dispatch<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::PrnsCommand;
+    use crate::engine::{EngineState, PrnsCommand};
     use crate::runtime::request_endpoints::{
         RequestContext, RequestEndpoint, RequestEndpointPolicy,
     };
     use embassy_futures::block_on;
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
     use embassy_sync::channel::Channel;
+    use prns_core::storage::GrowableHeap;
+
+    fn remote_control() -> AssembledRemoteControl {
+        let mut engine = EngineState::<GrowableHeap>::default();
+        crate::runtime::configure_remote_control_service(
+            &mut engine,
+            super::super::node_facade::test_remote_control_service(),
+        )
+        .expect("RemoteControl fits growable storage")
+    }
 
     struct DestinationEcho;
     struct DestinationRoutes;
@@ -289,6 +317,7 @@ mod tests {
         let channel = Channel::<M, crate::engine::IssuedCommand, 1>::new();
         let completions = crate::runtime::CompletionPool::<M, 1>::new();
         let handle = PrnsNodeHandle::new(channel.sender(), &completions);
+        let remote_control = remote_control();
         let request = RunnerRequest {
             destination: DestinationHash::new([0x5A; 16]),
             link_id: LinkId::new([1; 16]),
@@ -302,6 +331,7 @@ mod tests {
 
         block_on(dispatch::<(), StaticRoutes, M, 1, 1, 0, 0, 16>(
             &(),
+            &remote_control,
             handle,
             request,
         ));
@@ -327,6 +357,7 @@ mod tests {
         let channel = Channel::<M, crate::engine::IssuedCommand, 1>::new();
         let completions = crate::runtime::CompletionPool::<M, 1>::new();
         let handle = PrnsNodeHandle::new(channel.sender(), &completions);
+        let remote_control = remote_control();
         let destination = DestinationHash::new([0x5a; 16]);
         let request = RunnerRequest {
             destination,
@@ -341,6 +372,7 @@ mod tests {
 
         block_on(dispatch::<(), DestinationRoutes, M, 1, 1, 0, 0, 16>(
             &(),
+            &remote_control,
             handle,
             request,
         ));

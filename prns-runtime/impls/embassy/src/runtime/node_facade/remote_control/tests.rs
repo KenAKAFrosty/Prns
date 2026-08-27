@@ -5,10 +5,11 @@ use embassy_sync::channel::Channel;
 use crate::engine::{
     DeliveryEvidence, IssuedCommand, Journaled, PacketReceiptDelivered, PrnsCommand, Settlement,
 };
+use crate::remote_control::REMOTE_CONTROL_REQUEST_ENDPOINT_ID;
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
 use crate::runtime::request_endpoints::RequestEndpointId;
-use crate::runtime::{RemoteControlAnnounce, RemoteControlDescribe, REMOTE_CONTROL_ENDPOINT_ID};
+use crate::runtime::{RemoteControlAnnounce, RemoteControlDescribe};
 use crate::units::RttMillis;
 use prns_core::remote_control::{
     RemoteControlAnnounceOutcome, RemoteControlDescription, RemoteControlProtocolVersion,
@@ -46,7 +47,7 @@ fn announce_uses_the_bounded_embassy_request_lane() {
         assert_eq!(request.link_id, link_id);
         assert_eq!(
             request.path_hash,
-            RequestEndpointId::of(REMOTE_CONTROL_ENDPOINT_ID),
+            RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
         );
         assert_eq!(
             request.data.as_slice(),
@@ -104,7 +105,7 @@ fn describe_uses_the_bounded_embassy_request_lane() {
         assert_eq!(request.link_id, link_id);
         assert_eq!(
             request.path_hash,
-            RequestEndpointId::of(REMOTE_CONTROL_ENDPOINT_ID),
+            RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
         );
         assert_eq!(
             request.data.as_slice(),

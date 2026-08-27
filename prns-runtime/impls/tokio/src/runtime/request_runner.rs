@@ -15,10 +15,12 @@ use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::units::RttMillis;
 use crate::wire::DestinationHash;
+use prns_runtime::runtime::placement::dispatch_remote_control_request;
 
 use super::node_facade::{PrnsNodeHandle, ResponseSendError};
 use super::request_endpoints::{dispatch_request, Decline, InboundRequest, RequestEndpointSet};
 use super::request_endpoints::{ResponseCapacityExceeded, ResponseSink};
+use super::AssembledRemoteControl;
 
 pub(super) const REQUEST_QUEUE_DEPTH: usize = 1024;
 const MAX_IN_FLIGHT: usize = 256;
@@ -120,6 +122,7 @@ impl ResponseSink for RunnerResponse {
 
 pub(super) async fn run_router<St, R: RequestEndpointSet<St>>(
     state: &St,
+    remote_control: &AssembledRemoteControl,
     mut requests: mpsc::Receiver<RunnerRequest>,
     commands: PrnsNodeHandle,
 ) {
@@ -144,6 +147,7 @@ pub(super) async fn run_router<St, R: RequestEndpointSet<St>>(
                         });
                     in_flight.push(dispatch_guarded::<St, R>(
                         state,
+                        remote_control,
                         &commands,
                         request,
                         response_lane,
@@ -157,15 +161,22 @@ pub(super) async fn run_router<St, R: RequestEndpointSet<St>>(
 
 async fn dispatch_guarded<St, R: RequestEndpointSet<St>>(
     state: &St,
+    remote_control: &AssembledRemoteControl,
     commands: &PrnsNodeHandle,
     request: RunnerRequest,
     response_lane: Arc<Mutex<()>>,
 ) {
     let link_id = request.link_id;
-    if AssertUnwindSafe(dispatch::<St, R>(state, commands, request, response_lane))
-        .catch_unwind()
-        .await
-        .is_err()
+    if AssertUnwindSafe(dispatch::<St, R>(
+        state,
+        remote_control,
+        commands,
+        request,
+        response_lane,
+    ))
+    .catch_unwind()
+    .await
+    .is_err()
     {
         commands.close_link(link_id);
     }
@@ -182,6 +193,7 @@ async fn dispatch_guarded<St, R: RequestEndpointSet<St>>(
 )]
 async fn dispatch<St, R: RequestEndpointSet<St>>(
     state: &St,
+    remote_control: &AssembledRemoteControl,
     commands: &PrnsNodeHandle,
     request: RunnerRequest,
     response_lane: Arc<Mutex<()>>,
@@ -198,7 +210,21 @@ async fn dispatch<St, R: RequestEndpointSet<St>>(
     );
     let responder = inbound.respond_token();
     let mut body = RunnerResponse::Buffered(std::vec::Vec::new());
-    match dispatch_request::<St, R>(state, commands, request.path_hash, inbound, &mut body).await {
+    let dispatched = if request.destination == remote_control.target_endpoint().destination_hash()
+        && request.path_hash == remote_control.request_endpoint_id()
+    {
+        dispatch_remote_control_request(
+            state,
+            remote_control.access(),
+            commands,
+            inbound,
+            &mut body,
+        )
+        .await
+    } else {
+        dispatch_request::<St, R>(state, commands, request.path_hash, inbound, &mut body).await
+    };
+    match dispatched {
         Ok(()) => {
             let _response_guard = response_lane.lock().await;
             let result = match body {
@@ -269,10 +295,20 @@ async fn dispatch<St, R: RequestEndpointSet<St>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{IssuedCommand, PrnsCommand, Settlement};
+    use crate::engine::{EngineState, IssuedCommand, PrnsCommand, Settlement};
     use crate::manifold::driver::HostCommand;
     use crate::routing::request_handlers::RequestPathHash;
     use crate::runtime::request_endpoints::{RequestContext, RequestEndpointPolicy};
+    use crate::storage::GrowableHeap;
+
+    fn remote_control() -> AssembledRemoteControl {
+        let mut engine = EngineState::<GrowableHeap>::default();
+        crate::runtime::configure_remote_control_service(
+            &mut engine,
+            super::super::node_facade::test_remote_control_service(),
+        )
+        .expect("RemoteControl fits growable storage")
+    }
 
     #[test]
     fn static_file_sink_preserves_filename_and_borrowed_bytes() {
@@ -316,9 +352,11 @@ mod tests {
     async fn a_panicking_request_handler_closes_its_link() {
         let (commands, mut command_rx) = mpsc::unbounded_channel();
         let handle = PrnsNodeHandle::over(commands);
+        let remote_control = remote_control();
         let link_id = LinkId::new([0x44; 16]);
         dispatch_guarded::<(), PanickingRequestEndpointSet>(
             &(),
+            &remote_control,
             &handle,
             RunnerRequest {
                 destination: DestinationHash::new([0x33; 16]),
@@ -362,8 +400,10 @@ mod tests {
     ) -> mpsc::UnboundedReceiver<HostCommand> {
         let (commands, mut command_rx) = mpsc::unbounded_channel();
         let handle = PrnsNodeHandle::over(commands);
+        let remote_control = remote_control();
         let dispatched = dispatch_guarded::<(), PongRequestEndpointSet>(
             &(),
+            &remote_control,
             &handle,
             RunnerRequest {
                 destination: DestinationHash::new([0x33; 16]),

@@ -22,7 +22,7 @@ use crate::manifold::driver::{
     self as manifold_driver, CryptoPoolConfig, Egress, HostCommand, ProvideDecompressedHostCommand,
     TokioHost,
 };
-use crate::remote_control::{RemoteControlNodeIdentities, RemoteControlNodeIdentitySecrets};
+use crate::remote_control::{RemoteControlEndpoint, RemoteControlNodeIdentities};
 use crate::routing::announce::AnnounceObservation;
 use crate::routing::links::resources::ResourceMemoryLimits;
 use crate::routing::links::LinkId;
@@ -287,7 +287,7 @@ where
     F: FnMut(PrnsEvent<'_>, &St),
 {
     /// Stand a node up from `recipe` on the storage layout it names: assemble the engine (transport role, destinations, the request endpoints), then let the recipe's `interfaces` intent attach the node's edges through its own handle. Only [`run`](Self::run) awaits.
-    pub fn new<'a, D, I, P>(recipe: PrnsNodeRecipe<D, St, R, F, I, S, P>) -> Self
+    pub fn new<'a, D, I, P>(recipe: PrnsNodeRecipe<'a, D, St, R, F, I, S, P>) -> Self
     where
         D: IntoIterator<Item = PreConfiguredDestination<'a>>,
         I: AttachIntent,
@@ -301,7 +301,7 @@ where
         D: IntoIterator<Item = PreConfiguredDestination<'a>>,
         I: AttachIntent,
         P: persistence::PersistenceIntent,
-        B: FnOnce(PrnsNodeHandle) -> PrnsNodeRecipe<D, St, R, F, I, S, P>,
+        B: FnOnce(PrnsNodeHandle) -> PrnsNodeRecipe<'a, D, St, R, F, I, S, P>,
     {
         let (notify_tx, notify_rx) = mpsc::unbounded_channel();
         let (command_tx, command_rx) = mpsc::unbounded_channel();
@@ -355,15 +355,6 @@ where
             .set_non_routing_identity(&identity)
             .map_err(NonRoutingIdentityError::Configure)?;
         Ok(self)
-    }
-
-    pub fn configure_remote_control_identities(
-        &mut self,
-        secrets: RemoteControlNodeIdentitySecrets,
-    ) -> Result<RemoteControlNodeIdentities, HoldIdentityError> {
-        self.node
-            .engine
-            .configure_remote_control_identities(secrets)
     }
 
     pub fn with_shared_instance_identity(
@@ -458,6 +449,16 @@ where
     #[must_use]
     pub fn handle(&self) -> PrnsNodeHandle {
         self.handle.clone()
+    }
+
+    #[must_use]
+    pub const fn remote_control_identities(&self) -> &RemoteControlNodeIdentities {
+        self.node.remote_control.identities()
+    }
+
+    #[must_use]
+    pub const fn remote_control_target_endpoint(&self) -> RemoteControlEndpoint {
+        self.node.remote_control.target_endpoint()
     }
 
     pub fn issue(&self, command: PrnsCommand) -> Option<CommandId> {
@@ -574,6 +575,7 @@ where
         } = self;
         let AssembledNode {
             engine,
+            remote_control,
             state,
             mut on_event,
             request_endpoints: _,
@@ -718,7 +720,7 @@ where
         let driver_interfaces = handle.interfaces.clone();
         let node_tasks = run_node_tasks(
             manifold,
-            run_router::<St, R>(&state, req_rx, handle.clone()),
+            run_router::<St, R>(&state, &remote_control, req_rx, handle.clone()),
             drive_interfaces(
                 std::vec::Vec::new(),
                 iface_build_rx,

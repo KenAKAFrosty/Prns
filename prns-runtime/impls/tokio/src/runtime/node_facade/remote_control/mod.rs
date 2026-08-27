@@ -1,9 +1,8 @@
 use crate::engine::RequestResponseTimeout;
+use crate::remote_control::REMOTE_CONTROL_REQUEST_ENDPOINT_ID;
 use crate::routing::links::LinkId;
 use crate::runtime::request_endpoints::RequestEndpointId;
-use crate::runtime::{
-    RemoteControlAnnounce, RemoteControlDescribe, RemoteControlError, REMOTE_CONTROL_ENDPOINT_ID,
-};
+use crate::runtime::{RemoteControlAnnounce, RemoteControlDescribe, RemoteControlError};
 use crate::units::RttMillis;
 use prns_core::remote_control::RemoteControlDescription;
 
@@ -33,7 +32,7 @@ impl RemoteControlHandle<'_> {
             .node
             .request_owned_with_options(
                 self.link_id,
-                RequestEndpointId::of(REMOTE_CONTROL_ENDPOINT_ID),
+                RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
                 encoded,
                 RequestOptions {
                     response_timeout: RequestResponseTimeout::LinkDefault,
@@ -56,7 +55,7 @@ impl RemoteControlHandle<'_> {
             .node
             .request_owned_with_options(
                 self.link_id,
-                RequestEndpointId::of(REMOTE_CONTROL_ENDPOINT_ID),
+                RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
                 encoded,
                 RequestOptions {
                     response_timeout: RequestResponseTimeout::LinkDefault,

@@ -39,19 +39,19 @@ pub use identity_blackhole::{
     IdentityBlackholeSourceError,
 };
 pub use node::{
-    assemble_node, configure_preconfigured_destination, AssembledNode,
-    ConfigurePreconfiguredDestinationError, ManuallyAttached, NoPersistence,
-    PreConfiguredDestination, PrnsNodeRecipe, ServeMyRequestEndpoints,
+    assemble_node, configure_preconfigured_destination, configure_remote_control_service,
+    AssembledNode, AssembledRemoteControl, ConfigurePreconfiguredDestinationError,
+    ConfigureRemoteControlServiceError, ManuallyAttached, NoPersistence, PreConfiguredDestination,
+    PrnsNodeRecipe, ServeMyRequestEndpoints,
 };
 pub use remote_control::{
-    RemoteControlAnnounce, RemoteControlAnnounceFailure, RemoteControlDescribe,
-    RemoteControlEndpoint, RemoteControlEndpointState, RemoteControlError,
-    REMOTE_CONTROL_ENDPOINT_ID,
+    RemoteControlAnnounce, RemoteControlAnnounceFailure, RemoteControlDescribe, RemoteControlError,
 };
 
 #[doc(hidden)]
 pub mod placement {
     pub use super::node::assemble_node_in_place;
+    pub use super::remote_control::dispatch_remote_control_request;
 }
 
 cfg_if::cfg_if! {

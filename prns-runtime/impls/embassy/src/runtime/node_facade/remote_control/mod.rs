@@ -1,11 +1,10 @@
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
 use crate::engine::RequestResponseTimeout;
+use crate::remote_control::REMOTE_CONTROL_REQUEST_ENDPOINT_ID;
 use crate::routing::links::LinkId;
 use crate::runtime::request_endpoints::RequestEndpointId;
-use crate::runtime::{
-    RemoteControlAnnounce, RemoteControlDescribe, RemoteControlError, REMOTE_CONTROL_ENDPOINT_ID,
-};
+use crate::runtime::{RemoteControlAnnounce, RemoteControlDescribe, RemoteControlError};
 use crate::units::RttMillis;
 use prns_core::remote_control::RemoteControlDescription;
 
@@ -70,7 +69,7 @@ impl<
             .node
             .request_with_maximum_response_bytes::<{ RemoteControlAnnounce::RESPONSE_CAPACITY }>(
                 self.link_id,
-                RequestEndpointId::of(REMOTE_CONTROL_ENDPOINT_ID),
+                RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
                 &encoded,
                 RequestResponseTimeout::LinkDefault,
             )
@@ -89,7 +88,7 @@ impl<
             .node
             .request_with_maximum_response_bytes::<{ RemoteControlDescribe::RESPONSE_CAPACITY }>(
                 self.link_id,
-                RequestEndpointId::of(REMOTE_CONTROL_ENDPOINT_ID),
+                RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
                 &encoded,
                 RequestResponseTimeout::LinkDefault,
             )

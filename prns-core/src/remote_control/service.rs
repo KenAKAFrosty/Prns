@@ -5,6 +5,7 @@ use super::{
 };
 
 pub const DEFAULT_MAX_REMOTE_CONTROL_ALLOWED_CONTROLLERS: usize = 8;
+pub const REMOTE_CONTROL_REQUEST_ENDPOINT_ID: &str = "/remote-control";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteControlAllowedControllersError {

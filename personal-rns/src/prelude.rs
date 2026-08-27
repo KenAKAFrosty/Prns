@@ -2,21 +2,22 @@ pub use crate::{
     request_endpoints, AnnounceNowError, CommandId, DestinationHash, Diagnostic, InterfaceStatus,
     ManuallyAttached, Message, NoPersistence, PacketReceiptDelivered, PreConfiguredDestination,
     PrnsCommand, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, ProofStrategy, RatchetPolicy,
-    RemoteControlAnnounce, RemoteControlAnnounceFailure, RemoteControlDescribe,
-    RemoteControlEndpoint, RemoteControlEndpointState, RemoteControlError, ResourceMemoryLimits,
-    ResourceStrategy, RuntimeHealth, SendError, SetRegisteredAnnounceAppDataError, Zeroizing,
-    IDENTITY_SECRET_KEY_LEN, REMOTE_CONTROL_ENDPOINT_ID,
+    RemoteControlAnnounce, RemoteControlAnnounceFailure, RemoteControlDescribe, RemoteControlError,
+    ResourceMemoryLimits, ResourceStrategy, RuntimeHealth, SendError,
+    SetRegisteredAnnounceAppDataError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
 };
 
 pub use crate::remote_control::{
-    RemoteControlAccessTable, RemoteControlAnnounceOutcome, RemoteControlControllerIdentity,
-    RemoteControlControllerIdentitySecret, RemoteControlDescription,
+    RemoteControlAccessTable, RemoteControlAllowedControllers, RemoteControlAnnounceOutcome,
+    RemoteControlControllerIdentity, RemoteControlControllerIdentitySecret,
+    RemoteControlDescription, RemoteControlEndpoint, RemoteControlInitialAccess,
     RemoteControlMessageWriteError, RemoteControlNodeIdentities, RemoteControlNodeIdentitySecrets,
     RemoteControlNodeIdentitySecretsError, RemoteControlProtocolError,
-    RemoteControlProtocolErrorKind, RemoteControlProtocolVersion, RemoteControlRequest,
-    RemoteControlRequestKind, RemoteControlRequestParseError, RemoteControlRequestSet,
-    RemoteControlResponse, RemoteControlResponseKind, RemoteControlResponseParseError,
-    RemoteControlTargetIdentity, RemoteControlTargetIdentitySecret,
+    RemoteControlProtocolErrorKind, RemoteControlProtocolVersion, RemoteControlPublicAppData,
+    RemoteControlRequest, RemoteControlRequestKind, RemoteControlRequestParseError,
+    RemoteControlRequestSet, RemoteControlResponse, RemoteControlResponseKind,
+    RemoteControlResponseParseError, RemoteControlService, RemoteControlTargetIdentity,
+    RemoteControlTargetIdentitySecret, REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
 };
 
 #[cfg(feature = "alloc")]

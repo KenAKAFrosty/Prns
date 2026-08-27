@@ -61,6 +61,32 @@ pub use resource_transfer::{
     ResourceSendError, SegmentCompression, AUTO_COMPRESS_MAX_LEN,
 };
 
+#[cfg(test)]
+pub(crate) fn test_remote_control_service(
+) -> prns_core::remote_control::RemoteControlService<'static> {
+    use prns_core::identity::vault::IdentitySecretKey;
+    use prns_core::remote_control::{
+        RemoteControlControllerIdentitySecret, RemoteControlInitialAccess,
+        RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData, RemoteControlService,
+        RemoteControlTargetIdentitySecret,
+    };
+
+    let identity_secrets = RemoteControlNodeIdentitySecrets::new(
+        RemoteControlControllerIdentitySecret::from(IdentitySecretKey::new(
+            [0x71; crate::identity::IDENTITY_SECRET_KEY_LEN],
+        )),
+        RemoteControlTargetIdentitySecret::from(IdentitySecretKey::new(
+            [0x72; crate::identity::IDENTITY_SECRET_KEY_LEN],
+        )),
+    )
+    .expect("distinct test identities");
+    RemoteControlService::new(
+        identity_secrets,
+        RemoteControlPublicAppData::try_from(b"".as_slice()).expect("empty app data"),
+        RemoteControlInitialAccess::Nobody,
+    )
+}
+
 /// A cloneable, `Send` handle to a running node: the proactive surface. Every [`CommandId`] is minted from one counter, so a fire-and-forget [`issue`](Self::issue) can never collide with an awaited [`send_single_packet`](Self::send_single_packet) or a runner's respond.
 #[derive(Clone)]
 pub struct PrnsNodeHandle {

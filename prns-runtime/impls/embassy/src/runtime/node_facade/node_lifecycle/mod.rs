@@ -9,7 +9,6 @@ use heapless::Vec as HeaplessVec;
 use static_cell::StaticCell;
 
 use crate::engine::{IssuedCommand, ProofRequest, MAX_SEND_REQUEST_DATA_LEN};
-use crate::identity::held::HoldIdentityError;
 use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceIfac};
 use crate::manifold::driver::{
     run_pooled, EmbassyInterfaceStatus, InterfaceLifecycle, PooledEgress, PooledWiring,
@@ -17,7 +16,7 @@ use crate::manifold::driver::{
 };
 use crate::manifold::grant::ManifoldLaneReader;
 use crate::manifold::Host;
-use crate::remote_control::{RemoteControlNodeIdentities, RemoteControlNodeIdentitySecrets};
+use crate::remote_control::{RemoteControlEndpoint, RemoteControlNodeIdentities};
 use crate::storage::StorageLayout;
 
 use super::super::request_endpoints::RequestEndpointSet;
@@ -152,7 +151,7 @@ where
     M: RawMutex + 'static,
 {
     pub fn new<'d, D>(
-        recipe: PrnsNodeRecipe<D, St, R, F, ManuallyAttached, S>,
+        recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S>,
         wiring: ManifoldWiring<
             M,
             LANE_COUNT,
@@ -217,7 +216,7 @@ where
 {
     pub fn init_static<'d, D>(
         cell: &'static StaticCell<Self>,
-        recipe: PrnsNodeRecipe<D, St, R, F, ManuallyAttached, S>,
+        recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S>,
         wiring: ManifoldWiring<
             M,
             LANE_COUNT,
@@ -245,7 +244,7 @@ where
     )]
     pub fn init_static_with_persistence<'d, D, P>(
         cell: &'static StaticCell<Self>,
-        recipe: PrnsNodeRecipe<D, St, R, F, ManuallyAttached, S, P>,
+        recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S, P>,
         wiring: ManifoldWiring<
             M,
             LANE_COUNT,
@@ -307,7 +306,7 @@ where
     }
 
     pub fn new_with_request_capacity<'d, D>(
-        recipe: PrnsNodeRecipe<D, St, R, F, ManuallyAttached, S>,
+        recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S>,
         wiring: ManifoldWiring<
             M,
             LANE_COUNT,
@@ -328,7 +327,7 @@ where
     }
 
     fn build<'d, D>(
-        recipe: PrnsNodeRecipe<D, St, R, F, ManuallyAttached, S>,
+        recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S>,
         wiring: ManifoldWiring<
             M,
             LANE_COUNT,
@@ -377,21 +376,22 @@ where
         self.node.engine.set_protocol_policy(policy);
     }
 
-    pub fn configure_remote_control_identities(
-        &mut self,
-        secrets: RemoteControlNodeIdentitySecrets,
-    ) -> Result<RemoteControlNodeIdentities, HoldIdentityError> {
-        self.node
-            .engine
-            .configure_remote_control_identities(secrets)
-    }
-
     #[must_use]
     pub fn handle(
         &self,
     ) -> PrnsNodeHandle<'static, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>
     {
         self.handle
+    }
+
+    #[must_use]
+    pub const fn remote_control_identities(&self) -> &RemoteControlNodeIdentities {
+        self.node.remote_control.identities()
+    }
+
+    #[must_use]
+    pub const fn remote_control_target_endpoint(&self) -> RemoteControlEndpoint {
+        self.node.remote_control.target_endpoint()
     }
 
     /// Runs the manifold with the caller's interface and supervisor tasks.
@@ -494,6 +494,7 @@ where
         } = self;
         let AssembledNode {
             mut engine,
+            remote_control,
             state,
             mut on_event,
             request_endpoints: _,
@@ -541,7 +542,7 @@ where
             RESPONSE_BYTES,
             ROUTED_REQUESTS,
             ROUTED_REQUEST_BYTES,
-        >(&state, request_channel.receiver(), handle);
+        >(&state, &remote_control, request_channel.receiver(), handle);
         join(join(manifold, router), drive).await;
     }
 
@@ -746,6 +747,7 @@ where
         } = self;
         let AssembledNode {
             engine,
+            remote_control,
             state,
             on_event,
             request_endpoints: _,
@@ -792,7 +794,7 @@ where
             RESPONSE_BYTES,
             ROUTED_REQUESTS,
             ROUTED_REQUEST_BYTES,
-        >(state, request_channel.receiver(), *handle);
+        >(state, remote_control, request_channel.receiver(), *handle);
         join(manifold, router).await;
     }
 }

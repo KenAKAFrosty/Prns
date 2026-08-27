@@ -2,9 +2,10 @@ use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 use crate::engine::SendRequestFailure;
 use crate::manifold::driver::HostCommand;
+use crate::remote_control::REMOTE_CONTROL_REQUEST_ENDPOINT_ID;
 use crate::routing::links::LinkId;
 use crate::runtime::request_endpoints::RequestEndpointId;
-use crate::runtime::{SendError, REMOTE_CONTROL_ENDPOINT_ID};
+use crate::runtime::SendError;
 use crate::units::RttMillis;
 use prns_core::remote_control::{
     RemoteControlAnnounceOutcome, RemoteControlDescription, RemoteControlProtocolError,
@@ -39,7 +40,7 @@ async fn announce_owns_the_remote_control_exchange_and_returns_its_rtt() {
     assert_eq!(request.link_id, link_id);
     assert_eq!(
         request.path_hash,
-        RequestEndpointId::of(REMOTE_CONTROL_ENDPOINT_ID),
+        RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
     );
     assert_eq!(
         request.data.as_slice(),
@@ -75,7 +76,7 @@ async fn describe_owns_the_remote_control_exchange_and_returns_the_typed_descrip
     assert_eq!(request.link_id, link_id);
     assert_eq!(
         request.path_hash,
-        RequestEndpointId::of(REMOTE_CONTROL_ENDPOINT_ID),
+        RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
     );
     assert_eq!(
         request.data.as_slice(),

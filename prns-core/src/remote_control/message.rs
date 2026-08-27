@@ -132,6 +132,8 @@ pub enum RemoteControlRequest {
 }
 
 impl RemoteControlRequest {
+    pub const MAX_ENCODED_LEN: usize = MESSAGE_HEADER_ENCODED_LEN;
+
     #[must_use]
     pub const fn kind(self) -> RemoteControlRequestKind {
         match self {

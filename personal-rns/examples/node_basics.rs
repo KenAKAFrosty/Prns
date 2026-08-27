@@ -2,6 +2,8 @@
 
 #![expect(clippy::expect_used, clippy::panic)]
 
+mod common;
+
 use core::time::Duration;
 
 use personal_rns::prelude::*;
@@ -32,6 +34,7 @@ async fn main() {
     let node_a = PrnsNode::new(PrnsNodeRecipe {
         pre_configured_destinations: [destination_a],
         transport_identity: None,
+        remote_control: common::remote_control_service(0xD0, 0xD1),
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
         app_state: (),
@@ -48,6 +51,7 @@ async fn main() {
 
     let node_b = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
+        remote_control: common::remote_control_service(0xD2, 0xD3),
         pre_configured_destinations: [destination_b],
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],

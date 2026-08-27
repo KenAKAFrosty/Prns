@@ -3,13 +3,14 @@ use crate::remote_control::{
     RemoteControlAccessTable, RemoteControlAnnounceOutcome, RemoteControlDescription,
     RemoteControlMessageWriteError, RemoteControlProtocolError, RemoteControlRequest,
     RemoteControlResponse, RemoteControlResponseKind, RemoteControlResponseParseError,
+    REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
 };
 use crate::units::ByteLimit;
 
-use super::request_endpoints::{Decline, RequestContext, RequestEndpoint, RequestEndpointPolicy};
+use super::request_endpoints::{
+    Decline, InboundRequest, RequestContext, RequestEndpoint, RequestEndpointPolicy, ResponseSink,
+};
 use super::{AnnounceNowError, PrnsNodeApi, SendError};
-
-pub const REMOTE_CONTROL_ENDPOINT_ID: &str = "/remote-control";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum RemoteControlError {
@@ -121,32 +122,19 @@ impl RemoteControlAnnounce {
     }
 }
 
-pub trait RemoteControlEndpointState {
-    type AccessTable: RemoteControlAccessTable;
+struct RemoteControlRequestEndpoint;
 
-    fn remote_control_access(&self) -> &Self::AccessTable;
-    fn remote_control_description(&self) -> RemoteControlDescription;
-}
-
-pub struct RemoteControlEndpoint;
-
-impl<AppState: RemoteControlEndpointState> RequestEndpoint<AppState> for RemoteControlEndpoint {
-    const ENDPOINT_ID: &'static str = REMOTE_CONTROL_ENDPOINT_ID;
+impl<AppState> RequestEndpoint<AppState> for RemoteControlRequestEndpoint {
+    const ENDPOINT_ID: &'static str = REMOTE_CONTROL_REQUEST_ENDPOINT_ID;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::RequireIdentified;
 
     async fn handle(
         mut context: RequestContext<'_, AppState>,
         node: &impl PrnsNodeApi,
     ) -> Result<(), Decline> {
-        let Some(requester) = context.requester else {
-            return Err(Decline::Ignore);
-        };
-        if !context.state.remote_control_access().contains(&requester) {
-            return Err(Decline::Ignore);
-        }
         let response = match RemoteControlRequest::parse(context.data) {
             Ok(RemoteControlRequest::Describe) => {
-                RemoteControlResponse::Describe(context.state.remote_control_description())
+                RemoteControlResponse::Describe(RemoteControlDescription::default())
             }
             Ok(RemoteControlRequest::Announce) => {
                 let outcome = match node
@@ -181,6 +169,26 @@ impl<AppState: RemoteControlEndpointState> RequestEndpoint<AppState> for RemoteC
     }
 }
 
+pub async fn dispatch_remote_control_request<'a, AppState, Access>(
+    state: &'a AppState,
+    access: &Access,
+    node: &impl PrnsNodeApi,
+    request: InboundRequest<'a>,
+    sink: &'a mut dyn ResponseSink,
+) -> Result<(), Decline>
+where
+    Access: RemoteControlAccessTable,
+{
+    let Some(requester) = request.requester else {
+        return Err(Decline::Ignore);
+    };
+    if !access.contains(&requester) {
+        return Err(Decline::Ignore);
+    }
+    RemoteControlRequestEndpoint::handle(RequestContext::from_inbound(state, request, sink), node)
+        .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,25 +196,16 @@ mod tests {
     use crate::identity::{
         IdentityEncryptionPublicKey, IdentityHash, IdentityPublicKeys, IdentitySigningPublicKey,
     };
-    use crate::persistence::{
-        read_remote_control_access_snapshot, write_remote_control_access_snapshot,
-    };
     use crate::remote_control::{
         FixedRemoteControlAccessTable, RemoteControlControllerIdentity,
         RemoteControlProtocolVersion, RemoteControlRequestKind,
     };
     use crate::routing::links::request::RequestId;
     use crate::routing::links::LinkId;
-    use crate::routing::request_handlers::RequestPathHash;
-    use crate::runtime::request_endpoints::{dispatch_request, InboundRequest, RequestEndpointSet};
+    use crate::runtime::request_endpoints::InboundRequest;
     use crate::units::{InstantMillis, RttMillis};
     use crate::wire::DestinationHash;
     use core::cell::RefCell;
-
-    struct State {
-        access: FixedRemoteControlAccessTable<2>,
-        description: RemoteControlDescription,
-    }
 
     struct AnnounceNode {
         result: Result<(), AnnounceNowError>,
@@ -279,18 +278,6 @@ mod tests {
         }
     }
 
-    impl RemoteControlEndpointState for State {
-        type AccessTable = FixedRemoteControlAccessTable<2>;
-
-        fn remote_control_access(&self) -> &Self::AccessTable {
-            &self.access
-        }
-
-        fn remote_control_description(&self) -> RemoteControlDescription {
-            self.description
-        }
-    }
-
     fn identity(fill: u8) -> RemoteControlControllerIdentity {
         RemoteControlControllerIdentity::new(IdentityPublicKeys {
             encryption: IdentityEncryptionPublicKey::new(X25519PublicKey([fill; 32])),
@@ -298,34 +285,23 @@ mod tests {
         })
     }
 
-    fn state(allowed: RemoteControlControllerIdentity) -> State {
-        let mut persisted = [0u8; 82];
-        let persisted_len =
-            write_remote_control_access_snapshot(core::iter::once(allowed), &mut persisted)
-                .unwrap();
+    fn access(allowed: RemoteControlControllerIdentity) -> FixedRemoteControlAccessTable<1> {
         let mut access = FixedRemoteControlAccessTable::default();
-        for identity in read_remote_control_access_snapshot(&persisted[..persisted_len]).unwrap() {
-            access.upsert(identity).unwrap();
-        }
-        State {
-            access,
-            description: RemoteControlDescription::default(),
-        }
+        access.upsert(allowed).unwrap();
+        access
     }
 
-    async fn dispatch<R: RequestEndpointSet<State>>(
-        _endpoints: &R,
-        state: &State,
+    async fn dispatch(
+        access: &impl RemoteControlAccessTable,
         requester: Option<IdentityHash>,
         data: &[u8],
         sink: &mut dyn super::super::request_endpoints::ResponseSink,
     ) -> Result<(), Decline> {
-        dispatch_with_node(_endpoints, state, &(), requester, data, sink).await
+        dispatch_with_node(access, &(), requester, data, sink).await
     }
 
-    async fn dispatch_with_node<R: RequestEndpointSet<State>>(
-        _endpoints: &R,
-        state: &State,
+    async fn dispatch_with_node(
+        access: &impl RemoteControlAccessTable,
         node: &impl PrnsNodeApi,
         requester: Option<IdentityHash>,
         data: &[u8],
@@ -340,14 +316,7 @@ mod tests {
             RttMillis::new(20),
             data,
         );
-        dispatch_request::<State, R>(
-            state,
-            node,
-            RequestPathHash::of(REMOTE_CONTROL_ENDPOINT_ID),
-            request,
-            sink,
-        )
-        .await
+        dispatch_remote_control_request(&(), access, node, request, sink).await
     }
 
     fn describe_request() -> [u8; RemoteControlRequest::Describe.encoded_len()] {
@@ -456,19 +425,17 @@ mod tests {
     }
 
     #[test]
-    fn an_authorized_announce_waits_for_the_exact_destination_effect() {
+    fn an_admitted_announce_waits_for_the_exact_destination_effect() {
         futures_executor::block_on(async {
             let allowed = identity(0x31);
-            let state = state(allowed);
-            let endpoints = crate::request_endpoints![RemoteControlEndpoint];
+            let access = access(allowed);
             let node = AnnounceNode::new(Ok(()));
             let mut response =
                 heapless::Vec::<u8, { RemoteControlResponse::MAX_ENCODED_LEN }>::new();
 
             assert_eq!(
                 dispatch_with_node(
-                    &endpoints,
-                    &state,
+                    &access,
                     &node,
                     Some(allowed.identity_hash()),
                     &announce_request(),
@@ -498,8 +465,7 @@ mod tests {
     fn announce_effect_failures_are_stable_wire_outcomes() {
         futures_executor::block_on(async {
             let allowed = identity(0x32);
-            let state = state(allowed);
-            let endpoints = crate::request_endpoints![RemoteControlEndpoint];
+            let access = access(allowed);
             let cases = [
                 (
                     AnnounceNowError::NodeStopped,
@@ -529,8 +495,7 @@ mod tests {
                     heapless::Vec::<u8, { RemoteControlResponse::MAX_ENCODED_LEN }>::new();
                 assert_eq!(
                     dispatch_with_node(
-                        &endpoints,
-                        &state,
+                        &access,
                         &node,
                         Some(allowed.identity_hash()),
                         &announce_request(),
@@ -548,26 +513,24 @@ mod tests {
     }
 
     #[test]
-    fn the_endpoint_requires_an_identified_requester_at_registration() {
+    fn the_endpoint_requires_an_identified_requester_before_access_is_checked() {
         assert_eq!(
-            <RemoteControlEndpoint as RequestEndpoint<State>>::POLICY,
+            <RemoteControlRequestEndpoint as RequestEndpoint<()>>::POLICY,
             RequestEndpointPolicy::RequireIdentified,
         );
     }
 
     #[test]
-    fn a_restored_authorized_identity_receives_the_description() {
+    fn an_admitted_identity_receives_the_description() {
         futures_executor::block_on(async {
             let allowed = identity(0x21);
-            let state = state(allowed);
-            let endpoints = crate::request_endpoints![RemoteControlEndpoint];
+            let access = access(allowed);
             let mut response =
                 heapless::Vec::<u8, { RemoteControlResponse::MAX_ENCODED_LEN }>::new();
 
             assert_eq!(
                 dispatch(
-                    &endpoints,
-                    &state,
+                    &access,
                     Some(allowed.identity_hash()),
                     &describe_request(),
                     &mut response,
@@ -587,44 +550,17 @@ mod tests {
     }
 
     #[test]
-    fn unidentified_and_unlisted_requesters_are_silently_refused() {
+    fn unidentified_and_unlisted_requesters_cannot_reach_remote_control() {
         futures_executor::block_on(async {
-            let state = state(identity(0x43));
-            let endpoints = crate::request_endpoints![RemoteControlEndpoint];
+            let access = access(identity(0x43));
+            let node = AnnounceNode::new(Ok(()));
 
             for requester in [None, Some(identity(0x65).identity_hash())] {
                 let mut response =
                     heapless::Vec::<u8, { RemoteControlResponse::MAX_ENCODED_LEN }>::new();
                 assert_eq!(
-                    dispatch(
-                        &endpoints,
-                        &state,
-                        requester,
-                        &describe_request(),
-                        &mut response,
-                    )
-                    .await,
-                    Err(Decline::Ignore),
-                );
-                assert!(response.is_empty());
-            }
-        });
-    }
-
-    #[test]
-    fn refused_announce_requests_cannot_reach_the_node_effect() {
-        futures_executor::block_on(async {
-            let state = state(identity(0x44));
-            let endpoints = crate::request_endpoints![RemoteControlEndpoint];
-            let node = AnnounceNode::new(Ok(()));
-
-            for requester in [None, Some(identity(0x66).identity_hash())] {
-                let mut response =
-                    heapless::Vec::<u8, { RemoteControlResponse::MAX_ENCODED_LEN }>::new();
-                assert_eq!(
                     dispatch_with_node(
-                        &endpoints,
-                        &state,
+                        &access,
                         &node,
                         requester,
                         &announce_request(),
@@ -640,11 +576,10 @@ mod tests {
     }
 
     #[test]
-    fn authorized_protocol_failures_receive_typed_errors() {
+    fn admitted_protocol_failures_receive_typed_errors() {
         futures_executor::block_on(async {
             let allowed = identity(0x87);
-            let state = state(allowed);
-            let endpoints = crate::request_endpoints![RemoteControlEndpoint];
+            let access = access(allowed);
             let unsupported_version = 0x73;
             let unknown_request_kind = 0x95;
             let cases = [
@@ -674,8 +609,7 @@ mod tests {
                     heapless::Vec::<u8, { RemoteControlResponse::MAX_ENCODED_LEN }>::new();
                 assert_eq!(
                     dispatch(
-                        &endpoints,
-                        &state,
+                        &access,
                         Some(allowed.identity_hash()),
                         request,
                         &mut response,

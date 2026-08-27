@@ -1,4 +1,4 @@
-use crate::routing::announce::emit::MAX_ANNOUNCE_APP_DATA_LEN;
+use crate::routing::announce::emit::{AnnounceAppDataBytes, MAX_ANNOUNCE_APP_DATA_LEN};
 
 const ANNOUNCEMENT_FORMAT_VERSION_ENCODED_LEN: usize = 1;
 
@@ -122,6 +122,16 @@ impl<'a> RemoteControlAnnouncementData<'a> {
         Ok(encoded_len)
     }
 
+    pub fn encode(&self) -> Result<AnnounceAppDataBytes, RemoteControlAnnouncementDataWriteError> {
+        let mut output = [0; Self::MAX_ENCODED_LEN];
+        let encoded_len = self.write_into(&mut output)?;
+        let encoded = output
+            .get(..encoded_len)
+            .ok_or(RemoteControlAnnouncementDataWriteError::BufferTooShort)?;
+        AnnounceAppDataBytes::from_slice(encoded)
+            .map_err(|()| RemoteControlAnnouncementDataWriteError::BufferTooShort)
+    }
+
     pub fn parse(bytes: &'a [u8]) -> Result<Self, RemoteControlAnnouncementDataParseError> {
         let Some((format_version, public_app_data)) = bytes.split_first() else {
             return Err(RemoteControlAnnouncementDataParseError::Truncated);
@@ -215,6 +225,13 @@ mod tests {
         ];
 
         assert_eq!(announcement_data.write_into(&mut output), Ok(encoded_len));
+        assert_eq!(
+            announcement_data
+                .encode()
+                .as_ref()
+                .map(|data| data.as_slice()),
+            Ok(expected.as_slice()),
+        );
         assert_eq!(output.get(..encoded_len), Some(expected.as_slice()));
         assert_eq!(
             output

@@ -9,6 +9,7 @@ use crate::routing::{BlackholeExpiry, BlackholedIdentity};
 use crate::runtime::{ManuallyAttached, NoPersistence, PreConfiguredDestination, PrnsNodeRecipe};
 use crate::wire::DestinationHash;
 
+use super::super::test_remote_control_service;
 use super::super::{PrnsNode, PrnsNodeHandle};
 use super::{
     try_zeroed_buffer, wall_clock_timeline_origin, BlackholeSeedReport, NodePersistence,
@@ -65,6 +66,7 @@ fn the_standard_timeline_origin_is_unix_epoch_aligned() {
 fn boot_blackholes_seed_against_the_resumed_timeline() {
     let mut prns = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
+        remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: (),
         storage: crate::storage::GrowableHeap,
@@ -118,6 +120,7 @@ async fn a_tolerated_write_failure_is_retried_while_the_node_keeps_running() {
     let persistence = NodePersistence::custom_dir(&directory).unwrap();
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
+        remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: (),
         storage: crate::storage::GrowableHeap,
