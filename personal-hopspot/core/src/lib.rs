@@ -125,6 +125,11 @@ pub fn snapshots_to_cards<const N: usize>(
         let mut links = snapshot.links;
         let mut transported_links = snapshot.transported_links;
         let mut peers = 0u32;
+        let mut tx_bytes = snapshot.tx_bytes;
+        let mut rx_bytes = snapshot.rx_bytes;
+        let mut member_rate_rx_bps = 0u32;
+        let mut member_rate_tx_bps = 0u32;
+        let mut has_member_rates = false;
         for member in snapshots {
             if let Membership::FleetMember { supervisor_id } = member.membership {
                 if supervisor_id == snapshot.id {
@@ -132,24 +137,40 @@ pub fn snapshots_to_cards<const N: usize>(
                     destinations = destinations.saturating_add(member.destinations);
                     links = links.saturating_add(member.links);
                     transported_links = transported_links.saturating_add(member.transported_links);
+                    tx_bytes = tx_bytes.saturating_add(member.tx_bytes);
+                    rx_bytes = rx_bytes.saturating_add(member.rx_bytes);
+                    if let Some(rates) = member.transfer_rates {
+                        member_rate_rx_bps = member_rate_rx_bps.saturating_add(rates.rx_bps);
+                        member_rate_tx_bps = member_rate_tx_bps.saturating_add(rates.tx_bps);
+                        has_member_rates = true;
+                    }
                 }
             }
         }
+        let rate_bytes_per_sec = if peers > 0 {
+            has_member_rates.then_some(
+                member_rate_rx_bps
+                    .saturating_add(member_rate_tx_bps)
+                    .saturating_div(8),
+            )
+        } else {
+            snapshot
+                .transfer_rates
+                .map(|rates| rates.rx_bps.saturating_add(rates.tx_bps) / 8)
+        }
+        .unwrap_or(0);
         let _ = cards.push(Card {
             id: snapshot.id,
             kind,
             label,
             connection: snapshot.connection,
             failure_reason: snapshot.failure_reason,
-            tx_bytes: snapshot.tx_bytes,
-            rx_bytes: snapshot.rx_bytes,
+            tx_bytes,
+            rx_bytes,
             links: links.saturating_add(transported_links),
             peers: interface_kind_shows_supervisor_peers(snapshot.id).then_some(peers),
             destinations,
-            rate_bytes_per_sec: snapshot
-                .transfer_rates
-                .map(|rates| rates.rx_bps.saturating_add(rates.tx_bps) / 8)
-                .unwrap_or(0),
+            rate_bytes_per_sec,
             last_activity_secs: None,
         });
     }
@@ -329,6 +350,44 @@ mod tests {
 
         assert_eq!(cards.len(), 1);
         assert_eq!(cards[0].connection, ConnectionState::Disconnected);
+    }
+
+    #[test]
+    fn snapshots_to_cards_rolls_up_fleet_member_traffic_bytes() {
+        let supervisor_id =
+            InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);
+        let member_id = InterfaceId::new([
+            InterfaceKind::BluetoothPeer as u8,
+            0x78,
+            0xa8,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ]);
+        let mut supervisor = snapshot(InterfaceKind::BluetoothAuto);
+        supervisor.id = supervisor_id;
+        supervisor.tx_bytes = 0;
+        supervisor.rx_bytes = 0;
+        let mut member = snapshot(InterfaceKind::BluetoothPeer);
+        member.id = member_id;
+        member.tx_bytes = 20;
+        member.rx_bytes = 183;
+        member.transfer_rates = Some(TransferRates {
+            rx_bps: 800,
+            tx_bps: 160,
+        });
+        member.membership = Membership::FleetMember { supervisor_id };
+
+        let cards: heapless::Vec<Card, 4> = snapshots_to_cards(&[supervisor, member], |id| {
+            (id == supervisor_id).then_some((CardKind::Ble, card_label("BLE")))
+        });
+
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].tx_bytes, 20);
+        assert_eq!(cards[0].rx_bytes, 183);
+        assert_eq!(cards[0].rate_bytes_per_sec, 120);
     }
 
     #[test]
