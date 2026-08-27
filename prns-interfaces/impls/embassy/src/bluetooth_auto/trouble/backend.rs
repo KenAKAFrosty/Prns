@@ -604,7 +604,10 @@ impl EventHandler for ScanFunnel {
                 peer_address,
                 capabilities,
             ) == ColumbaConnectionRole::Dial;
-            if contains_service(report.data) && should_dial {
+            if contains_service(report.data)
+                && discovery_groups_match(default_group_tag(), report.data)
+                && should_dial
+            {
                 let address = report.addr.into_inner();
                 let outcome = self.hub.admit_sighting(address, Instant::now().as_millis());
                 if outcome == SightingAdmissionOutcome::Admit {
