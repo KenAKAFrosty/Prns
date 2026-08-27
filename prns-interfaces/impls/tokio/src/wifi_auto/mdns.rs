@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::{IpAddr, SocketAddr, SocketAddrV6};
 use std::num::NonZeroU8;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use mdns_sd::{
     IfKind, Receiver, ResolvedService, ScopedIp, ServiceDaemon, ServiceEvent, ServiceInfo,
@@ -20,17 +20,15 @@ use prns_core::interfaces::wifi_auto::{
 
 use crate::network_device::AutoWifiDevicePolicy;
 
+use super::publication_absence::{
+    EmptyPublicationDisposition, PublicationAbsence, PublicationPresence,
+};
 use super::{
     DiscoveryLifecycleError, DiscoveryParticipation, ServiceDiscovery, ServiceDiscoveryPublisher,
 };
 
 const RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
-/// Keep a previously registered UDP (or TCP) service alive across brief windows where
-/// `collect_eligible_ip_addresses` returns no publishable addresses — e.g. transient
-/// link-local IPv6 flicker — so Bonjour browsers do not see goodbye/re-register flaps
-/// every second.
-const PUBLICATION_EMPTY_GRACE: Duration = Duration::from_secs(15);
 pub(crate) const DISCOVERY_CAPACITY: NonZeroU8 = contract::DEFAULT_DISCOVERY_SERVICE_CAPACITY;
 
 /// Starts the native DNS-SD provider behind a bounded AutoWifi discovery channel.
@@ -506,7 +504,7 @@ struct NativeMdnsSession {
     daemon: ServiceDaemon,
     browsed_transports: BTreeSet<DiscoveryTransport>,
     registered_services: BTreeMap<DiscoveryTransport, RegisteredService>,
-    empty_publication_since: BTreeMap<DiscoveryTransport, std::time::Instant>,
+    publication_absence: PublicationAbsence,
 }
 
 impl NativeMdnsSession {
@@ -515,7 +513,7 @@ impl NativeMdnsSession {
             daemon: ServiceDaemon::new().map_err(MdnsDiscoveryError::Mdns)?,
             browsed_transports: BTreeSet::new(),
             registered_services: BTreeMap::new(),
-            empty_publication_since: BTreeMap::new(),
+            publication_absence: PublicationAbsence::new(),
         };
         native_mdns_session
             .daemon
@@ -545,8 +543,9 @@ impl NativeMdnsSession {
         central_publications: &CentralPublications,
         eligible_ip_addresses: &BTreeSet<IpAddr>,
     ) -> Result<(), MdnsDiscoveryError> {
+        let observed_at = Instant::now();
         for ephemeral_publication in central_publications.iter() {
-            self.reconcile_publication(ephemeral_publication, eligible_ip_addresses)?;
+            self.reconcile_publication(ephemeral_publication, eligible_ip_addresses, observed_at)?;
         }
         Ok(())
     }
@@ -555,21 +554,28 @@ impl NativeMdnsSession {
         &mut self,
         ephemeral_publication: &EphemeralPublication,
         eligible_ip_addresses: &BTreeSet<IpAddr>,
+        observed_at: Instant,
     ) -> Result<(), MdnsDiscoveryError> {
         let advertised_ip_addresses =
             advertised_ip_addresses(ephemeral_publication.transport, eligible_ip_addresses);
         if advertised_ip_addresses.is_empty() {
-            let previously_registered = self
+            let publication_presence = match self
                 .registered_services
-                .contains_key(&ephemeral_publication.transport);
-            if previously_registered {
-                let empty_since = self
-                    .empty_publication_since
-                    .entry(ephemeral_publication.transport)
-                    .or_insert_with(std::time::Instant::now);
-                if empty_since.elapsed() < PUBLICATION_EMPTY_GRACE {
+                .get(&ephemeral_publication.transport)
+            {
+                Some(_) => PublicationPresence::Registered,
+                None => PublicationPresence::Unregistered,
+            };
+            match self.publication_absence.observe_empty(
+                ephemeral_publication.transport,
+                publication_presence,
+                observed_at,
+            ) {
+                EmptyPublicationDisposition::AlreadyAbsent
+                | EmptyPublicationDisposition::RetainDuringGrace => {
                     return Ok(());
                 }
+                EmptyPublicationDisposition::Withdraw => {}
             }
             if let Some(previously_registered_service) = self
                 .registered_services
@@ -579,12 +585,10 @@ impl NativeMdnsSession {
                     .daemon
                     .unregister(&previously_registered_service.service_fullname);
             }
-            self.empty_publication_since
-                .remove(&ephemeral_publication.transport);
             return Ok(());
         }
-        self.empty_publication_since
-            .remove(&ephemeral_publication.transport);
+        self.publication_absence
+            .observe_available(ephemeral_publication.transport);
 
         let desired_service = RegisteredService {
             service_fullname: ephemeral_publication.service_name.as_str().to_owned(),
