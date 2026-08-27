@@ -9,6 +9,8 @@ use heapless::Vec as HeaplessVec;
 use static_cell::StaticCell;
 
 use crate::engine::{IssuedCommand, ProofRequest, MAX_SEND_REQUEST_DATA_LEN};
+use crate::identity::held::HoldIdentityError;
+use crate::identity::{IdentityHash, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceIfac};
 use crate::manifold::driver::{
     run_pooled, EmbassyInterfaceStatus, InterfaceLifecycle, PooledEgress, PooledWiring,
@@ -373,6 +375,13 @@ where
 
     pub fn set_protocol_policy(&mut self, policy: crate::engine::EngineProtocolPolicy) {
         self.node.engine.set_protocol_policy(policy);
+    }
+
+    pub fn hold_remote_control_controller_identity(
+        &mut self,
+        secret: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
+    ) -> Result<IdentityHash, HoldIdentityError> {
+        self.node.engine.hold_identity(secret)
     }
 
     #[must_use]

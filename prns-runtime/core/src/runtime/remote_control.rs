@@ -192,8 +192,8 @@ mod tests {
         read_remote_control_access_snapshot, write_remote_control_access_snapshot,
     };
     use crate::remote_control::{
-        FixedRemoteControlAccessTable, RemoteControlIdentity, RemoteControlProtocolVersion,
-        RemoteControlRequestKind,
+        FixedRemoteControlAccessTable, RemoteControlControllerIdentity,
+        RemoteControlProtocolVersion, RemoteControlRequestKind,
     };
     use crate::routing::links::request::RequestId;
     use crate::routing::links::LinkId;
@@ -284,14 +284,14 @@ mod tests {
         }
     }
 
-    fn identity(fill: u8) -> RemoteControlIdentity {
-        RemoteControlIdentity::new(IdentityPublicKeys {
+    fn identity(fill: u8) -> RemoteControlControllerIdentity {
+        RemoteControlControllerIdentity::new(IdentityPublicKeys {
             encryption: IdentityEncryptionPublicKey::new(X25519PublicKey([fill; 32])),
             signing: IdentitySigningPublicKey::new(Ed25519PublicKey([fill; 32])),
         })
     }
 
-    fn state(allowed: RemoteControlIdentity) -> State {
+    fn state(allowed: RemoteControlControllerIdentity) -> State {
         let mut persisted = [0u8; 82];
         let persisted_len =
             write_remote_control_access_snapshot(core::iter::once(allowed), &mut persisted)

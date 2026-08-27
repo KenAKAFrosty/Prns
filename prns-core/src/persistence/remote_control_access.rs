@@ -4,18 +4,18 @@ use super::envelope::{
 };
 use super::{SnapshotReadError, SnapshotRegion};
 use crate::identity::{PublicIdentityMaterial, IDENTITY_PUBLIC_KEY_LEN};
-use crate::remote_control::RemoteControlIdentity;
+use crate::remote_control::RemoteControlControllerIdentity;
 
 const ROW_COUNT_LEN: usize = 4;
 
-pub const REMOTE_CONTROL_IDENTITY_WIRE_LEN: usize = IDENTITY_PUBLIC_KEY_LEN;
+pub const REMOTE_CONTROL_CONTROLLER_IDENTITY_WIRE_LEN: usize = IDENTITY_PUBLIC_KEY_LEN;
 
 pub fn remote_control_access_snapshot_len(row_count: usize) -> usize {
-    SNAPSHOT_OVERHEAD_LEN + ROW_COUNT_LEN + row_count * REMOTE_CONTROL_IDENTITY_WIRE_LEN
+    SNAPSHOT_OVERHEAD_LEN + ROW_COUNT_LEN + row_count * REMOTE_CONTROL_CONTROLLER_IDENTITY_WIRE_LEN
 }
 
 pub fn write_remote_control_access_snapshot(
-    rows: impl Iterator<Item = RemoteControlIdentity>,
+    rows: impl Iterator<Item = RemoteControlControllerIdentity>,
     out: &mut [u8],
 ) -> Result<usize, SnapshotSealError> {
     let payload_start = SNAPSHOT_HEADER_LEN + ROW_COUNT_LEN;
@@ -25,12 +25,12 @@ pub fn write_remote_control_access_snapshot(
     let mut at = payload_start;
     let mut row_count: u32 = 0;
     for row in rows {
-        if out.len() < at + REMOTE_CONTROL_IDENTITY_WIRE_LEN {
+        if out.len() < at + REMOTE_CONTROL_CONTROLLER_IDENTITY_WIRE_LEN {
             return Err(SnapshotSealError::BufferTooShort);
         }
-        out[at..at + REMOTE_CONTROL_IDENTITY_WIRE_LEN]
+        out[at..at + REMOTE_CONTROL_CONTROLLER_IDENTITY_WIRE_LEN]
             .copy_from_slice(&row.public_keys().public_key_bytes());
-        at += REMOTE_CONTROL_IDENTITY_WIRE_LEN;
+        at += REMOTE_CONTROL_CONTROLLER_IDENTITY_WIRE_LEN;
         row_count += 1;
     }
     out[SNAPSHOT_HEADER_LEN..payload_start].copy_from_slice(&row_count.to_le_bytes());
@@ -43,39 +43,39 @@ pub fn write_remote_control_access_snapshot(
 
 pub fn read_remote_control_access_snapshot(
     bytes: &[u8],
-) -> Result<PersistedRemoteControlIdentities<'_>, SnapshotReadError> {
+) -> Result<PersistedRemoteControlControllerIdentities<'_>, SnapshotReadError> {
     let payload = open_snapshot(SnapshotRegion::RemoteControlAccess, bytes)
         .map_err(SnapshotReadError::Envelope)?;
     let Some((row_count_bytes, rows)) = payload.split_first_chunk::<ROW_COUNT_LEN>() else {
         return Err(SnapshotReadError::MalformedPayload);
     };
     let row_count = u64::from(u32::from_le_bytes(*row_count_bytes));
-    if rows.len() as u64 != row_count * REMOTE_CONTROL_IDENTITY_WIRE_LEN as u64 {
+    if rows.len() as u64 != row_count * REMOTE_CONTROL_CONTROLLER_IDENTITY_WIRE_LEN as u64 {
         return Err(SnapshotReadError::MalformedPayload);
     }
-    Ok(PersistedRemoteControlIdentities { rest: rows })
+    Ok(PersistedRemoteControlControllerIdentities { rest: rows })
 }
 
 #[derive(Debug, Clone)]
-pub struct PersistedRemoteControlIdentities<'a> {
+pub struct PersistedRemoteControlControllerIdentities<'a> {
     rest: &'a [u8],
 }
 
-impl PersistedRemoteControlIdentities<'_> {
+impl PersistedRemoteControlControllerIdentities<'_> {
     pub fn row_count(&self) -> usize {
-        self.rest.len() / REMOTE_CONTROL_IDENTITY_WIRE_LEN
+        self.rest.len() / REMOTE_CONTROL_CONTROLLER_IDENTITY_WIRE_LEN
     }
 }
 
-impl Iterator for PersistedRemoteControlIdentities<'_> {
-    type Item = RemoteControlIdentity;
+impl Iterator for PersistedRemoteControlControllerIdentities<'_> {
+    type Item = RemoteControlControllerIdentity;
 
     fn next(&mut self) -> Option<Self::Item> {
         let (public_keys, rest) = self
             .rest
-            .split_first_chunk::<REMOTE_CONTROL_IDENTITY_WIRE_LEN>()?;
+            .split_first_chunk::<REMOTE_CONTROL_CONTROLLER_IDENTITY_WIRE_LEN>()?;
         self.rest = rest;
-        Some(RemoteControlIdentity::new(
+        Some(RemoteControlControllerIdentity::new(
             PublicIdentityMaterial::from_bytes(*public_keys).public_keys(),
         ))
     }
@@ -85,7 +85,7 @@ impl Iterator for PersistedRemoteControlIdentities<'_> {
     }
 }
 
-impl ExactSizeIterator for PersistedRemoteControlIdentities<'_> {}
+impl ExactSizeIterator for PersistedRemoteControlControllerIdentities<'_> {}
 
 #[cfg(test)]
 mod tests {
@@ -98,8 +98,8 @@ mod tests {
     use crate::remote_control::{FixedRemoteControlAccessTable, RemoteControlAccessTable};
     use std::vec::Vec;
 
-    fn identity(fill: u8) -> RemoteControlIdentity {
-        RemoteControlIdentity::new(IdentityPublicKeys {
+    fn identity(fill: u8) -> RemoteControlControllerIdentity {
+        RemoteControlControllerIdentity::new(IdentityPublicKeys {
             encryption: IdentityEncryptionPublicKey::new(X25519PublicKey([fill; 32])),
             signing: IdentitySigningPublicKey::new(Ed25519PublicKey([fill; 32])),
         })
@@ -147,7 +147,8 @@ mod tests {
 
     #[test]
     fn malformed_row_counts_are_refused() {
-        let mut payload = std::vec![0u8; ROW_COUNT_LEN + REMOTE_CONTROL_IDENTITY_WIRE_LEN - 1];
+        let mut payload =
+            std::vec![0u8; ROW_COUNT_LEN + REMOTE_CONTROL_CONTROLLER_IDENTITY_WIRE_LEN - 1];
         payload[..ROW_COUNT_LEN].copy_from_slice(&1u32.to_le_bytes());
         let mut sealed = std::vec![0u8; SNAPSHOT_OVERHEAD_LEN + payload.len()];
         let len = super::super::envelope::seal_snapshot(

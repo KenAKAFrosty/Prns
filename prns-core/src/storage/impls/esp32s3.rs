@@ -12,6 +12,7 @@ use crate::interfaces::EMBEDDED_MAX_LINK_MTU;
 use crate::persistence::{
     flash_journal_record_storage_len, maximum_route_upsert_payload_len, self_ratchets_snapshot_len,
 };
+use crate::remote_control::REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY;
 use crate::routing::announce::defaults::MAX_ANNOUNCE_IDS_PER_DESTINATION;
 use crate::routing::announce::destination_announce_limit::{
     destination_announce_limit_index_buckets, FixedHeapDestinationAnnounceLimitTable,
@@ -57,7 +58,7 @@ use crate::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayout};
 
 const MAX_TRACKED_DESTINATIONS: usize = 512;
 const MAX_UPSTREAM_APP_DESTINATIONS: usize = 2;
-const MAX_HELD_IDENTITIES: usize = 1;
+const MAX_HELD_IDENTITIES: usize = REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY;
 const MAX_LINK_SESSIONS: usize = 512;
 const MAX_TRANSPORTED_LINKS: usize = 32;
 const MAX_OUTSTANDING_RECEIPTS: usize = 8;

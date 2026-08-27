@@ -7,7 +7,6 @@ use personal_rns::prelude::*;
 
 const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(10);
 const TARGET_ASPECTS: &[&str] = &["remote-control", "target"];
-const CONTROLLER_ASPECTS: &[&str] = &["remote-control", "controller"];
 
 struct TargetState {
     access_table: HeapRemoteControlAccessTable,
@@ -40,12 +39,7 @@ async fn main() {
     let controller_material = PrivateIdentityMaterial::from_bytes(*controller_secret);
     let controller_identity = controller_material.identity_hash();
     let controller_public_identity =
-        RemoteControlIdentity::new(controller_material.public().public_keys());
-    let controller_destination = destination(
-        controller_secret,
-        CONTROLLER_ASPECTS,
-        ServeMyRequestEndpoints::No,
-    );
+        RemoteControlControllerIdentity::new(controller_material.public().public_keys());
 
     let mut access_table = HeapRemoteControlAccessTable::default();
     access_table
@@ -77,9 +71,9 @@ async fn main() {
     let _server = target_handle.supervise(server);
 
     let (heard_sender, mut heard_receiver) = tokio::sync::mpsc::unbounded_channel();
-    let controller = PrnsNode::new(PrnsNodeRecipe {
+    let mut controller = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
-        pre_configured_destinations: [controller_destination],
+        pre_configured_destinations: [],
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
@@ -93,6 +87,9 @@ async fn main() {
         },
         persistence: NoPersistence,
     });
+    controller
+        .hold_remote_control_controller_identity(controller_secret)
+        .expect("controller identity did not fit the identity vault");
     let controller_handle = controller.handle();
 
     let announcer = target_handle.clone();

@@ -1,11 +1,14 @@
 use crate::crypto::{Ed25519PublicKey, X25519PublicKey};
-use crate::identity::{IdentityEncryptionPublicKey, IdentityPublicKeys, IdentitySigningPublicKey};
+use crate::identity::{
+    IdentityEncryptionPublicKey, IdentityHash, IdentityPublicKeys, IdentitySigningPublicKey,
+};
 use crate::storage::TablePushError;
+use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
 
 use super::*;
 
-fn identity(fill: u8) -> RemoteControlIdentity {
-    RemoteControlIdentity::new(IdentityPublicKeys {
+fn identity(fill: u8) -> RemoteControlControllerIdentity {
+    RemoteControlControllerIdentity::new(IdentityPublicKeys {
         encryption: IdentityEncryptionPublicKey::new(X25519PublicKey([fill; 32])),
         signing: IdentitySigningPublicKey::new(Ed25519PublicKey([fill; 32])),
     })
@@ -71,6 +74,19 @@ fn a_zero_capacity_table_is_an_empty_disabled_table() {
 
     assert!(table.is_empty());
     assert_eq!(table.upsert(identity(0xA9)), Err(TablePushError::TableFull),);
+}
+
+#[test]
+fn target_keeps_its_identity_and_endpoint_together() {
+    let identity =
+        RemoteControlTargetIdentity::new(IdentityHash::new([0x41; TRUNCATED_HASH_BYTE_LEN]));
+    let endpoint = DestinationHash::new([0x52; TRUNCATED_HASH_BYTE_LEN]);
+    let target = RemoteControlTarget::new(identity, endpoint);
+
+    assert_eq!(
+        (target.identity().identity_hash(), target.endpoint()),
+        (IdentityHash::new([0x41; TRUNCATED_HASH_BYTE_LEN]), endpoint,)
+    );
 }
 
 #[test]

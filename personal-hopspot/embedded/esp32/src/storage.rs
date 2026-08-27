@@ -208,6 +208,7 @@ mod riscv {
     use personal_rns::identity::held::FixedHeldIdentityTable;
     use personal_rns::manifold::interface_seam::EMBEDDED_MAX_LINK_MTU;
     use personal_rns::prelude::*;
+    use personal_rns::remote_control::REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY;
     use personal_rns::routing::announce::destination_announce_limit::FixedDestinationAnnounceLimitTable;
     use personal_rns::routing::announce::held::FixedHeldAnnounceTable;
     use personal_rns::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitTable;
@@ -257,7 +258,7 @@ mod riscv {
         // smaller shared tables. None of these counts constrain the eight-peer BLE controller.
         pub(crate) const TRACKED_DESTINATIONS: usize = 36;
         const UPSTREAM_APP_DESTINATIONS: usize = 2;
-        const HELD_IDENTITIES: usize = 1;
+        const HELD_IDENTITIES: usize = REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY;
         pub const LINK_SESSIONS: usize = 12;
         const TRANSPORTED_LINKS: usize = 8;
         const CHANNELS: usize = 2;

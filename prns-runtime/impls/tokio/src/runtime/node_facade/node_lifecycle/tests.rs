@@ -7,7 +7,7 @@ use crate::engine::test_support::{
 };
 use crate::engine::{InstantMillis, Journaled, PersistenceFlushCause, PersistenceFlushTarget};
 use crate::identity::in_memory::InMemoryNodeIdentity;
-use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use crate::identity::{PrivateIdentityMaterial, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
     InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode, ReportsStatus,
@@ -237,6 +237,44 @@ async fn run_until_returns_when_a_non_persistent_node_is_asked_to_stop() {
     });
 
     assert_eq!(node.run_until(async {}).await, Ok(()));
+}
+
+#[test]
+fn controller_and_target_identities_coexist_without_a_transport_identity() {
+    let target_secret = Zeroizing::new([0x31; IDENTITY_SECRET_KEY_LEN]);
+    let controller_secret = Zeroizing::new([0x42; IDENTITY_SECRET_KEY_LEN]);
+    let target_identity = PrivateIdentityMaterial::from_bytes(*target_secret).identity_hash();
+    let mut node = PrnsNode::new(PrnsNodeRecipe {
+        transport_identity: None,
+        pre_configured_destinations: [PreConfiguredDestination::Single {
+            app_name: "remote-control-test",
+            aspects: &["target"],
+            identity: target_secret,
+            announce_app_data: &[],
+            proof: crate::routing::ProofStrategy::ProveAll,
+            link_requests: crate::routing::LinkRequestPolicy::AcceptAll,
+            ratchet: crate::engine::RatchetPolicy::NoRatchets,
+            resource_strategy: ResourceStrategy::AcceptNone,
+            maximum_request_bytes: crate::units::ByteLimit::Unlimited,
+            request_endpoints: ServeMyRequestEndpoints::No,
+        }],
+        app_state: (),
+        storage: crate::storage::GrowableHeap,
+        request_endpoints: crate::request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
+        on_event: |_event, _state: &()| {},
+    });
+
+    let controller = node
+        .hold_remote_control_controller_identity(controller_secret)
+        .unwrap();
+
+    assert_eq!(
+        node.node.engine.held_identity_hashes(),
+        &[target_identity, controller],
+    );
+    assert_eq!(node.node.engine.transport_id(), None);
 }
 
 #[tokio::test]

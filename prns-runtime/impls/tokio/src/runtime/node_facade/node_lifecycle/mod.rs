@@ -356,6 +356,13 @@ where
         Ok(self)
     }
 
+    pub fn hold_remote_control_controller_identity(
+        &mut self,
+        secret: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
+    ) -> Result<IdentityHash, HoldIdentityError> {
+        self.node.engine.hold_identity(secret)
+    }
+
     pub fn with_shared_instance_identity(
         self,
         secret: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,

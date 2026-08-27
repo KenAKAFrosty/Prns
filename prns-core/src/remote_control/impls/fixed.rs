@@ -1,11 +1,11 @@
 use heapless::Vec;
 
-use crate::remote_control::{RemoteControlAccessTable, RemoteControlIdentity};
+use crate::remote_control::{RemoteControlAccessTable, RemoteControlControllerIdentity};
 use crate::storage::TablePushError;
 
 #[derive(Debug)]
 pub struct FixedRemoteControlAccessTable<const ACCESS_SLOTS: usize> {
-    identities: Vec<RemoteControlIdentity, ACCESS_SLOTS>,
+    identities: Vec<RemoteControlControllerIdentity, ACCESS_SLOTS>,
 }
 
 impl<const ACCESS_SLOTS: usize> Default for FixedRemoteControlAccessTable<ACCESS_SLOTS> {
@@ -27,11 +27,11 @@ impl<const ACCESS_SLOTS: usize> RemoteControlAccessTable
         self.identities.len()
     }
 
-    fn identities(&self) -> &[RemoteControlIdentity] {
+    fn identities(&self) -> &[RemoteControlControllerIdentity] {
         self.identities.as_slice()
     }
 
-    fn upsert(&mut self, identity: RemoteControlIdentity) -> Result<(), TablePushError> {
+    fn upsert(&mut self, identity: RemoteControlControllerIdentity) -> Result<(), TablePushError> {
         let identity_hash = identity.identity_hash();
         if let Some(current) = self
             .identities

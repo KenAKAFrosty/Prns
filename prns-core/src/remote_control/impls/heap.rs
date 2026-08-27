@@ -1,11 +1,11 @@
 use alloc::vec::Vec;
 
-use crate::remote_control::{RemoteControlAccessTable, RemoteControlIdentity};
+use crate::remote_control::{RemoteControlAccessTable, RemoteControlControllerIdentity};
 use crate::storage::TablePushError;
 
 #[derive(Debug, Default)]
 pub struct HeapRemoteControlAccessTable {
-    identities: Vec<RemoteControlIdentity>,
+    identities: Vec<RemoteControlControllerIdentity>,
 }
 
 impl RemoteControlAccessTable for HeapRemoteControlAccessTable {
@@ -17,11 +17,11 @@ impl RemoteControlAccessTable for HeapRemoteControlAccessTable {
         self.identities.len()
     }
 
-    fn identities(&self) -> &[RemoteControlIdentity] {
+    fn identities(&self) -> &[RemoteControlControllerIdentity] {
         &self.identities
     }
 
-    fn upsert(&mut self, identity: RemoteControlIdentity) -> Result<(), TablePushError> {
+    fn upsert(&mut self, identity: RemoteControlControllerIdentity) -> Result<(), TablePushError> {
         let identity_hash = identity.identity_hash();
         if let Some(current) = self
             .identities

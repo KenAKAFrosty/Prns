@@ -56,8 +56,8 @@ pub use envelope::{
 pub use impls::*;
 pub use remote_control_access::{
     read_remote_control_access_snapshot, remote_control_access_snapshot_len,
-    write_remote_control_access_snapshot, PersistedRemoteControlIdentities,
-    REMOTE_CONTROL_IDENTITY_WIRE_LEN,
+    write_remote_control_access_snapshot, PersistedRemoteControlControllerIdentities,
+    REMOTE_CONTROL_CONTROLLER_IDENTITY_WIRE_LEN,
 };
 pub use routing_table::{
     maximum_persisted_route_row_wire_len, maximum_route_upsert_payload_len,
