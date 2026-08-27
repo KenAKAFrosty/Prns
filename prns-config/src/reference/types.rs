@@ -202,7 +202,9 @@ pub enum ReferenceConfigParams {
         port: Option<String>,
     },
     PrnsUsbAuto,
-    PrnsBluetoothAuto,
+    PrnsBluetoothAuto {
+        group_id: Option<String>,
+    },
     PrnsWebSocketClient {
         target: Option<String>,
         framing: Option<String>,

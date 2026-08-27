@@ -7,6 +7,7 @@ pub use prns_core::interfaces::wifi_auto::{
     DiscoveryScope as AutoInterfaceDiscoveryScope,
     MulticastAddressType as AutoInterfaceMulticastAddressType,
 };
+use prns_core::interfaces::bluetooth_auto::GROUP_NAME as BLE_GROUP_NAME;
 use prns_core::interfaces::wifi_auto::{DEFAULT_DATA_PORT, DEFAULT_DISCOVERY_PORT, GROUP_NAME};
 use prns_core::interfaces::{BitrateBps, InterfaceDefaults};
 
@@ -461,7 +462,9 @@ pub enum PlannedMedium {
         device: String,
     },
     PrnsUsbAuto,
-    PrnsBluetoothAuto,
+    PrnsBluetoothAuto {
+        group_id: AutoInterfaceGroupId,
+    },
     PrnsWebSocketClient {
         target: WebSocketTargetPlan,
         framing: WebSocketFramingSelection,
@@ -811,7 +814,15 @@ pub(super) fn plan_medium(interface: &ReferenceInterface) -> Result<PlannedMediu
             })?,
         }),
         ReferenceConfigParams::PrnsUsbAuto => Ok(PlannedMedium::PrnsUsbAuto),
-        ReferenceConfigParams::PrnsBluetoothAuto => Ok(PlannedMedium::PrnsBluetoothAuto),
+        ReferenceConfigParams::PrnsBluetoothAuto { group_id } => {
+            Ok(PlannedMedium::PrnsBluetoothAuto {
+                group_id: AutoInterfaceGroupId(
+                    group_id
+                        .clone()
+                        .unwrap_or_else(|| BLE_GROUP_NAME.to_string()),
+                ),
+            })
+        }
         ReferenceConfigParams::PrnsWebSocketClient { target, framing } => {
             let target = target.clone().ok_or(PlanErrorKind::MissingRequiredField {
                 key: interface_key::TARGET,

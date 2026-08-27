@@ -347,7 +347,8 @@ fn medium_interface_key_rule(type_name: &str, key: &str) -> Option<KeyRule> {
         "BackboneInterface" | "BackboneClientInterface" => backbone_interface_key_rule(key),
         "I2PInterface" => i2p_interface_key_rule(key),
         "WeaveInterface" => weave_interface_key_rule(key),
-        "PrnsUsbAuto" | "PrnsBluetoothAuto" => None,
+        "PrnsUsbAuto" => None,
+        "PrnsBluetoothAuto" => prns_bluetooth_auto_key_rule(key),
         "PrnsWebSocketClient" => prns_websocket_client_key_rule(key),
         "PrnsWebSocketServer" => prns_websocket_server_key_rule(key),
         _ => None,
@@ -362,6 +363,13 @@ fn auto_interface_key_rule(key: &str) -> Option<KeyRule> {
         }
         interface_key::DISCOVERY_PORT | interface_key::DATA_PORT => Some(Applied(ValueKind::U16)),
         interface_key::DEVICES | interface_key::IGNORED_DEVICES => Some(Applied(ValueKind::List)),
+        _ => None,
+    }
+}
+
+fn prns_bluetooth_auto_key_rule(key: &str) -> Option<KeyRule> {
+    match key {
+        interface_key::GROUP_ID => Some(Applied(ValueKind::String)),
         _ => None,
     }
 }
@@ -564,7 +572,8 @@ pub(super) fn known_interface_keys(type_name: &str) -> Vec<&'static str> {
         "BackboneInterface" | "BackboneClientInterface" => interface_key::BACKBONE,
         "I2PInterface" => interface_key::I2P,
         "WeaveInterface" => interface_key::WEAVE,
-        "PrnsUsbAuto" | "PrnsBluetoothAuto" => &[],
+        "PrnsUsbAuto" => &[],
+        "PrnsBluetoothAuto" => interface_key::PRNS_BLUETOOTH_AUTO,
         "PrnsWebSocketClient" => interface_key::PRNS_WEBSOCKET_CLIENT,
         "PrnsWebSocketServer" => interface_key::PRNS_WEBSOCKET_SERVER,
         _ => &[],

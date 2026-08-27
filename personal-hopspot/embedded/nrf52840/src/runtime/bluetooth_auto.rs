@@ -28,10 +28,10 @@ use personal_rns::bluetooth_auto::{
 };
 use personal_rns::interfaces::bluetooth_auto::{
     columba_connection_role, columba_role_capabilities, contains_service, default_group_tag,
-    discovery_groups_match, encode_advertisement, encode_stream_frame, fragments_of, BleAddress,
-    BleIdentity, BleRoleCapabilities, ColumbaConnectionRole, Control, Fragment, L2capPlan,
-    PeerProtocol, Reassembler, BLE_HW_MTU, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
-    STREAM_FRAME_PREFIX_LEN,
+    discovery_groups_match, encode_advertisement, encode_stream_frame, fragments_of, group_tag,
+    BleAddress, BleIdentity, BleRoleCapabilities, ColumbaConnectionRole, Control, Fragment,
+    L2capPlan, PeerProtocol, Reassembler, BLE_HW_MTU, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
+    GROUP_TAG_LEN, STREAM_FRAME_PREFIX_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::{
     AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, DialOutcome, Origin,
@@ -78,6 +78,18 @@ const PREFERRED_MIN_CONN_INTERVAL: u16 = 12;
 const PREFERRED_MAX_CONN_INTERVAL: u16 = 24;
 const PREFERRED_SLAVE_LATENCY: u16 = 0;
 const PREFERRED_SUPERVISION_TIMEOUT: u16 = 400;
+
+/// Discovery group tag for SoftDevice advertise + passive scan.
+///
+/// Override at compile time without touching BLE identity flash:
+/// `PRNS_BLE_DISCOVERY_GROUP=mt-leg-a` / `mt-leg-b` (lab islands).
+/// Empty / unset keeps the open-mesh default (`reticulum`).
+fn local_discovery_group_tag() -> [u8; GROUP_TAG_LEN] {
+    match option_env!("PRNS_BLE_DISCOVERY_GROUP") {
+        Some(group) if !group.is_empty() => group_tag(group.as_bytes()),
+        _ => default_group_tag(),
+    }
+}
 const SIGHTING_PACING: Duration = Duration::from_millis(200);
 const SCAN_ERROR_BACKOFF: Duration = Duration::from_millis(500);
 /// One scan window before the scanner releases the central-radio permit (10 ms units), so a pending
@@ -1362,7 +1374,7 @@ pub(super) async fn acceptor(sd: &'static Softdevice, hub: &'static BleHub) -> !
             encode_advertisement(
                 &mut adv_buf,
                 BleRoleCapabilities::DualRole,
-                default_group_tag(),
+                local_discovery_group_tag(),
             )
             .unwrap_or(0);
         debug_assert_eq!(
@@ -1432,7 +1444,7 @@ pub(super) async fn scanner(sd: &'static Softdevice, hub: &'static BleHub) -> ! 
                 capabilities,
             ) == ColumbaConnectionRole::Dial;
             if contains_service(data)
-                && discovery_groups_match(default_group_tag(), data)
+                && discovery_groups_match(local_discovery_group_tag(), data)
                 && should_dial
             {
                 Some(SeenPeer {

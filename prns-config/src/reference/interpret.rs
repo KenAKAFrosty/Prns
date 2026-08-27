@@ -585,7 +585,9 @@ fn interpret_params(
             port: opt(rest, interface_key::PORT, interface, coerce_string)?,
         },
         "PrnsUsbAuto" => ReferenceConfigParams::PrnsUsbAuto,
-        "PrnsBluetoothAuto" => ReferenceConfigParams::PrnsBluetoothAuto,
+        "PrnsBluetoothAuto" => ReferenceConfigParams::PrnsBluetoothAuto {
+            group_id: opt(rest, interface_key::GROUP_ID, interface, coerce_string)?,
+        },
         "PrnsWebSocketClient" => ReferenceConfigParams::PrnsWebSocketClient {
             target: opt(rest, interface_key::TARGET, interface, coerce_string)?,
             framing: opt(rest, interface_key::FRAMING, interface, coerce_string)?,

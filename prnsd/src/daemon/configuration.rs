@@ -123,7 +123,7 @@ mod tests {
         ));
         assert!(matches!(
             plan.interfaces[2].medium,
-            PlannedMedium::PrnsBluetoothAuto
+            PlannedMedium::PrnsBluetoothAuto { .. }
         ));
     }
 }

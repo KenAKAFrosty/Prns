@@ -3,11 +3,18 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 crate="$root/personal-hopspot/embedded/nrf52840"
-output="$root/target/hopspot-mesh-tower-v2"
+# Optional lab override: PRNS_BLE_DISCOVERY_GROUP=mt-leg-a|mt-leg-b (or any string).
+# Hashes into the SoftDevice ADV group tag; does not change BLE identity flash.
+discovery_group="${PRNS_BLE_DISCOVERY_GROUP:-}"
+artifact_suffix=""
+if [[ -n "$discovery_group" ]]; then
+    artifact_suffix="-${discovery_group//[^A-Za-z0-9._-]/_}"
+fi
+output="$root/target/hopspot-mesh-tower-v2${artifact_suffix}"
 cargo_target="$output/cargo"
 elf="$cargo_target/thumbv7em-none-eabihf/release/heltec-mesh-tower-v2"
-binary="$output/heltec-mesh-tower-v2.bin"
-uf2="$output/heltec-mesh-tower-v2.uf2"
+binary="$output/heltec-mesh-tower-v2${artifact_suffix}.bin"
+uf2="$output/heltec-mesh-tower-v2${artifact_suffix}.uf2"
 nrf52840_uf2_family=0xADA52840
 
 rust_sysroot="$(rustc --print sysroot)"
@@ -34,6 +41,12 @@ fi
 mkdir -p "$output"
 (
     cd "$crate"
+    if [[ -n "$discovery_group" ]]; then
+        export PRNS_BLE_DISCOVERY_GROUP="$discovery_group"
+        printf 'MeshTower V2 BLE discovery group: %s\n' "$discovery_group"
+    else
+        unset PRNS_BLE_DISCOVERY_GROUP
+    fi
     cargo build --release --locked --no-default-features \
         --features board-mesh-tower-v2,softdevice-s140-v6 \
         --bin heltec-mesh-tower-v2 \

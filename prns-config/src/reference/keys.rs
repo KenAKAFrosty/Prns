@@ -232,6 +232,7 @@ pub(crate) mod interface {
         IGNORED_DEVICES,
         MULTICAST_ADDRESS_TYPE,
     ];
+    pub const PRNS_BLUETOOTH_AUTO: &[&str] = &[GROUP_ID];
     pub const TCP_CLIENT: &[&str] = &[
         TARGET_HOST,
         TARGET_PORT,
