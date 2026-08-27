@@ -11,6 +11,7 @@ pub struct HopspotS3FlashLayout {
     pub journal: FlashJournalLayout,
 }
 
+pub const ESP32_4_MIB_FLASH_CAPACITY: usize = 4 * 1024 * 1024;
 pub const ESP32_4_MIB_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET: u32 = 0x3DF000;
 
 pub const S3_8_MIB_FLASH_LAYOUT: HopspotS3FlashLayout = HopspotS3FlashLayout {
@@ -348,10 +349,12 @@ mod tests {
                 HOPSPOT_FLASH_PAGE_BYTES as u32,
             )
         );
+        let journal = partition(four_mib, "prns_state");
         assert_eq!(
             ESP32_4_MIB_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET + HOPSPOT_FLASH_PAGE_BYTES as u32,
-            partition(four_mib, "prns_state").0
+            journal.0
         );
+        assert_eq!(journal.0 + journal.1, ESP32_4_MIB_FLASH_CAPACITY as u32);
 
         assert_s3_csv(
             include_str!("../../embedded/esp32/partitions-hopspot-8mb.csv"),

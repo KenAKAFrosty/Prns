@@ -24,7 +24,7 @@ pub use flash_identity::{
     bootstrap_flash_ble_identity, bootstrap_flash_node_identity, FlashIdentityError,
 };
 pub use flash_layout::{
-    FirmwareAddressRange, HopspotS3FlashLayout, Nrf52840FirmwareMemory,
+    FirmwareAddressRange, HopspotS3FlashLayout, Nrf52840FirmwareMemory, ESP32_4_MIB_FLASH_CAPACITY,
     ESP32_4_MIB_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET, HELTEC_DISPLAY_NRF52840_FIRMWARE_MEMORY,
     HELTEC_DISPLAY_NRF52840_JOURNAL_LAYOUT, HELTEC_DISPLAY_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET,
     HOPSPOT_FLASH_PAGE_BYTES, MESH_TOWER_V2_BLE_IDENTITY_FLASH_OFFSET,

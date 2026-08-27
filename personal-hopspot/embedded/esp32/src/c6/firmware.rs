@@ -1,4 +1,7 @@
 use super::*;
+use personal_rns::remote_control::{
+    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlService,
+};
 
 pub async fn run(spawner: Spawner) {
     let C6Hardware {
@@ -16,6 +19,9 @@ pub async fn run(spawner: Spawner) {
 
     let node_bootstrap = crate::identity::bootstrap_node_identity();
     crate::identity::log_persistence("node", node_bootstrap.persistence());
+    let remote_control_bootstrap = crate::identity::C6_REMOTE_CONTROL_IDENTITY_FLASH
+        .load_or_generate()
+        .expect("RemoteControl identity bootstrap failed");
     let ble_bootstrap = crate::identity::bootstrap_ble_identity();
     crate::identity::log_persistence("Bluetooth", ble_bootstrap.persistence());
     drop(identity_entropy);
@@ -47,6 +53,13 @@ pub async fn run(spawner: Spawner) {
     let node_identity = node_bootstrap.into_identity();
     let transport_secret = node_identity.transport_secret();
     let destination_secret = node_identity.into_destination_secret();
+    let (remote_control_identity_secrets, _remote_control_identity_origins) =
+        remote_control_bootstrap.into_parts();
+    let remote_control = RemoteControlService::new(
+        remote_control_identity_secrets,
+        RemoteControlPublicAppData::empty(),
+        RemoteControlInitialAccess::Nobody,
+    );
     let destinations = personal_hopspot_core::HopspotDestinationSet::new(
         destination_secret,
         ANNOUNCE_APP_DATA,
@@ -98,6 +111,7 @@ pub async fn run(spawner: Spawner) {
     let host = EmbassyHost::new_with_timebase(timebase, hardware_entropy as fn(&mut [u8]));
     let recipe = PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
+        remote_control,
         pre_configured_destinations: destinations.into_preconfigured_destinations(),
         app_state: (),
         storage: C6Storage,

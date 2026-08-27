@@ -1,4 +1,7 @@
 use super::*;
+use personal_rns::remote_control::{
+    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlService,
+};
 
 pub(crate) async fn run<B: Esp32S3Board>(spawner: Spawner)
 where
@@ -149,8 +152,10 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     // Reconstruct identities before radio bring-up, on a temporary RTOS task stack. Curve25519's
     // stack high-water mark is too large for the guarded core-0 main stack, and doing the work here
     // also keeps it out of the live Wi-Fi/BLE scheduling window.
-    let (node_bootstrap, ble_bootstrap, destination_hashes) =
-        crate::identity::bootstrap_s3_identities().await;
+    let (node_bootstrap, remote_control_bootstrap, ble_bootstrap, destination_hashes) =
+        crate::identity::bootstrap_s3_identities(B::FLASH_LAYOUT.into()).await;
+    let remote_control_bootstrap =
+        remote_control_bootstrap.expect("RemoteControl identity bootstrap failed");
     crate::identity::log_persistence("node", node_bootstrap.persistence());
     crate::identity::log_persistence("Bluetooth", ble_bootstrap.persistence());
 
@@ -175,6 +180,13 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let node_identity = node_bootstrap.into_identity();
     let transport_secret = node_identity.transport_secret();
     let destination_secret = node_identity.into_destination_secret();
+    let (remote_control_identity_secrets, _remote_control_identity_origins) =
+        remote_control_bootstrap.into_parts();
+    let remote_control = RemoteControlService::new(
+        remote_control_identity_secrets,
+        RemoteControlPublicAppData::empty(),
+        RemoteControlInitialAccess::Nobody,
+    );
     let destinations = personal_hopspot_core::HopspotDestinationSet::new(
         destination_secret,
         B::ANNOUNCE_APP_DATA,
@@ -212,6 +224,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
 
     let recipe = PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
+        remote_control,
         pre_configured_destinations: destinations.into_preconfigured_destinations(),
         app_state: (),
         storage: EngineStorageType::default(),
