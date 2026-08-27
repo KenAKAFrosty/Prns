@@ -67,6 +67,7 @@ async fn main() {
                 source_interface,
                 hops,
                 destination,
+                app_data: _,
             }) = event
             {
                 println!(

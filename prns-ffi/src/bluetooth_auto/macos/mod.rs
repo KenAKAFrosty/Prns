@@ -4,6 +4,7 @@ mod data_plane;
 mod discovery;
 mod gatt_link;
 mod gatt_write;
+mod l2cap_lifecycle;
 mod peripheral;
 
 #[cfg(test)]
@@ -190,6 +191,13 @@ struct SendPeripheralDelegate(Retained<PeripheralDelegate>);
 // SAFETY: the retained delegate's RefCell-backed state is accessed only by the serial CoreBluetooth
 // dispatch queue before and after transfer.
 unsafe impl Send for SendPeripheralDelegate {}
+
+impl SendPeripheralDelegate {
+    /// Queue-confined: call only from the CoreBluetooth serial dispatch queue.
+    fn has_inbound_session(&self, peer_id: CoreBluetoothPeerId) -> bool {
+        self.0.has_inbound_session(peer_id)
+    }
+}
 
 enum Event {
     CentralPowered,

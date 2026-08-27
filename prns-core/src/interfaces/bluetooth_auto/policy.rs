@@ -221,10 +221,21 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionPolicy<MAX_PEERS
             && self.find_settled_by_identity(identity).is_none()
             && self.settled_count() < MAX_PEERS
         {
-            emit(PolicyAction::Reject {
-                address,
-                dialed: false,
-            });
+            let we_open = matches!(
+                plan,
+                super::handshake::L2capArrangement::Opens(opener) if opener == self.local.endpoint
+            );
+            if dialed {
+                // Non-opener who dialed: pause outbound so the designated opener can take central.
+                self.upsert_backoff(address, BackoffKind::Suppressed, now_ms);
+                self.dial_pause_until_ms = now_ms.saturating_add(DIAL_PAUSE_MS);
+            }
+            emit(PolicyAction::Reject { address, dialed });
+            if we_open && !dialed {
+                // Opener was peripheral: redial as central on the address we already have.
+                self.upsert_backoff(address, BackoffKind::Dialing, now_ms);
+                emit(PolicyAction::Dial(address));
+            }
             return;
         }
         let keeper = is_keeper(
@@ -716,21 +727,79 @@ mod tests {
 
         assert_eq!(
             actions,
+            std::vec![
+                PolicyAction::Reject {
+                    address: addr(2),
+                    dialed: false,
+                },
+                PolicyAction::Dial(addr(2)),
+            ]
+        );
+        assert_eq!(manager.settled_count(), 0);
+    }
+
+    #[test]
+    fn a_non_opener_who_dialed_rejects_and_pauses_outbound() {
+        use crate::interfaces::bluetooth_auto::{AndroidHost, AppleHost, Psm};
+
+        let capabilities = LinkCapabilities {
+            l2cap: Psm::new(0x00c0),
+            link_mtu: 500,
+        };
+
+        let mut manager = ConnectionPolicy::<2, 8>::new(LocalPeer {
+            identity: BleIdentity::new([1; 16]),
+            endpoint: Endpoint::CoreBluetooth(AppleHost::MacOs),
+            capabilities,
+        });
+        manager.start(&mut |_| {});
+
+        let actions = collect(
+            &mut manager,
+            PolicyInput::Settled {
+                address: addr(2),
+                origin: Origin::Dialed,
+                established: EstablishedPeer {
+                    identity: BleIdentity::new([2; 16]),
+                    transport: EstablishedTransport::Native {
+                        endpoint: Endpoint::Android(AndroidHost::Android),
+                        capabilities,
+                    },
+                    peer_rssi: None,
+                },
+                now_ms: 5,
+            },
+        );
+
+        assert_eq!(
+            actions,
             std::vec![PolicyAction::Reject {
                 address: addr(2),
-                dialed: false,
+                dialed: true,
             }]
         );
         assert_eq!(manager.settled_count(), 0);
 
-        let redial = collect(
+        let while_paused = collect(
             &mut manager,
             PolicyInput::Sighting {
                 address: addr(2),
                 now_ms: 6,
             },
         );
-        assert_eq!(redial, std::vec![PolicyAction::Dial(addr(2))]);
+        assert!(
+            while_paused.is_empty(),
+            "non-opener must pause dialing so the opener can take central"
+        );
+
+        let after_pause = collect(
+            &mut manager,
+            PolicyInput::Sighting {
+                address: addr(2),
+                now_ms: 5 + DIAL_PAUSE_MS,
+            },
+        );
+        assert_eq!(after_pause, std::vec![PolicyAction::Dial(addr(2))]);
     }
 
     #[test]

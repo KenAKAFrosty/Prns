@@ -455,7 +455,7 @@ fn both_ends_keep_the_same_connection_for_an_either_opens_pair() {
 }
 
 #[test]
-fn only_the_designated_opener_stuck_as_peripheral_redials() {
+fn opens_arrangement_rejects_either_wrong_gatt_role() {
     let opens_android = l2cap_arrangement(mac(), android());
     assert!(needs_redial(
         opens_android,
@@ -468,7 +468,7 @@ fn only_the_designated_opener_stuck_as_peripheral_redials() {
         android()
     ));
     assert!(!needs_redial(opens_android, HandshakeRole::Listener, mac()));
-    assert!(!needs_redial(opens_android, HandshakeRole::Dialer, mac()));
+    assert!(needs_redial(opens_android, HandshakeRole::Dialer, mac()));
 
     let either = l2cap_arrangement(linux(), android());
     assert!(!needs_redial(either, HandshakeRole::Listener, linux()));

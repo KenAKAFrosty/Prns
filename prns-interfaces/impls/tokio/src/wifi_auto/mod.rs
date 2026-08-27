@@ -38,6 +38,8 @@ mod apple;
 mod discovery;
 #[cfg(feature = "wifi-auto-mdns")]
 mod mdns;
+#[cfg(feature = "wifi-auto-mdns")]
+mod publication_absence;
 
 #[cfg(all(
     feature = "wifi-auto-apple",
