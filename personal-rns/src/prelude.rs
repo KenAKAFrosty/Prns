@@ -16,7 +16,7 @@ pub use crate::remote_control::{
     RemoteControlProtocolErrorKind, RemoteControlProtocolVersion, RemoteControlRequest,
     RemoteControlRequestKind, RemoteControlRequestParseError, RemoteControlRequestSet,
     RemoteControlResponse, RemoteControlResponseKind, RemoteControlResponseParseError,
-    RemoteControlTarget, RemoteControlTargetIdentity, RemoteControlTargetIdentitySecret,
+    RemoteControlTargetIdentity, RemoteControlTargetIdentitySecret,
 };
 
 #[cfg(feature = "alloc")]

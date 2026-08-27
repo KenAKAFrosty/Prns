@@ -2,7 +2,6 @@ use crate::identity::in_memory::{IdentityParts, InMemoryNodeIdentity};
 use crate::identity::vault::IdentitySecretKey;
 use crate::identity::{IdentityHash, IdentityPublicKeys};
 use crate::storage::TablePushError;
-use crate::wire::DestinationHash;
 
 pub const REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY: usize = 2;
 
@@ -143,34 +142,6 @@ impl RemoteControlTargetIdentity {
     #[must_use]
     pub const fn identity_hash(&self) -> IdentityHash {
         self.identity_hash
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct RemoteControlTarget {
-    identity: RemoteControlTargetIdentity,
-    endpoint: DestinationHash,
-}
-
-impl RemoteControlTarget {
-    #[must_use]
-    pub const fn new(identity: RemoteControlTargetIdentity, endpoint: DestinationHash) -> Self {
-        Self { identity, endpoint }
-    }
-
-    #[must_use]
-    pub const fn identity(&self) -> &RemoteControlTargetIdentity {
-        &self.identity
-    }
-
-    #[must_use]
-    pub const fn endpoint(&self) -> DestinationHash {
-        self.endpoint
-    }
-
-    #[must_use]
-    pub fn into_parts(self) -> (RemoteControlTargetIdentity, DestinationHash) {
-        (self.identity, self.endpoint)
     }
 }
 

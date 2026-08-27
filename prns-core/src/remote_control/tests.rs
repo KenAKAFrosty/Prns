@@ -1,10 +1,9 @@
 use crate::crypto::{Ed25519PublicKey, X25519PublicKey};
 use crate::identity::{
-    IdentityEncryptionPublicKey, IdentityHash, IdentityPublicKeys, IdentitySigningPublicKey,
-    Zeroizing, IDENTITY_SECRET_KEY_LEN,
+    IdentityEncryptionPublicKey, IdentityPublicKeys, IdentitySigningPublicKey, Zeroizing,
+    IDENTITY_SECRET_KEY_LEN,
 };
 use crate::storage::TablePushError;
-use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
 
 use super::*;
 
@@ -75,19 +74,6 @@ fn a_zero_capacity_table_is_an_empty_disabled_table() {
 
     assert!(table.is_empty());
     assert_eq!(table.upsert(identity(0xA9)), Err(TablePushError::TableFull),);
-}
-
-#[test]
-fn target_keeps_its_identity_and_endpoint_together() {
-    let identity =
-        RemoteControlTargetIdentity::new(IdentityHash::new([0x41; TRUNCATED_HASH_BYTE_LEN]));
-    let endpoint = DestinationHash::new([0x52; TRUNCATED_HASH_BYTE_LEN]);
-    let target = RemoteControlTarget::new(identity, endpoint);
-
-    assert_eq!(
-        (target.identity().identity_hash(), target.endpoint()),
-        (IdentityHash::new([0x41; TRUNCATED_HASH_BYTE_LEN]), endpoint,)
-    );
 }
 
 fn identity_secret(fill: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {

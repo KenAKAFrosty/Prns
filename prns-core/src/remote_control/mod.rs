@@ -13,11 +13,13 @@
 
 mod bootstrap;
 mod core;
+mod endpoint;
 mod impls;
 mod message;
 
 pub use self::core::*;
 pub use bootstrap::*;
+pub use endpoint::*;
 pub use impls::*;
 pub use message::*;
 
