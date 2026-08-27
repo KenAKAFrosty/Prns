@@ -78,6 +78,10 @@ type OutboundTakeOutcome =
 type RuntimeOutboundDrainOutcome =
   | Tag<"Drained", readonly PrnsOutboundFrame[]>
   | RuntimeRejected;
+type OutboundActivityOutcome =
+  | Tag<"RuntimeAdvanced">
+  | Tag<"InterfaceDetached">;
+type OutboundActivityWaiter = (outcome: OutboundActivityOutcome) => void;
 
 const INTERFACE_OUTBOUND_QUEUE_DEPTH = 64;
 
@@ -103,6 +107,7 @@ export class RuntimeHost {
   #activeRegistrationKeys = new Set<string>();
   #outboundQueues = new Map<string, PrnsOutboundFrame[]>();
   #overflowedOutbound = new Set<string>();
+  #outboundActivityWaiters = new Map<string, Set<OutboundActivityWaiter>>();
 
   constructor(
     wasm: PrnsWasmModule,
@@ -178,6 +183,7 @@ export class RuntimeHost {
     const key = byteKey(id);
     const active = this.#activeInterfaces.get(key);
     if (!active) {
+      this.#resolveOutboundActivity(key, Tag("InterfaceDetached"));
       return Tag("Detached");
     }
     try {
@@ -198,6 +204,7 @@ export class RuntimeHost {
     this.#activeRegistrationKeys.delete(active.registrationKey);
     this.#outboundQueues.delete(key);
     this.#overflowedOutbound.delete(key);
+    this.#resolveOutboundActivity(key, Tag("InterfaceDetached"));
     return Tag("Detached");
   }
 
@@ -241,7 +248,7 @@ export class RuntimeHost {
       if (active !== undefined) {
         active.rxBytes = saturatingAdd(active.rxBytes, bytes.length);
       }
-      this.#onRuntimeActivity();
+      this.notifyRuntimeActivity();
       return Tag("Accepted");
     } catch (error) {
       return runtimeRejected("ingest", error);
@@ -300,6 +307,40 @@ export class RuntimeHost {
       );
     }
     return Tag("Outbound", outbound);
+  }
+
+  waitForOutboundActivity(id: InterfaceId): Promise<OutboundActivityOutcome> {
+    const key = byteKey(id);
+    if (!this.#activeInterfaces.has(key)) {
+      return Promise.resolve(Tag("InterfaceDetached"));
+    }
+    return new Promise((resolve) => {
+      const waiters = this.#outboundActivityWaiters.get(key) ?? new Set();
+      waiters.add(resolve);
+      this.#outboundActivityWaiters.set(key, waiters);
+    });
+  }
+
+  notifyRuntimeActivity(): void {
+    const keys = [...this.#outboundActivityWaiters.keys()];
+    for (const key of keys) {
+      this.#resolveOutboundActivity(key, Tag("RuntimeAdvanced"));
+    }
+    this.#onRuntimeActivity();
+  }
+
+  #resolveOutboundActivity(
+    key: string,
+    outcome: OutboundActivityOutcome,
+  ): void {
+    const waiters = this.#outboundActivityWaiters.get(key);
+    if (waiters === undefined) {
+      return;
+    }
+    this.#outboundActivityWaiters.delete(key);
+    for (const resolve of waiters) {
+      resolve(outcome);
+    }
   }
 
   createUsbAutoDecoder(): UsbAutoDecoderBinding {

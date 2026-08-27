@@ -3,7 +3,9 @@ use super::forward::PacketToForward;
 use super::links::ForwardedLinkRequestBody;
 use super::upstream_delivery::{DecryptOwed, RatchetDecryptOwed};
 use crate::crypto::{Ed25519PublicKey, X25519PublicKey};
-use crate::engine::{CommandId, InstantMillis, LinkClosedReason, PacketReceiptDelivered};
+use crate::engine::{
+    CommandId, InstantMillis, LinkClosedReason, PacketReceiptDelivered, WakeSchedule,
+};
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
 use crate::routing::announce::schedule::ScheduleRejection;
@@ -26,10 +28,21 @@ use crate::routing::request_handlers::RequestPathHash;
 use crate::units::RttMillis;
 use crate::wire::{DestinationHash, WirePacketHeader};
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct IngestEffects<'a> {
     pub destination_identity_expiry: Option<InstantMillis>,
     pub accepted_announce: Option<AcceptedAnnounceEffect<'a>>,
+    pub held_announce_release: WakeSchedule,
+}
+
+impl Default for IngestEffects<'_> {
+    fn default() -> Self {
+        Self {
+            destination_identity_expiry: None,
+            accepted_announce: None,
+            held_announce_release: WakeSchedule::Unchanged,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

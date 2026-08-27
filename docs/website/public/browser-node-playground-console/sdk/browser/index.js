@@ -715,7 +715,7 @@ export class Prns {
         }
         return new Promise((settle) => {
             this.#pendingCommands.set(id, { pending, settle });
-            this.#pumpEvents();
+            this.#host.notifyRuntimeActivity();
         });
     }
     #sendResourceSource(value, source, compression, packedMetadata) {

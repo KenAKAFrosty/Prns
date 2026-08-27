@@ -1,6 +1,7 @@
 import init, * as wasm from "./pkg/prns_wasm.js";
 import { BrowserLocalStorageIdentityStore, Prns, Tag, match, match_into, } from "./sdk/index.js";
 import { BROWSER_PLAYGROUND_LXMF_DELIVERY, LXMF_DELIVERY_DISPLAY_NAME, } from "./lxmf.js";
+import { PlaygroundBluetoothController } from "./bluetooth.js";
 import { describeAutoWifiFailure, describeCommandFailure, describeHostError, describeHostOperationFailure, describeInterfaceCloseFailure, describeStartupFailure, describeUsbConnectFailure, describeWebSocketConnectFailure, hostOperationFailed, } from "./outcomes.js";
 import { hex, presentPacketContent } from "./presentation.js";
 import { controlAvailability, sameAutoWifiStatus, webSocketConnectAvailable, } from "./state.js";
@@ -16,6 +17,7 @@ class BrowserPlayground {
     #autoWifi = Tag("Waiting");
     #webSocket = Tag("Waiting");
     #usb = Tag("Waiting");
+    #bluetooth;
     #snapshot;
     #pollTimer;
     #lastRuntimeFailure = "";
@@ -25,6 +27,7 @@ class BrowserPlayground {
         this.#prns = prns;
         this.#destination = destination;
         this.#pageDestination = pageDestination;
+        this.#bluetooth = new PlaygroundBluetoothController(prns.interfaces.bluetooth, view, () => this.#syncControls());
     }
     static async start(view) {
         if (BROWSER_PLAYGROUND_LXMF_DELIVERY.tag !== "Prepared") {
@@ -84,6 +87,7 @@ class BrowserPlayground {
         await Promise.allSettled([
             webSocket?.close(),
             usb?.close(),
+            this.#bluetooth.shutdown(),
             autoWifi?.close(),
         ]);
     }
@@ -95,6 +99,7 @@ class BrowserPlayground {
         this.#usb = webUsbAvailable()
             ? Tag("Ready")
             : Tag("Unavailable", { api: "WebUSB" });
+        this.#bluetooth.start();
         this.#view.renderRuntimeReady(this.#destination);
         this.#view.renderAutoWifi(this.#autoWifi);
         this.#view.renderWebSocket(this.#webSocket);
@@ -117,6 +122,12 @@ class BrowserPlayground {
             },
             closeUsb: () => {
                 void this.#closeUsb();
+            },
+            connectBluetooth: () => {
+                void this.#bluetooth.connect();
+            },
+            closeBluetooth: () => {
+                void this.#bluetooth.close();
             },
             announce: () => this.#announce(),
             clearActivity: () => this.#view.clearActivity(),
@@ -372,6 +383,7 @@ class BrowserPlayground {
         this.#pollAutoWifi();
         this.#pollWebSocket();
         this.#pollUsb();
+        this.#bluetooth.poll();
         this.#pollRuntime();
         this.#syncControls();
     }
@@ -602,7 +614,7 @@ class BrowserPlayground {
         this.#view.record("Failure", summary, detail);
     }
     #syncControls() {
-        this.#view.setControls(controlAvailability(this.#autoWifi, this.#webSocket, this.#usb, this.#snapshot));
+        this.#view.setControls(controlAvailability(this.#autoWifi, this.#webSocket, this.#usb, this.#bluetooth.state, this.#snapshot));
     }
 }
 async function boot(document) {
@@ -621,6 +633,7 @@ async function boot(document) {
     view.renderAutoWifi(Tag("Waiting"));
     view.renderWebSocket(Tag("Waiting"));
     view.renderUsb(Tag("Waiting"));
+    view.renderBluetooth(Tag("Waiting"));
     view.setControls({
         autoWifiStart: false,
         autoWifiClose: false,
@@ -628,6 +641,8 @@ async function boot(document) {
         webSocketClose: false,
         usbConnect: false,
         usbClose: false,
+        bluetoothConnect: false,
+        bluetoothClose: false,
         announce: false,
     });
     view.record("Failure", "Browser node could not start", describeStartupFailure(startup));

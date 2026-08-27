@@ -210,6 +210,7 @@ impl<S: StorageLayout> EngineState<S> {
             &mut effects,
         );
         let protocol_violation = ProtocolViolationKind::of_outcome(&outcome);
+        wake_schedule_changes.held_announce_release = effects.held_announce_release;
         let accepted_observation = effects.accepted_announce.take();
         if let Some(expiry) = effects.destination_identity_expiry {
             wake_schedule_changes.expired_destination_identities = WakeSchedule::AtMost(expiry);

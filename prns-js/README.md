@@ -49,6 +49,28 @@ console.log(node.backendInfo);
 await node.stop();
 ```
 
+Web Bluetooth connects the browser as a GATT central to a native or embedded
+Prns node advertising the shared Bluetooth Auto service. Start the chooser
+from a user action in a supported secure-context browser:
+
+```ts
+connectButton.addEventListener("click", async () => {
+  const connected = await node.interfaces.bluetooth.connect();
+  if (connected.tag !== "Connected") {
+    reportBluetoothFailure(connected);
+    return;
+  }
+
+  const session = connected.data;
+  showInterface(session.interfaceId);
+});
+```
+
+The session carries Reticulum packets in both directions over the shared GATT
+control and data characteristics. Browser instances do not advertise this
+service, so a browser-to-browser Bluetooth link still requires a native or
+embedded Prns transport node nearby.
+
 ## Handle events and commands
 
 Application events and diagnostics are separate, bounded, single-owner streams. Claiming a stream is an explicit outcome, so an ownership conflict never appears as an iterator exception. Handle that boundary once, then keep the event loop flat:
@@ -156,4 +178,4 @@ match(sent.data, {
 
 ## More examples
 
-[`examples/native-lifecycle.ts`](examples/native-lifecycle.ts) is a complete native lifecycle program with a self-contained loopback interface. The [browser transport playground](../prns-wasm/examples/browser-playground/README.md) runs a live node with permission-gated WebUSB and Wi-Fi controls.
+[`examples/native-lifecycle.ts`](examples/native-lifecycle.ts) is a complete native lifecycle program with a self-contained loopback interface. The [browser transport playground](../prns-wasm/examples/browser-playground/README.md) runs a live node with permission-gated Web Bluetooth, WebUSB, and Wi-Fi controls.

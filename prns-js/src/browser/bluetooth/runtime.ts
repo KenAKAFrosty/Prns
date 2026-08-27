@@ -44,6 +44,10 @@ type BluetoothOutboundOutcome =
   | Extract<InterfaceSessionFailure, Tag<"OutboundQueueFull", unknown>>
   | RuntimeRejected;
 
+type BluetoothOutboundActivityOutcome =
+  | Tag<"RuntimeAdvanced">
+  | Tag<"InterfaceDetached">;
+
 export type BluetoothRuntimeHost = {
   bluetoothIdentityReadiness():
     | Tag<"Ready">
@@ -64,4 +68,7 @@ export type BluetoothRuntimeHost = {
   deactivateInterface(id: InterfaceId): BluetoothDetachOutcome;
   ingest(id: InterfaceId, bytes: PacketFrame): BluetoothIngestOutcome;
   takeOutboundFor(id: InterfaceId): BluetoothOutboundOutcome;
+  waitForOutboundActivity(
+    id: InterfaceId,
+  ): Promise<BluetoothOutboundActivityOutcome>;
 };

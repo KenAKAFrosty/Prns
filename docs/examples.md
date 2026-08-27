@@ -32,7 +32,7 @@ cargo run --locked -p personal-rns --example dynamic_interface --features tokio-
 | Example | What you'll see |
 | --- | --- |
 | [`native-lifecycle.ts`](../prns-js/examples/native-lifecycle.ts) | Create a native node, claim its event stream, attach and detach a self-contained loopback TCP server, and stop cleanly, with every event case handled exhaustively. |
-| [Browser transport playground](../prns-wasm/examples/browser-playground/README.md) | A live WebAssembly node in your browser, with direct WebSocket, WebUSB, and Wi-Fi transports kept behind explicit actions. |
+| [Browser transport playground](../prns-wasm/examples/browser-playground/README.md) | A live WebAssembly node in your browser, with direct WebSocket, Web Bluetooth, WebUSB, and Wi-Fi transports kept behind explicit actions. |
 
 Typecheck the native source example and both SDK implementations:
 

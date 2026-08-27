@@ -115,6 +115,8 @@ try {
     persistenceFailures: "Typed",
     routePersistence: "Restored",
     webSocketFraming: "Resolved",
+    bluetoothContract: "Shared",
+    bluetoothSession: "Bridged",
     compression: "Compressed",
     compressionDetail: "message:message",
   });

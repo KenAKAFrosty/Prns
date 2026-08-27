@@ -40,6 +40,7 @@ fi
 mkdir -p "$public_dir/sdk" "$public_dir/pkg"
 cp "$example_dir/index.html" "$public_dir/index.html"
 cp "$example_dir/styles.css" "$public_dir/styles.css"
+cp "$build_dir/prns-wasm/examples/browser-playground/bluetooth.js" "$public_dir/bluetooth.js"
 cp "$build_dir/prns-wasm/examples/browser-playground/lxmf.js" "$public_dir/lxmf.js"
 cp "$build_dir/prns-wasm/examples/browser-playground/main.js" "$public_dir/main.js"
 cp "$build_dir/prns-wasm/examples/browser-playground/outcomes.js" "$public_dir/outcomes.js"

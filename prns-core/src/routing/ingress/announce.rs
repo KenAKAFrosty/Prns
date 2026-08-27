@@ -349,9 +349,13 @@ mod tests {
     use crate::engine::test_support::*;
     use crate::engine::{
         AnnounceAppData, AnnounceNow, AnnounceTarget, Directive, EngineReaction, IngestIo,
+        Journaled, WakeSchedule, WakeSchedules,
     };
     use crate::identity::in_memory::InMemoryNodeIdentity;
-    use crate::interfaces::{InboundPacket, InterfaceDescriptor};
+    use crate::interfaces::{
+        FrequencyMilliHertz, InboundPacket, IngressControlPolicy, InterfaceCommonPolicy,
+        InterfaceDescriptor,
+    };
     use crate::routing::announce::Announce;
     use crate::routing::ingress::testkit::iface;
     use crate::routing::ingress::{DeferredCrypto, IgnoreReason, IngestPacketOutcome};
@@ -1188,6 +1192,162 @@ mod tests {
         let n = crate::routing::announce::write_announce_wire_packet(&announce, hops, &mut buf)
             .expect("announce serializes");
         buf[..n].to_vec()
+    }
+
+    const LIMIT_TEST_FIRST_ARRIVAL_MS: u64 = 1_000;
+    const LIMIT_TEST_INITIAL_BURST_ARRIVAL_MS: u64 = LIMIT_TEST_FIRST_ARRIVAL_MS + 3;
+    const LIMIT_TEST_BURST_CLEARING_DELAY_MS: u64 = 500;
+    const LIMIT_TEST_BURST_CLEAR_ARRIVAL_MS: u64 =
+        LIMIT_TEST_INITIAL_BURST_ARRIVAL_MS + LIMIT_TEST_BURST_CLEARING_DELAY_MS;
+    const LIMIT_TEST_PRE_RELATCH_ARRIVAL_MS: u64 = LIMIT_TEST_BURST_CLEAR_ARRIVAL_MS + 1;
+    const LIMIT_TEST_RELATCH_ARRIVAL_MS: u64 = LIMIT_TEST_PRE_RELATCH_ARRIVAL_MS + 1;
+    const LIMIT_TEST_BURST_HOLD_MILLIS: u64 = 100;
+    const LIMIT_TEST_BURST_PENALTY_MILLIS: u64 = 10_000;
+    const LIMIT_TEST_TARGET_FREQUENCY_MILLI_HERTZ: u64 = 10_000;
+
+    fn relay_ready_to_relatch_with_full_held_queue() -> (
+        EngineState<TestStorageLayout>,
+        InterfaceDescriptor,
+        WakeSchedules,
+    ) {
+        let source = InterfaceId::new([0xEE; 8]);
+        let ingress_control = IngressControlPolicy {
+            max_held_announces: 1,
+            new_interface_millis: u64::MAX,
+            announce_burst_frequency_new: FrequencyMilliHertz::new(
+                LIMIT_TEST_TARGET_FREQUENCY_MILLI_HERTZ,
+            ),
+            announce_burst_frequency: FrequencyMilliHertz::new(
+                LIMIT_TEST_TARGET_FREQUENCY_MILLI_HERTZ,
+            ),
+            burst_hold_millis: LIMIT_TEST_BURST_HOLD_MILLIS,
+            burst_penalty_millis: LIMIT_TEST_BURST_PENALTY_MILLIS,
+            ..InterfaceCommonPolicy::RNS_DEFAULT.ingress_control
+        };
+        let descriptor = InterfaceDescriptor {
+            common: InterfaceCommonPolicy {
+                ingress_control,
+                ..InterfaceCommonPolicy::RNS_DEFAULT
+            },
+            ..routable_descriptor(source)
+        };
+        let descriptors = [descriptor];
+        let interfaces = AttachedInterfaces::new(&descriptors);
+        let mut relay = transporting_node();
+        let mut schedules = relay.wake_schedules(interfaces);
+
+        for (seed, arrived_at_ms) in [
+            (0, LIMIT_TEST_FIRST_ARRIVAL_MS),
+            (1, LIMIT_TEST_FIRST_ARRIVAL_MS + 1),
+            (2, LIMIT_TEST_FIRST_ARRIVAL_MS + 2),
+            (3, LIMIT_TEST_INITIAL_BURST_ARRIVAL_MS),
+            (4, LIMIT_TEST_BURST_CLEAR_ARRIVAL_MS),
+            (5, LIMIT_TEST_PRE_RELATCH_ARRIVAL_MS),
+        ] {
+            let mut wire = flood_announce(seed, 5);
+            let arrived_at = InstantMillis(arrived_at_ms);
+            let delta = relay.ingest_packet_into(
+                InboundPacket {
+                    arrived_at,
+                    source_interface: source,
+                    bytes: &mut wire,
+                },
+                IngestIo {
+                    interfaces,
+                    now: arrived_at,
+                    fill_entropy: &mut |_| {},
+                    should_prove: &mut |_| false,
+                    should_accept_resource: &mut |_| false,
+                    sink: &mut |_| {},
+                },
+            );
+            schedules.merge(delta);
+            assert_eq!(schedules, relay.wake_schedules(interfaces));
+        }
+
+        assert_eq!(relay.held_announces.len_for(source), 1);
+        assert_eq!(
+            schedules.held_announce_release,
+            WakeSchedule::At(InstantMillis(
+                LIMIT_TEST_INITIAL_BURST_ARRIVAL_MS + LIMIT_TEST_BURST_PENALTY_MILLIS
+            )),
+        );
+        (relay, descriptor, schedules)
+    }
+
+    #[test]
+    fn a_relatched_full_held_queue_reports_its_later_release_deadline() {
+        let (mut relay, descriptor, mut schedules) = relay_ready_to_relatch_with_full_held_queue();
+        let descriptors = [descriptor];
+        let interfaces = AttachedInterfaces::new(&descriptors);
+        let source = descriptor.id;
+        let arrived_at = InstantMillis(LIMIT_TEST_RELATCH_ARRIVAL_MS);
+        let mut wire = flood_announce(6, 5);
+        let mut held_drop = None;
+        let delta = relay.ingest_packet_into(
+            InboundPacket {
+                arrived_at,
+                source_interface: source,
+                bytes: &mut wire,
+            },
+            IngestIo {
+                interfaces,
+                now: arrived_at,
+                fill_entropy: &mut |_| {},
+                should_prove: &mut |_| false,
+                should_accept_resource: &mut |_| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Journaled(Journaled::AnnounceHeldDropped {
+                        cause, ..
+                    }) = reaction
+                    {
+                        held_drop = Some(cause);
+                    }
+                },
+            },
+        );
+        let expected = WakeSchedule::At(InstantMillis(
+            arrived_at.0 + descriptor.common.ingress_control.burst_penalty_millis,
+        ));
+
+        assert_eq!(held_drop, Some(HeldDropCause::InterfaceAtCap));
+        assert_eq!(delta.held_announce_release, expected);
+        schedules.merge(delta);
+        assert_eq!(schedules, relay.wake_schedules(interfaces));
+    }
+
+    #[test]
+    fn a_relatched_forgery_reports_the_held_queue_release_deadline() {
+        let (mut relay, descriptor, mut schedules) = relay_ready_to_relatch_with_full_held_queue();
+        let descriptors = [descriptor];
+        let interfaces = AttachedInterfaces::new(&descriptors);
+        let source = descriptor.id;
+        let arrived_at = InstantMillis(LIMIT_TEST_RELATCH_ARRIVAL_MS);
+        let mut wire = flood_announce(6, 5);
+        *wire.last_mut().unwrap() ^= 0xFF;
+        let delta = relay.ingest_packet_into(
+            InboundPacket {
+                arrived_at,
+                source_interface: source,
+                bytes: &mut wire,
+            },
+            IngestIo {
+                interfaces,
+                now: arrived_at,
+                fill_entropy: &mut |_| {},
+                should_prove: &mut |_| false,
+                should_accept_resource: &mut |_| false,
+                sink: &mut |_| {},
+            },
+        );
+        let expected = WakeSchedule::At(InstantMillis(
+            arrived_at.0 + descriptor.common.ingress_control.burst_penalty_millis,
+        ));
+
+        assert_eq!(relay.held_announces.len_for(source), 1);
+        assert_eq!(delta.held_announce_release, expected);
+        schedules.merge(delta);
+        assert_eq!(schedules, relay.wake_schedules(interfaces));
     }
 
     #[test]
