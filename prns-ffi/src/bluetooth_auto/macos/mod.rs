@@ -17,15 +17,16 @@ use objc2::msg_send;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_core_bluetooth::{
-    CBAdvertisementDataLocalNameKey, CBAdvertisementDataServiceUUIDsKey, CBCentralManager,
+    CBAdvertisementDataManufacturerDataKey, CBAdvertisementDataServiceUUIDsKey, CBCentralManager,
     CBCentralManagerScanOptionAllowDuplicatesKey, CBCharacteristic, CBPeer, CBPeripheral,
     CBPeripheralManager, CBUUID,
 };
 use objc2_foundation::{NSArray, NSData, NSDictionary, NSNumber, NSString};
 
 use prns_core::interfaces::bluetooth_auto::{
-    BleAddress, BleUuid, BLE_SERVICE_UUID, COLUMBA_IDENTITY_UUID, COLUMBA_RX_UUID, COLUMBA_TX_UUID,
-    NATIVE_CONTROL_UUID, NATIVE_DATA_UUID,
+    default_group_tag, manufacturer_role_payload, BleAddress, BleRoleCapabilities, BleUuid,
+    BLE_SERVICE_UUID, COLUMBA_IDENTITY_UUID, COLUMBA_RX_UUID, COLUMBA_TX_UUID, NATIVE_CONTROL_UUID,
+    NATIVE_DATA_UUID,
 };
 
 use central::CentralDelegate;
@@ -104,12 +105,18 @@ fn advertisement_data(services: &NSArray<CBUUID>) -> Retained<NSDictionary<NSStr
     // SAFETY: CoreBluetooth exports this NSString constant with process lifetime.
     let uuids_key: &NSString = unsafe { CBAdvertisementDataServiceUUIDsKey };
     let uuids_value: &AnyObject = services;
+    // Prefer manufacturer group tag over local name so SoftDevice passive scanners see the group
+    // in primary ADV (classic ADV is only 31 bytes with a 128-bit service UUID).
     // SAFETY: CoreBluetooth exports this NSString constant with process lifetime.
-    let name_key: &NSString = unsafe { CBAdvertisementDataLocalNameKey };
-    let name = NSString::from_str("Prns");
-    let name_ref: &NSString = &name;
-    let name_value: &AnyObject = name_ref;
-    NSDictionary::from_slices(&[uuids_key, name_key], &[uuids_value, name_value])
+    let mfg_key: &NSString = unsafe { CBAdvertisementDataManufacturerDataKey };
+    let payload = manufacturer_role_payload(BleRoleCapabilities::DualRole, default_group_tag());
+    let mut mfg_bytes = [0u8; 8];
+    mfg_bytes[0] = 0xff;
+    mfg_bytes[1] = 0xff;
+    mfg_bytes[2..].copy_from_slice(&payload);
+    let mfg = NSData::with_bytes(&mfg_bytes);
+    let mfg_value: &AnyObject = &mfg;
+    NSDictionary::from_slices(&[uuids_key, mfg_key], &[uuids_value, mfg_value])
 }
 
 fn scan_options() -> Retained<NSDictionary<NSString, AnyObject>> {

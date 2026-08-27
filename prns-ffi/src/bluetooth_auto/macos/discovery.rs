@@ -7,7 +7,10 @@ use objc2_core_bluetooth::{
 };
 use objc2_foundation::{NSData, NSDictionary, NSString};
 
-use prns_core::interfaces::bluetooth_auto::columba_role_capabilities_from_manufacturer;
+use prns_core::interfaces::bluetooth_auto::{
+    columba_role_capabilities_from_manufacturer, default_group_tag,
+    manufacturer_discovery_groups_match,
+};
 
 use super::CoreBluetoothPeerId;
 
@@ -111,15 +114,20 @@ pub(super) fn candidate_strength(
     local_name_is_prns: bool,
     manufacturer_data: Option<&[u8]>,
 ) -> CandidateStrength {
-    if local_name_is_prns
-        || manufacturer_data.is_some_and(|data| {
-            let Some(company_id) = data.get(..2).and_then(|bytes| bytes.try_into().ok()) else {
-                return false;
-            };
-            columba_role_capabilities_from_manufacturer(u16::from_le_bytes(company_id), &data[2..])
-                .is_some()
-        })
-    {
+    if let Some(data) = manufacturer_data {
+        let Some(company_id) = data.get(..2).and_then(|bytes| bytes.try_into().ok()) else {
+            return CandidateStrength::Weak;
+        };
+        let company_id = u16::from_le_bytes(company_id);
+        let body = &data[2..];
+        if !manufacturer_discovery_groups_match(default_group_tag(), company_id, body) {
+            return CandidateStrength::Weak;
+        }
+        if columba_role_capabilities_from_manufacturer(company_id, body).is_some() {
+            return CandidateStrength::Strong;
+        }
+    }
+    if local_name_is_prns {
         CandidateStrength::Strong
     } else {
         CandidateStrength::Weak

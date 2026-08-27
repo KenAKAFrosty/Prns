@@ -124,16 +124,31 @@ pub fn advertisement_group_tag(adv: &[u8]) -> [u8; GROUP_TAG_LEN] {
                 return None;
             }
             let company_id: [u8; 2] = body.get(..2)?.try_into().ok()?;
-            if company_id != EXPERIMENTAL_ROLE_COMPANY_ID {
-                return None;
-            }
-            let data = body.get(2..)?;
-            if *data.first()? < EXPERIMENTAL_ROLE_VERSION {
-                return None;
-            }
-            data.get(2..2 + GROUP_TAG_LEN)?.try_into().ok()
+            group_tag_from_manufacturer(u16::from_le_bytes(company_id), body.get(2..)?)
         })
         .unwrap_or_else(default_group_tag)
+}
+
+/// Group tag from a parsed manufacturer payload (`version | flags | tag…`), if present.
+pub fn group_tag_from_manufacturer(
+    company_id: u16,
+    data: &[u8],
+) -> Option<[u8; GROUP_TAG_LEN]> {
+    if company_id != u16::from_le_bytes(EXPERIMENTAL_ROLE_COMPANY_ID) {
+        return None;
+    }
+    if *data.first()? < EXPERIMENTAL_ROLE_VERSION {
+        return None;
+    }
+    data.get(2..2 + GROUP_TAG_LEN)?.try_into().ok()
+}
+
+/// Effective discovery group for a manufacturer payload (legacy/missing → default group).
+pub fn manufacturer_discovery_group_tag(
+    company_id: u16,
+    data: &[u8],
+) -> [u8; GROUP_TAG_LEN] {
+    group_tag_from_manufacturer(company_id, data).unwrap_or_else(default_group_tag)
 }
 
 /// True when the advertisement's discovery group matches `local_tag`.
@@ -142,6 +157,34 @@ pub fn advertisement_group_tag(adv: &[u8]) -> [u8; GROUP_TAG_LEN] {
 /// nodes do not peer with untagged firmware.
 pub fn discovery_groups_match(local_tag: [u8; GROUP_TAG_LEN], adv: &[u8]) -> bool {
     advertisement_group_tag(adv) == local_tag
+}
+
+/// True when a manufacturer payload's discovery group matches `local_tag`.
+pub fn manufacturer_discovery_groups_match(
+    local_tag: [u8; GROUP_TAG_LEN],
+    company_id: u16,
+    data: &[u8],
+) -> bool {
+    manufacturer_discovery_group_tag(company_id, data) == local_tag
+}
+
+/// Manufacturer-specific body for a DualRole advertisement in the local discovery group.
+pub fn manufacturer_role_payload(
+    role_capabilities: BleRoleCapabilities,
+    group_tag: [u8; GROUP_TAG_LEN],
+) -> [u8; 2 + GROUP_TAG_LEN] {
+    let flags = match role_capabilities {
+        BleRoleCapabilities::DualRole => 0,
+        BleRoleCapabilities::PeripheralOnly => EXPERIMENTAL_ROLE_PERIPHERAL_ONLY,
+    };
+    [
+        EXPERIMENTAL_ROLE_VERSION,
+        flags,
+        group_tag[0],
+        group_tag[1],
+        group_tag[2],
+        group_tag[3],
+    ]
 }
 
 pub fn columba_connection_role(

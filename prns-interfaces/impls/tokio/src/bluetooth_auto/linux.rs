@@ -27,11 +27,13 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::oneshot;
 
 use prns_core::interfaces::bluetooth_auto::{
-    columba_connection_role, columba_role_capabilities_from_manufacturer, encode_stream_frame,
-    fragments_of, BleAddress, BleIdentity, BleRoleCapabilities, BleUuid, ColumbaConnectionRole,
-    Control, Fragment, L2capPlan, PeerProtocol, Psm, Reassembler, StreamDeframer, BLE_HW_MTU,
-    BLE_SERVICE_UUID, COLUMBA_IDENTITY_UUID, COLUMBA_RX_UUID, COLUMBA_TX_UUID, CONTROL_MAX_LEN,
-    FRAGMENT_HEADER_LEN, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID, STREAM_FRAME_PREFIX_LEN,
+    columba_connection_role, columba_role_capabilities_from_manufacturer, default_group_tag,
+    encode_stream_frame, fragments_of, manufacturer_discovery_groups_match,
+    manufacturer_role_payload, BleAddress, BleIdentity, BleRoleCapabilities, BleUuid,
+    ColumbaConnectionRole, Control, Fragment, L2capPlan, PeerProtocol, Psm, Reassembler,
+    StreamDeframer, BLE_HW_MTU, BLE_SERVICE_UUID, COLUMBA_IDENTITY_UUID, COLUMBA_RX_UUID,
+    COLUMBA_TX_UUID, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID,
+    STREAM_FRAME_PREFIX_LEN,
 };
 use prns_core::interfaces::bluetooth_auto::{
     AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, DialOutcome, Origin,
@@ -86,6 +88,15 @@ fn identifies_prns_fallback(
                 columba_role_capabilities_from_manufacturer(*company_id, value).is_some()
             })
         })
+}
+
+fn matches_local_discovery_group(manufacturer_data: Option<&HashMap<u16, Vec<u8>>>) -> bool {
+    let local = default_group_tag();
+    match manufacturer_data.and_then(|data| data.get(&0xffff)) {
+        Some(body) => manufacturer_discovery_groups_match(local, 0xffff, body),
+        // No Prns manufacturer field → treat as the default open mesh.
+        None => local == default_group_tag(),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -780,16 +791,15 @@ impl BluerBackend {
         let Ok(device) = self.adapter.device(address) else {
             return true;
         };
-        let peer_capabilities = device
-            .manufacturer_data()
-            .await
-            .ok()
-            .flatten()
-            .and_then(|data| {
-                data.iter().find_map(|(company_id, value)| {
-                    columba_role_capabilities_from_manufacturer(*company_id, value)
-                })
-            });
+        let manufacturer_data = device.manufacturer_data().await.ok().flatten();
+        if !matches_local_discovery_group(manufacturer_data.as_ref()) {
+            return false;
+        }
+        let peer_capabilities = manufacturer_data.as_ref().and_then(|data| {
+            data.iter().find_map(|(company_id, value)| {
+                columba_role_capabilities_from_manufacturer(*company_id, value)
+            })
+        });
         columba_connection_role(
             BleAddress::new(self.address.0),
             BleRoleCapabilities::DualRole,
@@ -824,10 +834,11 @@ impl BluerBackend {
     }
 
     fn advertisement() -> Advertisement {
+        let payload = manufacturer_role_payload(BleRoleCapabilities::DualRole, default_group_tag());
         Advertisement {
             advertisement_type: bluer::adv::Type::Peripheral,
             service_uuids: [uuid_of(BLE_SERVICE_UUID)].into_iter().collect(),
-            manufacturer_data: [(0xffff, vec![0x03, 0x00])].into_iter().collect(),
+            manufacturer_data: [(0xffff, payload.to_vec())].into_iter().collect(),
             discoverable: Some(true),
             min_interval: Some(ADVERTISING_INTERVAL_MIN),
             max_interval: Some(ADVERTISING_INTERVAL_MAX),

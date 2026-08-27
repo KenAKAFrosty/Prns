@@ -1538,7 +1538,14 @@ class BleLink(private val context: Context) {
             .addServiceUuid(ParcelUuid(PRNS_SERVICE))
             .addManufacturerData(
                 PRNS_ROLE_COMPANY_ID,
-                byteArrayOf(PRNS_ROLE_VERSION, PRNS_ROLE_DUAL_MODE),
+                byteArrayOf(
+                    PRNS_ROLE_VERSION,
+                    PRNS_ROLE_DUAL_MODE,
+                    PRNS_DEFAULT_GROUP_TAG[0],
+                    PRNS_DEFAULT_GROUP_TAG[1],
+                    PRNS_DEFAULT_GROUP_TAG[2],
+                    PRNS_DEFAULT_GROUP_TAG[3],
+                ),
             )
             .build()
         try {
@@ -1628,9 +1635,12 @@ class BleLink(private val context: Context) {
     private fun shouldDial(peerAddress: ByteArray, result: ScanResult): Boolean {
         val capabilities = result.scanRecord
             ?.getManufacturerSpecificData(PRNS_ROLE_COMPANY_ID)
+        if (!matchesLocalDiscoveryGroup(capabilities)) {
+            return false
+        }
         if (capabilities != null &&
             capabilities.size >= 2 &&
-            capabilities[0] >= PRNS_ROLE_VERSION &&
+            capabilities[0] >= PRNS_ROLE_VERSION_MIN &&
             capabilities[1].toInt() and PRNS_ROLE_PERIPHERAL_ONLY.toInt() != 0
         ) {
             return true
@@ -1647,6 +1657,23 @@ class BleLink(private val context: Context) {
             }
         }
         return false
+    }
+
+    private fun matchesLocalDiscoveryGroup(capabilities: ByteArray?): Boolean {
+        // Missing or legacy (v3) manufacturer payloads map to the default reticulum group.
+        if (capabilities == null ||
+            capabilities.size < 2 ||
+            capabilities[0] < PRNS_ROLE_VERSION
+        ) {
+            return true
+        }
+        if (capabilities.size < 6) {
+            return true
+        }
+        return capabilities[2] == PRNS_DEFAULT_GROUP_TAG[0] &&
+            capabilities[3] == PRNS_DEFAULT_GROUP_TAG[1] &&
+            capabilities[4] == PRNS_DEFAULT_GROUP_TAG[2] &&
+            capabilities[5] == PRNS_DEFAULT_GROUP_TAG[3]
     }
 
     private fun formatMac(octets: ByteArray): String =
@@ -1723,9 +1750,15 @@ class BleLink(private val context: Context) {
         private const val L2CAP_OPEN_RETRIES = 5
         private const val L2CAP_OPEN_RETRY_MS = 200L
         private const val PRNS_ROLE_COMPANY_ID = 0xFFFF
-        private const val PRNS_ROLE_VERSION: Byte = 0x03
+        /** Oldest manufacturer role payload we still accept while scanning. */
+        private const val PRNS_ROLE_VERSION_MIN: Byte = 0x03
+        /** Advertised manufacturer payload version that includes a discovery group tag. */
+        private const val PRNS_ROLE_VERSION: Byte = 0x04
         private const val PRNS_ROLE_DUAL_MODE: Byte = 0x00
         private const val PRNS_ROLE_PERIPHERAL_ONLY: Byte = 0x01
+        /** sha256("reticulum")[0..4] — must match prns-core DEFAULT_GROUP_TAG. */
+        private val PRNS_DEFAULT_GROUP_TAG =
+            byteArrayOf(0xEA.toByte(), 0xC4.toByte(), 0xD7.toByte(), 0x0B)
         private val HIDDEN_LOCAL_ADDRESS = byteArrayOf(2, 0, 0, 0, 0, 0)
         val PRNS_SERVICE: UUID = UUID.fromString("37145b00-442d-4a94-917f-8f42c5da28e3")
         val COLUMBA_TX: UUID = UUID.fromString("37145b00-442d-4a94-917f-8f42c5da28e4")
