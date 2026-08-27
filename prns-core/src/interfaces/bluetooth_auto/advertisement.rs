@@ -1,4 +1,4 @@
-use super::identity::BleAddress;
+use super::identity::{default_group_tag, BleAddress, GROUP_TAG_LEN};
 
 pub const MAX_ADVERTISEMENT_LEN: usize = 31;
 
@@ -23,7 +23,10 @@ const AD_SERVICE_UUID128: u8 = 0x07;
 pub(super) const AD_MANUFACTURER_SPECIFIC: u8 = 0xff;
 const FLAGS_LE_GENERAL_DISCOVERABLE: u8 = 0x06;
 const EXPERIMENTAL_ROLE_COMPANY_ID: [u8; 2] = [0xff, 0xff];
-pub(super) const EXPERIMENTAL_ROLE_VERSION: u8 = 0x03;
+/// Oldest manufacturer payload we still parse for role flags.
+pub(super) const EXPERIMENTAL_ROLE_VERSION_MIN: u8 = 0x03;
+/// Manufacturer payload version that carries a discovery group tag.
+pub(super) const EXPERIMENTAL_ROLE_VERSION: u8 = 0x04;
 pub(super) const EXPERIMENTAL_ROLE_PERIPHERAL_ONLY: u8 = 0x01;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,9 +48,13 @@ pub enum ColumbaConnectionRole {
     Unavailable,
 }
 
+/// Encode a SoftDevice-sized ADV including the Prns service UUID, role flags, and discovery group tag.
+///
+/// Layout fills all 31 classic ADV bytes when successful.
 pub fn encode_advertisement(
     out: &mut [u8],
     role_capabilities: BleRoleCapabilities,
+    group_tag: [u8; GROUP_TAG_LEN],
 ) -> Option<usize> {
     let mut writer = AdWriter::new(out);
     writer.put(AD_FLAGS, &[FLAGS_LE_GENERAL_DISCOVERABLE])?;
@@ -65,6 +72,10 @@ pub fn encode_advertisement(
             EXPERIMENTAL_ROLE_COMPANY_ID[1],
             EXPERIMENTAL_ROLE_VERSION,
             flags,
+            group_tag[0],
+            group_tag[1],
+            group_tag[2],
+            group_tag[3],
         ],
     )?;
     Some(writer.len())
@@ -94,7 +105,7 @@ pub fn columba_role_capabilities_from_manufacturer(
     data: &[u8],
 ) -> Option<BleRoleCapabilities> {
     if company_id != u16::from_le_bytes(EXPERIMENTAL_ROLE_COMPANY_ID)
-        || *data.first()? < EXPERIMENTAL_ROLE_VERSION
+        || *data.first()? < EXPERIMENTAL_ROLE_VERSION_MIN
     {
         return None;
     }
@@ -103,6 +114,34 @@ pub fn columba_role_capabilities_from_manufacturer(
     } else {
         Some(BleRoleCapabilities::PeripheralOnly)
     }
+}
+
+/// Discovery group tag from manufacturer data, or the default group when the peer is legacy (v3).
+pub fn advertisement_group_tag(adv: &[u8]) -> [u8; GROUP_TAG_LEN] {
+    AdReader::new(adv)
+        .find_map(|(ad_type, body)| {
+            if ad_type != AD_MANUFACTURER_SPECIFIC {
+                return None;
+            }
+            let company_id: [u8; 2] = body.get(..2)?.try_into().ok()?;
+            if company_id != EXPERIMENTAL_ROLE_COMPANY_ID {
+                return None;
+            }
+            let data = body.get(2..)?;
+            if *data.first()? < EXPERIMENTAL_ROLE_VERSION {
+                return None;
+            }
+            data.get(2..2 + GROUP_TAG_LEN)?.try_into().ok()
+        })
+        .unwrap_or_else(default_group_tag)
+}
+
+/// True when the advertisement's discovery group matches `local_tag`.
+///
+/// Legacy (v3) advertisements are treated as the default group, so custom-group
+/// nodes do not peer with untagged firmware.
+pub fn discovery_groups_match(local_tag: [u8; GROUP_TAG_LEN], adv: &[u8]) -> bool {
+    advertisement_group_tag(adv) == local_tag
 }
 
 pub fn columba_connection_role(

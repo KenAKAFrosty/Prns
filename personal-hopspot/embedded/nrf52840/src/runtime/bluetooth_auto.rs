@@ -27,10 +27,10 @@ use personal_rns::bluetooth_auto::{
     BluetoothAutoShared, BluetoothAutoStatus, FrameLease, FramePoolError, SharedFramePool,
 };
 use personal_rns::interfaces::bluetooth_auto::{
-    columba_connection_role, columba_role_capabilities, contains_service, encode_advertisement,
-    encode_stream_frame, fragments_of, BleAddress, BleIdentity, BleRoleCapabilities,
-    ColumbaConnectionRole, Control, Fragment, L2capPlan, PeerProtocol, Reassembler, BLE_HW_MTU,
-    CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,
+    columba_connection_role, columba_role_capabilities, contains_service, default_group_tag,
+    encode_advertisement, encode_stream_frame, fragments_of, BleAddress, BleIdentity,
+    BleRoleCapabilities, ColumbaConnectionRole, Control, Fragment, L2capPlan, PeerProtocol,
+    Reassembler, BLE_HW_MTU, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::{
     AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, DialOutcome, Origin,
@@ -1358,7 +1358,12 @@ pub(super) async fn acceptor(sd: &'static Softdevice, hub: &'static BleHub) -> !
 
         let mut adv_buf = [0u8; 31];
         let adv_len =
-            encode_advertisement(&mut adv_buf, BleRoleCapabilities::DualRole).unwrap_or(0);
+            encode_advertisement(
+                &mut adv_buf,
+                BleRoleCapabilities::DualRole,
+                default_group_tag(),
+            )
+            .unwrap_or(0);
         let scan_data = [0x05u8, 0x09, b'P', b'r', b'n', b's'];
         let adv = peripheral::ConnectableAdvertisement::ScannableUndirected {
             adv_data: &adv_buf[..adv_len],

@@ -6,8 +6,8 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex as BridgeMutex;
 use esp_radio::ble::controller::BleConnector;
 use personal_rns::bluetooth_auto::{BluetoothAuto, BluetoothAutoShared, BluetoothAutoStatus};
 use personal_rns::interfaces::bluetooth_auto::{
-    encode_advertisement, BleIdentity, BleRoleCapabilities, Endpoint, Esp32Host, LinkCapabilities,
-    Psm, BLE_HW_MTU, MAX_ADVERTISEMENT_LEN,
+    default_group_tag, encode_advertisement, BleIdentity, BleRoleCapabilities, Endpoint, Esp32Host,
+    LinkCapabilities, Psm, BLE_HW_MTU, MAX_ADVERTISEMENT_LEN,
 };
 use personal_rns::runtime::Fleet;
 use prns_interfaces_embassy::bluetooth_auto::GattCharacteristic;
@@ -172,8 +172,12 @@ pub async fn run(
     let server: &'static GattServer = SERVER.init(AttributeServer::new(table));
 
     let mut adv_data = [0u8; MAX_ADVERTISEMENT_LEN];
-    let adv_len = encode_advertisement(&mut adv_data, BleRoleCapabilities::DualRole)
-        .expect("advertisement fits");
+    let adv_len = encode_advertisement(
+        &mut adv_data,
+        BleRoleCapabilities::DualRole,
+        default_group_tag(),
+    )
+    .expect("advertisement fits");
 
     let service_uuid = bluetooth_auto::service_uuid();
     let control_uuid = bluetooth_auto::control_uuid();

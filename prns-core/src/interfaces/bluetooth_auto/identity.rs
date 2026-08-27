@@ -1,8 +1,33 @@
-pub const GROUP_ID: &[u8] = b"bluetooth-auto";
+use crate::crypto::sha256;
+
+/// Stable supervisor channel tag for [`InterfaceId::from_channel_tag`](crate::interfaces::InterfaceId::from_channel_tag).
+/// This is not a discovery/peering group — see [`GROUP_ID`].
+pub const CHANNEL_TAG: &[u8] = b"bluetooth-auto";
+
+/// Default Bluetooth Auto discovery group (same string as Wi‑Fi Auto's default).
+pub const GROUP_NAME: &str = "reticulum";
+/// UTF-8 bytes of [`GROUP_NAME`], hashed into the advertisement group tag.
+pub const GROUP_ID: &[u8] = GROUP_NAME.as_bytes();
+
+pub const GROUP_TAG_LEN: usize = 4;
+
 pub const BLE_IDENTITY_LEN: usize = 16;
 pub const PERSISTED_BLE_IDENTITY_LEN: usize = 40;
 
 const PERSISTED_BLE_IDENTITY_MAGIC: [u8; 8] = *b"PRNSBLE1";
+
+/// Truncated `sha256(group_id)` carried in manufacturer-specific advertisement data.
+pub fn group_tag(group_id: &[u8]) -> [u8; GROUP_TAG_LEN] {
+    let digest = sha256(group_id);
+    let mut tag = [0u8; GROUP_TAG_LEN];
+    tag.copy_from_slice(&digest[..GROUP_TAG_LEN]);
+    tag
+}
+
+/// Group tag for the default discovery group [`GROUP_ID`].
+pub fn default_group_tag() -> [u8; GROUP_TAG_LEN] {
+    group_tag(GROUP_ID)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BleAddress([u8; 6]);
@@ -103,5 +128,11 @@ mod tests {
             decode_persisted_ble_identity(&[u8::MAX; PERSISTED_BLE_IDENTITY_LEN]),
             Ok(None)
         );
+    }
+
+    #[test]
+    fn group_tag_is_stable_for_the_default_discovery_group() {
+        assert_eq!(group_tag(GROUP_ID), default_group_tag());
+        assert_ne!(group_tag(b"mt-leg-a"), group_tag(b"mt-leg-b"));
     }
 }

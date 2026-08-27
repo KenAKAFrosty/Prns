@@ -297,7 +297,7 @@ impl BluetoothAutoStatus {
         let (enabled, _) = watch::channel(true);
         Self {
             shared: Arc::new(BluetoothAutoShared {
-                id: InterfaceId::from_channel_tag(InterfaceKind::BluetoothAuto, contract::GROUP_ID),
+                id: InterfaceId::from_channel_tag(InterfaceKind::BluetoothAuto, contract::CHANNEL_TAG),
                 enabled,
                 up: AtomicBool::new(false),
                 failed: AtomicBool::new(false),
@@ -459,7 +459,7 @@ where
     const KIND: InterfaceKind = InterfaceKind::BluetoothAuto;
 
     fn channel_tag(&self) -> &[u8] {
-        contract::GROUP_ID
+        contract::CHANNEL_TAG
     }
 
     fn policy(&self) -> EffectiveInterfacePolicy {

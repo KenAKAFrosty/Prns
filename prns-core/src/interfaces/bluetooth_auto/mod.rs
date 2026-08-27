@@ -6,11 +6,11 @@ mod identity;
 mod policy;
 
 pub use advertisement::{
-    columba_connection_role, columba_role_capabilities,
-    columba_role_capabilities_from_manufacturer, contains_service, encode_advertisement,
-    BleRoleCapabilities, BleUuid, ColumbaConnectionRole, BLE_SERVICE_UUID, BLE_SERVICE_UUID_BYTES,
-    COLUMBA_IDENTITY_UUID, COLUMBA_RX_UUID, COLUMBA_TX_UUID, MAX_ADVERTISEMENT_LEN,
-    NATIVE_CONTROL_UUID, NATIVE_DATA_UUID,
+    advertisement_group_tag, columba_connection_role, columba_role_capabilities,
+    columba_role_capabilities_from_manufacturer, contains_service, discovery_groups_match,
+    encode_advertisement, BleRoleCapabilities, BleUuid, ColumbaConnectionRole, BLE_SERVICE_UUID,
+    BLE_SERVICE_UUID_BYTES, COLUMBA_IDENTITY_UUID, COLUMBA_RX_UUID, COLUMBA_TX_UUID,
+    MAX_ADVERTISEMENT_LEN, NATIVE_CONTROL_UUID, NATIVE_DATA_UUID,
 };
 pub use backend::{
     AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, DialOutcome, Origin,
@@ -28,8 +28,9 @@ pub use handshake::{
     WinRtHost, CONTROL_MAX_LEN,
 };
 pub use identity::{
-    decode_persisted_ble_identity, encode_persisted_ble_identity, BleAddress, BleIdentity,
-    PersistedBleIdentityError, BLE_IDENTITY_LEN, GROUP_ID, PERSISTED_BLE_IDENTITY_LEN,
+    decode_persisted_ble_identity, default_group_tag, encode_persisted_ble_identity, group_tag,
+    BleAddress, BleIdentity, PersistedBleIdentityError, BLE_IDENTITY_LEN, CHANNEL_TAG, GROUP_ID,
+    GROUP_NAME, GROUP_TAG_LEN, PERSISTED_BLE_IDENTITY_LEN,
 };
 /// Canonical name for a Bluetooth LE device address.
 pub type BluetoothLeAddress = BleAddress;

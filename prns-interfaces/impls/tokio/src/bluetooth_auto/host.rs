@@ -219,7 +219,7 @@ impl InterfaceSupervisor for PreparedPlatformBluetooth {
     const KIND: InterfaceKind = InterfaceKind::BluetoothAuto;
 
     fn channel_tag(&self) -> &[u8] {
-        contract::GROUP_ID
+        contract::CHANNEL_TAG
     }
 
     fn policy(&self) -> EffectiveInterfacePolicy {
@@ -352,7 +352,7 @@ impl InterfaceSupervisor for PlatformBluetooth {
     const KIND: InterfaceKind = InterfaceKind::BluetoothAuto;
 
     fn channel_tag(&self) -> &[u8] {
-        contract::GROUP_ID
+        contract::CHANNEL_TAG
     }
 
     fn policy(&self) -> EffectiveInterfacePolicy {
