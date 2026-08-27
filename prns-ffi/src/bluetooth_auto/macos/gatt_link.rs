@@ -434,6 +434,10 @@ impl BleLink for GattLink {
                         }
                     }
                 }
+                drop(frames);
+                crate::diagnostic_log::debug!(
+                    "bluetooth: L2CAP reader exited — merged data lane closing"
+                );
             });
             write_rx
         });

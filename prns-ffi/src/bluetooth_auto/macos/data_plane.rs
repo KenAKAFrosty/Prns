@@ -2,6 +2,7 @@ use core::cell::RefCell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use dispatch2::{DispatchQueue, DispatchRetained};
@@ -36,7 +37,22 @@ pub(super) struct StreamPump {
     output: Retained<NSOutputStream>,
     inbound_tx: RefCell<Option<tokio_mpsc::Sender<Box<[u8]>>>>,
     outbound: Arc<Mutex<Outbound>>,
+    on_dead: RefCell<Option<(super::SendPeripheralDelegate, CoreBluetoothPeerId)>>,
+    dead_fired: AtomicBool,
     _channel: Retained<CBL2CAPChannel>,
+}
+
+fn mark_data_plane_dead(pump: &StreamPump) {
+    if pump.dead_fired.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    if let Ok(mut out) = pump.outbound.lock() {
+        out.closed = true;
+    }
+    pump.inbound_tx.borrow_mut().take();
+    if let Some((delegate, peer_id)) = pump.on_dead.borrow_mut().take() {
+        delegate.end_inbound_session(peer_id);
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -108,8 +124,7 @@ pub(super) fn flush(pump: &StreamPump) {
                 crate::diagnostic_log::warn!(
                     "bluetooth: L2CAP write returned {written} — data plane down"
                 );
-                out.closed = true;
-                pump.inbound_tx.borrow_mut().take();
+                mark_data_plane_dead(pump);
             }
             break;
         }
@@ -140,10 +155,7 @@ unsafe extern "C-unwind" fn read_cb(
                     .as_ref()
                     .is_some_and(|tx| tx.try_send(Box::from(&buf[..read as usize])).is_ok());
                 if !accepted {
-                    pump.inbound_tx.borrow_mut().take();
-                    if let Ok(mut out) = pump.outbound.lock() {
-                        out.closed = true;
-                    }
+                    mark_data_plane_dead(pump);
                     break;
                 }
             } else {
@@ -155,7 +167,7 @@ unsafe extern "C-unwind" fn read_cb(
         crate::diagnostic_log::warn!(
             "bluetooth: L2CAP read stream closed/errored — inbound data plane down"
         );
-        pump.inbound_tx.borrow_mut().take();
+        mark_data_plane_dead(pump);
     }
 }
 
@@ -174,16 +186,14 @@ unsafe extern "C-unwind" fn write_cb(
         crate::diagnostic_log::warn!(
             "bluetooth: L2CAP write stream closed/errored — outbound data plane down"
         );
-        if let Ok(mut out) = pump.outbound.lock() {
-            out.closed = true;
-        }
-        pump.inbound_tx.borrow_mut().take();
+        mark_data_plane_dead(pump);
     }
 }
 
 pub(super) fn wire_l2cap(
     channel: &CBL2CAPChannel,
     queue: &DispatchRetained<DispatchQueue>,
+    on_dead: impl FnOnce(CoreBluetoothPeerId) -> Option<(super::SendPeripheralDelegate, CoreBluetoothPeerId)>,
 ) -> Option<(CoreBluetoothPeerId, DataPlane)> {
     // SAFETY: CoreBluetooth supplied a live retained channel, and its accessors return retained
     // objects whose runtime types match the generated bindings.
@@ -200,11 +210,14 @@ pub(super) fn wire_l2cap(
         pending: VecDeque::new(),
         closed: false,
     }));
+    let on_dead = on_dead(peer_id);
     let pump = Box::into_raw(Box::new(StreamPump {
         input,
         output,
         inbound_tx: RefCell::new(Some(inbound_tx)),
         outbound: outbound.clone(),
+        on_dead: RefCell::new(on_dead),
+        dead_fired: AtomicBool::new(false),
         _channel: channel.retain(),
     }));
     // SAFETY: `pump` is a live Box allocation kept by PumpHandle. NSInputStream/NSOutputStream are

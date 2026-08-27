@@ -275,7 +275,10 @@ define_class!(
                 );
                 return;
             };
-            let Some((peer_id, data)) = wire_l2cap(channel, &self.ivars().queue) else {
+            let delegate = SendPeripheralDelegate(self.retain());
+            let Some((peer_id, data)) = wire_l2cap(channel, &self.ivars().queue, move |peer_id| {
+                Some((delegate, peer_id))
+            }) else {
                 crate::diagnostic_log::warn!(
                     "bluetooth: L2CAP channel exposes no streams — dropping"
                 );
@@ -438,8 +441,7 @@ define_class!(
                 .get(&peer_id)
                 .is_some_and(|session| Some(session.protocol) == unsubscribed_protocol);
             if remove {
-                self.ivars().sessions.borrow_mut().remove(&peer_id);
-                self.ivars().pending_l2cap.borrow_mut().remove(&peer_id);
+                self.end_inbound_session(peer_id);
             }
         }
 
@@ -456,6 +458,17 @@ impl PeripheralDelegate {
     /// Queue-confined: call only from the CoreBluetooth serial dispatch queue.
     pub(super) fn has_inbound_sessions(&self) -> bool {
         !self.ivars().sessions.borrow().is_empty()
+    }
+
+    /// Queue-confined: call only from the CoreBluetooth serial dispatch queue.
+    pub(super) fn end_inbound_session(&self, peer_id: CoreBluetoothPeerId) {
+        if self.ivars().sessions.borrow_mut().remove(&peer_id).is_some() {
+            self.ivars().pending_l2cap.borrow_mut().remove(&peer_id);
+            crate::diagnostic_log::warn!(
+                "bluetooth: inbound session ended for {:02x?} — link teardown starting",
+                peer_id.address().octets()
+            );
+        }
     }
 
     pub(super) fn new(

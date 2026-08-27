@@ -186,6 +186,7 @@ struct SendCentralDelegate(Retained<CentralDelegate>);
 // dispatch queue before and after transfer.
 unsafe impl Send for SendCentralDelegate {}
 
+#[derive(Clone)]
 struct SendPeripheralDelegate(Retained<PeripheralDelegate>);
 // SAFETY: the retained delegate's RefCell-backed state is accessed only by the serial CoreBluetooth
 // dispatch queue before and after transfer.
@@ -195,6 +196,10 @@ impl SendPeripheralDelegate {
     /// Queue-confined: call only from the CoreBluetooth serial dispatch queue.
     fn has_inbound_sessions(&self) -> bool {
         self.0.has_inbound_sessions()
+    }
+
+    fn end_inbound_session(&self, peer_id: CoreBluetoothPeerId) {
+        self.0.end_inbound_session(peer_id);
     }
 }
 
