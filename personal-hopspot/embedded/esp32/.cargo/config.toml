@@ -3,6 +3,12 @@
 #   cargo heltec-v4-r8     / -flash   the Heltec V4-R8 (S3R8 / Octal PSRAM)
 #   cargo tbeam-supreme    / -flash   the LilyGO T-Beam S3 Supreme
 #   cargo c6               / -flash   the headless XIAO ESP32-C6
+#
+# Each -flash alias passes the board's partition table explicitly. Without it espflash
+# falls back to its built-in default, whose `nvs` spans ble_id/hopcfg/node_id and whose
+# `factory` spans radio_cfg/prns_state, so flashing a provisioned board through these
+# aliases would take its identity with it. The tables are the same files the flash
+# manifest catalog names for each board, and paths resolve from this directory.
 
 [target.xtensa-esp32s3-none-elf]
 runner = "espflash flash --monitor --after watchdog-reset"
@@ -27,12 +33,12 @@ ESP_HAL_CONFIG_STACK_GUARD_OFFSET = "4096"
 
 [alias]
 heltec-v4 = "build --release -p hopspot-heltec-v4 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
-heltec-v4-flash = "run --release -p hopspot-heltec-v4 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
+heltec-v4-flash = "run --release -p hopspot-heltec-v4 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc -- --partition-table partitions-hopspot-16mb.csv"
 heltec-v4-r8 = "build --release -p hopspot-heltec-v4-r8 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
-heltec-v4-r8-flash = "run --release -p hopspot-heltec-v4-r8 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
+heltec-v4-r8-flash = "run --release -p hopspot-heltec-v4-r8 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc -- --partition-table partitions-hopspot-16mb.csv"
 tbeam-supreme = "build --release -p hopspot-t-beam-supreme --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
-tbeam-supreme-flash = "run --release -p hopspot-t-beam-supreme --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
+tbeam-supreme-flash = "run --release -p hopspot-t-beam-supreme --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc -- --partition-table partitions-hopspot-8mb.csv"
 # Seeed XIAO ESP32-C6 Hopspot: USB-auto + ESP-NOW + BLE on the headless board. ESP-NOW uses
 # Espressif's WiFi radio driver internally, but this build exposes no WiFi-LAN or SoftAP interface.
 c6 = "build --release -p hopspot-xiao-esp32-c6 --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc"
-c6-flash = "run --release -p hopspot-xiao-esp32-c6 --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc"
+c6-flash = "run --release -p hopspot-xiao-esp32-c6 --target riscv32imac-unknown-none-elf -Zbuild-std=core,alloc -- --partition-table partitions-hopspot-4mb.csv"
