@@ -9,7 +9,7 @@ use crate::runtime::SendError;
 use crate::units::RttMillis;
 use prns_core::remote_control::{
     RemoteControlAnnounceOutcome, RemoteControlDescription, RemoteControlProtocolError,
-    RemoteControlProtocolVersion, RemoteControlRequestKind, RemoteControlResponse,
+    RemoteControlProtocolVersion, RemoteControlRequestSet, RemoteControlResponse,
     RemoteControlResponseKind, RemoteControlResponseParseError,
 };
 
@@ -91,7 +91,8 @@ async fn describe_owns_the_remote_control_exchange_and_returns_the_typed_descrip
         request.maximum_response_bytes,
         crate::runtime::RemoteControlDescribe::MAXIMUM_RESPONSE_BYTES,
     );
-    let response = RemoteControlResponse::Describe(RemoteControlDescription::default());
+    let description = RemoteControlDescription::try_from(RemoteControlRequestSet::all()).unwrap();
+    let response = RemoteControlResponse::Describe(description);
     assert!(request
         .completion
         .send(Ok((encoded_response(&response), RttMillis::new(37),)))
@@ -100,9 +101,10 @@ async fn describe_owns_the_remote_control_exchange_and_returns_the_typed_descrip
     let Ok(Ok((description, rtt))) = requesting.await else {
         panic!("describe returns the typed response");
     };
-    assert!(description
-        .supported_requests()
-        .supports(RemoteControlRequestKind::Describe));
+    assert_eq!(
+        description.available_requests(),
+        &RemoteControlRequestSet::all(),
+    );
     assert_eq!(rtt, RttMillis::new(37));
 }
 

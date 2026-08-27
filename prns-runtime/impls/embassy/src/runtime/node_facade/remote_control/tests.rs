@@ -13,7 +13,7 @@ use crate::runtime::{RemoteControlAnnounce, RemoteControlDescribe};
 use crate::units::RttMillis;
 use prns_core::remote_control::{
     RemoteControlAnnounceOutcome, RemoteControlDescription, RemoteControlProtocolVersion,
-    RemoteControlRequestKind, RemoteControlResponse,
+    RemoteControlRequestSet, RemoteControlResponse,
 };
 
 use super::super::command_handle::JournalRoute;
@@ -119,9 +119,9 @@ fn describe_uses_the_bounded_embassy_request_lane() {
             RemoteControlDescribe::MAXIMUM_RESPONSE_BYTES,
         );
 
-        let response = encoded_response(&RemoteControlResponse::Describe(
-            RemoteControlDescription::default(),
-        ));
+        let description =
+            RemoteControlDescription::try_from(RemoteControlRequestSet::all()).unwrap();
+        let response = encoded_response(&RemoteControlResponse::Describe(description));
         let response_event = Journaled::ResponseReceived {
             command_id: issued.id,
             link_id,
@@ -148,8 +148,9 @@ fn describe_uses_the_bounded_embassy_request_lane() {
     let Ok((description, rtt)) = result else {
         panic!("typed description")
     };
-    assert!(description
-        .supported_requests()
-        .supports(RemoteControlRequestKind::Describe));
+    assert_eq!(
+        description.available_requests(),
+        &RemoteControlRequestSet::all(),
+    );
     assert_eq!(rtt, RttMillis::new(37));
 }

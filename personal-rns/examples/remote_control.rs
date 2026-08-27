@@ -123,10 +123,10 @@ async fn main() {
             .await
             .expect("describe request did not settle");
         assert!(description
-            .supported_requests()
+            .available_requests()
             .supports(RemoteControlRequestKind::Describe));
         assert!(description
-            .supported_requests()
+            .available_requests()
             .supports(RemoteControlRequestKind::Announce));
         println!("Authorized Describe returned {description:?} in {rtt:?}");
 

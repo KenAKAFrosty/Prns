@@ -282,27 +282,56 @@ fn announce_request_round_trips_through_its_own_wire_shape() {
 }
 
 #[test]
-fn describe_response_reports_its_supported_requests_canonically() {
-    let mut supported = RemoteControlRequestSet::all();
-    assert_eq!(supported.len(), 2);
-    assert!(!supported.insert(RemoteControlRequestKind::Describe));
-    assert!(!supported.insert(RemoteControlRequestKind::Announce));
-    assert_eq!(supported.len(), 2);
-    assert!(supported.supports(RemoteControlRequestKind::Describe));
-    assert!(supported.supports(RemoteControlRequestKind::Announce));
-    assert!(!supported.is_empty());
+fn request_sets_intersect_without_changing_either_input() {
+    let all = RemoteControlRequestSet::all();
+    let describe = RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
+    let announce = RemoteControlRequestSet::only(RemoteControlRequestKind::Announce);
+
+    assert_eq!(all.intersection(&describe), describe);
+    assert_eq!(describe.intersection(&all), describe);
     assert_eq!(
-        supported.iter().collect::<std::vec::Vec<_>>(),
+        describe.intersection(&announce),
+        RemoteControlRequestSet::empty()
+    );
+    assert_eq!(all, RemoteControlRequestSet::all());
+    assert_eq!(
+        describe,
+        RemoteControlRequestSet::only(RemoteControlRequestKind::Describe)
+    );
+}
+
+#[test]
+fn describe_response_reports_its_available_requests_canonically() {
+    let mut available = RemoteControlRequestSet::all();
+    assert_eq!(available.len(), 2);
+    assert!(!available.insert(RemoteControlRequestKind::Describe));
+    assert!(!available.insert(RemoteControlRequestKind::Announce));
+    assert_eq!(available.len(), 2);
+    assert!(available.supports(RemoteControlRequestKind::Describe));
+    assert!(available.supports(RemoteControlRequestKind::Announce));
+    assert!(!available.is_empty());
+    assert_eq!(
+        available.iter().collect::<std::vec::Vec<_>>(),
         std::vec![
             RemoteControlRequestKind::Describe,
             RemoteControlRequestKind::Announce,
         ],
     );
+    assert_eq!(
+        RemoteControlDescription::try_from(RemoteControlRequestSet::empty()),
+        Err(RemoteControlDescriptionError::DescribeUnavailable),
+    );
+    assert_eq!(
+        RemoteControlDescription::try_from(RemoteControlRequestSet::only(
+            RemoteControlRequestKind::Announce,
+        )),
+        Err(RemoteControlDescriptionError::DescribeUnavailable),
+    );
 
-    let description = RemoteControlDescription::new(supported);
+    let description = RemoteControlDescription::try_from(available).unwrap();
     let response = RemoteControlResponse::Describe(description);
     let mut bytes = [0u8; RemoteControlResponse::MAX_ENCODED_LEN];
-    let supported_count = u8::try_from(supported.len()).unwrap_or(u8::MAX);
+    let available_count = u8::try_from(available.len()).unwrap_or(u8::MAX);
 
     let written = response.write_into(&mut bytes).unwrap();
     let encoded = bytes.get(..written).unwrap_or_default();
@@ -312,7 +341,7 @@ fn describe_response_reports_its_supported_requests_canonically() {
         &[
             RemoteControlProtocolVersion::V1.wire_value(),
             response.kind().wire_value(),
-            supported_count,
+            available_count,
             RemoteControlRequestKind::Describe.wire_value(),
             RemoteControlRequestKind::Announce.wire_value(),
         ],
@@ -554,8 +583,8 @@ fn message_writers_use_only_their_reported_prefix_and_refuse_short_buffers() {
         Err(RemoteControlMessageWriteError::BufferTooShort),
     );
 
-    let description = RemoteControlDescription::default();
-    let supported_count = u8::try_from(description.supported_requests().len()).unwrap_or(u8::MAX);
+    let description = RemoteControlDescription::try_from(RemoteControlRequestSet::all()).unwrap();
+    let available_count = u8::try_from(description.available_requests().len()).unwrap_or(u8::MAX);
     let response = RemoteControlResponse::Describe(description);
     let mut response_bytes = [0x5A; 6];
     assert_eq!(
@@ -567,7 +596,7 @@ fn message_writers_use_only_their_reported_prefix_and_refuse_short_buffers() {
         [
             RemoteControlProtocolVersion::V1.wire_value(),
             response.kind().wire_value(),
-            supported_count,
+            available_count,
             RemoteControlRequestKind::Describe.wire_value(),
             RemoteControlRequestKind::Announce.wire_value(),
             0x5A,

@@ -256,6 +256,17 @@ impl RemoteControlRequestSet {
             .into_iter()
             .filter(|kind| self.supports(*kind))
     }
+
+    #[must_use]
+    pub fn intersection(&self, other: &Self) -> Self {
+        let mut intersection = Self::empty();
+        for kind in self.iter() {
+            if other.supports(kind) {
+                let _inserted = intersection.insert(kind);
+            }
+        }
+        intersection
+    }
 }
 
 impl core::fmt::Debug for RemoteControlRequestSet {
@@ -266,24 +277,29 @@ impl core::fmt::Debug for RemoteControlRequestSet {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoteControlDescription {
-    supported_requests: RemoteControlRequestSet,
+    available_requests: RemoteControlRequestSet,
 }
 
 impl RemoteControlDescription {
     #[must_use]
-    pub const fn new(supported_requests: RemoteControlRequestSet) -> Self {
-        Self { supported_requests }
-    }
-
-    #[must_use]
-    pub const fn supported_requests(&self) -> &RemoteControlRequestSet {
-        &self.supported_requests
+    pub const fn available_requests(&self) -> &RemoteControlRequestSet {
+        &self.available_requests
     }
 }
 
-impl Default for RemoteControlDescription {
-    fn default() -> Self {
-        Self::new(RemoteControlRequestSet::all())
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlDescriptionError {
+    DescribeUnavailable,
+}
+
+impl TryFrom<RemoteControlRequestSet> for RemoteControlDescription {
+    type Error = RemoteControlDescriptionError;
+
+    fn try_from(available_requests: RemoteControlRequestSet) -> Result<Self, Self::Error> {
+        if !available_requests.supports(RemoteControlRequestKind::Describe) {
+            return Err(RemoteControlDescriptionError::DescribeUnavailable);
+        }
+        Ok(Self { available_requests })
     }
 }
 
@@ -368,7 +384,7 @@ impl RemoteControlResponse {
     pub fn encoded_len(&self) -> usize {
         let body_len = match self {
             Self::Describe(description) => {
-                DESCRIPTION_COUNT_ENCODED_LEN.saturating_add(description.supported_requests.len())
+                DESCRIPTION_COUNT_ENCODED_LEN.saturating_add(description.available_requests.len())
             }
             Self::Announce(outcome) => outcome.encoded_len(),
             Self::ProtocolError(error) => error.encoded_body_len(),
@@ -479,21 +495,22 @@ fn parse_description(
     if kinds.len() != usize::from(*count) {
         return Err(RemoteControlResponseParseError::Malformed);
     }
-    let mut supported_requests = RemoteControlRequestSet::empty();
+    let mut available_requests = RemoteControlRequestSet::empty();
     let mut previous = None;
     for wire_value in kinds {
         let Some(kind) = RemoteControlRequestKind::from_wire(*wire_value) else {
             return Err(RemoteControlResponseParseError::UnknownRequestKind { found: *wire_value });
         };
-        if previous.is_some_and(|value| value >= *wire_value) || !supported_requests.insert(kind) {
+        if previous.is_some_and(|value| value >= *wire_value) || !available_requests.insert(kind) {
             return Err(RemoteControlResponseParseError::NonCanonicalRequestSet);
         }
         previous = Some(*wire_value);
     }
-    if !supported_requests.supports(RemoteControlRequestKind::Describe) {
-        return Err(RemoteControlResponseParseError::Malformed);
-    }
-    Ok(RemoteControlDescription::new(supported_requests))
+    RemoteControlDescription::try_from(available_requests).map_err(
+        |RemoteControlDescriptionError::DescribeUnavailable| {
+            RemoteControlResponseParseError::Malformed
+        },
+    )
 }
 
 fn parse_announce_outcome(
@@ -548,8 +565,8 @@ fn write_description(description: &RemoteControlDescription, body: &mut [u8]) {
     let Some((count, kinds)) = body.split_first_mut() else {
         return;
     };
-    *count = description.supported_requests.len;
-    for (out, kind) in kinds.iter_mut().zip(description.supported_requests.iter()) {
+    *count = description.available_requests.len;
+    for (out, kind) in kinds.iter_mut().zip(description.available_requests.iter()) {
         *out = kind.wire_value();
     }
 }
