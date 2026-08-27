@@ -1,5 +1,6 @@
 use core::time::Duration;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc as sync_mpsc;
 use std::sync::{Arc, Mutex};
 
@@ -34,10 +35,24 @@ use super::{
 
 const POWER_ON_TIMEOUT: Duration = Duration::from_secs(10);
 const DIAL_TIMEOUT: Duration = Duration::from_secs(15);
-/// CoreBluetooth can leave `isScanning == true` while delivering no advertisements.
-/// Periodically bounce the scan (and re-assert advertising) so late peers stay visible
-/// without requiring a process restart.
-const RADIO_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+/// Maximum recovery latency for a CoreBluetooth scan that claims to be active but has stopped
+/// delivering callbacks. Any discovery callback renews the scan lease without touching the radio.
+const RADIO_LIVENESS_INTERVAL: Duration = Duration::from_secs(60);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ScanLease {
+    Inactive,
+    Renewed,
+    Expired,
+}
+
+pub(super) const fn scan_lease(enabled: bool, activity_observed: bool) -> ScanLease {
+    match (enabled, activity_observed) {
+        (false, _) => ScanLease::Inactive,
+        (true, true) => ScanLease::Renewed,
+        (true, false) => ScanLease::Expired,
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ScanOp {
@@ -221,7 +236,9 @@ pub struct MacosBleBackend {
     queue: DispatchRetained<DispatchQueue>,
     scan_enabled: bool,
     advertise_enabled: bool,
-    radio_refresh_at: tokio::time::Instant,
+    scan_activity: Arc<AtomicBool>,
+    scan_liveness_at: tokio::time::Instant,
+    advertising_reconcile_at: tokio::time::Instant,
 }
 
 struct NativeThread {
@@ -245,6 +262,7 @@ pub struct PreparedMacosBleBackend {
     events: tokio_mpsc::UnboundedReceiver<Event>,
     peripherals: PeripheralTable,
     restored: RestoredPeripherals,
+    scan_activity: Arc<AtomicBool>,
     handles: Handles,
 }
 
@@ -260,9 +278,11 @@ impl MacosBleBackend {
         let (handles_tx, handles_rx) = oneshot::channel::<Handles>();
         let peripherals: PeripheralTable = Arc::new(Mutex::new(HashMap::new()));
         let restored: RestoredPeripherals = Arc::new(Mutex::new(VecDeque::new()));
+        let scan_activity = Arc::new(AtomicBool::new(false));
         let central_events = events_tx.clone();
         let peripherals_for_thread = peripherals.clone();
         let restored_for_thread = restored.clone();
+        let scan_activity_for_thread = Arc::clone(&scan_activity);
 
         let join = std::thread::Builder::new()
             .name("prns-corebluetooth".into())
@@ -273,6 +293,7 @@ impl MacosBleBackend {
                     central_events,
                     peripherals_for_thread,
                     restored_for_thread,
+                    scan_activity_for_thread,
                 );
                 let central_proto = ProtocolObject::from_ref(&*central_delegate);
                 #[cfg(target_os = "ios")]
@@ -336,6 +357,7 @@ impl MacosBleBackend {
             events: events_rx,
             peripherals,
             restored,
+            scan_activity,
             handles,
         })
     }
@@ -430,7 +452,9 @@ impl PreparedMacosBleBackend {
             queue,
             scan_enabled: false,
             advertise_enabled: false,
-            radio_refresh_at: tokio::time::Instant::now() + RADIO_REFRESH_INTERVAL,
+            scan_activity: self.scan_activity,
+            scan_liveness_at: tokio::time::Instant::now() + RADIO_LIVENESS_INTERVAL,
+            advertising_reconcile_at: tokio::time::Instant::now() + RADIO_LIVENESS_INTERVAL,
         })
     }
 }
@@ -441,12 +465,15 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
 
     async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), MacosBleError> {
         self.advertise_enabled = mode.is_on();
+        self.advertising_reconcile_at = tokio::time::Instant::now() + RADIO_LIVENESS_INTERVAL;
         self.peripheral_delegate.0.set_advertising(mode);
         Ok(())
     }
 
     async fn set_scanning(&mut self, mode: ScanningMode) -> Result<(), MacosBleError> {
         self.scan_enabled = mode.is_on();
+        self.scan_activity.store(false, Ordering::Relaxed);
+        self.scan_liveness_at = tokio::time::Instant::now() + RADIO_LIVENESS_INTERVAL;
         let restart = cfg!(target_os = "macos") && self.scan_enabled;
         let central = SendCentralManager(self.central.0.clone());
         self.queue.exec_async(move || {
@@ -469,8 +496,6 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                 };
             }
             let pending_dials = !self.dials.is_empty();
-            let refresh_radio =
-                cfg!(target_os = "macos") && (self.scan_enabled || self.advertise_enabled);
             tokio::select! {
                 event = self.events.recv() => match event {
                     Some(Event::Sighting { address, rssi }) => {
@@ -506,22 +531,29 @@ impl BleBackend<{ MacosBleBackend::MAX_PEERS }> for MacosBleBackend {
                         Err(_) => continue,
                     }
                 }
-                _ = tokio::time::sleep_until(self.radio_refresh_at), if refresh_radio => {
-                    if self.scan_enabled {
+                _ = tokio::time::sleep_until(self.scan_liveness_at),
+                    if cfg!(target_os = "macos") && self.scan_enabled => {
+                    let scan_activity = self.scan_activity.swap(false, Ordering::Relaxed);
+                    if scan_lease(self.scan_enabled, scan_activity) == ScanLease::Expired {
                         let central = SendCentralManager(self.central.0.clone());
                         self.queue.exec_async(move || {
                             apply_scanning(central, true, true);
                         });
                     }
-                    // Re-assert advertising only when no inbound sessions are live — bouncing
-                    // stop/startAdvertising drops connected centrals on some stacks.
-                    if self.advertise_enabled {
-                        self.peripheral_delegate
-                            .0
-                            .refresh_advertising_if_idle();
-                    }
-                    self.radio_refresh_at =
-                        tokio::time::Instant::now() + RADIO_REFRESH_INTERVAL;
+                    self.scan_liveness_at =
+                        tokio::time::Instant::now() + RADIO_LIVENESS_INTERVAL;
+                    continue;
+                }
+                _ = tokio::time::sleep_until(self.advertising_reconcile_at),
+                    if cfg!(target_os = "macos") && self.advertise_enabled => {
+                    // Reconcile desired advertising with CoreBluetooth's authoritative state.
+                    // Healthy advertising remains untouched; a false state is restarted without
+                    // bouncing live inbound sessions.
+                    self.peripheral_delegate
+                        .0
+                        .set_advertising(AdvertisingMode::On);
+                    self.advertising_reconcile_at =
+                        tokio::time::Instant::now() + RADIO_LIVENESS_INTERVAL;
                     continue;
                 }
             }

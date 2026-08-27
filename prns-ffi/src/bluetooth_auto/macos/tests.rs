@@ -7,7 +7,9 @@ use prns_core::interfaces::bluetooth_auto::{
 };
 use tokio::sync::{mpsc, oneshot};
 
-use super::backend::{dial_admission, scan_op, DialAdmission, ScanOp, StartupReadiness};
+use super::backend::{
+    dial_admission, scan_lease, scan_op, DialAdmission, ScanLease, ScanOp, StartupReadiness,
+};
 use super::central::CentralPeerSession;
 use super::discovery::{
     candidate_strength, discover_disposition, CandidateStrength, DiscoverDisposition,
@@ -17,7 +19,7 @@ use super::gatt_link::{
     gatt_inbound_channel, gatt_inbound_channel_with_budget, GattInboundSendError,
 };
 use super::gatt_write::{write_admission, GattWriteAdmission, GattWriteMode, GattWritePlan};
-use super::peripheral::has_session_for_peer;
+use super::peripheral::{advertising_op, has_session_for_peer, AdvertisingOp};
 use super::MacosBleError;
 use super::{CoreBluetoothPeerId, MacosBleBackend};
 
@@ -199,6 +201,22 @@ fn scan_op_starts_restarts_and_stops_without_spurious_work() {
     assert_eq!(scan_op(false, true, false), ScanOp::Stop);
     assert_eq!(scan_op(false, true, true), ScanOp::Stop);
     assert_eq!(scan_op(false, false, true), ScanOp::None);
+}
+
+#[test]
+fn scan_lease_restarts_only_an_enabled_scan_without_observed_activity() {
+    assert_eq!(scan_lease(false, false), ScanLease::Inactive);
+    assert_eq!(scan_lease(false, true), ScanLease::Inactive);
+    assert_eq!(scan_lease(true, true), ScanLease::Renewed);
+    assert_eq!(scan_lease(true, false), ScanLease::Expired);
+}
+
+#[test]
+fn advertising_reconciliation_never_bounces_a_healthy_advertisement() {
+    assert_eq!(advertising_op(true, false), AdvertisingOp::Start);
+    assert_eq!(advertising_op(true, true), AdvertisingOp::None);
+    assert_eq!(advertising_op(false, true), AdvertisingOp::Stop);
+    assert_eq!(advertising_op(false, false), AdvertisingOp::None);
 }
 
 #[test]
