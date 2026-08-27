@@ -1,8 +1,94 @@
+use crate::identity::in_memory::{IdentityParts, InMemoryNodeIdentity};
+use crate::identity::vault::IdentitySecretKey;
 use crate::identity::{IdentityHash, IdentityPublicKeys};
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 
 pub const REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY: usize = 2;
+
+pub struct RemoteControlControllerIdentitySecret {
+    parts: IdentityParts,
+}
+
+impl From<IdentitySecretKey> for RemoteControlControllerIdentitySecret {
+    fn from(secret: IdentitySecretKey) -> Self {
+        Self {
+            parts: InMemoryNodeIdentity::from_secret_key_bytes(&secret).into_parts(),
+        }
+    }
+}
+
+pub struct RemoteControlTargetIdentitySecret {
+    parts: IdentityParts,
+}
+
+impl From<IdentitySecretKey> for RemoteControlTargetIdentitySecret {
+    fn from(secret: IdentitySecretKey) -> Self {
+        Self {
+            parts: InMemoryNodeIdentity::from_secret_key_bytes(&secret).into_parts(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlNodeIdentitySecretsError {
+    ControllerAndTargetAreSameIdentity,
+}
+
+pub struct RemoteControlNodeIdentitySecrets {
+    controller: RemoteControlControllerIdentitySecret,
+    target: RemoteControlTargetIdentitySecret,
+}
+
+impl RemoteControlNodeIdentitySecrets {
+    pub fn new(
+        controller: RemoteControlControllerIdentitySecret,
+        target: RemoteControlTargetIdentitySecret,
+    ) -> Result<Self, RemoteControlNodeIdentitySecretsError> {
+        if controller.parts.hash == target.parts.hash {
+            return Err(RemoteControlNodeIdentitySecretsError::ControllerAndTargetAreSameIdentity);
+        }
+        Ok(Self { controller, target })
+    }
+
+    #[must_use]
+    pub fn identities(&self) -> RemoteControlNodeIdentities {
+        RemoteControlNodeIdentities {
+            controller: RemoteControlControllerIdentity::new(IdentityPublicKeys {
+                encryption: self.controller.parts.encryption_public,
+                signing: self.controller.parts.signing_public,
+            }),
+            target: RemoteControlTargetIdentity::new(self.target.parts.hash),
+        }
+    }
+
+    pub(crate) fn into_parts(self) -> (IdentityParts, IdentityParts) {
+        (self.controller.parts, self.target.parts)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct RemoteControlNodeIdentities {
+    controller: RemoteControlControllerIdentity,
+    target: RemoteControlTargetIdentity,
+}
+
+impl RemoteControlNodeIdentities {
+    #[must_use]
+    pub const fn controller(&self) -> &RemoteControlControllerIdentity {
+        &self.controller
+    }
+
+    #[must_use]
+    pub const fn target(&self) -> &RemoteControlTargetIdentity {
+        &self.target
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (RemoteControlControllerIdentity, RemoteControlTargetIdentity) {
+        (self.controller, self.target)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoteControlControllerIdentity {

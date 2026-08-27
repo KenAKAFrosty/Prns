@@ -10,7 +10,6 @@ use static_cell::StaticCell;
 
 use crate::engine::{IssuedCommand, ProofRequest, MAX_SEND_REQUEST_DATA_LEN};
 use crate::identity::held::HoldIdentityError;
-use crate::identity::{IdentityHash, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceIfac};
 use crate::manifold::driver::{
     run_pooled, EmbassyInterfaceStatus, InterfaceLifecycle, PooledEgress, PooledWiring,
@@ -18,6 +17,7 @@ use crate::manifold::driver::{
 };
 use crate::manifold::grant::ManifoldLaneReader;
 use crate::manifold::Host;
+use crate::remote_control::{RemoteControlNodeIdentities, RemoteControlNodeIdentitySecrets};
 use crate::storage::StorageLayout;
 
 use super::super::request_endpoints::RequestEndpointSet;
@@ -377,11 +377,13 @@ where
         self.node.engine.set_protocol_policy(policy);
     }
 
-    pub fn hold_remote_control_controller_identity(
+    pub fn configure_remote_control_identities(
         &mut self,
-        secret: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
-    ) -> Result<IdentityHash, HoldIdentityError> {
-        self.node.engine.hold_identity(secret)
+        secrets: RemoteControlNodeIdentitySecrets,
+    ) -> Result<RemoteControlNodeIdentities, HoldIdentityError> {
+        self.node
+            .engine
+            .configure_remote_control_identities(secrets)
     }
 
     #[must_use]

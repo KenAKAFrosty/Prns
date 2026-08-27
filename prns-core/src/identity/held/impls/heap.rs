@@ -65,6 +65,13 @@ impl HeldIdentityTable for HeapHeldIdentityTable {
         self.signing_publics.push(signing_public);
         Ok(i)
     }
+
+    fn pop(&mut self) {
+        let _hash = self.hashes.pop();
+        let _secrets = self.secrets.pop();
+        let _encryption_public = self.encryption_publics.pop();
+        let _signing_public = self.signing_publics.pop();
+    }
 }
 
 #[cfg(test)]

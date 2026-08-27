@@ -2,7 +2,6 @@
 
 use core::time::Duration;
 
-use personal_rns::identity::PrivateIdentityMaterial;
 use personal_rns::prelude::*;
 
 const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -28,6 +27,13 @@ impl RemoteControlEndpointState for TargetState {
 #[tokio::main]
 async fn main() {
     let target_secret = try_generate_identity_secret().expect("target identity generation failed");
+    let target_remote_control_identities = RemoteControlNodeIdentitySecrets::new(
+        RemoteControlControllerIdentitySecret::from(
+            try_generate_identity_secret().expect("target controller identity generation failed"),
+        ),
+        RemoteControlTargetIdentitySecret::from(target_secret.clone()),
+    )
+    .expect("target controller and target identities are distinct");
     let target_destination =
         destination(target_secret, TARGET_ASPECTS, ServeMyRequestEndpoints::Yes);
     let target_destination_hash = target_destination
@@ -36,10 +42,16 @@ async fn main() {
 
     let controller_secret =
         try_generate_identity_secret().expect("controller identity generation failed");
-    let controller_material = PrivateIdentityMaterial::from_bytes(*controller_secret);
-    let controller_identity = controller_material.identity_hash();
-    let controller_public_identity =
-        RemoteControlControllerIdentity::new(controller_material.public().public_keys());
+    let controller_remote_control_identities = RemoteControlNodeIdentitySecrets::new(
+        RemoteControlControllerIdentitySecret::from(controller_secret),
+        RemoteControlTargetIdentitySecret::from(
+            try_generate_identity_secret().expect("controller target identity generation failed"),
+        ),
+    )
+    .expect("controller and controller target identities are distinct");
+    let controller_identities = controller_remote_control_identities.identities();
+    let controller_identity = controller_identities.controller().identity_hash();
+    let controller_public_identity = *controller_identities.controller();
 
     let mut access_table = HeapRemoteControlAccessTable::default();
     access_table
@@ -54,7 +66,7 @@ async fn main() {
         .expect("could not read server address")
         .to_string();
 
-    let target = PrnsNode::new(PrnsNodeRecipe {
+    let mut target = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [target_destination],
         app_state: TargetState {
@@ -67,6 +79,9 @@ async fn main() {
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
     });
+    target
+        .configure_remote_control_identities(target_remote_control_identities)
+        .expect("target identities did not fit the identity vault");
     let target_handle = target.handle();
     let _server = target_handle.supervise(server);
 
@@ -88,8 +103,8 @@ async fn main() {
         persistence: NoPersistence,
     });
     controller
-        .hold_remote_control_controller_identity(controller_secret)
-        .expect("controller identity did not fit the identity vault");
+        .configure_remote_control_identities(controller_remote_control_identities)
+        .expect("controller identities did not fit the identity vault");
     let controller_handle = controller.handle();
 
     let announcer = target_handle.clone();

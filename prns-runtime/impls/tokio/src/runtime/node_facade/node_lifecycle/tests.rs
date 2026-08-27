@@ -7,13 +7,17 @@ use crate::engine::test_support::{
 };
 use crate::engine::{InstantMillis, Journaled, PersistenceFlushCause, PersistenceFlushTarget};
 use crate::identity::in_memory::InMemoryNodeIdentity;
-use crate::identity::{PrivateIdentityMaterial, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{
     AnnounceBandwidthCap, BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities,
     InterfaceDescriptor, InterfaceId, InterfaceKind, InterfaceMode, ReportsStatus,
     TransportCapability,
 };
 use crate::manifold::interface_seam::{Interface, InterfaceSeam};
+use crate::remote_control::{
+    RemoteControlControllerIdentitySecret, RemoteControlNodeIdentitySecrets,
+    RemoteControlTargetIdentitySecret,
+};
 use crate::routing::announce::AnnounceObservation;
 use crate::routing::links::resources::{ResourceMemoryLimits, ResourceStrategy};
 use crate::routing::request_handlers::RequestHandlerError;
@@ -243,7 +247,14 @@ async fn run_until_returns_when_a_non_persistent_node_is_asked_to_stop() {
 fn controller_and_target_identities_coexist_without_a_transport_identity() {
     let target_secret = Zeroizing::new([0x31; IDENTITY_SECRET_KEY_LEN]);
     let controller_secret = Zeroizing::new([0x42; IDENTITY_SECRET_KEY_LEN]);
-    let target_identity = PrivateIdentityMaterial::from_bytes(*target_secret).identity_hash();
+    let remote_control_secrets = RemoteControlNodeIdentitySecrets::new(
+        RemoteControlControllerIdentitySecret::from(controller_secret),
+        RemoteControlTargetIdentitySecret::from(target_secret.clone()),
+    )
+    .unwrap();
+    let expected_identities = remote_control_secrets.identities();
+    let target_identity = expected_identities.target().identity_hash();
+    let controller_identity = expected_identities.controller().identity_hash();
     let mut node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         pre_configured_destinations: [PreConfiguredDestination::Single {
@@ -266,13 +277,14 @@ fn controller_and_target_identities_coexist_without_a_transport_identity() {
         on_event: |_event, _state: &()| {},
     });
 
-    let controller = node
-        .hold_remote_control_controller_identity(controller_secret)
+    let configured_identities = node
+        .configure_remote_control_identities(remote_control_secrets)
         .unwrap();
 
+    assert_eq!(configured_identities, expected_identities);
     assert_eq!(
         node.node.engine.held_identity_hashes(),
-        &[target_identity, controller],
+        &[target_identity, controller_identity],
     );
     assert_eq!(node.node.engine.transport_id(), None);
 }

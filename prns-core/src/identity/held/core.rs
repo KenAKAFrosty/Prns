@@ -1,4 +1,5 @@
 use crate::crypto::{ed25519_sign, Ed25519SecretKey, Ed25519Signature, X25519SecretKey};
+use crate::identity::in_memory::IdentityParts;
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{
     DecryptError, IdentityEncryptionPublicKey, IdentityHash, IdentityKeyFallback, IdentitySigner,
@@ -32,6 +33,8 @@ pub trait HeldIdentityTable {
         encryption_public: IdentityEncryptionPublicKey,
         signing_public: IdentitySigningPublicKey,
     ) -> Result<usize, HoldIdentityError>;
+
+    fn pop(&mut self);
 }
 
 #[derive(Default)]
@@ -45,17 +48,42 @@ impl<C: HeldIdentityTable> HeldIdentities<C> {
         secret_key_bytes: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
     ) -> Result<IdentityHash, HoldIdentityError> {
         let parts = InMemoryNodeIdentity::from_secret_key_bytes(&secret_key_bytes).into_parts();
-        if self.table.hashes().contains(&parts.hash) {
-            return Ok(parts.hash);
+        let identity = parts.hash;
+        if self.contains(&identity) {
+            return Ok(identity);
         }
-        self.table.push(
-            parts.hash,
-            parts.encryption_secret,
-            parts.signing_secret,
-            parts.encryption_public,
-            parts.signing_public,
-        )?;
-        Ok(parts.hash)
+        self.push_parts(parts)?;
+        Ok(identity)
+    }
+
+    pub fn hold_pair(
+        &mut self,
+        first: IdentityParts,
+        second: IdentityParts,
+    ) -> Result<(), HoldIdentityError> {
+        let first_is_new = !self.contains(&first.hash);
+        let identities_are_distinct = first.hash != second.hash;
+        let second_is_new = identities_are_distinct && !self.contains(&second.hash);
+        let required_capacity =
+            usize::from(first_is_new).saturating_add(usize::from(second_is_new));
+        let available_capacity = self.table.capacity().saturating_sub(self.table.len());
+        if required_capacity > available_capacity {
+            return Err(HoldIdentityError::StoreFull);
+        }
+
+        if first_is_new {
+            self.push_parts(first)?;
+        }
+        if !second_is_new {
+            return Ok(());
+        }
+        if let Err(error) = self.push_parts(second) {
+            if first_is_new {
+                self.table.pop();
+            }
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub fn contains(&self, hash: &IdentityHash) -> bool {
@@ -88,6 +116,17 @@ impl<C: HeldIdentityTable> HeldIdentities<C> {
 
     pub fn is_empty(&self) -> bool {
         self.table.is_empty()
+    }
+
+    fn push_parts(&mut self, parts: IdentityParts) -> Result<(), HoldIdentityError> {
+        self.table.push(
+            parts.hash,
+            parts.encryption_secret,
+            parts.signing_secret,
+            parts.encryption_public,
+            parts.signing_public,
+        )?;
+        Ok(())
     }
 }
 
@@ -170,15 +209,82 @@ mod tests {
     use super::super::*;
     use super::*;
     use crate::crypto::ratchets::RatchetId;
-    use crate::identity::{OpenedBy, RemoteIdentity, ENCRYPTION_IV_LEN};
+    use crate::crypto::{Ed25519SecretKey, X25519SecretKey};
+    use crate::identity::{
+        IdentityEncryptionPublicKey, IdentitySigningPublicKey, OpenedBy, RemoteIdentity,
+        ENCRYPTION_IV_LEN,
+    };
 
     type TestIdentities = HeldIdentities<FixedHeldIdentityTable<2>>;
+
+    #[derive(Default)]
+    struct RejectSecondIdentityTable {
+        inner: FixedHeldIdentityTable<2>,
+    }
+
+    impl HeldIdentityTable for RejectSecondIdentityTable {
+        fn capacity(&self) -> usize {
+            self.inner.capacity()
+        }
+
+        fn len(&self) -> usize {
+            self.inner.len()
+        }
+
+        fn hashes(&self) -> &[IdentityHash] {
+            self.inner.hashes()
+        }
+
+        fn encryption_publics(&self) -> &[IdentityEncryptionPublicKey] {
+            self.inner.encryption_publics()
+        }
+
+        fn signing_publics(&self) -> &[IdentitySigningPublicKey] {
+            self.inner.signing_publics()
+        }
+
+        fn encryption_secret_at(&self, index: usize) -> Option<&X25519SecretKey> {
+            self.inner.encryption_secret_at(index)
+        }
+
+        fn signing_secret_at(&self, index: usize) -> Option<&Ed25519SecretKey> {
+            self.inner.signing_secret_at(index)
+        }
+
+        fn push(
+            &mut self,
+            hash: IdentityHash,
+            encryption_secret: X25519SecretKey,
+            signing_secret: Ed25519SecretKey,
+            encryption_public: IdentityEncryptionPublicKey,
+            signing_public: IdentitySigningPublicKey,
+        ) -> Result<usize, HoldIdentityError> {
+            if self.inner.len() == 1 {
+                return Err(HoldIdentityError::StoreFull);
+            }
+            self.inner.push(
+                hash,
+                encryption_secret,
+                signing_secret,
+                encryption_public,
+                signing_public,
+            )
+        }
+
+        fn pop(&mut self) {
+            self.inner.pop();
+        }
+    }
 
     fn secret_key_bytes(fill: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
         let mut bytes = [0u8; IDENTITY_SECRET_KEY_LEN];
         bytes[..32].fill(fill);
         bytes[32..].fill(fill.wrapping_add(1));
         Zeroizing::new(bytes)
+    }
+
+    fn identity_parts(fill: u8) -> IdentityParts {
+        InMemoryNodeIdentity::from_secret_key_bytes(&secret_key_bytes(fill)).into_parts()
     }
 
     #[test]
@@ -213,6 +319,53 @@ mod tests {
             Err(HoldIdentityError::StoreFull),
         );
         assert_eq!(identities.len(), 2);
+    }
+
+    #[test]
+    fn a_pair_preflights_capacity_without_partially_holding_either_identity() {
+        let mut identities: HeldIdentities<FixedHeldIdentityTable<1>> = HeldIdentities::default();
+
+        assert_eq!(
+            identities.hold_pair(identity_parts(0x11), identity_parts(0x33)),
+            Err(HoldIdentityError::StoreFull),
+        );
+        assert!(identities.is_empty());
+    }
+
+    #[test]
+    fn a_pair_holds_both_distinct_identities_as_one_operation() {
+        let first = identity_parts(0x11);
+        let second = identity_parts(0x33);
+        let expected = [first.hash, second.hash];
+        let mut identities = TestIdentities::default();
+
+        assert_eq!(identities.hold_pair(first, second), Ok(()));
+        assert_eq!(identities.hashes(), &expected);
+    }
+
+    #[test]
+    fn a_pair_rolls_back_when_the_second_insertion_is_rejected() {
+        let mut identities: HeldIdentities<RejectSecondIdentityTable> = HeldIdentities::default();
+
+        assert_eq!(
+            identities.hold_pair(identity_parts(0x11), identity_parts(0x33)),
+            Err(HoldIdentityError::StoreFull),
+        );
+        assert!(identities.is_empty());
+    }
+
+    #[test]
+    fn a_pair_only_spends_capacity_for_identities_not_already_held() {
+        let first_secret = secret_key_bytes(0x11);
+        let first = InMemoryNodeIdentity::from_secret_key_bytes(&first_secret).into_parts();
+        let second = identity_parts(0x33);
+        let first_hash = first.hash;
+        let expected = [first.hash, second.hash];
+        let mut identities = TestIdentities::default();
+
+        assert_eq!(identities.hold(first_secret), Ok(first_hash));
+        assert_eq!(identities.hold_pair(first, second), Ok(()));
+        assert_eq!(identities.hashes(), &expected);
     }
 
     #[test]

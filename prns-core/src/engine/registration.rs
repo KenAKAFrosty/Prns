@@ -6,6 +6,7 @@ use crate::engine::{AllowRequester, AllowRequesterRejection, CommandId, CommandO
 use crate::engine::{EngineState, RatchetPolicy};
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{IdentityHash, IDENTITY_SECRET_KEY_LEN};
+use crate::remote_control::{RemoteControlNodeIdentities, RemoteControlNodeIdentitySecrets};
 use crate::routing::announce::emit::MAX_RATCHETED_ANNOUNCE_APP_DATA_LEN;
 use crate::routing::announce::{derive_destination_hash, expand_name, Announce};
 use crate::routing::group_keys::{GroupKey, GroupKeyError};
@@ -115,6 +116,16 @@ impl<S: StorageLayout> EngineState<S> {
         identity_secret_key: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
     ) -> Result<IdentityHash, HoldIdentityError> {
         self.held_identities.hold(identity_secret_key)
+    }
+
+    pub fn configure_remote_control_identities(
+        &mut self,
+        secrets: RemoteControlNodeIdentitySecrets,
+    ) -> Result<RemoteControlNodeIdentities, HoldIdentityError> {
+        let identities = secrets.identities();
+        let (controller, target) = secrets.into_parts();
+        self.held_identities.hold_pair(controller, target)?;
+        Ok(identities)
     }
 
     pub fn held_identity_hashes(&self) -> &[IdentityHash] {

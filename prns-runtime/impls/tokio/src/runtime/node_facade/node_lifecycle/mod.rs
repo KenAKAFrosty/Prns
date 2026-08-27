@@ -22,6 +22,7 @@ use crate::manifold::driver::{
     self as manifold_driver, CryptoPoolConfig, Egress, HostCommand, ProvideDecompressedHostCommand,
     TokioHost,
 };
+use crate::remote_control::{RemoteControlNodeIdentities, RemoteControlNodeIdentitySecrets};
 use crate::routing::announce::AnnounceObservation;
 use crate::routing::links::resources::ResourceMemoryLimits;
 use crate::routing::links::LinkId;
@@ -356,11 +357,13 @@ where
         Ok(self)
     }
 
-    pub fn hold_remote_control_controller_identity(
+    pub fn configure_remote_control_identities(
         &mut self,
-        secret: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>,
-    ) -> Result<IdentityHash, HoldIdentityError> {
-        self.node.engine.hold_identity(secret)
+        secrets: RemoteControlNodeIdentitySecrets,
+    ) -> Result<RemoteControlNodeIdentities, HoldIdentityError> {
+        self.node
+            .engine
+            .configure_remote_control_identities(secrets)
     }
 
     pub fn with_shared_instance_identity(

@@ -10,11 +10,13 @@ pub use crate::{
 
 pub use crate::remote_control::{
     RemoteControlAccessTable, RemoteControlAnnounceOutcome, RemoteControlControllerIdentity,
-    RemoteControlDescription, RemoteControlMessageWriteError, RemoteControlProtocolError,
+    RemoteControlControllerIdentitySecret, RemoteControlDescription,
+    RemoteControlMessageWriteError, RemoteControlNodeIdentities, RemoteControlNodeIdentitySecrets,
+    RemoteControlNodeIdentitySecretsError, RemoteControlProtocolError,
     RemoteControlProtocolErrorKind, RemoteControlProtocolVersion, RemoteControlRequest,
     RemoteControlRequestKind, RemoteControlRequestParseError, RemoteControlRequestSet,
     RemoteControlResponse, RemoteControlResponseKind, RemoteControlResponseParseError,
-    RemoteControlTarget, RemoteControlTargetIdentity,
+    RemoteControlTarget, RemoteControlTargetIdentity, RemoteControlTargetIdentitySecret,
 };
 
 #[cfg(feature = "alloc")]

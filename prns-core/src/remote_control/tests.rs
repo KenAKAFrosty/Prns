@@ -1,6 +1,7 @@
 use crate::crypto::{Ed25519PublicKey, X25519PublicKey};
 use crate::identity::{
     IdentityEncryptionPublicKey, IdentityHash, IdentityPublicKeys, IdentitySigningPublicKey,
+    Zeroizing, IDENTITY_SECRET_KEY_LEN,
 };
 use crate::storage::TablePushError;
 use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
@@ -87,6 +88,36 @@ fn target_keeps_its_identity_and_endpoint_together() {
         (target.identity().identity_hash(), target.endpoint()),
         (IdentityHash::new([0x41; TRUNCATED_HASH_BYTE_LEN]), endpoint,)
     );
+}
+
+fn identity_secret(fill: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
+    Zeroizing::new([fill; IDENTITY_SECRET_KEY_LEN])
+}
+
+#[test]
+fn controller_and_target_secret_brands_derive_their_public_identities() {
+    let secrets = RemoteControlNodeIdentitySecrets::new(
+        RemoteControlControllerIdentitySecret::from(identity_secret(0x31)),
+        RemoteControlTargetIdentitySecret::from(identity_secret(0x42)),
+    )
+    .unwrap();
+    let identities = secrets.identities();
+
+    assert_ne!(
+        identities.controller().identity_hash(),
+        identities.target().identity_hash(),
+    );
+}
+
+#[test]
+fn one_identity_cannot_fill_both_remote_control_positions() {
+    let controller = RemoteControlControllerIdentitySecret::from(identity_secret(0x31));
+    let target = RemoteControlTargetIdentitySecret::from(identity_secret(0x31));
+
+    assert!(matches!(
+        RemoteControlNodeIdentitySecrets::new(controller, target),
+        Err(RemoteControlNodeIdentitySecretsError::ControllerAndTargetAreSameIdentity),
+    ));
 }
 
 #[test]
