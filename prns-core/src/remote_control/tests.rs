@@ -1,11 +1,9 @@
+use super::*;
 use crate::crypto::{Ed25519PublicKey, X25519PublicKey};
 use crate::identity::{
     IdentityEncryptionPublicKey, IdentityPublicKeys, IdentitySigningPublicKey, Zeroizing,
     IDENTITY_SECRET_KEY_LEN,
 };
-use crate::storage::TablePushError;
-
-use super::*;
 
 fn identity(fill: u8) -> RemoteControlControllerIdentity {
     RemoteControlControllerIdentity::new(IdentityPublicKeys {
@@ -27,21 +25,36 @@ fn table_contract(table: &mut impl RemoteControlAccessTable) {
     let second_hash = second.controller().identity_hash();
 
     assert!(table.is_empty());
-    assert_eq!(table.upsert(first), Ok(()));
-    assert_eq!(table.upsert(updated_first), Ok(()));
+    assert_eq!(
+        table.set_controller_grant(first),
+        Ok(SetRemoteControlControllerGrantOutcome::Added),
+    );
+    assert_eq!(
+        table.set_controller_grant(first),
+        Ok(SetRemoteControlControllerGrantOutcome::Unchanged),
+    );
+    assert_eq!(
+        table.set_controller_grant(updated_first),
+        Ok(SetRemoteControlControllerGrantOutcome::Updated { previous: first }),
+    );
     assert_eq!(table.len(), 1);
     assert_eq!(table.grant_for(&first_hash), Some(&updated_first));
     assert!(table.contains(&first_hash));
     assert!(!table.contains(&second_hash));
     assert_eq!(
-        table.remove(&second_hash),
-        RemoveRemoteControlAccessOutcome::NotFound,
+        table.revoke_controller(second.controller()),
+        RevokeRemoteControlControllerOutcome::NotFound,
     );
-    assert_eq!(table.upsert(second), Ok(()));
+    assert_eq!(
+        table.set_controller_grant(second),
+        Ok(SetRemoteControlControllerGrantOutcome::Added),
+    );
     assert_eq!(table.len(), 2);
     assert_eq!(
-        table.remove(&first_hash),
-        RemoveRemoteControlAccessOutcome::Removed,
+        table.revoke_controller(first.controller()),
+        RevokeRemoteControlControllerOutcome::Revoked {
+            grant: updated_first,
+        },
     );
     assert_eq!(table.grants(), &[second]);
 }
@@ -60,11 +73,17 @@ fn a_full_fixed_table_refuses_only_a_new_identity() {
     let first = grant(0x65, RemoteControlRequestKind::Describe);
     let updated_first = grant(0x65, RemoteControlRequestKind::Announce);
 
-    assert_eq!(table.upsert(first), Ok(()));
-    assert_eq!(table.upsert(updated_first), Ok(()));
     assert_eq!(
-        table.upsert(grant(0x87, RemoteControlRequestKind::Describe)),
-        Err(TablePushError::TableFull),
+        table.set_controller_grant(first),
+        Ok(SetRemoteControlControllerGrantOutcome::Added),
+    );
+    assert_eq!(
+        table.set_controller_grant(updated_first),
+        Ok(SetRemoteControlControllerGrantOutcome::Updated { previous: first }),
+    );
+    assert_eq!(
+        table.set_controller_grant(grant(0x87, RemoteControlRequestKind::Describe)),
+        Err(SetRemoteControlControllerGrantError::CapacityExhausted),
     );
     assert_eq!(table.grants(), &[updated_first]);
 }
@@ -84,8 +103,8 @@ fn a_zero_capacity_table_is_an_empty_disabled_table() {
 
     assert!(table.is_empty());
     assert_eq!(
-        table.upsert(grant(0xA9, RemoteControlRequestKind::Describe)),
-        Err(TablePushError::TableFull),
+        table.set_controller_grant(grant(0xA9, RemoteControlRequestKind::Describe)),
+        Err(SetRemoteControlControllerGrantError::CapacityExhausted),
     );
 }
 

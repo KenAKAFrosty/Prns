@@ -246,8 +246,22 @@ impl RemoteControlTargetIdentity {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RemoveRemoteControlAccessOutcome {
-    Removed,
+pub enum SetRemoteControlControllerGrantOutcome {
+    Added,
+    Unchanged,
+    Updated {
+        previous: RemoteControlControllerGrant,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetRemoteControlControllerGrantError {
+    CapacityExhausted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RevokeRemoteControlControllerOutcome {
+    Revoked { grant: RemoteControlControllerGrant },
     NotFound,
 }
 
@@ -279,11 +293,35 @@ pub trait RemoteControlAccessTable {
         self.index_of(identity).is_some()
     }
 
-    fn remove(&mut self, identity: &IdentityHash) -> RemoveRemoteControlAccessOutcome {
-        let Some(index) = self.index_of(identity) else {
-            return RemoveRemoteControlAccessOutcome::NotFound;
+    fn set_controller_grant(
+        &mut self,
+        grant: RemoteControlControllerGrant,
+    ) -> Result<SetRemoteControlControllerGrantOutcome, SetRemoteControlControllerGrantError> {
+        let identity = grant.controller().identity_hash();
+        let previous = self.grant_for(&identity).copied();
+        if previous == Some(grant) {
+            return Ok(SetRemoteControlControllerGrantOutcome::Unchanged);
+        }
+        self.upsert(grant).map_err(|TablePushError::TableFull| {
+            SetRemoteControlControllerGrantError::CapacityExhausted
+        })?;
+        Ok(match previous {
+            Some(previous) => SetRemoteControlControllerGrantOutcome::Updated { previous },
+            None => SetRemoteControlControllerGrantOutcome::Added,
+        })
+    }
+
+    fn revoke_controller(
+        &mut self,
+        controller: &RemoteControlControllerIdentity,
+    ) -> RevokeRemoteControlControllerOutcome {
+        let Some(index) = self.index_of(&controller.identity_hash()) else {
+            return RevokeRemoteControlControllerOutcome::NotFound;
+        };
+        let Some(grant) = self.grants().get(index).copied() else {
+            return RevokeRemoteControlControllerOutcome::NotFound;
         };
         self.swap_remove(index);
-        RemoveRemoteControlAccessOutcome::Removed
+        RevokeRemoteControlControllerOutcome::Revoked { grant }
     }
 }

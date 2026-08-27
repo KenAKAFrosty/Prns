@@ -8,9 +8,10 @@ use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::remote_control::{
     FixedRemoteControlAccessTable, RemoteControlAccessTable, RemoteControlAnnouncementData,
     RemoteControlAnnouncementDataWriteError, RemoteControlEndpoint, RemoteControlNodeIdentities,
-    RemoteControlRequest, RemoteControlService, DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS,
-    REMOTE_CONTROL_APPLICATION_ASPECTS, REMOTE_CONTROL_APPLICATION_NAME,
-    REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
+    RemoteControlRequest, RemoteControlService, RevokeRemoteControlControllerOutcome,
+    SetRemoteControlControllerGrantError, SetRemoteControlControllerGrantOutcome,
+    DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS, REMOTE_CONTROL_APPLICATION_ASPECTS,
+    REMOTE_CONTROL_APPLICATION_NAME, REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
 };
 use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::request_handlers::{RequestHandlerError, RequestPathHash, RequestPolicy};
@@ -65,6 +66,20 @@ impl AssembledRemoteControl {
         &self,
     ) -> &FixedRemoteControlAccessTable<DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS> {
         &self.access
+    }
+
+    pub fn set_controller_grant(
+        &mut self,
+        grant: crate::remote_control::RemoteControlControllerGrant,
+    ) -> Result<SetRemoteControlControllerGrantOutcome, SetRemoteControlControllerGrantError> {
+        self.access.set_controller_grant(grant)
+    }
+
+    pub fn revoke_controller(
+        &mut self,
+        controller: &crate::remote_control::RemoteControlControllerIdentity,
+    ) -> RevokeRemoteControlControllerOutcome {
+        self.access.revoke_controller(controller)
     }
 }
 
@@ -566,6 +581,42 @@ mod tests {
                 },
             ),
         );
+    }
+
+    #[test]
+    fn assembled_remote_control_owns_controller_grant_changes() {
+        let mut engine = EngineState::<Storage>::default();
+        let mut remote_control =
+            configure_remote_control_service(&mut engine, remote_control_service()).unwrap();
+        let initial = remote_control_grant(0x41);
+        let updated = RemoteControlControllerGrant::new(
+            *initial.controller(),
+            RemoteControlRequestSet::only(RemoteControlRequestKind::Announce),
+        )
+        .unwrap();
+
+        assert_eq!(
+            remote_control.set_controller_grant(initial),
+            Ok(SetRemoteControlControllerGrantOutcome::Added),
+        );
+        assert_eq!(
+            remote_control.set_controller_grant(initial),
+            Ok(SetRemoteControlControllerGrantOutcome::Unchanged),
+        );
+        assert_eq!(
+            remote_control.set_controller_grant(updated),
+            Ok(SetRemoteControlControllerGrantOutcome::Updated { previous: initial }),
+        );
+        assert_eq!(remote_control.access().grants(), &[updated]);
+        assert_eq!(
+            remote_control.revoke_controller(updated.controller()),
+            RevokeRemoteControlControllerOutcome::Revoked { grant: updated },
+        );
+        assert_eq!(
+            remote_control.revoke_controller(updated.controller()),
+            RevokeRemoteControlControllerOutcome::NotFound,
+        );
+        assert!(remote_control.access().is_empty());
     }
 
     #[test]
