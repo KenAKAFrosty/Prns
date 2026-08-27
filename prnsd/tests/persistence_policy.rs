@@ -162,8 +162,7 @@ fn required_persistence_refuses_an_unavailable_transport_identity() {
     let directory = TestDirectory::new("required-startup");
     let storage = directory.path().join("storage");
     fs::create_dir(&storage).unwrap_or_else(|error| panic!("{error}"));
-    fs::create_dir(storage.join("transport_identity"))
-        .unwrap_or_else(|error| panic!("{error}"));
+    fs::create_dir(storage.join("transport_identity")).unwrap_or_else(|error| panic!("{error}"));
 
     let output = directory.run_to_completion("required");
 
@@ -179,10 +178,8 @@ fn best_effort_retains_transport_identity_and_node_persistence_fallbacks() {
     let directory = TestDirectory::new("best-effort");
     let storage = directory.path().join("storage");
     fs::create_dir(&storage).unwrap_or_else(|error| panic!("{error}"));
-    fs::create_dir(storage.join("transport_identity"))
-        .unwrap_or_else(|error| panic!("{error}"));
-    fs::write(storage.join("prns"), b"not a directory")
-        .unwrap_or_else(|error| panic!("{error}"));
+    fs::create_dir(storage.join("transport_identity")).unwrap_or_else(|error| panic!("{error}"));
+    fs::write(storage.join("prns"), b"not a directory").unwrap_or_else(|error| panic!("{error}"));
     let mut daemon = RunningDaemon::start(&directory, "best-effort");
     daemon.wait_until_ready();
 

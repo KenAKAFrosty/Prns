@@ -59,7 +59,10 @@ impl fmt::Display for RnxError {
         match self {
             Self::Configuration(source) => source.fmt(formatter),
             Self::RemoteControlIdentityUnavailable(source) => {
-                write!(formatter, "could not create RNX RemoteControl identities: {source}")
+                write!(
+                    formatter,
+                    "could not create RNX RemoteControl identities: {source}"
+                )
             }
             Self::Identity { path, source } => {
                 write!(

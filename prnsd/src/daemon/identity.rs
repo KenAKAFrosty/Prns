@@ -127,11 +127,7 @@ mod tests {
     #[test]
     fn a_remote_control_identity_error_is_never_replaced_with_ephemeral_identities() {
         let directory = tempfile::tempdir().unwrap();
-        std::fs::write(
-            directory.path().join(REMOTE_CONTROL_IDENTITY_DIRECTORY),
-            [],
-        )
-        .unwrap();
+        std::fs::write(directory.path().join(REMOTE_CONTROL_IDENTITY_DIRECTORY), []).unwrap();
 
         assert!(load_or_create_remote_control_identities(directory.path()).is_err());
     }

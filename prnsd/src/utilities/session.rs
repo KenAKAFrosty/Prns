@@ -294,7 +294,10 @@ impl fmt::Display for UtilityNodeSessionError {
         match self {
             Self::Configuration(source) => source.fmt(formatter),
             Self::RemoteControlIdentityUnavailable(source) => {
-                write!(formatter, "could not create utility RemoteControl identities: {source}")
+                write!(
+                    formatter,
+                    "could not create utility RemoteControl identities: {source}"
+                )
             }
             Self::IdentityConfiguration(source) => {
                 write!(

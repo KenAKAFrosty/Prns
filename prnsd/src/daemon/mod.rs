@@ -107,7 +107,10 @@ impl core::fmt::Display for DaemonRunError {
                 )
             }
             Self::RemoteControlIdentityUnavailable(error) => {
-                write!(formatter, "required RemoteControl identities are unavailable: {error}")
+                write!(
+                    formatter,
+                    "required RemoteControl identities are unavailable: {error}"
+                )
             }
             Self::PersistenceUnavailable(error) => {
                 write!(formatter, "required persistence is unavailable: {error}")

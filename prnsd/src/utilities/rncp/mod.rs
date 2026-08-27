@@ -501,8 +501,8 @@ where
     F: FnOnce() -> R,
 {
     let (events, receiver) = mpsc::unbounded_channel();
-    let remote_control = transient_remote_control_service()
-        .map_err(RncpError::RemoteControlIdentityUnavailable)?;
+    let remote_control =
+        transient_remote_control_service().map_err(RncpError::RemoteControlIdentityUnavailable)?;
     let listener_allowed: Arc<[IdentityHash]> = args.allowed.clone().into();
     let listener_no_auth = args.no_auth;
     let mut node = PrnsNode::new_with_handle(move |handle| personal_rns::runtime::PrnsNodeRecipe {
@@ -949,7 +949,10 @@ impl fmt::Display for RncpError {
             Self::Arguments(message) => formatter.write_str(message),
             Self::Configuration(source) => source.fmt(formatter),
             Self::RemoteControlIdentityUnavailable(source) => {
-                write!(formatter, "could not create RNCP RemoteControl identities: {source}")
+                write!(
+                    formatter,
+                    "could not create RNCP RemoteControl identities: {source}"
+                )
             }
             Self::Identity { path, source } => {
                 write!(

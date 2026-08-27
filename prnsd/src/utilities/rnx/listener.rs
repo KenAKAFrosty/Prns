@@ -134,8 +134,8 @@ where
     R: RequestEndpointSet<ListenerState>,
     F: FnOnce() -> R,
 {
-    let remote_control = transient_remote_control_service()
-        .map_err(RnxError::RemoteControlIdentityUnavailable)?;
+    let remote_control =
+        transient_remote_control_service().map_err(RnxError::RemoteControlIdentityUnavailable)?;
     let allowed: Arc<[IdentityHash]> = args.allowed.clone().into();
     let no_auth = args.no_auth;
     let mut node = PrnsNode::new_with_handle(move |handle| personal_rns::runtime::PrnsNodeRecipe {
