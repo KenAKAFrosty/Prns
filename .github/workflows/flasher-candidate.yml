@@ -241,7 +241,7 @@ jobs:
     name: CLI ${{ matrix.build_pass }} ${{ matrix.platform.target }}
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 16
       matrix:
         build_pass: [primary, reproduction]
         platform:
@@ -336,7 +336,7 @@ jobs:
     name: Sparse firmware and hosted site ${{ matrix.build_pass }}
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 16
       matrix:
         build_pass: [primary, reproduction]
     runs-on: ubuntu-24.04
@@ -430,7 +430,7 @@ jobs:
     name: Release dependency and notice evidence ${{ matrix.build_pass }}
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 16
       matrix:
         build_pass: [primary, reproduction]
     runs-on: ubuntu-24.04
@@ -477,7 +477,7 @@ jobs:
     needs: [cli, core-candidate, dependency-audit]
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 16
       matrix:
         build_pass: [primary, reproduction]
     runs-on: ubuntu-24.04

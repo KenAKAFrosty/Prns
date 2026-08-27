@@ -688,6 +688,24 @@ inputs = ["validation/platforms/embedded.sh", "validation/platforms/no-std-esp-b
 artifacts = "validation-artifacts/results/embedded-builds"
 
 [[suite]]
+id = "esp32-firmware-check"
+domain = "platform"
+group = "esp"
+tiers = ["pr"]
+platform = "linux"
+toolchain = "esp"
+timeout_seconds = 5400
+command = ["bash", "validation/platforms/esp32-firmware-check.sh"]
+inputs = [
+  "validation/platforms/esp32-firmware-check.sh",
+  "personal-hopspot/embedded/esp32",
+  "tools/release/install-release-esp-toolchain.sh",
+  "tools/release/release-esp-toolchain-identity.sh",
+  "tools/release/verify-release-esp-toolchain.sh",
+]
+artifacts = "validation-artifacts/results/esp32-firmware-check"
+
+[[suite]]
 id = "shipping-firmware"
 domain = "platform"
 group = "esp"
