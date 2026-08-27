@@ -13,6 +13,7 @@ use personal_rns::interfaces::bluetooth_auto::{
     AndroidHost, Endpoint, LinkCapabilities, BLE_HW_MTU,
 };
 use personal_rns::interfaces::wifi_direct::GoIntent;
+use personal_rns::interfaces::InterfaceStatus;
 use personal_rns::runtime::{Diagnostic, ManuallyAttached, PrnsEvent, PrnsNode, PrnsNodeRecipe};
 use personal_rns::shared_instance::rns_rpc::{SharedInstanceCredentials, SharedInstanceRpcServer};
 use personal_rns::shared_instance::SharedInstanceServer;

@@ -159,7 +159,8 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                 super::super::learned_state::persistence_state(),
                 now_ms,
             );
-            let mut details = hopspot::snapshots_to_interface_menu_details(
+            let mut details = hopspot::ble_interface_menu_details(
+                Some(super::super::bluetooth_auto::local_discovery_group()),
                 ui_state.selected_card(content.cards),
                 &snapshots,
             );

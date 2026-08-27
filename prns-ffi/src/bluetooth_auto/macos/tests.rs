@@ -3,8 +3,8 @@ use std::time::{Duration, Instant};
 
 use objc2_core_bluetooth::CBCharacteristicProperties;
 use prns_core::interfaces::bluetooth_auto::{
-    default_group_tag,
-    AdvertisingMode, BleBackend, BleIdentity, Control, ScanningMode,
+    default_group_tag, group_tag, manufacturer_role_payload, BleRoleCapabilities, AdvertisingMode,
+    BleBackend, BleIdentity, Control, ScanningMode,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -116,6 +116,53 @@ fn candidate_strength_accepts_prns_name_or_manufacturer_marker() {
         candidate_strength(false, None, default_group_tag()),
         CandidateStrength::Weak
     );
+}
+
+#[test]
+fn candidate_strength_rejects_other_discovery_groups() {
+    let other = group_tag(b"mt-leg-b");
+    let default_body = manufacturer_role_payload(BleRoleCapabilities::DualRole, default_group_tag());
+    let mut default_mfg = [0u8; 8];
+    default_mfg[0] = 0xff;
+    default_mfg[1] = 0xff;
+    default_mfg[2..].copy_from_slice(&default_body);
+
+    let other_body = manufacturer_role_payload(BleRoleCapabilities::DualRole, other);
+    let mut other_mfg = [0u8; 8];
+    other_mfg[0] = 0xff;
+    other_mfg[1] = 0xff;
+    other_mfg[2..].copy_from_slice(&other_body);
+
+    assert_eq!(
+        candidate_strength(false, Some(&default_mfg), other),
+        CandidateStrength::Rejected
+    );
+    assert_eq!(
+        candidate_strength(false, Some(&other_mfg), default_group_tag()),
+        CandidateStrength::Rejected
+    );
+    assert_eq!(
+        candidate_strength(false, Some(&other_mfg), other),
+        CandidateStrength::Strong
+    );
+    // Legacy name-only ads are the default group only.
+    assert_eq!(
+        candidate_strength(true, None, other),
+        CandidateStrength::Rejected
+    );
+}
+
+#[test]
+fn rejected_candidates_are_never_admitted() {
+    let now = Instant::now();
+    let peer = peer_id(7);
+    let mut guard = DiscoveryGuard::default();
+    assert!(!guard.admit_candidate(peer, CandidateStrength::Rejected, now));
+    assert!(!guard.admit_candidate(
+        peer,
+        CandidateStrength::Rejected,
+        now + Duration::from_secs(1)
+    ));
 }
 
 #[test]

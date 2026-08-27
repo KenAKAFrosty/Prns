@@ -89,6 +89,8 @@ class BleLink(private val context: Context) {
     private val inboundByAddr = ConcurrentHashMap<String, Int>()
     private val columbaSubscribedCentrals = ConcurrentHashMap<String, BluetoothDevice>()
     private val devices = ConcurrentHashMap<String, BluetoothDevice>()
+    /** Last scan-time discovery-group match for a peer address. Missing means not yet observed. */
+    private val peerDiscoveryAllowed = ConcurrentHashMap<String, Boolean>()
     private val workers = CopyOnWriteArraySet<Thread>()
     private val radioWorkers = CopyOnWriteArraySet<Thread>()
     private val linkWorkers = ConcurrentHashMap<Int, CopyOnWriteArraySet<Thread>>()
@@ -198,6 +200,21 @@ class BleLink(private val context: Context) {
                 return
             }
             val octets = parseMac(device.address) ?: return
+            val capabilities = result.scanRecord
+                ?.getManufacturerSpecificData(PRNS_ROLE_COMPANY_ID)
+            // Only cache when manufacturer data is present so truncated ads don't
+            // permanently mark a same-group peer as mismatched.
+            if (capabilities != null) {
+                val allowed = matchesLocalDiscoveryGroup(capabilities)
+                val previous = peerDiscoveryAllowed.put(device.address, allowed)
+                if (previous != allowed) {
+                    Log.i(
+                        TAG,
+                        "scan group ${device.address}: allowed=$allowed " +
+                            "mfg=${capabilities.joinToString("") { "%02x".format(it) }}",
+                    )
+                }
+            }
             if (!shouldDial(octets, result)) {
                 return
             }
@@ -225,6 +242,10 @@ class BleLink(private val context: Context) {
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 rememberDevice(device)
+                if (peerDiscoveryAllowed[device.address] == false) {
+                    Log.w(TAG, "rejecting inbound ${device.address}: known discovery group mismatch")
+                    runCatching { gattServer?.cancelConnection(device) }
+                }
                 return
             }
             if (newState == BluetoothProfile.STATE_DISCONNECTED) {
@@ -352,7 +373,11 @@ class BleLink(private val context: Context) {
             var responseStatus = BluetoothGatt.GATT_SUCCESS
             if (descriptor.characteristic.uuid == COLUMBA_TX) {
                 if (subscribing) {
-                    if (columbaSubscribedCentrals.containsKey(device.address) ||
+                    if (peerDiscoveryAllowed[device.address] == false) {
+                        responseStatus = BluetoothGatt.GATT_FAILURE
+                        Log.w(TAG, "columba subscription reject ${device.address}: known discovery group mismatch")
+                        runCatching { gattServer?.cancelConnection(device) }
+                    } else if (columbaSubscribedCentrals.containsKey(device.address) ||
                         columbaSubscribedCentrals.size < peerCapacity
                     ) {
                         columbaSubscribedCentrals[device.address] = device
@@ -369,7 +394,11 @@ class BleLink(private val context: Context) {
                 descriptor.characteristic.uuid == NATIVE_CONTROL &&
                 inboundByAddr[device.address] == null
             ) {
-                if (links.size >= peerCapacity) {
+                if (peerDiscoveryAllowed[device.address] == false) {
+                    responseStatus = BluetoothGatt.GATT_FAILURE
+                    Log.w(TAG, "listener reject ${device.address}: known discovery group mismatch")
+                    runCatching { gattServer?.cancelConnection(device) }
+                } else if (links.size >= peerCapacity) {
                     responseStatus = ATT_INSUFFICIENT_RESOURCES
                 } else {
                     val connId = nextConnId.getAndIncrement()
@@ -418,6 +447,11 @@ class BleLink(private val context: Context) {
         val address = device.address
         val existingConnId = inboundByAddr[address]
         if (existingConnId == null) {
+            if (peerDiscoveryAllowed[address] == false) {
+                Log.w(TAG, "columba reject $address: known discovery group mismatch")
+                runCatching { gattServer?.cancelConnection(device) }
+                return NativeBridge.BLE_INGRESS_CLOSED
+            }
             if (value.size != COLUMBA_IDENTITY_LEN) {
                 Log.w(TAG, "columba RX from $address before identity (${value.size}B), dropping")
                 return NativeBridge.BLE_INGRESS_CLOSED
@@ -1611,6 +1645,7 @@ class BleLink(private val context: Context) {
         columbaIdentityChar = null
         l2capServer = null
         devices.clear()
+        peerDiscoveryAllowed.clear()
         inboundByAddr.clear()
         columbaSubscribedCentrals.clear()
         dialingAddrs.clear()

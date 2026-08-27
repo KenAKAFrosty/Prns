@@ -530,7 +530,7 @@ pub(crate) fn set_ble_discovery_group(group_id: &str) -> bool {
     bridge.set_local_group_tag(group_tag(group_id.as_bytes()));
     drop(slot);
     {
-        let mut manager = lock_manager();
+        let manager = lock_manager();
         if let Some(resources) = manager
             .process
             .as_ref()

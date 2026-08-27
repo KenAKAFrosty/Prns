@@ -1,6 +1,6 @@
 use heapless::Vec as HVec;
 use personal_hopspot_core::{
-    expand_face_rgba, face_64x128, snapshots_to_cards, snapshots_to_interface_menu_details,
+    ble_interface_menu_details, expand_face_rgba, face_64x128, snapshots_to_cards,
     AccessPointState, Card, CardActivityTracker, InputEvent, PowerSnapshot, ScreenContent,
     UiAction, UiConfiguration, UiNotice, UiState, UserBlanking, MOBILE_RGBA_BYTES,
 };
@@ -85,11 +85,6 @@ impl HopspotFace {
             }
             UiAction::Announce => self.show_notice(UiNotice::Announcing),
             UiAction::CopySharedInstanceConfig => {}
-            UiAction::CycleBleDiscoveryGroup => {
-                if crate::engine::cycle_ble_discovery_group().is_some() {
-                    self.show_notice(UiNotice::BleGroupUpdated);
-                }
-            }
             UiAction::None
             | UiAction::BlankDisplay
             | UiAction::ToggleDisplayAutoOff
@@ -143,7 +138,9 @@ impl HopspotFace {
         if cards.is_empty() {
             face_64x128::splash(&mut self.framebuffer, face_64x128::SplashContent::Starting);
         } else {
-            let interface_menu_details = snapshots_to_interface_menu_details(
+            let group = crate::engine::ble_discovery_group();
+            let interface_menu_details = ble_interface_menu_details(
+                group.as_deref(),
                 self.state.selected_card(content.cards),
                 snapshots,
             );
