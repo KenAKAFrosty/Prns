@@ -1,6 +1,6 @@
 use crate::identity::in_memory::{IdentityParts, InMemoryNodeIdentity};
 use crate::identity::vault::IdentitySecretKey;
-use crate::identity::{IdentityHash, IdentityPublicKeys};
+use crate::identity::{IdentityHash, IdentityPublicKeys, IDENTITY_SECRET_KEY_LEN};
 use crate::storage::TablePushError;
 
 pub const REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY: usize = 2;
@@ -34,12 +34,35 @@ pub enum RemoteControlNodeIdentitySecretsError {
     ControllerAndTargetAreSameIdentity,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum RemoteControlNodeIdentityGenerationError<EntropyError> {
+    ControllerEntropy(EntropyError),
+    TargetEntropy(EntropyError),
+    InvalidPair(RemoteControlNodeIdentitySecretsError),
+}
+
 pub struct RemoteControlNodeIdentitySecrets {
     controller: RemoteControlControllerIdentitySecret,
     target: RemoteControlTargetIdentitySecret,
 }
 
 impl RemoteControlNodeIdentitySecrets {
+    pub fn generate<EntropyError>(
+        mut fill_entropy: impl FnMut(&mut [u8]) -> Result<(), EntropyError>,
+    ) -> Result<Self, RemoteControlNodeIdentityGenerationError<EntropyError>> {
+        let mut controller = IdentitySecretKey::new([0; IDENTITY_SECRET_KEY_LEN]);
+        fill_entropy(&mut controller[..])
+            .map_err(RemoteControlNodeIdentityGenerationError::ControllerEntropy)?;
+        let mut target = IdentitySecretKey::new([0; IDENTITY_SECRET_KEY_LEN]);
+        fill_entropy(&mut target[..])
+            .map_err(RemoteControlNodeIdentityGenerationError::TargetEntropy)?;
+        Self::new(
+            RemoteControlControllerIdentitySecret::from(controller),
+            RemoteControlTargetIdentitySecret::from(target),
+        )
+        .map_err(RemoteControlNodeIdentityGenerationError::InvalidPair)
+    }
+
     pub fn new(
         controller: RemoteControlControllerIdentitySecret,
         target: RemoteControlTargetIdentitySecret,

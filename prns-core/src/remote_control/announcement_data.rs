@@ -196,7 +196,7 @@ mod tests {
         let maximum = [0xA5; MAX_REMOTE_CONTROL_PUBLIC_APP_DATA_LEN];
         let oversized = [0x5A; OVERSIZED_PUBLIC_APP_DATA_LEN];
 
-        assert_eq!(RemoteControlPublicAppData::empty().as_bytes(), &[]);
+        assert!(RemoteControlPublicAppData::empty().as_bytes().is_empty());
         assert_eq!(
             RemoteControlAnnouncementData::MAX_ENCODED_LEN,
             MAX_ANNOUNCE_APP_DATA_LEN,
