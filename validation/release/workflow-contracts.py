@@ -24,8 +24,8 @@ AUTOMATIC_WORKFLOWS = frozenset(
         "napi.yml",
     }
 )
-STANDARD_MATRIX_PARALLELISM_LIMIT = 4
-MATRIX_PARALLELISM_LIMITS = {"release-readiness.yml": 20}
+STANDARD_MATRIX_PARALLELISM = 16
+MATRIX_PARALLELISM_OVERRIDES = {"release-readiness.yml": 20}
 MAIN_RELEASE_AUTHORITY_WORKFLOWS = (
     "host-sdk-promote.yml",
     "host-sdk-public-qualification.yml",
@@ -73,8 +73,8 @@ def validate_resource_bounds(workflow: Path, text: str) -> list[str]:
     errors: list[str] = []
     relative = workflow.relative_to(ROOT)
     artifact_limit = 7 if workflow.name in AUTOMATIC_WORKFLOWS else 30
-    parallelism_limit = MATRIX_PARALLELISM_LIMITS.get(
-        workflow.name, STANDARD_MATRIX_PARALLELISM_LIMIT
+    parallelism = MATRIX_PARALLELISM_OVERRIDES.get(
+        workflow.name, STANDARD_MATRIX_PARALLELISM
     )
     for job_name, block in workflow_jobs(text):
         if re.search(r"(?m)^    runs-on:", block):
@@ -93,16 +93,9 @@ def validate_resource_bounds(workflow: Path, text: str) -> list[str]:
             )
             if parallel is None:
                 errors.append(f"{relative}: {job_name} has an unbounded matrix")
-            elif not 1 <= int(parallel.group(1)) <= parallelism_limit:
+            elif int(parallel.group(1)) != parallelism:
                 errors.append(
-                    f"{relative}: {job_name} exceeds {parallelism_limit} parallel matrix jobs"
-                )
-            elif (
-                workflow.name in MATRIX_PARALLELISM_LIMITS
-                and int(parallel.group(1)) != parallelism_limit
-            ):
-                errors.append(
-                    f"{relative}: {job_name} must use all {parallelism_limit} "
+                    f"{relative}: {job_name} must use {parallelism} "
                     "parallel matrix jobs"
                 )
 
@@ -496,6 +489,16 @@ def validate() -> list[str]:
             errors.append(f"ESP toolchain verifier does not check {field}")
     if "RUSTUP_TOOLCHAIN: 1.90.0" not in ci or "toolchain: 1.90.0" not in ci:
         errors.append("ci.yml does not explicitly force and install the Rust 1.90.0 MSRV")
+    for product_matrix_gate in (
+        "run --suite embedded-builds",
+        "run --suite esp32-firmware-check",
+        'release toolchain esp install -- "${RUNNER_TEMP}/prns-esp-tools"',
+        "ESP32_RESULT: ${{ needs.esp32-firmware.result }}",
+    ):
+        if product_matrix_gate not in ci:
+            errors.append(
+                f"ci.yml is missing required product-matrix gate {product_matrix_gate!r}"
+            )
     if 'node-version: "24.18.0"' not in ci:
         errors.append("ci.yml does not test the release web graph with Node 24.18.0")
     for browser_gate in (

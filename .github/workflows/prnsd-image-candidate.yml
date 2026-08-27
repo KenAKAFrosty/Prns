@@ -20,7 +20,7 @@ jobs:
     name: ${{ matrix.pass }} ${{ matrix.image.platform }}
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 16
       matrix:
         pass: [primary, reproduction]
         image:

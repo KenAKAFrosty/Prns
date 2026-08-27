@@ -1,5 +1,5 @@
 use esp_hal::analog::adc::{Adc, AdcCalCurve, AdcConfig, AdcPin, Attenuation};
-use esp_hal::gpio::{Flex, Input, InputConfig, Level, Output, OutputConfig};
+use esp_hal::gpio::{Input, InputConfig, Level, Output, OutputConfig};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::spi::master::{Config as SpiConfig, Spi};
 use esp_hal::time::Rate;
@@ -16,7 +16,7 @@ use personal_rns::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
 
 use personal_hopspot_core as screen;
 
-use super::{HELTEC_GC1109_RX_GAIN_DB, HELTEC_KCT8103L_RX_GAIN_DB};
+use super::heltec_frontend;
 use crate::s3::{
     self, BoardDisplay, BoardFace, Esp32S3Board, NoGnss, S3BoardHardware, S3InterfaceHardware,
     S3ManifoldHardware,
@@ -195,23 +195,7 @@ impl Esp32S3Board for HeltecV4R8Board {
             let lora_reset = Output::new(p.GPIO12, Level::High, OutputConfig::default());
             let lora_busy = Input::new(p.GPIO13, InputConfig::default());
             let lora_dio1 = Input::new(p.GPIO14, InputConfig::default());
-            let _lora_pa_pwr = Output::new(p.GPIO7, Level::High, OutputConfig::default());
-            let mut lora_csd = Flex::new(p.GPIO2);
-            lora_csd.apply_input_config(&InputConfig::default());
-            lora_csd.set_input_enable(true);
-            let lora_is_kct8103l = lora_csd.is_high();
-            let lora_rx_gain_db = if lora_is_kct8103l {
-                HELTEC_KCT8103L_RX_GAIN_DB
-            } else {
-                HELTEC_GC1109_RX_GAIN_DB
-            };
-            lora_csd.set_output_enable(true);
-            lora_csd.set_high();
-            let _lora_fem_switch = if lora_is_kct8103l {
-                Output::new(p.GPIO5, Level::High, OutputConfig::default())
-            } else {
-                Output::new(p.GPIO46, Level::High, OutputConfig::default())
-            };
+            let lora_frontend = heltec_frontend::initialize(p.GPIO7, p.GPIO2, p.GPIO46, p.GPIO5);
             Sx126x::new(
                 lora_spi_device,
                 lora_busy,
@@ -223,10 +207,9 @@ impl Esp32S3Board for HeltecV4R8Board {
                     use_dcdc: true,
                     rx_boost: true,
                     dio2_as_rf_switch: true,
-                    external_rx_gain_db: lora_rx_gain_db,
+                    external_rx_gain_db: lora_frontend.rx_gain_db(),
                     external_power_amplifier: None,
-                    enter_transmit: None,
-                    enter_receive: None,
+                    frontend_control: lora_frontend.control(),
                 },
             )
         };

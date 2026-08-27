@@ -155,7 +155,7 @@ jobs:
     needs: contract
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 16
       matrix:
         settings:
           - host: ubuntu-latest
@@ -366,7 +366,7 @@ jobs:
     needs: contract
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 16
       matrix:
         settings:
           - ndk: arm64-v8a
@@ -522,7 +522,7 @@ jobs:
     needs: managed
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 16
       matrix:
         host:
           - ubuntu-latest

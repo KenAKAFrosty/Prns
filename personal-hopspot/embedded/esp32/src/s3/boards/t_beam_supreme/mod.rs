@@ -18,7 +18,7 @@ use embedded_graphics::Pixel;
 use embedded_hal_bus::spi::ExclusiveDevice;
 
 use personal_rns::interfaces::InterfaceId;
-use personal_rns::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
+use personal_rns::radios::sx126x::{BoardConfig, FrontendControl, Sx126x, TcxoVoltage};
 
 use personal_hopspot_core as screen;
 use static_cell::StaticCell;
@@ -413,8 +413,7 @@ impl Esp32S3Board for TBeamSupremeBoard {
                     dio2_as_rf_switch: true,
                     external_rx_gain_db: 0,
                     external_power_amplifier: None,
-                    enter_transmit: None,
-                    enter_receive: None,
+                    frontend_control: FrontendControl::NoDynamicControl,
                 },
             )
         };
