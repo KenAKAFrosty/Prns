@@ -39,6 +39,20 @@ pub(super) struct StreamPump {
     _channel: Retained<CBL2CAPChannel>,
 }
 
+/// Queue-confined: close both halves before releasing the stream receiver. The receiver closure is
+/// the data-plane terminal signal consumed by the owning link lifecycle.
+fn mark_data_plane_dead(pump: &StreamPump) {
+    if let Ok(mut out) = pump.outbound.lock() {
+        out.closed = true;
+    }
+    pump.inbound_tx.borrow_mut().take();
+}
+
+/// Queue-confined: the caller already owns `pump.outbound`, so acquiring it again would deadlock.
+fn release_data_plane_receiver(pump: &StreamPump) {
+    pump.inbound_tx.borrow_mut().take();
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct PumpPtr(pub(super) *const StreamPump);
 // SAFETY: PumpPtr is only dereferenced by jobs on the owning serial dispatch queue, and PumpHandle
@@ -109,7 +123,9 @@ pub(super) fn flush(pump: &StreamPump) {
                     "bluetooth: L2CAP write returned {written} — data plane down"
                 );
                 out.closed = true;
-                pump.inbound_tx.borrow_mut().take();
+                drop(out);
+                release_data_plane_receiver(pump);
+                return;
             }
             break;
         }
@@ -140,10 +156,7 @@ unsafe extern "C-unwind" fn read_cb(
                     .as_ref()
                     .is_some_and(|tx| tx.try_send(Box::from(&buf[..read as usize])).is_ok());
                 if !accepted {
-                    pump.inbound_tx.borrow_mut().take();
-                    if let Ok(mut out) = pump.outbound.lock() {
-                        out.closed = true;
-                    }
+                    mark_data_plane_dead(pump);
                     break;
                 }
             } else {
@@ -155,7 +168,7 @@ unsafe extern "C-unwind" fn read_cb(
         crate::diagnostic_log::warn!(
             "bluetooth: L2CAP read stream closed/errored — inbound data plane down"
         );
-        pump.inbound_tx.borrow_mut().take();
+        mark_data_plane_dead(pump);
     }
 }
 
@@ -174,10 +187,7 @@ unsafe extern "C-unwind" fn write_cb(
         crate::diagnostic_log::warn!(
             "bluetooth: L2CAP write stream closed/errored — outbound data plane down"
         );
-        if let Ok(mut out) = pump.outbound.lock() {
-            out.closed = true;
-        }
-        pump.inbound_tx.borrow_mut().take();
+        mark_data_plane_dead(pump);
     }
 }
 

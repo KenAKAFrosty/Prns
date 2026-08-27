@@ -1,28 +1,27 @@
 use core::time::Duration;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use dispatch2::{DispatchQueue, DispatchRetained};
 use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 
 use prns_core::interfaces::bluetooth_auto::{
-    encode_stream_frame, fragments_of, BleAddress, BleIdentity, Control, Fragment, L2capPlan,
-    PeerProtocol, Reassembler, StreamDeframer, BLE_HW_MTU, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
+    fragments_of, BleAddress, BleIdentity, Control, L2capPlan, PeerProtocol, BLE_HW_MTU,
+    CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
 };
 use prns_core::interfaces::bluetooth_auto::{BleLink, BleSink, BleSource};
 
-use super::data_plane::{flush, DataPlane, Outbound, PumpHandle, PumpPtr, L2CAP_SDU_LEN};
+use super::data_plane::DataPlane;
 use super::gatt_write::{GattWriteMode, GattWriteRequest, GattWriteTarget};
+use super::l2cap_lifecycle::{self, DataPlaneEnd, FailurePolicy, WriteHalf};
 use super::peripheral::ListenerCharacteristic;
 use super::{
     CoreBluetoothPeerId, MacosBleError, SendCentralDelegate, SendCharacteristicRef, SendPeripheral,
     SendPeripheralDelegate,
 };
 
-const GATT_REASSEMBLY_CAP: usize = BLE_HW_MTU;
 const GATT_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const GATT_INBOUND_BUDGET_BYTES: usize = 128 * 1024;
-const L2CAP_OUTBOUND_CAP: usize = 8 * L2CAP_SDU_LEN;
 
 #[derive(Clone)]
 pub(super) struct GattInboundSender {
@@ -130,6 +129,15 @@ pub(super) enum ControlPlane {
         queue: DispatchRetained<DispatchQueue>,
         peripheral_manager: SendPeripheralDelegate,
     },
+}
+
+impl ControlPlane {
+    const fn l2cap_failure_policy(&self) -> FailurePolicy {
+        match self {
+            Self::Central { .. } => FailurePolicy::RetainGattFloor,
+            Self::Listener { .. } => FailurePolicy::EndInboundLink,
+        }
+    }
 }
 
 enum GattWriter {
@@ -382,65 +390,25 @@ impl BleLink for GattLink {
 
     fn into_data(self) -> (GattSource, GattSink) {
         let (merged_tx, merged_rx) = tokio_mpsc::channel::<Box<[u8]>>(16);
+        let l2cap_failure_policy = self.control.l2cap_failure_policy();
 
-        if let Some(mut inbound_rx) = self.data_inbound_rx {
-            let frames = merged_tx.clone();
-            tokio::spawn(async move {
-                let mut reassembler = Reassembler::<GATT_REASSEMBLY_CAP>::new();
-                while let Some(message) = inbound_rx.recv().await {
-                    let Some(fragment) = Fragment::decode(&message) else {
-                        continue;
-                    };
-                    if let Some(frame) = reassembler.absorb(&fragment) {
-                        if frames.send(Box::from(frame)).await.is_err() {
-                            break;
-                        }
-                    }
-                }
-            });
-        }
-
-        let l2cap_pending = self.l2cap_pending.map(|pending| {
-            let (write_tx, write_rx) = oneshot::channel::<L2capWriteHalf>();
-            let frames = merged_tx.clone();
-            tokio::spawn(async move {
-                let Ok(data) = pending.await else {
-                    return;
-                };
-                crate::diagnostic_log::debug!("bluetooth: L2CAP fast lane up — data now rides the channel, GATT stays the floor");
-                let DataPlane {
-                    mut inbound_rx,
-                    outbound,
-                    queue,
-                    pump_ptr,
-                    pump,
-                } = data;
-                let _ = write_tx.send(L2capWriteHalf {
-                    outbound,
-                    queue,
-                    pump_ptr,
-                    _pump: pump.clone(),
-                });
-                let _read_pump = pump;
-                let mut deframer = StreamDeframer::<{ 2 * L2CAP_SDU_LEN }>::new();
-                let mut frame = std::vec![0u8; 2 * L2CAP_SDU_LEN];
-                while let Some(chunk) = inbound_rx.recv().await {
-                    if !deframer.absorb(&chunk) {
-                        break;
-                    }
-                    while let Some(len) = deframer.next_frame(&mut frame) {
-                        if frames.send(Box::from(&frame[..len])).await.is_err() {
-                            return;
-                        }
-                    }
-                }
-            });
-            write_rx
-        });
+        let l2cap_lane = l2cap_lifecycle::start(
+            self.data_inbound_rx,
+            self.l2cap_pending,
+            merged_tx.clone(),
+            l2cap_failure_policy,
+        );
+        let (l2cap_pending, l2cap_end) = match l2cap_lane {
+            Some(lane) => (Some(lane.write_ready), lane.link_end),
+            None => (None, None),
+        };
 
         drop(merged_tx);
         (
-            GattSource { inbound: merged_rx },
+            GattSource {
+                inbound: merged_rx,
+                l2cap_end,
+            },
             GattSink {
                 gatt: gatt_writer(&self.control),
                 l2cap: None,
@@ -494,57 +462,40 @@ fn gatt_writer(control: &ControlPlane) -> Option<GattWriter> {
 
 pub struct GattSource {
     inbound: tokio_mpsc::Receiver<Box<[u8]>>,
+    l2cap_end: Option<oneshot::Receiver<DataPlaneEnd>>,
 }
 
 impl BleSource for GattSource {
     type Error = MacosBleError;
 
     async fn recv_frame(&mut self, out: &mut [u8]) -> Result<usize, MacosBleError> {
-        let frame = self.inbound.recv().await.ok_or(MacosBleError::Closed)?;
+        let frame = loop {
+            let Some(l2cap_end) = self.l2cap_end.as_mut() else {
+                break self.inbound.recv().await.ok_or(MacosBleError::Closed)?;
+            };
+            tokio::select! {
+                biased;
+                end = l2cap_end => {
+                    self.l2cap_end = None;
+                    if matches!(end, Ok(DataPlaneEnd::Terminated)) {
+                        return Err(MacosBleError::Closed);
+                    }
+                }
+                frame = self.inbound.recv() => {
+                    break frame.ok_or(MacosBleError::Closed)?;
+                }
+            }
+        };
         let len = frame.len().min(out.len());
         out[..len].copy_from_slice(&frame[..len]);
         Ok(len)
     }
 }
 
-struct L2capWriteHalf {
-    outbound: Arc<Mutex<Outbound>>,
-    queue: DispatchRetained<DispatchQueue>,
-    pump_ptr: PumpPtr,
-    _pump: Arc<PumpHandle>,
-}
-
-impl L2capWriteHalf {
-    fn send(&self, frame: &[u8]) -> Result<(), MacosBleError> {
-        let mut framed = [0u8; L2CAP_SDU_LEN];
-        let len = encode_stream_frame(frame, &mut framed).ok_or(MacosBleError::FrameTooLarge)?;
-        {
-            let Ok(mut out) = self.outbound.lock() else {
-                return Err(MacosBleError::Closed);
-            };
-            if out.closed {
-                return Err(MacosBleError::Closed);
-            }
-            if out.pending.len().saturating_add(len) > L2CAP_OUTBOUND_CAP {
-                return Err(MacosBleError::QueueFull);
-            }
-            out.pending.extend(framed[..len].iter().copied());
-        }
-        let ptr = self.pump_ptr;
-        self.queue.exec_async(move || {
-            let ptr = ptr;
-            // SAFETY: PumpHandle keeps this Box-backed pointer alive and all dereferences plus final
-            // destruction are serialized on this same dispatch queue.
-            flush(unsafe { &*ptr.0 });
-        });
-        Ok(())
-    }
-}
-
 pub struct GattSink {
     gatt: Option<GattWriter>,
-    l2cap: Option<L2capWriteHalf>,
-    l2cap_pending: Option<oneshot::Receiver<L2capWriteHalf>>,
+    l2cap: Option<WriteHalf>,
+    l2cap_pending: Option<oneshot::Receiver<WriteHalf>>,
 }
 
 impl BleSink for GattSink {
@@ -581,5 +532,47 @@ impl BleSink for GattSink {
             return gatt.send(frame).await;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod source_lifecycle_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn inbound_l2cap_end_closes_source_while_gatt_floor_is_still_open() {
+        let (gatt_tx, gatt_rx) = tokio_mpsc::channel(1);
+        let (end_tx, end_rx) = oneshot::channel();
+        let mut source = GattSource {
+            inbound: gatt_rx,
+            l2cap_end: Some(end_rx),
+        };
+
+        assert!(end_tx.send(DataPlaneEnd::Terminated).is_ok());
+
+        let mut frame = [0; 1];
+        assert!(matches!(
+            source.recv_frame(&mut frame).await,
+            Err(MacosBleError::Closed)
+        ));
+        assert!(!gatt_tx.is_closed());
+    }
+
+    #[tokio::test]
+    async fn abandoned_l2cap_upgrade_keeps_the_gatt_floor_live() {
+        let (gatt_tx, gatt_rx) = tokio_mpsc::channel(1);
+        let (end_tx, end_rx) = oneshot::channel();
+        let mut source = GattSource {
+            inbound: gatt_rx,
+            l2cap_end: Some(end_rx),
+        };
+
+        drop(end_tx);
+        gatt_tx.send(Box::from(&[7, 8, 9][..])).await.unwrap();
+
+        let mut frame = [0; 3];
+        assert_eq!(source.recv_frame(&mut frame).await.unwrap(), 3);
+        assert_eq!(frame, [7, 8, 9]);
+        assert!(source.l2cap_end.is_none());
     }
 }
