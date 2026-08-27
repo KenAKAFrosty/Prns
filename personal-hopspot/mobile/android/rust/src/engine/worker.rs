@@ -93,7 +93,7 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
         .set_local_group_tag(personal_rns::interfaces::bluetooth_auto::group_tag(
             ble_group_id.as_bytes(),
         ));
-    super::install_ble_discovery_group(&storage_dir, ble_group_id);
+    super::install_ble_discovery_group(&storage_dir, ble_group_id.clone());
 
     let destinations = HopspotDestinationSet::new(
         node_identity.into_destination_secret(),
@@ -181,6 +181,7 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
     let wifi = AutoWifi::new().with_platform_discovery(service_discovery);
     let wifi_status = wifi.status();
     handle.supervise(wifi);
+    let _ = handle.set_interface_group_id(wifi_status.id(), "reticulum");
 
     let bluetooth = BluetoothAuto::<_, { AndroidBleBackend::MAX_PEERS }>::new(
         AndroidBleBackend::new(platform.ble),
@@ -193,6 +194,7 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
     );
     let ble_status = bluetooth.status();
     handle.supervise(bluetooth);
+    let _ = handle.set_interface_group_id(ble_status.id(), ble_group_id);
 
     let wifi_direct = WifiDirectAuto::new(
         AndroidWifiDirectBackend::new(platform.wifi_direct),

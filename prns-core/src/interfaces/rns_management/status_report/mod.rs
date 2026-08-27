@@ -137,6 +137,7 @@ pub struct RnsInterfaceStatusReport {
     pub via_switch_id: RnsOptionalField<String>,
     pub blocked_ip_list: RnsOptionalField<Vec<String>>,
     pub rssi: RnsOptionalField<i64>,
+    pub group_id: RnsOptionalField<String>,
     pub fleet_peers: Vec<RnsFleetPeerReport>,
 }
 
@@ -163,6 +164,7 @@ pub struct RnsInterfaceStatsReport {
     pub network_identity: RnsOptionalField<IdentityHash>,
     pub transport_uptime_seconds: RnsOptionalField<f64>,
     pub probe_responder: RnsOptionalField<DestinationHash>,
+    pub software_version: RnsOptionalField<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

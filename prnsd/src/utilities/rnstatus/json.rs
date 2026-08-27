@@ -60,6 +60,11 @@ fn report_value(report: &RnsInterfaceStatsReport) -> Value {
         &report.probe_responder,
         |value| Value::String(hex(value.as_bytes())),
     );
+    insert_optional_string(
+        &mut fields,
+        transport::SOFTWARE_VERSION,
+        &report.software_version,
+    );
     Value::Object(fields)
 }
 
@@ -121,6 +126,7 @@ fn interface_value(status: &RnsInterfaceStatusReport) -> Value {
         interface::IFAC_NETWORK_NAME,
         &status.ifac_network_name,
     );
+    insert_optional_string(&mut fields, interface::GROUP_ID, &status.group_id);
     insert_optional_string(
         &mut fields,
         interface::AUTOCONNECT_SOURCE,
@@ -425,6 +431,7 @@ mod tests {
                 String::from("2001:db8::1"),
             ]),
             rssi: RnsOptionalField::Absent,
+            group_id: RnsOptionalField::Absent,
             fleet_peers: vec![],
         };
         let Value::Object(fields) = interface_value(&status) else {

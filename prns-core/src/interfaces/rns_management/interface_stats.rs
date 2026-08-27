@@ -37,6 +37,7 @@ pub struct RnsInterfaceStatsEntry {
     snapshot: InterfaceSnapshot,
     access_code: Option<RnsInterfaceAccessCode>,
     rssi: Option<i8>,
+    group_id: Option<String>,
     fleet_peers: Vec<RnsInterfaceStatsEntry>,
 }
 
@@ -51,6 +52,7 @@ impl RnsInterfaceStatsEntry {
             snapshot,
             access_code,
             rssi: None,
+            group_id: None,
             fleet_peers: Vec::new(),
         }
     }
@@ -60,18 +62,24 @@ impl RnsInterfaceStatsEntry {
         self
     }
 
+    pub fn with_group_id(mut self, group_id: Option<String>) -> Self {
+        self.group_id = group_id;
+        self
+    }
+
     pub fn with_fleet_peers(mut self, fleet_peers: Vec<RnsInterfaceStatsEntry>) -> Self {
         self.fleet_peers = fleet_peers;
         self
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RnsTransportStatus {
     transport_identity: IdentityHash,
     network_identity: Option<IdentityHash>,
     uptime: Duration,
-    probe_responder: Option<DestinationHash>,
+probe_responder: Option<DestinationHash>,
+    software_version: Option<String>,
 }
 
 impl RnsTransportStatus {
@@ -84,13 +92,19 @@ impl RnsTransportStatus {
             transport_identity,
             network_identity,
             uptime,
-            probe_responder: None,
+probe_responder: None,
+            software_version: None,
         }
     }
 
     #[must_use]
     pub const fn with_probe_responder(mut self, probe_responder: Option<DestinationHash>) -> Self {
         self.probe_responder = probe_responder;
+        self
+    }
+
+    pub fn with_software_version(mut self, software_version: impl Into<String>) -> Self {
+        self.software_version = Some(software_version.into());
         self
     }
 }
@@ -137,7 +151,19 @@ impl RnsInterfaceStats {
         &self,
         encoder: &mut MessagePackEncoder,
     ) -> Result<(), RnsManagementEncodeError> {
-        encoder.map(if self.transport.is_some() { 10 } else { 6 })?;
+        encoder.map(if self.transport.is_some() {
+            let mut fields = 10usize;
+            if self
+                .transport
+                .as_ref()
+                .is_some_and(|status| status.software_version.is_some())
+            {
+                fields = fields.saturating_add(1);
+            }
+            fields
+        } else {
+            6
+        })?;
         encoder.field(interface::INTERFACES)?;
         encoder.array(self.entries.len())?;
 
@@ -164,7 +190,7 @@ impl RnsInterfaceStats {
         encoder.field(interface::RESIDENT_SET_SIZE)?;
         encoder.nil();
 
-        if let Some(status) = self.transport {
+        if let Some(status) = &self.transport {
             encoder.field(transport::IDENTITY)?;
             encoder.binary(status.transport_identity.as_bytes())?;
             encoder.field(transport::NETWORK_IDENTITY)?;
@@ -175,9 +201,12 @@ impl RnsInterfaceStats {
             encoder.field(transport::UPTIME)?;
             encoder.float(status.uptime.as_secs_f64());
             encoder.field(transport::PROBE_RESPONDER)?;
-            match status.probe_responder {
+match status.probe_responder {
                 Some(destination) => encoder.binary(destination.as_bytes())?,
                 None => encoder.nil(),
+            }
+            if let Some(software_version) = &status.software_version {
+                encoder.string_field(transport::SOFTWARE_VERSION, software_version)?;
             }
         }
         Ok(())
@@ -198,6 +227,9 @@ fn encode_interface_entry(
     });
     let mut fields = 14usize;
     if entry.rssi.is_some() {
+        fields = fields.saturating_add(1);
+    }
+    if entry.group_id.is_some() {
         fields = fields.saturating_add(1);
     }
     if !entry.fleet_peers.is_empty() {
@@ -243,6 +275,9 @@ fn encode_interface_entry(
     if let Some(rssi) = entry.rssi {
         encoder.field(interface::RSSI)?;
         encoder.signed(i64::from(rssi));
+    }
+    if let Some(group_id) = &entry.group_id {
+        encoder.string_field(interface::GROUP_ID, group_id)?;
     }
     if !entry.fleet_peers.is_empty() {
         encoder.field(interface::FLEET_PEERS)?;

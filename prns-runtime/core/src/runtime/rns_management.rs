@@ -36,6 +36,7 @@ fn stats_entry_from_inventory(entry: InterfaceInventoryEntry<String>) -> RnsInte
         .collect();
     RnsInterfaceStatsEntry::new(entry.name, entry.snapshot, access_code)
         .with_rssi(entry.rssi)
+        .with_group_id(entry.group_id)
         .with_fleet_peers(fleet_peers)
 }
 

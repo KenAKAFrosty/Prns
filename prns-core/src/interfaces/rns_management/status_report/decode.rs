@@ -149,6 +149,7 @@ struct ReportBuilder {
     network_identity: RnsOptionalField<IdentityHash>,
     transport_uptime_seconds: RnsOptionalField<f64>,
     probe_responder: RnsOptionalField<DestinationHash>,
+    software_version: RnsOptionalField<String>,
 }
 
 impl ReportBuilder {
@@ -179,6 +180,7 @@ impl ReportBuilder {
             network_identity: self.network_identity,
             transport_uptime_seconds: self.transport_uptime_seconds,
             probe_responder: self.probe_responder,
+            software_version: self.software_version,
         })
     }
 }
@@ -239,6 +241,7 @@ struct InterfaceBuilder {
     via_switch_id: RnsOptionalField<String>,
     blocked_ip_list: RnsOptionalField<Vec<String>>,
     rssi: RnsOptionalField<i64>,
+    group_id: RnsOptionalField<String>,
     fleet_peers: Vec<RnsFleetPeerReport>,
 }
 
@@ -303,6 +306,7 @@ impl InterfaceBuilder {
             via_switch_id: self.via_switch_id,
             blocked_ip_list: self.blocked_ip_list,
             rssi: self.rssi,
+            group_id: self.group_id,
             fleet_peers: self.fleet_peers,
         })
     }
@@ -385,6 +389,9 @@ fn decode_report(
             }
             transport::PROBE_RESPONDER => {
                 report.probe_responder = read_optional_hash(reader, path, DestinationHash::new)?
+            }
+            transport::SOFTWARE_VERSION => {
+                report.software_version = read_optional_string(reader, path)?
             }
             _ => skip(reader)?,
         }
@@ -577,6 +584,9 @@ fn read_interface(
                 interface_report.blocked_ip_list = read_optional_string_array(reader, path)?
             }
             interface::RSSI => interface_report.rssi = read_optional_i64(reader, path)?,
+            interface::GROUP_ID => {
+                interface_report.group_id = read_optional_string(reader, path)?
+            }
             interface::FLEET_PEERS => {
                 interface_report.fleet_peers = read_fleet_peers(reader, index)?
             }

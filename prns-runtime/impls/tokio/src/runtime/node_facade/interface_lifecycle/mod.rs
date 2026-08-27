@@ -185,6 +185,7 @@ impl PrnsNodeHandle {
                 ifac: ifac.as_ref().map(RuntimeIfac::snapshot),
                 name,
                 rssi: None,
+                group_id: None,
                 byte_accounting: ByteAccounting::OwnTraffic,
                 retired_member_bytes: RetiredMemberBytes::default(),
                 retired_member_frame_accounting: RetiredMemberFrameAccounting::default(),
@@ -248,6 +249,7 @@ impl PrnsNodeHandle {
                         },
                         ifac: ifac.clone(),
                         rssi: registered.rssi,
+                        group_id: registered.group_id.clone(),
                         members: std::vec::Vec::new(),
                     }
                 })
@@ -290,6 +292,18 @@ impl PrnsNodeHandle {
             return false;
         };
         interface.name = Some(name.into());
+        true
+    }
+
+    #[must_use]
+    pub fn set_interface_group_id(&self, id: InterfaceId, group_id: impl Into<String>) -> bool {
+        let Ok(mut interfaces) = self.interfaces.lock() else {
+            return false;
+        };
+        let Some(interface) = interfaces.get_mut(&id) else {
+            return false;
+        };
+        interface.group_id = Some(group_id.into());
         true
     }
 
@@ -377,6 +391,7 @@ impl PrnsNodeHandle {
                 ifac: ifac_status,
                 name: None,
                 rssi: None,
+                group_id: None,
                 byte_accounting: ByteAccounting::FleetAggregate,
                 retired_member_bytes: RetiredMemberBytes::default(),
                 retired_member_frame_accounting: RetiredMemberFrameAccounting::default(),
@@ -639,6 +654,7 @@ impl Fleet {
                 ifac: self.ifac.as_ref().map(RuntimeIfac::snapshot),
                 name,
                 rssi,
+                group_id: None,
                 byte_accounting: ByteAccounting::OwnTraffic,
                 retired_member_bytes: RetiredMemberBytes::default(),
                 retired_member_frame_accounting: RetiredMemberFrameAccounting::default(),
@@ -805,6 +821,7 @@ pub(super) struct RegisteredInterface {
     ifac: Option<InterfaceIfacSnapshot>,
     name: Option<String>,
     rssi: Option<i8>,
+    group_id: Option<String>,
     byte_accounting: ByteAccounting,
     retired_member_bytes: RetiredMemberBytes,
     retired_member_frame_accounting: RetiredMemberFrameAccounting,

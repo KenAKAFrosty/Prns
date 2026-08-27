@@ -133,6 +133,7 @@ fn render_interface(
         &status.autoconnect_source,
     );
     write_optional(output, "    Network   : ", "", &status.ifac_network_name);
+    write_optional(output, "    Group     : ", "", &status.group_id);
     let _ = writeln!(
         output,
         "    Status    : {}",
@@ -535,6 +536,9 @@ fn render_footer(
             "\n Transport Instance <{}> running",
             hex(identity.as_bytes())
         );
+        if let Some(version) = report.software_version.value() {
+            let _ = writeln!(output, " Software           {version}");
+        }
         if let Some(identity) = report.network_identity.value() {
             let _ = writeln!(output, " Network Identity   <{}>", hex(identity.as_bytes()));
         }
@@ -772,6 +776,7 @@ mod tests {
             ifac_signature: RnsOptionalField::Absent,
             ifac_size_bytes: RnsOptionalField::Absent,
             ifac_network_name: RnsOptionalField::Absent,
+            group_id: RnsOptionalField::Value(String::from("reticulum")),
             autoconnect_source: RnsOptionalField::Absent,
             announce_queue: RnsOptionalField::Absent,
             held_announces: RnsOptionalField::Absent,
@@ -818,7 +823,9 @@ mod tests {
             }],
         };
         let mut output = String::new();
+        write_optional(&mut output, "    Group     : ", "", &status.group_id);
         render_fleet_peers(&mut output, &status);
+        assert!(output.contains("Group     : reticulum"));
         assert!(output.contains("Peers     : 1 connected"));
         assert!(output.contains("ab12… @ AA:BB:CC:DD:EE:FF  Up  rssi -61"));
         assert!(output.contains("Traffic"));

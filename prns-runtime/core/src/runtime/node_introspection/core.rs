@@ -50,6 +50,8 @@ pub struct InterfaceInventoryEntry<Label> {
     pub ifac: Option<InterfaceIfacSnapshot<Label>>,
     /// Link-up RSSI in dBm when the interface recorded one (Bluetooth Auto peers).
     pub rssi: Option<i8>,
+    /// Configured Auto discovery group id (`group_id`), when the interface has one.
+    pub group_id: Option<Label>,
     /// Fleet members nested under a folded supervisor. Always empty on leaf entries.
     #[cfg(feature = "alloc")]
     pub members: Vec<InterfaceInventoryEntry<Label>>,
@@ -64,6 +66,7 @@ struct FoldedInterface<Label> {
     root_frame_accounting: FrameAccountingCoverage,
     ifac: Option<InterfaceIfacSnapshot<Label>>,
     rssi: Option<i8>,
+    group_id: Option<Label>,
     #[cfg(feature = "alloc")]
     members: Vec<InterfaceInventoryEntry<Label>>,
     member_connection: ConnectionState,
@@ -93,6 +96,7 @@ impl<Label> FoldedInterface<Label> {
             root_frame_accounting: FrameAccountingCoverage::Unavailable,
             ifac: None,
             rssi: None,
+            group_id: None,
             #[cfg(feature = "alloc")]
             members: Vec::new(),
             member_connection: ConnectionState::Unknown,
@@ -135,6 +139,9 @@ impl<Label> FoldedInterface<Label> {
                     self.ifac = entry.ifac.take();
                 }
                 self.rssi = entry.rssi.or(self.rssi);
+                if entry.group_id.is_some() {
+                    self.group_id = entry.group_id.take();
+                }
             }
             Membership::FleetMember { .. } => {
                 if self.root.is_none() && entry.origin == InterfaceOriginKind::Discovered {
@@ -180,6 +187,7 @@ impl<Label> FoldedInterface<Label> {
                         snapshot,
                         ifac: entry.ifac.take(),
                         rssi: entry.rssi,
+                        group_id: None,
                         members: Vec::new(),
                     });
                 }
@@ -266,6 +274,7 @@ impl<Label> FoldedInterface<Label> {
             },
             ifac: self.ifac,
             rssi: self.rssi,
+            group_id: self.group_id,
             #[cfg(feature = "alloc")]
             members: self.members,
         }
@@ -381,6 +390,7 @@ mod tests {
             },
             ifac: None,
             rssi: None,
+            group_id: None,
             #[cfg(feature = "alloc")]
             members: Vec::new(),
         }

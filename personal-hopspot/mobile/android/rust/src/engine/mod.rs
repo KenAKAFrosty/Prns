@@ -529,6 +529,18 @@ pub(crate) fn set_ble_discovery_group(group_id: &str) -> bool {
     let bridge = ble_bridge();
     bridge.set_local_group_tag(group_tag(group_id.as_bytes()));
     drop(slot);
+    {
+        let mut manager = lock_manager();
+        if let Some(resources) = manager
+            .process
+            .as_ref()
+            .and_then(|process| process.resources.as_ref())
+        {
+            let _ = resources
+                .handle
+                .set_interface_group_id(resources.ble_status.id(), group_id);
+        }
+    }
     republish_ble_discovery_group();
     true
 }
