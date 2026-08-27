@@ -175,6 +175,8 @@ impl<Label> FoldedInterface<Label> {
                     self.members.push(InterfaceInventoryEntry {
                         name: entry.name.take(),
                         origin: entry.origin,
+                        attachment_epoch: entry.attachment_epoch,
+                        frame_accounting: entry.frame_accounting,
                         snapshot,
                         ifac: entry.ifac.take(),
                         rssi: entry.rssi,
