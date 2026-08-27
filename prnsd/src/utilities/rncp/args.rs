@@ -64,8 +64,8 @@ pub struct RncpArgs {
     #[arg(short = 'i', value_name = "IDENTITY")]
     pub identity: Option<PathBuf>,
 
-    #[arg(short = 'w', value_name = "SECONDS", value_parser = parse_positive_duration, default_value = "15")]
-    pub timeout: PositiveDuration,
+    #[arg(short = 'w', value_name = "SECONDS", value_parser = parse_positive_duration, help = "Give up after this many seconds (default: adaptive, with a 15-second path floor)")]
+    pub timeout: Option<PositiveDuration>,
 
     #[arg(short = 'P', long)]
     pub phy_rates: bool,

@@ -121,7 +121,13 @@ async fn run_probes(
                     .await
                     .map_err(RnprobeError::Rpc)?,
             )
-            .unwrap_or(Duration::MAX),
+            .unwrap_or(Duration::MAX)
+            .max(
+                client
+                    .adaptive_path_timeout()
+                    .await
+                    .map_err(RnprobeError::Path)?,
+            ),
     };
     client
         .ensure_path(request.destination, effective_timeout)

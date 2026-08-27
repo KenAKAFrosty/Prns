@@ -4,16 +4,18 @@ use crate::engine::InstantMillis;
 use crate::interfaces::{BitrateBps, InterfaceId};
 use crate::routing::links::{LinkId, LinkMode};
 use crate::routing::routes::{RouteEvidenceHandle, RouteEvidenceId};
+use crate::routing::timing::broadcast_airtime_ms;
 use crate::storage::TablePushError;
 use crate::wire::{DestinationHash, TransportId};
 
 /// RNS 1.4.2 `Transport.LINK_TIMEOUT = Link.STALE_TIME × 1.25`: a switched frame refreshes the row, so only a truly dead link goes idle this long.
 pub const TRANSPORTED_LINK_TIMEOUT_MS: u64 = 900_000;
 
-/// RNS 1.4.2 `Transport.extra_link_proof_timeout`: one MTU's airtime on the arrival interface, an allowance for slow last hops.
+/// RNS 1.5 `Transport.extra_link_proof_timeout`: one MTU's airtime on the selected
+/// outbound interface, an allowance for slow remaining hops.
 #[must_use]
 pub fn extra_link_proof_timeout_ms(bitrate: BitrateBps) -> u64 {
-    4_000_000u64 / bitrate.get()
+    broadcast_airtime_ms(bitrate)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

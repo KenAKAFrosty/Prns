@@ -1,8 +1,12 @@
 use crate::engine::{CommandId, RequestPath};
 use crate::engine::{EngineState, InstantMillis};
+use crate::interfaces::AttachedInterfaces;
 use crate::routing::path_requests::pending::{
     CulledPathRequest, ExpiredPathRequest, PendingPathRequest, SettledPathRequest,
-    PATH_REQUEST_TIMEOUT_MS,
+};
+use crate::routing::timing::{
+    path_discovery_timeout_ms, path_request_egress_eligible, slowest_eligible_bitrate,
+    PathRequestAudience,
 };
 use crate::storage::StorageLayout;
 use crate::wire::{DestinationHash, WireError};
@@ -27,6 +31,35 @@ impl<S: StorageLayout> EngineState<S> {
         now: InstantMillis,
         buf: &mut [u8],
     ) -> PathRequestWriteOutcome {
+        self.write_commanded_path_request_with_interfaces(
+            id,
+            request,
+            now,
+            AttachedInterfaces::new(&[]),
+            buf,
+        )
+    }
+
+    pub fn write_commanded_path_request_with_interfaces(
+        &mut self,
+        id: CommandId,
+        request: &RequestPath,
+        now: InstantMillis,
+        interfaces: AttachedInterfaces<'_>,
+        buf: &mut [u8],
+    ) -> PathRequestWriteOutcome {
+        self.write_commanded_path_request_with_timing(id, request, now, interfaces, None, buf)
+    }
+
+    pub fn write_commanded_path_request_with_timing(
+        &mut self,
+        id: CommandId,
+        request: &RequestPath,
+        now: InstantMillis,
+        interfaces: AttachedInterfaces<'_>,
+        path_timeout_floor_ms: Option<u64>,
+        buf: &mut [u8],
+    ) -> PathRequestWriteOutcome {
         let wire_bytes = match write_path_request_wire_packet(
             request.destination,
             self.network_transport_enabled()
@@ -39,10 +72,17 @@ impl<S: StorageLayout> EngineState<S> {
             Err(error) => return PathRequestWriteOutcome::SerializeFailed(error),
         };
 
+        let slowest = slowest_eligible_bitrate(interfaces, |descriptor| {
+            path_request_egress_eligible(descriptor, None, PathRequestAudience::Network)
+        });
+        let timeout_ms = path_timeout_floor_ms.map_or_else(
+            || path_discovery_timeout_ms(slowest),
+            |floor| path_discovery_timeout_ms(slowest).max(floor),
+        );
         let culled = self.pending_path_requests.track(PendingPathRequest {
             destination: request.destination,
             command_id: id,
-            timeout_at: InstantMillis(now.0.saturating_add(PATH_REQUEST_TIMEOUT_MS)),
+            timeout_at: InstantMillis(now.0.saturating_add(timeout_ms)),
         });
         self.recent_path_requests
             .mark_seen_at(request.destination, now);
@@ -68,7 +108,9 @@ mod tests {
     use super::*;
     use crate::engine::test_support::*;
     use crate::engine::{AnnounceIngest, IngestPacketOutcome, PathRequestId};
-    use crate::interfaces::{AttachedInterfaces, InboundPacket, InterfaceId};
+    use crate::interfaces::{
+        AttachedInterfaces, BitrateBps, EgressCapability, InboundPacket, InterfaceId, InterfaceKind,
+    };
     use crate::routing::announce::{derive_plain_destination_hash, expand_name};
     use crate::wire::{WirePacketHeader, BROADCAST_MTU};
 
@@ -99,13 +141,14 @@ mod tests {
         );
 
         let mut buf = [0u8; BROADCAST_MTU];
-        let outcome = state.write_commanded_path_request(
+        let outcome = state.write_commanded_path_request_with_interfaces(
             CommandId(7),
             &RequestPath {
                 destination,
                 id: PathRequestId::new([0x55; 16]),
             },
             InstantMillis(1_000),
+            AttachedInterfaces::new(&transporting_interfaces()),
             &mut buf,
         );
         let PathRequestWriteOutcome::Written { wire_bytes, .. } = outcome else {
@@ -122,5 +165,45 @@ mod tests {
             path_request_destination,
         );
         assert!(state.pending_path_requests.contains(&destination));
+    }
+
+    #[test]
+    fn a_local_path_request_uses_only_eligible_fanout_bitrates() {
+        let mut state: EngineState<TestStorageLayout> = EngineState::new(second_secret_key());
+        let destination = DestinationHash::new([0x44; 16]);
+        let mut slow = routable_descriptor(InterfaceId::new([0xA1; 8]));
+        slow.bitrate = BitrateBps::guess(250);
+        let mut disabled = routable_descriptor(InterfaceId::new([0xB2; 8]));
+        disabled.bitrate = BitrateBps::guess(5);
+        disabled.capabilities.egress = EgressCapability::Disabled;
+        let mut local = routable_descriptor(InterfaceId::from_channel_tag(
+            InterfaceKind::LocalClient,
+            b"unrelated-client",
+        ));
+        local.bitrate = BitrateBps::guess(5);
+        let interfaces = [slow, disabled, local];
+        let mut buf = [0u8; BROADCAST_MTU];
+
+        let outcome = state.write_commanded_path_request_with_interfaces(
+            CommandId(7),
+            &RequestPath {
+                destination,
+                id: PathRequestId::new([0x55; 16]),
+            },
+            InstantMillis(1_000),
+            AttachedInterfaces::new(&interfaces),
+            &mut buf,
+        );
+        assert!(matches!(outcome, PathRequestWriteOutcome::Written { .. }));
+        assert_eq!(
+            state.pop_timed_out_path_request(InstantMillis(38_999)),
+            None
+        );
+        assert_eq!(
+            state
+                .pop_timed_out_path_request(InstantMillis(39_000))
+                .map(|expired| expired.command_id),
+            Some(CommandId(7)),
+        );
     }
 }

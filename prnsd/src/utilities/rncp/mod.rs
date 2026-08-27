@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub use args::RncpArgs;
 use io::{canonical_directory, expand_user_path, resolve_fetch, CpIoError, ReceiveTarget};
@@ -213,25 +213,36 @@ async fn send(args: RncpArgs) -> Result<(), RncpError> {
         .and_then(|name| name.to_str())
         .ok_or(RncpError::Arguments("file name is not valid UTF-8"))?;
     let metadata = encode_metadata(name)?;
-    let timeout = args.timeout.get();
+    let explicit_timeout = args.timeout.map(|timeout| timeout.get());
+    let rpc_timeout = explicit_timeout.unwrap_or(Duration::from_secs(15));
     let session = UtilityNodeSession::connect(
         &configuration,
         UtilityNodeIdentity::Private(secret),
-        timeout,
+        rpc_timeout,
     )
     .await
     .map_err(RncpError::Session)?;
     session
         .run(move |client| async move {
+            let path_timeout = match explicit_timeout {
+                Some(timeout) => timeout,
+                None => client
+                    .adaptive_path_timeout()
+                    .await
+                    .map_err(RncpError::Path)?,
+            };
             client
-                .ensure_path(destination, timeout)
+                .ensure_path(destination, path_timeout)
                 .await
                 .map_err(RncpError::Path)?;
-            let link = client
-                .handle()
-                .establish_link(destination)
-                .await
-                .map_err(RncpError::Link)?;
+            let establish = client.handle().establish_link(destination);
+            let link = match explicit_timeout {
+                Some(timeout) => tokio::time::timeout(timeout, establish)
+                    .await
+                    .map_err(|_| RncpError::LinkTimeout(timeout))?
+                    .map_err(RncpError::Link)?,
+                None => establish.await.map_err(RncpError::Link)?,
+            };
             client
                 .handle()
                 .identify(link, identity)
@@ -302,25 +313,33 @@ async fn fetch(args: RncpArgs) -> Result<(), RncpError> {
     let mut request = vec![0u8; requested.len().saturating_add(5)];
     let request_len = write_fetch_path(&requested, &mut request).map_err(RncpError::Codec)?;
     request.truncate(request_len);
-    let timeout = args.timeout.get();
+    let explicit_timeout = args.timeout.map(|timeout| timeout.get());
+    let rpc_timeout = explicit_timeout.unwrap_or(Duration::from_secs(15));
     let session = UtilityNodeSession::connect(
         &configuration,
         UtilityNodeIdentity::Private(secret),
-        timeout,
+        rpc_timeout,
     )
     .await
     .map_err(RncpError::Session)?;
     session
         .run(move |client| async move {
+            let path_timeout = match explicit_timeout {
+                Some(timeout) => timeout,
+                None => client.adaptive_path_timeout().await.map_err(RncpError::Path)?,
+            };
             client
-                .ensure_path(destination, timeout)
+                .ensure_path(destination, path_timeout)
                 .await
                 .map_err(RncpError::Path)?;
-            let link = client
-                .handle()
-                .establish_link(destination)
-                .await
-                .map_err(RncpError::Link)?;
+            let establish = client.handle().establish_link(destination);
+            let link = match explicit_timeout {
+                Some(timeout) => tokio::time::timeout(timeout, establish)
+                    .await
+                    .map_err(|_| RncpError::LinkTimeout(timeout))?
+                    .map_err(RncpError::Link)?,
+                None => establish.await.map_err(RncpError::Link)?,
+            };
             client
                 .handle()
                 .identify(link, identity)
@@ -900,6 +919,7 @@ pub enum RncpError {
     ListenerPanicked(NodeRunError),
     Path(UtilityPathError),
     Link(SendError<EstablishLinkFailure>),
+    LinkTimeout(Duration),
     Identify(SendError<IdentifyFailure>),
     ResourceStrategy(SendError<SetResourceStrategyFailure>),
     Request(SendError<SendRequestFailure>),
@@ -936,6 +956,11 @@ impl fmt::Display for RncpError {
             Self::ListenerPanicked(source) => write!(formatter, "RNCP listener stopped: {source}"),
             Self::Path(source) => source.fmt(formatter),
             Self::Link(source) => write!(formatter, "link establishment failed: {source:?}"),
+            Self::LinkTimeout(timeout) => write!(
+                formatter,
+                "link establishment timed out after {} seconds",
+                timeout.as_secs_f64()
+            ),
             Self::Identify(source) => write!(formatter, "link identification failed: {source:?}"),
             Self::ResourceStrategy(source) => {
                 write!(formatter, "resource admission failed: {source:?}")

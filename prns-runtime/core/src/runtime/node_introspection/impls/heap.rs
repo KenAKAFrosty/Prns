@@ -10,7 +10,9 @@ use prns_core::routing::dedup::PacketHash;
 use prns_core::units::InstantMillis;
 use prns_core::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
 
-use super::super::{fold_logical_interface_inventory, InterfaceInventoryEntry};
+use super::super::{
+    fold_logical_interface_inventory, InterfaceInventoryEntry, InterfaceTimingSnapshot,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnnounceRateSnapshot {
@@ -76,6 +78,10 @@ impl HeapAnnounceRateHistory {
 
 pub trait NodeIntrospection {
     fn interface_inventory(&self) -> Vec<InterfaceInventoryEntry<String>>;
+
+    fn interface_timing_inventory(&self) -> Vec<InterfaceTimingSnapshot> {
+        Vec::new()
+    }
 
     fn link_count(&self) -> impl Future<Output = u32> + Send;
 

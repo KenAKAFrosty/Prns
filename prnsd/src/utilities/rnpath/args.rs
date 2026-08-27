@@ -89,8 +89,8 @@ pub struct RnpathArgs {
     )]
     pub drop_via: bool,
 
-    #[arg(short = 'w', value_name = "SECONDS", value_parser = parse_positive_duration, default_value = "15", help = "Give up on a path request after this many seconds")]
-    pub path_timeout: PositiveDuration,
+    #[arg(short = 'w', value_name = "SECONDS", value_parser = parse_positive_duration, help = "Give up on a path request after this many seconds (default: adaptive, with a 15-second floor)")]
+    pub path_timeout: Option<PositiveDuration>,
 
     #[arg(short = 'R', value_name = "HASH", value_parser = parse_identity_hash, requires = "management_identity", help = "Inspect the transport with this 16-byte identity hash")]
     pub remote: Option<IdentityHash>,

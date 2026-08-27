@@ -7,10 +7,12 @@ use crate::interfaces::{
 };
 use crate::routing::announce::defaults::{PATH_REQUEST_GRACE_MS, PATH_REQUEST_ROAMING_GRACE_MS};
 use crate::routing::announce::schedule::{ScheduleOutcome, ScheduledAnnounceQueue};
-use crate::routing::path_requests::recursive::{
-    RecursiveOutcome, RECURSIVE_PATH_REQUEST_TIMEOUT_MS,
-};
+use crate::routing::path_requests::recursive::RecursiveOutcome;
 use crate::routing::path_requests::seen::{PathRequestIdBytes, PathRequestNovelty};
+use crate::routing::timing::{
+    path_discovery_timeout_ms, path_request_egress_eligible, slowest_eligible_bitrate,
+    PathRequestAudience,
+};
 use crate::routing::{NextHop, RouteResponsiveness};
 use crate::storage::StorageLayout;
 use crate::wire::{DestinationHash, DestinationType, TransportId, TRUNCATED_HASH_BYTE_LEN};
@@ -277,7 +279,29 @@ impl<S: StorageLayout> EngineState<S> {
         } else {
             return IngestPacketOutcome::Ignored(IgnoreReason::NotForUs);
         };
-        let expires_at = InstantMillis(now.0.saturating_add(RECURSIVE_PATH_REQUEST_TIMEOUT_MS));
+        let audience = match outcome {
+            IngestPacketOutcome::ForwardLocalClientPathRequest { .. }
+            | IngestPacketOutcome::ForwardRecursivePathRequest { .. } => {
+                Some(PathRequestAudience::Network)
+            }
+            IngestPacketOutcome::ForwardBoundaryPathRequest { .. } => {
+                Some(PathRequestAudience::BoundaryAndGateway)
+            }
+            IngestPacketOutcome::RelayPathRequestToLocalClients { .. } => None,
+            _ => None,
+        };
+        let slowest = audience.and_then(|audience| {
+            slowest_eligible_bitrate(interfaces, |descriptor| {
+                path_request_egress_eligible(descriptor, Some(source_interface), audience)
+                    && (audience == PathRequestAudience::LocalClients
+                        || !self.egress_path_request_limits.should_egress_limit(
+                            descriptor.id,
+                            now,
+                            descriptor.common.path_request_egress,
+                        ))
+            })
+        });
+        let expires_at = InstantMillis(now.0.saturating_add(path_discovery_timeout_ms(slowest)));
         match self
             .recursive_path_requests
             .begin(request.destination, source_interface, expires_at)
@@ -295,7 +319,7 @@ mod tests {
     use super::*;
     use crate::engine::test_support::*;
     use crate::engine::{Directive, EngineReaction, IngestIo, Journaled};
-    use crate::interfaces::{EgressCapability, InboundPacket, InterfaceDescriptor};
+    use crate::interfaces::{BitrateBps, EgressCapability, InboundPacket, InterfaceDescriptor};
     use crate::routing::ingress::testkit::iface;
     use crate::routing::ingress::AnnounceIngest;
     use crate::routing::path_requests::{write_path_request_wire_packet, PATH_REQUEST_DESTINATION};
@@ -906,9 +930,23 @@ mod tests {
     fn a_local_clients_unknown_path_request_fans_out_to_the_network() {
         let stranger = DestinationHash::new([0x44; 16]);
         let app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"sideband");
+        let other_app = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"nomadnet");
         let uplink = iface(0xB2);
+        let unrelated = iface(0xC3);
         let mut relay = transporting_node();
-        let interfaces = [routable_descriptor(app), routable_descriptor(uplink)];
+        let mut uplink_descriptor = routable_descriptor(uplink);
+        uplink_descriptor.bitrate = BitrateBps::guess(250);
+        let mut unrelated_descriptor = routable_descriptor(unrelated);
+        unrelated_descriptor.bitrate = BitrateBps::guess(5);
+        unrelated_descriptor.capabilities.egress = EgressCapability::Disabled;
+        let mut other_app_descriptor = routable_descriptor(other_app);
+        other_app_descriptor.bitrate = BitrateBps::guess(5);
+        let interfaces = [
+            routable_descriptor(app),
+            other_app_descriptor,
+            uplink_descriptor,
+            unrelated_descriptor,
+        ];
 
         let mut wire = stranger_path_request([0x55; 16]);
         assert_eq!(
@@ -928,6 +966,11 @@ mod tests {
                 id: [0x55; 16],
             },
             "a local client's request for an unheard destination fans out so the network can answer",
+        );
+        assert_eq!(
+            relay.recursive_path_requests.earliest_expiry_at(),
+            Some(InstantMillis(39_000)),
+            "the 250 bps network egress yields a 38-second discovery lifetime; disabled and local-only 5 bps interfaces are irrelevant",
         );
         assert_eq!(
             relay

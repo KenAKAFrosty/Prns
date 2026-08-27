@@ -7,9 +7,6 @@ use crate::engine::{EngineState, InstantMillis};
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{AttachedInterfaces, InterfaceId};
-use crate::routing::delivery::send_single::{
-    DEFAULT_FIRST_HOP_TIMEOUT_MS, DEFAULT_PER_HOP_TIMEOUT_MS,
-};
 use crate::routing::links::handshake::{
     negotiated_link_mtu, write_link_proof, write_link_proof_from_parts, write_link_request,
     write_link_rtt, write_unsignalled_link_request, AcceptedLinkRequest, LinkProofSignOwed,
@@ -18,6 +15,9 @@ use crate::routing::links::table::{
     InitiatedLink, LinkActivation, LinkPhase, OverdueLink, RespondingLink, TrackLinkError,
 };
 use crate::routing::links::{LinkId, LinkKey, LinkMode, MAX_LINK_MTU};
+use crate::routing::timing::{
+    link_establishment_timeout_ms, FirstHopTiming, DEFAULT_PER_HOP_TIMEOUT_MS,
+};
 use crate::routing::NextHop;
 use crate::storage::StorageLayout;
 use crate::wire::BROADCAST_MTU;
@@ -146,6 +146,28 @@ impl<S: StorageLayout> EngineState<S> {
         interfaces: AttachedInterfaces<'_>,
         buf: &mut [u8],
     ) -> EstablishLinkWriteOutcome {
+        self.write_commanded_link_request_with_timing(
+            id,
+            establish,
+            now,
+            entropy,
+            FirstHopTiming {
+                interfaces,
+                shared_instance_floor_ms: None,
+            },
+            buf,
+        )
+    }
+
+    pub fn write_commanded_link_request_with_timing(
+        &mut self,
+        id: CommandId,
+        establish: &EstablishLink,
+        now: InstantMillis,
+        entropy: EstablishLinkEntropy,
+        timing: FirstHopTiming<'_>,
+        buf: &mut [u8],
+    ) -> EstablishLinkWriteOutcome {
         use EstablishLinkWriteOutcome::{Rejected, Written};
 
         let Some(stored) = self
@@ -183,7 +205,7 @@ impl<S: StorageLayout> EngineState<S> {
                 via,
                 &encryption_public,
                 &signing_public,
-                link_mtu_ceiling(interfaces, fire_on),
+                link_mtu_ceiling(timing.interfaces, fire_on),
                 mode,
                 buf,
             ),
@@ -201,10 +223,19 @@ impl<S: StorageLayout> EngineState<S> {
             };
         };
 
+        let bitrate = timing
+            .interfaces
+            .descriptor_for(fire_on)
+            .filter(|descriptor| descriptor.capabilities.allows_transmit())
+            .map(|descriptor| descriptor.bitrate);
+        let computed = link_establishment_timeout_ms(hops, bitrate);
+        let floor = timing.shared_instance_floor_ms.map(|first_hop| {
+            first_hop
+                .saturating_add(DEFAULT_PER_HOP_TIMEOUT_MS.saturating_mul(u64::from(hops.max(1))))
+        });
         let timeout_at = InstantMillis(
             now.0
-                .saturating_add(DEFAULT_FIRST_HOP_TIMEOUT_MS)
-                .saturating_add(DEFAULT_PER_HOP_TIMEOUT_MS.saturating_mul(u64::from(hops.max(1)))),
+                .saturating_add(floor.map_or(computed, |floor| computed.max(floor))),
         );
         match self.links.track_initiated(InitiatedLink {
             link_id,

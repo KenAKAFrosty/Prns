@@ -1,5 +1,10 @@
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::time::Duration;
+
 use crate::engine::{
     AnnounceNow, AnnounceNowFailure, EstablishLink, EstablishLinkFailure, Identify,
     PacketReceiptDelivered, PathFound, PrnsCommand, SendGroupFailure, SendPlainPacketFailure,
@@ -14,7 +19,7 @@ use crate::runtime::{RuntimeRequestHandlerError, SendError};
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 
-use super::PrnsNodeHandle;
+use super::{BitrateTimingOracle, PrnsNodeHandle};
 
 const PEER: DestinationHash = DestinationHash::new([0xAB; 16]);
 
@@ -30,6 +35,104 @@ fn delivered(ms: u64) -> PacketReceiptDelivered {
 fn handle() -> (PrnsNodeHandle, UnboundedReceiver<HostCommand>) {
     let (commands, command_rx) = mpsc::unbounded_channel();
     (PrnsNodeHandle::over(commands), command_rx)
+}
+
+struct DaemonTiming;
+
+impl BitrateTimingOracle for DaemonTiming {
+    fn first_hop_timeout(
+        &self,
+        _destination: DestinationHash,
+    ) -> Pin<Box<dyn Future<Output = Option<Duration>> + Send + '_>> {
+        Box::pin(async { Some(Duration::from_millis(18_013)) })
+    }
+
+    fn medium_path_timeout(&self) -> Pin<Box<dyn Future<Output = Option<Duration>> + Send + '_>> {
+        Box::pin(async { Some(Duration::from_millis(30_026)) })
+    }
+}
+
+#[tokio::test]
+async fn a_daemon_timing_oracle_reaches_normal_path_link_and_single_packet_commands() {
+    use crate::engine::{CommandTiming, LinkEstablished};
+
+    let (prns, mut command_rx) = handle();
+    prns.install_bitrate_timing_oracle(Arc::new(DaemonTiming));
+
+    let issuer = prns.clone();
+    let path = tokio::spawn(async move { issuer.request_path(PEER).await });
+    let HostCommand::AwaitedEngineWithTiming {
+        issued,
+        timing,
+        completion,
+    } = command_rx.recv().await.expect("path command")
+    else {
+        panic!("daemon-backed path discovery must carry timing");
+    };
+    assert!(matches!(issued.command, PrnsCommand::RequestPath(_)));
+    assert_eq!(
+        timing,
+        CommandTiming {
+            first_hop_timeout_floor_ms: None,
+            path_timeout_floor_ms: Some(30_026),
+        }
+    );
+    completion
+        .send(Settlement::RequestPath(Ok(PathFound {
+            hops: crate::units::HopCount(1),
+        })))
+        .unwrap();
+    assert!(path.await.unwrap().is_ok());
+
+    let issuer = prns.clone();
+    let establish = tokio::spawn(async move { issuer.establish_link_with_rtt(PEER).await });
+    let HostCommand::AwaitedEngineWithTiming {
+        issued,
+        timing,
+        completion,
+    } = command_rx.recv().await.expect("link command")
+    else {
+        panic!("daemon-backed link establishment must carry timing");
+    };
+    assert!(matches!(issued.command, PrnsCommand::EstablishLink(_)));
+    assert_eq!(
+        timing,
+        CommandTiming {
+            first_hop_timeout_floor_ms: Some(18_013),
+            path_timeout_floor_ms: None,
+        }
+    );
+    let established = LinkEstablished {
+        link_id: LinkId::new([0x42; 16]),
+        rtt_millis: 11,
+    };
+    completion
+        .send(Settlement::EstablishLink(Ok(established)))
+        .unwrap();
+    assert_eq!(establish.await.unwrap(), Ok(established));
+
+    let issuer = prns.clone();
+    let send = tokio::spawn(async move { issuer.send_single_packet(PEER, b"ping").await });
+    let HostCommand::AwaitedEngineWithTiming {
+        issued,
+        timing,
+        completion,
+    } = command_rx.recv().await.expect("single-packet command")
+    else {
+        panic!("daemon-backed single-packet delivery must carry timing");
+    };
+    assert!(matches!(issued.command, PrnsCommand::SendSinglePacket(_)));
+    assert_eq!(
+        timing,
+        CommandTiming {
+            first_hop_timeout_floor_ms: Some(18_013),
+            path_timeout_floor_ms: None,
+        }
+    );
+    completion
+        .send(Settlement::SendSinglePacket(Ok(delivered(7))))
+        .unwrap();
+    assert_eq!(send.await.unwrap(), Ok(delivered(7)));
 }
 
 #[tokio::test]

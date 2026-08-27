@@ -316,6 +316,7 @@ where
             store: InterfaceStore::new(),
             resource_admission: super::resource_admission::ResourceAdmissionRegistry::default(),
             entropy: crate::manifold::driver::TokioEntropy,
+            timing_oracle: Arc::new(Mutex::new(None)),
         };
         let (node, interfaces, persistence_intent) = assemble_node(build_recipe(handle.clone()));
         let node_persistence =

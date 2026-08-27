@@ -45,6 +45,8 @@ pub enum RpcVerb {
     GetNextHop,
     GetNextHopInterfaceName,
     GetFirstHopTimeout,
+    GetLowestInterfaceBitrate,
+    GetMediumPathTimeout,
     GetPacketRssi,
     GetPacketSnr,
     GetPacketQuality,
@@ -70,6 +72,8 @@ impl RpcVerb {
             Self::GetNextHop => verb::GET_NEXT_HOP,
             Self::GetNextHopInterfaceName => verb::GET_NEXT_HOP_INTERFACE_NAME,
             Self::GetFirstHopTimeout => verb::GET_FIRST_HOP_TIMEOUT,
+            Self::GetLowestInterfaceBitrate => verb::GET_LOWEST_INTERFACE_BITRATE,
+            Self::GetMediumPathTimeout => verb::GET_MEDIUM_PATH_TIMEOUT,
             Self::GetPacketRssi => verb::GET_PACKET_RSSI,
             Self::GetPacketSnr => verb::GET_PACKET_SNR,
             Self::GetPacketQuality => verb::GET_PACKET_QUALITY,
@@ -97,6 +101,8 @@ impl RnsRpcRequest {
             Self::NextHop { .. } => RpcVerb::GetNextHop,
             Self::NextHopInterface { .. } => RpcVerb::GetNextHopInterfaceName,
             Self::FirstHopTimeout { .. } => RpcVerb::GetFirstHopTimeout,
+            Self::LowestInterfaceBitrate => RpcVerb::GetLowestInterfaceBitrate,
+            Self::MediumPathTimeout => RpcVerb::GetMediumPathTimeout,
             Self::PacketRssi { .. } => RpcVerb::GetPacketRssi,
             Self::PacketSnr { .. } => RpcVerb::GetPacketSnr,
             Self::PacketQuality { .. } => RpcVerb::GetPacketQuality,
@@ -184,6 +190,10 @@ fn classify_pickle_rpc_verb(request: &[u8]) -> RpcVerb {
         RpcVerb::GetNextHop
     } else if contains(request, get::FIRST_HOP_TIMEOUT.as_bytes()) {
         RpcVerb::GetFirstHopTimeout
+    } else if contains(request, get::LOWEST_INTERFACE_BITRATE.as_bytes()) {
+        RpcVerb::GetLowestInterfaceBitrate
+    } else if contains(request, get::MEDIUM_PATH_TIMEOUT.as_bytes()) {
+        RpcVerb::GetMediumPathTimeout
     } else if contains(request, get::LINK_COUNT.as_bytes()) {
         RpcVerb::GetLinkCount
     } else if contains(request, get::PACKET_RSSI.as_bytes()) {
@@ -243,6 +253,11 @@ mod tests {
             (RpcVerb::GetNextHop, "next_hop"),
             (RpcVerb::GetNextHopInterfaceName, "next_hop_if_name"),
             (RpcVerb::GetFirstHopTimeout, "first_hop_timeout"),
+            (
+                RpcVerb::GetLowestInterfaceBitrate,
+                "lowest_interface_bitrate",
+            ),
+            (RpcVerb::GetMediumPathTimeout, "medium_path_timeout"),
             (RpcVerb::GetPacketRssi, "packet_rssi"),
             (RpcVerb::GetPacketSnr, "packet_snr"),
             (RpcVerb::GetPacketQuality, "packet_q"),

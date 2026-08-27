@@ -135,6 +135,8 @@ pub enum RnsRpcRequest {
     FirstHopTimeout {
         destination_hash: DestinationHash,
     },
+    LowestInterfaceBitrate,
+    MediumPathTimeout,
     LinkCount,
     PacketRssi {
         packet_hash: PacketHashArgument,
@@ -209,6 +211,10 @@ impl RnsRpcRequest {
                 argument::DESTINATION_HASH,
                 destination_hash.as_bytes(),
             )?,
+            Self::LowestInterfaceBitrate => {
+                encode_pickle_get(&mut encoder, get::LOWEST_INTERFACE_BITRATE)?
+            }
+            Self::MediumPathTimeout => encode_pickle_get(&mut encoder, get::MEDIUM_PATH_TIMEOUT)?,
             Self::LinkCount => encode_pickle_get(&mut encoder, get::LINK_COUNT)?,
             Self::PacketRssi { packet_hash } => encode_pickle_get_with_binary(
                 &mut encoder,
@@ -318,6 +324,10 @@ impl RnsRpcRequest {
                 argument::DESTINATION_HASH,
                 destination_hash.as_bytes(),
             )?,
+            Self::LowestInterfaceBitrate => {
+                encode_get(&mut encoder, get::LOWEST_INTERFACE_BITRATE)?
+            }
+            Self::MediumPathTimeout => encode_get(&mut encoder, get::MEDIUM_PATH_TIMEOUT)?,
             Self::LinkCount => encode_get(&mut encoder, get::LINK_COUNT)?,
             Self::PacketRssi { packet_hash } => encode_get_with_binary(
                 &mut encoder,
@@ -1022,6 +1032,14 @@ fn decode_get(mut fields: Fields) -> Result<RnsRpcRequest, DecodeError> {
                 destination_hash: take_destination_hash(&mut fields.destination_hash)?,
             })
         }
+        get::LOWEST_INTERFACE_BITRATE => {
+            fields.ensure_only(&[selector::GET])?;
+            Ok(RnsRpcRequest::LowestInterfaceBitrate)
+        }
+        get::MEDIUM_PATH_TIMEOUT => {
+            fields.ensure_only(&[selector::GET])?;
+            Ok(RnsRpcRequest::MediumPathTimeout)
+        }
         get::LINK_COUNT => {
             fields.ensure_only(&[selector::GET])?;
             Ok(RnsRpcRequest::LinkCount)
@@ -1343,6 +1361,27 @@ mod tests {
         assert!(encoded
             .windows(packed_float.len())
             .any(|window| window == packed_float));
+    }
+
+    #[test]
+    fn bitrate_timing_operations_round_trip_in_both_rpc_dialects() {
+        for (request, verb) in [
+            (
+                RnsRpcRequest::LowestInterfaceBitrate,
+                super::super::RpcVerb::GetLowestInterfaceBitrate,
+            ),
+            (
+                RnsRpcRequest::MediumPathTimeout,
+                super::super::RpcVerb::GetMediumPathTimeout,
+            ),
+        ] {
+            let message_pack = request.encode_message_pack().unwrap();
+            let pickle = request.encode_pickle().unwrap();
+            let decoded = super::super::RpcRequest::decode(&pickle).unwrap();
+            assert_eq!(decoded.dialect(), super::super::RpcDialect::Pickle);
+            assert_eq!(decoded.verb(), verb);
+            assert_eq!(decode(&message_pack), Ok(request));
+        }
     }
 
     fn binary<const N: usize>(byte: u8) -> Value {

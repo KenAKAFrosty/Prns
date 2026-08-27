@@ -30,8 +30,17 @@ use crate::routing::links::request::{
 };
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::LinkId;
+use crate::routing::timing::FirstHopTiming;
 use crate::storage::StorageLayout;
 use crate::wire::BROADCAST_MTU;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CommandTiming {
+    /// A daemon-derived first-hop floor for shared-instance clients.
+    pub first_hop_timeout_floor_ms: Option<u64>,
+    /// A daemon-derived complete discovery floor for shared-instance clients.
+    pub path_timeout_floor_ms: Option<u64>,
+}
 
 impl<S: StorageLayout> EngineState<S> {
     /// Resolves the link's interface only so the grant-first directive can name its target; the manifold must know which lane to offer a slot from before `fill` runs. The write inside `fill` looks the link up again and that second lookup is the authority: a link gone by then fails there as `LinkVanished`.
@@ -49,6 +58,28 @@ impl<S: StorageLayout> EngineState<S> {
         issued: IssuedCommand,
         interfaces: AttachedInterfaces<'_>,
         now: InstantMillis,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+    {
+        self.ingest_command_into_with_timing(
+            issued,
+            interfaces,
+            now,
+            CommandTiming::default(),
+            fill_entropy,
+            sink,
+        )
+    }
+
+    pub fn ingest_command_into_with_timing<F>(
+        &mut self,
+        issued: IssuedCommand,
+        interfaces: AttachedInterfaces<'_>,
+        now: InstantMillis,
+        timing: CommandTiming,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules
@@ -116,7 +147,17 @@ impl<S: StorageLayout> EngineState<S> {
                 let entropy = SendSinglePacketEntropy::new(entropy_bytes);
 
                 let mut buf = [0u8; BROADCAST_MTU];
-                match self.write_commanded_send_single_packet(id, &send, now, entropy, &mut buf) {
+                match self.write_commanded_send_single_packet_with_timing(
+                    id,
+                    &send,
+                    now,
+                    entropy,
+                    FirstHopTiming {
+                        interfaces,
+                        shared_instance_floor_ms: timing.first_hop_timeout_floor_ms,
+                    },
+                    &mut buf,
+                ) {
                     SendSinglePacketWriteOutcome::Written(dispatch) => {
                         fan_frame(
                             interfaces,
@@ -199,7 +240,14 @@ impl<S: StorageLayout> EngineState<S> {
             }
             CommandOutcome::OwesPathRequest { id, request } => {
                 let mut buf = [0u8; BROADCAST_MTU];
-                match self.write_commanded_path_request(id, &request, now, &mut buf) {
+                match self.write_commanded_path_request_with_timing(
+                    id,
+                    &request,
+                    now,
+                    interfaces,
+                    timing.path_timeout_floor_ms,
+                    &mut buf,
+                ) {
                     PathRequestWriteOutcome::Written { wire_bytes, culled } => {
                         fan_frame(interfaces, FanTarget::All, &buf[..wire_bytes], sink);
                         if let Some(culled) = culled {
@@ -226,8 +274,16 @@ impl<S: StorageLayout> EngineState<S> {
                 let entropy = EstablishLinkEntropy::new(entropy_bytes);
 
                 let mut buf = [0u8; BROADCAST_MTU];
-                match self.write_commanded_link_request(
-                    id, &establish, now, entropy, interfaces, &mut buf,
+                match self.write_commanded_link_request_with_timing(
+                    id,
+                    &establish,
+                    now,
+                    entropy,
+                    FirstHopTiming {
+                        interfaces,
+                        shared_instance_floor_ms: timing.first_hop_timeout_floor_ms,
+                    },
+                    &mut buf,
                 ) {
                     EstablishLinkWriteOutcome::Written(dispatch) => {
                         fan_frame(

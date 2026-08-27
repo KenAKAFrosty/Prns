@@ -2,8 +2,8 @@ use crate::engine::CommandId;
 use crate::engine::InstantMillis;
 use crate::wire::DestinationHash;
 
-/// RNS 1.4.2 `Transport.PATH_REQUEST_TIMEOUT` (15s): how long a client path request waits for an answer before giving up.
-pub const PATH_REQUEST_TIMEOUT_MS: u64 = 15_000;
+/// The ordinary RNS path-request lifetime. Bitrate-aware callers retain this as a floor.
+pub const PATH_REQUEST_TIMEOUT_MS: u64 = crate::routing::timing::PATH_REQUEST_TIMEOUT_FLOOR_MS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PendingPathRequest {

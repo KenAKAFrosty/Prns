@@ -9,8 +9,11 @@ mod resource_admission;
 mod resource_transfer;
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
@@ -73,6 +76,18 @@ pub struct PrnsNodeHandle {
     store: InterfaceStore,
     resource_admission: resource_admission::ResourceAdmissionRegistry,
     entropy: crate::manifold::driver::TokioEntropy,
+    timing_oracle: Arc<Mutex<Option<Arc<dyn BitrateTimingOracle>>>>,
+}
+
+/// An optional shared-instance timing source. Directly attached nodes do not need one;
+/// clients install the daemon-backed implementation when joining the local bus.
+pub trait BitrateTimingOracle: Send + Sync {
+    fn first_hop_timeout(
+        &self,
+        destination: DestinationHash,
+    ) -> Pin<Box<dyn Future<Output = Option<Duration>> + Send + '_>>;
+
+    fn medium_path_timeout(&self) -> Pin<Box<dyn Future<Output = Option<Duration>> + Send + '_>>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,11 +129,60 @@ impl PrnsNodeHandle {
             store: InterfaceStore::new(),
             resource_admission: resource_admission::ResourceAdmissionRegistry::default(),
             entropy: crate::manifold::driver::TokioEntropy,
+            timing_oracle: Arc::new(Mutex::new(None)),
         }
     }
 
     pub fn fill_entropy(&self, bytes: &mut [u8]) {
         self.entropy.fill(bytes);
+    }
+
+    /// Installs a daemon-backed timing source for subsequent high-level network operations.
+    pub fn install_bitrate_timing_oracle(&self, oracle: Arc<dyn BitrateTimingOracle>) {
+        if let Ok(mut installed) = self.timing_oracle.lock() {
+            *installed = Some(oracle);
+        }
+    }
+
+    async fn first_hop_command_timing(
+        &self,
+        destination: DestinationHash,
+    ) -> crate::engine::CommandTiming {
+        let oracle = self
+            .timing_oracle
+            .lock()
+            .ok()
+            .and_then(|installed| installed.clone());
+        let first_hop_timeout_floor_ms = match oracle {
+            Some(oracle) => oracle
+                .first_hop_timeout(destination)
+                .await
+                .map(duration_millis_saturating),
+            None => None,
+        };
+        crate::engine::CommandTiming {
+            first_hop_timeout_floor_ms,
+            path_timeout_floor_ms: None,
+        }
+    }
+
+    async fn path_command_timing(&self) -> crate::engine::CommandTiming {
+        let oracle = self
+            .timing_oracle
+            .lock()
+            .ok()
+            .and_then(|installed| installed.clone());
+        let path_timeout_floor_ms = match oracle {
+            Some(oracle) => oracle
+                .medium_path_timeout()
+                .await
+                .map(duration_millis_saturating),
+            None => None,
+        };
+        crate::engine::CommandTiming {
+            first_hop_timeout_floor_ms: None,
+            path_timeout_floor_ms,
+        }
     }
 
     fn mint(&self) -> CommandId {
@@ -155,11 +219,15 @@ impl PrnsNodeHandle {
     ) -> Result<PacketReceiptDelivered, SendError<SendSinglePacketFailure>> {
         let payload =
             SendSinglePacketPayload::from_slice(data).map_err(|()| SendError::PayloadTooLarge)?;
+        let timing = self.first_hop_command_timing(destination).await;
         match self
-            .settle(PrnsCommand::SendSinglePacket(SendSinglePacket {
-                destination,
-                payload,
-            }))
+            .settle_with_timing(
+                PrnsCommand::SendSinglePacket(SendSinglePacket {
+                    destination,
+                    payload,
+                }),
+                timing,
+            )
             .await
         {
             Some(Settlement::SendSinglePacket(result)) => result.map_err(SendError::Failed),
@@ -229,8 +297,12 @@ impl PrnsNodeHandle {
         &self,
         destination: DestinationHash,
     ) -> Result<LinkEstablished, SendError<EstablishLinkFailure>> {
+        let timing = self.first_hop_command_timing(destination).await;
         match self
-            .settle(PrnsCommand::EstablishLink(EstablishLink { destination }))
+            .settle_with_timing(
+                PrnsCommand::EstablishLink(EstablishLink { destination }),
+                timing,
+            )
             .await
         {
             Some(Settlement::EstablishLink(result)) => result.map_err(SendError::Failed),
@@ -244,11 +316,15 @@ impl PrnsNodeHandle {
     ) -> Result<PathFound, RequestPathError> {
         let mut request_id = [0; PATH_REQUEST_ID_LEN];
         getrandom::getrandom(&mut request_id).map_err(|_| RequestPathError::EntropyUnavailable)?;
+        let timing = self.path_command_timing().await;
         match self
-            .settle(PrnsCommand::RequestPath(RequestPath {
-                destination,
-                id: PathRequestId::new(request_id),
-            }))
+            .settle_with_timing(
+                PrnsCommand::RequestPath(RequestPath {
+                    destination,
+                    id: PathRequestId::new(request_id),
+                }),
+                timing,
+            )
             .await
         {
             Some(Settlement::RequestPath(result)) => result.map_err(RequestPathError::Failed),
@@ -380,10 +456,34 @@ impl PrnsNodeHandle {
         settled.await.ok()
     }
 
+    async fn settle_with_timing(
+        &self,
+        command: PrnsCommand,
+        timing: crate::engine::CommandTiming,
+    ) -> Option<Settlement> {
+        if timing == crate::engine::CommandTiming::default() {
+            return self.settle(command).await;
+        }
+        let id = self.mint();
+        let (completion, settled) = oneshot::channel();
+        self.commands
+            .send(HostCommand::AwaitedEngineWithTiming {
+                issued: IssuedCommand { id, command },
+                timing,
+                completion,
+            })
+            .ok()?;
+        settled.await.ok()
+    }
+
     pub fn close_link(&self, link_id: LinkId) -> bool {
         self.issue(PrnsCommand::CloseLink(CloseLink { link_id }))
             .is_some()
     }
+}
+
+fn duration_millis_saturating(duration: Duration) -> u64 {
+    duration.as_millis().min(u128::from(u64::MAX)) as u64
 }
 
 impl super::PrnsNodeApi for PrnsNodeHandle {

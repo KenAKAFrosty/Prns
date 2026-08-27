@@ -204,6 +204,7 @@ fn registered_status(view: StatusView, membership: Membership) -> RegisteredInte
             membership,
             origin: InterfaceOriginKind::Configured,
         },
+        descriptor: None,
         mode: crate::interfaces::InterfaceMode::Boundary,
         gravity: crate::interfaces::InterfaceGravity::new(-27),
         ifac: None,

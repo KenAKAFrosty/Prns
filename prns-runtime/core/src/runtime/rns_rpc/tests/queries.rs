@@ -1,4 +1,217 @@
 use super::*;
+use crate::runtime::node_introspection::InterfaceTimingSnapshot;
+use prns_core::interfaces::{
+    BitrateBps, EgressCapability, IngressCapability, InterfaceCapabilities, InterfaceKind,
+    TransportCapability,
+};
+
+#[derive(Clone)]
+struct TimingQuery {
+    routes: Vec<RouteSnapshot>,
+    timing: Vec<InterfaceTimingSnapshot>,
+}
+
+impl NodeIntrospection for TimingQuery {
+    fn interface_inventory(&self) -> Vec<InterfaceInventoryEntry> {
+        Vec::new()
+    }
+
+    fn interface_timing_inventory(&self) -> Vec<InterfaceTimingSnapshot> {
+        self.timing.clone()
+    }
+
+    async fn link_count(&self) -> u32 {
+        0
+    }
+
+    fn packet_phy(&self, _packet_hash: PacketHash) -> Option<PacketPhyStats> {
+        None
+    }
+
+    async fn announce_rates(&self) -> Vec<AnnounceRateSnapshot> {
+        Vec::new()
+    }
+
+    async fn routes(&self) -> Vec<RouteSnapshot> {
+        self.routes.clone()
+    }
+
+    async fn route(&self, destination: DestinationHash) -> Option<RouteSnapshot> {
+        self.routes
+            .iter()
+            .find(|route| route.destination == destination)
+            .cloned()
+    }
+}
+
+async fn timing_reply(request: &[u8], query: &TimingQuery) -> Vec<u8> {
+    let request = RpcRequest::decode(request).unwrap();
+    let controls = StubQuery {
+        links: 0,
+        packet_phy: None,
+        rates: Vec::new(),
+        routes: Vec::new(),
+        interfaces: Vec::new(),
+    };
+    reply_for_decoded(
+        &request,
+        query,
+        &controls,
+        &controls,
+        &controls,
+        TEST_TRANSPORT_IDENTITY_HASH,
+        None,
+    )
+    .await
+    .unwrap()
+}
+
+fn transmitting_capabilities() -> InterfaceCapabilities {
+    InterfaceCapabilities {
+        ingress: IngressCapability::Enabled,
+        egress: EgressCapability::Enabled(TransportCapability::CrossInterfaceOnly),
+    }
+}
+
+#[futures_test::test]
+async fn bitrate_timing_queries_use_online_eligible_interfaces_in_both_dialects() {
+    let destination = DestinationHash::new([0xAB; 16]);
+    let selected = InterfaceId::new([0x07; 8]);
+    let local = InterfaceId::from_channel_tag(InterfaceKind::LocalServer, b"app");
+    let disabled = InterfaceId::new([0x08; 8]);
+    let disconnected = InterfaceId::new([0x0B; 8]);
+    let query = TimingQuery {
+        routes: vec![RouteSnapshot {
+            destination,
+            hops: 1,
+            via: NextHop::Direct,
+            learned_at: prns_core::engine::InstantMillis(0),
+            last_route_activity_at: prns_core::engine::InstantMillis(0),
+            expires_at: prns_core::engine::InstantMillis(u64::MAX),
+            interface: selected,
+        }],
+        timing: vec![
+            InterfaceTimingSnapshot {
+                id: selected,
+                bitrate: BitrateBps::guess(333),
+                capabilities: transmitting_capabilities(),
+                connection: ConnectionState::Connected,
+            },
+            InterfaceTimingSnapshot {
+                id: local,
+                bitrate: BitrateBps::guess(5),
+                capabilities: transmitting_capabilities(),
+                connection: ConnectionState::Connected,
+            },
+            InterfaceTimingSnapshot {
+                id: disabled,
+                bitrate: BitrateBps::guess(5),
+                capabilities: InterfaceCapabilities {
+                    ingress: IngressCapability::Enabled,
+                    egress: EgressCapability::Disabled,
+                },
+                connection: ConnectionState::Connected,
+            },
+            InterfaceTimingSnapshot {
+                id: disconnected,
+                bitrate: BitrateBps::guess(5),
+                capabilities: transmitting_capabilities(),
+                connection: ConnectionState::Disconnected,
+            },
+        ],
+    };
+    let decode = |reply| rmpv::decode::read_value(&mut std::io::Cursor::new(reply)).unwrap();
+
+    let first_hop = msgpack_request(vec![
+        ("get", Value::from("first_hop_timeout")),
+        (
+            "destination_hash",
+            Value::Binary(destination.as_bytes().to_vec()),
+        ),
+    ]);
+    assert_eq!(
+        decode(timing_reply(&first_hop, &query).await),
+        Value::F64(18.013),
+    );
+    assert_eq!(
+        decode(
+            timing_reply(
+                &msgpack_request(vec![("get", Value::from("lowest_interface_bitrate"),)]),
+                &query,
+            )
+            .await,
+        ),
+        Value::from(333),
+    );
+    assert_eq!(
+        decode(
+            timing_reply(
+                &msgpack_request(vec![("get", Value::from("medium_path_timeout"))]),
+                &query,
+            )
+            .await,
+        ),
+        Value::F64(30.026),
+    );
+
+    assert_eq!(
+        timing_reply(
+            &legacy_string_request("get", "lowest_interface_bitrate"),
+            &query,
+        )
+        .await,
+        b"I333\n.",
+    );
+    assert_eq!(
+        timing_reply(&legacy_string_request("get", "medium_path_timeout"), &query,).await,
+        b"F30.026\n.",
+    );
+
+    let no_bitrate = TimingQuery {
+        routes: query.routes.clone(),
+        timing: Vec::new(),
+    };
+    assert_eq!(
+        decode(
+            timing_reply(
+                &msgpack_request(vec![("get", Value::from("lowest_interface_bitrate"),)]),
+                &no_bitrate,
+            )
+            .await,
+        ),
+        Value::Nil,
+    );
+    assert_eq!(
+        decode(
+            timing_reply(
+                &msgpack_request(vec![("get", Value::from("medium_path_timeout"))]),
+                &no_bitrate,
+            )
+            .await,
+        ),
+        Value::from(0),
+    );
+    assert_eq!(
+        decode(timing_reply(&first_hop, &no_bitrate).await),
+        Value::from(6),
+    );
+    assert_eq!(
+        timing_reply(
+            &legacy_string_request("get", "lowest_interface_bitrate"),
+            &no_bitrate,
+        )
+        .await,
+        b"N.",
+    );
+    assert_eq!(
+        timing_reply(
+            &legacy_string_request("get", "medium_path_timeout"),
+            &no_bitrate,
+        )
+        .await,
+        b"I0\n.",
+    );
+}
 
 #[futures_test::test]
 async fn the_set_answers_phy_stats_none_timeout_default_and_a_real_link_count() {
