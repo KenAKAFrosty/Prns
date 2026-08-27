@@ -49,6 +49,7 @@ Open [the Prns health dashboard](http://127.0.0.1:3000/d/prns-observability/prns
 - uptime, configured-versus-discovered interfaces, routes, links, shared clients, traffic, and sampled request latency
 - inbound and outbound announces by source, origin, outcome, and interface kind
 - announce holds, schedules, pacer depth, lossless egress backpressure, lane occupancy, and terminal egress failures
+- accounted interface receive failures and frame evidence
 - warnings, errors, and recent structured events
 
 Metrics and traces travel over OTLP. Structured events remain in the daemon log. The local collector reads `prnsd.jsonl` from the shared per-user state directory for the Loki panels.
@@ -130,6 +131,37 @@ The exporter uses OTLP/HTTP protobuf. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and `
 If several `prnsd` processes publish to one backend, give each a stable `service.instance.id` through `OTEL_RESOURCE_ATTRIBUTES`.
 
 Production traces default to parent-based 10% sampling. Remote trace export queues at most 2,048 spans, sends at most 512 per batch, and uses five-second network and shutdown bounds. Runtime state is sampled every five seconds, while `OTEL_METRIC_EXPORT_INTERVAL` controls how often the SDK exports those observations.
+
+### Interface receive evidence
+
+`prns.interface.receive.frames` is a cumulative OTEL counter labeled with `interface`,
+`interface_kind`, `interface_origin`, and one of these `event` values:
+
+- `received`: a complete, nonempty interface frame or UDP datagram was accepted from the wire.
+- `undecodable`: interface framing rejected a receive candidate before it became a complete frame.
+- `delivered`: the complete frame or datagram was handed through the interface seam to the runtime.
+- `malformed`: an authoritative RNS parser rejected the delivered frame, whether at initial
+  classification or in a deeper packet, link, path-request, tunnel, or resource parser.
+- `protocol_violation`: the per-interface total of receive candidates that violated framing or
+  protocol rules. It includes every `malformed` and `undecodable` event plus structurally valid
+  packets rejected for invalid proofs/signatures, impossible link context/phase/RTT, or relayed
+  PLAIN/GROUP data that the protocol does not permit to be transported.
+
+These are layered observations, not a conservation equation. In particular, a frame can count as
+both `delivered` and `malformed`, and `protocol_violation` is intentionally a superset rather than
+another stage in a pipeline. IFAC refusal, duplicates, packets for another node, capacity or policy
+rejection, and decryption failure are separate outcomes and do not enter the protocol-violation
+total. `received - delivered` is not a general drop count, and the dashboard intentionally does not
+calculate a drop percentage. An interface that does not measure frames publishes no series rather
+than an all-zero series. A logical fleet is published only when every represented traffic-bearing
+member is accounted, including retired members carried across connection churn.
+
+The reporter samples these cumulative values every five seconds and exports reset-aware deltas.
+Detach and reattach under the same interface ID starts a new source epoch, so the replacement's
+initial observations are not suppressed by the previous attachment's larger counters. Grafana's
+receive-evidence table therefore contains accounted interfaces only, while the receive-failures
+time series shows the protocol-violation total alongside its `malformed` and `undecodable` subsets.
+Neither panel contributes to Operational state or Hard signals.
 
 ### Announce egress pressure and loss
 

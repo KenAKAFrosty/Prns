@@ -69,7 +69,7 @@ impl<Open> PipeInterface<Open> {
             respawn_delay,
             policy,
             channel_tag,
-            status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
+            status: TokioInterfaceStatus::new_accounted(id, ConnectionState::Initializing),
         }
     }
 
@@ -152,6 +152,10 @@ impl<Open> prns_core::interfaces::ReportsStatus for PipeInterface<Open> {
 
     fn connection_view(&self) -> Option<prns_core::interfaces::ConnectionView> {
         Some(prns_core::interfaces::ConnectionView::of(self.status()))
+    }
+
+    fn frame_accounting_recorder(&self) -> Option<prns_core::interfaces::FrameAccountingRecorder> {
+        prns_core::interfaces::FrameAccountingRecorder::of(self.status())
     }
 }
 

@@ -70,7 +70,7 @@ fn a_lane_set_rejects_duplicate_interface_ids_without_consuming_storage() {
 #[test]
 fn an_accounted_lane_rejects_a_mismatched_status_without_consuming_storage() {
     static LANE: StaticManifoldLane<Mtx, FRAME, 1> = StaticManifoldLane::new();
-    static STATUS: EmbassyInterfaceStatus = EmbassyInterfaceStatus::new(
+    static STATUS: EmbassyInterfaceStatus = EmbassyInterfaceStatus::new_accounted(
         InterfaceId::new([0x6B; 8]),
         crate::interfaces::ConnectionState::Initializing,
     );

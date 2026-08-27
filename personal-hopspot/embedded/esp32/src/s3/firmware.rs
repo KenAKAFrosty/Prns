@@ -64,7 +64,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     // Defer claiming USB-JTAG until after Wi-Fi bring-up so boot logs stay visible through radio init.
     let usb_status: &'static EmbassyInterfaceStatus = mk_static!(
         EmbassyInterfaceStatus,
-        EmbassyInterfaceStatus::new(B::USB_INTERFACE_ID, ConnectionState::Initializing)
+        EmbassyInterfaceStatus::new_accounted(B::USB_INTERFACE_ID, ConnectionState::Initializing,)
     );
     let usb_id = usb_status.id();
     let mac = base_mac_address();
@@ -108,7 +108,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     #[cfg(feature = "lora")]
     let lora_status: &'static EmbassyInterfaceStatus = mk_static!(
         EmbassyInterfaceStatus,
-        EmbassyInterfaceStatus::new(lora_id, ConnectionState::Initializing)
+        EmbassyInterfaceStatus::new_accounted(lora_id, ConnectionState::Initializing)
     );
     #[cfg(feature = "lora")]
     let lora_spectrum: &'static LoRaSpectrumStatus =
@@ -185,7 +185,10 @@ pub(super) async fn run_core<B: Esp32S3Board>(
 
     let espnow_status: &'static EmbassyInterfaceStatus = mk_static!(
         EmbassyInterfaceStatus,
-        EmbassyInterfaceStatus::new(espnow_core::interface_id(), ConnectionState::Initializing)
+        EmbassyInterfaceStatus::new_accounted(
+            espnow_core::interface_id(),
+            ConnectionState::Initializing,
+        )
     );
     let espnow = esp_now.map(|radio| {
         EspNowInterface::new(

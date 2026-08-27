@@ -108,6 +108,20 @@ pub enum IgnoreReason {
     IfacRefused,
 }
 
+/// A receive outcome that violates an interface-framing or RNS protocol rule. These are narrower
+/// than all ignored packets: duplicates, packets for another node, policy refusals, IFAC
+/// authentication failures, and resource pressure are intentionally not protocol violations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProtocolViolationKind {
+    Malformed,
+    InvalidIfacEnvelope,
+    UnhandledContext,
+    RelayedNonTransportedData,
+    InvalidLinkPhase,
+    InvalidLinkRtt,
+    InvalidProof,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IngestPacketOutcome<'p> {
     Announce(AnnounceIngest),
@@ -260,4 +274,119 @@ pub enum IngestPacketOutcome<'p> {
         expires: InstantMillis,
     },
     Ignored(IgnoreReason),
+}
+
+impl ProtocolViolationKind {
+    #[must_use]
+    pub const fn of_outcome(outcome: &IngestPacketOutcome<'_>) -> Option<Self> {
+        match outcome {
+            IngestPacketOutcome::Ignored(reason) => match reason {
+                IgnoreReason::Malformed => Some(Self::Malformed),
+                IgnoreReason::UnhandledContext => Some(Self::UnhandledContext),
+                IgnoreReason::HopLimitReached => Some(Self::RelayedNonTransportedData),
+                IgnoreReason::LinkPhaseMismatch => Some(Self::InvalidLinkPhase),
+                IgnoreReason::LinkRttError(_) => Some(Self::InvalidLinkRtt),
+                IgnoreReason::ProofInvalid => Some(Self::InvalidProof),
+                IgnoreReason::Consumed
+                | IgnoreReason::Duplicate
+                | IgnoreReason::Superseded
+                | IgnoreReason::NotForUs
+                | IgnoreReason::NoRoute
+                | IgnoreReason::LoopPrevented
+                | IgnoreReason::RouteUnresponsive
+                | IgnoreReason::OtherInstance
+                | IgnoreReason::UnknownLink
+                | IgnoreReason::DecryptFailed
+                | IgnoreReason::UnknownIdentity
+                | IgnoreReason::LinkRequestsRefused
+                | IgnoreReason::PermissionDenied
+                | IgnoreReason::RateLimited
+                | IgnoreReason::CapacityExhausted
+                | IgnoreReason::RequestTooLarge
+                | IgnoreReason::StrategyDeclined
+                | IgnoreReason::UnmatchedResponse
+                | IgnoreReason::IfacRefused => None,
+            },
+            IngestPacketOutcome::OwesLinkClose {
+                reason: LinkClosedReason::MalformedRtt,
+                ..
+            } => Some(Self::InvalidLinkRtt),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_malformed(self) -> bool {
+        matches!(self, Self::Malformed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::routing::links::LinkId;
+    use crate::wire::TRUNCATED_HASH_BYTE_LEN;
+
+    #[test]
+    fn protocol_violations_are_the_wire_rule_subset_of_ignored_packets() {
+        for (reason, expected) in [
+            (IgnoreReason::Malformed, ProtocolViolationKind::Malformed),
+            (
+                IgnoreReason::UnhandledContext,
+                ProtocolViolationKind::UnhandledContext,
+            ),
+            (
+                IgnoreReason::HopLimitReached,
+                ProtocolViolationKind::RelayedNonTransportedData,
+            ),
+            (
+                IgnoreReason::LinkPhaseMismatch,
+                ProtocolViolationKind::InvalidLinkPhase,
+            ),
+            (
+                IgnoreReason::LinkRttError(LinkRttError::InvalidToken),
+                ProtocolViolationKind::InvalidLinkRtt,
+            ),
+            (
+                IgnoreReason::ProofInvalid,
+                ProtocolViolationKind::InvalidProof,
+            ),
+        ] {
+            assert_eq!(
+                ProtocolViolationKind::of_outcome(&IngestPacketOutcome::Ignored(reason)),
+                Some(expected),
+            );
+        }
+
+        for reason in [
+            IgnoreReason::Duplicate,
+            IgnoreReason::NotForUs,
+            IgnoreReason::DecryptFailed,
+            IgnoreReason::CapacityExhausted,
+            IgnoreReason::IfacRefused,
+        ] {
+            assert_eq!(
+                ProtocolViolationKind::of_outcome(&IngestPacketOutcome::Ignored(reason)),
+                None,
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_link_rtt_close_is_a_protocol_violation() {
+        let malformed = IngestPacketOutcome::OwesLinkClose {
+            link_id: LinkId::new([0; TRUNCATED_HASH_BYTE_LEN]),
+            reason: LinkClosedReason::MalformedRtt,
+        };
+        assert_eq!(
+            ProtocolViolationKind::of_outcome(&malformed),
+            Some(ProtocolViolationKind::InvalidLinkRtt),
+        );
+
+        let timeout = IngestPacketOutcome::OwesLinkClose {
+            link_id: LinkId::new([0; TRUNCATED_HASH_BYTE_LEN]),
+            reason: LinkClosedReason::Timeout,
+        };
+        assert_eq!(ProtocolViolationKind::of_outcome(&timeout), None);
+    }
 }

@@ -75,7 +75,7 @@ impl<Src: BleSource, Snk: BleSink> BluetoothPeer<Src, Snk> {
             sink,
             channel_tag,
             policy,
-            status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
+            status: TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Connected),
             closed: None,
         }
     }
@@ -876,7 +876,7 @@ mod tests {
         let status = BluetoothAutoStatus::new();
         status.mark_up();
 
-        status.set_members(std::vec![TokioInterfaceStatus::new(
+        status.set_members(std::vec![TokioInterfaceStatus::new_unaccounted(
             InterfaceId::new([0xB2; 8]),
             ConnectionState::Connected,
         )]);

@@ -749,7 +749,7 @@ mod tests {
         let status = WifiDirectStatus::new(InterfaceId::new([0xD1; 8]));
         status.mark_up();
 
-        status.set_members(std::vec![TokioInterfaceStatus::new(
+        status.set_members(std::vec![TokioInterfaceStatus::new_unaccounted(
             InterfaceId::new([0xD2; 8]),
             ConnectionState::Connected,
         )]);

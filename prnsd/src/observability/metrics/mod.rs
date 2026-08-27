@@ -1,8 +1,10 @@
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use opentelemetry::metrics::Gauge;
 use opentelemetry_sdk::metrics::SdkMeterProvider;
 use personal_rns::interfaces::InterfaceKind;
+use personal_rns::interfaces::{FrameAccounting, InterfaceId};
 use personal_rns::node_introspection::logical_interface_inventory;
 use personal_rns::runtime::{PrnsNodeHandle, RuntimeHealth, RuntimeMetricsSnapshot};
 
@@ -17,6 +19,7 @@ const SNAPSHOT_INTERVAL: Duration = Duration::from_secs(5);
 pub(super) struct MetricsReporter {
     instruments: Instruments,
     previous: Option<RuntimeMetricsSnapshot>,
+    previous_frame_accounting: HashMap<InterfaceId, (u64, FrameAccounting)>,
 }
 
 pub(crate) struct RunningMetricsReporter {
@@ -37,6 +40,7 @@ impl MetricsReporter {
         Self {
             instruments: Instruments::new(provider),
             previous: None,
+            previous_frame_accounting: HashMap::new(),
         }
     }
 

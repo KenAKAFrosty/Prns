@@ -4,7 +4,8 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
 
 use prns_core::interfaces::{
-    ConnectionState, InterfaceId, InterfaceStatus, InterfaceVitals, TransferRates,
+    ConnectionState, FrameAccounting, FrameAccountingEvent, InterfaceId, InterfaceStatus,
+    InterfaceVitals, RecordsFrameAccounting, TransferRates,
 };
 use prns_runtime::manifold::driver::TokioInterfaceStatus;
 
@@ -51,7 +52,7 @@ pub(crate) struct I2pPeerStatus {
 impl I2pPeerStatus {
     pub(crate) fn new(id: InterfaceId, connection: ConnectionState) -> Self {
         Self {
-            wire: TokioInterfaceStatus::new(id, connection),
+            wire: TokioInterfaceStatus::new_accounted(id, connection),
             issue: Arc::new(AtomicU8::new(I2pInterfaceIssue::None as u8)),
         }
     }
@@ -96,6 +97,16 @@ impl InterfaceStatus for I2pPeerStatus {
 
     fn transfer_rates(&self) -> Option<TransferRates> {
         self.wire.transfer_rates()
+    }
+
+    fn frame_accounting(&self) -> Option<FrameAccounting> {
+        self.wire.frame_accounting()
+    }
+}
+
+impl RecordsFrameAccounting for I2pPeerStatus {
+    fn record_frame_event(&self, event: FrameAccountingEvent) {
+        self.wire.record_frame_event(event);
     }
 }
 

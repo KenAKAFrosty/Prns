@@ -309,6 +309,7 @@ where
         let handle = PrnsNodeHandle {
             commands: command_tx,
             ids: Arc::new(AtomicU64::new(0)),
+            attachment_epochs: Arc::new(AtomicU64::new(0)),
             notify_tx,
             iface_build: iface_build_tx,
             interfaces: Arc::new(Mutex::new(HashMap::new())),

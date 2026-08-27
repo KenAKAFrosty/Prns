@@ -212,7 +212,6 @@ where
         let mut presence_probe_at = Instant::now() + PRESENCE_PROBE_INTERVAL;
         let mut io_priority = IoPriority::Read;
 
-        status.account_frames();
         lifecycle.publish(status);
 
         loop {
@@ -733,7 +732,8 @@ mod tests {
         let host_to_device = RefCell::new(VecDeque::new());
         let device_to_host = RefCell::new(VecDeque::new());
         let dispositions = RefCell::new(Vec::new());
-        let status = EmbassyInterfaceStatus::new(device_id(), ConnectionState::Initializing);
+        let status =
+            EmbassyInterfaceStatus::new_accounted(device_id(), ConnectionState::Initializing);
 
         let notify: Channel<CriticalSectionRawMutex, InterfaceId, 2> = Channel::new();
         let (in_tx, mut in_rx) = leaked_grant_lane::<DEVICE_SLOT>(2);
@@ -809,6 +809,7 @@ mod tests {
                     Some(FrameAccounting {
                         frames_in: 2,
                         malformed: 0,
+                        protocol_violations: 0,
                         undecodable: 0,
                         delivered: 1,
                     })
@@ -831,7 +832,8 @@ mod tests {
         let host_to_device = RefCell::new(VecDeque::new());
         let device_to_host = RefCell::new(VecDeque::new());
         let dispositions = RefCell::new(Vec::new());
-        let status = EmbassyInterfaceStatus::new(device_id(), ConnectionState::Initializing);
+        let status =
+            EmbassyInterfaceStatus::new_accounted(device_id(), ConnectionState::Initializing);
         let notify: Channel<CriticalSectionRawMutex, InterfaceId, 1> = Channel::new();
         let (in_tx, _in_rx) = leaked_grant_lane::<DEVICE_SLOT>(1);
         let (mut out_tx, out_rx) = leaked_grant_lane::<DEVICE_SLOT>(1);
@@ -961,7 +963,7 @@ mod tests {
             actions: &actions,
             cancellations: &cancellations,
         };
-        let status = EmbassyInterfaceStatus::new(device_id(), ConnectionState::Connected);
+        let status = EmbassyInterfaceStatus::new_accounted(device_id(), ConnectionState::Connected);
         let mut frame_buf = [0u8; contract::MAX_FRAMED_BYTES];
 
         block_on(async {
@@ -991,7 +993,7 @@ mod tests {
             bytes: &bytes,
             flushes: &flushes,
         };
-        let status = EmbassyInterfaceStatus::new(device_id(), ConnectionState::Connected);
+        let status = EmbassyInterfaceStatus::new_accounted(device_id(), ConnectionState::Connected);
         let mut frame_buf = [0u8; contract::MAX_FRAMED_BYTES];
 
         block_on(async {
@@ -1024,7 +1026,7 @@ mod tests {
             actions: &actions,
             cancellations: &cancellations,
         };
-        let status = EmbassyInterfaceStatus::new(device_id(), ConnectionState::Connected);
+        let status = EmbassyInterfaceStatus::new_accounted(device_id(), ConnectionState::Connected);
         let mut frame_buf = [0u8; contract::MAX_FRAMED_BYTES];
 
         block_on(async {
@@ -1079,7 +1081,7 @@ mod tests {
             actions: &actions,
             cancellations: &cancellations,
         };
-        let status = EmbassyInterfaceStatus::new(device_id(), ConnectionState::Connected);
+        let status = EmbassyInterfaceStatus::new_accounted(device_id(), ConnectionState::Connected);
         let mut frame_buf = [0u8; contract::MAX_FRAMED_BYTES];
 
         block_on(async {
@@ -1099,7 +1101,8 @@ mod tests {
 
     #[test]
     fn failure_state_survives_disable_and_reenable() {
-        let status = EmbassyInterfaceStatus::new(device_id(), ConnectionState::Initializing);
+        let status =
+            EmbassyInterfaceStatus::new_accounted(device_id(), ConnectionState::Initializing);
         let mut lifecycle = UsbLifecycle::Failed;
         lifecycle.publish(&status);
         assert_eq!(status.connection(), ConnectionState::Failed);
@@ -1117,7 +1120,8 @@ mod tests {
     fn data_before_handshake_is_not_delivered() {
         let host_to_device = RefCell::new(VecDeque::new());
         let device_to_host = RefCell::new(VecDeque::new());
-        let status = EmbassyInterfaceStatus::new(device_id(), ConnectionState::Initializing);
+        let status =
+            EmbassyInterfaceStatus::new_accounted(device_id(), ConnectionState::Initializing);
         let notify: Channel<CriticalSectionRawMutex, InterfaceId, 1> = Channel::new();
         let (in_tx, _in_rx) = leaked_grant_lane::<DEVICE_SLOT>(1);
         let (_out_tx, out_rx) = leaked_grant_lane::<DEVICE_SLOT>(1);
@@ -1175,7 +1179,8 @@ mod tests {
             ErrorKind::NotConnected,
         )]));
         let write_cancellations = Cell::new(0);
-        let status = EmbassyInterfaceStatus::new(device_id(), ConnectionState::Initializing);
+        let status =
+            EmbassyInterfaceStatus::new_accounted(device_id(), ConnectionState::Initializing);
         let notify: Channel<CriticalSectionRawMutex, InterfaceId, 1> = Channel::new();
         let (in_tx, _in_rx) = leaked_grant_lane::<DEVICE_SLOT>(1);
         let (_out_tx, out_rx) = leaked_grant_lane::<DEVICE_SLOT>(1);

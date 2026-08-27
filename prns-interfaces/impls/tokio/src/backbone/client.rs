@@ -98,7 +98,7 @@ impl BackboneClientInterface {
             target,
             policy,
             connection,
-            status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
+            status: TokioInterfaceStatus::new_accounted(id, ConnectionState::Initializing),
         }
     }
 
@@ -220,6 +220,10 @@ impl prns_core::interfaces::ReportsStatus for BackboneClientInterface {
 
     fn connection_view(&self) -> Option<prns_core::interfaces::ConnectionView> {
         Some(prns_core::interfaces::ConnectionView::of(self.status()))
+    }
+
+    fn frame_accounting_recorder(&self) -> Option<prns_core::interfaces::FrameAccountingRecorder> {
+        prns_core::interfaces::FrameAccountingRecorder::of(self.status())
     }
 }
 

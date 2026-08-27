@@ -41,7 +41,7 @@ impl<S> BackboneServerConnection<S> {
             channel_tag,
             stream: Some(stream),
             policy,
-            status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
+            status: TokioInterfaceStatus::new_accounted(id, ConnectionState::Connected),
         }
     }
 
@@ -107,6 +107,7 @@ pub struct BackboneServer {
     listener: TcpListener,
     policy: EffectiveInterfacePolicy,
     channel_tag: Vec<u8>,
+    status: TokioInterfaceStatus,
 }
 
 impl BackboneServer {
@@ -123,10 +124,12 @@ impl BackboneServer {
     ) -> io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
         let channel_tag = listener.local_addr()?.to_string().into_bytes();
+        let id = InterfaceId::from_channel_tag(InterfaceKind::BackboneServer, &channel_tag);
         Ok(Self {
             listener,
             policy,
             channel_tag,
+            status: TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Connected),
         })
     }
 
@@ -174,7 +177,14 @@ impl InterfaceSupervisor for BackboneServer {
     }
 }
 
-impl prns_core::interfaces::ReportsStatus for BackboneServer {}
+impl prns_core::interfaces::ReportsStatus for BackboneServer {
+    fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
+        let status = self.status.clone();
+        Some(std::sync::Arc::new(move || {
+            std::vec![prns_core::interfaces::InterfaceVitals::of(&status)]
+        }))
+    }
+}
 
 impl<S> prns_core::interfaces::ReportsStatus for BackboneServerConnection<S> {
     fn status_view(&self) -> Option<prns_core::interfaces::StatusView> {
@@ -186,6 +196,10 @@ impl<S> prns_core::interfaces::ReportsStatus for BackboneServerConnection<S> {
 
     fn connection_view(&self) -> Option<prns_core::interfaces::ConnectionView> {
         Some(prns_core::interfaces::ConnectionView::of(self.status()))
+    }
+
+    fn frame_accounting_recorder(&self) -> Option<prns_core::interfaces::FrameAccountingRecorder> {
+        prns_core::interfaces::FrameAccountingRecorder::of(self.status())
     }
 }
 
@@ -281,6 +295,21 @@ mod tests {
             BitrateBps::guess(12_345_678),
             "the listener's pipe claim rides into the member's descriptor",
         );
+    }
+
+    #[tokio::test]
+    async fn the_listener_publishes_a_stable_unaccounted_supervisor_status() {
+        let server = BackboneServer::bind("127.0.0.1:0", backbone::BACKBONE_BITRATE_ESTIMATE)
+            .await
+            .expect("binds an ephemeral listener");
+        let view = prns_core::interfaces::ReportsStatus::status_view(&server)
+            .expect("the listener publishes status");
+        let vitals = view();
+
+        assert_eq!(vitals.len(), 1);
+        assert_eq!(vitals[0].id, server.id());
+        assert_eq!(vitals[0].connection, ConnectionState::Connected);
+        assert_eq!(vitals[0].frame_accounting, None);
     }
 
     #[tokio::test]

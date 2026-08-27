@@ -66,7 +66,7 @@ pub use crate::wire::WireError as EgressSerializeError;
 pub use commands::*;
 pub use introspection::{AnnounceRateState, RouteSnapshot};
 pub use node_egress::ReemitAnnounce;
-pub use node_ingress::IngestIo;
+pub use node_ingress::{IngestIo, IngestPacketReport};
 pub use proof::ResolvedReceiptSettlement;
 pub use reaction::{
     Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason, PersistenceFlushCause,
@@ -102,7 +102,7 @@ pub use crate::routing::delivery::send_single::{
 pub use crate::routing::ingress::{
     AcceptedAnnounce, AnnounceIngest, AnnounceVerifyOwed, ClassifiedInboundPacket, DataPacket,
     DecryptOwed, DeferredCrypto, IgnoreReason, IngestPacketOutcome, Ingress, LinkRttOwed,
-    PacketToForward, RatchetDecryptOwed, RebroadcastDecision,
+    PacketToForward, ProtocolViolationKind, RatchetDecryptOwed, RebroadcastDecision,
 };
 pub use crate::routing::links::data::{
     link_mdu, LinkDataError, SendToLinkDispatch, SendToLinkWriteError, LINK_MDU,

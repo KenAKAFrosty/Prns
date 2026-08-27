@@ -186,8 +186,6 @@ impl Interface for TcpClient<'_> {
         let started = Instant::now();
         let mut reconnect = reconnect_policy.schedule();
         let mut connection_attempt = TcpConnectionAttempt::Initial;
-        status.account_frames();
-
         loop {
             if !status.is_enabled() {
                 status.set_connection(ConnectionState::Disabled);

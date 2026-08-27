@@ -3,6 +3,7 @@ use crate::engine::{
     ResolvedReceiptSettlement, WakeSchedules,
 };
 use crate::identity::OpenedToken;
+use crate::interfaces::FrameAccountingEvent;
 use crate::manifold::Host;
 use crate::routing::links::resources::build_outgoing::SALT_REROLL_CAP;
 use crate::routing::links::resources::receive::offload::OffloadedOpenSpan;
@@ -254,7 +255,14 @@ where
                     &mut |entropy| host.fill_entropy(entropy),
                     &mut reaction_sink!(),
                 )),
-                None => CryptoCompletionEffect::NoWakeChange,
+                None => {
+                    if let Some(recorder) =
+                        topology.frame_accounting_recorder(owed.source_interface)
+                    {
+                        recorder.record(FrameAccountingEvent::ProtocolViolation);
+                    }
+                    CryptoCompletionEffect::NoWakeChange
+                }
             },
             CryptoResult::LinkProofSigned {
                 owed,
@@ -310,6 +318,11 @@ where
                         &mut reaction_sink!(),
                     ))
                 } else {
+                    if let Some(recorder) =
+                        topology.frame_accounting_recorder(owed.source_interface)
+                    {
+                        recorder.record(FrameAccountingEvent::ProtocolViolation);
+                    }
                     CryptoCompletionEffect::NoWakeChange
                 }
             }

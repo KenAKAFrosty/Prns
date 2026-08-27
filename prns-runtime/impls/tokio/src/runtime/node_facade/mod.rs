@@ -66,6 +66,7 @@ pub use resource_transfer::{
 pub struct PrnsNodeHandle {
     commands: UnboundedSender<HostCommand>,
     ids: Arc<AtomicU64>,
+    attachment_epochs: Arc<AtomicU64>,
     notify_tx: UnboundedSender<InterfaceId>,
     iface_build: UnboundedSender<DriverMsg>,
     interfaces: Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
@@ -106,6 +107,7 @@ impl PrnsNodeHandle {
         Self {
             commands,
             ids: Arc::new(AtomicU64::new(0)),
+            attachment_epochs: Arc::new(AtomicU64::new(0)),
             notify_tx,
             iface_build,
             interfaces: Arc::new(Mutex::new(HashMap::new())),

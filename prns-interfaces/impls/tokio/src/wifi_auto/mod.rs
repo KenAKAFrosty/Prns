@@ -115,7 +115,7 @@ impl AutoWifiPeer {
             inbound,
             policy,
             channel_tag,
-            status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
+            status: TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Connected),
         }
     }
 
@@ -3140,11 +3140,11 @@ mod tests {
     fn the_parent_connection_follows_the_best_live_child_state() {
         let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, contract::GROUP_ID);
         let status = AutoWifiStatus::new(id);
-        let first = TokioInterfaceStatus::new(
+        let first = TokioInterfaceStatus::new_unaccounted(
             InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"first"),
             ConnectionState::Initializing,
         );
-        let second = TokioInterfaceStatus::new(
+        let second = TokioInterfaceStatus::new_unaccounted(
             InterfaceId::from_channel_tag(InterfaceKind::TcpClient, b"second"),
             ConnectionState::Disconnected,
         );
@@ -3168,7 +3168,7 @@ mod tests {
     fn completed_and_reconnected_member_traffic_is_monotonic() {
         let id = InterfaceId::from_channel_tag(InterfaceKind::AutoWifi, b"accounting");
         let status = AutoWifiStatus::new(id);
-        let first = TokioInterfaceStatus::new(
+        let first = TokioInterfaceStatus::new_unaccounted(
             InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"peer"),
             ConnectionState::Connected,
         );
@@ -3182,7 +3182,7 @@ mod tests {
         status.publish(&completed, vec![]);
         assert_eq!((status.rx_bytes(), status.tx_bytes()), (90, 45));
 
-        let reconnected = TokioInterfaceStatus::new(
+        let reconnected = TokioInterfaceStatus::new_unaccounted(
             InterfaceId::from_channel_tag(InterfaceKind::WifiPeer, b"peer"),
             ConnectionState::Connected,
         );

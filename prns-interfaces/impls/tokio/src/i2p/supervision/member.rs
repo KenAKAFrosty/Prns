@@ -202,6 +202,10 @@ impl<B> prns_core::interfaces::ReportsStatus for I2pConfiguredPeer<B> {
     fn connection_view(&self) -> Option<prns_core::interfaces::ConnectionView> {
         Some(prns_core::interfaces::ConnectionView::of(self.status()))
     }
+
+    fn frame_accounting_recorder(&self) -> Option<prns_core::interfaces::FrameAccountingRecorder> {
+        prns_core::interfaces::FrameAccountingRecorder::of(self.status())
+    }
 }
 
 pub(crate) struct I2pAcceptedPeer<S> {
@@ -297,6 +301,10 @@ impl<S> prns_core::interfaces::ReportsStatus for I2pAcceptedPeer<S> {
 
     fn connection_view(&self) -> Option<prns_core::interfaces::ConnectionView> {
         Some(prns_core::interfaces::ConnectionView::of(self.status()))
+    }
+
+    fn frame_accounting_recorder(&self) -> Option<prns_core::interfaces::FrameAccountingRecorder> {
+        prns_core::interfaces::FrameAccountingRecorder::of(self.status())
     }
 }
 

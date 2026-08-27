@@ -44,7 +44,7 @@ impl<S> SharedInstanceClient<S> {
             channel_tag,
             stream: Some(stream),
             policy,
-            status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
+            status: TokioInterfaceStatus::new_accounted(id, ConnectionState::Connected),
         }
     }
 
@@ -155,7 +155,7 @@ impl SharedInstanceServer {
             channel_tag,
             bind_addr: Some(bind_addr),
             policy: shared_instance::configured_policy(Default::default()),
-            status: TokioInterfaceStatus::new(id, ConnectionState::Disconnected),
+            status: TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Disconnected),
             #[cfg(any(target_os = "linux", target_os = "android"))]
             socket_path: None,
         }
@@ -171,7 +171,7 @@ impl SharedInstanceServer {
             channel_tag,
             bind_addr: None,
             policy: shared_instance::configured_policy(Default::default()),
-            status: TokioInterfaceStatus::new(id, ConnectionState::Disconnected),
+            status: TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Disconnected),
             socket_path: Some(socket_path),
         }
     }
@@ -188,7 +188,8 @@ impl SharedInstanceServer {
     pub fn with_socket_path(mut self, socket_path: impl Into<String>) -> Self {
         let socket_path = socket_path.into();
         self.channel_tag = std::format!("unix:{socket_path}").into_bytes();
-        self.status = TokioInterfaceStatus::new(self.id(), ConnectionState::Disconnected);
+        self.status =
+            TokioInterfaceStatus::new_unaccounted(self.id(), ConnectionState::Disconnected);
         self.bind_addr = None;
         self.socket_path = Some(socket_path);
         self
@@ -357,6 +358,10 @@ impl<S> prns_core::interfaces::ReportsStatus for SharedInstanceClient<S> {
 
     fn connection_view(&self) -> Option<prns_core::interfaces::ConnectionView> {
         Some(prns_core::interfaces::ConnectionView::of(self.status()))
+    }
+
+    fn frame_accounting_recorder(&self) -> Option<prns_core::interfaces::FrameAccountingRecorder> {
+        prns_core::interfaces::FrameAccountingRecorder::of(self.status())
     }
 }
 

@@ -30,7 +30,10 @@ pub async fn run(spawner: Spawner) {
         let esp_now_radio = interfaces.esp_now;
         let espnow_status: &'static EmbassyInterfaceStatus = mk_static!(
             EmbassyInterfaceStatus,
-            EmbassyInterfaceStatus::new(espnow_core::interface_id(), ConnectionState::Initializing)
+            EmbassyInterfaceStatus::new_accounted(
+                espnow_core::interface_id(),
+                ConnectionState::Initializing,
+            )
         );
         let espnow = EspNowInterface::new(
             EspNowAdapter::new(esp_now_radio),

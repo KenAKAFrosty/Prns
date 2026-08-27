@@ -134,7 +134,7 @@ impl<Open> KissInterface<Open> {
             station_identification: settings.station_identification,
             policy: settings.policy,
             channel_tag,
-            status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
+            status: TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Initializing),
         }
     }
 

@@ -148,7 +148,7 @@ impl<Open> Ax25KissInterface<Open> {
             policy: settings.policy,
             header,
             channel_tag,
-            status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
+            status: TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Initializing),
         })
     }
 

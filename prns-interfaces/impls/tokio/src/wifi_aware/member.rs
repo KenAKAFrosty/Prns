@@ -32,7 +32,7 @@ impl<S> WifiAwareMember<S> {
             channel_tag,
             stream: Some(stream),
             policy,
-            status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
+            status: TokioInterfaceStatus::new_accounted(id, ConnectionState::Connected),
             closed: None,
         }
     }
@@ -109,6 +109,10 @@ impl<S> prns_core::interfaces::ReportsStatus for WifiAwareMember<S> {
 
     fn connection_view(&self) -> Option<prns_core::interfaces::ConnectionView> {
         Some(prns_core::interfaces::ConnectionView::of(self.status()))
+    }
+
+    fn frame_accounting_recorder(&self) -> Option<prns_core::interfaces::FrameAccountingRecorder> {
+        prns_core::interfaces::FrameAccountingRecorder::of(self.status())
     }
 }
 

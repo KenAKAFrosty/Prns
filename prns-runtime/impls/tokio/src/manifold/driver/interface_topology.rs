@@ -2,7 +2,7 @@ use prns_core::interfaces::{AttachedInterfaces, IndexedAttachedInterfaces};
 
 use crate::engine::{Departure, EngineState, InstantMillis};
 use crate::interfaces::InterfaceIfac;
-use crate::interfaces::{InterfaceDescriptor, InterfaceId};
+use crate::interfaces::{FrameAccountingRecorder, InterfaceDescriptor, InterfaceId};
 use crate::manifold::interface_seam::{frame_cap_for, BROADCAST_WIRE_FRAME_LEN};
 use crate::manifold::Host;
 use crate::storage::StorageLayout;
@@ -15,6 +15,7 @@ pub(super) struct InterfaceTopology {
     pub(super) interfaces: IndexedAttachedInterfaces,
     pub(super) ifacs: std::vec::Vec<InterfaceIfac>,
     pub(super) inbound_lanes: std::vec::Vec<(InterfaceId, TokioGrantConsumer)>,
+    frame_accounting: std::vec::Vec<FrameAccountingRecorder>,
     pub(super) pacers: std::vec::Vec<InterfacePacer>,
     pub(super) egress: Egress,
 }
@@ -43,6 +44,7 @@ impl InterfaceTopology {
             interfaces,
             ifacs,
             inbound_lanes,
+            frame_accounting: std::vec::Vec::new(),
             pacers,
             egress,
         }
@@ -73,6 +75,7 @@ impl InterfaceTopology {
             inbound,
             egress,
             connection,
+            frame_accounting,
             ifac,
         } = add;
         let id = descriptor.id;
@@ -96,6 +99,12 @@ impl InterfaceTopology {
         engine.interface_attached(id, now);
         self.interfaces.push(descriptor);
         self.inbound_lanes.push((id, inbound));
+        if let Some(recorder) = frame_accounting {
+            debug_assert_eq!(recorder.id(), id);
+            if recorder.id() == id {
+                self.frame_accounting.push(recorder);
+            }
+        }
         self.egress
             .add_lane(id, logical_interface, egress, connection);
         if let Some(context) = ifac {
@@ -114,8 +123,19 @@ impl InterfaceTopology {
         engine.interface_departed(id, departure, now);
         self.interfaces.remove(id);
         self.inbound_lanes.retain(|(lane_id, _)| *lane_id != id);
+        self.frame_accounting.retain(|recorder| recorder.id() != id);
         self.pacers.retain(|pacer| pacer.id != id);
         self.ifacs.retain(|entry| entry.id != id);
         self.egress.remove_lane(id);
+    }
+
+    pub(super) fn frame_accounting_recorder(
+        &self,
+        source: InterfaceId,
+    ) -> Option<FrameAccountingRecorder> {
+        self.frame_accounting
+            .iter()
+            .find(|recorder| recorder.id() == source)
+            .cloned()
     }
 }

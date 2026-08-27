@@ -145,6 +145,7 @@ pub struct AddInterfaceCommand {
     pub inbound: TokioGrantConsumer,
     pub egress: TokioGrantProducer,
     pub connection: Option<ConnectionView>,
+    pub frame_accounting: Option<crate::interfaces::FrameAccountingRecorder>,
     pub ifac: Option<crate::interfaces::IfacContext>,
 }
 

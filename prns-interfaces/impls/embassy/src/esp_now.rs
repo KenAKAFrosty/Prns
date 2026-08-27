@@ -82,7 +82,6 @@ impl<R: EspNowRadio> Interface for EspNowInterface<'_, R> {
         let mut rx_buf = Box::new([0u8; ESP_NOW_V2_AIR_MTU]);
         let mut throughput = ThroughputLedger::new();
         let started = Instant::now();
-        status.account_frames();
         status.set_connection(ConnectionState::Connected);
         crate::diagnostic_log::info!("RNS_ESPNOW interface up, policy {policy:?}");
 

@@ -4,7 +4,9 @@ use crate::engine::{
     ClassifiedInboundPacket, DeferredCrypto, EngineState, IngestIo, Journaled, ProofIngest,
     ProofRequest, Settlement, WakeSchedules,
 };
-use crate::interfaces::{InboundPacket, InterfaceId, PacketPhyStats};
+use crate::interfaces::{
+    FrameAccountingEvent, IfacUnmaskError, InboundPacket, InterfaceId, PacketPhyStats,
+};
 use crate::manifold::kernel::merge_wake_schedules_delta;
 use crate::manifold::Host;
 use crate::routing::dedup::PacketHash;
@@ -102,6 +104,7 @@ impl InboundDispatch {
         }
 
         for &source in ready_lanes.iter() {
+            let frame_accounting = topology.frame_accounting_recorder(source);
             let Some((_, lane)) = topology
                 .inbound_lanes
                 .iter_mut()
@@ -120,13 +123,27 @@ impl InboundDispatch {
                 let packet_phy = slot.packet_phy;
                 let bytes = match ifac_for(&topology.ifacs, source) {
                     Some(entry) => {
-                        let Some(clean_len) =
-                            entry.context.unmask_inbound(slot.frame(), unmask_scratch)
-                        else {
-                            lane.release();
-                            continue;
-                        };
-                        &mut unmask_scratch[..clean_len]
+                        match entry
+                            .context
+                            .try_unmask_inbound(slot.frame(), unmask_scratch)
+                        {
+                            Ok(clean_len) => &mut unmask_scratch[..clean_len],
+                            Err(IfacUnmaskError::PacketTooShort) => {
+                                if let Some(recorder) = &frame_accounting {
+                                    recorder.record(FrameAccountingEvent::ProtocolViolation);
+                                }
+                                lane.release();
+                                continue;
+                            }
+                            Err(
+                                IfacUnmaskError::MissingFlag
+                                | IfacUnmaskError::InvalidSignature
+                                | IfacUnmaskError::OutputTooSmall { .. },
+                            ) => {
+                                lane.release();
+                                continue;
+                            }
+                        }
                     }
                     None => slot.frame_mut(),
                 };
@@ -174,11 +191,11 @@ impl InboundDispatch {
                         }
                     }
                 }
-                let wake_schedules_delta = match crypto_pool {
+                let ingest_report = match crypto_pool {
                     Some(pool) => {
                         let mut deferred_sign = None;
                         let mut deferred = DeferredCrypto::default();
-                        let delta = engine.ingest_classified_into_deferring(
+                        let report = engine.ingest_classified_into_deferring_report(
                             packet,
                             IngestIo {
                                 interfaces: topology.interfaces.view(),
@@ -212,9 +229,9 @@ impl InboundDispatch {
                                 pool.submit(CryptoJob::VerifyAnnounce(owed));
                             }
                         }
-                        delta
+                        report
                     }
-                    None => engine.ingest_classified_into(
+                    None => engine.ingest_classified_into_report(
                         packet,
                         IngestIo {
                             interfaces: topology.interfaces.view(),
@@ -226,10 +243,19 @@ impl InboundDispatch {
                         },
                     ),
                 };
+                if let (Some(recorder), Some(violation)) =
+                    (&frame_accounting, ingest_report.protocol_violation)
+                {
+                    recorder.record(if violation.is_malformed() {
+                        FrameAccountingEvent::Malformed
+                    } else {
+                        FrameAccountingEvent::ProtocolViolation
+                    });
+                }
                 lane.release();
                 merge_wake_schedules_delta(
                     wake_schedules,
-                    wake_schedules_delta,
+                    ingest_report.wake_schedules,
                     engine,
                     topology.interfaces.view(),
                 );

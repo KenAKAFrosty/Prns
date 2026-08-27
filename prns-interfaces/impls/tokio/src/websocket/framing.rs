@@ -394,7 +394,7 @@ mod tests {
             inbound: Some(inbound_sender),
         };
         let id = InterfaceId::from_channel_tag(InterfaceKind::WebSocketServerPeer, b"auto-test");
-        let status = TokioInterfaceStatus::new(id, ConnectionState::Connected);
+        let status = TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Connected);
         let started = tokio::time::Instant::now();
         let task = tokio::spawn(async move {
             let mut seam = seam;
@@ -494,7 +494,7 @@ mod tests {
             inbound: None,
         };
         let id = InterfaceId::from_channel_tag(InterfaceKind::WebSocketServerPeer, b"kiss-test");
-        let status = TokioInterfaceStatus::new(id, ConnectionState::Connected);
+        let status = TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Connected);
         let task = tokio::spawn(async move {
             let mut seam = seam;
             let mut airtime = AirtimeLedger::new();

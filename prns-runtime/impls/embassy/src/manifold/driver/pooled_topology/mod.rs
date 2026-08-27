@@ -9,7 +9,9 @@ use crate::engine::{
     ProofRequest,
 };
 use crate::interfaces::InterfaceIfac;
-use crate::interfaces::{AttachedInterfaces, InboundPacket, InterfaceDescriptor, InterfaceId};
+use crate::interfaces::{
+    AttachedInterfaces, IfacUnmaskError, InboundPacket, InterfaceDescriptor, InterfaceId,
+};
 use crate::manifold::grant::{FrameTarget, ManifoldLaneReader};
 use crate::manifold::interface_seam::{EMBEDDED_MAX_LINK_MTU, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use crate::manifold::kernel::{fire_due_reason, merge_wake_schedules_delta};
@@ -23,7 +25,7 @@ use super::egress::{
     flush_due_pacers, ifac_for, route_reaction, soonest_pacer_release, InterfacePacer,
     ManifoldEgress, PooledEgress,
 };
-use super::interface_status::account_malformed_frame;
+use super::interface_status::account_protocol_violation;
 use super::packet_phy::retain_packet_phy;
 use super::EmbassyInterfaceStatus;
 
@@ -171,13 +173,28 @@ pub(crate) async fn run_pooled<
                         let mut unmasked = [0u8; EMBEDDED_MAX_WIRE_FRAME_LEN];
                         let bytes = match ifac_for(ifacs, *lane_id) {
                             Some(entry) => {
-                                let Some(clean_len) =
-                                    entry.context.unmask_inbound(frame, &mut unmasked)
-                                else {
-                                    lane.release();
-                                    continue;
-                                };
-                                &mut unmasked[..clean_len]
+                                match entry.context.try_unmask_inbound(frame, &mut unmasked) {
+                                    Ok(clean_len) => &mut unmasked[..clean_len],
+                                    Err(IfacUnmaskError::PacketTooShort) => {
+                                        account_protocol_violation(
+                                            frame_accounting_statuses,
+                                            source,
+                                            Some(
+                                                crate::engine::ProtocolViolationKind::InvalidIfacEnvelope,
+                                            ),
+                                        );
+                                        lane.release();
+                                        continue;
+                                    }
+                                    Err(
+                                        IfacUnmaskError::MissingFlag
+                                        | IfacUnmaskError::InvalidSignature
+                                        | IfacUnmaskError::OutputTooSmall { .. },
+                                    ) => {
+                                        lane.release();
+                                        continue;
+                                    }
+                                }
                             }
                             None => frame,
                         };
@@ -187,9 +204,8 @@ pub(crate) async fn run_pooled<
                             source_interface: source,
                             bytes,
                         });
-                        account_malformed_frame(frame_accounting_statuses, source, &packet);
                         retain_packet_phy(store, &packet, packet_phy);
-                        let delta = engine.ingest_classified_into(
+                        let report = engine.ingest_classified_into_report(
                             packet,
                             IngestIo {
                                 interfaces: AttachedInterfaces::new(&*descriptors),
@@ -212,10 +228,15 @@ pub(crate) async fn run_pooled<
                                 },
                             },
                         );
+                        account_protocol_violation(
+                            frame_accounting_statuses,
+                            source,
+                            report.protocol_violation,
+                        );
                         lane.release();
                         merge_wake_schedules_delta(
                             &mut wake_schedules,
-                            delta,
+                            report.wake_schedules,
                             &*engine,
                             AttachedInterfaces::new(&*descriptors),
                         );

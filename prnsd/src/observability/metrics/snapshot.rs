@@ -64,10 +64,11 @@ impl MetricsReporter {
     }
 
     fn record_interfaces(
-        &self,
+        &mut self,
         interfaces: &[InterfaceInventoryEntry],
         snapshot: &RuntimeMetricsSnapshot,
     ) {
+        let mut current_frame_accounting = std::collections::HashMap::new();
         for interface in interfaces {
             let kind = interface
                 .snapshot
@@ -130,6 +131,63 @@ impl MetricsReporter {
                 self.instruments
                     .interface_io_bytes
                     .record(bytes, &io_attributes);
+            }
+
+            if let Some(current) = interface.frame_accounting.complete() {
+                let previous = &self.previous_frame_accounting;
+                let previous = frame_accounting_previous(
+                    previous,
+                    interface.snapshot.id,
+                    interface.attachment_epoch,
+                );
+                for (event, current, previous) in [
+                    (
+                        "received",
+                        current.frames_in,
+                        previous.map(|accounting| accounting.frames_in),
+                    ),
+                    (
+                        "delivered",
+                        current.delivered,
+                        previous.map(|accounting| accounting.delivered),
+                    ),
+                    (
+                        "malformed",
+                        current.malformed,
+                        previous.map(|accounting| accounting.malformed),
+                    ),
+                    (
+                        "protocol_violation",
+                        current.protocol_violations,
+                        previous.map(|accounting| accounting.protocol_violations),
+                    ),
+                    (
+                        "undecodable",
+                        current.undecodable,
+                        previous.map(|accounting| accounting.undecodable),
+                    ),
+                ] {
+                    let frame_attributes = [
+                        attributes[0].clone(),
+                        attributes[1].clone(),
+                        attributes[2].clone(),
+                        KeyValue::new("event", event),
+                    ];
+                    let value = reset_aware_delta(current, previous);
+                    if value != 0 {
+                        self.instruments
+                            .interface_receive_frames
+                            .add(value, &frame_attributes);
+                    }
+                }
+                current_frame_accounting
+                    .insert(interface.snapshot.id, (interface.attachment_epoch, current));
+            } else if let Some(previous) = self
+                .previous_frame_accounting
+                .get(&interface.snapshot.id)
+                .filter(|(epoch, _)| *epoch == interface.attachment_epoch)
+            {
+                current_frame_accounting.insert(interface.snapshot.id, *previous);
             }
 
             let ingress = snapshot
@@ -276,6 +334,7 @@ impl MetricsReporter {
                     &attributes,
                 );
         }
+        self.previous_frame_accounting = current_frame_accounting;
     }
 
     fn record_engine(&self, snapshot: &RuntimeMetricsSnapshot) {
@@ -639,6 +698,27 @@ fn delta(current: u64, previous: Option<u64>) -> u64 {
     current.saturating_sub(previous.unwrap_or(0))
 }
 
+fn reset_aware_delta(current: u64, previous: Option<u64>) -> u64 {
+    match previous {
+        Some(previous) if current >= previous => current - previous,
+        Some(_) | None => current,
+    }
+}
+
+fn frame_accounting_previous(
+    previous: &std::collections::HashMap<
+        personal_rns::interfaces::InterfaceId,
+        (u64, personal_rns::interfaces::FrameAccounting),
+    >,
+    id: personal_rns::interfaces::InterfaceId,
+    attachment_epoch: u64,
+) -> Option<personal_rns::interfaces::FrameAccounting> {
+    previous
+        .get(&id)
+        .filter(|(epoch, _)| *epoch == attachment_epoch)
+        .map(|(_, accounting)| *accounting)
+}
+
 fn add_delta(counter: &Counter<u64>, current: u64, previous: Option<u64>, attributes: &[KeyValue]) {
     let value = delta(current, previous);
     if value != 0 {
@@ -654,5 +734,42 @@ mod tests {
         assert_eq!(delta(10, None), 10);
         assert_eq!(delta(15, Some(10)), 5);
         assert_eq!(delta(3, Some(10)), 0);
+    }
+
+    #[test]
+    fn frame_snapshots_restart_after_a_source_reset() {
+        assert_eq!(reset_aware_delta(10, None), 10);
+        assert_eq!(reset_aware_delta(15, Some(10)), 5);
+        assert_eq!(reset_aware_delta(3, Some(10)), 3);
+        assert_eq!(reset_aware_delta(0, Some(10)), 0);
+    }
+
+    #[test]
+    fn detached_or_replaced_frame_sources_have_no_previous_snapshot() {
+        let id = personal_rns::interfaces::InterfaceId::new([0x51; 8]);
+        let accounting = personal_rns::interfaces::FrameAccounting {
+            frames_in: 10,
+            malformed: 1,
+            protocol_violations: 3,
+            undecodable: 2,
+            delivered: 9,
+        };
+        let mut previous = std::collections::HashMap::from([(id, (7, accounting))]);
+
+        assert_eq!(
+            frame_accounting_previous(&previous, id, 7),
+            Some(accounting)
+        );
+        assert_eq!(frame_accounting_previous(&previous, id, 8), None);
+        previous.remove(&id);
+        assert_eq!(frame_accounting_previous(&previous, id, 7), None);
+    }
+
+    #[test]
+    fn unaccounted_and_partial_inventory_never_become_zero_samples() {
+        use personal_rns::node_introspection::FrameAccountingCoverage;
+
+        assert_eq!(FrameAccountingCoverage::Unavailable.complete(), None);
+        assert_eq!(FrameAccountingCoverage::Incomplete.complete(), None);
     }
 }

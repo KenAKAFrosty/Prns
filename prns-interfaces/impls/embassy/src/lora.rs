@@ -858,8 +858,6 @@ impl<R: LoRaRadio> Interface for LoRaInterface<'_, R> {
             lifecycle,
         } = self;
         let mut current_id = id;
-        status.account_frames();
-
         if let Err(e) = radio.initialize(profile).await {
             crate::diagnostic_log::error!("RNS_LORA radio init failed: {e:?}; interface offline");
             status.set_connection(ConnectionState::Disconnected);
@@ -1503,9 +1501,10 @@ mod tests {
 
     #[test]
     fn receive_accounting_distinguishes_reassembly_resync_from_delivery() {
-        let status =
-            EmbassyInterfaceStatus::new(id_of(&DEFAULT_915_PROFILE), ConnectionState::Connected);
-        status.account_frames();
+        let status = EmbassyInterfaceStatus::new_accounted(
+            id_of(&DEFAULT_915_PROFILE),
+            ConnectionState::Connected,
+        );
         let mut throughput = ThroughputLedger::new();
         let mut reassembler = LoRaReassembler::<LORA_MAX_PAYLOAD>::new();
         let mut seam = RecordingInboundSeam {
@@ -1554,6 +1553,7 @@ mod tests {
             Some(FrameAccounting {
                 frames_in: 4,
                 malformed: 1,
+                protocol_violations: 2,
                 undecodable: 1,
                 delivered: 1,
             })

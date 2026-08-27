@@ -6,7 +6,7 @@ mod link_handshake_completion;
 mod packet_dispatch;
 mod relay;
 
-pub use packet_dispatch::IngestIo;
+pub use packet_dispatch::{IngestIo, IngestPacketReport};
 
 use crate::engine::Journaled;
 use crate::routing::RemovedRoute;

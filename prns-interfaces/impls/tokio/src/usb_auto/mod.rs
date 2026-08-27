@@ -169,7 +169,7 @@ impl<Scan, Open> UsbAutoHost<Scan, Open> {
             scan,
             open,
             policy,
-            status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
+            status: TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Initializing),
             rescan,
         }
     }

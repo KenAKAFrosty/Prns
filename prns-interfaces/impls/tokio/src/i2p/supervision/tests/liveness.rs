@@ -40,7 +40,10 @@ impl InterfaceSeam for PendingSeam {
 
 #[tokio::test(start_paused = true)]
 async fn watchdog_keepalive_degradation_recovery_and_timeout_match_reference_timing() {
-    let status = TokioInterfaceStatus::new(InterfaceId::new([0x71; 8]), ConnectionState::Connected);
+    let status = TokioInterfaceStatus::new_accounted(
+        InterfaceId::new([0x71; 8]),
+        ConnectionState::Connected,
+    );
     let task_status = status.clone();
     let (local, mut remote) = tokio::io::duplex(1024);
     let task = tokio::spawn(async move {

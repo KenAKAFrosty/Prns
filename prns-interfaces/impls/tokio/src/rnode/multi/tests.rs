@@ -150,7 +150,10 @@ fn wire_cycle(
                     station_identification.clone(),
                 ),
                 meters: MemberMeters {
-                    status: TokioInterfaceStatus::new(settings.id(), ConnectionState::Connected),
+                    status: TokioInterfaceStatus::new_unaccounted(
+                        settings.id(),
+                        ConnectionState::Connected,
+                    ),
                     airtime: AirtimeLedger::new(),
                     throughput: ThroughputLedger::new(),
                     started,

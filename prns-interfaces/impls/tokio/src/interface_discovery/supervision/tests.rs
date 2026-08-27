@@ -111,7 +111,10 @@ fn auto_connect_capacity_reports_only_when_auto_connect_is_enabled() {
     let interface = InterfaceId::new([0x35; 8]);
     service.statuses.insert(
         interface,
-        TokioInterfaceStatus::new(interface, prns_core::interfaces::ConnectionState::Connected),
+        TokioInterfaceStatus::new_unaccounted(
+            interface,
+            prns_core::interfaces::ConnectionState::Connected,
+        ),
     );
     service.report_auto_connect_capacity(&mut |event| {
         if let TokioDiscoveryEvent::AutoConnectCapacity { online, maximum } = event {

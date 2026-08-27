@@ -2,22 +2,26 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
-use crate::engine::ClassifiedInboundPacket;
+use crate::engine::ProtocolViolationKind;
 use crate::interfaces::{
     AirtimeUtilization, ConnectionState, FrameAccounting, InterfaceId, InterfaceStatus,
     TransferRates,
 };
 
-pub(super) fn account_malformed_frame(
+pub(super) fn account_protocol_violation(
     statuses: &[&EmbassyInterfaceStatus],
     source: InterfaceId,
-    packet: &ClassifiedInboundPacket<'_>,
+    violation: Option<ProtocolViolationKind>,
 ) {
-    if !packet.is_malformed() {
+    let Some(violation) = violation else {
         return;
-    }
+    };
     if let Some(status) = statuses.iter().find(|status| status.id() == source) {
-        status.count_frame_malformed();
+        if violation.is_malformed() {
+            status.count_frame_malformed();
+        } else {
+            status.count_protocol_violation();
+        }
     }
 }
 
@@ -30,9 +34,10 @@ pub struct EmbassyInterfaceStatus {
     transfer_rates: AtomicU64,
     enabled: AtomicBool,
     enabled_changed: Signal<CriticalSectionRawMutex, bool>,
-    accounts_frames: AtomicBool,
+    publishes_frame_accounting: bool,
     frames_in: AtomicU64,
     frames_malformed: AtomicU64,
+    protocol_violations: AtomicU64,
     frames_undecodable: AtomicU64,
     frames_delivered: AtomicU64,
 }
@@ -42,7 +47,20 @@ const RATES_UNPUBLISHED: u64 = u64::MAX;
 
 impl EmbassyInterfaceStatus {
     #[must_use]
-    pub const fn new(id: InterfaceId, connection: ConnectionState) -> Self {
+    pub const fn new_accounted(id: InterfaceId, connection: ConnectionState) -> Self {
+        Self::new(id, connection, true)
+    }
+
+    #[must_use]
+    pub const fn new_unaccounted(id: InterfaceId, connection: ConnectionState) -> Self {
+        Self::new(id, connection, false)
+    }
+
+    const fn new(
+        id: InterfaceId,
+        connection: ConnectionState,
+        publishes_frame_accounting: bool,
+    ) -> Self {
         Self {
             id: AtomicU64::new(u64::from_be_bytes(*id.as_bytes())),
             connection: AtomicU8::new(connection.as_u8()),
@@ -52,9 +70,10 @@ impl EmbassyInterfaceStatus {
             transfer_rates: AtomicU64::new(RATES_UNPUBLISHED),
             enabled: AtomicBool::new(true),
             enabled_changed: Signal::new(),
-            accounts_frames: AtomicBool::new(false),
+            publishes_frame_accounting,
             frames_in: AtomicU64::new(0),
             frames_malformed: AtomicU64::new(0),
+            protocol_violations: AtomicU64::new(0),
             frames_undecodable: AtomicU64::new(0),
             frames_delivered: AtomicU64::new(0),
         }
@@ -131,23 +150,22 @@ impl EmbassyInterfaceStatus {
         self.transfer_rates.store(packed, Ordering::Relaxed);
     }
 
-    /// Declare that this interface counts frames, so a reader can tell an idle accounted link
-    /// (all-zero) from a family that never counted (`None`). A driver calls this once at bring-up,
-    /// before the first frame, and the counters publish from then on.
-    pub fn account_frames(&self) {
-        self.accounts_frames.store(true, Ordering::Relaxed);
-    }
-
     pub fn count_frame_in(&self) {
         self.frames_in.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn count_frame_malformed(&self) {
         self.frames_malformed.fetch_add(1, Ordering::Relaxed);
+        self.count_protocol_violation();
+    }
+
+    pub fn count_protocol_violation(&self) {
+        self.protocol_violations.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn count_frame_undecodable(&self) {
         self.frames_undecodable.fetch_add(1, Ordering::Relaxed);
+        self.count_protocol_violation();
     }
 
     pub fn count_frame_delivered(&self) {
@@ -198,12 +216,13 @@ impl InterfaceStatus for EmbassyInterfaceStatus {
     }
 
     fn frame_accounting(&self) -> Option<FrameAccounting> {
-        if !self.accounts_frames.load(Ordering::Relaxed) {
+        if !self.publishes_frame_accounting {
             return None;
         }
         Some(FrameAccounting {
             frames_in: self.frames_in.load(Ordering::Relaxed),
             malformed: self.frames_malformed.load(Ordering::Relaxed),
+            protocol_violations: self.protocol_violations.load(Ordering::Relaxed),
             undecodable: self.frames_undecodable.load(Ordering::Relaxed),
             delivered: self.frames_delivered.load(Ordering::Relaxed),
         })
@@ -213,14 +232,14 @@ impl InterfaceStatus for EmbassyInterfaceStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::InstantMillis;
-    use crate::interfaces::InboundPacket;
     use embassy_futures::{block_on, join::join};
 
     #[test]
     fn enabled_state_changes_wake_waiters() {
-        let status =
-            EmbassyInterfaceStatus::new(InterfaceId::new([0x5A; 8]), ConnectionState::Initializing);
+        let status = EmbassyInterfaceStatus::new_unaccounted(
+            InterfaceId::new([0x5A; 8]),
+            ConnectionState::Initializing,
+        );
 
         block_on(async {
             join(status.wait_until_disabled(), async {
@@ -240,18 +259,20 @@ mod tests {
     }
 
     #[test]
-    fn frame_accounting_stays_unpublished_until_declared() {
-        let status =
-            EmbassyInterfaceStatus::new(InterfaceId::new([0x5A; 8]), ConnectionState::Connected);
+    fn construction_decides_whether_frame_accounting_is_published() {
+        let status = EmbassyInterfaceStatus::new_unaccounted(
+            InterfaceId::new([0x5A; 8]),
+            ConnectionState::Connected,
+        );
 
-        // Counting before declaring must not publish: a family that never declares stays None,
-        // and None must remain distinguishable from an idle link's all-zero.
         status.count_frame_in();
         assert_eq!(status.frame_accounting(), None);
 
-        status.account_frames();
-        let counts = status.frame_accounting().unwrap();
-        assert_eq!(counts.frames_in, 1);
+        let status = EmbassyInterfaceStatus::new_accounted(
+            InterfaceId::new([0x5A; 8]),
+            ConnectionState::Connected,
+        );
+        assert_eq!(status.frame_accounting(), Some(FrameAccounting::default()));
 
         status.count_frame_in();
         status.count_frame_malformed();
@@ -262,34 +283,32 @@ mod tests {
             (
                 counts.frames_in,
                 counts.malformed,
+                counts.protocol_violations,
                 counts.undecodable,
                 counts.delivered
             ),
-            (2, 1, 1, 1)
+            (1, 1, 2, 1, 1)
         );
     }
 
     #[test]
-    fn malformed_classification_is_charged_to_its_source_interface() {
+    fn protocol_violation_is_charged_to_its_source_interface() {
         let source = InterfaceId::new([0x5A; 8]);
         let other = InterfaceId::new([0x6B; 8]);
-        let source_status = EmbassyInterfaceStatus::new(source, ConnectionState::Connected);
-        let other_status = EmbassyInterfaceStatus::new(other, ConnectionState::Connected);
-        source_status.account_frames();
-        other_status.account_frames();
-        let mut bytes = [0x01];
-        let packet = ClassifiedInboundPacket::classify(InboundPacket {
-            arrived_at: InstantMillis(1),
-            source_interface: source,
-            bytes: &mut bytes,
-        });
-
-        account_malformed_frame(&[&other_status, &source_status], source, &packet);
+        let source_status =
+            EmbassyInterfaceStatus::new_accounted(source, ConnectionState::Connected);
+        let other_status = EmbassyInterfaceStatus::new_accounted(other, ConnectionState::Connected);
+        account_protocol_violation(
+            &[&other_status, &source_status],
+            source,
+            Some(ProtocolViolationKind::Malformed),
+        );
 
         assert_eq!(
             source_status.frame_accounting(),
             Some(FrameAccounting {
                 malformed: 1,
+                protocol_violations: 1,
                 ..FrameAccounting::default()
             })
         );
