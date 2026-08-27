@@ -38,6 +38,11 @@ pub struct RemoteControlPublicAppData<'a> {
 
 impl<'a> RemoteControlPublicAppData<'a> {
     #[must_use]
+    pub const fn empty() -> Self {
+        Self { bytes: &[] }
+    }
+
+    #[must_use]
     pub const fn as_bytes(&self) -> &'a [u8] {
         self.bytes
     }
@@ -191,6 +196,7 @@ mod tests {
         let maximum = [0xA5; MAX_REMOTE_CONTROL_PUBLIC_APP_DATA_LEN];
         let oversized = [0x5A; OVERSIZED_PUBLIC_APP_DATA_LEN];
 
+        assert_eq!(RemoteControlPublicAppData::empty().as_bytes(), &[]);
         assert_eq!(
             RemoteControlAnnouncementData::MAX_ENCODED_LEN,
             MAX_ANNOUNCE_APP_DATA_LEN,

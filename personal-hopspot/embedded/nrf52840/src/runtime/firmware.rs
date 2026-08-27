@@ -21,6 +21,9 @@ use personal_rns::interfaces::{ConnectionState, InterfaceStatus};
 use personal_rns::lora::{LoRaApplyOutcome, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
 use personal_rns::manifold::embassy::{EmbassyHost, EmbassyInterfaceStatus};
 use personal_rns::manifold::interface_seam::Interface;
+use personal_rns::remote_control::{
+    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlService,
+};
 use personal_rns::runtime::{Fleet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe};
 use personal_rns::storage::StorageLayout;
 use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
@@ -65,21 +68,38 @@ async fn manifold_task(
 
 #[allow(clippy::too_many_lines)]
 pub async fn run(spawner: Spawner) -> ! {
-    let ((node_bootstrap, ble_bootstrap, runtime_entropy_seed), early_hardware) =
-        Board::initialize_identities(|nvmc, rng| {
-            let mut fill_entropy = |bytes: &mut [u8]| rng.blocking_fill_bytes(bytes);
-            let node_bootstrap = board::bootstrap_node_identity(nvmc, &mut fill_entropy);
-            let ble_bootstrap = board::bootstrap_ble_identity(nvmc, &mut fill_entropy);
-            let mut runtime_entropy_seed =
-                personal_rns::identity::Zeroizing::new([0u8; RUNTIME_ENTROPY_SEED_LEN]);
-            fill_entropy(&mut runtime_entropy_seed[..]);
-            (node_bootstrap, ble_bootstrap, runtime_entropy_seed)
-        });
+    let (
+        (node_bootstrap, remote_control_bootstrap, ble_bootstrap, runtime_entropy_seed),
+        early_hardware,
+    ) = Board::initialize_identities(|nvmc, rng| {
+        let mut fill_entropy = |bytes: &mut [u8]| rng.blocking_fill_bytes(bytes);
+        let node_bootstrap = board::bootstrap_node_identity(nvmc, &mut fill_entropy);
+        let remote_control_bootstrap = board::REMOTE_CONTROL_IDENTITY_FLASH
+            .load_or_generate(nvmc, &mut fill_entropy)
+            .expect("RemoteControl identity bootstrap failed");
+        let ble_bootstrap = board::bootstrap_ble_identity(nvmc, &mut fill_entropy);
+        let mut runtime_entropy_seed =
+            personal_rns::identity::Zeroizing::new([0u8; RUNTIME_ENTROPY_SEED_LEN]);
+        fill_entropy(&mut runtime_entropy_seed[..]);
+        (
+            node_bootstrap,
+            remote_control_bootstrap,
+            ble_bootstrap,
+            runtime_entropy_seed,
+        )
+    });
     initialize_runtime_entropy(&runtime_entropy_seed);
     drop(runtime_entropy_seed);
     let identity_startup_notice =
         board::identity_startup_notice(node_bootstrap.persistence(), ble_bootstrap.persistence());
     let node_identity = node_bootstrap.into_identity();
+    let (remote_control_identity_secrets, _remote_control_identity_origins) =
+        remote_control_bootstrap.into_parts();
+    let remote_control = RemoteControlService::new(
+        remote_control_identity_secrets,
+        RemoteControlPublicAppData::empty(),
+        RemoteControlInitialAccess::Nobody,
+    );
     let ble_identity = Some(ble_bootstrap.into_identity());
 
     let EarlyHardware {
@@ -235,6 +255,7 @@ pub async fn run(spawner: Spawner) -> ! {
     static NODE: StaticCell<Node> = StaticCell::new();
     let recipe = PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
+        remote_control,
         pre_configured_destinations: hopspot::HopspotDestinationSet::new(
             destination_secret,
             ANNOUNCE_APP_DATA,

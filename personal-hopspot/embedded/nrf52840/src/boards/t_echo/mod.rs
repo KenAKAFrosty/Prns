@@ -22,6 +22,10 @@ pub(crate) const JOURNAL_LAYOUT: personal_rns::persistence::FlashJournalLayout =
     personal_hopspot_core::T_ECHO_JOURNAL_LAYOUT;
 pub(crate) const RADIO_PROFILE_PAGES: [u32; 2] =
     personal_hopspot_core::NRF52840_RADIO_PROFILE_PAGES;
+pub(crate) const REMOTE_CONTROL_IDENTITY_FLASH: super::RemoteControlIdentityFlash =
+    super::RemoteControlIdentityFlash::at(
+        personal_hopspot_core::T_ECHO_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET,
+    );
 pub(crate) const USB_MANUFACTURER: &str = "Stay Personal";
 pub(crate) const USB_PRODUCT: &str = "Personal Hopspot (T-Echo)";
 pub(crate) const USB_SERIAL_NUMBER: &str = "PERSONAL-RNS-TECHO-HOP";
