@@ -2,9 +2,11 @@ pub use crate::{
     request_endpoints, AnnounceNowError, CommandId, DestinationHash, Diagnostic, InterfaceStatus,
     ManuallyAttached, Message, NoPersistence, PacketReceiptDelivered, PreConfiguredDestination,
     PrnsCommand, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, ProofStrategy, RatchetPolicy,
-    RemoteControlAnnounce, RemoteControlAnnounceFailure, RemoteControlDescribe, RemoteControlError,
-    ResourceMemoryLimits, ResourceStrategy, RuntimeHealth, SendError,
-    SetRegisteredAnnounceAppDataError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
+    RemoteControlAccessControl, RemoteControlAnnounce, RemoteControlAnnounceFailure,
+    RemoteControlDescribe, RemoteControlError, ResourceMemoryLimits, ResourceStrategy,
+    RevokeRemoteControlControllerControlError, RuntimeHealth, SendError,
+    SetRegisteredAnnounceAppDataError, SetRemoteControlControllerGrantControlError, Zeroizing,
+    IDENTITY_SECRET_KEY_LEN,
 };
 
 pub use crate::remote_control::{
