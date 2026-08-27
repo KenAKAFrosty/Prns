@@ -1,18 +1,16 @@
 use heapless::Vec;
 
-use crate::remote_control::{RemoteControlAccessTable, RemoteControlControllerIdentity};
+use crate::remote_control::{RemoteControlAccessTable, RemoteControlControllerGrant};
 use crate::storage::TablePushError;
 
 #[derive(Debug)]
 pub struct FixedRemoteControlAccessTable<const ACCESS_SLOTS: usize> {
-    identities: Vec<RemoteControlControllerIdentity, ACCESS_SLOTS>,
+    grants: Vec<RemoteControlControllerGrant, ACCESS_SLOTS>,
 }
 
 impl<const ACCESS_SLOTS: usize> Default for FixedRemoteControlAccessTable<ACCESS_SLOTS> {
     fn default() -> Self {
-        Self {
-            identities: Vec::new(),
-        }
+        Self { grants: Vec::new() }
     }
 }
 
@@ -24,29 +22,29 @@ impl<const ACCESS_SLOTS: usize> RemoteControlAccessTable
     }
 
     fn len(&self) -> usize {
-        self.identities.len()
+        self.grants.len()
     }
 
-    fn identities(&self) -> &[RemoteControlControllerIdentity] {
-        self.identities.as_slice()
+    fn grants(&self) -> &[RemoteControlControllerGrant] {
+        self.grants.as_slice()
     }
 
-    fn upsert(&mut self, identity: RemoteControlControllerIdentity) -> Result<(), TablePushError> {
-        let identity_hash = identity.identity_hash();
+    fn upsert(&mut self, grant: RemoteControlControllerGrant) -> Result<(), TablePushError> {
+        let identity_hash = grant.controller().identity_hash();
         if let Some(current) = self
-            .identities
+            .grants
             .iter_mut()
-            .find(|candidate| candidate.identity_hash() == identity_hash)
+            .find(|candidate| candidate.controller().identity_hash() == identity_hash)
         {
-            *current = identity;
+            *current = grant;
             return Ok(());
         }
-        self.identities
-            .push(identity)
+        self.grants
+            .push(grant)
             .map_err(|_| TablePushError::TableFull)
     }
 
     fn swap_remove(&mut self, index: usize) {
-        self.identities.swap_remove(index);
+        self.grants.swap_remove(index);
     }
 }

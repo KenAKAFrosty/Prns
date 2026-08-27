@@ -2,8 +2,8 @@ use crate::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, SendRequestFai
 use crate::remote_control::{
     RemoteControlAccessTable, RemoteControlAnnounceOutcome, RemoteControlDescription,
     RemoteControlMessageWriteError, RemoteControlProtocolError, RemoteControlRequest,
-    RemoteControlResponse, RemoteControlResponseKind, RemoteControlResponseParseError,
-    REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
+    RemoteControlRequestParseError, RemoteControlResponse, RemoteControlResponseKind,
+    RemoteControlResponseParseError, REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
 };
 use crate::units::ByteLimit;
 
@@ -124,15 +124,13 @@ impl RemoteControlAnnounce {
 
 struct RemoteControlRequestEndpoint;
 
-impl<AppState> RequestEndpoint<AppState> for RemoteControlRequestEndpoint {
-    const ENDPOINT_ID: &'static str = REMOTE_CONTROL_REQUEST_ENDPOINT_ID;
-    const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::RequireIdentified;
-
-    async fn handle(
+impl RemoteControlRequestEndpoint {
+    async fn handle_parsed<AppState>(
         mut context: RequestContext<'_, AppState>,
         node: &impl PrnsNodeApi,
+        request: Result<RemoteControlRequest, RemoteControlRequestParseError>,
     ) -> Result<(), Decline> {
-        let response = match RemoteControlRequest::parse(context.data) {
+        let response = match request {
             Ok(RemoteControlRequest::Describe) => {
                 RemoteControlResponse::Describe(RemoteControlDescription::default())
             }
@@ -169,6 +167,19 @@ impl<AppState> RequestEndpoint<AppState> for RemoteControlRequestEndpoint {
     }
 }
 
+impl<AppState> RequestEndpoint<AppState> for RemoteControlRequestEndpoint {
+    const ENDPOINT_ID: &'static str = REMOTE_CONTROL_REQUEST_ENDPOINT_ID;
+    const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::RequireIdentified;
+
+    async fn handle(
+        context: RequestContext<'_, AppState>,
+        node: &impl PrnsNodeApi,
+    ) -> Result<(), Decline> {
+        let request = RemoteControlRequest::parse(context.data);
+        Self::handle_parsed(context, node, request).await
+    }
+}
+
 pub async fn dispatch_remote_control_request<'a, AppState, Access>(
     state: &'a AppState,
     access: &Access,
@@ -182,11 +193,22 @@ where
     let Some(requester) = request.requester else {
         return Err(Decline::Ignore);
     };
-    if !access.contains(&requester) {
+    let Some(grant) = access.grant_for(&requester) else {
+        return Err(Decline::Ignore);
+    };
+    let parsed = RemoteControlRequest::parse(request.data);
+    if parsed
+        .as_ref()
+        .is_ok_and(|request| !grant.permits(request.kind()))
+    {
         return Err(Decline::Ignore);
     }
-    RemoteControlRequestEndpoint::handle(RequestContext::from_inbound(state, request, sink), node)
-        .await
+    RemoteControlRequestEndpoint::handle_parsed(
+        RequestContext::from_inbound(state, request, sink),
+        node,
+        parsed,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -197,8 +219,9 @@ mod tests {
         IdentityEncryptionPublicKey, IdentityHash, IdentityPublicKeys, IdentitySigningPublicKey,
     };
     use crate::remote_control::{
-        FixedRemoteControlAccessTable, RemoteControlControllerIdentity,
-        RemoteControlProtocolVersion, RemoteControlRequestKind,
+        FixedRemoteControlAccessTable, RemoteControlControllerGrant,
+        RemoteControlControllerIdentity, RemoteControlProtocolVersion, RemoteControlRequestKind,
+        RemoteControlRequestSet,
     };
     use crate::routing::links::request::RequestId;
     use crate::routing::links::LinkId;
@@ -286,8 +309,17 @@ mod tests {
     }
 
     fn access(allowed: RemoteControlControllerIdentity) -> FixedRemoteControlAccessTable<1> {
+        access_permitting(allowed, RemoteControlRequestSet::all())
+    }
+
+    fn access_permitting(
+        allowed: RemoteControlControllerIdentity,
+        permitted_requests: RemoteControlRequestSet,
+    ) -> FixedRemoteControlAccessTable<1> {
         let mut access = FixedRemoteControlAccessTable::default();
-        access.upsert(allowed).unwrap();
+        access
+            .upsert(RemoteControlControllerGrant::new(allowed, permitted_requests).unwrap())
+            .unwrap();
         access
     }
 
@@ -458,6 +490,50 @@ mod tests {
                     RemoteControlAnnounceOutcome::Announced,
                 )),
             );
+        });
+    }
+
+    #[test]
+    fn a_controller_grant_reaches_only_its_permitted_requests() {
+        futures_executor::block_on(async {
+            let allowed = identity(0x33);
+            let access = access_permitting(
+                allowed,
+                RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
+            );
+            let node = AnnounceNode::new(Ok(()));
+            let mut response =
+                heapless::Vec::<u8, { RemoteControlResponse::MAX_ENCODED_LEN }>::new();
+
+            assert_eq!(
+                dispatch_with_node(
+                    &access,
+                    &node,
+                    Some(allowed.identity_hash()),
+                    &announce_request(),
+                    &mut response,
+                )
+                .await,
+                Err(Decline::Ignore),
+            );
+            assert!(response.is_empty());
+            assert!(node.received.borrow().is_none());
+
+            assert_eq!(
+                dispatch_with_node(
+                    &access,
+                    &node,
+                    Some(allowed.identity_hash()),
+                    &describe_request(),
+                    &mut response,
+                )
+                .await,
+                Ok(()),
+            );
+            assert!(matches!(
+                RemoteControlResponse::parse(response.as_slice()),
+                Ok(RemoteControlResponse::Describe(_)),
+            ));
         });
     }
 

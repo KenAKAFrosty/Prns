@@ -8,10 +8,11 @@ pub use crate::{
 };
 
 pub use crate::remote_control::{
-    RemoteControlAccessTable, RemoteControlAllowedControllers, RemoteControlAnnounceOutcome,
-    RemoteControlControllerIdentity, RemoteControlControllerIdentitySecret,
-    RemoteControlDescription, RemoteControlEndpoint, RemoteControlInitialAccess,
-    RemoteControlMessageWriteError, RemoteControlNodeIdentities,
+    RemoteControlAccessTable, RemoteControlAnnounceOutcome, RemoteControlControllerGrant,
+    RemoteControlControllerGrantError, RemoteControlControllerGrants,
+    RemoteControlControllerGrantsError, RemoteControlControllerIdentity,
+    RemoteControlControllerIdentitySecret, RemoteControlDescription, RemoteControlEndpoint,
+    RemoteControlInitialAccess, RemoteControlMessageWriteError, RemoteControlNodeIdentities,
     RemoteControlNodeIdentityBootstrap, RemoteControlNodeIdentityBootstrapError,
     RemoteControlNodeIdentityGenerationError, RemoteControlNodeIdentityOrigins,
     RemoteControlNodeIdentitySecrets, RemoteControlNodeIdentitySecretsError,

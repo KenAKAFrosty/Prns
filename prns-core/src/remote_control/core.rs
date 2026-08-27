@@ -3,6 +3,8 @@ use crate::identity::vault::IdentitySecretKey;
 use crate::identity::{IdentityHash, IdentityPublicKeys, IDENTITY_SECRET_KEY_LEN};
 use crate::storage::TablePushError;
 
+use super::{RemoteControlRequestKind, RemoteControlRequestSet};
+
 pub const REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY: usize = 2;
 
 pub struct RemoteControlControllerIdentitySecret {
@@ -185,6 +187,47 @@ impl RemoteControlControllerIdentity {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlControllerGrantError {
+    NoPermittedRequests,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemoteControlControllerGrant {
+    controller: RemoteControlControllerIdentity,
+    permitted_requests: RemoteControlRequestSet,
+}
+
+impl RemoteControlControllerGrant {
+    pub fn new(
+        controller: RemoteControlControllerIdentity,
+        permitted_requests: RemoteControlRequestSet,
+    ) -> Result<Self, RemoteControlControllerGrantError> {
+        if permitted_requests.is_empty() {
+            return Err(RemoteControlControllerGrantError::NoPermittedRequests);
+        }
+        Ok(Self {
+            controller,
+            permitted_requests,
+        })
+    }
+
+    #[must_use]
+    pub const fn controller(&self) -> &RemoteControlControllerIdentity {
+        &self.controller
+    }
+
+    #[must_use]
+    pub const fn permitted_requests(&self) -> &RemoteControlRequestSet {
+        &self.permitted_requests
+    }
+
+    #[must_use]
+    pub fn permits(&self, request: RemoteControlRequestKind) -> bool {
+        self.permitted_requests.supports(request)
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct RemoteControlTargetIdentity {
     identity_hash: IdentityHash,
@@ -211,8 +254,8 @@ pub enum RemoveRemoteControlAccessOutcome {
 pub trait RemoteControlAccessTable {
     fn capacity(&self) -> usize;
     fn len(&self) -> usize;
-    fn identities(&self) -> &[RemoteControlControllerIdentity];
-    fn upsert(&mut self, identity: RemoteControlControllerIdentity) -> Result<(), TablePushError>;
+    fn grants(&self) -> &[RemoteControlControllerGrant];
+    fn upsert(&mut self, grant: RemoteControlControllerGrant) -> Result<(), TablePushError>;
     fn swap_remove(&mut self, index: usize);
 
     fn is_empty(&self) -> bool {
@@ -220,16 +263,16 @@ pub trait RemoteControlAccessTable {
     }
 
     fn index_of(&self, identity: &IdentityHash) -> Option<usize> {
-        self.identities()
+        self.grants()
             .iter()
-            .position(|candidate| candidate.identity_hash() == *identity)
+            .position(|grant| grant.controller().identity_hash() == *identity)
     }
 
-    fn get(&self, identity: &IdentityHash) -> Option<&RemoteControlControllerIdentity> {
+    fn grant_for(&self, identity: &IdentityHash) -> Option<&RemoteControlControllerGrant> {
         //It's expected this will be a very short list (single digit members allowed in most cases, etc.)
         //Because the domain fundamentally wants to keep this tight, quick scans like this are not only okay but probably faster
         //If we start getting to like ~32 members or more to support real use cases or something, we'll want to improve this with a proper index.
-        self.identities().get(self.index_of(identity)?)
+        self.grants().get(self.index_of(identity)?)
     }
 
     fn contains(&self, identity: &IdentityHash) -> bool {

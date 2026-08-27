@@ -55,8 +55,8 @@ pub use envelope::{
 #[allow(unused_imports)]
 pub use impls::*;
 pub use remote_control_access::{
-    read_remote_control_access_snapshot, remote_control_access_snapshot_len,
-    write_remote_control_access_snapshot, PersistedRemoteControlControllerIdentities,
+    read_remote_control_access_snapshot, remote_control_access_snapshot_capacity,
+    write_remote_control_access_snapshot, PersistedRemoteControlControllerGrants,
     REMOTE_CONTROL_CONTROLLER_IDENTITY_WIRE_LEN,
 };
 pub use routing_table::{

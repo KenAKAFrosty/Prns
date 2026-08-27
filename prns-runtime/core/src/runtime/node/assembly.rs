@@ -8,7 +8,7 @@ use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::remote_control::{
     FixedRemoteControlAccessTable, RemoteControlAccessTable, RemoteControlAnnouncementData,
     RemoteControlAnnouncementDataWriteError, RemoteControlEndpoint, RemoteControlNodeIdentities,
-    RemoteControlRequest, RemoteControlService, DEFAULT_MAX_REMOTE_CONTROL_ALLOWED_CONTROLLERS,
+    RemoteControlRequest, RemoteControlService, DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS,
     REMOTE_CONTROL_APPLICATION_ASPECTS, REMOTE_CONTROL_APPLICATION_NAME,
     REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
 };
@@ -41,7 +41,7 @@ pub struct AssembledRemoteControl {
     identities: RemoteControlNodeIdentities,
     target_endpoint: RemoteControlEndpoint,
     request_endpoint_id: RequestPathHash,
-    access: FixedRemoteControlAccessTable<DEFAULT_MAX_REMOTE_CONTROL_ALLOWED_CONTROLLERS>,
+    access: FixedRemoteControlAccessTable<DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS>,
 }
 
 impl AssembledRemoteControl {
@@ -63,7 +63,7 @@ impl AssembledRemoteControl {
     #[must_use]
     pub const fn access(
         &self,
-    ) -> &FixedRemoteControlAccessTable<DEFAULT_MAX_REMOTE_CONTROL_ALLOWED_CONTROLLERS> {
+    ) -> &FixedRemoteControlAccessTable<DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS> {
         &self.access
     }
 }
@@ -189,9 +189,9 @@ where
         )
         .map_err(ConfigureRemoteControlServiceError::RegisterRequestEndpoint)?;
     let mut access = FixedRemoteControlAccessTable::default();
-    for controller in initial_access.controllers() {
+    for grant in initial_access.grants() {
         access
-            .upsert(*controller)
+            .upsert(*grant)
             .map_err(ConfigureRemoteControlServiceError::BuildAccess)?;
     }
     Ok(AssembledRemoteControl {
@@ -393,10 +393,10 @@ mod tests {
     use crate::identity::vault::IdentitySecretKey;
     use crate::identity::IdentityHash;
     use crate::remote_control::{
-        RemoteControlAllowedControllers, RemoteControlControllerIdentity,
-        RemoteControlControllerIdentitySecret, RemoteControlInitialAccess,
-        RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData,
-        RemoteControlTargetIdentitySecret,
+        RemoteControlControllerGrant, RemoteControlControllerGrants,
+        RemoteControlControllerIdentity, RemoteControlControllerIdentitySecret,
+        RemoteControlInitialAccess, RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData,
+        RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlTargetIdentitySecret,
     };
     use crate::routing::request_handlers::RequestPathHash;
     use crate::runtime::request_endpoints::{Decline, RequestContext, RequestEndpointPolicy};
@@ -426,6 +426,14 @@ mod tests {
         *remote_control_identity_secrets(fill, fill.saturating_add(1))
             .identities()
             .controller()
+    }
+
+    fn remote_control_grant(fill: u8) -> RemoteControlControllerGrant {
+        RemoteControlControllerGrant::new(
+            remote_control_controller(fill),
+            RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
+        )
+        .unwrap()
     }
 
     fn remote_control_service() -> RemoteControlService<'static> {
@@ -521,12 +529,9 @@ mod tests {
         let mut engine = EngineState::<Storage>::default();
         let identity_secrets = remote_control_identity_secrets(0x31, 0x32);
         let expected_identities = identity_secrets.identities();
-        let allowed = [
-            remote_control_controller(0x41),
-            remote_control_controller(0x51),
-        ];
-        let initial_access = RemoteControlInitialAccess::Controllers(
-            RemoteControlAllowedControllers::try_from(allowed.as_slice()).unwrap(),
+        let grants = [remote_control_grant(0x41), remote_control_grant(0x51)];
+        let initial_access = RemoteControlInitialAccess::Grants(
+            RemoteControlControllerGrants::try_from(grants.as_slice()).unwrap(),
         );
         let service = RemoteControlService::new(
             identity_secrets,
@@ -539,7 +544,7 @@ mod tests {
         let target_destination = target_endpoint.destination_hash();
 
         assert_eq!(configured.identities(), &expected_identities);
-        assert_eq!(configured.access().identities(), allowed.as_slice());
+        assert_eq!(configured.access().grants(), grants.as_slice());
         assert_eq!(engine.transport_id(), None);
         assert_eq!(engine.held_identity_hashes().len(), 2);
         assert_eq!(

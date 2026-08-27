@@ -17,13 +17,17 @@ async fn main() {
     let controller_identities = controller_identity_secrets.identities();
     let controller_identity = controller_identities.controller().identity_hash();
     let controller_public_identity = *controller_identities.controller();
-    let allowed_controllers = [controller_public_identity];
+    let controller_grants = [RemoteControlControllerGrant::new(
+        controller_public_identity,
+        RemoteControlRequestSet::all(),
+    )
+    .expect("the complete request set is not empty")];
     let target_remote_control = RemoteControlService::new(
         target_identity_secrets,
         RemoteControlPublicAppData::try_from(b"target".as_slice()).expect("target app data fits"),
-        RemoteControlInitialAccess::Controllers(
-            RemoteControlAllowedControllers::try_from(allowed_controllers.as_slice())
-                .expect("one controller is allowed"),
+        RemoteControlInitialAccess::Grants(
+            RemoteControlControllerGrants::try_from(controller_grants.as_slice())
+                .expect("one controller grant is configured"),
         ),
     );
     let controller_remote_control = RemoteControlService::new(

@@ -14,17 +14,23 @@ fn identity(fill: u8) -> RemoteControlControllerIdentity {
     })
 }
 
+fn grant(fill: u8, request: RemoteControlRequestKind) -> RemoteControlControllerGrant {
+    RemoteControlControllerGrant::new(identity(fill), RemoteControlRequestSet::only(request))
+        .unwrap()
+}
+
 fn table_contract(table: &mut impl RemoteControlAccessTable) {
-    let first = identity(0x21);
-    let second = identity(0x43);
-    let first_hash = first.identity_hash();
-    let second_hash = second.identity_hash();
+    let first = grant(0x21, RemoteControlRequestKind::Describe);
+    let updated_first = grant(0x21, RemoteControlRequestKind::Announce);
+    let second = grant(0x43, RemoteControlRequestKind::Describe);
+    let first_hash = first.controller().identity_hash();
+    let second_hash = second.controller().identity_hash();
 
     assert!(table.is_empty());
     assert_eq!(table.upsert(first), Ok(()));
-    assert_eq!(table.upsert(first), Ok(()));
+    assert_eq!(table.upsert(updated_first), Ok(()));
     assert_eq!(table.len(), 1);
-    assert_eq!(table.get(&first_hash), Some(&first));
+    assert_eq!(table.grant_for(&first_hash), Some(&updated_first));
     assert!(table.contains(&first_hash));
     assert!(!table.contains(&second_hash));
     assert_eq!(
@@ -37,7 +43,7 @@ fn table_contract(table: &mut impl RemoteControlAccessTable) {
         table.remove(&first_hash),
         RemoveRemoteControlAccessOutcome::Removed,
     );
-    assert_eq!(table.identities(), &[second]);
+    assert_eq!(table.grants(), &[second]);
 }
 
 #[test]
@@ -51,12 +57,16 @@ fn fixed_table_obeys_the_access_table_contract() {
 #[test]
 fn a_full_fixed_table_refuses_only_a_new_identity() {
     let mut table = FixedRemoteControlAccessTable::<1>::default();
-    let first = identity(0x65);
+    let first = grant(0x65, RemoteControlRequestKind::Describe);
+    let updated_first = grant(0x65, RemoteControlRequestKind::Announce);
 
     assert_eq!(table.upsert(first), Ok(()));
-    assert_eq!(table.upsert(first), Ok(()));
-    assert_eq!(table.upsert(identity(0x87)), Err(TablePushError::TableFull),);
-    assert_eq!(table.identities(), &[first]);
+    assert_eq!(table.upsert(updated_first), Ok(()));
+    assert_eq!(
+        table.upsert(grant(0x87, RemoteControlRequestKind::Describe)),
+        Err(TablePushError::TableFull),
+    );
+    assert_eq!(table.grants(), &[updated_first]);
 }
 
 #[cfg(feature = "alloc")]
@@ -73,7 +83,10 @@ fn a_zero_capacity_table_is_an_empty_disabled_table() {
     let mut table = FixedRemoteControlAccessTable::<0>::default();
 
     assert!(table.is_empty());
-    assert_eq!(table.upsert(identity(0xA9)), Err(TablePushError::TableFull),);
+    assert_eq!(
+        table.upsert(grant(0xA9, RemoteControlRequestKind::Describe)),
+        Err(TablePushError::TableFull),
+    );
 }
 
 fn identity_secret(fill: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
@@ -270,7 +283,7 @@ fn announce_request_round_trips_through_its_own_wire_shape() {
 
 #[test]
 fn describe_response_reports_its_supported_requests_canonically() {
-    let mut supported = RemoteControlRequestSet::new();
+    let mut supported = RemoteControlRequestSet::all();
     assert_eq!(supported.len(), 2);
     assert!(!supported.insert(RemoteControlRequestKind::Describe));
     assert!(!supported.insert(RemoteControlRequestKind::Announce));

@@ -38,7 +38,7 @@ impl RemoteControlRequestKind {
         self as u8
     }
 
-    fn from_wire(value: u8) -> Option<Self> {
+    pub(crate) fn from_wire(value: u8) -> Option<Self> {
         enum_from_wire(value, Self::ALL, Self::wire_value)
     }
 
@@ -196,7 +196,22 @@ pub struct RemoteControlRequestSet {
 
 impl RemoteControlRequestSet {
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn empty() -> Self {
+        Self {
+            bits: [0; REQUEST_KIND_BITMAP_LEN],
+            len: 0,
+        }
+    }
+
+    #[must_use]
+    pub fn only(kind: RemoteControlRequestKind) -> Self {
+        let mut requests = Self::empty();
+        let _inserted = requests.insert(kind);
+        requests
+    }
+
+    #[must_use]
+    pub fn all() -> Self {
         let mut supported = Self::empty();
         for kind in RemoteControlRequestKind::ALL {
             let _inserted = supported.insert(kind);
@@ -241,19 +256,6 @@ impl RemoteControlRequestSet {
             .into_iter()
             .filter(|kind| self.supports(*kind))
     }
-
-    fn empty() -> Self {
-        Self {
-            bits: [0; REQUEST_KIND_BITMAP_LEN],
-            len: 0,
-        }
-    }
-}
-
-impl Default for RemoteControlRequestSet {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl core::fmt::Debug for RemoteControlRequestSet {
@@ -281,7 +283,7 @@ impl RemoteControlDescription {
 
 impl Default for RemoteControlDescription {
     fn default() -> Self {
-        Self::new(RemoteControlRequestSet::new())
+        Self::new(RemoteControlRequestSet::all())
     }
 }
 

@@ -1,72 +1,72 @@
 use crate::identity::IdentityHash;
 
 use super::{
-    RemoteControlControllerIdentity, RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData,
+    RemoteControlControllerGrant, RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData,
 };
 
-pub const DEFAULT_MAX_REMOTE_CONTROL_ALLOWED_CONTROLLERS: usize = 8;
+pub const DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS: usize = 8;
 pub const REMOTE_CONTROL_REQUEST_ENDPOINT_ID: &str = "/remote-control";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RemoteControlAllowedControllersError {
+pub enum RemoteControlControllerGrantsError {
     Empty,
     TooMany { actual: usize, maximum: usize },
     Duplicate { identity: IdentityHash },
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct RemoteControlAllowedControllers<'a> {
-    identities: &'a [RemoteControlControllerIdentity],
+pub struct RemoteControlControllerGrants<'a> {
+    grants: &'a [RemoteControlControllerGrant],
 }
 
-impl<'a> RemoteControlAllowedControllers<'a> {
+impl<'a> RemoteControlControllerGrants<'a> {
     #[must_use]
-    pub const fn identities(&self) -> &'a [RemoteControlControllerIdentity] {
-        self.identities
+    pub const fn grants(&self) -> &'a [RemoteControlControllerGrant] {
+        self.grants
     }
 }
 
-impl<'a> TryFrom<&'a [RemoteControlControllerIdentity]> for RemoteControlAllowedControllers<'a> {
-    type Error = RemoteControlAllowedControllersError;
+impl<'a> TryFrom<&'a [RemoteControlControllerGrant]> for RemoteControlControllerGrants<'a> {
+    type Error = RemoteControlControllerGrantsError;
 
-    fn try_from(identities: &'a [RemoteControlControllerIdentity]) -> Result<Self, Self::Error> {
-        if identities.is_empty() {
-            return Err(RemoteControlAllowedControllersError::Empty);
+    fn try_from(grants: &'a [RemoteControlControllerGrant]) -> Result<Self, Self::Error> {
+        if grants.is_empty() {
+            return Err(RemoteControlControllerGrantsError::Empty);
         }
-        if identities.len() > DEFAULT_MAX_REMOTE_CONTROL_ALLOWED_CONTROLLERS {
-            return Err(RemoteControlAllowedControllersError::TooMany {
-                actual: identities.len(),
-                maximum: DEFAULT_MAX_REMOTE_CONTROL_ALLOWED_CONTROLLERS,
+        if grants.len() > DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS {
+            return Err(RemoteControlControllerGrantsError::TooMany {
+                actual: grants.len(),
+                maximum: DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS,
             });
         }
-        for (index, identity) in identities.iter().enumerate() {
-            let identity_hash = identity.identity_hash();
-            if identities
+        for (index, grant) in grants.iter().enumerate() {
+            let identity_hash = grant.controller().identity_hash();
+            if grants
                 .iter()
                 .skip(index.saturating_add(1))
-                .any(|candidate| candidate.identity_hash() == identity_hash)
+                .any(|candidate| candidate.controller().identity_hash() == identity_hash)
             {
-                return Err(RemoteControlAllowedControllersError::Duplicate {
+                return Err(RemoteControlControllerGrantsError::Duplicate {
                     identity: identity_hash,
                 });
             }
         }
-        Ok(Self { identities })
+        Ok(Self { grants })
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum RemoteControlInitialAccess<'a> {
     Nobody,
-    Controllers(RemoteControlAllowedControllers<'a>),
+    Grants(RemoteControlControllerGrants<'a>),
 }
 
 impl RemoteControlInitialAccess<'_> {
     #[must_use]
-    pub const fn controllers(&self) -> &[RemoteControlControllerIdentity] {
+    pub const fn grants(&self) -> &[RemoteControlControllerGrant] {
         match self {
             Self::Nobody => &[],
-            Self::Controllers(controllers) => controllers.identities(),
+            Self::Grants(grants) => grants.grants(),
         }
     }
 }
@@ -132,11 +132,12 @@ mod tests {
         IDENTITY_SECRET_KEY_LEN,
     };
     use crate::remote_control::{
-        RemoteControlControllerIdentitySecret, RemoteControlTargetIdentitySecret,
+        RemoteControlControllerGrantError, RemoteControlControllerIdentity,
+        RemoteControlControllerIdentitySecret, RemoteControlRequestKind, RemoteControlRequestSet,
+        RemoteControlTargetIdentitySecret,
     };
 
-    const TOO_MANY_CONTROLLERS: usize =
-        DEFAULT_MAX_REMOTE_CONTROL_ALLOWED_CONTROLLERS.saturating_add(1);
+    const TOO_MANY_GRANTS: usize = DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS.saturating_add(1);
 
     fn controller(fill: u8) -> RemoteControlControllerIdentity {
         RemoteControlControllerIdentity::new(IdentityPublicKeys {
@@ -145,64 +146,85 @@ mod tests {
         })
     }
 
+    fn grant(fill: u8) -> RemoteControlControllerGrant {
+        RemoteControlControllerGrant::new(
+            controller(fill),
+            RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
+        )
+        .unwrap()
+    }
+
     #[test]
-    fn initial_access_requires_an_explicit_nobody_or_nonempty_controller_set() {
-        assert_eq!(RemoteControlInitialAccess::Nobody.controllers(), &[],);
+    fn a_controller_grant_requires_at_least_one_permitted_request() {
         assert_eq!(
-            RemoteControlAllowedControllers::try_from([].as_slice()),
-            Err(RemoteControlAllowedControllersError::Empty),
+            RemoteControlControllerGrant::new(controller(1), RemoteControlRequestSet::empty()),
+            Err(RemoteControlControllerGrantError::NoPermittedRequests),
+        );
+        let controller = controller(2);
+        let permitted_requests = RemoteControlRequestSet::only(RemoteControlRequestKind::Announce);
+        let grant = RemoteControlControllerGrant::new(controller, permitted_requests).unwrap();
+
+        assert_eq!(grant.controller(), &controller);
+        assert_eq!(grant.permitted_requests(), &permitted_requests);
+        assert!(!grant.permits(RemoteControlRequestKind::Describe));
+        assert!(grant.permits(RemoteControlRequestKind::Announce));
+    }
+
+    #[test]
+    fn initial_access_requires_an_explicit_nobody_or_nonempty_grant_set() {
+        assert_eq!(RemoteControlInitialAccess::Nobody.grants(), &[],);
+        assert_eq!(
+            RemoteControlControllerGrants::try_from([].as_slice()),
+            Err(RemoteControlControllerGrantsError::Empty),
         );
 
-        let controllers = [controller(1), controller(2)];
-        let allowed = RemoteControlAllowedControllers::try_from(controllers.as_slice());
+        let grants = [grant(1), grant(2)];
+        let allowed = RemoteControlControllerGrants::try_from(grants.as_slice());
         assert_eq!(
-            allowed
-                .as_ref()
-                .map(RemoteControlAllowedControllers::identities),
-            Ok(controllers.as_slice()),
+            allowed.as_ref().map(RemoteControlControllerGrants::grants),
+            Ok(grants.as_slice()),
         );
         assert_eq!(
             allowed
-                .map(RemoteControlInitialAccess::Controllers)
+                .map(RemoteControlInitialAccess::Grants)
                 .as_ref()
-                .map(RemoteControlInitialAccess::controllers),
-            Ok(controllers.as_slice()),
+                .map(RemoteControlInitialAccess::grants),
+            Ok(grants.as_slice()),
         );
     }
 
     #[test]
-    fn initial_access_accepts_exactly_eight_distinct_controllers() {
+    fn initial_access_accepts_exactly_eight_distinct_grants() {
         let maximum =
-            core::array::from_fn::<_, DEFAULT_MAX_REMOTE_CONTROL_ALLOWED_CONTROLLERS, _>(|index| {
-                controller(index as u8)
+            core::array::from_fn::<_, DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS, _>(|index| {
+                grant(index as u8)
             });
-        let oversized =
-            core::array::from_fn::<_, TOO_MANY_CONTROLLERS, _>(|index| controller(index as u8));
+        let oversized = core::array::from_fn::<_, TOO_MANY_GRANTS, _>(|index| grant(index as u8));
 
         assert_eq!(
-            RemoteControlAllowedControllers::try_from(maximum.as_slice())
+            RemoteControlControllerGrants::try_from(maximum.as_slice())
                 .as_ref()
-                .map(|controllers| controllers.identities().len()),
-            Ok(DEFAULT_MAX_REMOTE_CONTROL_ALLOWED_CONTROLLERS),
+                .map(|grants| grants.grants().len()),
+            Ok(DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS),
         );
         assert_eq!(
-            RemoteControlAllowedControllers::try_from(oversized.as_slice()),
-            Err(RemoteControlAllowedControllersError::TooMany {
+            RemoteControlControllerGrants::try_from(oversized.as_slice()),
+            Err(RemoteControlControllerGrantsError::TooMany {
                 actual: oversized.len(),
-                maximum: DEFAULT_MAX_REMOTE_CONTROL_ALLOWED_CONTROLLERS,
+                maximum: DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS,
             }),
         );
     }
 
     #[test]
-    fn initial_access_rejects_a_duplicate_controller_identity() {
-        let duplicate = controller(3);
-        let controllers = [controller(1), duplicate, controller(2), duplicate];
+    fn initial_access_rejects_duplicate_controller_grants() {
+        let duplicate = grant(3);
+        let grants = [grant(1), duplicate, grant(2), duplicate];
 
         assert_eq!(
-            RemoteControlAllowedControllers::try_from(controllers.as_slice()),
-            Err(RemoteControlAllowedControllersError::Duplicate {
-                identity: duplicate.identity_hash(),
+            RemoteControlControllerGrants::try_from(grants.as_slice()),
+            Err(RemoteControlControllerGrantsError::Duplicate {
+                identity: duplicate.controller().identity_hash(),
             }),
         );
     }

@@ -1,11 +1,11 @@
 use alloc::vec::Vec;
 
-use crate::remote_control::{RemoteControlAccessTable, RemoteControlControllerIdentity};
+use crate::remote_control::{RemoteControlAccessTable, RemoteControlControllerGrant};
 use crate::storage::TablePushError;
 
 #[derive(Debug, Default)]
 pub struct HeapRemoteControlAccessTable {
-    identities: Vec<RemoteControlControllerIdentity>,
+    grants: Vec<RemoteControlControllerGrant>,
 }
 
 impl RemoteControlAccessTable for HeapRemoteControlAccessTable {
@@ -14,28 +14,28 @@ impl RemoteControlAccessTable for HeapRemoteControlAccessTable {
     }
 
     fn len(&self) -> usize {
-        self.identities.len()
+        self.grants.len()
     }
 
-    fn identities(&self) -> &[RemoteControlControllerIdentity] {
-        &self.identities
+    fn grants(&self) -> &[RemoteControlControllerGrant] {
+        &self.grants
     }
 
-    fn upsert(&mut self, identity: RemoteControlControllerIdentity) -> Result<(), TablePushError> {
-        let identity_hash = identity.identity_hash();
+    fn upsert(&mut self, grant: RemoteControlControllerGrant) -> Result<(), TablePushError> {
+        let identity_hash = grant.controller().identity_hash();
         if let Some(current) = self
-            .identities
+            .grants
             .iter_mut()
-            .find(|candidate| candidate.identity_hash() == identity_hash)
+            .find(|candidate| candidate.controller().identity_hash() == identity_hash)
         {
-            *current = identity;
+            *current = grant;
             return Ok(());
         }
-        self.identities.push(identity);
+        self.grants.push(grant);
         Ok(())
     }
 
     fn swap_remove(&mut self, index: usize) {
-        self.identities.swap_remove(index);
+        self.grants.swap_remove(index);
     }
 }
