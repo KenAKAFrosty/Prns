@@ -28,9 +28,10 @@ use personal_rns::bluetooth_auto::{
 };
 use personal_rns::interfaces::bluetooth_auto::{
     columba_connection_role, columba_role_capabilities, contains_service, default_group_tag,
-    encode_advertisement, encode_stream_frame, fragments_of, BleAddress, BleIdentity,
-    BleRoleCapabilities, ColumbaConnectionRole, Control, Fragment, L2capPlan, PeerProtocol,
-    Reassembler, BLE_HW_MTU, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,
+    discovery_groups_match, encode_advertisement, encode_stream_frame, fragments_of, BleAddress,
+    BleIdentity, BleRoleCapabilities, ColumbaConnectionRole, Control, Fragment, L2capPlan,
+    PeerProtocol, Reassembler, BLE_HW_MTU, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
+    STREAM_FRAME_PREFIX_LEN,
 };
 use personal_rns::interfaces::bluetooth_auto::{
     AdvertisingMode, BleBackend, BleEvent, BleLink, BleSink, BleSource, DialOutcome, Origin,
@@ -1364,6 +1365,10 @@ pub(super) async fn acceptor(sd: &'static Softdevice, hub: &'static BleHub) -> !
                 default_group_tag(),
             )
             .unwrap_or(0);
+        debug_assert_eq!(
+            adv_len, 31,
+            "SoftDevice classic ADV must fill the 31-byte budget with the group tag"
+        );
         let scan_data = [0x05u8, 0x09, b'P', b'r', b'n', b's'];
         let adv = peripheral::ConnectableAdvertisement::ScannableUndirected {
             adv_data: &adv_buf[..adv_len],
@@ -1426,7 +1431,10 @@ pub(super) async fn scanner(sd: &'static Softdevice, hub: &'static BleHub) -> ! 
                 BleAddress::from_hci_bytes(address.bytes()),
                 capabilities,
             ) == ColumbaConnectionRole::Dial;
-            if contains_service(data) && should_dial {
+            if contains_service(data)
+                && discovery_groups_match(default_group_tag(), data)
+                && should_dial
+            {
                 Some(SeenPeer {
                     address,
                     rssi: report.rssi,

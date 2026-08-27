@@ -24,9 +24,14 @@ pub fn group_tag(group_id: &[u8]) -> [u8; GROUP_TAG_LEN] {
     tag
 }
 
+/// Precomputed [`group_tag`] for [`GROUP_ID`] (`"reticulum"`).
+///
+/// Kept as a const so SoftDevice advertise/scan paths can use it without hashing on every event.
+pub const DEFAULT_GROUP_TAG: [u8; GROUP_TAG_LEN] = [0xea, 0xc4, 0xd7, 0x0b];
+
 /// Group tag for the default discovery group [`GROUP_ID`].
 pub fn default_group_tag() -> [u8; GROUP_TAG_LEN] {
-    group_tag(GROUP_ID)
+    DEFAULT_GROUP_TAG
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -132,7 +137,8 @@ mod tests {
 
     #[test]
     fn group_tag_is_stable_for_the_default_discovery_group() {
-        assert_eq!(group_tag(GROUP_ID), default_group_tag());
+        assert_eq!(group_tag(GROUP_ID), DEFAULT_GROUP_TAG);
+        assert_eq!(default_group_tag(), DEFAULT_GROUP_TAG);
         assert_ne!(group_tag(b"mt-leg-a"), group_tag(b"mt-leg-b"));
     }
 }

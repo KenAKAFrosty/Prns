@@ -29,8 +29,8 @@ pub use handshake::{
 };
 pub use identity::{
     decode_persisted_ble_identity, default_group_tag, encode_persisted_ble_identity, group_tag,
-    BleAddress, BleIdentity, PersistedBleIdentityError, BLE_IDENTITY_LEN, CHANNEL_TAG, GROUP_ID,
-    GROUP_NAME, GROUP_TAG_LEN, PERSISTED_BLE_IDENTITY_LEN,
+    BleAddress, BleIdentity, PersistedBleIdentityError, BLE_IDENTITY_LEN, CHANNEL_TAG,
+    DEFAULT_GROUP_TAG, GROUP_ID, GROUP_NAME, GROUP_TAG_LEN, PERSISTED_BLE_IDENTITY_LEN,
 };
 /// Canonical name for a Bluetooth LE device address.
 pub type BluetoothLeAddress = BleAddress;
