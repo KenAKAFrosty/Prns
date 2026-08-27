@@ -11,6 +11,7 @@ use personal_rns::shared_instance::ExistingSharedInstanceUnavailable;
 use personal_rns::wire::DestinationHash;
 
 use crate::utilities::configuration::UtilityConfigurationError;
+use crate::utilities::remote_control::TransientRemoteControlIdentityError;
 use crate::utilities::session::{UtilityNodeSessionError, UtilityNodeStopped, UtilityPathError};
 
 use super::identity::pretty_hash;
@@ -18,6 +19,7 @@ use super::identity::pretty_hash;
 #[derive(Debug)]
 pub enum RnxError {
     Configuration(UtilityConfigurationError),
+    RemoteControlIdentityUnavailable(TransientRemoteControlIdentityError),
     Identity {
         path: PathBuf,
         source: IdentitySecretFileError,
@@ -55,6 +57,9 @@ impl fmt::Display for RnxError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Configuration(source) => source.fmt(formatter),
+            Self::RemoteControlIdentityUnavailable(source) => {
+                write!(formatter, "could not create RNX RemoteControl identities: {source}")
+            }
             Self::Identity { path, source } => {
                 write!(
                     formatter,
@@ -127,6 +132,7 @@ impl RnxError {
             Self::ResponseCodec(_) => 247,
             Self::RemoteCouldNotExecute => 248,
             Self::Configuration(_)
+            | Self::RemoteControlIdentityUnavailable(_)
             | Self::Identity { .. }
             | Self::HomeUnavailable(_)
             | Self::Io { .. }

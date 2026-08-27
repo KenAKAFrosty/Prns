@@ -1,5 +1,6 @@
 mod arguments;
 mod configuration;
+mod remote_control;
 mod remote_management;
 pub(crate) mod rncp;
 pub(crate) mod rnid;

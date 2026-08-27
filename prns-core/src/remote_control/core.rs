@@ -41,6 +41,40 @@ pub enum RemoteControlNodeIdentityGenerationError<EntropyError> {
     InvalidPair(RemoteControlNodeIdentitySecretsError),
 }
 
+impl<EntropyError> core::fmt::Display for RemoteControlNodeIdentityGenerationError<EntropyError>
+where
+    EntropyError: core::fmt::Display,
+{
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::ControllerEntropy(error) => {
+                write!(
+                    formatter,
+                    "controller identity could not be generated: {error}"
+                )
+            }
+            Self::TargetEntropy(error) => {
+                write!(formatter, "target identity could not be generated: {error}")
+            }
+            Self::InvalidPair(_) => {
+                formatter.write_str("controller and target resolve to the same identity")
+            }
+        }
+    }
+}
+
+impl<EntropyError> core::error::Error for RemoteControlNodeIdentityGenerationError<EntropyError>
+where
+    EntropyError: core::error::Error + 'static,
+{
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::ControllerEntropy(error) | Self::TargetEntropy(error) => Some(error),
+            Self::InvalidPair(_) => None,
+        }
+    }
+}
+
 pub struct RemoteControlNodeIdentitySecrets {
     controller: RemoteControlControllerIdentitySecret,
     target: RemoteControlTargetIdentitySecret,

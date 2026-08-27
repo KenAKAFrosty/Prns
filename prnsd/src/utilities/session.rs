@@ -26,6 +26,9 @@ use personal_rns::units::HopCount;
 use personal_rns::wire::DestinationHash;
 
 use super::configuration::{LoadedConfiguration, UtilityConfigurationError};
+use super::remote_control::{
+    transient_remote_control_service, TransientRemoteControlIdentityError,
+};
 
 type UtilityNode = PrnsNode<(), (), fn(PrnsEvent<'_>, &()), GrowableHeap>;
 
@@ -59,7 +62,7 @@ impl UtilityNodeSession {
         identity: UtilityNodeIdentity,
         rpc_timeout: Duration,
     ) -> Result<Self, UtilityNodeSessionError> {
-        let node = utility_node();
+        let node = utility_node()?;
         let node = match identity {
             UtilityNodeIdentity::Anonymous => node,
             UtilityNodeIdentity::Private(identity) => node
@@ -134,7 +137,7 @@ impl UtilityBusSession {
         configuration: &LoadedConfiguration,
         identity: UtilityNodeIdentity,
     ) -> Result<Self, UtilityNodeSessionError> {
-        let node = utility_node();
+        let node = utility_node()?;
         let node = match identity {
             UtilityNodeIdentity::Anonymous => node,
             UtilityNodeIdentity::Private(identity) => node
@@ -150,7 +153,7 @@ impl UtilityBusSession {
         app_name: &str,
         aspects: &[&str],
     ) -> Result<(Self, DestinationHash), UtilityNodeSessionError> {
-        let mut node = utility_node();
+        let mut node = utility_node()?;
         let destination = node
             .register_preconfigured_destination(PreConfiguredDestination::Single {
                 app_name,
@@ -222,9 +225,11 @@ impl UtilityBusClient {
     }
 }
 
-fn utility_node() -> UtilityNode {
-    PrnsNode::new(PrnsNodeRecipe {
+fn utility_node() -> Result<UtilityNode, TransientRemoteControlIdentityError> {
+    let remote_control = transient_remote_control_service()?;
+    Ok(PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
+        remote_control,
         pre_configured_destinations: std::iter::empty(),
         app_state: (),
         storage: GrowableHeap,
@@ -232,7 +237,7 @@ fn utility_node() -> UtilityNode {
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
         on_event: ignore_event,
-    })
+    }))
 }
 
 fn ignore_event(_event: PrnsEvent<'_>, _state: &()) {}
@@ -265,6 +270,7 @@ impl std::error::Error for UtilityNodeStopped {
 #[derive(Debug)]
 pub enum UtilityNodeSessionError {
     Configuration(UtilityConfigurationError),
+    RemoteControlIdentityUnavailable(TransientRemoteControlIdentityError),
     IdentityConfiguration(NonRoutingIdentityError),
     SharedInstanceUnavailable(ExistingSharedInstanceUnavailable),
     DestinationConfiguration(ConfigurePreconfiguredDestinationError),
@@ -274,6 +280,9 @@ impl fmt::Display for UtilityNodeSessionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Configuration(source) => source.fmt(formatter),
+            Self::RemoteControlIdentityUnavailable(source) => {
+                write!(formatter, "could not create utility RemoteControl identities: {source}")
+            }
             Self::IdentityConfiguration(source) => {
                 write!(
                     formatter,
@@ -295,6 +304,12 @@ impl fmt::Display for UtilityNodeSessionError {
 }
 
 impl std::error::Error for UtilityNodeSessionError {}
+
+impl From<TransientRemoteControlIdentityError> for UtilityNodeSessionError {
+    fn from(source: TransientRemoteControlIdentityError) -> Self {
+        Self::RemoteControlIdentityUnavailable(source)
+    }
+}
 
 #[derive(Debug)]
 pub enum UtilityPathError {

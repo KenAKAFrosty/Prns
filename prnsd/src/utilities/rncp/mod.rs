@@ -41,6 +41,9 @@ use personal_rns::wire::DestinationHash;
 use tokio::sync::{mpsc, oneshot};
 
 use super::configuration::{LoadedConfiguration, UtilityConfigurationError};
+use super::remote_control::{
+    transient_remote_control_service, TransientRemoteControlIdentityError,
+};
 use super::session::{
     UtilityNodeIdentity, UtilityNodeSession, UtilityNodeSessionError, UtilityNodeStopped,
     UtilityPathError,
@@ -479,10 +482,13 @@ where
     F: FnOnce() -> R,
 {
     let (events, receiver) = mpsc::unbounded_channel();
+    let remote_control = transient_remote_control_service()
+        .map_err(RncpError::RemoteControlIdentityUnavailable)?;
     let listener_allowed: Arc<[IdentityHash]> = args.allowed.clone().into();
     let listener_no_auth = args.no_auth;
     let mut node = PrnsNode::new_with_handle(move |handle| personal_rns::runtime::PrnsNodeRecipe {
         transport_identity: None,
+        remote_control,
         pre_configured_destinations: [PreConfiguredDestination::Single {
             app_name: APP_NAME,
             aspects: &[RECEIVE_ASPECT],
@@ -888,6 +894,7 @@ fn pretty_hash(bytes: &[u8]) -> String {
 pub enum RncpError {
     Arguments(&'static str),
     Configuration(UtilityConfigurationError),
+    RemoteControlIdentityUnavailable(TransientRemoteControlIdentityError),
     Identity {
         path: PathBuf,
         source: IdentitySecretFileError,
@@ -921,6 +928,9 @@ impl fmt::Display for RncpError {
         match self {
             Self::Arguments(message) => formatter.write_str(message),
             Self::Configuration(source) => source.fmt(formatter),
+            Self::RemoteControlIdentityUnavailable(source) => {
+                write!(formatter, "could not create RNCP RemoteControl identities: {source}")
+            }
             Self::Identity { path, source } => {
                 write!(
                     formatter,
