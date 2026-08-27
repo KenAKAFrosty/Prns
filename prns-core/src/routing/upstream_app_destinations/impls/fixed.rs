@@ -55,6 +55,9 @@ impl<const MAX_UPSTREAM_APP_DESTINATIONS: usize> UpstreamAppDestinationTable
     fn app_data_at(&self, index: usize) -> Option<&[u8]> {
         self.app_data.get(index).map(|data| data.as_slice())
     }
+    fn app_data_at_mut(&mut self, index: usize) -> Option<&mut AnnounceAppDataBytes> {
+        self.app_data.get_mut(index)
+    }
 
     fn kind_mut(&mut self, index: usize) -> &mut UpstreamAppDestinationKind {
         &mut self.kind[index]

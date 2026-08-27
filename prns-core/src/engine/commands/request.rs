@@ -134,6 +134,7 @@ impl Settleable for SendRequest {
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
+            | Settlement::SetRegisteredAnnounceAppData(_)
             | Settlement::SendPlainPacket(_) => None,
         }
     }
@@ -164,6 +165,7 @@ impl Settleable for Respond {
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
+            | Settlement::SetRegisteredAnnounceAppData(_)
             | Settlement::SendPlainPacket(_) => None,
         }
     }
@@ -194,6 +196,7 @@ impl Settleable for AllowRequester {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
+            | Settlement::SetRegisteredAnnounceAppData(_)
             | Settlement::SendPlainPacket(_) => None,
         }
     }

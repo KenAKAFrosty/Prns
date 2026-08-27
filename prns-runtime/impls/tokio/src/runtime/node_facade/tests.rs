@@ -3,14 +3,15 @@ use tokio::sync::mpsc::{self, UnboundedReceiver};
 use crate::engine::{
     AnnounceNow, AnnounceNowFailure, EstablishLink, EstablishLinkFailure, Identify,
     PacketReceiptDelivered, PathFound, PrnsCommand, SendGroupFailure, SendPlainPacketFailure,
-    Settlement, MAX_SEND_GROUP_PLAINTEXT_LEN, MAX_SEND_PLAIN_PACKET_PAYLOAD_LEN,
-    MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN,
+    SetRegisteredAnnounceAppData, SetRegisteredAnnounceAppDataFailure,
+    SetRegisteredAnnounceAppDataRejection, Settlement, MAX_SEND_GROUP_PLAINTEXT_LEN,
+    MAX_SEND_PLAIN_PACKET_PAYLOAD_LEN, MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN,
 };
 use crate::identity::IdentityHash;
 use crate::manifold::driver::HostCommand;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
-use crate::runtime::{RuntimeRequestHandlerError, SendError};
+use crate::runtime::{RuntimeRequestHandlerError, SendError, SetRegisteredAnnounceAppDataError};
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 
@@ -348,6 +349,42 @@ async fn announce_now_awaits_and_surfaces_its_typed_settlement() {
         announced.await.expect("the announce task joins"),
         Err(crate::runtime::AnnounceNowError::Rejected(
             crate::engine::AnnounceNowRejection::UnknownDestination,
+        )),
+    );
+}
+
+#[tokio::test]
+async fn registered_announce_app_data_update_awaits_and_surfaces_its_typed_settlement() {
+    let (prns, mut command_rx) = handle();
+    let command = SetRegisteredAnnounceAppData {
+        destination: PEER,
+        app_data: crate::routing::announce::emit::AnnounceAppDataBytes::from_slice(b"default")
+            .expect("valid app data"),
+    };
+    let expected = command.clone();
+    let issuer = prns.clone();
+    let updated =
+        tokio::spawn(async move { issuer.set_registered_announce_app_data(command).await });
+    let HostCommand::AwaitedEngine { issued, completion } =
+        command_rx.recv().await.expect("the command was issued")
+    else {
+        panic!("set_registered_announce_app_data must issue an awaited engine command");
+    };
+    assert_eq!(
+        issued.command,
+        PrnsCommand::SetRegisteredAnnounceAppData(expected),
+    );
+    completion
+        .send(Settlement::SetRegisteredAnnounceAppData(Err(
+            SetRegisteredAnnounceAppDataFailure::Rejected(
+                SetRegisteredAnnounceAppDataRejection::UnknownDestination,
+            ),
+        )))
+        .expect("the awaiter is still parked");
+    assert_eq!(
+        updated.await.expect("the update task joins"),
+        Err(SetRegisteredAnnounceAppDataError::Rejected(
+            SetRegisteredAnnounceAppDataRejection::UnknownDestination,
         )),
     );
 }

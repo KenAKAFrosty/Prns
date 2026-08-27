@@ -8,6 +8,7 @@ pub use prns_runtime::runtime::{
     PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, RemoteControlAnnounce,
     RemoteControlAnnounceFailure, RemoteControlDescribe, RemoteControlError, RoutingControl,
     RoutingControlError, RuntimeHealth, SendError, ServeMyRequestEndpoints,
+    SetRegisteredAnnounceAppDataError,
 };
 
 #[cfg(feature = "alloc")]

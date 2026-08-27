@@ -84,7 +84,7 @@ pub use prns_runtime::runtime::{
     PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, RemoteControlAnnounce,
     RemoteControlAnnounceFailure, RemoteControlDescribe, RemoteControlEndpoint,
     RemoteControlEndpointState, RemoteControlError, RuntimeHealth, SendError,
-    REMOTE_CONTROL_ENDPOINT_ID,
+    SetRegisteredAnnounceAppDataError, REMOTE_CONTROL_ENDPOINT_ID,
 };
 pub use prns_runtime::wire::{DestinationHash, TransportId};
 

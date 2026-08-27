@@ -232,6 +232,13 @@ mod tests {
             self.result
         }
 
+        async fn set_registered_announce_app_data(
+            &self,
+            set: crate::engine::SetRegisteredAnnounceAppData,
+        ) -> Result<(), super::super::SetRegisteredAnnounceAppDataError> {
+            <() as PrnsNodeApi>::set_registered_announce_app_data(&(), set).await
+        }
+
         async fn send_single_packet(
             &self,
             destination: DestinationHash,

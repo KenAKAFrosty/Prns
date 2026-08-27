@@ -337,6 +337,7 @@ fn delivery_identity<'a>(delivery: &'a Delivery<'_>) -> &'a [u8] {
 fn settlement_kind(settlement: &Settlement) -> &'static str {
     match settlement {
         Settlement::AnnounceNow(_) => "announce_now",
+        Settlement::SetRegisteredAnnounceAppData(_) => "set_registered_announce_app_data",
         Settlement::SendSinglePacket(_) => "send_single_packet",
         Settlement::SendGroup(_) => "send_group",
         Settlement::SendPlainPacket(_) => "send_plain_packet",
@@ -357,6 +358,7 @@ fn settlement_kind(settlement: &Settlement) -> &'static str {
 fn settlement_outcome(settlement: &Settlement) -> &'static str {
     let succeeded = match settlement {
         Settlement::AnnounceNow(result) => result.is_ok(),
+        Settlement::SetRegisteredAnnounceAppData(result) => result.is_ok(),
         Settlement::SendSinglePacket(result) => result.is_ok(),
         Settlement::SendGroup(result) => result.is_ok(),
         Settlement::SendPlainPacket(result) => result.is_ok(),

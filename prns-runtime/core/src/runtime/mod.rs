@@ -30,7 +30,7 @@ pub use crate::engine::BlackholeSeedReport;
 pub use command::{
     AnnounceNowError, ClearAnnounceQueuesOutcome, DestinationIdentityRetentionControl,
     DestinationIdentityRetentionControlError, DropRouteOutcome, DropRoutesViaOutcome, PrnsNodeApi,
-    RoutingControl, RoutingControlError, SendError,
+    RoutingControl, RoutingControlError, SendError, SetRegisteredAnnounceAppDataError,
 };
 pub use event::{Diagnostic, Message, PrnsEvent};
 pub use health::RuntimeHealth;

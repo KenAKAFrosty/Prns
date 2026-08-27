@@ -2,6 +2,7 @@ mod announce;
 mod channel;
 mod link;
 mod path;
+mod registered_announce_app_data;
 mod request;
 mod resource;
 mod send_group;
@@ -24,6 +25,10 @@ pub use link::{
     MAX_SEND_TO_LINK_PLAINTEXT_LEN,
 };
 pub use path::{PathFound, PathRequestId, RequestPath, RequestPathFailure, PATH_REQUEST_ID_LEN};
+pub use registered_announce_app_data::{
+    SetRegisteredAnnounceAppData, SetRegisteredAnnounceAppDataFailure,
+    SetRegisteredAnnounceAppDataRejection,
+};
 pub use request::{
     AllowRequester, AllowRequesterFailure, AllowRequesterRejection, RequestResponseTimeout,
     Respond, RespondData, RespondFailure, RespondPayload, RespondRejection, SendRequest,
@@ -67,6 +72,7 @@ pub struct IssuedCommand {
 #[repr(C)]
 pub enum PrnsCommand {
     AnnounceNow(AnnounceNow),
+    SetRegisteredAnnounceAppData(SetRegisteredAnnounceAppData),
     SendSinglePacket(SendSinglePacket),
     SendGroup(SendGroup),
     RequestPath(RequestPath),
@@ -93,6 +99,13 @@ pub enum CommandOutcome {
     AnnounceRejected {
         id: CommandId,
         rejection: AnnounceNowRejection,
+    },
+    RegisteredAnnounceAppDataSet {
+        id: CommandId,
+    },
+    SetRegisteredAnnounceAppDataRejected {
+        id: CommandId,
+        rejection: SetRegisteredAnnounceAppDataRejection,
     },
     OwesSendSinglePacket {
         id: CommandId,
@@ -200,6 +213,7 @@ pub enum CommandOutcome {
 #[repr(C)]
 pub enum Settlement {
     AnnounceNow(Result<(), AnnounceNowFailure>),
+    SetRegisteredAnnounceAppData(Result<(), SetRegisteredAnnounceAppDataFailure>),
     SendSinglePacket(Result<PacketReceiptDelivered, SendSinglePacketFailure>),
     SendGroup(Result<(), SendGroupFailure>),
     RequestPath(Result<PathFound, RequestPathFailure>),
@@ -271,6 +285,9 @@ impl<S: StorageLayout> EngineState<S> {
         match command {
             PrnsCommand::AnnounceNow(announce_now) => {
                 self.ingest_announce_now(id, announce_now, interfaces)
+            }
+            PrnsCommand::SetRegisteredAnnounceAppData(set) => {
+                self.ingest_set_registered_announce_app_data(id, set)
             }
             PrnsCommand::SendSinglePacket(send) => self.ingest_send_single_packet(id, send),
             PrnsCommand::SendGroup(send) => self.ingest_send_group(id, send),

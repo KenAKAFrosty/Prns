@@ -11,7 +11,7 @@ use crate::engine::{
     RequestResponseTimeout, Respond, RespondData, RespondPayload, SendGroup, SendGroupFailure,
     SendGroupPayload, SendPlainPacket, SendPlainPacketFailure, SendPlainPacketPayload, SendRequest,
     SendRequestData, SendRequestFailure, SendSinglePacket, SendSinglePacketFailure,
-    SendSinglePacketPayload, Settlement,
+    SendSinglePacketPayload, SetRegisteredAnnounceAppData, Settlement,
 };
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
@@ -19,7 +19,7 @@ use crate::units::{ByteLimit, RttMillis};
 use crate::wire::DestinationHash;
 
 use super::super::request_endpoints::RespondToken;
-use super::super::{AnnounceNowError, PrnsNodeApi, SendError};
+use super::super::{AnnounceNowError, PrnsNodeApi, SendError, SetRegisteredAnnounceAppDataError};
 
 const NO_AWAITER: u64 = u64::MAX;
 
@@ -413,6 +413,35 @@ impl<
         }
     }
 
+    pub async fn set_registered_announce_app_data(
+        &self,
+        set: SetRegisteredAnnounceAppData,
+    ) -> Result<(), SetRegisteredAnnounceAppDataError> {
+        let id = self.pool.mint();
+        let slot = self
+            .pool
+            .claim_settlement(id)
+            .ok_or(SetRegisteredAnnounceAppDataError::Busy)?;
+        let _guard = SlotGuard {
+            pool: self.pool,
+            slot,
+            id,
+        };
+        self.commands
+            .try_send(IssuedCommand {
+                id,
+                command: PrnsCommand::SetRegisteredAnnounceAppData(set),
+            })
+            .map_err(|_| SetRegisteredAnnounceAppDataError::NodeStopped)?;
+        match self.pool.parked(slot).await {
+            Settlement::SetRegisteredAnnounceAppData(Ok(())) => Ok(()),
+            Settlement::SetRegisteredAnnounceAppData(Err(failure)) => {
+                Err(SetRegisteredAnnounceAppDataError::from_failure(failure))
+            }
+            _ => Err(SetRegisteredAnnounceAppDataError::NodeStopped),
+        }
+    }
+
     /// Responds inline; returns `false` when the body exceeds the link MDU or the command lane is full.
     pub fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> bool {
         match RespondData::from_slice(packed) {
@@ -631,6 +660,13 @@ impl<
         announce: crate::engine::AnnounceNow,
     ) -> Result<(), AnnounceNowError> {
         self.announce_now(announce).await
+    }
+
+    async fn set_registered_announce_app_data(
+        &self,
+        set: SetRegisteredAnnounceAppData,
+    ) -> Result<(), SetRegisteredAnnounceAppDataError> {
+        self.set_registered_announce_app_data(set).await
     }
 
     async fn send_single_packet(

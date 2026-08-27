@@ -3,7 +3,7 @@ use crate::engine::{
     IdentifyFailure, Journaled, LinkClosedReason, RequestPathFailure, RespondFailure,
     RouteRemovalCause, SendGroupFailure, SendPlainPacketFailure, SendRequestFailure,
     SendResourceFailure, SendSinglePacketFailure, SendToChannelFailure, SendToLinkFailure,
-    SetResourceStrategyFailure, Settlement,
+    SetRegisteredAnnounceAppDataFailure, SetResourceStrategyFailure, Settlement,
 };
 use crate::routing::links::resources::table::ApplyHashmapUpdateError;
 use crate::routing::links::resources::ResourceFailureCause;
@@ -13,6 +13,7 @@ prns_macros::iterable_enum! {
     #[repr(u8)]
     pub enum RuntimeOperation {
         AnnounceNow,
+        SetRegisteredAnnounceAppData,
         SendSinglePacket,
         SendGroup,
         RequestPath,
@@ -308,6 +309,10 @@ impl From<&Settlement> for SettledOperation {
                 operation: Operation::AnnounceNow,
                 outcome: result.runtime_outcome(),
             },
+            Settlement::SetRegisteredAnnounceAppData(result) => Self {
+                operation: Operation::SetRegisteredAnnounceAppData,
+                outcome: result.runtime_outcome(),
+            },
             Settlement::SendSinglePacket(result) => Self {
                 operation: Operation::SendSinglePacket,
                 outcome: result.runtime_outcome(),
@@ -373,6 +378,14 @@ impl From<&AnnounceNowFailure> for RuntimeOperationOutcome {
         match failure {
             AnnounceNowFailure::Rejected(_) => Self::Rejected,
             AnnounceNowFailure::WriteFailed(_) => Self::WriteFailed,
+        }
+    }
+}
+
+impl From<&SetRegisteredAnnounceAppDataFailure> for RuntimeOperationOutcome {
+    fn from(failure: &SetRegisteredAnnounceAppDataFailure) -> Self {
+        match failure {
+            SetRegisteredAnnounceAppDataFailure::Rejected(_) => Self::Rejected,
         }
     }
 }

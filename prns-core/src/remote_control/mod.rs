@@ -17,6 +17,7 @@ mod core;
 mod endpoint;
 mod impls;
 mod message;
+mod service;
 
 pub use self::core::*;
 pub use announcement_data::*;
@@ -24,6 +25,7 @@ pub use bootstrap::*;
 pub use endpoint::*;
 pub use impls::*;
 pub use message::*;
+pub use service::*;
 
 #[cfg(test)]
 mod tests;

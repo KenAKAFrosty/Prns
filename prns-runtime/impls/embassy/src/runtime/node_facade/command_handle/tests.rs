@@ -2,13 +2,15 @@ use super::{CompletionPool, JournalRoute, RequestSlotGuard, NO_AWAITER};
 use crate::engine::{
     AnnounceAppData, AnnounceNow, AnnounceNowFailure, AnnounceNowRejection, AnnounceTarget,
     CommandId, DeliveryEvidence, IssuedCommand, Journaled, PacketReceiptDelivered, PrnsCommand,
-    SendGroupFailure, SendGroupRejection, SendPlainPacketFailure, SendRequestFailure, Settlement,
-    MAX_SEND_GROUP_PLAINTEXT_LEN, MAX_SEND_PLAIN_PACKET_PAYLOAD_LEN,
+    SendGroupFailure, SendGroupRejection, SendPlainPacketFailure, SendRequestFailure,
+    SetRegisteredAnnounceAppData, SetRegisteredAnnounceAppDataFailure,
+    SetRegisteredAnnounceAppDataRejection, Settlement, MAX_SEND_GROUP_PLAINTEXT_LEN,
+    MAX_SEND_PLAIN_PACKET_PAYLOAD_LEN,
 };
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
-use crate::runtime::{AnnounceNowError, SendError};
+use crate::runtime::{AnnounceNowError, SendError, SetRegisteredAnnounceAppDataError};
 use crate::units::{ByteLimit, RttMillis};
 use crate::wire::DestinationHash;
 use embassy_futures::{block_on, join::join};
@@ -251,6 +253,41 @@ fn announce_now_awaits_and_preserves_its_typed_settlement() {
         result,
         Err(AnnounceNowError::Rejected(
             AnnounceNowRejection::UnknownDestination,
+        )),
+    );
+}
+
+#[test]
+fn registered_announce_app_data_update_awaits_and_preserves_its_typed_settlement() {
+    let commands = Channel::<CriticalSectionRawMutex, IssuedCommand, 1>::new();
+    let completions = Pool::<1>::new();
+    let handle = super::PrnsNodeHandle::new(commands.sender(), &completions);
+    let set = SetRegisteredAnnounceAppData {
+        destination: PEER,
+        app_data: crate::routing::announce::emit::AnnounceAppDataBytes::from_slice(b"default")
+            .expect("valid app data"),
+    };
+    let expected = set.clone();
+    let failure = SetRegisteredAnnounceAppDataFailure::Rejected(
+        SetRegisteredAnnounceAppDataRejection::UnknownDestination,
+    );
+
+    let (result, ()) = block_on(join(handle.set_registered_announce_app_data(set), async {
+        let issued = commands.receiver().receive().await;
+        assert_eq!(
+            issued.command,
+            PrnsCommand::SetRegisteredAnnounceAppData(expected),
+        );
+        assert!(completions.settle(
+            issued.id,
+            Settlement::SetRegisteredAnnounceAppData(Err(failure)),
+        ));
+    }));
+
+    assert_eq!(
+        result,
+        Err(SetRegisteredAnnounceAppDataError::Rejected(
+            SetRegisteredAnnounceAppDataRejection::UnknownDestination,
         )),
     );
 }

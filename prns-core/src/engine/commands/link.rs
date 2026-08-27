@@ -125,6 +125,7 @@ impl Settleable for EstablishLink {
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
+            | Settlement::SetRegisteredAnnounceAppData(_)
             | Settlement::SendPlainPacket(_) => None,
         }
     }
@@ -157,6 +158,7 @@ impl Settleable for SendToLink {
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
+            | Settlement::SetRegisteredAnnounceAppData(_)
             | Settlement::SendPlainPacket(_) => None,
         }
     }
@@ -187,6 +189,7 @@ impl Settleable for Identify {
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
+            | Settlement::SetRegisteredAnnounceAppData(_)
             | Settlement::SendPlainPacket(_) => None,
         }
     }
@@ -217,6 +220,7 @@ impl Settleable for CloseLink {
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
+            | Settlement::SetRegisteredAnnounceAppData(_)
             | Settlement::SendPlainPacket(_) => None,
         }
     }

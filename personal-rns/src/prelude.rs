@@ -4,8 +4,8 @@ pub use crate::{
     PrnsCommand, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, ProofStrategy, RatchetPolicy,
     RemoteControlAnnounce, RemoteControlAnnounceFailure, RemoteControlDescribe,
     RemoteControlEndpoint, RemoteControlEndpointState, RemoteControlError, ResourceMemoryLimits,
-    ResourceStrategy, RuntimeHealth, SendError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
-    REMOTE_CONTROL_ENDPOINT_ID,
+    ResourceStrategy, RuntimeHealth, SendError, SetRegisteredAnnounceAppDataError, Zeroizing,
+    IDENTITY_SECRET_KEY_LEN, REMOTE_CONTROL_ENDPOINT_ID,
 };
 
 pub use crate::remote_control::{

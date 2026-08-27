@@ -22,7 +22,7 @@ use crate::engine::{
     SendGroup, SendGroupFailure, SendGroupPayload, SendPlainPacket, SendPlainPacketFailure,
     SendPlainPacketPayload, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
     SendToChannel, SendToChannelBody, SendToChannelFailure, SendToLink, SendToLinkFailure,
-    SendToLinkPayload, Settlement, PATH_REQUEST_ID_LEN,
+    SendToLinkPayload, SetRegisteredAnnounceAppData, Settlement, PATH_REQUEST_ID_LEN,
 };
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
@@ -316,6 +316,22 @@ impl PrnsNodeHandle {
         }
     }
 
+    pub async fn set_registered_announce_app_data(
+        &self,
+        set: SetRegisteredAnnounceAppData,
+    ) -> Result<(), super::SetRegisteredAnnounceAppDataError> {
+        match self
+            .settle(PrnsCommand::SetRegisteredAnnounceAppData(set))
+            .await
+        {
+            Some(Settlement::SetRegisteredAnnounceAppData(Ok(()))) => Ok(()),
+            Some(Settlement::SetRegisteredAnnounceAppData(Err(failure))) => Err(
+                super::SetRegisteredAnnounceAppDataError::from_failure(failure),
+            ),
+            Some(_) | None => Err(super::SetRegisteredAnnounceAppDataError::NodeStopped),
+        }
+    }
+
     pub async fn allow_requester(
         &self,
         allow: AllowRequester,
@@ -393,6 +409,13 @@ impl super::PrnsNodeApi for PrnsNodeHandle {
 
     async fn announce_now(&self, announce: AnnounceNow) -> Result<(), super::AnnounceNowError> {
         self.announce_now(announce).await
+    }
+
+    async fn set_registered_announce_app_data(
+        &self,
+        set: SetRegisteredAnnounceAppData,
+    ) -> Result<(), super::SetRegisteredAnnounceAppDataError> {
+        self.set_registered_announce_app_data(set).await
     }
 
     async fn send_single_packet(

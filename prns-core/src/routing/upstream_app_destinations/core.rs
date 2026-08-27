@@ -82,6 +82,7 @@ pub trait UpstreamAppDestinationTable {
     fn kinds(&self) -> &[UpstreamAppDestinationKind];
     fn name_hashes(&self) -> &[DottedNameHash];
     fn app_data_at(&self, index: usize) -> Option<&[u8]>;
+    fn app_data_at_mut(&mut self, index: usize) -> Option<&mut AnnounceAppDataBytes>;
 
     fn kind_mut(&mut self, index: usize) -> &mut UpstreamAppDestinationKind;
     fn upsert(
@@ -257,6 +258,20 @@ impl<C: UpstreamAppDestinationTable> UpstreamAppDestinations<C> {
             .iter()
             .position(|candidate| candidate == destination)?;
         self.table.app_data_at(slot)
+    }
+
+    pub(crate) fn replace_registered_announce_app_data(
+        &mut self,
+        destination: &DestinationHash,
+        app_data: AnnounceAppDataBytes,
+    ) -> Option<AnnounceAppDataBytes> {
+        let slot = self
+            .table
+            .destinations()
+            .iter()
+            .position(|candidate| candidate == destination)?;
+        let registered = self.table.app_data_at_mut(slot)?;
+        Some(core::mem::replace(registered, app_data))
     }
 
     pub fn registration_for(
