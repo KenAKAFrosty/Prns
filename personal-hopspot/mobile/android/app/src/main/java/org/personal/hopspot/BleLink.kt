@@ -1538,14 +1538,16 @@ class BleLink(private val context: Context) {
             .addServiceUuid(ParcelUuid(PRNS_SERVICE))
             .addManufacturerData(
                 PRNS_ROLE_COMPANY_ID,
-                byteArrayOf(
-                    PRNS_ROLE_VERSION,
-                    PRNS_ROLE_DUAL_MODE,
-                    PRNS_DEFAULT_GROUP_TAG[0],
-                    PRNS_DEFAULT_GROUP_TAG[1],
-                    PRNS_DEFAULT_GROUP_TAG[2],
-                    PRNS_DEFAULT_GROUP_TAG[3],
-                ),
+                localGroupTag().let { tag ->
+                    byteArrayOf(
+                        PRNS_ROLE_VERSION,
+                        PRNS_ROLE_DUAL_MODE,
+                        tag[0],
+                        tag[1],
+                        tag[2],
+                        tag[3],
+                    )
+                },
             )
             .build()
         try {
@@ -1660,20 +1662,32 @@ class BleLink(private val context: Context) {
     }
 
     private fun matchesLocalDiscoveryGroup(capabilities: ByteArray?): Boolean {
+        val local = localGroupTag()
         // Missing or legacy (v3) manufacturer payloads map to the default reticulum group.
         if (capabilities == null ||
             capabilities.size < 2 ||
             capabilities[0] < PRNS_ROLE_VERSION
         ) {
-            return true
+            return local.contentEquals(PRNS_DEFAULT_GROUP_TAG)
         }
         if (capabilities.size < 6) {
-            return true
+            return local.contentEquals(PRNS_DEFAULT_GROUP_TAG)
         }
-        return capabilities[2] == PRNS_DEFAULT_GROUP_TAG[0] &&
-            capabilities[3] == PRNS_DEFAULT_GROUP_TAG[1] &&
-            capabilities[4] == PRNS_DEFAULT_GROUP_TAG[2] &&
-            capabilities[5] == PRNS_DEFAULT_GROUP_TAG[3]
+        return capabilities[2] == local[0] &&
+            capabilities[3] == local[1] &&
+            capabilities[4] == local[2] &&
+            capabilities[5] == local[3]
+    }
+
+    private fun localGroupTag(): ByteArray {
+        val buffer = ByteBuffer.allocateDirect(4)
+        val n = NativeBridge.nativeBleGroupTag(buffer)
+        if (n < 4) {
+            return PRNS_DEFAULT_GROUP_TAG
+        }
+        val tag = ByteArray(4)
+        buffer.get(tag)
+        return tag
     }
 
     private fun formatMac(octets: ByteArray): String =

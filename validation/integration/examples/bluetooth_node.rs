@@ -1,3 +1,4 @@
+use prns_core::interfaces::bluetooth_auto::default_group_tag;
 #[cfg(target_os = "macos")]
 #[tokio::main]
 async fn main() {
@@ -26,7 +27,7 @@ async fn main() {
     let node_byte: u8 = 0x33;
 
     let identity = BleIdentity::new([node_byte; 16]);
-    let backend = match MacosBleBackend::new(identity).await {
+    let backend = match MacosBleBackend::new(identity, default_group_tag()).await {
         Ok(backend) => backend,
         Err(error) => {
             eprintln!("bluetooth did not power on: {error:?}");

@@ -612,6 +612,7 @@ pub struct BluerBackend {
     address_type: AddressType,
     psm: Psm,
     identity: BleIdentity,
+    group_tag: [u8; 4],
     radio_power: RadioPower,
     connecting: HashSet<Address>,
     active_links: ActiveLinkGenerations,
@@ -657,7 +658,7 @@ impl Drop for BluerBackend {
 impl BluerBackend {
     pub const MAX_PEERS: usize = 8;
 
-    pub async fn open(psm: Psm, identity: BleIdentity) -> Result<Self, BluerError> {
+    pub async fn open(psm: Psm, identity: BleIdentity, group_tag: [u8; 4]) -> Result<Self, BluerError> {
         let session = Session::new().await?;
         let adapter = session.default_adapter().await?;
         adapter.set_powered(true).await?;
@@ -683,6 +684,7 @@ impl BluerBackend {
             address_type,
             psm,
             identity,
+            group_tag,
             radio_power: RadioPower::Off,
             connecting: HashSet::new(),
             active_links: ActiveLinkGenerations::new(),
@@ -792,7 +794,7 @@ impl BluerBackend {
             return true;
         };
         let manufacturer_data = device.manufacturer_data().await.ok().flatten();
-        if !matches_local_discovery_group(manufacturer_data.as_ref()) {
+        if !matches_local_discovery_group(self.group_tag, manufacturer_data.as_ref()) {
             return false;
         }
         let peer_capabilities = manufacturer_data.as_ref().and_then(|data| {
@@ -833,8 +835,8 @@ impl BluerBackend {
         Some(rssi.clamp(i8::MIN as i16, i8::MAX as i16) as i8)
     }
 
-    fn advertisement() -> Advertisement {
-        let payload = manufacturer_role_payload(BleRoleCapabilities::DualRole, default_group_tag());
+    fn advertisement(group_tag: [u8; 4]) -> Advertisement {
+        let payload = manufacturer_role_payload(BleRoleCapabilities::DualRole, group_tag);
         Advertisement {
             advertisement_type: bluer::adv::Type::Peripheral,
             service_uuids: [uuid_of(BLE_SERVICE_UUID)].into_iter().collect(),
@@ -878,7 +880,7 @@ impl BluerBackend {
             self.gatt_retry_at = None;
         }
         self.ensure_gatt_server().await?;
-        let advertisement = self.adapter.advertise(Self::advertisement()).await?;
+        let advertisement = self.adapter.advertise(Self::advertisement(self.group_tag)).await?;
         self.advertisement.register(advertisement);
         self.gatt_retry_at = None;
         crate::diagnostic_log::debug!(
@@ -2514,7 +2516,7 @@ mod tests {
 
     #[test]
     fn advertising_interval_meets_the_recovery_boundary() {
-        let advertisement = BluerBackend::advertisement();
+        let advertisement = BluerBackend::advertisement(default_group_tag());
 
         assert_eq!(
             (advertisement.min_interval, advertisement.max_interval),

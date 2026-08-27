@@ -8,8 +8,8 @@ use objc2_core_bluetooth::{
 use objc2_foundation::{NSData, NSDictionary, NSString};
 
 use prns_core::interfaces::bluetooth_auto::{
-    columba_role_capabilities_from_manufacturer, default_group_tag,
-    manufacturer_discovery_groups_match,
+    columba_role_capabilities_from_manufacturer, manufacturer_discovery_groups_match,
+    GROUP_TAG_LEN,
 };
 
 use super::CoreBluetoothPeerId;
@@ -113,6 +113,7 @@ pub(super) const fn discover_disposition(
 pub(super) fn candidate_strength(
     local_name_is_prns: bool,
     manufacturer_data: Option<&[u8]>,
+    local_group_tag: [u8; GROUP_TAG_LEN],
 ) -> CandidateStrength {
     if let Some(data) = manufacturer_data {
         let Some(company_id) = data.get(..2).and_then(|bytes| bytes.try_into().ok()) else {
@@ -120,7 +121,7 @@ pub(super) fn candidate_strength(
         };
         let company_id = u16::from_le_bytes(company_id);
         let body = &data[2..];
-        if !manufacturer_discovery_groups_match(default_group_tag(), company_id, body) {
+        if !manufacturer_discovery_groups_match(local_group_tag, company_id, body) {
             return CandidateStrength::Weak;
         }
         if columba_role_capabilities_from_manufacturer(company_id, body).is_some() {
@@ -136,6 +137,7 @@ pub(super) fn candidate_strength(
 
 pub(super) fn advertisement_candidate_strength(
     advertisement_data: &NSDictionary<NSString, AnyObject>,
+    local_group_tag: [u8; GROUP_TAG_LEN],
 ) -> CandidateStrength {
     // SAFETY: CoreBluetooth exports this dictionary key with process lifetime.
     let local_name_key = unsafe { CBAdvertisementDataLocalNameKey };
@@ -150,7 +152,7 @@ pub(super) fn advertisement_candidate_strength(
     let manufacturer_data = advertisement_data
         .objectForKey(manufacturer_data_key)
         .and_then(|data| data.downcast_ref::<NSData>().map(NSData::to_vec));
-    candidate_strength(local_name_is_prns, manufacturer_data.as_deref())
+    candidate_strength(local_name_is_prns, manufacturer_data.as_deref(), local_group_tag)
 }
 
 #[derive(Default)]

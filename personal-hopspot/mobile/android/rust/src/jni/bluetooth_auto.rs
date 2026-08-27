@@ -78,6 +78,27 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleIdentity(
     ble_bridge().local_identity(out) as jint
 }
 
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleGroupTag(
+    env: JNIEnv,
+    _class: JClass,
+    buffer: JByteBuffer,
+) -> jint {
+    let Ok(address) = env.get_direct_buffer_address(&buffer) else {
+        return 0;
+    };
+    let Ok(capacity) = env.get_direct_buffer_capacity(&buffer) else {
+        return 0;
+    };
+    if address.is_null() || capacity < 4 {
+        return 0;
+    }
+    // SAFETY: `address`/`capacity` describe the JVM-owned direct buffer, pinned for
+    // this call; nothing else aliases it while we copy the local BLE group tag into it.
+    let out = unsafe { core::slice::from_raw_parts_mut(address, capacity) };
+    ble_bridge().local_group_tag(out) as jint
+}
+
 fn ble_rssi(value: jint) -> Option<i8> {
     if value == 127 {
         None

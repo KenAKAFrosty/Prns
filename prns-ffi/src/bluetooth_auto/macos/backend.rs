@@ -272,7 +272,7 @@ impl MacosBleBackend {
     #[cfg(target_os = "macos")]
     pub const MAX_PEERS: usize = 8;
 
-    pub async fn prepare(identity: BleIdentity) -> Result<PreparedMacosBleBackend, MacosBleError> {
+    pub async fn prepare(identity: BleIdentity, group_tag: [u8; 4]) -> Result<PreparedMacosBleBackend, MacosBleError> {
         let (events_tx, events_rx) = tokio_mpsc::unbounded_channel::<Event>();
         let (keepalive, shutdown_rx) = sync_mpsc::channel::<()>();
         let (handles_tx, handles_rx) = oneshot::channel::<Handles>();
@@ -294,6 +294,7 @@ impl MacosBleBackend {
                     peripherals_for_thread,
                     restored_for_thread,
                     scan_activity_for_thread,
+                    group_tag,
                 );
                 let central_proto = ProtocolObject::from_ref(&*central_delegate);
                 #[cfg(target_os = "ios")]
@@ -314,7 +315,7 @@ impl MacosBleBackend {
                 };
 
                 let peripheral_delegate =
-                    PeripheralDelegate::new(events_tx, queue.clone(), identity);
+                    PeripheralDelegate::new(events_tx, queue.clone(), identity, group_tag);
                 let peripheral_proto = ProtocolObject::from_ref(&*peripheral_delegate);
                 #[cfg(target_os = "ios")]
                 let peripheral_options = Some(peripheral_manager_options());
@@ -362,8 +363,8 @@ impl MacosBleBackend {
         })
     }
 
-    pub async fn new(identity: BleIdentity) -> Result<Self, MacosBleError> {
-        Self::prepare(identity).await?.ready().await
+    pub async fn new(identity: BleIdentity, group_tag: [u8; 4]) -> Result<Self, MacosBleError> {
+        Self::prepare(identity, group_tag).await?.ready().await
     }
 
     pub fn psm(&self) -> Psm {

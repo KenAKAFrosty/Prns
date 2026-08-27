@@ -6,7 +6,7 @@ use std::time::Duration;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::Notify;
 
-use prns_core::interfaces::bluetooth_auto::{AdvertisingMode, RadioMode, ScanningMode};
+use prns_core::interfaces::bluetooth_auto::{DEFAULT_GROUP_TAG, GROUP_TAG_LEN, AdvertisingMode, RadioMode, ScanningMode};
 use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, PeerProtocol};
 
 use super::outbound::{BoundedByteQueue, BoundedMessageQueue};
@@ -224,6 +224,7 @@ impl RadioState {
 pub(super) struct Shared {
     radio: Mutex<RadioState>,
     local_identity: Mutex<Option<[u8; 16]>>,
+    local_group_tag: Mutex<[u8; GROUP_TAG_LEN]>,
     pub(super) psm: Mutex<Option<u16>>,
     psm_ready: Notify,
     pub(super) links: Mutex<HashMap<u32, LinkRecord>>,
@@ -255,6 +256,7 @@ impl AndroidBleBridge {
             shared: Arc::new(Shared {
                 radio: Mutex::new(RadioState::default()),
                 local_identity: Mutex::new(None),
+                local_group_tag: Mutex::new(DEFAULT_GROUP_TAG),
                 psm: Mutex::new(None),
                 psm_ready: Notify::new(),
                 links: Mutex::new(HashMap::new()),
@@ -290,6 +292,26 @@ impl AndroidBleBridge {
         };
         out[..16].copy_from_slice(&identity);
         16
+    }
+
+    pub fn set_local_group_tag(&self, tag: [u8; GROUP_TAG_LEN]) {
+        if let Ok(mut slot) = self.shared.local_group_tag.lock() {
+            *slot = tag;
+        }
+    }
+
+    pub fn local_group_tag(&self, out: &mut [u8]) -> usize {
+        if out.len() < GROUP_TAG_LEN {
+            return 0;
+        }
+        let tag = self
+            .shared
+            .local_group_tag
+            .lock()
+            .map(|slot| *slot)
+            .unwrap_or(DEFAULT_GROUP_TAG);
+        out[..GROUP_TAG_LEN].copy_from_slice(&tag);
+        GROUP_TAG_LEN
     }
 
     pub fn set_radio_mode(&self, mode: RadioMode) {

@@ -50,6 +50,8 @@ pub(in crate::screen) const SLEEP_MENU_ITEM: usize = 4;
 pub(in crate::screen) const RADIO_MENU_ITEM_NO_DISPLAY: usize = 3;
 pub(in crate::screen) const POWER_MENU_ITEM: usize = 0;
 pub(in crate::screen) const POWER_ONLY_MENU_ITEMS: &[&str] = &["Power", "Back"];
+pub(in crate::screen) const BLE_MENU_ITEMS: &[&str] = &["Power", "Group", "Back"];
+pub(in crate::screen) const BLE_GROUP_MENU_ITEM: usize = 1;
 pub(in crate::screen) const SHARED_INSTANCE_MENU_ITEMS: &[&str] = &["Power", "RNS Config", "Back"];
 pub(in crate::screen) const SHARED_INSTANCE_CONFIG_MENU_ITEM: usize = 1;
 pub(in crate::screen) const WIFI_MENU_ITEMS: &[&str] = &["Power", "Station", "Back"];
@@ -65,6 +67,7 @@ pub(in crate::screen) fn interface_menu_items(
     match kind {
         CardKind::LoRa => LORA_MENU_ITEMS,
         CardKind::WifiStation | CardKind::WifiStationDisabled => WIFI_MENU_ITEMS,
+        CardKind::Ble => BLE_MENU_ITEMS,
         CardKind::SharedInstance
             if shared_instance_config_export == SharedInstanceConfigExport::Available =>
         {
@@ -73,7 +76,6 @@ pub(in crate::screen) fn interface_menu_items(
         CardKind::Wifi
         | CardKind::Peer
         | CardKind::Usb
-        | CardKind::Ble
         | CardKind::EspNow
         | CardKind::SharedInstance
         | CardKind::Tcp => POWER_ONLY_MENU_ITEMS,
@@ -105,6 +107,7 @@ pub enum UiAction {
     SwapRadioMode,
     OpenDocs,
     CopySharedInstanceConfig,
+    CycleBleDiscoveryGroup,
 }
 
 impl UiAction {
@@ -136,6 +139,7 @@ prns_macros::iterable_enum! {
         StateRecovered,
         SaveDeferred,
         SaveFailed,
+        BleGroupUpdated,
     }
     #[cfg(test)]
     pub(in crate::screen) const ALL;
@@ -207,6 +211,7 @@ impl UiNotice {
                 NoticeLines::three("Save deferred", "Flash cooldown", "Auto retry")
             }
             Self::SaveFailed => NoticeLines::three("Save failed", "Flash error", "Auto retry"),
+            Self::BleGroupUpdated => NoticeLines::two("BLE group", "Updated"),
         }
     }
 }
@@ -712,6 +717,7 @@ impl UiState {
                         CardKind::WifiStation | CardKind::WifiStationDisabled,
                         STATION_UPLINK_MENU_ITEM,
                     ) => UiAction::ToggleStationUplink,
+                    (CardKind::Ble, BLE_GROUP_MENU_ITEM) => UiAction::CycleBleDiscoveryGroup,
                     (CardKind::LoRa, LORA_TUNE_MENU_ITEM) => UiAction::OpenLoRaEditor,
                     (CardKind::LoRa, LORA_RESET_MENU_ITEM) => UiAction::ResetLoRaProfile,
                     _ => UiAction::None,

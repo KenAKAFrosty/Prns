@@ -182,6 +182,14 @@ object NativeBridge {
 
     external fun nativeBleIdentity(buffer: ByteBuffer): Int
 
+    external fun nativeBleGroupTag(buffer: ByteBuffer): Int
+
+    external fun nativeBleDiscoveryGroup(): String?
+
+    external fun nativeBleSetDiscoveryGroup(groupId: String): Boolean
+
+    external fun nativeBleCycleDiscoveryGroup(): String?
+
     external fun nativeBleSighting(address: ByteBuffer, rssi: Int)
 
     external fun nativeBleDialFailed(address: ByteBuffer): Boolean

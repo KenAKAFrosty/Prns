@@ -11,6 +11,7 @@ use super::BluetoothAutoStatus;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AutoBle {
     identity: BleIdentity,
+    group_tag: [u8; 4],
 }
 
 /// Canonical name for the Bluetooth LE auto-interface constructor.
@@ -19,6 +20,7 @@ pub type AutoBluetoothLe = AutoBle;
 pub struct ConfiguredAutoBle {
     identity: BleIdentity,
     policy: EffectiveInterfacePolicy,
+    group_tag: [u8; 4],
 }
 
 /// Canonical name for a configured Bluetooth LE auto-interface.
@@ -27,7 +29,16 @@ pub type ConfiguredAutoBluetoothLe = ConfiguredAutoBle;
 impl AutoBle {
     #[must_use]
     pub const fn new(identity: BleIdentity) -> Self {
-        Self { identity }
+        Self {
+            identity,
+            group_tag: contract::DEFAULT_GROUP_TAG,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_group_tag(mut self, group_tag: [u8; 4]) -> Self {
+        self.group_tag = group_tag;
+        self
     }
 
     #[must_use]
@@ -35,7 +46,20 @@ impl AutoBle {
         identity: BleIdentity,
         policy: EffectiveInterfacePolicy,
     ) -> ConfiguredAutoBle {
-        ConfiguredAutoBle { identity, policy }
+        Self::with_policy_and_group(identity, policy, contract::default_group_tag())
+    }
+
+    #[must_use]
+    pub fn with_policy_and_group(
+        identity: BleIdentity,
+        policy: EffectiveInterfacePolicy,
+        group_tag: [u8; 4],
+    ) -> ConfiguredAutoBle {
+        ConfiguredAutoBle {
+            identity,
+            policy,
+            group_tag,
+        }
     }
 
     /// Creates the restoration-aware CoreBluetooth managers immediately while leaving radio
@@ -44,9 +68,19 @@ impl AutoBle {
     pub async fn prepare(
         identity: BleIdentity,
     ) -> Result<PreparedAutoBle, prns_ffi::bluetooth_auto::macos::MacosBleError> {
-        let backend = prns_ffi::bluetooth_auto::macos::MacosBleBackend::prepare(identity).await?;
+        Self::prepare_with_group(identity, contract::default_group_tag()).await
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub async fn prepare_with_group(
+        identity: BleIdentity,
+        group_tag: [u8; 4],
+    ) -> Result<PreparedAutoBle, prns_ffi::bluetooth_auto::macos::MacosBleError> {
+        let backend =
+            prns_ffi::bluetooth_auto::macos::MacosBleBackend::prepare(identity, group_tag).await?;
         Ok(PreparedAutoBle {
             identity,
+            group_tag,
             policy: prns_runtime::interfaces::bluetooth_auto::defaults_for_bitrate(
                 prns_runtime::interfaces::bluetooth_auto::BLE_BITRATE_GUESS_BPS,
             )
@@ -62,6 +96,7 @@ impl AutoBle {
     pub fn unavailable(identity: BleIdentity) -> PreparedAutoBle {
         PreparedAutoBle {
             identity,
+            group_tag: contract::DEFAULT_GROUP_TAG,
             policy: prns_runtime::interfaces::bluetooth_auto::defaults_for_bitrate(
                 prns_runtime::interfaces::bluetooth_auto::BLE_BITRATE_GUESS_BPS,
             )
@@ -82,6 +117,7 @@ pub type AttachedBluetoothLe = AttachedBle;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub struct PreparedAutoBle {
     identity: BleIdentity,
+    group_tag: [u8; 4],
     policy: EffectiveInterfacePolicy,
     status: BluetoothAutoStatus,
     backend: Option<prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend>,
@@ -109,6 +145,7 @@ impl Attachable for AutoBle {
         attach_platform_bluetooth(
             handle,
             self.identity,
+            self.group_tag,
             prns_runtime::interfaces::bluetooth_auto::defaults_for_bitrate(
                 prns_runtime::interfaces::bluetooth_auto::BLE_BITRATE_GUESS_BPS,
             )
@@ -126,6 +163,7 @@ impl Attachable for AutoBle {
         attach_platform_bluetooth(
             handle,
             self.identity,
+            self.group_tag,
             prns_runtime::interfaces::bluetooth_auto::defaults_for_bitrate(
                 prns_runtime::interfaces::bluetooth_auto::BLE_BITRATE_GUESS_BPS,
             )
@@ -139,7 +177,7 @@ impl Attachable for ConfiguredAutoBle {
     type Attached = AttachedBle;
 
     fn attach_to(self, handle: &PrnsNodeHandle) -> AttachedBle {
-        attach_platform_bluetooth(handle, self.identity, self.policy, None)
+        attach_platform_bluetooth(handle, self.identity, self.group_tag, self.policy, None)
     }
 
     fn attach_to_with_ifac(
@@ -151,6 +189,7 @@ impl Attachable for ConfiguredAutoBle {
         attach_platform_bluetooth(
             handle,
             self.identity,
+            self.group_tag,
             self.policy,
             Some((ifac, network_name)),
         )
@@ -165,6 +204,7 @@ impl Attachable for PreparedAutoBle {
         let status = self.status.clone();
         handle.supervise(PreparedPlatformBluetooth {
             identity: self.identity,
+            group_tag: self.group_tag,
             policy: self.policy,
             status: self.status,
             backend: self.backend,
@@ -182,6 +222,7 @@ impl Attachable for PreparedAutoBle {
         handle.supervise_with_ifac_name(
             PreparedPlatformBluetooth {
                 identity: self.identity,
+                group_tag: self.group_tag,
                 policy: self.policy,
                 status: self.status,
                 backend: self.backend,
@@ -196,6 +237,7 @@ impl Attachable for PreparedAutoBle {
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 struct PreparedPlatformBluetooth {
     identity: BleIdentity,
+    group_tag: [u8; 4],
     policy: EffectiveInterfacePolicy,
     status: BluetoothAutoStatus,
     backend: Option<prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend>,
@@ -230,6 +272,7 @@ impl InterfaceSupervisor for PreparedPlatformBluetooth {
         run_prepared_platform_bluetooth(
             fleet,
             self.identity,
+            self.group_tag,
             self.status,
             self.policy,
             self.backend,
@@ -242,6 +285,7 @@ impl InterfaceSupervisor for PreparedPlatformBluetooth {
 async fn run_prepared_platform_bluetooth(
     fleet: Fleet,
     ble_identity: BleIdentity,
+    group_tag: [u8; 4],
     status: BluetoothAutoStatus,
     policy: EffectiveInterfacePolicy,
     backend: Option<prns_ffi::bluetooth_auto::macos::PreparedMacosBleBackend>,
@@ -256,7 +300,7 @@ async fn run_prepared_platform_bluetooth(
     loop {
         let candidate = match prepared.take() {
             Some(backend) => backend,
-            None => match MacosBleBackend::prepare(ble_identity).await {
+            None => match MacosBleBackend::prepare(ble_identity, group_tag).await {
                 Ok(backend) => backend,
                 Err(error) => {
                     status.mark_failed(Some("Bluetooth native manager unavailable"));
@@ -315,12 +359,14 @@ async fn run_prepared_platform_bluetooth(
 fn attach_platform_bluetooth(
     handle: &PrnsNodeHandle,
     ble_identity: BleIdentity,
+    group_tag: [u8; 4],
     policy: EffectiveInterfacePolicy,
     ifac: Option<(IfacContext, Option<String>)>,
 ) -> AttachedBle {
     let status = BluetoothAutoStatus::new();
     let bluetooth = PlatformBluetooth {
         ble_identity,
+        group_tag,
         policy,
         status: status.clone(),
     };
@@ -335,6 +381,7 @@ fn attach_platform_bluetooth(
 
 struct PlatformBluetooth {
     ble_identity: BleIdentity,
+    group_tag: [u8; 4],
     policy: EffectiveInterfacePolicy,
     status: BluetoothAutoStatus,
 }
@@ -360,7 +407,14 @@ impl InterfaceSupervisor for PlatformBluetooth {
     }
 
     async fn run(self, fleet: Fleet) {
-        run_platform_bluetooth(fleet, self.ble_identity, self.status, self.policy).await;
+        run_platform_bluetooth(
+            fleet,
+            self.ble_identity,
+            self.group_tag,
+            self.status,
+            self.policy,
+        )
+        .await;
     }
 }
 
@@ -368,6 +422,7 @@ impl InterfaceSupervisor for PlatformBluetooth {
 async fn run_platform_bluetooth(
     fleet: Fleet,
     ble_identity: BleIdentity,
+    group_tag: [u8; 4],
     status: BluetoothAutoStatus,
     policy: EffectiveInterfacePolicy,
 ) {
@@ -377,7 +432,7 @@ async fn run_platform_bluetooth(
         AppleHost, Endpoint, LinkCapabilities, BLE_HW_MTU,
     };
 
-    match MacosBleBackend::new(ble_identity).await {
+    match MacosBleBackend::new(ble_identity, group_tag).await {
         Ok(backend) => {
             let psm = backend.psm();
             let bluetooth = BluetoothAuto::<_, { MacosBleBackend::MAX_PEERS }>::with_status(
@@ -411,6 +466,7 @@ async fn run_platform_bluetooth(
 async fn run_platform_bluetooth(
     fleet: Fleet,
     ble_identity: BleIdentity,
+    group_tag: [u8; 4],
     status: BluetoothAutoStatus,
     policy: EffectiveInterfacePolicy,
 ) {
@@ -420,7 +476,7 @@ async fn run_platform_bluetooth(
         AppleHost, Endpoint, LinkCapabilities, BLE_HW_MTU,
     };
 
-    match MacosBleBackend::new(ble_identity).await {
+    match MacosBleBackend::new(ble_identity, group_tag).await {
         Ok(backend) => {
             let psm = backend.psm();
             let bluetooth = BluetoothAuto::<_, { MacosBleBackend::MAX_PEERS }>::with_status(
@@ -454,6 +510,7 @@ async fn run_platform_bluetooth(
 async fn run_platform_bluetooth(
     fleet: Fleet,
     ble_identity: BleIdentity,
+    group_tag: [u8; 4],
     status: BluetoothAutoStatus,
     policy: EffectiveInterfacePolicy,
 ) {
@@ -493,6 +550,7 @@ async fn run_platform_bluetooth(
 async fn run_platform_bluetooth(
     fleet: Fleet,
     ble_identity: BleIdentity,
+    group_tag: [u8; 4],
     status: BluetoothAutoStatus,
     policy: EffectiveInterfacePolicy,
 ) {
@@ -510,7 +568,7 @@ async fn run_platform_bluetooth(
         );
         return std::future::pending().await;
     };
-    match BluerBackend::open(psm, ble_identity).await {
+    match BluerBackend::open(psm, ble_identity, group_tag).await {
         Ok(backend) => {
             let bluetooth = BluetoothAuto::<_, { BluerBackend::MAX_PEERS }>::with_status(
                 backend,
@@ -547,6 +605,7 @@ async fn run_platform_bluetooth(
 async fn run_platform_bluetooth(
     _fleet: Fleet,
     _ble_identity: BleIdentity,
+    _group_tag: [u8; 4],
     status: BluetoothAutoStatus,
     _policy: EffectiveInterfacePolicy,
 ) {

@@ -85,6 +85,11 @@ impl HopspotFace {
             }
             UiAction::Announce => self.show_notice(UiNotice::Announcing),
             UiAction::CopySharedInstanceConfig => {}
+            UiAction::CycleBleDiscoveryGroup => {
+                if crate::engine::cycle_ble_discovery_group().is_some() {
+                    self.show_notice(UiNotice::BleGroupUpdated);
+                }
+            }
             UiAction::None
             | UiAction::BlankDisplay
             | UiAction::ToggleDisplayAutoOff
