@@ -6,13 +6,13 @@ use crate::engine::RatchetPolicy;
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::remote_control::{
-    FixedRemoteControlAccessTable, RemoteControlAccessTable, RemoteControlAnnouncementData,
-    RemoteControlAnnouncementDataWriteError, RemoteControlEndpoint, RemoteControlNodeIdentities,
-    RemoteControlRequest, RemoteControlRequestSet, RemoteControlSelfAnnouncement,
-    RemoteControlService, RevokeRemoteControlControllerError, RevokeRemoteControlControllerOutcome,
-    SetRemoteControlControllerGrantError, SetRemoteControlControllerGrantOutcome,
-    DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS, REMOTE_CONTROL_APPLICATION_ASPECTS,
-    REMOTE_CONTROL_APPLICATION_NAME, REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
+    FixedRemoteControlAccessTable, RemoteControlAccessTable, RemoteControlEndpoint,
+    RemoteControlNodeIdentities, RemoteControlRequest, RemoteControlRequestSet,
+    RemoteControlSelfAnnouncement, RemoteControlService, RevokeRemoteControlControllerError,
+    RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantError,
+    SetRemoteControlControllerGrantOutcome, DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS,
+    REMOTE_CONTROL_APPLICATION_ASPECTS, REMOTE_CONTROL_APPLICATION_NAME,
+    REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
 };
 use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::request_handlers::{RequestHandlerError, RequestPathHash, RequestPolicy};
@@ -159,7 +159,6 @@ impl AssembledRemoteControl {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigureRemoteControlServiceError {
     HoldIdentity(HoldIdentityError),
-    EncodeAnnouncementData(RemoteControlAnnouncementDataWriteError),
     RegisterTarget(RegisterDestinationError),
     ConfigureRequestLimit,
     RegisterRequestEndpoint(TablePushError),
@@ -247,21 +246,17 @@ where
         return Ok(AssembledRemoteControl { available: None });
     };
     let available_requests = configuration.available_requests();
-    let (identity_secrets, default_public_app_data, initial_access, self_announcement) =
-        configuration.into_parts();
+    let (identity_secrets, initial_access, self_announcement) = configuration.into_parts();
     let identities = engine
         .configure_remote_control_identities(identity_secrets)
         .map_err(ConfigureRemoteControlServiceError::HoldIdentity)?;
     let target_endpoint = identities.target().endpoint();
-    let announcement_data = RemoteControlAnnouncementData::new(default_public_app_data)
-        .encode()
-        .map_err(ConfigureRemoteControlServiceError::EncodeAnnouncementData)?;
     let destination = engine
         .register_single_destination(
             &identities.target().identity_hash(),
             REMOTE_CONTROL_APPLICATION_NAME,
             REMOTE_CONTROL_APPLICATION_ASPECTS,
-            announcement_data.as_slice(),
+            b"",
             ProofStrategy::ProveAll,
             LinkRequestPolicy::AcceptAll,
             RatchetPolicy::NoRatchets,
@@ -492,8 +487,8 @@ mod tests {
     use crate::remote_control::{
         RemoteControlControllerGrant, RemoteControlControllerGrants,
         RemoteControlControllerIdentity, RemoteControlControllerIdentitySecret,
-        RemoteControlInitialAccess, RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData,
-        RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlTargetIdentitySecret,
+        RemoteControlInitialAccess, RemoteControlNodeIdentitySecrets, RemoteControlRequestKind,
+        RemoteControlRequestSet, RemoteControlTargetIdentitySecret,
         REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY,
     };
     use crate::routing::request_handlers::RequestPathHash;
@@ -537,7 +532,6 @@ mod tests {
     fn remote_control_service() -> RemoteControlService<'static> {
         RemoteControlService::new(
             remote_control_identity_secrets(0x71, 0x72),
-            RemoteControlPublicAppData::try_from(b"".as_slice()).unwrap(),
             RemoteControlInitialAccess::Nobody,
             RemoteControlSelfAnnouncement::Unavailable,
         )
@@ -634,7 +628,6 @@ mod tests {
         );
         let service = RemoteControlService::new(
             identity_secrets,
-            RemoteControlPublicAppData::try_from(b"node".as_slice()).unwrap(),
             initial_access,
             RemoteControlSelfAnnouncement::Destination(DestinationHash::new([0x61; 16])),
         );
