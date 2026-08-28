@@ -4,7 +4,12 @@ use crate::wire::DestinationHash;
 use super::RemoteControlTargetIdentity;
 
 pub const REMOTE_CONTROL_APPLICATION_NAME: &str = "reticulum";
-pub const REMOTE_CONTROL_APPLICATION_ASPECTS: &[&str] = &["remote", "control"];
+pub(crate) const REMOTE_CONTROL_NAMESPACE_ASPECT: &str = "remote";
+pub(crate) const REMOTE_CONTROL_SERVICE_ASPECT: &str = "control";
+pub const REMOTE_CONTROL_APPLICATION_ASPECTS: &[&str] = &[
+    REMOTE_CONTROL_NAMESPACE_ASPECT,
+    REMOTE_CONTROL_SERVICE_ASPECT,
+];
 
 /// Pre-computed and saved here statically to avoid unnecessary hashing at runtime for what is a stable hash on these well-known app name & aspects
 const REMOTE_CONTROL_DOTTED_NAME_HASH: DottedNameHash =
