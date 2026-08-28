@@ -17,7 +17,8 @@ use static_cell::StaticCell;
 
 use crate::boards::status_led::StatusLed;
 
-use crate::boards::{DisplayBringup, DisplayIoError};
+use crate::boards::DisplayIoError;
+use crate::immediate_display::BoardDisplay;
 
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
@@ -33,7 +34,7 @@ type T114Radio = Sx126x<T114SpiDevice, Input<'static>, Input<'static>, Output<'s
 pub(crate) type T114LoraInterface = LoRaInterface<'static, T114Radio>;
 
 pub(crate) type T114Display = super::DisplayDriver<T114SpiDevice>;
-pub(crate) type T114DisplayBringup = DisplayBringup<T114Display, DisplayIoError>;
+pub(crate) type T114DisplayBringup = BoardDisplay<T114Display>;
 
 type T114UsbDriver = Driver<'static, &'static SoftwareVbusDetect>;
 
@@ -112,10 +113,10 @@ impl T114Board {
             display_backlight,
         );
         let display = match display.initialize().await {
-            Ok(()) => DisplayBringup::Ready(display),
-            Err(error) => {
+            Ok(()) => BoardDisplay::initialized(display),
+            Err(DisplayIoError::Spi | DisplayIoError::NotInitialized) => {
                 display.force_dark();
-                DisplayBringup::Unavailable(error)
+                BoardDisplay::initialization_failed(display)
             }
         };
 

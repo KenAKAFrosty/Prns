@@ -21,7 +21,6 @@ use personal_rns::storage::StorageLayout;
 use personal_rns::wire::DestinationHash;
 
 use crate::boards::selected as board;
-use crate::boards::{DisplayBringup, DisplayIoError};
 
 use super::bluetooth::{self, BluetoothAutoStatus, BLE_SHARED, BLE_SUPERVISOR_ID, MEMBERS};
 use super::{BLE_MANIFOLD_LANE, COMMANDS, COMPLETION, INTERFACE_STORE, LORA_CONTROL};
@@ -30,15 +29,8 @@ pub(super) const INTERFACE_CAPACITY: usize = 2 + MEMBERS;
 pub(super) const LANE_COUNT: usize = 3;
 const NOTICE_MS: u64 = 900;
 
-async fn apply_display_power(
-    display: &mut board::ReadyDisplay,
-    command: hopspot::DisplayPowerCommand,
-) -> Result<(), DisplayIoError> {
-    match command {
-        hopspot::DisplayPowerCommand::NoChange => Ok(()),
-        hopspot::DisplayPowerCommand::Wake => display.wake().await,
-        hopspot::DisplayPowerCommand::Darken => display.darken().await,
-    }
+fn display_now() -> hopspot::display::MonotonicMillis {
+    hopspot::display::MonotonicMillis::new(embassy_time::Instant::now().as_millis())
 }
 
 pub(super) struct LoadedProfile {
@@ -109,13 +101,10 @@ pub(super) fn face(input: FaceInput) -> impl Future {
     } = input;
     let ui_handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
     async move {
-        let mut display = match display {
-            DisplayBringup::Ready(display) => display,
-            DisplayBringup::Unavailable(_error) => core::future::pending().await,
-        };
+        let mut display = display.into_runtime(display_now());
         let mut ui_state = hopspot::UiState::new(hopspot::UiConfiguration {
             storage_limits: <board::Storage as StorageLayout>::LIMITS,
-            user_blanking: hopspot::UserBlanking::Available,
+            user_blanking: display.user_blanking(),
             access_point: hopspot::AccessPointState::Unsupported,
             shared_instance_config_export: hopspot::SharedInstanceConfigExport::Unavailable,
             #[cfg(feature = "board-t096")]
@@ -137,11 +126,6 @@ pub(super) fn face(input: FaceInput) -> impl Future {
         }
         let mut notice_until_ms =
             startup_notice.map(|notice| (embassy_time::Instant::now().as_millis() + 5_000, notice));
-        let mut display_power = hopspot::DisplayPowerState::new(
-            hopspot::UserBlanking::Available,
-            embassy_time::Instant::now().as_millis(),
-            hopspot::DEFAULT_DISPLAY_AUTO_OFF,
-        );
         loop {
             let battery_mv = battery.sample_millivolts().await;
             let battery_state = battery_gauge.update(
@@ -208,29 +192,25 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                     radio_recoveries: spectrum.radio_recoveries,
                 });
             }
-            if let Err(DisplayIoError::Spi) =
-                apply_display_power(&mut display, display_power.tick(now_ms)).await
-            {
-                display.force_dark();
-                display_power.mark_unavailable();
-            }
-            if display_power.is_lit() {
-                #[cfg(feature = "board-t096")]
-                let gnss = ui_state.gnss_visible().then(board::gnss_snapshot);
-                #[cfg(feature = "board-t114")]
-                let gnss = None;
-                hopspot::render(
-                    &mut display,
-                    hopspot::RenderFrame {
-                        content,
-                        battery: battery_state,
-                        gnss,
-                        state: &ui_state,
-                        interface_menu_details: &details,
-                    },
-                );
-                let _panel_update = display.flush();
-            }
+            let now = hopspot::display::MonotonicMillis::new(now_ms);
+            let _blanking = display.poll_blanking(now, display_now).await;
+            #[cfg(feature = "board-t096")]
+            let gnss = (display.visibility() == hopspot::display::DisplayVisibility::Visible
+                && ui_state.gnss_visible())
+            .then(board::gnss_snapshot);
+            #[cfg(feature = "board-t114")]
+            let gnss = None;
+            let _presentation = display.render_and_present(
+                hopspot::face_64x128::RenderInput {
+                    content,
+                    battery: battery_state,
+                    gnss,
+                    state: &ui_state,
+                    interface_menu_details: &details,
+                },
+                now,
+                display_now,
+            );
             match select3(
                 board::INPUT_EVENTS.receive(),
                 INTERFACE_STORE.changed(),
@@ -240,21 +220,19 @@ pub(super) fn face(input: FaceInput) -> impl Future {
             {
                 Either3::First(event) => {
                     let now_ms = embassy_time::Instant::now().as_millis();
-                    if display_power.button_pressed(now_ms, hopspot::DEFAULT_DISPLAY_AUTO_OFF)
-                        == hopspot::DisplayButtonOutcome::WakeAndConsume
-                    {
-                        if let Err(DisplayIoError::Spi) =
-                            apply_display_power(&mut display, hopspot::DisplayPowerCommand::Wake)
-                                .await
-                        {
-                            display.force_dark();
-                            display_power.mark_unavailable();
-                        } else {
-                            let notice = hopspot::UiNotice::Awake;
-                            ui_state.show_notice(notice);
-                            notice_until_ms = Some((now_ms + NOTICE_MS, notice));
+                    let now = hopspot::display::MonotonicMillis::new(now_ms);
+                    match display.button_pressed(now, display_now).await {
+                        Ok(hopspot::DisplayButtonOutcome::WakeAndConsume) => {
+                            if display.visibility() == hopspot::display::DisplayVisibility::Visible
+                            {
+                                let notice = hopspot::UiNotice::Awake;
+                                ui_state.show_notice(notice);
+                                notice_until_ms = Some((now_ms + NOTICE_MS, notice));
+                            }
+                            continue;
                         }
-                        continue;
+                        Ok(hopspot::DisplayButtonOutcome::ForwardToUi) => {}
+                        Err(_) => continue,
                     }
                     match ui_state.handle_input(event, content) {
                         hopspot::UiAction::Announce => {
@@ -271,7 +249,12 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                             let notice = hopspot::UiNotice::Sleeping;
                             ui_state.show_notice(notice);
                             notice_until_ms = Some((now_ms + NOTICE_MS, notice));
-                            display_power.schedule_system_sleep(now_ms.saturating_add(NOTICE_MS));
+                            let _scheduled = display.schedule_blanking(
+                                hopspot::display::MonotonicMillis::new(
+                                    now_ms.saturating_add(NOTICE_MS),
+                                ),
+                                hopspot::display::DisplayBlankReason::SystemSleep,
+                            );
                             lora_status.disable();
                             usb_status.disable();
                             BluetoothAutoStatus::new(&BLE_SHARED).disable();
@@ -279,15 +262,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                             board::control_gnss(hopspot::GnssReceiverCommand::Disable);
                         }
                         hopspot::UiAction::Wake => {
-                            if let Err(DisplayIoError::Spi) = apply_display_power(
-                                &mut display,
-                                display_power.wake(now_ms, hopspot::DEFAULT_DISPLAY_AUTO_OFF),
-                            )
-                            .await
-                            {
-                                display.force_dark();
-                                display_power.mark_unavailable();
-                            }
+                            let _restoration = display.request_visible(now, display_now).await;
                             let notice = hopspot::UiNotice::Awake;
                             ui_state.show_notice(notice);
                             notice_until_ms = Some((now_ms + NOTICE_MS, notice));
@@ -303,12 +278,15 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                             let notice = hopspot::UiNotice::DisplayOff;
                             ui_state.show_notice(notice);
                             notice_until_ms = Some((now_ms + NOTICE_MS, notice));
-                            display_power.schedule_display_off(now_ms.saturating_add(NOTICE_MS));
+                            let _scheduled = display.schedule_blanking(
+                                hopspot::display::MonotonicMillis::new(
+                                    now_ms.saturating_add(NOTICE_MS),
+                                ),
+                                hopspot::display::DisplayBlankReason::DisplayOnly,
+                            );
                         }
                         hopspot::UiAction::ToggleDisplayAutoOff => {
-                            if let Some(auto_off) = display_power
-                                .toggle_auto_off(now_ms, hopspot::DEFAULT_DISPLAY_AUTO_OFF)
-                            {
+                            if let Ok(auto_off) = display.toggle_auto_off(now) {
                                 let notice = match auto_off {
                                     hopspot::DisplayAutoOff::Enabled => {
                                         hopspot::UiNotice::DisplayAutoOffOn

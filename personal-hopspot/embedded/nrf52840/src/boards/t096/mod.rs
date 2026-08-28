@@ -12,8 +12,8 @@ pub(crate) use gnss::{
     control as control_gnss, drive as drive_gnss, snapshot as gnss_snapshot, T096Gnss as Gnss,
 };
 pub(crate) use hardware::{
-    T096Battery as Battery, T096Board as Board, T096Display as ReadyDisplay,
-    T096DisplayBringup as Display, T096Hardware as Hardware, T096LoraInterface as LoraInterface,
+    T096Battery as Battery, T096Board as Board, T096DisplayBringup as Display,
+    T096Hardware as Hardware, T096LoraInterface as LoraInterface,
 };
 pub(crate) use identity::{
     bootstrap_ble_identity, bootstrap_node_identity, startup_notice as identity_startup_notice,
