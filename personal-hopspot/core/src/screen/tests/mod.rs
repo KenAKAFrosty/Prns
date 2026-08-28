@@ -15,11 +15,13 @@ use crate::{
     PersistenceState, PowerSnapshot,
 };
 
+use super::face_64x128::RenderInput;
 use super::limits::{build_limit_rows, LimitRow, LimitValue};
 use super::model::InterfaceMenuDetailKind;
 use super::render::cards::{
     card_label_max_chars, connection_status_label, draw_card_with_selection,
 };
+use super::render::draw as render_screen;
 use super::render::glyphs::{
     draw_battery, draw_clock, draw_interface_icon, draw_link, draw_person,
 };
@@ -51,11 +53,11 @@ use super::state::{
     SLEEP_MENU_ITEM, STATION_UPLINK_MENU_ITEM, WIFI_MENU_ITEMS,
 };
 use super::{
-    apply_and_persist_radio_profile, card_label, render as render_screen, sort_cards_for_display,
-    AccessPointState, BluetoothRecoveryMenuDetails, Card, CardActivityTracker, CardKind,
-    GnssAvailability, InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess,
-    PersistenceNotice, RadioProfileChangeResult, RenderFrame, ScreenContent,
-    SharedInstanceConfigExport, UiAction, UiConfiguration, UiNotice, UiState, UserBlanking,
+    apply_and_persist_radio_profile, card_label, sort_cards_for_display, AccessPointState,
+    BluetoothRecoveryMenuDetails, Card, CardActivityTracker, CardKind, GnssAvailability,
+    InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, PersistenceNotice,
+    RadioProfileChangeResult, ScreenContent, SharedInstanceConfigExport, UiAction, UiConfiguration,
+    UiNotice, UiState, UserBlanking,
 };
 
 const TEST_WIDTH: usize = WIDTH as usize;
@@ -112,7 +114,7 @@ fn render_with_state<D: DrawTarget<Color = BinaryColor>>(
     let interface_menu_details = InterfaceMenuDetails::empty();
     render_screen(
         display,
-        RenderFrame {
+        RenderInput {
             content: test_content(cards),
             battery,
             gnss: None,
@@ -132,7 +134,7 @@ fn render_with_local_docs<D: DrawTarget<Color = BinaryColor>>(
     let interface_menu_details = InterfaceMenuDetails::empty();
     render_screen(
         display,
-        RenderFrame {
+        RenderInput {
             content: ScreenContent {
                 cards,
                 local_docs: Some(local_docs),

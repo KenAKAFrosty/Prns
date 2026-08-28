@@ -71,15 +71,12 @@ pub use radio_profile_store::{
 };
 #[cfg(feature = "display")]
 pub use screen::{
-    apply_and_persist_radio_profile, card_label, card_label_max_chars, render, splash,
-    tcp_card_label, AccessPointState, BluetoothRecoveryMenuDetails, CanvasDimensions, Card,
-    CardActivityTracker, CardKind, CardLabel, DisplayAutoOff, DisplayAutoOffDuration,
-    DisplayButtonOutcome, DisplayDarkReason, DisplayPowerCommand, DisplayPowerControl,
-    DisplayPowerState, EinkRefresh, EinkRefreshPolicy, EinkRefreshUrgency, GnssAvailability,
-    InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, LogicalPoint,
-    PersistenceNotice, QuarterTurn, RadioProfileChangeResult, RenderFrame, RotatedCanvasMapping,
-    ScreenContent, SharedInstanceConfigExport, SplashContent, UiAction, UiConfiguration, UiNotice,
-    UiState, UserBlanking, WifiNetworkStatus, WifiStationStatus, DEFAULT_DISPLAY_AUTO_OFF,
+    apply_and_persist_radio_profile, card_label, card_label_max_chars, tcp_card_label,
+    AccessPointState, BluetoothRecoveryMenuDetails, Card, CardActivityTracker, CardKind, CardLabel,
+    GnssAvailability, InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess,
+    PersistenceNotice, RadioProfileChangeResult, ScreenContent, SharedInstanceConfigExport,
+    UiAction, UiConfiguration, UiNotice, UiState, UserBlanking, WifiNetworkStatus,
+    WifiStationStatus,
 };
 #[cfg(feature = "display")]
 pub use screen::{display, face_64x128};

@@ -13,8 +13,6 @@ extern crate alloc;
 )]
 mod immediate_display;
 
-//NOTE: Right now Hopspot on embedded assumes each given board has a set profile of interfaces. That coupling is clear here. However, note that in the future, if there's developer interest in expanding hopspot to allow for spceific feature selection during custom builds, we can honor that.
-
 #[cfg(all(
     target_arch = "xtensa",
     not(all(

@@ -1,5 +1,17 @@
 use super::time::{DisplayDuration, MonotonicMillis};
-use crate::{DisplayAutoOff, DisplayButtonOutcome, UserBlanking};
+use crate::UserBlanking;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DisplayAutoOff {
+    Enabled,
+    Disabled,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DisplayButtonOutcome {
+    ForwardToUi,
+    WakeAndConsume,
+}
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum UserBlankingPolicy {

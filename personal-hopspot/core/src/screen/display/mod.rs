@@ -4,7 +4,8 @@ mod time;
 
 pub use blanking::{
     BlankingCommand, BlankingDecision, BlankingError, BlankingOutcome, BlankingResult,
-    BufferRetention, ButtonDecision, DisplayBlankReason, DisplayVisibility, UserBlankingPolicy,
+    BufferRetention, ButtonDecision, DisplayAutoOff, DisplayBlankReason, DisplayButtonOutcome,
+    DisplayVisibility, UserBlankingPolicy,
 };
 pub use presentation::{
     EinkPolicy, EinkPolicyConfiguration, EinkPolicyError, PresentationAttempt,
@@ -19,10 +20,11 @@ use blanking::BlankingCapability;
 use presentation::Presenter;
 
 use super::face_64x128::{self, Frame, RenderInput};
-use super::{DisplayAutoOff, UserBlanking};
+use super::UserBlanking;
 
+const DEFAULT_AUTO_OFF_MILLISECONDS: u64 = 60_000;
 pub const DEFAULT_AUTO_OFF: DisplayDuration =
-    match DisplayDuration::from_millis(super::power::DEFAULT_DISPLAY_AUTO_OFF_MILLISECONDS) {
+    match DisplayDuration::from_millis(DEFAULT_AUTO_OFF_MILLISECONDS) {
         Ok(duration) => duration,
         Err(_) => panic!("the default display auto-off duration is nonzero"),
     };

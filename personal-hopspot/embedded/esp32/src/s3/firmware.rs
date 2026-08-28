@@ -576,7 +576,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 Either3::First(event) => {
                     let now_ms = embassy_time::Instant::now().as_millis();
                     match display.button_pressed(MonotonicMillis::new(now_ms), display_now) {
-                        Ok(screen::DisplayButtonOutcome::WakeAndConsume) => {
+                        Ok(screen::display::DisplayButtonOutcome::WakeAndConsume) => {
                             if display.visibility() == DisplayVisibility::Visible {
                                 ui_state.show_notice(screen::UiNotice::Awake);
                                 notice_until_ms =
@@ -584,7 +584,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             }
                             continue;
                         }
-                        Ok(screen::DisplayButtonOutcome::ForwardToUi) => {}
+                        Ok(screen::display::DisplayButtonOutcome::ForwardToUi) => {}
                         Err(error) => {
                             log::error!("display button handling failed: {error:?}");
                             continue;
@@ -606,10 +606,10 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             match display.toggle_auto_off(MonotonicMillis::new(now_ms)) {
                                 Ok(auto_off) => {
                                     let notice = match auto_off {
-                                        screen::DisplayAutoOff::Enabled => {
+                                        screen::display::DisplayAutoOff::Enabled => {
                                             screen::UiNotice::DisplayAutoOffOn
                                         }
-                                        screen::DisplayAutoOff::Disabled => {
+                                        screen::display::DisplayAutoOff::Disabled => {
                                             screen::UiNotice::DisplayAutoOffOff
                                         }
                                     };

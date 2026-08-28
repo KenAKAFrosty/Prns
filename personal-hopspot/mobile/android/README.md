@@ -1,11 +1,11 @@
 # Personal Hopspot — Android
 
-The Android face of Personal Hopspot. The shared `personal-hopspot-core` renderer
-(generic over `embedded_graphics::DrawTarget<Color = BinaryColor>`) draws the
-identical 64x128 screen here that it draws on the Heltec V4 OLED and the Linux debug
-window. This crate adds the platform adapters Android needs:
+The Android face of Personal Hopspot. `personal-hopspot-core` renders the same
+canonical 64×128 monochrome frame used by embedded and desktop Hopspots, then
+the Android adapter expands that frame into the app's native RGBA surface. This
+crate adds the other platform adapters Android needs:
 
-- a `DrawTarget` backed by a flat RGBA framebuffer (`rust/src/framebuffer.rs`)
+- canonical-frame expansion into a flat RGBA framebuffer (`rust/src/face.rs`)
 - a single-button input source: every tap is a `ShortPress`, every hold a
   `LongPress` (`rust/src/face.rs` + the `nativePostInput` entry point)
 - Android-hosted USB Auto (`app/src/main/java/org/personal/hopspot/UsbLink.kt`)

@@ -1,5 +1,4 @@
 use super::*;
-use crate::{DisplayAutoOff, DisplayButtonOutcome};
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::{DrawTarget, Pixel, Point};
 

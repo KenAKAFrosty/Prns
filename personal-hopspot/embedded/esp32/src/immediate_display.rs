@@ -1,13 +1,14 @@
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::{DrawTarget, Pixel, Point};
 use personal_hopspot_core::display::{
-    BlankingCommand, BlankingDecision, BlankingError, BlankingOutcome, DisplayBlankReason,
-    DisplayCoordinator, DisplayDuration, DisplayVisibility, MonotonicMillis, PresentationDecision,
-    PresentationError, PresentationOutcome, PresentationPolicy, PresentationUrgency,
-    UserBlankingPolicy, DEFAULT_AUTO_OFF,
+    BlankingCommand, BlankingDecision, BlankingError, BlankingOutcome, DisplayAutoOff,
+    DisplayBlankReason, DisplayButtonOutcome, DisplayCoordinator, DisplayDuration,
+    DisplayVisibility, MonotonicMillis, PresentationDecision, PresentationError,
+    PresentationOutcome, PresentationPolicy, PresentationUrgency, UserBlankingPolicy,
+    DEFAULT_AUTO_OFF,
 };
 use personal_hopspot_core::face_64x128::{Frame, RenderInput, HEIGHT, WIDTH};
-use personal_hopspot_core::{DisplayAutoOff, DisplayButtonOutcome, UserBlanking};
+use personal_hopspot_core::UserBlanking;
 
 const BLANKING_RETRY_BACKOFF_DURATION: DisplayDuration = match DisplayDuration::from_millis(500) {
     Ok(duration) => duration,

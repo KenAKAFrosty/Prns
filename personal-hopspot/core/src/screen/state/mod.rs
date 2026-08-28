@@ -323,18 +323,7 @@ impl UserBlanking {
     pub const fn is_available(self) -> bool {
         matches!(self.0, UserBlankingCapability::Available)
     }
-
-    #[doc(hidden)]
-    #[allow(non_upper_case_globals)]
-    pub const Unavailable: Self = Self::unavailable();
-
-    #[doc(hidden)]
-    #[allow(non_upper_case_globals)]
-    pub const Available: Self = Self(UserBlankingCapability::Available);
 }
-
-#[doc(hidden)]
-pub type DisplayPowerControl = UserBlanking;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AccessPointState {

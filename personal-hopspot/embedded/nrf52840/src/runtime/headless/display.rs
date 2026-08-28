@@ -222,7 +222,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                     let now_ms = embassy_time::Instant::now().as_millis();
                     let now = hopspot::display::MonotonicMillis::new(now_ms);
                     match display.button_pressed(now, display_now).await {
-                        Ok(hopspot::DisplayButtonOutcome::WakeAndConsume) => {
+                        Ok(hopspot::display::DisplayButtonOutcome::WakeAndConsume) => {
                             if display.visibility() == hopspot::display::DisplayVisibility::Visible
                             {
                                 let notice = hopspot::UiNotice::Awake;
@@ -231,7 +231,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                             }
                             continue;
                         }
-                        Ok(hopspot::DisplayButtonOutcome::ForwardToUi) => {}
+                        Ok(hopspot::display::DisplayButtonOutcome::ForwardToUi) => {}
                         Err(_) => continue,
                     }
                     match ui_state.handle_input(event, content) {
@@ -288,10 +288,10 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                         hopspot::UiAction::ToggleDisplayAutoOff => {
                             if let Ok(auto_off) = display.toggle_auto_off(now) {
                                 let notice = match auto_off {
-                                    hopspot::DisplayAutoOff::Enabled => {
+                                    hopspot::display::DisplayAutoOff::Enabled => {
                                         hopspot::UiNotice::DisplayAutoOffOn
                                     }
-                                    hopspot::DisplayAutoOff::Disabled => {
+                                    hopspot::display::DisplayAutoOff::Disabled => {
                                         hopspot::UiNotice::DisplayAutoOffOff
                                     }
                                 };
