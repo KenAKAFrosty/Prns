@@ -12,7 +12,10 @@ use crate::interfaces::EMBEDDED_MAX_LINK_MTU;
 use crate::persistence::{
     flash_journal_record_storage_len, maximum_route_upsert_payload_len, self_ratchets_snapshot_len,
 };
-use crate::remote_control::REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY;
+use crate::remote_control::{
+    REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY,
+    REMOTE_CONTROL_REQUIRED_UPSTREAM_APP_DESTINATION_CAPACITY,
+};
 use crate::routing::announce::defaults::MAX_ANNOUNCE_IDS_PER_DESTINATION;
 use crate::routing::announce::destination_announce_limit::{
     destination_announce_limit_index_buckets, FixedHeapDestinationAnnounceLimitTable,
@@ -57,8 +60,12 @@ use crate::routing::warmth::FixedDepartedInterfaceTable;
 use crate::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayout};
 
 const MAX_TRACKED_DESTINATIONS: usize = 512;
-const MAX_UPSTREAM_APP_DESTINATIONS: usize = 2;
-const MAX_HELD_IDENTITIES: usize = REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY;
+// Two Hopspot destinations share one node identity. RemoteControl owns an independent target
+// destination plus its controller/target identity pair.
+const MAX_UPSTREAM_APP_DESTINATIONS: usize =
+    2usize.saturating_add(REMOTE_CONTROL_REQUIRED_UPSTREAM_APP_DESTINATION_CAPACITY);
+const MAX_HELD_IDENTITIES: usize =
+    1usize.saturating_add(REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY);
 const MAX_LINK_SESSIONS: usize = 512;
 const MAX_TRANSPORTED_LINKS: usize = 32;
 const MAX_OUTSTANDING_RECEIPTS: usize = 8;
@@ -97,8 +104,8 @@ const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(EMBEDDED_MAX_LINK_MTU);
 ///
 /// `MAX_REQUEST_HANDLERS` is independent from the upstream-application destination capacity:
 /// applications commonly register several request paths on one destination. It defaults to the
-/// historical two rows, while application recipes with more routes should supply their exact
-/// registration count.
+/// fixed profile's destination count, while application recipes with more routes should supply
+/// their exact registration count.
 pub struct Esp32S3<
     A: Allocator = Global,
     const MAX_REQUEST_HANDLERS: usize = MAX_UPSTREAM_APP_DESTINATIONS,

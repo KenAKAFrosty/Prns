@@ -495,6 +495,8 @@ mod tests {
         RemoteControlInitialAccess, RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData,
         RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlTargetIdentitySecret,
         REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY,
+        REMOTE_CONTROL_REQUIRED_REQUEST_HANDLER_CAPACITY,
+        REMOTE_CONTROL_REQUIRED_UPSTREAM_APP_DESTINATION_CAPACITY,
     };
     use crate::routing::request_handlers::RequestPathHash;
     use crate::runtime::request_endpoints::{Decline, RequestContext, RequestEndpointPolicy};
@@ -502,6 +504,20 @@ mod tests {
     use crate::storage::TestFixedStorage;
 
     type Storage = TestFixedStorage<4, 4, 128, 4, 4, 4, 2, 2, 2, 2, 2, 2>;
+    type RemoteControlOnlyStorage = TestFixedStorage<
+        4,
+        4,
+        128,
+        REMOTE_CONTROL_REQUIRED_UPSTREAM_APP_DESTINATION_CAPACITY,
+        REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY,
+        4,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+    >;
 
     struct Routes;
 
@@ -665,6 +681,24 @@ mod tests {
                 },
             ),
         );
+    }
+
+    #[test]
+    fn remote_control_capacity_constants_fit_exact_fixed_storage() {
+        let mut engine = EngineState::<RemoteControlOnlyStorage>::default();
+        let configured = configure_remote_control_service(&mut engine, remote_control_service())
+            .expect("the advertised RemoteControl capacities fit the service");
+
+        assert!(configured.is_available());
+        assert_eq!(
+            engine.held_identity_hashes().len(),
+            REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY,
+        );
+        assert_eq!(
+            engine.upstream_app_destinations().count(),
+            REMOTE_CONTROL_REQUIRED_UPSTREAM_APP_DESTINATION_CAPACITY,
+        );
+        assert_eq!(REMOTE_CONTROL_REQUIRED_REQUEST_HANDLER_CAPACITY, 1);
     }
 
     #[test]

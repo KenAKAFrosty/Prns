@@ -5,7 +5,12 @@ use crate::storage::TablePushError;
 
 use super::{RemoteControlRequestKind, RemoteControlRequestSet};
 
+/// Held-identity rows consumed by an available RemoteControl service.
 pub const REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY: usize = 2;
+/// Upstream application-destination rows consumed by an available RemoteControl service.
+pub const REMOTE_CONTROL_REQUIRED_UPSTREAM_APP_DESTINATION_CAPACITY: usize = 1;
+/// Request-handler rows consumed by an available RemoteControl service.
+pub const REMOTE_CONTROL_REQUIRED_REQUEST_HANDLER_CAPACITY: usize = 1;
 
 pub struct RemoteControlControllerIdentitySecret {
     parts: IdentityParts,
