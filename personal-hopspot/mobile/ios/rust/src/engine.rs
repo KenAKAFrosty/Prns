@@ -20,8 +20,13 @@ use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::manifold::tokio::TokioInterfaceStatus;
 use personal_rns::node_introspection::NodeIntrospection;
+use personal_rns::remote_control::{
+    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
+    RemoteControlService,
+};
 use personal_rns::runtime::{
     Diagnostic, ManuallyAttached, NodeRunError, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
+    RemoteControlIdentityDirectory,
 };
 use personal_rns::storage::GrowableHeap;
 #[cfg(target_os = "ios")]
@@ -566,11 +571,35 @@ async fn run_engine(
         ),
     );
 
+    let remote_control_bootstrap = match RemoteControlIdentityDirectory::new(
+        storage_directory.join("remote_control"),
+    )
+    .load_or_generate()
+    {
+        Ok(bootstrap) => bootstrap,
+        Err(error) => {
+            diagnostic(
+                "remote_control",
+                format_args!("state=failed error={error}"),
+            );
+            let _ = ready_tx.send(Err(MobileEngineFailure::StorageConfiguration));
+            return;
+        }
+    };
+    let (remote_control_identity_secrets, _) = remote_control_bootstrap.into_parts();
+    let remote_control = RemoteControlService::new(
+        remote_control_identity_secrets,
+        RemoteControlPublicAppData::empty(),
+        RemoteControlInitialAccess::Nobody,
+        RemoteControlSelfAnnouncement::Destination(destination_hashes.node_page),
+    );
+
     let (persistence_change_tx, persistence_changes) = tokio::sync::mpsc::unbounded_channel::<()>();
     let (rotated_tx, rotated_rx) = tokio::sync::mpsc::unbounded_channel::<DestinationHash>();
     let timeline_origin = prepared_persistence.timeline_origin();
     let mut node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
+        remote_control,
         pre_configured_destinations: destinations.into_preconfigured_destinations(),
         app_state: (),
         storage: GrowableHeap,
