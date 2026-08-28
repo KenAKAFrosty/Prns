@@ -30,7 +30,141 @@ fn show_notice(
     timer.stage(notice, duration);
 }
 
-pub(crate) async fn run<B: Esp32S3Board>(spawner: Spawner)
+#[cfg(feature = "heltec-v4-r8-boot")]
+use core::alloc::Layout;
+#[cfg(feature = "heltec-v4-r8-boot")]
+use core::ffi::c_void;
+#[cfg(feature = "heltec-v4-r8-boot")]
+use core::future::Future;
+#[cfg(feature = "heltec-v4-r8-boot")]
+use core::mem::MaybeUninit;
+#[cfg(feature = "heltec-v4-r8-boot")]
+use core::pin::Pin;
+
+#[cfg(feature = "heltec-v4-r8-boot")]
+use allocator_api2::alloc::Allocator;
+#[cfg(feature = "heltec-v4-r8-boot")]
+use allocator_api2::boxed::Box as AllocBox;
+#[cfg(feature = "heltec-v4-r8-boot")]
+use static_cell::StaticCell;
+
+#[cfg(feature = "heltec-v4-r8-boot")]
+/// Main residual stack is only ~28 KiB after radio/reclaimed heaps. Construct and poll `run_core` on
+/// a dedicated RTOS thread-mode executor. The stack lives in PSRAM (`ExternalMemory`) so it does
+/// not carve the Internal freelist Wi-Fi/BLE need for association.
+const RUN_CORE_STACK_BYTES: usize = 64 * 1024;
+
+#[cfg(feature = "heltec-v4-r8-boot")]
+#[repr(C)]
+struct RunCoreHandoffHeader {
+    worker: unsafe fn(*mut c_void),
+    data: *mut c_void,
+}
+
+#[cfg(feature = "heltec-v4-r8-boot")]
+struct RunCoreHandoffArgs<B: Esp32S3Board>
+where
+    B::Display: 'static,
+    B::Battery: 'static,
+    B::Gnss: 'static,
+{
+    hardware: Option<S3BoardHardware<B::Display, B::Battery, B::Gnss>>,
+}
+
+#[cfg(feature = "heltec-v4-r8-boot")]
+extern "C" fn run_core_handoff_entry(param: *mut c_void) {
+    // SAFETY: `spawn_task_with_stack` passes the leaked header pointer for the life of this worker.
+    let header = unsafe { &*param.cast::<RunCoreHandoffHeader>() };
+    unsafe { (header.worker)(header.data) };
+}
+
+#[cfg(feature = "heltec-v4-r8-boot")]
+unsafe fn run_core_handoff_worker<B: Esp32S3Board + 'static>(data: *mut c_void)
+where
+    B::Display: 'static,
+    B::Battery: 'static,
+    B::Gnss: 'static,
+{
+    // SAFETY: `data` is the leaked `RunCoreHandoffArgs` pointer from `start_run_core_executor`.
+    let args = unsafe { &mut *data.cast::<RunCoreHandoffArgs<B>>() };
+    let hardware = args
+        .hardware
+        .take()
+        .expect("run_core handoff expects board hardware once");
+
+    static EXECUTOR: StaticCell<esp_rtos::embassy::Executor> = StaticCell::new();
+    EXECUTOR
+        .init(esp_rtos::embassy::Executor::new())
+        .run(move |spawner| {
+            // Prefer the global external heap (not the R8 private bump): `run_core` later resets that
+            // bump before placing the LoRa TX queue, and must not free the live boot future.
+            let run = AllocBox::leak(AllocBox::new_in(
+                run_core::<B>(spawner, hardware),
+                esp_alloc::ExternalMemory,
+            ));
+            esp_println::println!(
+                "run_core future bytes={} (pinned in external RAM; polled on {} KiB PSRAM stack)",
+                core::mem::size_of_val(run),
+                RUN_CORE_STACK_BYTES / 1024
+            );
+            // SAFETY: leaked allocation is never moved; fat-pointer coerce to dyn Future for await.
+            let run: Pin<&'static mut dyn Future<Output = ()>> =
+                unsafe { Pin::new_unchecked(run) };
+            spawner
+                .spawn(run_core_task(run).expect("run_core task fits"));
+        });
+}
+
+#[cfg(feature = "heltec-v4-r8-boot")]
+fn start_run_core_executor<B: Esp32S3Board + 'static>(
+    hardware: S3BoardHardware<B::Display, B::Battery, B::Gnss>,
+) where
+    B::Display: 'static,
+    B::Battery: 'static,
+    B::Gnss: 'static,
+{
+    let args = AllocBox::leak(AllocBox::new_in(
+        RunCoreHandoffArgs::<B> {
+            hardware: Some(hardware),
+        },
+        esp_alloc::ExternalMemory,
+    ));
+    let header = AllocBox::leak(AllocBox::new_in(
+        RunCoreHandoffHeader {
+            worker: run_core_handoff_worker::<B>,
+            data: core::ptr::from_mut(args).cast::<c_void>(),
+        },
+        esp_alloc::ExternalMemory,
+    ));
+
+    // Stack in the global PSRAM window — keeps the ~156 KiB Internal freelist for Wi-Fi/BLE.
+    let stack_layout = Layout::from_size_align(RUN_CORE_STACK_BYTES, 16)
+        .expect("run-core stack layout");
+    let stack_ptr = esp_alloc::ExternalMemory
+        .allocate(stack_layout)
+        .expect("run-core PSRAM stack");
+    // SAFETY: exclusive ExternalMemory allocation leaked for the device lifetime; alignment matches
+    // `spawn_task_with_stack` requirements.
+    let stack: &'static mut [MaybeUninit<u8>] = unsafe {
+        core::slice::from_raw_parts_mut(stack_ptr.as_ptr().cast::<MaybeUninit<u8>>(), RUN_CORE_STACK_BYTES)
+    };
+
+    // SAFETY: header/args/stack are leaked external allocations; the worker runs for the device lifetime.
+    unsafe {
+        esp_rtos::spawn_task_with_stack(
+            "run-core",
+            run_core_handoff_entry,
+            core::ptr::from_mut(header).cast::<c_void>(),
+            stack,
+            1,
+            Some(esp_hal::system::Cpu::ProCpu),
+        );
+    }
+}
+
+pub(crate) async fn run<B: Esp32S3Board + 'static>(
+    #[cfg_attr(feature = "heltec-v4-r8-boot", allow(unused_variables))] spawner: Spawner,
+)
 where
     B::Display: 'static,
     <B::Display as S3BoardDisplay>::Runtime: 'static,
@@ -44,8 +178,19 @@ where
     // the private bump that `reinit_private_psram_heap` resets inside `run_core` before the LoRa
     // queue lands — pinning here would place the live future (OLED/I2C state) in that window and
     // get overwritten, which zeroed I2C Config.frequency after radio bring-up.
-    allocator_api2::boxed::Box::pin_in(run_core::<B>(spawner, bringup), esp_alloc::ExternalMemory)
-        .await;
+    #[cfg(feature = "heltec-v4-r8-boot")]
+    {
+        // Construction and polling must not use the ~28 KiB main stack. Hand off to a dedicated RTOS
+        // thread-mode executor whose stack lives in PSRAM so Internal heap stays available for Wi-Fi.
+        boot_stage(BootPhase::RunCorePinBegin);
+        start_run_core_executor::<B>(bringup);
+        core::future::pending::<()>().await;
+    }
+    #[cfg(not(feature = "heltec-v4-r8-boot"))]
+    {
+        allocator_api2::boxed::Box::pin_in(run_core::<B>(spawner, bringup), esp_alloc::ExternalMemory)
+            .await;
+    }
 }
 
 #[allow(clippy::too_many_lines)]
@@ -58,6 +203,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     B::Battery: 'static,
     B::Gnss: 'static,
 {
+    #[cfg(feature = "heltec-v4-r8-boot")]
+    boot_stage(BootPhase::RunCoreEntered);
     let BoardFace {
         display: board_display,
         battery,
@@ -88,6 +235,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         wifi_config.password.len(),
         wifi_config.tcp_client.is_some()
     );
+
+    #[cfg(feature = "heltec-v4-r8-boot")]
+    boot_stage(BootPhase::RunCorePreLoraProfile);
 
     // Defer claiming USB-JTAG until after Wi-Fi bring-up so boot logs stay visible through radio init.
     let usb_status: &'static EmbassyInterfaceStatus = mk_static!(
@@ -1072,6 +1222,12 @@ async fn manifold_run(
     boot_stage(BootPhase::PersistenceRestoreComplete);
     node.run_manifold_with_persistence_and_interface_store(&INTERFACE_STORE, persistence)
         .await
+}
+
+#[cfg(feature = "heltec-v4-r8-boot")]
+#[embassy_executor::task]
+async fn run_core_task(mut run: Pin<&'static mut dyn Future<Output = ()>>) {
+    run.as_mut().await;
 }
 
 #[embassy_executor::task]

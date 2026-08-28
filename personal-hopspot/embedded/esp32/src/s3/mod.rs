@@ -195,7 +195,7 @@ const RECLAIMED_HEAP_BYTES: usize = 72 * 1024;
 // ordinary software state in PSRAM. Reinvest the released `.bss` in the internal-only radio heap:
 // the S3 Wi-Fi blob can retain its complete RX profile during BLE coexistence without exhausting
 // the allocator. Execution and both CPU stacks remain in internal RAM; only suspended future state
-// lives in PSRAM.
+// lives in PSRAM (Heltec V4-R8 additionally polls `run_core` on a dedicated PSRAM stack).
 const RADIO_INTERNAL_HEAP_BYTES: usize = 52 * 1024;
 
 const RENDER_INTERVAL_MS: u64 = 500;
@@ -355,6 +355,15 @@ pub(crate) enum BootPhase {
     WatchdogReady = 24,
     AnnounceBegin = 25,
     AnnounceNodeIssueReturned = 27,
+    /// Heltec V4-R8: about to hand `run_core` to the PSRAM-backed executor.
+    #[cfg(feature = "heltec-v4-r8-boot")]
+    RunCorePinBegin = 32,
+    /// Heltec V4-R8: first instruction inside `run_core`.
+    #[cfg(feature = "heltec-v4-r8-boot")]
+    RunCoreEntered = 33,
+    /// Heltec V4-R8: before first `run_core` await (LoRa profile / flash).
+    #[cfg(feature = "heltec-v4-r8-boot")]
+    RunCorePreLoraProfile = 34,
 }
 
 impl BootPhase {
@@ -386,6 +395,12 @@ impl BootPhase {
             Self::WatchdogReady => "watchdog.ready",
             Self::AnnounceBegin => "announce.begin",
             Self::AnnounceNodeIssueReturned => "announce.node.issue.return",
+            #[cfg(feature = "heltec-v4-r8-boot")]
+            Self::RunCorePinBegin => "run-core.pin.begin",
+            #[cfg(feature = "heltec-v4-r8-boot")]
+            Self::RunCoreEntered => "run-core.entered",
+            #[cfg(feature = "heltec-v4-r8-boot")]
+            Self::RunCorePreLoraProfile => "run-core.pre-lora-profile",
         }
     }
 }

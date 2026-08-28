@@ -518,6 +518,82 @@ impl Task {
         task
     }
 
+    /// Create a task that runs on a caller-owned stack (DRAM `.bss`, PSRAM, etc.).
+    ///
+    /// Unlike [`Task::new`], this does not allocate from `InternalMemory`. The stack must outlive
+    /// the task; on drop the stack is not freed (`heap_allocated` stays false). Use this for
+    /// permanent workers that must not starve the Wi-Fi/BLE internal heap.
+    #[cfg(feature = "esp-radio")]
+    pub(crate) fn new_with_stack(
+        name: &str,
+        task_fn: extern "C" fn(*mut c_void),
+        param: *mut c_void,
+        stack: &'static mut [MaybeUninit<u8>],
+        priority: usize,
+        pinned_to: Option<Cpu>,
+    ) -> Self {
+        debug!(
+            "task_create_with_stack {} {:?}({:?}) stack_bytes = {} priority = {} pinned_to = {:?}",
+            name,
+            task_fn,
+            param,
+            stack.len(),
+            priority,
+            pinned_to
+        );
+
+        const MIN_STACK_ALIGNMENT: usize = 16;
+        let stack_len_bytes = stack.len() & !(MIN_STACK_ALIGNMENT - 1);
+        unwrap!(
+            (stack_len_bytes >= 4096).then_some(()),
+            "Caller-owned task stack is too small"
+        );
+        unwrap!(
+            (stack.as_ptr() as usize).is_multiple_of(MIN_STACK_ALIGNMENT).then_some(()),
+            "Caller-owned task stack must be 16-byte aligned"
+        );
+
+        let stack_bottom = stack.as_mut_ptr().cast::<MaybeUninit<u32>>();
+        let stack_words =
+            core::ptr::slice_from_raw_parts_mut(stack_bottom, stack_len_bytes / 4);
+        let stack_top = unsafe { stack_bottom.add(stack_words.len()).cast() };
+
+        let stack_guard_offset =
+            esp_config::esp_config_int!(usize, "ESP_HAL_CONFIG_STACK_GUARD_OFFSET");
+
+        let mut task = Task {
+            cpu_context: new_task_context(task_fn, param, stack_top),
+            thread_local: ThreadLocalData::new(),
+            state: TaskState::Ready,
+            stack: stack_words,
+            #[cfg(any(hw_task_overflow_detection, sw_task_overflow_detection))]
+            stack_guard: stack_words.cast(),
+            #[cfg(sw_task_overflow_detection)]
+            stack_guard_value: 0,
+            #[cfg(feature = "esp-radio")]
+            current_wait_queue: None,
+            priority: Priority::new(priority),
+            #[cfg(multi_core)]
+            pinned_to,
+
+            wakeup_at: 0,
+            timer_queued: false,
+            in_run_or_wait_queue: false,
+
+            alloc_list_item: TaskListItem::None,
+            ready_queue_item: TaskListItem::None,
+            timer_queue_item: TaskListItem::None,
+            delete_list_item: TaskListItem::None,
+
+            #[cfg(feature = "alloc")]
+            heap_allocated: false,
+        };
+
+        task.set_up_stack_guard(stack_guard_offset, 0xDEED_BAAD);
+
+        task
+    }
+
     fn set_up_stack_guard(&mut self, offset: usize, _value: u32) {
         let stack_bottom = self.stack.cast::<MaybeUninit<u32>>();
         let stack_guard = unsafe { stack_bottom.byte_add(offset) };

@@ -47,6 +47,9 @@ usb = ["personal-rns/usb"]
 tcp = ["wifi-auto", "personal-rns/tcp-dns", "embassy-net/dns"]
 # Developer-only interoperability fixture. Shipping board packages do not enable it.
 wifi-security-probe = []
+# Heltec V4-R8 (S3R8): PSRAM-backed `run-core` executor stack and related boot breadcrumbs.
+# Other S3 boards keep pinning `run_core` on the main embassy task.
+heltec-v4-r8-boot = []
 
 [dependencies]
 cfg-if = "1.0"

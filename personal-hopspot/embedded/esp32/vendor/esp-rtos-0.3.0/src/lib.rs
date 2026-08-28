@@ -117,6 +117,27 @@ pub use macros::rtos_main as main;
 pub(crate) use scheduler::SCHEDULER;
 pub use task::CurrentThreadHandle;
 
+/// Spawn a permanent (or long-lived) task on a caller-owned stack.
+///
+/// The stack is not allocated from `InternalMemory`, so this does not compete with the Wi-Fi/BLE
+/// internal heap. The stack slice must remain valid for the life of the task; it is never freed by
+/// the scheduler.
+///
+/// ## Safety
+///
+/// `param` must remain valid for the lifetime of the task and the pointed-to data must be `Send`.
+#[cfg(feature = "esp-radio")]
+pub unsafe fn spawn_task_with_stack(
+    name: &str,
+    task: extern "C" fn(*mut core::ffi::c_void),
+    param: *mut core::ffi::c_void,
+    stack: &'static mut [core::mem::MaybeUninit<u8>],
+    priority: u32,
+    pin_to_core: Option<Cpu>,
+) {
+    let _ = SCHEDULER.create_task_with_stack(name, task, param, stack, priority, pin_to_core);
+}
+
 use crate::{task::IdleFn, timer::TimeDriver};
 
 type TimeBase = OneShotTimer<'static, Blocking>;
