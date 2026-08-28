@@ -256,7 +256,13 @@ pub enum SetRemoteControlControllerGrantOutcome {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetRemoteControlControllerGrantError {
+    Unavailable,
     CapacityExhausted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RevokeRemoteControlControllerError {
+    Unavailable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

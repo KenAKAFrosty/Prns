@@ -8,8 +8,8 @@ pub(crate) use super::button::{drive as drive_button, EVENTS as INPUT_EVENTS};
 pub(crate) use crate::storage::Nrf52840Storage as Storage;
 pub(crate) use display::St7789Display as DisplayDriver;
 pub(crate) use hardware::{
-    T114Battery as Battery, T114Board as Board, T114Display as ReadyDisplay,
-    T114DisplayBringup as Display, T114Hardware as Hardware, T114LoraInterface as LoraInterface,
+    T114Battery as Battery, T114Board as Board, T114DisplayBringup as Display,
+    T114Hardware as Hardware, T114LoraInterface as LoraInterface,
 };
 pub(crate) use identity::{
     bootstrap_ble_identity, bootstrap_node_identity, startup_notice as identity_startup_notice,

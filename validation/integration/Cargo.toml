@@ -13,7 +13,7 @@ publish = false
 
 [dependencies]
 personal-rns = { path = "../../personal-rns", default-features = false, features = ["tokio-host", "tcp", "udp", "shared-instance", "wifi-auto", "wifi-direct", "runtime-metrics"] }
-personal-hopspot-core = { path = "../../personal-hopspot/core" }
+personal-hopspot-core = { path = "../../personal-hopspot/core", default-features = false }
 
 [dev-dependencies]
 env_logger = "0.11"

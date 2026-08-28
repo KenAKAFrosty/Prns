@@ -24,8 +24,8 @@ use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use personal_hopspot_core::{
-    self as screen, AccessPointState, Card, DisplayPowerControl, InputEvent, ScreenContent,
-    UiAction, UiConfiguration, UiState,
+    self as screen, AccessPointState, Card, InputEvent, ScreenContent, UiAction, UiConfiguration,
+    UiState, UserBlanking,
 };
 
 use super::runtime::{classify, WindowHandles, USB_INTERFACE_ID};
@@ -40,11 +40,30 @@ const LONG_PRESS_THRESHOLD: Duration = Duration::from_millis(500);
 fn ui_state() -> UiState {
     UiState::new(UiConfiguration {
         storage_limits: <GrowableHeap as StorageLayout>::LIMITS,
-        display_power_control: DisplayPowerControl::Unavailable,
+        user_blanking: UserBlanking::unavailable(),
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: screen::SharedInstanceConfigExport::Unavailable,
         gnss: screen::GnssAvailability::Unavailable,
     })
+}
+
+fn update_simulator_frame(
+    frame: &screen::face_64x128::Frame,
+    display: &mut SimulatorDisplay<BinaryColor>,
+) {
+    display
+        .draw_iter((0..screen::face_64x128::HEIGHT as i32).flat_map(|y| {
+            (0..screen::face_64x128::WIDTH as i32).map(move |x| {
+                let point = Point::new(x, y);
+                let color = if frame.pixel_is_on(point) {
+                    BinaryColor::On
+                } else {
+                    BinaryColor::Off
+                };
+                Pixel(point, color)
+            })
+        }))
+        .unwrap();
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -523,6 +542,7 @@ pub(super) fn run_window(handles: WindowHandles) {
         .scale(4)
         .build();
     let mut display = SimulatorDisplay::<BinaryColor>::new(PANEL);
+    let mut frame = screen::face_64x128::Frame::new();
     let mut window = HopspotWindow::new("Personal Hopspot", &output, &display);
     let mut tray = match TrayController::new(true) {
         Ok(tray) => {
@@ -552,7 +572,7 @@ pub(super) fn run_window(handles: WindowHandles) {
                              notice_until: &mut Option<Instant>| match action
     {
         UiAction::None => {}
-        UiAction::DisplayOff => {
+        UiAction::BlankDisplay => {
             ui_state.show_notice(screen::UiNotice::DisplayOff);
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
         }
@@ -838,9 +858,9 @@ pub(super) fn run_window(handles: WindowHandles) {
                 &snapshots,
             );
             let battery = screen::BatteryGauge::lipo().sample(&mut screen::NoBattery);
-            screen::render(
-                &mut display,
-                screen::RenderFrame {
+            screen::face_64x128::render(
+                &mut frame,
+                screen::face_64x128::RenderInput {
                     content,
                     battery,
                     gnss: None,
@@ -848,6 +868,7 @@ pub(super) fn run_window(handles: WindowHandles) {
                     interface_menu_details: &interface_menu_details,
                 },
             );
+            update_simulator_frame(&frame, &mut display);
             window.update(&display);
             needs_redraw = false;
             last_redraw = Instant::now();

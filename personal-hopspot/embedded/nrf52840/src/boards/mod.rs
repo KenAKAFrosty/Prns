@@ -19,16 +19,14 @@ mod status_led;
 mod button;
 
 #[cfg(any(feature = "board-t096", feature = "board-t114"))]
-pub(crate) enum DisplayBringup<Display, Error> {
-    Ready(Display),
-    Unavailable(Error),
-}
-
-#[cfg(any(feature = "board-t096", feature = "board-t114"))]
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum DisplayIoError {
     Spi,
+    NotInitialized,
 }
+
+#[cfg(any(feature = "board-t096", feature = "board-t114"))]
+mod tft;
 
 pub(crate) type RemoteControlIdentityBootstrapError =
     RemoteControlNodeIdentityBootstrapError<FlashVaultError<NvmcError>, Infallible>;

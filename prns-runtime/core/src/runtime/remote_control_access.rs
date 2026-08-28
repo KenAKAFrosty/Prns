@@ -1,19 +1,21 @@
 use crate::remote_control::{
     RemoteControlControllerGrant, RemoteControlControllerIdentity,
-    RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantError,
-    SetRemoteControlControllerGrantOutcome,
+    RevokeRemoteControlControllerError, RevokeRemoteControlControllerOutcome,
+    SetRemoteControlControllerGrantError, SetRemoteControlControllerGrantOutcome,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetRemoteControlControllerGrantControlError {
     NodeStopped,
     Busy,
+    Unavailable,
     CapacityExhausted,
 }
 
 impl From<SetRemoteControlControllerGrantError> for SetRemoteControlControllerGrantControlError {
     fn from(error: SetRemoteControlControllerGrantError) -> Self {
         match error {
+            SetRemoteControlControllerGrantError::Unavailable => Self::Unavailable,
             SetRemoteControlControllerGrantError::CapacityExhausted => Self::CapacityExhausted,
         }
     }
@@ -23,6 +25,15 @@ impl From<SetRemoteControlControllerGrantError> for SetRemoteControlControllerGr
 pub enum RevokeRemoteControlControllerControlError {
     NodeStopped,
     Busy,
+    Unavailable,
+}
+
+impl From<RevokeRemoteControlControllerError> for RevokeRemoteControlControllerControlError {
+    fn from(error: RevokeRemoteControlControllerError) -> Self {
+        match error {
+            RevokeRemoteControlControllerError::Unavailable => Self::Unavailable,
+        }
+    }
 }
 
 pub trait RemoteControlAccessControl {

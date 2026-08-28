@@ -175,9 +175,9 @@ fn remote_control_access_preserves_exact_set_and_revoke_settlements() {
             assert_eq!(controller, *grant.controller());
             assert!(handle.settle_remote_control_access(
                 id,
-                RemoteControlAccessCompletion::ControllerRevoked(
+                RemoteControlAccessCompletion::ControllerRevoked(Ok(
                     crate::remote_control::RevokeRemoteControlControllerOutcome::Revoked { grant },
-                ),
+                )),
             ));
         },
     ));
@@ -263,27 +263,27 @@ fn remote_control_access_ignores_a_settlement_for_a_released_operation() {
 
     assert!(!completions.remote_control_access.settle(
         released,
-        RemoteControlAccessCompletion::ControllerRevoked(
+        RemoteControlAccessCompletion::ControllerRevoked(Ok(
             crate::remote_control::RevokeRemoteControlControllerOutcome::NotFound,
-        ),
+        )),
     ));
     assert!(completions.remote_control_access.settle(
         current,
-        RemoteControlAccessCompletion::ControllerRevoked(
+        RemoteControlAccessCompletion::ControllerRevoked(Ok(
             crate::remote_control::RevokeRemoteControlControllerOutcome::NotFound,
-        ),
+        )),
     ));
     assert!(matches!(
         block_on(completions.remote_control_access.completion(current)),
-        RemoteControlAccessCompletion::ControllerRevoked(
+        RemoteControlAccessCompletion::ControllerRevoked(Ok(
             crate::remote_control::RevokeRemoteControlControllerOutcome::NotFound,
-        ),
+        )),
     ));
     assert!(!completions.remote_control_access.settle(
         current,
-        RemoteControlAccessCompletion::ControllerRevoked(
+        RemoteControlAccessCompletion::ControllerRevoked(Ok(
             crate::remote_control::RevokeRemoteControlControllerOutcome::NotFound,
-        ),
+        )),
     ));
 }
 

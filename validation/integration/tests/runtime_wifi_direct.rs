@@ -161,6 +161,7 @@ async fn a_wifi_direct_group_forms_and_carries_an_announce_between_two_nodes() {
     let (backend_a, backend_b) = LoopbackWifiDirectBackend::pair();
 
     let node_a = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [single_a],
         app_state: (),
@@ -175,6 +176,7 @@ async fn a_wifi_direct_group_forms_and_carries_an_announce_between_two_nodes() {
 
     let (heard_tx, mut heard_rx) = mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xF2))],
         app_state: (),

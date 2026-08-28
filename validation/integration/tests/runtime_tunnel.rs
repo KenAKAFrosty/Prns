@@ -66,6 +66,7 @@ async fn a_recipe_node_synthesizes_a_tunnel_when_its_transport_is_a_held_identit
 
     let client = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let node = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: Some(secret.clone()),
         pre_configured_destinations: [PreConfiguredDestination::Single {
             app_name: "bench",

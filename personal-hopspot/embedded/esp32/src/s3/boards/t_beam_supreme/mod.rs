@@ -11,10 +11,7 @@ use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_time::{Delay, Duration, Timer};
-use embedded_graphics::draw_target::DrawTarget;
-use embedded_graphics::pixelcolor::BinaryColor;
-use embedded_graphics::prelude::{OriginDimensions, Point, Size};
-use embedded_graphics::Pixel;
+use embedded_graphics::prelude::Point;
 use embedded_hal_bus::spi::ExclusiveDevice;
 
 use personal_rns::interfaces::InterfaceId;
@@ -24,8 +21,8 @@ use personal_hopspot_core as screen;
 use static_cell::StaticCell;
 
 use crate::s3::{
-    self, BoardDisplay, BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware,
-    S3ManifoldHardware,
+    self, BoardDisplay, BoardFace, Esp32S3Board, ImmediateDisplayDevice, S3BoardHardware,
+    S3InterfaceHardware, S3ManifoldHardware,
 };
 
 mod gnss;
@@ -203,15 +200,23 @@ const SH1106_ADDR: u8 = 0x3d;
 /// starts at column 2. This is the one detail that makes the SH1106 incompatible with the SSD1306
 /// driver's full-width horizontal-addressing flush.
 const SH1106_COL_OFFSET: u8 = 2;
-/// SH1106 panel: 128 columns × 64 rows = 8 pages of 128 bytes. The UI draws into a 64×128 portrait
-/// canvas, so the `DrawTarget` reports 64×128 and rotates each pixel 90° into this physical buffer.
 const SH1106_W: u32 = 128;
 const SH1106_H: u32 = 64;
+const SH1106_PANEL: screen::face_64x128::PanelSize =
+    match screen::face_64x128::PanelSize::new(SH1106_W, SH1106_H) {
+        Ok(panel) => panel,
+        Err(_) => panic!("the SH1106 panel dimensions are nonzero"),
+    };
+const SH1106_TRANSFORM: screen::face_64x128::PanelTransform =
+    match screen::face_64x128::PanelTransform::centered(
+        SH1106_PANEL,
+        screen::face_64x128::PanelScale::OneToOne,
+        screen::face_64x128::QuarterTurn::Clockwise,
+    ) {
+        Ok(transform) => transform,
+        Err(_) => panic!("the canonical face fits the SH1106 panel"),
+    };
 
-/// A minimal SH1106 OLED driver over I2C: a 1 KiB framebuffer that implements the same
-/// `embedded_graphics` `DrawTarget<Color = BinaryColor>` the shared UI renders into, flushed page by
-/// page (the SH1106 only supports page addressing). No external crate — the published `sh1106` crate
-/// is stuck on embedded-hal 0.2, which this esp-hal stack does not implement.
 pub struct Sh1106I2c<I> {
     i2c: I,
     buf: [u8; (SH1106_W * SH1106_H / 8) as usize],
@@ -258,35 +263,50 @@ impl<I: embedded_hal::i2c::I2c> Sh1106I2c<I> {
     }
 }
 
-impl<I> OriginDimensions for Sh1106I2c<I> {
-    fn size(&self) -> Size {
-        Size::new(SH1106_H, SH1106_W)
-    }
-}
-
-impl<I: embedded_hal::i2c::I2c> DrawTarget for Sh1106I2c<I> {
-    type Color = BinaryColor;
-    type Error = core::convert::Infallible;
-
-    fn draw_iter<T>(&mut self, pixels: T) -> Result<(), Self::Error>
-    where
-        T: IntoIterator<Item = Pixel<Self::Color>>,
-    {
-        for Pixel(Point { x, y }, color) in pixels {
-            if x < 0 || y < 0 || x >= SH1106_H as i32 || y >= SH1106_W as i32 {
-                continue;
-            }
-            let px = (SH1106_W - 1) - y as u32;
-            let py = x as u32;
-            let idx = (px + (py / 8) * SH1106_W) as usize;
-            let bit = 1u8 << (py % 8);
-            if color == BinaryColor::On {
-                self.buf[idx] |= bit;
-            } else {
-                self.buf[idx] &= !bit;
+impl<I: embedded_hal::i2c::I2c> ImmediateDisplayDevice for Sh1106I2c<I> {
+    fn present(
+        &mut self,
+        frame: &screen::face_64x128::Frame,
+    ) -> screen::display::PresentationOutcome {
+        self.buf.fill(0);
+        for y in 0..SH1106_H {
+            for x in 0..SH1106_W {
+                let Ok(screen::face_64x128::MappedPoint::Source(source)) =
+                    SH1106_TRANSFORM.map_panel_point(screen::face_64x128::PhysicalPoint::new(x, y))
+                else {
+                    continue;
+                };
+                if frame.pixel_is_on(Point::new(source.x() as i32, source.y() as i32)) {
+                    let index = (x + (y / 8) * SH1106_W) as usize;
+                    self.buf[index] |= 1u8 << (y % 8);
+                }
             }
         }
-        Ok(())
+        match self.flush() {
+            Ok(()) => screen::display::PresentationOutcome::Succeeded,
+            Err(()) => {
+                log::error!("OLED render failed");
+                screen::display::PresentationOutcome::Failed
+            }
+        }
+    }
+
+    fn apply_blanking(
+        &mut self,
+        command: screen::display::BlankingCommand,
+    ) -> screen::display::BlankingOutcome {
+        let on = command == screen::display::BlankingCommand::Restore;
+        let result = match self.set_display_on(on) {
+            Ok(()) => screen::display::BlankingResult::Succeeded,
+            Err(()) => {
+                log::error!("OLED blanking failed");
+                screen::display::BlankingResult::Failed
+            }
+        };
+        screen::display::BlankingOutcome {
+            result,
+            buffer_retention: screen::display::BufferRetention::Preserved,
+        }
     }
 }
 
@@ -304,18 +324,6 @@ impl Esp32S3Board for TBeamSupremeBoard {
     type Display = Sh1106I2c<TBeamI2c>;
     type Battery = Axp2101Battery;
     type Gnss = TBeamSupremeGnss;
-
-    fn flush(display: &mut Self::Display) {
-        let _ = display.flush();
-    }
-
-    fn wake_display(display: &mut Self::Display) {
-        let _ = display.set_display_on(true);
-    }
-
-    fn darken_display(display: &mut Self::Display) {
-        let _ = display.set_display_on(false);
-    }
 
     async fn bringup(
         p: esp_hal::peripherals::Peripherals,
@@ -361,8 +369,8 @@ impl Esp32S3Board for TBeamSupremeBoard {
         }
 
         // OLED (T-Beam S3 Supreme: powered via the PMU above, no Vext/RST GPIO; I2C0 on 17/18). The
-        // panel is an SH1106 (132-col page-addressed RAM, 2-px offset), so it uses the sh1106 driver
-        // rather than the Heltec's ssd1306 — both render through the same embedded-graphics DrawTarget.
+        // panel is an SH1106 (132-col page-addressed RAM, 2-px offset), so it uses the local driver
+        // rather than the Heltec's SSD1306 adapter; both consume the canonical frame.
         let i2c = I2c::new(
             p.I2C0,
             I2cConfig::default().with_frequency(Rate::from_khz(400)),
@@ -378,8 +386,9 @@ impl Esp32S3Board for TBeamSupremeBoard {
             s3::BootPhase::OledFailed
         });
         if oled_ok {
-            screen::splash(&mut display, screen::SplashContent::Brand);
-            let _ = display.flush();
+            let mut frame = screen::face_64x128::Frame::new();
+            screen::face_64x128::splash(&mut frame, screen::face_64x128::SplashContent::Brand);
+            let _ = display.present(&frame);
         }
 
         let lora_radio = {
@@ -435,9 +444,10 @@ impl Esp32S3Board for TBeamSupremeBoard {
 
         S3BoardHardware {
             face: BoardFace {
-                display: BoardDisplay {
-                    device: display,
-                    initialized: oled_ok,
+                display: if oled_ok {
+                    BoardDisplay::initialized(display)
+                } else {
+                    BoardDisplay::initialization_failed(display)
                 },
                 battery,
                 button: Input::new(

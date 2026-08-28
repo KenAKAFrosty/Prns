@@ -12,11 +12,11 @@ use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
 use embedded_graphics::text::{Baseline, Text};
 
-use crate::{GnssSnapshot, PowerSnapshot};
+use crate::PowerSnapshot;
 
+use super::face_64x128::{RenderInput, SplashContent};
 use super::limits::build_limit_rows;
-use super::model::{InterfaceMenuDetails, ScreenContent};
-use super::state::{focus_item_count, visible_start_for, UiMode, UiState};
+use super::state::{focus_item_count, visible_start_for, UiMode};
 use cards::{draw_card_peek, draw_card_with_selection, draw_footer, draw_global_row};
 use glyphs::draw_title_bar;
 use gnss::draw_gnss_panel;
@@ -27,42 +27,17 @@ use menus::{
     draw_sleeping,
 };
 
-pub struct RenderFrame<'frame, 'docs> {
-    pub content: ScreenContent<'frame, 'docs>,
-    pub battery: PowerSnapshot,
-    pub gnss: Option<GnssSnapshot>,
-    pub state: &'frame UiState,
-    pub interface_menu_details: &'frame InterfaceMenuDetails,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SplashContent {
-    Brand,
-    Starting,
-    Connecting,
-}
-
-impl SplashContent {
-    #[cfg(test)]
-    pub(in crate::screen) const ALL: [Self; 3] = [Self::Brand, Self::Starting, Self::Connecting];
-
-    pub(in crate::screen) fn lines(self) -> &'static [&'static str] {
-        match self {
-            Self::Brand => &["Personal", "Hopspot"],
-            Self::Starting => &["starting"],
-            Self::Connecting => &["connecting"],
-        }
-    }
-}
-
-pub fn render<D: DrawTarget<Color = BinaryColor>>(display: &mut D, frame: RenderFrame<'_, '_>) {
-    let RenderFrame {
+pub(super) fn draw<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    input: RenderInput<'_, '_>,
+) {
+    let RenderInput {
         content,
         battery,
         gnss,
         state,
         interface_menu_details,
-    } = frame;
+    } = input;
     let cards = content.cards;
     let local_docs = content.local_docs;
     let _ = display.clear(BinaryColor::Off);
@@ -171,7 +146,10 @@ pub fn render<D: DrawTarget<Color = BinaryColor>>(display: &mut D, frame: Render
     }
 }
 
-pub fn splash<D: DrawTarget<Color = BinaryColor>>(display: &mut D, content: SplashContent) {
+pub(super) fn draw_splash<D: DrawTarget<Color = BinaryColor>>(
+    display: &mut D,
+    content: SplashContent,
+) {
     let _ = display.clear(BinaryColor::Off);
     draw_title_bar(display, PowerSnapshot::UNKNOWN);
     let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);

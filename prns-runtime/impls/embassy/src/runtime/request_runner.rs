@@ -203,14 +203,14 @@ async fn dispatch<
     );
     let responder = inbound.respond_token();
     let mut body = RunnerResponse::Buffered(RespondData::new());
-    let dispatched = if request.destination == remote_control.target_endpoint().destination_hash()
-        && request.path_hash == remote_control.request_endpoint_id()
+    let dispatched = if let Some((access, available_requests, self_announcement)) =
+        remote_control.request_configuration(request.destination, request.path_hash)
     {
         dispatch_remote_control_request(
             state,
-            remote_control.access(),
-            remote_control.available_requests(),
-            remote_control.self_announcement(),
+            access,
+            available_requests,
+            self_announcement,
             &commands,
             inbound,
             &mut body,
@@ -418,6 +418,53 @@ mod tests {
     }
 
     #[test]
+    fn unavailable_remote_control_rejects_access_changes() {
+        use crate::remote_control::RemoteControlRequestKind;
+        use crate::runtime::{
+            RemoteControlAccessControl, RevokeRemoteControlControllerControlError,
+            SetRemoteControlControllerGrantControlError,
+        };
+
+        type M = CriticalSectionRawMutex;
+        let commands = Channel::<M, crate::engine::IssuedCommand, 1>::new();
+        let completions = crate::runtime::CompletionPool::<M, 0>::new();
+        let handle = PrnsNodeHandle::new(commands.sender(), &completions);
+        let requests = Channel::<M, RunnerRequest<16>, 1>::new();
+        let mut engine = EngineState::<GrowableHeap>::default();
+        let mut remote_control = crate::runtime::configure_remote_control_service(
+            &mut engine,
+            crate::remote_control::RemoteControlService::Unavailable,
+        )
+        .expect("unavailable RemoteControl requires no storage");
+        let grant = super::super::node_facade::test_remote_control_grant(
+            RemoteControlRequestKind::Describe,
+        );
+        let router = run_router::<(), (), M, 1, 0, 0, 0, 1, 16>(
+            &(),
+            &mut remote_control,
+            requests.receiver(),
+            handle,
+        );
+        let exercise = async {
+            assert_eq!(
+                handle.set_remote_control_controller_grant(grant).await,
+                Err(SetRemoteControlControllerGrantControlError::Unavailable),
+            );
+            assert_eq!(
+                handle
+                    .revoke_remote_control_controller(*grant.controller())
+                    .await,
+                Err(RevokeRemoteControlControllerControlError::Unavailable),
+            );
+        };
+
+        match block_on(select(exercise, router)) {
+            Either::First(()) => {}
+            Either::Second(()) => panic!("router returned"),
+        }
+    }
+
+    #[test]
     fn router_applies_ready_remote_control_access_before_a_ready_request() {
         use crate::remote_control::{
             RemoteControlAccessTable, RemoteControlDescription, RemoteControlRequest,
@@ -432,8 +479,8 @@ mod tests {
         let handle = PrnsNodeHandle::new(commands.sender(), &completions);
         let requests = Channel::<M, RunnerRequest<16>, 1>::new();
         let mut remote_control = remote_control();
-        let destination = remote_control.target_endpoint().destination_hash();
-        let path_hash = remote_control.request_endpoint_id();
+        let destination = remote_control.target_endpoint().unwrap().destination_hash();
+        let path_hash = remote_control.request_endpoint_id().unwrap();
         let grant = super::super::node_facade::test_remote_control_grant(
             RemoteControlRequestKind::Describe,
         );
@@ -490,6 +537,6 @@ mod tests {
             Either::First(()) => {}
             Either::Second(()) => panic!("router returned"),
         }
-        assert!(remote_control.access().is_empty());
+        assert!(remote_control.access().unwrap().is_empty());
     }
 }

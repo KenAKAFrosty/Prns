@@ -5,8 +5,8 @@ use tokio::sync::{oneshot, Mutex, OwnedMutexGuard};
 
 use crate::remote_control::{
     RemoteControlControllerGrant, RemoteControlControllerIdentity,
-    RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantError,
-    SetRemoteControlControllerGrantOutcome,
+    RevokeRemoteControlControllerError, RevokeRemoteControlControllerOutcome,
+    SetRemoteControlControllerGrantError, SetRemoteControlControllerGrantOutcome,
 };
 
 use super::node_facade::PrnsNodeHandle;
@@ -26,7 +26,9 @@ pub(super) enum RemoteControlAccessCommand {
     },
     RevokeController {
         controller: RemoteControlControllerIdentity,
-        completion: oneshot::Sender<RevokeRemoteControlControllerOutcome>,
+        completion: oneshot::Sender<
+            Result<RevokeRemoteControlControllerOutcome, RevokeRemoteControlControllerError>,
+        >,
     },
 }
 
@@ -151,15 +153,16 @@ impl RemoteControlAccessControl for PrnsNodeHandle {
                     return Err(RevokeRemoteControlControllerControlError::NodeStopped)
                 }
             };
-        settled
-            .await
-            .map_err(|_| RevokeRemoteControlControllerControlError::NodeStopped)
+        match settled.await {
+            Ok(outcome) => outcome.map_err(Into::into),
+            Err(_) => Err(RevokeRemoteControlControllerControlError::NodeStopped),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use tokio::sync::mpsc;
+    use tokio::sync::{mpsc, oneshot};
 
     use crate::remote_control::{
         RemoteControlAccessTable, RemoteControlRequestKind, RevokeRemoteControlControllerOutcome,
@@ -172,6 +175,36 @@ mod tests {
         SetRemoteControlControllerGrantControlError,
     };
     use super::RemoteControlAccessCommand;
+
+    #[tokio::test]
+    async fn unavailable_service_rejects_access_changes() {
+        let grant = test_remote_control_grant(RemoteControlRequestKind::Describe);
+        let mut engine = crate::engine::EngineState::<crate::storage::GrowableHeap>::default();
+        let mut remote_control = crate::runtime::configure_remote_control_service(
+            &mut engine,
+            crate::remote_control::RemoteControlService::Unavailable,
+        )
+        .expect("unavailable RemoteControl requires no storage");
+
+        let (completion, settled) = oneshot::channel();
+        RemoteControlAccessCommand::SetControllerGrant { grant, completion }
+            .apply(&mut remote_control);
+        assert_eq!(
+            settled.await.expect("set completion remains connected"),
+            Err(SetRemoteControlControllerGrantError::Unavailable),
+        );
+
+        let (completion, settled) = oneshot::channel();
+        RemoteControlAccessCommand::RevokeController {
+            controller: *grant.controller(),
+            completion,
+        }
+        .apply(&mut remote_control);
+        assert_eq!(
+            settled.await.expect("revoke completion remains connected"),
+            Err(crate::remote_control::RevokeRemoteControlControllerError::Unavailable,),
+        );
+    }
 
     #[tokio::test]
     async fn access_lane_preserves_exact_set_and_revoke_outcomes() {
@@ -212,7 +245,7 @@ mod tests {
                 };
                 assert_eq!(controller, *grant.controller());
                 assert!(completion
-                    .send(RevokeRemoteControlControllerOutcome::Revoked { grant })
+                    .send(Ok(RevokeRemoteControlControllerOutcome::Revoked { grant }))
                     .is_ok());
             },
         );
@@ -284,7 +317,7 @@ mod tests {
             crate::runtime::configure_remote_control_service(&mut engine, service)
                 .expect("RemoteControl fits growable storage");
         command.apply(&mut remote_control);
-        assert!(remote_control.access().is_empty());
+        assert!(remote_control.access().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -324,7 +357,7 @@ mod tests {
                     panic!("revoke controller command")
                 };
                 assert!(completion
-                    .send(RevokeRemoteControlControllerOutcome::NotFound)
+                    .send(Ok(RevokeRemoteControlControllerOutcome::NotFound))
                     .is_ok());
             },
         );

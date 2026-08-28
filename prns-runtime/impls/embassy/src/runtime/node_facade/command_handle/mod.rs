@@ -727,7 +727,9 @@ impl<
             id,
         };
         match self.pool.remote_control_access.completion(id).await {
-            RemoteControlAccessCompletion::ControllerRevoked(outcome) => Ok(outcome),
+            RemoteControlAccessCompletion::ControllerRevoked(outcome) => {
+                outcome.map_err(Into::into)
+            }
             RemoteControlAccessCompletion::ControllerGrantSet(_) => {
                 Err(RevokeRemoteControlControllerControlError::NodeStopped)
             }

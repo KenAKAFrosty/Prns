@@ -7,7 +7,7 @@ publish = false
 description = "Personal Hopspot firmware for the Heltec WiFi LoRa 32 V4-R8 (ESP32-S3R8)"
 
 [dependencies]
-personal-hopspot-esp32 = { path = "../..", default-features = false, features = ["bluetooth-auto", "wifi-auto", "esp-now", "lora", "usb", "tcp"] }
+personal-hopspot-esp32 = { path = "../..", default-features = false, features = ["bluetooth-auto", "display", "wifi-auto", "esp-now", "lora", "usb", "tcp"] }
 embassy-executor = { version = "0.10", default-features = false }
 esp-hal = { version = "1.1", features = ["esp32s3", "unstable"] }
 esp-rtos = { version = "0.3.0", features = ["esp32s3", "embassy", "esp-radio"] }

@@ -16,9 +16,9 @@ exclude = [
 
 [features]
 default = ["board-t-echo", "softdevice-s140-v7"]
-board-t-echo = []
-board-t096 = ["softdevice-s140-v6"]
-board-t114 = ["softdevice-s140-v6"]
+board-t-echo = ["personal-hopspot-core/display", "dep:embedded-graphics"]
+board-t096 = ["personal-hopspot-core/display", "dep:embedded-graphics", "softdevice-s140-v6"]
+board-t114 = ["personal-hopspot-core/display", "dep:embedded-graphics", "softdevice-s140-v6"]
 board-t1000e = ["cortex-m/critical-section-single-core"]
 board-mesh-tower-v2 = ["embassy-nrf/nfc-pins-as-gpio"]
 softdevice-s140-v6 = ["dep:nrf-softdevice", "nrf-softdevice/s140-v6"]
@@ -58,9 +58,9 @@ personal-rns = { path = "../../../personal-rns", default-features = false, featu
 personal-hopspot-core = { path = "../../core", default-features = false, features = ["embedded"] }
 prns-core = { path = "../../../prns-core", default-features = false }
 
-embedded-graphics = "0.8"
-epd-waveshare = { version = "0.6", default-features = false, features = ["graphics", "epd2in13_v3"] }
+embedded-graphics = { version = "0.8", optional = true }
 embedded-hal = "1.0"
+embedded-hal-async = "1.0"
 embedded-hal-bus = { version = "0.3", features = ["async"] }
 
 cortex-m = { version = "0.7", features = ["inline-asm"] }
@@ -86,6 +86,9 @@ nrf-softdevice = { path = "vendor/nrf-softdevice/nrf-softdevice", optional = tru
 # nrf-softdevice's GATT characteristics use heapless 0.9; the rest of the firmware is on 0.8.
 heapless09 = { package = "heapless", version = "0.9" }
 rand_chacha = { version = "0.9", default-features = false }
+
+[dev-dependencies]
+epd-waveshare = { version = "0.6", default-features = false, features = ["graphics", "epd2in13_v3"] }
 
 [profile.release]
 codegen-units = 1

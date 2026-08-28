@@ -69,13 +69,13 @@ fn prepare_request(
     remote_control: &AssembledRemoteControl,
     request: RunnerRequest,
 ) -> PreparedRunnerRequest {
-    let route = if request.destination == remote_control.target_endpoint().destination_hash()
-        && request.path_hash == remote_control.request_endpoint_id()
+    let route = if let Some((access, available_requests, self_announcement)) =
+        remote_control.request_configuration(request.destination, request.path_hash)
     {
         match admit_remote_control_request(
-            remote_control.access(),
-            remote_control.available_requests(),
-            remote_control.self_announcement(),
+            access,
+            available_requests,
+            self_announcement,
             &request.inbound(),
         ) {
             Ok(admission) => PreparedRequestRoute::RemoteControl(admission),
@@ -518,8 +518,8 @@ mod tests {
         let (handle, mut access) = PrnsNodeHandle::over_with_remote_control_access(commands);
         let (request_tx, request_rx) = mpsc::channel(1);
         let mut remote_control = remote_control();
-        let destination = remote_control.target_endpoint().destination_hash();
-        let path_hash = remote_control.request_endpoint_id();
+        let destination = remote_control.target_endpoint().unwrap().destination_hash();
+        let path_hash = remote_control.request_endpoint_id().unwrap();
         let grant = super::super::node_facade::test_remote_control_grant(
             RemoteControlRequestKind::Describe,
         );

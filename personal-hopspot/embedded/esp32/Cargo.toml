@@ -37,6 +37,7 @@ path = "src/lib.rs"
 
 [features]
 default = []
+display = ["personal-hopspot-core/display", "dep:embedded-graphics"]
 bluetooth-auto = ["dep:trouble-host", "dep:prns-interfaces-embassy", "esp-radio/ble", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/bluetooth-auto"]
 wifi-auto = ["esp-radio/wifi", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/wifi-auto"]
 esp-now = ["esp-radio/esp-now", "esp-radio/coex", "esp-rtos/esp-radio", "personal-rns/esp-now"]
@@ -49,10 +50,13 @@ wifi-security-probe = []
 [dependencies]
 cfg-if = "1.0"
 personal-hopspot-core = { path = "../../core", default-features = false, features = ["embedded"] }
-embedded-graphics = "0.8"
+embedded-graphics = { version = "0.8", optional = true }
 heapless = { version = "0.8", default-features = false }
 embedded-storage = "0.3"
 embedded-storage-async = "0.4"
+
+[dev-dependencies]
+personal-rns = { path = "../../../personal-rns", default-features = false }
 
 [target.'cfg(target_arch = "xtensa")'.dependencies]
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "external-alloc", "flash", "log"] }

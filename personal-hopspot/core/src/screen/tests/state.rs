@@ -94,6 +94,22 @@ fn persistence_timer_only_clears_the_notice_it_owns() {
 }
 
 #[test]
+fn persistence_changes_can_be_timed_by_a_physical_presenter() {
+    let mut persistence = PersistenceNotice::new();
+
+    assert_eq!(persistence.observe(PersistenceState::Durable), None);
+    assert_eq!(
+        persistence.observe(PersistenceState::Deferred),
+        Some(UiNotice::SaveDeferred)
+    );
+    assert_eq!(persistence.observe(PersistenceState::Deferred), None);
+    assert_eq!(
+        persistence.observe(PersistenceState::Recovered),
+        Some(UiNotice::StateRecovered)
+    );
+}
+
+#[test]
 fn every_notice_line_fits_its_rendered_font() {
     for notice in UiNotice::ALL {
         let lines = notice.lines();
@@ -126,6 +142,29 @@ fn short_press_dismisses_notice_without_moving_focus() {
     );
     assert_eq!(state.notice(), None);
     assert!(state.global_selected());
+}
+
+#[test]
+fn sleeping_notice_does_not_consume_the_wake_press() {
+    let cards = test_cards::<1>(CardKind::Usb);
+    let content = test_content(&cards);
+    let mut state = test_ui_state();
+
+    state.handle_input(InputEvent::LongPress, content);
+    for _ in 0..2 {
+        state.handle_input(InputEvent::ShortPress, content);
+    }
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::Sleep
+    );
+    state.show_notice(UiNotice::Sleeping);
+
+    assert_eq!(
+        state.handle_input(InputEvent::ShortPress, content),
+        UiAction::Wake
+    );
+    assert_eq!(state.visible_notice(), None);
 }
 
 #[test]
@@ -299,15 +338,15 @@ fn display_capable_menu_offers_display_controls_before_sleep() {
 
     assert_eq!(
         state.global_menu_selected_item(),
-        Some(DISPLAY_OFF_MENU_ITEM)
+        Some(BLANK_DISPLAY_MENU_ITEM)
     );
     assert_eq!(
-        state.global_menu_item_label(GlobalMenuItem::DisplayOff),
+        state.global_menu_item_label(GlobalMenuItem::BlankDisplay),
         "Screen Off"
     );
     assert_eq!(
         state.handle_input(InputEvent::LongPress, content),
-        UiAction::DisplayOff
+        UiAction::BlankDisplay
     );
     assert!(state.global_selected());
 

@@ -1336,7 +1336,6 @@ dependencies = [
 name = "personal-hopspot-ios"
 version = "0.1.0"
 dependencies = [
- "embedded-graphics",
  "heapless 0.8.0",
  "libc",
  "personal-hopspot-core",

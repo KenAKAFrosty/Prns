@@ -276,7 +276,10 @@ fn controller_and_target_identities_coexist_without_a_transport_identity() {
         on_event: |_event, _state: &()| {},
     });
 
-    assert_eq!(node.node.remote_control.identities(), &expected_identities);
+    assert_eq!(
+        node.node.remote_control.identities(),
+        Some(&expected_identities)
+    );
     assert_eq!(node.node.engine.held_identity_hashes().len(), 2);
     assert!(node
         .node

@@ -7,8 +7,8 @@ use embassy_sync::signal::Signal;
 use crate::engine::CommandId;
 use crate::remote_control::{
     RemoteControlControllerGrant, RemoteControlControllerIdentity,
-    RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantError,
-    SetRemoteControlControllerGrantOutcome,
+    RevokeRemoteControlControllerError, RevokeRemoteControlControllerOutcome,
+    SetRemoteControlControllerGrantError, SetRemoteControlControllerGrantOutcome,
 };
 
 pub(super) enum RemoteControlAccessCommand {
@@ -26,7 +26,9 @@ pub(super) enum RemoteControlAccessCompletion {
     ControllerGrantSet(
         Result<SetRemoteControlControllerGrantOutcome, SetRemoteControlControllerGrantError>,
     ),
-    ControllerRevoked(RevokeRemoteControlControllerOutcome),
+    ControllerRevoked(
+        Result<RevokeRemoteControlControllerOutcome, RevokeRemoteControlControllerError>,
+    ),
 }
 
 enum RemoteControlAccessExchangeState {

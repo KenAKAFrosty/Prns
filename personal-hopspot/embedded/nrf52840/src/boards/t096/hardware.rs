@@ -24,7 +24,8 @@ use static_cell::StaticCell;
 
 use crate::boards::status_led::StatusLed;
 
-use crate::boards::{DisplayBringup, DisplayIoError};
+use crate::boards::DisplayIoError;
+use crate::immediate_display::BoardDisplay;
 
 bind_interrupts!(struct Irqs {
     USBD => usb::InterruptHandler<peripherals::USBD>;
@@ -41,7 +42,7 @@ type T096Radio = Sx126x<T096SpiDevice, Input<'static>, Input<'static>, Output<'s
 pub(crate) type T096LoraInterface = LoRaInterface<'static, T096Radio>;
 
 pub(crate) type T096Display = super::DisplayDriver<T096SpiDevice>;
-pub(crate) type T096DisplayBringup = DisplayBringup<T096Display, DisplayIoError>;
+pub(crate) type T096DisplayBringup = BoardDisplay<T096Display>;
 
 type T096UsbDriver = Driver<'static, &'static SoftwareVbusDetect>;
 
@@ -170,10 +171,10 @@ impl T096Board {
         let mut display =
             super::DisplayDriver::new(display_spi, display_dc, display_reset, display_backlight);
         let display = match display.initialize().await {
-            Ok(()) => DisplayBringup::Ready(display),
-            Err(error) => {
+            Ok(()) => BoardDisplay::initialized(display),
+            Err(DisplayIoError::Spi | DisplayIoError::NotInitialized) => {
                 display.force_dark();
-                DisplayBringup::Unavailable(error)
+                BoardDisplay::initialization_failed(display)
             }
         };
 

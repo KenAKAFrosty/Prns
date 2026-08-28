@@ -123,9 +123,12 @@ pub unsafe extern "C" fn hopspot_render(handle: *mut HopspotFace, ptr: *mut u8, 
     if ptr.is_null() || len < RGBA_BYTES {
         return;
     }
-    // SAFETY: null and minimum size were checked above; the caller contract guarantees `ptr..len`
-    // is one writable, unaliased allocation that remains live for the duration of this call.
-    let out = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
+    // SAFETY: null and minimum size were checked above; the caller contract guarantees the
+    // rendered prefix is writable, unaliased, and live for the duration of this call.
+    let out = unsafe { core::slice::from_raw_parts_mut(ptr, RGBA_BYTES) };
+    let Ok(out) = <&mut [u8; RGBA_BYTES]>::try_from(out) else {
+        return;
+    };
     face.render(out);
 }
 

@@ -24,9 +24,9 @@ pub use crate::remote_control::{
     RemoteControlRequestSet, RemoteControlResponse, RemoteControlResponseKind,
     RemoteControlResponseParseError, RemoteControlSelfAnnouncement, RemoteControlService,
     RemoteControlTargetIdentity, RemoteControlTargetIdentitySecret,
-    RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantError,
-    SetRemoteControlControllerGrantOutcome, REMOTE_CONTROL_IDENTITY_VAULT_SLOTS,
-    REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
+    RevokeRemoteControlControllerError, RevokeRemoteControlControllerOutcome,
+    SetRemoteControlControllerGrantError, SetRemoteControlControllerGrantOutcome,
+    REMOTE_CONTROL_IDENTITY_VAULT_SLOTS, REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
 };
 
 #[cfg(feature = "alloc")]

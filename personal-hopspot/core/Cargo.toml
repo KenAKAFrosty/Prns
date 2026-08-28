@@ -7,11 +7,12 @@ repository.workspace = true
 homepage.workspace = true
 rust-version.workspace = true
 publish = false
-description = "Shared Personal Hopspot status-screen renderer: one DrawTarget-generic draw path for the Heltec V4 OLED and the Linux debug window."
+description = "Shared Personal Hopspot application state, canonical display face, and presentation policy."
 build = "build.rs"
 
 [features]
-default = []
+default = ["display"]
+display = ["dep:embedded-graphics"]
 embedded = ["personal-rns/embassy-host"]
 host = ["personal-rns/tokio-host"]
 source-archive = ["personal-rns/large-static-responses"]
@@ -22,7 +23,7 @@ prns-core = { path = "../../prns-core", default-features = false }
 prns-macros = { path = "../../prns-macros" }
 embedded-storage = "0.3"
 embedded-storage-async = "0.4"
-embedded-graphics = "0.8" # pinned to the same 0.8 the S3's ssd1306 stack uses.
+embedded-graphics = { version = "0.8", optional = true } # pinned to the same 0.8 the S3's ssd1306 stack uses.
 heapless = { version = "0.8", default-features = false }
 
 [build-dependencies]

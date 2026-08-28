@@ -11,7 +11,7 @@ fn gnss_panel_stays_between_the_global_row_and_selected_interface() {
 
     render_screen(
         &mut display,
-        RenderFrame {
+        RenderInput {
             content,
             battery: PowerSnapshot::UNKNOWN,
             gnss: Some(GnssSnapshot::Searching { satellites: 7 }),

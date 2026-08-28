@@ -20,7 +20,7 @@ pub(in crate::screen) enum GlobalMenuItem {
     Announce,
     Limits,
     Gnss,
-    DisplayOff,
+    BlankDisplay,
     DisplayAutoOff,
     Sleep,
     RadioMode,
@@ -31,7 +31,7 @@ const GLOBAL_MENU_ORDER: [GlobalMenuItem; 8] = [
     GlobalMenuItem::Announce,
     GlobalMenuItem::Limits,
     GlobalMenuItem::Gnss,
-    GlobalMenuItem::DisplayOff,
+    GlobalMenuItem::BlankDisplay,
     GlobalMenuItem::DisplayAutoOff,
     GlobalMenuItem::Sleep,
     GlobalMenuItem::RadioMode,
@@ -41,7 +41,7 @@ const GLOBAL_MENU_ORDER: [GlobalMenuItem; 8] = [
 #[cfg(test)]
 pub(in crate::screen) const ANNOUNCE_MENU_ITEM: usize = 0;
 #[cfg(test)]
-pub(in crate::screen) const DISPLAY_OFF_MENU_ITEM: usize = 2;
+pub(in crate::screen) const BLANK_DISPLAY_MENU_ITEM: usize = 2;
 #[cfg(test)]
 pub(in crate::screen) const DISPLAY_AUTO_OFF_MENU_ITEM: usize = 3;
 #[cfg(test)]
@@ -91,7 +91,7 @@ pub enum InputEvent {
 pub enum UiAction {
     None,
     Announce,
-    DisplayOff,
+    BlankDisplay,
     ToggleDisplayAutoOff,
     Sleep,
     Wake,
@@ -105,6 +105,12 @@ pub enum UiAction {
     SwapRadioMode,
     OpenDocs,
     CopySharedInstanceConfig,
+}
+
+impl UiAction {
+    #[doc(hidden)]
+    #[allow(non_upper_case_globals)]
+    pub const DisplayOff: Self = Self::BlankDisplay;
 }
 
 prns_macros::iterable_enum! {
@@ -265,19 +271,26 @@ impl PersistenceNotice {
                 self.visible_until = None;
             }
         }
-        if persistence == self.observed {
+        let Some(notice) = self.observe(persistence) else {
             return changed;
+        };
+        self.visible_until = Some((now_millis.saturating_add(PERSISTENCE_NOTICE_MILLIS), notice));
+        ui_state.show_notice(notice);
+        true
+    }
+
+    #[must_use]
+    pub fn observe(&mut self, persistence: PersistenceState) -> Option<UiNotice> {
+        if persistence == self.observed {
+            return None;
         }
-        let notice = match persistence {
+        self.observed = persistence;
+        Some(match persistence {
             PersistenceState::Durable => UiNotice::Saved,
             PersistenceState::Recovered => UiNotice::StateRecovered,
             PersistenceState::Deferred => UiNotice::SaveDeferred,
             PersistenceState::Failed => UiNotice::SaveFailed,
-        };
-        self.observed = persistence;
-        self.visible_until = Some((now_millis.saturating_add(PERSISTENCE_NOTICE_MILLIS), notice));
-        ui_state.show_notice(notice);
-        true
+        })
     }
 }
 
@@ -288,9 +301,28 @@ impl Default for PersistenceNotice {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DisplayPowerControl {
+enum UserBlankingCapability {
     Unavailable,
     Available,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UserBlanking(UserBlankingCapability);
+
+impl UserBlanking {
+    #[must_use]
+    pub const fn unavailable() -> Self {
+        Self(UserBlankingCapability::Unavailable)
+    }
+
+    pub(in crate::screen) const fn available() -> Self {
+        Self(UserBlankingCapability::Available)
+    }
+
+    #[must_use]
+    pub const fn is_available(self) -> bool {
+        matches!(self.0, UserBlankingCapability::Available)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -314,7 +346,7 @@ pub enum GnssAvailability {
 
 pub struct UiConfiguration {
     pub storage_limits: DisplayedStorageLimits,
-    pub display_power_control: DisplayPowerControl,
+    pub user_blanking: UserBlanking,
     pub access_point: AccessPointState,
     pub shared_instance_config_export: SharedInstanceConfigExport,
     pub gnss: GnssAvailability,
@@ -325,7 +357,7 @@ pub struct UiState {
     pub(in crate::screen) selected_focus: usize,
     pub(in crate::screen) visible_start: usize,
     pub(in crate::screen) mode: UiMode,
-    pub(in crate::screen) display_power_control: DisplayPowerControl,
+    pub(in crate::screen) user_blanking: UserBlanking,
     pub(in crate::screen) access_point: AccessPointState,
     pub(in crate::screen) shared_instance_config_export: SharedInstanceConfigExport,
     pub(in crate::screen) gnss: GnssAvailability,
@@ -363,7 +395,7 @@ impl UiState {
             selected_focus: 0,
             visible_start: 0,
             mode: UiMode::Cards,
-            display_power_control: configuration.display_power_control,
+            user_blanking: configuration.user_blanking,
             access_point: configuration.access_point,
             shared_instance_config_export: configuration.shared_instance_config_export,
             gnss: configuration.gnss,
@@ -389,8 +421,13 @@ impl UiState {
         true
     }
 
-    pub(in crate::screen) fn notice(&self) -> Option<UiNotice> {
+    #[must_use]
+    pub const fn visible_notice(&self) -> Option<UiNotice> {
         self.notice
+    }
+
+    pub(in crate::screen) const fn notice(&self) -> Option<UiNotice> {
+        self.visible_notice()
     }
 
     pub(in crate::screen) fn global_selected(&self) -> bool {
@@ -457,8 +494,8 @@ impl UiState {
     fn global_menu_item_available(&self, item: GlobalMenuItem) -> bool {
         match item {
             GlobalMenuItem::Gnss => self.gnss == GnssAvailability::Available,
-            GlobalMenuItem::DisplayOff | GlobalMenuItem::DisplayAutoOff => {
-                self.display_power_control == DisplayPowerControl::Available
+            GlobalMenuItem::BlankDisplay | GlobalMenuItem::DisplayAutoOff => {
+                self.user_blanking.is_available()
             }
             GlobalMenuItem::RadioMode => self.access_point != AccessPointState::Unsupported,
             GlobalMenuItem::Announce
@@ -485,7 +522,7 @@ impl UiState {
             GlobalMenuItem::Limits => "Limits",
             GlobalMenuItem::Gnss if self.gnss_visible => "GPS Off",
             GlobalMenuItem::Gnss => "GPS On",
-            GlobalMenuItem::DisplayOff => "Screen Off",
+            GlobalMenuItem::BlankDisplay => "Screen Off",
             GlobalMenuItem::DisplayAutoOff => "Auto Off",
             GlobalMenuItem::Sleep => "Sleep",
             GlobalMenuItem::RadioMode => match self.access_point {
@@ -533,7 +570,10 @@ impl UiState {
     }
 
     pub fn handle_input(&mut self, event: InputEvent, content: ScreenContent<'_, '_>) -> UiAction {
-        if event == InputEvent::ShortPress && self.notice.take().is_some() {
+        if self.mode != UiMode::Sleeping
+            && event == InputEvent::ShortPress
+            && self.notice.take().is_some()
+        {
             self.sync(content);
             return UiAction::None;
         }
@@ -604,9 +644,9 @@ impl UiState {
                             crate::GnssReceiverCommand::Disable
                         })
                     }
-                    Some(GlobalMenuItem::DisplayOff) => {
+                    Some(GlobalMenuItem::BlankDisplay) => {
                         self.mode = UiMode::Cards;
-                        UiAction::DisplayOff
+                        UiAction::BlankDisplay
                     }
                     Some(GlobalMenuItem::DisplayAutoOff) => {
                         self.mode = UiMode::Cards;

@@ -460,12 +460,12 @@ where
     }
 
     #[must_use]
-    pub const fn remote_control_identities(&self) -> &RemoteControlNodeIdentities {
+    pub const fn remote_control_identities(&self) -> Option<&RemoteControlNodeIdentities> {
         self.node.remote_control.identities()
     }
 
     #[must_use]
-    pub const fn remote_control_target_endpoint(&self) -> RemoteControlEndpoint {
+    pub const fn remote_control_target_endpoint(&self) -> Option<RemoteControlEndpoint> {
         self.node.remote_control.target_endpoint()
     }
 

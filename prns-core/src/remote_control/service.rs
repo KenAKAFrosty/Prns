@@ -79,7 +79,15 @@ pub enum RemoteControlSelfAnnouncement {
     Destination(DestinationHash),
 }
 
-pub struct RemoteControlService<'a> {
+// Available owns identity secrets until assembly consumes the recipe. The no-alloc path cannot
+// box them, and Unavailable must remain a payload-free state rather than inventing identities.
+#[allow(clippy::large_enum_variant)]
+pub enum RemoteControlService<'a> {
+    Unavailable,
+    Available(RemoteControlConfiguration<'a>),
+}
+
+pub struct RemoteControlConfiguration<'a> {
     identity_secrets: RemoteControlNodeIdentitySecrets,
     default_public_app_data: RemoteControlPublicAppData<'a>,
     initial_access: RemoteControlInitialAccess<'a>,
@@ -94,14 +102,45 @@ impl<'a> RemoteControlService<'a> {
         initial_access: RemoteControlInitialAccess<'a>,
         self_announcement: RemoteControlSelfAnnouncement,
     ) -> Self {
-        Self {
+        Self::Available(RemoteControlConfiguration {
             identity_secrets,
             default_public_app_data,
             initial_access,
             self_announcement,
+        })
+    }
+
+    #[must_use]
+    pub const fn is_available(&self) -> bool {
+        matches!(self, Self::Available(_))
+    }
+
+    #[must_use]
+    pub const fn configuration(&self) -> Option<&RemoteControlConfiguration<'a>> {
+        match self {
+            Self::Unavailable => None,
+            Self::Available(configuration) => Some(configuration),
         }
     }
 
+    #[must_use]
+    pub fn into_configuration(self) -> Option<RemoteControlConfiguration<'a>> {
+        match self {
+            Self::Unavailable => None,
+            Self::Available(configuration) => Some(configuration),
+        }
+    }
+
+    #[must_use]
+    pub fn available_requests(&self) -> RemoteControlRequestSet {
+        self.configuration().map_or_else(
+            RemoteControlRequestSet::empty,
+            RemoteControlConfiguration::available_requests,
+        )
+    }
+}
+
+impl<'a> RemoteControlConfiguration<'a> {
     #[must_use]
     pub const fn identity_secrets(&self) -> &RemoteControlNodeIdentitySecrets {
         &self.identity_secrets
@@ -286,7 +325,7 @@ mod tests {
         );
 
         let (identity_secrets, default_public_app_data, initial_access, self_announcement) =
-            service.into_parts();
+            service.into_configuration().unwrap().into_parts();
 
         assert_eq!(identity_secrets.identities(), identities);
         assert_eq!(default_public_app_data.as_bytes(), b"application");
@@ -298,8 +337,9 @@ mod tests {
     }
 
     #[test]
-    fn service_availability_is_derived_from_its_configured_actions() {
-        let unavailable = RemoteControlService::new(
+    fn service_availability_is_explicit_and_available_actions_are_derived() {
+        let unavailable = RemoteControlService::Unavailable;
+        let describe_only = RemoteControlService::new(
             identity_secrets(),
             RemoteControlPublicAppData::empty(),
             RemoteControlInitialAccess::Nobody,
@@ -312,8 +352,15 @@ mod tests {
             RemoteControlSelfAnnouncement::Destination(DestinationHash::new([0x43; 16])),
         );
 
+        assert!(!unavailable.is_available());
+        assert!(unavailable.configuration().is_none());
+        assert!(describe_only.is_available());
         assert_eq!(
             unavailable.available_requests(),
+            RemoteControlRequestSet::empty(),
+        );
+        assert_eq!(
+            describe_only.available_requests(),
             RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
         );
         assert_eq!(
