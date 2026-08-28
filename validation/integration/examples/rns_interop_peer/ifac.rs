@@ -79,6 +79,7 @@ pub async fn run_server() -> Result<(), Failure> {
         .map_err(|_| Failure::InvalidDestination)?;
     let (observed_tx, mut observed_rx) = tokio::sync::mpsc::unbounded_channel();
     let node = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [destination],
         app_state: (),

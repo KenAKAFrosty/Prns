@@ -2,13 +2,14 @@ use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 use crate::engine::SendRequestFailure;
 use crate::manifold::driver::HostCommand;
+use crate::remote_control::REMOTE_CONTROL_REQUEST_ENDPOINT_ID;
 use crate::routing::links::LinkId;
 use crate::runtime::request_endpoints::RequestEndpointId;
-use crate::runtime::{SendError, REMOTE_CONTROL_ENDPOINT_ID};
+use crate::runtime::SendError;
 use crate::units::RttMillis;
 use prns_core::remote_control::{
-    RemoteControlAnnounceOutcome, RemoteControlDescription, RemoteControlProtocolError,
-    RemoteControlProtocolVersion, RemoteControlRequestKind, RemoteControlResponse,
+    RemoteControlAnnounceSelfOutcome, RemoteControlDescription, RemoteControlProtocolError,
+    RemoteControlProtocolVersion, RemoteControlRequestSet, RemoteControlResponse,
     RemoteControlResponseKind, RemoteControlResponseParseError,
 };
 
@@ -28,10 +29,11 @@ fn encoded_response(response: &RemoteControlResponse) -> std::vec::Vec<u8> {
 }
 
 #[tokio::test]
-async fn announce_owns_the_remote_control_exchange_and_returns_its_rtt() {
+async fn announce_self_owns_the_remote_control_exchange_and_returns_its_rtt() {
     let (handle, mut command_rx) = test_handle();
     let link_id = LinkId::new([0x20; 16]);
-    let requesting = tokio::spawn(async move { handle.remote_control(link_id).announce().await });
+    let requesting =
+        tokio::spawn(async move { handle.remote_control(link_id).announce_self().await });
 
     let Some(HostCommand::RequestAny(request)) = command_rx.recv().await else {
         panic!("announce issues a request command");
@@ -39,22 +41,22 @@ async fn announce_owns_the_remote_control_exchange_and_returns_its_rtt() {
     assert_eq!(request.link_id, link_id);
     assert_eq!(
         request.path_hash,
-        RequestEndpointId::of(REMOTE_CONTROL_ENDPOINT_ID),
+        RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
     );
     assert_eq!(
         request.data.as_slice(),
         &[
             RemoteControlProtocolVersion::V1.wire_value(),
-            crate::runtime::RemoteControlAnnounce::REQUEST
+            crate::runtime::RemoteControlAnnounceSelf::REQUEST
                 .kind()
                 .wire_value(),
         ],
     );
     assert_eq!(
         request.maximum_response_bytes,
-        crate::runtime::RemoteControlAnnounce::MAXIMUM_RESPONSE_BYTES,
+        crate::runtime::RemoteControlAnnounceSelf::MAXIMUM_RESPONSE_BYTES,
     );
-    let response = RemoteControlResponse::Announce(RemoteControlAnnounceOutcome::Announced);
+    let response = RemoteControlResponse::AnnounceSelf(RemoteControlAnnounceSelfOutcome::Announced);
     assert!(request
         .completion
         .send(Ok((encoded_response(&response), RttMillis::new(36))))
@@ -75,7 +77,7 @@ async fn describe_owns_the_remote_control_exchange_and_returns_the_typed_descrip
     assert_eq!(request.link_id, link_id);
     assert_eq!(
         request.path_hash,
-        RequestEndpointId::of(REMOTE_CONTROL_ENDPOINT_ID),
+        RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
     );
     assert_eq!(
         request.data.as_slice(),
@@ -90,7 +92,8 @@ async fn describe_owns_the_remote_control_exchange_and_returns_the_typed_descrip
         request.maximum_response_bytes,
         crate::runtime::RemoteControlDescribe::MAXIMUM_RESPONSE_BYTES,
     );
-    let response = RemoteControlResponse::Describe(RemoteControlDescription::default());
+    let description = RemoteControlDescription::try_from(RemoteControlRequestSet::all()).unwrap();
+    let response = RemoteControlResponse::Describe(description);
     assert!(request
         .completion
         .send(Ok((encoded_response(&response), RttMillis::new(37),)))
@@ -99,9 +102,10 @@ async fn describe_owns_the_remote_control_exchange_and_returns_the_typed_descrip
     let Ok(Ok((description, rtt))) = requesting.await else {
         panic!("describe returns the typed response");
     };
-    assert!(description
-        .supported_requests()
-        .supports(RemoteControlRequestKind::Describe));
+    assert_eq!(
+        description.available_requests(),
+        &RemoteControlRequestSet::all(),
+    );
     assert_eq!(rtt, RttMillis::new(37));
 }
 

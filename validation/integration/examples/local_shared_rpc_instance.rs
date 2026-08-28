@@ -42,6 +42,7 @@ async fn main() {
             .with_rpc_key(rpc_key.to_vec());
 
     let node = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [] as [personal_rns::runtime::PreConfiguredDestination; 0],
         app_state: (),

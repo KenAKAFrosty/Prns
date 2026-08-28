@@ -78,3 +78,17 @@ path = "fuzz_targets/gnss_nmea_stream.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "remote_control_messages_parse"
+path = "fuzz_targets/remote_control_messages_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "remote_control_access_snapshot"
+path = "fuzz_targets/remote_control_access_snapshot.rs"
+test = false
+doc = false
+bench = false

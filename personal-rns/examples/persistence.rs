@@ -1,5 +1,7 @@
 #![expect(clippy::expect_used, clippy::panic)]
 
+mod common;
+
 use core::time::Duration;
 
 use personal_rns::prelude::*;
@@ -26,6 +28,7 @@ async fn main() {
 
     let listener = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
+        remote_control: common::remote_control_service(0xD0, 0xD1),
         pre_configured_destinations: [listener_destination()],
         app_state: (),
         storage: GrowableHeap,
@@ -113,6 +116,7 @@ async fn main() {
     let client = TcpClientInterface::new(server_address);
     let announcer = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
+        remote_control: common::remote_control_service(0xD2, 0xD3),
         pre_configured_destinations: [announcing_destination],
         app_state: (),
         storage: GrowableHeap,

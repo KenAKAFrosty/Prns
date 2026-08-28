@@ -25,7 +25,7 @@ use crate::engine::{
     SendGroup, SendGroupFailure, SendGroupPayload, SendPlainPacket, SendPlainPacketFailure,
     SendPlainPacketPayload, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
     SendToChannel, SendToChannelBody, SendToChannelFailure, SendToLink, SendToLinkFailure,
-    SendToLinkPayload, Settlement, PATH_REQUEST_ID_LEN,
+    SendToLinkPayload, SetRegisteredAnnounceAppData, Settlement, PATH_REQUEST_ID_LEN,
 };
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
@@ -36,6 +36,9 @@ use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 
+use super::remote_control_access::RemoteControlAccessSender;
+#[cfg(test)]
+use super::remote_control_access::{remote_control_access_lane, RemoteControlAccessReceiver};
 use super::request_endpoints::RespondToken;
 use super::{InterfaceStore, SendError};
 pub use byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
@@ -64,6 +67,49 @@ pub use resource_transfer::{
     ResourceSendError, SegmentCompression, AUTO_COMPRESS_MAX_LEN,
 };
 
+#[cfg(test)]
+pub(crate) fn test_remote_control_service(
+) -> prns_core::remote_control::RemoteControlService<'static> {
+    use prns_core::identity::vault::IdentitySecretKey;
+    use prns_core::remote_control::{
+        RemoteControlControllerIdentitySecret, RemoteControlInitialAccess,
+        RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData,
+        RemoteControlSelfAnnouncement, RemoteControlService, RemoteControlTargetIdentitySecret,
+    };
+
+    let identity_secrets = RemoteControlNodeIdentitySecrets::new(
+        RemoteControlControllerIdentitySecret::from(IdentitySecretKey::new(
+            [0x71; crate::identity::IDENTITY_SECRET_KEY_LEN],
+        )),
+        RemoteControlTargetIdentitySecret::from(IdentitySecretKey::new(
+            [0x72; crate::identity::IDENTITY_SECRET_KEY_LEN],
+        )),
+    )
+    .expect("distinct test identities");
+    RemoteControlService::new(
+        identity_secrets,
+        RemoteControlPublicAppData::try_from(b"".as_slice()).expect("empty app data"),
+        RemoteControlInitialAccess::Nobody,
+        RemoteControlSelfAnnouncement::Unavailable,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn test_remote_control_grant(
+    request: prns_core::remote_control::RemoteControlRequestKind,
+) -> prns_core::remote_control::RemoteControlControllerGrant {
+    let identities = test_remote_control_service()
+        .configuration()
+        .unwrap()
+        .identity_secrets()
+        .identities();
+    prns_core::remote_control::RemoteControlControllerGrant::new(
+        *identities.controller(),
+        prns_core::remote_control::RemoteControlRequestSet::only(request),
+    )
+    .unwrap()
+}
+
 /// A cloneable, `Send` handle to a running node: the proactive surface. Every [`CommandId`] is minted from one counter, so a fire-and-forget [`issue`](Self::issue) can never collide with an awaited [`send_single_packet`](Self::send_single_packet) or a runner's respond.
 #[derive(Clone)]
 pub struct PrnsNodeHandle {
@@ -77,6 +123,7 @@ pub struct PrnsNodeHandle {
     resource_admission: resource_admission::ResourceAdmissionRegistry,
     entropy: crate::manifold::driver::TokioEntropy,
     timing_oracle: Arc<Mutex<Option<Arc<dyn BitrateTimingOracle>>>>,
+    pub(super) remote_control_access: RemoteControlAccessSender,
 }
 
 /// An optional shared-instance timing source. Directly attached nodes do not need one;
@@ -117,20 +164,32 @@ impl std::error::Error for RuntimeRequestHandlerError {}
 impl PrnsNodeHandle {
     #[cfg(test)]
     pub(crate) fn over(commands: UnboundedSender<HostCommand>) -> Self {
+        Self::over_with_remote_control_access(commands).0
+    }
+
+    #[cfg(test)]
+    pub(super) fn over_with_remote_control_access(
+        commands: UnboundedSender<HostCommand>,
+    ) -> (Self, RemoteControlAccessReceiver) {
         let (notify_tx, _notify_rx) = tokio::sync::mpsc::unbounded_channel();
         let (iface_build, _iface_build_rx) = tokio::sync::mpsc::unbounded_channel();
-        Self {
-            commands,
-            ids: Arc::new(AtomicU64::new(0)),
-            attachment_epochs: Arc::new(AtomicU64::new(0)),
-            notify_tx,
-            iface_build,
-            interfaces: Arc::new(Mutex::new(HashMap::new())),
-            store: InterfaceStore::new(),
-            resource_admission: resource_admission::ResourceAdmissionRegistry::default(),
-            entropy: crate::manifold::driver::TokioEntropy,
-            timing_oracle: Arc::new(Mutex::new(None)),
-        }
+        let (remote_control_access, remote_control_access_rx) = remote_control_access_lane();
+        (
+            Self {
+                commands,
+                ids: Arc::new(AtomicU64::new(0)),
+                attachment_epochs: Arc::new(AtomicU64::new(0)),
+                notify_tx,
+                iface_build,
+                interfaces: Arc::new(Mutex::new(HashMap::new())),
+                store: InterfaceStore::new(),
+                resource_admission: resource_admission::ResourceAdmissionRegistry::default(),
+                entropy: crate::manifold::driver::TokioEntropy,
+                timing_oracle: Arc::new(Mutex::new(None)),
+                remote_control_access,
+            },
+            remote_control_access_rx,
+        )
     }
 
     pub fn fill_entropy(&self, bytes: &mut [u8]) {
@@ -392,6 +451,22 @@ impl PrnsNodeHandle {
         }
     }
 
+    pub async fn set_registered_announce_app_data(
+        &self,
+        set: SetRegisteredAnnounceAppData,
+    ) -> Result<(), super::SetRegisteredAnnounceAppDataError> {
+        match self
+            .settle(PrnsCommand::SetRegisteredAnnounceAppData(set))
+            .await
+        {
+            Some(Settlement::SetRegisteredAnnounceAppData(Ok(()))) => Ok(()),
+            Some(Settlement::SetRegisteredAnnounceAppData(Err(failure))) => Err(
+                super::SetRegisteredAnnounceAppDataError::from_failure(failure),
+            ),
+            Some(_) | None => Err(super::SetRegisteredAnnounceAppDataError::NodeStopped),
+        }
+    }
+
     pub async fn allow_requester(
         &self,
         allow: AllowRequester,
@@ -493,6 +568,13 @@ impl super::PrnsNodeApi for PrnsNodeHandle {
 
     async fn announce_now(&self, announce: AnnounceNow) -> Result<(), super::AnnounceNowError> {
         self.announce_now(announce).await
+    }
+
+    async fn set_registered_announce_app_data(
+        &self,
+        set: SetRegisteredAnnounceAppData,
+    ) -> Result<(), super::SetRegisteredAnnounceAppDataError> {
+        self.set_registered_announce_app_data(set).await
     }
 
     async fn send_single_packet(

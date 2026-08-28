@@ -70,6 +70,7 @@ impl Settleable for SetResourceStrategy {
             | Settlement::SendResource(_)
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
+            | Settlement::SetRegisteredAnnounceAppData(_)
             | Settlement::SendPlainPacket(_) => None,
         }
     }

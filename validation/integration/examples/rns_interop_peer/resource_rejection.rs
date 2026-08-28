@@ -51,6 +51,7 @@ pub async fn run_client() -> Result<(), ClientFailure> {
     let client = TcpClientInterface::new(target);
     let (destination_tx, mut destination_rx) = tokio::sync::mpsc::unbounded_channel();
     let node = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [] as [PreConfiguredDestination; 0],
         app_state: (),
@@ -193,6 +194,7 @@ pub async fn run_server() -> Result<(), ServerFailure> {
         completed: completed_tx,
     };
     let node = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [destination],
         app_state: state,

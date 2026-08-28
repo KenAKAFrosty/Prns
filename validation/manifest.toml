@@ -1558,6 +1558,18 @@ path = "fuzz_targets/gnss_nmea_stream.rs"
 group = "gnss"
 tiers = ["release", "scheduled"]
 
+[[fuzz_target]]
+name = "remote_control_messages_parse"
+path = "fuzz_targets/remote_control_messages_parse.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[fuzz_target]]
+name = "remote_control_access_snapshot"
+path = "fuzz_targets/remote_control_access_snapshot.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
 [[kani]]
 name = "hops_above_pathfinder_m_always_reject_before_any_other_gate"
 source = "prns-core/src/routing/announce/acceptance.rs"
@@ -1676,4 +1688,22 @@ tiers = ["release", "scheduled"]
 name = "every_scaled_coordinate_output_respects_its_axis_bound"
 source = "prns-core/src/capabilities/positioning/gnss.rs"
 group = "gnss"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "remote_control_request_parse_terminates_for_every_distinct_wire_shape"
+source = "prns-core/src/remote_control/message.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "remote_control_response_parse_terminates_for_every_distinct_wire_shape"
+source = "prns-core/src/remote_control/message.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "request_set_intersection_preserves_exact_membership"
+source = "prns-core/src/remote_control/message.rs"
+group = "remote-control"
 tiers = ["release", "scheduled"]

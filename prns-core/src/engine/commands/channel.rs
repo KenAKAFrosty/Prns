@@ -60,6 +60,7 @@ impl Settleable for SendToChannel {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::AllowRequester(_)
+            | Settlement::SetRegisteredAnnounceAppData(_)
             | Settlement::SendPlainPacket(_) => None,
         }
     }

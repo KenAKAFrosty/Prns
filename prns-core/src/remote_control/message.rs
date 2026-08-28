@@ -28,7 +28,7 @@ prns_macros::iterable_enum! {
     #[repr(u8)]
     pub enum RemoteControlRequestKind {
         Describe = 0x01,
-        Announce = 0x02,
+        AnnounceSelf = 0x02,
     }
 }
 
@@ -38,7 +38,7 @@ impl RemoteControlRequestKind {
         self as u8
     }
 
-    fn from_wire(value: u8) -> Option<Self> {
+    pub(crate) fn from_wire(value: u8) -> Option<Self> {
         enum_from_wire(value, Self::ALL, Self::wire_value)
     }
 
@@ -46,8 +46,8 @@ impl RemoteControlRequestKind {
     pub const fn maximum_response_encoded_len(self) -> usize {
         match self {
             Self::Describe => RemoteControlResponse::MAX_ENCODED_LEN,
-            Self::Announce => MESSAGE_HEADER_ENCODED_LEN.saturating_add(maximum(
-                RemoteControlAnnounceOutcome::ENCODED_LEN,
+            Self::AnnounceSelf => MESSAGE_HEADER_ENCODED_LEN.saturating_add(maximum(
+                RemoteControlAnnounceSelfOutcome::ENCODED_LEN,
                 RemoteControlProtocolError::MAX_ENCODED_BODY_LEN,
             )),
         }
@@ -59,7 +59,7 @@ prns_macros::iterable_enum! {
     #[repr(u8)]
     pub enum RemoteControlResponseKind {
         Describe = 0x01,
-        Announce = 0x02,
+        AnnounceSelf = 0x02,
         ProtocolError = 0xFF,
     }
 }
@@ -99,7 +99,7 @@ impl RemoteControlProtocolErrorKind {
 prns_macros::iterable_enum! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[repr(u8)]
-    pub enum RemoteControlAnnounceOutcome {
+    pub enum RemoteControlAnnounceSelfOutcome {
         Announced = 0x01,
         Unavailable = 0x02,
         Rejected = 0x03,
@@ -107,7 +107,7 @@ prns_macros::iterable_enum! {
     }
 }
 
-impl RemoteControlAnnounceOutcome {
+impl RemoteControlAnnounceSelfOutcome {
     pub const ENCODED_LEN: usize = 1;
 
     #[must_use]
@@ -128,15 +128,17 @@ impl RemoteControlAnnounceOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteControlRequest {
     Describe,
-    Announce,
+    AnnounceSelf,
 }
 
 impl RemoteControlRequest {
+    pub const MAX_ENCODED_LEN: usize = MESSAGE_HEADER_ENCODED_LEN;
+
     #[must_use]
     pub const fn kind(self) -> RemoteControlRequestKind {
         match self {
             Self::Describe => RemoteControlRequestKind::Describe,
-            Self::Announce => RemoteControlRequestKind::Announce,
+            Self::AnnounceSelf => RemoteControlRequestKind::AnnounceSelf,
         }
     }
 
@@ -144,7 +146,7 @@ impl RemoteControlRequest {
     pub const fn encoded_len(self) -> usize {
         match self {
             Self::Describe => MESSAGE_HEADER_ENCODED_LEN,
-            Self::Announce => MESSAGE_HEADER_ENCODED_LEN,
+            Self::AnnounceSelf => MESSAGE_HEADER_ENCODED_LEN,
         }
     }
 
@@ -168,8 +170,8 @@ impl RemoteControlRequest {
         };
         match kind {
             RemoteControlRequestKind::Describe if body.is_empty() => Ok(Self::Describe),
-            RemoteControlRequestKind::Announce if body.is_empty() => Ok(Self::Announce),
-            RemoteControlRequestKind::Describe | RemoteControlRequestKind::Announce => {
+            RemoteControlRequestKind::AnnounceSelf if body.is_empty() => Ok(Self::AnnounceSelf),
+            RemoteControlRequestKind::Describe | RemoteControlRequestKind::AnnounceSelf => {
                 Err(RemoteControlRequestParseError::Malformed)
             }
         }
@@ -194,7 +196,22 @@ pub struct RemoteControlRequestSet {
 
 impl RemoteControlRequestSet {
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn empty() -> Self {
+        Self {
+            bits: [0; REQUEST_KIND_BITMAP_LEN],
+            len: 0,
+        }
+    }
+
+    #[must_use]
+    pub fn only(kind: RemoteControlRequestKind) -> Self {
+        let mut requests = Self::empty();
+        let _inserted = requests.insert(kind);
+        requests
+    }
+
+    #[must_use]
+    pub fn all() -> Self {
         let mut supported = Self::empty();
         for kind in RemoteControlRequestKind::ALL {
             let _inserted = supported.insert(kind);
@@ -240,17 +257,15 @@ impl RemoteControlRequestSet {
             .filter(|kind| self.supports(*kind))
     }
 
-    fn empty() -> Self {
-        Self {
-            bits: [0; REQUEST_KIND_BITMAP_LEN],
-            len: 0,
+    #[must_use]
+    pub fn intersection(&self, other: &Self) -> Self {
+        let mut intersection = Self::empty();
+        for kind in self.iter() {
+            if other.supports(kind) {
+                let _inserted = intersection.insert(kind);
+            }
         }
-    }
-}
-
-impl Default for RemoteControlRequestSet {
-    fn default() -> Self {
-        Self::new()
+        intersection
     }
 }
 
@@ -262,24 +277,29 @@ impl core::fmt::Debug for RemoteControlRequestSet {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoteControlDescription {
-    supported_requests: RemoteControlRequestSet,
+    available_requests: RemoteControlRequestSet,
 }
 
 impl RemoteControlDescription {
     #[must_use]
-    pub const fn new(supported_requests: RemoteControlRequestSet) -> Self {
-        Self { supported_requests }
-    }
-
-    #[must_use]
-    pub const fn supported_requests(&self) -> &RemoteControlRequestSet {
-        &self.supported_requests
+    pub const fn available_requests(&self) -> &RemoteControlRequestSet {
+        &self.available_requests
     }
 }
 
-impl Default for RemoteControlDescription {
-    fn default() -> Self {
-        Self::new(RemoteControlRequestSet::new())
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlDescriptionError {
+    DescribeUnavailable,
+}
+
+impl TryFrom<RemoteControlRequestSet> for RemoteControlDescription {
+    type Error = RemoteControlDescriptionError;
+
+    fn try_from(available_requests: RemoteControlRequestSet) -> Result<Self, Self::Error> {
+        if !available_requests.supports(RemoteControlRequestKind::Describe) {
+            return Err(RemoteControlDescriptionError::DescribeUnavailable);
+        }
+        Ok(Self { available_requests })
     }
 }
 
@@ -338,7 +358,7 @@ impl From<RemoteControlRequestParseError> for RemoteControlProtocolError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteControlResponse {
     Describe(RemoteControlDescription),
-    Announce(RemoteControlAnnounceOutcome),
+    AnnounceSelf(RemoteControlAnnounceSelfOutcome),
     ProtocolError(RemoteControlProtocolError),
 }
 
@@ -346,7 +366,7 @@ impl RemoteControlResponse {
     pub const MAX_ENCODED_LEN: usize = MESSAGE_HEADER_ENCODED_LEN.saturating_add(maximum(
         DESCRIPTION_COUNT_ENCODED_LEN.saturating_add(RemoteControlRequestKind::ALL.len()),
         maximum(
-            RemoteControlAnnounceOutcome::ENCODED_LEN,
+            RemoteControlAnnounceSelfOutcome::ENCODED_LEN,
             RemoteControlProtocolError::MAX_ENCODED_BODY_LEN,
         ),
     ));
@@ -355,7 +375,7 @@ impl RemoteControlResponse {
     pub const fn kind(&self) -> RemoteControlResponseKind {
         match self {
             Self::Describe(_) => RemoteControlResponseKind::Describe,
-            Self::Announce(_) => RemoteControlResponseKind::Announce,
+            Self::AnnounceSelf(_) => RemoteControlResponseKind::AnnounceSelf,
             Self::ProtocolError(_) => RemoteControlResponseKind::ProtocolError,
         }
     }
@@ -364,9 +384,9 @@ impl RemoteControlResponse {
     pub fn encoded_len(&self) -> usize {
         let body_len = match self {
             Self::Describe(description) => {
-                DESCRIPTION_COUNT_ENCODED_LEN.saturating_add(description.supported_requests.len())
+                DESCRIPTION_COUNT_ENCODED_LEN.saturating_add(description.available_requests.len())
             }
-            Self::Announce(outcome) => outcome.encoded_len(),
+            Self::AnnounceSelf(outcome) => outcome.encoded_len(),
             Self::ProtocolError(error) => error.encoded_body_len(),
         };
         MESSAGE_HEADER_ENCODED_LEN.saturating_add(body_len)
@@ -387,7 +407,9 @@ impl RemoteControlResponse {
         };
         match kind {
             RemoteControlResponseKind::Describe => parse_description(body).map(Self::Describe),
-            RemoteControlResponseKind::Announce => parse_announce_outcome(body).map(Self::Announce),
+            RemoteControlResponseKind::AnnounceSelf => {
+                parse_announce_self_outcome(body).map(Self::AnnounceSelf)
+            }
             RemoteControlResponseKind::ProtocolError => {
                 parse_protocol_error(body).map(Self::ProtocolError)
             }
@@ -409,7 +431,7 @@ impl RemoteControlResponse {
         *kind = self.kind().wire_value();
         match self {
             Self::Describe(description) => write_description(description, body),
-            Self::Announce(outcome) => write_announce_outcome(*outcome, body),
+            Self::AnnounceSelf(outcome) => write_announce_self_outcome(*outcome, body),
             Self::ProtocolError(error) => write_protocol_error(error, body),
         }
         Ok(encoded_len)
@@ -429,7 +451,7 @@ pub enum RemoteControlResponseParseError {
     Truncated,
     UnsupportedVersion { found: u8 },
     UnknownResponseKind { found: u8 },
-    UnknownAnnounceOutcome { found: u8 },
+    UnknownAnnounceSelfOutcome { found: u8 },
     UnknownProtocolErrorKind { found: u8 },
     UnknownRequestKind { found: u8 },
     NonCanonicalRequestSet,
@@ -475,26 +497,27 @@ fn parse_description(
     if kinds.len() != usize::from(*count) {
         return Err(RemoteControlResponseParseError::Malformed);
     }
-    let mut supported_requests = RemoteControlRequestSet::empty();
+    let mut available_requests = RemoteControlRequestSet::empty();
     let mut previous = None;
     for wire_value in kinds {
         let Some(kind) = RemoteControlRequestKind::from_wire(*wire_value) else {
             return Err(RemoteControlResponseParseError::UnknownRequestKind { found: *wire_value });
         };
-        if previous.is_some_and(|value| value >= *wire_value) || !supported_requests.insert(kind) {
+        if previous.is_some_and(|value| value >= *wire_value) || !available_requests.insert(kind) {
             return Err(RemoteControlResponseParseError::NonCanonicalRequestSet);
         }
         previous = Some(*wire_value);
     }
-    if !supported_requests.supports(RemoteControlRequestKind::Describe) {
-        return Err(RemoteControlResponseParseError::Malformed);
-    }
-    Ok(RemoteControlDescription::new(supported_requests))
+    RemoteControlDescription::try_from(available_requests).map_err(
+        |RemoteControlDescriptionError::DescribeUnavailable| {
+            RemoteControlResponseParseError::Malformed
+        },
+    )
 }
 
-fn parse_announce_outcome(
+fn parse_announce_self_outcome(
     body: &[u8],
-) -> Result<RemoteControlAnnounceOutcome, RemoteControlResponseParseError> {
+) -> Result<RemoteControlAnnounceSelfOutcome, RemoteControlResponseParseError> {
     let [outcome] = body else {
         return Err(if body.is_empty() {
             RemoteControlResponseParseError::Truncated
@@ -502,8 +525,8 @@ fn parse_announce_outcome(
             RemoteControlResponseParseError::Malformed
         });
     };
-    RemoteControlAnnounceOutcome::from_wire(*outcome)
-        .ok_or(RemoteControlResponseParseError::UnknownAnnounceOutcome { found: *outcome })
+    RemoteControlAnnounceSelfOutcome::from_wire(*outcome)
+        .ok_or(RemoteControlResponseParseError::UnknownAnnounceSelfOutcome { found: *outcome })
 }
 
 fn parse_protocol_error(
@@ -544,13 +567,13 @@ fn write_description(description: &RemoteControlDescription, body: &mut [u8]) {
     let Some((count, kinds)) = body.split_first_mut() else {
         return;
     };
-    *count = description.supported_requests.len;
-    for (out, kind) in kinds.iter_mut().zip(description.supported_requests.iter()) {
+    *count = description.available_requests.len;
+    for (out, kind) in kinds.iter_mut().zip(description.available_requests.iter()) {
         *out = kind.wire_value();
     }
 }
 
-fn write_announce_outcome(outcome: RemoteControlAnnounceOutcome, body: &mut [u8]) {
+fn write_announce_self_outcome(outcome: RemoteControlAnnounceSelfOutcome, body: &mut [u8]) {
     if let Some(out) = body.first_mut() {
         *out = outcome.wire_value();
     }
@@ -563,5 +586,57 @@ fn write_protocol_error(error: &RemoteControlProtocolError, body: &mut [u8]) {
     *kind = error.kind().wire_value();
     if let (Some(found), Some(out)) = (error.found(), detail.first_mut()) {
         *out = found;
+    }
+}
+
+#[cfg_attr(mutants, mutants::skip)]
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn remote_control_request_parse_terminates_for_every_distinct_wire_shape() {
+        let bytes: [u8; RemoteControlRequest::MAX_ENCODED_LEN + 1] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= bytes.len());
+        let _result = RemoteControlRequest::parse(&bytes[..len]);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn remote_control_response_parse_terminates_for_every_distinct_wire_shape() {
+        let bytes: [u8; RemoteControlResponse::MAX_ENCODED_LEN + 1] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= bytes.len());
+        let _result = RemoteControlResponse::parse(&bytes[..len]);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn request_set_intersection_preserves_exact_membership() {
+        let mut left = RemoteControlRequestSet::empty();
+        let mut right = RemoteControlRequestSet::empty();
+        if kani::any() {
+            let _inserted = left.insert(RemoteControlRequestKind::Describe);
+        }
+        if kani::any() {
+            let _inserted = left.insert(RemoteControlRequestKind::AnnounceSelf);
+        }
+        if kani::any() {
+            let _inserted = right.insert(RemoteControlRequestKind::Describe);
+        }
+        if kani::any() {
+            let _inserted = right.insert(RemoteControlRequestKind::AnnounceSelf);
+        }
+        let intersection = left.intersection(&right);
+        for kind in RemoteControlRequestKind::ALL {
+            assert_eq!(
+                intersection.supports(kind),
+                left.supports(kind) && right.supports(kind)
+            );
+        }
+        assert!(intersection.len() <= left.len());
+        assert!(intersection.len() <= right.len());
     }
 }

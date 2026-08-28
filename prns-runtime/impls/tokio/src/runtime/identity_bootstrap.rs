@@ -1,7 +1,8 @@
 use std::fs;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use prns_core::identity::vault::{FileVault, FileVaultError};
 use prns_core::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use prns_core::interfaces::bluetooth_auto::{
     decode_persisted_ble_identity, encode_persisted_ble_identity, BleIdentity,
@@ -10,6 +11,30 @@ use prns_core::interfaces::bluetooth_auto::{
 use prns_core::interfaces::browser_rendezvous::{
     BrowserRendezvousId, BrowserSelectionSeed, ID_LEN as LOCAL_IDENTITY_LEN,
 };
+use prns_core::remote_control::{
+    RemoteControlNodeIdentityBootstrap, RemoteControlNodeIdentityBootstrapError,
+};
+
+pub type RemoteControlFileIdentityBootstrapError =
+    RemoteControlNodeIdentityBootstrapError<FileVaultError, OsEntropyError>;
+
+pub struct RemoteControlIdentityDirectory {
+    vault: FileVault,
+}
+
+impl RemoteControlIdentityDirectory {
+    pub fn new(directory: impl Into<PathBuf>) -> Self {
+        Self {
+            vault: FileVault::new(directory),
+        }
+    }
+
+    pub fn load_or_generate(
+        mut self,
+    ) -> Result<RemoteControlNodeIdentityBootstrap, RemoteControlFileIdentityBootstrapError> {
+        RemoteControlNodeIdentityBootstrap::load_or_generate(&mut self.vault, fill_os_entropy)
+    }
+}
 
 #[must_use]
 #[expect(
@@ -285,6 +310,7 @@ impl std::error::Error for LocalIdentityFileError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use prns_core::identity::vault::IdentityOrigin;
 
     #[test]
     fn a_fresh_path_mints_persists_and_reloads_the_same_secret() {
@@ -384,5 +410,79 @@ mod tests {
         assert_eq!(fs::read(&path).unwrap(), [0u8; LOCAL_IDENTITY_LEN - 1]);
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remote_control_identity_directory_persists_a_distinct_pair() {
+        let dir = std::env::temp_dir().join(format!(
+            "prns-remote-control-identities-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+
+        let first = RemoteControlIdentityDirectory::new(&dir)
+            .load_or_generate()
+            .unwrap();
+        let first_identities = first.secrets().identities();
+        assert_eq!(
+            (first.origins().controller(), first.origins().target()),
+            (IdentityOrigin::Generated, IdentityOrigin::Generated)
+        );
+        assert_ne!(
+            first_identities.controller().identity_hash(),
+            first_identities.target().identity_hash()
+        );
+
+        let second = RemoteControlIdentityDirectory::new(&dir)
+            .load_or_generate()
+            .unwrap();
+        assert_eq!(second.secrets().identities(), first_identities);
+        assert_eq!(
+            (second.origins().controller(), second.origins().target()),
+            (IdentityOrigin::Loaded, IdentityOrigin::Loaded)
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn malformed_remote_control_identity_is_refused_unchanged() {
+        let dir = std::env::temp_dir().join(format!(
+            "prns-remote-control-identities-malformed-{}",
+            std::process::id()
+        ));
+        let target = dir.join("target");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(&target, b"short").unwrap();
+
+        assert!(matches!(
+            RemoteControlIdentityDirectory::new(&dir).load_or_generate(),
+            Err(RemoteControlNodeIdentityBootstrapError::TargetLoad(
+                FileVaultError::MalformedLength { found: 5 }
+            ))
+        ));
+        assert_eq!(fs::read(&target).unwrap(), b"short");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unusable_remote_control_identity_directory_is_a_typed_failure() {
+        let path = std::env::temp_dir().join(format!(
+            "prns-remote-control-identities-unusable-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+        fs::write(&path, b"not a directory").unwrap();
+
+        assert!(matches!(
+            RemoteControlIdentityDirectory::new(&path).load_or_generate(),
+            Err(RemoteControlNodeIdentityBootstrapError::ControllerLoad(
+                FileVaultError::Io(_)
+            ))
+        ));
+
+        let _ = fs::remove_file(&path);
     }
 }

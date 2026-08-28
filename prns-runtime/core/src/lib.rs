@@ -15,8 +15,8 @@ pub use prns_core::{
     units, wire,
 };
 
+pub use prns_core::remote_control::{RemoteControlEndpoint, REMOTE_CONTROL_REQUEST_ENDPOINT_ID};
 pub use runtime::node_introspection;
-pub use runtime::{RemoteControlEndpoint, RemoteControlEndpointState, REMOTE_CONTROL_ENDPOINT_ID};
 pub mod manifold;
 #[cfg(feature = "resource-bzip2")]
 pub mod resource_compression;

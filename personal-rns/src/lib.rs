@@ -81,10 +81,10 @@ pub use prns_runtime::routing::links::resources::{ResourceMemoryLimits, Resource
 pub use prns_runtime::routing::ProofStrategy;
 pub use prns_runtime::runtime::{
     AnnounceNowError, Diagnostic, ManuallyAttached, Message, NoPersistence,
-    PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, RemoteControlAnnounce,
-    RemoteControlAnnounceFailure, RemoteControlDescribe, RemoteControlEndpoint,
-    RemoteControlEndpointState, RemoteControlError, RuntimeHealth, SendError,
-    REMOTE_CONTROL_ENDPOINT_ID,
+    PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, RemoteControlAccessControl,
+    RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure, RemoteControlDescribe,
+    RemoteControlError, RevokeRemoteControlControllerControlError, RuntimeHealth, SendError,
+    SetRegisteredAnnounceAppDataError, SetRemoteControlControllerGrantControlError,
 };
 pub use prns_runtime::wire::{DestinationHash, TransportId};
 
@@ -100,7 +100,8 @@ pub use prns_runtime_tokio::runtime::{
     load_or_create_browser_rendezvous_id, load_or_create_browser_selection_seed,
     load_or_create_identity_secret, try_generate_identity_secret, AttachIntent, Attachable,
     AttachedInterface, AttachedSupervisor, Fleet, IdentitySecretFileError, LocalIdentityFileError,
-    OsEntropyError, PrnsNode, PrnsNodeHandle, RemoteControlHandle,
+    OsEntropyError, PrnsNode, PrnsNodeHandle, RemoteControlFileIdentityBootstrapError,
+    RemoteControlHandle, RemoteControlIdentityDirectory,
 };
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]

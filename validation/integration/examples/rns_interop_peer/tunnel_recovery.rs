@@ -70,6 +70,7 @@ pub async fn run_client() -> Result<(), ClientFailure> {
     let status = client.status();
     let (observed_tx, mut observed_rx) = tokio::sync::mpsc::unbounded_channel();
     let node = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: Some(secret(0x71)),
         pre_configured_destinations: [destination],
         app_state: (),
@@ -175,6 +176,7 @@ pub async fn run_server() -> Result<(), ServerFailure> {
     let announce_count_for_on_event = announce_count.clone();
     let (destination_tx, mut destination_rx) = tokio::sync::mpsc::unbounded_channel();
     let node = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: Some(secret(0x72)),
         pre_configured_destinations: [] as [PreConfiguredDestination; 0],
         app_state: (),

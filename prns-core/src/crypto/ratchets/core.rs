@@ -114,6 +114,7 @@ pub trait SelfRatchetTable {
     fn set_last_rotated(&mut self, index: usize, at: InstantMillis);
     fn insert_newest_secret(&mut self, index: usize, secret: X25519SecretKey);
     fn clear_secrets(&mut self, index: usize);
+    fn swap_remove(&mut self, index: usize);
     fn push(&mut self, destination: DestinationHash) -> Result<(), TrackRatchetsError>;
 }
 
@@ -132,6 +133,13 @@ impl<C: SelfRatchetTable> SelfRatchets<C> {
 
     pub fn is_tracked(&self, destination: &DestinationHash) -> bool {
         self.table.destinations().contains(destination)
+    }
+
+    pub(crate) fn untrack(&mut self, destination: &DestinationHash) {
+        let Some(index) = self.index_of(destination) else {
+            return;
+        };
+        self.table.swap_remove(index);
     }
 
     pub fn has_room(&self) -> bool {
@@ -536,5 +544,29 @@ mod tests {
         ratchets.rotate_if_due(&dest(2), InstantMillis(1_000), &mut fill(0x22));
         assert_eq!(ratchets.newest_ratchet_key(&dest(1)), Some(public_of(0x11)));
         assert_eq!(ratchets.newest_ratchet_key(&dest(2)), Some(public_of(0x22)));
+    }
+
+    fn assert_untracking_preserves_alignment<C: SelfRatchetTable + Default>() {
+        let mut ratchets = SelfRatchets::<C>::default();
+        ratchets.track(dest(1)).unwrap();
+        ratchets.track(dest(2)).unwrap();
+        ratchets.rotate_if_due(&dest(1), InstantMillis(1_000), &mut fill(0x11));
+        ratchets.rotate_if_due(&dest(2), InstantMillis(2_000), &mut fill(0x22));
+
+        ratchets.untrack(&dest(1));
+        ratchets.untrack(&dest(1));
+
+        assert!(!ratchets.is_tracked(&dest(1)));
+        assert_eq!(ratchets.newest_ratchet_key(&dest(1)), None);
+        assert_eq!(ratchets.newest_ratchet_key(&dest(2)), Some(public_of(0x22)));
+        assert_eq!(ratchets.len(), 1);
+        ratchets.track(dest(3)).unwrap();
+        assert!(ratchets.is_tracked(&dest(3)));
+    }
+
+    #[test]
+    fn untracking_preserves_fixed_and_heap_column_alignment() {
+        assert_untracking_preserves_alignment::<FixedSelfRatchetTable<2, 3>>();
+        assert_untracking_preserves_alignment::<HeapSelfRatchetTable>();
     }
 }

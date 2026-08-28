@@ -13,8 +13,8 @@ use crate::engine::{
     RespondRejection, SendGroupEntropy, SendGroupFailure, SendPlainPacketFailure,
     SendRequestFailure, SendRequestRejection, SendSinglePacketEntropy, SendSinglePacketFailure,
     SendSinglePacketWriteError, SendSinglePacketWriteOutcome, SendToChannelFailure,
-    SendToChannelRejection, SendToLinkFailure, SendToLinkRejection, SetResourceStrategyFailure,
-    Settlement, WakeSchedules,
+    SendToChannelRejection, SendToLinkFailure, SendToLinkRejection,
+    SetRegisteredAnnounceAppDataFailure, SetResourceStrategyFailure, Settlement, WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::AttachedInterfaces;
@@ -139,6 +139,18 @@ impl<S: StorageLayout> EngineState<S> {
                     sink,
                     id,
                     Settlement::AnnounceNow(Err(AnnounceNowFailure::Rejected(rejection))),
+                );
+            }
+            CommandOutcome::RegisteredAnnounceAppDataSet { id } => {
+                settle(sink, id, Settlement::SetRegisteredAnnounceAppData(Ok(())));
+            }
+            CommandOutcome::SetRegisteredAnnounceAppDataRejected { id, rejection } => {
+                settle(
+                    sink,
+                    id,
+                    Settlement::SetRegisteredAnnounceAppData(Err(
+                        SetRegisteredAnnounceAppDataFailure::Rejected(rejection),
+                    )),
                 );
             }
             CommandOutcome::OwesSendSinglePacket { id, send } => {

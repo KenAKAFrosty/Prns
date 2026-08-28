@@ -36,9 +36,26 @@ impl UpstreamAppDestinationTable for HeapUpstreamAppDestinationTable {
     fn app_data_at(&self, index: usize) -> Option<&[u8]> {
         self.app_data.get(index).map(|data| data.as_slice())
     }
+    fn app_data_at_mut(&mut self, index: usize) -> Option<&mut AnnounceAppDataBytes> {
+        self.app_data.get_mut(index)
+    }
 
     fn kind_mut(&mut self, index: usize) -> &mut UpstreamAppDestinationKind {
         &mut self.kind[index]
+    }
+
+    fn swap_remove(&mut self, index: usize) -> Option<AnnounceAppDataBytes> {
+        if index >= self.destination.len()
+            || index >= self.kind.len()
+            || index >= self.name_hash.len()
+            || index >= self.app_data.len()
+        {
+            return None;
+        }
+        self.destination.swap_remove(index);
+        self.kind.swap_remove(index);
+        self.name_hash.swap_remove(index);
+        Some(self.app_data.swap_remove(index))
     }
 
     fn upsert(
@@ -102,5 +119,46 @@ mod tests {
         assert_eq!(table.destinations().len(), 100);
         assert_eq!(table.kinds().len(), 100);
         assert_eq!(table.name_hashes().len(), 100);
+    }
+
+    #[test]
+    fn removing_a_row_keeps_every_heap_column_aligned() {
+        let mut table = HeapUpstreamAppDestinationTable::default();
+        for n in 1..=3u8 {
+            table
+                .upsert(
+                    DestinationHash::new([n; TRUNCATED_HASH_BYTE_LEN]),
+                    UpstreamAppDestinationKind::Plain,
+                    DottedNameHash::new([n; DOTTED_NAME_HASH_BYTE_LEN]),
+                    AnnounceAppDataBytes::from_slice(&[n]).unwrap(),
+                )
+                .unwrap();
+        }
+
+        assert!(table.swap_remove(3).is_none());
+        assert_eq!(table.len(), 3);
+        let removed = table.swap_remove(1);
+
+        assert_eq!(
+            removed.as_ref().map(|data| data.as_slice()),
+            Some([2].as_slice())
+        );
+        assert_eq!(table.len(), 2);
+        assert_eq!(
+            table.destinations(),
+            &[
+                DestinationHash::new([1; TRUNCATED_HASH_BYTE_LEN]),
+                DestinationHash::new([3; TRUNCATED_HASH_BYTE_LEN]),
+            ],
+        );
+        assert_eq!(
+            table.name_hashes(),
+            &[
+                DottedNameHash::new([1; DOTTED_NAME_HASH_BYTE_LEN]),
+                DottedNameHash::new([3; DOTTED_NAME_HASH_BYTE_LEN]),
+            ],
+        );
+        assert_eq!(table.app_data_at(0), Some([1].as_slice()));
+        assert_eq!(table.app_data_at(1), Some([3].as_slice()));
     }
 }

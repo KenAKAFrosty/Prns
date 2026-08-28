@@ -34,6 +34,18 @@ impl<const MAX_GROUP_KEYS: usize> GroupKeyTable for FixedGroupKeyTable<MAX_GROUP
         &self.keys[..self.len]
     }
 
+    fn swap_remove(&mut self, index: usize) {
+        if index >= self.len {
+            return;
+        }
+        let last = self.len - 1;
+        self.destinations.swap(index, last);
+        self.keys.swap(index, last);
+        self.destinations[last] = DestinationHash::new([0u8; 16]);
+        self.keys[last] = GroupKey::default();
+        self.len -= 1;
+    }
+
     fn upsert(
         &mut self,
         destination: DestinationHash,

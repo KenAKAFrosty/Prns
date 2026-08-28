@@ -85,6 +85,7 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
     let node_a = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [single_a],
         app_state: (),
@@ -100,6 +101,7 @@ async fn two_nodes_stand_up_and_one_hears_the_others_announce() {
     let client = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xB2))],
         app_state: (),
@@ -159,6 +161,7 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
     let node_a = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [single_a],
         app_state: (),
@@ -173,6 +176,7 @@ async fn an_interface_added_through_the_handle_carries_traffic_until_torn_down()
 
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xD2))],
         app_state: (),
@@ -264,6 +268,7 @@ async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_t
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
     let node_a = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [single_a],
         app_state: (),
@@ -278,6 +283,7 @@ async fn a_supervisor_spawns_a_member_and_tearing_the_supervisor_down_cascades_t
 
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xF2))],
         app_state: (),
@@ -354,6 +360,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
     let server_status = server.status();
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_s = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [single(secret(0x55))],
         app_state: (),
@@ -379,6 +386,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
         TcpClientInterface::new_with_bitrate(addr.clone(), BITRATE, ReconnectPolicy::STANDARD);
     let client_a_status = client_a.status();
     let node_a = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [single_a],
         app_state: (),
@@ -395,6 +403,7 @@ async fn the_server_stands_up_a_distinct_member_per_client_and_hears_each_on_its
     let client_b = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let client_b_status = client_b.status();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [single_b],
         app_state: (),
@@ -515,6 +524,7 @@ async fn a_recipe_accept_destination_receives_a_resource() {
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
     let node_a = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [single_a],
         app_state: (),
@@ -530,6 +540,7 @@ async fn a_recipe_accept_destination_receives_a_resource() {
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let client = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let node_b = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [single(secret(0xF2))],
         app_state: (),

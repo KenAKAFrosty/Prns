@@ -1,3 +1,4 @@
+use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Receiver;
 use heapless::Vec as HeaplessVec;
@@ -9,12 +10,15 @@ use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::units::RttMillis;
 use crate::wire::DestinationHash;
+use prns_runtime::runtime::placement::dispatch_remote_control_request;
 
 use super::node_facade::PrnsNodeHandle;
+use super::remote_control_access::{RemoteControlAccessCommand, RemoteControlAccessCompletion};
 use super::request_endpoints::{
     dispatch_request, Decline, InboundRequest, RequestEndpointSet, ResponseCapacityExceeded,
     ResponseSink,
 };
+use super::AssembledRemoteControl;
 
 #[allow(clippy::large_enum_variant)]
 enum RunnerResponse {
@@ -125,6 +129,7 @@ pub(super) async fn run_router<
     const REQUEST_BYTES: usize,
 >(
     state: &St,
+    remote_control: &mut AssembledRemoteControl,
     requests: Receiver<'_, M, RunnerRequest<REQUEST_BYTES>, REQUESTS>,
     commands: PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
 ) where
@@ -132,17 +137,40 @@ pub(super) async fn run_router<
     M: RawMutex,
 {
     loop {
-        dispatch::<
-            St,
-            R,
-            M,
-            COMMANDS,
-            COMPLETIONS,
-            REQUEST_COMPLETIONS,
-            RESPONSE_BYTES,
-            REQUEST_BYTES,
-        >(state, commands, requests.receive().await)
-        .await;
+        match select(
+            commands.next_remote_control_access_command(),
+            requests.receive(),
+        )
+        .await
+        {
+            Either::First(RemoteControlAccessCommand::SetControllerGrant { id, grant }) => {
+                let outcome = remote_control.set_controller_grant(grant);
+                let _settled = commands.settle_remote_control_access(
+                    id,
+                    RemoteControlAccessCompletion::ControllerGrantSet(outcome),
+                );
+            }
+            Either::First(RemoteControlAccessCommand::RevokeController { id, controller }) => {
+                let outcome = remote_control.revoke_controller(&controller);
+                let _settled = commands.settle_remote_control_access(
+                    id,
+                    RemoteControlAccessCompletion::ControllerRevoked(outcome),
+                );
+            }
+            Either::Second(request) => {
+                dispatch::<
+                    St,
+                    R,
+                    M,
+                    COMMANDS,
+                    COMPLETIONS,
+                    REQUEST_COMPLETIONS,
+                    RESPONSE_BYTES,
+                    REQUEST_BYTES,
+                >(state, remote_control, commands, request)
+                .await;
+            }
+        }
     }
 }
 
@@ -157,6 +185,7 @@ async fn dispatch<
     const REQUEST_BYTES: usize,
 >(
     state: &St,
+    remote_control: &AssembledRemoteControl,
     commands: PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>,
     request: RunnerRequest<REQUEST_BYTES>,
 ) where
@@ -174,7 +203,23 @@ async fn dispatch<
     );
     let responder = inbound.respond_token();
     let mut body = RunnerResponse::Buffered(RespondData::new());
-    match dispatch_request::<St, R>(state, &commands, request.path_hash, inbound, &mut body).await {
+    let dispatched = if let Some((access, available_requests, self_announcement)) =
+        remote_control.request_configuration(request.destination, request.path_hash)
+    {
+        dispatch_remote_control_request(
+            state,
+            access,
+            available_requests,
+            self_announcement,
+            &commands,
+            inbound,
+            &mut body,
+        )
+        .await
+    } else {
+        dispatch_request::<St, R>(state, &commands, request.path_hash, inbound, &mut body).await
+    };
+    match dispatched {
         Ok(()) => match body {
             RunnerResponse::Buffered(body) => {
                 commands.respond_owned_packed(responder, body);
@@ -197,13 +242,24 @@ async fn dispatch<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::PrnsCommand;
+    use crate::engine::{EngineState, PrnsCommand};
     use crate::runtime::request_endpoints::{
         RequestContext, RequestEndpoint, RequestEndpointPolicy,
     };
     use embassy_futures::block_on;
+    use embassy_futures::select::{select, Either};
     use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
     use embassy_sync::channel::Channel;
+    use prns_core::storage::GrowableHeap;
+
+    fn remote_control() -> AssembledRemoteControl {
+        let mut engine = EngineState::<GrowableHeap>::default();
+        crate::runtime::configure_remote_control_service(
+            &mut engine,
+            super::super::node_facade::test_remote_control_service(),
+        )
+        .expect("RemoteControl fits growable storage")
+    }
 
     struct DestinationEcho;
     struct DestinationRoutes;
@@ -289,6 +345,7 @@ mod tests {
         let channel = Channel::<M, crate::engine::IssuedCommand, 1>::new();
         let completions = crate::runtime::CompletionPool::<M, 1>::new();
         let handle = PrnsNodeHandle::new(channel.sender(), &completions);
+        let remote_control = remote_control();
         let request = RunnerRequest {
             destination: DestinationHash::new([0x5A; 16]),
             link_id: LinkId::new([1; 16]),
@@ -302,6 +359,7 @@ mod tests {
 
         block_on(dispatch::<(), StaticRoutes, M, 1, 1, 0, 0, 16>(
             &(),
+            &remote_control,
             handle,
             request,
         ));
@@ -327,6 +385,7 @@ mod tests {
         let channel = Channel::<M, crate::engine::IssuedCommand, 1>::new();
         let completions = crate::runtime::CompletionPool::<M, 1>::new();
         let handle = PrnsNodeHandle::new(channel.sender(), &completions);
+        let remote_control = remote_control();
         let destination = DestinationHash::new([0x5a; 16]);
         let request = RunnerRequest {
             destination,
@@ -341,6 +400,7 @@ mod tests {
 
         block_on(dispatch::<(), DestinationRoutes, M, 1, 1, 0, 0, 16>(
             &(),
+            &remote_control,
             handle,
             request,
         ));
@@ -355,5 +415,128 @@ mod tests {
             panic!("packed response");
         };
         assert_eq!(data.as_slice(), destination.as_bytes());
+    }
+
+    #[test]
+    fn unavailable_remote_control_rejects_access_changes() {
+        use crate::remote_control::RemoteControlRequestKind;
+        use crate::runtime::{
+            RemoteControlAccessControl, RevokeRemoteControlControllerControlError,
+            SetRemoteControlControllerGrantControlError,
+        };
+
+        type M = CriticalSectionRawMutex;
+        let commands = Channel::<M, crate::engine::IssuedCommand, 1>::new();
+        let completions = crate::runtime::CompletionPool::<M, 0>::new();
+        let handle = PrnsNodeHandle::new(commands.sender(), &completions);
+        let requests = Channel::<M, RunnerRequest<16>, 1>::new();
+        let mut engine = EngineState::<GrowableHeap>::default();
+        let mut remote_control = crate::runtime::configure_remote_control_service(
+            &mut engine,
+            crate::remote_control::RemoteControlService::Unavailable,
+        )
+        .expect("unavailable RemoteControl requires no storage");
+        let grant = super::super::node_facade::test_remote_control_grant(
+            RemoteControlRequestKind::Describe,
+        );
+        let router = run_router::<(), (), M, 1, 0, 0, 0, 1, 16>(
+            &(),
+            &mut remote_control,
+            requests.receiver(),
+            handle,
+        );
+        let exercise = async {
+            assert_eq!(
+                handle.set_remote_control_controller_grant(grant).await,
+                Err(SetRemoteControlControllerGrantControlError::Unavailable),
+            );
+            assert_eq!(
+                handle
+                    .revoke_remote_control_controller(*grant.controller())
+                    .await,
+                Err(RevokeRemoteControlControllerControlError::Unavailable),
+            );
+        };
+
+        match block_on(select(exercise, router)) {
+            Either::First(()) => {}
+            Either::Second(()) => panic!("router returned"),
+        }
+    }
+
+    #[test]
+    fn router_applies_ready_remote_control_access_before_a_ready_request() {
+        use crate::remote_control::{
+            RemoteControlAccessTable, RemoteControlDescription, RemoteControlRequest,
+            RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlResponse,
+            RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantOutcome,
+        };
+        use crate::runtime::RemoteControlAccessControl;
+
+        type M = CriticalSectionRawMutex;
+        let commands = Channel::<M, crate::engine::IssuedCommand, 1>::new();
+        let completions = crate::runtime::CompletionPool::<M, 0>::new();
+        let handle = PrnsNodeHandle::new(commands.sender(), &completions);
+        let requests = Channel::<M, RunnerRequest<16>, 1>::new();
+        let mut remote_control = remote_control();
+        let destination = remote_control.target_endpoint().unwrap().destination_hash();
+        let path_hash = remote_control.request_endpoint_id().unwrap();
+        let grant = super::super::node_facade::test_remote_control_grant(
+            RemoteControlRequestKind::Describe,
+        );
+        let mut request_bytes = [0; RemoteControlRequest::MAX_ENCODED_LEN];
+        let request_len = RemoteControlRequest::Describe
+            .write_into(&mut request_bytes)
+            .unwrap();
+        let request = RunnerRequest {
+            destination,
+            link_id: LinkId::new([0x71; 16]),
+            request_id: RequestId([0x72; 16]),
+            requester: Some(grant.controller().identity_hash()),
+            path_hash,
+            requested_at: InstantMillis(73),
+            rtt: RttMillis::new(74),
+            data: HeaplessVec::from_slice(&request_bytes[..request_len]).unwrap(),
+        };
+        assert!(requests.try_send(request).is_ok());
+        let router = run_router::<(), DestinationRoutes, M, 1, 0, 0, 0, 1, 16>(
+            &(),
+            &mut remote_control,
+            requests.receiver(),
+            handle,
+        );
+        let exercise = async {
+            assert_eq!(
+                handle.set_remote_control_controller_grant(grant).await,
+                Ok(SetRemoteControlControllerGrantOutcome::Added),
+            );
+            let issued = commands.receiver().receive().await;
+            let PrnsCommand::Respond(response) = issued.command else {
+                panic!("RemoteControl response command")
+            };
+            let crate::engine::RespondPayload::Packed(data) = response.payload else {
+                panic!("packed RemoteControl response")
+            };
+            let expected = RemoteControlDescription::try_from(RemoteControlRequestSet::only(
+                RemoteControlRequestKind::Describe,
+            ))
+            .unwrap();
+            assert_eq!(
+                RemoteControlResponse::parse(data.as_slice()),
+                Ok(RemoteControlResponse::Describe(expected)),
+            );
+            assert_eq!(
+                handle
+                    .revoke_remote_control_controller(*grant.controller())
+                    .await,
+                Ok(RevokeRemoteControlControllerOutcome::Revoked { grant }),
+            );
+        };
+
+        match block_on(select(exercise, router)) {
+            Either::First(()) => {}
+            Either::Second(()) => panic!("router returned"),
+        }
+        assert!(remote_control.access().unwrap().is_empty());
     }
 }

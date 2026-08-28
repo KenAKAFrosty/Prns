@@ -6,6 +6,7 @@ pub mod node;
 pub mod node_introspection;
 pub mod packet_phy_retention;
 mod remote_control;
+mod remote_control_access;
 pub mod request_endpoints;
 #[cfg(feature = "rns-management")]
 pub mod rns_management;
@@ -30,7 +31,7 @@ pub use crate::engine::BlackholeSeedReport;
 pub use command::{
     AnnounceNowError, ClearAnnounceQueuesOutcome, DestinationIdentityRetentionControl,
     DestinationIdentityRetentionControlError, DropRouteOutcome, DropRoutesViaOutcome, PrnsNodeApi,
-    RoutingControl, RoutingControlError, SendError,
+    RoutingControl, RoutingControlError, SendError, SetRegisteredAnnounceAppDataError,
 };
 pub use event::{Diagnostic, Message, PrnsEvent};
 pub use health::RuntimeHealth;
@@ -39,19 +40,27 @@ pub use identity_blackhole::{
     IdentityBlackholeSourceError,
 };
 pub use node::{
-    assemble_node, configure_preconfigured_destination, AssembledNode,
-    ConfigurePreconfiguredDestinationError, ManuallyAttached, NoPersistence,
-    PreConfiguredDestination, PrnsNodeRecipe, ServeMyRequestEndpoints,
+    assemble_node, configure_preconfigured_destination, configure_remote_control_service,
+    AssembledNode, AssembledRemoteControl, ConfigurePreconfiguredDestinationError,
+    ConfigureRemoteControlServiceError, ManuallyAttached, NoPersistence, PreConfiguredDestination,
+    PrnsNodeRecipe, ServeMyRequestEndpoints,
 };
 pub use remote_control::{
-    RemoteControlAnnounce, RemoteControlAnnounceFailure, RemoteControlDescribe,
-    RemoteControlEndpoint, RemoteControlEndpointState, RemoteControlError,
-    REMOTE_CONTROL_ENDPOINT_ID,
+    RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure, RemoteControlDescribe,
+    RemoteControlError,
+};
+pub use remote_control_access::{
+    RemoteControlAccessControl, RevokeRemoteControlControllerControlError,
+    SetRemoteControlControllerGrantControlError,
 };
 
 #[doc(hidden)]
 pub mod placement {
     pub use super::node::assemble_node_in_place;
+    pub use super::remote_control::{
+        admit_remote_control_request, dispatch_admitted_remote_control_request,
+        dispatch_remote_control_request, AdmittedRemoteControlRequest,
+    };
 }
 
 cfg_if::cfg_if! {

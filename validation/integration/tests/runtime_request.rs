@@ -90,6 +90,7 @@ async fn a_request_endpoints_answers_a_live_request_over_tcp() {
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
     let node_a = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [responder_dest],
         app_state: Responder,
@@ -122,6 +123,7 @@ async fn a_request_endpoints_answers_a_live_request_over_tcp() {
     let client = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [PreConfiguredDestination::Single {
             resource_strategy:
@@ -240,6 +242,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
     let node_a = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [responder_dest],
         app_state: Responder,
@@ -272,6 +275,7 @@ async fn request_auto_negotiates_both_rungs_over_tcp() {
     let client = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [PreConfiguredDestination::Single {
             resource_strategy:
@@ -370,6 +374,7 @@ async fn the_hopspot_node_page_serves_over_tcp() {
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
     let node_a = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [responder_dest],
         app_state: (),
@@ -402,6 +407,7 @@ async fn the_hopspot_node_page_serves_over_tcp() {
     let client = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [PreConfiguredDestination::Single {
             resource_strategy:
@@ -499,6 +505,7 @@ async fn serve_the_hopspot_page_for_a_stock_client() {
         .await
         .expect("server binds");
     let node_a = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [responder_dest],
         app_state: (),
@@ -560,6 +567,7 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
         .expect("server binds");
     let addr = server.local_addr().expect("bound addr").to_string();
     let node_a = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [responder_dest],
         app_state: Responder,
@@ -592,6 +600,7 @@ async fn a_split_response_answers_a_small_request_over_tcp() {
     let client = TcpClientInterface::new_with_bitrate(addr, BITRATE, ReconnectPolicy::STANDARD);
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [PreConfiguredDestination::Single {
             resource_strategy:

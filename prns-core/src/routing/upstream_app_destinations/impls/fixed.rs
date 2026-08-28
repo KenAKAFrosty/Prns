@@ -55,9 +55,28 @@ impl<const MAX_UPSTREAM_APP_DESTINATIONS: usize> UpstreamAppDestinationTable
     fn app_data_at(&self, index: usize) -> Option<&[u8]> {
         self.app_data.get(index).map(|data| data.as_slice())
     }
+    fn app_data_at_mut(&mut self, index: usize) -> Option<&mut AnnounceAppDataBytes> {
+        self.app_data.get_mut(index)
+    }
 
     fn kind_mut(&mut self, index: usize) -> &mut UpstreamAppDestinationKind {
         &mut self.kind[index]
+    }
+
+    fn swap_remove(&mut self, index: usize) -> Option<AnnounceAppDataBytes> {
+        let last = self.len.checked_sub(1)?;
+        if index > last || index >= self.app_data.len() {
+            return None;
+        }
+        self.destination.swap(index, last);
+        self.kind.swap(index, last);
+        self.name_hash.swap(index, last);
+        let app_data = self.app_data.swap_remove(index);
+        self.destination[last] = DestinationHash::new([0u8; TRUNCATED_HASH_BYTE_LEN]);
+        self.kind[last] = UpstreamAppDestinationKind::Plain;
+        self.name_hash[last] = DottedNameHash::new([0u8; DOTTED_NAME_HASH_BYTE_LEN]);
+        self.len = last;
+        Some(app_data)
     }
 
     fn upsert(
@@ -215,5 +234,49 @@ mod tests {
             }],
         );
         assert_eq!(table.app_data_at(0), Some(b"new".as_slice()));
+    }
+
+    #[test]
+    fn removing_a_row_keeps_every_column_aligned_and_reclaims_capacity() {
+        let mut table = FixedUpstreamAppDestinationTable::<2>::default();
+        table
+            .upsert(
+                dest(1),
+                UpstreamAppDestinationKind::Plain,
+                name(1),
+                AnnounceAppDataBytes::from_slice(b"first").unwrap(),
+            )
+            .unwrap();
+        table
+            .upsert(
+                dest(2),
+                UpstreamAppDestinationKind::Group,
+                name(2),
+                AnnounceAppDataBytes::from_slice(b"second").unwrap(),
+            )
+            .unwrap();
+
+        assert!(table.swap_remove(2).is_none());
+        assert_eq!(table.destinations(), &[dest(1), dest(2)]);
+        let removed = table.swap_remove(0);
+        assert_eq!(
+            removed.as_ref().map(|data| data.as_slice()),
+            Some(b"first".as_slice())
+        );
+
+        assert_eq!(table.len(), 1);
+        assert_eq!(table.destinations(), &[dest(2)]);
+        assert_eq!(table.kinds(), &[UpstreamAppDestinationKind::Group]);
+        assert_eq!(table.name_hashes(), &[name(2)]);
+        assert_eq!(table.app_data_at(0), Some(b"second".as_slice()));
+        assert_eq!(
+            table.upsert(
+                dest(3),
+                UpstreamAppDestinationKind::Plain,
+                name(3),
+                AnnounceAppDataBytes::from_slice(b"third").unwrap(),
+            ),
+            Ok(1),
+        );
     }
 }

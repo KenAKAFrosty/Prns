@@ -187,6 +187,22 @@ pub struct RequestContext<'a, S> {
 }
 
 impl<S> RequestContext<'_, S> {
+    pub(super) fn from_inbound<'a>(
+        state: &'a S,
+        request: InboundRequest<'a>,
+        sink: &'a mut dyn ResponseSink,
+    ) -> RequestContext<'a, S> {
+        RequestContext {
+            state,
+            destination: request.destination,
+            data: request.data,
+            requester: request.requester,
+            requested_at: request.requested_at,
+            respond_token: request.respond_token(),
+            sink,
+        }
+    }
+
     /// Send a normal application response exactly as supplied.
     ///
     /// This is the default for text, protocol messages, and arbitrary byte payloads:
@@ -365,15 +381,7 @@ pub async fn dispatch_request<'a, S, R: RequestEndpointSet<S>>(
     request: InboundRequest<'a>,
     sink: &'a mut dyn ResponseSink,
 ) -> Result<(), Decline> {
-    let cx = RequestContext {
-        state,
-        destination: request.destination,
-        data: request.data,
-        requester: request.requester,
-        requested_at: request.requested_at,
-        respond_token: request.respond_token(),
-        sink,
-    };
+    let cx = RequestContext::from_inbound(state, request, sink);
     R::dispatch(cx, node, path_hash).await
 }
 

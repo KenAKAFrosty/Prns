@@ -5,8 +5,17 @@ use crate::engine::EngineState;
 use crate::engine::RatchetPolicy;
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use crate::remote_control::{
+    FixedRemoteControlAccessTable, RemoteControlAccessTable, RemoteControlAnnouncementData,
+    RemoteControlAnnouncementDataWriteError, RemoteControlEndpoint, RemoteControlNodeIdentities,
+    RemoteControlRequest, RemoteControlRequestSet, RemoteControlSelfAnnouncement,
+    RemoteControlService, RevokeRemoteControlControllerError, RevokeRemoteControlControllerOutcome,
+    SetRemoteControlControllerGrantError, SetRemoteControlControllerGrantOutcome,
+    DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS, REMOTE_CONTROL_APPLICATION_ASPECTS,
+    REMOTE_CONTROL_APPLICATION_NAME, REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
+};
 use crate::routing::links::resources::ResourceStrategy;
-use crate::routing::request_handlers::RequestHandlerError;
+use crate::routing::request_handlers::{RequestHandlerError, RequestPathHash, RequestPolicy};
 use crate::routing::upstream_app_destinations::RegisterDestinationError;
 use crate::routing::{LinkRequestPolicy, ProofStrategy};
 use crate::storage::StorageLayout;
@@ -23,9 +32,138 @@ where
     S: StorageLayout,
 {
     pub engine: EngineState<S>,
+    pub remote_control: AssembledRemoteControl,
     pub state: St,
     pub on_event: F,
     pub request_endpoints: PhantomData<R>,
+}
+
+#[derive(Debug)]
+pub struct AssembledRemoteControl {
+    available: Option<AvailableRemoteControl>,
+}
+
+#[derive(Debug)]
+struct AvailableRemoteControl {
+    identities: RemoteControlNodeIdentities,
+    target_endpoint: RemoteControlEndpoint,
+    request_endpoint_id: RequestPathHash,
+    access: FixedRemoteControlAccessTable<DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS>,
+    available_requests: RemoteControlRequestSet,
+    self_announcement: RemoteControlSelfAnnouncement,
+}
+
+impl AssembledRemoteControl {
+    #[must_use]
+    pub const fn is_available(&self) -> bool {
+        self.available.is_some()
+    }
+
+    #[must_use]
+    pub const fn identities(&self) -> Option<&RemoteControlNodeIdentities> {
+        match &self.available {
+            Some(available) => Some(&available.identities),
+            None => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn target_endpoint(&self) -> Option<RemoteControlEndpoint> {
+        match &self.available {
+            Some(available) => Some(available.target_endpoint),
+            None => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn request_endpoint_id(&self) -> Option<RequestPathHash> {
+        match &self.available {
+            Some(available) => Some(available.request_endpoint_id),
+            None => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn access(
+        &self,
+    ) -> Option<&FixedRemoteControlAccessTable<DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS>> {
+        match &self.available {
+            Some(available) => Some(&available.access),
+            None => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn available_requests(&self) -> RemoteControlRequestSet {
+        match &self.available {
+            Some(available) => available.available_requests,
+            None => RemoteControlRequestSet::empty(),
+        }
+    }
+
+    #[must_use]
+    pub const fn self_announcement(&self) -> Option<RemoteControlSelfAnnouncement> {
+        match &self.available {
+            Some(available) => Some(available.self_announcement),
+            None => None,
+        }
+    }
+
+    #[must_use]
+    pub fn request_configuration(
+        &self,
+        destination: DestinationHash,
+        path: RequestPathHash,
+    ) -> Option<(
+        &FixedRemoteControlAccessTable<DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS>,
+        RemoteControlRequestSet,
+        RemoteControlSelfAnnouncement,
+    )> {
+        let available = self.available.as_ref()?;
+        if destination != available.target_endpoint.destination_hash()
+            || path != available.request_endpoint_id
+        {
+            return None;
+        }
+        Some((
+            &available.access,
+            available.available_requests,
+            available.self_announcement,
+        ))
+    }
+
+    pub fn set_controller_grant(
+        &mut self,
+        grant: crate::remote_control::RemoteControlControllerGrant,
+    ) -> Result<SetRemoteControlControllerGrantOutcome, SetRemoteControlControllerGrantError> {
+        self.available
+            .as_mut()
+            .ok_or(SetRemoteControlControllerGrantError::Unavailable)?
+            .access
+            .set_controller_grant(grant)
+    }
+
+    pub fn revoke_controller(
+        &mut self,
+        controller: &crate::remote_control::RemoteControlControllerIdentity,
+    ) -> Result<RevokeRemoteControlControllerOutcome, RevokeRemoteControlControllerError> {
+        Ok(self
+            .available
+            .as_mut()
+            .ok_or(RevokeRemoteControlControllerError::Unavailable)?
+            .access
+            .revoke_controller(controller))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigureRemoteControlServiceError {
+    HoldIdentity(HoldIdentityError),
+    EncodeAnnouncementData(RemoteControlAnnouncementDataWriteError),
+    RegisterTarget(RegisterDestinationError),
+    ConfigureRequestLimit,
+    RegisterRequestEndpoint(TablePushError),
+    BuildAccess(TablePushError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +236,69 @@ where
     }
 }
 
+pub fn configure_remote_control_service<S>(
+    engine: &mut EngineState<S>,
+    service: RemoteControlService<'_>,
+) -> Result<AssembledRemoteControl, ConfigureRemoteControlServiceError>
+where
+    S: StorageLayout,
+{
+    let Some(configuration) = service.into_configuration() else {
+        return Ok(AssembledRemoteControl { available: None });
+    };
+    let available_requests = configuration.available_requests();
+    let (identity_secrets, default_public_app_data, initial_access, self_announcement) =
+        configuration.into_parts();
+    let identities = engine
+        .configure_remote_control_identities(identity_secrets)
+        .map_err(ConfigureRemoteControlServiceError::HoldIdentity)?;
+    let target_endpoint = identities.target().endpoint();
+    let announcement_data = RemoteControlAnnouncementData::new(default_public_app_data)
+        .encode()
+        .map_err(ConfigureRemoteControlServiceError::EncodeAnnouncementData)?;
+    let destination = engine
+        .register_single_destination(
+            &identities.target().identity_hash(),
+            REMOTE_CONTROL_APPLICATION_NAME,
+            REMOTE_CONTROL_APPLICATION_ASPECTS,
+            announcement_data.as_slice(),
+            ProofStrategy::ProveAll,
+            LinkRequestPolicy::AcceptAll,
+            RatchetPolicy::NoRatchets,
+        )
+        .map_err(ConfigureRemoteControlServiceError::RegisterTarget)?;
+    if !engine.set_maximum_request_bytes(
+        &destination,
+        ByteLimit::Maximum(RemoteControlRequest::MAX_ENCODED_LEN as u64),
+    ) {
+        return Err(ConfigureRemoteControlServiceError::ConfigureRequestLimit);
+    }
+    let request_endpoint_id = RequestPathHash::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID);
+    engine
+        .register_request_handler_hash(
+            &destination,
+            request_endpoint_id,
+            RequestPolicy::RequireIdentified,
+        )
+        .map_err(ConfigureRemoteControlServiceError::RegisterRequestEndpoint)?;
+    let mut access = FixedRemoteControlAccessTable::default();
+    for grant in initial_access.grants() {
+        access
+            .upsert(*grant)
+            .map_err(ConfigureRemoteControlServiceError::BuildAccess)?;
+    }
+    Ok(AssembledRemoteControl {
+        available: Some(AvailableRemoteControl {
+            identities,
+            target_endpoint,
+            request_endpoint_id,
+            access,
+            available_requests,
+            self_announcement,
+        }),
+    })
+}
+
 fn configure_single_destination<St, R, S>(
     engine: &mut EngineState<S>,
     configuration: SingleDestinationConfiguration<'_>,
@@ -163,7 +364,7 @@ where
 
 #[allow(clippy::expect_used)]
 pub fn assemble_node<'a, D, St, R, F, I, S, P>(
-    recipe: PrnsNodeRecipe<D, St, R, F, I, S, P>,
+    recipe: PrnsNodeRecipe<'a, D, St, R, F, I, S, P>,
 ) -> (AssembledNode<St, R, F, S>, I, P)
 where
     D: IntoIterator<Item = PreConfiguredDestination<'a>>,
@@ -173,6 +374,7 @@ where
 {
     let PrnsNodeRecipe {
         transport_identity,
+        remote_control,
         pre_configured_destinations,
         app_state,
         storage: _,
@@ -182,8 +384,12 @@ where
         on_event,
     } = recipe;
 
+    let mut engine = EngineState::<S>::default();
+    let remote_control = configure_remote_control_service(&mut engine, remote_control)
+        .expect("the RemoteControl service fits the node storage");
     let mut node = AssembledNode {
-        engine: EngineState::<S>::default(),
+        engine,
+        remote_control,
         state: app_state,
         on_event,
         request_endpoints: PhantomData,
@@ -197,9 +403,10 @@ where
     clippy::undocumented_unsafe_blocks,
     reason = "every AssembledNode field is initialized before the slot is exposed"
 )]
+#[allow(clippy::expect_used)]
 pub fn assemble_node_in_place<'a, 'slot, D, St, R, F, I, S, P>(
     slot: &'slot mut MaybeUninit<AssembledNode<St, R, F, S>>,
-    recipe: PrnsNodeRecipe<D, St, R, F, I, S, P>,
+    recipe: PrnsNodeRecipe<'a, D, St, R, F, I, S, P>,
 ) -> (&'slot mut AssembledNode<St, R, F, S>, I, P)
 where
     D: IntoIterator<Item = PreConfiguredDestination<'a>>,
@@ -209,6 +416,7 @@ where
 {
     let PrnsNodeRecipe {
         transport_identity,
+        remote_control,
         pre_configured_destinations,
         app_state,
         storage: _,
@@ -222,6 +430,10 @@ where
         let engine =
             &mut *core::ptr::addr_of_mut!((*node).engine).cast::<MaybeUninit<EngineState<S>>>();
         EngineState::init_in_place(engine);
+        let engine = &mut *core::ptr::addr_of_mut!((*node).engine);
+        let remote_control = configure_remote_control_service(engine, remote_control)
+            .expect("the RemoteControl service fits the node storage");
+        core::ptr::addr_of_mut!((*node).remote_control).write(remote_control);
         core::ptr::addr_of_mut!((*node).state).write(app_state);
         core::ptr::addr_of_mut!((*node).on_event).write(on_event);
         core::ptr::addr_of_mut!((*node).request_endpoints).write(PhantomData);
@@ -275,7 +487,15 @@ fn configure_assembled_node<'a, D, St, R, F, S>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity::vault::IdentitySecretKey;
     use crate::identity::IdentityHash;
+    use crate::remote_control::{
+        RemoteControlControllerGrant, RemoteControlControllerGrants,
+        RemoteControlControllerIdentity, RemoteControlControllerIdentitySecret,
+        RemoteControlInitialAccess, RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData,
+        RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlTargetIdentitySecret,
+        REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY,
+    };
     use crate::routing::request_handlers::RequestPathHash;
     use crate::runtime::request_endpoints::{Decline, RequestContext, RequestEndpointPolicy};
     use crate::runtime::{ManuallyAttached, NoPersistence};
@@ -284,6 +504,44 @@ mod tests {
     type Storage = TestFixedStorage<4, 4, 128, 4, 4, 4, 2, 2, 2, 2, 2, 2>;
 
     struct Routes;
+
+    fn remote_control_identity_secrets(
+        controller_fill: u8,
+        target_fill: u8,
+    ) -> RemoteControlNodeIdentitySecrets {
+        RemoteControlNodeIdentitySecrets::new(
+            RemoteControlControllerIdentitySecret::from(IdentitySecretKey::new(
+                [controller_fill; IDENTITY_SECRET_KEY_LEN],
+            )),
+            RemoteControlTargetIdentitySecret::from(IdentitySecretKey::new(
+                [target_fill; IDENTITY_SECRET_KEY_LEN],
+            )),
+        )
+        .unwrap()
+    }
+
+    fn remote_control_controller(fill: u8) -> RemoteControlControllerIdentity {
+        *remote_control_identity_secrets(fill, fill.saturating_add(1))
+            .identities()
+            .controller()
+    }
+
+    fn remote_control_grant(fill: u8) -> RemoteControlControllerGrant {
+        RemoteControlControllerGrant::new(
+            remote_control_controller(fill),
+            RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
+        )
+        .unwrap()
+    }
+
+    fn remote_control_service() -> RemoteControlService<'static> {
+        RemoteControlService::new(
+            remote_control_identity_secrets(0x71, 0x72),
+            RemoteControlPublicAppData::try_from(b"".as_slice()).unwrap(),
+            RemoteControlInitialAccess::Nobody,
+            RemoteControlSelfAnnouncement::Unavailable,
+        )
+    }
 
     impl RequestEndpointSet<()> for Routes {
         const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] =
@@ -366,6 +624,114 @@ mod tests {
     }
 
     #[test]
+    fn remote_control_service_registers_its_independent_target_and_access() {
+        let mut engine = EngineState::<Storage>::default();
+        let identity_secrets = remote_control_identity_secrets(0x31, 0x32);
+        let expected_identities = identity_secrets.identities();
+        let grants = [remote_control_grant(0x41), remote_control_grant(0x51)];
+        let initial_access = RemoteControlInitialAccess::Grants(
+            RemoteControlControllerGrants::try_from(grants.as_slice()).unwrap(),
+        );
+        let service = RemoteControlService::new(
+            identity_secrets,
+            RemoteControlPublicAppData::try_from(b"node".as_slice()).unwrap(),
+            initial_access,
+            RemoteControlSelfAnnouncement::Destination(DestinationHash::new([0x61; 16])),
+        );
+
+        let configured = configure_remote_control_service(&mut engine, service).unwrap();
+        let target_endpoint = configured.target_endpoint().unwrap();
+        let target_destination = target_endpoint.destination_hash();
+
+        assert_eq!(configured.identities(), Some(&expected_identities));
+        assert_eq!(configured.access().unwrap().grants(), grants.as_slice());
+        assert_eq!(engine.transport_id(), None);
+        assert_eq!(engine.held_identity_hashes().len(), 2);
+        assert_eq!(
+            engine
+                .upstream_app_destinations()
+                .find(|registered| registered.destination == target_destination)
+                .map(|registered| registered.kind),
+            Some(
+                crate::routing::upstream_app_destinations::UpstreamAppDestinationKind::Single {
+                    identity: expected_identities.target().identity_hash(),
+                    proof_strategy: ProofStrategy::ProveAll,
+                    link_request_policy: LinkRequestPolicy::AcceptAll,
+                    resource_strategy: ResourceStrategy::AcceptNone,
+                    maximum_request_bytes: ByteLimit::Maximum(
+                        RemoteControlRequest::MAX_ENCODED_LEN as u64,
+                    ),
+                    ratchet_policy: RatchetPolicy::NoRatchets,
+                },
+            ),
+        );
+    }
+
+    #[test]
+    fn unavailable_remote_control_registers_nothing() {
+        let mut engine = EngineState::<Storage>::default();
+        let mut remote_control =
+            configure_remote_control_service(&mut engine, RemoteControlService::Unavailable)
+                .unwrap();
+        let grant = remote_control_grant(0x41);
+
+        assert!(!remote_control.is_available());
+        assert_eq!(remote_control.identities(), None);
+        assert_eq!(remote_control.target_endpoint(), None);
+        assert_eq!(remote_control.request_endpoint_id(), None);
+        assert_eq!(
+            remote_control.available_requests(),
+            RemoteControlRequestSet::empty()
+        );
+        assert_eq!(engine.held_identity_hashes().len(), 0);
+        assert_eq!(engine.upstream_app_destinations().count(), 0);
+        assert_eq!(
+            remote_control.set_controller_grant(grant),
+            Err(SetRemoteControlControllerGrantError::Unavailable),
+        );
+        assert_eq!(
+            remote_control.revoke_controller(grant.controller()),
+            Err(RevokeRemoteControlControllerError::Unavailable),
+        );
+    }
+
+    #[test]
+    fn assembled_remote_control_owns_controller_grant_changes() {
+        let mut engine = EngineState::<Storage>::default();
+        let mut remote_control =
+            configure_remote_control_service(&mut engine, remote_control_service()).unwrap();
+        let initial = remote_control_grant(0x41);
+        let updated = RemoteControlControllerGrant::new(
+            *initial.controller(),
+            RemoteControlRequestSet::only(RemoteControlRequestKind::AnnounceSelf),
+        )
+        .unwrap();
+
+        assert_eq!(
+            remote_control.set_controller_grant(initial),
+            Ok(SetRemoteControlControllerGrantOutcome::Added),
+        );
+        assert_eq!(
+            remote_control.set_controller_grant(initial),
+            Ok(SetRemoteControlControllerGrantOutcome::Unchanged),
+        );
+        assert_eq!(
+            remote_control.set_controller_grant(updated),
+            Ok(SetRemoteControlControllerGrantOutcome::Updated { previous: initial }),
+        );
+        assert_eq!(remote_control.access().unwrap().grants(), &[updated]);
+        assert_eq!(
+            remote_control.revoke_controller(updated.controller()),
+            Ok(RevokeRemoteControlControllerOutcome::Revoked { grant: updated }),
+        );
+        assert_eq!(
+            remote_control.revoke_controller(updated.controller()),
+            Ok(RevokeRemoteControlControllerOutcome::NotFound),
+        );
+        assert!(remote_control.access().unwrap().is_empty());
+    }
+
+    #[test]
     fn in_place_assembly_initializes_and_configures_the_node() {
         let mut slot = MaybeUninit::uninit();
         let storage: Storage = TestFixedStorage;
@@ -373,6 +739,7 @@ mod tests {
             &mut slot,
             PrnsNodeRecipe {
                 transport_identity: Some(Zeroizing::new([0x33; IDENTITY_SECRET_KEY_LEN])),
+                remote_control: remote_control_service(),
                 pre_configured_destinations: [PreConfiguredDestination::Plain {
                     app_name: "test",
                     aspects: &["plain"],
@@ -387,8 +754,11 @@ mod tests {
         );
 
         assert!(node.engine.network_transport_enabled());
-        assert_eq!(node.engine.held_identity_hashes().len(), 1);
-        assert_eq!(node.engine.upstream_app_destinations().count(), 1);
+        assert_eq!(
+            node.engine.held_identity_hashes().len(),
+            REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY.saturating_add(1),
+        );
+        assert_eq!(node.engine.upstream_app_destinations().count(), 2);
     }
 
     #[test]
@@ -441,6 +811,7 @@ mod tests {
             &mut slot,
             PrnsNodeRecipe {
                 transport_identity: None,
+                remote_control: remote_control_service(),
                 pre_configured_destinations: [PreConfiguredDestination::Plain {
                     app_name: "test",
                     aspects: &["plain"],

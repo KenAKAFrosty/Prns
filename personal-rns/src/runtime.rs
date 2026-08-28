@@ -5,9 +5,11 @@ pub use prns_runtime::runtime::{
     DestinationIdentityRetentionControlError, Diagnostic, DropRouteOutcome, DropRoutesViaOutcome,
     IdentityBlackholeControl, IdentityBlackholeControlError, IdentityBlackholeSource,
     IdentityBlackholeSourceError, ManuallyAttached, Message, NoPersistence,
-    PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, RemoteControlAnnounce,
-    RemoteControlAnnounceFailure, RemoteControlDescribe, RemoteControlError, RoutingControl,
+    PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, RemoteControlAccessControl,
+    RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure, RemoteControlDescribe,
+    RemoteControlError, RevokeRemoteControlControllerControlError, RoutingControl,
     RoutingControlError, RuntimeHealth, SendError, ServeMyRequestEndpoints,
+    SetRegisteredAnnounceAppDataError, SetRemoteControlControllerGrantControlError,
 };
 
 #[cfg(feature = "alloc")]
@@ -47,12 +49,12 @@ pub use prns_runtime_tokio::runtime::{
     PersistenceEvent, PersistenceFlushStatus, PersistenceIntent, PersistenceRestoreReport,
     PersistenceTrigger, PersistenceWorker, PoolWorkers, PrepareFlushError, PreparedFlush,
     PreparedResourceReceiver, PrnsNode, PrnsNodeHandle, RatchetSeedReport, RegionFlush,
-    RegisterRequestEndpointError, RemoteControlHandle, RequestOptions, RequestPathError,
-    ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor, ResourceProgress,
-    ResourceReceipt, ResourceReceiveError, ResourceSendError, ResponseSendError, RouteSeedProgress,
-    RouteSeedReport, RuntimeRequestHandlerError, SaveOnLearn, SaveOnLearnWiring,
-    SegmentCompression, SharedInstanceIdentityError, StreamId, Subscription, TunnelSeedReport,
-    AUTO_COMPRESS_MAX_LEN,
+    RegisterRequestEndpointError, RemoteControlFileIdentityBootstrapError, RemoteControlHandle,
+    RemoteControlIdentityDirectory, RequestOptions, RequestPathError, ResourceAdmissionPeer,
+    ResourceOfferAdmission, ResourceOfferMonitor, ResourceProgress, ResourceReceipt,
+    ResourceReceiveError, ResourceSendError, ResponseSendError, RouteSeedProgress, RouteSeedReport,
+    RuntimeRequestHandlerError, SaveOnLearn, SaveOnLearnWiring, SegmentCompression,
+    SharedInstanceIdentityError, StreamId, Subscription, TunnelSeedReport, AUTO_COMPRESS_MAX_LEN,
 };
 
 #[cfg(all(feature = "rnx", feature = "tokio-host"))]

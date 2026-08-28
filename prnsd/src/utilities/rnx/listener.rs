@@ -27,6 +27,7 @@ use personal_rns::wire::DestinationHash;
 use tokio::sync::Semaphore;
 
 use crate::utilities::configuration::LoadedConfiguration;
+use crate::utilities::remote_control::transient_remote_control_service;
 
 use super::identity::{home_directory, load_identity, pretty_hash};
 use super::{RnxArgs, RnxError};
@@ -133,10 +134,13 @@ where
     R: RequestEndpointSet<ListenerState>,
     F: FnOnce() -> R,
 {
+    let remote_control =
+        transient_remote_control_service().map_err(RnxError::RemoteControlIdentityUnavailable)?;
     let allowed: Arc<[IdentityHash]> = args.allowed.clone().into();
     let no_auth = args.no_auth;
     let mut node = PrnsNode::new_with_handle(move |handle| personal_rns::runtime::PrnsNodeRecipe {
         transport_identity: None,
+        remote_control,
         pre_configured_destinations: [PreConfiguredDestination::Single {
             app_name: APP_NAME,
             aspects: &[EXECUTE_ASPECT],

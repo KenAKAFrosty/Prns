@@ -1,15 +1,26 @@
+use core::convert::Infallible;
 #[cfg(target_arch = "xtensa")]
 use core::{cell::UnsafeCell, ffi::c_void, mem::MaybeUninit};
 
 use esp_hal::rng::Rng;
+#[cfg(target_arch = "xtensa")]
+use personal_hopspot_core::HopspotS3FlashLayout;
 #[cfg(target_arch = "xtensa")]
 use personal_hopspot_core::UiNotice;
 use personal_hopspot_core::{
     bootstrap_flash_ble_identity, bootstrap_flash_node_identity, FlashIdentityError,
     HopspotNodeIdentity, IdentityBootstrap, IdentityPersistence,
 };
-use personal_rns::identity::vault::FlashVault;
+#[cfg(target_arch = "riscv32")]
+use personal_hopspot_core::{
+    ESP32_4_MIB_FLASH_CAPACITY, ESP32_4_MIB_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET,
+};
+use personal_rns::identity::vault::{FlashVault, FlashVaultError};
 use personal_rns::interfaces::bluetooth_auto::BleIdentity;
+use personal_rns::remote_control::{
+    RemoteControlNodeIdentityBootstrap, RemoteControlNodeIdentityBootstrapError,
+    REMOTE_CONTROL_IDENTITY_VAULT_SLOTS,
+};
 #[cfg(target_arch = "xtensa")]
 use portable_atomic::{AtomicU8, Ordering};
 
@@ -27,6 +38,52 @@ const _: () = assert!(HOPSPOT_CONFIG_FLASH_OFFSET + FLASH_SECTOR_LEN == NODE_IDE
 const _: () = assert!(NODE_IDENTITY_FLASH_OFFSET + FLASH_SECTOR_LEN == IDENTITY_FLASH_END as u32);
 
 pub(crate) type Error = FlashIdentityError<EspRomFlashError>;
+pub(crate) type RemoteControlIdentityBootstrapError =
+    RemoteControlNodeIdentityBootstrapError<FlashVaultError<EspRomFlashError>, Infallible>;
+
+pub(crate) struct RemoteControlIdentityFlash {
+    flash_capacity: usize,
+    offset: u32,
+}
+
+impl RemoteControlIdentityFlash {
+    const fn new(flash_capacity: usize, offset: u32) -> Self {
+        Self {
+            flash_capacity,
+            offset,
+        }
+    }
+
+    pub(crate) fn load_or_generate(
+        self,
+    ) -> Result<RemoteControlNodeIdentityBootstrap, RemoteControlIdentityBootstrapError> {
+        let mut vault = FlashVault::<_, REMOTE_CONTROL_IDENTITY_VAULT_SLOTS>::new(
+            EspRomFlash::new(self.flash_capacity),
+            self.offset,
+        );
+        RemoteControlNodeIdentityBootstrap::load_or_generate(&mut vault, |bytes| {
+            hardware_entropy(bytes);
+            Ok(())
+        })
+    }
+}
+
+#[cfg(target_arch = "xtensa")]
+impl From<HopspotS3FlashLayout> for RemoteControlIdentityFlash {
+    fn from(layout: HopspotS3FlashLayout) -> Self {
+        Self::new(
+            layout.flash_capacity,
+            layout.remote_control_identity_flash_offset,
+        )
+    }
+}
+
+#[cfg(target_arch = "riscv32")]
+pub(crate) const C6_REMOTE_CONTROL_IDENTITY_FLASH: RemoteControlIdentityFlash =
+    RemoteControlIdentityFlash::new(
+        ESP32_4_MIB_FLASH_CAPACITY,
+        ESP32_4_MIB_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET,
+    );
 
 #[cfg(target_arch = "xtensa")]
 const IDENTITY_TASK_IDLE: u8 = 0;
@@ -40,6 +97,7 @@ const IDENTITY_TASK_STACK_BYTES: usize = 40 * 1024;
 #[cfg(target_arch = "xtensa")]
 type IdentityBootstraps = (
     IdentityBootstrap<HopspotNodeIdentity, Error>,
+    Result<RemoteControlNodeIdentityBootstrap, RemoteControlIdentityBootstrapError>,
     IdentityBootstrap<BleIdentity, Error>,
     personal_hopspot_core::HopspotDestinationHashes,
 );
@@ -47,6 +105,7 @@ type IdentityBootstraps = (
 #[cfg(target_arch = "xtensa")]
 struct IdentityTaskContext {
     state: AtomicU8,
+    remote_control_identity_flash: UnsafeCell<MaybeUninit<RemoteControlIdentityFlash>>,
     output: UnsafeCell<MaybeUninit<IdentityBootstraps>>,
 }
 
@@ -55,14 +114,43 @@ impl IdentityTaskContext {
     const fn new() -> Self {
         Self {
             state: AtomicU8::new(IDENTITY_TASK_IDLE),
+            remote_control_identity_flash: UnsafeCell::new(MaybeUninit::uninit()),
             output: UnsafeCell::new(MaybeUninit::uninit()),
         }
     }
+
+    #[expect(
+        clippy::undocumented_unsafe_blocks,
+        reason = "the one-shot transition grants the caller exclusive initialization access before the worker starts"
+    )]
+    fn start(&self, remote_control_identity_flash: RemoteControlIdentityFlash) {
+        self.state
+            .compare_exchange(
+                IDENTITY_TASK_IDLE,
+                IDENTITY_TASK_RUNNING,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .expect("S3 identities may only be bootstrapped once");
+        unsafe {
+            (*self.remote_control_identity_flash.get()).write(remote_control_identity_flash);
+        }
+    }
+
+    #[expect(
+        clippy::undocumented_unsafe_blocks,
+        reason = "the worker runs only after start initializes the one-shot input"
+    )]
+    fn take_remote_control_identity_flash(&self) -> RemoteControlIdentityFlash {
+        unsafe { (*self.remote_control_identity_flash.get()).assume_init_read() }
+    }
 }
 
-// SAFETY: the one-shot state transition gives the worker exclusive write access to `output`, and
-// the caller does not read it until the worker publishes READY with release ordering.
 #[cfg(target_arch = "xtensa")]
+#[expect(
+    clippy::undocumented_unsafe_blocks,
+    reason = "the one-shot state transition separates input initialization, worker output, and caller consumption"
+)]
 unsafe impl Sync for IdentityTaskContext {}
 
 #[cfg(target_arch = "xtensa")]
@@ -70,11 +158,18 @@ static IDENTITY_TASK: IdentityTaskContext = IdentityTaskContext::new();
 
 #[cfg(target_arch = "xtensa")]
 extern "C" fn identity_task(_param: *mut c_void) {
+    let remote_control_identity_flash = IDENTITY_TASK.take_remote_control_identity_flash();
     let node = bootstrap_node_identity();
+    let remote_control = remote_control_identity_flash.load_or_generate();
     let destination_hashes =
         personal_hopspot_core::hopspot_destination_hashes(node.identity().secret())
             .expect("the built-in hopspot destination names are valid");
-    let output = (node, bootstrap_ble_identity(), destination_hashes);
+    let output = (
+        node,
+        remote_control,
+        bootstrap_ble_identity(),
+        destination_hashes,
+    );
 
     // SAFETY: IDLE -> RUNNING is performed exactly once before this task is created, so no other
     // writer can access the output slot. The slot has static storage and outlives the task.
@@ -84,23 +179,17 @@ extern "C" fn identity_task(_param: *mut c_void) {
         .store(IDENTITY_TASK_READY, Ordering::Release);
 }
 
-/// Restores both S3 identities and derives the local destination hashes away from the constrained
+/// Restores S3 identities and derives the local destination hashes away from the constrained
 /// main stack.
 ///
 /// Ed25519 public-key reconstruction has a large stack high-water mark. Running it on a temporary
 /// radio-RTOS task keeps the main stack guard effective and frees the temporary stack when the
 /// worker exits. The persisted records and bootstrap behavior are otherwise identical.
 #[cfg(target_arch = "xtensa")]
-pub(crate) async fn bootstrap_s3_identities() -> IdentityBootstraps {
-    IDENTITY_TASK
-        .state
-        .compare_exchange(
-            IDENTITY_TASK_IDLE,
-            IDENTITY_TASK_RUNNING,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        )
-        .expect("S3 identities may only be bootstrapped once");
+pub(crate) async fn bootstrap_s3_identities(
+    remote_control_identity_flash: RemoteControlIdentityFlash,
+) -> IdentityBootstraps {
+    IDENTITY_TASK.start(remote_control_identity_flash);
 
     // SAFETY: `IDENTITY_TASK` has static storage and is Send. The worker only uses the global
     // directly, but passing its address documents and satisfies the RTOS task parameter lifetime.
