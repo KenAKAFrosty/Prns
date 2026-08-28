@@ -8,6 +8,7 @@ mod ssd1681;
 use personal_rns::interfaces::InterfaceId;
 
 pub(crate) use crate::storage::Nrf52840Storage as Storage;
+pub(crate) use display::retained_policy;
 pub(crate) use hardware::{
     TechoBoard as Board, TechoControls as Controls, TechoDisplayHardware as DisplayHardware,
     TechoEarlyHardware as EarlyHardware, TechoFaceHardware as FaceHardware, TechoRadio as Radio,

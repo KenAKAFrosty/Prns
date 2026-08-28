@@ -8,7 +8,7 @@ pub use blanking::{
     DisplayVisibility, UserBlankingPolicy,
 };
 pub use presentation::{
-    EinkPolicy, EinkPolicyConfiguration, EinkPolicyError, PresentationAttempt,
+    EinkPolicy, EinkPolicyConfiguration, EinkPolicyError, EinkRefreshPolicy, PresentationAttempt,
     PresentationDecision, PresentationError, PresentationOutcome, PresentationPolicy,
     PresentationUrgency, RefreshKind,
 };

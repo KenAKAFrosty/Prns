@@ -11,8 +11,10 @@ fn retained_policy() -> PresentationPolicy {
     PresentationPolicy::RetainedEink(
         EinkPolicy::new(EinkPolicyConfiguration {
             telemetry_minimum: SECOND,
-            partial_refresh_limit: PartialRefreshLimit::new(2).unwrap(),
-            full_refresh_maximum_age: DisplayDuration::from_millis(10_000).unwrap(),
+            refresh: EinkRefreshPolicy::Partial {
+                maximum_consecutive: PartialRefreshLimit::new(2).unwrap(),
+                full_maximum_age: DisplayDuration::from_millis(10_000).unwrap(),
+            },
         })
         .unwrap(),
     )
@@ -88,11 +90,32 @@ fn policy_inputs_reject_zero_and_inverted_limits() {
     assert_eq!(
         EinkPolicy::new(EinkPolicyConfiguration {
             telemetry_minimum: DisplayDuration::from_millis(2_000).unwrap(),
-            partial_refresh_limit: PartialRefreshLimit::new(1).unwrap(),
-            full_refresh_maximum_age: SECOND,
+            refresh: EinkRefreshPolicy::Partial {
+                maximum_consecutive: PartialRefreshLimit::new(1).unwrap(),
+                full_maximum_age: SECOND,
+            },
         }),
         Err(EinkPolicyError::TelemetryMinimumExceedsFullMaximumAge)
     );
+}
+
+#[test]
+fn full_only_retained_policy_never_selects_partial_refresh() {
+    let policy = PresentationPolicy::RetainedEink(
+        EinkPolicy::new(EinkPolicyConfiguration {
+            telemetry_minimum: SECOND,
+            refresh: EinkRefreshPolicy::FullOnly,
+        })
+        .unwrap(),
+    );
+    let mut coordinator = coordinator(policy);
+    let first = present(&mut coordinator, 0, PresentationUrgency::Immediate);
+    assert_eq!(first.refresh_kind(), RefreshKind::Full);
+    complete_presentation(&mut coordinator, first, 1, PresentationOutcome::Succeeded);
+
+    draw_marker(&mut coordinator, 1);
+    let changed = present(&mut coordinator, 2, PresentationUrgency::Immediate);
+    assert_eq!(changed.refresh_kind(), RefreshKind::Full);
 }
 
 #[test]
