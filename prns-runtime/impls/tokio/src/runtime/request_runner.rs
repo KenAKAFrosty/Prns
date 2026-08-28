@@ -15,9 +15,13 @@ use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::units::RttMillis;
 use crate::wire::DestinationHash;
-use prns_runtime::runtime::placement::dispatch_remote_control_request;
+use prns_runtime::runtime::placement::{
+    admit_remote_control_request, dispatch_admitted_remote_control_request,
+    AdmittedRemoteControlRequest,
+};
 
 use super::node_facade::{PrnsNodeHandle, ResponseSendError};
+use super::remote_control_access::RemoteControlAccessReceiver;
 use super::request_endpoints::{dispatch_request, Decline, InboundRequest, RequestEndpointSet};
 use super::request_endpoints::{ResponseCapacityExceeded, ResponseSink};
 use super::AssembledRemoteControl;
@@ -34,6 +38,48 @@ pub(super) struct RunnerRequest {
     pub requested_at: InstantMillis,
     pub rtt: RttMillis,
     pub data: std::vec::Vec<u8>,
+}
+
+impl RunnerRequest {
+    fn inbound(&self) -> InboundRequest<'_> {
+        InboundRequest::new(
+            self.destination,
+            self.link_id,
+            self.request_id,
+            self.requester,
+            self.requested_at,
+            self.rtt,
+            &self.data,
+        )
+    }
+}
+
+enum PreparedRequestRoute {
+    Application,
+    RemoteControl(AdmittedRemoteControlRequest),
+    Declined(Decline),
+}
+
+struct PreparedRunnerRequest {
+    request: RunnerRequest,
+    route: PreparedRequestRoute,
+}
+
+fn prepare_request(
+    remote_control: &AssembledRemoteControl,
+    request: RunnerRequest,
+) -> PreparedRunnerRequest {
+    let route = if request.destination == remote_control.target_endpoint().destination_hash()
+        && request.path_hash == remote_control.request_endpoint_id()
+    {
+        match admit_remote_control_request(remote_control.access(), &request.inbound()) {
+            Ok(admission) => PreparedRequestRoute::RemoteControl(admission),
+            Err(decline) => PreparedRequestRoute::Declined(decline),
+        }
+    } else {
+        PreparedRequestRoute::Application
+    };
+    PreparedRunnerRequest { request, route }
 }
 
 enum RunnerResponse {
@@ -122,8 +168,9 @@ impl ResponseSink for RunnerResponse {
 
 pub(super) async fn run_router<St, R: RequestEndpointSet<St>>(
     state: &St,
-    remote_control: &AssembledRemoteControl,
+    remote_control: &mut AssembledRemoteControl,
     mut requests: mpsc::Receiver<RunnerRequest>,
+    remote_control_access: &mut RemoteControlAccessReceiver,
     commands: PrnsNodeHandle,
 ) {
     let mut in_flight = FuturesUnordered::new();
@@ -134,6 +181,9 @@ pub(super) async fn run_router<St, R: RequestEndpointSet<St>>(
         tokio::select! {
             biased;
             Some(()) = in_flight.next(), if !in_flight.is_empty() => {}
+            Some(command) = remote_control_access.receive() => {
+                command.apply(remote_control);
+            }
             request = requests.recv(), if accepting => match request {
                 Some(request) => {
                     response_lanes.retain(|_, lane| lane.strong_count() > 0);
@@ -145,9 +195,9 @@ pub(super) async fn run_router<St, R: RequestEndpointSet<St>>(
                             response_lanes.insert(request.link_id, Arc::downgrade(&lane));
                             lane
                         });
+                    let request = prepare_request(remote_control, request);
                     in_flight.push(dispatch_guarded::<St, R>(
                         state,
-                        remote_control,
                         &commands,
                         request,
                         response_lane,
@@ -161,22 +211,15 @@ pub(super) async fn run_router<St, R: RequestEndpointSet<St>>(
 
 async fn dispatch_guarded<St, R: RequestEndpointSet<St>>(
     state: &St,
-    remote_control: &AssembledRemoteControl,
     commands: &PrnsNodeHandle,
-    request: RunnerRequest,
+    request: PreparedRunnerRequest,
     response_lane: Arc<Mutex<()>>,
 ) {
-    let link_id = request.link_id;
-    if AssertUnwindSafe(dispatch::<St, R>(
-        state,
-        remote_control,
-        commands,
-        request,
-        response_lane,
-    ))
-    .catch_unwind()
-    .await
-    .is_err()
+    let link_id = request.request.link_id;
+    if AssertUnwindSafe(dispatch::<St, R>(state, commands, request, response_lane))
+        .catch_unwind()
+        .await
+        .is_err()
     {
         commands.close_link(link_id);
     }
@@ -188,41 +231,33 @@ async fn dispatch_guarded<St, R: RequestEndpointSet<St>>(
         name = "prns.respond",
         level = "debug",
         skip_all,
-        fields(bytes = request.data.len(), link_id = ?request.link_id.as_bytes(), path_hash = ?request.path_hash)
+        fields(
+            bytes = request.request.data.len(),
+            link_id = ?request.request.link_id.as_bytes(),
+            path_hash = ?request.request.path_hash,
+        )
     )
 )]
 async fn dispatch<St, R: RequestEndpointSet<St>>(
     state: &St,
-    remote_control: &AssembledRemoteControl,
     commands: &PrnsNodeHandle,
-    request: RunnerRequest,
+    request: PreparedRunnerRequest,
     response_lane: Arc<Mutex<()>>,
 ) {
+    let PreparedRunnerRequest { request, route } = request;
     let link_id = request.link_id;
-    let inbound = InboundRequest::new(
-        request.destination,
-        request.link_id,
-        request.request_id,
-        request.requester,
-        request.requested_at,
-        request.rtt,
-        &request.data,
-    );
+    let inbound = request.inbound();
     let responder = inbound.respond_token();
     let mut body = RunnerResponse::Buffered(std::vec::Vec::new());
-    let dispatched = if request.destination == remote_control.target_endpoint().destination_hash()
-        && request.path_hash == remote_control.request_endpoint_id()
-    {
-        dispatch_remote_control_request(
-            state,
-            remote_control.access(),
-            commands,
-            inbound,
-            &mut body,
-        )
-        .await
-    } else {
-        dispatch_request::<St, R>(state, commands, request.path_hash, inbound, &mut body).await
+    let dispatched = match route {
+        PreparedRequestRoute::RemoteControl(admission) => {
+            dispatch_admitted_remote_control_request(state, commands, inbound, &mut body, admission)
+                .await
+        }
+        PreparedRequestRoute::Application => {
+            dispatch_request::<St, R>(state, commands, request.path_hash, inbound, &mut body).await
+        }
+        PreparedRequestRoute::Declined(decline) => Err(decline),
     };
     match dispatched {
         Ok(()) => {
@@ -356,18 +391,20 @@ mod tests {
         let link_id = LinkId::new([0x44; 16]);
         dispatch_guarded::<(), PanickingRequestEndpointSet>(
             &(),
-            &remote_control,
             &handle,
-            RunnerRequest {
-                destination: DestinationHash::new([0x33; 16]),
-                link_id,
-                request_id: RequestId([0x55; 16]),
-                requester: None,
-                path_hash: RequestPathHash::new([0x66; 16]),
-                requested_at: InstantMillis(700),
-                rtt: RttMillis::new(80),
-                data: std::vec::Vec::new(),
-            },
+            prepare_request(
+                &remote_control,
+                RunnerRequest {
+                    destination: DestinationHash::new([0x33; 16]),
+                    link_id,
+                    request_id: RequestId([0x55; 16]),
+                    requester: None,
+                    path_hash: RequestPathHash::new([0x66; 16]),
+                    requested_at: InstantMillis(700),
+                    rtt: RttMillis::new(80),
+                    data: std::vec::Vec::new(),
+                },
+            ),
             Arc::new(Mutex::new(())),
         )
         .await;
@@ -403,18 +440,20 @@ mod tests {
         let remote_control = remote_control();
         let dispatched = dispatch_guarded::<(), PongRequestEndpointSet>(
             &(),
-            &remote_control,
             &handle,
-            RunnerRequest {
-                destination: DestinationHash::new([0x33; 16]),
-                link_id: LinkId::new([0x44; 16]),
-                request_id: RequestId([0x55; 16]),
-                requester: None,
-                path_hash: RequestPathHash::new([0x66; 16]),
-                requested_at: InstantMillis(700),
-                rtt: RttMillis::new(80),
-                data: std::vec::Vec::new(),
-            },
+            prepare_request(
+                &remote_control,
+                RunnerRequest {
+                    destination: DestinationHash::new([0x33; 16]),
+                    link_id: LinkId::new([0x44; 16]),
+                    request_id: RequestId([0x55; 16]),
+                    requester: None,
+                    path_hash: RequestPathHash::new([0x66; 16]),
+                    requested_at: InstantMillis(700),
+                    rtt: RttMillis::new(80),
+                    data: std::vec::Vec::new(),
+                },
+            ),
             Arc::new(Mutex::new(())),
         );
         let settled = async {
@@ -459,5 +498,92 @@ mod tests {
         ))
         .await;
         assert!(command_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn router_applies_ready_remote_control_access_before_a_ready_request() {
+        use crate::remote_control::{
+            RemoteControlDescription, RemoteControlRequest, RemoteControlRequestKind,
+            RemoteControlRequestSet, RemoteControlResponse, RevokeRemoteControlControllerOutcome,
+            SetRemoteControlControllerGrantOutcome,
+        };
+        use crate::runtime::RemoteControlAccessControl;
+
+        let (commands, mut command_rx) = mpsc::unbounded_channel();
+        let (handle, mut access) = PrnsNodeHandle::over_with_remote_control_access(commands);
+        let (request_tx, request_rx) = mpsc::channel(1);
+        let mut remote_control = remote_control();
+        let destination = remote_control.target_endpoint().destination_hash();
+        let path_hash = remote_control.request_endpoint_id();
+        let grant = super::super::node_facade::test_remote_control_grant(
+            RemoteControlRequestKind::Describe,
+        );
+        let mut data = std::vec![0; RemoteControlRequest::MAX_ENCODED_LEN];
+        let encoded_len = RemoteControlRequest::Describe
+            .write_into(data.as_mut_slice())
+            .expect("Describe fits its maximum encoded length");
+        data.truncate(encoded_len);
+        request_tx
+            .send(RunnerRequest {
+                destination,
+                link_id: LinkId::new([0x71; 16]),
+                request_id: RequestId([0x72; 16]),
+                requester: Some(grant.controller().identity_hash()),
+                path_hash,
+                requested_at: InstantMillis(73),
+                rtt: RttMillis::new(74),
+                data,
+            })
+            .await
+            .expect("request lane remains open");
+
+        let setting = handle.set_remote_control_controller_grant(grant);
+        tokio::pin!(setting);
+        tokio::select! {
+            biased;
+            outcome = &mut setting => panic!("unsettled access change returned: {outcome:?}"),
+            () = tokio::task::yield_now() => {}
+        }
+
+        let router = run_router::<(), PongRequestEndpointSet>(
+            &(),
+            &mut remote_control,
+            request_rx,
+            &mut access,
+            handle.clone(),
+        );
+        let exercise = async {
+            assert_eq!(
+                setting.await,
+                Ok(SetRemoteControlControllerGrantOutcome::Added),
+            );
+            let Some(HostCommand::RespondAny(response)) = command_rx.recv().await else {
+                panic!("RemoteControl response command")
+            };
+            let expected = RemoteControlDescription::try_from(RemoteControlRequestSet::only(
+                RemoteControlRequestKind::Describe,
+            ))
+            .expect("Describe is available");
+            assert_eq!(
+                RemoteControlResponse::parse(response.packed.as_slice()),
+                Ok(RemoteControlResponse::Describe(expected)),
+            );
+            let Some(completion) = response.completion else {
+                panic!("settled RemoteControl response")
+            };
+            assert!(completion.send(Settlement::Respond(Ok(()))).is_ok());
+            assert_eq!(
+                handle
+                    .revoke_remote_control_controller(*grant.controller())
+                    .await,
+                Ok(RevokeRemoteControlControllerOutcome::Revoked { grant }),
+            );
+        };
+        tokio::pin!(router);
+        tokio::select! {
+            biased;
+            () = exercise => {}
+            () = &mut router => panic!("router returned while its lanes remained open"),
+        }
     }
 }

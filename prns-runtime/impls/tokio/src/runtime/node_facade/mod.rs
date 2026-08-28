@@ -36,6 +36,9 @@ use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 
+use super::remote_control_access::RemoteControlAccessSender;
+#[cfg(test)]
+use super::remote_control_access::{remote_control_access_lane, RemoteControlAccessReceiver};
 use super::request_endpoints::RespondToken;
 use super::{InterfaceStore, SendError};
 pub use byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
@@ -90,6 +93,20 @@ pub(crate) fn test_remote_control_service(
     )
 }
 
+#[cfg(test)]
+pub(crate) fn test_remote_control_grant(
+    request: prns_core::remote_control::RemoteControlRequestKind,
+) -> prns_core::remote_control::RemoteControlControllerGrant {
+    let identities = test_remote_control_service()
+        .identity_secrets()
+        .identities();
+    prns_core::remote_control::RemoteControlControllerGrant::new(
+        *identities.controller(),
+        prns_core::remote_control::RemoteControlRequestSet::only(request),
+    )
+    .unwrap()
+}
+
 /// A cloneable, `Send` handle to a running node: the proactive surface. Every [`CommandId`] is minted from one counter, so a fire-and-forget [`issue`](Self::issue) can never collide with an awaited [`send_single_packet`](Self::send_single_packet) or a runner's respond.
 #[derive(Clone)]
 pub struct PrnsNodeHandle {
@@ -103,6 +120,7 @@ pub struct PrnsNodeHandle {
     resource_admission: resource_admission::ResourceAdmissionRegistry,
     entropy: crate::manifold::driver::TokioEntropy,
     timing_oracle: Arc<Mutex<Option<Arc<dyn BitrateTimingOracle>>>>,
+    pub(super) remote_control_access: RemoteControlAccessSender,
 }
 
 /// An optional shared-instance timing source. Directly attached nodes do not need one;
@@ -143,20 +161,32 @@ impl std::error::Error for RuntimeRequestHandlerError {}
 impl PrnsNodeHandle {
     #[cfg(test)]
     pub(crate) fn over(commands: UnboundedSender<HostCommand>) -> Self {
+        Self::over_with_remote_control_access(commands).0
+    }
+
+    #[cfg(test)]
+    pub(super) fn over_with_remote_control_access(
+        commands: UnboundedSender<HostCommand>,
+    ) -> (Self, RemoteControlAccessReceiver) {
         let (notify_tx, _notify_rx) = tokio::sync::mpsc::unbounded_channel();
         let (iface_build, _iface_build_rx) = tokio::sync::mpsc::unbounded_channel();
-        Self {
-            commands,
-            ids: Arc::new(AtomicU64::new(0)),
-            attachment_epochs: Arc::new(AtomicU64::new(0)),
-            notify_tx,
-            iface_build,
-            interfaces: Arc::new(Mutex::new(HashMap::new())),
-            store: InterfaceStore::new(),
-            resource_admission: resource_admission::ResourceAdmissionRegistry::default(),
-            entropy: crate::manifold::driver::TokioEntropy,
-            timing_oracle: Arc::new(Mutex::new(None)),
-        }
+        let (remote_control_access, remote_control_access_rx) = remote_control_access_lane();
+        (
+            Self {
+                commands,
+                ids: Arc::new(AtomicU64::new(0)),
+                attachment_epochs: Arc::new(AtomicU64::new(0)),
+                notify_tx,
+                iface_build,
+                interfaces: Arc::new(Mutex::new(HashMap::new())),
+                store: InterfaceStore::new(),
+                resource_admission: resource_admission::ResourceAdmissionRegistry::default(),
+                entropy: crate::manifold::driver::TokioEntropy,
+                timing_oracle: Arc::new(Mutex::new(None)),
+                remote_control_access,
+            },
+            remote_control_access_rx,
+        )
     }
 
     pub fn fill_entropy(&self, bytes: &mut [u8]) {

@@ -36,6 +36,9 @@ use prns_runtime::runtime::{
     ConfigurePreconfiguredDestinationError, Diagnostic,
 };
 
+use super::super::remote_control_access::{
+    remote_control_access_lane, RemoteControlAccessReceiver,
+};
 use super::super::request_endpoints::{RequestEndpoint, RequestEndpointSet, RespondToken};
 use super::super::request_runner::{run_router, RunnerRequest, REQUEST_QUEUE_DEPTH};
 use super::super::{
@@ -78,6 +81,7 @@ pub struct PrnsNode<St, R, F, S: StorageLayout> {
     pub(super) node: AssembledNode<St, R, F, S>,
     notify_rx: UnboundedReceiver<InterfaceId>,
     command_rx: UnboundedReceiver<HostCommand>,
+    remote_control_access_rx: RemoteControlAccessReceiver,
     iface_build_rx: UnboundedReceiver<DriverMsg>,
     accepted_announce_observer: Option<AcceptedAnnounceObserver>,
     pub(super) crypto_pool: CryptoPoolConfig,
@@ -306,6 +310,7 @@ where
         let (notify_tx, notify_rx) = mpsc::unbounded_channel();
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (iface_build_tx, iface_build_rx) = mpsc::unbounded_channel();
+        let (remote_control_access, remote_control_access_rx) = remote_control_access_lane();
 
         let handle = PrnsNodeHandle {
             commands: command_tx,
@@ -318,6 +323,7 @@ where
             resource_admission: super::resource_admission::ResourceAdmissionRegistry::default(),
             entropy: crate::manifold::driver::TokioEntropy,
             timing_oracle: Arc::new(Mutex::new(None)),
+            remote_control_access,
         };
         let (node, interfaces, persistence_intent) = assemble_node(build_recipe(handle.clone()));
         let node_persistence =
@@ -335,6 +341,7 @@ where
             node,
             notify_rx,
             command_rx,
+            remote_control_access_rx,
             iface_build_rx,
             accepted_announce_observer: None,
             crypto_pool: CryptoPoolConfig::host_default(),
@@ -569,6 +576,7 @@ where
             node,
             notify_rx,
             command_rx,
+            mut remote_control_access_rx,
             iface_build_rx,
             mut accepted_announce_observer,
             crypto_pool,
@@ -576,7 +584,7 @@ where
         } = self;
         let AssembledNode {
             engine,
-            remote_control,
+            mut remote_control,
             state,
             mut on_event,
             request_endpoints: _,
@@ -721,7 +729,13 @@ where
         let driver_interfaces = handle.interfaces.clone();
         let node_tasks = run_node_tasks(
             manifold,
-            run_router::<St, R>(&state, &remote_control, req_rx, handle.clone()),
+            run_router::<St, R>(
+                &state,
+                &mut remote_control,
+                req_rx,
+                &mut remote_control_access_rx,
+                handle.clone(),
+            ),
             drive_interfaces(
                 std::vec::Vec::new(),
                 iface_build_rx,

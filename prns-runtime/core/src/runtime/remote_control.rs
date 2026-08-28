@@ -1,4 +1,5 @@
 use crate::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, SendRequestFailure};
+use crate::identity::IdentityHash;
 use crate::remote_control::{
     RemoteControlAccessTable, RemoteControlAnnounceOutcome, RemoteControlDescription,
     RemoteControlDescriptionError, RemoteControlMessageWriteError, RemoteControlProtocolError,
@@ -7,9 +8,11 @@ use crate::remote_control::{
     REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
 };
 use crate::units::ByteLimit;
+use crate::wire::DestinationHash;
 
 use super::request_endpoints::{
-    Decline, InboundRequest, RequestContext, RequestEndpoint, RequestEndpointPolicy, ResponseSink,
+    Decline, InboundRequest, RequestContext, RequestEndpoint, RequestEndpointPolicy, RespondToken,
+    ResponseSink,
 };
 use super::{AnnounceNowError, PrnsNodeApi, SendError};
 
@@ -185,6 +188,66 @@ impl<AppState> RequestEndpoint<AppState> for RemoteControlRequestEndpoint {
     }
 }
 
+pub struct AdmittedRemoteControlRequest {
+    destination: DestinationHash,
+    controller: IdentityHash,
+    responder: RespondToken,
+    parsed: Result<RemoteControlRequest, RemoteControlRequestParseError>,
+    available_requests: RemoteControlRequestSet,
+}
+
+pub fn admit_remote_control_request<Access>(
+    access: &Access,
+    request: &InboundRequest<'_>,
+) -> Result<AdmittedRemoteControlRequest, Decline>
+where
+    Access: RemoteControlAccessTable,
+{
+    let Some(controller) = request.requester else {
+        return Err(Decline::Ignore);
+    };
+    let Some(grant) = access.grant_for(&controller) else {
+        return Err(Decline::Ignore);
+    };
+    let parsed = RemoteControlRequest::parse(request.data);
+    if parsed
+        .as_ref()
+        .is_ok_and(|request| !grant.permits(request.kind()))
+    {
+        return Err(Decline::Ignore);
+    }
+    Ok(AdmittedRemoteControlRequest {
+        destination: request.destination,
+        controller,
+        responder: request.respond_token(),
+        parsed,
+        available_requests: RemoteControlRequestSet::all().intersection(grant.permitted_requests()),
+    })
+}
+
+pub async fn dispatch_admitted_remote_control_request<'a, AppState>(
+    state: &'a AppState,
+    node: &impl PrnsNodeApi,
+    request: InboundRequest<'a>,
+    sink: &'a mut dyn ResponseSink,
+    admission: AdmittedRemoteControlRequest,
+) -> Result<(), Decline> {
+    if request.destination != admission.destination
+        || request.requester != Some(admission.controller)
+        || request.respond_token() != admission.responder
+        || RemoteControlRequest::parse(request.data) != admission.parsed
+    {
+        return Err(Decline::Ignore);
+    }
+    RemoteControlRequestEndpoint::handle_parsed(
+        RequestContext::from_inbound(state, request, sink),
+        node,
+        admission.parsed,
+        admission.available_requests,
+    )
+    .await
+}
+
 pub async fn dispatch_remote_control_request<'a, AppState, Access>(
     state: &'a AppState,
     access: &Access,
@@ -195,28 +258,8 @@ pub async fn dispatch_remote_control_request<'a, AppState, Access>(
 where
     Access: RemoteControlAccessTable,
 {
-    let Some(requester) = request.requester else {
-        return Err(Decline::Ignore);
-    };
-    let Some(grant) = access.grant_for(&requester) else {
-        return Err(Decline::Ignore);
-    };
-    let parsed = RemoteControlRequest::parse(request.data);
-    if parsed
-        .as_ref()
-        .is_ok_and(|request| !grant.permits(request.kind()))
-    {
-        return Err(Decline::Ignore);
-    }
-    let available_requests =
-        RemoteControlRequestSet::all().intersection(grant.permitted_requests());
-    RemoteControlRequestEndpoint::handle_parsed(
-        RequestContext::from_inbound(state, request, sink),
-        node,
-        parsed,
-        available_requests,
-    )
-    .await
+    let admission = admit_remote_control_request(access, &request)?;
+    dispatch_admitted_remote_control_request(state, node, request, sink, admission).await
 }
 
 #[cfg(test)]
@@ -544,6 +587,49 @@ mod tests {
                 RemoteControlResponse::parse(response.as_slice()),
                 Ok(RemoteControlResponse::Describe(description)),
             );
+        });
+    }
+
+    #[test]
+    fn an_admission_is_bound_to_the_exact_inbound_request() {
+        futures_executor::block_on(async {
+            let allowed = identity(0x34);
+            let access = access(allowed);
+            let request_data = describe_request();
+            let admitted = InboundRequest::new(
+                DestinationHash::new([0x21; 16]),
+                LinkId::new([0x43; 16]),
+                RequestId([0x65; 16]),
+                Some(allowed.identity_hash()),
+                InstantMillis(1_000),
+                RttMillis::new(20),
+                &request_data,
+            );
+            let admission = admit_remote_control_request(&access, &admitted).unwrap();
+            let different_request = InboundRequest::new(
+                DestinationHash::new([0x21; 16]),
+                LinkId::new([0x43; 16]),
+                RequestId([0x66; 16]),
+                Some(allowed.identity_hash()),
+                InstantMillis(1_000),
+                RttMillis::new(20),
+                &request_data,
+            );
+            let mut response =
+                heapless::Vec::<u8, { RemoteControlResponse::MAX_ENCODED_LEN }>::new();
+
+            assert_eq!(
+                dispatch_admitted_remote_control_request(
+                    &(),
+                    &(),
+                    different_request,
+                    &mut response,
+                    admission,
+                )
+                .await,
+                Err(Decline::Ignore),
+            );
+            assert!(response.is_empty());
         });
     }
 
