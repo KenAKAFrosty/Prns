@@ -4,6 +4,13 @@
 extern crate alloc;
 
 #[cfg(all(feature = "display", any(test, target_arch = "xtensa")))]
+mod display_runtime;
+
+#[cfg(all(feature = "display", any(test, target_arch = "xtensa")))]
+#[path = "s3/boards/heltec_e290/ssd1680.rs"]
+mod heltec_e290_ssd1680;
+
+#[cfg(all(feature = "display", any(test, target_arch = "xtensa")))]
 #[cfg_attr(
     all(test, not(target_arch = "xtensa")),
     allow(

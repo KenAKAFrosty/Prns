@@ -10,7 +10,7 @@ pub(crate) type LoraRadio = Sx126x<
 >;
 
 pub(crate) struct BoardFace<D, B> {
-    pub(crate) display: BoardDisplay<D>,
+    pub(crate) display: D,
     pub(crate) battery: B,
     pub(crate) button: Input<'static>,
 }
@@ -44,7 +44,7 @@ pub(crate) trait Esp32S3Board {
     const BOOT_BANNER: &'static str;
     const USB_INTERFACE_ID: InterfaceId;
     const FLASH_LAYOUT: screen::HopspotS3FlashLayout;
-    type Display: crate::immediate_display::ImmediateDisplayDevice;
+    type Display: crate::display_runtime::S3BoardDisplay;
     type Battery: screen::BatterySource;
     type Gnss: GnssProvider;
 

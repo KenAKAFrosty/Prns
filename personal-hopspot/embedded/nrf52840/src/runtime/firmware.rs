@@ -46,7 +46,7 @@ use super::bluetooth_auto::{
 use super::entropy::{initialize_runtime_entropy, runtime_entropy, RUNTIME_ENTROPY_SEED_LEN};
 use super::interface_cards::{build_cards, build_snapshots};
 use super::node::*;
-use super::notice::PresentedNoticeTimer;
+use hopspot::PresentedNoticeTimer;
 
 const STATS_POLL: Duration = Duration::from_secs(1);
 const NOTICE_DURATION: hopspot::display::DisplayDuration =

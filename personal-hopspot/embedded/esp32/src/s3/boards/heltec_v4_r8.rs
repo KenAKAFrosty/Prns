@@ -18,8 +18,8 @@ use personal_hopspot_core as screen;
 
 use super::heltec_frontend;
 use crate::s3::{
-    self, BoardDisplay, BoardFace, Esp32S3Board, ImmediateDisplayDevice, NoGnss, S3BoardHardware,
-    S3InterfaceHardware, S3ManifoldHardware,
+    self, BoardFace, Esp32S3Board, ImmediateBoardDisplay, ImmediateDisplayDevice, NoGnss,
+    S3BoardHardware, S3InterfaceHardware, S3ManifoldHardware,
 };
 
 /// This board's USB-auto interface id (the always-present top-level wire on pool slot 0).
@@ -144,7 +144,7 @@ impl Esp32S3Board for HeltecV4R8Board {
     const BOOT_BANNER: &'static str = "HOPSPOT_HELTECV4_R8";
     const USB_INTERFACE_ID: InterfaceId = USB_INTERFACE_ID;
     const FLASH_LAYOUT: screen::HopspotS3FlashLayout = screen::S3_16_MIB_FLASH_LAYOUT;
-    type Display = HeltecDisplay;
+    type Display = ImmediateBoardDisplay<HeltecDisplay>;
     type Battery = HeltecR8Battery;
     type Gnss = NoGnss;
 
@@ -164,7 +164,7 @@ impl Esp32S3Board for HeltecV4R8Board {
             }
         );
 
-        s3::boot_stage(s3::BootPhase::OledBegin);
+        s3::boot_stage(s3::BootPhase::DisplayHardwareBegin);
         // OLED (V4-R8: Vext on GPIO40 active-low; pulse RST; I2C0 on 17/18).
         let mut _vext = Output::new(p.GPIO40, Level::Low, OutputConfig::default());
         let mut rst = Output::new(p.GPIO21, Level::High, OutputConfig::default());
@@ -187,12 +187,12 @@ impl Esp32S3Board for HeltecV4R8Board {
         .into_buffered_graphics_mode();
         let oled_ok = match display.init() {
             Ok(()) => {
-                s3::boot_stage(s3::BootPhase::OledReady);
+                s3::boot_stage(s3::BootPhase::DisplayHardwareReady);
                 log::info!("OLED initialized");
                 true
             }
             Err(error) => {
-                s3::boot_stage(s3::BootPhase::OledFailed);
+                s3::boot_stage(s3::BootPhase::DisplayHardwareFailed);
                 log::error!("OLED initialization failed: {error:?}");
                 false
             }
@@ -254,9 +254,9 @@ impl Esp32S3Board for HeltecV4R8Board {
         S3BoardHardware {
             face: BoardFace {
                 display: if oled_ok {
-                    BoardDisplay::initialized(display)
+                    ImmediateBoardDisplay::initialized(display)
                 } else {
-                    BoardDisplay::initialization_failed(display)
+                    ImmediateBoardDisplay::initialization_failed(display)
                 },
                 battery,
                 button: Input::new(

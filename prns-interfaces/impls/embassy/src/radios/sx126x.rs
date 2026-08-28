@@ -247,6 +247,7 @@ pub enum Error {
     Spi,
     Busy,
     Dio1,
+    UnexpectedTransmitInterrupt(u16),
     Reset,
     Crc,
     Timeout,
@@ -558,6 +559,9 @@ where
         self.set_packet_params(len as u8).await?;
         self.write_tx_payload(len).await?;
         self.clear_irq(irq::ALL).await?;
+        // Clearing a receive IRQ can leave DIO1 physically high briefly. SetTx must not start until
+        // that stale level releases, or the TxDone wait can consume it as a false completion.
+        self.wait_for_dio1_release().await?;
         // SetTx with timeout 0 = single shot, no chip timeout — so the TxDone wait is bounded here ([`TX_DONE_TIMEOUT_MS`]); a TX that never completes must not trap the radio task forever.
         self.command(&[op::SET_TX, 0x00, 0x00, 0x00]).await?;
         {
@@ -576,6 +580,9 @@ where
         self.wait_for_dio1_release().await?;
         if flags & irq::TIMEOUT != 0 {
             return Err(Error::Timeout);
+        }
+        if flags & irq::TX_DONE == 0 {
+            return Err(Error::UnexpectedTransmitInterrupt(flags));
         }
         Ok(())
     }
@@ -802,9 +809,12 @@ where
 
     fn recovery(error: &Self::Error) -> RadioRecovery {
         match error {
-            Error::Spi | Error::Busy | Error::Dio1 | Error::Reset | Error::Timeout => {
-                RadioRecovery::Reinitialize
-            }
+            Error::Spi
+            | Error::Busy
+            | Error::Dio1
+            | Error::UnexpectedTransmitInterrupt(_)
+            | Error::Reset
+            | Error::Timeout => RadioRecovery::Reinitialize,
             Error::Crc | Error::BufferTooSmall => RadioRecovery::Continue,
         }
     }
@@ -972,6 +982,19 @@ mod tests {
 
     struct MockSpi {
         log: Log,
+        irq_flags: u16,
+    }
+    impl MockSpi {
+        fn new(log: Log) -> Self {
+            Self {
+                log,
+                irq_flags: irq::TX_DONE | irq::RX_DONE,
+            }
+        }
+
+        fn with_irq(log: Log, irq_flags: u16) -> Self {
+            Self { log, irq_flags }
+        }
     }
     impl SpiErrorType for MockSpi {
         type Error = MockErr;
@@ -996,20 +1019,21 @@ mod tests {
             }
             for op in ops.iter_mut() {
                 if let Operation::Read(buf) = op {
-                    fill_read(&header, buf);
+                    fill_read(&header, buf, self.irq_flags);
                 }
             }
             Ok(())
         }
     }
 
-    fn fill_read(header: &[u8], buf: &mut [u8]) {
+    fn fill_read(header: &[u8], buf: &mut [u8], irq_flags: u16) {
         match header.first().copied().unwrap_or(0) {
             op::GET_IRQ_STATUS => {
                 if buf.len() >= 3 {
                     buf[0] = 0x00;
-                    buf[1] = 0x00;
-                    buf[2] = 0x03;
+                    let encoded = irq_flags.to_be_bytes();
+                    buf[1] = encoded[0];
+                    buf[2] = encoded[1];
                 }
             }
             op::GET_RX_BUFFER_STATUS => {
@@ -1087,9 +1111,7 @@ mod tests {
 
     fn mock_radio() -> MockRadio {
         Sx126x::new(
-            MockSpi {
-                log: Rc::new(RefCell::new(Vec::new())),
-            },
+            MockSpi::new(Rc::new(RefCell::new(Vec::new()))),
             MockWait,
             MockWait,
             MockOut,
@@ -1145,6 +1167,35 @@ mod tests {
     struct Dio1NeverReleases;
     impl DigErrorType for Dio1NeverReleases {
         type Error = MockErr;
+    }
+
+    struct Dio1ReleasesOnce {
+        low_waits: u8,
+    }
+    impl DigErrorType for Dio1ReleasesOnce {
+        type Error = MockErr;
+    }
+    impl Wait for Dio1ReleasesOnce {
+        async fn wait_for_high(&mut self) -> Result<(), MockErr> {
+            Ok(())
+        }
+        async fn wait_for_low(&mut self) -> Result<(), MockErr> {
+            if self.low_waits == 0 {
+                self.low_waits = 1;
+                Ok(())
+            } else {
+                core::future::pending::<Result<(), MockErr>>().await
+            }
+        }
+        async fn wait_for_rising_edge(&mut self) -> Result<(), MockErr> {
+            Ok(())
+        }
+        async fn wait_for_falling_edge(&mut self) -> Result<(), MockErr> {
+            core::future::pending::<Result<(), MockErr>>().await
+        }
+        async fn wait_for_any_edge(&mut self) -> Result<(), MockErr> {
+            Ok(())
+        }
     }
     impl Wait for Dio1NeverReleases {
         async fn wait_for_high(&mut self) -> Result<(), MockErr> {
@@ -1271,7 +1322,7 @@ mod tests {
         });
         let log: Log = Rc::new(RefCell::new(Vec::new()));
         let mut radio = Sx126x::new(
-            MockSpi { log: log.clone() },
+            MockSpi::new(log.clone()),
             MockWait,
             MockWait,
             MockOut,
@@ -1308,6 +1359,7 @@ mod tests {
             Error::Spi,
             Error::Busy,
             Error::Dio1,
+            Error::UnexpectedTransmitInterrupt(irq::HEADER_ERR),
             Error::Reset,
             Error::Timeout,
         ] {
@@ -1331,7 +1383,7 @@ mod tests {
             frontend_control: FrontendControl::NoDynamicControl,
         };
         let mut radio = Sx126x::new(
-            MockSpi { log: log.clone() },
+            MockSpi::new(log.clone()),
             MockWait,
             MockWait,
             MockOut,
@@ -1466,9 +1518,7 @@ mod tests {
         let mut board = board();
         board.external_rx_gain_db = 17;
         let mut radio = Sx126x::new(
-            MockSpi {
-                log: Rc::new(RefCell::new(Vec::new())),
-            },
+            MockSpi::new(Rc::new(RefCell::new(Vec::new()))),
             MockWait,
             MockWait,
             MockOut,
@@ -1510,7 +1560,7 @@ mod tests {
     fn a_wedged_busy_line_times_out_instead_of_hanging() {
         let log: Log = Rc::new(RefCell::new(Vec::new()));
         let mut radio = Sx126x::new(
-            MockSpi { log },
+            MockSpi::new(log),
             BusyNeverLow,
             MockWait,
             MockOut,
@@ -1525,7 +1575,7 @@ mod tests {
     fn a_txdone_that_never_fires_times_out_instead_of_hanging() {
         let log: Log = Rc::new(RefCell::new(Vec::new()));
         let mut radio = Sx126x::new(
-            MockSpi { log },
+            MockSpi::new(log),
             MockWait,
             Dio1NeverHigh,
             MockOut,
@@ -1540,7 +1590,22 @@ mod tests {
     fn a_txdone_that_never_releases_times_out_instead_of_reentering_receive() {
         let log: Log = Rc::new(RefCell::new(Vec::new()));
         let mut radio = Sx126x::new(
-            MockSpi { log },
+            MockSpi::new(log),
+            MockWait,
+            Dio1ReleasesOnce { low_waits: 0 },
+            MockOut,
+            MockDelay,
+            board(),
+        );
+        let result = block_on(radio.transmit(b"PRNS-HELTEC-SMOK"));
+        assert_eq!(result, Err(Error::Timeout));
+    }
+
+    #[test]
+    fn a_stale_dio1_level_must_release_before_set_tx() {
+        let log: Log = Rc::new(RefCell::new(Vec::new()));
+        let mut radio = Sx126x::new(
+            MockSpi::new(log.clone()),
             MockWait,
             Dio1NeverReleases,
             MockOut,
@@ -1549,5 +1614,29 @@ mod tests {
         );
         let result = block_on(radio.transmit(b"PRNS-HELTEC-SMOK"));
         assert_eq!(result, Err(Error::Timeout));
+        assert!(
+            !log.borrow()
+                .iter()
+                .any(|command| command.as_slice() == [op::SET_TX, 0x00, 0x00, 0x00]),
+            "SetTx must not start while DIO1 reports a stale IRQ"
+        );
+    }
+
+    #[test]
+    fn a_non_txdone_interrupt_cannot_report_transmit_success() {
+        let log: Log = Rc::new(RefCell::new(Vec::new()));
+        let mut radio = Sx126x::new(
+            MockSpi::with_irq(log, irq::HEADER_ERR),
+            MockWait,
+            MockWait,
+            MockOut,
+            MockDelay,
+            board(),
+        );
+        let result = block_on(radio.transmit(b"PRNS-HELTEC-SMOK"));
+        assert_eq!(
+            result,
+            Err(Error::UnexpectedTransmitInterrupt(irq::HEADER_ERR))
+        );
     }
 }

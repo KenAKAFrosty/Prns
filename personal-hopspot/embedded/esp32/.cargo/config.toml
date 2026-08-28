@@ -1,5 +1,6 @@
 #   cargo heltec-v4        build the Heltec V4 (S3R2) firmware
 #   cargo heltec-v4-flash  build + flash + monitor (board on USB)
+#   cargo heltec-e290      / -flash   the Heltec Vision Master E290-HF
 #   cargo heltec-v4-r8     / -flash   the Heltec V4-R8 (S3R8 / Octal PSRAM)
 #   cargo tbeam-supreme    / -flash   the LilyGO T-Beam S3 Supreme
 #   cargo c6               / -flash   the headless XIAO ESP32-C6
@@ -26,6 +27,8 @@ TROUBLE_HOST_GATT_CLIENT_NOTIFICATION_QUEUE_SIZE = "2"
 ESP_HAL_CONFIG_STACK_GUARD_OFFSET = "4096"
 
 [alias]
+heltec-e290 = "build --release -p hopspot-heltec-e290 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
+heltec-e290-flash = "run --release -p hopspot-heltec-e290 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
 heltec-v4 = "build --release -p hopspot-heltec-v4 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
 heltec-v4-flash = "run --release -p hopspot-heltec-v4 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
 heltec-v4-r8 = "build --release -p hopspot-heltec-v4-r8 --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc"
