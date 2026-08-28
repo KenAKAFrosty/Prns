@@ -15,15 +15,45 @@ use personal_rns::runtime::request_endpoints::RequestEndpointSet;
 use personal_rns::storage::Esp32S3;
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const REMOTE_CONTROL_REQUEST_HANDLER_ROWS: usize = 1;
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 const NODE_REQUEST_HANDLER_CAPACITY: usize =
     <personal_hopspot_core::node_pages::NodePageRoutes as RequestEndpointSet<()>>::REGISTRATIONS
-        .len();
+        .len()
+        + REMOTE_CONTROL_REQUEST_HANDLER_ROWS;
 
 /// The engine's storage recipe: the small coordination shell stays inline in SRAM, while
 /// high-count or bulky columns (including links, routes, announces, history, app-data, and
 /// resource buffers) are placed in PSRAM through `PsramAlloc`.
 #[cfg(target_arch = "xtensa")]
 pub type EngineStorageType = Esp32S3<PsramAlloc, NODE_REQUEST_HANDLER_CAPACITY>;
+
+#[cfg(target_arch = "xtensa")]
+const _: () = {
+    use personal_rns::storage::{StorageCapacity, StorageLayout};
+    assert!(
+        matches!(
+            <EngineStorageType as StorageLayout>::LIMITS.held_identities,
+            StorageCapacity::Fixed(3)
+        ),
+        "Hopspot + RemoteControl requires three held-identity rows on ESP32-S3"
+    );
+    assert!(
+        matches!(
+            <EngineStorageType as StorageLayout>::LIMITS.upstream_app_destinations,
+            StorageCapacity::Fixed(3)
+        ),
+        "Hopspot + RemoteControl requires three upstream-app rows on ESP32-S3"
+    );
+};
+
+#[cfg(target_arch = "xtensa")]
+const _: () = assert!(
+    NODE_REQUEST_HANDLER_CAPACITY
+        >= REMOTE_CONTROL_REQUEST_HANDLER_ROWS
+            + <personal_hopspot_core::node_pages::NodePageRoutes as RequestEndpointSet<()>>::REGISTRATIONS
+                .len()
+);
 
 #[cfg(target_arch = "riscv32")]
 pub use riscv::C6Storage;
@@ -257,8 +287,10 @@ mod riscv {
         // Keep cheap relationships abundant while channels and resource continuations borrow
         // smaller shared tables. None of these counts constrain the eight-peer BLE controller.
         pub(crate) const TRACKED_DESTINATIONS: usize = 36;
-        const UPSTREAM_APP_DESTINATIONS: usize = 2;
-        const HELD_IDENTITIES: usize = REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY;
+        const UPSTREAM_APP_DESTINATIONS: usize =
+            REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY.saturating_add(1);
+        const HELD_IDENTITIES: usize =
+            REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY.saturating_add(1);
         pub const LINK_SESSIONS: usize = 12;
         const TRANSPORTED_LINKS: usize = 8;
         const CHANNELS: usize = 2;

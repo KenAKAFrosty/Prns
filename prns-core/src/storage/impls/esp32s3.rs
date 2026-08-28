@@ -57,8 +57,13 @@ use crate::routing::warmth::FixedDepartedInterfaceTable;
 use crate::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayout};
 
 const MAX_TRACKED_DESTINATIONS: usize = 512;
-const MAX_UPSTREAM_APP_DESTINATIONS: usize = 2;
-const MAX_HELD_IDENTITIES: usize = REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY;
+const MAX_UPSTREAM_APP_DESTINATIONS: usize =
+    REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY.saturating_add(1);
+const _: () = assert!(MAX_UPSTREAM_APP_DESTINATIONS >= 3);
+/// RemoteControl holds controller + target identities; Hopspot still holds one node identity for
+/// its delivery/node-page destinations and transport.
+const MAX_HELD_IDENTITIES: usize = REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY.saturating_add(1);
+const _: () = assert!(MAX_HELD_IDENTITIES >= 3);
 const MAX_LINK_SESSIONS: usize = 512;
 const MAX_TRANSPORTED_LINKS: usize = 32;
 const MAX_OUTSTANDING_RECEIPTS: usize = 8;
