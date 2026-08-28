@@ -639,6 +639,98 @@ mod tests {
     }
 
     #[test]
+    fn hopspot_style_recipe_needs_five_request_handler_rows_on_nrf52840() {
+        let node_secret = Zeroizing::new([0x55; IDENTITY_SECRET_KEY_LEN]);
+        let destinations = || {
+            [
+                PreConfiguredDestination::Single {
+                    app_name: "lxmf",
+                    aspects: &["delivery"],
+                    identity: node_secret.clone(),
+                    announce_app_data: b"delivery",
+                    proof: ProofStrategy::ProveAll,
+                    link_requests: LinkRequestPolicy::AcceptAll,
+                    ratchet: RatchetPolicy::Ratcheted,
+                    resource_strategy: ResourceStrategy::AcceptNone,
+                    maximum_request_bytes: Default::default(),
+                    request_endpoints: ServeMyRequestEndpoints::No,
+                },
+                PreConfiguredDestination::Single {
+                    app_name: "node",
+                    aspects: &["page"],
+                    identity: node_secret.clone(),
+                    announce_app_data: b"node",
+                    proof: ProofStrategy::ProveNone,
+                    link_requests: LinkRequestPolicy::AcceptAll,
+                    ratchet: RatchetPolicy::NoRatchets,
+                    resource_strategy: ResourceStrategy::AcceptNone,
+                    maximum_request_bytes: Default::default(),
+                    request_endpoints: ServeMyRequestEndpoints::Yes,
+                },
+            ]
+        };
+        type TightHandlers = TestFixedStorage<8, 8, 256, 4, 3, 16, 4, 4, 4, 32, 32, 32>;
+        type RoomyHandlers = TestFixedStorage<8, 8, 256, 5, 3, 16, 4, 4, 4, 32, 32, 32>;
+        let tight_storage: TightHandlers = TestFixedStorage;
+        let roomy_storage: RoomyHandlers = TestFixedStorage;
+        struct FourNodePageRoutes;
+        impl RequestEndpointSet<()> for FourNodePageRoutes {
+            const REGISTRATIONS: &'static [(&'static str, RequestEndpointPolicy)] = &[
+                ("index", RequestEndpointPolicy::AllowAll),
+                ("quickstart", RequestEndpointPolicy::AllowAll),
+                ("coming-from-rns", RequestEndpointPolicy::AllowAll),
+                ("source", RequestEndpointPolicy::AllowAll),
+            ];
+
+            async fn dispatch(
+                _context: RequestContext<'_, ()>,
+                _node: &impl crate::runtime::PrnsNodeApi,
+                _path_hash: RequestPathHash,
+            ) -> Result<(), Decline> {
+                Err(Decline::Ignore)
+            }
+        }
+        let mut tight = MaybeUninit::uninit();
+        let tight_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            assemble_node_in_place(
+                &mut tight,
+                PrnsNodeRecipe {
+                    transport_identity: Some(node_secret.clone()),
+                    remote_control: remote_control_service(),
+                    pre_configured_destinations: destinations(),
+                    app_state: (),
+                    storage: tight_storage,
+                    request_endpoints: FourNodePageRoutes,
+                    interfaces: ManuallyAttached,
+                    persistence: NoPersistence,
+                    on_event: |_, _| {},
+                },
+            );
+        }));
+        assert!(
+            tight_result.is_err(),
+            "four handler rows cannot fit RC + four node-page routes"
+        );
+
+        let mut roomy = MaybeUninit::uninit();
+        let (node, _, _) = assemble_node_in_place(
+            &mut roomy,
+            PrnsNodeRecipe {
+                transport_identity: Some(node_secret.clone()),
+                remote_control: remote_control_service(),
+                pre_configured_destinations: destinations(),
+                app_state: (),
+                storage: roomy_storage,
+                request_endpoints: FourNodePageRoutes,
+                interfaces: ManuallyAttached,
+                persistence: NoPersistence,
+                on_event: |_, _| {},
+            },
+        );
+        assert_eq!(node.engine.upstream_app_destinations().count(), 3);
+    }
+
+    #[test]
     fn in_place_assembly_initializes_and_configures_the_node() {
         let mut slot = MaybeUninit::uninit();
         let storage: Storage = TestFixedStorage;

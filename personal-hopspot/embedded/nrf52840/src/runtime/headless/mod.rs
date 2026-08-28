@@ -148,6 +148,14 @@ async fn manifold_task(
         .await
 }
 
+#[cfg(feature = "board-mesh-tower-v2")]
+#[embassy_executor::task]
+async fn mesh_tower_watchdog_task() -> ! {
+    loop {
+        board::maintain().await;
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 pub async fn run(spawner: Spawner) -> ! {
     #[cfg(feature = "board-t1000e")]
@@ -243,6 +251,10 @@ pub async fn run(spawner: Spawner) -> ! {
         mut status_led,
         button,
     } = hardware;
+    #[cfg(feature = "board-mesh-tower-v2")]
+    spawner.spawn(
+        mesh_tower_watchdog_task().expect("MeshTower watchdog task fits"),
+    );
 
     let mut usb_config = UsbConfig::new(WEBUSB_VENDOR_ID, WEBUSB_PRODUCT_ID);
     usb_config.manufacturer = Some(USB_MANUFACTURER);

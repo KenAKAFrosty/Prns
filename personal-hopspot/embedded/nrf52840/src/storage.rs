@@ -51,15 +51,19 @@ impl Nrf52840Storage {
     // Relationship tables are intentionally independent from transfer workspaces. An idle link is
     // cheap; channels and resources borrow the smaller shared pools only while doing payload work.
     pub(crate) const TRACKED_DESTINATIONS: usize = 8;
-    pub(crate) const UPSTREAM_APP_DESTINATIONS: usize = 2;
+    pub(crate) const UPSTREAM_APP_DESTINATIONS: usize =
+        REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY.saturating_add(1);
+    const REMOTE_CONTROL_REQUEST_HANDLER_ROWS: usize = 1;
     const REQUEST_HANDLERS: usize =
         <personal_hopspot_core::node_pages::NodePageRoutes as RequestEndpointSet<()>>::REGISTRATIONS
-            .len();
+            .len()
+            + Self::REMOTE_CONTROL_REQUEST_HANDLER_ROWS;
     pub const LINK_SESSIONS: usize = 32;
     const TRANSPORTED_LINKS: usize = 4;
     const CHANNELS: usize = 1;
     const RESOURCE_ASSEMBLIES: usize = 1;
-    const HELD_IDENTITIES: usize = REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY;
+    const HELD_IDENTITIES: usize =
+        REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY.saturating_add(1);
     const BLACKHOLED_IDENTITIES: usize = 0;
     const BLACKHOLE_REASON_BYTES: usize = 0;
     const HELD_ANNOUNCES: usize = 4;
@@ -107,6 +111,16 @@ impl Nrf52840Storage {
 
 const _: () = assert!(Nrf52840Storage::LINK_SESSIONS > Nrf52840Storage::CHANNELS);
 const _: () = assert!(Nrf52840Storage::RESOURCE_ASSEMBLIES == 1);
+const _: () = assert!(Nrf52840Storage::REQUEST_HANDLERS
+    >= Nrf52840Storage::REMOTE_CONTROL_REQUEST_HANDLER_ROWS
+        + <personal_hopspot_core::node_pages::NodePageRoutes as RequestEndpointSet<()>>::REGISTRATIONS
+            .len());
+const _: () =
+    assert!(Nrf52840Storage::HELD_IDENTITIES >= REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY + 1);
+const _: () = assert!(
+    Nrf52840Storage::UPSTREAM_APP_DESTINATIONS
+        >= REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY + 1
+);
 const _: () = assert!(core::mem::size_of::<NoPendingResourceOfferTable>() == 0);
 const _: () =
     assert!(core::mem::size_of::<PendingResourceOffers<NoPendingResourceOfferTable>>() == 0);
