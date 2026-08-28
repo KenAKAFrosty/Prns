@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
 use personal_rns::engine::RatchetPolicy;
+use personal_rns::identity::IdentityHash;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::routing::announce::{derive_single_destination_hash, ExpandNameError};
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::request_handlers::RequestPolicy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
@@ -20,6 +22,12 @@ use super::DaemonRequestState;
 const APP_NAME: &str = "nomadnetwork";
 const ASPECTS: &[&str] = &["node"];
 const ANNOUNCE_APP_DATA: &[u8] = crate::build_identity::NNPAGES_ANNOUNCE_TITLE.as_bytes();
+
+pub(crate) fn destination_hash(
+    identity: &IdentityHash,
+) -> Result<DestinationHash, ExpandNameError> {
+    derive_single_destination_hash(identity, APP_NAME, ASPECTS)
+}
 
 pub(crate) struct NodePageDestination {
     pub(crate) hash: DestinationHash,

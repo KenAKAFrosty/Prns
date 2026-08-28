@@ -178,7 +178,7 @@ mod tests {
         let (commands, _command_rx) = mpsc::unbounded_channel();
         let (handle, mut access) = PrnsNodeHandle::over_with_remote_control_access(commands);
         let previous = test_remote_control_grant(RemoteControlRequestKind::Describe);
-        let grant = test_remote_control_grant(RemoteControlRequestKind::Announce);
+        let grant = test_remote_control_grant(RemoteControlRequestKind::AnnounceSelf);
 
         let (set, ()) = tokio::join!(handle.set_remote_control_controller_grant(grant), async {
             let Some(RemoteControlAccessCommand::SetControllerGrant {

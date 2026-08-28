@@ -82,8 +82,8 @@ pub use prns_runtime::routing::ProofStrategy;
 pub use prns_runtime::runtime::{
     AnnounceNowError, Diagnostic, ManuallyAttached, Message, NoPersistence,
     PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, RemoteControlAccessControl,
-    RemoteControlAnnounce, RemoteControlAnnounceFailure, RemoteControlDescribe, RemoteControlError,
-    RevokeRemoteControlControllerControlError, RuntimeHealth, SendError,
+    RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure, RemoteControlDescribe,
+    RemoteControlError, RevokeRemoteControlControllerControlError, RuntimeHealth, SendError,
     SetRegisteredAnnounceAppDataError, SetRemoteControlControllerGrantControlError,
 };
 pub use prns_runtime::wire::{DestinationHash, TransportId};

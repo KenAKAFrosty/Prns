@@ -17,6 +17,21 @@ async fn main() {
     let controller_identities = controller_identity_secrets.identities();
     let controller_identity = controller_identities.controller().identity_hash();
     let controller_public_identity = *controller_identities.controller();
+    let self_destination = PreConfiguredDestination::Single {
+        app_name: "prns-example",
+        aspects: &["node"],
+        identity: Zeroizing::new([0xD4; IDENTITY_SECRET_KEY_LEN]),
+        announce_app_data: b"RemoteControl example",
+        proof: ProofStrategy::ProveNone,
+        link_requests: LinkRequestPolicy::AcceptAll,
+        ratchet: RatchetPolicy::NoRatchets,
+        resource_strategy: ResourceStrategy::AcceptNone,
+        maximum_request_bytes: Default::default(),
+        request_endpoints: ServeMyRequestEndpoints::No,
+    };
+    let self_destination_hash = self_destination
+        .destination_hash()
+        .expect("the example destination name is valid");
     let controller_grants = [RemoteControlControllerGrant::new(
         controller_public_identity,
         RemoteControlRequestSet::all(),
@@ -29,12 +44,14 @@ async fn main() {
             RemoteControlControllerGrants::try_from(controller_grants.as_slice())
                 .expect("one controller grant is configured"),
         ),
+        RemoteControlSelfAnnouncement::Destination(self_destination_hash),
     );
     let controller_remote_control = RemoteControlService::new(
         controller_identity_secrets,
         RemoteControlPublicAppData::try_from(b"controller".as_slice())
             .expect("controller app data fits"),
         RemoteControlInitialAccess::Nobody,
+        RemoteControlSelfAnnouncement::Unavailable,
     );
 
     let server = TcpServer::bind("127.0.0.1:0")
@@ -48,7 +65,7 @@ async fn main() {
     let target = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         remote_control: target_remote_control,
-        pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+        pre_configured_destinations: [self_destination],
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
@@ -127,15 +144,15 @@ async fn main() {
             .supports(RemoteControlRequestKind::Describe));
         assert!(description
             .available_requests()
-            .supports(RemoteControlRequestKind::Announce));
+            .supports(RemoteControlRequestKind::AnnounceSelf));
         println!("Authorized Describe returned {description:?} in {rtt:?}");
 
         let announce_rtt = controller_handle
             .remote_control(link_id)
-            .announce()
+            .announce_self()
             .await
-            .expect("announce request did not settle");
-        println!("Authorized Announce completed in {announce_rtt:?}");
+            .expect("announce-self request did not settle");
+        println!("Authorized AnnounceSelf completed in {announce_rtt:?}");
     };
 
     tokio::select! {

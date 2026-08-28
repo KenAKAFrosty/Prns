@@ -46,7 +46,8 @@ pub use node::{
     PrnsNodeRecipe, ServeMyRequestEndpoints,
 };
 pub use remote_control::{
-    RemoteControlAnnounce, RemoteControlAnnounceFailure, RemoteControlDescribe, RemoteControlError,
+    RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure, RemoteControlDescribe,
+    RemoteControlError,
 };
 pub use remote_control_access::{
     RemoteControlAccessControl, RevokeRemoteControlControllerControlError,

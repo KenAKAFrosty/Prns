@@ -73,8 +73,8 @@ pub(crate) fn test_remote_control_service(
     use prns_core::identity::vault::IdentitySecretKey;
     use prns_core::remote_control::{
         RemoteControlControllerIdentitySecret, RemoteControlInitialAccess,
-        RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData, RemoteControlService,
-        RemoteControlTargetIdentitySecret,
+        RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData,
+        RemoteControlSelfAnnouncement, RemoteControlService, RemoteControlTargetIdentitySecret,
     };
 
     let identity_secrets = RemoteControlNodeIdentitySecrets::new(
@@ -90,6 +90,7 @@ pub(crate) fn test_remote_control_service(
         identity_secrets,
         RemoteControlPublicAppData::try_from(b"".as_slice()).expect("empty app data"),
         RemoteControlInitialAccess::Nobody,
+        RemoteControlSelfAnnouncement::Unavailable,
     )
 }
 

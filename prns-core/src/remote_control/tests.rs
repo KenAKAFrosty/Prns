@@ -19,7 +19,7 @@ fn grant(fill: u8, request: RemoteControlRequestKind) -> RemoteControlController
 
 fn table_contract(table: &mut impl RemoteControlAccessTable) {
     let first = grant(0x21, RemoteControlRequestKind::Describe);
-    let updated_first = grant(0x21, RemoteControlRequestKind::Announce);
+    let updated_first = grant(0x21, RemoteControlRequestKind::AnnounceSelf);
     let second = grant(0x43, RemoteControlRequestKind::Describe);
     let first_hash = first.controller().identity_hash();
     let second_hash = second.controller().identity_hash();
@@ -71,7 +71,7 @@ fn fixed_table_obeys_the_access_table_contract() {
 fn a_full_fixed_table_refuses_only_a_new_identity() {
     let mut table = FixedRemoteControlAccessTable::<1>::default();
     let first = grant(0x65, RemoteControlRequestKind::Describe);
-    let updated_first = grant(0x65, RemoteControlRequestKind::Announce);
+    let updated_first = grant(0x65, RemoteControlRequestKind::AnnounceSelf);
 
     assert_eq!(
         table.set_controller_grant(first),
@@ -207,14 +207,14 @@ fn protocol_discriminants_are_stable_typed_values() {
         RemoteControlRequestKind::ALL,
         [
             RemoteControlRequestKind::Describe,
-            RemoteControlRequestKind::Announce,
+            RemoteControlRequestKind::AnnounceSelf,
         ],
     );
     assert_eq!(
         RemoteControlResponseKind::ALL,
         [
             RemoteControlResponseKind::Describe,
-            RemoteControlResponseKind::Announce,
+            RemoteControlResponseKind::AnnounceSelf,
             RemoteControlResponseKind::ProtocolError,
         ],
     );
@@ -228,9 +228,9 @@ fn protocol_discriminants_are_stable_typed_values() {
     );
     assert_eq!(RemoteControlProtocolVersion::V1.wire_value(), 0x01);
     assert_eq!(RemoteControlRequestKind::Describe.wire_value(), 0x01);
-    assert_eq!(RemoteControlRequestKind::Announce.wire_value(), 0x02);
+    assert_eq!(RemoteControlRequestKind::AnnounceSelf.wire_value(), 0x02);
     assert_eq!(RemoteControlResponseKind::Describe.wire_value(), 0x01);
-    assert_eq!(RemoteControlResponseKind::Announce.wire_value(), 0x02);
+    assert_eq!(RemoteControlResponseKind::AnnounceSelf.wire_value(), 0x02);
     assert_eq!(RemoteControlResponseKind::ProtocolError.wire_value(), 0xFF,);
     assert_eq!(
         RemoteControlProtocolErrorKind::MalformedRequest.wire_value(),
@@ -245,18 +245,30 @@ fn protocol_discriminants_are_stable_typed_values() {
         0x03,
     );
     assert_eq!(
-        RemoteControlAnnounceOutcome::ALL,
+        RemoteControlAnnounceSelfOutcome::ALL,
         [
-            RemoteControlAnnounceOutcome::Announced,
-            RemoteControlAnnounceOutcome::Unavailable,
-            RemoteControlAnnounceOutcome::Rejected,
-            RemoteControlAnnounceOutcome::WriteFailed,
+            RemoteControlAnnounceSelfOutcome::Announced,
+            RemoteControlAnnounceSelfOutcome::Unavailable,
+            RemoteControlAnnounceSelfOutcome::Rejected,
+            RemoteControlAnnounceSelfOutcome::WriteFailed,
         ],
     );
-    assert_eq!(RemoteControlAnnounceOutcome::Announced.wire_value(), 0x01);
-    assert_eq!(RemoteControlAnnounceOutcome::Unavailable.wire_value(), 0x02);
-    assert_eq!(RemoteControlAnnounceOutcome::Rejected.wire_value(), 0x03);
-    assert_eq!(RemoteControlAnnounceOutcome::WriteFailed.wire_value(), 0x04);
+    assert_eq!(
+        RemoteControlAnnounceSelfOutcome::Announced.wire_value(),
+        0x01
+    );
+    assert_eq!(
+        RemoteControlAnnounceSelfOutcome::Unavailable.wire_value(),
+        0x02
+    );
+    assert_eq!(
+        RemoteControlAnnounceSelfOutcome::Rejected.wire_value(),
+        0x03
+    );
+    assert_eq!(
+        RemoteControlAnnounceSelfOutcome::WriteFailed.wire_value(),
+        0x04
+    );
 }
 
 #[test]
@@ -277,11 +289,11 @@ fn describe_request_round_trips_through_its_own_wire_shape() {
 }
 
 #[test]
-fn announce_request_round_trips_through_its_own_wire_shape() {
-    let request = RemoteControlRequest::Announce;
-    let mut bytes = [0u8; RemoteControlRequest::Announce.encoded_len()];
+fn announce_self_request_round_trips_through_its_own_wire_shape() {
+    let request = RemoteControlRequest::AnnounceSelf;
+    let mut bytes = [0u8; RemoteControlRequest::AnnounceSelf.encoded_len()];
 
-    assert_eq!(request.kind(), RemoteControlRequestKind::Announce);
+    assert_eq!(request.kind(), RemoteControlRequestKind::AnnounceSelf);
     assert_eq!(request.write_into(&mut bytes), Ok(request.encoded_len()));
     assert_eq!(
         bytes,
@@ -304,7 +316,7 @@ fn announce_request_round_trips_through_its_own_wire_shape() {
 fn request_sets_intersect_without_changing_either_input() {
     let all = RemoteControlRequestSet::all();
     let describe = RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
-    let announce = RemoteControlRequestSet::only(RemoteControlRequestKind::Announce);
+    let announce = RemoteControlRequestSet::only(RemoteControlRequestKind::AnnounceSelf);
 
     assert_eq!(all.intersection(&describe), describe);
     assert_eq!(describe.intersection(&all), describe);
@@ -324,16 +336,16 @@ fn describe_response_reports_its_available_requests_canonically() {
     let mut available = RemoteControlRequestSet::all();
     assert_eq!(available.len(), 2);
     assert!(!available.insert(RemoteControlRequestKind::Describe));
-    assert!(!available.insert(RemoteControlRequestKind::Announce));
+    assert!(!available.insert(RemoteControlRequestKind::AnnounceSelf));
     assert_eq!(available.len(), 2);
     assert!(available.supports(RemoteControlRequestKind::Describe));
-    assert!(available.supports(RemoteControlRequestKind::Announce));
+    assert!(available.supports(RemoteControlRequestKind::AnnounceSelf));
     assert!(!available.is_empty());
     assert_eq!(
         available.iter().collect::<std::vec::Vec<_>>(),
         std::vec![
             RemoteControlRequestKind::Describe,
-            RemoteControlRequestKind::Announce,
+            RemoteControlRequestKind::AnnounceSelf,
         ],
     );
     assert_eq!(
@@ -342,7 +354,7 @@ fn describe_response_reports_its_available_requests_canonically() {
     );
     assert_eq!(
         RemoteControlDescription::try_from(RemoteControlRequestSet::only(
-            RemoteControlRequestKind::Announce,
+            RemoteControlRequestKind::AnnounceSelf,
         )),
         Err(RemoteControlDescriptionError::DescribeUnavailable),
     );
@@ -362,17 +374,18 @@ fn describe_response_reports_its_available_requests_canonically() {
             response.kind().wire_value(),
             available_count,
             RemoteControlRequestKind::Describe.wire_value(),
-            RemoteControlRequestKind::Announce.wire_value(),
+            RemoteControlRequestKind::AnnounceSelf.wire_value(),
         ],
     );
     assert_eq!(RemoteControlResponse::parse(encoded), Ok(response));
 }
 
 #[test]
-fn announce_outcomes_round_trip_with_their_typed_wire_values() {
-    for outcome in RemoteControlAnnounceOutcome::ALL {
-        let response = RemoteControlResponse::Announce(outcome);
-        let mut bytes = [0u8; RemoteControlRequestKind::Announce.maximum_response_encoded_len()];
+fn announce_self_outcomes_round_trip_with_their_typed_wire_values() {
+    for outcome in RemoteControlAnnounceSelfOutcome::ALL {
+        let response = RemoteControlResponse::AnnounceSelf(outcome);
+        let mut bytes =
+            [0u8; RemoteControlRequestKind::AnnounceSelf.maximum_response_encoded_len()];
         let written = response.write_into(&mut bytes).unwrap();
         let encoded = bytes.get(..written).unwrap_or_default();
 
@@ -381,7 +394,7 @@ fn announce_outcomes_round_trip_with_their_typed_wire_values() {
             encoded,
             &[
                 RemoteControlProtocolVersion::V1.wire_value(),
-                RemoteControlResponseKind::Announce.wire_value(),
+                RemoteControlResponseKind::AnnounceSelf.wire_value(),
                 outcome.wire_value(),
             ],
         );
@@ -459,7 +472,7 @@ fn request_parser_classifies_protocol_failures() {
     assert_eq!(
         RemoteControlRequest::parse(&[
             RemoteControlProtocolVersion::V1.wire_value(),
-            RemoteControlRequestKind::Announce.wire_value(),
+            RemoteControlRequestKind::AnnounceSelf.wire_value(),
             0x00,
         ]),
         Err(RemoteControlRequestParseError::Malformed),
@@ -511,11 +524,11 @@ fn response_parser_classifies_response_header_and_error_failures() {
     let version = RemoteControlProtocolVersion::V1.wire_value();
     let unsupported_version = version.wrapping_add(1);
     let describe = RemoteControlResponseKind::Describe.wire_value();
-    let announce = RemoteControlResponseKind::Announce.wire_value();
+    let announce = RemoteControlResponseKind::AnnounceSelf.wire_value();
     let protocol_error = RemoteControlResponseKind::ProtocolError.wire_value();
     let malformed_request = RemoteControlProtocolErrorKind::MalformedRequest.wire_value();
     let unsupported_version_error = RemoteControlProtocolErrorKind::UnsupportedVersion.wire_value();
-    let announced = RemoteControlAnnounceOutcome::Announced.wire_value();
+    let announced = RemoteControlAnnounceSelfOutcome::Announced.wire_value();
     let unknown_response = 0x72;
     let unknown_protocol_error = 0x82;
     let unknown_announce_outcome = 0x72;
@@ -551,9 +564,11 @@ fn response_parser_classifies_response_header_and_error_failures() {
     );
     assert_eq!(
         RemoteControlResponse::parse(&[version, announce, unknown_announce_outcome]),
-        Err(RemoteControlResponseParseError::UnknownAnnounceOutcome {
-            found: unknown_announce_outcome,
-        }),
+        Err(
+            RemoteControlResponseParseError::UnknownAnnounceSelfOutcome {
+                found: unknown_announce_outcome,
+            }
+        ),
     );
     assert_eq!(
         RemoteControlResponse::parse(&[version, announce, announced, 0x00]),
@@ -617,7 +632,7 @@ fn message_writers_use_only_their_reported_prefix_and_refuse_short_buffers() {
             response.kind().wire_value(),
             available_count,
             RemoteControlRequestKind::Describe.wire_value(),
-            RemoteControlRequestKind::Announce.wire_value(),
+            RemoteControlRequestKind::AnnounceSelf.wire_value(),
             0x5A,
         ],
     );

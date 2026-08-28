@@ -177,7 +177,7 @@ mod tests {
             ),
             grant(
                 0x43,
-                RemoteControlRequestSet::only(RemoteControlRequestKind::Announce),
+                RemoteControlRequestSet::only(RemoteControlRequestKind::AnnounceSelf),
             ),
             grant(0x65, RemoteControlRequestSet::all()),
         ];
@@ -198,7 +198,7 @@ mod tests {
             ),
             grant(
                 0xA9,
-                RemoteControlRequestSet::only(RemoteControlRequestKind::Announce),
+                RemoteControlRequestSet::only(RemoteControlRequestKind::AnnounceSelf),
             ),
         ];
         let mut out = std::vec![0u8; remote_control_access_snapshot_capacity(grants.len())];

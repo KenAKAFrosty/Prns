@@ -72,7 +72,12 @@ fn prepare_request(
     let route = if request.destination == remote_control.target_endpoint().destination_hash()
         && request.path_hash == remote_control.request_endpoint_id()
     {
-        match admit_remote_control_request(remote_control.access(), &request.inbound()) {
+        match admit_remote_control_request(
+            remote_control.access(),
+            remote_control.available_requests(),
+            remote_control.self_announcement(),
+            &request.inbound(),
+        ) {
             Ok(admission) => PreparedRequestRoute::RemoteControl(admission),
             Err(decline) => PreparedRequestRoute::Declined(decline),
         }

@@ -32,8 +32,10 @@ use personal_rns::identity::IdentitySigner;
 use personal_rns::interfaces::ConnectionState;
 use personal_rns::node_introspection::logical_interface_inventory;
 use personal_rns::remote_control::{
-    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlService,
+    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
+    RemoteControlService,
 };
+use personal_rns::routing::announce::ExpandNameError;
 use personal_rns::runtime::{
     wall_clock_timeline_origin, CryptoPoolConfig, Diagnostic, ManuallyAttached, NodePersistence,
     NodeRunError, PersistenceFlushStatus, PoolWorkers, PrnsEvent, PrnsNode, PrnsNodeRecipe,
@@ -89,6 +91,7 @@ pub(crate) struct DaemonPresentation {
 pub(crate) enum DaemonRunError {
     TransportIdentityUnavailable(personal_rns::runtime::IdentitySecretFileError),
     RemoteControlIdentityUnavailable(RemoteControlFileIdentityBootstrapError),
+    RemoteControlSelfAnnouncementUnavailable(ExpandNameError),
     PersistenceUnavailable(std::io::Error),
     PersistenceFlushFailed,
     PersistenceWorkerStopped,
@@ -110,6 +113,12 @@ impl core::fmt::Display for DaemonRunError {
                 write!(
                     formatter,
                     "required RemoteControl identities are unavailable: {error}"
+                )
+            }
+            Self::RemoteControlSelfAnnouncementUnavailable(error) => {
+                write!(
+                    formatter,
+                    "RemoteControl self-announcement is unavailable: {error:?}"
                 )
             }
             Self::PersistenceUnavailable(error) => {
@@ -134,7 +143,8 @@ impl std::error::Error for DaemonRunError {
             Self::TransportIdentityUnavailable(error) => Some(error),
             Self::RemoteControlIdentityUnavailable(error) => Some(error),
             Self::PersistenceUnavailable(error) => Some(error),
-            Self::PersistenceFlushFailed
+            Self::RemoteControlSelfAnnouncementUnavailable(_)
+            | Self::PersistenceFlushFailed
             | Self::PersistenceWorkerStopped
             | Self::NodeStopped
             | Self::NodePanicked(_)
@@ -269,11 +279,6 @@ pub(super) async fn run(
             }
         };
     let (remote_control_identity_secrets, _) = remote_control_identity_bootstrap.into_parts();
-    let remote_control = RemoteControlService::new(
-        remote_control_identity_secrets,
-        RemoteControlPublicAppData::empty(),
-        RemoteControlInitialAccess::Nobody,
-    );
     let persistent_secret = match identity::load_or_create_transport_identity(&storage_dir) {
         Ok(secret) => secret,
         Err(error) => match cli.persistence_policy {
@@ -323,6 +328,15 @@ pub(super) async fn run(
     };
     let visible_identity_hash =
         InMemoryNodeIdentity::from_secret_key_bytes(&visible_secret).identity_hash();
+    let self_announcement_destination =
+        services::node_page_destination_hash(&visible_identity_hash)
+            .map_err(DaemonRunError::RemoteControlSelfAnnouncementUnavailable)?;
+    let remote_control = RemoteControlService::new(
+        remote_control_identity_secrets,
+        RemoteControlPublicAppData::empty(),
+        RemoteControlInitialAccess::Nobody,
+        RemoteControlSelfAnnouncement::Destination(self_announcement_destination),
+    );
     let network_identity_hash = network_identity
         .as_ref()
         .map(|identity| InMemoryNodeIdentity::from_secret_key_bytes(identity).identity_hash());

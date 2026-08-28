@@ -8,7 +8,7 @@ use crate::runtime::request_endpoints::RequestEndpointId;
 use crate::runtime::SendError;
 use crate::units::RttMillis;
 use prns_core::remote_control::{
-    RemoteControlAnnounceOutcome, RemoteControlDescription, RemoteControlProtocolError,
+    RemoteControlAnnounceSelfOutcome, RemoteControlDescription, RemoteControlProtocolError,
     RemoteControlProtocolVersion, RemoteControlRequestSet, RemoteControlResponse,
     RemoteControlResponseKind, RemoteControlResponseParseError,
 };
@@ -29,10 +29,11 @@ fn encoded_response(response: &RemoteControlResponse) -> std::vec::Vec<u8> {
 }
 
 #[tokio::test]
-async fn announce_owns_the_remote_control_exchange_and_returns_its_rtt() {
+async fn announce_self_owns_the_remote_control_exchange_and_returns_its_rtt() {
     let (handle, mut command_rx) = test_handle();
     let link_id = LinkId::new([0x20; 16]);
-    let requesting = tokio::spawn(async move { handle.remote_control(link_id).announce().await });
+    let requesting =
+        tokio::spawn(async move { handle.remote_control(link_id).announce_self().await });
 
     let Some(HostCommand::RequestAny(request)) = command_rx.recv().await else {
         panic!("announce issues a request command");
@@ -46,16 +47,16 @@ async fn announce_owns_the_remote_control_exchange_and_returns_its_rtt() {
         request.data.as_slice(),
         &[
             RemoteControlProtocolVersion::V1.wire_value(),
-            crate::runtime::RemoteControlAnnounce::REQUEST
+            crate::runtime::RemoteControlAnnounceSelf::REQUEST
                 .kind()
                 .wire_value(),
         ],
     );
     assert_eq!(
         request.maximum_response_bytes,
-        crate::runtime::RemoteControlAnnounce::MAXIMUM_RESPONSE_BYTES,
+        crate::runtime::RemoteControlAnnounceSelf::MAXIMUM_RESPONSE_BYTES,
     );
-    let response = RemoteControlResponse::Announce(RemoteControlAnnounceOutcome::Announced);
+    let response = RemoteControlResponse::AnnounceSelf(RemoteControlAnnounceSelfOutcome::Announced);
     assert!(request
         .completion
         .send(Ok((encoded_response(&response), RttMillis::new(36))))

@@ -22,7 +22,8 @@ use personal_rns::lora::{LoRaApplyOutcome, LoRaInterface, LoRaInterfaceInput, Lo
 use personal_rns::manifold::embassy::{EmbassyHost, EmbassyInterfaceStatus};
 use personal_rns::manifold::interface_seam::Interface;
 use personal_rns::remote_control::{
-    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlService,
+    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
+    RemoteControlService,
 };
 use personal_rns::runtime::{Fleet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe};
 use personal_rns::storage::StorageLayout;
@@ -95,11 +96,6 @@ pub async fn run(spawner: Spawner) -> ! {
     let node_identity = node_bootstrap.into_identity();
     let (remote_control_identity_secrets, _remote_control_identity_origins) =
         remote_control_bootstrap.into_parts();
-    let remote_control = RemoteControlService::new(
-        remote_control_identity_secrets,
-        RemoteControlPublicAppData::empty(),
-        RemoteControlInitialAccess::Nobody,
-    );
     let ble_identity = Some(ble_bootstrap.into_identity());
 
     let EarlyHardware {
@@ -194,6 +190,12 @@ pub async fn run(spawner: Spawner) -> ! {
     .destination_hashes()
     .expect("the hopspot destination names are valid");
     let node_page_destination = destination_hashes.node_page;
+    let remote_control = RemoteControlService::new(
+        remote_control_identity_secrets,
+        RemoteControlPublicAppData::empty(),
+        RemoteControlInitialAccess::Nobody,
+        RemoteControlSelfAnnouncement::Destination(node_page_destination),
+    );
     let mut manifold_lanes = ManifoldLanes::new();
     let lora_profile = loaded_lora_profile.profile;
     let lora_id = LoRaInterface::<board::Radio>::interface_id(&lora_profile);

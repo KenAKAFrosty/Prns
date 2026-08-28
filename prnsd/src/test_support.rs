@@ -1,8 +1,8 @@
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::remote_control::{
     RemoteControlControllerIdentitySecret, RemoteControlInitialAccess,
-    RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData, RemoteControlService,
-    RemoteControlTargetIdentitySecret,
+    RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
+    RemoteControlService, RemoteControlTargetIdentitySecret,
 };
 
 const CONTROLLER_SECRET_BYTE: u8 = 0x43;
@@ -22,5 +22,6 @@ pub(crate) fn remote_control_service() -> RemoteControlService<'static> {
         identity_secrets,
         RemoteControlPublicAppData::empty(),
         RemoteControlInitialAccess::Nobody,
+        RemoteControlSelfAnnouncement::Unavailable,
     )
 }

@@ -2,7 +2,7 @@ pub use crate::{
     request_endpoints, AnnounceNowError, CommandId, DestinationHash, Diagnostic, InterfaceStatus,
     ManuallyAttached, Message, NoPersistence, PacketReceiptDelivered, PreConfiguredDestination,
     PrnsCommand, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, ProofStrategy, RatchetPolicy,
-    RemoteControlAccessControl, RemoteControlAnnounce, RemoteControlAnnounceFailure,
+    RemoteControlAccessControl, RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure,
     RemoteControlDescribe, RemoteControlError, ResourceMemoryLimits, ResourceStrategy,
     RevokeRemoteControlControllerControlError, RuntimeHealth, SendError,
     SetRegisteredAnnounceAppDataError, SetRemoteControlControllerGrantControlError, Zeroizing,
@@ -10,7 +10,7 @@ pub use crate::{
 };
 
 pub use crate::remote_control::{
-    RemoteControlAccessTable, RemoteControlAnnounceOutcome, RemoteControlControllerGrant,
+    RemoteControlAccessTable, RemoteControlAnnounceSelfOutcome, RemoteControlControllerGrant,
     RemoteControlControllerGrantError, RemoteControlControllerGrants,
     RemoteControlControllerGrantsError, RemoteControlControllerIdentity,
     RemoteControlControllerIdentitySecret, RemoteControlDescription, RemoteControlDescriptionError,
@@ -22,10 +22,11 @@ pub use crate::remote_control::{
     RemoteControlProtocolErrorKind, RemoteControlProtocolVersion, RemoteControlPublicAppData,
     RemoteControlRequest, RemoteControlRequestKind, RemoteControlRequestParseError,
     RemoteControlRequestSet, RemoteControlResponse, RemoteControlResponseKind,
-    RemoteControlResponseParseError, RemoteControlService, RemoteControlTargetIdentity,
-    RemoteControlTargetIdentitySecret, RevokeRemoteControlControllerOutcome,
-    SetRemoteControlControllerGrantError, SetRemoteControlControllerGrantOutcome,
-    REMOTE_CONTROL_IDENTITY_VAULT_SLOTS, REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
+    RemoteControlResponseParseError, RemoteControlSelfAnnouncement, RemoteControlService,
+    RemoteControlTargetIdentity, RemoteControlTargetIdentitySecret,
+    RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantError,
+    SetRemoteControlControllerGrantOutcome, REMOTE_CONTROL_IDENTITY_VAULT_SLOTS,
+    REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
 };
 
 #[cfg(feature = "alloc")]

@@ -135,7 +135,7 @@ fn remote_control_access_preserves_exact_set_and_revoke_settlements() {
         crate::remote_control::RemoteControlRequestKind::Describe,
     );
     let grant = super::super::test_remote_control_grant(
-        crate::remote_control::RemoteControlRequestKind::Announce,
+        crate::remote_control::RemoteControlRequestKind::AnnounceSelf,
     );
 
     let (set, ()) = block_on(join(

@@ -1,6 +1,7 @@
 use super::*;
 use personal_rns::remote_control::{
-    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlService,
+    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
+    RemoteControlService,
 };
 
 pub(crate) async fn run<B: Esp32S3Board>(spawner: Spawner)
@@ -186,6 +187,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         remote_control_identity_secrets,
         RemoteControlPublicAppData::empty(),
         RemoteControlInitialAccess::Nobody,
+        RemoteControlSelfAnnouncement::Destination(destination_hashes.node_page),
     );
     let destinations = personal_hopspot_core::HopspotDestinationSet::new(
         destination_secret,

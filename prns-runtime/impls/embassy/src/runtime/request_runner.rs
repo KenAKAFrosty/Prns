@@ -209,6 +209,8 @@ async fn dispatch<
         dispatch_remote_control_request(
             state,
             remote_control.access(),
+            remote_control.available_requests(),
+            remote_control.self_announcement(),
             &commands,
             inbound,
             &mut body,

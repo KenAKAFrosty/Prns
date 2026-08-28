@@ -28,7 +28,7 @@ prns_macros::iterable_enum! {
     #[repr(u8)]
     pub enum RemoteControlRequestKind {
         Describe = 0x01,
-        Announce = 0x02,
+        AnnounceSelf = 0x02,
     }
 }
 
@@ -46,8 +46,8 @@ impl RemoteControlRequestKind {
     pub const fn maximum_response_encoded_len(self) -> usize {
         match self {
             Self::Describe => RemoteControlResponse::MAX_ENCODED_LEN,
-            Self::Announce => MESSAGE_HEADER_ENCODED_LEN.saturating_add(maximum(
-                RemoteControlAnnounceOutcome::ENCODED_LEN,
+            Self::AnnounceSelf => MESSAGE_HEADER_ENCODED_LEN.saturating_add(maximum(
+                RemoteControlAnnounceSelfOutcome::ENCODED_LEN,
                 RemoteControlProtocolError::MAX_ENCODED_BODY_LEN,
             )),
         }
@@ -59,7 +59,7 @@ prns_macros::iterable_enum! {
     #[repr(u8)]
     pub enum RemoteControlResponseKind {
         Describe = 0x01,
-        Announce = 0x02,
+        AnnounceSelf = 0x02,
         ProtocolError = 0xFF,
     }
 }
@@ -99,7 +99,7 @@ impl RemoteControlProtocolErrorKind {
 prns_macros::iterable_enum! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[repr(u8)]
-    pub enum RemoteControlAnnounceOutcome {
+    pub enum RemoteControlAnnounceSelfOutcome {
         Announced = 0x01,
         Unavailable = 0x02,
         Rejected = 0x03,
@@ -107,7 +107,7 @@ prns_macros::iterable_enum! {
     }
 }
 
-impl RemoteControlAnnounceOutcome {
+impl RemoteControlAnnounceSelfOutcome {
     pub const ENCODED_LEN: usize = 1;
 
     #[must_use]
@@ -128,7 +128,7 @@ impl RemoteControlAnnounceOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteControlRequest {
     Describe,
-    Announce,
+    AnnounceSelf,
 }
 
 impl RemoteControlRequest {
@@ -138,7 +138,7 @@ impl RemoteControlRequest {
     pub const fn kind(self) -> RemoteControlRequestKind {
         match self {
             Self::Describe => RemoteControlRequestKind::Describe,
-            Self::Announce => RemoteControlRequestKind::Announce,
+            Self::AnnounceSelf => RemoteControlRequestKind::AnnounceSelf,
         }
     }
 
@@ -146,7 +146,7 @@ impl RemoteControlRequest {
     pub const fn encoded_len(self) -> usize {
         match self {
             Self::Describe => MESSAGE_HEADER_ENCODED_LEN,
-            Self::Announce => MESSAGE_HEADER_ENCODED_LEN,
+            Self::AnnounceSelf => MESSAGE_HEADER_ENCODED_LEN,
         }
     }
 
@@ -170,8 +170,8 @@ impl RemoteControlRequest {
         };
         match kind {
             RemoteControlRequestKind::Describe if body.is_empty() => Ok(Self::Describe),
-            RemoteControlRequestKind::Announce if body.is_empty() => Ok(Self::Announce),
-            RemoteControlRequestKind::Describe | RemoteControlRequestKind::Announce => {
+            RemoteControlRequestKind::AnnounceSelf if body.is_empty() => Ok(Self::AnnounceSelf),
+            RemoteControlRequestKind::Describe | RemoteControlRequestKind::AnnounceSelf => {
                 Err(RemoteControlRequestParseError::Malformed)
             }
         }
@@ -358,7 +358,7 @@ impl From<RemoteControlRequestParseError> for RemoteControlProtocolError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteControlResponse {
     Describe(RemoteControlDescription),
-    Announce(RemoteControlAnnounceOutcome),
+    AnnounceSelf(RemoteControlAnnounceSelfOutcome),
     ProtocolError(RemoteControlProtocolError),
 }
 
@@ -366,7 +366,7 @@ impl RemoteControlResponse {
     pub const MAX_ENCODED_LEN: usize = MESSAGE_HEADER_ENCODED_LEN.saturating_add(maximum(
         DESCRIPTION_COUNT_ENCODED_LEN.saturating_add(RemoteControlRequestKind::ALL.len()),
         maximum(
-            RemoteControlAnnounceOutcome::ENCODED_LEN,
+            RemoteControlAnnounceSelfOutcome::ENCODED_LEN,
             RemoteControlProtocolError::MAX_ENCODED_BODY_LEN,
         ),
     ));
@@ -375,7 +375,7 @@ impl RemoteControlResponse {
     pub const fn kind(&self) -> RemoteControlResponseKind {
         match self {
             Self::Describe(_) => RemoteControlResponseKind::Describe,
-            Self::Announce(_) => RemoteControlResponseKind::Announce,
+            Self::AnnounceSelf(_) => RemoteControlResponseKind::AnnounceSelf,
             Self::ProtocolError(_) => RemoteControlResponseKind::ProtocolError,
         }
     }
@@ -386,7 +386,7 @@ impl RemoteControlResponse {
             Self::Describe(description) => {
                 DESCRIPTION_COUNT_ENCODED_LEN.saturating_add(description.available_requests.len())
             }
-            Self::Announce(outcome) => outcome.encoded_len(),
+            Self::AnnounceSelf(outcome) => outcome.encoded_len(),
             Self::ProtocolError(error) => error.encoded_body_len(),
         };
         MESSAGE_HEADER_ENCODED_LEN.saturating_add(body_len)
@@ -407,7 +407,9 @@ impl RemoteControlResponse {
         };
         match kind {
             RemoteControlResponseKind::Describe => parse_description(body).map(Self::Describe),
-            RemoteControlResponseKind::Announce => parse_announce_outcome(body).map(Self::Announce),
+            RemoteControlResponseKind::AnnounceSelf => {
+                parse_announce_self_outcome(body).map(Self::AnnounceSelf)
+            }
             RemoteControlResponseKind::ProtocolError => {
                 parse_protocol_error(body).map(Self::ProtocolError)
             }
@@ -429,7 +431,7 @@ impl RemoteControlResponse {
         *kind = self.kind().wire_value();
         match self {
             Self::Describe(description) => write_description(description, body),
-            Self::Announce(outcome) => write_announce_outcome(*outcome, body),
+            Self::AnnounceSelf(outcome) => write_announce_self_outcome(*outcome, body),
             Self::ProtocolError(error) => write_protocol_error(error, body),
         }
         Ok(encoded_len)
@@ -449,7 +451,7 @@ pub enum RemoteControlResponseParseError {
     Truncated,
     UnsupportedVersion { found: u8 },
     UnknownResponseKind { found: u8 },
-    UnknownAnnounceOutcome { found: u8 },
+    UnknownAnnounceSelfOutcome { found: u8 },
     UnknownProtocolErrorKind { found: u8 },
     UnknownRequestKind { found: u8 },
     NonCanonicalRequestSet,
@@ -513,9 +515,9 @@ fn parse_description(
     )
 }
 
-fn parse_announce_outcome(
+fn parse_announce_self_outcome(
     body: &[u8],
-) -> Result<RemoteControlAnnounceOutcome, RemoteControlResponseParseError> {
+) -> Result<RemoteControlAnnounceSelfOutcome, RemoteControlResponseParseError> {
     let [outcome] = body else {
         return Err(if body.is_empty() {
             RemoteControlResponseParseError::Truncated
@@ -523,8 +525,8 @@ fn parse_announce_outcome(
             RemoteControlResponseParseError::Malformed
         });
     };
-    RemoteControlAnnounceOutcome::from_wire(*outcome)
-        .ok_or(RemoteControlResponseParseError::UnknownAnnounceOutcome { found: *outcome })
+    RemoteControlAnnounceSelfOutcome::from_wire(*outcome)
+        .ok_or(RemoteControlResponseParseError::UnknownAnnounceSelfOutcome { found: *outcome })
 }
 
 fn parse_protocol_error(
@@ -571,7 +573,7 @@ fn write_description(description: &RemoteControlDescription, body: &mut [u8]) {
     }
 }
 
-fn write_announce_outcome(outcome: RemoteControlAnnounceOutcome, body: &mut [u8]) {
+fn write_announce_self_outcome(outcome: RemoteControlAnnounceSelfOutcome, body: &mut [u8]) {
     if let Some(out) = body.first_mut() {
         *out = outcome.wire_value();
     }

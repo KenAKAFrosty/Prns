@@ -4,7 +4,7 @@ use crate::engine::RequestResponseTimeout;
 use crate::remote_control::REMOTE_CONTROL_REQUEST_ENDPOINT_ID;
 use crate::routing::links::LinkId;
 use crate::runtime::request_endpoints::RequestEndpointId;
-use crate::runtime::{RemoteControlAnnounce, RemoteControlDescribe, RemoteControlError};
+use crate::runtime::{RemoteControlAnnounceSelf, RemoteControlDescribe, RemoteControlError};
 use crate::units::RttMillis;
 use prns_core::remote_control::RemoteControlDescription;
 
@@ -62,12 +62,12 @@ impl<
         const RESPONSE_BYTES: usize,
     > RemoteControlHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>
 {
-    pub async fn announce(&self) -> Result<RttMillis, RemoteControlError> {
-        let mut encoded = [0u8; RemoteControlAnnounce::REQUEST.encoded_len()];
-        RemoteControlAnnounce::write_request(&mut encoded)?;
+    pub async fn announce_self(&self) -> Result<RttMillis, RemoteControlError> {
+        let mut encoded = [0u8; RemoteControlAnnounceSelf::REQUEST.encoded_len()];
+        RemoteControlAnnounceSelf::write_request(&mut encoded)?;
         let (response, rtt) = self
             .node
-            .request_with_maximum_response_bytes::<{ RemoteControlAnnounce::RESPONSE_CAPACITY }>(
+            .request_with_maximum_response_bytes::<{ RemoteControlAnnounceSelf::RESPONSE_CAPACITY }>(
                 self.link_id,
                 RequestEndpointId::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID),
                 &encoded,
@@ -75,7 +75,7 @@ impl<
             )
             .await
             .map_err(RemoteControlError::Request)?;
-        RemoteControlAnnounce::parse_response(response.as_slice())?;
+        RemoteControlAnnounceSelf::parse_response(response.as_slice())?;
         Ok(rtt)
     }
 

@@ -1,6 +1,7 @@
 use super::*;
 use personal_rns::remote_control::{
-    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlService,
+    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
+    RemoteControlService,
 };
 
 pub async fn run(spawner: Spawner) {
@@ -53,17 +54,22 @@ pub async fn run(spawner: Spawner) {
     let node_identity = node_bootstrap.into_identity();
     let transport_secret = node_identity.transport_secret();
     let destination_secret = node_identity.into_destination_secret();
+    let destinations = personal_hopspot_core::HopspotDestinationSet::new(
+        destination_secret,
+        ANNOUNCE_APP_DATA,
+        NODE_ANNOUNCE_APP_DATA,
+    );
+    let node_page_destination = destinations
+        .destination_hashes()
+        .expect("the hopspot destination names are valid")
+        .node_page;
     let (remote_control_identity_secrets, _remote_control_identity_origins) =
         remote_control_bootstrap.into_parts();
     let remote_control = RemoteControlService::new(
         remote_control_identity_secrets,
         RemoteControlPublicAppData::empty(),
         RemoteControlInitialAccess::Nobody,
-    );
-    let destinations = personal_hopspot_core::HopspotDestinationSet::new(
-        destination_secret,
-        ANNOUNCE_APP_DATA,
-        NODE_ANNOUNCE_APP_DATA,
+        RemoteControlSelfAnnouncement::Destination(node_page_destination),
     );
     #[cfg(feature = "bluetooth-auto")]
     let ble_identity = Some(ble_bootstrap.into_identity());

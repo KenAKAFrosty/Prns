@@ -17,7 +17,8 @@ use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpe
 use personal_rns::manifold::embassy::{EmbassyHost, EmbassyInterfaceStatus, InterfaceLifecycle};
 use personal_rns::manifold::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use personal_rns::remote_control::{
-    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlService,
+    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
+    RemoteControlService,
 };
 use personal_rns::runtime::{
     minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
@@ -199,11 +200,6 @@ pub async fn run(spawner: Spawner) -> ! {
     let node_identity = node_bootstrap.into_identity();
     let (remote_control_identity_secrets, _remote_control_identity_origins) =
         remote_control_bootstrap.into_parts();
-    let remote_control = RemoteControlService::new(
-        remote_control_identity_secrets,
-        RemoteControlPublicAppData::empty(),
-        RemoteControlInitialAccess::Nobody,
-    );
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
@@ -296,11 +292,6 @@ pub async fn run(spawner: Spawner) -> ! {
 
     let transport_secret = node_identity.transport_secret();
     let destination_secret = node_identity.into_destination_secret();
-    #[cfg(any(
-        feature = "board-t096",
-        feature = "board-t114",
-        feature = "board-mesh-tower-v2"
-    ))]
     let node_page_destination = hopspot::HopspotDestinationSet::new(
         destination_secret.clone(),
         ANNOUNCE_APP_DATA,
@@ -309,6 +300,13 @@ pub async fn run(spawner: Spawner) -> ! {
     .destination_hashes()
     .expect("the hopspot destination names are valid")
     .node_page;
+    let self_announcement = RemoteControlSelfAnnouncement::Destination(node_page_destination);
+    let remote_control = RemoteControlService::new(
+        remote_control_identity_secrets,
+        RemoteControlPublicAppData::empty(),
+        RemoteControlInitialAccess::Nobody,
+        self_announcement,
+    );
     let mut manifold_lanes = ManifoldLanes::new();
     #[cfg(any(feature = "board-t096", feature = "board-t114"))]
     let loaded_lora_profile = selected::load_profile(shared_flash).await;

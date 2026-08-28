@@ -8,7 +8,8 @@ use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::remote_control::{
     FixedRemoteControlAccessTable, RemoteControlAccessTable, RemoteControlAnnouncementData,
     RemoteControlAnnouncementDataWriteError, RemoteControlEndpoint, RemoteControlNodeIdentities,
-    RemoteControlRequest, RemoteControlService, RevokeRemoteControlControllerOutcome,
+    RemoteControlRequest, RemoteControlRequestSet, RemoteControlSelfAnnouncement,
+    RemoteControlService, RevokeRemoteControlControllerOutcome,
     SetRemoteControlControllerGrantError, SetRemoteControlControllerGrantOutcome,
     DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS, REMOTE_CONTROL_APPLICATION_ASPECTS,
     REMOTE_CONTROL_APPLICATION_NAME, REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
@@ -43,6 +44,8 @@ pub struct AssembledRemoteControl {
     target_endpoint: RemoteControlEndpoint,
     request_endpoint_id: RequestPathHash,
     access: FixedRemoteControlAccessTable<DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS>,
+    available_requests: RemoteControlRequestSet,
+    self_announcement: RemoteControlSelfAnnouncement,
 }
 
 impl AssembledRemoteControl {
@@ -66,6 +69,16 @@ impl AssembledRemoteControl {
         &self,
     ) -> &FixedRemoteControlAccessTable<DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS> {
         &self.access
+    }
+
+    #[must_use]
+    pub const fn self_announcement(&self) -> RemoteControlSelfAnnouncement {
+        self.self_announcement
+    }
+
+    #[must_use]
+    pub const fn available_requests(&self) -> RemoteControlRequestSet {
+        self.available_requests
     }
 
     pub fn set_controller_grant(
@@ -170,7 +183,9 @@ pub fn configure_remote_control_service<S>(
 where
     S: StorageLayout,
 {
-    let (identity_secrets, default_public_app_data, initial_access) = service.into_parts();
+    let available_requests = service.available_requests();
+    let (identity_secrets, default_public_app_data, initial_access, self_announcement) =
+        service.into_parts();
     let identities = engine
         .configure_remote_control_identities(identity_secrets)
         .map_err(ConfigureRemoteControlServiceError::HoldIdentity)?;
@@ -214,6 +229,8 @@ where
         target_endpoint,
         request_endpoint_id,
         access,
+        available_requests,
+        self_announcement,
     })
 }
 
@@ -457,6 +474,7 @@ mod tests {
             remote_control_identity_secrets(0x71, 0x72),
             RemoteControlPublicAppData::try_from(b"".as_slice()).unwrap(),
             RemoteControlInitialAccess::Nobody,
+            RemoteControlSelfAnnouncement::Unavailable,
         )
     }
 
@@ -553,6 +571,7 @@ mod tests {
             identity_secrets,
             RemoteControlPublicAppData::try_from(b"node".as_slice()).unwrap(),
             initial_access,
+            RemoteControlSelfAnnouncement::Destination(DestinationHash::new([0x61; 16])),
         );
 
         let configured = configure_remote_control_service(&mut engine, service).unwrap();
@@ -591,7 +610,7 @@ mod tests {
         let initial = remote_control_grant(0x41);
         let updated = RemoteControlControllerGrant::new(
             *initial.controller(),
-            RemoteControlRequestSet::only(RemoteControlRequestKind::Announce),
+            RemoteControlRequestSet::only(RemoteControlRequestKind::AnnounceSelf),
         )
         .unwrap();
 

@@ -1,7 +1,9 @@
 use crate::identity::IdentityHash;
+use crate::wire::DestinationHash;
 
 use super::{
     RemoteControlControllerGrant, RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData,
+    RemoteControlRequestKind, RemoteControlRequestSet,
 };
 
 pub const DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS: usize = 8;
@@ -71,10 +73,17 @@ impl RemoteControlInitialAccess<'_> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlSelfAnnouncement {
+    Unavailable,
+    Destination(DestinationHash),
+}
+
 pub struct RemoteControlService<'a> {
     identity_secrets: RemoteControlNodeIdentitySecrets,
     default_public_app_data: RemoteControlPublicAppData<'a>,
     initial_access: RemoteControlInitialAccess<'a>,
+    self_announcement: RemoteControlSelfAnnouncement,
 }
 
 impl<'a> RemoteControlService<'a> {
@@ -83,11 +92,13 @@ impl<'a> RemoteControlService<'a> {
         identity_secrets: RemoteControlNodeIdentitySecrets,
         default_public_app_data: RemoteControlPublicAppData<'a>,
         initial_access: RemoteControlInitialAccess<'a>,
+        self_announcement: RemoteControlSelfAnnouncement,
     ) -> Self {
         Self {
             identity_secrets,
             default_public_app_data,
             initial_access,
+            self_announcement,
         }
     }
 
@@ -107,17 +118,36 @@ impl<'a> RemoteControlService<'a> {
     }
 
     #[must_use]
+    pub const fn self_announcement(&self) -> RemoteControlSelfAnnouncement {
+        self.self_announcement
+    }
+
+    #[must_use]
+    pub fn available_requests(&self) -> RemoteControlRequestSet {
+        let mut available = RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
+        match self.self_announcement {
+            RemoteControlSelfAnnouncement::Unavailable => {}
+            RemoteControlSelfAnnouncement::Destination(_) => {
+                let _inserted = available.insert(RemoteControlRequestKind::AnnounceSelf);
+            }
+        }
+        available
+    }
+
+    #[must_use]
     pub fn into_parts(
         self,
     ) -> (
         RemoteControlNodeIdentitySecrets,
         RemoteControlPublicAppData<'a>,
         RemoteControlInitialAccess<'a>,
+        RemoteControlSelfAnnouncement,
     ) {
         (
             self.identity_secrets,
             self.default_public_app_data,
             self.initial_access,
+            self.self_announcement,
         )
     }
 }
@@ -161,13 +191,14 @@ mod tests {
             Err(RemoteControlControllerGrantError::NoPermittedRequests),
         );
         let controller = controller(2);
-        let permitted_requests = RemoteControlRequestSet::only(RemoteControlRequestKind::Announce);
+        let permitted_requests =
+            RemoteControlRequestSet::only(RemoteControlRequestKind::AnnounceSelf);
         let grant = RemoteControlControllerGrant::new(controller, permitted_requests).unwrap();
 
         assert_eq!(grant.controller(), &controller);
         assert_eq!(grant.permitted_requests(), &permitted_requests);
         assert!(!grant.permits(RemoteControlRequestKind::Describe));
-        assert!(grant.permits(RemoteControlRequestKind::Announce));
+        assert!(grant.permits(RemoteControlRequestKind::AnnounceSelf));
     }
 
     #[test]
@@ -247,12 +278,18 @@ mod tests {
             identity_secrets,
             default_public_app_data,
             RemoteControlInitialAccess::Nobody,
+            RemoteControlSelfAnnouncement::Unavailable,
         );
 
-        let (identity_secrets, default_public_app_data, initial_access) = service.into_parts();
+        let (identity_secrets, default_public_app_data, initial_access, self_announcement) =
+            service.into_parts();
 
         assert_eq!(identity_secrets.identities(), identities);
         assert_eq!(default_public_app_data.as_bytes(), b"application");
         assert_eq!(initial_access, RemoteControlInitialAccess::Nobody);
+        assert_eq!(
+            self_announcement,
+            RemoteControlSelfAnnouncement::Unavailable
+        );
     }
 }
