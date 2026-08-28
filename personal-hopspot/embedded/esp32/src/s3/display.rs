@@ -330,7 +330,7 @@ pub(super) fn build_interface_menu_details(
         }
         Some(screen::CardKind::Usb) => screen::usb_interface_menu_details(usb.connection()),
         Some(screen::CardKind::Ble) => screen::ble_interface_menu_details(
-            Some(personal_rns::interfaces::bluetooth_auto::GROUP_NAME),
+            Some(crate::bluetooth_auto::local_discovery_group()),
             selected_card,
             snapshots,
         ),

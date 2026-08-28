@@ -79,6 +79,16 @@ pub trait BleBackend<const MAX_PEERS: usize> {
         None
     }
 
+    /// Live local discovery group tag when the backend owns a mutable group (e.g. Android).
+    fn local_group_tag(&self) -> Option<[u8; 4]> {
+        None
+    }
+
+    /// Ask the radio to drop every peer without cycling advertising/scanning.
+    ///
+    /// Used when the discovery group changes so existing links cannot linger across groups.
+    fn drop_all_links(&mut self) {}
+
     async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), Self::Error>;
     async fn set_scanning(&mut self, _mode: ScanningMode) -> Result<(), Self::Error> {
         Ok(())

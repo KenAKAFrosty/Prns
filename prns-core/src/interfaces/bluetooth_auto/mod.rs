@@ -22,11 +22,11 @@ pub use framing::{
     BLE_HW_MTU, FRAGMENT_HEADER_LEN, STREAM_FRAME_PREFIX_LEN,
 };
 pub use handshake::{
-    is_keeper, l2cap_arrangement, l2cap_plan, needs_redial, we_should_be_central, AndroidHost,
-    AppleHost, BlueZHost, CloseReason, Control, Endpoint, Esp32Host, EstablishedPeer,
-    EstablishedTransport, Handshake, HandshakeOutcome, HandshakeReaction, HandshakeRole,
-    L2capArrangement, L2capPlan, LinkCapabilities, LocalPeer, Nrf52Host, PeerProtocol, Psm,
-    WinRtHost, CONTROL_MAX_LEN,
+    is_keeper, l2cap_arrangement, l2cap_plan, needs_redial, resolved_discovery_group,
+    we_should_be_central, AndroidHost, AppleHost, BlueZHost, CloseReason, Control, Endpoint,
+    Esp32Host, EstablishedPeer, EstablishedTransport, Handshake, HandshakeOutcome,
+    HandshakeReaction, HandshakeRole, L2capArrangement, L2capPlan, LinkCapabilities, LocalPeer,
+    Nrf52Host, PeerProtocol, Psm, WinRtHost, CONTROL_LEGACY_GREETING_LEN, CONTROL_MAX_LEN,
 };
 pub use identity::{
     decode_persisted_ble_identity, default_group_tag, encode_persisted_ble_identity, group_tag,

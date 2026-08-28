@@ -569,10 +569,9 @@ fn republish_ble_discovery_group() {
     else {
         return;
     };
-    if resources.ble_status.is_enabled() {
-        resources.ble_status.disable();
-        resources.ble_status.enable();
-    }
+    // Evict peers + refresh discovery group without cycling the radio. A disable/enable bounce
+    // races the Android radio pump (PSM cleared in Rust while Kotlin keeps the L2CAP server).
+    resources.ble_status.reset_peers();
 }
 
 pub(super) fn install_ble_discovery_group(storage_dir: &std::path::Path, group_id: String) {

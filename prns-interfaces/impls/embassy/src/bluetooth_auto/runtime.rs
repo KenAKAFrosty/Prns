@@ -554,6 +554,7 @@ where
         identity: BleIdentity,
         endpoint: Endpoint,
         capabilities: LinkCapabilities,
+        group_tag: [u8; 4],
         shared: &'static BluetoothAutoShared<MEMBERS>,
     ) -> Self {
         Self {
@@ -562,6 +563,7 @@ where
                 identity,
                 endpoint,
                 capabilities,
+                group_tag,
             },
             status: BluetoothAutoStatus::new(shared),
             bitrate: contract::BLE_BITRATE_GUESS_BPS,
@@ -1575,6 +1577,7 @@ mod tests {
             identity: BleIdentity::new([identity; 16]),
             endpoint: Endpoint::Nrf52(Nrf52Host::Nrf52),
             capabilities: CAPS,
+            group_tag: contract::default_group_tag(),
         }
     }
 
@@ -1607,6 +1610,7 @@ mod tests {
             endpoint: Endpoint::Nrf52(Nrf52Host::Nrf52),
             capabilities: CAPS,
             peer_rssi: None,
+            group_tag: Some(contract::default_group_tag()),
         };
         let mut handshakes = [
             Some(PendingHandshake::new(

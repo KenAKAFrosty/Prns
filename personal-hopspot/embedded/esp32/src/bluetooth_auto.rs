@@ -6,8 +6,8 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex as BridgeMutex;
 use esp_radio::ble::controller::BleConnector;
 use personal_rns::bluetooth_auto::{BluetoothAuto, BluetoothAutoShared, BluetoothAutoStatus};
 use personal_rns::interfaces::bluetooth_auto::{
-    default_group_tag, encode_advertisement, BleIdentity, BleRoleCapabilities, Endpoint, Esp32Host,
-    LinkCapabilities, Psm, BLE_HW_MTU, MAX_ADVERTISEMENT_LEN,
+    default_group_tag, encode_advertisement, group_tag, BleIdentity, BleRoleCapabilities, Endpoint,
+    Esp32Host, LinkCapabilities, Psm, BLE_HW_MTU, GROUP_NAME, GROUP_TAG_LEN, MAX_ADVERTISEMENT_LEN,
 };
 use personal_rns::runtime::Fleet;
 use prns_interfaces_embassy::bluetooth_auto::GattCharacteristic;
@@ -48,6 +48,25 @@ const _: () = assert!(
     PEER_CAPACITY == 4,
     "S3 serve_slot_task pool_size must equal bluetooth_auto::PEER_CAPACITY"
 );
+
+/// Discovery group id for Trouble advertise + scan.
+///
+/// Override at compile time without touching BLE identity flash:
+/// `PRNS_BLE_DISCOVERY_GROUP=mt-leg-a` / `mt-leg-b` (lab islands).
+/// Empty / unset keeps the open-mesh default (`reticulum`).
+pub(crate) fn local_discovery_group() -> &'static str {
+    match option_env!("PRNS_BLE_DISCOVERY_GROUP") {
+        Some(group) if !group.is_empty() => group,
+        _ => GROUP_NAME,
+    }
+}
+
+pub(crate) fn local_discovery_group_tag() -> [u8; GROUP_TAG_LEN] {
+    match local_discovery_group() {
+        GROUP_NAME => default_group_tag(),
+        group => group_tag(group.as_bytes()),
+    }
+}
 
 async fn serve_owned_slot(
     idx: usize,
@@ -172,10 +191,11 @@ pub async fn run(
     let server: &'static GattServer = SERVER.init(AttributeServer::new(table));
 
     let mut adv_data = [0u8; MAX_ADVERTISEMENT_LEN];
+    let discovery_group = local_discovery_group_tag();
     let adv_len = encode_advertisement(
         &mut adv_data,
         BleRoleCapabilities::DualRole,
-        default_group_tag(),
+        discovery_group,
     )
     .expect("advertisement fits");
 
@@ -189,6 +209,7 @@ pub async fn run(
     static HUB: StaticCell<BleHub> = StaticCell::new();
     let hub: &'static BleHub = HUB.init(BleHub::new(BluetoothAutoStatus::new(shared)));
     hub.set_local_address(address);
+    hub.set_discovery_group_tag(discovery_group);
 
     let supervisor = BluetoothAuto::new(
         hub.backend(),
@@ -198,6 +219,7 @@ pub async fn run(
             l2cap: Psm::new(L2CAP_PSM),
             link_mtu: BLE_HW_MTU as u16,
         },
+        discovery_group,
         shared,
     );
 

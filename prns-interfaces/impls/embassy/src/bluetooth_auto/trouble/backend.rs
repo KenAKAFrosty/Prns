@@ -236,6 +236,7 @@ pub struct BleHub {
     pub(super) radio_enabled: AtomicBool,
     discovery: DiscoveryState,
     pub(super) local_address: BlockingMutex<BridgeMutex, Cell<[u8; 6]>>,
+    discovery_group_tag: BlockingMutex<BridgeMutex, Cell<[u8; 4]>>,
     status: BluetoothAutoStatus<PEER_CAPACITY>,
 }
 
@@ -259,12 +260,21 @@ impl BleHub {
             radio_enabled: AtomicBool::new(false),
             discovery: DiscoveryState::new(),
             local_address: BlockingMutex::new(Cell::new([0; 6])),
+            discovery_group_tag: BlockingMutex::new(Cell::new(DEFAULT_GROUP_TAG)),
             status,
         }
     }
 
     pub fn set_local_address(&self, local_address: [u8; 6]) {
         self.local_address.lock(|cell| cell.set(local_address));
+    }
+
+    pub fn set_discovery_group_tag(&self, group_tag: [u8; 4]) {
+        self.discovery_group_tag.lock(|cell| cell.set(group_tag));
+    }
+
+    pub fn discovery_group_tag(&self) -> [u8; 4] {
+        self.discovery_group_tag.lock(|cell| cell.get())
     }
 
     pub(super) async fn acquire_radio(&self) -> RadioPermit<'_> {
@@ -605,7 +615,7 @@ impl EventHandler for ScanFunnel {
                 capabilities,
             ) == ColumbaConnectionRole::Dial;
             if contains_service(report.data)
-                && discovery_groups_match(default_group_tag(), report.data)
+                && discovery_groups_match(self.hub.discovery_group_tag(), report.data)
                 && should_dial
             {
                 let address = report.addr.into_inner();

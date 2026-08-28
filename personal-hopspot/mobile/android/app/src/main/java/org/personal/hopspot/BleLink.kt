@@ -214,6 +214,9 @@ class BleLink(private val context: Context) {
                             "mfg=${capabilities.joinToString("") { "%02x".format(it) }}",
                     )
                 }
+                if (!allowed && previous != false) {
+                    tearDownLinksForAddress(device.address)
+                }
             }
             if (!shouldDial(octets, result)) {
                 return
@@ -242,8 +245,8 @@ class BleLink(private val context: Context) {
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 rememberDevice(device)
-                if (peerDiscoveryAllowed[device.address] == false) {
-                    Log.w(TAG, "rejecting inbound ${device.address}: known discovery group mismatch")
+                if (!inboundDiscoveryPermitted(device.address)) {
+                    Log.w(TAG, "rejecting inbound ${device.address}: discovery group not permitted")
                     runCatching { gattServer?.cancelConnection(device) }
                 }
                 return
@@ -373,9 +376,9 @@ class BleLink(private val context: Context) {
             var responseStatus = BluetoothGatt.GATT_SUCCESS
             if (descriptor.characteristic.uuid == COLUMBA_TX) {
                 if (subscribing) {
-                    if (peerDiscoveryAllowed[device.address] == false) {
+                    if (!inboundDiscoveryPermitted(device.address)) {
                         responseStatus = BluetoothGatt.GATT_FAILURE
-                        Log.w(TAG, "columba subscription reject ${device.address}: known discovery group mismatch")
+                        Log.w(TAG, "columba subscription reject ${device.address}: discovery group not permitted")
                         runCatching { gattServer?.cancelConnection(device) }
                     } else if (columbaSubscribedCentrals.containsKey(device.address) ||
                         columbaSubscribedCentrals.size < peerCapacity
@@ -394,9 +397,9 @@ class BleLink(private val context: Context) {
                 descriptor.characteristic.uuid == NATIVE_CONTROL &&
                 inboundByAddr[device.address] == null
             ) {
-                if (peerDiscoveryAllowed[device.address] == false) {
+                if (!inboundDiscoveryPermitted(device.address)) {
                     responseStatus = BluetoothGatt.GATT_FAILURE
-                    Log.w(TAG, "listener reject ${device.address}: known discovery group mismatch")
+                    Log.w(TAG, "listener reject ${device.address}: discovery group not permitted")
                     runCatching { gattServer?.cancelConnection(device) }
                 } else if (links.size >= peerCapacity) {
                     responseStatus = ATT_INSUFFICIENT_RESOURCES
@@ -447,8 +450,8 @@ class BleLink(private val context: Context) {
         val address = device.address
         val existingConnId = inboundByAddr[address]
         if (existingConnId == null) {
-            if (peerDiscoveryAllowed[address] == false) {
-                Log.w(TAG, "columba reject $address: known discovery group mismatch")
+            if (!inboundDiscoveryPermitted(address)) {
+                Log.w(TAG, "columba reject $address: discovery group not permitted")
                 runCatching { gattServer?.cancelConnection(device) }
                 return NativeBridge.BLE_INGRESS_CLOSED
             }
@@ -1448,6 +1451,7 @@ class BleLink(private val context: Context) {
             return
         }
         inboundByAddr.remove(link.address, connId)
+        peerDiscoveryAllowed.remove(link.address)
         columbaSubscribedCentrals.remove(link.address)
         dialingAddrs.remove(link.address)
         connectedAddrs.remove(link.address)
@@ -1712,6 +1716,29 @@ class BleLink(private val context: Context) {
             capabilities[3] == local[1] &&
             capabilities[4] == local[2] &&
             capabilities[5] == local[3]
+    }
+
+    /**
+     * Inbound GATT admission:
+     * - known mismatch (`false`) → reject early
+     * - known match / unknown → allow; Hello/Welcome group tag is the authoritative gate
+     *
+     * Unknown must not reject on custom groups: the peer that dials first is often not in the
+     * scan cache yet (truncated ads / no manufacturer payload), which would deadlock same-group peering.
+     */
+    private fun inboundDiscoveryPermitted(address: String): Boolean {
+        return peerDiscoveryAllowed[address] != false
+    }
+
+    private fun tearDownLinksForAddress(address: String) {
+        val victims = links.filterValues { it.address == address }.keys.toList()
+        if (victims.isEmpty()) {
+            return
+        }
+        Log.w(TAG, "tearing down ${victims.size} link(s) for $address: discovery group mismatch")
+        for (connId in victims) {
+            closeLink(connId)
+        }
     }
 
     private fun localGroupTag(): ByteArray {

@@ -322,6 +322,7 @@ pub async fn run(spawner: Spawner) -> ! {
                     l2cap: None,
                     link_mtu: BLE_HW_MTU as u16,
                 },
+                crate::runtime::bluetooth_auto::local_discovery_group_tag(),
                 &BLE_SHARED,
             );
             let fleet: Fleet<Mtx, BLE_HW_MTU, NOTIFY_CAP, LIFECYCLE_CAP> =

@@ -334,6 +334,7 @@ async fn run_prepared_platform_bluetooth(
                         l2cap,
                         link_mtu: BLE_HW_MTU as u16,
                     },
+                    group_tag,
                     status,
                 )
                 .with_policy(policy);
@@ -443,7 +444,8 @@ async fn run_platform_bluetooth(
                     l2cap: Some(psm),
                     link_mtu: BLE_HW_MTU as u16,
                 },
-                status,
+                group_tag,
+                    status,
             )
             .with_policy(policy);
             crate::diagnostic_log::info!(
@@ -487,7 +489,8 @@ async fn run_platform_bluetooth(
                     l2cap: None,
                     link_mtu: BLE_HW_MTU as u16,
                 },
-                status,
+                group_tag,
+                    status,
             )
             .with_policy(policy);
             crate::diagnostic_log::info!(
@@ -530,7 +533,8 @@ async fn run_platform_bluetooth(
                     l2cap: None,
                     link_mtu: BLE_HW_MTU as u16,
                 },
-                status,
+                group_tag,
+                    status,
             )
             .with_policy(policy);
             crate::diagnostic_log::info!("bluetooth: supervising WinRT (GATT-only)");
@@ -578,7 +582,8 @@ async fn run_platform_bluetooth(
                     l2cap: Some(psm),
                     link_mtu: BLE_HW_MTU as u16,
                 },
-                status,
+                group_tag,
+                    status,
             )
             .with_policy(policy);
             crate::diagnostic_log::info!(

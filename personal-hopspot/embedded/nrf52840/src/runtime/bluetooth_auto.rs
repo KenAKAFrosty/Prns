@@ -91,7 +91,7 @@ pub(super) fn local_discovery_group() -> &'static str {
     }
 }
 
-fn local_discovery_group_tag() -> [u8; GROUP_TAG_LEN] {
+pub(crate) fn local_discovery_group_tag() -> [u8; GROUP_TAG_LEN] {
     match local_discovery_group() {
         GROUP_NAME => default_group_tag(),
         group => group_tag(group.as_bytes()),

@@ -23,10 +23,10 @@ use trouble_host::att::{AttClient, AttReq};
 use trouble_host::prelude::*;
 
 use prns_core::interfaces::bluetooth_auto::{
-    columba_connection_role, columba_role_capabilities, contains_service, default_group_tag,
-    discovery_groups_match, encode_stream_frame, fragments_of, BleAddress, BleIdentity,
-    BleRoleCapabilities, ColumbaConnectionRole, Control, Fragment, L2capPlan, PeerProtocol,
-    Reassembler, BLE_HW_MTU, BLE_SERVICE_UUID_BYTES, CONTROL_MAX_LEN, FRAGMENT_HEADER_LEN,
+    columba_connection_role, columba_role_capabilities, contains_service, discovery_groups_match,
+    encode_stream_frame, fragments_of, BleAddress, BleIdentity, BleRoleCapabilities,
+    ColumbaConnectionRole, Control, Fragment, L2capPlan, PeerProtocol, Reassembler, BLE_HW_MTU,
+    BLE_SERVICE_UUID_BYTES, CONTROL_MAX_LEN, DEFAULT_GROUP_TAG, FRAGMENT_HEADER_LEN,
     STREAM_FRAME_PREFIX_LEN,
 };
 use prns_core::interfaces::bluetooth_auto::{

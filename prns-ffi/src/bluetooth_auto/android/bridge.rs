@@ -670,6 +670,35 @@ impl AndroidBleBridge {
         complete
     }
 
+    /// Close every active peer link without clearing the L2CAP PSM or radio mode.
+    pub fn close_all_peer_links(&self) {
+        if let Ok(mut requests) = self.shared.dial_requests.lock() {
+            requests.clear();
+        }
+        if let Ok(mut events) = self.shared.events.lock() {
+            events.clear();
+        }
+        let Ok(mut links) = self.shared.links.lock() else {
+            return;
+        };
+        let Ok(mut closes) = self.shared.close_requests.lock() else {
+            return;
+        };
+        let mut queued = false;
+        for (conn_id, link) in links.iter_mut() {
+            if matches!(link, LinkRecord::Active(_)) {
+                if closes.enqueue(*conn_id) {
+                    queued |= link.request_close();
+                }
+            }
+        }
+        drop(closes);
+        drop(links);
+        if queued {
+            self.shared.work.wake();
+        }
+    }
+
     pub fn next_close(&self) -> Option<u32> {
         self.shared
             .close_requests

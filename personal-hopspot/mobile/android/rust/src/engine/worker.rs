@@ -89,11 +89,8 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
     let ble_identity = ble_bootstrap.into_identity();
     platform.ble.set_local_identity(ble_identity);
     let ble_group_id = super::load_ble_discovery_group(&storage_dir);
-    platform
-        .ble
-        .set_local_group_tag(personal_rns::interfaces::bluetooth_auto::group_tag(
-            ble_group_id.as_bytes(),
-        ));
+    let ble_group_tag = personal_rns::interfaces::bluetooth_auto::group_tag(ble_group_id.as_bytes());
+    platform.ble.set_local_group_tag(ble_group_tag);
     super::install_ble_discovery_group(&storage_dir, ble_group_id.clone());
 
     let destinations = HopspotDestinationSet::new(
@@ -192,6 +189,7 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
             l2cap: None,
             link_mtu: BLE_HW_MTU as u16,
         },
+        ble_group_tag,
     );
     let ble_status = bluetooth.status();
     handle.supervise(bluetooth);

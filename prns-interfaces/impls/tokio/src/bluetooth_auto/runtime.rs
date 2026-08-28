@@ -217,6 +217,7 @@ enum Step<L: BleLink> {
     Handshake(HandshakeDone<L>),
     Closed(BleIdentity, BleAddress),
     Disabled,
+    PeersReset(u64),
 }
 
 pub struct BluetoothAuto<B, const MAX_PEERS: usize> {
@@ -235,12 +236,14 @@ where
         identity: BleIdentity,
         endpoint: Endpoint,
         capabilities: LinkCapabilities,
+        group_tag: [u8; 4],
     ) -> Self {
         Self::with_status(
             backend,
             identity,
             endpoint,
             capabilities,
+            group_tag,
             BluetoothAutoStatus::new(),
         )
     }
@@ -256,6 +259,7 @@ where
         identity: BleIdentity,
         endpoint: Endpoint,
         capabilities: LinkCapabilities,
+        group_tag: [u8; 4],
         status: BluetoothAutoStatus,
     ) -> Self {
         Self {
@@ -264,6 +268,7 @@ where
                 identity,
                 endpoint,
                 capabilities,
+                group_tag,
             },
             policy: contract::defaults_for_bitrate(contract::BLE_BITRATE_GUESS_BPS)
                 .configured(ConfiguredInterfacePolicy::default()),
@@ -285,6 +290,8 @@ pub struct BluetoothAutoStatus {
 struct BluetoothAutoShared {
     id: InterfaceId,
     enabled: watch::Sender<bool>,
+    /// Bumped to force peer eviction (e.g. discovery-group change) without a radio cycle.
+    peers_epoch: watch::Sender<u64>,
     up: AtomicBool,
     failed: AtomicBool,
     failure_reason: Mutex<Option<&'static str>>,
@@ -295,10 +302,12 @@ struct BluetoothAutoShared {
 impl BluetoothAutoStatus {
     pub(crate) fn new() -> Self {
         let (enabled, _) = watch::channel(true);
+        let (peers_epoch, _) = watch::channel(0u64);
         Self {
             shared: Arc::new(BluetoothAutoShared {
                 id: InterfaceId::from_channel_tag(InterfaceKind::BluetoothAuto, contract::CHANNEL_TAG),
                 enabled,
+                peers_epoch,
                 up: AtomicBool::new(false),
                 failed: AtomicBool::new(false),
                 failure_reason: Mutex::new(None),
@@ -340,6 +349,22 @@ impl BluetoothAutoStatus {
             *current = !*current;
             true
         });
+    }
+
+    /// Drop every settled/in-flight peer and refresh discovery state without disabling the interface.
+    pub fn reset_peers(&self) {
+        self.shared.peers_epoch.send_modify(|epoch| *epoch = epoch.wrapping_add(1));
+    }
+
+    fn peers_epoch(&self) -> u64 {
+        *self.shared.peers_epoch.borrow()
+    }
+
+    async fn wait_for_peers_epoch(&self, seen: u64) -> u64 {
+        let mut changed = self.shared.peers_epoch.subscribe();
+        let _ = changed.wait_for(|epoch| *epoch != seen).await;
+        let epoch = *changed.borrow();
+        epoch
     }
 
     fn update_enabled(&self, enabled: bool) {
@@ -489,17 +514,19 @@ where
         status.mark_up();
         manager.start(&mut |action| pending.push(action));
         apply_radio::<B, MAX_PEERS>(&mut pending, &mut members, &mut backend).await;
+        let mut peers_epoch = status.peers_epoch();
         loop {
             if !status.is_enabled() {
                 let _ = backend.set_advertising(AdvertisingMode::Off).await;
                 let _ = backend.set_scanning(ScanningMode::Off).await;
-                for (_, member) in members.drain() {
-                    member.attached.teardown();
-                    backend.on_link_closed(member.address).await;
-                }
-                handshakes = FuturesUnordered::new();
-                pending.clear();
-                status.set_members(std::vec::Vec::new());
+                evict_all_peers::<B, MAX_PEERS>(
+                    &mut backend,
+                    &status,
+                    &mut members,
+                    &mut handshakes,
+                    &mut pending,
+                )
+                .await;
                 let _ = backend.set_radio_mode(RadioMode::Off).await;
                 status.wait_until_enabled().await;
                 prepare_radio::<B, MAX_PEERS>(&mut backend, &mut local, configured_capabilities)
@@ -507,6 +534,7 @@ where
                 manager = ConnectionPolicy::<MAX_PEERS, DIAL_TRACK>::new(local);
                 manager.start(&mut |action| pending.push(action));
                 apply_radio::<B, MAX_PEERS>(&mut pending, &mut members, &mut backend).await;
+                peers_epoch = status.peers_epoch();
                 continue;
             }
             let step = tokio::select! {
@@ -514,9 +542,28 @@ where
                 Some(done) = handshakes.next(), if !handshakes.is_empty() => Step::Handshake(done),
                 Some((identity, address)) = closed_rx.recv() => Step::Closed(identity, address),
                 () = status.wait_until_disabled() => Step::Disabled,
+                epoch = status.wait_for_peers_epoch(peers_epoch) => Step::PeersReset(epoch),
             };
             match step {
                 Step::Disabled => {}
+                Step::PeersReset(epoch) => {
+                    peers_epoch = epoch;
+                    evict_all_peers::<B, MAX_PEERS>(
+                        &mut backend,
+                        &status,
+                        &mut members,
+                        &mut handshakes,
+                        &mut pending,
+                    )
+                    .await;
+                    if let Some(group_tag) = backend.local_group_tag() {
+                        local.group_tag = group_tag;
+                    }
+                    manager = ConnectionPolicy::<MAX_PEERS, DIAL_TRACK>::new(local);
+                    manager.start(&mut |action| pending.push(action));
+                    apply_radio::<B, MAX_PEERS>(&mut pending, &mut members, &mut backend).await;
+                    continue;
+                }
                 Step::Event(BleEvent::Sighting { address, .. }) => {
                     let now_ms = started.elapsed().as_millis() as u64;
                     manager.handle(PolicyInput::Sighting { address, now_ms }, &mut |action| {
@@ -530,6 +577,9 @@ where
                     peer_rssi,
                 }) => {
                     let address = link.address();
+                    if let Some(group_tag) = backend.local_group_tag() {
+                        local.group_tag = group_tag;
+                    }
                     if manager.begin_handshake(origin) {
                         handshakes.push(Box::pin(run_handshake_task(
                             link,
@@ -546,6 +596,9 @@ where
                 }
                 Step::Event(BleEvent::Inbound(link)) => {
                     let address = link.address();
+                    if let Some(group_tag) = backend.local_group_tag() {
+                        local.group_tag = group_tag;
+                    }
                     if manager.begin_handshake(Origin::Accepted) {
                         handshakes.push(Box::pin(run_handshake_task(
                             link,
@@ -644,6 +697,25 @@ where
 
 pub(super) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
+async fn evict_all_peers<B, const MAX_PEERS: usize>(
+    backend: &mut B,
+    status: &BluetoothAutoStatus,
+    members: &mut HashMap<BleIdentity, TokioMember>,
+    handshakes: &mut HandshakeQueue<B::Link>,
+    pending: &mut std::vec::Vec<PolicyAction>,
+) where
+    B: BleBackend<MAX_PEERS>,
+{
+    backend.drop_all_links();
+    for (_, member) in members.drain() {
+        member.attached.teardown();
+        backend.on_link_closed(member.address).await;
+    }
+    *handshakes = FuturesUnordered::new();
+    pending.clear();
+    status.set_members(std::vec::Vec::new());
+}
+
 async fn prepare_radio<B, const MAX_PEERS: usize>(
     backend: &mut B,
     local: &mut LocalPeer,
@@ -654,6 +726,9 @@ async fn prepare_radio<B, const MAX_PEERS: usize>(
     let _ = backend.set_radio_mode(RadioMode::On).await;
     if let Ok(capabilities) = backend.local_capabilities(configured_capabilities).await {
         local.capabilities = capabilities;
+    }
+    if let Some(group_tag) = backend.local_group_tag() {
+        local.group_tag = group_tag;
     }
 }
 
@@ -1068,6 +1143,7 @@ mod tests {
             identity: BleIdentity::new([1; 16]),
             endpoint: linux(),
             capabilities: caps(0x0080),
+            group_tag: contract::default_group_tag(),
         };
         let peer_identity = BleIdentity::new([2; 16]);
         let mut link = ColumbaLink {
@@ -1097,6 +1173,7 @@ mod tests {
             identity: BleIdentity::new([1; 16]),
             endpoint: android(),
             capabilities: caps(0x0080),
+            group_tag: contract::default_group_tag(),
         };
         let peer_identity = BleIdentity::new([2; 16]);
         let mut link = ColumbaLink {
@@ -1243,11 +1320,13 @@ mod tests {
             identity: BleIdentity::new([1u8; 16]),
             endpoint: mac(),
             capabilities: caps(0x0081),
+            group_tag: contract::default_group_tag(),
         };
         let local_b = LocalPeer {
             identity: BleIdentity::new([2u8; 16]),
             endpoint: linux(),
             capabilities: caps(0x0082),
+            group_tag: contract::default_group_tag(),
         };
         let (mut backend_a, mut backend_b) = LoopbackBleBackend::pair();
 
@@ -1407,6 +1486,7 @@ mod tests {
             identity: BleIdentity::new([1u8; 16]),
             endpoint: mac(),
             capabilities: caps(0x0081),
+            group_tag: contract::default_group_tag(),
         };
         let local_b = LocalPeer {
             identity: BleIdentity::new([2u8; 16]),
@@ -1415,6 +1495,7 @@ mod tests {
                 l2cap: None,
                 link_mtu: 247,
             },
+            group_tag: contract::default_group_tag(),
         };
         let (mut backend_a, mut backend_b) = LoopbackBleBackend::pair();
 
@@ -1475,11 +1556,13 @@ mod tests {
             identity: BleIdentity::new([1u8; 16]),
             endpoint: mac(),
             capabilities: caps(0x00c0),
+            group_tag: contract::default_group_tag(),
         };
         let android_local = LocalPeer {
             identity: BleIdentity::new([2u8; 16]),
             endpoint: android(),
             capabilities: caps(0x0080),
+            group_tag: contract::default_group_tag(),
         };
         let (mut mac_backend, mut android_backend) = LoopbackBleBackend::pair();
 
