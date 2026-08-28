@@ -118,6 +118,17 @@ impl<C: RequestHandlerTable> RequestHandlers<C> {
         true
     }
 
+    pub(crate) fn unregister_destination(&mut self, destination: &DestinationHash) {
+        while let Some(slot) = self
+            .table
+            .destinations()
+            .iter()
+            .position(|candidate| candidate == destination)
+        {
+            self.table.remove_at(slot);
+        }
+    }
+
     pub fn allow(
         &mut self,
         destination: &DestinationHash,
@@ -318,5 +329,37 @@ mod tests {
             handlers.disallow(&dest(1), &path, &identity(1)),
             Err(RequestHandlerError::NoSuchHandler),
         );
+    }
+
+    fn assert_destination_unregistration_preserves_other_handlers<
+        C: RequestHandlerTable + Default,
+    >() {
+        let mut handlers = RequestHandlers::<C>::default();
+        let first = RequestPathHash::of("/first");
+        let second = RequestPathHash::of("/second");
+        let retained = RequestPathHash::of("/retained");
+        handlers
+            .register(dest(1), first, RequestPolicy::AllowAll)
+            .unwrap();
+        handlers
+            .register(dest(2), retained, RequestPolicy::AllowAll)
+            .unwrap();
+        handlers
+            .register(dest(1), second, RequestPolicy::AllowAll)
+            .unwrap();
+
+        handlers.unregister_destination(&dest(1));
+        handlers.unregister_destination(&dest(1));
+
+        assert_eq!(handlers.len(), 1);
+        assert!(!handlers.permits(&dest(1), &first, None));
+        assert!(!handlers.permits(&dest(1), &second, None));
+        assert!(handlers.permits(&dest(2), &retained, None));
+    }
+
+    #[test]
+    fn destination_unregistration_preserves_fixed_and_heap_column_alignment() {
+        assert_destination_unregistration_preserves_other_handlers::<FixedRequestHandlerTable<4>>();
+        assert_destination_unregistration_preserves_other_handlers::<HeapRequestHandlerTable>();
     }
 }

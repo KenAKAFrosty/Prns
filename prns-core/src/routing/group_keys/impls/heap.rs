@@ -25,6 +25,14 @@ impl GroupKeyTable for HeapGroupKeyTable {
         &self.keys
     }
 
+    fn swap_remove(&mut self, index: usize) {
+        if index >= self.destinations.len() {
+            return;
+        }
+        self.destinations.swap_remove(index);
+        self.keys.swap_remove(index);
+    }
+
     fn upsert(
         &mut self,
         destination: DestinationHash,
