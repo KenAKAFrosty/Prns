@@ -2,12 +2,12 @@ mod display;
 mod hardware;
 mod identity;
 mod input;
+mod raster;
 mod ssd1681;
 
 use personal_rns::interfaces::InterfaceId;
 
 pub(crate) use crate::storage::Nrf52840Storage as Storage;
-pub(crate) use display::{frame_hash, EinkScreen};
 pub(crate) use hardware::{
     TechoBoard as Board, TechoControls as Controls, TechoDisplayHardware as DisplayHardware,
     TechoEarlyHardware as EarlyHardware, TechoFaceHardware as FaceHardware, TechoRadio as Radio,
@@ -16,7 +16,9 @@ pub(crate) use hardware::{
 pub(crate) use identity::{
     bootstrap_ble_identity, bootstrap_node_identity, startup_notice as identity_startup_notice,
 };
-pub(crate) use input::{drive_button, drive_frontlight, EVENTS as INPUT_EVENTS};
+pub(crate) use input::{
+    drive_button, drive_frontlight, EVENTS as INPUT_EVENTS, EVENT_CAPACITY as INPUT_EVENT_CAPACITY,
+};
 
 pub(crate) const JOURNAL_LAYOUT: personal_rns::persistence::FlashJournalLayout =
     personal_hopspot_core::T_ECHO_JOURNAL_LAYOUT;

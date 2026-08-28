@@ -271,19 +271,26 @@ impl PersistenceNotice {
                 self.visible_until = None;
             }
         }
-        if persistence == self.observed {
+        let Some(notice) = self.observe(persistence) else {
             return changed;
+        };
+        self.visible_until = Some((now_millis.saturating_add(PERSISTENCE_NOTICE_MILLIS), notice));
+        ui_state.show_notice(notice);
+        true
+    }
+
+    #[must_use]
+    pub fn observe(&mut self, persistence: PersistenceState) -> Option<UiNotice> {
+        if persistence == self.observed {
+            return None;
         }
-        let notice = match persistence {
+        self.observed = persistence;
+        Some(match persistence {
             PersistenceState::Durable => UiNotice::Saved,
             PersistenceState::Recovered => UiNotice::StateRecovered,
             PersistenceState::Deferred => UiNotice::SaveDeferred,
             PersistenceState::Failed => UiNotice::SaveFailed,
-        };
-        self.observed = persistence;
-        self.visible_until = Some((now_millis.saturating_add(PERSISTENCE_NOTICE_MILLIS), notice));
-        ui_state.show_notice(notice);
-        true
+        })
     }
 }
 
@@ -425,8 +432,13 @@ impl UiState {
         true
     }
 
-    pub(in crate::screen) fn notice(&self) -> Option<UiNotice> {
+    #[must_use]
+    pub const fn visible_notice(&self) -> Option<UiNotice> {
         self.notice
+    }
+
+    pub(in crate::screen) const fn notice(&self) -> Option<UiNotice> {
+        self.visible_notice()
     }
 
     pub(in crate::screen) fn global_selected(&self) -> bool {
@@ -569,7 +581,10 @@ impl UiState {
     }
 
     pub fn handle_input(&mut self, event: InputEvent, content: ScreenContent<'_, '_>) -> UiAction {
-        if event == InputEvent::ShortPress && self.notice.take().is_some() {
+        if self.mode != UiMode::Sleeping
+            && event == InputEvent::ShortPress
+            && self.notice.take().is_some()
+        {
             self.sync(content);
             return UiAction::None;
         }

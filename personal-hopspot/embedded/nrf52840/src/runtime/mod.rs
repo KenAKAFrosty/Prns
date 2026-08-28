@@ -37,6 +37,8 @@ mod interface_cards;
 mod learned_state;
 #[cfg(feature = "board-t-echo")]
 pub(crate) mod node;
+#[cfg(feature = "board-t-echo")]
+mod notice;
 #[cfg(any(
     feature = "board-t-echo",
     feature = "board-t096",

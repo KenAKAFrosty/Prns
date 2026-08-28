@@ -14,7 +14,8 @@ const BUTTON_LONG_PRESS: Duration = Duration::from_millis(500);
 const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
 const FRONTLIGHT_HOLD: Duration = Duration::from_secs(8);
 
-pub(crate) static EVENTS: Channel<Mtx, InputEvent, 4> = Channel::new();
+pub(crate) const EVENT_CAPACITY: usize = 4;
+pub(crate) static EVENTS: Channel<Mtx, InputEvent, EVENT_CAPACITY> = Channel::new();
 static BUTTON_COUNT: AtomicU32 = AtomicU32::new(0);
 static FRONTLIGHT_WAKE: Signal<Mtx, ()> = Signal::new();
 

@@ -59,8 +59,8 @@ personal-hopspot-core = { path = "../../core", default-features = false, feature
 prns-core = { path = "../../../prns-core", default-features = false }
 
 embedded-graphics = "0.8"
-epd-waveshare = { version = "0.6", default-features = false, features = ["graphics", "epd2in13_v3"] }
 embedded-hal = "1.0"
+embedded-hal-async = "1.0"
 embedded-hal-bus = { version = "0.3", features = ["async"] }
 
 cortex-m = { version = "0.7", features = ["inline-asm"] }
@@ -86,6 +86,9 @@ nrf-softdevice = { path = "vendor/nrf-softdevice/nrf-softdevice", optional = tru
 # nrf-softdevice's GATT characteristics use heapless 0.9; the rest of the firmware is on 0.8.
 heapless09 = { package = "heapless", version = "0.9" }
 rand_chacha = { version = "0.9", default-features = false }
+
+[dev-dependencies]
+epd-waveshare = { version = "0.6", default-features = false, features = ["graphics", "epd2in13_v3"] }
 
 [profile.release]
 codegen-units = 1
