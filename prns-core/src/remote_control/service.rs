@@ -184,6 +184,18 @@ mod tests {
         .unwrap()
     }
 
+    fn identity_secrets() -> RemoteControlNodeIdentitySecrets {
+        RemoteControlNodeIdentitySecrets::new(
+            RemoteControlControllerIdentitySecret::from(IdentitySecretKey::new(
+                [0x31; IDENTITY_SECRET_KEY_LEN],
+            )),
+            RemoteControlTargetIdentitySecret::from(IdentitySecretKey::new(
+                [0x32; IDENTITY_SECRET_KEY_LEN],
+            )),
+        )
+        .unwrap()
+    }
+
     #[test]
     fn a_controller_grant_requires_at_least_one_permitted_request() {
         assert_eq!(
@@ -262,15 +274,7 @@ mod tests {
 
     #[test]
     fn service_moves_all_configuration_back_out_without_cloning_secrets() {
-        let identity_secrets = RemoteControlNodeIdentitySecrets::new(
-            RemoteControlControllerIdentitySecret::from(IdentitySecretKey::new(
-                [0x31; IDENTITY_SECRET_KEY_LEN],
-            )),
-            RemoteControlTargetIdentitySecret::from(IdentitySecretKey::new(
-                [0x32; IDENTITY_SECRET_KEY_LEN],
-            )),
-        )
-        .unwrap();
+        let identity_secrets = identity_secrets();
         let identities = identity_secrets.identities();
         let default_public_app_data =
             RemoteControlPublicAppData::try_from(b"application".as_slice()).unwrap();
@@ -290,6 +294,31 @@ mod tests {
         assert_eq!(
             self_announcement,
             RemoteControlSelfAnnouncement::Unavailable
+        );
+    }
+
+    #[test]
+    fn service_availability_is_derived_from_its_configured_actions() {
+        let unavailable = RemoteControlService::new(
+            identity_secrets(),
+            RemoteControlPublicAppData::empty(),
+            RemoteControlInitialAccess::Nobody,
+            RemoteControlSelfAnnouncement::Unavailable,
+        );
+        let available = RemoteControlService::new(
+            identity_secrets(),
+            RemoteControlPublicAppData::empty(),
+            RemoteControlInitialAccess::Nobody,
+            RemoteControlSelfAnnouncement::Destination(DestinationHash::new([0x43; 16])),
+        );
+
+        assert_eq!(
+            unavailable.available_requests(),
+            RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
+        );
+        assert_eq!(
+            available.available_requests(),
+            RemoteControlRequestSet::all(),
         );
     }
 }

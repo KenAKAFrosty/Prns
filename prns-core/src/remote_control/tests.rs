@@ -4,6 +4,7 @@ use crate::identity::{
     IdentityEncryptionPublicKey, IdentityPublicKeys, IdentitySigningPublicKey, Zeroizing,
     IDENTITY_SECRET_KEY_LEN,
 };
+use proptest::prelude::*;
 
 fn identity(fill: u8) -> RemoteControlControllerIdentity {
     RemoteControlControllerIdentity::new(IdentityPublicKeys {
@@ -640,4 +641,34 @@ fn message_writers_use_only_their_reported_prefix_and_refuse_short_buffers() {
         response.write_into(&mut response_bytes[..3]),
         Err(RemoteControlMessageWriteError::BufferTooShort),
     );
+}
+
+proptest! {
+    #[test]
+    fn every_successfully_parsed_request_round_trips_through_its_writer(
+        bytes in proptest::collection::vec(any::<u8>(), 0..=256),
+    ) {
+        if let Ok(request) = RemoteControlRequest::parse(&bytes) {
+            let mut encoded = [0u8; RemoteControlRequest::MAX_ENCODED_LEN];
+            let written = request.write_into(&mut encoded).unwrap();
+            let encoded = encoded
+                .get(..written)
+                .expect("request writer returned an out-of-bounds length");
+            prop_assert_eq!(RemoteControlRequest::parse(encoded), Ok(request));
+        }
+    }
+
+    #[test]
+    fn every_successfully_parsed_response_round_trips_through_its_writer(
+        bytes in proptest::collection::vec(any::<u8>(), 0..=256),
+    ) {
+        if let Ok(response) = RemoteControlResponse::parse(&bytes) {
+            let mut encoded = [0u8; RemoteControlResponse::MAX_ENCODED_LEN];
+            let written = response.write_into(&mut encoded).unwrap();
+            let encoded = encoded
+                .get(..written)
+                .expect("response writer returned an out-of-bounds length");
+            prop_assert_eq!(RemoteControlResponse::parse(encoded), Ok(response));
+        }
+    }
 }

@@ -422,6 +422,27 @@ mod tests {
         data: &[u8],
         sink: &mut dyn super::super::request_endpoints::ResponseSink,
     ) -> Result<(), Decline> {
+        dispatch_with_configuration(
+            access,
+            RemoteControlRequestSet::all(),
+            RemoteControlSelfAnnouncement::Destination(DestinationHash::new([0x87; 16])),
+            node,
+            requester,
+            data,
+            sink,
+        )
+        .await
+    }
+
+    async fn dispatch_with_configuration(
+        access: &impl RemoteControlAccessTable,
+        supported_requests: RemoteControlRequestSet,
+        self_announcement: RemoteControlSelfAnnouncement,
+        node: &impl PrnsNodeApi,
+        requester: Option<IdentityHash>,
+        data: &[u8],
+        sink: &mut dyn super::super::request_endpoints::ResponseSink,
+    ) -> Result<(), Decline> {
         let request = InboundRequest::new(
             DestinationHash::new([0x21; 16]),
             LinkId::new([0x43; 16]),
@@ -434,8 +455,8 @@ mod tests {
         dispatch_remote_control_request(
             &(),
             access,
-            RemoteControlRequestSet::all(),
-            RemoteControlSelfAnnouncement::Destination(DestinationHash::new([0x87; 16])),
+            supported_requests,
+            self_announcement,
             node,
             request,
             sink,
@@ -584,6 +605,55 @@ mod tests {
                     RemoteControlAnnounceSelfOutcome::Announced,
                 )),
             );
+        });
+    }
+
+    #[test]
+    fn unavailable_self_announcement_is_neither_described_nor_dispatched() {
+        futures_executor::block_on(async {
+            let allowed = identity(0x35);
+            let access = access(allowed);
+            let supported_requests =
+                RemoteControlRequestSet::only(RemoteControlRequestKind::Describe);
+            let node = AnnounceNode::new(Ok(()));
+            let mut response =
+                heapless::Vec::<u8, { RemoteControlResponse::MAX_ENCODED_LEN }>::new();
+
+            assert_eq!(
+                dispatch_with_configuration(
+                    &access,
+                    supported_requests,
+                    RemoteControlSelfAnnouncement::Unavailable,
+                    &node,
+                    Some(allowed.identity_hash()),
+                    &describe_request(),
+                    &mut response,
+                )
+                .await,
+                Ok(()),
+            );
+            let description = RemoteControlDescription::try_from(supported_requests).unwrap();
+            assert_eq!(
+                RemoteControlResponse::parse(response.as_slice()),
+                Ok(RemoteControlResponse::Describe(description)),
+            );
+
+            response.clear();
+            assert_eq!(
+                dispatch_with_configuration(
+                    &access,
+                    supported_requests,
+                    RemoteControlSelfAnnouncement::Unavailable,
+                    &node,
+                    Some(allowed.identity_hash()),
+                    &announce_self_request(),
+                    &mut response,
+                )
+                .await,
+                Err(Decline::Ignore),
+            );
+            assert!(response.is_empty());
+            assert!(node.received.borrow().is_none());
         });
     }
 

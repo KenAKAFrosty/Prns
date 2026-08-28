@@ -588,3 +588,55 @@ fn write_protocol_error(error: &RemoteControlProtocolError, body: &mut [u8]) {
         *out = found;
     }
 }
+
+#[cfg_attr(mutants, mutants::skip)]
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn remote_control_request_parse_terminates_for_every_distinct_wire_shape() {
+        let bytes: [u8; RemoteControlRequest::MAX_ENCODED_LEN + 1] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= bytes.len());
+        let _result = RemoteControlRequest::parse(&bytes[..len]);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn remote_control_response_parse_terminates_for_every_distinct_wire_shape() {
+        let bytes: [u8; RemoteControlResponse::MAX_ENCODED_LEN + 1] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= bytes.len());
+        let _result = RemoteControlResponse::parse(&bytes[..len]);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn request_set_intersection_preserves_exact_membership() {
+        let mut left = RemoteControlRequestSet::empty();
+        let mut right = RemoteControlRequestSet::empty();
+        if kani::any() {
+            let _inserted = left.insert(RemoteControlRequestKind::Describe);
+        }
+        if kani::any() {
+            let _inserted = left.insert(RemoteControlRequestKind::AnnounceSelf);
+        }
+        if kani::any() {
+            let _inserted = right.insert(RemoteControlRequestKind::Describe);
+        }
+        if kani::any() {
+            let _inserted = right.insert(RemoteControlRequestKind::AnnounceSelf);
+        }
+        let intersection = left.intersection(&right);
+        for kind in RemoteControlRequestKind::ALL {
+            assert_eq!(
+                intersection.supports(kind),
+                left.supports(kind) && right.supports(kind)
+            );
+        }
+        assert!(intersection.len() <= left.len());
+        assert!(intersection.len() <= right.len());
+    }
+}
