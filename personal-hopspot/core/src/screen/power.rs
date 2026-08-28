@@ -16,8 +16,9 @@ impl DisplayAutoOffDuration {
     }
 }
 
+pub(crate) const DEFAULT_DISPLAY_AUTO_OFF_MILLISECONDS: u64 = 60_000;
 pub const DEFAULT_DISPLAY_AUTO_OFF: DisplayAutoOffDuration =
-    DisplayAutoOffDuration::from_millis(60_000);
+    DisplayAutoOffDuration::from_millis(DEFAULT_DISPLAY_AUTO_OFF_MILLISECONDS);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DisplayAutoOff {

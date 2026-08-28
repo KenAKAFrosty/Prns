@@ -38,8 +38,6 @@ use embassy_time::with_timeout;
 #[cfg(feature = "lora")]
 use embassy_time::Delay;
 use embassy_time::{Duration, Ticker, Timer};
-use embedded_graphics::draw_target::DrawTarget;
-use embedded_graphics::pixelcolor::BinaryColor;
 #[cfg(feature = "lora")]
 use embedded_hal_bus::spi::ExclusiveDevice;
 use heapless::Vec as HVec;
@@ -116,10 +114,13 @@ use crate::storage::EngineStorageType;
 
 use personal_hopspot_core as screen;
 
+pub(crate) use crate::immediate_display::{
+    BoardDisplay, ImmediateDisplayDevice, ImmediatePresentation,
+};
 #[cfg(feature = "lora")]
 pub(crate) use board::LoraRadio;
 pub(crate) use board::{
-    BoardDisplay, BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware, S3ManifoldHardware,
+    BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware, S3ManifoldHardware,
 };
 pub(crate) use gnss::{GnssProvider, GnssShared, NoGnss};
 

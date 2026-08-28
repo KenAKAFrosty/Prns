@@ -1,4 +1,9 @@
 use super::*;
+use personal_hopspot_core::display::{DisplayBlankReason, DisplayVisibility, MonotonicMillis};
+
+fn display_now() -> MonotonicMillis {
+    MonotonicMillis::new(embassy_time::Instant::now().as_millis())
+}
 
 pub(crate) async fn run<B: Esp32S3Board>(spawner: Spawner)
 where
@@ -27,14 +32,10 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     B::Gnss: 'static,
 {
     let BoardFace {
-        display,
+        display: board_display,
         battery,
         button,
     } = hardware.face;
-    let BoardDisplay {
-        device: mut display,
-        initialized: oled_ok,
-    } = display;
     let mut battery_source = battery;
     let gnss = hardware.gnss;
     let S3InterfaceHardware {
@@ -390,18 +391,14 @@ pub(super) async fn run_core<B: Esp32S3Board>(
 
     let render = async move {
         boot_stage(BootPhase::DisplayRuntimeBegin);
+        let mut display = board_display.into_runtime(display_now());
         let access_point = match radio_mode {
             RadioMode::AccessPoint => screen::AccessPointState::Active,
             RadioMode::Ble => screen::AccessPointState::Inactive,
         };
-        let user_blanking = if oled_ok {
-            screen::UserBlanking::Available
-        } else {
-            screen::UserBlanking::Unavailable
-        };
         let mut ui_state = screen::UiState::new(screen::UiConfiguration {
             storage_limits: <EngineStorageType as StorageLayout>::LIMITS,
-            user_blanking,
+            user_blanking: display.user_blanking(),
             access_point,
             shared_instance_config_export: screen::SharedInstanceConfigExport::Unavailable,
             gnss: B::Gnss::AVAILABILITY,
@@ -431,15 +428,11 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let mut activity = screen::CardActivityTracker::<8>::new();
         let mut notice_until_ms =
             startup_notice.map(|notice| (embassy_time::Instant::now().as_millis() + 5_000, notice));
-        let mut display_power = screen::DisplayPowerState::new(
-            user_blanking,
-            embassy_time::Instant::now().as_millis(),
-            screen::DEFAULT_DISPLAY_AUTO_OFF,
-        );
         let mut render_tick = Ticker::every(RENDER_INTERVAL);
         let mut settle_after_draw = false;
         let mut persistence_notice = screen::PersistenceNotice::new();
         let mut first_render_pending = true;
+        let mut first_render_started = false;
         loop {
             if ticks_to_battery_sample == 0 {
                 sampled_battery_state = battery_gauge.sample(&mut battery_source);
@@ -522,31 +515,44 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                     }
                 }
             }
-            if display_power.tick(now_ms) == screen::DisplayPowerCommand::Darken {
-                B::darken_display(&mut display);
+            if let Err(error) = display.poll_blanking(MonotonicMillis::new(now_ms), display_now) {
+                log::error!("display blanking failed: {error:?}");
             }
-            if display_power.is_lit() {
-                if first_render_pending {
-                    boot_stage(BootPhase::DisplayFirstRenderBegin);
-                }
-                screen::render(
-                    &mut display,
-                    screen::RenderFrame {
-                        content,
-                        battery: battery_state,
-                        gnss: ui_state.gnss_visible().then(B::Gnss::snapshot).flatten(),
-                        state: &ui_state,
-                        interface_menu_details: &interface_menu_details,
-                    },
-                );
-                B::flush(&mut display);
-                if first_render_pending {
+            if first_render_pending
+                && !first_render_started
+                && display.visibility() == DisplayVisibility::Visible
+            {
+                boot_stage(BootPhase::DisplayFirstRenderBegin);
+                first_render_started = true;
+            }
+            match display.render_and_present(
+                screen::face_64x128::RenderInput {
+                    content,
+                    battery: battery_state,
+                    gnss: ui_state.gnss_visible().then(B::Gnss::snapshot).flatten(),
+                    state: &ui_state,
+                    interface_menu_details: &interface_menu_details,
+                },
+                MonotonicMillis::new(now_ms),
+                display_now,
+            ) {
+                Ok(ImmediatePresentation::Presented) if first_render_pending => {
                     boot_stage(BootPhase::DisplayFirstRenderComplete);
                     first_render_pending = false;
                 }
-            } else if first_render_pending {
-                boot_stage(BootPhase::DisplayFirstRenderUnavailable);
-                first_render_pending = false;
+                Ok(ImmediatePresentation::Unavailable) if first_render_pending => {
+                    boot_stage(BootPhase::DisplayFirstRenderUnavailable);
+                    first_render_pending = false;
+                }
+                Ok(ImmediatePresentation::Failed) => {
+                    log::error!("display presentation failed");
+                }
+                Ok(
+                    ImmediatePresentation::Unavailable
+                    | ImmediatePresentation::Withheld
+                    | ImmediatePresentation::Presented,
+                ) => {}
+                Err(error) => log::error!("display presentation state failed: {error:?}"),
             }
             if settle_after_draw {
                 Timer::after(Duration::from_millis(screen::COALESCE_MS)).await;
@@ -569,37 +575,50 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 }
                 Either3::First(event) => {
                     let now_ms = embassy_time::Instant::now().as_millis();
-                    if display_power.button_pressed(now_ms, screen::DEFAULT_DISPLAY_AUTO_OFF)
-                        == screen::DisplayButtonOutcome::WakeAndConsume
-                    {
-                        B::wake_display(&mut display);
-                        ui_state.show_notice(screen::UiNotice::Awake);
-                        notice_until_ms = Some((now_ms + NOTICE_MS, screen::UiNotice::Awake));
-                        // Waking a dark-but-running display is the whole action for this press. Do
-                        // not forward it to `UiState`, where a short press would also move focus.
-                        continue;
+                    match display.button_pressed(MonotonicMillis::new(now_ms), display_now) {
+                        Ok(screen::DisplayButtonOutcome::WakeAndConsume) => {
+                            if display.visibility() == DisplayVisibility::Visible {
+                                ui_state.show_notice(screen::UiNotice::Awake);
+                                notice_until_ms =
+                                    Some((now_ms + NOTICE_MS, screen::UiNotice::Awake));
+                            }
+                            continue;
+                        }
+                        Ok(screen::DisplayButtonOutcome::ForwardToUi) => {}
+                        Err(error) => {
+                            log::error!("display button handling failed: {error:?}");
+                            continue;
+                        }
                     }
                     match ui_state.handle_input(event, content) {
                         screen::UiAction::BlankDisplay => {
                             ui_state.show_notice(screen::UiNotice::DisplayOff);
                             notice_until_ms =
                                 Some((now_ms + NOTICE_MS, screen::UiNotice::DisplayOff));
-                            display_power.schedule_display_off(now_ms.saturating_add(NOTICE_MS));
+                            if let Err(error) = display.schedule_blanking(
+                                MonotonicMillis::new(now_ms.saturating_add(NOTICE_MS)),
+                                DisplayBlankReason::DisplayOnly,
+                            ) {
+                                log::error!("display-off scheduling failed: {error:?}");
+                            }
                         }
                         screen::UiAction::ToggleDisplayAutoOff => {
-                            if let Some(auto_off) = display_power
-                                .toggle_auto_off(now_ms, screen::DEFAULT_DISPLAY_AUTO_OFF)
-                            {
-                                let notice = match auto_off {
-                                    screen::DisplayAutoOff::Enabled => {
-                                        screen::UiNotice::DisplayAutoOffOn
-                                    }
-                                    screen::DisplayAutoOff::Disabled => {
-                                        screen::UiNotice::DisplayAutoOffOff
-                                    }
-                                };
-                                ui_state.show_notice(notice);
-                                notice_until_ms = Some((now_ms + NOTICE_MS, notice));
+                            match display.toggle_auto_off(MonotonicMillis::new(now_ms)) {
+                                Ok(auto_off) => {
+                                    let notice = match auto_off {
+                                        screen::DisplayAutoOff::Enabled => {
+                                            screen::UiNotice::DisplayAutoOffOn
+                                        }
+                                        screen::DisplayAutoOff::Disabled => {
+                                            screen::UiNotice::DisplayAutoOffOff
+                                        }
+                                    };
+                                    ui_state.show_notice(notice);
+                                    notice_until_ms = Some((now_ms + NOTICE_MS, notice));
+                                }
+                                Err(error) => {
+                                    log::error!("display auto-off toggle failed: {error:?}");
+                                }
                             }
                         }
                         screen::UiAction::ControlGnss(command) => {
@@ -609,9 +628,12 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             ui_state.show_notice(screen::UiNotice::Sleeping);
                             notice_until_ms =
                                 Some((now_ms + NOTICE_MS, screen::UiNotice::Sleeping));
-                            display_power.schedule_system_sleep(
-                                now_ms.saturating_add(DISPLAY_SLEEP_DELAY_MS),
-                            );
+                            if let Err(error) = display.schedule_blanking(
+                                MonotonicMillis::new(now_ms.saturating_add(DISPLAY_SLEEP_DELAY_MS)),
+                                DisplayBlankReason::SystemSleep,
+                            ) {
+                                log::error!("system-sleep display scheduling failed: {error:?}");
+                            }
                             usb_status.disable();
                             if let Some(status) = lora_card_status {
                                 status.disable();
@@ -633,10 +655,10 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                             B::Gnss::control(screen::GnssReceiverCommand::Disable);
                         }
                         screen::UiAction::Wake => {
-                            if display_power.wake(now_ms, screen::DEFAULT_DISPLAY_AUTO_OFF)
-                                == screen::DisplayPowerCommand::Wake
+                            if let Err(error) =
+                                display.request_visible(MonotonicMillis::new(now_ms), display_now)
                             {
-                                B::wake_display(&mut display);
+                                log::error!("display wake failed: {error:?}");
                             }
                             ui_state.show_notice(screen::UiNotice::Awake);
                             notice_until_ms = Some((now_ms + NOTICE_MS, screen::UiNotice::Awake));

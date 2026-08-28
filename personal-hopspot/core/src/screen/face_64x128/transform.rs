@@ -160,7 +160,7 @@ pub struct PanelTransform {
 }
 
 impl PanelTransform {
-    pub fn centered(
+    pub const fn centered(
         panel: PanelSize,
         scale: PanelScale,
         turn: QuarterTurn,

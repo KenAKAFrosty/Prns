@@ -55,6 +55,9 @@ heapless = { version = "0.8", default-features = false }
 embedded-storage = "0.3"
 embedded-storage-async = "0.4"
 
+[dev-dependencies]
+personal-rns = { path = "../../../personal-rns", default-features = false }
+
 [target.'cfg(target_arch = "xtensa")'.dependencies]
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "external-alloc", "flash", "log"] }
 prns-interfaces-embassy = { path = "../../../prns-interfaces/impls/embassy", optional = true, default-features = false, features = ["bluetooth-auto-trouble", "log"] }

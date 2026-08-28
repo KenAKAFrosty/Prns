@@ -21,6 +21,12 @@ use presentation::Presenter;
 use super::face_64x128::{self, Frame, RenderInput};
 use super::{DisplayAutoOff, UserBlanking};
 
+pub const DEFAULT_AUTO_OFF: DisplayDuration =
+    match DisplayDuration::from_millis(super::power::DEFAULT_DISPLAY_AUTO_OFF_MILLISECONDS) {
+        Ok(duration) => duration,
+        Err(_) => panic!("the default display auto-off duration is nonzero"),
+    };
+
 pub struct DisplayCoordinator {
     state: DisplayState,
 }
