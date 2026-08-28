@@ -958,6 +958,14 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
                 self.status,
             )
             .await;
+            // Same cadence as tokio `send_periodic_peering`: mDNS targets are not the only
+            // peers we must keep alive, and IPv6 multicast beacons are blocked on many APs.
+            send_unicast_peer_refresh(
+                &self.primary.unicast_discovery,
+                &self.brain,
+                self.status,
+            )
+            .await;
         }
         BeaconMaintenanceOutcome::Completed
     }
@@ -1569,6 +1577,30 @@ async fn send_discovery_probes<const MEMBERS: usize>(
         Either::First(()) | Either::Second(Ok(())) => {}
         Either::Second(Err(_timeout)) => {
             crate::diagnostic_log::debug!("wifi-auto: discovery probe budget exhausted");
+        }
+    }
+}
+
+async fn send_unicast_peer_refresh<const MEMBERS: usize>(
+    unicast_discovery_socket: &UdpSocket<'_>,
+    brain: &contract::FixedAutoInterfaceProtocol<MEMBERS>,
+    status: AutoWifiStatus<MEMBERS>,
+) {
+    let token = brain.our_peering_token();
+    let send = with_timeout(SEND_TIMEOUT, async {
+        for address in brain.known_peer_addresses() {
+            let _send_result = unicast_discovery_socket
+                .send_to(
+                    token.as_bytes(),
+                    (IpAddress::Ipv6(address), contract::UNICAST_DISCOVERY_PORT),
+                )
+                .await;
+        }
+    });
+    match select(status.wait_until_disabled(), send).await {
+        Either::First(()) | Either::Second(Ok(())) => {}
+        Either::Second(Err(_timeout)) => {
+            crate::diagnostic_log::debug!("wifi-auto: unicast peer refresh budget exhausted");
         }
     }
 }
