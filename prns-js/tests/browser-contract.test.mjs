@@ -64,7 +64,7 @@ test("generated contract inventories and guards accept exactly their known strin
     [
       "LINK_CLOSED_REASON_VALUES",
       "isLinkClosedReason",
-      ["Timeout", "PeerClosed", "MalformedRtt"],
+      ["Timeout", "PeerClosed", "MalformedRtt", "LocallyClosed"],
     ],
     ["HOST_ROLE_NAME_VALUES", "isHostRoleName", ["Endpoint", "Transport"]],
     [

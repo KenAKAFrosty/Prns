@@ -106,6 +106,7 @@ try {
   clearTimeout(browserTimeout);
   assert.deepEqual(result, {
     title: "PASS",
+    execution: "DedicatedWorker",
     outcome: "Ready",
     command: "Failed:UnknownLink",
     resource: "Failed:UnknownLink",
@@ -117,6 +118,8 @@ try {
     webSocketFraming: "Resolved",
     bluetoothContract: "Shared",
     bluetoothSession: "Bridged",
+    bluetoothWorker: "Bridged",
+    stop: "Idempotent",
     compression: "Compressed",
     compressionDetail: "message:message",
   });

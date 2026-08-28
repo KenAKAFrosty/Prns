@@ -30,13 +30,14 @@ use personal_rns::routing::upstream_app_destinations::{LinkRequestPolicy, ProofS
 use personal_rns::routing::warmth::Departure;
 use personal_rns::storage::GrowableHeap;
 use personal_rns::units::{ByteLimit, DurationMillis};
-use prns_host::PrnsLimits;
+use prns_host::{EventBatchProjection, EventProjection, PrnsLimits};
 use prns_host_cooperative::{CooperativeHost, Entropy, MonotonicMillis};
 use prns_runtime::runtime::persistence_snapshots::{
     snapshot_persisted_state, snapshot_self_ratchets,
 };
 use wasm_bindgen::prelude::*;
 
+use crate::event_projection::{capture_journaled, CapturedJournal};
 use crate::input::{
     array_to_strings, destination_hash_from_vec, identity_hash_from_vec, interface_id_from_vec,
     link_id_from_vec, optional_array, optional_bool, optional_bytes, optional_i64, optional_string,
@@ -45,8 +46,8 @@ use crate::input::{
     required_u64, secret_key_from_vec,
 };
 use crate::js_translation::{
-    interface_kind_name, journaled_to_js, outbound_to_js, set_bigint, set_bytes, set_str, set_u32,
-    set_u64, set_usize, set_value,
+    interface_kind_name, outbound_to_js, set_bigint, set_bytes, set_str, set_u32, set_u64,
+    set_usize, set_value,
 };
 use crate::parameters::{bitrate_bps_u32, BROWSER_PERSISTENCE_VERSION};
 
@@ -85,7 +86,8 @@ pub(crate) enum OutboundTarget {
 pub struct PrnsRuntime {
     engine: EngineState<GrowableHeap>,
     interfaces: Vec<InterfaceDescriptor>,
-    events: Vec<JsValue>,
+    events: Vec<EventProjection>,
+    control_events: Vec<JsValue>,
     outbound: Vec<OutboundFrame>,
     next_command_id: u64,
     revision: u64,
@@ -116,6 +118,7 @@ impl PrnsRuntime {
             engine: EngineState::new(secret),
             interfaces: Vec::new(),
             events: Vec::new(),
+            control_events: Vec::new(),
             outbound: Vec::new(),
             next_command_id: 0,
             revision: 0,
@@ -837,10 +840,18 @@ impl PrnsRuntime {
     #[wasm_bindgen(js_name = drainEvents)]
     pub fn drain_events(&mut self) -> Array {
         let drained = Array::new();
-        for event in self.events.drain(..) {
+        for event in self.control_events.drain(..) {
             drained.push(&event);
         }
         drained
+    }
+
+    #[wasm_bindgen(js_name = drainEventBatch)]
+    pub fn drain_event_batch(&mut self) -> Result<Vec<u8>, JsValue> {
+        let batch = EventBatchProjection::from_records(core::mem::take(&mut self.events));
+        batch.encode().map_err(|error| {
+            JsValue::from_str(&format!("event batch projection failed: {error:?}"))
+        })
     }
 
     #[wasm_bindgen(js_name = drainOutbound)]
@@ -1142,6 +1153,7 @@ impl PrnsRuntime {
         for reaction in reactions {
             match reaction {
                 CapturedReaction::Event(event) => self.events.push(event),
+                CapturedReaction::Control(event) => self.control_events.push(event),
                 CapturedReaction::Outbound(frame) => self.outbound.push(frame),
             }
         }
@@ -1279,7 +1291,8 @@ fn resource_strategy(options: &JsValue) -> Result<ResourceStrategy, JsValue> {
 }
 
 enum CapturedReaction {
-    Event(JsValue),
+    Event(EventProjection),
+    Control(JsValue),
     Outbound(OutboundFrame),
 }
 
@@ -1308,7 +1321,10 @@ impl EntropyCursor {
 
 fn capture_reaction(reaction: EngineReaction<'_>) -> CapturedReaction {
     match reaction {
-        EngineReaction::Journaled(journaled) => CapturedReaction::Event(journaled_to_js(journaled)),
+        EngineReaction::Journaled(journaled) => match capture_journaled(journaled) {
+            CapturedJournal::Event(event) => CapturedReaction::Event(event),
+            CapturedJournal::Control(event) => CapturedReaction::Control(event),
+        },
         EngineReaction::Directive(directive) => {
             CapturedReaction::Outbound(directive_to_frame(directive))
         }

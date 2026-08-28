@@ -6,7 +6,6 @@ import type {
 } from "../interface_contract.js";
 import type { PrnsOutboundFrame } from "../outbound.js";
 import type {
-  BluetoothReassemblerBinding,
   EntropyFailure,
   RuntimeRejected,
   StableIdentityUnavailable,
@@ -48,6 +47,13 @@ type BluetoothOutboundActivityOutcome =
   | Tag<"RuntimeAdvanced">
   | Tag<"InterfaceDetached">;
 
+type BluetoothHostOutcome<Outcome> = Outcome | Promise<Outcome>;
+
+export type BluetoothHostReassembler = {
+  absorb(bytes: Uint8Array): BluetoothHostOutcome<Uint8Array | undefined>;
+  release?(): void;
+};
+
 export type BluetoothRuntimeHost = {
   bluetoothIdentityReadiness():
     | Tag<"Ready">
@@ -61,13 +67,13 @@ export type BluetoothRuntimeHost = {
   bluetoothDialerHello(): Uint8Array;
   bluetoothDecodeControl(bytes: Uint8Array): unknown;
   bluetoothDataFragments(packet: PacketFrame): Uint8Array[];
-  createBluetoothReassembler(): BluetoothReassemblerBinding;
+  createBluetoothReassembler(): BluetoothHostReassembler;
   registerInterface(
     registration: BluetoothRuntimeRegistration,
-  ): BluetoothRegistrationOutcome;
-  deactivateInterface(id: InterfaceId): BluetoothDetachOutcome;
-  ingest(id: InterfaceId, bytes: PacketFrame): BluetoothIngestOutcome;
-  takeOutboundFor(id: InterfaceId): BluetoothOutboundOutcome;
+  ): BluetoothHostOutcome<BluetoothRegistrationOutcome>;
+  deactivateInterface(id: InterfaceId): BluetoothHostOutcome<BluetoothDetachOutcome>;
+  ingest(id: InterfaceId, bytes: PacketFrame): BluetoothHostOutcome<BluetoothIngestOutcome>;
+  takeOutboundFor(id: InterfaceId): BluetoothHostOutcome<BluetoothOutboundOutcome>;
   waitForOutboundActivity(
     id: InterfaceId,
   ): Promise<BluetoothOutboundActivityOutcome>;

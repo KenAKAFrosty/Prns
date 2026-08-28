@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod bluetooth_auto;
+mod event_projection;
 mod input;
 mod js_translation;
 mod parameters;

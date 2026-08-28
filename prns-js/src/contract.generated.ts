@@ -379,6 +379,90 @@ export function isSerialStopBits(value: unknown): value is SerialStopBits {
   return typeof value === "string" && (SERIAL_STOP_BITS_VALUES as readonly string[]).includes(value);
 }
 
+export const APPLICATION_EVENT_KIND_CODES = Object.freeze({
+  SingleDelivery: 100,
+  Request: 101,
+  Response: 102,
+  ResponseSegment: 103,
+  ResourceAvailable: 104,
+  ResourceSegment: 105,
+  ResourceNeedsDecompression: 106,
+  ChannelMessage: 107,
+  LinkDelivery: 108,
+} as const);
+
+export type ApplicationEventKindCode = (typeof APPLICATION_EVENT_KIND_CODES)[keyof typeof APPLICATION_EVENT_KIND_CODES];
+
+export const DIAGNOSTIC_EVENT_KIND_CODES = Object.freeze({
+  AnnounceHeard: 200,
+  LinkEstablished: 201,
+  PeerIdentified: 202,
+  LinkClosed: 203,
+  LinkInterfaceMismatch: 204,
+  ResourceAssembled: 205,
+  ResourceFailed: 206,
+  ResourceSendProgress: 207,
+  SelfRatchetRotated: 208,
+  AnnounceHeldDropped: 209,
+  Delivered: 210,
+  RouteExpired: 211,
+  RouteEvicted: 212,
+  RouteInterfaceGone: 213,
+  RouteDropped: 214,
+  BackendDiagnostic: 215,
+  DiagnosticsDropped: 216,
+  PersistenceRestored: 217,
+  PersistenceFlushed: 218,
+  PersistenceFlushFailed: 219,
+} as const);
+
+export type DiagnosticEventKindCode = (typeof DIAGNOSTIC_EVENT_KIND_CODES)[keyof typeof DIAGNOSTIC_EVENT_KIND_CODES];
+
+export const EVENT_FIELD_CODES = Object.freeze({
+  Destination: 1,
+  SourceInterface: 2,
+  Plaintext: 3,
+  LinkId: 4,
+  RequestId: 5,
+  Requester: 6,
+  PathHash: 7,
+  RttMillis: 8,
+  Data: 9,
+  SegmentIndex: 10,
+  TotalSegments: 11,
+  Hash: 12,
+  OriginalHash: 13,
+  Metadata: 14,
+  TotalBytes: 15,
+  StreamId: 16,
+  UncompressedDataBytes: 17,
+  MessageType: 18,
+  Identity: 19,
+  Reason: 20,
+  AttachedInterface: 21,
+  ArrivedOn: 22,
+  TotalSizeBytes: 23,
+  Cause: 24,
+  TransferredBytes: 25,
+  PhysicalTransferredBytes: 26,
+  Detail: 27,
+  Kind: 28,
+  DroppedCount: 29,
+  Hops: 30,
+  Stream: 31,
+  Routes: 32,
+  DestinationIdentities: 33,
+  Tunnels: 34,
+  Ratchets: 35,
+  Refused: 36,
+  Dropped: 37,
+  PersistenceCause: 38,
+  PersistenceTarget: 39,
+  AppData: 40,
+} as const);
+
+export type EventFieldCode = (typeof EVENT_FIELD_CODES)[keyof typeof EVENT_FIELD_CODES];
+
 export type DestinationName = {
   readonly appName: string;
   readonly aspects: readonly string[];

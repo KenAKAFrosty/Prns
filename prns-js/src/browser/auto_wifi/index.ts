@@ -167,7 +167,7 @@ type RankedGatewayCandidate = GatewayCandidate & {
   readonly weight: string;
 };
 
-type SelectionSeedOutcome =
+export type SelectionSeedOutcome =
   | Tag<"Loaded", Uint8Array>
   | Extract<AutoWifiFailure, Tag<"SelectionIdentityUnavailable", unknown>>;
 
@@ -193,15 +193,18 @@ export class AutoWifiInterface {
   readonly #host: AutoWifiRuntimeHost;
   #controller: AutoWifiController | undefined;
 
-  constructor(host: AutoWifiRuntimeHost) {
+  readonly #selectionSeed: Uint8Array | undefined;
+
+  constructor(host: AutoWifiRuntimeHost, selectionSeed?: Uint8Array) {
     this.#host = host;
+    this.#selectionSeed = selectionSeed;
   }
 
   start(): AutoWifiController {
     if (this.#controller && !this.#controller.closed) {
       return this.#controller;
     }
-    this.#controller = new AutoWifiController(this.#host);
+    this.#controller = new AutoWifiController(this.#host, this.#selectionSeed);
     return this.#controller;
   }
 }
@@ -220,9 +223,11 @@ export class AutoWifiController {
   #refreshTimer: number | undefined;
   #recoveryTimer: number | undefined;
 
-  constructor(host: AutoWifiRuntimeHost) {
+  constructor(host: AutoWifiRuntimeHost, selectionSeed?: Uint8Array) {
     this.#host = host;
-    this.#seed = loadSelectionSeed();
+    this.#seed = selectionSeed === undefined
+      ? loadOrCreateAutoWifiSelectionSeed()
+      : Promise.resolve(Tag("Loaded", selectionSeed.slice()));
     this.#refreshTimer = globalThis.setInterval(() => {
       this.#requestRefresh();
     }, REFRESH_INTERVAL_MS);
@@ -1221,7 +1226,7 @@ function isLocalHostname(hostname: string): boolean {
   );
 }
 
-async function loadSelectionSeed(): Promise<SelectionSeedOutcome> {
+export async function loadOrCreateAutoWifiSelectionSeed(): Promise<SelectionSeedOutcome> {
   try {
     const storage = globalThis.localStorage;
     if (!storage) {

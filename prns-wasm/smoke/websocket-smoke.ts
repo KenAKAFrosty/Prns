@@ -256,6 +256,7 @@ async function main(): Promise<void> {
 
   try {
     const rejectedStore = await Prns.create({
+      execution: "MainThread",
       wasm: wasmModule(),
       identityStore: {
         load: async () => {
@@ -271,6 +272,7 @@ async function main(): Promise<void> {
 
     const prns = expectReady(
       await Prns.create({
+        execution: "MainThread",
         wasm: wasmModule(),
         identityStore: fixedIdentityStore(),
         entropy: fixedEntropy,
@@ -668,7 +670,7 @@ async function main(): Promise<void> {
         identity: inspectedIdentity,
       },
     ];
-    const stableRendezvousSnapshot = prns.hostSnapshot();
+    const stableRendezvousSnapshot = await prns.hostSnapshot();
     assert(
       stableRendezvousSnapshot.tag === "Captured" &&
         stableRendezvousSnapshot.data.interfaces.some(
@@ -787,7 +789,7 @@ async function main(): Promise<void> {
         stopAttached.data.tag === "InterfaceAttached",
       "stable WebSocket client attaches before shutdown",
     );
-    const runningSnapshot = prns.hostSnapshot();
+    const runningSnapshot = await prns.hostSnapshot();
     assert(runningSnapshot.tag === "Captured", "stable host snapshot is captured");
     assert(
       runningSnapshot.data.backend.backend === "Cooperative" &&
@@ -813,7 +815,7 @@ async function main(): Promise<void> {
       ).closeCalls === 1,
       "browser shutdown closes stable transports",
     );
-    const stoppedSnapshot = prns.hostSnapshot();
+    const stoppedSnapshot = await prns.hostSnapshot();
     assert(
       stoppedSnapshot.tag === "Captured" &&
         !stoppedSnapshot.data.runtime.running &&

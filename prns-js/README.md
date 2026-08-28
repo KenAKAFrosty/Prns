@@ -34,7 +34,7 @@ console.log(node.identityHash);
 await node.stop();
 ```
 
-Browsers use the cooperative WebAssembly backend:
+Browsers use the cooperative WebAssembly backend on a module DedicatedWorker by default:
 
 ```ts
 import { Prns } from "personal-rns/browser";
@@ -45,8 +45,29 @@ if (created.tag !== "Ready") {
 }
 
 const node = created.data;
+console.log(node.execution);
 console.log(node.backendInfo);
 await node.stop();
+```
+
+The Worker owns the Rust engine, command settlement, WebSocket and Auto Wi-Fi
+connections, and stateful Bluetooth/USB framing. Application-event batches
+cross to the page as one packed transferable buffer and are materialized there.
+Web Bluetooth and WebUSB device objects remain on the page because those APIs
+are permission-gated page capabilities; their packet traffic uses a separate
+bounded capability channel.
+
+`execution: "MainThread"` is the explicit diagnostic and embedding mode. It is
+also the only mode that accepts an already imported `wasm` module, a custom
+entropy function, or a custom clock. Worker startup and protocol failures are
+typed `WorkerStartFailed` and `WorkerProtocolFailed` creation outcomes; Prns
+does not silently fall back to the main thread. A static deployment that keeps
+the generated WASM package outside the npm package can provide its module URL:
+
+```ts
+const created = await Prns.create({
+  wasmModuleUrl: new URL("./pkg/prns_wasm.js", import.meta.url),
+});
 ```
 
 Web Bluetooth connects the browser as a GATT central to a native or embedded
@@ -132,7 +153,7 @@ match(settlement.data, {
   RequesterAllowed: confirmRequester,
 });
 ```
-The compiler requires every declared case. Commands settle their returned promises, expected failures are typed tagged outcomes, and public binary values are semantically branded `Uint8Array` instances. Browser backends attach `WebSocketClient` and `BrowserRendezvous` through the bounded cooperative transport and return `UnsupportedByBackend` for native-only interface kinds. Each host reports its current support through `backendInfo` and `capabilities`. The browser `hostSnapshot()` projects the generated inspection contract with revisioned routes, destination identities, logical interfaces, transfer counters, runtime health, and exact persistence status. A `ResourceAvailable` event owns a `ResourceStream`; its `claim()` method uses the same `Claimed | AlreadyClaimed` contract.
+The compiler requires every declared case. Commands settle their returned promises, expected failures are typed tagged outcomes, and public binary values are semantically branded `Uint8Array` instances. Browser backends attach `WebSocketClient` and `BrowserRendezvous` through the bounded cooperative transport and return `UnsupportedByBackend` for native-only interface kinds. Each host reports its current support through `backendInfo` and `capabilities`. Browser destination registration, node-page registration, `snapshot()`, and `hostSnapshot()` are asynchronous so the public API is identical across Worker and main-thread execution. The browser `hostSnapshot()` projects the generated inspection contract with revisioned routes, destination identities, logical interfaces, transfer counters, runtime health, and exact persistence status. A `ResourceAvailable` event owns a `ResourceStream`; its `claim()` method uses the same `Claimed | AlreadyClaimed` contract.
 
 Browser hosts are ephemeral by default. `persistentBrowser()` selects a caller-named `localStorage` root for the host identity, Bluetooth identity, routing state, destination identities, tunnels, and ratchets. Interfaces remain caller-supplied after restart. `stop()` flushes the bounded state before settling, while restoration and flush results appear on the diagnostic stream and in `hostSnapshot()`:
 

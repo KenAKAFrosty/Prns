@@ -52,9 +52,14 @@ export type BluetoothConnectFailure = Exclude<
 export class BluetoothInterface {
   readonly name = "bluetooth" as const;
   readonly #host: BluetoothRuntimeHost;
+  readonly #onConnected: ((session: BluetoothSession) => void) | undefined;
 
-  constructor(host: BluetoothRuntimeHost) {
+  constructor(
+    host: BluetoothRuntimeHost,
+    onConnected?: (session: BluetoothSession) => void,
+  ) {
     this.#host = host;
+    this.#onConnected = onConnected;
   }
 
   async connect(): Promise<BluetoothConnectOutcome> {
@@ -142,6 +147,7 @@ export class BluetoothInterface {
         await session.close();
         return started;
       }
+      this.#onConnected?.(session);
       return Tag("Connected", session);
     } catch (error) {
       if (session) {

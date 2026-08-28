@@ -17,9 +17,8 @@ import type {
   InterfaceSessionFailure,
   InterfaceSessionStatus,
 } from "../interface_contract.js";
-import type { UsbAutoDecoderBinding } from "../runtime_contract.js";
 import type { UsbAutoSession } from "./index.js";
-import type { UsbAutoRuntimeHost } from "./runtime.js";
+import type { UsbAutoHostDecoder, UsbAutoRuntimeHost } from "./runtime.js";
 import { WebUsbAutoTransport } from "./transport.js";
 import type { UsbAutoWriteOutcome } from "./transport.js";
 
@@ -42,7 +41,7 @@ export class BrowserUsbAutoSession implements UsbAutoSession {
 
   readonly #host: UsbAutoRuntimeHost;
   readonly #transport: WebUsbAutoTransport;
-  readonly #decoder: UsbAutoDecoderBinding;
+  readonly #decoder: UsbAutoHostDecoder;
   readonly #nodeTag: Uint8Array;
   #writeQueue: Promise<UsbAutoWriteOutcome> = Promise.resolve(Tag("Written"));
   #closed = false;
@@ -76,8 +75,9 @@ export class BrowserUsbAutoSession implements UsbAutoSession {
       return closedSessionOutcome(this.#status);
     }
     this.#closed = true;
+    this.#decoder.release?.();
     const causes: InterfaceCleanupFailure[] = [];
-    const detached = this.#host.deactivateInterface(this.interfaceId);
+    const detached = await this.#host.deactivateInterface(this.interfaceId);
     if (detached.tag !== "Detached") {
       causes.push(Tag("RuntimeDetachFailed", { detail: detached.data.detail }));
     }
@@ -116,7 +116,7 @@ export class BrowserUsbAutoSession implements UsbAutoSession {
         }
         let messages: unknown[];
         try {
-          messages = this.#decoder.feed(chunk);
+          messages = await this.#decoder.feed(chunk);
         } catch (error) {
           await this.#fail(
             Tag("ProtocolViolation", {
@@ -178,7 +178,7 @@ export class BrowserUsbAutoSession implements UsbAutoSession {
     try {
       while (!this.#closed) {
         if (this.#confirmed) {
-          const outbound = this.#host.takeOutboundFor(this.interfaceId);
+          const outbound = await this.#host.takeOutboundFor(this.interfaceId);
           if (outbound.tag !== "Outbound") {
             await this.#fail(outbound);
             return;
@@ -220,7 +220,7 @@ export class BrowserUsbAutoSession implements UsbAutoSession {
       },
       Data: async (bytes) => {
         if (this.#confirmed && bytes.length > 0) {
-          const ingested = this.#host.ingest(
+          const ingested = await this.#host.ingest(
             this.interfaceId,
             packetFrame(bytes),
           );
@@ -242,7 +242,8 @@ export class BrowserUsbAutoSession implements UsbAutoSession {
     }
     this.#status = Tag("Failed", sessionFailure);
     this.#closed = true;
-    this.#host.deactivateInterface(this.interfaceId);
+    this.#decoder.release?.();
+    await this.#host.deactivateInterface(this.interfaceId);
     await this.#writeQueue;
     await this.#transport.close();
   }

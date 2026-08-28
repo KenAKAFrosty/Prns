@@ -9,6 +9,8 @@ import type {
 import { byteKey } from "./bytes.js";
 import { describeHostError } from "./host_errors.js";
 import type { BrowserUsbDeviceFilter } from "./host_apis.js";
+import type { BluetoothHostReassembler } from "./bluetooth/runtime.js";
+import type { UsbAutoHostDecoder } from "./usb_auto/runtime.js";
 import {
   outboundTargets,
   parseOutboundFrame,
@@ -343,12 +345,26 @@ export class RuntimeHost {
     }
   }
 
-  createUsbAutoDecoder(): UsbAutoDecoderBinding {
-    return new this.#wasm.UsbAutoDecoder();
+  createUsbAutoDecoder(): UsbAutoHostDecoder {
+    const decoder = new this.#wasm.UsbAutoDecoder();
+    return {
+      feed: (chunk) => decoder.feed(chunk),
+      release: () => {
+        (decoder as UsbAutoDecoderBinding & { free?: () => void }).free?.();
+      },
+    };
   }
 
-  createBluetoothReassembler(): BluetoothReassemblerBinding {
-    return new this.#wasm.BluetoothReassembler();
+  createBluetoothReassembler(): BluetoothHostReassembler {
+    const reassembler = new this.#wasm.BluetoothReassembler();
+    return {
+      absorb: (bytes) => reassembler.absorb(bytes),
+      release: () => {
+        (
+          reassembler as BluetoothReassemblerBinding & { free?: () => void }
+        ).free?.();
+      },
+    };
   }
 
   createWebSocketFramingCodec(

@@ -156,6 +156,7 @@ export type PrnsRuntimeBinding = {
   allowRequester(options: RuntimeAllowRequesterOptions): bigint;
   closeLink(options: RuntimeCloseLinkOptions): bigint;
   ingest(options: RuntimeIngestOptions): void;
+  drainEventBatch(): Uint8Array;
   drainEvents(): unknown[];
   drainOutbound(): unknown[];
   persistedState(options: { readonly nowMs: InstantMillis }): unknown;

@@ -30,6 +30,7 @@ import {
 import type {
   BluetoothRuntimeHost,
   BluetoothRuntimeRegistration,
+  BluetoothHostReassembler,
 } from "./runtime.js";
 import type {
   BluetoothConnectFailure,
@@ -44,7 +45,6 @@ import type {
   InterfaceSessionFailure,
   InterfaceSessionStatus,
 } from "../interface_contract.js";
-import type { BluetoothReassemblerBinding } from "../runtime_contract.js";
 
 type BluetoothControl =
   | Tag<"Hello", Uint8Array>
@@ -67,30 +67,28 @@ export class BrowserBluetoothSession implements BluetoothSession {
   readonly #server: BrowserBluetoothRemoteGattServer;
   readonly #control: BrowserBluetoothRemoteGattCharacteristic;
   readonly #data: BrowserBluetoothRemoteGattCharacteristic;
-  readonly #reassembler: BluetoothReassemblerBinding;
+  readonly #reassembler: BluetoothHostReassembler;
   readonly #controlNotification = (event: Event): void => {
-    try {
-      const handled = this.#handleControlEvent(
-        event as BrowserBluetoothCharacteristicEvent,
-      );
+    void this.#handleControlEvent(
+      event as BrowserBluetoothCharacteristicEvent,
+    ).then((handled) => {
       if (handled.tag !== "Handled") {
         this.#handleEventFailure(handled);
       }
-    } catch (error) {
+    }).catch((error: unknown) => {
       this.#handleEventFailure(unexpectedSessionFailure(error));
-    }
+    });
   };
   readonly #dataNotification = (event: Event): void => {
-    try {
-      const handled = this.#handleDataEvent(
-        event as BrowserBluetoothCharacteristicEvent,
-      );
+    void this.#handleDataEvent(
+      event as BrowserBluetoothCharacteristicEvent,
+    ).then((handled) => {
       if (handled.tag !== "Handled") {
         this.#handleEventFailure(handled);
       }
-    } catch (error) {
+    }).catch((error: unknown) => {
       this.#handleEventFailure(unexpectedSessionFailure(error));
-    }
+    });
   };
   readonly #gattDisconnected = (): void => {
     this.#handleGattDisconnected();
@@ -183,10 +181,11 @@ export class BrowserBluetoothSession implements BluetoothSession {
       return closedSessionOutcome(this.#status);
     }
     this.#closed = true;
+    this.#reassembler.release?.();
     this.#removeEventListeners();
     const causes: InterfaceCleanupFailure[] = [];
     if (this.#interfaceId) {
-      const detached = this.#host.deactivateInterface(this.#interfaceId);
+      const detached = await this.#host.deactivateInterface(this.#interfaceId);
       if (detached.tag !== "Detached") {
         causes.push(Tag("RuntimeDetachFailed", { detail: detached.data.detail }));
       }
@@ -239,9 +238,9 @@ export class BrowserBluetoothSession implements BluetoothSession {
     return Tag("Confirmed");
   }
 
-  #handleControlEvent(
+  async #handleControlEvent(
     event: BrowserBluetoothCharacteristicEvent,
-  ): BluetoothHandleOutcome {
+  ): Promise<BluetoothHandleOutcome> {
     const decoded = characteristicBytes(event);
     if (decoded.tag !== "Decoded") {
       return decoded;
@@ -259,13 +258,13 @@ export class BrowserBluetoothSession implements BluetoothSession {
         detail: describeHostError(error),
       });
     }
-    return match_into<BluetoothHandleOutcome>().from(control, {
-      Hello: () =>
+    return match_into<Promise<BluetoothHandleOutcome>>().from(control, {
+      Hello: async () =>
         Tag("ProtocolViolation", {
           protocol: "Bluetooth",
           detail: "Bluetooth dialer received an unexpected hello",
         }),
-      Welcome: (identity) => {
+      Welcome: async (identity) => {
         if (this.#confirmed) {
           return Tag("Handled");
         }
@@ -285,7 +284,7 @@ export class BrowserBluetoothSession implements BluetoothSession {
             detail: describeHostError(error),
           });
         }
-        const registered = this.#host.registerInterface(registration);
+        const registered = await this.#host.registerInterface(registration);
         if (registered.tag !== "Registered") {
           return registered;
         }
@@ -294,7 +293,7 @@ export class BrowserBluetoothSession implements BluetoothSession {
         this.#status = Tag("Active");
         return Tag("Handled");
       },
-      Close: (reason) => {
+      Close: async (reason) => {
         if (!this.#confirmed) {
           this.#abortConnect(
             Tag("ConnectionFailed", {
@@ -311,22 +310,22 @@ export class BrowserBluetoothSession implements BluetoothSession {
     });
   }
 
-  #handleDataEvent(
+  async #handleDataEvent(
     event: BrowserBluetoothCharacteristicEvent,
-  ): SessionHandleOutcome {
+  ): Promise<SessionHandleOutcome> {
     const decoded = characteristicBytes(event);
     return decoded.tag === "Decoded"
       ? this.#handleDataBytes(decoded.data)
       : decoded;
   }
 
-  #handleDataBytes(bytes: Uint8Array): SessionHandleOutcome {
+  async #handleDataBytes(bytes: Uint8Array): Promise<SessionHandleOutcome> {
     if (!this.#confirmed || !this.#interfaceId) {
       return Tag("Handled");
     }
     let frame: Uint8Array | undefined;
     try {
-      frame = this.#reassembler.absorb(bytes);
+      frame = await this.#reassembler.absorb(bytes);
     } catch (error) {
       return Tag("ProtocolViolation", {
         protocol: "Bluetooth",
@@ -334,7 +333,7 @@ export class BrowserBluetoothSession implements BluetoothSession {
       });
     }
     if (frame && frame.length > 0) {
-      const ingested = this.#host.ingest(this.#interfaceId, packetFrame(frame));
+      const ingested = await this.#host.ingest(this.#interfaceId, packetFrame(frame));
       return ingested.tag === "Accepted" ? Tag("Handled") : ingested;
     }
     return Tag("Handled");
@@ -372,9 +371,10 @@ export class BrowserBluetoothSession implements BluetoothSession {
         : unexpectedSessionFailure(describeBluetoothConnectFailure(failure)),
     );
     this.#closed = true;
+    this.#reassembler.release?.();
     this.#removeEventListeners();
     if (this.#interfaceId) {
-      this.#host.deactivateInterface(this.#interfaceId);
+      void this.#host.deactivateInterface(this.#interfaceId);
     }
     disconnectBluetoothServer(this.#server);
   }
@@ -386,7 +386,7 @@ export class BrowserBluetoothSession implements BluetoothSession {
         if (!this.#confirmed || !interfaceId) {
           return;
         }
-        const outbound = this.#host.takeOutboundFor(interfaceId);
+        const outbound = await this.#host.takeOutboundFor(interfaceId);
         if (outbound.tag !== "Outbound") {
           await this.#fail(outbound);
           return;
@@ -421,9 +421,10 @@ export class BrowserBluetoothSession implements BluetoothSession {
     }
     this.#status = Tag("Failed", sessionFailure);
     this.#closed = true;
+    this.#reassembler.release?.();
     this.#removeEventListeners();
     if (this.#interfaceId) {
-      this.#host.deactivateInterface(this.#interfaceId);
+      await this.#host.deactivateInterface(this.#interfaceId);
     }
     await this.#writeQueue;
     disconnectBluetoothServer(this.#server);
@@ -444,19 +445,23 @@ export class BrowserBluetoothSession implements BluetoothSession {
       return;
     }
     this.#closed = true;
+    this.#reassembler.release?.();
     this.#removeEventListeners();
+    void this.#completeGattDisconnection();
+  }
+
+  async #completeGattDisconnection(): Promise<void> {
     const detached = this.#interfaceId
-      ? this.#host.deactivateInterface(this.#interfaceId)
+      ? await this.#host.deactivateInterface(this.#interfaceId)
       : Tag("Detached");
-    this.#status =
-      detached.tag === "Detached"
-        ? Tag(
-            "Failed",
-            Tag("Disconnected", {
-              detail: "Bluetooth GATT connection closed",
-            }),
-          )
-        : Tag("Failed", detached);
+    this.#status = detached.tag === "Detached"
+      ? Tag(
+          "Failed",
+          Tag("Disconnected", {
+            detail: "Bluetooth GATT connection closed",
+          }),
+        )
+      : Tag("Failed", detached);
   }
 
   #removeEventListeners(): void {

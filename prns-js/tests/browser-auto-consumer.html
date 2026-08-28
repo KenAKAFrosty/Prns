@@ -363,6 +363,75 @@
         }
       }
 
+      async function bluetoothWorkerOutcome() {
+        let restoreBluetooth = () => undefined;
+        let node;
+        try {
+          const wasm = await import("/prns-wasm/smoke/pkg/prns_wasm.js");
+          await wasm.default();
+          const control = new BluetoothSmokeCharacteristic();
+          const data = new BluetoothSmokeCharacteristic();
+          const service = new BluetoothSmokeService(wasm, control, data);
+          const device = new BluetoothSmokeDevice(service);
+          const previous = Object.getOwnPropertyDescriptor(
+            navigator,
+            "bluetooth",
+          );
+          Object.defineProperty(navigator, "bluetooth", {
+            configurable: true,
+            value: {
+              async requestDevice() {
+                return device;
+              },
+            },
+          });
+          restoreBluetooth = () => {
+            if (previous === undefined) {
+              delete navigator.bluetooth;
+            } else {
+              Object.defineProperty(navigator, "bluetooth", previous);
+            }
+          };
+          const peerIdentity = new Uint8Array(16).fill(31);
+          const welcome = new Uint8Array([
+            0x02,
+            ...peerIdentity,
+            0x03,
+            0x00,
+            0x00,
+            0x01,
+            0xf4,
+            0x80,
+          ]);
+          control.onWrite = (bytes) => {
+            if (wasm.bluetoothDecodeControl(bytes).type === "hello") {
+              queueMicrotask(() => control.notify(welcome));
+            }
+          };
+          const created = await Prns.create({});
+          if (created.tag !== "Ready") {
+            return `Failed:Create:${created.tag}`;
+          }
+          node = created.data;
+          const connected = await node.interfaces.bluetooth.connect();
+          if (connected.tag !== "Connected") {
+            return `Failed:Connect:${connected.tag}`;
+          }
+          const stopped = await node.stop();
+          node = undefined;
+          return stopped.tag === "Stopped" &&
+            connected.data.status.tag === "Closed" &&
+            device.disconnects === 1
+            ? "Bridged"
+            : `Failed:${stopped.tag}:${connected.data.status.tag}:${device.disconnects}`;
+        } catch (error) {
+          return `Failed:${error instanceof Error ? error.message : error}`;
+        } finally {
+          await node?.stop();
+          restoreBluetooth();
+        }
+      }
+
       class BluetoothSmokeCharacteristic extends EventTarget {
         value;
         writes = [];
@@ -416,12 +485,15 @@
 
       class BluetoothSmokeDevice extends EventTarget {
         gatt;
+        disconnects = 0;
 
         constructor(service) {
           super();
           this.gatt = {
             connect: async () => this.gatt,
-            disconnect: () => undefined,
+            disconnect: () => {
+              this.disconnects += 1;
+            },
             getPrimaryService: async () => service,
           };
         }
@@ -462,10 +534,12 @@
       const webSocketFraming = await webSocketFramingOutcome();
       const bluetoothContract = await bluetoothContractOutcome();
       const bluetoothSession = await bluetoothSessionOutcome();
+      const bluetoothWorker = await bluetoothWorkerOutcome();
       document.body.dataset.routePersistence = routePersistence;
       document.body.dataset.webSocketFraming = webSocketFraming;
       document.body.dataset.bluetoothContract = bluetoothContract;
       document.body.dataset.bluetoothSession = bluetoothSession;
+      document.body.dataset.bluetoothWorker = bluetoothWorker;
       document.body.dataset.compression =
         compression ? "Compressed" : "Failed";
       document.body.dataset.compressionDetail = compressionDetail;
@@ -477,7 +551,7 @@
       const firstPersistent = await Prns.create(persistentOptions);
       let persistence = "Failed";
       if (firstPersistent.tag === "Ready") {
-        const firstDestination = firstPersistent.data.registerSingleDestination({
+        const firstDestination = await firstPersistent.data.registerSingleDestination({
           appName: "browser-smoke",
           aspects: ["persistence"],
           requestHandlers: [],
@@ -489,14 +563,14 @@
           const restoration = diagnostics.tag === "Claimed"
             ? await diagnostics.data[Symbol.asyncIterator]().next()
             : { done: true };
-          const secondDestination = restored.data.registerSingleDestination({
+          const secondDestination = await restored.data.registerSingleDestination({
             appName: "browser-smoke",
             aspects: ["persistence"],
             requestHandlers: [],
           });
-          const restoredSnapshot = restored.data.hostSnapshot();
+          const restoredSnapshot = await restored.data.hostSnapshot();
           const restoredStopped = await restored.data.stop();
-          const flushedSnapshot = restored.data.hostSnapshot();
+          const flushedSnapshot = await restored.data.hostSnapshot();
           const sameDestination =
             firstDestination.tag === "Registered" &&
             secondDestination.tag === "Registered" &&
@@ -552,7 +626,7 @@
       let persistenceFailures = "Failed";
       if (saveFailure.tag === "Ready") {
         const stopped = await saveFailure.data.stop();
-        const snapshot = saveFailure.data.hostSnapshot();
+        const snapshot = await saveFailure.data.hostSnapshot();
         if (
           corruptPersistence.tag === "StoredPersistenceInvalid" &&
           stopped.tag === "OperationFailed" &&
@@ -570,6 +644,7 @@
       if (outcome.tag !== "Ready") {
         document.title = "FAIL";
       } else {
+        document.body.dataset.execution = outcome.data.execution;
         const unknownLink = linkId(new Uint8Array(16));
         const closed = await outcome.data.closeLink(unknownLink);
         document.body.dataset.command = `${closed.tag}:${closed.data.tag}`;
@@ -584,7 +659,7 @@
           new Blob([new Uint8Array(1024).fill(9)]),
         );
         document.body.dataset.blob = `${blob.tag}:${blob.data.tag}`;
-        const snapshot = outcome.data.hostSnapshot();
+        const snapshot = await outcome.data.hostSnapshot();
         const snapshotConsistent =
           snapshot.tag === "Captured" &&
           snapshot.data.backend.backend === "Cooperative" &&
@@ -596,6 +671,19 @@
         document.body.dataset.snapshot = snapshotConsistent
           ? "Consistent"
           : "Inconsistent";
+        const autoWifi = outcome.data.interfaces.autoWifi.start();
+        const stopped = await outcome.data.stop();
+        const stoppedAgain = await outcome.data.stop();
+        const stoppedSnapshot = await outcome.data.hostSnapshot();
+        const stopIdempotent =
+          stopped.tag === "Stopped" &&
+          stoppedAgain.tag === "AlreadyStopped" &&
+          stoppedSnapshot.tag === "Captured" &&
+          !stoppedSnapshot.data.runtime.running &&
+          autoWifi.closed;
+        document.body.dataset.stop = stopIdempotent
+          ? "Idempotent"
+          : `${stopped.tag}:${stoppedAgain.tag}`;
         document.title =
           closed.tag === "Failed" &&
           closed.data.tag === "UnknownLink" &&
@@ -610,6 +698,8 @@
           webSocketFraming === "Resolved" &&
           bluetoothContract === "Shared" &&
           bluetoothSession === "Bridged" &&
+          bluetoothWorker === "Bridged" &&
+          stopIdempotent &&
           compression
             ? "PASS"
             : "FAIL";
@@ -619,6 +709,7 @@
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           title: document.title,
+          execution: document.body.dataset.execution,
           outcome: document.body.dataset.outcome,
           command: document.body.dataset.command,
           resource: document.body.dataset.resource,
@@ -630,6 +721,8 @@
           webSocketFraming: document.body.dataset.webSocketFraming,
           bluetoothContract: document.body.dataset.bluetoothContract,
           bluetoothSession: document.body.dataset.bluetoothSession,
+          bluetoothWorker: document.body.dataset.bluetoothWorker,
+          stop: document.body.dataset.stop,
           compression: document.body.dataset.compression,
           compressionDetail: document.body.dataset.compressionDetail,
         }),

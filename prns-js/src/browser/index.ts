@@ -62,7 +62,12 @@ import { byteKey } from "./bytes.js";
 import {
   commandFailed,
 } from "./command_settlement.js";
-import { parseEvent } from "./events.js";
+import {
+  parseCorrelatedEventBatch,
+  parseEvent,
+  parseEventBatch,
+  retainedApplicationEventBytes,
+} from "./events.js";
 import type {
   ParsedPrnsEvent,
   PrnsApplicationEvent,
@@ -143,6 +148,8 @@ import type {
   RuntimeResourceSegmentInput,
   RuntimeResourceSegmentIssueInput,
 } from "./resource_send.js";
+import type { BluetoothHostReassembler } from "./bluetooth/runtime.js";
+import type { UsbAutoHostDecoder } from "./usb_auto/runtime.js";
 import {
   BLE_IDENTITY_LENGTH,
   MIN_ENTROPY_BYTES,
@@ -163,6 +170,11 @@ import {
   packetFrame,
   positiveInteger,
 } from "./values.js";
+import type { WorkerCapabilityCall } from "./worker_protocol.js";
+import {
+  registerWorkerCapabilityDispatcher,
+  workerEngineHooks,
+} from "./worker_engine_bridge.js";
 import type {
   AppData,
   AppName,
@@ -409,6 +421,8 @@ export type {
 
 export type PrnsCreateOutcome =
   | Tag<"Ready", Prns>
+  | Tag<"WorkerStartFailed", { readonly detail: string }>
+  | Tag<"WorkerProtocolFailed", { readonly detail: string }>
   | Tag<"WasmLoadFailed", { readonly detail: string }>
   | Tag<
       "ContractMismatch",
@@ -490,16 +504,29 @@ type PendingCommand =
   | Tag<"HostCommand", { readonly command: HostCommand }>
   | Tag<"ResourceSegment">;
 
-export type PrnsOptions = {
-  wasm?: PrnsWasmModule;
+type CommonPrnsOptions = {
   resourceCompressionModuleUrl?: URL;
   identityStore?: IdentityStore;
   bleIdentityStore?: StableIdentityStore;
   persistenceStore?: BrowserPersistenceStore;
-  entropy?: EntropySource;
-  now?: () => InstantMillis;
   limits?: HostLimits;
 };
+
+export type PrnsExecution = "DedicatedWorker" | "MainThread";
+
+export type DedicatedWorkerPrnsOptions = CommonPrnsOptions & {
+  execution?: "DedicatedWorker";
+  wasmModuleUrl?: URL;
+};
+
+export type MainThreadPrnsOptions = CommonPrnsOptions & {
+  execution: "MainThread";
+  wasm?: PrnsWasmModule;
+  entropy?: EntropySource;
+  now?: () => InstantMillis;
+};
+
+export type PrnsOptions = DedicatedWorkerPrnsOptions | MainThreadPrnsOptions;
 
 export function persistentBrowser(root: string = "prns"): PrnsOptions {
   return browserPersistenceStores(root);
@@ -532,6 +559,11 @@ export class Prns {
   #persistenceRestored: boolean;
   #lastPersistenceFlushCause: "Shutdown" | undefined;
   #persistenceFailureDetail: string | undefined;
+  #eventBatchSink: ((batch: Uint8Array) => void) | undefined;
+  #directDiagnosticSink: ((event: PrnsDiagnosticEvent) => void) | undefined;
+  #pageBluetoothReassemblers = new Map<number, BluetoothHostReassembler>();
+  #pageUsbAutoDecoders = new Map<number, UsbAutoHostDecoder>();
+  #nextPageCodecId = 1;
 
   private constructor(
     wasm: PrnsWasmModule,
@@ -544,6 +576,9 @@ export class Prns {
     persistenceStore: BrowserPersistenceStore | undefined,
     persistenceRestored: boolean,
     restorationReport: BrowserPersistenceRestoreReport | undefined,
+    eventBatchSink: ((batch: Uint8Array) => void) | undefined,
+    directDiagnosticSink: ((event: PrnsDiagnosticEvent) => void) | undefined,
+    autoWifiSelectionSeed: Uint8Array | undefined,
   ) {
     this.#runtime = runtime;
     this.#entropy = entropy;
@@ -554,11 +589,13 @@ export class Prns {
       resourceCompressionModuleUrl.href;
     this.#persistenceStore = persistenceStore;
     this.#persistenceRestored = persistenceRestored;
+    this.#eventBatchSink = eventBatchSink;
+    this.#directDiagnosticSink = directDiagnosticSink;
     this.#events = new BoundedAsyncLane<PrnsApplicationEvent>({
       name: "ApplicationEvents",
       maximumValues: limits.applicationEvents,
       maximumBytes: limits.retainedEventBytes,
-      measure: retainedBrowserEventBytes,
+      measure: retainedApplicationEventBytes,
       onRejected: (rejectedEventBytes) =>
         this.#failBackpressure(rejectedEventBytes),
       onBeforeNext: () => this.#pumpEvents(),
@@ -579,13 +616,21 @@ export class Prns {
       bleIdentityAvailability,
       () => this.#pumpEvents(),
     );
-    this.interfaces = new PrnsInterfaces(this.#host);
+    registerWorkerCapabilityDispatcher(this, (call) =>
+      this.#dispatchPageCapability(call),
+    );
+    this.interfaces = new PrnsInterfaces(this.#host, autoWifiSelectionSeed);
     if (restorationReport !== undefined) {
-      this.#diagnostics.push(Tag("PersistenceRestored", restorationReport));
+      this.#publishDiagnostic(Tag("PersistenceRestored", restorationReport));
     }
   }
 
   static async create(options: PrnsOptions): Promise<PrnsCreateOutcome> {
+    if (options.execution !== "MainThread") {
+      const { createDedicatedWorkerPrns } = await import("./worker_client.js");
+      return createDedicatedWorkerPrns(options);
+    }
+    const engineHooks = workerEngineHooks(options);
     const loaded = options.wasm
       ? Tag("Loaded", options.wasm)
       : await loadBundledWasm();
@@ -750,6 +795,9 @@ export class Prns {
           persistenceStore,
           persistedState !== undefined,
           restorationReport,
+          engineHooks?.eventBatchSink,
+          engineHooks?.directDiagnosticSink,
+          engineHooks?.autoWifiSelectionSeed,
         ),
       );
     } catch (error) {
@@ -757,9 +805,9 @@ export class Prns {
     }
   }
 
-  registerSingleDestination(
+  async registerSingleDestination(
     options: RegisterSingleDestinationOptions,
-  ): DestinationRegistrationOutcome {
+  ): Promise<DestinationRegistrationOutcome> {
     try {
       return Tag(
         "Registered",
@@ -770,7 +818,67 @@ export class Prns {
     }
   }
 
-  registerNodePage(appData: Uint8Array): DestinationRegistrationOutcome {
+  async #dispatchPageCapability(call: WorkerCapabilityCall): Promise<unknown> {
+    switch (call.operation) {
+      case "registerInterface":
+        return this.#host.registerInterface(call.value as Parameters<RuntimeHost["registerInterface"]>[0]);
+      case "deactivateInterface":
+        return this.#host.deactivateInterface(interfaceId(call.value));
+      case "ingest":
+        return this.#host.ingest(
+          interfaceId(call.value.interfaceId),
+          packetFrame(call.value.bytes),
+        );
+      case "takeOutbound":
+        return this.#host.takeOutboundFor(
+          interfaceId(call.value.interfaceId),
+          call.value.maximumFrames,
+        );
+      case "waitForOutboundActivity":
+        return this.#host.waitForOutboundActivity(interfaceId(call.value));
+      case "createBluetoothReassembler": {
+        const id = this.#mintPageCodecId();
+        this.#pageBluetoothReassemblers.set(
+          id,
+          this.#host.createBluetoothReassembler(),
+        );
+        return id;
+      }
+      case "absorbBluetoothFragment": {
+        const reassembler = this.#pageBluetoothReassemblers.get(call.value.id);
+        if (reassembler === undefined) {
+          throw new Error(`unknown Bluetooth reassembler ${call.value.id}`);
+        }
+        return reassembler.absorb(call.value.bytes);
+      }
+      case "releaseBluetoothReassembler":
+        return this.#pageBluetoothReassemblers.delete(call.value);
+      case "createUsbAutoDecoder": {
+        const id = this.#mintPageCodecId();
+        this.#pageUsbAutoDecoders.set(id, this.#host.createUsbAutoDecoder());
+        return id;
+      }
+      case "feedUsbAutoDecoder": {
+        const decoder = this.#pageUsbAutoDecoders.get(call.value.id);
+        if (decoder === undefined) {
+          throw new Error(`unknown USB Auto decoder ${call.value.id}`);
+        }
+        return decoder.feed(call.value.bytes);
+      }
+      case "releaseUsbAutoDecoder":
+        return this.#pageUsbAutoDecoders.delete(call.value);
+    }
+  }
+
+  #mintPageCodecId(): number {
+    const id = this.#nextPageCodecId;
+    this.#nextPageCodecId = id === Number.MAX_SAFE_INTEGER ? 1 : id + 1;
+    return id;
+  }
+
+  async registerNodePage(
+    appData: Uint8Array,
+  ): Promise<DestinationRegistrationOutcome> {
     try {
       return Tag(
         "Registered",
@@ -1169,6 +1277,10 @@ export class Prns {
     return this.#lifecycle;
   }
 
+  get execution(): PrnsExecution {
+    return "MainThread";
+  }
+
   get backendInfo(): BackendInfo {
     return cooperativeBackendInfo();
   }
@@ -1202,7 +1314,7 @@ export class Prns {
     return this.#diagnostics.claim();
   }
 
-  snapshot(): SnapshotOutcome {
+  async snapshot(): Promise<SnapshotOutcome> {
     try {
       return Tag("Captured", parseSnapshot(this.#runtime.snapshot()));
     } catch (error) {
@@ -1210,7 +1322,7 @@ export class Prns {
     }
   }
 
-  hostSnapshot(): HostSnapshotOutcome {
+  async hostSnapshot(): Promise<HostSnapshotOutcome> {
     try {
       const snapshot = parseSnapshot(this.#runtime.snapshot());
       const inspection = this.#host.interfaceInspection();
@@ -1292,6 +1404,14 @@ export class Prns {
     this.#pendingCommands.clear();
     this.#responseParts.clear();
     const sessions = [...this.#attachedInterfaces.values()];
+    for (const reassembler of this.#pageBluetoothReassemblers.values()) {
+      reassembler.release?.();
+    }
+    for (const decoder of this.#pageUsbAutoDecoders.values()) {
+      decoder.release?.();
+    }
+    this.#pageBluetoothReassemblers.clear();
+    this.#pageUsbAutoDecoders.clear();
     this.#attachedInterfaces.clear();
     const failures = (
       await Promise.all(
@@ -1323,13 +1443,13 @@ export class Prns {
       if (failure === undefined) {
         this.#lastPersistenceFlushCause = "Shutdown";
         this.#persistenceFailureDetail = undefined;
-        this.#diagnostics.push(
+        this.#publishDiagnostic(
           Tag("PersistenceFlushed", {
             cause: "Shutdown",
             target: "RoutingState",
           }),
         );
-        this.#diagnostics.push(
+        this.#publishDiagnostic(
           Tag("PersistenceFlushed", {
             cause: "Shutdown",
             target: "Ratchets",
@@ -1337,13 +1457,13 @@ export class Prns {
         );
       } else {
         this.#persistenceFailureDetail = failure;
-        this.#diagnostics.push(
+        this.#publishDiagnostic(
           Tag("PersistenceFlushFailed", {
             cause: "Shutdown",
             target: "RoutingState",
           }),
         );
-        this.#diagnostics.push(
+        this.#publishDiagnostic(
           Tag("PersistenceFlushFailed", {
             cause: "Shutdown",
             target: "Ratchets",
@@ -1547,7 +1667,16 @@ export class Prns {
     }
     let parsed: ParsedPrnsEvent[];
     try {
-      parsed = this.#runtime.drainEvents().map(parseEvent);
+      const batch = this.#runtime.drainEventBatch();
+      parsed = [
+        ...(this.#eventBatchSink === undefined
+          ? parseEventBatch(batch)
+          : parseCorrelatedEventBatch(batch)),
+        ...this.#runtime.drainEvents().map(parseEvent),
+      ];
+      if (batch.byteLength > 16) {
+        this.#eventBatchSink?.(batch);
+      }
     } catch (error) {
       this.#failContract(describeHostError(error));
       return;
@@ -1555,20 +1684,20 @@ export class Prns {
     for (const event of parsed) {
       match(event, {
         Application: (application) => {
-          this.#events.push(application);
+          this.#publishApplication(application);
         },
         Diagnostic: (diagnostic) => {
-          this.#diagnostics.push(diagnostic);
+          this.#publishDiagnostic(diagnostic);
         },
         CommandResponse: ({ commandId: responseCommandId, event }) => {
-          this.#events.push(event);
+          this.#publishApplication(event);
           this.#responseParts.set(responseCommandId, [event.data.data]);
         },
         CommandResponseSegment: ({
           commandId: responseCommandId,
           event,
         }) => {
-          this.#events.push(event);
+          this.#publishApplication(event);
           const parts = this.#responseParts.get(responseCommandId) ?? [];
           parts.push(event.data.data);
           this.#responseParts.set(responseCommandId, parts);
@@ -1596,6 +1725,20 @@ export class Prns {
         },
       });
     }
+  }
+
+  #publishApplication(event: PrnsApplicationEvent): void {
+    if (this.#eventBatchSink === undefined) {
+      this.#events.push(event);
+    }
+  }
+
+  #publishDiagnostic(event: PrnsDiagnosticEvent): void {
+    if (this.#eventBatchSink === undefined) {
+      this.#diagnostics.push(event);
+      return;
+    }
+    this.#directDiagnosticSink?.(event);
   }
 
   #commandSettlement(
@@ -1757,31 +1900,4 @@ function webSocketCommandFailure(
     RuntimeRejected: ({ operation, detail }) =>
       Tag("BackendFailed", { detail: `${operation}: ${detail}` }),
   });
-}
-
-function retainedBrowserEventBytes(event: PrnsApplicationEvent): number {
-  return match_into<number>().from(event, {
-    SingleDelivery: ({ plaintext }) => plaintext.length,
-    LinkDelivery: ({ plaintext }) => plaintext.length,
-    Request: ({ data }) => data.length,
-    Response: ({ data }) => data.length,
-    ResponseSegment: ({ data }) => data.length,
-    ResourceAvailable: ({ resource, metadata }) =>
-      exactBytesAsSafeNumber(resource.totalBytes, "resource.totalBytes") +
-      (metadata?.length ?? 0),
-    ResourceSegment: ({ data, metadata }) =>
-      data.length + (metadata?.length ?? 0),
-    ResourceNeedsDecompression: ({ stream }) => stream.length,
-    ChannelMessage: ({ data }) => data.length,
-  });
-}
-
-function exactBytesAsSafeNumber(value: bigint, name: string): number {
-  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new PrnsValidationError(
-      "invalid-number",
-      `${name} exceeds the JavaScript safe-integer limit`,
-    );
-  }
-  return Number(value);
 }
