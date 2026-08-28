@@ -335,6 +335,37 @@ def validate_cargo_workspaces(manifests: set[str]) -> list[str]:
     return errors
 
 
+def validate_cargo_check_delegations(
+    registry: dict, suites: dict[str, dict], workspaces: set[str]
+) -> list[str]:
+    errors = []
+    delegated = set()
+    delegations = registry.get("cargo_check_delegations", [])
+    if not isinstance(delegations, list):
+        return ["cargo-check delegations must be an array of tables"]
+    for index, delegation in enumerate(delegations):
+        location = f"cargo-check delegation[{index}]"
+        if not isinstance(delegation, dict):
+            errors.append(f"{location} must be a table")
+            continue
+        workspace = delegation.get("workspace")
+        suite = delegation.get("suite")
+        reason = delegation.get("reason")
+        if not isinstance(workspace, str) or workspace not in workspaces:
+            errors.append(f"{location} names an unknown lockfile workspace")
+        elif workspace in delegated:
+            errors.append(f"duplicate cargo-check delegation for {workspace}")
+        else:
+            delegated.add(workspace)
+        if not isinstance(suite, str) or suite not in suites:
+            errors.append(f"{location} names an unknown validation suite")
+        elif "pr" not in suites[suite].get("tiers", []):
+            errors.append(f"{location} suite must run in the PR tier")
+        if not isinstance(reason, str) or not reason.strip():
+            errors.append(f"{location} needs a non-empty reason")
+    return errors
+
+
 def validate_triage(path: Path | None = None) -> list[str]:
     errors: list[str] = []
     path = path or TRIAGE_PATH
@@ -467,6 +498,9 @@ def validate_manifest(manifest: dict, check_tools: bool = False) -> list[str]:
                 f"{sorted(expected_locks - actual_locks)!r} source-only="
                 f"{sorted(actual_locks - expected_locks)!r}"
             )
+        errors.extend(
+            validate_cargo_check_delegations(manifest["registry"], suites, expected_locks)
+        )
     format_manifests = manifest.get("registry", {}).get("format_manifests", [])
     if not isinstance(format_manifests, list) or not format_manifests:
         errors.append("format manifest registry must be a non-empty list")
@@ -622,6 +656,7 @@ def verification_report(manifest: dict, check_tools: bool) -> list[str]:
     registry = manifest["registry"]
     cargo_manifests = registry["cargo_manifests"]
     cargo_lock_workspaces = registry["cargo_lock_workspaces"]
+    cargo_check_delegations = registry.get("cargo_check_delegations", [])
     format_manifests = registry["format_manifests"]
     kani = discover_kani_harnesses()
     fuzz = discover_fuzz_targets(ROOT / "validation" / "fuzz" / "Cargo.toml")
@@ -649,6 +684,8 @@ def verification_report(manifest: dict, check_tools: bool) -> list[str]:
         "[verify] Cargo ownership: "
         f"{len(cargo_manifests)} manifests are registered, valid, and repository-owned; "
         f"{len(cargo_lock_workspaces)} first-party lockfile workspaces are inventoried; "
+        f"{len(cargo_lock_workspaces) - len(cargo_check_delegations)} enter the host compile sweep; "
+        f"{len(cargo_check_delegations)} real-target workspaces are delegated; "
         f"{len(format_manifests)} unique workspace roots own formatting.",
         "[verify] Native discovery: "
         f"{len(kani)} Kani proofs and {len(fuzz)} fuzz targets exactly match their source owners.",

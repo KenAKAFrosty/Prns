@@ -199,6 +199,29 @@ class RegistryTests(unittest.TestCase):
             any("must contain unique package names" in error for error in errors)
         )
 
+    def test_cargo_check_delegations_require_a_pr_suite_and_reason(self) -> None:
+        registry = {
+            "cargo_check_delegations": [
+                {"workspace": "firmware", "suite": "scheduled-only", "reason": ""},
+                {"workspace": "firmware", "suite": "missing", "reason": "duplicate"},
+                {"workspace": "unknown", "suite": "compile", "reason": "unknown"},
+            ]
+        }
+        suites = {
+            "compile": {"tiers": ["pr"]},
+            "scheduled-only": {"tiers": ["scheduled"]},
+        }
+
+        errors = runner.validate_cargo_check_delegations(
+            registry, suites, {".", "firmware"}
+        )
+
+        self.assertTrue(any("must run in the PR tier" in error for error in errors))
+        self.assertTrue(any("needs a non-empty reason" in error for error in errors))
+        self.assertTrue(any("duplicate cargo-check delegation" in error for error in errors))
+        self.assertTrue(any("unknown validation suite" in error for error in errors))
+        self.assertTrue(any("unknown lockfile workspace" in error for error in errors))
+
     def test_invalid_shard_definitions_are_rejected(self) -> None:
         manifest = copy.deepcopy(self.manifest)
         mutation = next(

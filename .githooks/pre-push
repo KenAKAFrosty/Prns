@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Pre-push hygiene gate: rustfmt-clean (root + app workspaces) and intra-doc
-# links resolve, before anything reaches origin — so unformatted code or a
-# broken doc link can never break `ci` again. Reuses the canonical check.
+# Pre-push gate for repository hygiene and every host-compatible Cargo workspace.
 #
 # Enable once per clone:   git config core.hooksPath .githooks
 # Bypass (discouraged):    git push --no-verify
@@ -28,5 +26,12 @@ if ! bash "${repo_root}/validation/hygiene/fmt-docs.sh"; then
     echo ""
     echo "✗ push blocked by the hygiene gate (see above)."
     echo "  fix formatting: cargo fmt --all   (and resolve any doc-link errors)"
+    exit 1
+fi
+
+if ! "${repo_root}/tools/prns" repo cargo-check; then
+    echo ""
+    echo "✗ push blocked by the repository Cargo check (see above)."
+    echo "  fix every failed workspace before retrying the push."
     exit 1
 fi

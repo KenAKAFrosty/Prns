@@ -283,6 +283,16 @@ entrypoint = ["python", "tools/device/hopspot-dev-flasher.py"]
 requires = ["cargo", "dx", "git", "npm", "python"]
 
 [[task]]
+id = "repo.cargo-check"
+summary = "Compile-check every host-compatible first-party Cargo workspace in parallel."
+domain = "repo"
+effect = "workspace-write"
+platforms = ["any"]
+audience = ["developer", "ci"]
+entrypoint = ["python", "tools/repo/cargo-check.py"]
+requires = ["cargo", "python"]
+
+[[task]]
 id = "repo.host-contract.generate"
 summary = "Regenerate every host-contract language artifact from the canonical schema."
 domain = "repo"
