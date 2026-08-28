@@ -111,12 +111,16 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let mut lora_profile_store =
         screen::RadioProfileStore::new(shared_flash, B::FLASH_LAYOUT.radio_profile_pages);
     #[cfg(feature = "lora")]
-    let loaded_lora_profile = match lora_profile_store.load(DEFAULT_915_PROFILE).await {
-        Ok(loaded) => loaded,
+    let loaded_lora_profile = match lora_profile_store.load(boot_lora_profile(B::MAX_TX_POWER_DBM)).await {
+        Ok(loaded) => screen::LoadedRadioProfile {
+            profile: loaded.profile.with_tx_power_at_most(B::MAX_TX_POWER_DBM),
+            follows_default: loaded.follows_default,
+            notice: loaded.notice,
+        },
         Err(error) => {
             log::error!("LoRa profile restore failed: {error:?}");
             screen::LoadedRadioProfile {
-                profile: DEFAULT_915_PROFILE,
+                profile: boot_lora_profile(B::MAX_TX_POWER_DBM),
                 follows_default: true,
                 notice: Some(screen::RadioProfileLoadNotice::Reset),
             }
@@ -919,7 +923,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 screen::UiAction::ResetLoRaProfile => {
                                     let result = screen::apply_and_persist_radio_profile(
                                         async {
-                                            LORA_CONTROL.apply(DEFAULT_915_PROFILE).await
+                                            LORA_CONTROL.apply(boot_lora_profile(B::MAX_TX_POWER_DBM)).await
                                                 == LoRaApplyOutcome::Applied
                                         },
                                         || async {
@@ -936,7 +940,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                     )
                                     .await;
                                     if result.applied() {
-                                        working_lora_profile = DEFAULT_915_PROFILE;
+                                        working_lora_profile = boot_lora_profile(B::MAX_TX_POWER_DBM);
                                     }
                                     let notice = result.notice();
                                     show_notice(

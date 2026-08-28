@@ -134,3 +134,8 @@ fn enter_receive() {
         }
     });
 }
+
+/// Map antenna-referred power through the Heltec FEM (~8 dB gain) into SX1262 chip power.
+pub(super) fn heltec_fem_chip_power_dbm(requested_output_dbm: i8) -> i8 {
+    requested_output_dbm.saturating_sub(8).clamp(-9, 22)
+}

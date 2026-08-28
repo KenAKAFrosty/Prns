@@ -106,7 +106,8 @@ impl Region {
 
     pub const fn max_tx_power(self) -> TxPower {
         let dbm = match self {
-            Self::Us915 | Self::Au915 | Self::In865 | Self::Eu869 | Self::Unlimited => 22,
+            Self::Us915 | Self::Au915 | Self::In865 | Self::Eu869 => 30,
+            Self::Unlimited => 22,
             Self::Cn470 => 19,
             Self::As923 | Self::Jp920 => 16,
             Self::Eu865 | Self::Eu868 | Self::Kr920 => 14,
@@ -266,6 +267,7 @@ prns_macros::iterable_enum! {
         MediumFast,
         LongFast,
         LongSlow,
+        Montreal,
     }
 }
 
@@ -292,6 +294,11 @@ impl ModemPreset {
                 bandwidth: LoraBandwidth::Bw125kHz,
                 coding_rate: CodingRate::Cr48,
             },
+            Self::Montreal => Modulation::Lora {
+                spreading_factor: SpreadingFactor::Sf9,
+                bandwidth: LoraBandwidth::Bw125kHz,
+                coding_rate: CodingRate::Cr47,
+            },
         }
     }
 
@@ -301,6 +308,7 @@ impl ModemPreset {
             Self::MediumFast => "MediumFast",
             Self::LongFast => "LongFast",
             Self::LongSlow => "LongSlow",
+            Self::Montreal => "Montreal",
         }
     }
 
@@ -321,6 +329,14 @@ pub struct RadioProfile {
 }
 
 impl RadioProfile {
+    /// Cap TX power to a board/radio ceiling. Channel identity is unchanged (power is local).
+    pub const fn with_tx_power_at_most(mut self, max_dbm: i8) -> Self {
+        if self.tx_power.dbm() > max_dbm {
+            self.tx_power = TxPower::new(max_dbm);
+        }
+        self
+    }
+
     pub const fn validate(self) -> Result<(), RadioProfileError> {
         let frequency_hz = self.frequency.hz();
         let (minimum_hz, maximum_hz) = self.region.band();
@@ -395,6 +411,29 @@ pub const DEFAULT_915_PROFILE: RadioProfile = RadioProfile {
     preamble: PreambleSymbols::new(18),
     region: Region::Us915,
 };
+
+/// Lab / Montreal mesh: 914.875 MHz, SF9, 125 kHz, CR 4/7, US915, preamble 18.
+///
+/// TX power is requested at the US915 regional ceiling (30 dBm). Callers must pass the
+/// board's antenna-referred maximum into [`boot_lora_profile`] so weaker PAs clamp down.
+/// Power is not part of the LoRa channel tag, so mixed TX levels still peer.
+pub const MONTREAL_PROFILE: RadioProfile = RadioProfile {
+    frequency: Frequency::new(914_875_000),
+    modulation: ModemPreset::Montreal.modulation(),
+    tx_power: TxPower::new(30),
+    preamble: PreambleSymbols::new(18),
+    region: Region::Us915,
+};
+
+/// Boot-time LoRa default, clamped to `max_tx_power_dbm` for this board.
+/// Set `PRNS_LORA_PROFILE=montreal` at compile time for the Montreal mesh.
+pub fn boot_lora_profile(max_tx_power_dbm: i8) -> RadioProfile {
+    let profile = match option_env!("PRNS_LORA_PROFILE") {
+        Some("montreal") => MONTREAL_PROFILE,
+        _ => DEFAULT_915_PROFILE,
+    };
+    profile.with_tx_power_at_most(max_tx_power_dbm)
+}
 
 pub fn channel_tag(profile: &RadioProfile) -> HeaplessVec<u8, CHANNEL_TAG_CAP> {
     let mut tag = HeaplessVec::new();
@@ -471,6 +510,28 @@ mod tests {
                 region.label()
             );
         }
+    }
+
+    #[test]
+    fn montreal_profile_validates_on_us915() {
+        assert_eq!(MONTREAL_PROFILE.validate(), Ok(()));
+        assert_eq!(
+            MONTREAL_PROFILE.modulation,
+            ModemPreset::Montreal.modulation()
+        );
+        assert_eq!(MONTREAL_PROFILE.nominal_bitrate_bps(), 1_255);
+    }
+
+    #[test]
+    fn boot_profile_clamps_tx_power_to_the_board_ceiling() {
+        let mt2 = MONTREAL_PROFILE.with_tx_power_at_most(30);
+        let hv4 = MONTREAL_PROFILE.with_tx_power_at_most(28);
+        let t114 = MONTREAL_PROFILE.with_tx_power_at_most(21);
+        assert_eq!(mt2.tx_power.dbm(), 30);
+        assert_eq!(hv4.tx_power.dbm(), 28);
+        assert_eq!(t114.tx_power.dbm(), 21);
+        assert_eq!(channel_tag(&mt2), channel_tag(&t114));
+        assert_eq!(boot_lora_profile(14).tx_power.dbm(), 14);
     }
 
     #[test]

@@ -44,6 +44,9 @@ pub(crate) trait Esp32S3Board {
     const BOOT_BANNER: &'static str;
     const USB_INTERFACE_ID: InterfaceId;
     const FLASH_LAYOUT: screen::HopspotS3FlashLayout;
+    /// Antenna-referred TX ceiling for this board's LoRa PA / FEM path.
+    #[cfg(feature = "lora")]
+    const MAX_TX_POWER_DBM: i8;
     type Display: crate::display_runtime::S3BoardDisplay;
     type Battery: screen::BatterySource;
     type Gnss: GnssProvider;

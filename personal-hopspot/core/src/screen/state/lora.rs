@@ -24,11 +24,12 @@ pub(in crate::screen) enum PresetChoice {
     Back,
 }
 
-pub(in crate::screen) const PRESET_CHOICES: [PresetChoice; 6] = [
+pub(in crate::screen) const PRESET_CHOICES: [PresetChoice; 7] = [
     PresetChoice::Preset(ModemPreset::ShortFast),
     PresetChoice::Preset(ModemPreset::MediumFast),
     PresetChoice::Preset(ModemPreset::LongFast),
     PresetChoice::Preset(ModemPreset::LongSlow),
+    PresetChoice::Preset(ModemPreset::Montreal),
     PresetChoice::Custom,
     PresetChoice::Back,
 ];

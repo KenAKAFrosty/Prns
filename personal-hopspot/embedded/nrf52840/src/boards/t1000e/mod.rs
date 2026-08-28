@@ -24,5 +24,7 @@ pub(crate) const USB_MANUFACTURER: &str = "Stay Personal";
 pub(crate) const USB_PRODUCT: &str = "Personal Hopspot (T1000-E)";
 pub(crate) const USB_SERIAL_NUMBER: &str = "PERSONAL-RNS-T1000E-HOP";
 pub(crate) const USB_INTERFACE_ID: InterfaceId = InterfaceId::new(*b"t1ke-usb");
+/// Antenna-referred TX ceiling (LR1110 / board PA path).
+pub(crate) const MAX_TX_POWER_DBM: i8 = 22;
 pub(crate) const ANNOUNCE_APP_DATA: &[u8] = b"\x92\xc4\x18Personal Hopspot T1000-E\xc0";
 pub(crate) const NODE_ANNOUNCE_APP_DATA: &[u8] = b"Personal Hopspot T1000-E";

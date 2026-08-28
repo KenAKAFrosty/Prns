@@ -15,7 +15,7 @@ use ssd1306::prelude::*;
 use ssd1306::{I2CDisplayInterface, Ssd1306};
 
 use personal_rns::interfaces::InterfaceId;
-use personal_rns::radios::sx126x::{BoardConfig, Sx126x, TcxoVoltage};
+use personal_rns::radios::sx126x::{BoardConfig, ExternalPowerAmplifier, Sx126x, TcxoVoltage};
 
 use personal_hopspot_core as screen;
 
@@ -248,6 +248,8 @@ impl Esp32S3Board for HeltecBoard {
     const BOOT_BANNER: &'static str = "HOPSPOT_HELTECV4";
     const USB_INTERFACE_ID: InterfaceId = USB_INTERFACE_ID;
     const FLASH_LAYOUT: screen::HopspotS3FlashLayout = screen::S3_16_MIB_FLASH_LAYOUT;
+    #[cfg(feature = "lora")]
+    const MAX_TX_POWER_DBM: i8 = 28;
     type Display = ImmediateBoardDisplay<HeltecDisplay>;
     type Battery = HeltecBattery;
     type Gnss = HeltecV4Gnss;
@@ -352,7 +354,11 @@ impl Esp32S3Board for HeltecBoard {
                     rx_boost: true,
                     dio2_as_rf_switch: true,
                     external_rx_gain_db: lora_frontend.rx_gain_db(),
-                    external_power_amplifier: None,
+                    external_power_amplifier: Some(ExternalPowerAmplifier {
+                        minimum_output_power_dbm: 5,
+                        maximum_output_power_dbm: 28,
+                        chip_power_dbm: heltec_frontend::heltec_fem_chip_power_dbm,
+                    }),
                     frontend_control: lora_frontend.control(),
                 },
             )

@@ -321,6 +321,8 @@ impl Esp32S3Board for TBeamSupremeBoard {
     const BOOT_BANNER: &'static str = "HOPSPOT_TBEAM_SUPREME";
     const USB_INTERFACE_ID: InterfaceId = USB_INTERFACE_ID;
     const FLASH_LAYOUT: screen::HopspotS3FlashLayout = screen::S3_8_MIB_FLASH_LAYOUT;
+    #[cfg(feature = "lora")]
+    const MAX_TX_POWER_DBM: i8 = 22;
     type Display = ImmediateBoardDisplay<Sh1106I2c<TBeamI2c>>;
     type Battery = Axp2101Battery;
     type Gnss = TBeamSupremeGnss;

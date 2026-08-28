@@ -47,7 +47,7 @@ use prns_core::engine::InstantMillis;
 use prns_core::interfaces::lora::{
     self, air_frame_count, encode_air_frame_part, AirFrameError, AirtimePolicy, AirtimePolicyError,
     LoRaReassembler, LoRaReassemblyError, LoRaReassemblyOutcome, RadioProfile,
-    RadioProfileCompatibilityError, RadioProfileError, SpreadingFactor, CHANNEL_TAG_CAP,
+    RadioProfileCompatibilityError, RadioProfileError, SpreadingFactor, TxPower, CHANNEL_TAG_CAP,
     LORA_MAX_PAYLOAD, LORA_SINGLE_FRAME_MAX,
 };
 use prns_core::interfaces::{
@@ -688,14 +688,10 @@ async fn apply_profile<R: LoRaRadio>(
     spectrum: &LoRaSpectrumStatus,
     lifecycle: DynamicSender<'_, InterfaceLifecycle>,
 ) -> bool {
-    if requested.validate().is_err() {
-        crate::diagnostic_log::warn!("RNS_LORA rejected invalid profile");
+    let Ok(requested) = fit_profile_to_radio(radio, requested) else {
+        crate::diagnostic_log::warn!("RNS_LORA rejected invalid or radio-incompatible profile");
         return false;
-    }
-    if radio.validate_profile(requested).is_err() {
-        crate::diagnostic_log::warn!("RNS_LORA rejected radio-incompatible profile");
-        return false;
-    }
+    };
     let requested_duty = match airtime_policy.resolve(requested.region) {
         Ok(duty) => duty,
         Err(_) => {
@@ -751,6 +747,40 @@ async fn apply_profile<R: LoRaRadio>(
     true
 }
 
+/// Clamp TX power into the radio's supported range when the rest of the profile is valid.
+/// Channel settings stay intact; power is a local knob.
+fn fit_profile_to_radio<R: LoRaRadio>(
+    radio: &R,
+    mut profile: RadioProfile,
+) -> Result<RadioProfile, LoRaConfigError> {
+    profile.validate().map_err(LoRaConfigError::Profile)?;
+    match radio.validate_profile(profile) {
+        Ok(()) => Ok(profile),
+        Err(RadioProfileCompatibilityError::TransmitPowerOutsideRadioRange {
+            power_dbm,
+            minimum_dbm,
+            maximum_dbm,
+        }) => {
+            let clamped = power_dbm.clamp(minimum_dbm, maximum_dbm);
+            if clamped == power_dbm {
+                return Err(LoRaConfigError::RadioCompatibility(
+                    RadioProfileCompatibilityError::TransmitPowerOutsideRadioRange {
+                        power_dbm,
+                        minimum_dbm,
+                        maximum_dbm,
+                    },
+                ));
+            }
+            profile.tx_power = TxPower::new(clamped);
+            profile.validate().map_err(LoRaConfigError::Profile)?;
+            radio
+                .validate_profile(profile)
+                .map_err(LoRaConfigError::RadioCompatibility)?;
+            Ok(profile)
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoRaConfigError {
     Profile(RadioProfileError),
@@ -801,10 +831,7 @@ impl<'a, R: LoRaRadio> LoRaInterface<'a, R> {
             spectrum,
             lifecycle,
         } = input;
-        profile.validate().map_err(LoRaConfigError::Profile)?;
-        radio
-            .validate_profile(profile)
-            .map_err(LoRaConfigError::RadioCompatibility)?;
+        let profile = fit_profile_to_radio(&radio, profile)?;
         let tag = lora::channel_tag(&profile);
         let id = Self::interface_id(&profile);
         let duty = airtime_policy

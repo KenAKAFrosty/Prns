@@ -64,7 +64,7 @@ use personal_rns::interfaces::esp_now::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy, ESP_NOW_V2_AIR_MTU,
 };
 #[cfg(feature = "lora")]
-use personal_rns::interfaces::lora::{AirtimePolicy, DEFAULT_915_PROFILE, LORA_MAX_PAYLOAD};
+use personal_rns::interfaces::lora::{AirtimePolicy, boot_lora_profile, LORA_MAX_PAYLOAD};
 use personal_rns::interfaces::usb_auto::device_descriptor;
 use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
 use personal_rns::interfaces::BitrateBps;
