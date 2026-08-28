@@ -1109,6 +1109,7 @@ async fn run(
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         interfaces: ManuallyAttached,
         persistence,
         on_event: move |event, _state: &()| {

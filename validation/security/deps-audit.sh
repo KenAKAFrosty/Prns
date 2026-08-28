@@ -27,6 +27,7 @@ graphs=(
     "napi-windows|prns-napi/Cargo.toml|x86_64-pc-windows-msvc"
     "nrf52840|personal-hopspot/embedded/nrf52840/Cargo.toml|thumbv7em-none-eabihf"
     "esp32-c6|personal-hopspot/embedded/esp32/boards/xiao-esp32-c6/Cargo.toml|riscv32imac-unknown-none-elf"
+    "esp32-s3-heltec-e290|personal-hopspot/embedded/esp32/boards/heltec-e290/Cargo.toml|xtensa-esp32s3-none-elf"
     "esp32-s3-heltec|personal-hopspot/embedded/esp32/boards/heltec-v4/Cargo.toml|xtensa-esp32s3-none-elf"
     "esp32-s3-heltec-r8|personal-hopspot/embedded/esp32/boards/heltec-v4-r8/Cargo.toml|xtensa-esp32s3-none-elf"
     "esp32-s3-tbeam|personal-hopspot/embedded/esp32/boards/t-beam-supreme/Cargo.toml|xtensa-esp32s3-none-elf"

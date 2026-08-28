@@ -572,6 +572,7 @@ async fn run_engine(
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: personal_hopspot_core::node_pages::NodePageRoutes,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
         on_event: move |event: PrnsEvent<'_>, _state: &()| match event {

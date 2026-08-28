@@ -141,6 +141,7 @@ mod tests {
             app_state: (),
             storage: GrowableHeap,
             request_endpoints: prns_runtime::request_endpoints![],
+            remote_control: prns_runtime::remote_control::RemoteControlService::Unavailable,
             interfaces: ManuallyAttached,
             persistence: NoPersistence,
             on_event: |_event, _state: &()| {},

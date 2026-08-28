@@ -112,6 +112,7 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: personal_hopspot_core::node_pages::NodePageRoutes,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
         on_event: move |event, _state: &()| {

@@ -260,6 +260,7 @@ mod tests {
             app_state: (),
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
+            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
             interfaces: ManuallyAttached,
             persistence: NoPersistence,
             on_event: |_event, _state| {},
@@ -282,6 +283,7 @@ mod tests {
             app_state: (),
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
+            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
             interfaces: |handle: &PrnsNodeHandle| {
                 handle.attach(client);
             },
@@ -358,6 +360,7 @@ mod tests {
             app_state: (),
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
+            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
             interfaces: ManuallyAttached,
             persistence: NoPersistence,
             on_event: |_event, _state| {},
@@ -383,6 +386,7 @@ mod tests {
             app_state: (),
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
+            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
             interfaces: move |handle: &PrnsNodeHandle| {
                 handle.attach(requester_client);
             },
@@ -442,6 +446,7 @@ mod tests {
             app_state: (),
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
+            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
             interfaces: ManuallyAttached,
             persistence: NoPersistence,
             on_event,
