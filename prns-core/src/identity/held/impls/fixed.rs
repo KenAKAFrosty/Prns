@@ -76,6 +76,14 @@ impl<const MAX_HELD_IDENTITIES: usize> HeldIdentityTable
         let _encryption_public = self.encryption_publics.pop();
         let _signing_public = self.signing_publics.pop();
     }
+
+    fn swap_remove(&mut self, index: usize) {
+        let _hash = self.hashes.swap_remove(index);
+        let _encryption_secret = self.encryption_secrets.swap_remove(index);
+        let _signing_secret = self.signing_secrets.swap_remove(index);
+        let _encryption_public = self.encryption_publics.swap_remove(index);
+        let _signing_public = self.signing_publics.swap_remove(index);
+    }
 }
 
 #[cfg(test)]
@@ -131,5 +139,41 @@ mod tests {
         assert!(table.encryption_secret_at(1).is_some());
         assert!(table.signing_secret_at(1).is_some());
         assert!(table.encryption_secret_at(2).is_none());
+    }
+
+    #[test]
+    fn swap_remove_keeps_every_fixed_column_aligned() {
+        let mut table = FixedHeldIdentityTable::<3>::default();
+        for byte in [1, 2, 3] {
+            let (hash, encryption, signing, encryption_public, signing_public) = row_inputs(byte);
+            table
+                .push(hash, encryption, signing, encryption_public, signing_public)
+                .unwrap();
+        }
+
+        table.swap_remove(1);
+
+        assert_eq!(
+            table.hashes(),
+            &[IdentityHash::new([1; 16]), IdentityHash::new([3; 16])],
+        );
+        assert_eq!(
+            table.encryption_publics(),
+            &[
+                IdentityEncryptionPublicKey::new(crate::crypto::X25519PublicKey([1; 32])),
+                IdentityEncryptionPublicKey::new(crate::crypto::X25519PublicKey([3; 32])),
+            ],
+        );
+        assert_eq!(
+            table.signing_publics(),
+            &[
+                IdentitySigningPublicKey::new(crate::crypto::Ed25519PublicKey([1; 32])),
+                IdentitySigningPublicKey::new(crate::crypto::Ed25519PublicKey([3; 32])),
+            ],
+        );
+        assert!(table.encryption_secret_at(1).is_some());
+        assert!(table.signing_secret_at(1).is_some());
+        assert!(table.encryption_secret_at(2).is_none());
+        assert!(table.signing_secret_at(2).is_none());
     }
 }
