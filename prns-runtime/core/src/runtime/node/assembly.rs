@@ -423,7 +423,7 @@ fn configure_assembled_node<'a, D, St, R, F, S>(
 mod tests {
     use super::*;
     use crate::identity::vault::IdentitySecretKey;
-    use crate::identity::IdentityHash;
+    use crate::identity::{IdentityHash, Zeroizing, IDENTITY_SECRET_KEY_LEN};
     use crate::remote_control::{
         RemoteControlControllerGrant, RemoteControlControllerGrants,
         RemoteControlControllerIdentity, RemoteControlControllerIdentitySecret,
@@ -432,8 +432,11 @@ mod tests {
         REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY,
     };
     use crate::routing::request_handlers::RequestPathHash;
+    use crate::engine::RatchetPolicy;
+    use crate::routing::links::resources::ResourceStrategy;
+    use crate::routing::{LinkRequestPolicy, ProofStrategy};
     use crate::runtime::request_endpoints::{Decline, RequestContext, RequestEndpointPolicy};
-    use crate::runtime::{ManuallyAttached, NoPersistence};
+    use crate::runtime::{ManuallyAttached, NoPersistence, ServeMyRequestEndpoints};
     use crate::storage::TestFixedStorage;
 
     type Storage = TestFixedStorage<4, 4, 128, 4, 4, 4, 2, 2, 2, 2, 2, 2>;
@@ -636,6 +639,151 @@ mod tests {
             RevokeRemoteControlControllerOutcome::NotFound,
         );
         assert!(remote_control.access().is_empty());
+    }
+
+    #[test]
+    fn hopspot_style_recipe_needs_three_held_identity_rows_with_remote_control() {
+        let tight_storage = TestFixedStorage::<4, 4, 128, 4, 2, 2, 2, 2, 2, 2, 2, 2>;
+        let roomy_storage = TestFixedStorage::<4, 4, 128, 4, 3, 2, 2, 2, 2, 2, 2, 2>;
+        let node_secret = Zeroizing::new([0x55; IDENTITY_SECRET_KEY_LEN]);
+        let destinations = || {
+            [
+                PreConfiguredDestination::Single {
+                    app_name: "lxmf",
+                    aspects: &["delivery"],
+                    identity: node_secret.clone(),
+                    announce_app_data: b"delivery",
+                    proof: ProofStrategy::ProveAll,
+                    link_requests: LinkRequestPolicy::AcceptAll,
+                    ratchet: RatchetPolicy::Ratcheted,
+                    resource_strategy: ResourceStrategy::AcceptNone,
+                    maximum_request_bytes: Default::default(),
+                    request_endpoints: ServeMyRequestEndpoints::No,
+                },
+                PreConfiguredDestination::Single {
+                    app_name: "node",
+                    aspects: &["page"],
+                    identity: node_secret.clone(),
+                    announce_app_data: b"node",
+                    proof: ProofStrategy::ProveNone,
+                    link_requests: LinkRequestPolicy::AcceptAll,
+                    ratchet: RatchetPolicy::NoRatchets,
+                    resource_strategy: ResourceStrategy::AcceptNone,
+                    maximum_request_bytes: Default::default(),
+                    request_endpoints: ServeMyRequestEndpoints::Yes,
+                },
+            ]
+        };
+        let mut tight = MaybeUninit::uninit();
+        let tight_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            assemble_node_in_place(
+                &mut tight,
+                PrnsNodeRecipe {
+                    transport_identity: Some(node_secret.clone()),
+                    remote_control: remote_control_service(),
+                    pre_configured_destinations: destinations(),
+                    app_state: (),
+                    storage: tight_storage,
+                    request_endpoints: (),
+                    interfaces: ManuallyAttached,
+                    persistence: NoPersistence,
+                    on_event: |_, _| {},
+                },
+            );
+        }));
+        assert!(tight_result.is_err(), "two held rows cannot fit RC + Hopspot");
+
+        let mut roomy = MaybeUninit::uninit();
+        let (node, _, _) = assemble_node_in_place(
+            &mut roomy,
+            PrnsNodeRecipe {
+                transport_identity: Some(node_secret.clone()),
+                remote_control: remote_control_service(),
+                pre_configured_destinations: destinations(),
+                app_state: (),
+                storage: roomy_storage,
+                request_endpoints: (),
+                interfaces: ManuallyAttached,
+                persistence: NoPersistence,
+                on_event: |_, _| {},
+            },
+        );
+        assert_eq!(node.engine.held_identity_hashes().len(), 3);
+    }
+
+    #[test]
+    fn hopspot_style_recipe_needs_three_upstream_rows_with_remote_control_on_esp32s3() {
+        type Esp32LikeStorage = TestFixedStorage<4, 4, 128, 2, 3, 2, 2, 2, 2, 2, 2, 2>;
+        let node_secret = Zeroizing::new([0x55; IDENTITY_SECRET_KEY_LEN]);
+        let destinations = || {
+            [
+                PreConfiguredDestination::Single {
+                    app_name: "lxmf",
+                    aspects: &["delivery"],
+                    identity: node_secret.clone(),
+                    announce_app_data: b"delivery",
+                    proof: ProofStrategy::ProveAll,
+                    link_requests: LinkRequestPolicy::AcceptAll,
+                    ratchet: RatchetPolicy::Ratcheted,
+                    resource_strategy: ResourceStrategy::AcceptNone,
+                    maximum_request_bytes: Default::default(),
+                    request_endpoints: ServeMyRequestEndpoints::No,
+                },
+                PreConfiguredDestination::Single {
+                    app_name: "node",
+                    aspects: &["page"],
+                    identity: node_secret.clone(),
+                    announce_app_data: b"node",
+                    proof: ProofStrategy::ProveNone,
+                    link_requests: LinkRequestPolicy::AcceptAll,
+                    ratchet: RatchetPolicy::NoRatchets,
+                    resource_strategy: ResourceStrategy::AcceptNone,
+                    maximum_request_bytes: Default::default(),
+                    request_endpoints: ServeMyRequestEndpoints::Yes,
+                },
+            ]
+        };
+        let storage: Esp32LikeStorage = TestFixedStorage;
+        let mut slot = MaybeUninit::uninit();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            assemble_node_in_place(
+                &mut slot,
+                PrnsNodeRecipe {
+                    transport_identity: Some(node_secret.clone()),
+                    remote_control: remote_control_service(),
+                    pre_configured_destinations: destinations(),
+                    app_state: (),
+                    storage,
+                    request_endpoints: (),
+                    interfaces: ManuallyAttached,
+                    persistence: NoPersistence,
+                    on_event: |_, _| {},
+                },
+            );
+        }));
+        assert!(
+            result.is_err(),
+            "two upstream rows cannot fit RC target + delivery + node page"
+        );
+
+        type Esp32FixedStorage = TestFixedStorage<4, 4, 128, 3, 3, 2, 2, 2, 2, 2, 2, 2>;
+        let storage: Esp32FixedStorage = TestFixedStorage;
+        let mut slot = MaybeUninit::uninit();
+        let (node, _, _) = assemble_node_in_place(
+            &mut slot,
+            PrnsNodeRecipe {
+                transport_identity: Some(node_secret.clone()),
+                remote_control: remote_control_service(),
+                pre_configured_destinations: destinations(),
+                app_state: (),
+                storage,
+                request_endpoints: (),
+                interfaces: ManuallyAttached,
+                persistence: NoPersistence,
+                on_event: |_, _| {},
+            },
+        );
+        assert_eq!(node.engine.upstream_app_destinations().count(), 3);
     }
 
     #[test]
