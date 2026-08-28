@@ -70,12 +70,14 @@ export function isCapabilityName(value: unknown): value is CapabilityName {
 export type LinkClosedReason =
   | "Timeout"
   | "PeerClosed"
-  | "MalformedRtt";
+  | "MalformedRtt"
+  | "LocallyClosed";
 
 export const LINK_CLOSED_REASON_VALUES: readonly LinkClosedReason[] = Object.freeze([
   "Timeout",
   "PeerClosed",
   "MalformedRtt",
+  "LocallyClosed",
 ]);
 
 export function isLinkClosedReason(value: unknown): value is LinkClosedReason {
@@ -993,7 +995,22 @@ export type CommandFailure =
         readonly detail: string;
       }
     >
-  | Tag<"ResponseTooLarge">;
+  | Tag<"ResponseTooLarge">
+  | Tag<"LinkClosed">
+  | Tag<"ResponseCancelledBySender">
+  | Tag<"ResponseHashmapBeyondPartCount">
+  | Tag<"ResponseHashmapSkipsAhead">
+  | Tag<"ResponseHashmapTooLong">
+  | Tag<"ResponseHashmapRagged">
+  | Tag<"ResponseRetriesExhausted">
+  | Tag<"ResponseLinkVanished">
+  | Tag<"ResponseTransferUnopenable">
+  | Tag<"ResponseTransferCorrupt">
+  | Tag<"ResponseProofUnsendable">
+  | Tag<"ResponseDecompressionFailed">
+  | Tag<"ResponseDecompressionTimedOut">
+  | Tag<"ResponseOpenTimedOut">
+  | Tag<"ResponseMetadataOverrun">;
 
 export type ApplicationEvent =
   | Tag<

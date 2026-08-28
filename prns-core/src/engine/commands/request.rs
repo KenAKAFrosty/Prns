@@ -3,6 +3,7 @@ use heapless::Vec as HeaplessVec;
 use crate::identity::IdentityHash;
 use crate::routing::links::data::link_mdu;
 use crate::routing::links::request::{RequestId, REQUEST_WIRE_OVERHEAD, RESPONSE_WIRE_OVERHEAD};
+use crate::routing::links::resources::ResourceFailureCause;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::units::{ByteLimit, DurationMillis};
@@ -44,10 +45,18 @@ pub enum SendRequestFailure {
     WriteFailed,
     Culled,
     Timeout,
+    LinkClosed,
     ResponseTooLarge,
+    ResponseTransferFailed(ResourceFailureCause),
     /// A valid Resource response could not be admitted within the receiver's
     /// bounded memory and pending-offer limits.
     ResourceCapacity,
+}
+
+impl From<ResourceFailureCause> for SendRequestFailure {
+    fn from(cause: ResourceFailureCause) -> Self {
+        Self::ResponseTransferFailed(cause)
+    }
 }
 
 pub const MAX_RESPOND_DATA_LEN: usize =
@@ -198,6 +207,39 @@ impl Settleable for AllowRequester {
             | Settlement::SendToChannel(_)
             | Settlement::SetRegisteredAnnounceAppData(_)
             | Settlement::SendPlainPacket(_) => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::routing::links::resources::table::ApplyHashmapUpdateError;
+
+    #[test]
+    fn every_response_transfer_failure_is_preserved_by_the_request_failure() {
+        let causes = [
+            ResourceFailureCause::CancelledBySender,
+            ResourceFailureCause::RefusedHashmapUpdate(ApplyHashmapUpdateError::BeyondPartCount),
+            ResourceFailureCause::RefusedHashmapUpdate(ApplyHashmapUpdateError::SkipsAhead),
+            ResourceFailureCause::RefusedHashmapUpdate(ApplyHashmapUpdateError::HashmapTooLong),
+            ResourceFailureCause::RefusedHashmapUpdate(ApplyHashmapUpdateError::HashmapRagged),
+            ResourceFailureCause::RetriesExhausted,
+            ResourceFailureCause::LinkVanished,
+            ResourceFailureCause::TransferUnopenable,
+            ResourceFailureCause::TransferCorrupt,
+            ResourceFailureCause::ProofUnsendable,
+            ResourceFailureCause::DecompressionFailed,
+            ResourceFailureCause::DecompressionTimedOut,
+            ResourceFailureCause::OpenTimedOut,
+            ResourceFailureCause::MetadataOverrun,
+        ];
+
+        for cause in causes {
+            assert_eq!(
+                SendRequestFailure::from(cause),
+                SendRequestFailure::ResponseTransferFailed(cause),
+            );
         }
     }
 }

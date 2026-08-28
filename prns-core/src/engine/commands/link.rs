@@ -90,6 +90,7 @@ pub enum SendToLinkFailure {
     WriteFailed(LinkDataError),
     Culled,
     Timeout,
+    LinkClosed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

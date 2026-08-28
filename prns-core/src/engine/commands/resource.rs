@@ -41,6 +41,7 @@ pub enum SendResourceFailure {
     RejectedByPeer,
     Sequencing,
     Timeout,
+    LinkClosed,
     /// The staged continuation was never advertised, so no wire cancel rides out with this settlement.
     PredecessorFailed,
 }

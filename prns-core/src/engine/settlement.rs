@@ -2,9 +2,9 @@ use crate::engine::{
     CommandId, EngineReaction, Journaled, SendRequestFailure, SendSinglePacketFailure,
     SendToLinkFailure, Settlement,
 };
-use crate::routing::delivery::receipts::ReceiptKind;
+use crate::routing::delivery::receipts::{LinkOwnedReceiptKind, ReceiptKind};
 
-pub(super) fn settle(
+pub(crate) fn settle(
     sink: &mut impl FnMut(EngineReaction<'_>),
     id: CommandId,
     settlement: Settlement,
@@ -13,6 +13,17 @@ pub(super) fn settle(
         id,
         settlement,
     }));
+}
+
+pub(crate) fn link_closed_settlement(kind: LinkOwnedReceiptKind) -> Settlement {
+    match kind {
+        LinkOwnedReceiptKind::SendToLink => {
+            Settlement::SendToLink(Err(SendToLinkFailure::LinkClosed))
+        }
+        LinkOwnedReceiptKind::SendRequest => {
+            Settlement::SendRequest(Err(SendRequestFailure::LinkClosed))
+        }
+    }
 }
 
 pub(super) fn culled_settlement(kind: ReceiptKind) -> Settlement {

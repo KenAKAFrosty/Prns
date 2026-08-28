@@ -3747,6 +3747,7 @@ fn a_close_link_command_settles_and_closes_the_peer() {
 
     let mut sent = std::vec::Vec::new();
     let mut settled = std::vec::Vec::new();
+    let mut closed = std::vec::Vec::new();
     let _ = initiator.ingest_command_into(
         IssuedCommand {
             id: CommandId(12),
@@ -3767,6 +3768,9 @@ fn a_close_link_command_settles_and_closes_the_peer() {
             EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
                 settled.push((id, settlement));
             }
+            EngineReaction::Journaled(Journaled::LinkClosed { link_id, reason }) => {
+                closed.push((link_id, reason));
+            }
             _ => {}
         },
     );
@@ -3775,6 +3779,7 @@ fn a_close_link_command_settles_and_closes_the_peer() {
         std::vec![(CommandId(12), Settlement::CloseLink(Ok(())))],
     );
     assert_eq!(sent.len(), 1);
+    assert_eq!(closed, [(link_id, LinkClosedReason::LocallyClosed)]);
     assert!(initiator.links.is_empty());
 
     let mut tampered = sent[0].clone();

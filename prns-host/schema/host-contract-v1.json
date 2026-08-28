@@ -469,7 +469,22 @@
         { "name": "DeviceUnavailable", "value": 38 },
         { "name": "ConnectFailed", "value": 39 },
         { "name": "BackendFailed", "value": 40 },
-        { "name": "ResponseTooLarge", "value": 41 }
+        { "name": "ResponseTooLarge", "value": 41 },
+        { "name": "LinkClosed", "value": 42 },
+        { "name": "ResponseCancelledBySender", "value": 43 },
+        { "name": "ResponseHashmapBeyondPartCount", "value": 44 },
+        { "name": "ResponseHashmapSkipsAhead", "value": 45 },
+        { "name": "ResponseHashmapTooLong", "value": 46 },
+        { "name": "ResponseHashmapRagged", "value": 47 },
+        { "name": "ResponseRetriesExhausted", "value": 48 },
+        { "name": "ResponseLinkVanished", "value": 49 },
+        { "name": "ResponseTransferUnopenable", "value": 50 },
+        { "name": "ResponseTransferCorrupt", "value": 51 },
+        { "name": "ResponseProofUnsendable", "value": 52 },
+        { "name": "ResponseDecompressionFailed", "value": 53 },
+        { "name": "ResponseDecompressionTimedOut", "value": 54 },
+        { "name": "ResponseOpenTimedOut", "value": 55 },
+        { "name": "ResponseMetadataOverrun", "value": 56 }
       ]
     },
     {
@@ -502,7 +517,8 @@
       "values": [
         { "name": "Timeout", "value": 1 },
         { "name": "PeerClosed", "value": 2 },
-        { "name": "MalformedRtt", "value": 3 }
+        { "name": "MalformedRtt", "value": 3 },
+        { "name": "LocallyClosed", "value": 4 }
       ]
     },
     {
@@ -1120,7 +1136,22 @@
         { "name": "BackendFailed", "value": 40, "fields": [
           { "name": "detail", "type": "string" }
         ] },
-        { "name": "ResponseTooLarge", "value": 41, "fields": [] }
+        { "name": "ResponseTooLarge", "value": 41, "fields": [] },
+        { "name": "LinkClosed", "value": 42, "fields": [] },
+        { "name": "ResponseCancelledBySender", "value": 43, "fields": [] },
+        { "name": "ResponseHashmapBeyondPartCount", "value": 44, "fields": [] },
+        { "name": "ResponseHashmapSkipsAhead", "value": 45, "fields": [] },
+        { "name": "ResponseHashmapTooLong", "value": 46, "fields": [] },
+        { "name": "ResponseHashmapRagged", "value": 47, "fields": [] },
+        { "name": "ResponseRetriesExhausted", "value": 48, "fields": [] },
+        { "name": "ResponseLinkVanished", "value": 49, "fields": [] },
+        { "name": "ResponseTransferUnopenable", "value": 50, "fields": [] },
+        { "name": "ResponseTransferCorrupt", "value": 51, "fields": [] },
+        { "name": "ResponseProofUnsendable", "value": 52, "fields": [] },
+        { "name": "ResponseDecompressionFailed", "value": 53, "fields": [] },
+        { "name": "ResponseDecompressionTimedOut", "value": 54, "fields": [] },
+        { "name": "ResponseOpenTimedOut", "value": 55, "fields": [] },
+        { "name": "ResponseMetadataOverrun", "value": 56, "fields": [] }
       ]
     },
     {

@@ -13,6 +13,8 @@ use personal_rns::interfaces::bluetooth_auto as bluetooth_contract;
 use personal_rns::interfaces::usb_auto;
 use personal_rns::interfaces::InterfaceKind;
 use personal_rns::routing::delivery::Delivery;
+use personal_rns::routing::links::resources::table::ApplyHashmapUpdateError;
+use personal_rns::routing::links::resources::ResourceFailureCause;
 use wasm_bindgen::prelude::*;
 
 use crate::runtime::{OutboundFrame, OutboundTarget};
@@ -169,6 +171,7 @@ pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
                     LinkClosedReason::Timeout => "timeout",
                     LinkClosedReason::PeerClosed => "peerClosed",
                     LinkClosedReason::MalformedRtt => "malformedRtt",
+                    LinkClosedReason::LocallyClosed => "locallyClosed",
                 },
             );
         }
@@ -376,6 +379,9 @@ fn settlement_to_js(object: &Object, settlement: Settlement) {
         Settlement::SendToLink(Err(SendToLinkFailure::Timeout)) => {
             set_command_failure(object, "DeliveryTimedOut", None);
         }
+        Settlement::SendToLink(Err(SendToLinkFailure::LinkClosed)) => {
+            set_command_failure(object, "LinkClosed", None);
+        }
         Settlement::Identify(Ok(())) => {
             set_str(object, "result", "succeeded");
             set_str(object, "kind", "Identified");
@@ -426,6 +432,32 @@ fn settlement_to_js(object: &Object, settlement: Settlement) {
         }
         Settlement::SendRequest(Err(SendRequestFailure::Timeout)) => {
             set_command_failure(object, "DeliveryTimedOut", None);
+        }
+        Settlement::SendRequest(Err(SendRequestFailure::LinkClosed)) => {
+            set_command_failure(object, "LinkClosed", None);
+        }
+        Settlement::SendRequest(Err(SendRequestFailure::ResponseTransferFailed(cause))) => {
+            let kind = match cause {
+                ResourceFailureCause::CancelledBySender => "ResponseCancelledBySender",
+                ResourceFailureCause::RefusedHashmapUpdate(refusal) => match refusal {
+                    ApplyHashmapUpdateError::BeyondPartCount => {
+                        "ResponseHashmapBeyondPartCount"
+                    }
+                    ApplyHashmapUpdateError::SkipsAhead => "ResponseHashmapSkipsAhead",
+                    ApplyHashmapUpdateError::HashmapTooLong => "ResponseHashmapTooLong",
+                    ApplyHashmapUpdateError::HashmapRagged => "ResponseHashmapRagged",
+                },
+                ResourceFailureCause::RetriesExhausted => "ResponseRetriesExhausted",
+                ResourceFailureCause::LinkVanished => "ResponseLinkVanished",
+                ResourceFailureCause::TransferUnopenable => "ResponseTransferUnopenable",
+                ResourceFailureCause::TransferCorrupt => "ResponseTransferCorrupt",
+                ResourceFailureCause::ProofUnsendable => "ResponseProofUnsendable",
+                ResourceFailureCause::DecompressionFailed => "ResponseDecompressionFailed",
+                ResourceFailureCause::DecompressionTimedOut => "ResponseDecompressionTimedOut",
+                ResourceFailureCause::OpenTimedOut => "ResponseOpenTimedOut",
+                ResourceFailureCause::MetadataOverrun => "ResponseMetadataOverrun",
+            };
+            set_command_failure(object, kind, None);
         }
         Settlement::SendRequest(Err(SendRequestFailure::ResponseTooLarge)) => {
             set_command_failure(object, "ResponseTooLarge", None);
@@ -499,6 +531,9 @@ fn settlement_to_js(object: &Object, settlement: Settlement) {
         }
         Settlement::SendToChannel(Err(SendToChannelFailure::Timeout)) => {
             set_command_failure(object, "DeliveryTimedOut", None);
+        }
+        Settlement::SendToChannel(Err(SendToChannelFailure::LinkClosed)) => {
+            set_command_failure(object, "LinkClosed", None);
         }
         Settlement::AllowRequester(Ok(())) => {
             set_str(object, "result", "succeeded");
@@ -583,6 +618,9 @@ fn set_resource_failure(object: &Object, failure: SendResourceFailure) {
         }
         SendResourceFailure::Timeout => {
             set_command_failure(object, "DeliveryTimedOut", None);
+        }
+        SendResourceFailure::LinkClosed => {
+            set_command_failure(object, "LinkClosed", None);
         }
         SendResourceFailure::PredecessorFailed => {
             set_command_failure(object, "ResourcePredecessorFailed", None);

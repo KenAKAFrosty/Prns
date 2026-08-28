@@ -367,6 +367,7 @@ pub(crate) fn track_pending_request_with_limit<S: StorageLayout>(
         packet_hash,
         command_id,
         kind: ReceiptKind::SendRequest {
+            link_id: link_id(),
             maximum_response_bytes,
         },
         peer_signing_key: IdentitySigningPublicKey::new(Ed25519PublicKey([0x99; 32])),

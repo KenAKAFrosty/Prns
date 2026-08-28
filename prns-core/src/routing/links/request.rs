@@ -454,6 +454,7 @@ impl<S: StorageLayout> EngineState<S> {
             packet_hash,
             command_id: id,
             kind: ReceiptKind::SendRequest {
+                link_id: request.link_id,
                 maximum_response_bytes: request.maximum_response_bytes,
             },
             peer_signing_key: IdentitySigningPublicKey::new(peer_signing),
@@ -491,6 +492,7 @@ impl<S: StorageLayout> EngineState<S> {
             packet_hash: PacketHash::new(sha256(packed_request)),
             command_id: id,
             kind: ReceiptKind::SendRequest {
+                link_id: *link_id,
                 maximum_response_bytes,
             },
             peer_signing_key: IdentitySigningPublicKey::new(peer_signing),

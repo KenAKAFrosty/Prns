@@ -12,10 +12,11 @@ use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::announce::{derive_destination_hash, expand_name, Announce};
 use crate::routing::group_keys::{GroupKey, GroupKeyError};
 use crate::routing::links::resources::ResourceStrategy;
+use crate::routing::links::LinkId;
 use crate::routing::request_handlers::{RequestHandlerError, RequestPathHash, RequestPolicy};
 use crate::routing::upstream_app_destinations::LinkRequestPolicy;
 use crate::routing::upstream_app_destinations::{
-    ProofStrategy, RegisterDestinationError, UnregisterDestinationOutcome, UpstreamAppDestination,
+    ProofStrategy, RegisterDestinationError, UnregisterRegistrationOutcome, UpstreamAppDestination,
 };
 use crate::routing::warmth::Departure;
 use crate::routing::{PersistedRouteRow, SeedRouteOutcome};
@@ -28,6 +29,18 @@ use zeroize::Zeroizing;
 pub enum SetTransportIdentityError {
     UnknownIdentity,
     AlreadyConfigured,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+#[must_use]
+pub enum UnregisterDestinationOutcome {
+    Unregistered {
+        registration: UpstreamAppDestination,
+    },
+    ResponderLinksPresent {
+        first_link: LinkId,
+    },
+    NotRegistered,
 }
 
 impl<S: StorageLayout> EngineState<S> {
@@ -210,15 +223,26 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         destination: &DestinationHash,
     ) -> UnregisterDestinationOutcome {
-        let outcome = self.upstream_app_destinations.unregister(destination);
-        let UnregisterDestinationOutcome::Unregistered { .. } = outcome else {
-            return outcome;
+        if self
+            .upstream_app_destinations
+            .registration_for(destination)
+            .is_none()
+        {
+            return UnregisterDestinationOutcome::NotRegistered;
+        }
+        if let Some(first_link) = self.responder_links_for_destination(destination).next() {
+            return UnregisterDestinationOutcome::ResponderLinksPresent { first_link };
+        }
+        let UnregisterRegistrationOutcome::Unregistered { registration } =
+            self.upstream_app_destinations.unregister(destination)
+        else {
+            return UnregisterDestinationOutcome::NotRegistered;
         };
         self.request_handlers.unregister_destination(destination);
         let _ = self.scheduled_announces.cancel(destination);
         self.self_ratchets.untrack(destination);
         self.group_keys.remove(destination);
-        outcome
+        UnregisterDestinationOutcome::Unregistered { registration }
     }
 
     /// RNS 1.4.2 apps set `Link.resource_strategy` in the link-established callback, a de facto per-destination default; stamping at activation outraces a sender's instant advertise.
@@ -819,6 +843,77 @@ mod tests {
     }
 
     #[test]
+    fn destination_unregistration_refuses_a_responder_link_without_mutating_state() {
+        use crate::crypto::{
+            x25519_diffie_hellman, x25519_public_key, Ed25519PublicKey, X25519SecretKey,
+        };
+        use crate::routing::links::table::RespondingLink;
+        use crate::routing::links::LinkKey;
+
+        let mut state = EngineState::<TestStorageLayout>::default();
+        let node = state.hold_identity(fixed_secret_key()).unwrap();
+        let destination = state
+            .register_single_destination(
+                &node,
+                "personal",
+                &["ephemeral"],
+                b"pairing",
+                ProofStrategy::ProveAll,
+                LinkRequestPolicy::AcceptAll,
+                RatchetPolicy::Ratcheted,
+            )
+            .unwrap();
+        let registration = state
+            .upstream_app_destinations()
+            .find(|registered| registered.destination == destination)
+            .unwrap();
+        let link_id = LinkId::new([0x71; 16]);
+        let local_secret = X25519SecretKey::new([0x72; 32]);
+        let remote_secret = X25519SecretKey::new([0x73; 32]);
+        let shared = x25519_diffie_hellman(&local_secret, &x25519_public_key(&remote_secret));
+        state
+            .links
+            .track_responding(RespondingLink {
+                link_id,
+                key: LinkKey::derive(&link_id, &shared),
+                requested_at: InstantMillis(1_000),
+                timeout_at: InstantMillis(2_000),
+                mtu: crate::wire::BROADCAST_MTU,
+                initiator_signing: Ed25519PublicKey([0x74; 32]),
+                destination,
+                identity: node,
+                proof_strategy: ProofStrategy::ProveAll,
+            })
+            .unwrap();
+
+        assert_eq!(
+            state.unregister_destination(&destination),
+            UnregisterDestinationOutcome::ResponderLinksPresent {
+                first_link: link_id,
+            },
+        );
+        assert_eq!(
+            state
+                .upstream_app_destinations()
+                .collect::<std::vec::Vec<_>>(),
+            [registration],
+        );
+        assert!(state.self_ratchets.is_tracked(&destination));
+        assert_eq!(
+            state
+                .responder_links_for_destination(&destination)
+                .collect::<std::vec::Vec<_>>(),
+            [link_id],
+        );
+
+        assert!(state.links.remove(&link_id));
+        assert_eq!(
+            state.unregister_destination(&destination),
+            UnregisterDestinationOutcome::Unregistered { registration },
+        );
+    }
+
+    #[test]
     fn destination_unregistration_reclaims_bounded_credential_slots() {
         let mut ratcheted = EngineState::<TestStorageLayout>::default();
         let node = ratcheted.hold_identity(fixed_secret_key()).unwrap();
@@ -839,7 +934,17 @@ mod tests {
                 removed_ratchet = Some(destination);
             }
         }
-        ratcheted.unregister_destination(&removed_ratchet.unwrap());
+        let removed_ratchet = removed_ratchet.unwrap();
+        let removed_registration = ratcheted
+            .upstream_app_destinations()
+            .find(|registration| registration.destination == removed_ratchet)
+            .unwrap();
+        assert_eq!(
+            ratcheted.unregister_destination(&removed_ratchet),
+            UnregisterDestinationOutcome::Unregistered {
+                registration: removed_registration,
+            },
+        );
         let replacement_ratchet = ratcheted
             .register_single_destination(
                 &node,
@@ -865,7 +970,17 @@ mod tests {
                 removed_group = Some(destination);
             }
         }
-        grouped.unregister_destination(&removed_group.unwrap());
+        let removed_group = removed_group.unwrap();
+        let removed_registration = grouped
+            .upstream_app_destinations()
+            .find(|registration| registration.destination == removed_group)
+            .unwrap();
+        assert_eq!(
+            grouped.unregister_destination(&removed_group),
+            UnregisterDestinationOutcome::Unregistered {
+                registration: removed_registration,
+            },
+        );
         let replacement_group = grouped
             .register_group_destination(&identity, "personal", &["replacement"], &[0x99; 64])
             .unwrap();

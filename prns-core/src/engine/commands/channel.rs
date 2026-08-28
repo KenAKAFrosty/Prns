@@ -31,6 +31,7 @@ pub enum SendToChannelFailure {
     WindowFull,
     Untrackable,
     Timeout,
+    LinkClosed,
 }
 
 impl Settleable for SendToChannel {

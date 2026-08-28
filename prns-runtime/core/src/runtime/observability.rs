@@ -52,6 +52,8 @@ prns_macros::iterable_enum! {
         Backpressure,
         Untrackable,
         ResponseTooLarge,
+        LinkClosed,
+        ResponseTransferFailed,
     }
 }
 
@@ -161,6 +163,7 @@ prns_macros::iterable_enum! {
         Timeout,
         PeerClosed,
         MalformedRtt,
+        LocallyClosed,
     }
 }
 
@@ -445,6 +448,7 @@ impl From<&SendToLinkFailure> for RuntimeOperationOutcome {
             SendToLinkFailure::WriteFailed(_) => Self::WriteFailed,
             SendToLinkFailure::Culled => Self::Culled,
             SendToLinkFailure::Timeout => Self::Timeout,
+            SendToLinkFailure::LinkClosed => Self::LinkClosed,
         }
     }
 }
@@ -465,7 +469,9 @@ impl From<&SendRequestFailure> for RuntimeOperationOutcome {
             SendRequestFailure::WriteFailed => Self::WriteFailed,
             SendRequestFailure::Culled => Self::Culled,
             SendRequestFailure::Timeout => Self::Timeout,
+            SendRequestFailure::LinkClosed => Self::LinkClosed,
             SendRequestFailure::ResponseTooLarge => Self::ResponseTooLarge,
+            SendRequestFailure::ResponseTransferFailed(_) => Self::ResponseTransferFailed,
             SendRequestFailure::ResourceCapacity => Self::Backpressure,
         }
     }
@@ -498,6 +504,7 @@ impl From<&SendResourceFailure> for RuntimeOperationOutcome {
             SendResourceFailure::RejectedByPeer => Self::PeerRejected,
             SendResourceFailure::Sequencing => Self::Sequencing,
             SendResourceFailure::Timeout => Self::Timeout,
+            SendResourceFailure::LinkClosed => Self::LinkClosed,
             SendResourceFailure::PredecessorFailed => Self::DependencyFailed,
         }
     }
@@ -519,6 +526,7 @@ impl From<&SendToChannelFailure> for RuntimeOperationOutcome {
             SendToChannelFailure::WindowFull => Self::Backpressure,
             SendToChannelFailure::Untrackable => Self::Untrackable,
             SendToChannelFailure::Timeout => Self::Timeout,
+            SendToChannelFailure::LinkClosed => Self::LinkClosed,
         }
     }
 }
@@ -560,6 +568,7 @@ impl From<LinkClosedReason> for RuntimeLinkClosure {
             LinkClosedReason::Timeout => Self::Timeout,
             LinkClosedReason::PeerClosed => Self::PeerClosed,
             LinkClosedReason::MalformedRtt => Self::MalformedRtt,
+            LinkClosedReason::LocallyClosed => Self::LocallyClosed,
         }
     }
 }
@@ -613,6 +622,16 @@ mod tests {
         assert_eq!(
             RuntimeOperationOutcome::from(&SendRequestFailure::ResourceCapacity),
             RuntimeOperationOutcome::Backpressure,
+        );
+    }
+
+    #[test]
+    fn response_transfer_failures_keep_their_own_operation_class() {
+        assert_eq!(
+            RuntimeOperationOutcome::from(&SendRequestFailure::ResponseTransferFailed(
+                ResourceFailureCause::TransferCorrupt,
+            )),
+            RuntimeOperationOutcome::ResponseTransferFailed,
         );
     }
 

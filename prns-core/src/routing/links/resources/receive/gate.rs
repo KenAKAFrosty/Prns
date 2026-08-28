@@ -515,6 +515,7 @@ mod tests {
             packet_hash,
             command_id: CommandId(42),
             kind: ReceiptKind::SendRequest {
+                link_id: link_id(),
                 maximum_response_bytes: crate::units::ByteLimit::Unlimited,
             },
             peer_signing_key: IdentitySigningPublicKey::new(Ed25519PublicKey([0x99; 32])),
@@ -1730,7 +1731,13 @@ mod tests {
 
         let mut close = [0u8; BROADCAST_MTU];
         receiver
-            .write_owed_link_close(&link_id(), &test_entropy_bytes::<16>(0x91), &mut close)
+            .write_owed_link_close(
+                &link_id(),
+                crate::engine::LinkClosedReason::LocallyClosed,
+                &test_entropy_bytes::<16>(0x91),
+                &mut close,
+                &mut |_| {},
+            )
             .unwrap();
         assert!(receiver.pending_resource_offers.is_empty());
     }

@@ -17,12 +17,13 @@ pub enum ReceiptKind {
     },
     SendToLink(LinkId),
     SendRequest {
+        link_id: LinkId,
         maximum_response_bytes: ByteLimit,
     },
 }
 
 const _: () = {
-    assert!(core::mem::size_of::<ReceiptKind>() == 24);
+    assert!(core::mem::size_of::<ReceiptKind>() == 32);
 };
 
 impl ReceiptKind {
@@ -74,6 +75,18 @@ pub struct ExpiredReceipt {
 pub struct CulledReceipt {
     pub command_id: CommandId,
     pub kind: ReceiptKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkOwnedReceiptKind {
+    SendToLink,
+    SendRequest,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinkOwnedReceipt {
+    pub command_id: CommandId,
+    pub kind: LinkOwnedReceiptKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -171,6 +184,32 @@ impl<C: ReceiptTable> Receipts<C> {
         self.table.remove(index);
         self.refresh_earliest_timeout();
         Some(expired)
+    }
+
+    pub fn pop_for_link(&mut self, link_id: &LinkId) -> Option<LinkOwnedReceipt> {
+        let (index, kind) = self
+            .table
+            .kinds()
+            .iter()
+            .enumerate()
+            .find_map(|(index, kind)| match kind {
+                ReceiptKind::SendToLink(candidate) if candidate == link_id => {
+                    Some((index, LinkOwnedReceiptKind::SendToLink))
+                }
+                ReceiptKind::SendRequest {
+                    link_id: candidate, ..
+                } if candidate == link_id => Some((index, LinkOwnedReceiptKind::SendRequest)),
+                ReceiptKind::SendSinglePacket { .. }
+                | ReceiptKind::SendToLink(_)
+                | ReceiptKind::SendRequest { .. } => None,
+            })?;
+        let receipt = LinkOwnedReceipt {
+            command_id: *self.table.command_ids().get(index)?,
+            kind,
+        };
+        self.table.remove(index);
+        self.refresh_earliest_timeout();
+        Some(receipt)
     }
 
     /// RNS 1.4.2 explicit proof: match the row by full packet hash, then verify. A failed signature leaves the row outstanding (reference parity; the timeout still owns it).
@@ -325,6 +364,7 @@ impl<C: ReceiptTable> Receipts<C> {
         match self.table.kinds().get(index)? {
             ReceiptKind::SendRequest {
                 maximum_response_bytes,
+                ..
             } => Some(*maximum_response_bytes),
             ReceiptKind::SendSinglePacket { .. } | ReceiptKind::SendToLink(_) => None,
         }
@@ -698,6 +738,7 @@ mod tests {
             packet_hash,
             command_id: CommandId(4),
             kind: ReceiptKind::SendRequest {
+                link_id: LinkId::new([0x2A; 16]),
                 maximum_response_bytes: ByteLimit::Unlimited,
             },
             peer_signing_key: key,
@@ -723,6 +764,54 @@ mod tests {
                 .map(|receipt| receipt.command_id),
             Some(CommandId(4)),
         );
+    }
+
+    #[test]
+    fn link_retirement_reclaims_even_a_request_claimed_by_a_resource() {
+        let (_, key) = signer(0x41);
+        let link_id = LinkId::new([0x42; 16]);
+        let packet_hash = PacketHash::new([0x43; 32]);
+        let request_id = RequestId::of_packet(&packet_hash);
+        let mut receipts = TestReceipts::default();
+        receipts.track(OutstandingReceipt {
+            packet_hash,
+            command_id: CommandId(43),
+            kind: ReceiptKind::SendRequest {
+                link_id,
+                maximum_response_bytes: ByteLimit::Unlimited,
+            },
+            peer_signing_key: key,
+            sent_at: InstantMillis(100),
+            timeout_at: InstantMillis(7_000),
+        });
+        receipts.track(OutstandingReceipt {
+            packet_hash: PacketHash::new([0x44; 32]),
+            command_id: CommandId(44),
+            kind: ReceiptKind::SendToLink(link_id),
+            peer_signing_key: key,
+            sent_at: InstantMillis(200),
+            timeout_at: InstantMillis(8_000),
+        });
+        receipts.track(outstanding(0x45, 45, key, 300, 9_000));
+        receipts.claim_request_for_transfer(request_id);
+
+        assert_eq!(
+            receipts.pop_for_link(&link_id),
+            Some(LinkOwnedReceipt {
+                command_id: CommandId(43),
+                kind: LinkOwnedReceiptKind::SendRequest,
+            }),
+        );
+        assert_eq!(
+            receipts.pop_for_link(&link_id),
+            Some(LinkOwnedReceipt {
+                command_id: CommandId(44),
+                kind: LinkOwnedReceiptKind::SendToLink,
+            }),
+        );
+        assert_eq!(receipts.pop_for_link(&link_id), None);
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts.earliest_timeout_at(), Some(InstantMillis(9_000)));
     }
 
     #[test]

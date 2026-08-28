@@ -640,7 +640,13 @@ impl<S: StorageLayout> EngineState<S> {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
                 fill_entropy(&mut iv);
                 let mut buf = [0u8; BROADCAST_MTU];
-                let settlement = match self.write_owed_link_close(&close.link_id, &iv, &mut buf) {
+                let settlement = match self.write_owed_link_close(
+                    &close.link_id,
+                    crate::engine::LinkClosedReason::LocallyClosed,
+                    &iv,
+                    &mut buf,
+                    sink,
+                ) {
                     Ok(dispatch) => {
                         if let Some(fire_on) = dispatch.fire_on {
                             fan_frame(

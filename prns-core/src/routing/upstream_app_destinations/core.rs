@@ -106,7 +106,7 @@ pub enum RegisterDestinationError {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum UnregisterDestinationOutcome {
+pub(crate) enum UnregisterRegistrationOutcome {
     Unregistered {
         registration: UpstreamAppDestination,
     },
@@ -300,20 +300,23 @@ impl<C: UpstreamAppDestinationTable> UpstreamAppDestinations<C> {
         Some((registered, self.table.app_data_at(slot)?))
     }
 
-    pub fn unregister(&mut self, destination: &DestinationHash) -> UnregisterDestinationOutcome {
+    pub(crate) fn unregister(
+        &mut self,
+        destination: &DestinationHash,
+    ) -> UnregisterRegistrationOutcome {
         let Some(slot) = self
             .table
             .destinations()
             .iter()
             .position(|candidate| candidate == destination)
         else {
-            return UnregisterDestinationOutcome::NotRegistered;
+            return UnregisterRegistrationOutcome::NotRegistered;
         };
         let Some(kind) = self.table.kinds().get(slot).copied() else {
-            return UnregisterDestinationOutcome::NotRegistered;
+            return UnregisterRegistrationOutcome::NotRegistered;
         };
         let Some(name_hash) = self.table.name_hashes().get(slot).copied() else {
-            return UnregisterDestinationOutcome::NotRegistered;
+            return UnregisterRegistrationOutcome::NotRegistered;
         };
         let registered = UpstreamAppDestination {
             destination: *destination,
@@ -321,9 +324,9 @@ impl<C: UpstreamAppDestinationTable> UpstreamAppDestinations<C> {
             name_hash,
         };
         if self.table.swap_remove(slot).is_none() {
-            return UnregisterDestinationOutcome::NotRegistered;
+            return UnregisterRegistrationOutcome::NotRegistered;
         }
-        UnregisterDestinationOutcome::Unregistered {
+        UnregisterRegistrationOutcome::Unregistered {
             registration: registered,
         }
     }
@@ -502,13 +505,13 @@ mod tests {
 
         assert_eq!(
             destinations.unregister(&first),
-            UnregisterDestinationOutcome::Unregistered {
+            UnregisterRegistrationOutcome::Unregistered {
                 registration: expected,
             },
         );
         assert_eq!(
             destinations.unregister(&first),
-            UnregisterDestinationOutcome::NotRegistered,
+            UnregisterRegistrationOutcome::NotRegistered,
         );
         assert!(destinations.registration_for(&first).is_none());
         assert_eq!(destinations.app_data_for(&second), Some([].as_slice()));

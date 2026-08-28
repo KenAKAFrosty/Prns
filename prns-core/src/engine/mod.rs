@@ -3,6 +3,7 @@ mod command_execution;
 mod commands;
 mod deadlines;
 mod destination_identity;
+mod destination_retirement;
 mod introspection;
 mod management;
 mod node_egress;
@@ -65,6 +66,7 @@ pub use crate::routing::RouteRemovalCause;
 pub use crate::wire::WireError as EgressSerializeError;
 pub use command_execution::CommandTiming;
 pub use commands::*;
+pub use destination_retirement::RetireDestinationOutcome;
 pub use introspection::{AnnounceRateState, RouteSnapshot};
 pub use node_egress::ReemitAnnounce;
 pub use node_ingress::{IngestIo, IngestPacketReport};
@@ -75,8 +77,10 @@ pub use reaction::{
 };
 pub use registration::{
     PersistedRoutePreflightError, PersistedRouteSignaturePending, PersistedRouteVerificationError,
-    RouteSeedOutcome, SetTransportIdentityError, VerifiedPersistedRoute,
+    RouteSeedOutcome, SetTransportIdentityError, UnregisterDestinationOutcome,
+    VerifiedPersistedRoute,
 };
+pub(crate) use settlement::{link_closed_settlement, settle};
 pub use state::{
     EngineProtocolPolicy, EngineState, LinkMtuDiscovery, LocalHopCountOverride,
     LocalOriginHopCount, ProofForm, RecursivePathRequestDefault,

@@ -31,6 +31,8 @@ use personal_rns::manifold::reconnect::ReconnectPolicy;
 use personal_rns::node_introspection::logical_interface_inventory;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::channel::MessageType;
+use personal_rns::routing::links::resources::table::ApplyHashmapUpdateError;
+use personal_rns::routing::links::resources::ResourceFailureCause;
 use personal_rns::routing::request_handlers::RequestPolicy as EngineRequestPolicy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::request_endpoints::RespondToken;
@@ -2578,6 +2580,7 @@ fn send_link_failure(error: SendError<SendToLinkFailure>) -> CommandFailure {
         },
         SendError::Failed(SendToLinkFailure::Culled) => CommandFailure::PacketCulled,
         SendError::Failed(SendToLinkFailure::Timeout) => CommandFailure::DeliveryTimedOut,
+        SendError::Failed(SendToLinkFailure::LinkClosed) => CommandFailure::LinkClosed,
     }
 }
 
@@ -2595,7 +2598,44 @@ fn request_failure(error: SendError<SendRequestFailure>) -> CommandFailure {
         },
         SendError::Failed(SendRequestFailure::Culled) => CommandFailure::PacketCulled,
         SendError::Failed(SendRequestFailure::Timeout) => CommandFailure::DeliveryTimedOut,
+        SendError::Failed(SendRequestFailure::LinkClosed) => CommandFailure::LinkClosed,
         SendError::Failed(SendRequestFailure::ResponseTooLarge) => CommandFailure::ResponseTooLarge,
+        SendError::Failed(SendRequestFailure::ResponseTransferFailed(cause)) => match cause {
+            ResourceFailureCause::CancelledBySender => {
+                CommandFailure::ResponseCancelledBySender
+            }
+            ResourceFailureCause::RefusedHashmapUpdate(refusal) => match refusal {
+                ApplyHashmapUpdateError::BeyondPartCount => {
+                    CommandFailure::ResponseHashmapBeyondPartCount
+                }
+                ApplyHashmapUpdateError::SkipsAhead => {
+                    CommandFailure::ResponseHashmapSkipsAhead
+                }
+                ApplyHashmapUpdateError::HashmapTooLong => {
+                    CommandFailure::ResponseHashmapTooLong
+                }
+                ApplyHashmapUpdateError::HashmapRagged => {
+                    CommandFailure::ResponseHashmapRagged
+                }
+            },
+            ResourceFailureCause::RetriesExhausted => {
+                CommandFailure::ResponseRetriesExhausted
+            }
+            ResourceFailureCause::LinkVanished => CommandFailure::ResponseLinkVanished,
+            ResourceFailureCause::TransferUnopenable => {
+                CommandFailure::ResponseTransferUnopenable
+            }
+            ResourceFailureCause::TransferCorrupt => CommandFailure::ResponseTransferCorrupt,
+            ResourceFailureCause::ProofUnsendable => CommandFailure::ResponseProofUnsendable,
+            ResourceFailureCause::DecompressionFailed => {
+                CommandFailure::ResponseDecompressionFailed
+            }
+            ResourceFailureCause::DecompressionTimedOut => {
+                CommandFailure::ResponseDecompressionTimedOut
+            }
+            ResourceFailureCause::OpenTimedOut => CommandFailure::ResponseOpenTimedOut,
+            ResourceFailureCause::MetadataOverrun => CommandFailure::ResponseMetadataOverrun,
+        },
         SendError::Failed(SendRequestFailure::ResourceCapacity) => {
             CommandFailure::ResourceTableFull
         }
@@ -2641,6 +2681,7 @@ fn resource_send_failure(error: ResourceSendError) -> CommandFailure {
         ResourceSendError::Rejected(SendResourceFailure::Timeout) => {
             CommandFailure::DeliveryTimedOut
         }
+        ResourceSendError::Rejected(SendResourceFailure::LinkClosed) => CommandFailure::LinkClosed,
         ResourceSendError::Rejected(SendResourceFailure::PredecessorFailed) => {
             CommandFailure::ResourcePredecessorFailed
         }
@@ -2676,6 +2717,7 @@ fn send_channel_failure(error: SendError<SendToChannelFailure>) -> CommandFailur
         SendError::Failed(SendToChannelFailure::WindowFull) => CommandFailure::ChannelWindowFull,
         SendError::Failed(SendToChannelFailure::Untrackable) => CommandFailure::ChannelUntrackable,
         SendError::Failed(SendToChannelFailure::Timeout) => CommandFailure::DeliveryTimedOut,
+        SendError::Failed(SendToChannelFailure::LinkClosed) => CommandFailure::LinkClosed,
     }
 }
 
@@ -2978,6 +3020,7 @@ fn translate_diagnostic(diagnostic: Diagnostic<'_>) -> Option<DiagnosticEvent> {
                 EngineLinkClosedReason::Timeout => LinkClosedReason::Timeout,
                 EngineLinkClosedReason::PeerClosed => LinkClosedReason::PeerClosed,
                 EngineLinkClosedReason::MalformedRtt => LinkClosedReason::MalformedRtt,
+                EngineLinkClosedReason::LocallyClosed => LinkClosedReason::LocallyClosed,
             },
         },
         Diagnostic::CommandSettled { id, settlement } => DiagnosticEvent::BackendDiagnostic {

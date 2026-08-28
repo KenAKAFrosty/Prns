@@ -220,6 +220,7 @@ pub enum LinkClosedReason {
     Timeout,
     PeerClosed,
     MalformedRtt,
+    LocallyClosed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

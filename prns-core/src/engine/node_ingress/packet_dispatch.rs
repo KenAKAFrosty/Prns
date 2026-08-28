@@ -597,7 +597,7 @@ impl<S: StorageLayout> EngineState<S> {
                     settle(
                         sink,
                         id,
-                        Settlement::SendRequest(Err(SendRequestFailure::Timeout)),
+                        Settlement::SendRequest(Err(SendRequestFailure::from(cause))),
                     );
                     wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
                 }
@@ -720,17 +720,16 @@ impl<S: StorageLayout> EngineState<S> {
                 }
             }
             IngestPacketOutcome::LinkClosedByPeer { link_id } => {
-                sink(EngineReaction::Journaled(Journaled::LinkClosed {
-                    link_id,
-                    reason: LinkClosedReason::PeerClosed,
-                }));
+                self.retire_link(&link_id, LinkClosedReason::PeerClosed, sink);
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::OwesLinkClose { link_id, reason } => {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
                 fill_entropy(&mut iv);
                 let mut buf = [0u8; BROADCAST_MTU];
-                if let Ok(dispatch) = self.write_owed_link_close(&link_id, &iv, &mut buf) {
+                if let Ok(dispatch) =
+                    self.write_owed_link_close(&link_id, reason, &iv, &mut buf, sink)
+                {
                     let target = dispatch.fire_on.unwrap_or(source);
                     if interfaces.is_egress_eligible(target, Egress::Transmit) {
                         sink(EngineReaction::Directive(Directive::Send {
@@ -738,10 +737,6 @@ impl<S: StorageLayout> EngineState<S> {
                             bytes: &buf[..dispatch.wire_bytes],
                         }));
                     }
-                    sink(EngineReaction::Journaled(Journaled::LinkClosed {
-                        link_id,
-                        reason,
-                    }));
                 }
             }
             IngestPacketOutcome::LinkInterfaceMismatch {
