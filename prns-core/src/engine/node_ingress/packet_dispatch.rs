@@ -4,6 +4,9 @@ use super::relay::{RelayAudience, RelayPathRequest};
 
 use crate::crypto::ratchets::RatchetRotation;
 use crate::crypto::{ed25519_sign, X25519SecretKey};
+use crate::engine::remote_control_pairing::{
+    RemoteControlPairingRequestIngress, RemoteControlPairingRequestIngressOutcome,
+};
 use crate::engine::settlement::settle;
 use crate::engine::LinkClosedReason;
 use crate::engine::{
@@ -410,16 +413,37 @@ impl<S: StorageLayout> EngineState<S> {
                 rtt,
                 data,
             } => {
-                sink(EngineReaction::Journaled(Journaled::RequestReceived {
-                    destination,
-                    link_id,
-                    request_id,
-                    requester,
-                    path_hash,
-                    requested_at,
-                    rtt,
-                    data,
-                }));
+                match self.ingest_remote_control_pairing_request(
+                    RemoteControlPairingRequestIngress {
+                        destination,
+                        link_id,
+                        request_id,
+                        requester,
+                        path_hash,
+                        data,
+                    },
+                    interfaces,
+                    now,
+                    fill_entropy,
+                    sink,
+                ) {
+                    RemoteControlPairingRequestIngressOutcome::Pairing(_pairing_outcome) => {
+                        wake_schedule_changes.remote_control_pairing =
+                            self.remote_control_pairing_wake();
+                    }
+                    RemoteControlPairingRequestIngressOutcome::ForwardToApplication => {
+                        sink(EngineReaction::Journaled(Journaled::RequestReceived {
+                            destination,
+                            link_id,
+                            request_id,
+                            requester,
+                            path_hash,
+                            requested_at,
+                            rtt,
+                            data,
+                        }));
+                    }
+                }
             }
             IngestPacketOutcome::ResponseSettled {
                 id,

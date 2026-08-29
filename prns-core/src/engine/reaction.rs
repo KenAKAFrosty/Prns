@@ -122,6 +122,18 @@ pub enum Journaled<'a> {
         crate::remote_control::RemoteControlPairingAvailabilityObservation<'a>,
     ),
 
+    RemoteControlTargetPairingConfirmationRequired(
+        crate::remote_control::RemoteControlTargetPairingAttemptView<'a>,
+    ),
+
+    RemoteControlTargetPairingExpired {
+        aborted: crate::remote_control::RemoteControlTargetPairingAborted,
+    },
+
+    RemoteControlTargetPairingLinkClosed {
+        aborted: crate::remote_control::RemoteControlTargetPairingAborted,
+    },
+
     /// RNS 1.4.2's `set_link_established_callback` as data.
     LinkEstablished(LinkEstablished),
 

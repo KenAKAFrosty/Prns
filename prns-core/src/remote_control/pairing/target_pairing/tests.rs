@@ -44,6 +44,7 @@ impl TargetPairingFixture {
                 )),
                 RemoteControlPairingWindow::new(PAIRING_OPENED_AT, PAIRING_EXPIRES_AT).unwrap(),
                 permissions(),
+                RemoteControlPairingAttemptTimeout::try_from(ATTEMPT_TIMEOUT).unwrap(),
             ),
             link_id: LinkId::new([link_fill; TRUNCATED_HASH_BYTE_LEN]),
             begin: RemoteControlPairingBegin::new(controller(0x31)),
@@ -127,15 +128,28 @@ fn begin_with_offer(
     state: &mut RemoteControlTargetPairingState,
     fixture: &TargetPairingFixture,
 ) -> (RemoteControlPairingAttemptId, RemoteControlPairingOffer) {
+    let (attempt_id, offer) = prepare_offer(state, fixture);
+    let DispatchRemoteControlTargetPairingOfferOutcome::AwaitingConfirmation { attempt } =
+        state.offer_dispatched(attempt_id)
+    else {
+        panic!("prepared offer")
+    };
+    assert_eq!(attempt.attempt_id(), attempt_id);
+    (attempt_id, offer)
+}
+
+fn prepare_offer(
+    state: &mut RemoteControlTargetPairingState,
+    fixture: &TargetPairingFixture,
+) -> (RemoteControlPairingAttemptId, RemoteControlPairingOffer) {
     let arrival = fixture.begin_arrival(0x60);
     match state.begin(
         &fixture.target_signer,
         &fixture.session,
         &arrival,
         ATTEMPT_STARTED_AT,
-        fixture.attempt_timeout(),
     ) {
-        BeginRemoteControlTargetPairingOutcome::Offered {
+        BeginRemoteControlTargetPairingOutcome::OfferPrepared {
             attempt_id,
             responder: offered_to,
             offer,
@@ -156,7 +170,8 @@ fn attempt_view(
     state: &RemoteControlTargetPairingState,
 ) -> RemoteControlTargetPairingAttemptView<'_> {
     match state.view() {
-        RemoteControlTargetPairingView::AwaitingBoth(attempt)
+        RemoteControlTargetPairingView::OfferPrepared(attempt)
+        | RemoteControlTargetPairingView::AwaitingBoth(attempt)
         | RemoteControlTargetPairingView::AwaitingTargetApproval(attempt)
         | RemoteControlTargetPairingView::AwaitingControllerCommit(attempt)
         | RemoteControlTargetPairingView::Authorizing(attempt)
@@ -258,7 +273,6 @@ fn begin_retains_one_exact_offer_and_refuses_competing_attempts() {
             &competing.session,
             &competing_arrival,
             ATTEMPT_STARTED_AT,
-            competing.attempt_timeout(),
         ),
         BeginRemoteControlTargetPairingOutcome::Busy { active: attempt_id },
     );
@@ -282,7 +296,6 @@ fn begin_requires_the_claimed_controller_to_own_the_identified_link() {
             &fixture.session,
             &arrival,
             ATTEMPT_STARTED_AT,
-            fixture.attempt_timeout(),
         ),
         BeginRemoteControlTargetPairingOutcome::Rejected {
             rejected: arrival.responder(),
@@ -293,6 +306,100 @@ fn begin_requires_the_claimed_controller_to_own_the_identified_link() {
         },
     );
     assert_eq!(state.view(), RemoteControlTargetPairingView::Idle);
+}
+
+#[test]
+fn only_the_exact_prepared_offer_dispatch_failure_aborts_the_attempt() {
+    let fixture = TargetPairingFixture::new();
+    let mut state = RemoteControlTargetPairingState::default();
+    let (attempt_id, _) = prepare_offer(&mut state, &fixture);
+    let mut other_state = RemoteControlTargetPairingState::default();
+    let (other_id, _) = prepare_offer(
+        &mut other_state,
+        &TargetPairingFixture::with_route(0x74, 0x85),
+    );
+
+    assert_eq!(
+        state.offer_dispatch_failed(other_id),
+        FailRemoteControlTargetPairingOfferDispatchOutcome::AttemptMismatch {
+            failed: other_id,
+            active: attempt_id,
+        },
+    );
+    assert_eq!(attempt_view(&state).attempt_id(), attempt_id);
+    assert_eq!(
+        state.offer_dispatch_failed(attempt_id),
+        FailRemoteControlTargetPairingOfferDispatchOutcome::Aborted { attempt_id },
+    );
+    assert_eq!(state.view(), RemoteControlTargetPairingView::Idle);
+    assert_eq!(
+        state.offer_dispatch_failed(attempt_id),
+        FailRemoteControlTargetPairingOfferDispatchOutcome::NoOfferPrepared,
+    );
+}
+
+#[test]
+fn a_prepared_offer_must_be_dispatched_before_confirmation() {
+    let fixture = TargetPairingFixture::new();
+    let mut state = RemoteControlTargetPairingState::default();
+    let (attempt_id, _) = prepare_offer(&mut state, &fixture);
+    let other = begin(
+        &mut RemoteControlTargetPairingState::default(),
+        &TargetPairingFixture::with_route(0x74, 0x85),
+    );
+
+    assert!(matches!(
+        state.view(),
+        RemoteControlTargetPairingView::OfferPrepared(attempt)
+            if attempt.attempt_id() == attempt_id
+    ));
+    assert_eq!(
+        state.approve(other, ATTEMPT_STARTED_AT),
+        ApproveRemoteControlTargetPairingOutcome::AttemptMismatch {
+            requested: other,
+            active: attempt_id,
+        },
+    );
+    assert_eq!(
+        state.approve(attempt_id, ATTEMPT_STARTED_AT),
+        ApproveRemoteControlTargetPairingOutcome::OfferPendingDispatch { attempt_id },
+    );
+    assert_eq!(
+        state.commit(fixture.commit(0x61), ATTEMPT_STARTED_AT),
+        CommitRemoteControlTargetPairingOutcome::Rejected {
+            rejected: responder(fixture.link_id, 0x61),
+            reason: RemoteControlTargetPairingCommitRejection::OfferPendingDispatch,
+        },
+    );
+    assert_eq!(
+        state.reject(other, ATTEMPT_STARTED_AT),
+        RejectRemoteControlTargetPairingOutcome::AttemptMismatch {
+            requested: other,
+            active: attempt_id,
+        },
+    );
+    assert_eq!(
+        state.reject(attempt_id, ATTEMPT_STARTED_AT),
+        RejectRemoteControlTargetPairingOutcome::OfferPendingDispatch { attempt_id },
+    );
+    assert_eq!(
+        state.offer_dispatched(other),
+        DispatchRemoteControlTargetPairingOfferOutcome::AttemptMismatch {
+            dispatched: other,
+            active: attempt_id,
+        },
+    );
+    let DispatchRemoteControlTargetPairingOfferOutcome::AwaitingConfirmation { attempt } =
+        state.offer_dispatched(attempt_id)
+    else {
+        panic!("matching prepared offer")
+    };
+    assert_eq!(attempt.attempt_id(), attempt_id);
+    assert!(matches!(
+        state.view(),
+        RemoteControlTargetPairingView::AwaitingBoth(attempt)
+            if attempt.attempt_id() == attempt_id
+    ));
 }
 
 #[test]
@@ -465,7 +572,6 @@ fn deadlines_expire_confirmations_and_consume_the_triggering_arrival() {
             &fixture.session,
             &arrival,
             InstantMillis(8_000),
-            fixture.attempt_timeout(),
         ),
         BeginRemoteControlTargetPairingOutcome::Expired {
             expired: RemoteControlTargetPairingAborted::AwaitingBoth {
@@ -482,7 +588,6 @@ fn deadlines_expire_confirmations_and_consume_the_triggering_arrival() {
             &fixture.session,
             &arrival,
             PAIRING_EXPIRES_AT,
-            fixture.attempt_timeout(),
         ),
         BeginRemoteControlTargetPairingOutcome::PairingUnavailable {
             reason: RemoteControlTargetPairingAttemptWindowError::PairingWindowElapsed {

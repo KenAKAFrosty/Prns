@@ -1,8 +1,8 @@
 use crate::identity::held::HoldIdentityError;
 use crate::remote_control::{
-    RemoteControlPairingAvailabilityWriteError, RemoteControlPairingEndpoint,
-    RemoteControlPairingExpiresAfter, RemoteControlPairingPermissions,
-    RemoteControlPairingPublicAppDataBytes,
+    RemoteControlPairingAttemptTimeout, RemoteControlPairingAvailabilityWriteError,
+    RemoteControlPairingEndpoint, RemoteControlPairingExpiresAfter,
+    RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
 };
 use crate::routing::delivery::send_plain::SendPlainPacketWriteError;
 use crate::routing::links::LinkId;
@@ -16,6 +16,7 @@ use super::{EgressTarget, EgressTargetRejection, PrnsCommand, Settleable, Settle
 pub struct OpenRemoteControlPairing {
     pub target: EgressTarget,
     pub expires_after: RemoteControlPairingExpiresAfter,
+    pub attempt_timeout: RemoteControlPairingAttemptTimeout,
     pub permissions: RemoteControlPairingPermissions,
     pub public_app_data: RemoteControlPairingPublicAppDataBytes,
 }
@@ -32,6 +33,10 @@ pub enum OpenRemoteControlPairingRejection {
     AlreadyOpen,
     NoTransmittingInterfaces,
     EgressTarget(EgressTargetRejection),
+    AttemptTimeoutExceedsWindow {
+        attempt_timeout: RemoteControlPairingAttemptTimeout,
+        pairing_expires_after: RemoteControlPairingExpiresAfter,
+    },
     DeadlineOverflow,
 }
 
@@ -41,6 +46,8 @@ pub enum OpenRemoteControlPairingFailure {
     IdentityGenerationExhausted,
     HoldIdentity(HoldIdentityError),
     RegisterEndpoint(RegisterDestinationError),
+    ConfigureRequestLimit,
+    RegisterRequestEndpoint(crate::storage::TablePushError),
     WriteAvailability(RemoteControlPairingAvailabilityWriteError),
     PayloadCapacity,
     WritePacket(SendPlainPacketWriteError),

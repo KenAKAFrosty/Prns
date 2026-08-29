@@ -19,8 +19,13 @@ const SOURCE: InterfaceId = InterfaceId::new([0xE1; 8]);
 #[tokio::test]
 async fn pooled_crypto_resumes_a_verified_pairing_availability_as_one_typed_observation() {
     let mut engine = EngineState::<TestStorageLayout>::default();
+    let target_identity = engine
+        .hold_identity(crate::identity::Zeroizing::new(
+            [0xE4; IDENTITY_SECRET_KEY_LEN],
+        ))
+        .unwrap();
     assert_eq!(
-        engine.configure_remote_control_pairing(),
+        engine.configure_remote_control_pairing(target_identity),
         Ok(RemoteControlPairingAvailabilityDestination::canonical()),
     );
     let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();

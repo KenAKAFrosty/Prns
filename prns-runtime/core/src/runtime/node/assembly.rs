@@ -295,7 +295,7 @@ where
             .map_err(ConfigureRemoteControlServiceError::BuildAccess)?;
     }
     let pairing_availability_destination = engine
-        .configure_remote_control_pairing()
+        .configure_remote_control_pairing(identities.target().identity_hash())
         .map_err(ConfigureRemoteControlServiceError::ConfigurePairing)?;
     Ok(AssembledRemoteControl {
         available: Some(AvailableRemoteControl {

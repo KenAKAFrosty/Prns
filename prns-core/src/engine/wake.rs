@@ -225,14 +225,30 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     pub fn remote_control_pairing_wake(&self) -> WakeSchedule {
-        let deadline = match self.remote_control_pairing_view() {
+        let window = match self.remote_control_pairing_view() {
             crate::remote_control::RemoteControlPairingView::Open(session) => {
                 Some(session.window().expires_at())
             }
             crate::remote_control::RemoteControlPairingView::Unavailable
             | crate::remote_control::RemoteControlPairingView::Closed => None,
         };
-        WakeSchedule::from_deadline(deadline)
+        let attempt = match self.remote_control_target_pairing.view() {
+            crate::remote_control::RemoteControlTargetPairingView::OfferPrepared(attempt)
+            | crate::remote_control::RemoteControlTargetPairingView::AwaitingBoth(attempt)
+            | crate::remote_control::RemoteControlTargetPairingView::AwaitingTargetApproval(
+                attempt,
+            )
+            | crate::remote_control::RemoteControlTargetPairingView::AwaitingControllerCommit(
+                attempt,
+            ) => Some(attempt.window().expires_at()),
+            crate::remote_control::RemoteControlTargetPairingView::Idle
+            | crate::remote_control::RemoteControlTargetPairingView::Authorizing(_)
+            | crate::remote_control::RemoteControlTargetPairingView::Completing(_) => None,
+        };
+        WakeSchedule::from_deadline(match (window, attempt) {
+            (Some(window), Some(attempt)) => Some(window.min(attempt)),
+            (window, attempt) => window.or(attempt),
+        })
     }
 
     pub fn route_expiry_wake(&self, interfaces: AttachedInterfaces<'_>) -> WakeSchedule {

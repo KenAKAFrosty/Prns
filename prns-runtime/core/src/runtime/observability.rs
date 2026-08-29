@@ -272,6 +272,9 @@ impl ReliabilityMetricsSnapshot {
             | Journaled::SelfRatchetRotated { .. }
             | Journaled::AnnounceHeldDropped { .. }
             | Journaled::RemoteControlPairingAvailabilityObserved(_)
+            | Journaled::RemoteControlTargetPairingConfirmationRequired(_)
+            | Journaled::RemoteControlTargetPairingExpired { .. }
+            | Journaled::RemoteControlTargetPairingLinkClosed { .. }
             | Journaled::RemoteControlPairingExpired { .. }
             | Journaled::RemoteControlPairingExpiryFailed { .. }
             | Journaled::Delivered(_)
@@ -565,13 +568,17 @@ impl From<&OpenRemoteControlPairingFailure> for RuntimeOperationOutcome {
             | OpenRemoteControlPairingFailure::RegisterEndpoint(
                 RegisterDestinationError::RegistryFull | RegisterDestinationError::RatchetTableFull,
             )
+            | OpenRemoteControlPairingFailure::RegisterRequestEndpoint(
+                crate::storage::TablePushError::TableFull,
+            )
             | OpenRemoteControlPairingFailure::PayloadCapacity => Self::Backpressure,
             OpenRemoteControlPairingFailure::RegisterEndpoint(
                 RegisterDestinationError::Name(_)
                 | RegisterDestinationError::UnknownIdentity
                 | RegisterDestinationError::AppDataTooLong
                 | RegisterDestinationError::InvalidGroupKey,
-            ) => Self::DependencyFailed,
+            )
+            | OpenRemoteControlPairingFailure::ConfigureRequestLimit => Self::DependencyFailed,
             OpenRemoteControlPairingFailure::WriteAvailability(_)
             | OpenRemoteControlPairingFailure::WritePacket(_) => Self::WriteFailed,
         }

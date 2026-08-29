@@ -142,6 +142,7 @@ impl<'a> RemoteControlTargetPairingAttemptView<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteControlTargetPairingView<'a> {
     Idle,
+    OfferPrepared(RemoteControlTargetPairingAttemptView<'a>),
     AwaitingBoth(RemoteControlTargetPairingAttemptView<'a>),
     AwaitingTargetApproval(RemoteControlTargetPairingAttemptView<'a>),
     AwaitingControllerCommit(RemoteControlTargetPairingAttemptView<'a>),
@@ -240,6 +241,10 @@ impl RemoteControlTargetPairingCommitArrival {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteControlTargetPairingAborted {
+    OfferPrepared {
+        attempt_id: RemoteControlPairingAttemptId,
+        context: RemoteControlPairingContext,
+    },
     AwaitingBoth {
         attempt_id: RemoteControlPairingAttemptId,
         context: RemoteControlPairingContext,
@@ -259,7 +264,8 @@ impl RemoteControlTargetPairingAborted {
     #[must_use]
     pub const fn attempt_id(self) -> RemoteControlPairingAttemptId {
         match self {
-            Self::AwaitingBoth { attempt_id, .. }
+            Self::OfferPrepared { attempt_id, .. }
+            | Self::AwaitingBoth { attempt_id, .. }
             | Self::AwaitingTargetApproval { attempt_id, .. }
             | Self::AwaitingControllerCommit { attempt_id, .. } => attempt_id,
         }
@@ -268,7 +274,8 @@ impl RemoteControlTargetPairingAborted {
     #[must_use]
     pub const fn context(self) -> RemoteControlPairingContext {
         match self {
-            Self::AwaitingBoth { context, .. }
+            Self::OfferPrepared { context, .. }
+            | Self::AwaitingBoth { context, .. }
             | Self::AwaitingTargetApproval { context, .. }
             | Self::AwaitingControllerCommit { context, .. } => context,
         }
@@ -277,7 +284,7 @@ impl RemoteControlTargetPairingAborted {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum BeginRemoteControlTargetPairingOutcome {
-    Offered {
+    OfferPrepared {
         attempt_id: RemoteControlPairingAttemptId,
         responder: RemoteControlTargetPairingResponder,
         offer: RemoteControlPairingOffer,
@@ -295,6 +302,30 @@ pub enum BeginRemoteControlTargetPairingOutcome {
         rejected: RemoteControlTargetPairingResponder,
         reason: RemoteControlTargetPairingBeginRejection,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DispatchRemoteControlTargetPairingOfferOutcome<'a> {
+    AwaitingConfirmation {
+        attempt: RemoteControlTargetPairingAttemptView<'a>,
+    },
+    AttemptMismatch {
+        dispatched: RemoteControlPairingAttemptId,
+        active: RemoteControlPairingAttemptId,
+    },
+    NoOfferPrepared,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailRemoteControlTargetPairingOfferDispatchOutcome {
+    Aborted {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
+    AttemptMismatch {
+        failed: RemoteControlPairingAttemptId,
+        active: RemoteControlPairingAttemptId,
+    },
+    NoOfferPrepared,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -322,6 +353,9 @@ pub enum ApproveRemoteControlTargetPairingOutcome {
         requested: RemoteControlPairingAttemptId,
         active: RemoteControlPairingAttemptId,
     },
+    OfferPendingDispatch {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
     AlreadyApproved {
         attempt_id: RemoteControlPairingAttemptId,
     },
@@ -333,6 +367,7 @@ pub enum ApproveRemoteControlTargetPairingOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteControlTargetPairingCommitRejection {
     NoActiveAttempt,
+    OfferPendingDispatch,
     WrongLink {
         expected: LinkId,
         found: LinkId,
@@ -376,6 +411,9 @@ pub enum RejectRemoteControlTargetPairingOutcome {
     AttemptMismatch {
         requested: RemoteControlPairingAttemptId,
         active: RemoteControlPairingAttemptId,
+    },
+    OfferPendingDispatch {
+        attempt_id: RemoteControlPairingAttemptId,
     },
     AlreadyApproved {
         attempt_id: RemoteControlPairingAttemptId,

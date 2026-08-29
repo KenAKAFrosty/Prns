@@ -1,4 +1,4 @@
-use crate::engine::test_support::{routable_descriptor, TestStorageLayout};
+use crate::engine::test_support::{fixed_secret_key, routable_descriptor, TestStorageLayout};
 use crate::engine::{
     CommandId, DeferredCrypto, Directive, EngineReaction, EngineState, IgnoreReason, IngestIo,
     IngestPacketOutcome, Journaled, PathRequestId, PathRequestWriteOutcome, RequestPath,
@@ -72,8 +72,9 @@ fn availability_wire_with_payload(header: WirePacketHeader, payload: &[u8]) -> s
 
 fn configured_engine() -> EngineState<TestStorageLayout> {
     let mut engine = EngineState::default();
+    let target_identity = engine.hold_identity(fixed_secret_key()).unwrap();
     assert_eq!(
-        engine.configure_remote_control_pairing(),
+        engine.configure_remote_control_pairing(target_identity),
         Ok(RemoteControlPairingAvailabilityDestination::canonical()),
     );
     engine

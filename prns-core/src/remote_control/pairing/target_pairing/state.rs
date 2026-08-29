@@ -4,9 +4,8 @@ use crate::routing::links::LinkId;
 use crate::units::InstantMillis;
 
 use super::super::{
-    RemoteControlPairingAttemptId, RemoteControlPairingAttemptTimeout,
-    RemoteControlPairingCompleted, RemoteControlPairingContext, RemoteControlPairingPreparedOffer,
-    RemoteControlPairingSession, RemoteControlPairingTranscript,
+    RemoteControlPairingAttemptId, RemoteControlPairingCompleted, RemoteControlPairingContext,
+    RemoteControlPairingPreparedOffer, RemoteControlPairingSession, RemoteControlPairingTranscript,
 };
 use super::model::*;
 
@@ -17,6 +16,12 @@ enum RemoteControlTargetPairingConfirmationProgress {
         responder: RemoteControlTargetPairingResponder,
     },
     ControllerCommit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RemoteControlTargetPairingActiveStage {
+    OfferPrepared,
+    Confirming(RemoteControlTargetPairingConfirmationProgress),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -46,9 +51,9 @@ impl RemoteControlTargetPairingAttempt {
 enum RemoteControlTargetPairingPhase {
     #[default]
     Idle,
-    Confirming {
+    Active {
         attempt: RemoteControlTargetPairingAttempt,
-        progress: RemoteControlTargetPairingConfirmationProgress,
+        stage: RemoteControlTargetPairingActiveStage,
     },
     Authorizing {
         attempt: RemoteControlTargetPairingAttempt,
@@ -70,16 +75,21 @@ impl RemoteControlTargetPairingState {
     pub fn view(&self) -> RemoteControlTargetPairingView<'_> {
         match &self.phase {
             RemoteControlTargetPairingPhase::Idle => RemoteControlTargetPairingView::Idle,
-            RemoteControlTargetPairingPhase::Confirming { attempt, progress } => match progress {
-                RemoteControlTargetPairingConfirmationProgress::Both => {
-                    RemoteControlTargetPairingView::AwaitingBoth(attempt.view())
+            RemoteControlTargetPairingPhase::Active { attempt, stage } => match stage {
+                RemoteControlTargetPairingActiveStage::OfferPrepared => {
+                    RemoteControlTargetPairingView::OfferPrepared(attempt.view())
                 }
-                RemoteControlTargetPairingConfirmationProgress::TargetApproval { .. } => {
-                    RemoteControlTargetPairingView::AwaitingTargetApproval(attempt.view())
-                }
-                RemoteControlTargetPairingConfirmationProgress::ControllerCommit => {
-                    RemoteControlTargetPairingView::AwaitingControllerCommit(attempt.view())
-                }
+                RemoteControlTargetPairingActiveStage::Confirming(progress) => match progress {
+                    RemoteControlTargetPairingConfirmationProgress::Both => {
+                        RemoteControlTargetPairingView::AwaitingBoth(attempt.view())
+                    }
+                    RemoteControlTargetPairingConfirmationProgress::TargetApproval { .. } => {
+                        RemoteControlTargetPairingView::AwaitingTargetApproval(attempt.view())
+                    }
+                    RemoteControlTargetPairingConfirmationProgress::ControllerCommit => {
+                        RemoteControlTargetPairingView::AwaitingControllerCommit(attempt.view())
+                    }
+                },
             },
             RemoteControlTargetPairingPhase::Authorizing { attempt, .. } => {
                 RemoteControlTargetPairingView::Authorizing(attempt.view())
@@ -96,9 +106,8 @@ impl RemoteControlTargetPairingState {
         session: &RemoteControlPairingSession,
         arrival: &RemoteControlTargetPairingBeginArrival,
         started_at: InstantMillis,
-        attempt_timeout: RemoteControlPairingAttemptTimeout,
     ) -> BeginRemoteControlTargetPairingOutcome {
-        if let Some(expired) = self.take_expired_confirmation(started_at) {
+        if let Some(expired) = self.take_expired_attempt(started_at) {
             return BeginRemoteControlTargetPairingOutcome::Expired { expired };
         }
         if let Some(active) = self.active_attempt_id() {
@@ -114,6 +123,7 @@ impl RemoteControlTargetPairingState {
                 },
             };
         }
+        let attempt_timeout = session.attempt_timeout();
         let window = match RemoteControlTargetPairingAttemptWindow::new(
             started_at,
             attempt_timeout,
@@ -134,14 +144,81 @@ impl RemoteControlTargetPairingState {
         let (offer, transcript) = prepared.into_parts();
         let attempt = RemoteControlTargetPairingAttempt { transcript, window };
         let attempt_id = attempt.attempt_id();
-        self.phase = RemoteControlTargetPairingPhase::Confirming {
+        self.phase = RemoteControlTargetPairingPhase::Active {
             attempt,
-            progress: RemoteControlTargetPairingConfirmationProgress::Both,
+            stage: RemoteControlTargetPairingActiveStage::OfferPrepared,
         };
-        BeginRemoteControlTargetPairingOutcome::Offered {
+        BeginRemoteControlTargetPairingOutcome::OfferPrepared {
             attempt_id,
             responder: arrival.responder,
             offer,
+        }
+    }
+
+    pub fn offer_dispatched(
+        &mut self,
+        dispatched: RemoteControlPairingAttemptId,
+    ) -> DispatchRemoteControlTargetPairingOfferOutcome<'_> {
+        match &mut self.phase {
+            RemoteControlTargetPairingPhase::Active {
+                attempt,
+                stage: stage @ RemoteControlTargetPairingActiveStage::OfferPrepared,
+            } => {
+                let active = attempt.attempt_id();
+                if dispatched != active {
+                    return DispatchRemoteControlTargetPairingOfferOutcome::AttemptMismatch {
+                        dispatched,
+                        active,
+                    };
+                }
+                *stage = RemoteControlTargetPairingActiveStage::Confirming(
+                    RemoteControlTargetPairingConfirmationProgress::Both,
+                );
+                DispatchRemoteControlTargetPairingOfferOutcome::AwaitingConfirmation {
+                    attempt: attempt.view(),
+                }
+            }
+            RemoteControlTargetPairingPhase::Idle
+            | RemoteControlTargetPairingPhase::Active { .. }
+            | RemoteControlTargetPairingPhase::Authorizing { .. }
+            | RemoteControlTargetPairingPhase::Completing { .. } => {
+                DispatchRemoteControlTargetPairingOfferOutcome::NoOfferPrepared
+            }
+        }
+    }
+
+    pub fn offer_dispatch_failed(
+        &mut self,
+        failed: RemoteControlPairingAttemptId,
+    ) -> FailRemoteControlTargetPairingOfferDispatchOutcome {
+        let phase = core::mem::take(&mut self.phase);
+        match phase {
+            RemoteControlTargetPairingPhase::Active {
+                attempt,
+                stage: RemoteControlTargetPairingActiveStage::OfferPrepared,
+            } => {
+                let active = attempt.attempt_id();
+                if failed == active {
+                    return FailRemoteControlTargetPairingOfferDispatchOutcome::Aborted {
+                        attempt_id: active,
+                    };
+                }
+                self.phase = RemoteControlTargetPairingPhase::Active {
+                    attempt,
+                    stage: RemoteControlTargetPairingActiveStage::OfferPrepared,
+                };
+                FailRemoteControlTargetPairingOfferDispatchOutcome::AttemptMismatch {
+                    failed,
+                    active,
+                }
+            }
+            phase @ (RemoteControlTargetPairingPhase::Idle
+            | RemoteControlTargetPairingPhase::Active { .. }
+            | RemoteControlTargetPairingPhase::Authorizing { .. }
+            | RemoteControlTargetPairingPhase::Completing { .. }) => {
+                self.phase = phase;
+                FailRemoteControlTargetPairingOfferDispatchOutcome::NoOfferPrepared
+            }
         }
     }
 
@@ -150,7 +227,7 @@ impl RemoteControlTargetPairingState {
         requested: RemoteControlPairingAttemptId,
         now: InstantMillis,
     ) -> ApproveRemoteControlTargetPairingOutcome {
-        if let Some(expired) = self.take_expired_confirmation(now) {
+        if let Some(expired) = self.take_expired_attempt(now) {
             return ApproveRemoteControlTargetPairingOutcome::Expired { expired };
         }
         let phase = core::mem::take(&mut self.phase);
@@ -158,10 +235,33 @@ impl RemoteControlTargetPairingState {
             RemoteControlTargetPairingPhase::Idle => {
                 ApproveRemoteControlTargetPairingOutcome::NoActiveAttempt
             }
-            RemoteControlTargetPairingPhase::Confirming { attempt, progress } => {
+            RemoteControlTargetPairingPhase::Active {
+                attempt,
+                stage: RemoteControlTargetPairingActiveStage::OfferPrepared,
+            } => {
+                let active = attempt.attempt_id();
+                self.phase = RemoteControlTargetPairingPhase::Active {
+                    attempt,
+                    stage: RemoteControlTargetPairingActiveStage::OfferPrepared,
+                };
+                if requested != active {
+                    ApproveRemoteControlTargetPairingOutcome::AttemptMismatch { requested, active }
+                } else {
+                    ApproveRemoteControlTargetPairingOutcome::OfferPendingDispatch {
+                        attempt_id: active,
+                    }
+                }
+            }
+            RemoteControlTargetPairingPhase::Active {
+                attempt,
+                stage: RemoteControlTargetPairingActiveStage::Confirming(progress),
+            } => {
                 let active = attempt.attempt_id();
                 if requested != active {
-                    self.phase = RemoteControlTargetPairingPhase::Confirming { attempt, progress };
+                    self.phase = RemoteControlTargetPairingPhase::Active {
+                        attempt,
+                        stage: RemoteControlTargetPairingActiveStage::Confirming(progress),
+                    };
                     return ApproveRemoteControlTargetPairingOutcome::AttemptMismatch {
                         requested,
                         active,
@@ -169,10 +269,11 @@ impl RemoteControlTargetPairingState {
                 }
                 match progress {
                     RemoteControlTargetPairingConfirmationProgress::Both => {
-                        self.phase = RemoteControlTargetPairingPhase::Confirming {
+                        self.phase = RemoteControlTargetPairingPhase::Active {
                             attempt,
-                            progress:
+                            stage: RemoteControlTargetPairingActiveStage::Confirming(
                                 RemoteControlTargetPairingConfirmationProgress::ControllerCommit,
+                            ),
                         };
                         ApproveRemoteControlTargetPairingOutcome::AwaitingControllerCommit {
                             attempt_id: active,
@@ -190,8 +291,10 @@ impl RemoteControlTargetPairingState {
                         }
                     }
                     RemoteControlTargetPairingConfirmationProgress::ControllerCommit => {
-                        self.phase =
-                            RemoteControlTargetPairingPhase::Confirming { attempt, progress };
+                        self.phase = RemoteControlTargetPairingPhase::Active {
+                            attempt,
+                            stage: RemoteControlTargetPairingActiveStage::Confirming(progress),
+                        };
                         ApproveRemoteControlTargetPairingOutcome::AlreadyApproved {
                             attempt_id: active,
                         }
@@ -216,7 +319,7 @@ impl RemoteControlTargetPairingState {
         arrival: RemoteControlTargetPairingCommitArrival,
         now: InstantMillis,
     ) -> CommitRemoteControlTargetPairingOutcome {
-        if let Some(expired) = self.take_expired_confirmation(now) {
+        if let Some(expired) = self.take_expired_attempt(now) {
             return CommitRemoteControlTargetPairingOutcome::Expired {
                 expired,
                 rejected: arrival.responder,
@@ -236,16 +339,33 @@ impl RemoteControlTargetPairingState {
         }
         let phase = core::mem::take(&mut self.phase);
         match phase {
-            RemoteControlTargetPairingPhase::Confirming { attempt, progress } => {
+            RemoteControlTargetPairingPhase::Active {
+                attempt,
+                stage: RemoteControlTargetPairingActiveStage::OfferPrepared,
+            } => {
+                self.phase = RemoteControlTargetPairingPhase::Active {
+                    attempt,
+                    stage: RemoteControlTargetPairingActiveStage::OfferPrepared,
+                };
+                CommitRemoteControlTargetPairingOutcome::Rejected {
+                    rejected: arrival.responder,
+                    reason: RemoteControlTargetPairingCommitRejection::OfferPendingDispatch,
+                }
+            }
+            RemoteControlTargetPairingPhase::Active {
+                attempt,
+                stage: RemoteControlTargetPairingActiveStage::Confirming(progress),
+            } => {
                 let attempt_id = attempt.attempt_id();
                 match progress {
                     RemoteControlTargetPairingConfirmationProgress::Both => {
-                        self.phase = RemoteControlTargetPairingPhase::Confirming {
+                        self.phase = RemoteControlTargetPairingPhase::Active {
                             attempt,
-                            progress:
+                            stage: RemoteControlTargetPairingActiveStage::Confirming(
                                 RemoteControlTargetPairingConfirmationProgress::TargetApproval {
                                     responder: arrival.responder,
                                 },
+                            ),
                         };
                         CommitRemoteControlTargetPairingOutcome::AwaitingTargetApproval {
                             attempt_id,
@@ -263,8 +383,10 @@ impl RemoteControlTargetPairingState {
                         }
                     }
                     RemoteControlTargetPairingConfirmationProgress::TargetApproval { .. } => {
-                        self.phase =
-                            RemoteControlTargetPairingPhase::Confirming { attempt, progress };
+                        self.phase = RemoteControlTargetPairingPhase::Active {
+                            attempt,
+                            stage: RemoteControlTargetPairingActiveStage::Confirming(progress),
+                        };
                         CommitRemoteControlTargetPairingOutcome::Rejected {
                             rejected: arrival.responder,
                             reason: RemoteControlTargetPairingCommitRejection::AlreadyCommitted,
@@ -300,7 +422,7 @@ impl RemoteControlTargetPairingState {
         requested: RemoteControlPairingAttemptId,
         now: InstantMillis,
     ) -> RejectRemoteControlTargetPairingOutcome {
-        if let Some(expired) = self.take_expired_confirmation(now) {
+        if let Some(expired) = self.take_expired_attempt(now) {
             return RejectRemoteControlTargetPairingOutcome::Expired { expired };
         }
         let phase = core::mem::take(&mut self.phase);
@@ -308,10 +430,33 @@ impl RemoteControlTargetPairingState {
             RemoteControlTargetPairingPhase::Idle => {
                 RejectRemoteControlTargetPairingOutcome::NoActiveAttempt
             }
-            RemoteControlTargetPairingPhase::Confirming { attempt, progress } => {
+            RemoteControlTargetPairingPhase::Active {
+                attempt,
+                stage: RemoteControlTargetPairingActiveStage::OfferPrepared,
+            } => {
+                let active = attempt.attempt_id();
+                self.phase = RemoteControlTargetPairingPhase::Active {
+                    attempt,
+                    stage: RemoteControlTargetPairingActiveStage::OfferPrepared,
+                };
+                if requested != active {
+                    RejectRemoteControlTargetPairingOutcome::AttemptMismatch { requested, active }
+                } else {
+                    RejectRemoteControlTargetPairingOutcome::OfferPendingDispatch {
+                        attempt_id: active,
+                    }
+                }
+            }
+            RemoteControlTargetPairingPhase::Active {
+                attempt,
+                stage: RemoteControlTargetPairingActiveStage::Confirming(progress),
+            } => {
                 let active = attempt.attempt_id();
                 if requested != active {
-                    self.phase = RemoteControlTargetPairingPhase::Confirming { attempt, progress };
+                    self.phase = RemoteControlTargetPairingPhase::Active {
+                        attempt,
+                        stage: RemoteControlTargetPairingActiveStage::Confirming(progress),
+                    };
                     return RejectRemoteControlTargetPairingOutcome::AttemptMismatch {
                         requested,
                         active,
@@ -321,12 +466,17 @@ impl RemoteControlTargetPairingState {
                     RemoteControlTargetPairingConfirmationProgress::Both
                     | RemoteControlTargetPairingConfirmationProgress::TargetApproval { .. } => {
                         RejectRemoteControlTargetPairingOutcome::Rejected {
-                            aborted: abort_confirming(attempt, progress),
+                            aborted: abort_active(
+                                attempt,
+                                RemoteControlTargetPairingActiveStage::Confirming(progress),
+                            ),
                         }
                     }
                     RemoteControlTargetPairingConfirmationProgress::ControllerCommit => {
-                        self.phase =
-                            RemoteControlTargetPairingPhase::Confirming { attempt, progress };
+                        self.phase = RemoteControlTargetPairingPhase::Active {
+                            attempt,
+                            stage: RemoteControlTargetPairingActiveStage::Confirming(progress),
+                        };
                         RejectRemoteControlTargetPairingOutcome::AlreadyApproved {
                             attempt_id: active,
                         }
@@ -384,7 +534,7 @@ impl RemoteControlTargetPairingState {
                 }
             }
             phase @ (RemoteControlTargetPairingPhase::Idle
-            | RemoteControlTargetPairingPhase::Confirming { .. }
+            | RemoteControlTargetPairingPhase::Active { .. }
             | RemoteControlTargetPairingPhase::Completing { .. }) => {
                 self.phase = phase;
                 PersistRemoteControlTargetPairingAuthorizationOutcome::NoAuthorizationOwed
@@ -414,7 +564,7 @@ impl RemoteControlTargetPairingState {
                 }
             }
             phase @ (RemoteControlTargetPairingPhase::Idle
-            | RemoteControlTargetPairingPhase::Confirming { .. }
+            | RemoteControlTargetPairingPhase::Active { .. }
             | RemoteControlTargetPairingPhase::Completing { .. }) => {
                 self.phase = phase;
                 FailRemoteControlTargetPairingAuthorizationOutcome::NoAuthorizationOwed
@@ -440,7 +590,7 @@ impl RemoteControlTargetPairingState {
                 CompleteRemoteControlTargetPairingOutcome::Completed { attempt_id: active }
             }
             phase @ (RemoteControlTargetPairingPhase::Idle
-            | RemoteControlTargetPairingPhase::Confirming { .. }
+            | RemoteControlTargetPairingPhase::Active { .. }
             | RemoteControlTargetPairingPhase::Authorizing { .. }) => {
                 self.phase = phase;
                 CompleteRemoteControlTargetPairingOutcome::NoCompletionOwed
@@ -449,14 +599,15 @@ impl RemoteControlTargetPairingState {
     }
 
     pub fn expire(&mut self, now: InstantMillis) -> ExpireRemoteControlTargetPairingOutcome {
-        if let Some(aborted) = self.take_expired_confirmation(now) {
+        if let Some(aborted) = self.take_expired_attempt(now) {
             return ExpireRemoteControlTargetPairingOutcome::Expired { aborted };
         }
         match self.view() {
             RemoteControlTargetPairingView::Idle => {
                 ExpireRemoteControlTargetPairingOutcome::NoActiveAttempt
             }
-            RemoteControlTargetPairingView::AwaitingBoth(attempt)
+            RemoteControlTargetPairingView::OfferPrepared(attempt)
+            | RemoteControlTargetPairingView::AwaitingBoth(attempt)
             | RemoteControlTargetPairingView::AwaitingTargetApproval(attempt)
             | RemoteControlTargetPairingView::AwaitingControllerCommit(attempt) => {
                 ExpireRemoteControlTargetPairingOutcome::NotDue {
@@ -478,15 +629,15 @@ impl RemoteControlTargetPairingState {
             RemoteControlTargetPairingPhase::Idle => {
                 CloseRemoteControlTargetPairingLinkOutcome::NoActiveAttempt
             }
-            RemoteControlTargetPairingPhase::Confirming { attempt, progress }
+            RemoteControlTargetPairingPhase::Active { attempt, stage }
                 if attempt.view().context().link_id() == link_id =>
             {
                 CloseRemoteControlTargetPairingLinkOutcome::Aborted {
-                    aborted: abort_confirming(attempt, progress),
+                    aborted: abort_active(attempt, stage),
                 }
             }
-            RemoteControlTargetPairingPhase::Confirming { attempt, progress } => {
-                self.phase = RemoteControlTargetPairingPhase::Confirming { attempt, progress };
+            RemoteControlTargetPairingPhase::Active { attempt, stage } => {
+                self.phase = RemoteControlTargetPairingPhase::Active { attempt, stage };
                 CloseRemoteControlTargetPairingLinkOutcome::UnrelatedLink
             }
             RemoteControlTargetPairingPhase::Authorizing { attempt, responder } => {
@@ -519,7 +670,7 @@ impl RemoteControlTargetPairingState {
     fn attempt(&self) -> Option<&RemoteControlTargetPairingAttempt> {
         match &self.phase {
             RemoteControlTargetPairingPhase::Idle => None,
-            RemoteControlTargetPairingPhase::Confirming { attempt, .. }
+            RemoteControlTargetPairingPhase::Active { attempt, .. }
             | RemoteControlTargetPairingPhase::Authorizing { attempt, .. }
             | RemoteControlTargetPairingPhase::Completing { attempt, .. } => Some(attempt),
         }
@@ -530,19 +681,19 @@ impl RemoteControlTargetPairingState {
             .map(RemoteControlTargetPairingAttempt::attempt_id)
     }
 
-    fn take_expired_confirmation(
+    fn take_expired_attempt(
         &mut self,
         now: InstantMillis,
     ) -> Option<RemoteControlTargetPairingAborted> {
         let phase = core::mem::take(&mut self.phase);
         match phase {
-            RemoteControlTargetPairingPhase::Confirming { attempt, progress }
+            RemoteControlTargetPairingPhase::Active { attempt, stage }
                 if now >= attempt.window.expires_at() =>
             {
-                Some(abort_confirming(attempt, progress))
+                Some(abort_active(attempt, stage))
             }
             phase @ (RemoteControlTargetPairingPhase::Idle
-            | RemoteControlTargetPairingPhase::Confirming { .. }
+            | RemoteControlTargetPairingPhase::Active { .. }
             | RemoteControlTargetPairingPhase::Authorizing { .. }
             | RemoteControlTargetPairingPhase::Completing { .. }) => {
                 self.phase = phase;
@@ -552,32 +703,38 @@ impl RemoteControlTargetPairingState {
     }
 }
 
-fn abort_confirming(
+fn abort_active(
     attempt: RemoteControlTargetPairingAttempt,
-    progress: RemoteControlTargetPairingConfirmationProgress,
+    stage: RemoteControlTargetPairingActiveStage,
 ) -> RemoteControlTargetPairingAborted {
     let attempt_id = attempt.attempt_id();
     let context = attempt.view().context();
-    match progress {
-        RemoteControlTargetPairingConfirmationProgress::Both => {
-            RemoteControlTargetPairingAborted::AwaitingBoth {
+    match stage {
+        RemoteControlTargetPairingActiveStage::OfferPrepared => {
+            RemoteControlTargetPairingAborted::OfferPrepared {
                 attempt_id,
                 context,
             }
         }
-        RemoteControlTargetPairingConfirmationProgress::TargetApproval { responder } => {
-            RemoteControlTargetPairingAborted::AwaitingTargetApproval {
-                attempt_id,
-                context,
-                responder,
-            }
-        }
-        RemoteControlTargetPairingConfirmationProgress::ControllerCommit => {
-            RemoteControlTargetPairingAborted::AwaitingControllerCommit {
-                attempt_id,
-                context,
-            }
-        }
+        RemoteControlTargetPairingActiveStage::Confirming(
+            RemoteControlTargetPairingConfirmationProgress::Both,
+        ) => RemoteControlTargetPairingAborted::AwaitingBoth {
+            attempt_id,
+            context,
+        },
+        RemoteControlTargetPairingActiveStage::Confirming(
+            RemoteControlTargetPairingConfirmationProgress::TargetApproval { responder },
+        ) => RemoteControlTargetPairingAborted::AwaitingTargetApproval {
+            attempt_id,
+            context,
+            responder,
+        },
+        RemoteControlTargetPairingActiveStage::Confirming(
+            RemoteControlTargetPairingConfirmationProgress::ControllerCommit,
+        ) => RemoteControlTargetPairingAborted::AwaitingControllerCommit {
+            attempt_id,
+            context,
+        },
     }
 }
 

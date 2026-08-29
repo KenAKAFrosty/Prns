@@ -160,6 +160,14 @@ pub enum PackBinaryError {
     LengthOutOfRange,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackedBinaryParseError {
+    Truncated,
+    NotBinary,
+    LengthOutOfRange { declared: u32 },
+    LengthMismatch { declared: usize, actual: usize },
+}
+
 pub const fn packed_binary_header_len(byte_len: usize) -> Option<usize> {
     match byte_len {
         0..=0xFF => Some(2),
@@ -200,6 +208,46 @@ pub fn write_packed_binary_header(
         _ => unreachable!(),
     }
     Ok(header_len)
+}
+
+pub fn parse_packed_binary(bytes: &[u8]) -> Result<&[u8], PackedBinaryParseError> {
+    let Some((&marker, remaining)) = bytes.split_first() else {
+        return Err(PackedBinaryParseError::Truncated);
+    };
+    let (declared, payload) = match marker {
+        BIN_8 => {
+            let Some((&declared, payload)) = remaining.split_first() else {
+                return Err(PackedBinaryParseError::Truncated);
+            };
+            (usize::from(declared), payload)
+        }
+        BIN_16 => {
+            let Some((encoded, payload)) = remaining.split_at_checked(2) else {
+                return Err(PackedBinaryParseError::Truncated);
+            };
+            (
+                usize::from(u16::from_be_bytes([encoded[0], encoded[1]])),
+                payload,
+            )
+        }
+        BIN_32 => {
+            let Some((encoded, payload)) = remaining.split_at_checked(4) else {
+                return Err(PackedBinaryParseError::Truncated);
+            };
+            let declared = u32::from_be_bytes([encoded[0], encoded[1], encoded[2], encoded[3]]);
+            let declared = usize::try_from(declared)
+                .map_err(|_| PackedBinaryParseError::LengthOutOfRange { declared })?;
+            (declared, payload)
+        }
+        _ => return Err(PackedBinaryParseError::NotBinary),
+    };
+    if payload.len() != declared {
+        return Err(PackedBinaryParseError::LengthMismatch {
+            declared,
+            actual: payload.len(),
+        });
+    }
+    Ok(payload)
 }
 
 /// `umsgpack.packb([request_id, response])`.
@@ -968,6 +1016,43 @@ mod tests {
         assert_eq!(
             write_packed_binary_header(256, &mut [0u8; 2]),
             Err(PackBinaryError::BufferTooShort)
+        );
+    }
+
+    #[test]
+    fn packed_binary_parser_requires_one_exact_binary_value() {
+        for packed in [
+            &[BIN_8, 3, 1, 2, 3][..],
+            &[BIN_16, 0, 3, 1, 2, 3][..],
+            &[BIN_32, 0, 0, 0, 3, 1, 2, 3][..],
+        ] {
+            assert_eq!(parse_packed_binary(packed), Ok(&[1, 2, 3][..]));
+        }
+        assert_eq!(
+            parse_packed_binary(&[]),
+            Err(PackedBinaryParseError::Truncated),
+        );
+        assert_eq!(
+            parse_packed_binary(&[NIL]),
+            Err(PackedBinaryParseError::NotBinary),
+        );
+        assert_eq!(
+            parse_packed_binary(&[BIN_16, 0]),
+            Err(PackedBinaryParseError::Truncated),
+        );
+        assert_eq!(
+            parse_packed_binary(&[BIN_8, 2, 1]),
+            Err(PackedBinaryParseError::LengthMismatch {
+                declared: 2,
+                actual: 1,
+            }),
+        );
+        assert_eq!(
+            parse_packed_binary(&[BIN_8, 1, 1, 2]),
+            Err(PackedBinaryParseError::LengthMismatch {
+                declared: 1,
+                actual: 2,
+            }),
         );
     }
 

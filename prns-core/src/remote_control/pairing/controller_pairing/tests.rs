@@ -7,6 +7,7 @@ use crate::identity::{IdentityHash, IdentityPublicKeys, IdentitySigner};
 use crate::remote_control::{
     ApproveRemoteControlTargetPairingOutcome, BeginRemoteControlTargetPairingOutcome,
     CommitRemoteControlTargetPairingOutcome, CompleteRemoteControlTargetPairingOutcome,
+    DispatchRemoteControlTargetPairingOfferOutcome,
     PersistRemoteControlTargetPairingAuthorizationOutcome, RemoteControlControllerIdentity,
     RemoteControlPairingAttemptId, RemoteControlPairingAttemptTimeout, RemoteControlPairingBegin,
     RemoteControlPairingCompleted, RemoteControlPairingContext, RemoteControlPairingIdentity,
@@ -52,6 +53,7 @@ impl PairingFixture {
                 )),
                 RemoteControlPairingWindow::new(PAIRING_OPENED_AT, PAIRING_EXPIRES_AT).unwrap(),
                 permissions(),
+                RemoteControlPairingAttemptTimeout::try_from(ATTEMPT_TIMEOUT).unwrap(),
             ),
             link_id: LinkId::new([link_fill; TRUNCATED_HASH_BYTE_LEN]),
         }
@@ -490,7 +492,7 @@ fn real_wire_messages_drive_both_reducers_to_the_same_durable_pairing() {
         begin_responder,
         fixture.controller.identity_hash(),
     );
-    let BeginRemoteControlTargetPairingOutcome::Offered {
+    let BeginRemoteControlTargetPairingOutcome::OfferPrepared {
         attempt_id: target_attempt_id,
         responder: offered_to,
         offer,
@@ -499,12 +501,17 @@ fn real_wire_messages_drive_both_reducers_to_the_same_durable_pairing() {
         &fixture.session,
         &begin_arrival,
         TARGET_STARTED_AT,
-        fixture.attempt_timeout(),
     )
     else {
         panic!("offer owed")
     };
     assert_eq!(offered_to, begin_responder);
+    let DispatchRemoteControlTargetPairingOfferOutcome::AwaitingConfirmation { attempt } =
+        target_state.offer_dispatched(target_attempt_id)
+    else {
+        panic!("prepared target offer")
+    };
+    assert_eq!(attempt.attempt_id(), target_attempt_id);
 
     let offer = match round_trip_response(RemoteControlPairingResponse::Offer(offer)) {
         RemoteControlPairingResponse::Offer(offer) => offer,

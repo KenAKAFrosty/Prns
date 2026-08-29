@@ -151,6 +151,25 @@ pub struct RemoteControlPairingSession {
     identity: RemoteControlPairingIdentity,
     window: RemoteControlPairingWindow,
     permissions: RemoteControlPairingPermissions,
+    attempt_timeout: RemoteControlPairingAttemptTimeout,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OpenRemoteControlPairingSession<'a> {
+    target_identity: IdentityHash,
+    session: &'a RemoteControlPairingSession,
+}
+
+impl<'a> OpenRemoteControlPairingSession<'a> {
+    #[must_use]
+    pub const fn target_identity(self) -> IdentityHash {
+        self.target_identity
+    }
+
+    #[must_use]
+    pub const fn session(self) -> &'a RemoteControlPairingSession {
+        self.session
+    }
 }
 
 impl RemoteControlPairingSession {
@@ -159,11 +178,13 @@ impl RemoteControlPairingSession {
         identity: RemoteControlPairingIdentity,
         window: RemoteControlPairingWindow,
         permissions: RemoteControlPairingPermissions,
+        attempt_timeout: RemoteControlPairingAttemptTimeout,
     ) -> Self {
         Self {
             identity,
             window,
             permissions,
+            attempt_timeout,
         }
     }
 
@@ -188,14 +209,25 @@ impl RemoteControlPairingSession {
     }
 
     #[must_use]
+    pub const fn attempt_timeout(&self) -> RemoteControlPairingAttemptTimeout {
+        self.attempt_timeout
+    }
+
+    #[must_use]
     pub fn into_parts(
         self,
     ) -> (
         RemoteControlPairingIdentity,
         RemoteControlPairingWindow,
         RemoteControlPairingPermissions,
+        RemoteControlPairingAttemptTimeout,
     ) {
-        (self.identity, self.window, self.permissions)
+        (
+            self.identity,
+            self.window,
+            self.permissions,
+            self.attempt_timeout,
+        )
     }
 }
 
@@ -203,8 +235,13 @@ impl RemoteControlPairingSession {
 enum RemoteControlPairingPhase {
     #[default]
     Unavailable,
-    Closed,
-    Open(RemoteControlPairingSession),
+    Closed {
+        target_identity: IdentityHash,
+    },
+    Open {
+        target_identity: IdentityHash,
+        session: RemoteControlPairingSession,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -246,9 +283,25 @@ pub(crate) enum CloseRemoteControlPairingOutcome {
 
 impl RemoteControlPairingState {
     #[must_use]
-    pub(crate) const fn available() -> Self {
+    pub(crate) const fn available(target_identity: IdentityHash) -> Self {
         Self {
-            phase: RemoteControlPairingPhase::Closed,
+            phase: RemoteControlPairingPhase::Closed { target_identity },
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn open_session(&self) -> Option<OpenRemoteControlPairingSession<'_>> {
+        match &self.phase {
+            RemoteControlPairingPhase::Open {
+                target_identity,
+                session,
+            } => Some(OpenRemoteControlPairingSession {
+                target_identity: *target_identity,
+                session,
+            }),
+            RemoteControlPairingPhase::Unavailable | RemoteControlPairingPhase::Closed { .. } => {
+                None
+            }
         }
     }
 
@@ -256,8 +309,10 @@ impl RemoteControlPairingState {
     pub(crate) const fn view(&self) -> RemoteControlPairingView<'_> {
         match &self.phase {
             RemoteControlPairingPhase::Unavailable => RemoteControlPairingView::Unavailable,
-            RemoteControlPairingPhase::Closed => RemoteControlPairingView::Closed,
-            RemoteControlPairingPhase::Open(session) => RemoteControlPairingView::Open(session),
+            RemoteControlPairingPhase::Closed { .. } => RemoteControlPairingView::Closed,
+            RemoteControlPairingPhase::Open { session, .. } => {
+                RemoteControlPairingView::Open(session)
+            }
         }
     }
 
@@ -270,14 +325,19 @@ impl RemoteControlPairingState {
             RemoteControlPairingPhase::Unavailable => {
                 OpenRemoteControlPairingOutcome::Unavailable { unopened: session }
             }
-            RemoteControlPairingPhase::Closed if now < session.window.expires_at => {
-                self.phase = RemoteControlPairingPhase::Open(session);
+            RemoteControlPairingPhase::Closed { target_identity }
+                if now < session.window.expires_at =>
+            {
+                self.phase = RemoteControlPairingPhase::Open {
+                    target_identity,
+                    session,
+                };
                 OpenRemoteControlPairingOutcome::Opened
             }
-            RemoteControlPairingPhase::Closed => {
+            RemoteControlPairingPhase::Closed { .. } => {
                 OpenRemoteControlPairingOutcome::DeadlineElapsed { unopened: session }
             }
-            RemoteControlPairingPhase::Open(_) => {
+            RemoteControlPairingPhase::Open { .. } => {
                 OpenRemoteControlPairingOutcome::AlreadyOpen { unopened: session }
             }
         }
@@ -286,12 +346,15 @@ impl RemoteControlPairingState {
     pub(crate) fn close(&mut self) -> CloseRemoteControlPairingOutcome {
         match core::mem::take(&mut self.phase) {
             RemoteControlPairingPhase::Unavailable => CloseRemoteControlPairingOutcome::Unavailable,
-            RemoteControlPairingPhase::Closed => {
-                self.phase = RemoteControlPairingPhase::Closed;
+            RemoteControlPairingPhase::Closed { target_identity } => {
+                self.phase = RemoteControlPairingPhase::Closed { target_identity };
                 CloseRemoteControlPairingOutcome::AlreadyClosed
             }
-            RemoteControlPairingPhase::Open(session) => {
-                self.phase = RemoteControlPairingPhase::Closed;
+            RemoteControlPairingPhase::Open {
+                target_identity,
+                session,
+            } => {
+                self.phase = RemoteControlPairingPhase::Closed { target_identity };
                 CloseRemoteControlPairingOutcome::Closed { session }
             }
         }
@@ -303,6 +366,7 @@ mod tests {
     use super::*;
     use crate::remote_control::RemoteControlRequestKind;
     use crate::routing::announce::expand_name;
+    use crate::units::DurationMillis;
     use crate::wire::TRUNCATED_HASH_BYTE_LEN;
 
     fn session(identity_fill: u8, opened_at: u64, expires_at: u64) -> RemoteControlPairingSession {
@@ -316,6 +380,7 @@ mod tests {
                 RemoteControlRequestKind::Describe,
             ))
             .unwrap(),
+            RemoteControlPairingAttemptTimeout::try_from(DurationMillis(500)).unwrap(),
         )
     }
 
@@ -388,7 +453,8 @@ mod tests {
             },
         );
 
-        let mut state = RemoteControlPairingState::available();
+        let target = IdentityHash::new([0xA1; TRUNCATED_HASH_BYTE_LEN]);
+        let mut state = RemoteControlPairingState::available(target);
         assert_eq!(state.view(), RemoteControlPairingView::Closed);
         assert_eq!(
             state.close(),
@@ -401,6 +467,7 @@ mod tests {
             state.open(open_session, InstantMillis(1_000)),
             OpenRemoteControlPairingOutcome::Opened,
         );
+        assert_eq!(state.open_session().unwrap().target_identity(), target);
         assert_eq!(
             state.close(),
             CloseRemoteControlPairingOutcome::Closed {
@@ -413,7 +480,9 @@ mod tests {
 
     #[test]
     fn opening_twice_keeps_the_live_session_and_returns_the_unopened_one() {
-        let mut state = RemoteControlPairingState::available();
+        let mut state = RemoteControlPairingState::available(IdentityHash::new(
+            [0xA2; TRUNCATED_HASH_BYTE_LEN],
+        ));
         let live = session(0x61, 1_000, 2_000);
         let live_endpoint = live.endpoint();
         let unopened = session(0x62, 1_000, 3_000);
@@ -437,7 +506,9 @@ mod tests {
 
     #[test]
     fn opening_after_the_prepared_session_deadline_returns_it_without_opening() {
-        let mut state = RemoteControlPairingState::available();
+        let mut state = RemoteControlPairingState::available(IdentityHash::new(
+            [0xA3; TRUNCATED_HASH_BYTE_LEN],
+        ));
 
         assert_eq!(
             state.open(session(0x63, 1_000, 2_000), InstantMillis(2_000)),

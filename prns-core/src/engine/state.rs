@@ -3,7 +3,7 @@ use crate::identity::destination_identity::DestinationIdentities;
 use crate::identity::held::HeldIdentities;
 use crate::identity::IDENTITY_SECRET_KEY_LEN;
 use crate::interfaces::InterfaceId;
-use crate::remote_control::RemoteControlPairingState;
+use crate::remote_control::{RemoteControlPairingState, RemoteControlTargetPairingState};
 use crate::routing::announce::destination_announce_limit::DestinationAnnounceLimits;
 use crate::routing::announce::held::HeldAnnounces;
 use crate::routing::announce::interface_announce_limit::InterfaceAnnounceLimits;
@@ -201,6 +201,7 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) identity_blackholes: IdentityBlackholes<S::Blackholes>,
     pub(crate) held_identities: HeldIdentities<S::HeldIdentities>,
     pub(crate) remote_control_pairing: RemoteControlPairingState,
+    pub(crate) remote_control_target_pairing: RemoteControlTargetPairingState,
     pub(crate) transport: TransportState,
     pub(crate) protocol: EngineProtocolPolicy,
     pub(crate) self_ratchets: SelfRatchets<S::SelfRatchets>,
@@ -265,6 +266,7 @@ impl<S: StorageLayout> Default for EngineState<S> {
             identity_blackholes: IdentityBlackholes::default(),
             held_identities: HeldIdentities::default(),
             remote_control_pairing: RemoteControlPairingState::default(),
+            remote_control_target_pairing: RemoteControlTargetPairingState::default(),
             transport: TransportState::default(),
             protocol: EngineProtocolPolicy::default(),
             self_ratchets: SelfRatchets::default(),
@@ -344,6 +346,10 @@ impl<S: StorageLayout> EngineState<S> {
             write!(identity_blackholes, IdentityBlackholes::default());
             write!(held_identities, HeldIdentities::default());
             write!(remote_control_pairing, RemoteControlPairingState::default());
+            write!(
+                remote_control_target_pairing,
+                RemoteControlTargetPairingState::default()
+            );
             write!(transport, TransportState::default());
             write!(protocol, EngineProtocolPolicy::default());
             write!(self_ratchets, SelfRatchets::default());

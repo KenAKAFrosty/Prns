@@ -141,6 +141,9 @@ fn an_ifac_frame_crosses_the_seam_and_leaves_masked_through_the_peer() {
         | Journaled::LinkInterfaceMismatch { .. }
         | Journaled::RemoteControlPairingAvailabilityObserved(_)
         | Journaled::RemoteControlPairingExpired { .. }
+        | Journaled::RemoteControlTargetPairingConfirmationRequired(_)
+        | Journaled::RemoteControlTargetPairingExpired { .. }
+        | Journaled::RemoteControlTargetPairingLinkClosed { .. }
         | Journaled::RemoteControlPairingExpiryFailed { .. } => {}
     };
 

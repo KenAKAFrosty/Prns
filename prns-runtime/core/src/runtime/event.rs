@@ -15,6 +15,7 @@ use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
 use crate::remote_control::{
     RemoteControlPairingAvailabilityObservation, RemoteControlPairingEndpoint,
+    RemoteControlTargetPairingAborted, RemoteControlTargetPairingAttemptView,
 };
 use crate::routing::delivery::Delivery;
 use crate::routing::links::channel::MessageType;
@@ -35,6 +36,13 @@ pub enum PrnsEvent<'a> {
 #[derive(Debug)]
 pub enum Message<'a> {
     RemoteControlPairingAvailable(RemoteControlPairingAvailabilityObservation<'a>),
+    RemoteControlTargetPairingConfirmationRequired(RemoteControlTargetPairingAttemptView<'a>),
+    RemoteControlTargetPairingExpired {
+        aborted: RemoteControlTargetPairingAborted,
+    },
+    RemoteControlTargetPairingLinkClosed {
+        aborted: RemoteControlTargetPairingAborted,
+    },
     Delivered(Delivery<'a>),
     Request {
         destination: DestinationHash,
@@ -177,6 +185,17 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
         match journaled {
             Journaled::RemoteControlPairingAvailabilityObserved(observation) => {
                 PrnsEvent::Message(Message::RemoteControlPairingAvailable(observation))
+            }
+            Journaled::RemoteControlTargetPairingConfirmationRequired(attempt) => {
+                PrnsEvent::Message(Message::RemoteControlTargetPairingConfirmationRequired(
+                    attempt,
+                ))
+            }
+            Journaled::RemoteControlTargetPairingExpired { aborted } => {
+                PrnsEvent::Message(Message::RemoteControlTargetPairingExpired { aborted })
+            }
+            Journaled::RemoteControlTargetPairingLinkClosed { aborted } => {
+                PrnsEvent::Message(Message::RemoteControlTargetPairingLinkClosed { aborted })
             }
             Journaled::Delivered(delivery) => PrnsEvent::Message(Message::Delivered(delivery)),
             Journaled::RequestReceived {

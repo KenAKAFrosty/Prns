@@ -63,6 +63,9 @@ async fn a_commanded_announce_fans_to_every_interface_and_settles() {
         | Journaled::LinkInterfaceMismatch { .. }
         | Journaled::RemoteControlPairingAvailabilityObserved(_)
         | Journaled::RemoteControlPairingExpired { .. }
+        | Journaled::RemoteControlTargetPairingConfirmationRequired(_)
+        | Journaled::RemoteControlTargetPairingExpired { .. }
+        | Journaled::RemoteControlTargetPairingLinkClosed { .. }
         | Journaled::RemoteControlPairingExpiryFailed { .. } => {}
     };
 

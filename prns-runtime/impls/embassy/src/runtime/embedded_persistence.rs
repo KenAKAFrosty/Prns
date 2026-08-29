@@ -411,6 +411,9 @@ where
             | Journaled::ResourceAssembled { .. }
             | Journaled::RemoteControlPairingAvailabilityObserved(_)
             | Journaled::RemoteControlPairingExpired { .. }
+            | Journaled::RemoteControlTargetPairingConfirmationRequired(_)
+            | Journaled::RemoteControlTargetPairingExpired { .. }
+            | Journaled::RemoteControlTargetPairingLinkClosed { .. }
             | Journaled::RemoteControlPairingExpiryFailed { .. } => {}
         }
     }

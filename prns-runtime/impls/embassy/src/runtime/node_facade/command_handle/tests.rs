@@ -9,9 +9,9 @@ use crate::engine::{
     MAX_SEND_PLAIN_PACKET_PAYLOAD_LEN,
 };
 use crate::remote_control::{
-    RemoteControlPairingEndpoint, RemoteControlPairingExpiresAfter,
-    RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
-    RemoteControlRequestKind, RemoteControlRequestSet,
+    RemoteControlPairingAttemptTimeout, RemoteControlPairingEndpoint,
+    RemoteControlPairingExpiresAfter, RemoteControlPairingPermissions,
+    RemoteControlPairingPublicAppDataBytes, RemoteControlRequestKind, RemoteControlRequestSet,
 };
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
@@ -38,6 +38,8 @@ fn open_pairing() -> OpenRemoteControlPairing {
     OpenRemoteControlPairing {
         target: crate::engine::EgressTarget::AllInterfaces,
         expires_after: RemoteControlPairingExpiresAfter::try_from(DurationMillis(60_000)).unwrap(),
+        attempt_timeout: RemoteControlPairingAttemptTimeout::try_from(DurationMillis(30_000))
+            .unwrap(),
         permissions: RemoteControlPairingPermissions::try_from(RemoteControlRequestSet::only(
             RemoteControlRequestKind::Describe,
         ))

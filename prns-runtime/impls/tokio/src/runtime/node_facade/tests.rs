@@ -16,9 +16,9 @@ use crate::engine::{
 use crate::identity::IdentityHash;
 use crate::manifold::driver::HostCommand;
 use crate::remote_control::{
-    RemoteControlPairingEndpoint, RemoteControlPairingExpiresAfter,
-    RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
-    RemoteControlRequestKind, RemoteControlRequestSet,
+    RemoteControlPairingAttemptTimeout, RemoteControlPairingEndpoint,
+    RemoteControlPairingExpiresAfter, RemoteControlPairingPermissions,
+    RemoteControlPairingPublicAppDataBytes, RemoteControlRequestKind, RemoteControlRequestSet,
 };
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
@@ -49,6 +49,8 @@ fn open_pairing() -> OpenRemoteControlPairing {
     OpenRemoteControlPairing {
         target: crate::engine::EgressTarget::AllInterfaces,
         expires_after: RemoteControlPairingExpiresAfter::try_from(DurationMillis(60_000)).unwrap(),
+        attempt_timeout: RemoteControlPairingAttemptTimeout::try_from(DurationMillis(30_000))
+            .unwrap(),
         permissions: RemoteControlPairingPermissions::try_from(RemoteControlRequestSet::only(
             RemoteControlRequestKind::Describe,
         ))
