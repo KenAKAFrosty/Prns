@@ -64,6 +64,7 @@ export type WirePackingPolicy = {
 
 export type WireCodec<Value> = {
   readonly id: string;
+  readonly accepts?: (values: readonly Value[]) => boolean;
   readonly encode: (values: readonly Value[]) => ArrayBuffer;
   readonly decode: (buffer: ArrayBuffer) => readonly Value[];
 };
@@ -102,6 +103,13 @@ export class WireBatchEncoder<Value = unknown> {
       return { message: Tag("ClonedBatch", { values }), transfer: [] };
     }
     if (values.length < this.#minimumItems) {
+      return { message: Tag("ClonedBatch", { values }), transfer: [] };
+    }
+    if (
+      this.#codec !== undefined &&
+      this.#codec.accepts !== undefined &&
+      !this.#codec.accepts(values)
+    ) {
       return { message: Tag("ClonedBatch", { values }), transfer: [] };
     }
     if (this.#codec !== undefined) {

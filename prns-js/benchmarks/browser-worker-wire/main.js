@@ -9,38 +9,60 @@ import {
   WireBatchDecoder,
   WireBatchEncoder,
 } from "../../dist/worker_wire/wire_batch.js";
+import {
+  workerInvocationCodec,
+  workerSettlementCodec,
+} from "../../dist/browser/worker_codecs.js";
+import {
+  DESTINATION_HASH_LENGTH,
+  LINK_ID_LENGTH,
+  REQUEST_PATH_HASH_LENGTH,
+} from "../../dist/contract.js";
 
 const worker = new Worker("./worker.js", { type: "module" });
 const requestEncoder = new WireBatchEncoder({ minimumItems: 1 });
 const responseDecoder = new WireBatchDecoder();
 const pending = new Map();
 const clonePending = new Map();
+const numericTransferPending = new Map();
 const commandPending = new Map();
 let nextId = 1;
 
-const productionCommandSender = commandSender();
-const clonedBatchCommandSender = commandSender({ minimumItems: Number.MAX_SAFE_INTEGER });
-const packedBatchCommandSender = commandSender({ minimumItems: 1 });
+const clonedBatchCommandSender = commandSender(
+  "ClonedCommandFrame",
+  { packingPolicy: { minimumItems: Number.MAX_SAFE_INTEGER } },
+);
+const packedBatchCommandSender = commandSender(
+  "PackedCommandFrame",
+  { packingPolicy: { minimumItems: 1 } },
+);
+const codecBatchCommandSender = commandSender(
+  "CodecCommandFrame",
+  { codec: workerInvocationCodec },
+);
 
-function commandSender(packingPolicy) {
+function commandSender(frameTag, options) {
   return new BatchedPortSender({
     port: worker,
-    wrap: (batch) => Tag("CommandFrame", { batch }),
+    wrap: (batch) => Tag(frameTag, { batch }),
     maximumItems: MAXIMUM_WIRE_BATCH_ITEMS,
     maximumBytes: 1024 * 1024,
     scheduleTask: messageTaskScheduler(),
     failed: fail,
-    ...(packingPolicy === undefined ? {} : { packingPolicy }),
+    ...options,
   });
 }
 
-const settlementReceiver = new BatchedPortReceiver((settlement) => {
-  const resolve = commandPending.get(settlement.id);
-  if (resolve !== undefined) {
-    commandPending.delete(settlement.id);
-    resolve(settlement.outcome);
-  }
-});
+const settlementReceiver = new BatchedPortReceiver(
+  (settlement) => {
+    const resolve = commandPending.get(settlement.id);
+    if (resolve !== undefined) {
+      commandPending.delete(settlement.id);
+      resolve(settlement.outcome);
+    }
+  },
+  [workerSettlementCodec],
+);
 
 worker.addEventListener("message", ({ data }) => {
   match(data, {
@@ -58,6 +80,11 @@ worker.addEventListener("message", ({ data }) => {
       const resolve = commandPending.get(id);
       commandPending.delete(id);
       resolve(outcome);
+    },
+    TransferredNumbers: ({ id, buffer }) => {
+      const resolve = numericTransferPending.get(id);
+      numericTransferPending.delete(id);
+      resolve(new Float64Array(buffer));
     },
     SettlementFrame: ({ batch }) => settlementReceiver.receive(batch),
     Failed: ({ detail }) => fail(new Error(detail)),
@@ -84,19 +111,29 @@ function packedRows(rows) {
   });
 }
 
-function cloneCommand(value) {
+function transferNumbers(values) {
   const id = nextId++;
+  const buffer = values.buffer;
   return new Promise((resolve) => {
-    commandPending.set(id, resolve);
-    worker.postMessage(Tag("CloneCommand", { id, value }));
+    numericTransferPending.set(id, resolve);
+    worker.postMessage(Tag("TransferNumbers", { id, buffer }), [buffer]);
   });
 }
 
-function batchedCommand(sender, value) {
+function cloneCommand(command) {
+  const id = nextId++;
+  const invocation = { id, call: Tag("Execute", command) };
+  return new Promise((resolve) => {
+    commandPending.set(id, resolve);
+    worker.postMessage(Tag("CloneCommand", { invocation }));
+  });
+}
+
+function batchedCommand(sender, command) {
   const id = nextId++;
   return new Promise((resolve) => {
     commandPending.set(id, resolve);
-    sender.send({ id, value });
+    sender.send({ id, call: Tag("Execute", command) });
   });
 }
 
@@ -156,20 +193,65 @@ async function rowRound(count) {
   };
 }
 
+async function numericRound(count) {
+  const value = Array.from({ length: count }, (_, index) => index + 0.25);
+  let transferred = await transferNumbers(Float64Array.from(value));
+  await cloneRows(value);
+  await packedRows(value);
+  const clone = [];
+  const packed = [];
+  const transfer = [];
+  for (let repetition = 0; repetition < 7; repetition += 1) {
+    const configurations = [
+      [clone, async () => cloneRows(value)],
+      [packed, async () => packedRows(value)],
+      [transfer, async () => {
+        transferred = await transferNumbers(transferred);
+        return transferred;
+      }],
+    ];
+    const order = configurations.map((_, index) =>
+      configurations[(index + repetition) % configurations.length]
+    );
+    for (const [samples, operation] of order) {
+      const measured = await measure(operation);
+      if (
+        measured.value.length !== count ||
+        measured.value[0] !== 0.25 ||
+        measured.value[count - 1] !== count - 0.75
+      ) {
+        throw new Error("numeric benchmark returned the wrong values");
+      }
+      samples.push(measured.millis);
+    }
+  }
+  return {
+    values: count,
+    plainCloneMedianMs: median(clone),
+    inferredF64MedianMs: median(packed),
+    transferredF64MedianMs: median(transfer),
+    inferredSpeedup: median(clone) / median(packed),
+    transferSpeedup: median(clone) / median(transfer),
+  };
+}
+
 async function commandRound(count) {
-  await Promise.all(Array.from({ length: 32 }, (_, index) =>
-    batchedCommand(productionCommandSender, commandValue(index))
-  ));
+  const warm = Array.from({ length: 32 }, (_, index) => commandValue(index));
+  await Promise.all(warm.map((value) => batchedCommand(clonedBatchCommandSender, value)));
+  await Promise.all(warm.map((value) => batchedCommand(packedBatchCommandSender, value)));
+  await Promise.all(warm.map((value) => batchedCommand(codecBatchCommandSender, value)));
   const clone = [];
   const clonedBatch = [];
   const packedBatch = [];
+  const codecBatch = [];
   const values = Array.from({ length: count }, (_, index) => commandValue(index));
-  const roundsPerSample = Math.max(10, Math.ceil(10_000 / count));
+  const roundsPerSample = Math.max(10, Math.ceil((count < 10 ? 1_000 : 10_000) / count));
   for (let repetition = 0; repetition < 7; repetition += 1) {
     const configurations = [
       [clone, cloneCommand],
       [clonedBatch, (value) => batchedCommand(clonedBatchCommandSender, value)],
       [packedBatch, (value) => batchedCommand(packedBatchCommandSender, value)],
+      [codecBatch, (value) => batchedCommand(codecBatchCommandSender, value)],
     ];
     const order = configurations.map((_, index) =>
       configurations[(index + repetition) % configurations.length]
@@ -189,46 +271,51 @@ async function commandRound(count) {
     cloneMedianMs: median(clone),
     clonedBatchMedianMs: median(clonedBatch),
     packedBatchMedianMs: median(packedBatch),
+    codecBatchMedianMs: median(codecBatch),
     clonedBatchSpeedup: median(clone) / median(clonedBatch),
     packedBatchSpeedup: median(clone) / median(packedBatch),
     packingSpeedup: median(clonedBatch) / median(packedBatch),
+    codecSpeedup: median(clonedBatch) / median(codecBatch),
   };
 }
 
 function commandValue(index) {
   if (index % 4 === 0) {
-    return Tag("Advance", { index, delta: index % 17 });
+    return Tag("Announce", { destination: fixedBytes(DESTINATION_HASH_LENGTH, index) });
   }
   if (index % 4 === 1) {
-    return Tag("Blend", {
-      index,
-      left: index + 0.25,
-      right: index + 0.75,
-      ratio: (index % 10) / 10,
+    return Tag("SendSinglePacket", {
+      destination: fixedBytes(DESTINATION_HASH_LENGTH, index),
+      payload: fixedBytes(32 + index % 97, index + 1),
     });
   }
   if (index % 4 === 2) {
-    return Tag("Digest", {
-      index,
-      payload: Uint8Array.from({ length: 32 + index % 97 }, (_, offset) =>
-        (index + offset) & 0xff
-      ),
+    return Tag("Request", {
+      linkId: fixedBytes(LINK_ID_LENGTH, index),
+      pathHash: fixedBytes(REQUEST_PATH_HASH_LENGTH, index + 1),
+      payload: fixedBytes(48 + index % 67, index + 2),
+      timeout: Tag("Exact", { millis: 1_000 + index }),
+      maximumResponseBytes: 65_536,
     });
   }
-  return Tag("Describe", {
-    index,
-    active: index % 2 === 0,
-    name: `peer-${index % 23}`,
+  return Tag("SendChannelMessage", {
+    linkId: fixedBytes(LINK_ID_LENGTH, index),
+    messageType: index % 0xffff,
+    payload: fixedBytes(24 + index % 53, index + 3),
   });
+}
+
+function fixedBytes(length, seed) {
+  return Uint8Array.from({ length }, (_, index) => (seed + index) & 0xff);
 }
 
 async function settlementIsolation() {
   const fast = Array.from({ length: 100 }, (_, index) =>
-    batchedCommand(productionCommandSender, commandValue(index))
+    batchedCommand(codecBatchCommandSender, commandValue(index))
   );
   const slow = batchedCommand(
-    productionCommandSender,
-    Tag("Delay", { index: 100, delayMillis: 50 }),
+    codecBatchCommandSender,
+    Tag("RequestPath", { destination: fixedBytes(DESTINATION_HASH_LENGTH, 0xff) }),
   );
   const started = performance.now();
   await Promise.all(fast);
@@ -240,12 +327,19 @@ async function settlementIsolation() {
 async function run() {
   const result = {
     userAgent: navigator.userAgent,
+    numericArrays: [
+      await numericRound(1_000),
+      await numericRound(10_000),
+      await numericRound(100_000),
+    ],
     rows: [
       await rowRound(1_000),
       await rowRound(10_000),
       await rowRound(100_000),
     ],
     commands: [
+      await commandRound(1),
+      await commandRound(4),
       await commandRound(10),
       await commandRound(32),
       await commandRound(64),

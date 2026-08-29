@@ -9,20 +9,42 @@ import {
   WireBatchDecoder,
   WireBatchEncoder,
 } from "../../dist/worker_wire/wire_batch.js";
+import {
+  workerInvocationCodec,
+  workerSettlementCodec,
+} from "../../dist/browser/worker_codecs.js";
 
 const requestDecoder = new WireBatchDecoder();
 const responseEncoder = new WireBatchEncoder({ minimumItems: 1 });
-const settlementSender = new BatchedPortSender({
+const clonedSettlementSender = settlementSender({
+  packingPolicy: { minimumItems: Number.MAX_SAFE_INTEGER },
+});
+const packedSettlementSender = settlementSender({
+  packingPolicy: { minimumItems: 1 },
+});
+const codecSettlementSender = settlementSender({ codec: workerSettlementCodec });
+
+function settlementSender(options) {
+  return new BatchedPortSender({
   port: self,
   wrap: (batch) => Tag("SettlementFrame", { batch }),
   maximumItems: MAXIMUM_WIRE_BATCH_ITEMS,
   maximumBytes: 1024 * 1024,
   scheduleTask: messageTaskScheduler(),
   failed: fail,
-});
-const commandReceiver = new BatchedPortReceiver((command) => {
-  void settleCommand(command);
-});
+    ...options,
+  });
+}
+
+const clonedCommandReceiver = commandReceiver(clonedSettlementSender);
+const packedCommandReceiver = commandReceiver(packedSettlementSender);
+const codecCommandReceiver = commandReceiver(codecSettlementSender, [workerInvocationCodec]);
+
+function commandReceiver(sender, codecs = []) {
+  return new BatchedPortReceiver((invocation) => {
+    void settleCommand(invocation, sender);
+  }, codecs);
+}
 
 self.addEventListener("message", ({ data }) => {
   match(data, {
@@ -37,36 +59,48 @@ self.addEventListener("message", ({ data }) => {
         [...encoded.transfer],
       );
     },
-    CloneCommand: async ({ id, value }) => {
-      const outcome = await commandOutcome(value);
-      self.postMessage(Tag("CloneSettlement", { id, outcome }));
+    CloneCommand: async ({ invocation }) => {
+      const outcome = await commandOutcome(invocation);
+      self.postMessage(Tag("CloneSettlement", { id: invocation.id, outcome }));
     },
-    CommandFrame: ({ batch }) => commandReceiver.receive(batch),
+    TransferNumbers: ({ id, buffer }) => {
+      self.postMessage(Tag("TransferredNumbers", { id, buffer }), [buffer]);
+    },
+    ClonedCommandFrame: ({ batch }) => clonedCommandReceiver.receive(batch),
+    PackedCommandFrame: ({ batch }) => packedCommandReceiver.receive(batch),
+    CodecCommandFrame: ({ batch }) => codecCommandReceiver.receive(batch),
   });
 });
 
-async function settleCommand(command) {
-  settlementSender.send({
-    id: command.id,
-    outcome: await commandOutcome(command.value),
+async function settleCommand(invocation, sender) {
+  sender.send({
+    id: invocation.id,
+    call: invocation.call.tag,
+    outcome: await commandOutcome(invocation),
   });
 }
 
-async function commandOutcome(value) {
-  return match(value, {
-    Advance: ({ index, delta }) => ({ checksum: index * 31 + delta }),
-    Blend: ({ index, left, right, ratio }) => ({
-      checksum: index * 31 + left * ratio + right * (1 - ratio),
-    }),
-    Digest: ({ index, payload }) => ({
-      checksum: payload.reduce((total, byte) => (total + byte) >>> 0, index),
-    }),
-    Describe: ({ index, active, name }) => ({
-      checksum: index * 31 + name.length + (active ? 1 : 0),
-    }),
-    Delay: async ({ index, delayMillis }) => {
-      await new Promise((resolve) => setTimeout(resolve, delayMillis));
-      return { checksum: index };
+async function commandOutcome(invocation) {
+  if (invocation.call.tag !== "Execute") {
+    throw new Error("benchmark received a non-execute invocation");
+  }
+  return match(invocation.call.data, {
+    Announce: () => Tag("Succeeded", Tag("Announced")),
+    SendSinglePacket: ({ payload }) => Tag("Succeeded", Tag("PacketDelivered", {
+      rttMillis: payload.byteLength / 10,
+      evidence: "ExplicitProof",
+    })),
+    Request: ({ payload }) => Tag("Succeeded", Tag("ResponseReceived", {
+      data: payload,
+      rttMillis: payload.byteLength / 10,
+    })),
+    SendChannelMessage: ({ payload }) => Tag("Succeeded", Tag("PacketDelivered", {
+      rttMillis: payload.byteLength / 10,
+      evidence: "ImplicitProof",
+    })),
+    RequestPath: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return Tag("Succeeded", Tag("PathDiscovered", { hops: 1 }));
     },
   });
 }

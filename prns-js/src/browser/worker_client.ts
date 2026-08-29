@@ -125,6 +125,11 @@ import {
   messageTaskScheduler,
 } from "../worker_wire/batched_port.js";
 import { MAXIMUM_WIRE_BATCH_ITEMS } from "../worker_wire/wire_batch.js";
+import {
+  MINIMUM_WORKER_CODEC_ITEMS,
+  workerInvocationCodec,
+  workerSettlementCodec,
+} from "./worker_codecs.js";
 
 type WorkerPreparation = {
   readonly initialization: WorkerInitialization;
@@ -278,6 +283,8 @@ class DedicatedWorkerPrns {
       maximumBytes: WORKER_WIRE_MAXIMUM_BYTES,
       scheduleTask: messageTaskScheduler(),
       failed: (error) => this.#failProtocol(describeHostError(error)),
+      codec: workerInvocationCodec,
+      packingPolicy: { minimumItems: MINIMUM_WORKER_CODEC_ITEMS },
     });
     this.#capabilitySender = new BatchedPortSender({
       port: capabilities,
@@ -287,9 +294,10 @@ class DedicatedWorkerPrns {
       scheduleTask: messageTaskScheduler(),
       failed: (error) => this.#failProtocol(describeHostError(error)),
     });
-    this.#controlSettlements = new BatchedPortReceiver((settlement) => {
-      this.#receiveControlSettlement(settlement);
-    });
+    this.#controlSettlements = new BatchedPortReceiver(
+      (settlement) => this.#receiveControlSettlement(settlement),
+      [workerSettlementCodec],
+    );
     this.#capabilitySettlements = new BatchedPortReceiver((settlement) => {
       this.#receiveCapabilitySettlement(settlement);
     });

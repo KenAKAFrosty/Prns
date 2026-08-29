@@ -37,6 +37,11 @@ import {
   messageTaskScheduler,
 } from "../worker_wire/batched_port.js";
 import { MAXIMUM_WIRE_BATCH_ITEMS } from "../worker_wire/wire_batch.js";
+import {
+  MINIMUM_WORKER_CODEC_ITEMS,
+  workerInvocationCodec,
+  workerSettlementCodec,
+} from "./worker_codecs.js";
 
 type StartedEngine = {
   readonly engine: Prns;
@@ -120,6 +125,8 @@ async function initialize(message: WorkerStartMessage): Promise<void> {
         detail: describeHostError(error),
       }));
     },
+    codec: workerSettlementCodec,
+    packingPolicy: { minimumItems: MINIMUM_WORKER_CODEC_ITEMS },
   });
   const capabilitySettlementSender = new BatchedPortSender<WorkerCapabilitySettlement>({
     port: capabilities,
@@ -133,9 +140,12 @@ async function initialize(message: WorkerStartMessage): Promise<void> {
       }));
     },
   });
-  const callReceiver = new BatchedPortReceiver<WorkerInvocation>((invocation) => {
-    void settleCall(invocation);
-  });
+  const callReceiver = new BatchedPortReceiver<WorkerInvocation>(
+    (invocation) => {
+      void settleCall(invocation);
+    },
+    [workerInvocationCodec],
+  );
   const capabilityReceiver = new BatchedPortReceiver<WorkerCapabilityInvocation>((invocation) => {
     void settleCapability(invocation);
   });
