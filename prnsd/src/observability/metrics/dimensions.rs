@@ -165,6 +165,7 @@ pub(super) fn interface_kind_name(kind: InterfaceKind) -> &'static str {
 pub(super) fn runtime_operation_name(operation: RuntimeOperation) -> &'static str {
     match operation {
         RuntimeOperation::AnnounceNow => "announce_now",
+        RuntimeOperation::SetRegisteredAnnounceAppData => "set_registered_announce_app_data",
         RuntimeOperation::SendSinglePacket => "send_single_packet",
         RuntimeOperation::SendGroup => "send_group",
         RuntimeOperation::RequestPath => "request_path",
@@ -178,6 +179,7 @@ pub(super) fn runtime_operation_name(operation: RuntimeOperation) -> &'static st
         RuntimeOperation::SetResourceStrategy => "set_resource_strategy",
         RuntimeOperation::SendToChannel => "send_to_channel",
         RuntimeOperation::AllowRequester => "allow_requester",
+        RuntimeOperation::SendPlainPacket => "send_plain_packet",
     }
 }
 
@@ -392,5 +394,53 @@ mod tests {
         assert!(!source.contains(
             "prns_announces_egress_total{outcome!~\\\"enqueued|interface_unavailable\\\"}"
         ));
+    }
+
+    #[test]
+    fn dashboard_surfaces_receive_evidence_without_promoting_it_to_health() {
+        let source = include_str!("../../../observability/grafana/prnsd.json");
+        let dashboard: serde_json::Value = serde_json::from_str(source).unwrap();
+        let panels = dashboard["panels"].as_array().unwrap();
+        let panel = |title: &str| {
+            panels
+                .iter()
+                .find(|panel| panel["title"].as_str() == Some(title))
+                .unwrap()
+        };
+
+        let failures = panel("Interface receive failures");
+        assert_eq!(failures["type"].as_str(), Some("timeseries"));
+        let failures_query = failures["targets"][0]["expr"].as_str().unwrap();
+        assert!(failures_query.contains("prns_interface_receive_frames_total"));
+        assert!(failures_query.contains("event=~\"protocol_violation|malformed|undecodable\""));
+
+        let evidence = panel("Interface receive evidence · selected range");
+        assert_eq!(evidence["type"].as_str(), Some("table"));
+        let events = [
+            "protocol_violation",
+            "malformed",
+            "undecodable",
+            "received",
+            "delivered",
+        ];
+        for (target, event) in evidence["targets"].as_array().unwrap().iter().zip(events) {
+            let query = target["expr"].as_str().unwrap();
+            assert!(query.contains("prns_interface_receive_frames_total"));
+            assert!(query.contains(&format!("event=\"{event}\"")));
+        }
+        let ordering = &evidence["transformations"][1]["options"]["indexByName"];
+        assert_eq!(ordering["interface"].as_u64(), Some(0));
+        assert_eq!(ordering["Value #A"].as_u64(), Some(1));
+        assert_eq!(ordering["Value #B"].as_u64(), Some(2));
+        assert_eq!(ordering["Value #C"].as_u64(), Some(3));
+        assert_eq!(ordering["Value #D"].as_u64(), Some(4));
+        assert_eq!(ordering["Value #E"].as_u64(), Some(5));
+
+        for title in ["Operational state", "Hard signals · 5m"] {
+            assert!(!panel(title)["targets"][0]["expr"]
+                .as_str()
+                .unwrap()
+                .contains("prns_interface_receive_frames_total"));
+        }
     }
 }

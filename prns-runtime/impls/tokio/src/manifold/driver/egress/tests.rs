@@ -441,7 +441,7 @@ fn clearing_announce_queues_counts_every_pacer_entry() {
 #[test]
 fn an_unavailable_interface_never_enters_the_pacer_or_lane() {
     let id = InterfaceId::new([0x6a; 8]);
-    let status = TokioInterfaceStatus::new(id, ConnectionState::Disconnected);
+    let status = TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Disconnected);
     let mut pacers = std::vec![InterfacePacer {
         id,
         #[cfg(feature = "runtime-metrics")]
@@ -533,7 +533,7 @@ fn an_unavailable_interface_never_enters_the_pacer_or_lane() {
 #[test]
 fn online_only_directives_skip_disconnected_interfaces() {
     let id = InterfaceId::new([0x6b; 8]);
-    let status = TokioInterfaceStatus::new(id, ConnectionState::Disconnected);
+    let status = TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Disconnected);
     let (tx, mut rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
     let mut egress = Egress::new(std::vec![]);
     egress.add_lane(id, id, tx, Some(ConnectionView::of(status.clone())));

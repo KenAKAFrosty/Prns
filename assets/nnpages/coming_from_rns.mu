@@ -129,7 +129,7 @@ Announcements are automatic: every six hours by default, and only while there is
 
 You can change your NomadNet node's name with `B333prnsd nnpages rename "My Node"`b. Changes to the name are live immediately, and persisted to disk.
 
-At any point you can use `B333prnsd nnpages seed`b to re-generate the starter pages along with a default `B333settings.toml`b (without touching anything you've already made yours). If you include the `B333--source`b flag, it will also stage the exact shipped source code bundle.
+At any point you can use `B333prnsd nnpages seed`b to re-generate the starter pages along with a default `B333settings.toml`b (without touching anything you've already made yours). Source hosting is opt-in: include `B333--source`b to stage the exact shipped source code bundle. Once staged, a prnsd-managed archive and checksum advance automatically with newer source-bearing prnsd releases; operator-owned archives stay untouched.
 
 By default, prnsd will find the active Reticulum configuration automatically; pass `B333--config`b for a nondefault foreground or container daemon.
 

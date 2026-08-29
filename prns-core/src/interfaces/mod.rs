@@ -37,10 +37,10 @@ pub use descriptor::{
 };
 pub use identity::{InterfaceId, InterfaceKind, InterfaceOriginKind, MacAddress, INTERFACE_ID_LEN};
 pub use packet::{
-    frame_cap_for, IfacContext, IfacMaskError, IfacSize, IfacSizeError, InboundPacket,
-    InterfaceIfac, OutboundPacket, PacketPhyStats, RssiDbm, SignalQualityTenthsPercent,
-    SnrQuarterDb, BROADCAST_WIRE_FRAME_LEN, DEFAULT_IFAC_SIZE, EMBEDDED_MAX_LINK_MTU,
-    EMBEDDED_MAX_WIRE_FRAME_LEN, IFAC_MAX_SIZE, MAX_WIRE_FRAME_LEN,
+    frame_cap_for, IfacContext, IfacMaskError, IfacSize, IfacSizeError, IfacUnmaskError,
+    InboundPacket, InterfaceIfac, OutboundPacket, PacketPhyStats, RssiDbm,
+    SignalQualityTenthsPercent, SnrQuarterDb, BROADCAST_WIRE_FRAME_LEN, DEFAULT_IFAC_SIZE,
+    EMBEDDED_MAX_LINK_MTU, EMBEDDED_MAX_WIRE_FRAME_LEN, IFAC_MAX_SIZE, MAX_WIRE_FRAME_LEN,
 };
 pub use policy::{
     AirtimeDutyCycle, AnnounceBandwidthCap, AnnounceRateLimit, Capabilities,
@@ -51,10 +51,13 @@ pub use policy::{
     TransportCapability, LOCAL_INTERFACE_BITRATE_ESTIMATE, TRAVERSED_NETWORK_BITRATE_ESTIMATE,
 };
 pub use status::{
-    AirtimeUtilization, ConnectionState, InterfaceSnapshot, InterfaceStatus, InterfaceVitals,
-    Membership, TransferRates,
+    AirtimeUtilization, ConnectionState, FrameAccounting, InterfaceSnapshot, InterfaceStatus,
+    InterfaceVitals, Membership, TransferRates,
 };
 #[cfg(feature = "tokio-host")]
-pub use status::{ConnectionView, ReportsStatus, StatusView};
+pub use status::{
+    ConnectionView, FrameAccountingEvent, FrameAccountingRecorder, RecordsFrameAccounting,
+    ReportsStatus, StatusView,
+};
 
 pub use framing::{kiss_framing, rns_serial_framing, FrameSink, FrameSinkError};

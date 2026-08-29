@@ -1,4 +1,4 @@
-use super::super::captive_portal::{ap_config, station_wifi_mode};
+use super::super::captive_portal::station_wifi_mode;
 use super::super::*;
 use crate::wifi_data_path_recovery::{
     StationDataPathAction, StationDataPathRecovery, StationDataPathWindow,
@@ -120,11 +120,16 @@ fn inspect_station_data_path(
 
 const WIFI_HEALTH_SAMPLES_BETWEEN_REPORTS: u8 = 4;
 const WIFI_LINK_CHECK_INTERVAL: Duration = Duration::from_secs(2);
-const WIFI_INTER_CHANNEL_DELAY: Duration = Duration::from_millis(25);
+// Each specific-channel APSTA scan returns to the SoftAP's home channel before the next scan.
+// Match ESP-IDF's minimum/default home-channel dwell so queued beacons and client traffic run.
+const WIFI_INTER_CHANNEL_HOME_DWELL: Duration = Duration::from_millis(30);
 const WIFI_CHANNEL_SCAN_TIMEOUT: Duration = Duration::from_millis(500);
 const WIFI_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
-const WIFI_SCAN_MIN_DWELL: HalDuration = HalDuration::from_millis(5);
-const WIFI_SCAN_MAX_DWELL: HalDuration = HalDuration::from_millis(20);
+// Some SAE-only access points do not answer the S3 driver's directed probe request. Keep active
+// scanning so provisioned hidden SSIDs remain discoverable, but stay on each channel for a full
+// beacon interval so pure WPA3 networks are also observed from their beacons.
+const WIFI_SCAN_MIN_DWELL: HalDuration = HalDuration::from_millis(120);
+const WIFI_SCAN_MAX_DWELL: HalDuration = HalDuration::from_millis(120);
 const DRIVER_STOP_RETRY_DELAY: Duration = Duration::from_millis(25);
 const ESP_OK: i32 = 0;
 const ESP_ERR_WIFI_NOT_INIT: i32 = 12_289;
@@ -133,6 +138,35 @@ const ESP_ERR_WIFI_NOT_STARTED: i32 = 12_290;
 pub(super) struct StationCredentials {
     pub(super) ssid: String,
     pub(super) password: String,
+}
+
+fn observed_authentication(authentication: Option<AuthenticationMethod>) -> ObservedAuthentication {
+    match authentication {
+        None => ObservedAuthentication::Unknown,
+        Some(AuthenticationMethod::None) => ObservedAuthentication::Open,
+        Some(
+            AuthenticationMethod::Wep
+            | AuthenticationMethod::Wpa
+            | AuthenticationMethod::WpaWpa2Personal,
+        ) => ObservedAuthentication::Legacy,
+        Some(AuthenticationMethod::Wpa2Personal) => ObservedAuthentication::Wpa2,
+        Some(AuthenticationMethod::Wpa3Personal | AuthenticationMethod::Wpa3ExtPsk) => {
+            ObservedAuthentication::Wpa3
+        }
+        Some(AuthenticationMethod::Wpa2Wpa3Personal | AuthenticationMethod::Wpa3ExtPskMixed) => {
+            ObservedAuthentication::Wpa2Wpa3
+        }
+        Some(_) => ObservedAuthentication::Unsupported,
+    }
+}
+
+fn driver_authentication(security: StationSecurity) -> AuthenticationMethod {
+    match security {
+        StationSecurity::Open => AuthenticationMethod::None,
+        StationSecurity::Wpa2 => AuthenticationMethod::Wpa2Personal,
+        StationSecurity::Wpa2Wpa3 => AuthenticationMethod::Wpa2Wpa3Personal,
+        StationSecurity::Wpa3 => AuthenticationMethod::Wpa3Personal,
+    }
 }
 
 extern "C" {
@@ -189,7 +223,6 @@ pub(super) async fn wifi_connect_task(
         .with_ssid(credentials.ssid.clone())
         .with_password(credentials.password.clone());
     let mut recovery = StationRecovery::new(DiscoveryScope::FullBand);
-    let mut soft_ap_active = ap_enabled;
 
     loop {
         let mut resumed = false;
@@ -251,10 +284,9 @@ pub(super) async fn wifi_connect_task(
             continue;
         }
         WIFI_STATION_JOINED.store(false, Ordering::Relaxed);
-        // APSTA has one physical 2.4 GHz radio, but the station must discover its uplink before
-        // that shared channel is known. Pinning discovery to the SoftAP's provisional boot channel
-        // makes every configured LAN on another channel permanently invisible. Scan the full band;
-        // once the station associates, the Espressif driver moves the SoftAP onto that channel.
+        // ESP-IDF supports station scans in APSTA mode. Keep the SoftAP configured while the shared
+        // radio visits each channel, returning home between scans; once the station associates, the
+        // driver moves the SoftAP onto the selected uplink channel.
         recovery.set_discovery_scope(DiscoveryScope::FullBand);
         let Some(attempt) = recovery.begin_attempt() else {
             Timer::after(DRIVER_STOP_RETRY_DELAY).await;
@@ -262,19 +294,20 @@ pub(super) async fn wifi_connect_task(
         };
         match attempt {
             StationAttempt::Connect(attempt) => {
-                let access_point = attempt.access_point();
+                let access_point = attempt.access_point().clone();
                 let access_point_channel = access_point.channel;
+                let security = access_point.security;
                 let station = base
                     .clone()
+                    .with_auth_method(driver_authentication(security))
+                    .with_pmf_required(security.requires_pmf());
+                let station = station
                     .with_bssid(access_point.bssid)
                     .with_channel(access_point_channel);
                 let configured = {
                     let mode = station_wifi_mode(station, ap_enabled, Some(access_point_channel));
                     match controller.set_config(&mode) {
-                        Ok(()) => {
-                            soft_ap_active = ap_enabled;
-                            true
-                        }
+                        Ok(()) => true,
                         Err(error) => {
                             log::warn!("wifi: station configuration failed: {error:?}");
                             false
@@ -298,8 +331,9 @@ pub(super) async fn wifi_connect_task(
                 boot_stage(BootPhase::WifiConnectionBegin);
                 let started_at = embassy_time::Instant::now().as_millis();
                 log::info!(
-                    "wifi: station connection begin channel={}",
-                    access_point.channel
+                    "wifi: station connection begin channel={} security={:?}",
+                    access_point.channel,
+                    access_point.security
                 );
                 let connected = embassy_futures::select::select(
                     with_timeout(WIFI_CONNECT_TIMEOUT, controller.connect_async()),
@@ -323,6 +357,7 @@ pub(super) async fn wifi_connect_task(
                             ConnectionOutcome::Connected(StationAccessPoint {
                                 bssid: connected.bssid,
                                 channel: connected.channel,
+                                security: access_point.security,
                             }),
                         );
                         if let Err(error) = controller.set_power_saving(PowerSaveMode::None) {
@@ -377,20 +412,6 @@ pub(super) async fn wifi_connect_task(
                 apply_station_yield(next, &status).await;
             }
             StationAttempt::Scan(attempt) => {
-                if ap_enabled && soft_ap_active {
-                    // APSTA can use only one RF channel. Tear down the provisional/recovery AP
-                    // while sweeping so a LAN on another channel remains discoverable; it comes
-                    // back on the selected station channel before association begins.
-                    let mode = WifiConfig::Station(base.clone());
-                    if let Err(error) = controller.set_config(&mode) {
-                        log::warn!("wifi: station discovery mode failed: {error:?}");
-                        let next =
-                            recovery.finish_scan(attempt, ScanOutcome::Failed(ScanFailure::Driver));
-                        apply_station_yield(next, &status).await;
-                        continue;
-                    }
-                    soft_ap_active = false;
-                }
                 let channel = attempt.channel();
                 if attempt.starts_sweep() {
                     boot_stage(BootPhase::WifiDiscoveryBegin);
@@ -414,18 +435,43 @@ pub(super) async fn wifi_connect_task(
                 .await;
                 let next = match scan {
                     embassy_futures::select::Either::First(Ok(Ok(networks))) => {
+                        let mut incompatible_security_observed = false;
                         let best = networks
                             .iter()
-                            .max_by_key(|access_point| access_point.signal_strength)
-                            .map(|access_point| StationAccessPoint {
-                                bssid: access_point.bssid,
-                                channel: access_point.channel,
-                            });
+                            .filter_map(|access_point| {
+                                let observed = observed_authentication(access_point.auth_method);
+                                let Some(security) = observed
+                                    .compatible_station_security(credentials.password.is_empty())
+                                else {
+                                    incompatible_security_observed = true;
+                                    return None;
+                                };
+                                Some((
+                                    access_point.signal_strength,
+                                    StationAccessPoint {
+                                        bssid: access_point.bssid,
+                                        channel: access_point.channel,
+                                        security,
+                                    },
+                                ))
+                            })
+                            .max_by_key(|(signal_strength, _)| *signal_strength)
+                            .map(|(_, access_point)| access_point);
                         if best.is_some() || attempt.ends_sweep() {
                             boot_stage(BootPhase::WifiDiscoveryComplete);
                         }
                         if best.is_some() {
-                            log::info!("wifi: discovery found channel={channel}");
+                            if let Some(access_point) = best.as_ref() {
+                                log::info!(
+                                    "wifi: discovery found channel={channel} security={:?}",
+                                    access_point.security
+                                );
+                            }
+                        } else if incompatible_security_observed {
+                            log::warn!(
+                                "wifi: configured network ignored due to incompatible security channel={channel} password_is_empty={}",
+                                credentials.password.is_empty()
+                            );
                         } else if attempt.ends_sweep() {
                             log::warn!("wifi: configured network absent");
                         }
@@ -449,16 +495,6 @@ pub(super) async fn wifi_connect_task(
                         next
                     }
                 };
-                if ap_enabled && matches!(&next, StationYield::Retry(_) | StationYield::Disabled) {
-                    // If the uplink is absent, keep the local provisioning/recovery AP available
-                    // during backoff. The next sweep will briefly return to station-only mode.
-                    match controller.set_config(&WifiConfig::AccessPoint(ap_config(None))) {
-                        Ok(()) => soft_ap_active = true,
-                        Err(error) => {
-                            log::warn!("wifi: recovery SoftAP configuration failed: {error:?}")
-                        }
-                    }
-                }
                 apply_station_yield(next, &status).await;
             }
         }
@@ -497,7 +533,7 @@ async fn apply_station_yield(next: StationYield, status: &AutoWifiStatus<MEMBERS
         StationYield::Continue | StationYield::MonitorLink | StationYield::Disabled => {}
         StationYield::InterChannel => {
             let _ = embassy_futures::select::select(
-                Timer::after(WIFI_INTER_CHANNEL_DELAY),
+                Timer::after(WIFI_INTER_CHANNEL_HOME_DWELL),
                 status.wait_until_station_uplink_disabled(),
             )
             .await;

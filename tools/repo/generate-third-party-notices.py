@@ -43,6 +43,11 @@ GRAPHS = (
         "riscv32imac-unknown-none-elf",
     ),
     (
+        "ESP32-S3 Heltec E290",
+        "personal-hopspot/embedded/esp32/boards/heltec-e290/Cargo.toml",
+        "xtensa-esp32s3-none-elf",
+    ),
+    (
         "ESP32-S3 Heltec",
         "personal-hopspot/embedded/esp32/boards/heltec-v4/Cargo.toml",
         "xtensa-esp32s3-none-elf",
@@ -101,6 +106,17 @@ NPM = (
     ("tslib 2.8.1", "0BSD", "docs/website/node_modules/tslib/LICENSE.txt"),
 )
 VENDORED = (
+    (
+        "Mbed TLS ffb280bb63c78bfec1e1ab55040671768c85c923",
+        "Apache-2.0",
+        "release/licenses/mbedtls-Apache-2.0.txt",
+        (
+            "ESP32-S3 Heltec",
+            "ESP32-S3 Heltec E290",
+            "ESP32-S3 Heltec R8",
+            "ESP32-S3 T-Beam",
+        ),
+    ),
     (
         "nrf-softdevice-s140-v6 0.1.2-prns.1",
         "LicenseRef-Nordic-SoftDevice",
@@ -278,7 +294,7 @@ def notice_bundle() -> str:
     lines = [
         "# Third-Party Notices",
         "",
-        "This checked bundle covers the shipped Rust, JavaScript, and Android release graphs.",
+        "This checked bundle covers the shipped and qualification Rust, JavaScript, and Android product graphs.",
         f"It was generated with `{version}` by `./tools/prns repo notices generate`.",
         "Each locked Rust manifest closure is fetched into a fresh isolated Cargo home before "
         "cargo-about reads its target-filtered packaged license material offline.",
@@ -303,6 +319,10 @@ def notice_bundle() -> str:
     lines.extend(["", "## Vendored native code", ""])
     lines.extend(
         [
+            "- `Mbed TLS ffb280bb63c78bfec1e1ab55040671768c85c923` — "
+            "`Apache-2.0` alternative selected from its "
+            "`Apache-2.0 OR GPL-2.0-or-later` dual license; selected crypto objects are "
+            "statically linked into the ESP32-S3 WPA3-SAE radio artifact.",
             "- `libdbus 1.14.4` — `AFL-2.1` alternative selected from its "
             "`AFL-2.1 OR GPL-2.0-or-later` dual license; built from the source vendored by "
             "`libdbus-sys` and statically linked into the Linux `personal-rns` Node addon and "

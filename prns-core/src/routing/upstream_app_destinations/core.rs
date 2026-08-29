@@ -82,8 +82,10 @@ pub trait UpstreamAppDestinationTable {
     fn kinds(&self) -> &[UpstreamAppDestinationKind];
     fn name_hashes(&self) -> &[DottedNameHash];
     fn app_data_at(&self, index: usize) -> Option<&[u8]>;
+    fn app_data_at_mut(&mut self, index: usize) -> Option<&mut AnnounceAppDataBytes>;
 
     fn kind_mut(&mut self, index: usize) -> &mut UpstreamAppDestinationKind;
+    fn swap_remove(&mut self, index: usize) -> Option<AnnounceAppDataBytes>;
     fn upsert(
         &mut self,
         destination: DestinationHash,
@@ -101,6 +103,14 @@ pub enum RegisterDestinationError {
     RatchetTableFull,
     AppDataTooLong,
     InvalidGroupKey,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum UnregisterDestinationOutcome {
+    Unregistered {
+        registration: UpstreamAppDestination,
+    },
+    NotRegistered,
 }
 
 #[derive(Debug, Default)]
@@ -259,6 +269,20 @@ impl<C: UpstreamAppDestinationTable> UpstreamAppDestinations<C> {
         self.table.app_data_at(slot)
     }
 
+    pub(crate) fn replace_registered_announce_app_data(
+        &mut self,
+        destination: &DestinationHash,
+        app_data: AnnounceAppDataBytes,
+    ) -> Option<AnnounceAppDataBytes> {
+        let slot = self
+            .table
+            .destinations()
+            .iter()
+            .position(|candidate| candidate == destination)?;
+        let registered = self.table.app_data_at_mut(slot)?;
+        Some(core::mem::replace(registered, app_data))
+    }
+
     pub fn registration_for(
         &self,
         destination: &DestinationHash,
@@ -274,6 +298,34 @@ impl<C: UpstreamAppDestinationTable> UpstreamAppDestinations<C> {
             name_hash: *self.table.name_hashes().get(slot)?,
         };
         Some((registered, self.table.app_data_at(slot)?))
+    }
+
+    pub fn unregister(&mut self, destination: &DestinationHash) -> UnregisterDestinationOutcome {
+        let Some(slot) = self
+            .table
+            .destinations()
+            .iter()
+            .position(|candidate| candidate == destination)
+        else {
+            return UnregisterDestinationOutcome::NotRegistered;
+        };
+        let Some(kind) = self.table.kinds().get(slot).copied() else {
+            return UnregisterDestinationOutcome::NotRegistered;
+        };
+        let Some(name_hash) = self.table.name_hashes().get(slot).copied() else {
+            return UnregisterDestinationOutcome::NotRegistered;
+        };
+        let registered = UpstreamAppDestination {
+            destination: *destination,
+            kind,
+            name_hash,
+        };
+        if self.table.swap_remove(slot).is_none() {
+            return UnregisterDestinationOutcome::NotRegistered;
+        }
+        UnregisterDestinationOutcome::Unregistered {
+            registration: registered,
+        }
     }
 
     pub fn lookup(
@@ -421,6 +473,48 @@ mod tests {
                 ratchet_policy: RatchetPolicy::RatchetsRequired,
             }),
         );
+    }
+
+    #[test]
+    fn unregister_returns_the_exact_registration_and_reclaims_its_slot() {
+        let identity_hash = IdentityHash::new([0x21; 16]);
+        let mut destinations =
+            UpstreamAppDestinations::<FixedUpstreamAppDestinationTable<2>>::default();
+        let first = destinations
+            .register_single(
+                &identity_hash,
+                "personal",
+                &["first"],
+                b"first-data",
+                ProofStrategy::ProveAll,
+                LinkRequestPolicy::AcceptAll,
+                RatchetPolicy::NoRatchets,
+            )
+            .unwrap();
+        let second = destinations
+            .register_plain("personal", &["second"])
+            .unwrap();
+        assert_eq!(
+            destinations.register_plain("personal", &["full"]),
+            Err(RegisterDestinationError::RegistryFull),
+        );
+        let expected = destinations.registration_for(&first).unwrap().0;
+
+        assert_eq!(
+            destinations.unregister(&first),
+            UnregisterDestinationOutcome::Unregistered {
+                registration: expected,
+            },
+        );
+        assert_eq!(
+            destinations.unregister(&first),
+            UnregisterDestinationOutcome::NotRegistered,
+        );
+        assert!(destinations.registration_for(&first).is_none());
+        assert_eq!(destinations.app_data_for(&second), Some([].as_slice()));
+        assert_eq!(destinations.len(), 1);
+        assert!(destinations.register_plain("personal", &["third"]).is_ok());
+        assert_eq!(destinations.len(), 2);
     }
 
     #[test]

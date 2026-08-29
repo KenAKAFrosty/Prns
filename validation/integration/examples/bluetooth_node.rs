@@ -55,6 +55,7 @@ async fn main() {
     };
 
     let node = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [me],
         app_state: (),
@@ -67,6 +68,7 @@ async fn main() {
                 source_interface,
                 hops,
                 destination,
+                app_data: _,
             }) = event
             {
                 println!(

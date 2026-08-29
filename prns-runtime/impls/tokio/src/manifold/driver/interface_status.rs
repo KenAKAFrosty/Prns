@@ -3,7 +3,8 @@ use std::sync::Arc;
 use tokio::sync::watch;
 
 use crate::interfaces::{
-    AirtimeUtilization, ConnectionState, InterfaceId, InterfaceStatus, TransferRates,
+    AirtimeUtilization, ConnectionState, FrameAccounting, FrameAccountingEvent, InterfaceId,
+    InterfaceStatus, RecordsFrameAccounting, TransferRates,
 };
 
 #[derive(Clone)]
@@ -19,6 +20,12 @@ struct StatusCell {
     airtime: AtomicU32,
     transfer_rates: AtomicU64,
     enabled: watch::Sender<bool>,
+    publishes_frame_accounting: bool,
+    frames_in: AtomicU64,
+    frames_malformed: AtomicU64,
+    protocol_violations: AtomicU64,
+    frames_undecodable: AtomicU64,
+    frames_delivered: AtomicU64,
 }
 
 const AIRTIME_UNPUBLISHED: u32 = u32::MAX;
@@ -40,7 +47,16 @@ fn unpack_airtime(packed: u32) -> Option<AirtimeUtilization> {
 
 impl TokioInterfaceStatus {
     #[must_use]
-    pub fn new(id: InterfaceId, connection: ConnectionState) -> Self {
+    pub fn new_accounted(id: InterfaceId, connection: ConnectionState) -> Self {
+        Self::new(id, connection, true)
+    }
+
+    #[must_use]
+    pub fn new_unaccounted(id: InterfaceId, connection: ConnectionState) -> Self {
+        Self::new(id, connection, false)
+    }
+
+    fn new(id: InterfaceId, connection: ConnectionState, publishes_frame_accounting: bool) -> Self {
         let (enabled, _) = watch::channel(true);
         Self {
             inner: Arc::new(StatusCell {
@@ -51,6 +67,12 @@ impl TokioInterfaceStatus {
                 airtime: AtomicU32::new(AIRTIME_UNPUBLISHED),
                 transfer_rates: AtomicU64::new(RATES_UNPUBLISHED),
                 enabled,
+                publishes_frame_accounting,
+                frames_in: AtomicU64::new(0),
+                frames_malformed: AtomicU64::new(0),
+                protocol_violations: AtomicU64::new(0),
+                frames_undecodable: AtomicU64::new(0),
+                frames_delivered: AtomicU64::new(0),
             }),
         }
     }
@@ -134,6 +156,32 @@ impl TokioInterfaceStatus {
         let packed = (u64::from(rates.rx_bps) << 32) | u64::from(rates.tx_bps);
         self.inner.transfer_rates.store(packed, Ordering::Relaxed);
     }
+
+    pub fn count_frame_in(&self) {
+        self.inner.frames_in.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn count_frame_malformed(&self) {
+        self.inner.frames_malformed.fetch_add(1, Ordering::Relaxed);
+        self.count_protocol_violation();
+    }
+
+    pub fn count_protocol_violation(&self) {
+        self.inner
+            .protocol_violations
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn count_frame_undecodable(&self) {
+        self.inner
+            .frames_undecodable
+            .fetch_add(1, Ordering::Relaxed);
+        self.count_protocol_violation();
+    }
+
+    pub fn count_frame_delivered(&self) {
+        self.inner.frames_delivered.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 impl InterfaceStatus for TokioInterfaceStatus {
@@ -170,6 +218,31 @@ impl InterfaceStatus for TokioInterfaceStatus {
             tx_bps: packed as u32,
         })
     }
+
+    fn frame_accounting(&self) -> Option<FrameAccounting> {
+        if !self.inner.publishes_frame_accounting {
+            return None;
+        }
+        Some(FrameAccounting {
+            frames_in: self.inner.frames_in.load(Ordering::Relaxed),
+            malformed: self.inner.frames_malformed.load(Ordering::Relaxed),
+            protocol_violations: self.inner.protocol_violations.load(Ordering::Relaxed),
+            undecodable: self.inner.frames_undecodable.load(Ordering::Relaxed),
+            delivered: self.inner.frames_delivered.load(Ordering::Relaxed),
+        })
+    }
+}
+
+impl RecordsFrameAccounting for TokioInterfaceStatus {
+    fn record_frame_event(&self, event: FrameAccountingEvent) {
+        match event {
+            FrameAccountingEvent::Received => self.count_frame_in(),
+            FrameAccountingEvent::Malformed => self.count_frame_malformed(),
+            FrameAccountingEvent::ProtocolViolation => self.count_protocol_violation(),
+            FrameAccountingEvent::Undecodable => self.count_frame_undecodable(),
+            FrameAccountingEvent::Delivered => self.count_frame_delivered(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -178,8 +251,10 @@ mod tests {
 
     #[test]
     fn airtime_reads_none_until_published_then_round_trips() {
-        let status =
-            TokioInterfaceStatus::new(InterfaceId::new([0x5A; 8]), ConnectionState::Initializing);
+        let status = TokioInterfaceStatus::new_unaccounted(
+            InterfaceId::new([0x5A; 8]),
+            ConnectionState::Initializing,
+        );
         assert_eq!(status.airtime(), None);
 
         status.set_airtime(AirtimeUtilization {
@@ -197,8 +272,10 @@ mod tests {
 
     #[tokio::test]
     async fn enabled_state_changes_wake_waiters() {
-        let status =
-            TokioInterfaceStatus::new(InterfaceId::new([0x5A; 8]), ConnectionState::Initializing);
+        let status = TokioInterfaceStatus::new_unaccounted(
+            InterfaceId::new([0x5A; 8]),
+            ConnectionState::Initializing,
+        );
 
         tokio::join!(
             status.wait_until_disabled(),
@@ -215,5 +292,37 @@ mod tests {
         assert!(!status.is_enabled());
         status.enable();
         assert!(status.is_enabled());
+    }
+
+    #[test]
+    fn construction_decides_whether_frame_accounting_is_published() {
+        let id = InterfaceId::new([0x5A; 8]);
+        let unaccounted = TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Connected);
+        unaccounted.count_frame_in();
+        assert_eq!(unaccounted.frame_accounting(), None);
+        assert!(crate::interfaces::FrameAccountingRecorder::of(unaccounted).is_none());
+
+        let accounted = TokioInterfaceStatus::new_accounted(id, ConnectionState::Connected);
+        let recorder = crate::interfaces::FrameAccountingRecorder::of(accounted.clone())
+            .expect("an accounted status exposes a recorder");
+        for event in [
+            FrameAccountingEvent::Received,
+            FrameAccountingEvent::Malformed,
+            FrameAccountingEvent::ProtocolViolation,
+            FrameAccountingEvent::Undecodable,
+            FrameAccountingEvent::Delivered,
+        ] {
+            recorder.record(event);
+        }
+        assert_eq!(
+            accounted.frame_accounting(),
+            Some(FrameAccounting {
+                frames_in: 1,
+                malformed: 1,
+                protocol_violations: 3,
+                undecodable: 1,
+                delivered: 1,
+            })
+        );
     }
 }

@@ -6,13 +6,13 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub use args::RncpArgs;
 use io::{canonical_directory, expand_user_path, resolve_fetch, CpIoError, ReceiveTarget};
 use personal_rns::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceNowFailure, AnnounceTarget, EstablishLinkFailure,
-    IdentifyFailure, RatchetPolicy, SendRequestFailure, SetResourceStrategyFailure,
+    AnnounceAppData, AnnounceNow, AnnounceTarget, EstablishLinkFailure, IdentifyFailure,
+    RatchetPolicy, SendRequestFailure, SetResourceStrategyFailure,
 };
 use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentityHash, IdentitySigner};
@@ -28,7 +28,7 @@ use personal_rns::runtime::request_endpoints::{
     Decline, RequestContext, RequestEndpoint, RequestEndpointPolicy, RequestEndpointSet,
 };
 use personal_rns::runtime::{
-    load_or_create_identity_secret, IdentitySecretFileError, NodeRunError,
+    load_or_create_identity_secret, AnnounceNowError, IdentitySecretFileError, NodeRunError,
     PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, ResourceAdmissionPeer,
     ResourceOfferAdmission, ResourceReceiveError, ResourceSendError, SegmentCompression, SendError,
     ServeMyRequestEndpoints,
@@ -41,6 +41,9 @@ use personal_rns::wire::DestinationHash;
 use tokio::sync::{mpsc, oneshot};
 
 use super::configuration::{LoadedConfiguration, UtilityConfigurationError};
+use super::remote_control::{
+    transient_remote_control_service, TransientRemoteControlIdentityError,
+};
 use super::session::{
     UtilityNodeIdentity, UtilityNodeSession, UtilityNodeSessionError, UtilityNodeStopped,
     UtilityPathError,
@@ -81,7 +84,10 @@ impl RequestEndpoint<ListenerState> for AuthenticatedFetch {
     const ENDPOINT_ID: &'static str = FETCH_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[]);
 
-    async fn handle(context: RequestContext<'_, ListenerState>) -> Result<(), Decline> {
+    async fn handle(
+        context: RequestContext<'_, ListenerState>,
+        _node: &impl personal_rns::runtime::PrnsNodeApi,
+    ) -> Result<(), Decline> {
         handle_fetch(context).await
     }
 }
@@ -90,7 +96,10 @@ impl RequestEndpoint<ListenerState> for PublicFetch {
     const ENDPOINT_ID: &'static str = FETCH_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(context: RequestContext<'_, ListenerState>) -> Result<(), Decline> {
+    async fn handle(
+        context: RequestContext<'_, ListenerState>,
+        _node: &impl personal_rns::runtime::PrnsNodeApi,
+    ) -> Result<(), Decline> {
         handle_fetch(context).await
     }
 }
@@ -207,25 +216,36 @@ async fn send(args: RncpArgs) -> Result<(), RncpError> {
         .and_then(|name| name.to_str())
         .ok_or(RncpError::Arguments("file name is not valid UTF-8"))?;
     let metadata = encode_metadata(name)?;
-    let timeout = args.timeout.get();
+    let explicit_timeout = args.timeout.map(|timeout| timeout.get());
+    let rpc_timeout = explicit_timeout.unwrap_or(Duration::from_secs(15));
     let session = UtilityNodeSession::connect(
         &configuration,
         UtilityNodeIdentity::Private(secret),
-        timeout,
+        rpc_timeout,
     )
     .await
     .map_err(RncpError::Session)?;
     session
         .run(move |client| async move {
+            let path_timeout = match explicit_timeout {
+                Some(timeout) => timeout,
+                None => client
+                    .adaptive_path_timeout()
+                    .await
+                    .map_err(RncpError::Path)?,
+            };
             client
-                .ensure_path(destination, timeout)
+                .ensure_path(destination, path_timeout)
                 .await
                 .map_err(RncpError::Path)?;
-            let link = client
-                .handle()
-                .establish_link(destination)
-                .await
-                .map_err(RncpError::Link)?;
+            let establish = client.handle().establish_link(destination);
+            let link = match explicit_timeout {
+                Some(timeout) => tokio::time::timeout(timeout, establish)
+                    .await
+                    .map_err(|_| RncpError::LinkTimeout(timeout))?
+                    .map_err(RncpError::Link)?,
+                None => establish.await.map_err(RncpError::Link)?,
+            };
             client
                 .handle()
                 .identify(link, identity)
@@ -296,25 +316,33 @@ async fn fetch(args: RncpArgs) -> Result<(), RncpError> {
     let mut request = vec![0u8; requested.len().saturating_add(5)];
     let request_len = write_fetch_path(&requested, &mut request).map_err(RncpError::Codec)?;
     request.truncate(request_len);
-    let timeout = args.timeout.get();
+    let explicit_timeout = args.timeout.map(|timeout| timeout.get());
+    let rpc_timeout = explicit_timeout.unwrap_or(Duration::from_secs(15));
     let session = UtilityNodeSession::connect(
         &configuration,
         UtilityNodeIdentity::Private(secret),
-        timeout,
+        rpc_timeout,
     )
     .await
     .map_err(RncpError::Session)?;
     session
         .run(move |client| async move {
+            let path_timeout = match explicit_timeout {
+                Some(timeout) => timeout,
+                None => client.adaptive_path_timeout().await.map_err(RncpError::Path)?,
+            };
             client
-                .ensure_path(destination, timeout)
+                .ensure_path(destination, path_timeout)
                 .await
                 .map_err(RncpError::Path)?;
-            let link = client
-                .handle()
-                .establish_link(destination)
-                .await
-                .map_err(RncpError::Link)?;
+            let establish = client.handle().establish_link(destination);
+            let link = match explicit_timeout {
+                Some(timeout) => tokio::time::timeout(timeout, establish)
+                    .await
+                    .map_err(|_| RncpError::LinkTimeout(timeout))?
+                    .map_err(RncpError::Link)?,
+                None => establish.await.map_err(RncpError::Link)?,
+            };
             client
                 .handle()
                 .identify(link, identity)
@@ -473,10 +501,13 @@ where
     F: FnOnce() -> R,
 {
     let (events, receiver) = mpsc::unbounded_channel();
+    let remote_control =
+        transient_remote_control_service().map_err(RncpError::RemoteControlIdentityUnavailable)?;
     let listener_allowed: Arc<[IdentityHash]> = args.allowed.clone().into();
     let listener_no_auth = args.no_auth;
     let mut node = PrnsNode::new_with_handle(move |handle| personal_rns::runtime::PrnsNodeRecipe {
         transport_identity: None,
+        remote_control,
         pre_configured_destinations: [PreConfiguredDestination::Single {
             app_name: APP_NAME,
             aspects: &[RECEIVE_ASPECT],
@@ -882,6 +913,7 @@ fn pretty_hash(bytes: &[u8]) -> String {
 pub enum RncpError {
     Arguments(&'static str),
     Configuration(UtilityConfigurationError),
+    RemoteControlIdentityUnavailable(TransientRemoteControlIdentityError),
     Identity {
         path: PathBuf,
         source: IdentitySecretFileError,
@@ -894,13 +926,14 @@ pub enum RncpError {
     ListenerPanicked(NodeRunError),
     Path(UtilityPathError),
     Link(SendError<EstablishLinkFailure>),
+    LinkTimeout(Duration),
     Identify(SendError<IdentifyFailure>),
     ResourceStrategy(SendError<SetResourceStrategyFailure>),
     Request(SendError<SendRequestFailure>),
     SendResource(ResourceSendError),
     ReceiveResource(ResourceReceiveError),
     RequestAcl(RequestHandlerError),
-    Announce(SendError<AnnounceNowFailure>),
+    Announce(AnnounceNowError),
     Codec(personal_rns::rncp::RncpCodecError),
     Io(CpIoError),
     AllowedIdentity(PathBuf),
@@ -915,6 +948,12 @@ impl fmt::Display for RncpError {
         match self {
             Self::Arguments(message) => formatter.write_str(message),
             Self::Configuration(source) => source.fmt(formatter),
+            Self::RemoteControlIdentityUnavailable(source) => {
+                write!(
+                    formatter,
+                    "could not create RNCP RemoteControl identities: {source}"
+                )
+            }
             Self::Identity { path, source } => {
                 write!(
                     formatter,
@@ -930,6 +969,11 @@ impl fmt::Display for RncpError {
             Self::ListenerPanicked(source) => write!(formatter, "RNCP listener stopped: {source}"),
             Self::Path(source) => source.fmt(formatter),
             Self::Link(source) => write!(formatter, "link establishment failed: {source:?}"),
+            Self::LinkTimeout(timeout) => write!(
+                formatter,
+                "link establishment timed out after {} seconds",
+                timeout.as_secs_f64()
+            ),
             Self::Identify(source) => write!(formatter, "link identification failed: {source:?}"),
             Self::ResourceStrategy(source) => {
                 write!(formatter, "resource admission failed: {source:?}")

@@ -44,7 +44,7 @@ impl RuntimeCycle {
         for settings in settings {
             let (inbound, inbound_rx) = mpsc::unbounded_channel();
             let id = settings.id();
-            let status = TokioInterfaceStatus::new(id, ConnectionState::Initializing);
+            let status = TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Initializing);
             let member = RNodeMultiMember {
                 id,
                 vport: settings.vport,

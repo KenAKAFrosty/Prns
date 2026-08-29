@@ -1,3 +1,5 @@
+use crate::station_security::StationSecurity;
+
 const FIRST_2_4_GHZ_CHANNEL: u8 = 1;
 const LAST_2_4_GHZ_CHANNEL: u8 = 13;
 
@@ -49,6 +51,7 @@ impl DiscoveryScope {
 pub(crate) struct AccessPoint {
     pub(crate) bssid: [u8; 6],
     pub(crate) channel: u8,
+    pub(crate) security: StationSecurity,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -295,6 +298,7 @@ mod tests {
         AccessPoint {
             bssid: [channel; 6],
             channel,
+            security: StationSecurity::Wpa2,
         }
     }
 

@@ -23,6 +23,8 @@ enum CommandError {
     CargoMessage(serde_json::Error),
     CargoStdoutUnavailable,
     CargoFailed(Option<i32>),
+    SourceSnapshotSpawn(std::io::Error),
+    SourceSnapshotFailed(Option<i32>),
     DaemonExited(Option<i32>),
     DaemonArtifactMissing,
     DaemonArtifactConflict { first: PathBuf, second: PathBuf },
@@ -43,6 +45,21 @@ impl fmt::Display for CommandError {
             }
             Self::CargoFailed(Some(code)) => write!(formatter, "cargo exited with status {code}"),
             Self::CargoFailed(None) => formatter.write_str("cargo exited unsuccessfully"),
+            Self::SourceSnapshotSpawn(error) => {
+                write!(
+                    formatter,
+                    "failed to package the local source snapshot: {error}"
+                )
+            }
+            Self::SourceSnapshotFailed(Some(code)) => {
+                write!(
+                    formatter,
+                    "source snapshot packaging exited with status {code}"
+                )
+            }
+            Self::SourceSnapshotFailed(None) => {
+                formatter.write_str("source snapshot packaging exited unsuccessfully")
+            }
             Self::DaemonExited(Some(code)) => write!(formatter, "prnsd exited with status {code}"),
             Self::DaemonExited(None) => formatter.write_str("prnsd exited unsuccessfully"),
             Self::DaemonArtifactMissing => {
@@ -103,10 +120,11 @@ fn main() -> ExitCode {
 }
 
 fn run(args: &[OsString]) -> Result<(), CommandError> {
-    let invocation = parse_invocation(args)?;
+    let mut invocation = parse_invocation(args)?;
     let root = repo_root();
     let manifest = root.join("prnsd/Cargo.toml");
     if invocation.action == Action::OneShot {
+        provision_local_source_snapshot(&mut invocation, &root)?;
         return run_daemon_through_cargo(cargo_run_arguments(&invocation, &manifest)?, &root);
     }
 
@@ -115,6 +133,7 @@ fn run(args: &[OsString]) -> Result<(), CommandError> {
     match invocation.action {
         Action::Start => start_or_attach(&invocation, &root, &manifest, &paths, signature),
         Action::Restart => {
+            configure_local_source_environment(&root)?;
             let binary = build_daemon(&invocation, &root, &manifest, false)?;
             if prnsd_control::stop(&paths)? {
                 eprintln!("Stopped prnsd");
@@ -152,10 +171,101 @@ fn run(args: &[OsString]) -> Result<(), CommandError> {
     }
 }
 
+fn provision_local_source_snapshot(
+    invocation: &mut arguments::Invocation,
+    root: &Path,
+) -> Result<(), CommandError> {
+    if !requests_implicit_local_source(invocation) || env::var_os("PRNSD_SOURCE_ARCHIVE").is_some()
+    {
+        return Ok(());
+    }
+    let archive = package_local_source_snapshot(root)?;
+    invocation
+        .daemon_args
+        .push(OsString::from("--source-archive"));
+    invocation.daemon_args.push(archive.into_os_string());
+    Ok(())
+}
+
+fn configure_local_source_environment(root: &Path) -> Result<(), CommandError> {
+    if env::var_os("PRNSD_SOURCE_ARCHIVE").is_some() {
+        return Ok(());
+    }
+    let archive = root.join("target/nnpages-source/source.zip");
+    if !archive.is_file() {
+        return Ok(());
+    }
+    let archive = package_local_source_snapshot(root)?;
+    env::set_var("PRNSD_SOURCE_ARCHIVE", archive);
+    Ok(())
+}
+
+fn package_local_source_snapshot(root: &Path) -> Result<PathBuf, CommandError> {
+    let archive = root.join("target/nnpages-source/source.zip");
+    let status = std::process::Command::new("python3")
+        .arg(root.join("tools/release/package-source-snapshot.py"))
+        .arg("--output")
+        .arg(&archive)
+        .current_dir(root)
+        .status()
+        .map_err(CommandError::SourceSnapshotSpawn)?;
+    if !status.success() {
+        return Err(CommandError::SourceSnapshotFailed(status.code()));
+    }
+    Ok(archive)
+}
+
+fn requests_implicit_local_source(invocation: &arguments::Invocation) -> bool {
+    let args = &invocation.daemon_args;
+    args.first().is_some_and(|arg| arg == "nnpages")
+        && args.get(1).is_some_and(|arg| arg == "seed")
+        && args.iter().any(|arg| arg == "--source")
+        && !args.iter().any(|arg| {
+            arg == "--source-archive"
+                || arg.to_str().is_some_and(|arg| {
+                    arg.strip_prefix("--source-archive")
+                        .is_some_and(|rest| rest.starts_with('='))
+                })
+        })
+}
+
 fn repo_root() -> PathBuf {
     PathBuf::from(COMMAND_MANIFEST_DIR)
         .parent()
         .and_then(Path::parent)
         .expect("prnsd command lives under prnsd/")
         .to_path_buf()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn invocation(args: &[&str]) -> arguments::Invocation {
+        arguments::parse_invocation(&args.iter().copied().map(OsString::from).collect::<Vec<_>>())
+            .expect("valid invocation")
+    }
+
+    #[test]
+    fn cargo_source_seed_requests_a_local_snapshot_only_when_implicit() {
+        assert!(requests_implicit_local_source(&invocation(&[
+            "nnpages", "seed", "--source"
+        ])));
+        assert!(!requests_implicit_local_source(&invocation(&[
+            "nnpages", "seed"
+        ])));
+        assert!(!requests_implicit_local_source(&invocation(&[
+            "nnpages",
+            "seed",
+            "--source",
+            "--source-archive",
+            "/release/source.zip"
+        ])));
+        assert!(!requests_implicit_local_source(&invocation(&[
+            "nnpages",
+            "seed",
+            "--source",
+            "--source-archive=/release/source.zip"
+        ])));
+    }
 }

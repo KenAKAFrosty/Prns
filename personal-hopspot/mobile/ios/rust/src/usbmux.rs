@@ -26,7 +26,7 @@ impl UsbMuxAutoDevice {
         Self {
             id,
             node_tag: contract::node_tag_for(id),
-            status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
+            status: TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Initializing),
             listener,
         }
     }

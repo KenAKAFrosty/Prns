@@ -25,13 +25,22 @@ use prns_runtime::manifold::throughput::ThroughputLedger;
 pub trait StreamDeframer {
     fn new() -> Self;
     fn reset(&mut self);
-    /// The next complete frame at or after `*offset` in `input`, its payload left in `sink`, advancing `offset` past the bytes consumed. `Some(len)` is the payload length now in the sink (`0` is a delimiter-only keepalive); `None` when the chunk is exhausted — mid-frame the partial payload stays accumulated in the sink for the next chunk — or when a malformed or oversized frame was swallowed (the scanner clears the sink, self-heals, and realigns at the next delimiter), in which case `offset` has still advanced so the caller's loop makes progress.
+    /// The next framing outcome at or after `*offset` in `input`, advancing `offset` past the
+    /// bytes consumed. A completed frame leaves its payload in `sink`; a rejected frame clears
+    /// the sink and self-heals at the next delimiter.
     fn next_frame_into(
         &mut self,
         input: &[u8],
         offset: &mut usize,
         sink: &mut dyn FrameSink,
-    ) -> Option<usize>;
+    ) -> StreamDeframeOutcome;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamDeframeOutcome {
+    AwaitingInput,
+    Frame { len: usize },
+    Rejected,
 }
 
 pub trait Framing {
@@ -71,10 +80,12 @@ impl StreamDeframer for RnsSerialScanner {
         input: &[u8],
         offset: &mut usize,
         sink: &mut dyn FrameSink,
-    ) -> Option<usize> {
-        RnsSerialScanner::next_frame_into(self, input, offset, sink)
-            .ok()
-            .flatten()
+    ) -> StreamDeframeOutcome {
+        match RnsSerialScanner::next_frame_into(self, input, offset, sink) {
+            Ok(Some(len)) => StreamDeframeOutcome::Frame { len },
+            Ok(None) => StreamDeframeOutcome::AwaitingInput,
+            Err(_) => StreamDeframeOutcome::Rejected,
+        }
     }
 }
 
@@ -112,10 +123,12 @@ impl StreamDeframer for KissScanner {
         input: &[u8],
         offset: &mut usize,
         sink: &mut dyn FrameSink,
-    ) -> Option<usize> {
-        KissScanner::next_frame_into(self, input, offset, sink)
-            .ok()
-            .flatten()
+    ) -> StreamDeframeOutcome {
+        match KissScanner::next_frame_into(self, input, offset, sink) {
+            Ok(Some(len)) => StreamDeframeOutcome::Frame { len },
+            Ok(None) => StreamDeframeOutcome::AwaitingInput,
+            Err(_) => StreamDeframeOutcome::Rejected,
+        }
     }
 }
 
@@ -335,8 +348,15 @@ async fn serve_inner<F, const READ_LEN: usize, const FRAMED_LEN: usize, S, Seam,
                 let chunk = &read_buf[..read];
                 while offset < chunk.len() {
                     let sink = seam.inbound_sink().await;
-                    if deframer.next_frame_into(chunk, &mut offset, sink).is_some() {
-                        seam.commit_inbound().await;
+                    match deframer.next_frame_into(chunk, &mut offset, sink) {
+                        StreamDeframeOutcome::AwaitingInput => {}
+                        StreamDeframeOutcome::Frame { len: 0 } => {}
+                        StreamDeframeOutcome::Frame { len: _ } => {
+                            status.count_frame_in();
+                            seam.commit_inbound().await;
+                            status.count_frame_delivered();
+                        }
+                        StreamDeframeOutcome::Rejected => status.count_frame_undecodable(),
                     }
                 }
             }
@@ -404,7 +424,7 @@ fn elapsed_millis(started: tokio::time::Instant) -> InstantMillis {
 mod tests {
     use super::*;
     use prns_core::interfaces::rns_serial_framing::RnsSerialDecoder;
-    use prns_core::interfaces::{ConnectionState, InterfaceId};
+    use prns_core::interfaces::{ConnectionState, FrameSinkError, InterfaceId};
     use prns_runtime::manifold::driver::{tokio_grant_lane, TokioGrantConsumer};
     use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -414,6 +434,81 @@ mod tests {
     struct LaneSeam {
         outbound: TokioGrantConsumer,
         inbound: std::vec::Vec<u8>,
+    }
+
+    #[derive(Default)]
+    struct OneByteSink(std::vec::Vec<u8>);
+
+    impl FrameSink for OneByteSink {
+        fn clear(&mut self) {
+            self.0.clear();
+        }
+
+        fn frame_len(&self) -> usize {
+            self.0.len()
+        }
+
+        fn free_capacity(&self) -> usize {
+            1usize.saturating_sub(self.0.len())
+        }
+
+        fn push(&mut self, byte: u8) -> Result<(), FrameSinkError> {
+            if self.0.len() == 1 {
+                return Err(FrameSinkError::Full);
+            }
+            self.0.push(byte);
+            Ok(())
+        }
+
+        fn extend_from_slice(&mut self, run: &[u8]) -> Result<(), FrameSinkError> {
+            if run.len() > self.free_capacity() {
+                return Err(FrameSinkError::Full);
+            }
+            self.0.extend_from_slice(run);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn host_deframer_distinguishes_waiting_frames_keepalives_and_rejections() {
+        use prns_core::interfaces::rns_serial_framing::FLAG;
+
+        let mut scanner = RnsSerialScanner::new();
+        let mut sink = std::vec::Vec::new();
+        let mut offset = 0;
+        assert_eq!(
+            StreamDeframer::next_frame_into(&mut scanner, &[FLAG, 0x01], &mut offset, &mut sink,),
+            StreamDeframeOutcome::AwaitingInput,
+        );
+        assert_eq!(sink, [0x01]);
+
+        offset = 0;
+        assert_eq!(
+            StreamDeframer::next_frame_into(&mut scanner, &[0x02, FLAG], &mut offset, &mut sink,),
+            StreamDeframeOutcome::Frame { len: 2 },
+        );
+        assert_eq!(sink, [0x01, 0x02]);
+
+        sink.clear();
+        offset = 0;
+        assert_eq!(
+            StreamDeframer::next_frame_into(&mut scanner, &[FLAG, FLAG], &mut offset, &mut sink,),
+            StreamDeframeOutcome::Frame { len: 0 },
+        );
+
+        scanner.reset();
+        let mut tiny = OneByteSink::default();
+        offset = 0;
+        assert_eq!(
+            StreamDeframer::next_frame_into(
+                &mut scanner,
+                &[FLAG, 0x01, 0x02, FLAG],
+                &mut offset,
+                &mut tiny,
+            ),
+            StreamDeframeOutcome::Rejected,
+        );
+        assert_eq!(tiny.frame_len(), 0);
     }
 
     impl InterfaceSeam for LaneSeam {
@@ -502,8 +597,10 @@ mod tests {
                 outbound: consumer,
                 inbound: std::vec::Vec::new(),
             };
-            let status =
-                TokioInterfaceStatus::new(InterfaceId::new([7u8; 8]), ConnectionState::Connected);
+            let status = TokioInterfaceStatus::new_accounted(
+                InterfaceId::new([7u8; 8]),
+                ConnectionState::Connected,
+            );
             let mut airtime = AirtimeLedger::default();
             let mut throughput = ThroughputLedger::new();
             let mut meters = WireMeters {

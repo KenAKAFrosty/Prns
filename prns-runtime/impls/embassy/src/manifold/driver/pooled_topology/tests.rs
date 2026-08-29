@@ -84,6 +84,7 @@ fn continuously_due_persistence_yields_to_sibling_tasks() {
                 descriptors: &mut descriptors,
                 ifacs: &mut ifacs,
                 inbound: &mut inbound,
+                frame_accounting_statuses: &[],
                 egress: &mut egress,
                 notify: notify.receiver(),
                 commands: commands.receiver(),
@@ -184,6 +185,7 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
             PooledWiring {
                 descriptors: &mut descriptors,
                 inbound: &mut inbound,
+                frame_accounting_statuses: &[],
                 egress: &mut egress,
                 notify: notify.receiver(),
                 commands: commands.receiver(),
@@ -306,6 +308,7 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
             PooledWiring {
                 descriptors: &mut descriptors,
                 inbound: &mut inbound,
+                frame_accounting_statuses: &[],
                 egress: &mut egress,
                 notify: notify.receiver(),
                 commands: commands.receiver(),

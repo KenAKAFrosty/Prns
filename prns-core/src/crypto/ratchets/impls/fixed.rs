@@ -78,6 +78,15 @@ impl<const MAX_RATCHETED_DESTINATIONS: usize, const RETAINED_RATCHETS_PER_DESTIN
         }
     }
 
+    fn swap_remove(&mut self, index: usize) {
+        if index >= self.destinations.len() {
+            return;
+        }
+        self.destinations.swap_remove(index);
+        self.last_rotated.swap_remove(index);
+        self.secrets.swap_remove(index);
+    }
+
     fn push(&mut self, destination: DestinationHash) -> Result<(), TrackRatchetsError> {
         self.destinations
             .push(destination)

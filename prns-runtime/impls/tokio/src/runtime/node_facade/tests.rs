@@ -1,19 +1,26 @@
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::time::Duration;
+
 use crate::engine::{
     AnnounceNow, AnnounceNowFailure, EstablishLink, EstablishLinkFailure, Identify,
-    PacketReceiptDelivered, PathFound, PrnsCommand, Settlement,
-    MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN,
+    PacketReceiptDelivered, PathFound, PrnsCommand, SendGroupFailure, SendPlainPacketFailure,
+    SetRegisteredAnnounceAppData, SetRegisteredAnnounceAppDataFailure,
+    SetRegisteredAnnounceAppDataRejection, Settlement, MAX_SEND_GROUP_PLAINTEXT_LEN,
+    MAX_SEND_PLAIN_PACKET_PAYLOAD_LEN, MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN,
 };
 use crate::identity::IdentityHash;
 use crate::manifold::driver::HostCommand;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
-use crate::runtime::{RuntimeRequestHandlerError, SendError};
+use crate::runtime::{RuntimeRequestHandlerError, SendError, SetRegisteredAnnounceAppDataError};
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 
-use super::PrnsNodeHandle;
+use super::{BitrateTimingOracle, PrnsNodeHandle};
 
 const PEER: DestinationHash = DestinationHash::new([0xAB; 16]);
 
@@ -31,6 +38,104 @@ fn handle() -> (PrnsNodeHandle, UnboundedReceiver<HostCommand>) {
     (PrnsNodeHandle::over(commands), command_rx)
 }
 
+struct DaemonTiming;
+
+impl BitrateTimingOracle for DaemonTiming {
+    fn first_hop_timeout(
+        &self,
+        _destination: DestinationHash,
+    ) -> Pin<Box<dyn Future<Output = Option<Duration>> + Send + '_>> {
+        Box::pin(async { Some(Duration::from_millis(18_013)) })
+    }
+
+    fn medium_path_timeout(&self) -> Pin<Box<dyn Future<Output = Option<Duration>> + Send + '_>> {
+        Box::pin(async { Some(Duration::from_millis(30_026)) })
+    }
+}
+
+#[tokio::test]
+async fn a_daemon_timing_oracle_reaches_normal_path_link_and_single_packet_commands() {
+    use crate::engine::{CommandTiming, LinkEstablished};
+
+    let (prns, mut command_rx) = handle();
+    prns.install_bitrate_timing_oracle(Arc::new(DaemonTiming));
+
+    let issuer = prns.clone();
+    let path = tokio::spawn(async move { issuer.request_path(PEER).await });
+    let HostCommand::AwaitedEngineWithTiming {
+        issued,
+        timing,
+        completion,
+    } = command_rx.recv().await.expect("path command")
+    else {
+        panic!("daemon-backed path discovery must carry timing");
+    };
+    assert!(matches!(issued.command, PrnsCommand::RequestPath(_)));
+    assert_eq!(
+        timing,
+        CommandTiming {
+            first_hop_timeout_floor_ms: None,
+            path_timeout_floor_ms: Some(30_026),
+        }
+    );
+    completion
+        .send(Settlement::RequestPath(Ok(PathFound {
+            hops: crate::units::HopCount(1),
+        })))
+        .unwrap();
+    assert!(path.await.unwrap().is_ok());
+
+    let issuer = prns.clone();
+    let establish = tokio::spawn(async move { issuer.establish_link_with_rtt(PEER).await });
+    let HostCommand::AwaitedEngineWithTiming {
+        issued,
+        timing,
+        completion,
+    } = command_rx.recv().await.expect("link command")
+    else {
+        panic!("daemon-backed link establishment must carry timing");
+    };
+    assert!(matches!(issued.command, PrnsCommand::EstablishLink(_)));
+    assert_eq!(
+        timing,
+        CommandTiming {
+            first_hop_timeout_floor_ms: Some(18_013),
+            path_timeout_floor_ms: None,
+        }
+    );
+    let established = LinkEstablished {
+        link_id: LinkId::new([0x42; 16]),
+        rtt_millis: 11,
+    };
+    completion
+        .send(Settlement::EstablishLink(Ok(established)))
+        .unwrap();
+    assert_eq!(establish.await.unwrap(), Ok(established));
+
+    let issuer = prns.clone();
+    let send = tokio::spawn(async move { issuer.send_single_packet(PEER, b"ping").await });
+    let HostCommand::AwaitedEngineWithTiming {
+        issued,
+        timing,
+        completion,
+    } = command_rx.recv().await.expect("single-packet command")
+    else {
+        panic!("daemon-backed single-packet delivery must carry timing");
+    };
+    assert!(matches!(issued.command, PrnsCommand::SendSinglePacket(_)));
+    assert_eq!(
+        timing,
+        CommandTiming {
+            first_hop_timeout_floor_ms: Some(18_013),
+            path_timeout_floor_ms: None,
+        }
+    );
+    completion
+        .send(Settlement::SendSinglePacket(Ok(delivered(7))))
+        .unwrap();
+    assert_eq!(send.await.unwrap(), Ok(delivered(7)));
+}
+
 #[tokio::test]
 async fn payload_beyond_the_mdu_is_rejected_before_the_wire() {
     let (prns, _command_rx) = handle();
@@ -38,6 +143,21 @@ async fn payload_beyond_the_mdu_is_rejected_before_the_wire() {
     assert_eq!(
         prns.send_single_packet(PEER, &oversize).await,
         Err(SendError::PayloadTooLarge),
+    );
+}
+
+#[tokio::test]
+async fn plain_and_group_payloads_beyond_their_mdu_are_rejected_before_the_wire() {
+    let (prns, _command_rx) = handle();
+    let plain_oversize = [0u8; MAX_SEND_PLAIN_PACKET_PAYLOAD_LEN + 1];
+    assert_eq!(
+        prns.send_plain_packet(PEER, &plain_oversize).await,
+        Err(SendError::<SendPlainPacketFailure>::PayloadTooLarge),
+    );
+    let group_oversize = [0u8; MAX_SEND_GROUP_PLAINTEXT_LEN + 1];
+    assert_eq!(
+        prns.send_group_packet(PEER, &group_oversize).await,
+        Err(SendError::<SendGroupFailure>::PayloadTooLarge),
     );
 }
 
@@ -68,6 +188,36 @@ async fn an_awaited_send_issues_the_completion_carrying_command() {
     }
 
     assert_eq!(send.await.expect("the send task joins"), Ok(delivered(7)),);
+}
+
+#[tokio::test]
+async fn awaited_plain_and_group_sends_issue_their_distinct_commands() {
+    let (prns, mut command_rx) = handle();
+    let issuer = prns.clone();
+    let plain = tokio::spawn(async move { issuer.send_plain_packet(PEER, b"plain").await });
+    match command_rx.recv().await.expect("plain command") {
+        HostCommand::AwaitedEngine { issued, completion } => {
+            assert!(matches!(issued.command, PrnsCommand::SendPlainPacket(_)));
+            completion
+                .send(Settlement::SendPlainPacket(Ok(())))
+                .expect("plain awaiter");
+        }
+        _ => panic!("plain send uses an awaited engine command"),
+    }
+    assert_eq!(plain.await.expect("plain task"), Ok(()));
+
+    let issuer = prns.clone();
+    let group = tokio::spawn(async move { issuer.send_group_packet(PEER, b"group").await });
+    match command_rx.recv().await.expect("group command") {
+        HostCommand::AwaitedEngine { issued, completion } => {
+            assert!(matches!(issued.command, PrnsCommand::SendGroup(_)));
+            completion
+                .send(Settlement::SendGroup(Ok(())))
+                .expect("group awaiter");
+        }
+        _ => panic!("group send uses an awaited engine command"),
+    }
+    assert_eq!(group.await.expect("group task"), Ok(()));
 }
 
 #[tokio::test]
@@ -300,9 +450,45 @@ async fn announce_now_awaits_and_surfaces_its_typed_settlement() {
         .expect("the awaiter is still parked");
     assert_eq!(
         announced.await.expect("the announce task joins"),
-        Err(SendError::Failed(AnnounceNowFailure::Rejected(
+        Err(crate::runtime::AnnounceNowError::Rejected(
             crate::engine::AnnounceNowRejection::UnknownDestination,
-        ))),
+        )),
+    );
+}
+
+#[tokio::test]
+async fn registered_announce_app_data_update_awaits_and_surfaces_its_typed_settlement() {
+    let (prns, mut command_rx) = handle();
+    let command = SetRegisteredAnnounceAppData {
+        destination: PEER,
+        app_data: crate::routing::announce::emit::AnnounceAppDataBytes::from_slice(b"default")
+            .expect("valid app data"),
+    };
+    let expected = command.clone();
+    let issuer = prns.clone();
+    let updated =
+        tokio::spawn(async move { issuer.set_registered_announce_app_data(command).await });
+    let HostCommand::AwaitedEngine { issued, completion } =
+        command_rx.recv().await.expect("the command was issued")
+    else {
+        panic!("set_registered_announce_app_data must issue an awaited engine command");
+    };
+    assert_eq!(
+        issued.command,
+        PrnsCommand::SetRegisteredAnnounceAppData(expected),
+    );
+    completion
+        .send(Settlement::SetRegisteredAnnounceAppData(Err(
+            SetRegisteredAnnounceAppDataFailure::Rejected(
+                SetRegisteredAnnounceAppDataRejection::UnknownDestination,
+            ),
+        )))
+        .expect("the awaiter is still parked");
+    assert_eq!(
+        updated.await.expect("the update task joins"),
+        Err(SetRegisteredAnnounceAppDataError::Rejected(
+            SetRegisteredAnnounceAppDataRejection::UnknownDestination,
+        )),
     );
 }
 

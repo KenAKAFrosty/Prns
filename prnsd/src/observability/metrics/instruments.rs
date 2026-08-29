@@ -15,6 +15,7 @@ pub(super) struct Instruments {
     pub(super) interface_links: Gauge<u64>,
     pub(super) interface_io_bits_per_second: Gauge<u64>,
     pub(super) interface_io_bytes: Gauge<u64>,
+    pub(super) interface_receive_frames: Counter<u64>,
     pub(super) interface_announce_ingress: Counter<u64>,
     pub(super) interface_announce_egress: Counter<u64>,
     pub(super) interface_announce_backpressure: Counter<u64>,
@@ -78,6 +79,7 @@ impl Instruments {
                 .u64_gauge("prns.interface.io_bits_per_second")
                 .build(),
             interface_io_bytes: meter.u64_gauge("prns.interface.io_bytes").build(),
+            interface_receive_frames: meter.u64_counter("prns.interface.receive.frames").build(),
             interface_announce_ingress: meter
                 .u64_counter("prns.interface.announces.ingress")
                 .build(),

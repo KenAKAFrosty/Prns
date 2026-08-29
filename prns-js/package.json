@@ -71,7 +71,7 @@
     "build:browser": "npm run build:code && node scripts/stage.mjs browser",
     "build": "npm run build:code && node scripts/stage.mjs",
     "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.casework-cjs.json --noEmit && tsc -p tsconfig.examples.json",
-    "test": "npm run build:code && node --test tests/async-lanes.test.mjs tests/browser-auto-wifi-reconnect.test.mjs tests/browser-contract.test.mjs tests/browser-resource-send.test.mjs tests/casework.test.mjs",
+    "test": "npm run build:code && node --test tests/async-lanes.test.mjs tests/browser-auto-wifi-reconnect.test.mjs tests/browser-bluetooth.test.mjs tests/browser-contract.test.mjs tests/browser-resource-send.test.mjs tests/casework.test.mjs",
     "test:browser": "npm run build:browser && node tests/browser-smoke.mjs",
     "test:browser:full": "npm --prefix ../prns-wasm run build:wasm && npm run test:browser",
     "test:native": "npm run build:native && node --test tests/native-consumer.test.mjs",

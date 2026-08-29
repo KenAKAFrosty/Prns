@@ -10,33 +10,38 @@ mod destinations;
 mod flash_identity;
 mod flash_layout;
 mod identity;
+#[cfg(feature = "display")]
 mod mobile;
 pub mod node_pages;
 mod persistence;
 mod radio_profile_store;
+#[cfg(feature = "display")]
 mod screen;
 mod soft_ap;
 
 pub use destinations::{
     hopspot_destination_hashes, HopspotDestinationHashes, HopspotDestinationSet,
+    HOPSPOT_DESTINATION_COUNT, HOPSPOT_IDENTITY_COUNT,
 };
 pub use flash_identity::{
     bootstrap_flash_ble_identity, bootstrap_flash_node_identity, FlashIdentityError,
 };
 pub use flash_layout::{
-    FirmwareAddressRange, HopspotS3FlashLayout, Nrf52840FirmwareMemory,
-    HELTEC_DISPLAY_NRF52840_FIRMWARE_MEMORY, HELTEC_DISPLAY_NRF52840_JOURNAL_LAYOUT,
+    FirmwareAddressRange, HopspotS3FlashLayout, Nrf52840FirmwareMemory, ESP32_4_MIB_FLASH_CAPACITY,
+    ESP32_4_MIB_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET, HELTEC_DISPLAY_NRF52840_FIRMWARE_MEMORY,
+    HELTEC_DISPLAY_NRF52840_JOURNAL_LAYOUT, HELTEC_DISPLAY_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET,
     HOPSPOT_FLASH_PAGE_BYTES, MESH_TOWER_V2_BLE_IDENTITY_FLASH_OFFSET,
     MESH_TOWER_V2_FIRMWARE_MEMORY, MESH_TOWER_V2_JOURNAL_LAYOUT,
     MESH_TOWER_V2_RADIO_PROFILE_FLASH_OFFSET, MESH_TOWER_V2_RECOVERY_BOOTLOADER_FLASH_OFFSET,
-    NRF52840_BLE_IDENTITY_FLASH_OFFSET, NRF52840_MIN_ARENA_BYTES,
-    NRF52840_NODE_IDENTITY_FLASH_OFFSET, NRF52840_RADIO_PROFILE_PAGES, S3_16_MIB_FLASH_LAYOUT,
-    S3_8_MIB_FLASH_LAYOUT, T096_APPLICATION_DATA_END, T096_FACTORY_RESERVED_FLASH_OFFSET,
-    T096_RECOVERY_BOOTLOADER_FLASH_OFFSET, T1000E_FIRMWARE_MEMORY, T1000E_JOURNAL_LAYOUT,
-    T1000E_NODE_IDENTITY_FLASH_OFFSET, T1000E_RECOVERY_BOOTLOADER_FLASH_OFFSET,
+    MESH_TOWER_V2_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET, NRF52840_BLE_IDENTITY_FLASH_OFFSET,
+    NRF52840_MIN_ARENA_BYTES, NRF52840_NODE_IDENTITY_FLASH_OFFSET, NRF52840_RADIO_PROFILE_PAGES,
+    S3_16_MIB_FLASH_LAYOUT, S3_8_MIB_FLASH_LAYOUT, T096_APPLICATION_DATA_END,
+    T096_FACTORY_RESERVED_FLASH_OFFSET, T096_RECOVERY_BOOTLOADER_FLASH_OFFSET,
+    T1000E_FIRMWARE_MEMORY, T1000E_JOURNAL_LAYOUT, T1000E_NODE_IDENTITY_FLASH_OFFSET,
+    T1000E_RECOVERY_BOOTLOADER_FLASH_OFFSET, T1000E_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET,
     T114_RECOVERY_BOOTLOADER_FLASH_OFFSET, T_ECHO_BLE_IDENTITY_FLASH_OFFSET, T_ECHO_JOURNAL_LAYOUT,
-    T_ECHO_MIN_ARENA_BYTES, T_ECHO_RESERVED_FLASH_END, T_ECHO_S140_V6_FIRMWARE_MEMORY,
-    T_ECHO_S140_V7_FIRMWARE_MEMORY,
+    T_ECHO_MIN_ARENA_BYTES, T_ECHO_REMOTE_CONTROL_IDENTITY_FLASH_OFFSET, T_ECHO_RESERVED_FLASH_END,
+    T_ECHO_S140_V6_FIRMWARE_MEMORY, T_ECHO_S140_V7_FIRMWARE_MEMORY,
 };
 #[cfg(feature = "host")]
 pub use identity::{
@@ -47,9 +52,10 @@ pub use identity::{
     HopspotNodeIdentity, IdentityBootstrap, IdentityPersistence, IdentityStorageName,
     BLE_IDENTITY_STORAGE, NODE_IDENTITY_STORAGE,
 };
+#[cfg(feature = "display")]
 pub use mobile::{
-    InvalidMobileInputCode, MobileActionCode, MobileEngineFailure, MobileEngineState,
-    MobileInputCode, MobileRgbaFrameBuffer, MOBILE_DARK_RGBA, MOBILE_LIT_RGBA, MOBILE_PANEL_HEIGHT,
+    expand_face_rgba, InvalidMobileInputCode, MobileActionCode, MobileEngineFailure,
+    MobileEngineState, MobileInputCode, MOBILE_DARK_RGBA, MOBILE_LIT_RGBA, MOBILE_PANEL_HEIGHT,
     MOBILE_PANEL_WIDTH, MOBILE_PIXEL_COUNT, MOBILE_RGBA_BYTES,
 };
 pub use persistence::PersistenceState;
@@ -66,23 +72,24 @@ pub use prns_core::capabilities::power::{
 pub use radio_profile_store::{
     LoadedRadioProfile, RadioProfileLoadNotice, RadioProfileStore, RadioProfileStoreError,
 };
+#[cfg(feature = "display")]
 pub use screen::{
-    apply_and_persist_radio_profile, card_label, card_label_max_chars, render, splash,
-    tcp_card_label, AccessPointState, BluetoothRecoveryMenuDetails, CanvasDimensions, Card,
-    CardActivityTracker, CardKind, CardLabel, DisplayAutoOff, DisplayAutoOffDuration,
-    DisplayButtonOutcome, DisplayDarkReason, DisplayPowerCommand, DisplayPowerControl,
-    DisplayPowerState, EinkRefresh, EinkRefreshPolicy, EinkRefreshUrgency, GnssAvailability,
-    InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, LogicalPoint,
-    PersistenceNotice, QuarterTurn, RadioProfileChangeResult, RenderFrame, RotatedCanvasMapping,
-    ScreenContent, SharedInstanceConfigExport, SplashContent, UiAction, UiConfiguration, UiNotice,
-    UiState, WifiNetworkStatus, WifiStationStatus, DEFAULT_DISPLAY_AUTO_OFF,
+    apply_and_persist_radio_profile, card_label, card_label_max_chars, tcp_card_label,
+    AccessPointState, BluetoothRecoveryMenuDetails, Card, CardActivityTracker, CardKind, CardLabel,
+    GnssAvailability, InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess,
+    PersistenceNotice, PresentedNoticeTimer, RadioProfileChangeResult, ScreenContent,
+    SharedInstanceConfigExport, UiAction, UiConfiguration, UiNotice, UiState, UserBlanking,
+    WifiNetworkStatus, WifiStationStatus,
 };
+#[cfg(feature = "display")]
+pub use screen::{display, face_64x128};
 pub use soft_ap::SoftApLeaseTable;
 
 use personal_rns::engine::{
     EngineProtocolPolicy, LinkMtuDiscovery, LocalHopCountOverride, ProofForm,
     RecursivePathRequestDefault,
 };
+#[cfg(feature = "display")]
 use personal_rns::interfaces::{ConnectionState, InterfaceId, InterfaceSnapshot, Membership};
 
 pub const EMBEDDED_HOPSPOT_PROTOCOL_POLICY: EngineProtocolPolicy = EngineProtocolPolicy {
@@ -95,8 +102,10 @@ pub const EMBEDDED_HOPSPOT_PROTOCOL_POLICY: EngineProtocolPolicy = EngineProtoco
 /// The faces' redraw-coalescing window, in milliseconds. A burst of engine changes inside this span
 /// folds into one repaint (~30 fps). It bounds how fast a face repaints when things change; it is not
 /// a frame clock — a face wakes on the store's signal and stays idle when nothing moves.
+#[cfg(feature = "display")]
 pub const COALESCE_MS: u64 = 33;
 
+#[cfg(feature = "display")]
 fn interface_kind_shows_supervisor_peers(id: InterfaceId) -> bool {
     id.kind().is_some_and(|kind| kind.member_kind().is_some())
 }
@@ -109,6 +118,7 @@ fn interface_kind_shows_supervisor_peers(id: InterfaceId) -> bool {
 /// into its supervisor's card, so the root shows one card per independent interface with the
 /// whole fleet's traffic summed under it. The link glyph sums terminated + carried links into one
 /// count of every live link. The returned list is already in face display order.
+#[cfg(feature = "display")]
 pub fn snapshots_to_cards<const N: usize>(
     snapshots: &[InterfaceSnapshot],
     mut classify: impl FnMut(InterfaceId) -> Option<(CardKind, CardLabel)>,
@@ -157,6 +167,7 @@ pub fn snapshots_to_cards<const N: usize>(
     cards
 }
 
+#[cfg(feature = "display")]
 fn push_snapshot_supervisor_peer_rows(
     details: &mut InterfaceMenuDetails,
     selected_card: Option<&Card>,
@@ -184,6 +195,7 @@ fn push_snapshot_supervisor_peer_rows(
     details.push_supervisor_peers(peers)
 }
 
+#[cfg(feature = "display")]
 pub fn snapshots_to_interface_menu_details(
     selected_card: Option<&Card>,
     snapshots: &[InterfaceSnapshot],
@@ -193,6 +205,7 @@ pub fn snapshots_to_interface_menu_details(
     details
 }
 
+#[cfg(feature = "display")]
 pub fn wifi_interface_menu_details(
     status: WifiNetworkStatus<'_>,
     selected_card: Option<&Card>,
@@ -211,6 +224,7 @@ pub fn wifi_interface_menu_details(
     details
 }
 
+#[cfg(feature = "display")]
 pub fn usb_interface_menu_details(connection: ConnectionState) -> InterfaceMenuDetails {
     let mut details = InterfaceMenuDetails::empty();
     let peer = matches!(
@@ -222,7 +236,7 @@ pub fn usb_interface_menu_details(connection: ConnectionState) -> InterfaceMenuD
     details
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "display"))]
 mod tests {
     use super::*;
     use personal_rns::interfaces::{InterfaceKind, TransferRates};

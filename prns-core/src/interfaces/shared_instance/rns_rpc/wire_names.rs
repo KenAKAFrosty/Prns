@@ -35,6 +35,8 @@ pub(super) mod get {
     pub const NEXT_HOP_INTERFACE_NAME: &str = "next_hop_if_name";
     pub const NEXT_HOP: &str = "next_hop";
     pub const FIRST_HOP_TIMEOUT: &str = "first_hop_timeout";
+    pub const LOWEST_INTERFACE_BITRATE: &str = "lowest_interface_bitrate";
+    pub const MEDIUM_PATH_TIMEOUT: &str = "medium_path_timeout";
     pub const LINK_COUNT: &str = "link_count";
     pub const PACKET_RSSI: &str = "packet_rssi";
     pub const PACKET_SNR: &str = "packet_snr";
@@ -69,6 +71,8 @@ pub(super) mod verb {
     pub const GET_NEXT_HOP: &str = get::NEXT_HOP;
     pub const GET_NEXT_HOP_INTERFACE_NAME: &str = get::NEXT_HOP_INTERFACE_NAME;
     pub const GET_FIRST_HOP_TIMEOUT: &str = get::FIRST_HOP_TIMEOUT;
+    pub const GET_LOWEST_INTERFACE_BITRATE: &str = get::LOWEST_INTERFACE_BITRATE;
+    pub const GET_MEDIUM_PATH_TIMEOUT: &str = get::MEDIUM_PATH_TIMEOUT;
     pub const GET_PACKET_RSSI: &str = get::PACKET_RSSI;
     pub const GET_PACKET_SNR: &str = get::PACKET_SNR;
     pub const GET_PACKET_QUALITY: &str = get::PACKET_QUALITY;

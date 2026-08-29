@@ -26,6 +26,14 @@ pub enum IfacMaskError {
     OutputTooSmall { required: usize, available: usize },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IfacUnmaskError {
+    PacketTooShort,
+    MissingFlag,
+    InvalidSignature,
+    OutputTooSmall { required: usize, available: usize },
+}
+
 impl IfacSize {
     pub const MIN: Self = Self(1);
     pub const NARROW: Self = Self(8);
@@ -161,18 +169,36 @@ impl IfacContext {
     }
 
     pub fn unmask_inbound(&self, wire: &[u8], out: &mut [u8]) -> Option<usize> {
+        self.try_unmask_inbound(wire, out).ok()
+    }
+
+    pub fn try_unmask_inbound(
+        &self,
+        wire: &[u8],
+        out: &mut [u8],
+    ) -> Result<usize, IfacUnmaskError> {
         if out.len() < wire.len() {
-            return None;
+            return Err(IfacUnmaskError::OutputTooSmall {
+                required: wire.len(),
+                available: out.len(),
+            });
         }
         out[..wire.len()].copy_from_slice(wire);
-        self.unmask_inbound_in_place(&mut out[..wire.len()])
+        self.try_unmask_inbound_in_place(&mut out[..wire.len()])
     }
 
     pub fn unmask_inbound_in_place(&self, wire: &mut [u8]) -> Option<usize> {
+        self.try_unmask_inbound_in_place(wire).ok()
+    }
+
+    pub fn try_unmask_inbound_in_place(&self, wire: &mut [u8]) -> Result<usize, IfacUnmaskError> {
         let size = self.size.bytes();
         let ifac_end = IFAC_START + size;
-        if wire.len() <= ifac_end || wire[HEADER_FLAGS_INDEX] & IFAC_FLAG == 0 {
-            return None;
+        if wire.len() <= ifac_end {
+            return Err(IfacUnmaskError::PacketTooShort);
+        }
+        if wire[HEADER_FLAGS_INDEX] & IFAC_FLAG == 0 {
+            return Err(IfacUnmaskError::MissingFlag);
         }
         let wire_bytes = wire.len();
         let clean_len = wire_bytes - size;
@@ -183,7 +209,11 @@ impl IfacContext {
         wire.copy_within(ifac_end..wire_bytes, IFAC_START);
 
         let expected = self.identity.sign(&wire[..clean_len]);
-        ct_eq(&ifac[..size], &expected.0[SIGNATURE_BYTE_LEN - size..]).then_some(clean_len)
+        if ct_eq(&ifac[..size], &expected.0[SIGNATURE_BYTE_LEN - size..]) {
+            Ok(clean_len)
+        } else {
+            Err(IfacUnmaskError::InvalidSignature)
+        }
     }
 }
 
@@ -339,6 +369,41 @@ mod tests {
         assert!(ctx
             .unmask_inbound(&bytes_from_hex(REFERENCE_MASKED)[..10], &mut out)
             .is_none());
+    }
+
+    #[test]
+    fn checked_unmasking_distinguishes_protocol_shape_from_access_refusal() {
+        let ctx = testnet();
+        let masked = bytes_from_hex(REFERENCE_MASKED);
+        let mut out = [0u8; TEST_MASK_LEN];
+
+        assert_eq!(
+            ctx.try_unmask_inbound(&masked[..10], &mut out),
+            Err(IfacUnmaskError::PacketTooShort),
+        );
+
+        let mut unflagged = masked.clone();
+        unflagged[0] &= !IFAC_FLAG;
+        assert_eq!(
+            ctx.try_unmask_inbound(&unflagged, &mut out),
+            Err(IfacUnmaskError::MissingFlag),
+        );
+
+        let mut tampered = masked.clone();
+        tampered[3] ^= 1;
+        assert_eq!(
+            ctx.try_unmask_inbound(&tampered, &mut out),
+            Err(IfacUnmaskError::InvalidSignature),
+        );
+
+        let available = masked.len() - 1;
+        assert_eq!(
+            ctx.try_unmask_inbound(&masked, &mut out[..available]),
+            Err(IfacUnmaskError::OutputTooSmall {
+                required: masked.len(),
+                available,
+            }),
+        );
     }
 
     #[test]

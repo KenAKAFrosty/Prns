@@ -61,7 +61,9 @@ impl Settleable for RequestPath {
             | Settlement::SendResource(_)
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
-            | Settlement::AllowRequester(_) => None,
+            | Settlement::AllowRequester(_)
+            | Settlement::SetRegisteredAnnounceAppData(_)
+            | Settlement::SendPlainPacket(_) => None,
         }
     }
 }

@@ -1,5 +1,7 @@
 #![expect(clippy::expect_used, clippy::panic)]
 
+mod common;
+
 use core::time::Duration;
 use std::cell::Cell;
 
@@ -18,7 +20,10 @@ impl RequestEndpoint<StatusBoard> for Status {
     const ENDPOINT_ID: &'static str = STATUS_ENDPOINT_ID;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(mut context: RequestContext<'_, StatusBoard>) -> Result<(), Decline> {
+    async fn handle(
+        mut context: RequestContext<'_, StatusBoard>,
+        _node: &impl personal_rns::runtime::PrnsNodeApi,
+    ) -> Result<(), Decline> {
         let hits = context.state.hits.get() + 1;
         context.state.hits.set(hits);
         let reply = format!("{}, visitor {hits}", context.state.greeting);
@@ -51,6 +56,7 @@ async fn main() {
         .to_string();
     let responder = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
+        remote_control: common::remote_control_service(0xD0, 0xD1),
         pre_configured_destinations: [responder_destination],
         app_state: StatusBoard {
             greeting: "hello",
@@ -69,6 +75,7 @@ async fn main() {
     let client = TcpClientInterface::new(server_address);
     let requester = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
+        remote_control: common::remote_control_service(0xD2, 0xD3),
         pre_configured_destinations: [requester_destination()],
         app_state: AnnounceRelay {
             heard: heard_sender,

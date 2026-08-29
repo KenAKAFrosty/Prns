@@ -1,7 +1,7 @@
 import { Tag } from "../../casework.js";
 import { connectFailure } from "../host_errors.js";
 import { hostGlobal } from "../host_apis.js";
-import { bluetoothStage, disconnectBluetoothServer, } from "./gatt.js";
+import { bluetoothStage, disconnectBluetoothServer, optionalBluetoothCharacteristic, } from "./gatt.js";
 import { BrowserBluetoothSession } from "./session.js";
 export class BluetoothInterface {
     name = "bluetooth";
@@ -60,8 +60,12 @@ export class BluetoothInterface {
                 return control;
             }
             const data = await optionalBluetoothCharacteristic(discovered.data, this.#host.bluetoothDataUuid());
+            if (data.tag !== "Completed") {
+                disconnectBluetoothServer(connectedServer);
+                return data;
+            }
             stage = "Handshake";
-            session = new BrowserBluetoothSession(this.#host, connectedServer, control.data, data ?? control.data);
+            session = new BrowserBluetoothSession(this.#host, requested.data, connectedServer, control.data, data.data ?? control.data);
             const started = await session.start();
             if (started.tag !== "Started") {
                 await session.close();
@@ -83,19 +87,11 @@ export class BluetoothInterface {
 function requireWebBluetooth() {
     try {
         const bluetooth = hostGlobal().navigator?.bluetooth;
-        return bluetooth
+        return bluetooth && typeof bluetooth.requestDevice === "function"
             ? Tag("Available", bluetooth)
             : Tag("HostApiUnavailable", { api: "WebBluetooth" });
     }
     catch {
         return Tag("HostApiUnavailable", { api: "WebBluetooth" });
-    }
-}
-async function optionalBluetoothCharacteristic(service, uuid) {
-    try {
-        return await service.getCharacteristic(uuid);
-    }
-    catch {
-        return undefined;
     }
 }

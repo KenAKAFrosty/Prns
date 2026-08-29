@@ -15,7 +15,8 @@ type CoreInterfaceInventoryEntry =
 
 pub(crate) use prns_runtime::runtime::node_introspection::HeapAnnounceRateHistory as AnnounceRateHistory;
 pub use prns_runtime::runtime::node_introspection::{
-    logical_interface_inventory, AnnounceRateSnapshot, NodeIntrospection,
+    logical_interface_inventory, AnnounceRateSnapshot, FrameAccountingCoverage,
+    InterfaceTimingSnapshot, NodeIntrospection,
 };
 pub type InterfaceIfacSnapshot = CoreInterfaceIfacSnapshot;
 pub type InterfaceInventoryEntry = CoreInterfaceInventoryEntry;

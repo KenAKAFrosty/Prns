@@ -2,8 +2,8 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 
 pub use prns_runtime::{
-    crypto, engine, identity, interfaces, persistence, request_endpoints, routing, storage, units,
-    wire,
+    crypto, engine, identity, interfaces, persistence, remote_control, request_endpoints, routing,
+    storage, units, wire,
 };
 
 #[cfg(feature = "interface-discovery")]

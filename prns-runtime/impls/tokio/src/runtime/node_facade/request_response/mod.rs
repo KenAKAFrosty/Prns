@@ -114,6 +114,17 @@ impl PrnsNodeHandle {
         data: &[u8],
         options: RequestOptions,
     ) -> Result<(std::vec::Vec<u8>, RttMillis), SendError<SendRequestFailure>> {
+        self.request_owned_with_options(link_id, path_hash, data.to_vec(), options)
+            .await
+    }
+
+    pub(super) async fn request_owned_with_options(
+        &self,
+        link_id: LinkId,
+        path_hash: RequestPathHash,
+        data: std::vec::Vec<u8>,
+        options: RequestOptions,
+    ) -> Result<(std::vec::Vec<u8>, RttMillis), SendError<SendRequestFailure>> {
         let id = self.mint();
         let (completion, settled) = oneshot::channel();
         self.commands
@@ -121,7 +132,7 @@ impl PrnsNodeHandle {
                 id,
                 link_id,
                 path_hash,
-                data: data.to_vec().into(),
+                data: data.into(),
                 response_timeout: options.response_timeout,
                 maximum_response_bytes: options.maximum_response_bytes,
                 completion,

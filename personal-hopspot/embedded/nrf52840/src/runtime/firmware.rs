@@ -1,12 +1,9 @@
 use embassy_executor::Spawner;
 use embassy_futures::join::{join, join3, join5};
-use embassy_futures::select::{select3, Either3};
-use embassy_time::{Duration, Timer};
+use embassy_futures::select::{select4, Either4};
+use embassy_time::{Duration, Instant, Timer};
 use embassy_usb::{Builder, Config as UsbConfig};
 use static_cell::{ConstStaticCell, StaticCell};
-
-use embedded_graphics::prelude::*;
-use epd_waveshare::color::Color as EpdColor;
 
 use nrf_softdevice::ble::l2cap;
 use nrf_softdevice::Softdevice;
@@ -21,6 +18,10 @@ use personal_rns::interfaces::{ConnectionState, InterfaceStatus};
 use personal_rns::lora::{LoRaApplyOutcome, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
 use personal_rns::manifold::embassy::{EmbassyHost, EmbassyInterfaceStatus};
 use personal_rns::manifold::interface_seam::Interface;
+use personal_rns::remote_control::{
+    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
+    RemoteControlService,
+};
 use personal_rns::runtime::{Fleet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe};
 use personal_rns::storage::StorageLayout;
 use personal_rns::usb_auto::{UsbAutoDevice, UsbAutoDeviceInput};
@@ -30,10 +31,11 @@ use personal_rns::usb_auto::{
 };
 
 use crate::boards::selected as board;
+use crate::retained_display::RetainedPresentation;
 use board::{
-    Board, Controls, DisplayHardware, EarlyHardware, EinkScreen, FaceHardware, RuntimeHardware,
-    Storage, UsbHardware, ANNOUNCE_APP_DATA, NODE_ANNOUNCE_APP_DATA, USB_INTERFACE_ID,
-    USB_MANUFACTURER, USB_PRODUCT, USB_SERIAL_NUMBER,
+    Board, Controls, DisplayHardware, EarlyHardware, FaceHardware, RuntimeHardware, Storage,
+    UsbHardware, ANNOUNCE_APP_DATA, NODE_ANNOUNCE_APP_DATA, USB_INTERFACE_ID, USB_MANUFACTURER,
+    USB_PRODUCT, USB_SERIAL_NUMBER,
 };
 
 use super::bluetooth_auto::{
@@ -44,14 +46,46 @@ use super::bluetooth_auto::{
 use super::entropy::{initialize_runtime_entropy, runtime_entropy, RUNTIME_ENTROPY_SEED_LEN};
 use super::interface_cards::{build_cards, build_snapshots};
 use super::node::*;
+use hopspot::PresentedNoticeTimer;
 
-const PARTIAL_REFRESH_LIMIT: u32 = 64;
-const FULL_REFRESH_MAX_AGE_MS: u64 = 30 * 60 * 1_000;
-const TELEMETRY_MIN_INTERVAL_MS: u64 = 5_000;
 const STATS_POLL: Duration = Duration::from_secs(1);
-const NOTICE_MS: u64 = 900;
+const NOTICE_DURATION: hopspot::display::DisplayDuration =
+    match hopspot::display::DisplayDuration::from_millis(900) {
+        Ok(duration) => duration,
+        Err(_) => panic!("the notice duration is nonzero"),
+    };
+const STARTUP_NOTICE_DURATION: hopspot::display::DisplayDuration =
+    match hopspot::display::DisplayDuration::from_millis(5_000) {
+        Ok(duration) => duration,
+        Err(_) => panic!("the startup notice duration is nonzero"),
+    };
 const USB_CONFIG_DESCRIPTOR_BYTES: usize = 64;
 const USB_BOS_DESCRIPTOR_BYTES: usize = 64;
+
+fn show_notice(
+    state: &mut hopspot::UiState,
+    timer: &mut PresentedNoticeTimer,
+    notice: hopspot::UiNotice,
+    duration: hopspot::display::DisplayDuration,
+) {
+    state.show_notice(notice);
+    timer.stage(notice, duration);
+}
+
+fn next_deadline_timer(
+    presentation: Option<hopspot::display::MonotonicMillis>,
+    notice: Option<hopspot::display::MonotonicMillis>,
+) -> Timer {
+    let deadline = match (presentation, notice) {
+        (Some(left), Some(right)) => Some(left.min(right)),
+        (Some(deadline), None) | (None, Some(deadline)) => Some(deadline),
+        (None, None) => None,
+    };
+    let instant = deadline
+        .and_then(|deadline| Instant::try_from_millis(deadline.as_millis()))
+        .unwrap_or(Instant::MAX);
+    Timer::at(instant)
+}
 
 #[embassy_executor::task]
 async fn manifold_task(
@@ -65,21 +99,33 @@ async fn manifold_task(
 
 #[allow(clippy::too_many_lines)]
 pub async fn run(spawner: Spawner) -> ! {
-    let ((node_bootstrap, ble_bootstrap, runtime_entropy_seed), early_hardware) =
-        Board::initialize_identities(|nvmc, rng| {
-            let mut fill_entropy = |bytes: &mut [u8]| rng.blocking_fill_bytes(bytes);
-            let node_bootstrap = board::bootstrap_node_identity(nvmc, &mut fill_entropy);
-            let ble_bootstrap = board::bootstrap_ble_identity(nvmc, &mut fill_entropy);
-            let mut runtime_entropy_seed =
-                personal_rns::identity::Zeroizing::new([0u8; RUNTIME_ENTROPY_SEED_LEN]);
-            fill_entropy(&mut runtime_entropy_seed[..]);
-            (node_bootstrap, ble_bootstrap, runtime_entropy_seed)
-        });
+    let (
+        (node_bootstrap, remote_control_bootstrap, ble_bootstrap, runtime_entropy_seed),
+        early_hardware,
+    ) = Board::initialize_identities(|nvmc, rng| {
+        let mut fill_entropy = |bytes: &mut [u8]| rng.blocking_fill_bytes(bytes);
+        let node_bootstrap = board::bootstrap_node_identity(nvmc, &mut fill_entropy);
+        let remote_control_bootstrap = board::REMOTE_CONTROL_IDENTITY_FLASH
+            .load_or_generate(nvmc, &mut fill_entropy)
+            .expect("RemoteControl identity bootstrap failed");
+        let ble_bootstrap = board::bootstrap_ble_identity(nvmc, &mut fill_entropy);
+        let mut runtime_entropy_seed =
+            personal_rns::identity::Zeroizing::new([0u8; RUNTIME_ENTROPY_SEED_LEN]);
+        fill_entropy(&mut runtime_entropy_seed[..]);
+        (
+            node_bootstrap,
+            remote_control_bootstrap,
+            ble_bootstrap,
+            runtime_entropy_seed,
+        )
+    });
     initialize_runtime_entropy(&runtime_entropy_seed);
     drop(runtime_entropy_seed);
     let identity_startup_notice =
         board::identity_startup_notice(node_bootstrap.persistence(), ble_bootstrap.persistence());
     let node_identity = node_bootstrap.into_identity();
+    let (remote_control_identity_secrets, _remote_control_identity_origins) =
+        remote_control_bootstrap.into_parts();
     let ble_identity = Some(ble_bootstrap.into_identity());
 
     let EarlyHardware {
@@ -154,8 +200,7 @@ pub async fn run(spawner: Spawner) -> ! {
         controls,
     } = deferred.finish().await;
     let DisplayHardware {
-        driver: eink,
-        mut panel,
+        device: display,
         _rail: _eink_rail,
     } = display;
     let Controls { button, frontlight } = controls;
@@ -174,12 +219,18 @@ pub async fn run(spawner: Spawner) -> ! {
     .destination_hashes()
     .expect("the hopspot destination names are valid");
     let node_page_destination = destination_hashes.node_page;
+    let remote_control = RemoteControlService::new(
+        remote_control_identity_secrets,
+        RemoteControlPublicAppData::empty(),
+        RemoteControlInitialAccess::Nobody,
+        RemoteControlSelfAnnouncement::Destination(node_page_destination),
+    );
     let mut manifold_lanes = ManifoldLanes::new();
     let lora_profile = loaded_lora_profile.profile;
     let lora_id = LoRaInterface::<board::Radio>::interface_id(&lora_profile);
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
     let lora_status: &'static EmbassyInterfaceStatus = LORA_STATUS.init(
-        EmbassyInterfaceStatus::new(lora_id, ConnectionState::Initializing),
+        EmbassyInterfaceStatus::new_accounted(lora_id, ConnectionState::Initializing),
     );
     static LORA_SPECTRUM: StaticCell<LoRaSpectrumStatus> = StaticCell::new();
     let lora_spectrum: &'static LoRaSpectrumStatus = LORA_SPECTRUM.init(LoRaSpectrumStatus::new());
@@ -202,10 +253,9 @@ pub async fn run(spawner: Spawner) -> ! {
 
     let (usb_tx, usb_rx) = class.split();
     static USB_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
-    let usb_status: &'static EmbassyInterfaceStatus = USB_STATUS.init(EmbassyInterfaceStatus::new(
-        USB_INTERFACE_ID,
-        ConnectionState::Initializing,
-    ));
+    let usb_status: &'static EmbassyInterfaceStatus = USB_STATUS.init(
+        EmbassyInterfaceStatus::new_accounted(USB_INTERFACE_ID, ConnectionState::Initializing),
+    );
     let usb_dev = UsbAutoDevice::new(UsbAutoDeviceInput {
         rx: usb_rx,
         tx: usb_tx,
@@ -214,7 +264,7 @@ pub async fn run(spawner: Spawner) -> ! {
     });
 
     let lora_lane = manifold_lanes
-        .claim_interface(&LORA_MANIFOLD_LANE, lora.descriptor())
+        .claim_accounted_interface(&LORA_MANIFOLD_LANE, lora.descriptor(), lora_status)
         .expect("LoRa lane is available");
     let ble_supervisor_lane = ble_identity.as_ref().map(|_| {
         manifold_lanes
@@ -222,7 +272,7 @@ pub async fn run(spawner: Spawner) -> ! {
             .expect("Bluetooth supervisor lane is available")
     });
     let usb_lane = manifold_lanes
-        .claim_interface(&USB_MANIFOLD_LANE, usb_dev.descriptor())
+        .claim_accounted_interface(&USB_MANIFOLD_LANE, usb_dev.descriptor(), usb_status)
         .expect("USB lane is available");
 
     let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
@@ -236,6 +286,7 @@ pub async fn run(spawner: Spawner) -> ! {
     static NODE: StaticCell<Node> = StaticCell::new();
     let recipe = PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
+        remote_control,
         pre_configured_destinations: hopspot::HopspotDestinationSet::new(
             destination_secret,
             ANNOUNCE_APP_DATA,
@@ -292,13 +343,10 @@ pub async fn run(spawner: Spawner) -> ! {
     let ui_handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
     let render = async move {
         let mut saadc = saadc;
-        let mut epd = match eink {
-            Some(epd) => epd,
-            None => core::future::pending().await,
-        };
+        let mut display = display.into_runtime(board::retained_policy());
         let mut ui_state = hopspot::UiState::new(hopspot::UiConfiguration {
             storage_limits: <Storage as StorageLayout>::LIMITS,
-            display_power_control: hopspot::DisplayPowerControl::Unavailable,
+            user_blanking: display.user_blanking(),
             access_point: hopspot::AccessPointState::Unsupported,
             shared_instance_config_export: hopspot::SharedInstanceConfigExport::Unavailable,
             gnss: hopspot::GnssAvailability::Unavailable,
@@ -308,23 +356,25 @@ pub async fn run(spawner: Spawner) -> ! {
             .is_some()
             .then_some(profile_startup_notice)
             .flatten();
+        let mut notice_timer = PresentedNoticeTimer::new();
         if let Some(notice) = startup_notice {
-            ui_state.show_notice(notice);
+            show_notice(
+                &mut ui_state,
+                &mut notice_timer,
+                notice,
+                STARTUP_NOTICE_DURATION,
+            );
         }
         let mut working_lora_profile = lora_profile;
-        let mut refresh_policy = hopspot::EinkRefreshPolicy::new(
-            PARTIAL_REFRESH_LIMIT,
-            FULL_REFRESH_MAX_AGE_MS,
-            TELEMETRY_MIN_INTERVAL_MS,
-        );
-        let mut refresh_urgency = hopspot::EinkRefreshUrgency::Immediate;
-        let mut displayed_hash = None;
+        let mut refresh_urgency = hopspot::display::PresentationUrgency::Immediate;
         let mut activity = hopspot::CardActivityTracker::<{ MEMBERS + 4 }>::new();
-        let mut notice_until_ms =
-            startup_notice.map(|notice| (embassy_time::Instant::now().as_millis() + 5_000, notice));
         let mut battery_gauge = hopspot::BatteryGauge::lipo();
         let mut persistence_notice = hopspot::PersistenceNotice::new();
+        let mut controller_sleep_pending = false;
         loop {
+            if controller_sleep_pending && display.deep_sleep().await.is_ok() {
+                controller_sleep_pending = false;
+            }
             let mut adc = [0i16; 1];
             saadc.sample(&mut adc).await;
             let vbat_mv = (adc[0].max(0) as u32) * 6000 / 4096;
@@ -336,6 +386,7 @@ pub async fn run(spawner: Spawner) -> ! {
             let snapshots = build_snapshots(lora_status, usb_status);
             let mut cards = build_cards(&snapshots, lora_status.id(), usb_status.id());
             let now_ms = embassy_time::Instant::now().as_millis();
+            let now = hopspot::display::MonotonicMillis::new(now_ms);
             let activity_secs = (now_ms / 1000).min(u64::from(u32::MAX)) as u32;
             activity.update(&mut cards, activity_secs);
             let content = hopspot::ScreenContent {
@@ -343,29 +394,33 @@ pub async fn run(spawner: Spawner) -> ! {
                 local_docs: None,
             };
             ui_state.sync(content);
-            if persistence_notice.update(
-                &mut ui_state,
-                super::learned_state::persistence_state(),
-                now_ms,
-            ) {
-                refresh_urgency = hopspot::EinkRefreshUrgency::Immediate;
+            if let Some(notice) =
+                persistence_notice.observe(super::learned_state::persistence_state())
+            {
+                show_notice(
+                    &mut ui_state,
+                    &mut notice_timer,
+                    notice,
+                    STARTUP_NOTICE_DURATION,
+                );
+                refresh_urgency = hopspot::display::PresentationUrgency::Immediate;
             }
-            if let Some((until, owner)) = notice_until_ms {
-                if now_ms >= until {
-                    notice_until_ms = None;
-                    if ui_state.clear_notice_if(owner) {
-                        if let Some(notice) = pending_startup_notice.take() {
-                            ui_state.show_notice(notice);
-                            notice_until_ms = Some((now_ms + 5_000, notice));
-                        }
-                    } else {
-                        pending_startup_notice = None;
+            if let Some(owner) = notice_timer.expire(now) {
+                if ui_state.clear_notice_if(owner) {
+                    if let Some(notice) = pending_startup_notice.take() {
+                        show_notice(
+                            &mut ui_state,
+                            &mut notice_timer,
+                            notice,
+                            STARTUP_NOTICE_DURATION,
+                        );
                     }
-                    refresh_urgency = hopspot::EinkRefreshUrgency::Immediate;
+                } else {
+                    pending_startup_notice = None;
                 }
+                refresh_urgency = hopspot::display::PresentationUrgency::Immediate;
             }
 
-            let _ = panel.clear(EpdColor::White);
             let mut interface_menu_details = hopspot::snapshots_to_interface_menu_details(
                 ui_state.selected_card(content.cards),
                 &snapshots,
@@ -402,182 +457,200 @@ pub async fn run(spawner: Spawner) -> ! {
                     radio_recoveries: spectrum.radio_recoveries,
                 });
             }
-            hopspot::render(
-                &mut EinkScreen { panel: &mut panel },
-                hopspot::RenderFrame {
-                    content,
-                    battery,
-                    gnss: None,
-                    state: &ui_state,
-                    interface_menu_details: &interface_menu_details,
-                },
-            );
-            let hash = board::frame_hash(panel.buffer());
-            if displayed_hash != Some(hash) {
-                match refresh_policy.for_changed_frame(now_ms, &refresh_urgency) {
-                    hopspot::EinkRefresh::Deferred => {}
-                    hopspot::EinkRefresh::Full => {
-                        if epd.full_update(panel.buffer()).is_ok() {
-                            refresh_policy.full_refresh_succeeded(now_ms);
-                            displayed_hash = Some(hash);
-                        } else {
-                            refresh_policy.refresh_failed();
-                        }
+            let presentation = display
+                .render_and_present(
+                    hopspot::face_64x128::RenderInput {
+                        content,
+                        battery,
+                        gnss: None,
+                        state: &ui_state,
+                        interface_menu_details: &interface_menu_details,
+                    },
+                    now,
+                    refresh_urgency,
+                    || {
+                        hopspot::display::MonotonicMillis::new(
+                            embassy_time::Instant::now().as_millis(),
+                        )
+                    },
+                )
+                .await;
+            let presentation_deadline = match presentation {
+                Ok(RetainedPresentation::Presented | RetainedPresentation::Unchanged) => {
+                    let completed_at = hopspot::display::MonotonicMillis::new(
+                        embassy_time::Instant::now().as_millis(),
+                    );
+                    let presented_notice = notice_timer
+                        .presentation_succeeded(ui_state.visible_notice(), completed_at);
+                    if presented_notice == Some(hopspot::UiNotice::Sleeping) {
+                        controller_sleep_pending = true;
                     }
-                    hopspot::EinkRefresh::Partial => {
-                        if epd.partial_update(panel.buffer()).is_ok() {
-                            refresh_policy.partial_refresh_succeeded(now_ms);
-                            displayed_hash = Some(hash);
-                        } else {
-                            refresh_policy.refresh_failed();
-                        }
-                    }
+                    refresh_urgency = hopspot::display::PresentationUrgency::Telemetry;
+                    None
                 }
-            }
+                Ok(RetainedPresentation::DeferredUntil(deadline)) => Some(deadline),
+                Ok(RetainedPresentation::Sleeping) | Err(_) => None,
+            };
 
-            match select3(
+            match select4(
                 board::INPUT_EVENTS.receive(),
                 INTERFACE_STORE.changed(),
                 Timer::after(STATS_POLL),
+                next_deadline_timer(presentation_deadline, notice_timer.deadline()),
             )
             .await
             {
-                Either3::First(event) => {
-                    refresh_urgency = hopspot::EinkRefreshUrgency::Immediate;
-                    let action = ui_state.handle_input(event, content);
-                    match action {
-                        hopspot::UiAction::Sleep => {
-                            ui_state.show_notice(hopspot::UiNotice::Sleeping);
-                            notice_until_ms = Some((
-                                embassy_time::Instant::now().as_millis() + NOTICE_MS,
-                                hopspot::UiNotice::Sleeping,
-                            ));
-                            lora_status.disable();
-                            usb_status.disable();
-                            let status = BluetoothAutoStatus::new(&BLE_SHARED);
-                            status.disable();
-                        }
-                        hopspot::UiAction::Wake => {
-                            ui_state.show_notice(hopspot::UiNotice::Awake);
-                            notice_until_ms = Some((
-                                embassy_time::Instant::now().as_millis() + NOTICE_MS,
-                                hopspot::UiNotice::Awake,
-                            ));
-                            lora_status.enable();
-                            usb_status.enable();
-                            let status = BluetoothAutoStatus::new(&BLE_SHARED);
-                            status.enable();
-                        }
-                        hopspot::UiAction::Announce => {
-                            ui_state.show_notice(hopspot::UiNotice::Announcing);
-                            notice_until_ms = Some((
-                                embassy_time::Instant::now().as_millis() + NOTICE_MS,
-                                hopspot::UiNotice::Announcing,
-                            ));
-                            let _ = ui_handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
-                                destination: node_page_destination,
-                                target: AnnounceTarget::AllInterfaces,
-                                app_data: AnnounceAppData::Registered,
-                            }));
-                        }
-                        hopspot::UiAction::ToggleSelectedInterface => {
-                            if let Some(card) = ui_state.selected_card(content.cards) {
-                                if card.id() == lora_status.id() {
-                                    let notice = if lora_status.is_enabled() {
-                                        hopspot::UiNotice::TurningOff
-                                    } else {
-                                        hopspot::UiNotice::TurningOn
-                                    };
-                                    ui_state.show_notice(notice);
-                                    notice_until_ms = Some((
-                                        embassy_time::Instant::now().as_millis() + NOTICE_MS,
-                                        notice,
-                                    ));
-                                    lora_status.toggle_enabled();
-                                } else if card.id() == usb_status.id() {
-                                    let notice = if usb_status.is_enabled() {
-                                        hopspot::UiNotice::TurningOff
-                                    } else {
-                                        hopspot::UiNotice::TurningOn
-                                    };
-                                    ui_state.show_notice(notice);
-                                    notice_until_ms = Some((
-                                        embassy_time::Instant::now().as_millis() + NOTICE_MS,
-                                        notice,
-                                    ));
-                                    usb_status.toggle_enabled();
-                                } else if card.id() == BLE_SUPERVISOR_ID {
-                                    let status = BluetoothAutoStatus::new(&BLE_SHARED);
-                                    let notice = if status.is_enabled() {
-                                        hopspot::UiNotice::TurningOff
-                                    } else {
-                                        hopspot::UiNotice::TurningOn
-                                    };
-                                    ui_state.show_notice(notice);
-                                    notice_until_ms = Some((
-                                        embassy_time::Instant::now().as_millis() + NOTICE_MS,
-                                        notice,
-                                    ));
-                                    status.toggle_enabled();
+                Either4::First(first_event) => {
+                    let mut next_event = Some(first_event);
+                    for index in 0..board::INPUT_EVENT_CAPACITY {
+                        let Some(event) = next_event.take() else {
+                            break;
+                        };
+                        refresh_urgency = hopspot::display::PresentationUrgency::Immediate;
+                        let action = ui_state.handle_input(event, content);
+                        notice_timer.reconcile(ui_state.visible_notice());
+                        match action {
+                            hopspot::UiAction::Sleep => {
+                                show_notice(
+                                    &mut ui_state,
+                                    &mut notice_timer,
+                                    hopspot::UiNotice::Sleeping,
+                                    NOTICE_DURATION,
+                                );
+                                lora_status.disable();
+                                usb_status.disable();
+                                let status = BluetoothAutoStatus::new(&BLE_SHARED);
+                                status.disable();
+                            }
+                            hopspot::UiAction::Wake => {
+                                controller_sleep_pending = false;
+                                let _ = display.wake().await;
+                                show_notice(
+                                    &mut ui_state,
+                                    &mut notice_timer,
+                                    hopspot::UiNotice::Awake,
+                                    NOTICE_DURATION,
+                                );
+                                lora_status.enable();
+                                usb_status.enable();
+                                let status = BluetoothAutoStatus::new(&BLE_SHARED);
+                                status.enable();
+                            }
+                            hopspot::UiAction::Announce => {
+                                show_notice(
+                                    &mut ui_state,
+                                    &mut notice_timer,
+                                    hopspot::UiNotice::Announcing,
+                                    NOTICE_DURATION,
+                                );
+                                let _ = ui_handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
+                                    destination: node_page_destination,
+                                    target: AnnounceTarget::AllInterfaces,
+                                    app_data: AnnounceAppData::Registered,
+                                }));
+                            }
+                            hopspot::UiAction::ToggleSelectedInterface => {
+                                if let Some(card) = ui_state.selected_card(content.cards) {
+                                    if card.id() == lora_status.id() {
+                                        let notice = if lora_status.is_enabled() {
+                                            hopspot::UiNotice::TurningOff
+                                        } else {
+                                            hopspot::UiNotice::TurningOn
+                                        };
+                                        show_notice(
+                                            &mut ui_state,
+                                            &mut notice_timer,
+                                            notice,
+                                            NOTICE_DURATION,
+                                        );
+                                        lora_status.toggle_enabled();
+                                    } else if card.id() == usb_status.id() {
+                                        let notice = if usb_status.is_enabled() {
+                                            hopspot::UiNotice::TurningOff
+                                        } else {
+                                            hopspot::UiNotice::TurningOn
+                                        };
+                                        show_notice(
+                                            &mut ui_state,
+                                            &mut notice_timer,
+                                            notice,
+                                            NOTICE_DURATION,
+                                        );
+                                        usb_status.toggle_enabled();
+                                    } else if card.id() == BLE_SUPERVISOR_ID {
+                                        let status = BluetoothAutoStatus::new(&BLE_SHARED);
+                                        let notice = if status.is_enabled() {
+                                            hopspot::UiNotice::TurningOff
+                                        } else {
+                                            hopspot::UiNotice::TurningOn
+                                        };
+                                        show_notice(
+                                            &mut ui_state,
+                                            &mut notice_timer,
+                                            notice,
+                                            NOTICE_DURATION,
+                                        );
+                                        status.toggle_enabled();
+                                    }
                                 }
                             }
-                        }
-                        hopspot::UiAction::OpenLoRaEditor => {
-                            ui_state.open_lora_editor(working_lora_profile);
-                        }
-                        hopspot::UiAction::SetLoRaProfile(profile) => {
-                            let result = hopspot::apply_and_persist_radio_profile(
-                                async {
-                                    LORA_CONTROL.apply(profile).await == LoRaApplyOutcome::Applied
-                                },
-                                || async { lora_profile_store.save(profile).await.is_ok() },
-                            )
-                            .await;
-                            if result.applied() {
-                                working_lora_profile = profile;
+                            hopspot::UiAction::OpenLoRaEditor => {
+                                ui_state.open_lora_editor(working_lora_profile);
                             }
-                            let notice = result.notice();
-                            ui_state.show_notice(notice);
-                            notice_until_ms = Some((
-                                embassy_time::Instant::now().as_millis() + NOTICE_MS,
-                                notice,
-                            ));
-                        }
-                        hopspot::UiAction::ResetLoRaProfile => {
-                            let result = hopspot::apply_and_persist_radio_profile(
-                                async {
-                                    LORA_CONTROL.apply(DEFAULT_915_PROFILE).await
-                                        == LoRaApplyOutcome::Applied
-                                },
-                                || async { lora_profile_store.reset().await.is_ok() },
-                            )
-                            .await;
-                            if result.applied() {
-                                working_lora_profile = DEFAULT_915_PROFILE;
+                            hopspot::UiAction::SetLoRaProfile(profile) => {
+                                let result = hopspot::apply_and_persist_radio_profile(
+                                    async {
+                                        LORA_CONTROL.apply(profile).await
+                                            == LoRaApplyOutcome::Applied
+                                    },
+                                    || async { lora_profile_store.save(profile).await.is_ok() },
+                                )
+                                .await;
+                                if result.applied() {
+                                    working_lora_profile = profile;
+                                }
+                                show_notice(
+                                    &mut ui_state,
+                                    &mut notice_timer,
+                                    result.notice(),
+                                    NOTICE_DURATION,
+                                );
                             }
-                            let notice = result.notice();
-                            ui_state.show_notice(notice);
-                            notice_until_ms = Some((
-                                embassy_time::Instant::now().as_millis() + NOTICE_MS,
-                                notice,
-                            ));
+                            hopspot::UiAction::ResetLoRaProfile => {
+                                let result = hopspot::apply_and_persist_radio_profile(
+                                    async {
+                                        LORA_CONTROL.apply(DEFAULT_915_PROFILE).await
+                                            == LoRaApplyOutcome::Applied
+                                    },
+                                    || async { lora_profile_store.reset().await.is_ok() },
+                                )
+                                .await;
+                                if result.applied() {
+                                    working_lora_profile = DEFAULT_915_PROFILE;
+                                }
+                                show_notice(
+                                    &mut ui_state,
+                                    &mut notice_timer,
+                                    result.notice(),
+                                    NOTICE_DURATION,
+                                );
+                            }
+                            hopspot::UiAction::OpenDocs => {}
+                            hopspot::UiAction::SwapRadioMode => {}
+                            hopspot::UiAction::ToggleStationUplink => {}
+                            hopspot::UiAction::BlankDisplay => {}
+                            hopspot::UiAction::ToggleDisplayAutoOff => {}
+                            hopspot::UiAction::CopySharedInstanceConfig => {}
+                            hopspot::UiAction::ControlGnss(_) => {}
+                            hopspot::UiAction::None => {}
                         }
-                        hopspot::UiAction::OpenDocs => {}
-                        hopspot::UiAction::SwapRadioMode => {}
-                        hopspot::UiAction::ToggleStationUplink => {}
-                        hopspot::UiAction::DisplayOff => {}
-                        hopspot::UiAction::ToggleDisplayAutoOff => {}
-                        hopspot::UiAction::CopySharedInstanceConfig => {}
-                        hopspot::UiAction::ControlGnss(_) => {}
-                        hopspot::UiAction::None => {}
+                        if index + 1 == board::INPUT_EVENT_CAPACITY {
+                            break;
+                        }
+                        next_event = board::INPUT_EVENTS.try_receive().ok();
                     }
                 }
-                Either3::Second(()) => {
-                    refresh_urgency = hopspot::EinkRefreshUrgency::Immediate;
-                }
-                Either3::Third(()) => {
-                    refresh_urgency = hopspot::EinkRefreshUrgency::Telemetry;
-                }
+                Either4::Second(()) | Either4::Third(()) | Either4::Fourth(()) => {}
             }
         }
     };

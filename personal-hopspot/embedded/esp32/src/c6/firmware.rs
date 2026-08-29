@@ -1,4 +1,8 @@
 use super::*;
+use personal_rns::remote_control::{
+    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
+    RemoteControlService,
+};
 
 pub async fn run(spawner: Spawner) {
     let C6Hardware {
@@ -16,12 +20,15 @@ pub async fn run(spawner: Spawner) {
 
     let node_bootstrap = crate::identity::bootstrap_node_identity();
     crate::identity::log_persistence("node", node_bootstrap.persistence());
+    let remote_control_bootstrap = crate::identity::C6_REMOTE_CONTROL_IDENTITY_FLASH
+        .load_or_generate()
+        .expect("RemoteControl identity bootstrap failed");
     let ble_bootstrap = crate::identity::bootstrap_ble_identity();
     crate::identity::log_persistence("Bluetooth", ble_bootstrap.persistence());
     drop(identity_entropy);
 
     #[cfg(feature = "esp-now")]
-    let (_espnow_controller, espnow, _espnow_status) = {
+    let (_espnow_controller, espnow, espnow_status) = {
         let wifi_config = ControllerConfig::default()
             .with_static_rx_buf_num(4)
             .with_rx_ba_win(3);
@@ -30,7 +37,10 @@ pub async fn run(spawner: Spawner) {
         let esp_now_radio = interfaces.esp_now;
         let espnow_status: &'static EmbassyInterfaceStatus = mk_static!(
             EmbassyInterfaceStatus,
-            EmbassyInterfaceStatus::new(espnow_core::interface_id(), ConnectionState::Initializing)
+            EmbassyInterfaceStatus::new_accounted(
+                espnow_core::interface_id(),
+                ConnectionState::Initializing,
+            )
         );
         let espnow = EspNowInterface::new(
             EspNowAdapter::new(esp_now_radio),
@@ -49,16 +59,32 @@ pub async fn run(spawner: Spawner) {
         ANNOUNCE_APP_DATA,
         NODE_ANNOUNCE_APP_DATA,
     );
+    let node_page_destination = destinations
+        .destination_hashes()
+        .expect("the hopspot destination names are valid")
+        .node_page;
+    let (remote_control_identity_secrets, _remote_control_identity_origins) =
+        remote_control_bootstrap.into_parts();
+    let remote_control = RemoteControlService::new(
+        remote_control_identity_secrets,
+        RemoteControlPublicAppData::empty(),
+        RemoteControlInitialAccess::Nobody,
+        RemoteControlSelfAnnouncement::Destination(node_page_destination),
+    );
     #[cfg(feature = "bluetooth-auto")]
     let ble_identity = Some(ble_bootstrap.into_identity());
 
     let mut manifold_lanes = ManifoldLanes::new();
     let usb_lane = manifold_lanes
-        .claim_interface(&USB_MANIFOLD_LANE, device_descriptor(USB_INTERFACE_ID))
+        .claim_accounted_interface(
+            &USB_MANIFOLD_LANE,
+            device_descriptor(USB_INTERFACE_ID),
+            &USB_STATUS,
+        )
         .expect("USB lane is available");
     #[cfg(feature = "esp-now")]
     let espnow_lane = manifold_lanes
-        .claim_interface(&ESPNOW_MANIFOLD_LANE, espnow.descriptor())
+        .claim_accounted_interface(&ESPNOW_MANIFOLD_LANE, espnow.descriptor(), espnow_status)
         .expect("ESP-NOW lane is available");
     #[cfg(feature = "bluetooth-auto")]
     let ble_supervisor_lane = ble_identity.as_ref().map(|_| {
@@ -91,6 +117,7 @@ pub async fn run(spawner: Spawner) {
     let host = EmbassyHost::new_with_timebase(timebase, hardware_entropy as fn(&mut [u8]));
     let recipe = PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
+        remote_control,
         pre_configured_destinations: destinations.into_preconfigured_destinations(),
         app_state: (),
         storage: C6Storage,

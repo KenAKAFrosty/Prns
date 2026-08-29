@@ -1,9 +1,9 @@
 use crate::engine::{
     AllowRequesterFailure, AnnounceNowFailure, CloseLinkFailure, EstablishLinkFailure,
     IdentifyFailure, Journaled, LinkClosedReason, RequestPathFailure, RespondFailure,
-    RouteRemovalCause, SendGroupFailure, SendRequestFailure, SendResourceFailure,
-    SendSinglePacketFailure, SendToChannelFailure, SendToLinkFailure, SetResourceStrategyFailure,
-    Settlement,
+    RouteRemovalCause, SendGroupFailure, SendPlainPacketFailure, SendRequestFailure,
+    SendResourceFailure, SendSinglePacketFailure, SendToChannelFailure, SendToLinkFailure,
+    SetRegisteredAnnounceAppDataFailure, SetResourceStrategyFailure, Settlement,
 };
 use crate::routing::links::resources::table::ApplyHashmapUpdateError;
 use crate::routing::links::resources::ResourceFailureCause;
@@ -13,6 +13,7 @@ prns_macros::iterable_enum! {
     #[repr(u8)]
     pub enum RuntimeOperation {
         AnnounceNow,
+        SetRegisteredAnnounceAppData,
         SendSinglePacket,
         SendGroup,
         RequestPath,
@@ -26,6 +27,7 @@ prns_macros::iterable_enum! {
         SetResourceStrategy,
         SendToChannel,
         AllowRequester,
+        SendPlainPacket,
     }
 }
 
@@ -307,12 +309,20 @@ impl From<&Settlement> for SettledOperation {
                 operation: Operation::AnnounceNow,
                 outcome: result.runtime_outcome(),
             },
+            Settlement::SetRegisteredAnnounceAppData(result) => Self {
+                operation: Operation::SetRegisteredAnnounceAppData,
+                outcome: result.runtime_outcome(),
+            },
             Settlement::SendSinglePacket(result) => Self {
                 operation: Operation::SendSinglePacket,
                 outcome: result.runtime_outcome(),
             },
             Settlement::SendGroup(result) => Self {
                 operation: Operation::SendGroup,
+                outcome: result.runtime_outcome(),
+            },
+            Settlement::SendPlainPacket(result) => Self {
+                operation: Operation::SendPlainPacket,
                 outcome: result.runtime_outcome(),
             },
             Settlement::RequestPath(result) => Self {
@@ -372,6 +382,14 @@ impl From<&AnnounceNowFailure> for RuntimeOperationOutcome {
     }
 }
 
+impl From<&SetRegisteredAnnounceAppDataFailure> for RuntimeOperationOutcome {
+    fn from(failure: &SetRegisteredAnnounceAppDataFailure) -> Self {
+        match failure {
+            SetRegisteredAnnounceAppDataFailure::Rejected(_) => Self::Rejected,
+        }
+    }
+}
+
 impl From<&SendSinglePacketFailure> for RuntimeOperationOutcome {
     fn from(failure: &SendSinglePacketFailure) -> Self {
         match failure {
@@ -388,6 +406,14 @@ impl From<&SendGroupFailure> for RuntimeOperationOutcome {
         match failure {
             SendGroupFailure::Rejected(_) => Self::Rejected,
             SendGroupFailure::WriteFailed(_) => Self::WriteFailed,
+        }
+    }
+}
+
+impl From<&SendPlainPacketFailure> for RuntimeOperationOutcome {
+    fn from(failure: &SendPlainPacketFailure) -> Self {
+        match failure {
+            SendPlainPacketFailure::WriteFailed(_) => Self::WriteFailed,
         }
     }
 }

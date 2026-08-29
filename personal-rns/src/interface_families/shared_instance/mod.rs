@@ -1,12 +1,13 @@
 pub use prns_interfaces_tokio::shared_instance::{
-    connect_existing_shared_instance, join_shared_instance, ExistingSharedInstancePolicy,
-    ExistingSharedInstanceUnavailable, RnsBlackholeFileError, RnsBlackholeFiles,
-    SharedInstanceBlackholeOutcome, SharedInstanceBusEndpoint, SharedInstanceClient,
-    SharedInstanceClientIntent, SharedInstanceCredentials, SharedInstanceEndpoint,
-    SharedInstanceIntent, SharedInstanceJoinError, SharedInstancePacketPhyStats,
-    SharedInstancePorts, SharedInstanceRole, SharedInstanceRpcClient, SharedInstanceRpcClientError,
-    SharedInstanceRpcClientPhase, SharedInstanceRpcEndpoint, SharedInstanceServer,
-    SharedInstanceTransport, SharedInstanceUnblackholeOutcome,
+    connect_existing_shared_instance, connect_existing_shared_instance_with_timing,
+    join_shared_instance, ExistingSharedInstancePolicy, ExistingSharedInstanceUnavailable,
+    RnsBlackholeFileError, RnsBlackholeFiles, SharedInstanceBlackholeOutcome,
+    SharedInstanceBusEndpoint, SharedInstanceClient, SharedInstanceClientIntent,
+    SharedInstanceCredentials, SharedInstanceEndpoint, SharedInstanceIntent,
+    SharedInstanceJoinError, SharedInstancePacketPhyStats, SharedInstancePorts, SharedInstanceRole,
+    SharedInstanceRpcClient, SharedInstanceRpcClientError, SharedInstanceRpcClientPhase,
+    SharedInstanceRpcEndpoint, SharedInstanceServer, SharedInstanceTransport,
+    SharedInstanceUnblackholeOutcome,
 };
 
 pub mod rns_rpc {

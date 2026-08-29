@@ -2,9 +2,11 @@ mod announce;
 mod channel;
 mod link;
 mod path;
+mod registered_announce_app_data;
 mod request;
 mod resource;
 mod send_group;
+mod send_plain;
 mod send_single;
 
 use crate::routing::dedup::PacketHash;
@@ -23,6 +25,10 @@ pub use link::{
     MAX_SEND_TO_LINK_PLAINTEXT_LEN,
 };
 pub use path::{PathFound, PathRequestId, RequestPath, RequestPathFailure, PATH_REQUEST_ID_LEN};
+pub use registered_announce_app_data::{
+    SetRegisteredAnnounceAppData, SetRegisteredAnnounceAppDataFailure,
+    SetRegisteredAnnounceAppDataRejection,
+};
 pub use request::{
     AllowRequester, AllowRequesterFailure, AllowRequesterRejection, RequestResponseTimeout,
     Respond, RespondData, RespondFailure, RespondPayload, RespondRejection, SendRequest,
@@ -35,6 +41,10 @@ pub use resource::{
 };
 pub use send_group::{
     SendGroup, SendGroupFailure, SendGroupPayload, SendGroupRejection, MAX_SEND_GROUP_PLAINTEXT_LEN,
+};
+pub use send_plain::{
+    SendPlainPacket, SendPlainPacketFailure, SendPlainPacketPayload,
+    MAX_SEND_PLAIN_PACKET_PAYLOAD_LEN,
 };
 pub use send_single::{
     SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload, SendSinglePacketRejection,
@@ -62,6 +72,7 @@ pub struct IssuedCommand {
 #[repr(C)]
 pub enum PrnsCommand {
     AnnounceNow(AnnounceNow),
+    SetRegisteredAnnounceAppData(SetRegisteredAnnounceAppData),
     SendSinglePacket(SendSinglePacket),
     SendGroup(SendGroup),
     RequestPath(RequestPath),
@@ -74,6 +85,7 @@ pub enum PrnsCommand {
     CloseLink(CloseLink),
     SetResourceStrategy(SetResourceStrategy),
     AllowRequester(AllowRequester),
+    SendPlainPacket(SendPlainPacket),
 }
 
 // The Owes* variants hand the caller its whole command payload back (SendSinglePacket rides ~400B of heapless body) beside slim rejections. Outcomes are transient by-value returns, destructured immediately, and the no-alloc core has no Box to shrink them.
@@ -87,6 +99,13 @@ pub enum CommandOutcome {
     AnnounceRejected {
         id: CommandId,
         rejection: AnnounceNowRejection,
+    },
+    RegisteredAnnounceAppDataSet {
+        id: CommandId,
+    },
+    SetRegisteredAnnounceAppDataRejected {
+        id: CommandId,
+        rejection: SetRegisteredAnnounceAppDataRejection,
     },
     OwesSendSinglePacket {
         id: CommandId,
@@ -103,6 +122,10 @@ pub enum CommandOutcome {
     SendGroupRejected {
         id: CommandId,
         rejection: SendGroupRejection,
+    },
+    OwesSendPlainPacket {
+        id: CommandId,
+        send: SendPlainPacket,
     },
     OwesPathRequest {
         id: CommandId,
@@ -190,6 +213,7 @@ pub enum CommandOutcome {
 #[repr(C)]
 pub enum Settlement {
     AnnounceNow(Result<(), AnnounceNowFailure>),
+    SetRegisteredAnnounceAppData(Result<(), SetRegisteredAnnounceAppDataFailure>),
     SendSinglePacket(Result<PacketReceiptDelivered, SendSinglePacketFailure>),
     SendGroup(Result<(), SendGroupFailure>),
     RequestPath(Result<PathFound, RequestPathFailure>),
@@ -203,6 +227,7 @@ pub enum Settlement {
     SetResourceStrategy(Result<(), SetResourceStrategyFailure>),
     SendToChannel(Result<PacketReceiptDelivered, SendToChannelFailure>),
     AllowRequester(Result<(), AllowRequesterFailure>),
+    SendPlainPacket(Result<(), SendPlainPacketFailure>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -261,8 +286,12 @@ impl<S: StorageLayout> EngineState<S> {
             PrnsCommand::AnnounceNow(announce_now) => {
                 self.ingest_announce_now(id, announce_now, interfaces)
             }
+            PrnsCommand::SetRegisteredAnnounceAppData(set) => {
+                self.ingest_set_registered_announce_app_data(id, set)
+            }
             PrnsCommand::SendSinglePacket(send) => self.ingest_send_single_packet(id, send),
             PrnsCommand::SendGroup(send) => self.ingest_send_group(id, send),
+            PrnsCommand::SendPlainPacket(send) => self.ingest_send_plain_packet(id, send),
             PrnsCommand::RequestPath(request) => CommandOutcome::OwesPathRequest { id, request },
             PrnsCommand::EstablishLink(establish) => self.ingest_establish_link(id, establish),
             PrnsCommand::SendToLink(send) => self.ingest_send_to_link(id, send),

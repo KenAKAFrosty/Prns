@@ -21,6 +21,27 @@ SPEC.loader.exec_module(notices)
 
 
 class ThirdPartyNoticeTests(unittest.TestCase):
+    def test_esp32s3_mbedtls_archive_is_in_the_vendored_inventory(self) -> None:
+        entries = {
+            package: (identifier, relative, graphs)
+            for package, identifier, relative, graphs in notices.VENDORED
+        }
+        package = "Mbed TLS ffb280bb63c78bfec1e1ab55040671768c85c923"
+
+        self.assertEqual(entries[package][0], "Apache-2.0")
+        self.assertEqual(
+            entries[package][1], "release/licenses/mbedtls-Apache-2.0.txt"
+        )
+        self.assertEqual(
+            entries[package][2],
+            (
+                "ESP32-S3 Heltec",
+                "ESP32-S3 Heltec E290",
+                "ESP32-S3 Heltec R8",
+                "ESP32-S3 T-Beam",
+            ),
+        )
+
     def test_notice_text_normalizes_presentation_only_whitespace(self) -> None:
         source = (
             "Copyright Example  \r\n"

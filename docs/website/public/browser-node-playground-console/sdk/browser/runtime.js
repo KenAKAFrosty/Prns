@@ -16,6 +16,7 @@ export class RuntimeHost {
     #activeRegistrationKeys = new Set();
     #outboundQueues = new Map();
     #overflowedOutbound = new Set();
+    #outboundActivityWaiters = new Map();
     constructor(wasm, runtime, entropy, now, bleIdentityAvailability, onRuntimeActivity) {
         this.#wasm = wasm;
         this.#runtime = runtime;
@@ -73,6 +74,7 @@ export class RuntimeHost {
         const key = byteKey(id);
         const active = this.#activeInterfaces.get(key);
         if (!active) {
+            this.#resolveOutboundActivity(key, Tag("InterfaceDetached"));
             return Tag("Detached");
         }
         try {
@@ -91,6 +93,7 @@ export class RuntimeHost {
         this.#activeRegistrationKeys.delete(active.registrationKey);
         this.#outboundQueues.delete(key);
         this.#overflowedOutbound.delete(key);
+        this.#resolveOutboundActivity(key, Tag("InterfaceDetached"));
         return Tag("Detached");
     }
     setContractKind(id, kind) {
@@ -129,7 +132,7 @@ export class RuntimeHost {
             if (active !== undefined) {
                 active.rxBytes = saturatingAdd(active.rxBytes, bytes.length);
             }
-            this.#onRuntimeActivity();
+            this.notifyRuntimeActivity();
             return Tag("Accepted");
         }
         catch (error) {
@@ -183,6 +186,34 @@ export class RuntimeHost {
             active.txBytes = outbound.reduce((total, frame) => saturatingAdd(total, frame.bytes.length), active.txBytes);
         }
         return Tag("Outbound", outbound);
+    }
+    waitForOutboundActivity(id) {
+        const key = byteKey(id);
+        if (!this.#activeInterfaces.has(key)) {
+            return Promise.resolve(Tag("InterfaceDetached"));
+        }
+        return new Promise((resolve) => {
+            const waiters = this.#outboundActivityWaiters.get(key) ?? new Set();
+            waiters.add(resolve);
+            this.#outboundActivityWaiters.set(key, waiters);
+        });
+    }
+    notifyRuntimeActivity() {
+        const keys = [...this.#outboundActivityWaiters.keys()];
+        for (const key of keys) {
+            this.#resolveOutboundActivity(key, Tag("RuntimeAdvanced"));
+        }
+        this.#onRuntimeActivity();
+    }
+    #resolveOutboundActivity(key, outcome) {
+        const waiters = this.#outboundActivityWaiters.get(key);
+        if (waiters === undefined) {
+            return;
+        }
+        this.#outboundActivityWaiters.delete(key);
+        for (const resolve of waiters) {
+            resolve(outcome);
+        }
     }
     createUsbAutoDecoder() {
         return new this.#wasm.UsbAutoDecoder();

@@ -1,20 +1,41 @@
-import { match_into } from "./sdk/index.js";
+import { Tag, match_into } from "./sdk/index.js";
 import type {
   AutoWifiController,
   AutoWifiControllerStatus,
   AutoWifiFailure,
   AutoWifiGatewayStatus,
+  BluetoothSession,
+  InterfaceSessionFailure,
   PrnsSnapshot,
   Tag as Tagged,
   UsbAutoSession,
   WebSocketSession,
 } from "./sdk/index.js";
 import type {
+  BluetoothConnectFailure,
   HostOperationFailed,
   InterfaceCloseFailure,
   UsbConnectFailure,
   WebSocketConnectFailure,
 } from "./outcomes.js";
+
+export type BluetoothState =
+  | Tagged<"Waiting">
+  | Tagged<"Ready">
+  | Tagged<"Unavailable", { readonly api: "WebBluetooth" }>
+  | Tagged<"Connecting">
+  | Tagged<"Session", BluetoothSession>
+  | Tagged<"SessionFailed", InterfaceSessionFailure>
+  | Tagged<"Closing", BluetoothSession>
+  | Tagged<"ConnectFailed", BluetoothConnectFailure | HostOperationFailed>
+  | Tagged<"Closed">
+  | Tagged<
+      "CloseFailed",
+      {
+        readonly session: BluetoothSession;
+        readonly failure: InterfaceCloseFailure | HostOperationFailed;
+      }
+    >;
 
 export type AutoWifiState =
   | Tagged<"Waiting">
@@ -72,6 +93,8 @@ export type ControlAvailability = {
   readonly webSocketClose: boolean;
   readonly usbConnect: boolean;
   readonly usbClose: boolean;
+  readonly bluetoothConnect: boolean;
+  readonly bluetoothClose: boolean;
   readonly announce: boolean;
 };
 
@@ -79,6 +102,7 @@ export function controlAvailability(
   autoWifi: AutoWifiState,
   webSocket: WebSocketState,
   usb: UsbState,
+  bluetooth: BluetoothState,
   snapshot: PrnsSnapshot | undefined,
 ): ControlAvailability {
   return {
@@ -88,8 +112,97 @@ export function controlAvailability(
     webSocketClose: webSocketCloseAvailable(webSocket),
     usbConnect: usbConnectAvailable(usb),
     usbClose: usbCloseAvailable(usb),
+    bluetoothConnect: bluetoothConnectAvailable(bluetooth),
+    bluetoothClose: bluetoothCloseAvailable(bluetooth),
     announce: (snapshot?.interfaces.length ?? 0) > 0,
   };
+}
+
+export function bluetoothConnectAvailable(state: BluetoothState): boolean {
+  return match_into<boolean>().from(state, {
+    Waiting: () => false,
+    Ready: () => true,
+    Unavailable: () => false,
+    Connecting: () => false,
+    Session: (session) =>
+      session.status.tag === "Closed" || session.status.tag === "Failed",
+    SessionFailed: () => true,
+    Closing: () => false,
+    ConnectFailed: () => true,
+    Closed: () => true,
+    CloseFailed: () => false,
+  });
+}
+
+function bluetoothCloseAvailable(state: BluetoothState): boolean {
+  return match_into<boolean>().from(state, {
+    Waiting: () => false,
+    Ready: () => false,
+    Unavailable: () => false,
+    Connecting: () => false,
+    Session: (session) =>
+      session.status.tag === "Negotiating" || session.status.tag === "Active",
+    SessionFailed: () => false,
+    Closing: () => false,
+    ConnectFailed: () => false,
+    Closed: () => false,
+    CloseFailed: () => true,
+  });
+}
+
+export function bluetoothSession(
+  state: BluetoothState,
+): BluetoothSession | undefined {
+  return match_into<BluetoothSession | undefined>().from(state, {
+    Waiting: () => undefined,
+    Ready: () => undefined,
+    Unavailable: () => undefined,
+    Connecting: () => undefined,
+    Session: (session) => session,
+    SessionFailed: () => undefined,
+    Closing: (session) => session,
+    ConnectFailed: () => undefined,
+    Closed: () => undefined,
+    CloseFailed: ({ session }) => session,
+  });
+}
+
+export function bluetoothClosableSession(
+  state: BluetoothState,
+): BluetoothSession | undefined {
+  return match_into<BluetoothSession | undefined>().from(state, {
+    Waiting: () => undefined,
+    Ready: () => undefined,
+    Unavailable: () => undefined,
+    Connecting: () => undefined,
+    Session: (session) =>
+      session.status.tag === "Negotiating" || session.status.tag === "Active"
+        ? session
+        : undefined,
+    SessionFailed: () => undefined,
+    Closing: () => undefined,
+    ConnectFailed: () => undefined,
+    Closed: () => undefined,
+    CloseFailed: ({ session }) => session,
+  });
+}
+
+export function observeBluetoothSession(
+  session: BluetoothSession,
+):
+  | Tagged<"Live">
+  | Tagged<"Closed">
+  | Tagged<"Failed", InterfaceSessionFailure> {
+  return match_into<
+    | Tagged<"Live">
+    | Tagged<"Closed">
+    | Tagged<"Failed", InterfaceSessionFailure>
+  >().from(session.status, {
+    Negotiating: () => Tag("Live"),
+    Active: () => Tag("Live"),
+    Closed: () => Tag("Closed"),
+    Failed: (failure) => Tag("Failed", failure),
+  });
 }
 
 export function webSocketConnectAvailable(state: WebSocketState): boolean {

@@ -63,7 +63,7 @@ impl<S> WebSocketServerConnection<S> {
             socket: Some(socket),
             policy,
             framing_selection,
-            status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
+            status: TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Connected),
         }
     }
 
@@ -408,8 +408,10 @@ mod tests {
         assert_eq!(status.connection(), ConnectionState::Connected);
         assert_eq!(status.id().kind(), Some(InterfaceKind::WebSocketServer));
 
-        let client_status =
-            TokioInterfaceStatus::new(member_id(b"127.0.0.1:54321"), ConnectionState::Connected);
+        let client_status = TokioInterfaceStatus::new_unaccounted(
+            member_id(b"127.0.0.1:54321"),
+            ConnectionState::Connected,
+        );
         status.admit(client_status.clone());
         assert_eq!(status.connection(), ConnectionState::Connected);
         assert_eq!(status.members().len(), 1);

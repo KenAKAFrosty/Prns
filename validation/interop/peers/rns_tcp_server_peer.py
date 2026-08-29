@@ -1,14 +1,4 @@
 #!/usr/bin/env python3
-"""Direction-A TCP parity smoke peer: a stock RNS TCPServerInterface hosting ``hopspot.host``.
-
-A standalone stock ``RNS.Reticulum`` whose only interface is a ``TCPServerInterface``. It hosts a
-``hopspot.host`` SINGLE destination with ``PROVE_ALL`` and announces it every two seconds, so a Prns
-client that dials in hears the announce, sends the destination a single packet, and receives the proof
-back over the same wire — the stock-side counterpart of ``rns_tcp_client_peer.py``.
-
-Env: ``PRNS_TCP_LISTEN_PORT`` is the port the stock server listens on.
-Prints ``SERVER_UP`` once listening and ``RECEIVED <len>`` for each delivered single.
-"""
 
 import os
 import sys
@@ -16,8 +6,10 @@ import tempfile
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
 PORT = os.environ["PRNS_TCP_LISTEN_PORT"]
+EXPECTED_FROM_PRNS = b"prns-tcp-parity-ping"
 
 CONFIG = f"""[reticulum]
   enable_transport = No
@@ -37,14 +29,17 @@ CONFIG = f"""[reticulum]
 
 
 def on_packet(data, packet):
-    print(f"RECEIVED {len(data)}", flush=True)
+    if data != EXPECTED_FROM_PRNS:
+        print(f"RECEIVED_MISMATCH len={len(data)}", flush=True)
+        return
+    print("STOCK_TCP_SERVER_OK received=1", flush=True)
 
 
 def main() -> int:
     configdir = tempfile.mkdtemp(prefix="rns-tcpserver-")
     with open(os.path.join(configdir, "config"), "w") as handle:
         handle.write(CONFIG)
-    RNS.Reticulum(configdir=configdir, loglevel=RNS.LOG_WARNING)
+    start_reference_reticulum(configdir=configdir, loglevel=RNS.LOG_WARNING)
 
     identity = RNS.Identity()
     destination = RNS.Destination(

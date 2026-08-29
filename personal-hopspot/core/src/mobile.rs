@@ -1,12 +1,9 @@
-use embedded_graphics::geometry::{OriginDimensions, Size};
-use embedded_graphics::pixelcolor::BinaryColor;
-use embedded_graphics::prelude::*;
-use embedded_graphics::Pixel;
+use embedded_graphics::geometry::Point;
 
-use crate::{InputEvent, UiAction};
+use crate::{face_64x128, InputEvent, UiAction};
 
-pub const MOBILE_PANEL_WIDTH: usize = 64;
-pub const MOBILE_PANEL_HEIGHT: usize = 128;
+pub const MOBILE_PANEL_WIDTH: usize = face_64x128::WIDTH as usize;
+pub const MOBILE_PANEL_HEIGHT: usize = face_64x128::HEIGHT as usize;
 pub const MOBILE_PIXEL_COUNT: usize = MOBILE_PANEL_WIDTH * MOBILE_PANEL_HEIGHT;
 pub const MOBILE_RGBA_BYTES: usize = MOBILE_PIXEL_COUNT * 4;
 pub const MOBILE_LIT_RGBA: [u8; 4] = [0x4a, 0x9e, 0xff, 0xff];
@@ -56,7 +53,7 @@ impl MobileActionCode {
             UiAction::Announce => Self::Announce,
             UiAction::CopySharedInstanceConfig => Self::CopySharedInstanceConfig,
             UiAction::None
-            | UiAction::DisplayOff
+            | UiAction::BlankDisplay
             | UiAction::ToggleDisplayAutoOff
             | UiAction::Sleep
             | UiAction::Wake
@@ -141,67 +138,25 @@ impl MobileEngineFailure {
     }
 }
 
-pub struct MobileRgbaFrameBuffer {
-    lit: [bool; MOBILE_PIXEL_COUNT],
-}
-
-impl MobileRgbaFrameBuffer {
-    pub const fn new() -> Self {
-        Self {
-            lit: [false; MOBILE_PIXEL_COUNT],
-        }
-    }
-
-    pub fn clear(&mut self) {
-        self.lit = [false; MOBILE_PIXEL_COUNT];
-    }
-
-    pub fn expand_rgba(&self, out: &mut [u8]) {
-        for (lit, chunk) in self.lit.iter().zip(out.as_chunks_mut::<4>().0.iter_mut()) {
-            chunk.copy_from_slice(if *lit {
-                &MOBILE_LIT_RGBA
-            } else {
-                &MOBILE_DARK_RGBA
-            });
-        }
-    }
-}
-
-impl Default for MobileRgbaFrameBuffer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl OriginDimensions for MobileRgbaFrameBuffer {
-    fn size(&self) -> Size {
-        Size::new(MOBILE_PANEL_WIDTH as u32, MOBILE_PANEL_HEIGHT as u32)
-    }
-}
-
-impl DrawTarget for MobileRgbaFrameBuffer {
-    type Color = BinaryColor;
-    type Error = core::convert::Infallible;
-
-    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
-    where
-        I: IntoIterator<Item = Pixel<Self::Color>>,
-    {
-        for Pixel(point, color) in pixels {
-            if (0..MOBILE_PANEL_WIDTH as i32).contains(&point.x)
-                && (0..MOBILE_PANEL_HEIGHT as i32).contains(&point.y)
-            {
-                let index = point.y as usize * MOBILE_PANEL_WIDTH + point.x as usize;
-                self.lit[index] = color.is_on();
-            }
-        }
-        Ok(())
+pub fn expand_face_rgba(frame: &face_64x128::Frame, out: &mut [u8; MOBILE_RGBA_BYTES]) {
+    for (index, chunk) in out.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        let point = Point::new(
+            (index % MOBILE_PANEL_WIDTH) as i32,
+            (index / MOBILE_PANEL_WIDTH) as i32,
+        );
+        chunk.copy_from_slice(if frame.pixel_is_on(point) {
+            &MOBILE_LIT_RGBA
+        } else {
+            &MOBILE_DARK_RGBA
+        });
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use embedded_graphics::pixelcolor::BinaryColor;
+    use embedded_graphics::prelude::*;
     use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 
     #[test]
@@ -263,14 +218,14 @@ mod tests {
 
     #[test]
     fn a_drawn_rectangle_lands_in_the_expanded_buffer() {
-        let mut frame = MobileRgbaFrameBuffer::new();
+        let mut frame = face_64x128::Frame::new();
         Rectangle::new(Point::new(0, 0), Size::new(2, 2))
             .into_styled(PrimitiveStyle::with_fill(BinaryColor::On))
             .draw(&mut frame)
             .unwrap();
 
         let mut out = [0u8; MOBILE_RGBA_BYTES];
-        frame.expand_rgba(&mut out);
+        expand_face_rgba(&frame, &mut out);
 
         assert_eq!(&out[0..4], &MOBILE_LIT_RGBA);
         let below = (2 * MOBILE_PANEL_WIDTH) * 4;
@@ -279,7 +234,7 @@ mod tests {
 
     #[test]
     fn out_of_bounds_pixels_are_dropped() {
-        let mut frame = MobileRgbaFrameBuffer::new();
+        let mut frame = face_64x128::Frame::new();
         frame
             .draw_iter([
                 Pixel(Point::new(-1, -1), BinaryColor::On),
@@ -289,7 +244,7 @@ mod tests {
             .unwrap();
 
         let mut out = [0u8; MOBILE_RGBA_BYTES];
-        frame.expand_rgba(&mut out);
+        expand_face_rgba(&frame, &mut out);
         assert!(out
             .as_chunks::<4>()
             .0

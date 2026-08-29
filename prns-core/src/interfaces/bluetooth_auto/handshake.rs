@@ -259,14 +259,25 @@ pub fn is_keeper(
         == we_should_be_central(l2cap_arrangement, ours, our_endpoint, theirs)
 }
 
+/// True when this handshake landed in the wrong GATT role for an `Opens(E)` arrangement.
+///
+/// The designated opener must be GATT central to open CoC. Either side may dial for discovery,
+/// but a settle in the wrong role must drop so the opener can dial (or re-dial) as central:
+/// - opener stuck as listener/peripheral → drop and dial
+/// - non-opener who dialed (wrong central) → drop and wait for the opener's dial
 pub fn needs_redial(
     l2cap_arrangement: L2capArrangement,
     our_role: HandshakeRole,
     our_endpoint: Endpoint,
 ) -> bool {
-    let we_open =
-        matches!(l2cap_arrangement, L2capArrangement::Opens(opener) if opener == our_endpoint);
-    we_open && matches!(our_role, HandshakeRole::Listener)
+    match l2cap_arrangement {
+        L2capArrangement::Opens(opener) => {
+            let we_open = opener == our_endpoint;
+            (we_open && matches!(our_role, HandshakeRole::Listener))
+                || (!we_open && matches!(our_role, HandshakeRole::Dialer))
+        }
+        L2capArrangement::GattOnly | L2capArrangement::EitherOpens => false,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

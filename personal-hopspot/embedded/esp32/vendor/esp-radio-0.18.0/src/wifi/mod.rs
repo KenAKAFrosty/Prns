@@ -7,8 +7,8 @@
 #![doc = concat!("- Station mode (aka STA mode or Wi-Fi client mode). ", chip_pretty!(), " connects to an access point.")]
 #![doc = concat!("- AP mode (aka Soft-AP mode or Access Point mode). Stations connect to the ", chip_pretty!(),".")]
 #![doc = concat!("- Station/AP-coexistence mode (", chip_pretty!(), " is concurrently an access point and a station connected to another access point).")]
-//! - Various security modes for the above (WPA, WPA2, ... Please note that WPA3 is currently not
-//!   supported)
+//! - Various security modes for the above. WPA3 availability depends on the chip-specific radio
+//!   archive; the Prns ESP32-S3 archive supports WPA3-SAE.
 //! - Scanning for access points (active & passive scanning).
 //! - Promiscuous mode for monitoring of IEEE802.11 Wi-Fi packets.
 //!
@@ -373,6 +373,28 @@ impl Config {
 }
 
 impl AuthenticationMethod {
+    const fn requires_pmf(self) -> bool {
+        match self {
+            Self::Wpa3Personal
+            | Self::Owe
+            | Self::Wpa3EntSuiteB192Bit
+            | Self::Wpa3ExtPsk
+            | Self::Wpa3ExtPskMixed
+            | Self::Dpp
+            | Self::Wpa3Enterprise => true,
+            Self::None
+            | Self::Wep
+            | Self::Wpa
+            | Self::Wpa2Personal
+            | Self::WpaWpa2Personal
+            | Self::Wpa2Enterprise
+            | Self::Wpa2Wpa3Personal
+            | Self::WapiPersonal
+            | Self::Wpa2Wpa3Enterprise
+            | Self::WpaEnterprise => false,
+        }
+    }
+
     fn to_raw(self) -> wifi_auth_mode_t {
         match self {
             AuthenticationMethod::None => include::wifi_auth_mode_t_WIFI_AUTH_OPEN,
@@ -449,13 +471,21 @@ impl AuthenticationMethod {
             // we const-assert we know all the auth-methods the wifi driver knows and it shouldn't
             // return anything else.
             //
-            // In fact from observation the drivers will return
-            // `wifi_auth_mode_t_WIFI_AUTH_OPEN` if the method is unsupported (e.g. any WPA3 in our
-            // case, since the supplicant isn't compiled to support it)
+            // From observation, the driver can report `wifi_auth_mode_t_WIFI_AUTH_OPEN` when a
+            // scanned authentication method is unsupported by the linked chip-specific supplicant.
             _ => AuthenticationMethod::None,
         }
     }
 }
+
+const _: () = {
+    assert!(AuthenticationMethod::Wpa3Personal.requires_pmf());
+    assert!(AuthenticationMethod::Owe.requires_pmf());
+    assert!(AuthenticationMethod::Wpa3Enterprise.requires_pmf());
+    assert!(!AuthenticationMethod::Wpa2Personal.requires_pmf());
+    assert!(!AuthenticationMethod::Wpa2Wpa3Personal.requires_pmf());
+    assert!(!AuthenticationMethod::Wpa2Wpa3Enterprise.requires_pmf());
+};
 
 /// Wi-Fi Mode (Station and/or AccessPoint).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -3322,9 +3352,9 @@ ignored."
                 ftm_responder: false,
                 pmf_cfg: wifi_pmf_config_t {
                     capable: true,
-                    required: false,
+                    required: config.pmf_required || config.auth_method.requires_pmf(),
                 },
-                sae_pwe_h2e: 0,
+                sae_pwe_h2e: wifi_sae_pwe_method_t_WPA3_SAE_PWE_BOTH,
                 csa_count: 3,
                 dtim_period: config.dtim_period,
                 transition_disable: 0,
@@ -3368,15 +3398,15 @@ ignored."
                 },
                 pmf_cfg: wifi_pmf_config_t {
                     capable: true,
-                    required: false,
+                    required: config.pmf_required || config.auth_method.requires_pmf(),
                 },
-                sae_pwe_h2e: 3,
+                sae_pwe_h2e: wifi_sae_pwe_method_t_WPA3_SAE_PWE_BOTH,
                 _bitfield_align_1: [0; 0],
                 _bitfield_1: __BindgenBitfieldUnit::new([0; 4]),
                 failure_retry_cnt: config.failure_retry_cnt,
                 _bitfield_align_2: [0; 0],
                 _bitfield_2: __BindgenBitfieldUnit::new([0; 4]),
-                sae_pk_mode: 0, // ??
+                sae_pk_mode: wifi_sae_pk_mode_t_WPA3_SAE_PK_MODE_DISABLED,
                 sae_h2e_identifier: [0; 32],
             },
         };
@@ -3421,7 +3451,7 @@ ignored."
                 failure_retry_cnt: config.failure_retry_cnt,
                 _bitfield_align_2: [0; 0],
                 _bitfield_2: __BindgenBitfieldUnit::new([0; 4]),
-                sae_pk_mode: 0, // ??
+                sae_pk_mode: wifi_sae_pk_mode_t_WPA3_SAE_PK_MODE_DISABLED,
                 sae_h2e_identifier: [0; 32],
             },
         };

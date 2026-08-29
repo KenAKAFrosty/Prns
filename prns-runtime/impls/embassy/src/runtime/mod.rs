@@ -1,6 +1,7 @@
 mod embedded_persistence;
 mod interface_store;
 mod node_facade;
+mod remote_control_access;
 mod request_runner;
 mod shared_flash;
 
@@ -18,6 +19,7 @@ pub use node_facade::Fleet as EmbassyFleet;
 pub use node_facade::{
     minimum_manifold_notification_capacity, CompletionPool, Fleet, InboundDeliveryError,
     InterfaceLane, LaneClaimError, ManifoldLaneSet, ManifoldWiring, OutboundFrame, PrnsNode,
-    PrnsNodeHandle, RequestRoutingCapacity, StaticManifoldLane, SupervisorLane,
+    PrnsNodeHandle, RemoteControlHandle, RequestResponseData, RequestRoutingCapacity,
+    StaticManifoldLane, SupervisorLane,
 };
 pub use shared_flash::SharedNorFlash;

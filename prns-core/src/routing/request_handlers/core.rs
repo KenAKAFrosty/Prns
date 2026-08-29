@@ -26,11 +26,11 @@ impl RequestPathHash {
     }
 }
 
-/// RNS 1.4.2 `Destination.ALLOW_NONE / ALLOW_ALL / ALLOW_LIST`. `AllowNone` is the reference's registration default: the handler exists but answers no one until the policy says otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequestPolicy {
     AllowNone,
     AllowAll,
+    RequireIdentified,
     AllowList,
 }
 
@@ -118,6 +118,17 @@ impl<C: RequestHandlerTable> RequestHandlers<C> {
         true
     }
 
+    pub(crate) fn unregister_destination(&mut self, destination: &DestinationHash) {
+        while let Some(slot) = self
+            .table
+            .destinations()
+            .iter()
+            .position(|candidate| candidate == destination)
+        {
+            self.table.remove_at(slot);
+        }
+    }
+
     pub fn allow(
         &mut self,
         destination: &DestinationHash,
@@ -154,7 +165,6 @@ impl<C: RequestHandlerTable> RequestHandlers<C> {
         Ok(())
     }
 
-    /// RNS 1.4.2 `Link.handle_request`'s gate, exactly: no handler refuses, `AllowNone` refuses, `AllowAll` permits, `AllowList` permits only a link whose peer has identified as a listed identity.
     pub fn permits(
         &self,
         destination: &DestinationHash,
@@ -167,6 +177,7 @@ impl<C: RequestHandlerTable> RequestHandlers<C> {
         match self.table.policies()[slot] {
             RequestPolicy::AllowNone => false,
             RequestPolicy::AllowAll => true,
+            RequestPolicy::RequireIdentified => remote_identity.is_some(),
             RequestPolicy::AllowList => remote_identity
                 .is_some_and(|identity| self.table.allowed_contains_at(slot, identity)),
         }
@@ -220,6 +231,12 @@ mod tests {
             !handlers.permits(&dest(1), &RequestPathHash::of("/other"), None),
             "an unregistered path stays silent",
         );
+
+        handlers
+            .register(dest(1), path, RequestPolicy::RequireIdentified)
+            .unwrap();
+        assert!(!handlers.permits(&dest(1), &path, None));
+        assert!(handlers.permits(&dest(1), &path, Some(&identity(0xAA))));
 
         handlers
             .register(dest(1), path, RequestPolicy::AllowList)
@@ -312,5 +329,37 @@ mod tests {
             handlers.disallow(&dest(1), &path, &identity(1)),
             Err(RequestHandlerError::NoSuchHandler),
         );
+    }
+
+    fn assert_destination_unregistration_preserves_other_handlers<
+        C: RequestHandlerTable + Default,
+    >() {
+        let mut handlers = RequestHandlers::<C>::default();
+        let first = RequestPathHash::of("/first");
+        let second = RequestPathHash::of("/second");
+        let retained = RequestPathHash::of("/retained");
+        handlers
+            .register(dest(1), first, RequestPolicy::AllowAll)
+            .unwrap();
+        handlers
+            .register(dest(2), retained, RequestPolicy::AllowAll)
+            .unwrap();
+        handlers
+            .register(dest(1), second, RequestPolicy::AllowAll)
+            .unwrap();
+
+        handlers.unregister_destination(&dest(1));
+        handlers.unregister_destination(&dest(1));
+
+        assert_eq!(handlers.len(), 1);
+        assert!(!handlers.permits(&dest(1), &first, None));
+        assert!(!handlers.permits(&dest(1), &second, None));
+        assert!(handlers.permits(&dest(2), &retained, None));
+    }
+
+    #[test]
+    fn destination_unregistration_preserves_fixed_and_heap_column_alignment() {
+        assert_destination_unregistration_preserves_other_handlers::<FixedRequestHandlerTable<4>>();
+        assert_destination_unregistration_preserves_other_handlers::<HeapRequestHandlerTable>();
     }
 }

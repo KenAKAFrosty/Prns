@@ -3,17 +3,9 @@ import sys
 import time
 
 import RNS
+from rns_protocol_evidence import start_reference_reticulum
 
-EXPECTED_RNS_VERSION = "1.4.2"
 RATE_HASH = bytes.fromhex("33333333333333333333333333333333")
-
-
-def require_reference_version():
-    version = getattr(RNS, "__version__", "")
-    if version != EXPECTED_RNS_VERSION:
-        raise RuntimeError(
-            f"expected RNS {EXPECTED_RNS_VERSION}, got {version!r}"
-        )
 
 
 def prepare(
@@ -67,7 +59,7 @@ def prepare(
 
 
 def serve(config_dir):
-    RNS.Reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     now = time.time()
     RNS.Transport.announce_rate_table[RATE_HASH] = {
         "last": now - 10,
@@ -83,7 +75,7 @@ def serve(config_dir):
 
 
 def peer(config_dir):
-    RNS.Reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     identity = RNS.Identity()
     destination = RNS.Destination(
         identity,
@@ -106,7 +98,6 @@ def identity_hash(path):
 
 
 def main():
-    require_reference_version()
     command = sys.argv[1]
     if command == "prepare":
         prepare(*sys.argv[2:])

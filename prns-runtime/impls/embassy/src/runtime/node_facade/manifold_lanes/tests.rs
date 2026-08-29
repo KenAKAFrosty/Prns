@@ -68,6 +68,30 @@ fn a_lane_set_rejects_duplicate_interface_ids_without_consuming_storage() {
 }
 
 #[test]
+fn an_accounted_lane_rejects_a_mismatched_status_without_consuming_storage() {
+    static LANE: StaticManifoldLane<Mtx, FRAME, 1> = StaticManifoldLane::new();
+    static STATUS: EmbassyInterfaceStatus = EmbassyInterfaceStatus::new_accounted(
+        InterfaceId::new([0x6B; 8]),
+        crate::interfaces::ConnectionState::Initializing,
+    );
+    let descriptor_id = InterfaceId::new([0x5A; 8]);
+    let mut lanes: ManifoldLaneSet<Mtx, 1, 1> = ManifoldLaneSet::new();
+
+    assert_eq!(
+        lanes
+            .claim_accounted_interface(&LANE, descriptor(descriptor_id, FRAME), &STATUS)
+            .err(),
+        Some(LaneClaimError::FrameAccountingIdMismatch {
+            descriptor: descriptor_id,
+            status: InterfaceId::new([0x6B; 8]),
+        })
+    );
+    assert!(lanes
+        .claim_interface(&LANE, descriptor(descriptor_id, FRAME))
+        .is_ok());
+}
+
+#[test]
 fn heterogeneous_lanes_pair_interface_and_manifold_traffic() {
     const SMALL_FRAME: usize = 16;
     static LANE: StaticManifoldLane<Mtx, SMALL_FRAME, 1> = StaticManifoldLane::new();

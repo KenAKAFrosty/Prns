@@ -2,17 +2,16 @@ use std::fmt;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use personal_rns::engine::{
-    AnnounceNowFailure, EstablishLinkFailure, IdentifyFailure, SendRequestFailure,
-};
+use personal_rns::engine::{EstablishLinkFailure, IdentifyFailure, SendRequestFailure};
 use personal_rns::rnx::RnxCodecError;
 use personal_rns::routing::announce::ExpandNameError;
 use personal_rns::routing::request_handlers::RequestHandlerError;
-use personal_rns::runtime::{IdentitySecretFileError, NodeRunError, SendError};
+use personal_rns::runtime::{AnnounceNowError, IdentitySecretFileError, NodeRunError, SendError};
 use personal_rns::shared_instance::ExistingSharedInstanceUnavailable;
 use personal_rns::wire::DestinationHash;
 
 use crate::utilities::configuration::UtilityConfigurationError;
+use crate::utilities::remote_control::TransientRemoteControlIdentityError;
 use crate::utilities::session::{UtilityNodeSessionError, UtilityNodeStopped, UtilityPathError};
 
 use super::identity::pretty_hash;
@@ -20,6 +19,7 @@ use super::identity::pretty_hash;
 #[derive(Debug)]
 pub enum RnxError {
     Configuration(UtilityConfigurationError),
+    RemoteControlIdentityUnavailable(TransientRemoteControlIdentityError),
     Identity {
         path: PathBuf,
         source: IdentitySecretFileError,
@@ -37,6 +37,7 @@ pub enum RnxError {
     NodeStopped(UtilityNodeStopped),
     Path(UtilityPathError),
     Link(SendError<EstablishLinkFailure>),
+    LinkTimeout(Duration),
     Identify(SendError<IdentifyFailure>),
     Request(SendError<SendRequestFailure>),
     ResponseTimeout(Duration),
@@ -45,7 +46,7 @@ pub enum RnxError {
     RemoteCouldNotExecute,
     SharedInstance(ExistingSharedInstanceUnavailable),
     RequestAcl(RequestHandlerError),
-    Announce(SendError<AnnounceNowFailure>),
+    Announce(AnnounceNowError),
     ListenerStopped,
     ListenerPanicked(NodeRunError),
     Stdin(std::io::Error),
@@ -57,6 +58,12 @@ impl fmt::Display for RnxError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Configuration(source) => source.fmt(formatter),
+            Self::RemoteControlIdentityUnavailable(source) => {
+                write!(
+                    formatter,
+                    "could not create RNX RemoteControl identities: {source}"
+                )
+            }
             Self::Identity { path, source } => {
                 write!(
                     formatter,
@@ -88,6 +95,11 @@ impl fmt::Display for RnxError {
             Self::NodeStopped(source) => source.fmt(formatter),
             Self::Path(source) => source.fmt(formatter),
             Self::Link(source) => write!(formatter, "link establishment failed: {source:?}"),
+            Self::LinkTimeout(timeout) => write!(
+                formatter,
+                "link establishment timed out after {} seconds",
+                timeout.as_secs_f64()
+            ),
             Self::Identify(source) => write!(formatter, "link identification failed: {source:?}"),
             Self::Request(source) => write!(formatter, "execution request failed: {source:?}"),
             Self::ResponseTimeout(timeout) => write!(
@@ -123,12 +135,13 @@ impl RnxError {
                 241
             }
             Self::Path(_) => 242,
-            Self::Link(_) => 243,
+            Self::Link(_) | Self::LinkTimeout(_) => 243,
             Self::Identify(_) | Self::Request(_) => 244,
             Self::ResponseTimeout(_) => 246,
             Self::ResponseCodec(_) => 247,
             Self::RemoteCouldNotExecute => 248,
             Self::Configuration(_)
+            | Self::RemoteControlIdentityUnavailable(_)
             | Self::Identity { .. }
             | Self::HomeUnavailable(_)
             | Self::Io { .. }

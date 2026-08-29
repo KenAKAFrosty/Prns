@@ -18,6 +18,7 @@ use crate::routing::links::resources::table::{IncomingResources, OutgoingResourc
 use crate::routing::links::resources::ResourceMemoryLimits;
 use crate::routing::links::table::Links;
 use crate::routing::links::transported::TransportedLinks;
+use crate::routing::links::LinkId;
 use crate::routing::path_requests::interface_path_request_limit::InterfacePathRequestLimits;
 use crate::routing::path_requests::pending::PendingPathRequests;
 use crate::routing::path_requests::recent::RecentPathRequests;
@@ -33,7 +34,7 @@ use crate::routing::RoutingTable;
 #[cfg(feature = "alloc")]
 use crate::storage::GrowableHeap;
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
-use crate::wire::TransportId;
+use crate::wire::{DestinationHash, TransportId};
 use core::mem::MaybeUninit;
 use zeroize::Zeroizing;
 
@@ -533,6 +534,13 @@ impl<S: StorageLayout> EngineState<S> {
 
     pub fn link_count_via(&self, interface: InterfaceId) -> usize {
         self.links.link_count_via(interface)
+    }
+
+    pub fn responder_links_for_destination<'a>(
+        &'a self,
+        destination: &'a DestinationHash,
+    ) -> impl Iterator<Item = LinkId> + 'a {
+        self.links.responder_links_for_destination(destination)
     }
 
     pub fn transported_link_count_via(&self, interface: InterfaceId) -> usize {

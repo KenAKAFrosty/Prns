@@ -11,9 +11,11 @@ pub use prns_core::interface_discovery;
 #[cfg(feature = "rnx")]
 pub use prns_core::rnx;
 pub use prns_core::{
-    crypto, engine, identity, interfaces, persistence, rncp, routing, storage, units, wire,
+    crypto, engine, identity, interfaces, persistence, remote_control, rncp, routing, storage,
+    units, wire,
 };
 
+pub use prns_core::remote_control::{RemoteControlEndpoint, REMOTE_CONTROL_REQUEST_ENDPOINT_ID};
 pub use runtime::node_introspection;
 pub mod manifold;
 #[cfg(feature = "resource-bzip2")]

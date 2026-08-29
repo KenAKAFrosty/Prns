@@ -34,7 +34,7 @@ pub(in crate::s3) fn build_tcp(
     let id = TcpClient::interface_id(channel_tag);
     let status: &'static EmbassyInterfaceStatus = mk_static!(
         EmbassyInterfaceStatus,
-        EmbassyInterfaceStatus::new(id, ConnectionState::Initializing)
+        EmbassyInterfaceStatus::new_accounted(id, ConnectionState::Initializing)
     );
     let rx_buffer: &'static mut [u8] =
         crate::storage::allocate_psram_slice(TCP_SOCKET_BUFFER_BYTES, 0u8);

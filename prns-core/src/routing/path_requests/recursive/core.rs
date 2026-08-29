@@ -1,8 +1,9 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::wire::DestinationHash;
-/// RNS 1.4.2 `Transport.PATH_REQUEST_TIMEOUT` (15s)
-pub const RECURSIVE_PATH_REQUEST_TIMEOUT_MS: u64 = 15_000;
+/// The ordinary recursive path-request lifetime, retained as an adaptive floor.
+pub const RECURSIVE_PATH_REQUEST_TIMEOUT_MS: u64 =
+    crate::routing::timing::PATH_REQUEST_TIMEOUT_FLOOR_MS;
 
 pub trait RecursivePathRequestTable {
     fn capacity(&self) -> usize;

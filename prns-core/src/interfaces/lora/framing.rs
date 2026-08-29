@@ -79,6 +79,21 @@ pub struct ReassembledPacket<'a> {
     pub phy: PacketPhyStats,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoRaReassemblyError {
+    EmptyAirFrame,
+    CapacityExceeded,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum LoRaReassemblyOutcome<'a> {
+    AwaitingSecond,
+    Delivered(ReassembledPacket<'a>),
+    ReplacedPartialAndAwaitingSecond,
+    DeliveredAfterReplacingPartial(ReassembledPacket<'a>),
+    Rejected(LoRaReassemblyError),
+}
+
 impl<const CAP: usize> LoRaReassembler<CAP> {
     pub const fn new() -> Self {
         Self {
@@ -87,25 +102,35 @@ impl<const CAP: usize> LoRaReassembler<CAP> {
         }
     }
 
-    pub fn feed(&mut self, frame: &[u8]) -> Option<&[u8]> {
-        let packet = self.feed_with_phy(frame, PacketPhyStats::default())?;
-        Some(packet.bytes)
+    pub fn feed(&mut self, frame: &[u8]) -> LoRaReassemblyOutcome<'_> {
+        self.feed_with_phy(frame, PacketPhyStats::default())
     }
 
     pub fn feed_with_phy(
         &mut self,
         frame: &[u8],
         phy: PacketPhyStats,
-    ) -> Option<ReassembledPacket<'_>> {
-        let parsed = decode_air_frame(frame)?;
+    ) -> LoRaReassemblyOutcome<'_> {
+        let Some(parsed) = decode_air_frame(frame) else {
+            return LoRaReassemblyOutcome::Rejected(LoRaReassemblyError::EmptyAirFrame);
+        };
         if !parsed.is_split_fragment {
+            let replaced_partial = matches!(self.state, ReassemblyState::AwaitingSecond { .. });
             self.buffer.clear();
-            let _ = self.buffer.extend_from_slice(parsed.payload);
+            if self.buffer.extend_from_slice(parsed.payload).is_err() {
+                self.state = ReassemblyState::Idle;
+                return LoRaReassemblyOutcome::Rejected(LoRaReassemblyError::CapacityExceeded);
+            }
             self.state = ReassemblyState::Idle;
-            return Some(ReassembledPacket {
+            let packet = ReassembledPacket {
                 bytes: &self.buffer,
                 phy,
-            });
+            };
+            return if replaced_partial {
+                LoRaReassemblyOutcome::DeliveredAfterReplacingPartial(packet)
+            } else {
+                LoRaReassemblyOutcome::Delivered(packet)
+            };
         }
 
         let ReassemblyState::AwaitingSecond {
@@ -113,25 +138,42 @@ impl<const CAP: usize> LoRaReassembler<CAP> {
             phy: first_phy,
         } = self.state
         else {
-            self.begin_split(parsed.sequence, parsed.payload, phy);
-            return None;
+            return match self.begin_split(parsed.sequence, parsed.payload, phy) {
+                Ok(()) => LoRaReassemblyOutcome::AwaitingSecond,
+                Err(error) => LoRaReassemblyOutcome::Rejected(error),
+            };
         };
         if sequence != parsed.sequence {
-            self.begin_split(parsed.sequence, parsed.payload, phy);
-            return None;
+            return match self.begin_split(parsed.sequence, parsed.payload, phy) {
+                Ok(()) => LoRaReassemblyOutcome::ReplacedPartialAndAwaitingSecond,
+                Err(error) => LoRaReassemblyOutcome::Rejected(error),
+            };
         }
-        let _ = self.buffer.extend_from_slice(parsed.payload);
+        if self.buffer.extend_from_slice(parsed.payload).is_err() {
+            self.buffer.clear();
+            self.state = ReassemblyState::Idle;
+            return LoRaReassemblyOutcome::Rejected(LoRaReassemblyError::CapacityExceeded);
+        }
         self.state = ReassemblyState::Idle;
-        Some(ReassembledPacket {
+        LoRaReassemblyOutcome::Delivered(ReassembledPacket {
             bytes: &self.buffer,
             phy: average_phy(first_phy, phy),
         })
     }
 
-    fn begin_split(&mut self, sequence: u8, payload: &[u8], phy: PacketPhyStats) {
+    fn begin_split(
+        &mut self,
+        sequence: u8,
+        payload: &[u8],
+        phy: PacketPhyStats,
+    ) -> Result<(), LoRaReassemblyError> {
         self.buffer.clear();
-        let _ = self.buffer.extend_from_slice(payload);
+        if self.buffer.extend_from_slice(payload).is_err() {
+            self.state = ReassemblyState::Idle;
+            return Err(LoRaReassemblyError::CapacityExceeded);
+        }
         self.state = ReassemblyState::AwaitingSecond { sequence, phy };
+        Ok(())
     }
 }
 
@@ -222,7 +264,13 @@ mod tests {
         let mut out = [0u8; 16];
         let n = encode_air_frame_part(&[0xAA, 0xBB, 0xCC], 0x10, 0, &mut out).unwrap();
         let mut r = LoRaReassembler::<512>::new();
-        assert_eq!(r.feed(&out[..n]), Some(&[0xAA, 0xBB, 0xCC][..]));
+        assert_eq!(
+            r.feed(&out[..n]),
+            LoRaReassemblyOutcome::Delivered(ReassembledPacket {
+                bytes: &[0xAA, 0xBB, 0xCC],
+                phy: PacketPhyStats::default(),
+            })
+        );
     }
 
     #[test]
@@ -233,8 +281,14 @@ mod tests {
         let n0 = encode_air_frame_part(&payload, 0x70, 0, &mut f0).unwrap();
         let n1 = encode_air_frame_part(&payload, 0x70, 1, &mut f1).unwrap();
         let mut r = LoRaReassembler::<512>::new();
-        assert_eq!(r.feed(&f0[..n0]), None);
-        assert_eq!(r.feed(&f1[..n1]), Some(&payload[..]));
+        assert_eq!(r.feed(&f0[..n0]), LoRaReassemblyOutcome::AwaitingSecond);
+        assert_eq!(
+            r.feed(&f1[..n1]),
+            LoRaReassemblyOutcome::Delivered(ReassembledPacket {
+                bytes: &payload,
+                phy: PacketPhyStats::default(),
+            })
+        );
     }
 
     #[test]
@@ -255,10 +309,13 @@ mod tests {
             snr: Some(SnrQuarterDb::new(5)),
             quality: None,
         };
-        assert_eq!(r.feed_with_phy(&f0[..n0], first_phy), None);
+        assert_eq!(
+            r.feed_with_phy(&f0[..n0], first_phy),
+            LoRaReassemblyOutcome::AwaitingSecond
+        );
         assert_eq!(
             r.feed_with_phy(&f1[..n1], second_phy),
-            Some(ReassembledPacket {
+            LoRaReassemblyOutcome::Delivered(ReassembledPacket {
                 bytes: &payload,
                 phy: PacketPhyStats {
                     rssi: Some(RssiDbm::new(-90)),
@@ -278,8 +335,14 @@ mod tests {
         let wn = encode_air_frame_part(&[0xEE; 4], 0x90, 0, &mut whole).unwrap();
 
         let mut r = LoRaReassembler::<512>::new();
-        assert_eq!(r.feed(&f0[..n0]), None);
-        assert_eq!(r.feed(&whole[..wn]), Some(&[0xEE; 4][..]));
+        assert_eq!(r.feed(&f0[..n0]), LoRaReassemblyOutcome::AwaitingSecond);
+        assert_eq!(
+            r.feed(&whole[..wn]),
+            LoRaReassemblyOutcome::DeliveredAfterReplacingPartial(ReassembledPacket {
+                bytes: &[0xEE; 4],
+                phy: PacketPhyStats::default(),
+            })
+        );
     }
 
     #[test]
@@ -294,9 +357,18 @@ mod tests {
         let bn1 = encode_air_frame_part(&b, 0x80, 1, &mut b1).unwrap();
 
         let mut r = LoRaReassembler::<512>::new();
-        assert_eq!(r.feed(&a0[..an0]), None);
-        assert_eq!(r.feed(&b0[..bn0]), None);
-        assert_eq!(r.feed(&b1[..bn1]), Some(&b[..]));
+        assert_eq!(r.feed(&a0[..an0]), LoRaReassemblyOutcome::AwaitingSecond);
+        assert_eq!(
+            r.feed(&b0[..bn0]),
+            LoRaReassemblyOutcome::ReplacedPartialAndAwaitingSecond
+        );
+        assert_eq!(
+            r.feed(&b1[..bn1]),
+            LoRaReassemblyOutcome::Delivered(ReassembledPacket {
+                bytes: &b,
+                phy: PacketPhyStats::default(),
+            })
+        );
     }
 
     #[test]
@@ -320,9 +392,23 @@ mod tests {
     }
 
     #[test]
-    fn decode_empty_frame_is_none() {
+    fn decode_empty_frame_is_rejected() {
         assert!(decode_air_frame(&[]).is_none());
-        assert_eq!(LoRaReassembler::<64>::new().feed(&[]), None);
+        assert_eq!(
+            LoRaReassembler::<64>::new().feed(&[]),
+            LoRaReassemblyOutcome::Rejected(LoRaReassemblyError::EmptyAirFrame)
+        );
+    }
+
+    #[test]
+    fn reassembler_rejects_a_frame_that_exceeds_its_capacity() {
+        let mut out = [0u8; 16];
+        let n = encode_air_frame_part(&[0xAA; 8], 0x10, 0, &mut out).unwrap();
+
+        assert_eq!(
+            LoRaReassembler::<4>::new().feed(&out[..n]),
+            LoRaReassemblyOutcome::Rejected(LoRaReassemblyError::CapacityExceeded)
+        );
     }
 
     proptest! {
@@ -345,11 +431,17 @@ mod tests {
                 prop_assert_eq!(parsed.is_split_fragment, split);
                 prop_assert_eq!(parsed.payload, &payload[start..end]);
 
-                let delivered = reassembler.feed(&out[..n]);
+                let outcome = reassembler.feed(&out[..n]);
                 if index + 1 == frame_count {
-                    prop_assert_eq!(delivered, Some(payload.as_slice()));
+                    prop_assert_eq!(
+                        outcome,
+                        LoRaReassemblyOutcome::Delivered(ReassembledPacket {
+                            bytes: payload.as_slice(),
+                            phy: PacketPhyStats::default(),
+                        })
+                    );
                 } else {
-                    prop_assert_eq!(delivered, None);
+                    prop_assert_eq!(outcome, LoRaReassemblyOutcome::AwaitingSecond);
                 }
             }
         }

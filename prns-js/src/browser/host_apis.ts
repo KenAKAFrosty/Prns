@@ -45,7 +45,7 @@ export type BrowserBluetoothRequestFilter = {
   services: readonly string[];
 };
 
-export type BrowserBluetoothDevice = {
+export type BrowserBluetoothDevice = EventTarget & {
   readonly gatt?: BrowserBluetoothRemoteGattServer;
 };
 
@@ -60,11 +60,17 @@ export type BrowserBluetoothRemoteGattService = {
 };
 
 export type BrowserBluetoothRemoteGattCharacteristic = EventTarget & {
+  readonly properties: BrowserBluetoothCharacteristicProperties;
   readonly value?: DataView;
   startNotifications(): Promise<BrowserBluetoothRemoteGattCharacteristic>;
   writeValue?(value: BufferSource): Promise<void>;
   writeValueWithResponse?(value: BufferSource): Promise<void>;
   writeValueWithoutResponse?(value: BufferSource): Promise<void>;
+};
+
+export type BrowserBluetoothCharacteristicProperties = {
+  readonly write: boolean;
+  readonly writeWithoutResponse: boolean;
 };
 
 export type BrowserBluetoothCharacteristicEvent = Event & {

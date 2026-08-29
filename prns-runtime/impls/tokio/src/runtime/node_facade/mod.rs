@@ -3,24 +3,29 @@ mod handle_capabilities;
 mod interface_lifecycle;
 mod node_lifecycle;
 mod persistence;
+mod remote_control;
 mod request_response;
 mod resource_admission;
 mod resource_transfer;
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 
 use crate::engine::{
-    AllowRequester, AllowRequesterFailure, AnnounceNow, AnnounceNowFailure, CloseLink, CommandId,
-    EstablishLink, EstablishLinkFailure, Identify, IdentifyFailure, IssuedCommand, LinkEstablished,
+    AllowRequester, AllowRequesterFailure, AnnounceNow, CloseLink, CommandId, EstablishLink,
+    EstablishLinkFailure, Identify, IdentifyFailure, IssuedCommand, LinkEstablished,
     PacketReceiptDelivered, PathFound, PathRequestId, PrnsCommand, RequestPath, RequestPathFailure,
-    SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload, SendToChannel,
-    SendToChannelBody, SendToChannelFailure, SendToLink, SendToLinkFailure, SendToLinkPayload,
-    Settlement, PATH_REQUEST_ID_LEN,
+    SendGroup, SendGroupFailure, SendGroupPayload, SendPlainPacket, SendPlainPacketFailure,
+    SendPlainPacketPayload, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
+    SendToChannel, SendToChannelBody, SendToChannelFailure, SendToLink, SendToLinkFailure,
+    SendToLinkPayload, SetRegisteredAnnounceAppData, Settlement, PATH_REQUEST_ID_LEN,
 };
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
@@ -31,6 +36,9 @@ use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 
+use super::remote_control_access::RemoteControlAccessSender;
+#[cfg(test)]
+use super::remote_control_access::{remote_control_access_lane, RemoteControlAccessReceiver};
 use super::request_endpoints::RespondToken;
 use super::{InterfaceStore, SendError};
 pub use byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
@@ -51,6 +59,7 @@ pub use persistence::{
     PreparedFlush, RatchetSeedReport, RegionFlush, RouteSeedProgress, RouteSeedReport, SaveOnLearn,
     SaveOnLearnWiring, TunnelSeedReport,
 };
+pub use remote_control::RemoteControlHandle;
 pub use request_response::{RequestOptions, ResponseSendError};
 pub use resource_admission::{ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor};
 pub use resource_transfer::{
@@ -58,17 +67,74 @@ pub use resource_transfer::{
     ResourceSendError, SegmentCompression, AUTO_COMPRESS_MAX_LEN,
 };
 
+#[cfg(test)]
+pub(crate) fn test_remote_control_service(
+) -> prns_core::remote_control::RemoteControlService<'static> {
+    use prns_core::identity::vault::IdentitySecretKey;
+    use prns_core::remote_control::{
+        RemoteControlControllerIdentitySecret, RemoteControlInitialAccess,
+        RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData,
+        RemoteControlSelfAnnouncement, RemoteControlService, RemoteControlTargetIdentitySecret,
+    };
+
+    let identity_secrets = RemoteControlNodeIdentitySecrets::new(
+        RemoteControlControllerIdentitySecret::from(IdentitySecretKey::new(
+            [0x71; crate::identity::IDENTITY_SECRET_KEY_LEN],
+        )),
+        RemoteControlTargetIdentitySecret::from(IdentitySecretKey::new(
+            [0x72; crate::identity::IDENTITY_SECRET_KEY_LEN],
+        )),
+    )
+    .expect("distinct test identities");
+    RemoteControlService::new(
+        identity_secrets,
+        RemoteControlPublicAppData::try_from(b"".as_slice()).expect("empty app data"),
+        RemoteControlInitialAccess::Nobody,
+        RemoteControlSelfAnnouncement::Unavailable,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn test_remote_control_grant(
+    request: prns_core::remote_control::RemoteControlRequestKind,
+) -> prns_core::remote_control::RemoteControlControllerGrant {
+    let identities = test_remote_control_service()
+        .configuration()
+        .unwrap()
+        .identity_secrets()
+        .identities();
+    prns_core::remote_control::RemoteControlControllerGrant::new(
+        *identities.controller(),
+        prns_core::remote_control::RemoteControlRequestSet::only(request),
+    )
+    .unwrap()
+}
+
 /// A cloneable, `Send` handle to a running node: the proactive surface. Every [`CommandId`] is minted from one counter, so a fire-and-forget [`issue`](Self::issue) can never collide with an awaited [`send_single_packet`](Self::send_single_packet) or a runner's respond.
 #[derive(Clone)]
 pub struct PrnsNodeHandle {
     commands: UnboundedSender<HostCommand>,
     ids: Arc<AtomicU64>,
+    attachment_epochs: Arc<AtomicU64>,
     notify_tx: UnboundedSender<InterfaceId>,
     iface_build: UnboundedSender<DriverMsg>,
     interfaces: Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
     store: InterfaceStore,
     resource_admission: resource_admission::ResourceAdmissionRegistry,
     entropy: crate::manifold::driver::TokioEntropy,
+    timing_oracle: Arc<Mutex<Option<Arc<dyn BitrateTimingOracle>>>>,
+    pub(super) remote_control_access: RemoteControlAccessSender,
+}
+
+/// An optional shared-instance timing source. Directly attached nodes do not need one;
+/// clients install the daemon-backed implementation when joining the local bus.
+pub trait BitrateTimingOracle: Send + Sync {
+    fn first_hop_timeout(
+        &self,
+        destination: DestinationHash,
+    ) -> Pin<Box<dyn Future<Output = Option<Duration>> + Send + '_>>;
+
+    fn medium_path_timeout(&self) -> Pin<Box<dyn Future<Output = Option<Duration>> + Send + '_>>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,22 +164,84 @@ impl std::error::Error for RuntimeRequestHandlerError {}
 impl PrnsNodeHandle {
     #[cfg(test)]
     pub(crate) fn over(commands: UnboundedSender<HostCommand>) -> Self {
+        Self::over_with_remote_control_access(commands).0
+    }
+
+    #[cfg(test)]
+    pub(super) fn over_with_remote_control_access(
+        commands: UnboundedSender<HostCommand>,
+    ) -> (Self, RemoteControlAccessReceiver) {
         let (notify_tx, _notify_rx) = tokio::sync::mpsc::unbounded_channel();
         let (iface_build, _iface_build_rx) = tokio::sync::mpsc::unbounded_channel();
-        Self {
-            commands,
-            ids: Arc::new(AtomicU64::new(0)),
-            notify_tx,
-            iface_build,
-            interfaces: Arc::new(Mutex::new(HashMap::new())),
-            store: InterfaceStore::new(),
-            resource_admission: resource_admission::ResourceAdmissionRegistry::default(),
-            entropy: crate::manifold::driver::TokioEntropy,
-        }
+        let (remote_control_access, remote_control_access_rx) = remote_control_access_lane();
+        (
+            Self {
+                commands,
+                ids: Arc::new(AtomicU64::new(0)),
+                attachment_epochs: Arc::new(AtomicU64::new(0)),
+                notify_tx,
+                iface_build,
+                interfaces: Arc::new(Mutex::new(HashMap::new())),
+                store: InterfaceStore::new(),
+                resource_admission: resource_admission::ResourceAdmissionRegistry::default(),
+                entropy: crate::manifold::driver::TokioEntropy,
+                timing_oracle: Arc::new(Mutex::new(None)),
+                remote_control_access,
+            },
+            remote_control_access_rx,
+        )
     }
 
     pub fn fill_entropy(&self, bytes: &mut [u8]) {
         self.entropy.fill(bytes);
+    }
+
+    /// Installs a daemon-backed timing source for subsequent high-level network operations.
+    pub fn install_bitrate_timing_oracle(&self, oracle: Arc<dyn BitrateTimingOracle>) {
+        if let Ok(mut installed) = self.timing_oracle.lock() {
+            *installed = Some(oracle);
+        }
+    }
+
+    async fn first_hop_command_timing(
+        &self,
+        destination: DestinationHash,
+    ) -> crate::engine::CommandTiming {
+        let oracle = self
+            .timing_oracle
+            .lock()
+            .ok()
+            .and_then(|installed| installed.clone());
+        let first_hop_timeout_floor_ms = match oracle {
+            Some(oracle) => oracle
+                .first_hop_timeout(destination)
+                .await
+                .map(duration_millis_saturating),
+            None => None,
+        };
+        crate::engine::CommandTiming {
+            first_hop_timeout_floor_ms,
+            path_timeout_floor_ms: None,
+        }
+    }
+
+    async fn path_command_timing(&self) -> crate::engine::CommandTiming {
+        let oracle = self
+            .timing_oracle
+            .lock()
+            .ok()
+            .and_then(|installed| installed.clone());
+        let path_timeout_floor_ms = match oracle {
+            Some(oracle) => oracle
+                .medium_path_timeout()
+                .await
+                .map(duration_millis_saturating),
+            None => None,
+        };
+        crate::engine::CommandTiming {
+            first_hop_timeout_floor_ms: None,
+            path_timeout_floor_ms,
+        }
     }
 
     fn mint(&self) -> CommandId {
@@ -150,14 +278,56 @@ impl PrnsNodeHandle {
     ) -> Result<PacketReceiptDelivered, SendError<SendSinglePacketFailure>> {
         let payload =
             SendSinglePacketPayload::from_slice(data).map_err(|()| SendError::PayloadTooLarge)?;
+        let timing = self.first_hop_command_timing(destination).await;
         match self
-            .settle(PrnsCommand::SendSinglePacket(SendSinglePacket {
+            .settle_with_timing(
+                PrnsCommand::SendSinglePacket(SendSinglePacket {
+                    destination,
+                    payload,
+                }),
+                timing,
+            )
+            .await
+        {
+            Some(Settlement::SendSinglePacket(result)) => result.map_err(SendError::Failed),
+            Some(_) | None => Err(SendError::NodeStopped),
+        }
+    }
+
+    pub async fn send_plain_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendPlainPacketFailure>> {
+        let payload =
+            SendPlainPacketPayload::from_slice(data).map_err(|()| SendError::PayloadTooLarge)?;
+        match self
+            .settle(PrnsCommand::SendPlainPacket(SendPlainPacket {
                 destination,
                 payload,
             }))
             .await
         {
-            Some(Settlement::SendSinglePacket(result)) => result.map_err(SendError::Failed),
+            Some(Settlement::SendPlainPacket(result)) => result.map_err(SendError::Failed),
+            Some(_) | None => Err(SendError::NodeStopped),
+        }
+    }
+
+    pub async fn send_group_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendGroupFailure>> {
+        let payload =
+            SendGroupPayload::from_slice(data).map_err(|()| SendError::PayloadTooLarge)?;
+        match self
+            .settle(PrnsCommand::SendGroup(SendGroup {
+                destination,
+                payload,
+            }))
+            .await
+        {
+            Some(Settlement::SendGroup(result)) => result.map_err(SendError::Failed),
             Some(_) | None => Err(SendError::NodeStopped),
         }
     }
@@ -186,8 +356,12 @@ impl PrnsNodeHandle {
         &self,
         destination: DestinationHash,
     ) -> Result<LinkEstablished, SendError<EstablishLinkFailure>> {
+        let timing = self.first_hop_command_timing(destination).await;
         match self
-            .settle(PrnsCommand::EstablishLink(EstablishLink { destination }))
+            .settle_with_timing(
+                PrnsCommand::EstablishLink(EstablishLink { destination }),
+                timing,
+            )
             .await
         {
             Some(Settlement::EstablishLink(result)) => result.map_err(SendError::Failed),
@@ -201,11 +375,15 @@ impl PrnsNodeHandle {
     ) -> Result<PathFound, RequestPathError> {
         let mut request_id = [0; PATH_REQUEST_ID_LEN];
         getrandom::getrandom(&mut request_id).map_err(|_| RequestPathError::EntropyUnavailable)?;
+        let timing = self.path_command_timing().await;
         match self
-            .settle(PrnsCommand::RequestPath(RequestPath {
-                destination,
-                id: PathRequestId::new(request_id),
-            }))
+            .settle_with_timing(
+                PrnsCommand::RequestPath(RequestPath {
+                    destination,
+                    id: PathRequestId::new(request_id),
+                }),
+                timing,
+            )
             .await
         {
             Some(Settlement::RequestPath(result)) => result.map_err(RequestPathError::Failed),
@@ -263,13 +441,29 @@ impl PrnsNodeHandle {
         }
     }
 
-    pub async fn announce_now(
-        &self,
-        announce: AnnounceNow,
-    ) -> Result<(), SendError<AnnounceNowFailure>> {
+    pub async fn announce_now(&self, announce: AnnounceNow) -> Result<(), super::AnnounceNowError> {
         match self.settle(PrnsCommand::AnnounceNow(announce)).await {
-            Some(Settlement::AnnounceNow(result)) => result.map_err(SendError::Failed),
-            Some(_) | None => Err(SendError::NodeStopped),
+            Some(Settlement::AnnounceNow(Ok(()))) => Ok(()),
+            Some(Settlement::AnnounceNow(Err(failure))) => {
+                Err(super::AnnounceNowError::from_failure(failure))
+            }
+            Some(_) | None => Err(super::AnnounceNowError::NodeStopped),
+        }
+    }
+
+    pub async fn set_registered_announce_app_data(
+        &self,
+        set: SetRegisteredAnnounceAppData,
+    ) -> Result<(), super::SetRegisteredAnnounceAppDataError> {
+        match self
+            .settle(PrnsCommand::SetRegisteredAnnounceAppData(set))
+            .await
+        {
+            Some(Settlement::SetRegisteredAnnounceAppData(Ok(()))) => Ok(()),
+            Some(Settlement::SetRegisteredAnnounceAppData(Err(failure))) => Err(
+                super::SetRegisteredAnnounceAppDataError::from_failure(failure),
+            ),
+            Some(_) | None => Err(super::SetRegisteredAnnounceAppDataError::NodeStopped),
         }
     }
 
@@ -337,15 +531,50 @@ impl PrnsNodeHandle {
         settled.await.ok()
     }
 
+    async fn settle_with_timing(
+        &self,
+        command: PrnsCommand,
+        timing: crate::engine::CommandTiming,
+    ) -> Option<Settlement> {
+        if timing == crate::engine::CommandTiming::default() {
+            return self.settle(command).await;
+        }
+        let id = self.mint();
+        let (completion, settled) = oneshot::channel();
+        self.commands
+            .send(HostCommand::AwaitedEngineWithTiming {
+                issued: IssuedCommand { id, command },
+                timing,
+                completion,
+            })
+            .ok()?;
+        settled.await.ok()
+    }
+
     pub fn close_link(&self, link_id: LinkId) -> bool {
         self.issue(PrnsCommand::CloseLink(CloseLink { link_id }))
             .is_some()
     }
 }
 
+fn duration_millis_saturating(duration: Duration) -> u64 {
+    duration.as_millis().min(u128::from(u64::MAX)) as u64
+}
+
 impl super::PrnsNodeApi for PrnsNodeHandle {
     fn issue(&self, command: PrnsCommand) -> Option<CommandId> {
         self.issue(command)
+    }
+
+    async fn announce_now(&self, announce: AnnounceNow) -> Result<(), super::AnnounceNowError> {
+        self.announce_now(announce).await
+    }
+
+    async fn set_registered_announce_app_data(
+        &self,
+        set: SetRegisteredAnnounceAppData,
+    ) -> Result<(), super::SetRegisteredAnnounceAppDataError> {
+        self.set_registered_announce_app_data(set).await
     }
 
     async fn send_single_packet(
@@ -354,6 +583,22 @@ impl super::PrnsNodeApi for PrnsNodeHandle {
         data: &[u8],
     ) -> Result<PacketReceiptDelivered, SendError<SendSinglePacketFailure>> {
         self.send_single_packet(destination, data).await
+    }
+
+    async fn send_plain_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendPlainPacketFailure>> {
+        self.send_plain_packet(destination, data).await
+    }
+
+    async fn send_group_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendGroupFailure>> {
+        self.send_group_packet(destination, data).await
     }
 
     fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> bool {

@@ -1,3 +1,12 @@
+use core::convert::Infallible;
+
+use embassy_nrf::nvmc::{Error as NvmcError, Nvmc};
+use personal_rns::identity::vault::{FlashVault, FlashVaultError};
+use personal_rns::remote_control::{
+    RemoteControlNodeIdentityBootstrap, RemoteControlNodeIdentityBootstrapError,
+    REMOTE_CONTROL_IDENTITY_VAULT_SLOTS,
+};
+
 #[cfg(any(
     feature = "board-t096",
     feature = "board-t114",
@@ -10,15 +19,39 @@ mod status_led;
 mod button;
 
 #[cfg(any(feature = "board-t096", feature = "board-t114"))]
-pub(crate) enum DisplayBringup<Display, Error> {
-    Ready(Display),
-    Unavailable(Error),
-}
-
-#[cfg(any(feature = "board-t096", feature = "board-t114"))]
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum DisplayIoError {
     Spi,
+    NotInitialized,
+}
+
+#[cfg(any(feature = "board-t096", feature = "board-t114"))]
+mod tft;
+
+pub(crate) type RemoteControlIdentityBootstrapError =
+    RemoteControlNodeIdentityBootstrapError<FlashVaultError<NvmcError>, Infallible>;
+
+pub(crate) struct RemoteControlIdentityFlash {
+    offset: u32,
+}
+
+impl RemoteControlIdentityFlash {
+    pub(crate) const fn at(offset: u32) -> Self {
+        Self { offset }
+    }
+
+    pub(crate) fn load_or_generate(
+        &self,
+        nvmc: &mut Nvmc<'_>,
+        fill_entropy: &mut impl FnMut(&mut [u8]),
+    ) -> Result<RemoteControlNodeIdentityBootstrap, RemoteControlIdentityBootstrapError> {
+        let mut vault =
+            FlashVault::<_, REMOTE_CONTROL_IDENTITY_VAULT_SLOTS>::new(nvmc, self.offset);
+        RemoteControlNodeIdentityBootstrap::load_or_generate(&mut vault, |bytes| {
+            fill_entropy(bytes);
+            Ok(())
+        })
+    }
 }
 
 #[cfg(feature = "board-mesh-tower-v2")]

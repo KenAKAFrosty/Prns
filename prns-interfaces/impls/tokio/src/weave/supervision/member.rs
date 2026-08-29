@@ -47,7 +47,7 @@ impl WeavePeer {
             channel_tag,
             inbound,
             outbound,
-            status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
+            status: TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Connected),
         }
     }
 

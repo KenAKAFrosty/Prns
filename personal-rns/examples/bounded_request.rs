@@ -1,5 +1,7 @@
 #![expect(clippy::expect_used, clippy::panic)]
 
+mod common;
+
 use core::time::Duration;
 
 use personal_rns::prelude::*;
@@ -13,7 +15,10 @@ impl RequestEndpoint for Echo {
     const ENDPOINT_ID: &'static str = EXAMPLE_ENDPOINT_ID;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(mut context: RequestContext<'_, ()>) -> Result<(), Decline> {
+    async fn handle(
+        mut context: RequestContext<'_, ()>,
+        _node: &impl personal_rns::runtime::PrnsNodeApi,
+    ) -> Result<(), Decline> {
         let data_from_request = context.data;
         context.respond(data_from_request)
     }
@@ -38,6 +43,7 @@ async fn main() {
 
     let responder = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
+        remote_control: common::remote_control_service(0xD0, 0xD1),
         pre_configured_destinations: [responder_destination],
         app_state: (),
         storage: GrowableHeap,
@@ -55,6 +61,7 @@ async fn main() {
     let tcp_client = TcpClientInterface::new(server_address);
     let requester = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
+        remote_control: common::remote_control_service(0xD2, 0xD3),
         pre_configured_destinations: [requester_destination()],
         app_state: (),
         storage: GrowableHeap,

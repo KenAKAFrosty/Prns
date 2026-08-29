@@ -11,8 +11,8 @@ use tokio::sync::oneshot;
 
 use crate::engine::{
     CommandId, EstablishLinkFailure, Journaled, LinkEstablished, PacketReceiptDelivered,
-    PersistenceFlushTarget, PrnsCommand, ProofRequest, SendSinglePacketFailure,
-    SetTransportIdentityError,
+    PersistenceFlushTarget, PrnsCommand, ProofRequest, SendGroupFailure, SendPlainPacketFailure,
+    SendSinglePacketFailure, SetTransportIdentityError,
 };
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{IdentityHash, Zeroizing, IDENTITY_SECRET_KEY_LEN};
@@ -22,6 +22,7 @@ use crate::manifold::driver::{
     self as manifold_driver, CryptoPoolConfig, Egress, HostCommand, ProvideDecompressedHostCommand,
     TokioHost,
 };
+use crate::remote_control::{RemoteControlEndpoint, RemoteControlNodeIdentities};
 use crate::routing::announce::AnnounceObservation;
 use crate::routing::links::resources::ResourceMemoryLimits;
 use crate::routing::links::LinkId;
@@ -35,6 +36,9 @@ use prns_runtime::runtime::{
     ConfigurePreconfiguredDestinationError, Diagnostic,
 };
 
+use super::super::remote_control_access::{
+    remote_control_access_lane, RemoteControlAccessReceiver,
+};
 use super::super::request_endpoints::{RequestEndpoint, RequestEndpointSet, RespondToken};
 use super::super::request_runner::{run_router, RunnerRequest, REQUEST_QUEUE_DEPTH};
 use super::super::{
@@ -77,6 +81,7 @@ pub struct PrnsNode<St, R, F, S: StorageLayout> {
     pub(super) node: AssembledNode<St, R, F, S>,
     notify_rx: UnboundedReceiver<InterfaceId>,
     command_rx: UnboundedReceiver<HostCommand>,
+    remote_control_access_rx: RemoteControlAccessReceiver,
     iface_build_rx: UnboundedReceiver<DriverMsg>,
     accepted_announce_observer: Option<AcceptedAnnounceObserver>,
     pub(super) crypto_pool: CryptoPoolConfig,
@@ -154,7 +159,9 @@ async fn run_node_tasks(
     }
 }
 
-fn persistence_restored_diagnostic(report: &persistence::PersistenceRestoreReport) -> Diagnostic {
+fn persistence_restored_diagnostic(
+    report: &persistence::PersistenceRestoreReport,
+) -> Diagnostic<'static> {
     Diagnostic::PersistenceRestored {
         routes: report.routes.seeded_count,
         destination_identities: report.destination_identities.seeded_count,
@@ -284,7 +291,7 @@ where
     F: FnMut(PrnsEvent<'_>, &St),
 {
     /// Stand a node up from `recipe` on the storage layout it names: assemble the engine (transport role, destinations, the request endpoints), then let the recipe's `interfaces` intent attach the node's edges through its own handle. Only [`run`](Self::run) awaits.
-    pub fn new<'a, D, I, P>(recipe: PrnsNodeRecipe<D, St, R, F, I, S, P>) -> Self
+    pub fn new<'a, D, I, P>(recipe: PrnsNodeRecipe<'a, D, St, R, F, I, S, P>) -> Self
     where
         D: IntoIterator<Item = PreConfiguredDestination<'a>>,
         I: AttachIntent,
@@ -298,21 +305,25 @@ where
         D: IntoIterator<Item = PreConfiguredDestination<'a>>,
         I: AttachIntent,
         P: persistence::PersistenceIntent,
-        B: FnOnce(PrnsNodeHandle) -> PrnsNodeRecipe<D, St, R, F, I, S, P>,
+        B: FnOnce(PrnsNodeHandle) -> PrnsNodeRecipe<'a, D, St, R, F, I, S, P>,
     {
         let (notify_tx, notify_rx) = mpsc::unbounded_channel();
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (iface_build_tx, iface_build_rx) = mpsc::unbounded_channel();
+        let (remote_control_access, remote_control_access_rx) = remote_control_access_lane();
 
         let handle = PrnsNodeHandle {
             commands: command_tx,
             ids: Arc::new(AtomicU64::new(0)),
+            attachment_epochs: Arc::new(AtomicU64::new(0)),
             notify_tx,
             iface_build: iface_build_tx,
             interfaces: Arc::new(Mutex::new(HashMap::new())),
             store: InterfaceStore::new(),
             resource_admission: super::resource_admission::ResourceAdmissionRegistry::default(),
             entropy: crate::manifold::driver::TokioEntropy,
+            timing_oracle: Arc::new(Mutex::new(None)),
+            remote_control_access,
         };
         let (node, interfaces, persistence_intent) = assemble_node(build_recipe(handle.clone()));
         let node_persistence =
@@ -330,6 +341,7 @@ where
             node,
             notify_rx,
             command_rx,
+            remote_control_access_rx,
             iface_build_rx,
             accepted_announce_observer: None,
             crypto_pool: CryptoPoolConfig::host_default(),
@@ -447,6 +459,16 @@ where
         self.handle.clone()
     }
 
+    #[must_use]
+    pub const fn remote_control_identities(&self) -> Option<&RemoteControlNodeIdentities> {
+        self.node.remote_control.identities()
+    }
+
+    #[must_use]
+    pub const fn remote_control_target_endpoint(&self) -> Option<RemoteControlEndpoint> {
+        self.node.remote_control.target_endpoint()
+    }
+
     pub fn issue(&self, command: PrnsCommand) -> Option<CommandId> {
         self.handle.issue(command)
     }
@@ -457,6 +479,22 @@ where
         data: &[u8],
     ) -> Result<PacketReceiptDelivered, SendError<SendSinglePacketFailure>> {
         self.handle.send_single_packet(destination, data).await
+    }
+
+    pub async fn send_plain_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendPlainPacketFailure>> {
+        self.handle.send_plain_packet(destination, data).await
+    }
+
+    pub async fn send_group_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendGroupFailure>> {
+        self.handle.send_group_packet(destination, data).await
     }
 
     pub async fn establish_link(
@@ -538,6 +576,7 @@ where
             node,
             notify_rx,
             command_rx,
+            mut remote_control_access_rx,
             iface_build_rx,
             mut accepted_announce_observer,
             crypto_pool,
@@ -545,6 +584,7 @@ where
         } = self;
         let AssembledNode {
             engine,
+            mut remote_control,
             state,
             mut on_event,
             request_endpoints: _,
@@ -689,7 +729,13 @@ where
         let driver_interfaces = handle.interfaces.clone();
         let node_tasks = run_node_tasks(
             manifold,
-            run_router::<St, R>(&state, req_rx, handle.clone()),
+            run_router::<St, R>(
+                &state,
+                &mut remote_control,
+                req_rx,
+                &mut remote_control_access_rx,
+                handle.clone(),
+            ),
             drive_interfaces(
                 std::vec::Vec::new(),
                 iface_build_rx,

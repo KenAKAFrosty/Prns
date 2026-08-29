@@ -216,6 +216,8 @@ object NativeBridge {
 
     external fun nativeBleDisconnected(connId: Int)
 
+    external fun nativeBleNextClose(): Int
+
     external fun nativeBleNextDial(buffer: ByteBuffer): Boolean
 
     external fun nativeBleNextL2capOpen(buffer: ByteBuffer): Boolean

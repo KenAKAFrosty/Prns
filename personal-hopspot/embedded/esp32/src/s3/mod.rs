@@ -38,8 +38,6 @@ use embassy_time::with_timeout;
 #[cfg(feature = "lora")]
 use embassy_time::Delay;
 use embassy_time::{Duration, Ticker, Timer};
-use embedded_graphics::draw_target::DrawTarget;
-use embedded_graphics::pixelcolor::BinaryColor;
 #[cfg(feature = "lora")]
 use embedded_hal_bus::spi::ExclusiveDevice;
 use heapless::Vec as HVec;
@@ -51,8 +49,8 @@ use esp_radio::wifi::ap::AccessPointConfig;
 use esp_radio::wifi::scan::{ScanConfig, ScanTypeConfig};
 use esp_radio::wifi::sta::StationConfig;
 use esp_radio::wifi::{
-    Config as WifiConfig, ControllerConfig, DisconnectReason, Interface as WifiStaDevice,
-    PowerSaveMode, WifiController, WifiError,
+    AuthenticationMethod, Config as WifiConfig, ControllerConfig, DisconnectReason,
+    Interface as WifiStaDevice, PowerSaveMode, WifiController, WifiError,
 };
 
 use esp_radio::esp_now::{
@@ -111,14 +109,20 @@ use crate::station_recovery::{
     AccessPoint as StationAccessPoint, ConnectionFailure, ConnectionOutcome, DiscoveryScope,
     ScanFailure, ScanOutcome, StationAttempt, StationRecovery, StationYield,
 };
+use crate::station_security::{ObservedAuthentication, StationSecurity};
 use crate::storage::EngineStorageType;
 
 use personal_hopspot_core as screen;
 
+pub(crate) use crate::display_runtime::{
+    ImmediateBoardDisplay, RetainedBoardDisplay, RetainedDisplayDevice, S3BoardDisplay,
+    S3DisplayRuntime, S3Presentation,
+};
+pub(crate) use crate::immediate_display::ImmediateDisplayDevice;
 #[cfg(feature = "lora")]
 pub(crate) use board::LoraRadio;
 pub(crate) use board::{
-    BoardDisplay, BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware, S3ManifoldHardware,
+    BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware, S3ManifoldHardware,
 };
 pub(crate) use gnss::{GnssProvider, GnssShared, NoGnss};
 
@@ -296,7 +300,8 @@ static LIFECYCLE: Channel<Mtx, InterfaceLifecycle, LIFECYCLE_CAP> = Channel::new
 static OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 static BLE_OUTBOUND_WAKE: Signal<Mtx, ()> = Signal::new();
 static COMPLETION: CompletionPool<Mtx, COMPLETIONS_CAP> = CompletionPool::new();
-static BUTTON_EVENTS: Channel<Mtx, screen::InputEvent, 4> = Channel::new();
+const BUTTON_EVENT_CAPACITY: usize = 4;
+static BUTTON_EVENTS: Channel<Mtx, screen::InputEvent, BUTTON_EVENT_CAPACITY> = Channel::new();
 /// Per-interface engine counts the manifold (core 1) pushes into and the render task (core 0) reads —
 /// a `CriticalSectionRawMutex` store so the `&'static` shared across cores stays `Sync`. Capacity is a
 /// power of two above the interface ceiling, so a live interface's counts never get dropped.
@@ -321,13 +326,12 @@ const BOOT_PHASE_MAGIC: u32 = 0x5052_0000;
 
 #[derive(Clone, Copy)]
 pub(crate) enum BootPhase {
-    // Only boards with a panel emit the OLED stages; a headless-only build constructs none of them.
     #[allow(dead_code)]
-    OledBegin = 1,
+    DisplayHardwareBegin = 1,
     #[allow(dead_code)]
-    OledReady = 2,
+    DisplayHardwareReady = 2,
     #[allow(dead_code)]
-    OledFailed = 3,
+    DisplayHardwareFailed = 3,
     WifiBegin = 4,
     WifiReady = 5,
     TcpBegin = 6,
@@ -356,9 +360,9 @@ pub(crate) enum BootPhase {
 impl BootPhase {
     fn label(self) -> &'static str {
         match self {
-            Self::OledBegin => "oled.begin",
-            Self::OledReady => "oled.ready",
-            Self::OledFailed => "oled.failed",
+            Self::DisplayHardwareBegin => "display.hardware.begin",
+            Self::DisplayHardwareReady => "display.hardware.ready",
+            Self::DisplayHardwareFailed => "display.hardware.failed",
             Self::WifiBegin => "wifi.begin",
             Self::WifiReady => "wifi.ready",
             Self::TcpBegin => "tcp.begin",
@@ -599,9 +603,14 @@ const RADIO_MODE_BLE: u32 = 0x424C_4501;
 static mut RADIO_MODE_FLAG: u32 = 0;
 
 fn boot_radio_mode(_station_configured: bool) -> RadioMode {
+    #[cfg(feature = "wifi-security-probe")]
+    return RadioMode::AccessPoint;
+
     // SAFETY: Boot reads the aligned RTC-fast persistent word before concurrent tasks start;
     // volatile semantics are not required because reset is the only cross-execution boundary.
+    #[cfg(not(feature = "wifi-security-probe"))]
     let flag = unsafe { core::ptr::addr_of!(RADIO_MODE_FLAG).read() };
+    #[cfg(not(feature = "wifi-security-probe"))]
     if flag == RADIO_MODE_AP {
         RadioMode::AccessPoint
     } else {

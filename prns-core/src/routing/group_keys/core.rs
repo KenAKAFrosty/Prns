@@ -67,6 +67,7 @@ pub trait GroupKeyTable {
     fn destinations(&self) -> &[DestinationHash];
     fn keys(&self) -> &[GroupKey];
 
+    fn swap_remove(&mut self, index: usize);
     fn upsert(&mut self, destination: DestinationHash, key: GroupKey)
         -> Result<(), TablePushError>;
 }
@@ -96,6 +97,18 @@ impl<C: GroupKeyTable> GroupKeys<C> {
             .iter()
             .position(|candidate| candidate == destination)?;
         self.table.keys().get(slot)
+    }
+
+    pub(crate) fn remove(&mut self, destination: &DestinationHash) {
+        let Some(slot) = self
+            .table
+            .destinations()
+            .iter()
+            .position(|candidate| candidate == destination)
+        else {
+            return;
+        };
+        self.table.swap_remove(slot);
     }
 
     pub fn len(&self) -> usize {
@@ -212,5 +225,35 @@ mod tests {
             keys.key_for(&dest(7)).map(GroupKey::as_slice),
             Some([7u8; 32].as_slice())
         );
+    }
+
+    fn assert_removal_preserves_alignment<C: GroupKeyTable + Default>() {
+        let mut keys = GroupKeys::<C>::default();
+        keys.insert(dest(1), GroupKey::from_slice(&[0x11; 32]).unwrap())
+            .unwrap();
+        keys.insert(dest(2), GroupKey::from_slice(&[0x22; 64]).unwrap())
+            .unwrap();
+
+        keys.remove(&dest(1));
+        keys.remove(&dest(1));
+
+        assert!(keys.key_for(&dest(1)).is_none());
+        assert_eq!(
+            keys.key_for(&dest(2)).map(GroupKey::as_slice),
+            Some([0x22; 64].as_slice())
+        );
+        assert_eq!(keys.len(), 1);
+        keys.insert(dest(3), GroupKey::from_slice(&[0x33; 32]).unwrap())
+            .unwrap();
+        assert_eq!(
+            keys.key_for(&dest(3)).map(GroupKey::as_slice),
+            Some([0x33; 32].as_slice())
+        );
+    }
+
+    #[test]
+    fn removal_preserves_fixed_and_heap_column_alignment() {
+        assert_removal_preserves_alignment::<FixedGroupKeyTable<2>>();
+        assert_removal_preserves_alignment::<HeapGroupKeyTable>();
     }
 }

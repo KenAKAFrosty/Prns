@@ -55,7 +55,7 @@ impl<S> TcpServerConnection<S> {
             stream: Some(stream),
             policy,
             framing,
-            status: TokioInterfaceStatus::new(id, ConnectionState::Connected),
+            status: TokioInterfaceStatus::new_accounted(id, ConnectionState::Connected),
         }
     }
 
@@ -332,6 +332,10 @@ impl<S> prns_core::interfaces::ReportsStatus for TcpServerConnection<S> {
 
     fn connection_view(&self) -> Option<prns_core::interfaces::ConnectionView> {
         Some(prns_core::interfaces::ConnectionView::of(self.status()))
+    }
+
+    fn frame_accounting_recorder(&self) -> Option<prns_core::interfaces::FrameAccountingRecorder> {
+        prns_core::interfaces::FrameAccountingRecorder::of(self.status())
     }
 }
 

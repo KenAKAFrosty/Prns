@@ -12,6 +12,7 @@ pub mod reverse_routes;
 pub mod route_expiry;
 pub mod routes;
 pub mod table;
+pub mod timing;
 pub mod tunnel;
 pub mod upstream_app_destinations;
 pub mod warmth;

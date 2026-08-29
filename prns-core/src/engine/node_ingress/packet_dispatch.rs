@@ -8,8 +8,8 @@ use crate::engine::settlement::settle;
 use crate::engine::LinkClosedReason;
 use crate::engine::{
     DeferredCrypto, Directive, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis,
-    Journaled, LinkEstablished, PathResponseWriteOutcome, ProofIngest, SendRequestFailure,
-    Settlement, WakeSchedule, WakeSchedules,
+    Journaled, LinkEstablished, PathResponseWriteOutcome, ProofIngest, ProtocolViolationKind,
+    SendRequestFailure, Settlement, WakeSchedule, WakeSchedules,
 };
 use crate::identity::{IdentitySigner, ENCRYPTION_IV_LEN};
 use crate::interfaces::AttachedInterfaces;
@@ -41,6 +41,12 @@ where
     pub sink: &'a mut Sink,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IngestPacketReport {
+    pub wake_schedules: WakeSchedules,
+    pub protocol_violation: Option<ProtocolViolationKind>,
+}
+
 impl<S: StorageLayout> EngineState<S> {
     pub fn ingest_packet_into<F, P, A, K>(
         &mut self,
@@ -53,7 +59,21 @@ impl<S: StorageLayout> EngineState<S> {
         A: FnMut(&ResourceOffer) -> bool,
         K: FnMut(EngineReaction<'_>),
     {
-        self.ingest_classified_into(ClassifiedInboundPacket::classify(packet), io)
+        self.ingest_packet_into_report(packet, io).wake_schedules
+    }
+
+    pub fn ingest_packet_into_report<F, P, A, K>(
+        &mut self,
+        packet: InboundPacket<'_>,
+        io: IngestIo<'_, F, P, A, K>,
+    ) -> IngestPacketReport
+    where
+        F: FnMut(&mut [u8]),
+        P: FnMut(&ProofRequest) -> bool,
+        A: FnMut(&ResourceOffer) -> bool,
+        K: FnMut(EngineReaction<'_>),
+    {
+        self.ingest_classified_into_report(ClassifiedInboundPacket::classify(packet), io)
     }
 
     pub fn ingest_classified_into<F, P, A, K>(
@@ -61,6 +81,21 @@ impl<S: StorageLayout> EngineState<S> {
         packet: ClassifiedInboundPacket<'_>,
         io: IngestIo<'_, F, P, A, K>,
     ) -> WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+        P: FnMut(&ProofRequest) -> bool,
+        A: FnMut(&ResourceOffer) -> bool,
+        K: FnMut(EngineReaction<'_>),
+    {
+        self.ingest_classified_into_report(packet, io)
+            .wake_schedules
+    }
+
+    pub fn ingest_classified_into_report<F, P, A, K>(
+        &mut self,
+        packet: ClassifiedInboundPacket<'_>,
+        io: IngestIo<'_, F, P, A, K>,
+    ) -> IngestPacketReport
     where
         F: FnMut(&mut [u8]),
         P: FnMut(&ProofRequest) -> bool,
@@ -76,7 +111,7 @@ impl<S: StorageLayout> EngineState<S> {
             sink,
         } = io;
         let mut deferred_sign: Option<DeferredProofSign> = None;
-        let wake = self.ingest_classified_into_deferring(
+        let report = self.ingest_classified_into_deferring_report(
             packet,
             IngestIo {
                 interfaces,
@@ -101,7 +136,7 @@ impl<S: StorageLayout> EngineState<S> {
                 }));
             }
         }
-        wake
+        report
     }
 
     pub fn ingest_packet_into_deferring<F, P, A, K>(
@@ -130,8 +165,25 @@ impl<S: StorageLayout> EngineState<S> {
         packet: ClassifiedInboundPacket<'_>,
         io: IngestIo<'_, F, P, A, K>,
         deferred_sign: &mut Option<DeferredProofSign>,
-        mut deferred: Option<&mut DeferredCrypto>,
+        deferred: Option<&mut DeferredCrypto>,
     ) -> WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+        P: FnMut(&ProofRequest) -> bool,
+        A: FnMut(&ResourceOffer) -> bool,
+        K: FnMut(EngineReaction<'_>),
+    {
+        self.ingest_classified_into_deferring_report(packet, io, deferred_sign, deferred)
+            .wake_schedules
+    }
+
+    pub fn ingest_classified_into_deferring_report<F, P, A, K>(
+        &mut self,
+        packet: ClassifiedInboundPacket<'_>,
+        io: IngestIo<'_, F, P, A, K>,
+        deferred_sign: &mut Option<DeferredProofSign>,
+        mut deferred: Option<&mut DeferredCrypto>,
+    ) -> IngestPacketReport
     where
         F: FnMut(&mut [u8]),
         P: FnMut(&ProofRequest) -> bool,
@@ -157,6 +209,8 @@ impl<S: StorageLayout> EngineState<S> {
             deferred.as_deref_mut(),
             &mut effects,
         );
+        let protocol_violation = ProtocolViolationKind::of_outcome(&outcome);
+        wake_schedule_changes.held_announce_release = effects.held_announce_release;
         let accepted_observation = effects.accepted_announce.take();
         if let Some(expiry) = effects.destination_identity_expiry {
             wake_schedule_changes.expired_destination_identities = WakeSchedule::AtMost(expiry);
@@ -280,7 +334,7 @@ impl<S: StorageLayout> EngineState<S> {
                     },
                     source,
                     interfaces,
-                    RelayAudience::OnlineTransports,
+                    RelayAudience::OnlineNetworkInterfaces,
                     now,
                     sink,
                 );
@@ -308,7 +362,7 @@ impl<S: StorageLayout> EngineState<S> {
                     },
                     source,
                     interfaces,
-                    RelayAudience::Transports,
+                    RelayAudience::AllNetworkInterfaces,
                     now,
                     sink,
                 );
@@ -712,6 +766,9 @@ impl<S: StorageLayout> EngineState<S> {
             }
         }
         wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
-        wake_schedule_changes
+        IngestPacketReport {
+            wake_schedules: wake_schedule_changes,
+            protocol_violation,
+        }
     }
 }

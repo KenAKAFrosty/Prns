@@ -80,6 +80,45 @@
       }
     },
     {
+      "availability": "qualification",
+      "slug": "heltec-e290",
+      "display_name": "Heltec Vision Master E290-HF",
+      "silicon": "ESP32-S3R8 + HT-RA62-HF/SX1262 (Octal PSRAM)",
+      "interfaces": ["Wi-Fi Auto", "TCP Client", "BLE Auto", "LoRa", "ESP-NOW", "USB Auto"],
+      "icon": "espressif",
+      "transport": "esp-serial",
+      "expected_chip": "esp32s3",
+      "flash_size": 16777216,
+      "preparation_profile": "esp-usb-boot",
+      "provisioning": {
+        "format": "HSPCFG1",
+        "version": 1,
+        "offset": 53248,
+        "size": 4096,
+        "ssid_max_bytes": 32,
+        "password_max_bytes": 64,
+        "tcp_client": {
+          "target_format": "ipv4-or-dns",
+          "max_clients": 1,
+          "default_port": 4242,
+          "hostname_max_bytes": 253
+        }
+      },
+      "build": {
+        "kind": "esp",
+        "chip": "esp32s3",
+        "rust_target": "xtensa-esp32s3-none-elf",
+        "partition_table": "partitions-hopspot-16mb.csv",
+        "package": "hopspot-heltec-e290",
+        "binary": "hopspot-heltec-e290",
+        "flash_size_label": "16mb",
+        "flash_mode": "dio",
+        "flash_frequency": "40m",
+        "before_reset": "usb-reset",
+        "after_reset": "watchdog-reset"
+      }
+    },
+    {
       "availability": "shipping",
       "slug": "t-beam-supreme",
       "display_name": "LilyGO T-Beam Supreme",

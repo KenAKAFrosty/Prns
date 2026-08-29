@@ -419,7 +419,7 @@ impl<S: StorageLayout> EngineState<S> {
 
         let extra_proof_allowance = arrival
             .interfaces
-            .descriptor_for(arrival.source_interface)
+            .descriptor_for(fire_on)
             .map(|c| extra_link_proof_timeout_ms(c.bitrate))
             .unwrap_or(0);
         let proof_timeout = InstantMillis(

@@ -21,8 +21,26 @@ const _: () = assert!(DHCP_FIRST_LEASE_HOST as usize + DHCP_LEASE_HISTORY_CAPACI
 /// A random per-boot SoftAP SSID suffix, cached so every `set_config` within a boot reuses the same
 /// name (regenerating per call would flap the SSID). 0 = unset. Random rather than MAC-derived so the
 /// AP name leaks no device identity; it re-rolls on reboot, which is acceptable (preferred, even).
+#[cfg(not(feature = "wifi-security-probe"))]
 static AP_SSID_SUFFIX: AtomicU64 = AtomicU64::new(0);
 
+#[cfg(feature = "wifi-security-probe")]
+const WIFI_SECURITY_PROBE_PASSWORD: &str = "hopspot-probe";
+
+#[cfg(feature = "wifi-security-probe")]
+fn wifi_security_probe_mode() -> &'static str {
+    match option_env!("HOPSPOT_WIFI_SECURITY_PROBE_MODE") {
+        Some("open") => "open",
+        Some("wpa2") => "wpa2",
+        Some("wpa2-pmf") => "wpa2-pmf",
+        Some("transition") => "transition",
+        Some("transition-pmf") => "transition-pmf",
+        Some("wpa3") | None => "wpa3",
+        Some(_) => "invalid",
+    }
+}
+
+#[cfg(not(feature = "wifi-security-probe"))]
 pub(super) fn ap_ssid_suffix() -> u16 {
     let mut suffix = AP_SSID_SUFFIX.load(Ordering::Relaxed);
     if suffix == 0 {
@@ -35,6 +53,10 @@ pub(super) fn ap_ssid_suffix() -> u16 {
 }
 
 pub(super) fn ap_ssid() -> String {
+    #[cfg(feature = "wifi-security-probe")]
+    return alloc::format!("Hopspot-Probe-{}", wifi_security_probe_mode());
+
+    #[cfg(not(feature = "wifi-security-probe"))]
     alloc::format!("Hopspot-{:04X}", ap_ssid_suffix())
 }
 
@@ -42,6 +64,29 @@ pub(super) fn ap_config(channel: Option<u8>) -> AccessPointConfig {
     let config = AccessPointConfig::default()
         .with_ssid(ap_ssid())
         .with_max_connections(TCP_RENDEZVOUS_CLIENT_CAPACITY as u16);
+    #[cfg(feature = "wifi-security-probe")]
+    let config = match wifi_security_probe_mode() {
+        "open" => config,
+        "wpa2" => config
+            .with_auth_method(AuthenticationMethod::Wpa2Personal)
+            .with_password(WIFI_SECURITY_PROBE_PASSWORD.into()),
+        "wpa2-pmf" => config
+            .with_auth_method(AuthenticationMethod::Wpa2Personal)
+            .with_password(WIFI_SECURITY_PROBE_PASSWORD.into())
+            .with_pmf_required(true),
+        "transition" => config
+            .with_auth_method(AuthenticationMethod::Wpa2Wpa3Personal)
+            .with_password(WIFI_SECURITY_PROBE_PASSWORD.into()),
+        "transition-pmf" => config
+            .with_auth_method(AuthenticationMethod::Wpa2Wpa3Personal)
+            .with_password(WIFI_SECURITY_PROBE_PASSWORD.into())
+            .with_pmf_required(true),
+        "wpa3" => config
+            .with_auth_method(AuthenticationMethod::Wpa3Personal)
+            .with_password(WIFI_SECURITY_PROBE_PASSWORD.into())
+            .with_pmf_required(true),
+        _ => panic!("invalid HOPSPOT_WIFI_SECURITY_PROBE_MODE"),
+    };
     match channel {
         Some(channel) => config.with_channel(channel),
         None => config,

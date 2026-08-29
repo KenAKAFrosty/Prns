@@ -142,7 +142,7 @@ impl UdpInterface {
             flow,
             policy,
             channel_tag,
-            status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
+            status: TokioInterfaceStatus::new_accounted(id, ConnectionState::Initializing),
         })
     }
 
@@ -191,7 +191,9 @@ impl Interface for UdpInterface {
                 let now = InstantMillis(started.elapsed().as_millis() as u64);
                 throughput.record_rx(now, len as u64);
                 self.status.set_transfer_rates(throughput.rates());
+                self.status.count_frame_in();
                 seam.next_inbound(&recv_buf[..len]).await;
+                self.status.count_frame_delivered();
             },
             UdpSocketFlow::SendOnly { peer } => loop {
                 let outbound = seam.next_outbound().await;
@@ -220,7 +222,9 @@ impl Interface for UdpInterface {
                         let now = InstantMillis(started.elapsed().as_millis() as u64);
                         throughput.record_rx(now, len as u64);
                         self.status.set_transfer_rates(throughput.rates());
+                        self.status.count_frame_in();
                         seam.next_inbound(&recv_buf[..len]).await;
+                        self.status.count_frame_delivered();
                     }
                     outbound = seam.next_outbound() => {
                         if outbound.is_empty() || outbound.len() > udp::UDP_DATAGRAM_MAX {
@@ -252,6 +256,10 @@ impl prns_core::interfaces::ReportsStatus for UdpInterface {
 
     fn connection_view(&self) -> Option<prns_core::interfaces::ConnectionView> {
         Some(prns_core::interfaces::ConnectionView::of(self.status()))
+    }
+
+    fn frame_accounting_recorder(&self) -> Option<prns_core::interfaces::FrameAccountingRecorder> {
+        prns_core::interfaces::FrameAccountingRecorder::of(self.status())
     }
 }
 
@@ -303,6 +311,7 @@ mod tests {
         let interface = UdpInterface::bind("127.0.0.1:0", far_addr, udp::UDP_BITRATE_ESTIMATE)
             .await
             .expect("binds an ephemeral local port");
+        let status = interface.status();
         let near_addr = interface.local_addr().expect("the bound address is known");
 
         let (in_tx, mut in_rx) = mpsc::unbounded_channel::<std::vec::Vec<u8>>();
@@ -315,6 +324,9 @@ mod tests {
         tokio::spawn(interface.run(seam));
 
         let payload = [0x7Eu8, 0x01, 0x7D, 0x02, 0x7E];
+        far.send_to(&[], near_addr)
+            .await
+            .expect("the test peer transmits an empty datagram");
         far.send_to(&payload, near_addr)
             .await
             .expect("the test peer transmits");
@@ -323,6 +335,16 @@ mod tests {
             .expect("the interface hands the datagram up within the window")
             .expect("the interface task is alive");
         assert_eq!(received, payload, "raw bytes, exactly as sent");
+        assert_eq!(
+            prns_core::interfaces::InterfaceStatus::frame_accounting(&status),
+            Some(prns_core::interfaces::FrameAccounting {
+                frames_in: 1,
+                malformed: 0,
+                protocol_violations: 0,
+                undecodable: 0,
+                delivered: 1,
+            }),
+        );
 
         let out_payload = [0xAAu8, 0x7E, 0xBB];
         out_tx

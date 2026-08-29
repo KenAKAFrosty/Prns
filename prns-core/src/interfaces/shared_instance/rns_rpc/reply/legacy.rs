@@ -11,6 +11,9 @@ pub enum LegacyRpcReplyPlan {
     NextHopInterfaceName(DestinationHash),
     NextHop(DestinationHash),
     LinkCount,
+    FirstHopTimeout(DestinationHash),
+    LowestInterfaceBitrate,
+    MediumPathTimeout,
     Immediate(RnsRpcReply),
 }
 
@@ -31,7 +34,12 @@ impl LegacyRpcReplyPlan {
                 Some(destination_hash) => Self::NextHopInterfaceName(destination_hash),
                 None => Self::Immediate(RnsRpcReply::next_hop_interface_name(None)),
             },
-            RpcVerb::GetFirstHopTimeout => Self::Immediate(RnsRpcReply::first_hop_timeout()),
+            RpcVerb::GetFirstHopTimeout => match destination_hash {
+                Some(destination_hash) => Self::FirstHopTimeout(destination_hash),
+                None => Self::Immediate(RnsRpcReply::first_hop_timeout()),
+            },
+            RpcVerb::GetLowestInterfaceBitrate => Self::LowestInterfaceBitrate,
+            RpcVerb::GetMediumPathTimeout => Self::MediumPathTimeout,
             RpcVerb::GetPacketRssi
             | RpcVerb::GetPacketSnr
             | RpcVerb::GetPacketQuality

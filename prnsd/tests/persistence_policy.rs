@@ -32,6 +32,24 @@ impl TestDirectory {
     fn path(&self) -> &Path {
         &self.0
     }
+
+    fn run_to_completion(&self, policy: &str) -> std::process::Output {
+        Command::new(env!("CARGO_BIN_EXE_prnsd"))
+            .args([
+                "run",
+                "--config",
+                self.path()
+                    .to_str()
+                    .unwrap_or_else(|| panic!("temporary path is UTF-8")),
+                "--log-format",
+                "json",
+                "--persistence-policy",
+                policy,
+            ])
+            .env_remove("RUST_LOG")
+            .output()
+            .unwrap_or_else(|error| panic!("{error}"))
+    }
 }
 
 impl Drop for TestDirectory {
@@ -140,27 +158,13 @@ impl Drop for RunningDaemon {
 }
 
 #[test]
-fn required_persistence_refuses_an_unwritable_identity_location() {
+fn required_persistence_refuses_an_unavailable_transport_identity() {
     let directory = TestDirectory::new("required-startup");
-    fs::write(directory.path().join("storage"), b"not a directory")
-        .unwrap_or_else(|error| panic!("{error}"));
+    let storage = directory.path().join("storage");
+    fs::create_dir(&storage).unwrap_or_else(|error| panic!("{error}"));
+    fs::create_dir(storage.join("transport_identity")).unwrap_or_else(|error| panic!("{error}"));
 
-    let output = Command::new(env!("CARGO_BIN_EXE_prnsd"))
-        .args([
-            "run",
-            "--config",
-            directory
-                .path()
-                .to_str()
-                .unwrap_or_else(|| panic!("temporary path is UTF-8")),
-            "--log-format",
-            "json",
-            "--persistence-policy",
-            "required",
-        ])
-        .env_remove("RUST_LOG")
-        .output()
-        .unwrap_or_else(|error| panic!("{error}"));
+    let output = directory.run_to_completion("required");
 
     assert!(!output.status.success());
     let rendered = String::from_utf8_lossy(&output.stderr);
@@ -170,10 +174,12 @@ fn required_persistence_refuses_an_unwritable_identity_location() {
 }
 
 #[test]
-fn best_effort_retains_the_existing_ephemeral_fallback() {
+fn best_effort_retains_transport_identity_and_node_persistence_fallbacks() {
     let directory = TestDirectory::new("best-effort");
-    fs::write(directory.path().join("storage"), b"not a directory")
-        .unwrap_or_else(|error| panic!("{error}"));
+    let storage = directory.path().join("storage");
+    fs::create_dir(&storage).unwrap_or_else(|error| panic!("{error}"));
+    fs::create_dir(storage.join("transport_identity")).unwrap_or_else(|error| panic!("{error}"));
+    fs::write(storage.join("prns"), b"not a directory").unwrap_or_else(|error| panic!("{error}"));
     let mut daemon = RunningDaemon::start(&directory, "best-effort");
     daemon.wait_until_ready();
 
@@ -181,6 +187,23 @@ fn best_effort_retains_the_existing_ephemeral_fallback() {
     assert!(status.success(), "{rendered}");
     assert!(rendered.contains("\"event\":\"identity_ephemeral\""));
     assert!(rendered.contains("\"event\":\"persistence_unavailable\""));
+}
+
+#[test]
+fn best_effort_still_requires_remote_control_identity_custody() {
+    let directory = TestDirectory::new("remote-control-required");
+    let storage = directory.path().join("storage");
+    fs::create_dir(&storage).unwrap_or_else(|error| panic!("{error}"));
+    fs::write(storage.join("remote_control"), b"not a directory")
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    let output = directory.run_to_completion("best-effort");
+
+    assert!(!output.status.success());
+    let rendered = String::from_utf8_lossy(&output.stderr);
+    assert!(rendered.contains("\"event\":\"remote_control_identity_unavailable\""));
+    assert!(rendered.contains("required RemoteControl identities are unavailable"));
+    assert!(!rendered.contains("\"event\":\"daemon_ready\""));
 }
 
 #[test]

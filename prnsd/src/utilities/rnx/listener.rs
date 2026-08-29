@@ -15,6 +15,7 @@ use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::request_endpoints::RequestEndpointSet;
 use personal_rns::runtime::rnx::{
     HeapRnxOutput, RnxAuthorization, RnxCommandHandler, RnxCompletion, RnxOutput,
+    RnxRequestEndpoint,
 };
 use personal_rns::runtime::{
     Diagnostic, PreConfiguredDestination, PrnsEvent, PrnsNode, PrnsNodeHandle, ProcessCommands,
@@ -26,6 +27,7 @@ use personal_rns::wire::DestinationHash;
 use tokio::sync::Semaphore;
 
 use crate::utilities::configuration::LoadedConfiguration;
+use crate::utilities::remote_control::transient_remote_control_service;
 
 use super::identity::{home_directory, load_identity, pretty_hash};
 use super::{RnxArgs, RnxError};
@@ -40,10 +42,12 @@ struct ListenerState {
     execution_slots: Semaphore,
 }
 
-struct RnxEndpoint;
-struct PublicRnxEndpoint;
+struct RnxCommand;
+struct PublicRnxCommand;
+type RnxEndpoint = RnxRequestEndpoint<RnxCommand>;
+type PublicRnxEndpoint = RnxRequestEndpoint<PublicRnxCommand>;
 
-impl RnxCommandHandler<ListenerState> for RnxEndpoint {
+impl RnxCommandHandler<ListenerState> for RnxCommand {
     const AUTHORIZATION: RnxAuthorization = RnxAuthorization::AllowList(&[]);
     type Output = HeapRnxOutput;
 
@@ -60,7 +64,7 @@ impl RnxCommandHandler<ListenerState> for RnxEndpoint {
     }
 }
 
-impl RnxCommandHandler<ListenerState> for PublicRnxEndpoint {
+impl RnxCommandHandler<ListenerState> for PublicRnxCommand {
     const AUTHORIZATION: RnxAuthorization = RnxAuthorization::Public;
     type Output = HeapRnxOutput;
 
@@ -107,19 +111,19 @@ pub(super) async fn run(mut args: RnxArgs) -> Result<(), RnxError> {
         eprintln!("prnsd x: no allowed identities configured; no commands will be accepted");
     }
     if args.no_auth {
-        listen_with_routes(args, configuration, secret, destination, || {
+        listen_with_endpoints(args, configuration, secret, destination, || {
             personal_rns::request_endpoints![PublicRnxEndpoint]
         })
         .await
     } else {
-        listen_with_routes(args, configuration, secret, destination, || {
+        listen_with_endpoints(args, configuration, secret, destination, || {
             personal_rns::request_endpoints![RnxEndpoint]
         })
         .await
     }
 }
 
-async fn listen_with_routes<R, F>(
+async fn listen_with_endpoints<R, F>(
     args: RnxArgs,
     configuration: LoadedConfiguration,
     secret: IdentitySecretKey,
@@ -130,10 +134,13 @@ where
     R: RequestEndpointSet<ListenerState>,
     F: FnOnce() -> R,
 {
+    let remote_control =
+        transient_remote_control_service().map_err(RnxError::RemoteControlIdentityUnavailable)?;
     let allowed: Arc<[IdentityHash]> = args.allowed.clone().into();
     let no_auth = args.no_auth;
     let mut node = PrnsNode::new_with_handle(move |handle| personal_rns::runtime::PrnsNodeRecipe {
         transport_identity: None,
+        remote_control,
         pre_configured_destinations: [PreConfiguredDestination::Single {
             app_name: APP_NAME,
             aspects: &[EXECUTE_ASPECT],

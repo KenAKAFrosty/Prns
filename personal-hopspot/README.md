@@ -4,14 +4,16 @@ Personal Hopspot is one Reticulum-based node application across desktop, mobile,
 and embedded platforms. It provides a status and control surface where the
 platform has a display or interactive shell.
 
-The `core` directory holds the platform-agnostic screen renderer. Each entry
-under `desktop/`, `mobile/`, and `embedded/` binds the shared application and
-Reticulum node to the platform's display, input, eligible interfaces, and power
-readings.
+The `core` directory owns the platform-agnostic application state, canonical
+64×128 monochrome face, display presentation policy, and renderer. Each entry
+under `desktop/`, `mobile/`, and `embedded/` converts that canonical frame into
+native pixels and binds the shared application and Reticulum node to its input,
+eligible interfaces, controller I/O, power rails, and power readings.
 
 Personal Hopspot is also the board-backed embedded reference application. A
-screen is optional: headless boards run the node and expose their supported
-remote controls without compiling a display surface.
+screen is optional: display-bearing standalone workspaces explicitly enable
+core's `display` feature, while headless boards run the node and expose their
+supported remote controls without compiling the face or presentation surface.
 
 ## Public packages
 
@@ -66,10 +68,12 @@ compatibility aliases.
 
 ESP32 firmware, from `embedded/esp32/` with the board on USB:
 
+    cargo heltec-e290-flash
     cargo heltec-v4-flash
     cargo heltec-v4-r8-flash
     cargo tbeam-supreme-flash
     cargo c6-flash
+
 
 T-Echo firmware:
 

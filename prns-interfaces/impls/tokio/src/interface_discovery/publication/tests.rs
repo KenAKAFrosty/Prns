@@ -105,7 +105,7 @@ async fn cadence_reuses_the_validated_stamp_and_sends_one_publication_at_a_time(
                 app_data_tx
                     .send(app_data)
                     .expect("the app-data observer remains open");
-                Ok::<_, SendError<AnnounceNowFailure>>(())
+                Ok::<_, AnnounceNowError>(())
             }
         },
         move |event| match event {
@@ -206,7 +206,7 @@ async fn network_encrypted_publication_uses_fresh_host_entropy_and_is_decryptabl
                 app_data_tx
                     .send(app_data)
                     .expect("the app-data observer remains open");
-                Ok::<_, SendError<AnnounceNowFailure>>(())
+                Ok::<_, AnnounceNowError>(())
             }
         },
         |_| {},

@@ -4,15 +4,9 @@ import time
 
 import RNS
 from RNS.vendor import umsgpack
+from rns_protocol_evidence import start_reference_reticulum
 
-EXPECTED_RNS_VERSION = "1.4.2"
 ENTRY_HASH = bytes.fromhex("33445566778899aabbccddeeff001122")
-
-
-def require_reference_version():
-    version = getattr(RNS, "__version__", "")
-    if version != EXPECTED_RNS_VERSION:
-        raise RuntimeError(f"expected RNS {EXPECTED_RNS_VERSION}, got {version!r}")
 
 
 def seed_publisher(config_dir):
@@ -112,7 +106,7 @@ def wait_for(predicate, timeout, failure):
 
 
 def query(config_dir, source_hash):
-    RNS.Reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     source_hash = bytes.fromhex(source_hash)
     destination_hash = RNS.Destination.hash_from_name_and_identity(
         "rnstransport.info.blackhole", source_hash
@@ -156,7 +150,7 @@ def query(config_dir, source_hash):
 
 
 def serve(config_dir):
-    RNS.Reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
+    start_reference_reticulum(configdir=config_dir, loglevel=RNS.LOG_ERROR)
     print("BLACKHOLE_SERVER_READY", flush=True)
     while True:
         time.sleep(1)
@@ -174,7 +168,6 @@ def verify_source_file(path, source_hash):
 
 
 def main():
-    require_reference_version()
     command = sys.argv[1]
     commands = {
         "prepare-prns-publisher": prepare_prns_publisher,

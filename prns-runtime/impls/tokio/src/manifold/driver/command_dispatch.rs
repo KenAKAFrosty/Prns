@@ -88,14 +88,18 @@ where
             };
         }
         macro_rules! defer_send_single_packet {
-            ($pool:expr, $id:expr, $send:expr) => {{
+            ($pool:expr, $id:expr, $send:expr, $timing:expr) => {{
                 let mut entropy_bytes = [0u8; SendSinglePacketEntropy::LEN];
                 host.fill_entropy(&mut entropy_bytes);
-                match engine.prepare_send_single_packet_deferred(
+                match engine.prepare_send_single_packet_deferred_with_timing(
                     $id,
                     $send,
                     now,
                     SendSinglePacketEntropy::new(entropy_bytes),
+                    crate::routing::timing::FirstHopTiming {
+                        interfaces: topology.interfaces.view(),
+                        shared_instance_floor_ms: $timing.first_hop_timeout_floor_ms,
+                    },
                 ) {
                     SendSinglePacketPrepared::Owed(owed) => {
                         $pool.submit(CryptoJob::SealScalars(owed));
@@ -144,7 +148,12 @@ where
                 let id = issued.id;
                 match (crypto_pool, issued.command) {
                     (Some(pool), PrnsCommand::SendSinglePacket(send)) => {
-                        defer_send_single_packet!(pool, id, send)
+                        defer_send_single_packet!(
+                            pool,
+                            id,
+                            send,
+                            crate::engine::CommandTiming::default()
+                        )
                     }
                     (_, command) => CommandEffect::Delta(engine.ingest_command_into(
                         IssuedCommand { id, command },
@@ -160,12 +169,54 @@ where
                 journal.register_completion(id, completion);
                 match (crypto_pool, issued.command) {
                     (Some(pool), PrnsCommand::SendSinglePacket(send)) => {
-                        defer_send_single_packet!(pool, id, send)
+                        defer_send_single_packet!(
+                            pool,
+                            id,
+                            send,
+                            crate::engine::CommandTiming::default()
+                        )
                     }
                     (_, command) => CommandEffect::Delta(engine.ingest_command_into(
                         IssuedCommand { id, command },
                         topology.interfaces.view(),
                         now,
+                        &mut |entropy| host.fill_entropy(entropy),
+                        &mut reaction_sink!(),
+                    )),
+                }
+            }
+            HostCommand::EngineWithTiming { issued, timing } => {
+                let id = issued.id;
+                match (crypto_pool, issued.command) {
+                    (Some(pool), PrnsCommand::SendSinglePacket(send)) => {
+                        defer_send_single_packet!(pool, id, send, timing)
+                    }
+                    (_, command) => CommandEffect::Delta(engine.ingest_command_into_with_timing(
+                        IssuedCommand { id, command },
+                        topology.interfaces.view(),
+                        now,
+                        timing,
+                        &mut |entropy| host.fill_entropy(entropy),
+                        &mut reaction_sink!(),
+                    )),
+                }
+            }
+            HostCommand::AwaitedEngineWithTiming {
+                issued,
+                timing,
+                completion,
+            } => {
+                let id = issued.id;
+                journal.register_completion(id, completion);
+                match (crypto_pool, issued.command) {
+                    (Some(pool), PrnsCommand::SendSinglePacket(send)) => {
+                        defer_send_single_packet!(pool, id, send, timing)
+                    }
+                    (_, command) => CommandEffect::Delta(engine.ingest_command_into_with_timing(
+                        IssuedCommand { id, command },
+                        topology.interfaces.view(),
+                        now,
+                        timing,
                         &mut |entropy| host.fill_entropy(entropy),
                         &mut reaction_sink!(),
                     )),

@@ -186,6 +186,7 @@ async fn a_dynamic_interface_drains_a_frame_queued_before_attachment() {
             inbound: inbound_lane,
             egress: outbound_lane,
             connection: None,
+            frame_accounting: None,
             ifac: None,
         }))
         .unwrap();
@@ -197,6 +198,126 @@ async fn a_dynamic_interface_drains_a_frame_queued_before_attachment() {
     assert_eq!(
         heard.as_bytes(),
         bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314").as_slice(),
+    );
+}
+
+#[tokio::test]
+async fn protocol_violations_are_attributed_to_the_source_recorder() {
+    use crate::interfaces::{
+        ConnectionState, FrameAccounting, FrameAccountingRecorder, InterfaceStatus,
+    };
+    use crate::wire::DestinationHash;
+
+    let malformed_source = InterfaceId::new([0xD5; 8]);
+    let valid_source = InterfaceId::new([0xD6; 8]);
+    let malformed_status =
+        TokioInterfaceStatus::new_accounted(malformed_source, ConnectionState::Connected);
+    let valid_status =
+        TokioInterfaceStatus::new_accounted(valid_source, ConnectionState::Connected);
+    let mut engine = EngineState::<TestStorageLayout>::default();
+    pin_transport_id(&mut engine, TEST_TRANSPORT_ID);
+
+    let (notify_tx, notify_rx) = mpsc::unbounded_channel::<InterfaceId>();
+    let (command_tx, command_rx) = mpsc::unbounded_channel::<HostCommand>();
+    let (heard_tx, mut heard_rx) = mpsc::unbounded_channel::<DestinationHash>();
+    let app = move |journaled: Journaled<'_>| {
+        if let Journaled::AnnounceHeard { observation, .. } = journaled {
+            let _ = heard_tx.send(observation.destination);
+        }
+    };
+    tokio::spawn(run(
+        engine,
+        TokioHost::new(),
+        ManifoldWiring {
+            interfaces: std::vec![],
+            ifacs: std::vec![],
+            notify: notify_rx,
+            inbound_lanes: std::vec![],
+            commands: command_rx,
+            egress: Egress::new(std::vec![]),
+        },
+        app,
+    ));
+
+    let (mut malformed_in, malformed_lane) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
+    let (malformed_out, _malformed_wire) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
+    let (mut valid_in, valid_lane) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
+    let (valid_out, _valid_wire) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
+    for (id, inbound, egress, recorder) in [
+        (
+            malformed_source,
+            malformed_lane,
+            malformed_out,
+            FrameAccountingRecorder::of(malformed_status.clone()),
+        ),
+        (
+            valid_source,
+            valid_lane,
+            valid_out,
+            FrameAccountingRecorder::of(valid_status.clone()),
+        ),
+    ] {
+        command_tx
+            .send(HostCommand::AddInterface(AddInterfaceCommand {
+                descriptor: descriptor(id),
+                logical_interface: id,
+                inbound,
+                egress,
+                connection: None,
+                frame_accounting: recorder,
+                ifac: None,
+            }))
+            .unwrap();
+    }
+    tokio::task::yield_now().await;
+
+    malformed_in.try_grant().unwrap().fill(&[0x01]);
+    malformed_in.commit();
+    notify_tx.send(malformed_source).unwrap();
+    valid_in
+        .try_grant()
+        .unwrap()
+        .fill(&bytes_from_hex(RNS_1_4_2_ANNOUNCE));
+    valid_in.commit();
+    notify_tx.send(valid_source).unwrap();
+    tokio::time::timeout(Duration::from_secs(2), heard_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+
+    let mut invalid_signature = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
+    invalid_signature[103] ^= 1;
+    valid_in.try_grant().unwrap().fill(&invalid_signature);
+    valid_in.commit();
+    notify_tx.send(valid_source).unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if valid_status
+                .frame_accounting()
+                .is_some_and(|counts| counts.protocol_violations == 1)
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the deferred signature verdict is attributed to its source");
+
+    assert_eq!(
+        malformed_status.frame_accounting(),
+        Some(FrameAccounting {
+            malformed: 1,
+            protocol_violations: 1,
+            ..FrameAccounting::default()
+        })
+    );
+    assert_eq!(
+        valid_status.frame_accounting(),
+        Some(FrameAccounting {
+            protocol_violations: 1,
+            ..FrameAccounting::default()
+        })
     );
 }
 
@@ -242,6 +363,7 @@ async fn dynamic_ifac_state_arrives_and_leaves_with_its_interface() {
             inbound: protected_rx,
             egress: protected_out,
             connection: None,
+            frame_accounting: None,
             ifac: Some(network.clone()),
         }))
         .unwrap();
@@ -276,6 +398,7 @@ async fn dynamic_ifac_state_arrives_and_leaves_with_its_interface() {
             inbound: open_rx,
             egress: open_out,
             connection: None,
+            frame_accounting: None,
             ifac: None,
         }))
         .unwrap();

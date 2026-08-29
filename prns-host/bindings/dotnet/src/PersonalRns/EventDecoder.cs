@@ -12,6 +12,12 @@ internal static class EventDecoder
                     new InterfaceId(Bytes(@event, EventField.SourceInterface)),
                     Bytes(@event, EventField.Plaintext)
                 ),
+            ApplicationEventKind.LinkDelivery =>
+                new ApplicationEvent.LinkDelivery(
+                    new LinkId(Bytes(@event, EventField.LinkId)),
+                    new InterfaceId(Bytes(@event, EventField.SourceInterface)),
+                    Bytes(@event, EventField.Plaintext)
+                ),
             ApplicationEventKind.Request =>
                 new ApplicationEvent.Request(
                     new DestinationHash(Bytes(@event, EventField.Destination)),
@@ -79,7 +85,8 @@ internal static class EventDecoder
                 new DiagnosticEvent.AnnounceHeard(
                     new DestinationHash(Bytes(@event, EventField.Destination)),
                     checked((byte)U64(@event, EventField.Hops)),
-                    new InterfaceId(Bytes(@event, EventField.SourceInterface))
+                    new InterfaceId(Bytes(@event, EventField.SourceInterface)),
+                    Bytes(@event, EventField.AppData)
                 ),
             DiagnosticEventKind.LinkEstablished =>
                 new DiagnosticEvent.LinkEstablished(

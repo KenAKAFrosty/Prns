@@ -1,12 +1,25 @@
 use std::path::{Path, PathBuf};
 
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
-use personal_rns::runtime::{load_or_create_identity_secret, IdentitySecretFileError};
+use personal_rns::remote_control::RemoteControlNodeIdentityBootstrap;
+use personal_rns::runtime::{
+    load_or_create_identity_secret, IdentitySecretFileError,
+    RemoteControlFileIdentityBootstrapError, RemoteControlIdentityDirectory,
+};
+
+const REMOTE_CONTROL_IDENTITY_DIRECTORY: &str = "remote_control";
 
 pub fn load_or_create_transport_identity(
     storage_dir: &Path,
 ) -> Result<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>, IdentitySecretFileError> {
     load_or_create_identity_secret(&storage_dir.join("transport_identity"))
+}
+
+pub fn load_or_create_remote_control_identities(
+    storage_dir: &Path,
+) -> Result<RemoteControlNodeIdentityBootstrap, RemoteControlFileIdentityBootstrapError> {
+    RemoteControlIdentityDirectory::new(storage_dir.join(REMOTE_CONTROL_IDENTITY_DIRECTORY))
+        .load_or_generate()
 }
 
 pub fn load_or_seed_network_identity(
@@ -109,5 +122,13 @@ mod tests {
         std::fs::create_dir(directory.path().join("transport_identity")).unwrap();
 
         assert!(load_or_create_transport_identity(directory.path()).is_err());
+    }
+
+    #[test]
+    fn a_remote_control_identity_error_is_never_replaced_with_ephemeral_identities() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join(REMOTE_CONTROL_IDENTITY_DIRECTORY), []).unwrap();
+
+        assert!(load_or_create_remote_control_identities(directory.path()).is_err());
     }
 }

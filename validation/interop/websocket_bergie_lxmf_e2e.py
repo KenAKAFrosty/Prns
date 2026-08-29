@@ -9,11 +9,21 @@ import time
 from contextlib import ExitStack
 from pathlib import Path
 
+from validation.interop.harness import (
+    CommandStream,
+    cleanup_temporary_directory,
+    decode_command_diagnostic,
+    decode_command_output,
+    environment,
+)
+
 
 ROOT = Path(__file__).resolve().parents[2]
 PRNSD_MANIFEST = ROOT / "prnsd" / "Cargo.toml"
 PRNSD_TARGET = ROOT / "prnsd" / "target"
-PRNSD_BINARY = PRNSD_TARGET / "debug" / "prnsd"
+PRNSD_BINARY = PRNSD_TARGET / "debug" / (
+    "prnsd.exe" if os.name == "nt" else "prnsd"
+)
 
 
 def build_prnsd() -> None:
@@ -37,7 +47,6 @@ def build_prnsd() -> None:
         cwd=ROOT,
         check=False,
         capture_output=True,
-        text=True,
         timeout=300,
     )
     if completed.returncode != 0:
@@ -47,8 +56,8 @@ def build_prnsd() -> None:
                     "command": command,
                     "cwd": str(ROOT),
                     "exit_code": completed.returncode,
-                    "stdout": completed.stdout,
-                    "stderr": completed.stderr,
+                    "stdout": decode_command_diagnostic(completed.stdout),
+                    "stderr": decode_command_diagnostic(completed.stderr),
                 },
                 sort_keys=True,
             )
@@ -70,16 +79,13 @@ class LoggedProcess:
     def start(
         cls, command: list[str], cwd: Path, log_path: Path
     ) -> LoggedProcess:
-        environment = os.environ.copy()
-        environment["PYTHONDONTWRITEBYTECODE"] = "1"
-        with log_path.open("w", encoding="utf-8") as log:
+        with log_path.open("wb") as log:
             process = subprocess.Popen(
                 command,
                 cwd=cwd,
-                env=environment,
+                env=environment({"PYTHONDONTWRITEBYTECODE": "1"}),
                 stdout=log,
                 stderr=subprocess.STDOUT,
-                text=True,
             )
         return cls(process, log_path)
 
@@ -92,7 +98,11 @@ class LoggedProcess:
     def output(self) -> str:
         if not self.log_path.exists():
             return ""
-        return self.log_path.read_text(encoding="utf-8")
+        return decode_command_output(
+            self.log_path.read_bytes(),
+            CommandStream.PROCESS_LOG,
+            f"{self.log_path} emitted invalid output",
+        )
 
     def wait_for(self, expected: str, timeout_seconds: int) -> str:
         deadline = time.monotonic() + timeout_seconds
@@ -136,7 +146,11 @@ class LoggedProcess:
 def read_log(log_path: Path) -> str:
     if not log_path.exists():
         return ""
-    return log_path.read_text(encoding="utf-8")
+    return decode_command_output(
+        log_path.read_bytes(),
+        CommandStream.PROCESS_LOG,
+        f"{log_path} emitted invalid output",
+    )
 
 
 def marker_lines(output: str, prefix: str) -> list[str]:
@@ -160,8 +174,9 @@ def destination_from(output: str, prefix: str) -> str:
 def exercise(repository: Path, echo_adapter: Path, sender_adapter: Path) -> dict:
     build_prnsd()
 
-    with tempfile.TemporaryDirectory(prefix="prns-bergie-lxmf-") as directory:
-        run_root = Path(directory)
+    temporary = tempfile.TemporaryDirectory(prefix="prns-bergie-lxmf-")
+    try:
+        run_root = Path(temporary.name)
         config_root = run_root / "prnsd"
         config_root.mkdir()
         port = available_tcp_port()
@@ -242,7 +257,7 @@ def exercise(repository: Path, echo_adapter: Path, sender_adapter: Path) -> dict
                         sender_log,
                     )
                 )
-                sender_output = sender.wait(40)
+                sender_output = sender.wait(170)
                 echo_output = echo.wait(10)
 
                 sender_destination = destination_from(
@@ -284,6 +299,8 @@ def exercise(repository: Path, echo_adapter: Path, sender_adapter: Path) -> dict
                 f"Bergie LXMF application interoperability failed: {error}\n"
                 f"{json.dumps(evidence, sort_keys=True)}"
             ) from error
+    finally:
+        cleanup_temporary_directory(temporary)
 
     return {
         "kind": "lxmf_application_e2e",

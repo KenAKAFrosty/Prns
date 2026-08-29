@@ -4,6 +4,7 @@ use personal_rns::routing::request_handlers::RequestPathHash;
 use personal_rns::runtime::request_endpoints::{
     Decline, RequestContext, RequestEndpoint, RequestEndpointPolicy, RequestEndpointSet,
 };
+use personal_rns::runtime::PrnsNodeApi;
 
 include!(concat!(env!("OUT_DIR"), "/node_pages_generated.rs"));
 
@@ -69,7 +70,10 @@ impl<S> RequestEndpoint<S> for NoSourceNodeIndexPage {
     const ENDPOINT_ID: &'static str = INDEX_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(mut context: RequestContext<'_, S>) -> Result<(), Decline> {
+    async fn handle(
+        mut context: RequestContext<'_, S>,
+        _node: &impl PrnsNodeApi,
+    ) -> Result<(), Decline> {
         context.respond_static_messagepack_bytes(HOPSPOT_INDEX_PAGE_NO_SOURCE)
     }
 }
@@ -80,7 +84,10 @@ impl<S> RequestEndpoint<S> for NodeQuickstartPage {
     const ENDPOINT_ID: &'static str = QUICKSTART_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(mut context: RequestContext<'_, S>) -> Result<(), Decline> {
+    async fn handle(
+        mut context: RequestContext<'_, S>,
+        _node: &impl PrnsNodeApi,
+    ) -> Result<(), Decline> {
         context.respond_static_messagepack_bytes(QUICKSTART_PAGE)
     }
 }
@@ -93,7 +100,10 @@ impl<S> RequestEndpoint<S> for SourceNodeIndexPage {
     const ENDPOINT_ID: &'static str = INDEX_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(mut context: RequestContext<'_, S>) -> Result<(), Decline> {
+    async fn handle(
+        mut context: RequestContext<'_, S>,
+        _node: &impl PrnsNodeApi,
+    ) -> Result<(), Decline> {
         context.respond_static_messagepack_bytes(HOPSPOT_INDEX_PAGE_WITH_SOURCE)
     }
 }
@@ -106,7 +116,10 @@ impl<S> RequestEndpoint<S> for SourceArchiveFile {
     const ENDPOINT_ID: &'static str = SOURCE_ARCHIVE_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(mut context: RequestContext<'_, S>) -> Result<(), Decline> {
+    async fn handle(
+        mut context: RequestContext<'_, S>,
+        _node: &impl PrnsNodeApi,
+    ) -> Result<(), Decline> {
         context.respond_static_file("source.zip", SOURCE_ARCHIVE)
     }
 }
@@ -119,7 +132,10 @@ impl<S> RequestEndpoint<S> for SourceChecksumFile {
     const ENDPOINT_ID: &'static str = SOURCE_CHECKSUM_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(mut context: RequestContext<'_, S>) -> Result<(), Decline> {
+    async fn handle(
+        mut context: RequestContext<'_, S>,
+        _node: &impl PrnsNodeApi,
+    ) -> Result<(), Decline> {
         context.respond_static_file("source.zip.sha256", SOURCE_CHECKSUM)
     }
 }
@@ -136,6 +152,7 @@ impl<S> RequestEndpointSet<S> for NoSourceNodePageRoutes {
 
     async fn dispatch(
         mut context: RequestContext<'_, S>,
+        _node: &impl PrnsNodeApi,
         path_hash: RequestPathHash,
     ) -> Result<(), Decline> {
         if path_hash == RequestPathHash::of(INDEX_PATH) {
@@ -168,6 +185,7 @@ impl<S> RequestEndpointSet<S> for SourceNodePageRoutes {
 
     async fn dispatch(
         mut context: RequestContext<'_, S>,
+        _node: &impl PrnsNodeApi,
         path_hash: RequestPathHash,
     ) -> Result<(), Decline> {
         if path_hash == RequestPathHash::of(INDEX_PATH) {
@@ -210,6 +228,7 @@ impl<S> RequestEndpointSet<S> for BrowserNodePageRoutes {
 
     async fn dispatch(
         mut context: RequestContext<'_, S>,
+        _node: &impl PrnsNodeApi,
         path_hash: RequestPathHash,
     ) -> Result<(), Decline> {
         if path_hash == RequestPathHash::of(INDEX_PATH) {
@@ -243,14 +262,17 @@ impl<S> RequestEndpoint<S> for NodeIndexPage {
     const ENDPOINT_ID: &'static str = INDEX_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(context: RequestContext<'_, S>) -> Result<(), Decline> {
+    async fn handle(
+        context: RequestContext<'_, S>,
+        node: &impl PrnsNodeApi,
+    ) -> Result<(), Decline> {
         #[cfg(feature = "source-archive")]
         {
-            SourceNodeIndexPage::handle(context).await
+            SourceNodeIndexPage::handle(context, node).await
         }
         #[cfg(not(feature = "source-archive"))]
         {
-            NoSourceNodeIndexPage::handle(context).await
+            NoSourceNodeIndexPage::handle(context, node).await
         }
     }
 }
@@ -269,15 +291,16 @@ impl<S> RequestEndpointSet<S> for NodePageRoutes {
 
     async fn dispatch(
         context: RequestContext<'_, S>,
+        node: &impl PrnsNodeApi,
         path_hash: RequestPathHash,
     ) -> Result<(), Decline> {
         #[cfg(feature = "source-archive")]
         {
-            SourceNodePageRoutes::dispatch(context, path_hash).await
+            SourceNodePageRoutes::dispatch(context, node, path_hash).await
         }
         #[cfg(not(feature = "source-archive"))]
         {
-            NoSourceNodePageRoutes::dispatch(context, path_hash).await
+            NoSourceNodePageRoutes::dispatch(context, node, path_hash).await
         }
     }
 }

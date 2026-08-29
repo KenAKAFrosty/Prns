@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
 use personal_rns::engine::RatchetPolicy;
+use personal_rns::identity::IdentityHash;
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use personal_rns::routing::announce::{derive_single_destination_hash, ExpandNameError};
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::request_handlers::RequestPolicy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
@@ -19,7 +21,13 @@ use super::DaemonRequestState;
 
 const APP_NAME: &str = "nomadnetwork";
 const ASPECTS: &[&str] = &["node"];
-const ANNOUNCE_APP_DATA: &[u8] = b"Prns: High-performance Reticulum";
+const ANNOUNCE_APP_DATA: &[u8] = crate::build_identity::NNPAGES_ANNOUNCE_TITLE.as_bytes();
+
+pub(crate) fn destination_hash(
+    identity: &IdentityHash,
+) -> Result<DestinationHash, ExpandNameError> {
+    derive_single_destination_hash(identity, APP_NAME, ASPECTS)
+}
 
 pub(crate) struct NodePageDestination {
     pub(crate) hash: DestinationHash,
@@ -67,6 +75,18 @@ mod tests {
     fn node_page_uses_nomadnet_destination_conventions() {
         assert_eq!(APP_NAME, "nomadnetwork");
         assert_eq!(ASPECTS, ["node"]);
-        assert_eq!(ANNOUNCE_APP_DATA, b"Prns: High-performance Reticulum");
+        assert_eq!(
+            ANNOUNCE_APP_DATA,
+            format!(
+                "Prns: High-performance Reticulum · v{} · {}",
+                crate::build_identity::VERSION,
+                crate::build_identity::SHORT_COMMIT,
+            )
+            .as_bytes()
+        );
+        assert!(
+            ANNOUNCE_APP_DATA.len()
+                <= personal_rns::routing::announce::emit::MAX_ANNOUNCE_APP_DATA_LEN
+        );
     }
 }

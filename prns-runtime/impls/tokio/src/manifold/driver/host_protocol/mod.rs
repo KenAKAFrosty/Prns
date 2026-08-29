@@ -4,8 +4,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 
 use crate::engine::{
-    CommandId, Departure, IssuedCommand, PersistenceFlushCause, PersistenceFlushTarget,
-    SendRequestFailure, Settlement,
+    CommandId, CommandTiming, Departure, IssuedCommand, PersistenceFlushCause,
+    PersistenceFlushTarget, SendRequestFailure, Settlement,
 };
 use crate::interfaces::{ConnectionView, InterfaceDescriptor, InterfaceId};
 use crate::manifold::grant_lane::{TokioGrantConsumer, TokioGrantProducer};
@@ -29,6 +29,10 @@ use prns_runtime::runtime::{PersistedStateSnapshot, SelfRatchetSnapshot, SelfRat
 #[allow(clippy::large_enum_variant)]
 pub enum HostCommand {
     Engine(IssuedCommand),
+    EngineWithTiming {
+        issued: IssuedCommand,
+        timing: CommandTiming,
+    },
     NotePersistenceFlush {
         cause: PersistenceFlushCause,
         target: PersistenceFlushTarget,
@@ -41,6 +45,11 @@ pub enum HostCommand {
     },
     AwaitedEngine {
         issued: IssuedCommand,
+        completion: oneshot::Sender<Settlement>,
+    },
+    AwaitedEngineWithTiming {
+        issued: IssuedCommand,
+        timing: CommandTiming,
         completion: oneshot::Sender<Settlement>,
     },
     SendResource(SendResourceHostCommand),
@@ -145,6 +154,7 @@ pub struct AddInterfaceCommand {
     pub inbound: TokioGrantConsumer,
     pub egress: TokioGrantProducer,
     pub connection: Option<ConnectionView>,
+    pub frame_accounting: Option<crate::interfaces::FrameAccountingRecorder>,
     pub ifac: Option<crate::interfaces::IfacContext>,
 }
 

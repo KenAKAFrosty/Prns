@@ -14,6 +14,11 @@ use crate::interfaces::{
     TransportCapability,
 };
 use crate::manifold::interface_seam::{Interface, InterfaceSeam};
+use crate::remote_control::{
+    RemoteControlControllerIdentitySecret, RemoteControlInitialAccess,
+    RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
+    RemoteControlService, RemoteControlTargetIdentitySecret,
+};
 use crate::routing::announce::AnnounceObservation;
 use crate::routing::links::resources::{ResourceMemoryLimits, ResourceStrategy};
 use crate::routing::request_handlers::RequestHandlerError;
@@ -26,6 +31,7 @@ use crate::wire::{DestinationHash, PacketType, WirePacketHeader};
 use super::super::super::request_endpoints::{
     Decline, RequestContext, RequestEndpoint, RequestEndpointPolicy,
 };
+use super::super::test_remote_control_service;
 use super::{
     notify_accepted_announce, persistence_restored_diagnostic, run_node_tasks,
     AcceptedAnnounceObserver, NodeRunError, PrnsNode,
@@ -227,6 +233,7 @@ fn restore_diagnostics_report_seeded_refused_and_dropped_totals() {
 async fn run_until_returns_when_a_non_persistent_node_is_asked_to_stop() {
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
+        remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: (),
         storage: crate::storage::GrowableHeap,
@@ -239,6 +246,54 @@ async fn run_until_returns_when_a_non_persistent_node_is_asked_to_stop() {
     assert_eq!(node.run_until(async {}).await, Ok(()));
 }
 
+#[test]
+fn controller_and_target_identities_coexist_without_a_transport_identity() {
+    let remote_control_secrets = RemoteControlNodeIdentitySecrets::new(
+        RemoteControlControllerIdentitySecret::from(Zeroizing::new(
+            [0x42; IDENTITY_SECRET_KEY_LEN],
+        )),
+        RemoteControlTargetIdentitySecret::from(Zeroizing::new([0x31; IDENTITY_SECRET_KEY_LEN])),
+    )
+    .unwrap();
+    let expected_identities = remote_control_secrets.identities();
+    let target_identity = expected_identities.target().identity_hash();
+    let controller_identity = expected_identities.controller().identity_hash();
+    let remote_control = RemoteControlService::new(
+        remote_control_secrets,
+        RemoteControlPublicAppData::try_from(b"".as_slice()).unwrap(),
+        RemoteControlInitialAccess::Nobody,
+        RemoteControlSelfAnnouncement::Unavailable,
+    );
+    let node = PrnsNode::new(PrnsNodeRecipe {
+        transport_identity: None,
+        remote_control,
+        pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+        app_state: (),
+        storage: crate::storage::GrowableHeap,
+        request_endpoints: crate::request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
+        on_event: |_event, _state: &()| {},
+    });
+
+    assert_eq!(
+        node.node.remote_control.identities(),
+        Some(&expected_identities)
+    );
+    assert_eq!(node.node.engine.held_identity_hashes().len(), 2);
+    assert!(node
+        .node
+        .engine
+        .held_identity_hashes()
+        .contains(&target_identity));
+    assert!(node
+        .node
+        .engine
+        .held_identity_hashes()
+        .contains(&controller_identity));
+    assert_eq!(node.node.engine.transport_id(), None);
+}
+
 #[tokio::test]
 async fn run_until_with_proof_decider_reaches_a_prove_if_recipe_destination() {
     let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
@@ -249,6 +304,7 @@ async fn run_until_with_proof_decider_reaches_a_prove_if_recipe_destination() {
     );
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
+        remote_control: test_remote_control_service(),
         pre_configured_destinations: [PreConfiguredDestination::Single {
             app_name: "personal",
             aspects: &["node"],
@@ -321,6 +377,7 @@ async fn graceful_shutdown_is_observed_after_state_and_ratchet_flushes() {
     let event_sink = Arc::clone(&events);
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
+        remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: (),
         storage: crate::storage::GrowableHeap,
@@ -366,6 +423,7 @@ async fn a_recipe_managed_write_failure_is_observed_before_run_returns() {
     let event_sink = Arc::clone(&events);
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
+        remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: (),
         storage: crate::storage::GrowableHeap,
@@ -394,6 +452,7 @@ async fn a_restore_callback_panic_reports_the_manifold_boundary() {
     let persistence = crate::runtime::NodePersistence::custom_dir(&directory).unwrap();
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
+        remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: (),
         storage: crate::storage::GrowableHeap,
@@ -471,6 +530,7 @@ fn accepted_announce_observers_receive_the_complete_observation() {
 fn new_with_handle_builds_state_from_the_nodes_handle() {
     let prns = PrnsNode::new_with_handle(|handle| PrnsNodeRecipe {
         transport_identity: None,
+        remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: handle,
         storage: crate::storage::GrowableHeap,
@@ -491,6 +551,7 @@ fn host_resource_memory_limits_reach_the_engine_before_run() {
     };
     let prns = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
+        remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: (),
         storage: crate::storage::GrowableHeap,
@@ -511,7 +572,10 @@ fn a_runtime_destination_registers_only_its_selected_route_types() {
         const ENDPOINT_ID: &'static str = "/first";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[]);
 
-        async fn handle(_context: RequestContext<'_, ()>) -> Result<(), Decline> {
+        async fn handle(
+            _context: RequestContext<'_, ()>,
+            _node: &impl crate::runtime::PrnsNodeApi,
+        ) -> Result<(), Decline> {
             Ok(())
         }
     }
@@ -521,13 +585,17 @@ fn a_runtime_destination_registers_only_its_selected_route_types() {
         const ENDPOINT_ID: &'static str = "/second";
         const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowList(&[]);
 
-        async fn handle(_context: RequestContext<'_, ()>) -> Result<(), Decline> {
+        async fn handle(
+            _context: RequestContext<'_, ()>,
+            _node: &impl crate::runtime::PrnsNodeApi,
+        ) -> Result<(), Decline> {
             Ok(())
         }
     }
 
     let mut prns = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
+        remote_control: test_remote_control_service(),
         pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
         app_state: (),
         storage: crate::storage::GrowableHeap,

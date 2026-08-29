@@ -280,6 +280,7 @@ export type {
   AnnounceEvent,
   ChannelMessageEvent,
   DiagnosticsDroppedEvent,
+  LinkDeliveryEvent,
   LinkEvent,
   PrnsApplicationEvent,
   PrnsDiagnosticEvent,
@@ -1508,7 +1509,7 @@ export class Prns {
     }
     return new Promise((settle) => {
       this.#pendingCommands.set(id, { pending, settle });
-      this.#pumpEvents();
+      this.#host.notifyRuntimeActivity();
     });
   }
 
@@ -1761,6 +1762,7 @@ function webSocketCommandFailure(
 function retainedBrowserEventBytes(event: PrnsApplicationEvent): number {
   return match_into<number>().from(event, {
     SingleDelivery: ({ plaintext }) => plaintext.length,
+    LinkDelivery: ({ plaintext }) => plaintext.length,
     Request: ({ data }) => data.length,
     Response: ({ data }) => data.length,
     ResponseSegment: ({ data }) => data.length,

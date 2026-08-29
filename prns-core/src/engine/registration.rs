@@ -6,14 +6,16 @@ use crate::engine::{AllowRequester, AllowRequesterRejection, CommandId, CommandO
 use crate::engine::{EngineState, RatchetPolicy};
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{IdentityHash, IDENTITY_SECRET_KEY_LEN};
+use crate::remote_control::{RemoteControlNodeIdentities, RemoteControlNodeIdentitySecrets};
 use crate::routing::announce::emit::MAX_RATCHETED_ANNOUNCE_APP_DATA_LEN;
+use crate::routing::announce::schedule::ScheduledAnnounceQueue;
 use crate::routing::announce::{derive_destination_hash, expand_name, Announce};
 use crate::routing::group_keys::{GroupKey, GroupKeyError};
 use crate::routing::links::resources::ResourceStrategy;
 use crate::routing::request_handlers::{RequestHandlerError, RequestPathHash, RequestPolicy};
 use crate::routing::upstream_app_destinations::LinkRequestPolicy;
 use crate::routing::upstream_app_destinations::{
-    ProofStrategy, RegisterDestinationError, UpstreamAppDestination,
+    ProofStrategy, RegisterDestinationError, UnregisterDestinationOutcome, UpstreamAppDestination,
 };
 use crate::routing::warmth::Departure;
 use crate::routing::{PersistedRouteRow, SeedRouteOutcome};
@@ -117,6 +119,16 @@ impl<S: StorageLayout> EngineState<S> {
         self.held_identities.hold(identity_secret_key)
     }
 
+    pub fn configure_remote_control_identities(
+        &mut self,
+        secrets: RemoteControlNodeIdentitySecrets,
+    ) -> Result<RemoteControlNodeIdentities, HoldIdentityError> {
+        let identities = secrets.identities();
+        let (controller, target) = secrets.into_parts();
+        self.held_identities.hold_pair(controller, target)?;
+        Ok(identities)
+    }
+
     pub fn held_identity_hashes(&self) -> &[IdentityHash] {
         self.held_identities.hashes()
     }
@@ -192,6 +204,21 @@ impl<S: StorageLayout> EngineState<S> {
 
     pub fn upstream_app_destinations(&self) -> impl Iterator<Item = UpstreamAppDestination> + '_ {
         self.upstream_app_destinations.iter()
+    }
+
+    pub fn unregister_destination(
+        &mut self,
+        destination: &DestinationHash,
+    ) -> UnregisterDestinationOutcome {
+        let outcome = self.upstream_app_destinations.unregister(destination);
+        let UnregisterDestinationOutcome::Unregistered { .. } = outcome else {
+            return outcome;
+        };
+        self.request_handlers.unregister_destination(destination);
+        let _ = self.scheduled_announces.cancel(destination);
+        self.self_ratchets.untrack(destination);
+        self.group_keys.remove(destination);
+        outcome
     }
 
     /// RNS 1.4.2 apps set `Link.resource_strategy` in the link-established callback, a de facto per-destination default; stamping at activation outraces a sender's instant advertise.
@@ -691,6 +718,165 @@ mod tests {
                 .is_ok(),
             "a group with a stored key re-registers on a full table",
         );
+    }
+
+    #[test]
+    fn destination_unregistration_removes_only_state_owned_by_that_destination() {
+        let mut state = EngineState::<TestStorageLayout>::default();
+        let node = state.hold_identity(fixed_secret_key()).unwrap();
+        let target = state
+            .register_single_destination(
+                &node,
+                "personal",
+                &["target"],
+                b"target",
+                ProofStrategy::ProveAll,
+                LinkRequestPolicy::AcceptAll,
+                RatchetPolicy::Ratcheted,
+            )
+            .unwrap();
+        let retained = state
+            .register_group_destination(&node, "personal", &["retained"], &[0x42; 64])
+            .unwrap();
+        let target_registration = state
+            .upstream_app_destinations()
+            .find(|registration| registration.destination == target)
+            .unwrap();
+        let retained_registration = state
+            .upstream_app_destinations()
+            .find(|registration| registration.destination == retained)
+            .unwrap();
+        let target_first = RequestPathHash::of("/target/first");
+        let target_second = RequestPathHash::of("/target/second");
+        let retained_path = RequestPathHash::of("/retained");
+        state
+            .register_request_handler_hash(&target, target_first, RequestPolicy::AllowAll)
+            .unwrap();
+        state
+            .register_request_handler_hash(&retained, retained_path, RequestPolicy::AllowAll)
+            .unwrap();
+        state
+            .register_request_handler_hash(&target, target_second, RequestPolicy::AllowAll)
+            .unwrap();
+        state
+            .self_ratchets
+            .rotate_if_due(&target, InstantMillis(1_000), &mut test_fill_entropy);
+        let interface = crate::interfaces::InterfaceId::new([0x41; 8]);
+        let _ = state
+            .scheduled_announces
+            .schedule(target, InstantMillis(2_000), interface, 0);
+        let _ = state
+            .scheduled_announces
+            .schedule(retained, InstantMillis(3_000), interface, 0);
+
+        assert_eq!(
+            state.unregister_destination(&target),
+            UnregisterDestinationOutcome::Unregistered {
+                registration: target_registration,
+            },
+        );
+
+        assert_eq!(
+            state
+                .upstream_app_destinations()
+                .collect::<std::vec::Vec<_>>(),
+            [retained_registration],
+        );
+        assert!(!state.request_handlers.permits(&target, &target_first, None));
+        assert!(!state
+            .request_handlers
+            .permits(&target, &target_second, None));
+        assert!(state
+            .request_handlers
+            .permits(&retained, &retained_path, None));
+        assert_eq!(state.request_handlers.len(), 1);
+        assert!(!state.self_ratchets.is_tracked(&target));
+        assert!(state.group_keys.key_for(&retained).is_some());
+        assert_eq!(state.scheduled_announces.scheduled_count(), 1);
+        assert_eq!(
+            state
+                .scheduled_announces
+                .iter()
+                .next()
+                .map(|scheduled| scheduled.destination),
+            Some(retained),
+        );
+
+        assert_eq!(
+            state.unregister_destination(&target),
+            UnregisterDestinationOutcome::NotRegistered,
+        );
+        assert_eq!(
+            state.unregister_destination(&retained),
+            UnregisterDestinationOutcome::Unregistered {
+                registration: retained_registration,
+            },
+        );
+        assert!(state.upstream_app_destinations().next().is_none());
+        assert!(state.request_handlers.is_empty());
+        assert!(state.group_keys.key_for(&retained).is_none());
+        assert_eq!(state.scheduled_announces.scheduled_count(), 0);
+    }
+
+    #[test]
+    fn destination_unregistration_reclaims_bounded_credential_slots() {
+        let mut ratcheted = EngineState::<TestStorageLayout>::default();
+        let node = ratcheted.hold_identity(fixed_secret_key()).unwrap();
+        let mut removed_ratchet = None;
+        for aspect in ["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"] {
+            let destination = ratcheted
+                .register_single_destination(
+                    &node,
+                    "personal",
+                    &[aspect],
+                    b"",
+                    ProofStrategy::ProveAll,
+                    LinkRequestPolicy::AcceptAll,
+                    RatchetPolicy::Ratcheted,
+                )
+                .unwrap();
+            if removed_ratchet.is_none() {
+                removed_ratchet = Some(destination);
+            }
+        }
+        ratcheted.unregister_destination(&removed_ratchet.unwrap());
+        let replacement_ratchet = ratcheted
+            .register_single_destination(
+                &node,
+                "personal",
+                &["replacement"],
+                b"",
+                ProofStrategy::ProveAll,
+                LinkRequestPolicy::AcceptAll,
+                RatchetPolicy::Ratcheted,
+            )
+            .unwrap();
+        assert!(ratcheted.self_ratchets.is_tracked(&replacement_ratchet));
+        assert_eq!(ratcheted.upstream_app_destinations().count(), 8);
+
+        let mut grouped = EngineState::<TestStorageLayout>::default();
+        let identity = IdentityHash::new([0x4C; 16]);
+        let mut removed_group = None;
+        for aspect in ["g0", "g1", "g2", "g3", "g4", "g5", "g6", "g7"] {
+            let destination = grouped
+                .register_group_destination(&identity, "personal", &[aspect], &[0x42; 64])
+                .unwrap();
+            if removed_group.is_none() {
+                removed_group = Some(destination);
+            }
+        }
+        grouped.unregister_destination(&removed_group.unwrap());
+        let replacement_group = grouped
+            .register_group_destination(&identity, "personal", &["replacement"], &[0x99; 64])
+            .unwrap();
+        assert_eq!(
+            grouped
+                .group_keys
+                .key_for(&replacement_group)
+                .map(GroupKey::as_slice),
+            Some([0x99; 64].as_slice()),
+        );
+        assert_eq!(grouped.upstream_app_destinations().count(), 8);
     }
 
     #[test]

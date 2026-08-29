@@ -1,6 +1,8 @@
 use crate::engine::{
-    AnnounceAppData, AnnounceNow, AnnounceTarget, CommandId, PacketReceiptDelivered, PrnsCommand,
-    SendSinglePacketFailure,
+    AnnounceAppData, AnnounceNow, AnnounceNowFailure, AnnounceNowRejection, AnnounceTarget,
+    AnnounceWriteFailure, CommandId, PacketReceiptDelivered, PrnsCommand, SendGroupFailure,
+    SendPlainPacketFailure, SendSinglePacketFailure, SetRegisteredAnnounceAppData,
+    SetRegisteredAnnounceAppDataFailure, SetRegisteredAnnounceAppDataRejection,
 };
 pub use crate::engine::{DropRouteOutcome, DropRoutesViaOutcome};
 use crate::identity::{
@@ -25,6 +27,40 @@ pub enum SendError<F> {
     /// More awaited sends are in flight than the platform tracks at once
     Busy,
     Failed(F),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnnounceNowError {
+    NodeStopped,
+    Busy,
+    Rejected(AnnounceNowRejection),
+    WriteFailed(AnnounceWriteFailure),
+}
+
+impl AnnounceNowError {
+    #[must_use]
+    pub const fn from_failure(failure: AnnounceNowFailure) -> Self {
+        match failure {
+            AnnounceNowFailure::Rejected(rejection) => Self::Rejected(rejection),
+            AnnounceNowFailure::WriteFailed(failure) => Self::WriteFailed(failure),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetRegisteredAnnounceAppDataError {
+    NodeStopped,
+    Busy,
+    Rejected(SetRegisteredAnnounceAppDataRejection),
+}
+
+impl SetRegisteredAnnounceAppDataError {
+    #[must_use]
+    pub const fn from_failure(failure: SetRegisteredAnnounceAppDataFailure) -> Self {
+        match failure {
+            SetRegisteredAnnounceAppDataFailure::Rejected(rejection) => Self::Rejected(rejection),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,13 +142,82 @@ pub trait PrnsNodeApi {
         }))
     }
 
+    async fn announce_now(&self, announce: AnnounceNow) -> Result<(), AnnounceNowError>;
+
+    async fn set_registered_announce_app_data(
+        &self,
+        set: SetRegisteredAnnounceAppData,
+    ) -> Result<(), SetRegisteredAnnounceAppDataError>;
+
     async fn send_single_packet(
         &self,
         destination: DestinationHash,
         data: &[u8],
     ) -> Result<PacketReceiptDelivered, SendError<SendSinglePacketFailure>>;
 
+    async fn send_plain_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendPlainPacketFailure>>;
+
+    async fn send_group_packet(
+        &self,
+        destination: DestinationHash,
+        data: &[u8],
+    ) -> Result<(), SendError<SendGroupFailure>>;
+
     fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> bool;
 
     fn close_link(&self, link_id: LinkId) -> bool;
+}
+
+#[cfg(test)]
+impl PrnsNodeApi for () {
+    fn issue(&self, _command: PrnsCommand) -> Option<CommandId> {
+        None
+    }
+
+    async fn announce_now(&self, _announce: AnnounceNow) -> Result<(), AnnounceNowError> {
+        Err(AnnounceNowError::NodeStopped)
+    }
+
+    async fn set_registered_announce_app_data(
+        &self,
+        _set: SetRegisteredAnnounceAppData,
+    ) -> Result<(), SetRegisteredAnnounceAppDataError> {
+        Err(SetRegisteredAnnounceAppDataError::NodeStopped)
+    }
+
+    async fn send_single_packet(
+        &self,
+        _destination: DestinationHash,
+        _data: &[u8],
+    ) -> Result<PacketReceiptDelivered, SendError<SendSinglePacketFailure>> {
+        Err(SendError::NodeStopped)
+    }
+
+    async fn send_plain_packet(
+        &self,
+        _destination: DestinationHash,
+        _data: &[u8],
+    ) -> Result<(), SendError<SendPlainPacketFailure>> {
+        Err(SendError::NodeStopped)
+    }
+
+    async fn send_group_packet(
+        &self,
+        _destination: DestinationHash,
+        _data: &[u8],
+    ) -> Result<(), SendError<SendGroupFailure>> {
+        Err(SendError::NodeStopped)
+    }
+
+    fn respond_packed(&self, _responder: RespondToken, _packed: &[u8]) -> bool {
+        false
+    }
+
+    fn close_link(&self, _link_id: LinkId) -> bool {
+        false
+    }
 }

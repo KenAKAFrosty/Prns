@@ -31,7 +31,10 @@ struct Echo;
 impl RequestEndpoint<Responder> for Echo {
     const ENDPOINT_ID: &'static str = QUERY_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
-    async fn handle(mut cx: RequestContext<'_, Responder>) -> Result<(), Decline> {
+    async fn handle(
+        mut cx: RequestContext<'_, Responder>,
+        _node: &impl personal_rns::runtime::PrnsNodeApi,
+    ) -> Result<(), Decline> {
         let asked = cx.data;
         let _ = cx.write_packed(asked);
         cx.respond(b"-pong")
@@ -75,6 +78,7 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
         .expect("binds the initiator socket");
 
     let node_a = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [responder_dest],
         app_state: Responder,
@@ -107,6 +111,7 @@ async fn a_link_establishes_and_carries_data_across_two_nodes_over_udp() {
 
     let (heard_tx, mut heard_rx) = tokio::sync::mpsc::unbounded_channel();
     let node_b = PrnsNode::new(PrnsNodeRecipe {
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         transport_identity: None,
         pre_configured_destinations: [PreConfiguredDestination::Single {
             resource_strategy:

@@ -46,8 +46,9 @@ use portable_atomic::{AtomicU32, Ordering};
 use prns_core::engine::InstantMillis;
 use prns_core::interfaces::lora::{
     self, air_frame_count, encode_air_frame_part, AirFrameError, AirtimePolicy, AirtimePolicyError,
-    LoRaReassembler, RadioProfile, RadioProfileCompatibilityError, RadioProfileError,
-    SpreadingFactor, CHANNEL_TAG_CAP, LORA_MAX_PAYLOAD, LORA_SINGLE_FRAME_MAX,
+    LoRaReassembler, LoRaReassemblyError, LoRaReassemblyOutcome, RadioProfile,
+    RadioProfileCompatibilityError, RadioProfileError, SpreadingFactor, CHANNEL_TAG_CAP,
+    LORA_MAX_PAYLOAD, LORA_SINGLE_FRAME_MAX,
 };
 use prns_core::interfaces::{
     AirtimeDutyCycle, ConnectionState, InterfaceDescriptor, InterfaceId, InterfaceKind,
@@ -360,18 +361,41 @@ async fn deliver_rx<Seam: InterfaceSeam>(
     reassembler: &mut LoRaReassembler<LORA_MAX_PAYLOAD>,
     seam: &mut Seam,
 ) {
+    status.count_frame_in();
     status.add_rx(frame.bytes.len() as u64);
     throughput.record_rx(frame.arrived_at, frame.bytes.len() as u64);
     status.set_transfer_rates(throughput.rates());
-    if let Some(packet) = reassembler.feed_with_phy(frame.bytes, frame.phy) {
-        if !packet.bytes.is_empty() && packet.bytes.len() <= LORA_MAX_PAYLOAD {
-            let mut phy = packet.phy;
-            if let Some(snr) = phy.snr {
-                phy.quality = frame.spreading_factor.signal_quality(snr);
-            }
-            seam.next_inbound_with_phy(packet.bytes, phy).await;
+    let packet = match reassembler.feed_with_phy(frame.bytes, frame.phy) {
+        LoRaReassemblyOutcome::AwaitingSecond => return,
+        LoRaReassemblyOutcome::Delivered(packet) => packet,
+        LoRaReassemblyOutcome::ReplacedPartialAndAwaitingSecond => {
+            status.count_frame_undecodable();
+            return;
         }
+        LoRaReassemblyOutcome::DeliveredAfterReplacingPartial(packet) => {
+            status.count_frame_undecodable();
+            packet
+        }
+        LoRaReassemblyOutcome::Rejected(LoRaReassemblyError::EmptyAirFrame) => {
+            status.count_frame_malformed();
+            return;
+        }
+        LoRaReassemblyOutcome::Rejected(LoRaReassemblyError::CapacityExceeded) => {
+            status.count_frame_undecodable();
+            return;
+        }
+    };
+    if packet.bytes.is_empty() {
+        status.count_frame_malformed();
+        return;
     }
+    debug_assert!(packet.bytes.len() <= LORA_MAX_PAYLOAD);
+    let mut phy = packet.phy;
+    if let Some(snr) = phy.snr {
+        phy.quality = frame.spreading_factor.signal_quality(snr);
+    }
+    seam.next_inbound_with_phy(packet.bytes, phy).await;
+    status.count_frame_delivered();
 }
 
 fn choose_backoff_entropy<Seam: InterfaceSeam>(
@@ -834,7 +858,6 @@ impl<R: LoRaRadio> Interface for LoRaInterface<'_, R> {
             lifecycle,
         } = self;
         let mut current_id = id;
-
         if let Err(e) = radio.initialize(profile).await {
             crate::diagnostic_log::error!("RNS_LORA radio init failed: {e:?}; interface offline");
             status.set_connection(ConnectionState::Disconnected);
@@ -1425,6 +1448,7 @@ mod tests {
     use prns_core::interfaces::lora::{
         CodingRate, LoraBandwidth, Modulation, PreambleSymbols, TxPower, DEFAULT_915_PROFILE,
     };
+    use prns_core::interfaces::{FrameAccounting, FrameSink, InterfaceStatus};
     use std::boxed::Box;
     use std::task::Waker;
 
@@ -1443,6 +1467,97 @@ mod tests {
 
     fn id_of(profile: &RadioProfile) -> InterfaceId {
         InterfaceId::from_channel_tag(InterfaceKind::LoRa, &lora::channel_tag(profile))
+    }
+
+    struct RecordingInboundSeam {
+        sink: std::vec::Vec<u8>,
+        delivered: std::vec::Vec<std::vec::Vec<u8>>,
+    }
+
+    impl InterfaceSeam for RecordingInboundSeam {
+        fn fill_entropy(&mut self, bytes: &mut [u8]) {
+            bytes.fill(0);
+        }
+
+        async fn inbound_sink(&mut self) -> &mut dyn FrameSink {
+            &mut self.sink
+        }
+
+        async fn commit_inbound(&mut self) {
+            if !self.sink.is_empty() {
+                self.delivered.push(self.sink.clone());
+                self.sink.clear();
+            }
+        }
+
+        async fn next_inbound_with_phy(&mut self, frame: &[u8], _phy: PacketPhyStats) {
+            self.delivered.push(frame.to_vec());
+        }
+
+        async fn next_outbound(&mut self) -> &[u8] {
+            core::future::pending().await
+        }
+    }
+
+    #[test]
+    fn receive_accounting_distinguishes_reassembly_resync_from_delivery() {
+        let status = EmbassyInterfaceStatus::new_accounted(
+            id_of(&DEFAULT_915_PROFILE),
+            ConnectionState::Connected,
+        );
+        let mut throughput = ThroughputLedger::new();
+        let mut reassembler = LoRaReassembler::<LORA_MAX_PAYLOAD>::new();
+        let mut seam = RecordingInboundSeam {
+            sink: std::vec::Vec::new(),
+            delivered: std::vec::Vec::new(),
+        };
+        let first_payload = [0xA1; 300];
+        let delivered_payload = [0xB2; 300];
+        let mut first_fragment = [0u8; LORA_SINGLE_FRAME_MAX];
+        let mut replacement_first = [0u8; LORA_SINGLE_FRAME_MAX];
+        let mut replacement_second = [0u8; LORA_SINGLE_FRAME_MAX];
+        let first_len =
+            encode_air_frame_part(&first_payload, 0x10, 0, &mut first_fragment).unwrap();
+        let replacement_first_len =
+            encode_air_frame_part(&delivered_payload, 0x20, 0, &mut replacement_first).unwrap();
+        let replacement_second_len =
+            encode_air_frame_part(&delivered_payload, 0x20, 1, &mut replacement_second).unwrap();
+
+        block_on(async {
+            for (bytes, arrived_at) in [
+                (&first_fragment[..first_len], 1),
+                (&replacement_first[..replacement_first_len], 2),
+                (&replacement_second[..replacement_second_len], 3),
+                (&[][..], 4),
+            ] {
+                deliver_rx(
+                    ObservedAirFrame {
+                        bytes,
+                        phy: PacketPhyStats::default(),
+                        spreading_factor: SpreadingFactor::Sf7,
+                        arrived_at: InstantMillis(arrived_at),
+                    },
+                    &status,
+                    &mut throughput,
+                    &mut reassembler,
+                    &mut seam,
+                )
+                .await;
+            }
+        });
+
+        assert_eq!(seam.delivered.len(), 1);
+        assert_eq!(seam.delivered[0], delivered_payload);
+        assert_eq!(
+            status.frame_accounting(),
+            Some(FrameAccounting {
+                frames_in: 4,
+                malformed: 1,
+                protocol_violations: 2,
+                undecodable: 1,
+                delivered: 1,
+            })
+        );
     }
 
     #[test]

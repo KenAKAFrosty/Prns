@@ -37,6 +37,11 @@ pub struct StationConfig {
     pub(crate) bssid: Option<[u8; 6]>,
     /// The authentication method for the Wi-Fi connection.
     pub(crate) auth_method: AuthenticationMethod,
+    /// Whether the station must reject access points that do not support Protected Management
+    /// Frames (PMF). PMF capability is always enabled, and authentication modes that mandate PMF
+    /// enforce it regardless of this setting.
+    #[builder_lite(unstable)]
+    pub(crate) pmf_required: bool,
     /// The password for the Wi-Fi connection.
     #[builder_lite(reference)]
     pub(crate) password: String,
@@ -99,6 +104,7 @@ impl Default for StationConfig {
             ssid: Ssid::default(),
             bssid: None,
             auth_method: AuthenticationMethod::Wpa2Personal,
+            pmf_required: false,
             password: String::new(),
             channel: None,
             protocols: Protocols::default(),
@@ -116,6 +122,7 @@ impl fmt::Debug for StationConfig {
             .field("ssid", &self.ssid)
             .field("bssid", &self.bssid)
             .field("auth_method", &self.auth_method)
+            .field("pmf_required", &self.pmf_required)
             .field("password", &"**REDACTED**")
             .field("channel", &self.channel)
             .field("protocols", &self.protocols)
@@ -136,6 +143,7 @@ impl defmt::Format for StationConfig {
             ssid: {}, \
             bssid: {:?}, \
             auth_method: {:?}, \
+            pmf_required: {}, \
             password: **REDACTED**, \
             channel: {:?}, \
             protocols: {}, \
@@ -147,6 +155,7 @@ impl defmt::Format for StationConfig {
             self.ssid.as_str(),
             self.bssid,
             self.auth_method,
+            self.pmf_required,
             self.channel,
             self.protocols,
             self.listen_interval,

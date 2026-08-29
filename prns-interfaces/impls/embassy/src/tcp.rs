@@ -186,7 +186,6 @@ impl Interface for TcpClient<'_> {
         let started = Instant::now();
         let mut reconnect = reconnect_policy.schedule();
         let mut connection_attempt = TcpConnectionAttempt::Initial;
-
         loop {
             if !status.is_enabled() {
                 status.set_connection(ConnectionState::Disabled);
@@ -438,13 +437,18 @@ async fn serve<Seam: InterfaceSeam>(
                     match decoder.feed_slice_next(chunk, &mut offset) {
                         Ok(Some(frame)) => {
                             if !frame.is_empty() {
+                                status.count_frame_in();
                                 seam.next_inbound(frame).await;
+                                status.count_frame_delivered();
                             }
                         }
                         Ok(None) => break,
-                        Err(error) => crate::diagnostic_log::warn!(
-                            "tcp-client [configured]: decode failed error={error:?}"
-                        ),
+                        Err(error) => {
+                            status.count_frame_undecodable();
+                            crate::diagnostic_log::warn!(
+                                "tcp-client [configured]: decode failed error={error:?}"
+                            );
+                        }
                     }
                 }
             }

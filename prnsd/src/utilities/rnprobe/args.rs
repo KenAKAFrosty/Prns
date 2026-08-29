@@ -24,7 +24,7 @@ pub struct RnprobeArgs {
     #[arg(short = 'n', long, value_name = "COUNT", default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
     pub probes: u32,
 
-    #[arg(short = 't', long, value_name = "SECONDS", value_parser = parse_positive_duration)]
+    #[arg(short = 't', long, value_name = "SECONDS", value_parser = parse_positive_duration, help = "Give up after this many seconds (default: adaptive, with a 15-second path floor)")]
     pub timeout: Option<PositiveDuration>,
 
     #[arg(short = 'w', long, value_name = "SECONDS", value_parser = parse_nonnegative_duration, default_value = "0")]

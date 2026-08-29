@@ -49,6 +49,10 @@ required-features = ["tokio-host", "tcp"]
 name = "persistence"
 required-features = ["tokio-host", "tcp"]
 
+[[example]]
+name = "remote_control"
+required-features = ["tokio-host", "tcp"]
+
 [features]
 default = ["std", "std-sync-host"]
 alloc = ["prns-core/alloc", "prns-runtime/alloc"]

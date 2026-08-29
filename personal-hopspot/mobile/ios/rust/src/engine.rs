@@ -506,7 +506,8 @@ async fn run_engine(
     // CoreBluetooth's restoration-aware managers are created before unrelated transport work.
     // Readiness remains asynchronous inside the BLE supervisor, so denial or an unavailable radio
     // degrades that interface without delaying the core engine.
-    let prepared_ble = match AutoBle::prepare(ble_identity).await {
+    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    let ble = match AutoBle::prepare(ble_identity).await {
         Ok(prepared) => prepared,
         Err(error) => {
             diagnostic(
@@ -516,6 +517,8 @@ async fn run_engine(
             AutoBle::unavailable(ble_identity)
         }
     };
+    #[cfg(not(any(target_os = "ios", target_os = "macos")))]
+    let ble = AutoBle::new(ble_identity);
 
     let usb_listener = match TcpListener::bind(("0.0.0.0", crate::usbmux::USBMUX_AUTO_PORT)).await {
         Ok(listener) => listener,
@@ -572,6 +575,7 @@ async fn run_engine(
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: personal_hopspot_core::node_pages::NodePageRoutes,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
         on_event: move |event: PrnsEvent<'_>, _state: &()| match event {
@@ -579,6 +583,7 @@ async fn run_engine(
                 destination,
                 hops,
                 source_interface,
+                app_data: _,
             }) => {
                 diagnostic(
                     "route",
@@ -648,7 +653,7 @@ async fn run_engine(
         ),
     );
 
-    let attached_ble = handle.attach(prepared_ble);
+    let attached_ble = handle.attach(ble);
     let ble_id = attached_ble.id();
     let ble_status = Some(attached_ble.status());
     diagnostic("transport", format_args!("kind=ble state=prepared"));

@@ -30,6 +30,7 @@ struct RpcTelemetryInner {
     get_next_hop: AtomicU64,
     get_next_hop_if_name: AtomicU64,
     get_first_hop_timeout: AtomicU64,
+    get_bitrate_timing: AtomicU64,
     get_phy_stats: AtomicU64,
     management_reads: AtomicU64,
     management_writes: AtomicU64,
@@ -56,6 +57,7 @@ pub struct RpcTelemetrySnapshot {
     pub get_next_hop: u64,
     pub get_next_hop_if_name: u64,
     pub get_first_hop_timeout: u64,
+    pub get_bitrate_timing: u64,
     pub get_phy_stats: u64,
     pub management_reads: u64,
     pub management_writes: u64,
@@ -85,6 +87,7 @@ impl RpcTelemetry {
             get_next_hop: load(&self.inner.get_next_hop),
             get_next_hop_if_name: load(&self.inner.get_next_hop_if_name),
             get_first_hop_timeout: load(&self.inner.get_first_hop_timeout),
+            get_bitrate_timing: load(&self.inner.get_bitrate_timing),
             get_phy_stats: load(&self.inner.get_phy_stats),
             management_reads: load(&self.inner.management_reads),
             management_writes: load(&self.inner.management_writes),
@@ -125,6 +128,10 @@ impl RpcTelemetry {
             RpcVerb::GetFirstHopTimeout => self
                 .inner
                 .get_first_hop_timeout
+                .fetch_add(1, Ordering::Relaxed),
+            RpcVerb::GetLowestInterfaceBitrate | RpcVerb::GetMediumPathTimeout => self
+                .inner
+                .get_bitrate_timing
                 .fetch_add(1, Ordering::Relaxed),
             RpcVerb::GetPacketRssi | RpcVerb::GetPacketSnr | RpcVerb::GetPacketQuality => {
                 self.inner.get_phy_stats.fetch_add(1, Ordering::Relaxed)

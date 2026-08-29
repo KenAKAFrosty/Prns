@@ -403,7 +403,8 @@ enum class ApplicationEventKind(val rawValue: Int) {
     RESOURCE_AVAILABLE(104),
     RESOURCE_SEGMENT(105),
     RESOURCE_NEEDS_DECOMPRESSION(106),
-    CHANNEL_MESSAGE(107);
+    CHANNEL_MESSAGE(107),
+    LINK_DELIVERY(108);
 
     companion object {
         fun fromRawValue(value: Int): ApplicationEventKind? = entries.firstOrNull { it.rawValue == value }
@@ -497,7 +498,8 @@ enum class EventField(val rawValue: Int) {
     REFUSED(36),
     DROPPED(37),
     PERSISTENCE_CAUSE(38),
-    PERSISTENCE_TARGET(39);
+    PERSISTENCE_TARGET(39),
+    APP_DATA(40);
 
     companion object {
         fun fromRawValue(value: Int): EventField? = entries.firstOrNull { it.rawValue == value }
@@ -1248,12 +1250,19 @@ data class ApplicationEventChannelMessage(
     val data: Bytes
 ) : ApplicationEvent
 
+data class ApplicationEventLinkDelivery(
+    val linkId: LinkId,
+    val sourceInterface: InterfaceId,
+    val plaintext: Bytes
+) : ApplicationEvent
+
 sealed interface DiagnosticEvent
 
 data class DiagnosticEventAnnounceHeard(
     val destination: DestinationHash,
     val hops: Int,
-    val sourceInterface: InterfaceId
+    val sourceInterface: InterfaceId,
+    val appData: Bytes
 ) : DiagnosticEvent
 
 data class DiagnosticEventLinkEstablished(

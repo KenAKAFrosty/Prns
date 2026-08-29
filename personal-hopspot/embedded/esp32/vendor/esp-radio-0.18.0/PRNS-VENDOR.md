@@ -21,4 +21,11 @@
     breaker.
   - Correct Wi-Fi teardown ordering, unregister receive callbacks, drain admitted receive buffers
     before stopping the driver, and use mode restart rather than reallocating the shared driver.
+  - Expose the ESP-IDF PMF-required setting for station and SoftAP configurations, enforce it for
+    authentication modes whose protocol mandates PMF, and select SAE's interoperable Hunt-and-Peck
+    plus Hash-to-Element mode instead of leaving SoftAP SAE unspecified.
+  - Provide fail-closed ESP-IDF heap-capability allocation shims used by the S3 WPA3-SAE mbedTLS
+    backend, including checked allocation-size arithmetic.
+  - Describe the Prns ESP32-S3 WPA3-SAE capability instead of the upstream package's blanket WPA3
+    unsupported statement.
   - Isolate the package as its own Cargo workspace for repository validation.

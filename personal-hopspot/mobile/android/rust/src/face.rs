@@ -1,9 +1,8 @@
 use heapless::Vec as HVec;
 use personal_hopspot_core::{
-    render, snapshots_to_cards, snapshots_to_interface_menu_details, splash, AccessPointState,
-    Card, CardActivityTracker, DisplayPowerControl, InputEvent, MobileRgbaFrameBuffer,
-    PowerSnapshot, RenderFrame, ScreenContent, SplashContent, UiAction, UiConfiguration, UiNotice,
-    UiState,
+    expand_face_rgba, face_64x128, snapshots_to_cards, snapshots_to_interface_menu_details,
+    AccessPointState, Card, CardActivityTracker, InputEvent, PowerSnapshot, ScreenContent,
+    UiAction, UiConfiguration, UiNotice, UiState, UserBlanking, MOBILE_RGBA_BYTES,
 };
 use personal_rns::interfaces::InterfaceSnapshot;
 use personal_rns::storage::{GrowableHeap, StorageLayout};
@@ -18,7 +17,7 @@ const NOTICE_TIMEOUT: Duration = Duration::from_millis(900);
 fn ui_state() -> UiState {
     UiState::new(UiConfiguration {
         storage_limits: <GrowableHeap as StorageLayout>::LIMITS,
-        display_power_control: DisplayPowerControl::Unavailable,
+        user_blanking: UserBlanking::unavailable(),
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: personal_hopspot_core::SharedInstanceConfigExport::Available,
         gnss: personal_hopspot_core::GnssAvailability::Unavailable,
@@ -27,7 +26,7 @@ fn ui_state() -> UiState {
 
 pub struct HopspotFace {
     state: UiState,
-    framebuffer: MobileRgbaFrameBuffer,
+    framebuffer: face_64x128::Frame,
     battery: PowerSnapshot,
     activity: CardActivityTracker<MAX_CARDS>,
     activity_started: Instant,
@@ -38,7 +37,7 @@ impl HopspotFace {
     pub fn new() -> Self {
         Self {
             state: ui_state(),
-            framebuffer: MobileRgbaFrameBuffer::new(),
+            framebuffer: face_64x128::Frame::new(),
             battery: PowerSnapshot::UNKNOWN,
             activity: CardActivityTracker::new(),
             activity_started: Instant::now(),
@@ -87,7 +86,7 @@ impl HopspotFace {
             UiAction::Announce => self.show_notice(UiNotice::Announcing),
             UiAction::CopySharedInstanceConfig => {}
             UiAction::None
-            | UiAction::DisplayOff
+            | UiAction::BlankDisplay
             | UiAction::ToggleDisplayAutoOff
             | UiAction::ControlGnss(_)
             | UiAction::ToggleStationUplink
@@ -100,7 +99,7 @@ impl HopspotFace {
         action
     }
 
-    pub fn render(&mut self, out_rgba: &mut [u8]) {
+    pub fn render(&mut self, out_rgba: &mut [u8; MOBILE_RGBA_BYTES]) {
         let snapshots = interface_snapshots();
         let mut cards = self.build_cards_from_snapshots(&snapshots);
         let elapsed = self.activity_started.elapsed();
@@ -122,7 +121,7 @@ impl HopspotFace {
         &mut self,
         cards: &[Card],
         snapshots: &[InterfaceSnapshot],
-        out_rgba: &mut [u8],
+        out_rgba: &mut [u8; MOBILE_RGBA_BYTES],
     ) {
         let content = ScreenContent {
             cards,
@@ -136,17 +135,16 @@ impl HopspotFace {
             self.state.clear_notice();
             self.notice_started = None;
         }
-        self.framebuffer.clear();
         if cards.is_empty() {
-            splash(&mut self.framebuffer, SplashContent::Starting);
+            face_64x128::splash(&mut self.framebuffer, face_64x128::SplashContent::Starting);
         } else {
             let interface_menu_details = snapshots_to_interface_menu_details(
                 self.state.selected_card(content.cards),
                 snapshots,
             );
-            render(
+            face_64x128::render(
                 &mut self.framebuffer,
-                RenderFrame {
+                face_64x128::RenderInput {
                     content,
                     battery: self.battery,
                     gnss: None,
@@ -155,7 +153,7 @@ impl HopspotFace {
                 },
             );
         }
-        self.framebuffer.expand_rgba(out_rgba);
+        expand_face_rgba(&self.framebuffer, out_rgba);
     }
 }
 
@@ -168,7 +166,7 @@ impl Default for HopspotFace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use personal_hopspot_core::{card_label, CardKind, MOBILE_DARK_RGBA, MOBILE_RGBA_BYTES};
+    use personal_hopspot_core::{card_label, CardKind, MOBILE_DARK_RGBA};
     use personal_rns::interfaces::{
         ConnectionState, InterfaceId, InterfaceSnapshot, Membership, TransferRates,
     };
@@ -177,7 +175,7 @@ mod tests {
         fn detached() -> Self {
             Self {
                 state: ui_state(),
-                framebuffer: MobileRgbaFrameBuffer::new(),
+                framebuffer: face_64x128::Frame::new(),
                 battery: PowerSnapshot::UNKNOWN,
                 activity: CardActivityTracker::new(),
                 activity_started: Instant::now(),
@@ -225,8 +223,8 @@ mod tests {
         })
     }
 
-    fn fresh_buffer() -> Vec<u8> {
-        vec![0u8; MOBILE_RGBA_BYTES]
+    fn fresh_buffer() -> [u8; MOBILE_RGBA_BYTES] {
+        [0; MOBILE_RGBA_BYTES]
     }
 
     #[test]

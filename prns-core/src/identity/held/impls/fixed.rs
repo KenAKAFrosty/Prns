@@ -68,6 +68,14 @@ impl<const MAX_HELD_IDENTITIES: usize> HeldIdentityTable
         let _ = self.signing_publics.push(signing_public);
         Ok(i)
     }
+
+    fn pop(&mut self) {
+        let _hash = self.hashes.pop();
+        let _encryption_secret = self.encryption_secrets.pop();
+        let _signing_secret = self.signing_secrets.pop();
+        let _encryption_public = self.encryption_publics.pop();
+        let _signing_public = self.signing_publics.pop();
+    }
 }
 
 #[cfg(test)]

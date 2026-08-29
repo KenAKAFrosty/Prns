@@ -3,7 +3,22 @@
 
 extern crate alloc;
 
-//NOTE: Right now Hopspot on embedded assumes each given board has a set profile of interfaces. That coupling is clear here. However, note that in the future, if there's developer interest in expanding hopspot to allow for spceific feature selection during custom builds, we can honor that.
+#[cfg(all(feature = "display", any(test, target_arch = "xtensa")))]
+mod display_runtime;
+
+#[cfg(all(feature = "display", any(test, target_arch = "xtensa")))]
+#[path = "s3/boards/heltec_e290/ssd1680.rs"]
+mod heltec_e290_ssd1680;
+
+#[cfg(all(feature = "display", any(test, target_arch = "xtensa")))]
+#[cfg_attr(
+    all(test, not(target_arch = "xtensa")),
+    allow(
+        dead_code,
+        reason = "host tests exercise the platform state adapter while hardware methods compile on Xtensa"
+    )
+)]
+mod immediate_display;
 
 #[cfg(all(
     target_arch = "xtensa",
@@ -68,6 +83,8 @@ mod persistence;
 
 #[cfg(any(test, target_arch = "xtensa"))]
 mod station_recovery;
+#[cfg(any(test, target_arch = "xtensa"))]
+mod station_security;
 #[cfg(any(target_arch = "riscv32", target_arch = "xtensa"))]
 mod storage;
 #[cfg(any(test, target_arch = "xtensa"))]

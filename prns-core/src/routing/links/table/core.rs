@@ -96,6 +96,21 @@ impl LinkPhase {
             command_id: CommandId(0),
         }
     }
+
+    fn local_destination(&self) -> Option<DestinationHash> {
+        match self {
+            Self::Handshake { destination, .. }
+            | Self::Active {
+                role: LinkRole::Responder { destination, .. },
+                ..
+            } => Some(*destination),
+            Self::Pending { .. }
+            | Self::Active {
+                role: LinkRole::Initiator { .. },
+                ..
+            } => None,
+        }
+    }
 }
 
 // The Pending phase holds the initiator secret, so Debug can't be derived (X25519SecretKey deliberately has no Debug to leak).
@@ -422,6 +437,20 @@ impl<C: LinkTable> Links<C> {
 
     pub fn has_local_link(&self, link_id: &LinkId) -> bool {
         self.index_of(link_id).is_some()
+    }
+
+    pub(crate) fn responder_links_for_destination<'a>(
+        &'a self,
+        destination: &'a DestinationHash,
+    ) -> impl Iterator<Item = LinkId> + 'a {
+        self.table
+            .link_ids()
+            .iter()
+            .zip(self.table.phases())
+            .filter_map(move |(link_id, phase)| match phase.local_destination() {
+                Some(candidate) if candidate == *destination => Some(*link_id),
+                Some(_) | None => None,
+            })
     }
 
     pub fn activate_initiated(
@@ -1131,6 +1160,75 @@ mod tests {
             "tearing a live link down drops its interface's count",
         );
         assert_eq!(links.active_link_count(), 2);
+    }
+
+    fn assert_local_destination_ownership<C: LinkTable + Default>() {
+        let shared_destination = dest(9);
+        let mut pending_initiator = initiated(1, 5_000);
+        pending_initiator.destination = shared_destination;
+        let mut handshake_responder = responding(2, 5_000);
+        handshake_responder.destination = shared_destination;
+        let mut active_responder = responding(3, 5_000);
+        active_responder.destination = dest(8);
+        let mut active_initiator = initiated(4, 5_000);
+        active_initiator.destination = dest(8);
+        let mut links = Links::<C>::default();
+        links.track_initiated(pending_initiator).unwrap();
+        links.track_responding(handshake_responder).unwrap();
+        links.track_responding(active_responder).unwrap();
+        links
+            .activate_responding(
+                &link_id(3),
+                RttMillis::new(120),
+                iface(0xAA),
+                InstantMillis(2_000),
+            )
+            .unwrap();
+
+        assert_eq!(
+            links
+                .responder_links_for_destination(&shared_destination)
+                .collect::<std::vec::Vec<_>>(),
+            [link_id(2)],
+        );
+        assert_eq!(
+            links
+                .responder_links_for_destination(&dest(8))
+                .collect::<std::vec::Vec<_>>(),
+            [link_id(3)],
+        );
+
+        links.remove(&link_id(2));
+        links.remove(&link_id(3));
+        links.track_initiated(active_initiator).unwrap();
+        links
+            .activate_initiated(
+                &link_id(4),
+                key(4, 9),
+                &LinkActivation {
+                    received_hops: 1,
+                    rtt: RttMillis::new(120),
+                    mtu: 500,
+                    attached_interface: iface(0xAA),
+                    peer_signing: Ed25519PublicKey([0x99; 32]),
+                },
+                InstantMillis(2_000),
+            )
+            .unwrap();
+
+        assert_eq!(
+            links
+                .responder_links_for_destination(&shared_destination)
+                .next(),
+            None,
+        );
+        assert_eq!(links.responder_links_for_destination(&dest(8)).next(), None,);
+    }
+
+    #[test]
+    fn only_responder_side_links_belong_to_a_local_destination() {
+        assert_local_destination_ownership::<FixedLinkTable<4>>();
+        assert_local_destination_ownership::<HeapLinkTable>();
     }
 
     #[test]

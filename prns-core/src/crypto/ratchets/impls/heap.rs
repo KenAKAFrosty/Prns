@@ -61,6 +61,15 @@ impl SelfRatchetTable for HeapSelfRatchetTable {
         }
     }
 
+    fn swap_remove(&mut self, index: usize) {
+        if index >= self.destinations.len() {
+            return;
+        }
+        self.destinations.swap_remove(index);
+        self.last_rotated.swap_remove(index);
+        self.secrets.swap_remove(index);
+    }
+
     fn push(&mut self, destination: DestinationHash) -> Result<(), TrackRatchetsError> {
         self.destinations.push(destination);
         self.last_rotated.push(LastRotated::Never);

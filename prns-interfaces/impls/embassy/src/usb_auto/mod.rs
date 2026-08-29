@@ -257,13 +257,26 @@ where
                             status.add_rx(n as u64);
                             lifecycle.recover(status);
                             for &byte in &read_buf[..n] {
-                                let Ok(Some(frame)) = decoder.feed(byte) else {
-                                    continue;
+                                let frame = match decoder.feed(byte) {
+                                    Ok(Some(frame)) => frame,
+                                    Ok(None) => continue,
+                                    Err(_) => {
+                                        status.count_frame_undecodable();
+                                        continue;
+                                    }
                                 };
                                 if frame.is_empty() {
                                     continue;
                                 }
-                                match contract::react_to(contract::decode_message(frame)) {
+                                status.count_frame_in();
+                                let message = match contract::decode_message(frame) {
+                                    Ok(message) => message,
+                                    Err(_) => {
+                                        status.count_frame_malformed();
+                                        continue;
+                                    }
+                                };
+                                match contract::react_to(Ok(message)) {
                                     InboundReaction::AnswerHandshake => {
                                         let ack = Message::HelloAck {
                                             tag: node_tag,
@@ -294,6 +307,9 @@ where
                                     InboundReaction::Deliver(packet) => {
                                         if lifecycle.is_linked() && !packet.is_empty() {
                                             seam.next_inbound(packet).await;
+                                            status.count_frame_delivered();
+                                        } else if packet.is_empty() {
+                                            status.count_frame_malformed();
                                         }
                                     }
                                     InboundReaction::Ignore => {}
@@ -478,7 +494,9 @@ async fn write_message<W: Write>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prns_core::interfaces::{FrameSink, InterfaceOriginKind, InterfaceStatus, IFAC_MAX_SIZE};
+    use prns_core::interfaces::{
+        FrameAccounting, FrameSink, InterfaceOriginKind, InterfaceStatus, IFAC_MAX_SIZE,
+    };
     use prns_runtime::manifold::driver::{leaked_grant_lane, EmbassyInterfaceSeam};
     use prns_runtime::manifold::grant::{GrantConsumer, GrantProducer};
 
@@ -714,7 +732,8 @@ mod tests {
         let host_to_device = RefCell::new(VecDeque::new());
         let device_to_host = RefCell::new(VecDeque::new());
         let dispositions = RefCell::new(Vec::new());
-        let status = EmbassyInterfaceStatus::new(device_id(), ConnectionState::Initializing);
+        let status =
+            EmbassyInterfaceStatus::new_accounted(device_id(), ConnectionState::Initializing);
 
         let notify: Channel<CriticalSectionRawMutex, InterfaceId, 2> = Channel::new();
         let (in_tx, mut in_rx) = leaked_grant_lane::<DEVICE_SLOT>(2);
@@ -785,6 +804,16 @@ mod tests {
                     dispositions.borrow().as_slice(),
                     &[OutboundDisposition::Sent]
                 );
+                assert_eq!(
+                    status.frame_accounting(),
+                    Some(FrameAccounting {
+                        frames_in: 2,
+                        malformed: 0,
+                        protocol_violations: 0,
+                        undecodable: 0,
+                        delivered: 1,
+                    })
+                );
                 let next = with_timeout(WATCHDOG, out_tx.grant())
                     .await
                     .expect("completed outbound releases its lane slot");
@@ -803,7 +832,8 @@ mod tests {
         let host_to_device = RefCell::new(VecDeque::new());
         let device_to_host = RefCell::new(VecDeque::new());
         let dispositions = RefCell::new(Vec::new());
-        let status = EmbassyInterfaceStatus::new(device_id(), ConnectionState::Initializing);
+        let status =
+            EmbassyInterfaceStatus::new_accounted(device_id(), ConnectionState::Initializing);
         let notify: Channel<CriticalSectionRawMutex, InterfaceId, 1> = Channel::new();
         let (in_tx, _in_rx) = leaked_grant_lane::<DEVICE_SLOT>(1);
         let (mut out_tx, out_rx) = leaked_grant_lane::<DEVICE_SLOT>(1);
@@ -933,7 +963,7 @@ mod tests {
             actions: &actions,
             cancellations: &cancellations,
         };
-        let status = EmbassyInterfaceStatus::new(device_id(), ConnectionState::Connected);
+        let status = EmbassyInterfaceStatus::new_accounted(device_id(), ConnectionState::Connected);
         let mut frame_buf = [0u8; contract::MAX_FRAMED_BYTES];
 
         block_on(async {
@@ -963,7 +993,7 @@ mod tests {
             bytes: &bytes,
             flushes: &flushes,
         };
-        let status = EmbassyInterfaceStatus::new(device_id(), ConnectionState::Connected);
+        let status = EmbassyInterfaceStatus::new_accounted(device_id(), ConnectionState::Connected);
         let mut frame_buf = [0u8; contract::MAX_FRAMED_BYTES];
 
         block_on(async {
@@ -996,7 +1026,7 @@ mod tests {
             actions: &actions,
             cancellations: &cancellations,
         };
-        let status = EmbassyInterfaceStatus::new(device_id(), ConnectionState::Connected);
+        let status = EmbassyInterfaceStatus::new_accounted(device_id(), ConnectionState::Connected);
         let mut frame_buf = [0u8; contract::MAX_FRAMED_BYTES];
 
         block_on(async {
@@ -1051,7 +1081,7 @@ mod tests {
             actions: &actions,
             cancellations: &cancellations,
         };
-        let status = EmbassyInterfaceStatus::new(device_id(), ConnectionState::Connected);
+        let status = EmbassyInterfaceStatus::new_accounted(device_id(), ConnectionState::Connected);
         let mut frame_buf = [0u8; contract::MAX_FRAMED_BYTES];
 
         block_on(async {
@@ -1071,7 +1101,8 @@ mod tests {
 
     #[test]
     fn failure_state_survives_disable_and_reenable() {
-        let status = EmbassyInterfaceStatus::new(device_id(), ConnectionState::Initializing);
+        let status =
+            EmbassyInterfaceStatus::new_accounted(device_id(), ConnectionState::Initializing);
         let mut lifecycle = UsbLifecycle::Failed;
         lifecycle.publish(&status);
         assert_eq!(status.connection(), ConnectionState::Failed);
@@ -1089,7 +1120,8 @@ mod tests {
     fn data_before_handshake_is_not_delivered() {
         let host_to_device = RefCell::new(VecDeque::new());
         let device_to_host = RefCell::new(VecDeque::new());
-        let status = EmbassyInterfaceStatus::new(device_id(), ConnectionState::Initializing);
+        let status =
+            EmbassyInterfaceStatus::new_accounted(device_id(), ConnectionState::Initializing);
         let notify: Channel<CriticalSectionRawMutex, InterfaceId, 1> = Channel::new();
         let (in_tx, _in_rx) = leaked_grant_lane::<DEVICE_SLOT>(1);
         let (_out_tx, out_rx) = leaked_grant_lane::<DEVICE_SLOT>(1);
@@ -1147,7 +1179,8 @@ mod tests {
             ErrorKind::NotConnected,
         )]));
         let write_cancellations = Cell::new(0);
-        let status = EmbassyInterfaceStatus::new(device_id(), ConnectionState::Initializing);
+        let status =
+            EmbassyInterfaceStatus::new_accounted(device_id(), ConnectionState::Initializing);
         let notify: Channel<CriticalSectionRawMutex, InterfaceId, 1> = Channel::new();
         let (in_tx, _in_rx) = leaked_grant_lane::<DEVICE_SLOT>(1);
         let (_out_tx, out_rx) = leaked_grant_lane::<DEVICE_SLOT>(1);

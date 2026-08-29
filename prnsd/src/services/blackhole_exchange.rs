@@ -73,7 +73,10 @@ impl RequestEndpoint<DaemonRequestState> for ListRoute {
     const ENDPOINT_ID: &'static str = LIST_PATH;
     const POLICY: RequestEndpointPolicy = RequestEndpointPolicy::AllowAll;
 
-    async fn handle(mut context: RequestContext<'_, DaemonRequestState>) -> Result<(), Decline> {
+    async fn handle(
+        mut context: RequestContext<'_, DaemonRequestState>,
+        _node: &impl personal_rns::runtime::PrnsNodeApi,
+    ) -> Result<(), Decline> {
         let entries = context
             .state
             .handle()

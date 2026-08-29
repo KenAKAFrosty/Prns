@@ -1,11 +1,11 @@
 # Personal Hopspot — iOS
 
-The iOS face of Personal Hopspot. The shared `personal-hopspot-core` renderer
-(generic over `embedded_graphics::DrawTarget<Color = BinaryColor>`) draws the
-identical 64x128 screen here that it draws on the Heltec V4 OLED, the Linux debug
-window, and the Android app. This face adds the platform adapters iOS needs:
+The iOS face of Personal Hopspot. `personal-hopspot-core` renders the same
+canonical 64×128 monochrome frame used by embedded, desktop, and Android
+Hopspots, then the iOS adapter expands that frame into the caller-owned RGBA
+surface. This face adds the other platform adapters iOS needs:
 
-- the shared mobile `DrawTarget` expanded into a caller-owned RGBA buffer
+- canonical-frame expansion into a caller-owned RGBA buffer
   (`rust/src/face.rs`)
 - a single-button input source: every tap is a `ShortPress`, every hold a
   `LongPress` (`rust/src/face.rs` + the `hopspot_post_input` entry point)

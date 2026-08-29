@@ -49,6 +49,10 @@ pub struct AccessPointConfig {
     pub(crate) protocols: Protocols,
     /// The authentication method to be used by the access point.
     pub(crate) auth_method: AuthenticationMethod,
+    /// Whether clients must negotiate Protected Management Frames (PMF). Authentication modes
+    /// that mandate PMF, including pure WPA3, enforce it regardless of this setting.
+    #[builder_lite(unstable)]
+    pub(crate) pmf_required: bool,
     /// The password for securing the access point (if applicable).
     #[builder_lite(reference)]
     pub(crate) password: String,
@@ -94,6 +98,7 @@ impl Default for AccessPointConfig {
             secondary_channel: None,
             protocols: Protocols::default(),
             auth_method: AuthenticationMethod::None,
+            pmf_required: false,
             password: String::new(),
             max_connections: 255,
             dtim_period: 2,
@@ -111,6 +116,7 @@ impl fmt::Debug for AccessPointConfig {
             .field("secondary_channel", &self.secondary_channel)
             .field("protocols", &self.protocols)
             .field("auth_method", &self.auth_method)
+            .field("pmf_required", &self.pmf_required)
             .field("password", &"**REDACTED**")
             .field("max_connections", &self.max_connections)
             .field("dtim_period", &self.dtim_period)
@@ -131,6 +137,7 @@ impl defmt::Format for AccessPointConfig {
             secondary_channel: {}, \
             protocols: {}, \
             auth_method: {}, \
+            pmf_required: {}, \
             password: **REDACTED**, \
             max_connections: {}, \
             dtim_period: {}, \
@@ -142,6 +149,7 @@ impl defmt::Format for AccessPointConfig {
             self.secondary_channel,
             self.protocols,
             self.auth_method,
+            self.pmf_required,
             self.max_connections,
             self.dtim_period,
             self.beacon_timeout

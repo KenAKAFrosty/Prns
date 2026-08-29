@@ -111,7 +111,10 @@ fn auto_connect_capacity_reports_only_when_auto_connect_is_enabled() {
     let interface = InterfaceId::new([0x35; 8]);
     service.statuses.insert(
         interface,
-        TokioInterfaceStatus::new(interface, prns_core::interfaces::ConnectionState::Connected),
+        TokioInterfaceStatus::new_unaccounted(
+            interface,
+            prns_core::interfaces::ConnectionState::Connected,
+        ),
     );
     service.report_auto_connect_capacity(&mut |event| {
         if let TokioDiscoveryEvent::AutoConnectCapacity { online, maximum } = event {
@@ -194,6 +197,7 @@ async fn an_eligible_discovery_stands_up_a_real_backbone_client() {
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: prns_runtime::request_endpoints![],
+        remote_control: prns_runtime::remote_control::RemoteControlService::Unavailable,
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
         on_event: |_event, _state: &()| {},

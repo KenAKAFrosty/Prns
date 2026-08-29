@@ -1,66 +1,67 @@
-use core::convert::Infallible;
+use personal_hopspot_core::display::{
+    DisplayDuration, EinkPolicy, EinkPolicyConfiguration, EinkRefreshPolicy, PartialRefreshLimit,
+};
+use personal_hopspot_core::face_64x128::{Frame, PanelTransform};
 
-use embedded_graphics::pixelcolor::BinaryColor;
-use embedded_graphics::prelude::*;
-use embedded_graphics::primitives::Rectangle;
-use epd_waveshare::color::Color as EpdColor;
-use epd_waveshare::epd1in54_v2::Display1in54;
+use crate::retained_display::{RetainedDisplayDevice, RetainedRefresh};
 
-const PANEL_SIZE: i32 = 200;
-const SCREEN_WIDTH: i32 = 64;
-const SCREEN_HEIGHT: i32 = 128;
-const SCALE_NUM: i32 = 3;
-const SCALE_DEN: i32 = 2;
-const SCALED_SHORT: i32 = SCREEN_WIDTH * SCALE_NUM / SCALE_DEN;
-const SCALED_LONG: i32 = SCREEN_HEIGHT * SCALE_NUM / SCALE_DEN;
-const SCALED_ORIGIN_X: i32 = (PANEL_SIZE - SCALED_LONG) / 2;
-const SCALED_ORIGIN_Y: i32 = (PANEL_SIZE - SCALED_SHORT) / 2;
+use super::hardware::TechoEink;
+use super::raster::{rasterize_row, transform};
+use super::ssd1681::Ssd1681Error;
 
-pub(crate) struct EinkScreen<'a> {
-    pub(crate) panel: &'a mut Display1in54,
+const PARTIAL_REFRESH_LIMIT: u32 = 64;
+const FULL_REFRESH_MAXIMUM_AGE_MS: u64 = 30 * 60 * 1_000;
+const TELEMETRY_MINIMUM_INTERVAL_MS: u64 = 5_000;
+
+pub(crate) fn retained_policy() -> EinkPolicy {
+    EinkPolicy::new(EinkPolicyConfiguration {
+        telemetry_minimum: DisplayDuration::from_millis(TELEMETRY_MINIMUM_INTERVAL_MS)
+            .expect("T-Echo telemetry spacing is nonzero"),
+        refresh: EinkRefreshPolicy::Partial {
+            maximum_consecutive: PartialRefreshLimit::new(PARTIAL_REFRESH_LIMIT)
+                .expect("T-Echo partial refresh limit is nonzero"),
+            full_maximum_age: DisplayDuration::from_millis(FULL_REFRESH_MAXIMUM_AGE_MS)
+                .expect("T-Echo full refresh age is nonzero"),
+        },
+    })
+    .expect("T-Echo telemetry spacing does not exceed its full refresh age")
 }
 
-impl OriginDimensions for EinkScreen<'_> {
-    fn size(&self) -> Size {
-        Size::new(SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32)
-    }
+pub(crate) struct TechoDisplayDevice {
+    driver: TechoEink,
+    transform: PanelTransform,
 }
 
-impl DrawTarget for EinkScreen<'_> {
-    type Color = BinaryColor;
-    type Error = Infallible;
-
-    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
-    where
-        I: IntoIterator<Item = Pixel<Self::Color>>,
-    {
-        for Pixel(point, color) in pixels {
-            let panel_color = match color {
-                BinaryColor::On => EpdColor::Black,
-                BinaryColor::Off => EpdColor::White,
-            };
-            let sx0 = point.x * SCALE_NUM / SCALE_DEN;
-            let sx1 = (point.x + 1) * SCALE_NUM / SCALE_DEN;
-            let sy0 = point.y * SCALE_NUM / SCALE_DEN;
-            let sy1 = (point.y + 1) * SCALE_NUM / SCALE_DEN;
-            let top_left = Point::new(
-                SCALED_ORIGIN_X + sy0,
-                SCALED_ORIGIN_Y + (SCALED_SHORT - sx1),
-            );
-            let size = Size::new((sy1 - sy0) as u32, (sx1 - sx0) as u32);
-            let _ = self
-                .panel
-                .fill_solid(&Rectangle::new(top_left, size), panel_color);
+impl TechoDisplayDevice {
+    pub(crate) fn new(driver: TechoEink) -> Self {
+        Self {
+            driver,
+            transform: transform(),
         }
-        Ok(())
     }
 }
 
-pub(crate) fn frame_hash(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325;
-    for &byte in bytes {
-        hash ^= byte as u64;
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+impl RetainedDisplayDevice for TechoDisplayDevice {
+    type Error = Ssd1681Error;
+
+    async fn present(
+        &mut self,
+        frame: &Frame,
+        refresh: RetainedRefresh,
+    ) -> Result<(), Self::Error> {
+        let transform = &self.transform;
+        let mut rows = |y| rasterize_row(frame, transform, y);
+        match refresh {
+            RetainedRefresh::Full => self.driver.full_update(&mut rows).await,
+            RetainedRefresh::Partial => self.driver.partial_update(&mut rows).await,
+        }
     }
-    hash
+
+    async fn recover(&mut self) -> Result<(), Self::Error> {
+        self.driver.recover().await
+    }
+
+    async fn deep_sleep(&mut self) -> Result<(), Self::Error> {
+        self.driver.deep_sleep().await
+    }
 }

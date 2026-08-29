@@ -55,8 +55,8 @@ pub struct RnxArgs {
     #[arg(short = 'm')]
     pub mirror: bool,
 
-    #[arg(short = 'w', value_name = "SECONDS", value_parser = parse_nonnegative_duration, default_value = "15")]
-    pub timeout: NonnegativeDuration,
+    #[arg(short = 'w', value_name = "SECONDS", value_parser = parse_nonnegative_duration, help = "Set the command and connection timeout (path discovery defaults to adaptive with a 15-second floor)")]
+    pub timeout: Option<NonnegativeDuration>,
 
     #[arg(short = 'W', value_name = "SECONDS", value_parser = parse_nonnegative_duration)]
     pub result_timeout: Option<NonnegativeDuration>,

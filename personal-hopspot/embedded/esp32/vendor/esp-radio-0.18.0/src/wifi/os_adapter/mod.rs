@@ -1272,6 +1272,38 @@ pub unsafe extern "C" fn calloc_internal_wrapper(n: usize, size: usize) -> *mut 
     unsafe { calloc_internal(n as u32, size) as *mut c_void }
 }
 
+/// ESP-IDF's mbedTLS port uses the heap-capability API for WPA3-SAE scratch
+/// allocations. The bare-metal radio adapter only exposes the equivalent
+/// internal allocator. Reject any request outside the exact INTERNAL | 8BIT
+/// contract used by the pinned mbedTLS build rather than silently weakening
+/// its memory-placement requirement.
+#[cfg(esp32s3)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn heap_caps_calloc(
+    n: usize,
+    size: usize,
+    caps: u32,
+) -> *mut c_void {
+    const MALLOC_CAP_8BIT: u32 = 1 << 2;
+    const MALLOC_CAP_INTERNAL: u32 = 1 << 11;
+    const MBEDTLS_INTERNAL_CAPS: u32 = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+
+    if caps != MBEDTLS_INTERNAL_CAPS {
+        return core::ptr::null_mut();
+    }
+    let Some(total) = n.checked_mul(size) else {
+        return core::ptr::null_mut();
+    };
+    unsafe { calloc_internal_wrapper(1, total) }
+}
+
+/// Release an allocation returned by [`heap_caps_calloc`].
+#[cfg(esp32s3)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn heap_caps_free(ptr: *mut c_void) {
+    unsafe { crate::compat::malloc::free_internal(ptr.cast()) }
+}
+
 /// **************************************************************************
 /// Name: esp_zalloc_internal
 ///

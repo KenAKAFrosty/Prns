@@ -92,7 +92,7 @@ impl WebSocketClientInterface {
             policy,
             reconnect_policy,
             framing_selection,
-            status: TokioInterfaceStatus::new(id, ConnectionState::Initializing),
+            status: TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Initializing),
         }
     }
 

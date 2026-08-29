@@ -3,8 +3,9 @@ use crate::identity::{
     MarkDestinationUsedOutcome, ReleaseDestinationOutcome, RetainDestinationOutcome,
     RetainIdentityOutcome,
 };
+use crate::interfaces::BitrateBps;
 use crate::interfaces::PacketPhyStats;
-use crate::routing::delivery::send_single::DEFAULT_PER_HOP_TIMEOUT_SECONDS;
+use crate::routing::timing::DEFAULT_FIRST_HOP_TIMEOUT_MS;
 use crate::routing::{BlackholeIdentityOutcome, BlackholedIdentity, UnblackholeIdentityOutcome};
 
 use super::RnsRpcReply;
@@ -16,7 +17,22 @@ pub enum RpcOperationOutcome<T> {
 
 impl RnsRpcReply {
     pub fn first_hop_timeout() -> Self {
-        Self::integer(i64::from(DEFAULT_PER_HOP_TIMEOUT_SECONDS))
+        Self::timeout_millis(DEFAULT_FIRST_HOP_TIMEOUT_MS)
+    }
+
+    pub fn timeout_millis(milliseconds: u64) -> Self {
+        if milliseconds.is_multiple_of(1_000) {
+            Self::integer(i64::try_from(milliseconds / 1_000).unwrap_or(i64::MAX))
+        } else {
+            Self::float(milliseconds as f64 / 1_000.0)
+        }
+    }
+
+    pub fn lowest_interface_bitrate(bitrate: Option<BitrateBps>) -> Self {
+        match bitrate {
+            Some(bitrate) => Self::integer(i64::try_from(bitrate.get()).unwrap_or(i64::MAX)),
+            None => Self::none(),
+        }
     }
 
     pub fn packet_rssi(stats: Option<PacketPhyStats>) -> Self {

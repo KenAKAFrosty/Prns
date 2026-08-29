@@ -91,6 +91,8 @@ async fn interface_stats_renders_each_held_interface_with_its_live_counters() {
             InterfaceInventoryEntry {
                 name: Some("Default Interface".into()),
                 origin: prns_core::interfaces::InterfaceOriginKind::Configured,
+                attachment_epoch: 1,
+                frame_accounting: crate::node_introspection::FrameAccountingCoverage::Unavailable,
                 snapshot: prns_core::interfaces::InterfaceSnapshot {
                     id: InterfaceId::new([0x07; 8]),
                     mode: prns_core::interfaces::InterfaceMode::Boundary,
@@ -117,6 +119,8 @@ async fn interface_stats_renders_each_held_interface_with_its_live_counters() {
             InterfaceInventoryEntry {
                 name: Some("Remote bridge".into()),
                 origin: prns_core::interfaces::InterfaceOriginKind::Configured,
+                attachment_epoch: 2,
+                frame_accounting: crate::node_introspection::FrameAccountingCoverage::Unavailable,
                 snapshot: prns_core::interfaces::InterfaceSnapshot {
                     id: InterfaceId::new([0x09; 8]),
                     mode: prns_core::interfaces::InterfaceMode::Full,

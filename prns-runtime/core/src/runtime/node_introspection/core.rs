@@ -1,8 +1,33 @@
 use prns_core::interfaces::IfacSize;
 use prns_core::interfaces::{
-    ConnectionState, InterfaceGravity, InterfaceId, InterfaceMode, InterfaceOriginKind,
-    InterfaceSnapshot, Membership, TransferRates,
+    BitrateBps, ConnectionState, FrameAccounting, InterfaceCapabilities, InterfaceGravity,
+    InterfaceId, InterfaceMode, InterfaceOriginKind, InterfaceSnapshot, Membership, TransferRates,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InterfaceTimingSnapshot {
+    pub id: InterfaceId,
+    pub bitrate: BitrateBps,
+    pub capabilities: InterfaceCapabilities,
+    pub connection: ConnectionState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameAccountingCoverage {
+    Unavailable,
+    Incomplete,
+    Complete(FrameAccounting),
+}
+
+impl FrameAccountingCoverage {
+    #[must_use]
+    pub const fn complete(self) -> Option<FrameAccounting> {
+        match self {
+            Self::Complete(accounting) => Some(accounting),
+            Self::Unavailable | Self::Incomplete => None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InterfaceIfacSnapshot<Label> {
@@ -15,6 +40,8 @@ pub struct InterfaceIfacSnapshot<Label> {
 pub struct InterfaceInventoryEntry<Label> {
     pub name: Option<Label>,
     pub origin: InterfaceOriginKind,
+    pub attachment_epoch: u64,
+    pub frame_accounting: FrameAccountingCoverage,
     pub snapshot: InterfaceSnapshot,
     pub ifac: Option<InterfaceIfacSnapshot<Label>>,
 }
@@ -24,6 +51,8 @@ struct FoldedInterface<Label> {
     name: Option<Label>,
     origin: InterfaceOriginKind,
     root: Option<InterfaceSnapshot>,
+    root_attachment_epoch: Option<u64>,
+    root_frame_accounting: FrameAccountingCoverage,
     ifac: Option<InterfaceIfacSnapshot<Label>>,
     member_connection: ConnectionState,
     member_mode: Option<InterfaceMode>,
@@ -32,6 +61,9 @@ struct FoldedInterface<Label> {
     member_rx_bytes: u64,
     member_tx_bytes: u64,
     member_rates: Option<TransferRates>,
+    member_attachment_epoch: u64,
+    member_frame_accounting: FrameAccounting,
+    member_frame_accounting_complete: bool,
     has_members: bool,
     destinations: u32,
     links: u32,
@@ -45,6 +77,8 @@ impl<Label> FoldedInterface<Label> {
             name: None,
             origin,
             root: None,
+            root_attachment_epoch: None,
+            root_frame_accounting: FrameAccountingCoverage::Unavailable,
             ifac: None,
             member_connection: ConnectionState::Unknown,
             member_mode: None,
@@ -53,6 +87,9 @@ impl<Label> FoldedInterface<Label> {
             member_rx_bytes: 0,
             member_tx_bytes: 0,
             member_rates: None,
+            member_attachment_epoch: 0,
+            member_frame_accounting: FrameAccounting::default(),
+            member_frame_accounting_complete: true,
             has_members: false,
             destinations: 0,
             links: 0,
@@ -70,6 +107,8 @@ impl<Label> FoldedInterface<Label> {
         match snapshot.membership {
             Membership::Independent => {
                 self.root = Some(snapshot);
+                self.root_attachment_epoch = Some(entry.attachment_epoch);
+                self.root_frame_accounting = entry.frame_accounting;
                 self.origin = entry.origin;
                 if entry.name.is_some() {
                     self.name = entry.name.take();
@@ -83,6 +122,17 @@ impl<Label> FoldedInterface<Label> {
                     self.origin = InterfaceOriginKind::Discovered;
                 }
                 self.has_members = true;
+                self.member_attachment_epoch =
+                    self.member_attachment_epoch.max(entry.attachment_epoch);
+                match entry.frame_accounting {
+                    FrameAccountingCoverage::Complete(accounting) => {
+                        self.member_frame_accounting =
+                            self.member_frame_accounting.saturating_add(accounting);
+                    }
+                    FrameAccountingCoverage::Unavailable | FrameAccountingCoverage::Incomplete => {
+                        self.member_frame_accounting_complete = false;
+                    }
+                }
                 self.member_mode.get_or_insert(snapshot.mode);
                 self.member_gravity.get_or_insert(snapshot.gravity);
                 self.member_connection =
@@ -135,9 +185,33 @@ impl<Label> FoldedInterface<Label> {
         } else {
             self.root.and_then(|snapshot| snapshot.transfer_rates)
         };
+        let frame_accounting = if self.has_members {
+            match (
+                self.root_frame_accounting,
+                self.member_frame_accounting_complete,
+            ) {
+                (FrameAccountingCoverage::Incomplete, _) | (_, false) => {
+                    FrameAccountingCoverage::Incomplete
+                }
+                (FrameAccountingCoverage::Complete(retired), true) => {
+                    FrameAccountingCoverage::Complete(
+                        retired.saturating_add(self.member_frame_accounting),
+                    )
+                }
+                (FrameAccountingCoverage::Unavailable, true) => {
+                    FrameAccountingCoverage::Complete(self.member_frame_accounting)
+                }
+            }
+        } else {
+            self.root_frame_accounting
+        };
         InterfaceInventoryEntry {
             name: self.name,
             origin: self.origin,
+            attachment_epoch: self
+                .root_attachment_epoch
+                .unwrap_or(self.member_attachment_epoch),
+            frame_accounting,
             snapshot: InterfaceSnapshot {
                 id: self.id,
                 mode,
@@ -245,6 +319,8 @@ mod tests {
         InterfaceInventoryEntry {
             name,
             origin: InterfaceOriginKind::Configured,
+            attachment_epoch: 1,
+            frame_accounting: FrameAccountingCoverage::Unavailable,
             snapshot: InterfaceSnapshot {
                 id,
                 mode: InterfaceMode::Full,
@@ -357,5 +433,63 @@ mod tests {
         let logical = fold_logical_interface_inventory(&mut snapshots);
 
         assert_eq!(logical, core::slice::from_ref(&expected));
+    }
+
+    #[test]
+    fn fleet_frame_accounting_requires_complete_member_coverage() {
+        let supervisor = InterfaceId::from_channel_tag(InterfaceKind::TcpServer, b"server");
+        let first = InterfaceId::from_channel_tag(InterfaceKind::TcpServerPeer, b"first");
+        let second = InterfaceId::from_channel_tag(InterfaceKind::TcpServerPeer, b"second");
+        let membership = Membership::FleetMember {
+            supervisor_id: supervisor,
+        };
+        let mut root = snapshot(
+            supervisor,
+            Membership::Independent,
+            0,
+            0,
+            0,
+            Some("Public server"),
+        );
+        root.attachment_epoch = 7;
+        root.frame_accounting = FrameAccountingCoverage::Complete(FrameAccounting {
+            frames_in: 5,
+            malformed: 1,
+            protocol_violations: 1,
+            undecodable: 0,
+            delivered: 4,
+        });
+        let mut first_member = snapshot(first, membership, 0, 0, 0, None);
+        first_member.frame_accounting = FrameAccountingCoverage::Complete(FrameAccounting {
+            frames_in: 3,
+            malformed: 0,
+            protocol_violations: 1,
+            undecodable: 1,
+            delivered: 2,
+        });
+        let mut second_member = snapshot(second, membership, 0, 0, 0, None);
+        second_member.frame_accounting = FrameAccountingCoverage::Unavailable;
+        let mut partial = [root.clone(), first_member.clone(), second_member];
+
+        let logical = fold_logical_interface_inventory(&mut partial);
+
+        assert_eq!(logical[0].attachment_epoch, 7);
+        assert_eq!(
+            logical[0].frame_accounting,
+            FrameAccountingCoverage::Incomplete
+        );
+
+        let mut complete = [root, first_member];
+        let logical = fold_logical_interface_inventory(&mut complete);
+        assert_eq!(
+            logical[0].frame_accounting,
+            FrameAccountingCoverage::Complete(FrameAccounting {
+                frames_in: 8,
+                malformed: 1,
+                protocol_violations: 2,
+                undecodable: 1,
+                delivered: 6,
+            })
+        );
     }
 }

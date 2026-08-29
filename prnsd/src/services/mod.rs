@@ -22,6 +22,7 @@ pub(crate) use blackhole_exchange::{
 pub(crate) use management_announcements::{
     announce_for, AnnouncedDestination, AnnouncementSchedule, ManagementAnnounceTask,
 };
+pub(crate) use node_page::destination_hash as node_page_destination_hash;
 pub(crate) use remote_management::{PathRoute, StatusRoute};
 pub(crate) use request_routes::DaemonRequestRoutes;
 pub(crate) use request_state::{DaemonRequestState, TransportStatusIdentity};

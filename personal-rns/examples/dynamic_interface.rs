@@ -1,5 +1,7 @@
 #![expect(clippy::expect_used, clippy::panic)]
 
+mod common;
+
 use core::time::Duration;
 
 use personal_rns::prelude::*;
@@ -10,6 +12,7 @@ const CHANGE_TIMEOUT: Duration = Duration::from_secs(5);
 async fn main() {
     let node = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
+        remote_control: common::remote_control_service(0xD0, 0xD1),
         pre_configured_destinations: [example_destination()],
         app_state: (),
         storage: GrowableHeap,

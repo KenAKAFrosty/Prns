@@ -35,6 +35,7 @@
   "enums": {
     "ApplicationEventKind": {
       "ChannelMessage": 107,
+      "LinkDelivery": 108,
       "Request": 101,
       "ResourceAvailable": 104,
       "ResourceNeedsDecompression": 106,
@@ -168,6 +169,7 @@
       "Site": 3
     },
     "EventField": {
+      "AppData": 40,
       "ArrivedOn": 22,
       "AttachedInterface": 21,
       "Cause": 24,
@@ -1560,6 +1562,7 @@
   "unions": {
     "ApplicationEvent": {
       "ChannelMessage": 107,
+      "LinkDelivery": 108,
       "Request": 101,
       "ResourceAvailable": 104,
       "ResourceNeedsDecompression": 106,

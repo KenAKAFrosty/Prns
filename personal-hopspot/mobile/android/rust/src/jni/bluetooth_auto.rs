@@ -365,6 +365,17 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleDisconnec
 }
 
 #[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleNextClose(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jint {
+    match ble_bridge().next_close() {
+        Some(conn_id) => conn_id as jint,
+        None => -1,
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleNextDial(
     env: JNIEnv,
     _class: JClass,

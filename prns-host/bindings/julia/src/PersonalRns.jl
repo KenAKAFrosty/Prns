@@ -12,6 +12,7 @@ include("events.jl")
 
 export ApplicationEvent
 export ApplicationEventChannelMessage
+export ApplicationEventLinkDelivery
 export ApplicationEventRequest
 export ApplicationEventResourceAvailable
 export ApplicationEventResourceNeedsDecompression

@@ -16,6 +16,10 @@ use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
 use personal_rns::manifold::embassy::{EmbassyHost, EmbassyInterfaceStatus, InterfaceLifecycle};
 use personal_rns::manifold::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
+use personal_rns::remote_control::{
+    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
+    RemoteControlService,
+};
 use personal_rns::runtime::{
     minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
     EmbassyInterfaceStore, ManifoldLaneSet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
@@ -147,29 +151,45 @@ async fn manifold_task(
 #[allow(clippy::too_many_lines)]
 pub async fn run(spawner: Spawner) -> ! {
     #[cfg(feature = "board-t1000e")]
-    let ((node_bootstrap, runtime_entropy_seed), hardware) = Board::initialize(|nvmc, rng| {
-        let mut fill_entropy = |bytes: &mut [u8]| rng.blocking_fill_bytes(bytes);
-        let node_bootstrap = board::bootstrap_node_identity(nvmc, &mut fill_entropy);
-        let mut runtime_entropy_seed =
-            personal_rns::identity::Zeroizing::new([0u8; RUNTIME_ENTROPY_SEED_LEN]);
-        fill_entropy(&mut runtime_entropy_seed[..]);
-        (node_bootstrap, runtime_entropy_seed)
-    })
-    .await;
+    let ((node_bootstrap, remote_control_bootstrap, runtime_entropy_seed), hardware) =
+        Board::initialize(|nvmc, rng| {
+            let mut fill_entropy = |bytes: &mut [u8]| rng.blocking_fill_bytes(bytes);
+            let node_bootstrap = board::bootstrap_node_identity(nvmc, &mut fill_entropy);
+            let remote_control_bootstrap = board::REMOTE_CONTROL_IDENTITY_FLASH
+                .load_or_generate(nvmc, &mut fill_entropy)
+                .expect("RemoteControl identity bootstrap failed");
+            let mut runtime_entropy_seed =
+                personal_rns::identity::Zeroizing::new([0u8; RUNTIME_ENTROPY_SEED_LEN]);
+            fill_entropy(&mut runtime_entropy_seed[..]);
+            (
+                node_bootstrap,
+                remote_control_bootstrap,
+                runtime_entropy_seed,
+            )
+        })
+        .await;
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
         feature = "board-mesh-tower-v2"
     ))]
-    let ((node_bootstrap, ble_bootstrap, runtime_entropy_seed), hardware) =
+    let ((node_bootstrap, remote_control_bootstrap, ble_bootstrap, runtime_entropy_seed), hardware) =
         Board::initialize(|nvmc, rng| {
             let mut fill_entropy = |bytes: &mut [u8]| rng.blocking_fill_bytes(bytes);
             let node_bootstrap = board::bootstrap_node_identity(nvmc, &mut fill_entropy);
+            let remote_control_bootstrap = board::REMOTE_CONTROL_IDENTITY_FLASH
+                .load_or_generate(nvmc, &mut fill_entropy)
+                .expect("RemoteControl identity bootstrap failed");
             let ble_bootstrap = board::bootstrap_ble_identity(nvmc, &mut fill_entropy);
             let mut runtime_entropy_seed =
                 personal_rns::identity::Zeroizing::new([0u8; RUNTIME_ENTROPY_SEED_LEN]);
             fill_entropy(&mut runtime_entropy_seed[..]);
-            (node_bootstrap, ble_bootstrap, runtime_entropy_seed)
+            (
+                node_bootstrap,
+                remote_control_bootstrap,
+                ble_bootstrap,
+                runtime_entropy_seed,
+            )
         })
         .await;
     initialize_runtime_entropy(&runtime_entropy_seed);
@@ -178,6 +198,8 @@ pub async fn run(spawner: Spawner) -> ! {
     let identity_startup_notice =
         board::identity_startup_notice(node_bootstrap.persistence(), ble_bootstrap.persistence());
     let node_identity = node_bootstrap.into_identity();
+    let (remote_control_identity_secrets, _remote_control_identity_origins) =
+        remote_control_bootstrap.into_parts();
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",
@@ -270,11 +292,6 @@ pub async fn run(spawner: Spawner) -> ! {
 
     let transport_secret = node_identity.transport_secret();
     let destination_secret = node_identity.into_destination_secret();
-    #[cfg(any(
-        feature = "board-t096",
-        feature = "board-t114",
-        feature = "board-mesh-tower-v2"
-    ))]
     let node_page_destination = hopspot::HopspotDestinationSet::new(
         destination_secret.clone(),
         ANNOUNCE_APP_DATA,
@@ -283,6 +300,13 @@ pub async fn run(spawner: Spawner) -> ! {
     .destination_hashes()
     .expect("the hopspot destination names are valid")
     .node_page;
+    let self_announcement = RemoteControlSelfAnnouncement::Destination(node_page_destination);
+    let remote_control = RemoteControlService::new(
+        remote_control_identity_secrets,
+        RemoteControlPublicAppData::empty(),
+        RemoteControlInitialAccess::Nobody,
+        self_announcement,
+    );
     let mut manifold_lanes = ManifoldLanes::new();
     #[cfg(any(feature = "board-t096", feature = "board-t114"))]
     let loaded_lora_profile = selected::load_profile(shared_flash).await;
@@ -293,7 +317,7 @@ pub async fn run(spawner: Spawner) -> ! {
     let lora_id = LoraInterface::interface_id(&lora_profile);
     static LORA_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
     let lora_status: &'static EmbassyInterfaceStatus = LORA_STATUS.init(
-        EmbassyInterfaceStatus::new(lora_id, ConnectionState::Initializing),
+        EmbassyInterfaceStatus::new_accounted(lora_id, ConnectionState::Initializing),
     );
     static LORA_SPECTRUM: StaticCell<LoRaSpectrumStatus> = StaticCell::new();
     let lora_spectrum: &'static LoRaSpectrumStatus = LORA_SPECTRUM.init(LoRaSpectrumStatus::new());
@@ -315,10 +339,9 @@ pub async fn run(spawner: Spawner) -> ! {
 
     let (usb_tx, usb_rx) = class.split();
     static USB_STATUS: StaticCell<EmbassyInterfaceStatus> = StaticCell::new();
-    let usb_status: &'static EmbassyInterfaceStatus = USB_STATUS.init(EmbassyInterfaceStatus::new(
-        USB_INTERFACE_ID,
-        ConnectionState::Initializing,
-    ));
+    let usb_status: &'static EmbassyInterfaceStatus = USB_STATUS.init(
+        EmbassyInterfaceStatus::new_accounted(USB_INTERFACE_ID, ConnectionState::Initializing),
+    );
     let usb_device = UsbAutoDevice::new(UsbAutoDeviceInput {
         rx: usb_rx,
         tx: usb_tx,
@@ -327,7 +350,7 @@ pub async fn run(spawner: Spawner) -> ! {
     });
 
     let lora_lane = manifold_lanes
-        .claim_interface(&LORA_MANIFOLD_LANE, lora.descriptor())
+        .claim_accounted_interface(&LORA_MANIFOLD_LANE, lora.descriptor(), lora_status)
         .expect("LoRa lane is available");
     #[cfg(any(
         feature = "board-t096",
@@ -344,7 +367,7 @@ pub async fn run(spawner: Spawner) -> ! {
             .expect("Bluetooth supervisor lane is available")
     });
     let usb_lane = manifold_lanes
-        .claim_interface(&USB_MANIFOLD_LANE, usb_device.descriptor())
+        .claim_accounted_interface(&USB_MANIFOLD_LANE, usb_device.descriptor(), usb_status)
         .expect("USB lane is available");
     let handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
     let manifold_wiring = manifold_lanes.into_manifold_wiring(
@@ -357,6 +380,7 @@ pub async fn run(spawner: Spawner) -> ! {
     static NODE: StaticCell<Node> = StaticCell::new();
     let recipe = PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
+        remote_control,
         pre_configured_destinations: hopspot::HopspotDestinationSet::new(
             destination_secret,
             ANNOUNCE_APP_DATA,

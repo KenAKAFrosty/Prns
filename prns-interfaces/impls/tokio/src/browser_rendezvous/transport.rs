@@ -46,7 +46,7 @@ impl BrowserRendezvousClient {
         Self {
             id,
             policy,
-            status: TokioInterfaceStatus::new(id, ConnectionState::Disconnected),
+            status: TokioInterfaceStatus::new_unaccounted(id, ConnectionState::Disconnected),
             core_id: Arc::new(Mutex::new(None)),
         }
     }

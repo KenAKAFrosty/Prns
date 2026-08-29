@@ -18,8 +18,8 @@ use personal_hopspot_core as screen;
 
 use super::heltec_frontend;
 use crate::s3::{
-    self, BoardDisplay, BoardFace, Esp32S3Board, NoGnss, S3BoardHardware, S3InterfaceHardware,
-    S3ManifoldHardware,
+    self, BoardFace, Esp32S3Board, ImmediateBoardDisplay, ImmediateDisplayDevice, NoGnss,
+    S3BoardHardware, S3InterfaceHardware, S3ManifoldHardware,
 };
 
 /// This board's USB-auto interface id (the always-present top-level wire on pool slot 0).
@@ -89,11 +89,50 @@ impl screen::BatterySource for HeltecR8Battery {
     }
 }
 
-type HeltecDisplay = Ssd1306<
+type HeltecController = Ssd1306<
     I2CInterface<I2c<'static, esp_hal::Blocking>>,
     DisplaySize128x64,
     BufferedGraphicsMode<DisplaySize128x64>,
 >;
+
+pub struct HeltecDisplay(HeltecController);
+
+impl ImmediateDisplayDevice for HeltecDisplay {
+    fn present(
+        &mut self,
+        frame: &screen::face_64x128::Frame,
+    ) -> screen::display::PresentationOutcome {
+        if let Err(error) = crate::immediate_display::draw_canonical_frame(&mut self.0, frame) {
+            log::error!("OLED frame conversion failed: {error:?}");
+            return screen::display::PresentationOutcome::Failed;
+        }
+        match self.0.flush() {
+            Ok(()) => screen::display::PresentationOutcome::Succeeded,
+            Err(error) => {
+                log::error!("OLED render failed: {error:?}");
+                screen::display::PresentationOutcome::Failed
+            }
+        }
+    }
+
+    fn apply_blanking(
+        &mut self,
+        command: screen::display::BlankingCommand,
+    ) -> screen::display::BlankingOutcome {
+        let on = command == screen::display::BlankingCommand::Restore;
+        let result = match self.0.set_display_on(on) {
+            Ok(()) => screen::display::BlankingResult::Succeeded,
+            Err(error) => {
+                log::error!("OLED blanking failed: {error:?}");
+                screen::display::BlankingResult::Failed
+            }
+        };
+        screen::display::BlankingOutcome {
+            result,
+            buffer_retention: screen::display::BufferRetention::Preserved,
+        }
+    }
+}
 
 /// The Heltec V4-R8's board half (OLED/battery/radio bring-up); everything past it is the shared
 /// [`s3`] core. Pinout differs from the S3R2 V4 for Vext and battery gating; PSRAM is Octal 8MB.
@@ -105,23 +144,9 @@ impl Esp32S3Board for HeltecV4R8Board {
     const BOOT_BANNER: &'static str = "HOPSPOT_HELTECV4_R8";
     const USB_INTERFACE_ID: InterfaceId = USB_INTERFACE_ID;
     const FLASH_LAYOUT: screen::HopspotS3FlashLayout = screen::S3_16_MIB_FLASH_LAYOUT;
-    type Display = HeltecDisplay;
+    type Display = ImmediateBoardDisplay<HeltecDisplay>;
     type Battery = HeltecR8Battery;
     type Gnss = NoGnss;
-
-    fn flush(display: &mut Self::Display) {
-        if let Err(error) = display.flush() {
-            log::error!("OLED render failed: {error:?}");
-        }
-    }
-
-    fn wake_display(display: &mut Self::Display) {
-        let _ = display.set_display_on(true);
-    }
-
-    fn darken_display(display: &mut Self::Display) {
-        let _ = display.set_display_on(false);
-    }
 
     async fn bringup(
         p: esp_hal::peripherals::Peripherals,
@@ -139,7 +164,7 @@ impl Esp32S3Board for HeltecV4R8Board {
             }
         );
 
-        s3::boot_stage(s3::BootPhase::OledBegin);
+        s3::boot_stage(s3::BootPhase::DisplayHardwareBegin);
         // OLED (V4-R8: Vext on GPIO40 active-low; pulse RST; I2C0 on 17/18).
         let mut _vext = Output::new(p.GPIO40, Level::Low, OutputConfig::default());
         let mut rst = Output::new(p.GPIO21, Level::High, OutputConfig::default());
@@ -162,21 +187,21 @@ impl Esp32S3Board for HeltecV4R8Board {
         .into_buffered_graphics_mode();
         let oled_ok = match display.init() {
             Ok(()) => {
-                s3::boot_stage(s3::BootPhase::OledReady);
+                s3::boot_stage(s3::BootPhase::DisplayHardwareReady);
                 log::info!("OLED initialized");
                 true
             }
             Err(error) => {
-                s3::boot_stage(s3::BootPhase::OledFailed);
+                s3::boot_stage(s3::BootPhase::DisplayHardwareFailed);
                 log::error!("OLED initialization failed: {error:?}");
                 false
             }
         };
+        let mut display = HeltecDisplay(display);
         if oled_ok {
-            screen::splash(&mut display, screen::SplashContent::Brand);
-            if let Err(error) = display.flush() {
-                log::error!("OLED splash failed: {error:?}");
-            }
+            let mut frame = screen::face_64x128::Frame::new();
+            screen::face_64x128::splash(&mut frame, screen::face_64x128::SplashContent::Brand);
+            let _ = display.present(&frame);
         }
 
         let lora_radio = {
@@ -228,9 +253,10 @@ impl Esp32S3Board for HeltecV4R8Board {
 
         S3BoardHardware {
             face: BoardFace {
-                display: BoardDisplay {
-                    device: display,
-                    initialized: oled_ok,
+                display: if oled_ok {
+                    ImmediateBoardDisplay::initialized(display)
+                } else {
+                    ImmediateBoardDisplay::initialization_failed(display)
                 },
                 battery,
                 button: Input::new(

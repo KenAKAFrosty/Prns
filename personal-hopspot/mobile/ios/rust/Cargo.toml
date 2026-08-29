@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
-description = "Personal Hopspot iOS face: a C-ABI + DrawTarget bridge that renders the shared Hopspot screen into an iOS RGBA buffer and feeds taps back as single-button input."
+description = "Personal Hopspot iOS face: a C-ABI bridge that expands the canonical Hopspot frame into an iOS RGBA buffer and feeds taps back as single-button input."
 
 [workspace]
 resolver = "2"
@@ -18,9 +18,8 @@ name = "personal_hopspot_ios"
 crate-type = ["staticlib", "lib"]
 
 [dependencies]
-personal-hopspot-core = { path = "../../../core", default-features = false, features = ["host"] }
+personal-hopspot-core = { path = "../../../core", default-features = false, features = ["display", "host"] }
 personal-rns = { path = "../../../../personal-rns", default-features = false, features = ["tokio-host", "tcp", "wifi-auto-apple", "bluetooth-auto", "parallel-persistence", "parallel-resource-hash"] }
-embedded-graphics = "0.8"
 heapless = { version = "0.8", default-features = false }
 # The async runtime + a TCP listener: RNS TCP framing is the serial HDLC framing, so the
 # manifold's serial interface serves a TCP connection directly — `accept` standing in for `open`.

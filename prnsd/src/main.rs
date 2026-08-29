@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod build_identity;
 mod cli;
 mod command_context;
 mod daemon;
@@ -14,6 +15,8 @@ mod services;
 mod shutdown;
 mod splash;
 mod terminal;
+#[cfg(test)]
+mod test_support;
 #[cfg(all(
     feature = "tray",
     any(target_os = "linux", target_os = "macos", target_os = "windows")

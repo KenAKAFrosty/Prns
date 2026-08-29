@@ -9,19 +9,21 @@ use tokio::sync::oneshot;
 
 use crate::engine::Departure;
 use crate::interfaces::{
-    ConnectionView, InterfaceId, InterfaceKind, InterfaceOriginKind, InterfaceSnapshot,
-    InterfaceStatus, InterfaceVitals, Membership, ReportsStatus, StatusView,
+    ConnectionView, FrameAccounting, InterfaceId, InterfaceKind, InterfaceOriginKind,
+    InterfaceSnapshot, InterfaceStatus, InterfaceVitals, Membership, ReportsStatus, StatusView,
 };
 use crate::interfaces::{IfacContext, IfacSize};
 use crate::manifold::driver::{HostCommand, TokioInterfaceStatus};
 use crate::manifold::interface_seam::Interface;
-use crate::node_introspection::{InterfaceIfacSnapshot, InterfaceInventoryEntry};
+use crate::node_introspection::{
+    FrameAccountingCoverage, InterfaceIfacSnapshot, InterfaceInventoryEntry,
+};
 use prns_runtime::runtime::node_introspection::fold_logical_interface_inventory;
 
 use super::super::PrnsNodeHandle;
 use super::{
     drive_interfaces, ByteAccounting, DriverMsg, Fleet, InterfacePlacement, RegisteredInterface,
-    RetiredMemberBytes, RuntimeIfac,
+    RetiredMemberBytes, RetiredMemberFrameAccounting, RuntimeIfac,
 };
 
 struct LiveRun {
@@ -58,7 +60,10 @@ impl StatusInterface {
         let id = InterfaceId::from_channel_tag(InterfaceKind::Pipe, tag);
         Self {
             tag: tag.to_vec(),
-            status: TokioInterfaceStatus::new(id, crate::interfaces::ConnectionState::Connected),
+            status: TokioInterfaceStatus::new_accounted(
+                id,
+                crate::interfaces::ConnectionState::Connected,
+            ),
         }
     }
 
@@ -136,6 +141,8 @@ async fn runtime_attachment_carries_ifac_wire_and_status_metadata() {
         std::vec![InterfaceInventoryEntry {
             name: Some("Protected wire".into()),
             origin: InterfaceOriginKind::Configured,
+            attachment_epoch: 0,
+            frame_accounting: FrameAccountingCoverage::Complete(FrameAccounting::default()),
             snapshot: InterfaceSnapshot {
                 id,
                 mode: crate::interfaces::InterfaceMode::Boundary,
@@ -197,12 +204,15 @@ fn registered_status(view: StatusView, membership: Membership) -> RegisteredInte
             membership,
             origin: InterfaceOriginKind::Configured,
         },
+        descriptor: None,
         mode: crate::interfaces::InterfaceMode::Boundary,
         gravity: crate::interfaces::InterfaceGravity::new(-27),
         ifac: None,
         name: None,
         byte_accounting: ByteAccounting::OwnTraffic,
         retired_member_bytes: RetiredMemberBytes::default(),
+        retired_member_frame_accounting: RetiredMemberFrameAccounting::default(),
+        attachment_epoch: 0,
     }
 }
 
@@ -212,12 +222,16 @@ async fn a_departed_fleet_members_bytes_retire_into_its_supervisor() {
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<HostCommand>();
 
     let supervisor_id = InterfaceId::new([0x72; 8]);
-    let supervisor_status =
-        TokioInterfaceStatus::new(supervisor_id, crate::interfaces::ConnectionState::Connected);
+    let supervisor_status = TokioInterfaceStatus::new_unaccounted(
+        supervisor_id,
+        crate::interfaces::ConnectionState::Connected,
+    );
     let member = StatusInterface::new(b"departing-member");
     let member_id = member.id();
     member.status.add_rx(4096);
     member.status.add_tx(512);
+    member.status.count_frame_in();
+    member.status.count_frame_delivered();
 
     let interfaces = Arc::new(Mutex::new(HashMap::new()));
     {
@@ -284,6 +298,16 @@ async fn a_departed_fleet_members_bytes_retire_into_its_supervisor() {
         (4096, 512),
         "the departed member's byte totals retire into its supervisor"
     );
+    assert!(matches!(
+        kept.retired_member_frame_accounting,
+        RetiredMemberFrameAccounting::Complete(FrameAccounting {
+            frames_in: 1,
+            malformed: 0,
+            protocol_violations: 0,
+            undecodable: 0,
+            delivered: 1,
+        })
+    ));
 }
 
 #[tokio::test]
@@ -292,14 +316,20 @@ async fn inventory_replaces_a_fleet_aggregates_live_bytes_with_retired_member_by
 
     let supervisor_id = InterfaceId::new([0x73; 8]);
     let member_id = InterfaceId::new([0x74; 8]);
-    let supervisor_status =
-        TokioInterfaceStatus::new(supervisor_id, crate::interfaces::ConnectionState::Connected);
+    let supervisor_status = TokioInterfaceStatus::new_unaccounted(
+        supervisor_id,
+        crate::interfaces::ConnectionState::Connected,
+    );
     supervisor_status.add_rx(10);
     supervisor_status.add_tx(20);
-    let member_status =
-        TokioInterfaceStatus::new(member_id, crate::interfaces::ConnectionState::Connected);
+    let member_status = TokioInterfaceStatus::new_accounted(
+        member_id,
+        crate::interfaces::ConnectionState::Connected,
+    );
     member_status.add_rx(10);
     member_status.add_tx(20);
+    member_status.count_frame_in();
+    member_status.count_frame_delivered();
     let supervisor_view: StatusView = {
         let status = supervisor_status.clone();
         Arc::new(move || std::vec![InterfaceVitals::of(&status)])
@@ -313,6 +343,14 @@ async fn inventory_replaces_a_fleet_aggregates_live_bytes_with_retired_member_by
         let mut registered = registered_status(supervisor_view, Membership::Independent);
         registered.byte_accounting = ByteAccounting::FleetAggregate;
         registered.retired_member_bytes = RetiredMemberBytes { rx: 4096, tx: 512 };
+        registered.retired_member_frame_accounting =
+            RetiredMemberFrameAccounting::Complete(FrameAccounting {
+                frames_in: 5,
+                malformed: 1,
+                protocol_violations: 1,
+                undecodable: 0,
+                delivered: 4,
+            });
         map.insert(supervisor_id, registered);
         map.insert(
             member_id,
@@ -337,6 +375,16 @@ async fn inventory_replaces_a_fleet_aggregates_live_bytes_with_retired_member_by
         (logical[0].snapshot.rx_bytes, logical[0].snapshot.tx_bytes),
         (4106, 532),
         "folding adds the live member exactly once to the retired odometer"
+    );
+    assert_eq!(
+        logical[0].frame_accounting,
+        FrameAccountingCoverage::Complete(FrameAccounting {
+            frames_in: 6,
+            malformed: 1,
+            protocol_violations: 1,
+            undecodable: 0,
+            delivered: 5,
+        })
     );
 }
 

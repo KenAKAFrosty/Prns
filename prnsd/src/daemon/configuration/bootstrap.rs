@@ -21,6 +21,8 @@ const RAILWAY_PORT: &str = "RAILWAY_TCP_PROXY_PORT";
 const NNPAGES_ANNOUNCE: &str = "PRNSD_NNPAGES_ANNOUNCE";
 const NNPAGES_ANNOUNCE_INTERVAL_MINUTES: &str = "PRNSD_NNPAGES_ANNOUNCE_INTERVAL_MINUTES";
 const SOURCE_ARCHIVE_ENV: &str = "PRNSD_SOURCE_ARCHIVE";
+const SOURCE_ARCHIVE_RECEIPT_FILE_NAME: &str = ".source.zip.prnsd-managed";
+const SOURCE_ARCHIVE_RECEIPT_VERSION: &str = "prnsd-managed-source-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PublishedEndpoint {
@@ -307,6 +309,16 @@ pub(crate) struct SourceArchiveSeed {
     pub(crate) archive_path: PathBuf,
     pub(crate) archive_bytes: u64,
     pub(crate) created: Vec<PathBuf>,
+    pub(crate) replaced: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BundledSourceRefresh {
+    NotStaged,
+    OperatorOwned,
+    BundleUnavailable,
+    Current(SourceArchiveSeed),
+    Updated(SourceArchiveSeed),
 }
 
 pub(crate) fn stage_bundled_source(
@@ -352,23 +364,53 @@ pub(crate) fn stage_source_archive(
     }
     let digest = data_encoding::HEXLOWER.encode(&personal_rns::crypto::sha256(&archive));
     validate_source_checksum_if_present(source, &digest)?;
-    let checksum = format!("{digest}  {}\n", crate::nnpages::SOURCE_ARCHIVE_FILE_NAME);
+    let checksum = source_checksum_document(&archive);
 
     let root = crate::nnpages::file_root(config_dir);
     prepare_nnpages_directory(&root)?;
     let archive_path = root.join(crate::nnpages::SOURCE_ARCHIVE_FILE_NAME);
     let checksum_path = root.join(crate::nnpages::SOURCE_CHECKSUM_FILE_NAME);
+    let receipt_path = root.join(SOURCE_ARCHIVE_RECEIPT_FILE_NAME);
+    let receipt = source_archive_receipt(&archive);
+    let plans = source_archive_publish_plans(
+        &archive_path,
+        &checksum_path,
+        &receipt_path,
+        &archive,
+        &checksum,
+        &receipt,
+    )?;
     let mut created = Vec::new();
+    let mut replaced = Vec::new();
     let mut transaction = NnPagesSeedTransaction::default();
     let result = (|| {
-        if publish_file_once(&root, &archive_path, &archive)? {
-            created.push(archive_path.clone());
-            transaction.record(NnPagesSeedChange::Created(archive_path.clone()));
-        }
-        if publish_file_once(&root, &checksum_path, checksum.as_bytes())? {
-            created.push(checksum_path.clone());
-            transaction.record(NnPagesSeedChange::Created(checksum_path));
-        }
+        apply_source_publish_plan(
+            &root,
+            &archive_path,
+            &archive,
+            plans.archive,
+            &mut created,
+            &mut replaced,
+            &mut transaction,
+        )?;
+        apply_source_publish_plan(
+            &root,
+            &checksum_path,
+            &checksum,
+            plans.checksum,
+            &mut created,
+            &mut replaced,
+            &mut transaction,
+        )?;
+        apply_source_publish_plan(
+            &root,
+            &receipt_path,
+            &receipt,
+            plans.receipt,
+            &mut created,
+            &mut replaced,
+            &mut transaction,
+        )?;
         Ok(())
     })();
     if let Err(error) = result {
@@ -378,7 +420,185 @@ pub(crate) fn stage_source_archive(
         archive_path,
         archive_bytes: u64::try_from(archive.len()).unwrap_or(u64::MAX),
         created,
+        replaced,
     })
+}
+
+pub(crate) fn refresh_staged_bundled_source(
+    config_dir: &Path,
+) -> Result<BundledSourceRefresh, ServerBootstrapError> {
+    let root = crate::nnpages::file_root(config_dir);
+    let archive_path = root.join(crate::nnpages::SOURCE_ARCHIVE_FILE_NAME);
+    let checksum_path = root.join(crate::nnpages::SOURCE_CHECKSUM_FILE_NAME);
+    let receipt_path = root.join(SOURCE_ARCHIVE_RECEIPT_FILE_NAME);
+    let Some(archive) = read_hosted_file(&archive_path)? else {
+        return Ok(BundledSourceRefresh::NotStaged);
+    };
+    let Some(checksum) = read_hosted_file(&checksum_path)? else {
+        return Ok(BundledSourceRefresh::OperatorOwned);
+    };
+    let Some(receipt) = read_hosted_file(&receipt_path)? else {
+        return Ok(BundledSourceRefresh::OperatorOwned);
+    };
+    if checksum != source_checksum_document(&archive) || receipt != source_archive_receipt(&archive)
+    {
+        return Ok(BundledSourceRefresh::OperatorOwned);
+    }
+    let Some(source) = locate_bundled_source(false)? else {
+        return Ok(BundledSourceRefresh::BundleUnavailable);
+    };
+    let staged = stage_source_archive(config_dir, &source)?;
+    if staged.replaced.is_empty() {
+        Ok(BundledSourceRefresh::Current(staged))
+    } else {
+        Ok(BundledSourceRefresh::Updated(staged))
+    }
+}
+
+#[derive(Debug)]
+struct SourceArchivePublishPlans {
+    archive: SourcePublishPlan,
+    checksum: SourcePublishPlan,
+    receipt: SourcePublishPlan,
+}
+
+#[derive(Debug)]
+enum SourcePublishPlan {
+    Current,
+    Create,
+    Replace(Vec<u8>),
+}
+
+fn source_archive_publish_plans(
+    archive_path: &Path,
+    checksum_path: &Path,
+    receipt_path: &Path,
+    desired_archive: &[u8],
+    desired_checksum: &[u8],
+    desired_receipt: &[u8],
+) -> Result<SourceArchivePublishPlans, ServerBootstrapError> {
+    let existing_archive = read_hosted_file(archive_path)?;
+    let existing_checksum = read_hosted_file(checksum_path)?;
+    let existing_receipt = read_hosted_file(receipt_path)?;
+    match (existing_archive, existing_checksum, existing_receipt) {
+        (None, None, None) => Ok(SourceArchivePublishPlans {
+            archive: SourcePublishPlan::Create,
+            checksum: SourcePublishPlan::Create,
+            receipt: SourcePublishPlan::Create,
+        }),
+        (Some(archive), checksum, receipt) if archive == desired_archive => {
+            let checksum = match checksum {
+                None => SourcePublishPlan::Create,
+                Some(checksum) if checksum == desired_checksum => SourcePublishPlan::Current,
+                Some(_) => {
+                    return Err(ServerBootstrapError::HostedFileConflict {
+                        path: checksum_path.to_path_buf(),
+                    })
+                }
+            };
+            let receipt = match receipt {
+                None => SourcePublishPlan::Create,
+                Some(receipt) if receipt == desired_receipt => SourcePublishPlan::Current,
+                Some(_) => {
+                    return Err(ServerBootstrapError::HostedFileConflict {
+                        path: receipt_path.to_path_buf(),
+                    })
+                }
+            };
+            Ok(SourceArchivePublishPlans {
+                archive: SourcePublishPlan::Current,
+                checksum,
+                receipt,
+            })
+        }
+        (Some(archive), Some(checksum), receipt)
+            if checksum == source_checksum_document(&archive) =>
+        {
+            let receipt = match receipt {
+                None => SourcePublishPlan::Create,
+                Some(receipt) if receipt == source_archive_receipt(&archive) => {
+                    SourcePublishPlan::Replace(receipt)
+                }
+                Some(_) => {
+                    return Err(ServerBootstrapError::HostedFileConflict {
+                        path: receipt_path.to_path_buf(),
+                    })
+                }
+            };
+            Ok(SourceArchivePublishPlans {
+                archive: SourcePublishPlan::Replace(archive),
+                checksum: SourcePublishPlan::Replace(checksum),
+                receipt,
+            })
+        }
+        (Some(_), _, _) => Err(ServerBootstrapError::HostedFileConflict {
+            path: archive_path.to_path_buf(),
+        }),
+        (None, Some(_), _) => Err(ServerBootstrapError::HostedFileConflict {
+            path: checksum_path.to_path_buf(),
+        }),
+        (None, None, Some(_)) => Err(ServerBootstrapError::HostedFileConflict {
+            path: receipt_path.to_path_buf(),
+        }),
+    }
+}
+
+fn apply_source_publish_plan(
+    root: &Path,
+    path: &Path,
+    desired: &[u8],
+    plan: SourcePublishPlan,
+    created: &mut Vec<PathBuf>,
+    replaced: &mut Vec<PathBuf>,
+    transaction: &mut NnPagesSeedTransaction,
+) -> Result<(), ServerBootstrapError> {
+    match plan {
+        SourcePublishPlan::Current => Ok(()),
+        SourcePublishPlan::Create => {
+            if publish_file_once(root, path, desired)? {
+                created.push(path.to_path_buf());
+                transaction.record(NnPagesSeedChange::Created(path.to_path_buf()));
+            }
+            Ok(())
+        }
+        SourcePublishPlan::Replace(previous) => {
+            replace_file(root, path, desired)?;
+            replaced.push(path.to_path_buf());
+            transaction.record(NnPagesSeedChange::Replaced {
+                path: path.to_path_buf(),
+                previous,
+            });
+            Ok(())
+        }
+    }
+}
+
+fn read_hosted_file(path: &Path) -> Result<Option<Vec<u8>>, ServerBootstrapError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata)
+            if metadata.file_type().is_file()
+                && metadata.len() <= crate::nnpages::MAX_FILE_BYTES =>
+        {
+            fs::read(path)
+                .map(Some)
+                .map_err(|error| nnpages_storage("read hosted file", path, error))
+        }
+        Ok(_) => Err(ServerBootstrapError::HostedFileConflict {
+            path: path.to_path_buf(),
+        }),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(nnpages_storage("inspect hosted file", path, error)),
+    }
+}
+
+fn source_checksum_document(archive: &[u8]) -> Vec<u8> {
+    let digest = data_encoding::HEXLOWER.encode(&personal_rns::crypto::sha256(archive));
+    format!("{digest}  {}\n", crate::nnpages::SOURCE_ARCHIVE_FILE_NAME).into_bytes()
+}
+
+fn source_archive_receipt(archive: &[u8]) -> Vec<u8> {
+    let digest = data_encoding::HEXLOWER.encode(&personal_rns::crypto::sha256(archive));
+    format!("{SOURCE_ARCHIVE_RECEIPT_VERSION}\n{digest}\n").into_bytes()
 }
 
 #[cfg(unix)]
@@ -625,7 +845,7 @@ fn seed_marked_page(
                     change: None,
                 });
             }
-            replace_page(&root, &path, desired.as_bytes())?;
+            replace_file(&root, &path, desired.as_bytes())?;
             return Ok(TrackedSeed {
                 outcome: ManagedPageSeed::Written(path.clone()),
                 change: Some(NnPagesSeedChange::Replaced {
@@ -643,7 +863,7 @@ fn seed_marked_page(
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(source) => return Err(nnpages_storage("inspect managed page", &path, source)),
     }
-    replace_page(&root, &path, desired.as_bytes())?;
+    replace_file(&root, &path, desired.as_bytes())?;
     Ok(TrackedSeed {
         outcome: ManagedPageSeed::Written(path.clone()),
         change: Some(NnPagesSeedChange::Created(path)),
@@ -689,7 +909,7 @@ impl NnPagesSeedTransaction {
                     .parent()
                     .ok_or_else(|| io::Error::other("managed page has no parent directory"))
                     .and_then(|root| {
-                        replace_page(root, &path, &previous).map_err(|error| match error {
+                        replace_file(root, &path, &previous).map_err(|error| match error {
                             ServerBootstrapError::NnPagesStorage { source, .. } => source,
                             other => io::Error::other(other.to_string()),
                         })
@@ -761,7 +981,14 @@ fn render_source_page(state: SourcePageState) -> String {
             SOURCE_PAGE_AVAILABLE
                 .replace("{{SIZE}}", &format_archive_size(archive_bytes))
                 .replace("{{CHECKSUM_LINE}}\n", checksum_line)
-                .replace("{{SOURCE_COMMIT_LINE}}\n", "")
+                .replace(
+                    "{{SOURCE_COMMIT_LINE}}\n",
+                    &format!(
+                        "`F999Daemon build:`f `F6ebPrns v{} · commit {}`f\n\n",
+                        crate::build_identity::VERSION,
+                        crate::build_identity::COMMIT,
+                    ),
+                )
         }
     }
 }
@@ -780,16 +1007,16 @@ pub(crate) fn format_archive_size(bytes: u64) -> String {
     format!("{}.{} {unit}", scaled_tenths / 10, scaled_tenths % 10)
 }
 
-fn replace_page(root: &Path, path: &Path, bytes: &[u8]) -> Result<(), ServerBootstrapError> {
+fn replace_file(root: &Path, path: &Path, bytes: &[u8]) -> Result<(), ServerBootstrapError> {
     let (mut file, staging_path) = create_staging_file(root)?;
     let result = (|| {
         file.write_all(bytes)
-            .map_err(|source| nnpages_storage("write staging page", &staging_path, source))?;
+            .map_err(|source| nnpages_storage("write staging file", &staging_path, source))?;
         file.sync_all()
-            .map_err(|source| nnpages_storage("sync staging page", &staging_path, source))?;
+            .map_err(|source| nnpages_storage("sync staging file", &staging_path, source))?;
         drop(file);
         crate::nnpages::replace_file(&staging_path, path)
-            .map_err(|source| nnpages_storage("publish page", path, source))?;
+            .map_err(|source| nnpages_storage("publish file", path, source))?;
         sync_nnpages_directory(root)
     })();
     if result.is_err() {
@@ -1672,6 +1899,9 @@ mod tests {
         assert!(available.starts_with(SOURCE_PAGE_MARKER));
         assert!(available.contains(":/file/source.zip"));
         assert!(available.contains("(2.0 KB)"));
+        assert!(available.contains(crate::build_identity::VERSION));
+        assert!(available.contains(crate::build_identity::COMMIT));
+        assert!(available.contains("does not authenticate the node by itself"));
         assert!(!available.contains("source.zip.sha256"));
         assert!(!available.contains("{{"));
 
@@ -1835,7 +2065,7 @@ mod tests {
 
         let staged = stage_source_archive(&config, &source).expect("stage source");
         assert_eq!(staged.archive_bytes, 20);
-        assert_eq!(staged.created.len(), 2);
+        assert_eq!(staged.created.len(), 3);
         assert_eq!(
             std::fs::read(&staged.archive_path).expect("staged archive"),
             b"exact release source"
@@ -1847,9 +2077,84 @@ mod tests {
             .expect("staged checksum"),
             format!("{digest}  {}\n", crate::nnpages::SOURCE_ARCHIVE_FILE_NAME)
         );
+        assert_eq!(
+            std::fs::read(
+                crate::nnpages::file_root(&config).join(SOURCE_ARCHIVE_RECEIPT_FILE_NAME)
+            )
+            .expect("management receipt"),
+            source_archive_receipt(b"exact release source")
+        );
 
         let repeated = stage_source_archive(&config, &source).expect("repeat stage");
         assert!(repeated.created.is_empty());
+        assert!(repeated.replaced.is_empty());
+    }
+
+    #[test]
+    fn a_managed_source_archive_advances_with_its_bundled_release() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let source = directory.path().join("release.zip");
+        let config = directory.path().join("node");
+        std::fs::write(&source, b"release one").expect("first source");
+        stage_source_archive(&config, &source).expect("stage first source");
+
+        std::fs::write(&source, b"release two").expect("second source");
+        let updated = stage_source_archive(&config, &source).expect("advance staged source");
+        assert!(updated.created.is_empty());
+        assert_eq!(updated.replaced.len(), 3);
+        assert_eq!(
+            std::fs::read(&updated.archive_path).expect("updated archive"),
+            b"release two"
+        );
+        assert_eq!(
+            std::fs::read(
+                crate::nnpages::file_root(&config).join(crate::nnpages::SOURCE_CHECKSUM_FILE_NAME)
+            )
+            .expect("updated checksum"),
+            source_checksum_document(b"release two")
+        );
+    }
+
+    #[test]
+    fn automatic_source_refresh_honors_the_hosting_opt_in_boundary() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        assert_eq!(
+            refresh_staged_bundled_source(directory.path()).expect("absent source is accepted"),
+            BundledSourceRefresh::NotStaged
+        );
+
+        let files = crate::nnpages::file_root(directory.path());
+        std::fs::create_dir_all(&files).expect("files");
+        std::fs::write(
+            files.join(crate::nnpages::SOURCE_ARCHIVE_FILE_NAME),
+            b"operator archive",
+        )
+        .expect("operator archive");
+        assert_eq!(
+            refresh_staged_bundled_source(directory.path()).expect("operator source is preserved"),
+            BundledSourceRefresh::OperatorOwned
+        );
+
+        std::fs::write(
+            files.join(crate::nnpages::SOURCE_CHECKSUM_FILE_NAME),
+            source_checksum_document(b"operator archive"),
+        )
+        .expect("operator checksum");
+        assert_eq!(
+            refresh_staged_bundled_source(directory.path())
+                .expect("operator checksum pair is preserved"),
+            BundledSourceRefresh::OperatorOwned
+        );
+
+        let adopted = stage_source_archive(
+            directory.path(),
+            &files.join(crate::nnpages::SOURCE_ARCHIVE_FILE_NAME),
+        )
+        .expect("explicit staging adopts a checksum pair");
+        assert!(adopted
+            .created
+            .iter()
+            .any(|path| path.ends_with(SOURCE_ARCHIVE_RECEIPT_FILE_NAME)));
     }
 
     #[test]

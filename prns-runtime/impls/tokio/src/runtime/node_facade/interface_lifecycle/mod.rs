@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
@@ -12,14 +13,16 @@ use tokio::sync::oneshot;
 use crate::engine::Departure;
 use crate::interfaces::IfacContext;
 use crate::interfaces::{
-    ConnectionView, InterfaceId, InterfaceKind, InterfaceOriginKind, InterfaceSnapshot, Membership,
-    ReportsStatus, StatusView,
+    ConnectionView, FrameAccounting, FrameAccountingRecorder, InterfaceDescriptor, InterfaceId,
+    InterfaceKind, InterfaceOriginKind, InterfaceSnapshot, Membership, ReportsStatus, StatusView,
 };
 use crate::manifold::driver::{
     tokio_grant_lane, AddInterfaceCommand, HostCommand, TokioInterfaceSeam,
 };
 use crate::manifold::interface_seam::{frame_cap_for, Interface};
-use crate::node_introspection::{InterfaceIfacSnapshot, InterfaceInventoryEntry};
+use crate::node_introspection::{
+    FrameAccountingCoverage, InterfaceIfacSnapshot, InterfaceInventoryEntry,
+};
 
 use super::super::ManuallyAttached;
 use super::PrnsNodeHandle;
@@ -60,6 +63,10 @@ impl RuntimeIfac {
 }
 
 impl PrnsNodeHandle {
+    fn next_attachment_epoch(&self) -> u64 {
+        self.attachment_epochs.fetch_add(1, Ordering::Relaxed)
+    }
+
     /// Attach an interface to the running node and get a handle to tear it back down. Grab any per-interface control handle (`.status()`, a radio's own controls) before calling this, since it takes the interface by value.
     ///
     /// `I: Send` is the host's bargain: the interface rides to the `run` task inside a `Send` builder closure which mints its run future there, so the future itself never has to be `Send` (what keeps `!Send` interface bodies legal) and the manifold stays `Send` and spawnable.
@@ -149,8 +156,10 @@ impl PrnsNodeHandle {
             origin,
         };
         let descriptor = interface.descriptor();
+        let attachment_epoch = self.next_attachment_epoch();
         let view = interface.status_view();
         let connection = interface.connection_view();
+        let frame_accounting = interface.frame_accounting_recorder();
         let attached = attach_interface(
             &self.commands,
             &self.iface_build,
@@ -160,6 +169,7 @@ impl PrnsNodeHandle {
                 descriptor,
                 placement,
                 connection,
+                frame_accounting,
                 ifac: ifac.as_ref().map(|access| access.context.clone()),
             },
         );
@@ -169,12 +179,15 @@ impl PrnsNodeHandle {
             view.map(|view| RegisteredInterface {
                 view,
                 placement,
+                descriptor: Some(descriptor),
                 mode: descriptor.mode,
                 gravity: descriptor.gravity,
                 ifac: ifac.as_ref().map(RuntimeIfac::snapshot),
                 name,
                 byte_accounting: ByteAccounting::OwnTraffic,
                 retired_member_bytes: RetiredMemberBytes::default(),
+                retired_member_frame_accounting: RetiredMemberFrameAccounting::default(),
+                attachment_epoch,
             }),
         );
         attached
@@ -193,6 +206,8 @@ impl PrnsNodeHandle {
                 let name = registered.name.clone();
                 let byte_accounting = registered.byte_accounting;
                 let retired = registered.retired_member_bytes;
+                let retired_frame_accounting = registered.retired_member_frame_accounting;
+                let attachment_epoch = registered.attachment_epoch;
                 (registered.view)().into_iter().map(move |vitals| {
                     let counts = self.store.counts(vitals.id);
                     let (rx_bytes, tx_bytes) = if vitals.id == owner
@@ -205,6 +220,17 @@ impl PrnsNodeHandle {
                     InterfaceInventoryEntry {
                         name: name.clone(),
                         origin: placement.origin,
+                        attachment_epoch,
+                        frame_accounting: if vitals.id == owner
+                            && matches!(byte_accounting, ByteAccounting::FleetAggregate)
+                        {
+                            retired_frame_accounting.coverage()
+                        } else {
+                            vitals.frame_accounting.map_or(
+                                FrameAccountingCoverage::Unavailable,
+                                FrameAccountingCoverage::Complete,
+                            )
+                        },
                         snapshot: InterfaceSnapshot {
                             id: vitals.id,
                             mode: registered.mode,
@@ -220,6 +246,32 @@ impl PrnsNodeHandle {
                             membership: placement.membership,
                         },
                         ifac: ifac.clone(),
+                    }
+                })
+            })
+            .collect()
+    }
+
+    #[must_use]
+    pub fn interface_timing_inventory(
+        &self,
+    ) -> std::vec::Vec<crate::node_introspection::InterfaceTimingSnapshot> {
+        let Ok(map) = self.interfaces.lock() else {
+            return std::vec::Vec::new();
+        };
+        map.values()
+            .filter_map(|registered| {
+                registered
+                    .descriptor
+                    .map(|descriptor| (descriptor, (registered.view)()))
+            })
+            .flat_map(|(descriptor, vitals)| {
+                vitals.into_iter().map(move |vitals| {
+                    crate::node_introspection::InterfaceTimingSnapshot {
+                        id: vitals.id,
+                        bitrate: descriptor.bitrate,
+                        capabilities: descriptor.capabilities,
+                        connection: vitals.connection,
                     }
                 })
             })
@@ -290,6 +342,7 @@ impl PrnsNodeHandle {
             origin: InterfaceOriginKind::Configured,
         };
         let policy = supervisor.policy();
+        let attachment_epoch = self.next_attachment_epoch();
         let view = supervisor.status_view();
         let ifac_status = ifac.as_ref().map(RuntimeIfac::snapshot);
         let fleet = Fleet {
@@ -298,6 +351,7 @@ impl PrnsNodeHandle {
             iface_build: self.iface_build.clone(),
             notify_tx: self.notify_tx.clone(),
             interfaces: self.interfaces.clone(),
+            attachment_epochs: self.attachment_epochs.clone(),
             ifac,
             entropy: self.entropy,
         };
@@ -314,12 +368,15 @@ impl PrnsNodeHandle {
             view.map(|view| RegisteredInterface {
                 view,
                 placement,
+                descriptor: None,
                 mode: policy.mode,
                 gravity: policy.gravity,
                 ifac: ifac_status,
                 name: None,
                 byte_accounting: ByteAccounting::FleetAggregate,
                 retired_member_bytes: RetiredMemberBytes::default(),
+                retired_member_frame_accounting: RetiredMemberFrameAccounting::default(),
+                attachment_epoch,
             }),
         );
         AttachedSupervisor {
@@ -438,6 +495,7 @@ struct InterfaceWiring {
     descriptor: crate::interfaces::InterfaceDescriptor,
     placement: InterfacePlacement,
     connection: Option<ConnectionView>,
+    frame_accounting: Option<FrameAccountingRecorder>,
     ifac: Option<IfacContext>,
 }
 
@@ -455,6 +513,7 @@ where
         descriptor,
         placement,
         connection,
+        frame_accounting,
         ifac,
     } = wiring;
     let id = descriptor.id;
@@ -478,6 +537,7 @@ where
         inbound: in_consumer,
         egress: out_producer,
         connection,
+        frame_accounting,
         ifac,
     }));
     let _ = iface_build.send(DriverMsg::Add {
@@ -499,6 +559,7 @@ pub struct Fleet {
     iface_build: UnboundedSender<DriverMsg>,
     notify_tx: UnboundedSender<InterfaceId>,
     interfaces: Arc<Mutex<HashMap<InterfaceId, RegisteredInterface>>>,
+    attachment_epochs: Arc<AtomicU64>,
     ifac: Option<RuntimeIfac>,
     entropy: crate::manifold::driver::TokioEntropy,
 }
@@ -515,7 +576,9 @@ impl Fleet {
     {
         let view = interface.status_view();
         let connection = interface.connection_view();
+        let frame_accounting = interface.frame_accounting_recorder();
         let descriptor = interface.descriptor();
+        let attachment_epoch = self.attachment_epochs.fetch_add(1, Ordering::Relaxed);
         let placement = InterfacePlacement {
             membership: Membership::FleetMember {
                 supervisor_id: self.supervisor_id,
@@ -531,6 +594,7 @@ impl Fleet {
                 descriptor,
                 placement,
                 connection,
+                frame_accounting,
                 ifac: self.ifac.as_ref().map(|access| access.context.clone()),
             },
         );
@@ -540,12 +604,15 @@ impl Fleet {
             view.map(|view| RegisteredInterface {
                 view,
                 placement,
+                descriptor: Some(descriptor),
                 mode: descriptor.mode,
                 gravity: descriptor.gravity,
                 ifac: self.ifac.as_ref().map(RuntimeIfac::snapshot),
                 name: None,
                 byte_accounting: ByteAccounting::OwnTraffic,
                 retired_member_bytes: RetiredMemberBytes::default(),
+                retired_member_frame_accounting: RetiredMemberFrameAccounting::default(),
+                attachment_epoch,
             }),
         );
         attached
@@ -563,6 +630,7 @@ impl Fleet {
             iface_build,
             notify_tx,
             interfaces: Arc::new(Mutex::new(HashMap::new())),
+            attachment_epochs: Arc::new(AtomicU64::new(0)),
             ifac: None,
             entropy: crate::manifold::driver::TokioEntropy,
         };
@@ -701,12 +769,15 @@ pub(super) async fn drive_interfaces(
 pub(super) struct RegisteredInterface {
     view: StatusView,
     placement: InterfacePlacement,
+    descriptor: Option<InterfaceDescriptor>,
     mode: crate::interfaces::InterfaceMode,
     gravity: crate::interfaces::InterfaceGravity,
     ifac: Option<InterfaceIfacSnapshot>,
     name: Option<String>,
     byte_accounting: ByteAccounting,
     retired_member_bytes: RetiredMemberBytes,
+    retired_member_frame_accounting: RetiredMemberFrameAccounting,
+    attachment_epoch: u64,
 }
 
 /// Whether this status owns its byte counters or mirrors the members that inventory tracks separately.
@@ -721,6 +792,34 @@ pub(super) enum ByteAccounting {
 pub(super) struct RetiredMemberBytes {
     rx: u64,
     tx: u64,
+}
+
+#[derive(Clone, Copy, Default)]
+enum RetiredMemberFrameAccounting {
+    #[default]
+    Unseen,
+    Complete(FrameAccounting),
+    Incomplete,
+}
+
+impl RetiredMemberFrameAccounting {
+    fn coverage(self) -> FrameAccountingCoverage {
+        match self {
+            Self::Unseen => FrameAccountingCoverage::Unavailable,
+            Self::Complete(accounting) => FrameAccountingCoverage::Complete(accounting),
+            Self::Incomplete => FrameAccountingCoverage::Incomplete,
+        }
+    }
+
+    fn include(&mut self, retired: Self) {
+        *self = match (*self, retired) {
+            (Self::Incomplete, _) | (_, Self::Incomplete) => Self::Incomplete,
+            (Self::Unseen, other) | (other, Self::Unseen) => other,
+            (Self::Complete(left), Self::Complete(right)) => {
+                Self::Complete(left.saturating_add(right))
+            }
+        };
+    }
 }
 
 fn register_status(
@@ -753,19 +852,28 @@ fn retire_member_status(
     let Some(departed) = map.remove(&member) else {
         return;
     };
-    let (rx, tx) = (departed.view)()
-        .into_iter()
-        .fold((0u64, 0u64), |(rx, tx), vitals| {
-            (
-                rx.saturating_add(vitals.rx_bytes),
-                tx.saturating_add(vitals.tx_bytes),
-            )
+    let vitals = (departed.view)();
+    let mut retired_frames = if vitals.is_empty() {
+        RetiredMemberFrameAccounting::Incomplete
+    } else {
+        RetiredMemberFrameAccounting::Unseen
+    };
+    let (rx, tx) = vitals.into_iter().fold((0u64, 0u64), |(rx, tx), vitals| {
+        retired_frames.include(match vitals.frame_accounting {
+            Some(accounting) => RetiredMemberFrameAccounting::Complete(accounting),
+            None => RetiredMemberFrameAccounting::Incomplete,
         });
+        (
+            rx.saturating_add(vitals.rx_bytes),
+            tx.saturating_add(vitals.tx_bytes),
+        )
+    });
     let Some(kept) = map.get_mut(&supervisor) else {
         return;
     };
     kept.retired_member_bytes.rx = kept.retired_member_bytes.rx.saturating_add(rx);
     kept.retired_member_bytes.tx = kept.retired_member_bytes.tx.saturating_add(tx);
+    kept.retired_member_frame_accounting.include(retired_frames);
 }
 
 fn stop_interface(stops: &mut HashMap<InterfaceId, oneshot::Sender<()>>, id: InterfaceId) -> bool {

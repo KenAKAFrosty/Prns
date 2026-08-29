@@ -31,9 +31,15 @@ use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::IdentitySigner;
 use personal_rns::interfaces::ConnectionState;
 use personal_rns::node_introspection::logical_interface_inventory;
+use personal_rns::remote_control::{
+    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
+    RemoteControlService,
+};
+use personal_rns::routing::announce::ExpandNameError;
 use personal_rns::runtime::{
     wall_clock_timeline_origin, CryptoPoolConfig, Diagnostic, ManuallyAttached, NodePersistence,
     NodeRunError, PersistenceFlushStatus, PoolWorkers, PrnsEvent, PrnsNode, PrnsNodeRecipe,
+    RemoteControlFileIdentityBootstrapError,
 };
 use personal_rns::shared_instance::{RnsBlackholeFiles, SharedInstanceCredentials};
 use personal_rns::storage::GrowableHeap;
@@ -84,6 +90,8 @@ pub(crate) struct DaemonPresentation {
 #[derive(Debug)]
 pub(crate) enum DaemonRunError {
     TransportIdentityUnavailable(personal_rns::runtime::IdentitySecretFileError),
+    RemoteControlIdentityUnavailable(RemoteControlFileIdentityBootstrapError),
+    RemoteControlSelfAnnouncementUnavailable(ExpandNameError),
     PersistenceUnavailable(std::io::Error),
     PersistenceFlushFailed,
     PersistenceWorkerStopped,
@@ -99,6 +107,18 @@ impl core::fmt::Display for DaemonRunError {
                 write!(
                     formatter,
                     "required transport identity is unavailable: {error}"
+                )
+            }
+            Self::RemoteControlIdentityUnavailable(error) => {
+                write!(
+                    formatter,
+                    "required RemoteControl identities are unavailable: {error}"
+                )
+            }
+            Self::RemoteControlSelfAnnouncementUnavailable(error) => {
+                write!(
+                    formatter,
+                    "RemoteControl self-announcement is unavailable: {error:?}"
                 )
             }
             Self::PersistenceUnavailable(error) => {
@@ -121,8 +141,10 @@ impl std::error::Error for DaemonRunError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::TransportIdentityUnavailable(error) => Some(error),
+            Self::RemoteControlIdentityUnavailable(error) => Some(error),
             Self::PersistenceUnavailable(error) => Some(error),
-            Self::PersistenceFlushFailed
+            Self::RemoteControlSelfAnnouncementUnavailable(_)
+            | Self::PersistenceFlushFailed
             | Self::PersistenceWorkerStopped
             | Self::NodeStopped
             | Self::NodePanicked(_)
@@ -165,6 +187,45 @@ pub(super) async fn run(
         event = "daemon_starting",
         version = env!("CARGO_PKG_VERSION"),
     );
+    match configuration::refresh_staged_bundled_source(&config_dir) {
+        Ok(configuration::BundledSourceRefresh::Updated(staged)) => {
+            tracing::info!(
+                event = "nnpages_source_archive_updated",
+                path = %staged.archive_path.display(),
+                archive_bytes = staged.archive_bytes,
+            );
+            if let Err(error) = configuration::refresh_source_page(&config_dir) {
+                tracing::warn!(
+                    event = "nnpages_source_page_refresh_failed",
+                    cause = "source_archive_update",
+                    error = %error,
+                );
+            }
+        }
+        Ok(configuration::BundledSourceRefresh::Current(staged)) => {
+            tracing::debug!(
+                event = "nnpages_source_archive_current",
+                path = %staged.archive_path.display(),
+                archive_bytes = staged.archive_bytes,
+            );
+        }
+        Ok(configuration::BundledSourceRefresh::OperatorOwned) => {
+            tracing::debug!(
+                event = "nnpages_source_archive_operator_owned",
+                "leaving the hosted source archive untouched"
+            );
+        }
+        Ok(
+            configuration::BundledSourceRefresh::NotStaged
+            | configuration::BundledSourceRefresh::BundleUnavailable,
+        ) => {}
+        Err(error) => {
+            tracing::warn!(
+                event = "nnpages_source_archive_update_failed",
+                error = %error,
+            );
+        }
+    }
     if let Some(path) = &config_path {
         tracing::info!(event = "config_loaded", path = %path.display());
     } else {
@@ -208,6 +269,16 @@ pub(super) async fn run(
         };
 
     let storage_dir = config_dir.join("storage");
+    let remote_control_identity_bootstrap =
+        match identity::load_or_create_remote_control_identities(&storage_dir) {
+            Ok(bootstrap) => bootstrap,
+            Err(error) => {
+                tracing::error!(event = "remote_control_identity_unavailable", error = %error);
+                observability.shutdown().await;
+                return Err(DaemonRunError::RemoteControlIdentityUnavailable(error));
+            }
+        };
+    let (remote_control_identity_secrets, _) = remote_control_identity_bootstrap.into_parts();
     let persistent_secret = match identity::load_or_create_transport_identity(&storage_dir) {
         Ok(secret) => secret,
         Err(error) => match cli.persistence_policy {
@@ -257,6 +328,15 @@ pub(super) async fn run(
     };
     let visible_identity_hash =
         InMemoryNodeIdentity::from_secret_key_bytes(&visible_secret).identity_hash();
+    let self_announcement_destination =
+        services::node_page_destination_hash(&visible_identity_hash)
+            .map_err(DaemonRunError::RemoteControlSelfAnnouncementUnavailable)?;
+    let remote_control = RemoteControlService::new(
+        remote_control_identity_secrets,
+        RemoteControlPublicAppData::empty(),
+        RemoteControlInitialAccess::Nobody,
+        RemoteControlSelfAnnouncement::Destination(self_announcement_destination),
+    );
     let network_identity_hash = network_identity
         .as_ref()
         .map(|identity| InMemoryNodeIdentity::from_secret_key_bytes(identity).identity_hash());
@@ -324,6 +404,7 @@ pub(super) async fn run(
     let request_nnpages = nnpages.clone();
     let mut prns = PrnsNode::new_with_handle(move |handle| PrnsNodeRecipe {
         transport_identity: transport_secret,
+        remote_control,
         pre_configured_destinations: std::iter::empty(),
         app_state: services::DaemonRequestState::new(
             handle,
