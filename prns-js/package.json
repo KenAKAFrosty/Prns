@@ -102,6 +102,12 @@
     "gallery:build": "npm run build && vite build --mode lib --config examples/framework-gallery/vite.qwik-panel.config.ts && vite build --config examples/framework-gallery/vite.config.ts && vite build --config examples/framework-gallery/vite.common.config.ts && vite build --config examples/framework-gallery/vite.svelte.config.ts",
     "gallery:serve": "npm run gallery:build && node examples/framework-gallery/server.mjs",
     "gallery:test": "npm run gallery:build && node tests/framework-gallery-smoke.mjs",
+    "solid-auto-wifi:check": "tsc -p examples/solid-auto-wifi/tsconfig.json",
+    "solid-auto-wifi:build": "npm run build && npm run solid-auto-wifi:check && vite build --config examples/solid-auto-wifi/vite.config.ts",
+    "solid-auto-wifi:serve": "npm run solid-auto-wifi:build && vite preview --config examples/solid-auto-wifi/vite.config.ts --host 127.0.0.1 --port 4174 --strictPort",
+    "drop:check": "tsc -p examples/prns-drop/tsconfig.json",
+    "drop:build": "npm run build && npm run drop:check && vite build --config examples/prns-drop/vite.config.ts",
+    "drop:serve": "npm run drop:build && vite preview --config examples/prns-drop/vite.config.ts --host 0.0.0.0 --port 4176 --strictPort",
     "pack:check": "npm --prefix ../prns-wasm run build:package:wasm && npm run build && npm pack --dry-run"
   },
   "devDependencies": {
@@ -116,6 +122,7 @@
     "svelte": "^5.57.0",
     "typescript": "5.9.2",
     "vite": "^7.3.6",
+    "vite-plugin-solid": "^2.11.14",
     "vue": "^3.5.42"
   },
   "optionalDependencies": {
