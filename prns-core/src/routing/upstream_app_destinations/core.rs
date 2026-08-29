@@ -23,6 +23,7 @@ pub enum ProofStrategy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkRequestPolicy {
     AcceptAll,
+    AcceptDirect,
     AcceptNone,
 }
 

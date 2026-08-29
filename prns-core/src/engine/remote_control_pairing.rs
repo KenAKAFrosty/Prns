@@ -164,7 +164,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
             REMOTE_CONTROL_PAIRING_APPLICATION_ASPECTS,
             b"",
             ProofStrategy::ProveAll,
-            LinkRequestPolicy::AcceptAll,
+            LinkRequestPolicy::AcceptDirect,
             RatchetPolicy::NoRatchets,
         ) {
             let _released = self.held_identities.release(&identity_hash);
@@ -339,6 +339,7 @@ mod tests {
         RemoteControlPairingExpiresAfter, RemoteControlPairingPermissions,
         RemoteControlPairingPublicAppDataBytes, RemoteControlRequestKind, RemoteControlRequestSet,
     };
+    use crate::routing::UpstreamAppDestinationKind;
     use crate::storage::TestFixedStorage;
     use crate::units::DurationMillis;
     use crate::wire::{DestinationType, PacketType, WirePacketHeader};
@@ -477,9 +478,18 @@ mod tests {
                 .unwrap(),
             )),
         );
-        assert!(engine
+        let endpoint_registration = engine
             .upstream_app_destinations()
-            .any(|registration| registration.destination == endpoint.destination_hash()));
+            .find(|registration| registration.destination == endpoint.destination_hash())
+            .unwrap();
+        let UpstreamAppDestinationKind::Single {
+            link_request_policy,
+            ..
+        } = endpoint_registration.kind
+        else {
+            panic!("the pairing endpoint must be a Single destination")
+        };
+        assert_eq!(link_request_policy, LinkRequestPolicy::AcceptDirect);
         assert_eq!(
             engine.held_identity_hashes(),
             &[availability.pairing_identity().identity_hash()]

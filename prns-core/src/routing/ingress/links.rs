@@ -884,16 +884,23 @@ impl<S: StorageLayout> EngineState<S> {
         else {
             return self.ingest_transported_link_request(header, &request, arrival);
         };
-        if let Some(transport_id) = header.transport_id {
-            if self.transport_id() != Some(transport_id) {
-                return IngestPacketOutcome::Ignored(IgnoreReason::OtherInstance);
-            }
-        }
         match registered.link_request_policy {
             LinkRequestPolicy::AcceptNone => {
                 return IngestPacketOutcome::Ignored(IgnoreReason::LinkRequestsRefused)
             }
-            LinkRequestPolicy::AcceptAll => {}
+            LinkRequestPolicy::AcceptDirect
+                if header.hops != 0
+                    || header.propagation != PropagationType::Broadcast
+                    || header.transport_id.is_some() =>
+            {
+                return IngestPacketOutcome::Ignored(IgnoreReason::LinkRequestsRefused)
+            }
+            LinkRequestPolicy::AcceptAll | LinkRequestPolicy::AcceptDirect => {}
+        }
+        if let Some(transport_id) = header.transport_id {
+            if self.transport_id() != Some(transport_id) {
+                return IngestPacketOutcome::Ignored(IgnoreReason::OtherInstance);
+            }
         }
         if self.held_identities.get(&registered.identity).is_none() {
             return IngestPacketOutcome::Ignored(IgnoreReason::UnknownIdentity);
