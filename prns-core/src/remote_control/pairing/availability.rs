@@ -157,7 +157,7 @@ impl RemoteControlPairingExpiresAfter {
     }
 
     const fn to_wire(self) -> [u8; PAIRING_AVAILABILITY_EXPIRES_AFTER_LEN] {
-        self.0.get().to_be_bytes()
+        self.0.get().to_le_bytes()
     }
 }
 
@@ -522,7 +522,7 @@ impl<'a> RemoteControlPairingAvailability<'a> {
             return Err(RemoteControlPairingAvailabilityParseError::SignedMetadataTruncated);
         };
         let expires_after = RemoteControlPairingExpiresAfter::try_from(DurationMillis(u64::from(
-            u32::from_be_bytes(*expires_after),
+            u32::from_le_bytes(*expires_after),
         )))
         .map_err(RemoteControlPairingAvailabilityParseError::InvalidExpiresAfter)?;
         let public_app_data = RemoteControlPairingPublicAppData::try_from(public_app_data)

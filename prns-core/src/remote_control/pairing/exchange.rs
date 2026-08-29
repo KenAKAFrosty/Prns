@@ -133,7 +133,7 @@ impl RemoteControlPairingAttemptTimeout {
     }
 
     const fn to_wire(self) -> [u8; PAIRING_ATTEMPT_TIMEOUT_ENCODED_LEN] {
-        self.0.get().to_be_bytes()
+        self.0.get().to_le_bytes()
     }
 }
 
@@ -286,7 +286,7 @@ impl RemoteControlPairingTranscript {
     pub fn confirmation_code(&self) -> RemoteControlPairingConfirmationCode {
         let [first, second, third, fourth, ..] = self.digest.0;
         RemoteControlPairingConfirmationCode(
-            u32::from_be_bytes([first, second, third, fourth])
+            u32::from_le_bytes([first, second, third, fourth])
                 .wrapping_rem(PAIRING_CONFIRMATION_CODE_MODULUS),
         )
     }
@@ -838,7 +838,7 @@ fn write_permissions(
 fn read_attempt_timeout(
     reader: &mut PairingWireReader<'_>,
 ) -> Result<RemoteControlPairingAttemptTimeout, RemoteControlPairingMessageParseError> {
-    let millis = u32::from_be_bytes(*reader.take()?);
+    let millis = u32::from_le_bytes(*reader.take()?);
     RemoteControlPairingAttemptTimeout::try_from(DurationMillis(u64::from(millis)))
         .map_err(RemoteControlPairingMessageParseError::InvalidAttemptTimeout)
 }
@@ -1158,12 +1158,12 @@ mod tests {
         assert_eq!(
             prepared.transcript().digest().as_bytes(),
             &[
-                0x40, 0x77, 0x33, 0xb0, 0x74, 0xcf, 0x20, 0x74, 0xf1, 0xfd, 0xa4, 0x52, 0x51, 0x90,
-                0x00, 0x12, 0x20, 0x36, 0x00, 0x88, 0x60, 0x14, 0xba, 0xed, 0x3e, 0x7c, 0xc6, 0x1e,
-                0xa9, 0x9a, 0xb3, 0x72,
+                0xa8, 0x56, 0x69, 0x47, 0xc2, 0xce, 0x4d, 0x86, 0x40, 0xa4, 0x29, 0x85, 0x56, 0x2b,
+                0x0d, 0xbc, 0x47, 0x01, 0x40, 0xf0, 0xc2, 0xb4, 0xa5, 0xdc, 0x24, 0x41, 0xb0, 0x3e,
+                0xfc, 0xe0, 0x70, 0x31,
             ],
         );
-        assert_eq!(prepared.transcript().confirmation_code().value(), 553_840);
+        assert_eq!(prepared.transcript().confirmation_code().value(), 85_800);
     }
 
     #[test]
@@ -1204,9 +1204,7 @@ mod tests {
                 PAIRING_MESSAGE_HEADER_ENCODED_LEN
                     + PAIRING_IDENTITY_ENCODED_LEN
                     + PAIRING_REQUEST_SET_COUNT_ENCODED_LEN
-                    + 1
-                    + PAIRING_ATTEMPT_TIMEOUT_ENCODED_LEN
-                    - 1,
+                    + 1,
                 0x01,
             ),
             (encoded.len() - 1, 0x01),
@@ -1433,7 +1431,7 @@ mod tests {
                 .saturating_add(1),
         )
         .unwrap()
-        .to_be_bytes();
+        .to_le_bytes();
         excessive_timeout[timeout_offset..timeout_offset + PAIRING_ATTEMPT_TIMEOUT_ENCODED_LEN]
             .copy_from_slice(&excessive);
         assert_eq!(
@@ -1441,7 +1439,7 @@ mod tests {
             Err(
                 RemoteControlPairingMessageParseError::InvalidAttemptTimeout(
                     RemoteControlPairingAttemptTimeoutError::TooLong {
-                        actual: DurationMillis(u64::from(u32::from_be_bytes(excessive))),
+                        actual: DurationMillis(u64::from(u32::from_le_bytes(excessive))),
                         maximum: MAX_REMOTE_CONTROL_PAIRING_ATTEMPT_TIMEOUT,
                     },
                 ),
