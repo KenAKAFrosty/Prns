@@ -21,6 +21,7 @@ mod soft_ap;
 
 pub use destinations::{
     hopspot_destination_hashes, HopspotDestinationHashes, HopspotDestinationSet,
+    HOPSPOT_DESTINATION_COUNT, HOPSPOT_IDENTITY_COUNT,
 };
 pub use flash_identity::{
     bootstrap_flash_ble_identity, bootstrap_flash_node_identity, FlashIdentityError,

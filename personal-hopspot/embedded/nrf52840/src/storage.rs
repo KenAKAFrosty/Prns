@@ -3,7 +3,7 @@ use personal_rns::identity::destination_identity::{
     NoDestinationIdentityAppData, NoDestinationIdentityTable,
 };
 use personal_rns::identity::held::FixedHeldIdentityTable;
-use personal_rns::remote_control::REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY;
+use personal_rns::remote_control::RemoteControlStorageRequirements;
 use personal_rns::routing::announce::destination_announce_limit::FixedDestinationAnnounceLimitTable;
 use personal_rns::routing::announce::held::FixedHeldAnnounceTable;
 use personal_rns::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitTable;
@@ -45,21 +45,27 @@ use personal_rns::routing::warmth::FixedDepartedInterfaceTable;
 use personal_rns::runtime::request_endpoints::RequestEndpointSet;
 use personal_rns::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayout};
 
+const REMOTE_CONTROL_STORAGE: RemoteControlStorageRequirements =
+    RemoteControlStorageRequirements::AVAILABLE;
+
 pub(crate) struct Nrf52840Storage;
 
 impl Nrf52840Storage {
     // Relationship tables are intentionally independent from transfer workspaces. An idle link is
     // cheap; channels and resources borrow the smaller shared pools only while doing payload work.
     pub(crate) const TRACKED_DESTINATIONS: usize = 8;
-    pub(crate) const UPSTREAM_APP_DESTINATIONS: usize = 2;
+    pub(crate) const UPSTREAM_APP_DESTINATIONS: usize =
+        personal_hopspot_core::HOPSPOT_DESTINATION_COUNT
+            + REMOTE_CONTROL_STORAGE.upstream_app_destinations();
     const REQUEST_HANDLERS: usize =
         <personal_hopspot_core::node_pages::NodePageRoutes as RequestEndpointSet<()>>::REGISTRATIONS
-            .len();
+            .len() + REMOTE_CONTROL_STORAGE.request_handlers();
     pub const LINK_SESSIONS: usize = 32;
     const TRANSPORTED_LINKS: usize = 4;
     const CHANNELS: usize = 1;
     const RESOURCE_ASSEMBLIES: usize = 1;
-    const HELD_IDENTITIES: usize = REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY;
+    const HELD_IDENTITIES: usize =
+        personal_hopspot_core::HOPSPOT_IDENTITY_COUNT + REMOTE_CONTROL_STORAGE.held_identities();
     const BLACKHOLED_IDENTITIES: usize = 0;
     const BLACKHOLE_REASON_BYTES: usize = 0;
     const HELD_ANNOUNCES: usize = 4;

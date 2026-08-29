@@ -493,8 +493,8 @@ mod tests {
         RemoteControlControllerGrant, RemoteControlControllerGrants,
         RemoteControlControllerIdentity, RemoteControlControllerIdentitySecret,
         RemoteControlInitialAccess, RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData,
-        RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlTargetIdentitySecret,
-        REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY,
+        RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlStorageRequirements,
+        RemoteControlTargetIdentitySecret,
     };
     use crate::routing::request_handlers::RequestPathHash;
     use crate::runtime::request_endpoints::{Decline, RequestContext, RequestEndpointPolicy};
@@ -502,6 +502,20 @@ mod tests {
     use crate::storage::TestFixedStorage;
 
     type Storage = TestFixedStorage<4, 4, 128, 4, 4, 4, 2, 2, 2, 2, 2, 2>;
+    type RemoteControlOnlyStorage = TestFixedStorage<
+        4,
+        4,
+        128,
+        { RemoteControlStorageRequirements::AVAILABLE.upstream_app_destinations() },
+        { RemoteControlStorageRequirements::AVAILABLE.held_identities() },
+        4,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+    >;
 
     struct Routes;
 
@@ -668,6 +682,26 @@ mod tests {
     }
 
     #[test]
+    fn available_remote_control_fits_its_storage_requirements() {
+        let requirements = &RemoteControlStorageRequirements::AVAILABLE;
+        let mut engine = EngineState::<RemoteControlOnlyStorage>::default();
+        let configured = configure_remote_control_service(&mut engine, remote_control_service())
+            .expect("available RemoteControl fits its advertised storage requirements");
+
+        assert!(configured.is_available());
+        assert!(configured.request_endpoint_id().is_some());
+        assert_eq!(
+            engine.held_identity_hashes().len(),
+            requirements.held_identities()
+        );
+        assert_eq!(
+            engine.upstream_app_destinations().count(),
+            requirements.upstream_app_destinations(),
+        );
+        assert_eq!(requirements.request_handlers(), 1);
+    }
+
+    #[test]
     fn unavailable_remote_control_registers_nothing() {
         let mut engine = EngineState::<Storage>::default();
         let mut remote_control =
@@ -756,9 +790,12 @@ mod tests {
         assert!(node.engine.network_transport_enabled());
         assert_eq!(
             node.engine.held_identity_hashes().len(),
-            REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY.saturating_add(1),
+            RemoteControlStorageRequirements::AVAILABLE.held_identities() + 1,
         );
-        assert_eq!(node.engine.upstream_app_destinations().count(), 2);
+        assert_eq!(
+            node.engine.upstream_app_destinations().count(),
+            RemoteControlStorageRequirements::AVAILABLE.upstream_app_destinations() + 1,
+        );
     }
 
     #[test]

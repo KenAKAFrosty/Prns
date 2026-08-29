@@ -57,8 +57,8 @@ use crate::routing::warmth::FixedDepartedInterfaceTable;
 use crate::storage::{DisplayedStorageLimits, StorageCapacity, StorageLayout};
 
 const MAX_TRACKED_DESTINATIONS: usize = 512;
-const MAX_UPSTREAM_APP_DESTINATIONS: usize = 2;
-const MAX_HELD_IDENTITIES: usize = REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY;
+const DEFAULT_MAX_UPSTREAM_APP_DESTINATIONS: usize = 2;
+const DEFAULT_MAX_HELD_IDENTITIES: usize = REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY;
 const MAX_LINK_SESSIONS: usize = 512;
 const MAX_TRANSPORTED_LINKS: usize = 32;
 const MAX_OUTSTANDING_RECEIPTS: usize = 8;
@@ -95,16 +95,22 @@ const CHANNEL_MESSAGE_BYTES: usize = channel_mdu(EMBEDDED_MAX_LINK_MTU);
 
 /// The PSRAM-backed ESP32-S3 storage profile.
 ///
-/// `MAX_REQUEST_HANDLERS` is independent from the upstream-application destination capacity:
-/// applications commonly register several request paths on one destination. It defaults to the
-/// historical two rows, while application recipes with more routes should supply their exact
-/// registration count.
+/// Application recipes can supply their exact request-handler, upstream-destination, and
+/// held-identity capacities without changing the rest of the PSRAM-backed profile.
 pub struct Esp32S3<
     A: Allocator = Global,
-    const MAX_REQUEST_HANDLERS: usize = MAX_UPSTREAM_APP_DESTINATIONS,
+    const MAX_REQUEST_HANDLERS: usize = DEFAULT_MAX_UPSTREAM_APP_DESTINATIONS,
+    const MAX_UPSTREAM_APP_DESTINATIONS: usize = DEFAULT_MAX_UPSTREAM_APP_DESTINATIONS,
+    const MAX_HELD_IDENTITIES: usize = DEFAULT_MAX_HELD_IDENTITIES,
 >(PhantomData<A>);
 
-impl<A: Allocator, const MAX_REQUEST_HANDLERS: usize> Esp32S3<A, MAX_REQUEST_HANDLERS> {
+impl<
+        A: Allocator,
+        const MAX_REQUEST_HANDLERS: usize,
+        const MAX_UPSTREAM_APP_DESTINATIONS: usize,
+        const MAX_HELD_IDENTITIES: usize,
+    > Esp32S3<A, MAX_REQUEST_HANDLERS, MAX_UPSTREAM_APP_DESTINATIONS, MAX_HELD_IDENTITIES>
+{
     pub const TRACKED_DESTINATIONS: usize = MAX_TRACKED_DESTINATIONS;
     pub const PENDING_RESOURCE_OFFERS: usize = MAX_PENDING_RESOURCE_OFFERS;
     pub const PENDING_RESOURCE_OFFER_ROW_BYTES: usize =
@@ -124,7 +130,13 @@ impl<A: Allocator, const MAX_REQUEST_HANDLERS: usize> Esp32S3<A, MAX_REQUEST_HAN
 }
 
 #[cfg(feature = "flash")]
-impl<A: Allocator, const MAX_REQUEST_HANDLERS: usize> Esp32S3<A, MAX_REQUEST_HANDLERS> {
+impl<
+        A: Allocator,
+        const MAX_REQUEST_HANDLERS: usize,
+        const MAX_UPSTREAM_APP_DESTINATIONS: usize,
+        const MAX_HELD_IDENTITIES: usize,
+    > Esp32S3<A, MAX_REQUEST_HANDLERS, MAX_UPSTREAM_APP_DESTINATIONS, MAX_HELD_IDENTITIES>
+{
     pub const MAX_CRITICAL_FLASH_JOURNAL_BYTES: usize = MAX_UPSTREAM_APP_DESTINATIONS
         * flash_journal_record_storage_len(
             crate::wire::TRUNCATED_HASH_BYTE_LEN
@@ -144,14 +156,26 @@ impl<A: Allocator, const MAX_REQUEST_HANDLERS: usize> Esp32S3<A, MAX_REQUEST_HAN
         + flash_journal_record_storage_len(0, 4);
 }
 
-impl<A: Allocator, const MAX_REQUEST_HANDLERS: usize> Default for Esp32S3<A, MAX_REQUEST_HANDLERS> {
+impl<
+        A: Allocator,
+        const MAX_REQUEST_HANDLERS: usize,
+        const MAX_UPSTREAM_APP_DESTINATIONS: usize,
+        const MAX_HELD_IDENTITIES: usize,
+    > Default
+    for Esp32S3<A, MAX_REQUEST_HANDLERS, MAX_UPSTREAM_APP_DESTINATIONS, MAX_HELD_IDENTITIES>
+{
     fn default() -> Self {
         Self(PhantomData)
     }
 }
 
-impl<A: Allocator + Default, const MAX_REQUEST_HANDLERS: usize> StorageLayout
-    for Esp32S3<A, MAX_REQUEST_HANDLERS>
+impl<
+        A: Allocator + Default,
+        const MAX_REQUEST_HANDLERS: usize,
+        const MAX_UPSTREAM_APP_DESTINATIONS: usize,
+        const MAX_HELD_IDENTITIES: usize,
+    > StorageLayout
+    for Esp32S3<A, MAX_REQUEST_HANDLERS, MAX_UPSTREAM_APP_DESTINATIONS, MAX_HELD_IDENTITIES>
 {
     const LIMITS: DisplayedStorageLimits = DisplayedStorageLimits {
         tracked_destinations: StorageCapacity::Fixed(MAX_TRACKED_DESTINATIONS),
@@ -275,11 +299,11 @@ mod tests {
         );
         assert_eq!(
             <L as StorageLayout>::LIMITS.upstream_app_destinations,
-            StorageCapacity::Fixed(super::MAX_UPSTREAM_APP_DESTINATIONS)
+            StorageCapacity::Fixed(super::DEFAULT_MAX_UPSTREAM_APP_DESTINATIONS)
         );
         assert_eq!(
             <L as StorageLayout>::LIMITS.held_identities,
-            StorageCapacity::Fixed(super::MAX_HELD_IDENTITIES)
+            StorageCapacity::Fixed(super::DEFAULT_MAX_HELD_IDENTITIES)
         );
         assert_eq!(
             <L as StorageLayout>::LIMITS.links,
@@ -335,13 +359,17 @@ mod tests {
     }
 
     #[test]
-    fn request_handler_capacity_is_an_application_owned_dimension() {
-        type L = Esp32S3<allocator_api2::alloc::Global, 5>;
+    fn application_owned_capacities_are_independent() {
+        type L = Esp32S3<allocator_api2::alloc::Global, 5, 3, 4>;
         let handlers = <L as StorageLayout>::RequestHandlers::default();
         assert_eq!(handlers.capacity(), 5);
         assert_eq!(
             <L as StorageLayout>::LIMITS.upstream_app_destinations,
-            StorageCapacity::Fixed(super::MAX_UPSTREAM_APP_DESTINATIONS)
+            StorageCapacity::Fixed(3)
+        );
+        assert_eq!(
+            <L as StorageLayout>::LIMITS.held_identities,
+            StorageCapacity::Fixed(4)
         );
     }
 
