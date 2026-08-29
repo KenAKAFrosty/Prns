@@ -35,7 +35,7 @@ use personal_rns::remote_control::{
     RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
     RemoteControlService,
 };
-use personal_rns::routing::announce::ExpandNameError;
+use personal_rns::routing::announce::{derive_single_destination_hash, ExpandNameError};
 use personal_rns::runtime::{
     wall_clock_timeline_origin, CryptoPoolConfig, Diagnostic, ManuallyAttached, NodePersistence,
     NodeRunError, PersistenceFlushStatus, PoolWorkers, PrnsEvent, PrnsNode, PrnsNodeRecipe,
@@ -400,6 +400,14 @@ pub(super) async fn run(
         routing_enabled.then_some(services::TransportStatusIdentity {
             transport: visible_identity_hash,
             network: network_identity_hash,
+            probe_responder: plan.probe_responder.is_enabled().then(|| {
+                derive_single_destination_hash(
+                    &visible_identity_hash,
+                    "rnstransport",
+                    &["probe"],
+                )
+                .expect("rnstransport.probe is a valid destination name")
+            }),
         });
     let request_nnpages = nnpages.clone();
     let mut prns = PrnsNode::new_with_handle(move |handle| PrnsNodeRecipe {
