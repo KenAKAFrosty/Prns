@@ -7,11 +7,11 @@ use embassy_sync::signal::Signal;
 use portable_atomic::{AtomicU64, Ordering};
 
 use crate::engine::{
-    CloseLink, CommandId, IssuedCommand, Journaled, PacketReceiptDelivered, PrnsCommand,
-    RequestResponseTimeout, Respond, RespondData, RespondPayload, SendGroup, SendGroupFailure,
-    SendGroupPayload, SendPlainPacket, SendPlainPacketFailure, SendPlainPacketPayload, SendRequest,
-    SendRequestData, SendRequestFailure, SendSinglePacket, SendSinglePacketFailure,
-    SendSinglePacketPayload, SetRegisteredAnnounceAppData, Settlement,
+    CloseLink, CommandId, EgressTarget, IssuedCommand, Journaled, PacketReceiptDelivered,
+    PrnsCommand, RequestResponseTimeout, Respond, RespondData, RespondPayload, SendGroup,
+    SendGroupFailure, SendGroupPayload, SendPlainPacket, SendPlainPacketFailure,
+    SendPlainPacketPayload, SendRequest, SendRequestData, SendRequestFailure, SendSinglePacket,
+    SendSinglePacketFailure, SendSinglePacketPayload, SetRegisteredAnnounceAppData, Settlement,
 };
 use crate::remote_control::{
     RemoteControlControllerGrant, RemoteControlControllerIdentity,
@@ -360,6 +360,7 @@ impl<
                 id,
                 command: PrnsCommand::SendPlainPacket(SendPlainPacket {
                     destination,
+                    target: EgressTarget::AllInterfaces,
                     payload,
                 }),
             })

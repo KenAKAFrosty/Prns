@@ -5,7 +5,9 @@ use crate::storage::TablePushError;
 
 use super::{RemoteControlRequestKind, RemoteControlRequestSet};
 
-pub const REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY: usize = 2;
+pub const REMOTE_CONTROL_NODE_IDENTITY_COUNT: usize = 2;
+pub const REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY: usize = 3;
+pub const REMOTE_CONTROL_REQUIRED_UPSTREAM_APP_DESTINATION_CAPACITY: usize = 3;
 
 pub struct RemoteControlControllerIdentitySecret {
     parts: IdentityParts,

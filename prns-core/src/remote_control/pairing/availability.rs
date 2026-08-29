@@ -43,6 +43,11 @@ pub struct RemoteControlPairingAvailabilityDestination {
     destination_hash: DestinationHash,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlPairingAvailabilityDestinationError {
+    NonCanonical { found: DestinationHash },
+}
+
 impl RemoteControlPairingAvailabilityDestination {
     #[must_use]
     pub const fn canonical() -> Self {
@@ -60,6 +65,22 @@ impl RemoteControlPairingAvailabilityDestination {
 impl From<RemoteControlPairingAvailabilityDestination> for DestinationHash {
     fn from(destination: RemoteControlPairingAvailabilityDestination) -> Self {
         destination.destination_hash
+    }
+}
+
+impl TryFrom<DestinationHash> for RemoteControlPairingAvailabilityDestination {
+    type Error = RemoteControlPairingAvailabilityDestinationError;
+
+    fn try_from(destination_hash: DestinationHash) -> Result<Self, Self::Error> {
+        let canonical = Self::canonical();
+        if destination_hash != canonical.destination_hash {
+            return Err(
+                RemoteControlPairingAvailabilityDestinationError::NonCanonical {
+                    found: destination_hash,
+                },
+            );
+        }
+        Ok(canonical)
     }
 }
 
@@ -564,9 +585,21 @@ mod tests {
         )
         .unwrap();
         assert_eq!(dotted_name_hash, REMOTE_CONTROL_PAIRING_DOTTED_NAME_HASH);
+        let canonical_hash = derive_plain_destination_hash(&dotted_name_hash);
+        let canonical = RemoteControlPairingAvailabilityDestination::canonical();
         assert_eq!(
-            RemoteControlPairingAvailabilityDestination::canonical().destination_hash(),
-            derive_plain_destination_hash(&dotted_name_hash),
+            RemoteControlPairingAvailabilityDestination::try_from(canonical_hash),
+            Ok(canonical),
+        );
+        assert_eq!(canonical.destination_hash(), canonical_hash);
+        let noncanonical = DestinationHash::new([0xA5; 16]);
+        assert_eq!(
+            RemoteControlPairingAvailabilityDestination::try_from(noncanonical),
+            Err(
+                RemoteControlPairingAvailabilityDestinationError::NonCanonical {
+                    found: noncanonical,
+                }
+            ),
         );
     }
 

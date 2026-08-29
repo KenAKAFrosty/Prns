@@ -416,6 +416,7 @@ impl From<&SendGroupFailure> for RuntimeOperationOutcome {
 impl From<&SendPlainPacketFailure> for RuntimeOperationOutcome {
     fn from(failure: &SendPlainPacketFailure) -> Self {
         match failure {
+            SendPlainPacketFailure::Rejected(_) => Self::Rejected,
             SendPlainPacketFailure::WriteFailed(_) => Self::WriteFailed,
         }
     }

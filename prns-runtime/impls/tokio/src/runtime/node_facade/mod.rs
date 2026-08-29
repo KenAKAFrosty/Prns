@@ -19,8 +19,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 
 use crate::engine::{
-    AllowRequester, AllowRequesterFailure, AnnounceNow, CloseLink, CommandId, EstablishLink,
-    EstablishLinkFailure, Identify, IdentifyFailure, IssuedCommand, LinkEstablished,
+    AllowRequester, AllowRequesterFailure, AnnounceNow, CloseLink, CommandId, EgressTarget,
+    EstablishLink, EstablishLinkFailure, Identify, IdentifyFailure, IssuedCommand, LinkEstablished,
     PacketReceiptDelivered, PathFound, PathRequestId, PrnsCommand, RequestPath, RequestPathFailure,
     SendGroup, SendGroupFailure, SendGroupPayload, SendPlainPacket, SendPlainPacketFailure,
     SendPlainPacketPayload, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
@@ -303,6 +303,7 @@ impl PrnsNodeHandle {
         match self
             .settle(PrnsCommand::SendPlainPacket(SendPlainPacket {
                 destination,
+                target: EgressTarget::AllInterfaces,
                 payload,
             }))
             .await

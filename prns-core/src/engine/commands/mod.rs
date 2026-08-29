@@ -1,5 +1,6 @@
 mod announce;
 mod channel;
+mod egress;
 mod link;
 mod path;
 mod registered_announce_app_data;
@@ -18,6 +19,7 @@ pub use channel::{
     SendToChannel, SendToChannelBody, SendToChannelFailure, SendToChannelRejection,
     MAX_SEND_TO_CHANNEL_BODY_LEN,
 };
+pub use egress::{EgressTarget, EgressTargetRejection};
 pub use link::{
     CloseLink, CloseLinkFailure, CloseLinkRejection, EstablishLink, EstablishLinkFailure,
     EstablishLinkRejection, Identify, IdentifyFailure, IdentifyRejection, LinkEstablished,
@@ -126,6 +128,10 @@ pub enum CommandOutcome {
     OwesSendPlainPacket {
         id: CommandId,
         send: SendPlainPacket,
+    },
+    SendPlainPacketRejected {
+        id: CommandId,
+        rejection: EgressTargetRejection,
     },
     OwesPathRequest {
         id: CommandId,
@@ -291,7 +297,9 @@ impl<S: StorageLayout> EngineState<S> {
             }
             PrnsCommand::SendSinglePacket(send) => self.ingest_send_single_packet(id, send),
             PrnsCommand::SendGroup(send) => self.ingest_send_group(id, send),
-            PrnsCommand::SendPlainPacket(send) => self.ingest_send_plain_packet(id, send),
+            PrnsCommand::SendPlainPacket(send) => {
+                self.ingest_send_plain_packet(id, send, interfaces)
+            }
             PrnsCommand::RequestPath(request) => CommandOutcome::OwesPathRequest { id, request },
             PrnsCommand::EstablishLink(establish) => self.ingest_establish_link(id, establish),
             PrnsCommand::SendToLink(send) => self.ingest_send_to_link(id, send),

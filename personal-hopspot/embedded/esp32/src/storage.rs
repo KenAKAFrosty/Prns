@@ -208,7 +208,10 @@ mod riscv {
     use personal_rns::identity::held::FixedHeldIdentityTable;
     use personal_rns::manifold::interface_seam::EMBEDDED_MAX_LINK_MTU;
     use personal_rns::prelude::*;
-    use personal_rns::remote_control::REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY;
+    use personal_rns::remote_control::{
+        REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY,
+        REMOTE_CONTROL_REQUIRED_UPSTREAM_APP_DESTINATION_CAPACITY,
+    };
     use personal_rns::routing::announce::destination_announce_limit::FixedDestinationAnnounceLimitTable;
     use personal_rns::routing::announce::held::FixedHeldAnnounceTable;
     use personal_rns::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitTable;
@@ -257,8 +260,12 @@ mod riscv {
         // Keep cheap relationships abundant while channels and resource continuations borrow
         // smaller shared tables. None of these counts constrain the eight-peer BLE controller.
         pub(crate) const TRACKED_DESTINATIONS: usize = 36;
-        const UPSTREAM_APP_DESTINATIONS: usize = 2;
-        const HELD_IDENTITIES: usize = REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY;
+        const APPLICATION_DESTINATIONS: usize = 2;
+        const APPLICATION_IDENTITIES: usize = 1;
+        const UPSTREAM_APP_DESTINATIONS: usize = Self::APPLICATION_DESTINATIONS
+            .saturating_add(REMOTE_CONTROL_REQUIRED_UPSTREAM_APP_DESTINATION_CAPACITY);
+        const HELD_IDENTITIES: usize = Self::APPLICATION_IDENTITIES
+            .saturating_add(REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY);
         pub const LINK_SESSIONS: usize = 12;
         const TRANSPORTED_LINKS: usize = 8;
         const CHANNELS: usize = 2;

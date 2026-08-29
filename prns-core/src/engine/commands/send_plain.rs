@@ -3,7 +3,7 @@ use heapless::Vec as HeaplessVec;
 use crate::routing::delivery::send_plain::SendPlainPacketWriteError;
 use crate::wire::{DestinationHash, BROADCAST_MDU};
 
-use super::{PrnsCommand, Settleable, Settlement};
+use super::{EgressTarget, EgressTargetRejection, PrnsCommand, Settleable, Settlement};
 
 pub const MAX_SEND_PLAIN_PACKET_PAYLOAD_LEN: usize = BROADCAST_MDU;
 
@@ -12,11 +12,13 @@ pub type SendPlainPacketPayload = HeaplessVec<u8, MAX_SEND_PLAIN_PACKET_PAYLOAD_
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendPlainPacket {
     pub destination: DestinationHash,
+    pub target: EgressTarget,
     pub payload: SendPlainPacketPayload,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendPlainPacketFailure {
+    Rejected(EgressTargetRejection),
     WriteFailed(SendPlainPacketWriteError),
 }
 

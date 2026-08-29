@@ -6,9 +6,9 @@ use crate::engine::settlement::{culled_settlement, settle};
 use crate::engine::AnnounceCommandOutcome;
 use crate::engine::{
     AllowRequesterFailure, AnnounceNowFailure, AnnounceTarget, AnnounceWriteFailure,
-    CloseLinkFailure, CommandOutcome, CommandedAnnounceWriteOutcome, Directive, EncryptOwed,
-    EngineReaction, EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome, FanTarget,
-    FinishSendSinglePacketOutcome, IdentifyFailure, IdentifyRejection, InstantMillis,
+    CloseLinkFailure, CommandOutcome, CommandedAnnounceWriteOutcome, Directive, EgressTarget,
+    EncryptOwed, EngineReaction, EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome,
+    FanTarget, FinishSendSinglePacketOutcome, IdentifyFailure, IdentifyRejection, InstantMillis,
     IssuedCommand, Journaled, PathRequestWriteOutcome, RequestPathFailure, RespondFailure,
     RespondRejection, SendGroupEntropy, SendGroupFailure, SendPlainPacketFailure,
     SendRequestFailure, SendRequestRejection, SendSinglePacketEntropy, SendSinglePacketFailure,
@@ -241,7 +241,11 @@ impl<S: StorageLayout> EngineState<S> {
                 let mut buf = [0u8; BROADCAST_MTU];
                 let settlement = match self.write_commanded_send_plain_packet(&send, &mut buf) {
                     Ok(wire_bytes) => {
-                        fan_frame(interfaces, FanTarget::All, &buf[..wire_bytes], sink);
+                        let fanout = match send.target {
+                            EgressTarget::AllInterfaces => FanTarget::All,
+                            EgressTarget::Interface(interface) => FanTarget::Only(interface),
+                        };
+                        fan_frame(interfaces, fanout, &buf[..wire_bytes], sink);
                         Settlement::SendPlainPacket(Ok(()))
                     }
                     Err(error) => {
@@ -249,6 +253,13 @@ impl<S: StorageLayout> EngineState<S> {
                     }
                 };
                 settle(sink, id, settlement);
+            }
+            CommandOutcome::SendPlainPacketRejected { id, rejection } => {
+                settle(
+                    sink,
+                    id,
+                    Settlement::SendPlainPacket(Err(SendPlainPacketFailure::Rejected(rejection))),
+                );
             }
             CommandOutcome::OwesPathRequest { id, request } => {
                 let mut buf = [0u8; BROADCAST_MTU];
