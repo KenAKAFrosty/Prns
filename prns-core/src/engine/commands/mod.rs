@@ -4,6 +4,7 @@ mod egress;
 mod link;
 mod path;
 mod registered_announce_app_data;
+mod remote_control_pairing;
 mod request;
 mod resource;
 mod send_group;
@@ -30,6 +31,11 @@ pub use path::{PathFound, PathRequestId, RequestPath, RequestPathFailure, PATH_R
 pub use registered_announce_app_data::{
     SetRegisteredAnnounceAppData, SetRegisteredAnnounceAppDataFailure,
     SetRegisteredAnnounceAppDataRejection,
+};
+pub use remote_control_pairing::{
+    CloseRemoteControlPairing, CloseRemoteControlPairingFailure, CloseRemoteControlPairingOutcome,
+    OpenRemoteControlPairing, OpenRemoteControlPairingFailure, OpenRemoteControlPairingRejection,
+    RemoteControlPairingOpened,
 };
 pub use request::{
     AllowRequester, AllowRequesterFailure, AllowRequesterRejection, RequestResponseTimeout,
@@ -88,6 +94,8 @@ pub enum PrnsCommand {
     SetResourceStrategy(SetResourceStrategy),
     AllowRequester(AllowRequester),
     SendPlainPacket(SendPlainPacket),
+    OpenRemoteControlPairing(OpenRemoteControlPairing),
+    CloseRemoteControlPairing(CloseRemoteControlPairing),
 }
 
 // The Owes* variants hand the caller its whole command payload back (SendSinglePacket rides ~400B of heapless body) beside slim rejections. Outcomes are transient by-value returns, destructured immediately, and the no-alloc core has no Box to shrink them.
@@ -132,6 +140,21 @@ pub enum CommandOutcome {
     SendPlainPacketRejected {
         id: CommandId,
         rejection: EgressTargetRejection,
+    },
+    OwesOpenRemoteControlPairing {
+        id: CommandId,
+        open: OpenRemoteControlPairing,
+    },
+    OpenRemoteControlPairingRejected {
+        id: CommandId,
+        rejection: OpenRemoteControlPairingRejection,
+    },
+    OwesCloseRemoteControlPairing {
+        id: CommandId,
+    },
+    CloseRemoteControlPairingRejected {
+        id: CommandId,
+        failure: CloseRemoteControlPairingFailure,
     },
     OwesPathRequest {
         id: CommandId,
@@ -234,6 +257,10 @@ pub enum Settlement {
     SendToChannel(Result<PacketReceiptDelivered, SendToChannelFailure>),
     AllowRequester(Result<(), AllowRequesterFailure>),
     SendPlainPacket(Result<(), SendPlainPacketFailure>),
+    OpenRemoteControlPairing(Result<RemoteControlPairingOpened, OpenRemoteControlPairingFailure>),
+    CloseRemoteControlPairing(
+        Result<CloseRemoteControlPairingOutcome, CloseRemoteControlPairingFailure>,
+    ),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -299,6 +326,12 @@ impl<S: StorageLayout> EngineState<S> {
             PrnsCommand::SendGroup(send) => self.ingest_send_group(id, send),
             PrnsCommand::SendPlainPacket(send) => {
                 self.ingest_send_plain_packet(id, send, interfaces)
+            }
+            PrnsCommand::OpenRemoteControlPairing(open) => {
+                self.ingest_open_remote_control_pairing(id, open, interfaces)
+            }
+            PrnsCommand::CloseRemoteControlPairing(_) => {
+                self.ingest_close_remote_control_pairing(id)
             }
             PrnsCommand::RequestPath(request) => CommandOutcome::OwesPathRequest { id, request },
             PrnsCommand::EstablishLink(establish) => self.ingest_establish_link(id, establish),

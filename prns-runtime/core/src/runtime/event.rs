@@ -13,6 +13,7 @@ use crate::engine::{CommandId, HeldDropCause, LinkEstablished, RouteRemovalCause
 use crate::engine::{InstantMillis, Journaled, PersistenceFlushCause, PersistenceFlushTarget};
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
+use crate::remote_control::RemoteControlPairingEndpoint;
 use crate::routing::delivery::Delivery;
 use crate::routing::links::channel::MessageType;
 use crate::routing::links::request::RequestId;
@@ -127,6 +128,13 @@ pub enum Diagnostic<'a> {
     CommandSettled {
         id: CommandId,
         settlement: Settlement,
+    },
+    RemoteControlPairingExpired {
+        endpoint: RemoteControlPairingEndpoint,
+    },
+    RemoteControlPairingExpiryFailed {
+        endpoint: RemoteControlPairingEndpoint,
+        failure: crate::engine::CloseRemoteControlPairingFailure,
     },
     LinkEstablished(LinkEstablished),
     PeerIdentified {
@@ -276,6 +284,15 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
             }),
             Journaled::CommandSettled { id, settlement } => {
                 PrnsEvent::Diagnostic(Diagnostic::CommandSettled { id, settlement })
+            }
+            Journaled::RemoteControlPairingExpired { endpoint } => {
+                PrnsEvent::Diagnostic(Diagnostic::RemoteControlPairingExpired { endpoint })
+            }
+            Journaled::RemoteControlPairingExpiryFailed { endpoint, failure } => {
+                PrnsEvent::Diagnostic(Diagnostic::RemoteControlPairingExpiryFailed {
+                    endpoint,
+                    failure,
+                })
             }
             Journaled::PersistenceFlushed { cause, target } => {
                 PrnsEvent::Diagnostic(Diagnostic::PersistenceFlushed { cause, target })

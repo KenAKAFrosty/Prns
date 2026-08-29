@@ -3,6 +3,7 @@ use crate::identity::destination_identity::DestinationIdentities;
 use crate::identity::held::HeldIdentities;
 use crate::identity::IDENTITY_SECRET_KEY_LEN;
 use crate::interfaces::InterfaceId;
+use crate::remote_control::RemoteControlPairingState;
 use crate::routing::announce::destination_announce_limit::DestinationAnnounceLimits;
 use crate::routing::announce::held::HeldAnnounces;
 use crate::routing::announce::interface_announce_limit::InterfaceAnnounceLimits;
@@ -199,6 +200,7 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) packet_hash_history: S::PacketHashes,
     pub(crate) identity_blackholes: IdentityBlackholes<S::Blackholes>,
     pub(crate) held_identities: HeldIdentities<S::HeldIdentities>,
+    pub(crate) remote_control_pairing: RemoteControlPairingState,
     pub(crate) transport: TransportState,
     pub(crate) protocol: EngineProtocolPolicy,
     pub(crate) self_ratchets: SelfRatchets<S::SelfRatchets>,
@@ -262,6 +264,7 @@ impl<S: StorageLayout> Default for EngineState<S> {
             packet_hash_history: Default::default(),
             identity_blackholes: IdentityBlackholes::default(),
             held_identities: HeldIdentities::default(),
+            remote_control_pairing: RemoteControlPairingState::default(),
             transport: TransportState::default(),
             protocol: EngineProtocolPolicy::default(),
             self_ratchets: SelfRatchets::default(),
@@ -340,6 +343,7 @@ impl<S: StorageLayout> EngineState<S> {
             write!(packet_hash_history, Default::default());
             write!(identity_blackholes, IdentityBlackholes::default());
             write!(held_identities, HeldIdentities::default());
+            write!(remote_control_pairing, RemoteControlPairingState::default());
             write!(transport, TransportState::default());
             write!(protocol, EngineProtocolPolicy::default());
             write!(self_ratchets, SelfRatchets::default());

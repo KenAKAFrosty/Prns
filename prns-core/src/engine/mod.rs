@@ -11,6 +11,7 @@ mod node_ingress;
 mod proof;
 mod reaction;
 mod registration;
+mod remote_control_pairing;
 mod route_evidence;
 mod settlement;
 mod state;
@@ -80,6 +81,7 @@ pub use registration::{
     RouteSeedOutcome, SetTransportIdentityError, UnregisterDestinationOutcome,
     VerifiedPersistedRoute,
 };
+pub use remote_control_pairing::ConfigureRemoteControlPairingError;
 pub(crate) use settlement::{link_closed_settlement, settle};
 pub use state::{
     EngineProtocolPolicy, EngineState, LinkMtuDiscovery, LocalHopCountOverride,

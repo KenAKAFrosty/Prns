@@ -7,11 +7,13 @@ use embassy_sync::signal::Signal;
 use portable_atomic::{AtomicU64, Ordering};
 
 use crate::engine::{
-    CloseLink, CommandId, EgressTarget, IssuedCommand, Journaled, PacketReceiptDelivered,
-    PrnsCommand, RequestResponseTimeout, Respond, RespondData, RespondPayload, SendGroup,
-    SendGroupFailure, SendGroupPayload, SendPlainPacket, SendPlainPacketFailure,
-    SendPlainPacketPayload, SendRequest, SendRequestData, SendRequestFailure, SendSinglePacket,
-    SendSinglePacketFailure, SendSinglePacketPayload, SetRegisteredAnnounceAppData, Settlement,
+    CloseLink, CloseRemoteControlPairing, CloseRemoteControlPairingOutcome, CommandId,
+    EgressTarget, IssuedCommand, Journaled, OpenRemoteControlPairing, PacketReceiptDelivered,
+    PrnsCommand, RemoteControlPairingOpened, RequestResponseTimeout, Respond, RespondData,
+    RespondPayload, SendGroup, SendGroupFailure, SendGroupPayload, SendPlainPacket,
+    SendPlainPacketFailure, SendPlainPacketPayload, SendRequest, SendRequestData,
+    SendRequestFailure, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
+    SetRegisteredAnnounceAppData, Settlement,
 };
 use crate::remote_control::{
     RemoteControlControllerGrant, RemoteControlControllerIdentity,
@@ -27,7 +29,8 @@ use super::super::remote_control_access::{
 };
 use super::super::request_endpoints::RespondToken;
 use super::super::{
-    AnnounceNowError, PrnsNodeApi, RemoteControlAccessControl,
+    AnnounceNowError, CloseRemoteControlPairingControlError, OpenRemoteControlPairingControlError,
+    PrnsNodeApi, RemoteControlAccessControl, RemoteControlPairingControlError,
     RevokeRemoteControlControllerControlError, SendError, SetRegisteredAnnounceAppDataError,
     SetRemoteControlControllerGrantControlError,
 };
@@ -456,6 +459,61 @@ impl<
         }
     }
 
+    pub async fn open_remote_control_pairing(
+        &self,
+        open: OpenRemoteControlPairing,
+    ) -> Result<RemoteControlPairingOpened, OpenRemoteControlPairingControlError> {
+        let id = self.pool.mint();
+        let slot = self
+            .pool
+            .claim_settlement(id)
+            .ok_or(RemoteControlPairingControlError::Busy)?;
+        let _guard = SlotGuard {
+            pool: self.pool,
+            slot,
+            id,
+        };
+        self.commands
+            .try_send(IssuedCommand {
+                id,
+                command: PrnsCommand::OpenRemoteControlPairing(open),
+            })
+            .map_err(|_| RemoteControlPairingControlError::NodeStopped)?;
+        match self.pool.parked(slot).await {
+            Settlement::OpenRemoteControlPairing(result) => {
+                result.map_err(RemoteControlPairingControlError::Failed)
+            }
+            _ => Err(RemoteControlPairingControlError::NodeStopped),
+        }
+    }
+
+    pub async fn close_remote_control_pairing(
+        &self,
+    ) -> Result<CloseRemoteControlPairingOutcome, CloseRemoteControlPairingControlError> {
+        let id = self.pool.mint();
+        let slot = self
+            .pool
+            .claim_settlement(id)
+            .ok_or(RemoteControlPairingControlError::Busy)?;
+        let _guard = SlotGuard {
+            pool: self.pool,
+            slot,
+            id,
+        };
+        self.commands
+            .try_send(IssuedCommand {
+                id,
+                command: PrnsCommand::CloseRemoteControlPairing(CloseRemoteControlPairing),
+            })
+            .map_err(|_| RemoteControlPairingControlError::NodeStopped)?;
+        match self.pool.parked(slot).await {
+            Settlement::CloseRemoteControlPairing(result) => {
+                result.map_err(RemoteControlPairingControlError::Failed)
+            }
+            _ => Err(RemoteControlPairingControlError::NodeStopped),
+        }
+    }
+
     /// Responds inline; returns `false` when the body exceeds the link MDU or the command lane is full.
     pub fn respond_packed(&self, responder: RespondToken, packed: &[u8]) -> bool {
         match RespondData::from_slice(packed) {
@@ -775,6 +833,19 @@ impl<
         set: SetRegisteredAnnounceAppData,
     ) -> Result<(), SetRegisteredAnnounceAppDataError> {
         self.set_registered_announce_app_data(set).await
+    }
+
+    async fn open_remote_control_pairing(
+        &self,
+        open: OpenRemoteControlPairing,
+    ) -> Result<RemoteControlPairingOpened, OpenRemoteControlPairingControlError> {
+        self.open_remote_control_pairing(open).await
+    }
+
+    async fn close_remote_control_pairing(
+        &self,
+    ) -> Result<CloseRemoteControlPairingOutcome, CloseRemoteControlPairingControlError> {
+        self.close_remote_control_pairing().await
     }
 
     async fn send_single_packet(

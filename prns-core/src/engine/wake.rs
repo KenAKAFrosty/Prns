@@ -18,6 +18,7 @@ pub enum WakeReason {
     ResourceDeadlines,
     ChannelTimeouts,
     HeldAnnounceRelease,
+    RemoteControlPairing,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +58,25 @@ pub struct WakeSchedules {
     pub resource_deadlines: WakeSchedule,
     pub channel_timeouts: WakeSchedule,
     pub held_announce_release: WakeSchedule,
+    pub remote_control_pairing: WakeSchedule,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RouteRemovalWakeScheduleDelta {
+    scheduled_announces: WakeSchedule,
+    expired_routes: WakeSchedule,
+    expired_destination_identities: WakeSchedule,
+}
+
+impl RouteRemovalWakeScheduleDelta {
+    pub(crate) const fn into_wake_schedules(self) -> WakeSchedules {
+        WakeSchedules {
+            scheduled_announces: self.scheduled_announces,
+            expired_routes: self.expired_routes,
+            expired_destination_identities: self.expired_destination_identities,
+            ..WakeSchedules::UNCHANGED
+        }
+    }
 }
 
 impl WakeSchedules {
@@ -71,6 +91,7 @@ impl WakeSchedules {
         resource_deadlines: WakeSchedule::Unchanged,
         channel_timeouts: WakeSchedule::Unchanged,
         held_announce_release: WakeSchedule::Unchanged,
+        remote_control_pairing: WakeSchedule::Unchanged,
     };
 
     pub fn merge(&mut self, delta: WakeSchedules) {
@@ -88,6 +109,10 @@ impl WakeSchedules {
             (&mut self.resource_deadlines, delta.resource_deadlines),
             (&mut self.channel_timeouts, delta.channel_timeouts),
             (&mut self.held_announce_release, delta.held_announce_release),
+            (
+                &mut self.remote_control_pairing,
+                delta.remote_control_pairing,
+            ),
         ] {
             match change {
                 WakeSchedule::Unchanged => {}
@@ -119,6 +144,10 @@ impl WakeSchedules {
             (self.resource_deadlines, WakeReason::ResourceDeadlines),
             (self.channel_timeouts, WakeReason::ChannelTimeouts),
             (self.held_announce_release, WakeReason::HeldAnnounceRelease),
+            (
+                self.remote_control_pairing,
+                WakeReason::RemoteControlPairing,
+            ),
         ] {
             match wake {
                 WakeSchedule::Unchanged | WakeSchedule::Idle => {}
@@ -195,6 +224,17 @@ impl<S: StorageLayout> EngineState<S> {
         WakeSchedule::from_deadline(earliest)
     }
 
+    pub fn remote_control_pairing_wake(&self) -> WakeSchedule {
+        let deadline = match self.remote_control_pairing_view() {
+            crate::remote_control::RemoteControlPairingView::Open(session) => {
+                Some(session.window().expires_at())
+            }
+            crate::remote_control::RemoteControlPairingView::Unavailable
+            | crate::remote_control::RemoteControlPairingView::Closed => None,
+        };
+        WakeSchedule::from_deadline(deadline)
+    }
+
     pub fn route_expiry_wake(&self, interfaces: AttachedInterfaces<'_>) -> WakeSchedule {
         let warmth = WarmestOf(&self.tunnels, &self.departed_interfaces);
         let routes = self
@@ -222,12 +262,11 @@ impl<S: StorageLayout> EngineState<S> {
     pub(crate) fn route_removal_wake_schedules(
         &self,
         interfaces: AttachedInterfaces<'_>,
-    ) -> WakeSchedules {
-        WakeSchedules {
+    ) -> RouteRemovalWakeScheduleDelta {
+        RouteRemovalWakeScheduleDelta {
             scheduled_announces: self.scheduled_announces_wake(),
             expired_routes: self.route_expiry_wake(interfaces),
             expired_destination_identities: self.destination_identity_expiry_wake(),
-            ..WakeSchedules::UNCHANGED
         }
     }
 
@@ -246,6 +285,7 @@ impl<S: StorageLayout> EngineState<S> {
             resource_deadlines: self.resource_deadlines_wake(),
             channel_timeouts: self.channel_timeouts_wake(),
             held_announce_release: self.held_announce_release_wake(),
+            remote_control_pairing: self.remote_control_pairing_wake(),
         }
     }
 
@@ -389,6 +429,7 @@ mod tests {
             resource_deadlines: WakeSchedule::Unchanged,
             channel_timeouts: WakeSchedule::Unchanged,
             held_announce_release: WakeSchedule::Unchanged,
+            remote_control_pairing: WakeSchedule::Unchanged,
         }
     }
 

@@ -53,7 +53,9 @@ impl Settleable for SetRegisteredAnnounceAppData {
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
-            | Settlement::SendPlainPacket(_) => None,
+            | Settlement::SendPlainPacket(_)
+            | Settlement::OpenRemoteControlPairing(_)
+            | Settlement::CloseRemoteControlPairing(_) => None,
         }
     }
 }

@@ -408,7 +408,9 @@ where
             | Journaled::ResourceFailed { .. }
             | Journaled::ResourceNeedsDecompression { .. }
             | Journaled::ResourceSegmentReceived { .. }
-            | Journaled::ResourceAssembled { .. } => {}
+            | Journaled::ResourceAssembled { .. }
+            | Journaled::RemoteControlPairingExpired { .. }
+            | Journaled::RemoteControlPairingExpiryFailed { .. } => {}
         }
     }
 

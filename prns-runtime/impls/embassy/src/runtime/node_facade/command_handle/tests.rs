@@ -1,11 +1,17 @@
 use super::{CompletionPool, JournalRoute, RequestSlotGuard, NO_AWAITER};
 use crate::engine::{
     AnnounceAppData, AnnounceNow, AnnounceNowFailure, AnnounceNowRejection, AnnounceTarget,
-    CommandId, DeliveryEvidence, IssuedCommand, Journaled, PacketReceiptDelivered, PrnsCommand,
-    SendGroupFailure, SendGroupRejection, SendPlainPacketFailure, SendRequestFailure,
-    SetRegisteredAnnounceAppData, SetRegisteredAnnounceAppDataFailure,
+    CloseRemoteControlPairing, CloseRemoteControlPairingFailure, CommandId, DeliveryEvidence,
+    IssuedCommand, Journaled, OpenRemoteControlPairing, PacketReceiptDelivered, PrnsCommand,
+    RemoteControlPairingOpened, SendGroupFailure, SendGroupRejection, SendPlainPacketFailure,
+    SendRequestFailure, SetRegisteredAnnounceAppData, SetRegisteredAnnounceAppDataFailure,
     SetRegisteredAnnounceAppDataRejection, Settlement, MAX_SEND_GROUP_PLAINTEXT_LEN,
     MAX_SEND_PLAIN_PACKET_PAYLOAD_LEN,
+};
+use crate::remote_control::{
+    RemoteControlPairingEndpoint, RemoteControlPairingExpiresAfter,
+    RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
+    RemoteControlRequestKind, RemoteControlRequestSet,
 };
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
@@ -14,10 +20,11 @@ use crate::runtime::remote_control_access::{
     RemoteControlAccessCommand, RemoteControlAccessCompletion,
 };
 use crate::runtime::{
-    AnnounceNowError, RemoteControlAccessControl, RevokeRemoteControlControllerControlError,
-    SendError, SetRegisteredAnnounceAppDataError, SetRemoteControlControllerGrantControlError,
+    AnnounceNowError, RemoteControlAccessControl, RemoteControlPairingControlError,
+    RevokeRemoteControlControllerControlError, SendError, SetRegisteredAnnounceAppDataError,
+    SetRemoteControlControllerGrantControlError,
 };
-use crate::units::{ByteLimit, RttMillis};
+use crate::units::{ByteLimit, DurationMillis, InstantMillis, RttMillis};
 use crate::wire::DestinationHash;
 use embassy_futures::{block_on, join::join};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -26,6 +33,19 @@ use portable_atomic::Ordering;
 
 type Pool<const COMPLETIONS: usize> = CompletionPool<CriticalSectionRawMutex, COMPLETIONS>;
 const PEER: DestinationHash = DestinationHash::new([0xAB; 16]);
+
+fn open_pairing() -> OpenRemoteControlPairing {
+    OpenRemoteControlPairing {
+        target: crate::engine::EgressTarget::AllInterfaces,
+        expires_after: RemoteControlPairingExpiresAfter::try_from(DurationMillis(60_000)).unwrap(),
+        permissions: RemoteControlPairingPermissions::try_from(RemoteControlRequestSet::only(
+            RemoteControlRequestKind::Describe,
+        ))
+        .unwrap(),
+        public_app_data: RemoteControlPairingPublicAppDataBytes::try_from(b"node".as_slice())
+            .unwrap(),
+    }
+}
 
 fn delivered(ms: u64) -> Settlement {
     Settlement::SendSinglePacket(Ok(PacketReceiptDelivered {
@@ -395,6 +415,60 @@ fn awaited_plain_and_group_sends_preserve_commands_and_typed_settlements() {
         assert!(completions.settle(issued.id, Settlement::SendGroup(Err(failure))));
     }));
     assert_eq!(group, Err(SendError::Failed(failure)));
+}
+
+#[test]
+fn pairing_lifecycle_preserves_commands_settlements_and_completion_capacity() {
+    let commands = Channel::<CriticalSectionRawMutex, IssuedCommand, 1>::new();
+    let completions = Pool::<1>::new();
+    let handle = super::PrnsNodeHandle::new(commands.sender(), &completions);
+    let expected = open_pairing();
+    let opened = RemoteControlPairingOpened {
+        endpoint: RemoteControlPairingEndpoint::from(
+            &crate::remote_control::RemoteControlPairingIdentity::new(
+                crate::identity::IdentityHash::new([0x51; 16]),
+            ),
+        ),
+        expires_at: InstantMillis(61_000),
+    };
+    let (result, ()) = block_on(join(
+        handle.open_remote_control_pairing(expected.clone()),
+        async {
+            let issued = commands.receiver().receive().await;
+            assert_eq!(
+                issued.command,
+                PrnsCommand::OpenRemoteControlPairing(expected),
+            );
+            assert!(
+                completions.settle(issued.id, Settlement::OpenRemoteControlPairing(Ok(opened)),)
+            );
+        },
+    ));
+    assert_eq!(result, Ok(opened));
+
+    let failure = CloseRemoteControlPairingFailure::IdentityNotHeld;
+    let (result, ()) = block_on(join(handle.close_remote_control_pairing(), async {
+        let issued = commands.receiver().receive().await;
+        assert_eq!(
+            issued.command,
+            PrnsCommand::CloseRemoteControlPairing(CloseRemoteControlPairing),
+        );
+        assert!(completions.settle(
+            issued.id,
+            Settlement::CloseRemoteControlPairing(Err(failure)),
+        ));
+    }));
+    assert_eq!(
+        result,
+        Err(RemoteControlPairingControlError::Failed(failure)),
+    );
+
+    let no_completions = Pool::<0>::new();
+    let bounded = super::PrnsNodeHandle::new(commands.sender(), &no_completions);
+    assert_eq!(
+        block_on(bounded.open_remote_control_pairing(open_pairing())),
+        Err(RemoteControlPairingControlError::Busy),
+    );
 }
 
 #[test]

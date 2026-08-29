@@ -66,7 +66,9 @@ impl Settleable for AnnounceNow {
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
             | Settlement::SetRegisteredAnnounceAppData(_)
-            | Settlement::SendPlainPacket(_) => None,
+            | Settlement::SendPlainPacket(_)
+            | Settlement::OpenRemoteControlPairing(_)
+            | Settlement::CloseRemoteControlPairing(_) => None,
         }
     }
 }

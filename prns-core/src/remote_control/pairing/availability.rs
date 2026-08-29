@@ -8,6 +8,7 @@ use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
     WireError, WirePacketHeader, BROADCAST_MDU, HEADER_MIN_LEN,
 };
+use heapless::Vec as HeaplessVec;
 
 use super::{
     RemoteControlPairingEndpoint, RemoteControlPairingIdentity,
@@ -187,6 +188,39 @@ pub enum RemoteControlPairingPublicAppDataError {
 #[derive(Debug, PartialEq, Eq)]
 pub struct RemoteControlPairingPublicAppData<'a> {
     bytes: &'a [u8],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteControlPairingPublicAppDataBytes(
+    HeaplessVec<u8, MAX_REMOTE_CONTROL_PAIRING_PUBLIC_APP_DATA_LEN>,
+);
+
+impl RemoteControlPairingPublicAppDataBytes {
+    #[must_use]
+    pub fn as_borrowed(&self) -> RemoteControlPairingPublicAppData<'_> {
+        RemoteControlPairingPublicAppData {
+            bytes: self.0.as_slice(),
+        }
+    }
+
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+}
+
+impl TryFrom<&[u8]> for RemoteControlPairingPublicAppDataBytes {
+    type Error = RemoteControlPairingPublicAppDataError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        let bounded = HeaplessVec::from_slice(bytes).map_err(|()| {
+            RemoteControlPairingPublicAppDataError::TooLong {
+                actual: bytes.len(),
+                maximum: MAX_REMOTE_CONTROL_PAIRING_PUBLIC_APP_DATA_LEN,
+            }
+        })?;
+        Ok(Self(bounded))
+    }
 }
 
 impl<'a> RemoteControlPairingPublicAppData<'a> {
@@ -627,6 +661,23 @@ mod tests {
         assert_eq!(
             maximum.deadline_from(InstantMillis(u64::MAX)),
             InstantMillis(u64::MAX),
+        );
+    }
+
+    #[test]
+    fn owned_public_app_data_preserves_the_exact_wire_bound() {
+        let maximum = [0xA5; MAX_REMOTE_CONTROL_PAIRING_PUBLIC_APP_DATA_LEN];
+        let owned = RemoteControlPairingPublicAppDataBytes::try_from(maximum.as_slice()).unwrap();
+        assert_eq!(owned.as_bytes(), maximum);
+        assert_eq!(owned.as_borrowed(), public_app_data(&maximum));
+
+        let too_long = [0xA5; MAX_REMOTE_CONTROL_PAIRING_PUBLIC_APP_DATA_LEN + 1];
+        assert_eq!(
+            RemoteControlPairingPublicAppDataBytes::try_from(too_long.as_slice()),
+            Err(RemoteControlPairingPublicAppDataError::TooLong {
+                actual: MAX_REMOTE_CONTROL_PAIRING_PUBLIC_APP_DATA_LEN + 1,
+                maximum: MAX_REMOTE_CONTROL_PAIRING_PUBLIC_APP_DATA_LEN,
+            }),
         );
     }
 

@@ -79,7 +79,7 @@ pub enum RemoteControlPairingPermissionsError {
     NoPermittedRequests,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteControlPairingPermissions {
     permitted_requests: RemoteControlRequestSet,
 }
@@ -196,25 +196,30 @@ impl RemoteControlPairingSession {
 #[derive(Debug, Default, PartialEq, Eq)]
 enum RemoteControlPairingPhase {
     #[default]
+    Unavailable,
     Closed,
     Open(RemoteControlPairingSession),
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum RemoteControlPairingView<'a> {
+    Unavailable,
     Closed,
     Open(&'a RemoteControlPairingSession),
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
-pub struct RemoteControlPairingState {
+pub(crate) struct RemoteControlPairingState {
     phase: RemoteControlPairingPhase,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 #[must_use]
-pub enum OpenRemoteControlPairingOutcome {
+pub(crate) enum OpenRemoteControlPairingOutcome {
     Opened,
+    Unavailable {
+        unopened: RemoteControlPairingSession,
+    },
     AlreadyOpen {
         unopened: RemoteControlPairingSession,
     },
@@ -225,40 +230,40 @@ pub enum OpenRemoteControlPairingOutcome {
 
 #[derive(Debug, PartialEq, Eq)]
 #[must_use]
-pub enum CloseRemoteControlPairingOutcome {
+pub(crate) enum CloseRemoteControlPairingOutcome {
     Closed {
         session: RemoteControlPairingSession,
     },
     AlreadyClosed,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-#[must_use]
-pub enum ExpireRemoteControlPairingOutcome {
-    Expired {
-        session: RemoteControlPairingSession,
-    },
-    NotDue {
-        expires_at: InstantMillis,
-    },
-    AlreadyClosed,
+    Unavailable,
 }
 
 impl RemoteControlPairingState {
     #[must_use]
-    pub const fn view(&self) -> RemoteControlPairingView<'_> {
+    pub(crate) const fn available() -> Self {
+        Self {
+            phase: RemoteControlPairingPhase::Closed,
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn view(&self) -> RemoteControlPairingView<'_> {
         match &self.phase {
+            RemoteControlPairingPhase::Unavailable => RemoteControlPairingView::Unavailable,
             RemoteControlPairingPhase::Closed => RemoteControlPairingView::Closed,
             RemoteControlPairingPhase::Open(session) => RemoteControlPairingView::Open(session),
         }
     }
 
-    pub fn open(
+    pub(crate) fn open(
         &mut self,
         session: RemoteControlPairingSession,
         now: InstantMillis,
     ) -> OpenRemoteControlPairingOutcome {
         match self.phase {
+            RemoteControlPairingPhase::Unavailable => {
+                OpenRemoteControlPairingOutcome::Unavailable { unopened: session }
+            }
             RemoteControlPairingPhase::Closed if now < session.window.expires_at => {
                 self.phase = RemoteControlPairingPhase::Open(session);
                 OpenRemoteControlPairingOutcome::Opened
@@ -272,25 +277,16 @@ impl RemoteControlPairingState {
         }
     }
 
-    pub fn close(&mut self) -> CloseRemoteControlPairingOutcome {
+    pub(crate) fn close(&mut self) -> CloseRemoteControlPairingOutcome {
         match core::mem::take(&mut self.phase) {
-            RemoteControlPairingPhase::Closed => CloseRemoteControlPairingOutcome::AlreadyClosed,
+            RemoteControlPairingPhase::Unavailable => CloseRemoteControlPairingOutcome::Unavailable,
+            RemoteControlPairingPhase::Closed => {
+                self.phase = RemoteControlPairingPhase::Closed;
+                CloseRemoteControlPairingOutcome::AlreadyClosed
+            }
             RemoteControlPairingPhase::Open(session) => {
+                self.phase = RemoteControlPairingPhase::Closed;
                 CloseRemoteControlPairingOutcome::Closed { session }
-            }
-        }
-    }
-
-    pub fn expire(&mut self, now: InstantMillis) -> ExpireRemoteControlPairingOutcome {
-        match core::mem::take(&mut self.phase) {
-            RemoteControlPairingPhase::Closed => ExpireRemoteControlPairingOutcome::AlreadyClosed,
-            RemoteControlPairingPhase::Open(session) if now < session.window.expires_at => {
-                let expires_at = session.window.expires_at;
-                self.phase = RemoteControlPairingPhase::Open(session);
-                ExpireRemoteControlPairingOutcome::NotDue { expires_at }
-            }
-            RemoteControlPairingPhase::Open(session) => {
-                ExpireRemoteControlPairingOutcome::Expired { session }
             }
         }
     }
@@ -372,8 +368,21 @@ mod tests {
     }
 
     #[test]
-    fn pairing_is_closed_by_default_and_closing_is_total() {
-        let mut state = RemoteControlPairingState::default();
+    fn unavailable_pairing_is_distinct_from_an_available_closed_window() {
+        let mut unavailable = RemoteControlPairingState::default();
+        assert_eq!(unavailable.view(), RemoteControlPairingView::Unavailable);
+        assert_eq!(
+            unavailable.close(),
+            CloseRemoteControlPairingOutcome::Unavailable,
+        );
+        assert_eq!(
+            unavailable.open(session(0x50, 1_000, 2_000), InstantMillis(1_000)),
+            OpenRemoteControlPairingOutcome::Unavailable {
+                unopened: session(0x50, 1_000, 2_000),
+            },
+        );
+
+        let mut state = RemoteControlPairingState::available();
         assert_eq!(state.view(), RemoteControlPairingView::Closed);
         assert_eq!(
             state.close(),
@@ -398,7 +407,7 @@ mod tests {
 
     #[test]
     fn opening_twice_keeps_the_live_session_and_returns_the_unopened_one() {
-        let mut state = RemoteControlPairingState::default();
+        let mut state = RemoteControlPairingState::available();
         let live = session(0x61, 1_000, 2_000);
         let live_endpoint = live.endpoint();
         let unopened = session(0x62, 1_000, 3_000);
@@ -422,7 +431,7 @@ mod tests {
 
     #[test]
     fn opening_after_the_prepared_session_deadline_returns_it_without_opening() {
-        let mut state = RemoteControlPairingState::default();
+        let mut state = RemoteControlPairingState::available();
 
         assert_eq!(
             state.open(session(0x63, 1_000, 2_000), InstantMillis(2_000)),
@@ -431,31 +440,5 @@ mod tests {
             },
         );
         assert_eq!(state.view(), RemoteControlPairingView::Closed);
-    }
-
-    #[test]
-    fn expiry_keeps_the_session_before_its_deadline_and_moves_it_out_at_the_boundary() {
-        let mut state = RemoteControlPairingState::default();
-        assert_eq!(
-            state.open(session(0x71, 1_000, 2_000), InstantMillis(1_000)),
-            OpenRemoteControlPairingOutcome::Opened,
-        );
-        assert_eq!(
-            state.expire(InstantMillis(1_999)),
-            ExpireRemoteControlPairingOutcome::NotDue {
-                expires_at: InstantMillis(2_000),
-            },
-        );
-        assert_eq!(
-            state.expire(InstantMillis(2_000)),
-            ExpireRemoteControlPairingOutcome::Expired {
-                session: session(0x71, 1_000, 2_000),
-            },
-        );
-        assert_eq!(state.view(), RemoteControlPairingView::Closed);
-        assert_eq!(
-            state.expire(InstantMillis(2_001)),
-            ExpireRemoteControlPairingOutcome::AlreadyClosed,
-        );
     }
 }

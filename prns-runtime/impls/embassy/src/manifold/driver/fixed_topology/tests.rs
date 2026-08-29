@@ -138,7 +138,9 @@ fn an_ifac_frame_crosses_the_seam_and_leaves_masked_through_the_peer() {
         | Journaled::ResourceNeedsDecompression { .. }
         | Journaled::ResourceSegmentReceived { .. }
         | Journaled::ResourceAssembled { .. }
-        | Journaled::LinkInterfaceMismatch { .. } => {}
+        | Journaled::LinkInterfaceMismatch { .. }
+        | Journaled::RemoteControlPairingExpired { .. }
+        | Journaled::RemoteControlPairingExpiryFailed { .. } => {}
     };
 
     let outcome = block_on(async {

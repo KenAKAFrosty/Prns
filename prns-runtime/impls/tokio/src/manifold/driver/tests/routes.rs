@@ -41,7 +41,9 @@ async fn routing_control_drops_a_live_route_and_journals_the_explicit_removal() 
         | Journaled::ResourceAssembled { .. }
         | Journaled::PersistenceFlushed { .. }
         | Journaled::PersistenceFlushFailed { .. }
-        | Journaled::LinkInterfaceMismatch { .. } => {}
+        | Journaled::LinkInterfaceMismatch { .. }
+        | Journaled::RemoteControlPairingExpired { .. }
+        | Journaled::RemoteControlPairingExpiryFailed { .. } => {}
     };
 
     tokio::spawn(run_with_store(
@@ -168,7 +170,9 @@ async fn the_manifold_culls_an_expired_route_at_its_deadline() {
         | Journaled::ResourceAssembled { .. }
         | Journaled::PersistenceFlushed { .. }
         | Journaled::PersistenceFlushFailed { .. }
-        | Journaled::LinkInterfaceMismatch { .. } => {}
+        | Journaled::LinkInterfaceMismatch { .. }
+        | Journaled::RemoteControlPairingExpired { .. }
+        | Journaled::RemoteControlPairingExpiryFailed { .. } => {}
     };
 
     tokio::spawn(run(

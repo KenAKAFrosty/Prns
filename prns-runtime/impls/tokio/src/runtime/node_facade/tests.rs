@@ -6,18 +6,25 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::engine::{
-    AnnounceNow, AnnounceNowFailure, EstablishLink, EstablishLinkFailure, Identify,
-    PacketReceiptDelivered, PathFound, PrnsCommand, SendGroupFailure, SendPlainPacketFailure,
-    SetRegisteredAnnounceAppData, SetRegisteredAnnounceAppDataFailure,
+    AnnounceNow, AnnounceNowFailure, CloseRemoteControlPairing, CloseRemoteControlPairingFailure,
+    EstablishLink, EstablishLinkFailure, Identify, OpenRemoteControlPairing,
+    PacketReceiptDelivered, PathFound, PrnsCommand, RemoteControlPairingOpened, SendGroupFailure,
+    SendPlainPacketFailure, SetRegisteredAnnounceAppData, SetRegisteredAnnounceAppDataFailure,
     SetRegisteredAnnounceAppDataRejection, Settlement, MAX_SEND_GROUP_PLAINTEXT_LEN,
     MAX_SEND_PLAIN_PACKET_PAYLOAD_LEN, MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN,
 };
 use crate::identity::IdentityHash;
 use crate::manifold::driver::HostCommand;
+use crate::remote_control::{
+    RemoteControlPairingEndpoint, RemoteControlPairingExpiresAfter,
+    RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
+    RemoteControlRequestKind, RemoteControlRequestSet,
+};
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use crate::runtime::{RuntimeRequestHandlerError, SendError, SetRegisteredAnnounceAppDataError};
 use crate::storage::TablePushError;
+use crate::units::{DurationMillis, InstantMillis};
 use crate::wire::DestinationHash;
 
 use super::{BitrateTimingOracle, PrnsNodeHandle};
@@ -36,6 +43,19 @@ fn delivered(ms: u64) -> PacketReceiptDelivered {
 fn handle() -> (PrnsNodeHandle, UnboundedReceiver<HostCommand>) {
     let (commands, command_rx) = mpsc::unbounded_channel();
     (PrnsNodeHandle::over(commands), command_rx)
+}
+
+fn open_pairing() -> OpenRemoteControlPairing {
+    OpenRemoteControlPairing {
+        target: crate::engine::EgressTarget::AllInterfaces,
+        expires_after: RemoteControlPairingExpiresAfter::try_from(DurationMillis(60_000)).unwrap(),
+        permissions: RemoteControlPairingPermissions::try_from(RemoteControlRequestSet::only(
+            RemoteControlRequestKind::Describe,
+        ))
+        .unwrap(),
+        public_app_data: RemoteControlPairingPublicAppDataBytes::try_from(b"node".as_slice())
+            .unwrap(),
+    }
 }
 
 struct DaemonTiming;
@@ -218,6 +238,59 @@ async fn awaited_plain_and_group_sends_issue_their_distinct_commands() {
         _ => panic!("group send uses an awaited engine command"),
     }
     assert_eq!(group.await.expect("group task"), Ok(()));
+}
+
+#[tokio::test]
+async fn pairing_lifecycle_awaits_and_preserves_exact_commands_and_settlements() {
+    let (prns, mut command_rx) = handle();
+    let open = open_pairing();
+    let expected = open.clone();
+    let issuer = prns.clone();
+    let opening = tokio::spawn(async move { issuer.open_remote_control_pairing(open).await });
+    let HostCommand::AwaitedEngine { issued, completion } =
+        command_rx.recv().await.expect("open pairing command")
+    else {
+        panic!("open pairing uses an awaited engine command")
+    };
+    assert_eq!(
+        issued.command,
+        PrnsCommand::OpenRemoteControlPairing(expected),
+    );
+    let opened = RemoteControlPairingOpened {
+        endpoint: RemoteControlPairingEndpoint::from(
+            &crate::remote_control::RemoteControlPairingIdentity::new(IdentityHash::new(
+                [0x51; 16],
+            )),
+        ),
+        expires_at: InstantMillis(61_000),
+    };
+    completion
+        .send(Settlement::OpenRemoteControlPairing(Ok(opened)))
+        .expect("open pairing awaiter");
+    assert_eq!(opening.await.expect("open pairing task"), Ok(opened));
+
+    let issuer = prns.clone();
+    let closing = tokio::spawn(async move { issuer.close_remote_control_pairing().await });
+    let HostCommand::AwaitedEngine { issued, completion } =
+        command_rx.recv().await.expect("close pairing command")
+    else {
+        panic!("close pairing uses an awaited engine command")
+    };
+    assert_eq!(
+        issued.command,
+        PrnsCommand::CloseRemoteControlPairing(CloseRemoteControlPairing),
+    );
+    completion
+        .send(Settlement::CloseRemoteControlPairing(Err(
+            CloseRemoteControlPairingFailure::IdentityNotHeld,
+        )))
+        .expect("close pairing awaiter");
+    assert_eq!(
+        closing.await.expect("close pairing task"),
+        Err(crate::runtime::RemoteControlPairingControlError::Failed(
+            CloseRemoteControlPairingFailure::IdentityNotHeld,
+        )),
+    );
 }
 
 #[tokio::test]

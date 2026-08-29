@@ -261,6 +261,44 @@ impl<S: StorageLayout> EngineState<S> {
                     Settlement::SendPlainPacket(Err(SendPlainPacketFailure::Rejected(rejection))),
                 );
             }
+            CommandOutcome::OwesOpenRemoteControlPairing { id, open } => {
+                let result = self.open_remote_control_pairing_into(
+                    open,
+                    interfaces,
+                    now,
+                    fill_entropy,
+                    sink,
+                );
+                if result.is_ok() {
+                    wake_schedule_changes.remote_control_pairing =
+                        self.remote_control_pairing_wake();
+                }
+                settle(sink, id, Settlement::OpenRemoteControlPairing(result));
+            }
+            CommandOutcome::OpenRemoteControlPairingRejected { id, rejection } => {
+                settle(
+                    sink,
+                    id,
+                    Settlement::OpenRemoteControlPairing(Err(
+                        crate::engine::OpenRemoteControlPairingFailure::Rejected(rejection),
+                    )),
+                );
+            }
+            CommandOutcome::OwesCloseRemoteControlPairing { id } => {
+                let result = self.close_remote_control_pairing_into(interfaces, fill_entropy, sink);
+                if result.is_ok() {
+                    wake_schedule_changes.remote_control_pairing =
+                        self.remote_control_pairing_wake();
+                }
+                settle(sink, id, Settlement::CloseRemoteControlPairing(result));
+            }
+            CommandOutcome::CloseRemoteControlPairingRejected { id, failure } => {
+                settle(
+                    sink,
+                    id,
+                    Settlement::CloseRemoteControlPairing(Err(failure)),
+                );
+            }
             CommandOutcome::OwesPathRequest { id, request } => {
                 let mut buf = [0u8; BROADCAST_MTU];
                 match self.write_commanded_path_request_with_timing(

@@ -109,6 +109,15 @@ pub enum Journaled<'a> {
         settlement: Settlement,
     },
 
+    RemoteControlPairingExpired {
+        endpoint: crate::remote_control::RemoteControlPairingEndpoint,
+    },
+
+    RemoteControlPairingExpiryFailed {
+        endpoint: crate::remote_control::RemoteControlPairingEndpoint,
+        failure: crate::engine::CloseRemoteControlPairingFailure,
+    },
+
     /// RNS 1.4.2's `set_link_established_callback` as data.
     LinkEstablished(LinkEstablished),
 

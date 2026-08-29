@@ -127,7 +127,9 @@ impl Settleable for EstablishLink {
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
             | Settlement::SetRegisteredAnnounceAppData(_)
-            | Settlement::SendPlainPacket(_) => None,
+            | Settlement::SendPlainPacket(_)
+            | Settlement::OpenRemoteControlPairing(_)
+            | Settlement::CloseRemoteControlPairing(_) => None,
         }
     }
 }
@@ -160,7 +162,9 @@ impl Settleable for SendToLink {
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
             | Settlement::SetRegisteredAnnounceAppData(_)
-            | Settlement::SendPlainPacket(_) => None,
+            | Settlement::SendPlainPacket(_)
+            | Settlement::OpenRemoteControlPairing(_)
+            | Settlement::CloseRemoteControlPairing(_) => None,
         }
     }
 }
@@ -191,7 +195,9 @@ impl Settleable for Identify {
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
             | Settlement::SetRegisteredAnnounceAppData(_)
-            | Settlement::SendPlainPacket(_) => None,
+            | Settlement::SendPlainPacket(_)
+            | Settlement::OpenRemoteControlPairing(_)
+            | Settlement::CloseRemoteControlPairing(_) => None,
         }
     }
 }
@@ -222,7 +228,9 @@ impl Settleable for CloseLink {
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
             | Settlement::SetRegisteredAnnounceAppData(_)
-            | Settlement::SendPlainPacket(_) => None,
+            | Settlement::SendPlainPacket(_)
+            | Settlement::OpenRemoteControlPairing(_)
+            | Settlement::CloseRemoteControlPairing(_) => None,
         }
     }
 }

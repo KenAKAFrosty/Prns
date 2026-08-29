@@ -48,7 +48,9 @@ impl Settleable for SendPlainPacket {
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
-            | Settlement::SetRegisteredAnnounceAppData(_) => None,
+            | Settlement::SetRegisteredAnnounceAppData(_)
+            | Settlement::OpenRemoteControlPairing(_)
+            | Settlement::CloseRemoteControlPairing(_) => None,
         }
     }
 }
