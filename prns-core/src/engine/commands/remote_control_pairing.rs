@@ -1,11 +1,12 @@
 use crate::identity::held::HoldIdentityError;
 use crate::remote_control::{
-    ApproveRemoteControlTargetPairingOutcome, RejectRemoteControlTargetPairingOutcome,
-    RemoteControlControllerGrant, RemoteControlPairingAttemptId,
-    RemoteControlPairingAttemptTimeout, RemoteControlPairingAvailabilityWriteError,
+    ApproveRemoteControlTargetPairingOutcome, CompleteRemoteControlTargetPairingOutcome,
+    RejectRemoteControlTargetPairingOutcome, RemoteControlControllerGrant,
+    RemoteControlPairingAttemptId, RemoteControlPairingAttemptTimeout,
+    RemoteControlPairingAvailabilityWriteError, RemoteControlPairingCompletionSigningError,
     RemoteControlPairingEndpoint, RemoteControlPairingExpiresAfter,
     RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
-    RemoteControlTargetPairingAborted,
+    RemoteControlTargetPairingAborted, RemoteControlTargetPairingResponder,
 };
 use crate::routing::delivery::send_plain::SendPlainPacketWriteError;
 use crate::routing::links::LinkId;
@@ -87,7 +88,8 @@ impl Settleable for OpenRemoteControlPairing {
             | Settlement::SendPlainPacket(_)
             | Settlement::CloseRemoteControlPairing(_)
             | Settlement::ApproveRemoteControlTargetPairing(_)
-            | Settlement::RejectRemoteControlTargetPairing(_) => None,
+            | Settlement::RejectRemoteControlTargetPairing(_)
+            | Settlement::SettleRemoteControlTargetPairingAuthorization(_) => None,
         }
     }
 }
@@ -145,7 +147,8 @@ impl Settleable for CloseRemoteControlPairing {
             | Settlement::SendPlainPacket(_)
             | Settlement::OpenRemoteControlPairing(_)
             | Settlement::ApproveRemoteControlTargetPairing(_)
-            | Settlement::RejectRemoteControlTargetPairing(_) => None,
+            | Settlement::RejectRemoteControlTargetPairing(_)
+            | Settlement::SettleRemoteControlTargetPairingAuthorization(_) => None,
         }
     }
 }
@@ -252,7 +255,8 @@ impl Settleable for ApproveRemoteControlTargetPairing {
             | Settlement::SendPlainPacket(_)
             | Settlement::OpenRemoteControlPairing(_)
             | Settlement::CloseRemoteControlPairing(_)
-            | Settlement::RejectRemoteControlTargetPairing(_) => None,
+            | Settlement::RejectRemoteControlTargetPairing(_)
+            | Settlement::SettleRemoteControlTargetPairingAuthorization(_) => None,
         }
     }
 }
@@ -348,7 +352,95 @@ impl Settleable for RejectRemoteControlTargetPairing {
             | Settlement::SendPlainPacket(_)
             | Settlement::OpenRemoteControlPairing(_)
             | Settlement::CloseRemoteControlPairing(_)
-            | Settlement::ApproveRemoteControlTargetPairing(_) => None,
+            | Settlement::ApproveRemoteControlTargetPairing(_)
+            | Settlement::SettleRemoteControlTargetPairingAuthorization(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlTargetPairingAuthorizationPersistence {
+    Persisted,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SettleRemoteControlTargetPairingAuthorization {
+    pub attempt_id: RemoteControlPairingAttemptId,
+    pub persistence: RemoteControlTargetPairingAuthorizationPersistence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlTargetPairingFinalization {
+    PairingCompleted {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
+    AuthorizationFailureRecorded {
+        attempt_id: RemoteControlPairingAttemptId,
+        responder: RemoteControlTargetPairingResponder,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettleRemoteControlTargetPairingAuthorizationFailure {
+    NoAuthorizationOwed {
+        settled: RemoteControlPairingAttemptId,
+    },
+    AttemptMismatch {
+        settled: RemoteControlPairingAttemptId,
+        active: RemoteControlPairingAttemptId,
+    },
+    TargetSignerUnavailable {
+        attempt_id: RemoteControlPairingAttemptId,
+        target_identity: crate::identity::IdentityHash,
+    },
+    CompletionSigningFailed {
+        attempt_id: RemoteControlPairingAttemptId,
+        error: RemoteControlPairingCompletionSigningError,
+    },
+    CompletionStateMismatch {
+        attempt_id: RemoteControlPairingAttemptId,
+        transition: CompleteRemoteControlTargetPairingOutcome,
+    },
+    CompletionDispatchFailed {
+        attempt_id: RemoteControlPairingAttemptId,
+        failure: crate::engine::RemoteControlPairingResponseDispatchFailure,
+    },
+}
+
+impl Settleable for SettleRemoteControlTargetPairingAuthorization {
+    type Success = RemoteControlTargetPairingFinalization;
+    type Failure = SettleRemoteControlTargetPairingAuthorizationFailure;
+
+    fn into_command(self) -> PrnsCommand {
+        PrnsCommand::SettleRemoteControlTargetPairingAuthorization(self)
+    }
+
+    fn from_settlement(
+        settlement: Settlement,
+    ) -> Option<Result<RemoteControlTargetPairingFinalization, Self::Failure>> {
+        match settlement {
+            Settlement::SettleRemoteControlTargetPairingAuthorization(result) => Some(result),
+            Settlement::AnnounceNow(_)
+            | Settlement::SetRegisteredAnnounceAppData(_)
+            | Settlement::SendSinglePacket(_)
+            | Settlement::SendGroup(_)
+            | Settlement::RequestPath(_)
+            | Settlement::EstablishLink(_)
+            | Settlement::SendToLink(_)
+            | Settlement::Identify(_)
+            | Settlement::SendRequest(_)
+            | Settlement::Respond(_)
+            | Settlement::CloseLink(_)
+            | Settlement::SendResource(_)
+            | Settlement::SetResourceStrategy(_)
+            | Settlement::SendToChannel(_)
+            | Settlement::AllowRequester(_)
+            | Settlement::SendPlainPacket(_)
+            | Settlement::OpenRemoteControlPairing(_)
+            | Settlement::CloseRemoteControlPairing(_)
+            | Settlement::ApproveRemoteControlTargetPairing(_)
+            | Settlement::RejectRemoteControlTargetPairing(_) => None,
         }
     }
 }

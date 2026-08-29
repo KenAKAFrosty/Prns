@@ -76,7 +76,8 @@ impl Settleable for SetResourceStrategy {
             | Settlement::OpenRemoteControlPairing(_)
             | Settlement::CloseRemoteControlPairing(_)
             | Settlement::ApproveRemoteControlTargetPairing(_)
-            | Settlement::RejectRemoteControlTargetPairing(_) => None,
+            | Settlement::RejectRemoteControlTargetPairing(_)
+            | Settlement::SettleRemoteControlTargetPairingAuthorization(_) => None,
         }
     }
 }

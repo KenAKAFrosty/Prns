@@ -38,7 +38,9 @@ pub use remote_control_pairing::{
     OpenRemoteControlPairing, OpenRemoteControlPairingFailure, OpenRemoteControlPairingRejection,
     RejectRemoteControlTargetPairing, RejectRemoteControlTargetPairingFailure,
     RemoteControlPairingOpened, RemoteControlTargetPairingApproval,
-    RemoteControlTargetPairingRejection,
+    RemoteControlTargetPairingAuthorizationPersistence, RemoteControlTargetPairingFinalization,
+    RemoteControlTargetPairingRejection, SettleRemoteControlTargetPairingAuthorization,
+    SettleRemoteControlTargetPairingAuthorizationFailure,
 };
 pub use request::{
     AllowRequester, AllowRequesterFailure, AllowRequesterRejection, RequestResponseTimeout,
@@ -101,6 +103,7 @@ pub enum PrnsCommand {
     CloseRemoteControlPairing(CloseRemoteControlPairing),
     ApproveRemoteControlTargetPairing(ApproveRemoteControlTargetPairing),
     RejectRemoteControlTargetPairing(RejectRemoteControlTargetPairing),
+    SettleRemoteControlTargetPairingAuthorization(SettleRemoteControlTargetPairingAuthorization),
 }
 
 // The Owes* variants hand the caller its whole command payload back (SendSinglePacket rides ~400B of heapless body) beside slim rejections. Outcomes are transient by-value returns, destructured immediately, and the no-alloc core has no Box to shrink them.
@@ -168,6 +171,10 @@ pub enum CommandOutcome {
     OwesRejectRemoteControlTargetPairing {
         id: CommandId,
         reject: RejectRemoteControlTargetPairing,
+    },
+    OwesSettleRemoteControlTargetPairingAuthorization {
+        id: CommandId,
+        settle_authorization: SettleRemoteControlTargetPairingAuthorization,
     },
     OwesPathRequest {
         id: CommandId,
@@ -280,6 +287,12 @@ pub enum Settlement {
     RejectRemoteControlTargetPairing(
         Result<RemoteControlTargetPairingRejection, RejectRemoteControlTargetPairingFailure>,
     ),
+    SettleRemoteControlTargetPairingAuthorization(
+        Result<
+            RemoteControlTargetPairingFinalization,
+            SettleRemoteControlTargetPairingAuthorizationFailure,
+        >,
+    ),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -357,6 +370,12 @@ impl<S: StorageLayout> EngineState<S> {
             }
             PrnsCommand::RejectRemoteControlTargetPairing(reject) => {
                 CommandOutcome::OwesRejectRemoteControlTargetPairing { id, reject }
+            }
+            PrnsCommand::SettleRemoteControlTargetPairingAuthorization(settle_authorization) => {
+                CommandOutcome::OwesSettleRemoteControlTargetPairingAuthorization {
+                    id,
+                    settle_authorization,
+                }
             }
             PrnsCommand::RequestPath(request) => CommandOutcome::OwesPathRequest { id, request },
             PrnsCommand::EstablishLink(establish) => self.ingest_establish_link(id, establish),

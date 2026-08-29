@@ -358,6 +358,24 @@ impl<S: StorageLayout> EngineState<S> {
                 );
                 wake_schedule_changes.remote_control_pairing = self.remote_control_pairing_wake();
             }
+            CommandOutcome::OwesSettleRemoteControlTargetPairingAuthorization {
+                id,
+                settle_authorization,
+            } => {
+                let result = self.settle_remote_control_target_pairing_authorization_into(
+                    settle_authorization,
+                    interfaces,
+                    now,
+                    fill_entropy,
+                    sink,
+                );
+                settle(
+                    sink,
+                    id,
+                    Settlement::SettleRemoteControlTargetPairingAuthorization(result),
+                );
+                wake_schedule_changes.remote_control_pairing = self.remote_control_pairing_wake();
+            }
             CommandOutcome::OwesPathRequest { id, request } => {
                 let mut buf = [0u8; BROADCAST_MTU];
                 match self.write_commanded_path_request_with_timing(

@@ -4,8 +4,10 @@ use crate::engine::{
     CloseRemoteControlPairingFailure, CloseRemoteControlPairingOutcome, CommandId, CommandOutcome,
     Directive, EgressTarget, EngineReaction, FanTarget, OpenRemoteControlPairing,
     OpenRemoteControlPairingFailure, OpenRemoteControlPairingRejection, RemoteControlPairingOpened,
+    RemoteControlTargetPairingAuthorizationPersistence, RemoteControlTargetPairingFinalization,
     Respond, RespondData, RespondPayload, RetireDestinationOutcome, SendPlainPacket,
-    SendPlainPacketPayload,
+    SendPlainPacketPayload, SettleRemoteControlTargetPairingAuthorization,
+    SettleRemoteControlTargetPairingAuthorizationFailure,
 };
 use crate::identity::held::ReleaseHeldIdentityOutcome;
 use crate::identity::in_memory::InMemoryNodeIdentity;
@@ -15,9 +17,12 @@ use crate::interfaces::{AttachedInterfaces, InterfaceId};
 use crate::remote_control::{
     BeginRemoteControlTargetPairingOutcome,
     CloseRemoteControlPairingOutcome as PairingStateCloseOutcome,
-    CommitRemoteControlTargetPairingOutcome, DispatchRemoteControlTargetPairingOfferOutcome,
-    ExpireRemoteControlTargetPairingOutcome, FailRemoteControlTargetPairingOfferDispatchOutcome,
-    OpenRemoteControlPairingOutcome as PairingStateOpenOutcome, RemoteControlPairingAttemptId,
+    CommitRemoteControlTargetPairingOutcome, CompleteRemoteControlTargetPairingOutcome,
+    DispatchRemoteControlTargetPairingOfferOutcome, ExpireRemoteControlTargetPairingOutcome,
+    FailRemoteControlTargetPairingAuthorizationOutcome,
+    FailRemoteControlTargetPairingOfferDispatchOutcome,
+    OpenRemoteControlPairingOutcome as PairingStateOpenOutcome,
+    PersistRemoteControlTargetPairingAuthorizationOutcome, RemoteControlPairingAttemptId,
     RemoteControlPairingAvailability, RemoteControlPairingAvailabilityDestination,
     RemoteControlPairingAvailabilityDestinationError, RemoteControlPairingIdentity,
     RemoteControlPairingMessageParseError, RemoteControlPairingMessageWriteError,
@@ -26,8 +31,9 @@ use crate::remote_control::{
     RemoteControlTargetPairingAborted, RemoteControlTargetPairingAttemptWindowError,
     RemoteControlTargetPairingBeginArrival, RemoteControlTargetPairingBeginRejection,
     RemoteControlTargetPairingCommitArrival, RemoteControlTargetPairingCommitRejection,
-    RemoteControlTargetPairingResponder, REMOTE_CONTROL_PAIRING_APPLICATION_ASPECTS,
-    REMOTE_CONTROL_PAIRING_APPLICATION_NAME, REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID,
+    RemoteControlTargetPairingResponder, RemoteControlTargetPairingView,
+    REMOTE_CONTROL_PAIRING_APPLICATION_ASPECTS, REMOTE_CONTROL_PAIRING_APPLICATION_NAME,
+    REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID,
 };
 use crate::routing::announce::{AnnounceEntropy, AnnounceId};
 use crate::routing::links::request::{
@@ -118,7 +124,7 @@ pub(crate) enum RemoteControlPairingRequestOutcome {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RemoteControlPairingResponseDispatchFailure {
+pub enum RemoteControlPairingResponseDispatchFailure {
     Encode(RemoteControlPairingMessageWriteError),
     Pack(PackBinaryError),
     Capacity { required: usize, maximum: usize },
@@ -458,6 +464,157 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
             bytes: &frame[..dispatch.wire_bytes],
         }));
         Ok(())
+    }
+
+    pub(crate) fn settle_remote_control_target_pairing_authorization_into<F>(
+        &mut self,
+        settlement: SettleRemoteControlTargetPairingAuthorization,
+        interfaces: AttachedInterfaces<'_>,
+        now: InstantMillis,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> Result<
+        RemoteControlTargetPairingFinalization,
+        SettleRemoteControlTargetPairingAuthorizationFailure,
+    >
+    where
+        F: FnMut(&mut [u8]),
+    {
+        let attempt_id = settlement.attempt_id;
+        match settlement.persistence {
+            RemoteControlTargetPairingAuthorizationPersistence::Failed => {
+                match self
+                    .remote_control_target_pairing
+                    .authorization_failed(attempt_id)
+                {
+                    FailRemoteControlTargetPairingAuthorizationOutcome::Aborted {
+                        attempt_id,
+                        responder,
+                    } => Ok(
+                        RemoteControlTargetPairingFinalization::AuthorizationFailureRecorded {
+                            attempt_id,
+                            responder,
+                        },
+                    ),
+                    FailRemoteControlTargetPairingAuthorizationOutcome::NoAuthorizationOwed => Err(
+                        SettleRemoteControlTargetPairingAuthorizationFailure::NoAuthorizationOwed {
+                            settled: attempt_id,
+                        },
+                    ),
+                    FailRemoteControlTargetPairingAuthorizationOutcome::AttemptMismatch {
+                        settled,
+                        active,
+                    } => Err(
+                        SettleRemoteControlTargetPairingAuthorizationFailure::AttemptMismatch {
+                            settled,
+                            active,
+                        },
+                    ),
+                }
+            }
+            RemoteControlTargetPairingAuthorizationPersistence::Persisted => {
+                let target_identity = match self.remote_control_target_pairing.view() {
+                    RemoteControlTargetPairingView::Authorizing(attempt)
+                        if attempt.attempt_id() == attempt_id =>
+                    {
+                        attempt.target().identity_hash()
+                    }
+                    RemoteControlTargetPairingView::Authorizing(attempt) => {
+                        return Err(
+                            SettleRemoteControlTargetPairingAuthorizationFailure::AttemptMismatch {
+                                settled: attempt_id,
+                                active: attempt.attempt_id(),
+                            },
+                        )
+                    }
+                    RemoteControlTargetPairingView::Idle
+                    | RemoteControlTargetPairingView::OfferPrepared(_)
+                    | RemoteControlTargetPairingView::AwaitingBoth(_)
+                    | RemoteControlTargetPairingView::AwaitingTargetApproval(_)
+                    | RemoteControlTargetPairingView::AwaitingControllerCommit(_)
+                    | RemoteControlTargetPairingView::Completing(_) => return Err(
+                        SettleRemoteControlTargetPairingAuthorizationFailure::NoAuthorizationOwed {
+                            settled: attempt_id,
+                        },
+                    ),
+                };
+                let Some(target_signer) = self.held_identities.get(&target_identity) else {
+                    return Err(
+                        SettleRemoteControlTargetPairingAuthorizationFailure::TargetSignerUnavailable {
+                            attempt_id,
+                            target_identity,
+                        },
+                    );
+                };
+                let (attempt_id, responder, completed) = match self
+                    .remote_control_target_pairing
+                    .authorization_persisted(attempt_id, &target_signer)
+                {
+                    PersistRemoteControlTargetPairingAuthorizationOutcome::CompletionOwed {
+                        attempt_id,
+                        responder,
+                        completed,
+                    } => (attempt_id, responder, completed),
+                    PersistRemoteControlTargetPairingAuthorizationOutcome::SigningFailed {
+                        attempt_id,
+                        error,
+                    } => {
+                        return Err(
+                            SettleRemoteControlTargetPairingAuthorizationFailure::CompletionSigningFailed {
+                                attempt_id,
+                                error,
+                            },
+                        )
+                    }
+                    PersistRemoteControlTargetPairingAuthorizationOutcome::NoAuthorizationOwed => {
+                        return Err(
+                            SettleRemoteControlTargetPairingAuthorizationFailure::NoAuthorizationOwed {
+                                settled: attempt_id,
+                            },
+                        )
+                    }
+                    PersistRemoteControlTargetPairingAuthorizationOutcome::AttemptMismatch {
+                        settled,
+                        active,
+                    } => {
+                        return Err(
+                            SettleRemoteControlTargetPairingAuthorizationFailure::AttemptMismatch {
+                                settled,
+                                active,
+                            },
+                        )
+                    }
+                };
+                match self.remote_control_target_pairing.complete(attempt_id) {
+                    CompleteRemoteControlTargetPairingOutcome::Completed {
+                        attempt_id: completed,
+                    } if completed == attempt_id => {}
+                    transition => {
+                        return Err(
+                            SettleRemoteControlTargetPairingAuthorizationFailure::CompletionStateMismatch {
+                                attempt_id,
+                                transition,
+                            },
+                        )
+                    }
+                }
+                self.dispatch_remote_control_pairing_response(
+                    responder,
+                    RemoteControlPairingResponse::Completed(completed),
+                    interfaces,
+                    now,
+                    fill_entropy,
+                    sink,
+                )
+                .map_err(|failure| {
+                    SettleRemoteControlTargetPairingAuthorizationFailure::CompletionDispatchFailed {
+                        attempt_id,
+                        failure,
+                    }
+                })?;
+                Ok(RemoteControlTargetPairingFinalization::PairingCompleted { attempt_id })
+            }
+        }
     }
 
     pub(crate) fn ingest_open_remote_control_pairing(

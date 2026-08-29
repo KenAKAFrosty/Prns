@@ -81,7 +81,9 @@ pub use registration::{
     RouteSeedOutcome, SetTransportIdentityError, UnregisterDestinationOutcome,
     VerifiedPersistedRoute,
 };
-pub use remote_control_pairing::ConfigureRemoteControlPairingError;
+pub use remote_control_pairing::{
+    ConfigureRemoteControlPairingError, RemoteControlPairingResponseDispatchFailure,
+};
 pub(crate) use settlement::{link_closed_settlement, settle};
 pub use state::{
     EngineProtocolPolicy, EngineState, LinkMtuDiscovery, LocalHopCountOverride,

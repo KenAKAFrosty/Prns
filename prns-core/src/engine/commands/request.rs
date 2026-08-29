@@ -148,7 +148,8 @@ impl Settleable for SendRequest {
             | Settlement::OpenRemoteControlPairing(_)
             | Settlement::CloseRemoteControlPairing(_)
             | Settlement::ApproveRemoteControlTargetPairing(_)
-            | Settlement::RejectRemoteControlTargetPairing(_) => None,
+            | Settlement::RejectRemoteControlTargetPairing(_)
+            | Settlement::SettleRemoteControlTargetPairingAuthorization(_) => None,
         }
     }
 }
@@ -183,7 +184,8 @@ impl Settleable for Respond {
             | Settlement::OpenRemoteControlPairing(_)
             | Settlement::CloseRemoteControlPairing(_)
             | Settlement::ApproveRemoteControlTargetPairing(_)
-            | Settlement::RejectRemoteControlTargetPairing(_) => None,
+            | Settlement::RejectRemoteControlTargetPairing(_)
+            | Settlement::SettleRemoteControlTargetPairingAuthorization(_) => None,
         }
     }
 }
@@ -218,7 +220,8 @@ impl Settleable for AllowRequester {
             | Settlement::OpenRemoteControlPairing(_)
             | Settlement::CloseRemoteControlPairing(_)
             | Settlement::ApproveRemoteControlTargetPairing(_)
-            | Settlement::RejectRemoteControlTargetPairing(_) => None,
+            | Settlement::RejectRemoteControlTargetPairing(_)
+            | Settlement::SettleRemoteControlTargetPairingAuthorization(_) => None,
         }
     }
 }
