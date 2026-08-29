@@ -65,7 +65,9 @@ impl Settleable for RequestPath {
             | Settlement::SetRegisteredAnnounceAppData(_)
             | Settlement::SendPlainPacket(_)
             | Settlement::OpenRemoteControlPairing(_)
-            | Settlement::CloseRemoteControlPairing(_) => None,
+            | Settlement::CloseRemoteControlPairing(_)
+            | Settlement::ApproveRemoteControlTargetPairing(_)
+            | Settlement::RejectRemoteControlTargetPairing(_) => None,
         }
     }
 }

@@ -9,9 +9,10 @@ use crate::engine::{
     CloseLinkFailure, CommandOutcome, CommandedAnnounceWriteOutcome, Directive, EgressTarget,
     EncryptOwed, EngineReaction, EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome,
     FanTarget, FinishSendSinglePacketOutcome, IdentifyFailure, IdentifyRejection, InstantMillis,
-    IssuedCommand, Journaled, PathRequestWriteOutcome, RequestPathFailure, RespondFailure,
-    RespondRejection, SendGroupEntropy, SendGroupFailure, SendPlainPacketFailure,
-    SendRequestFailure, SendRequestRejection, SendSinglePacketEntropy, SendSinglePacketFailure,
+    IssuedCommand, Journaled, PathRequestWriteOutcome, RemoteControlTargetPairingApproval,
+    RemoteControlTargetPairingRejection, RequestPathFailure, RespondFailure, RespondRejection,
+    SendGroupEntropy, SendGroupFailure, SendPlainPacketFailure, SendRequestFailure,
+    SendRequestRejection, SendSinglePacketEntropy, SendSinglePacketFailure,
     SendSinglePacketWriteError, SendSinglePacketWriteOutcome, SendToChannelFailure,
     SendToChannelRejection, SendToLinkFailure, SendToLinkRejection,
     SetRegisteredAnnounceAppDataFailure, SetResourceStrategyFailure, Settlement, WakeSchedules,
@@ -19,6 +20,9 @@ use crate::engine::{
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::AttachedInterfaces;
 use crate::interfaces::InterfaceId;
+use crate::remote_control::{
+    ApproveRemoteControlTargetPairingOutcome, RejectRemoteControlTargetPairingOutcome,
+};
 use crate::routing::delivery::receipts::ReceiptKind;
 use crate::routing::links::channel::send::SendToChannelWriteError;
 use crate::routing::links::channel::CHANNEL_ENVELOPE_HEADER_LEN;
@@ -298,6 +302,42 @@ impl<S: StorageLayout> EngineState<S> {
                     id,
                     Settlement::CloseRemoteControlPairing(Err(failure)),
                 );
+            }
+            CommandOutcome::OwesApproveRemoteControlTargetPairing { id, approve } => {
+                let transition = self
+                    .remote_control_target_pairing
+                    .approve(approve.attempt_id, now);
+                if let ApproveRemoteControlTargetPairingOutcome::Expired { expired } = transition {
+                    sink(EngineReaction::Journaled(
+                        Journaled::RemoteControlTargetPairingExpired { aborted: expired },
+                    ));
+                }
+                settle(
+                    sink,
+                    id,
+                    Settlement::ApproveRemoteControlTargetPairing(
+                        RemoteControlTargetPairingApproval::from_transition(transition),
+                    ),
+                );
+                wake_schedule_changes.remote_control_pairing = self.remote_control_pairing_wake();
+            }
+            CommandOutcome::OwesRejectRemoteControlTargetPairing { id, reject } => {
+                let transition = self
+                    .remote_control_target_pairing
+                    .reject(reject.attempt_id, now);
+                if let RejectRemoteControlTargetPairingOutcome::Expired { expired } = transition {
+                    sink(EngineReaction::Journaled(
+                        Journaled::RemoteControlTargetPairingExpired { aborted: expired },
+                    ));
+                }
+                settle(
+                    sink,
+                    id,
+                    Settlement::RejectRemoteControlTargetPairing(
+                        RemoteControlTargetPairingRejection::from_transition(transition),
+                    ),
+                );
+                wake_schedule_changes.remote_control_pairing = self.remote_control_pairing_wake();
             }
             CommandOutcome::OwesPathRequest { id, request } => {
                 let mut buf = [0u8; BROADCAST_MTU];

@@ -714,16 +714,21 @@ mod tests {
     use crate::crypto::{x25519_diffie_hellman, x25519_public_key, X25519SecretKey};
     use crate::engine::test_support::{fixed_secret_key, routable_descriptor, TestStorageLayout};
     use crate::engine::{
+        ApproveRemoteControlTargetPairing, ApproveRemoteControlTargetPairingFailure,
         CloseRemoteControlPairing, CommandId, Directive, IngestIo, IssuedCommand, Journaled,
-        PrnsCommand, Settlement, WakeReason,
+        PrnsCommand, RejectRemoteControlTargetPairing, RejectRemoteControlTargetPairingFailure,
+        RemoteControlTargetPairingApproval, RemoteControlTargetPairingRejection, Settlement,
+        WakeReason,
     };
     use crate::identity::{IdentityPublicKeys, IdentitySigner};
     use crate::interfaces::{EgressCapability, InboundPacket, InterfaceDescriptor, InterfaceId};
     use crate::remote_control::{
-        RemoteControlControllerIdentity, RemoteControlPairingAttemptTimeout,
-        RemoteControlPairingBegin, RemoteControlPairingEndpoint, RemoteControlPairingExpiresAfter,
+        RemoteControlControllerGrant, RemoteControlControllerIdentity,
+        RemoteControlPairingAttemptTimeout, RemoteControlPairingBegin,
+        RemoteControlPairingEndpoint, RemoteControlPairingExpiresAfter,
         RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
-        RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlTargetPairingView,
+        RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlTargetPairingCommitArrival,
+        RemoteControlTargetPairingResponder, RemoteControlTargetPairingView,
     };
     use crate::routing::dedup::PacketHash;
     use crate::routing::links::data::write_link_packet;
@@ -767,8 +772,12 @@ mod tests {
     }
 
     fn controller_identity() -> RemoteControlControllerIdentity {
+        controller_identity_from_secret_fill(0xD2)
+    }
+
+    fn controller_identity_from_secret_fill(fill: u8) -> RemoteControlControllerIdentity {
         let signer = InMemoryNodeIdentity::from_secret_key_bytes(&Zeroizing::new(
-            [0xD2; IDENTITY_SECRET_KEY_LEN],
+            [fill; IDENTITY_SECRET_KEY_LEN],
         ));
         RemoteControlControllerIdentity::new(IdentityPublicKeys {
             encryption: signer.encryption_public_key(),
@@ -895,6 +904,43 @@ mod tests {
         let header_len = write_packed_binary_header(encoded.len(), &mut packed).unwrap();
         packed[header_len..header_len + encoded.len()].copy_from_slice(encoded);
         packed[..header_len + encoded.len()].to_vec()
+    }
+
+    fn dispatch_pairing_offer(
+        engine: &mut crate::engine::EngineState<TestStorageLayout>,
+        interfaces: &[InterfaceDescriptor],
+        endpoint: RemoteControlPairingEndpoint,
+        link_id: LinkId,
+        controller: RemoteControlControllerIdentity,
+        request_id: RequestId,
+    ) -> RemoteControlPairingAttemptId {
+        let mut encoded = [0u8; RemoteControlPairingRequest::MAX_ENCODED_LEN];
+        let encoded_len =
+            RemoteControlPairingRequest::Begin(RemoteControlPairingBegin::new(controller))
+                .write_into(&mut encoded)
+                .unwrap();
+        let packed = packed_pairing_payload(&encoded[..encoded_len]);
+        let outcome = engine.ingest_remote_control_pairing_request(
+            RemoteControlPairingRequestIngress {
+                destination: endpoint.destination_hash(),
+                link_id,
+                request_id,
+                requester: Some(controller.identity_hash()),
+                path_hash: RequestPathHash::of(REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID),
+                data: &packed,
+            },
+            AttachedInterfaces::new(interfaces),
+            InstantMillis(2_000),
+            &mut |bytes| bytes.fill(0xF7),
+            &mut |_| {},
+        );
+        let RemoteControlPairingRequestIngressOutcome::Pairing(
+            RemoteControlPairingRequestOutcome::OfferDispatched { attempt_id },
+        ) = outcome
+        else {
+            panic!("offer dispatched")
+        };
+        attempt_id
     }
 
     #[test]
@@ -1537,6 +1583,305 @@ mod tests {
         );
         assert_eq!(
             engine.remote_control_pairing_wake(),
+            crate::engine::WakeSchedule::At(InstantMillis(61_000)),
+        );
+    }
+
+    #[test]
+    fn target_decision_commands_approve_or_reject_the_exact_offered_attempt() {
+        let controller = controller_identity();
+        let (mut approving, interfaces, endpoint, link_id, _, _) =
+            open_pairing_link(controller.identity_hash());
+        let approved_attempt = dispatch_pairing_offer(
+            &mut approving,
+            &interfaces,
+            endpoint,
+            link_id,
+            controller,
+            RequestId([0xA1; 16]),
+        );
+        let mut approval = None;
+        let approval_wake = approving.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(0xA2),
+                command: PrnsCommand::ApproveRemoteControlTargetPairing(
+                    ApproveRemoteControlTargetPairing {
+                        attempt_id: approved_attempt,
+                    },
+                ),
+            },
+            AttachedInterfaces::new(&interfaces),
+            InstantMillis(2_100),
+            &mut |_| panic!("target approval needs no entropy"),
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) =
+                    reaction
+                {
+                    approval = Some((id, settlement));
+                }
+            },
+        );
+        assert_eq!(
+            approval,
+            Some((
+                CommandId(0xA2),
+                Settlement::ApproveRemoteControlTargetPairing(Ok(
+                    RemoteControlTargetPairingApproval::AwaitingControllerCommit {
+                        attempt_id: approved_attempt,
+                    },
+                )),
+            )),
+        );
+        assert!(matches!(
+            approving.remote_control_target_pairing.view(),
+            RemoteControlTargetPairingView::AwaitingControllerCommit(attempt)
+                if attempt.attempt_id() == approved_attempt
+        ));
+        assert_eq!(
+            approval_wake.remote_control_pairing,
+            crate::engine::WakeSchedule::At(InstantMillis(32_000)),
+        );
+
+        let (mut rejecting, interfaces, endpoint, link_id, _, _) =
+            open_pairing_link(controller.identity_hash());
+        let rejected_attempt = dispatch_pairing_offer(
+            &mut rejecting,
+            &interfaces,
+            endpoint,
+            link_id,
+            controller,
+            RequestId([0xA3; 16]),
+        );
+        let aborted = RemoteControlTargetPairingAborted::AwaitingBoth {
+            attempt_id: rejected_attempt,
+            context: crate::remote_control::RemoteControlPairingContext::new(endpoint, link_id),
+        };
+        let mut rejection = None;
+        let rejection_wake = rejecting.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(0xA4),
+                command: PrnsCommand::RejectRemoteControlTargetPairing(
+                    RejectRemoteControlTargetPairing {
+                        attempt_id: rejected_attempt,
+                    },
+                ),
+            },
+            AttachedInterfaces::new(&interfaces),
+            InstantMillis(2_100),
+            &mut |_| panic!("target rejection needs no entropy"),
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) =
+                    reaction
+                {
+                    rejection = Some((id, settlement));
+                }
+            },
+        );
+        assert_eq!(
+            rejection,
+            Some((
+                CommandId(0xA4),
+                Settlement::RejectRemoteControlTargetPairing(Ok(
+                    RemoteControlTargetPairingRejection { aborted },
+                )),
+            )),
+        );
+        assert_eq!(
+            rejecting.remote_control_target_pairing.view(),
+            RemoteControlTargetPairingView::Idle,
+        );
+        assert_eq!(
+            rejection_wake.remote_control_pairing,
+            crate::engine::WakeSchedule::At(InstantMillis(61_000)),
+        );
+    }
+
+    #[test]
+    fn target_decision_commands_preserve_mismatch_and_expiry() {
+        let controller = controller_identity();
+        let (mut engine, interfaces, endpoint, link_id, _, _) =
+            open_pairing_link(controller.identity_hash());
+        let active = dispatch_pairing_offer(
+            &mut engine,
+            &interfaces,
+            endpoint,
+            link_id,
+            controller,
+            RequestId([0xB1; 16]),
+        );
+        let other_controller = controller_identity_from_secret_fill(0xD9);
+        let (mut other, other_interfaces, other_endpoint, other_link_id, _, _) =
+            open_pairing_link(other_controller.identity_hash());
+        let requested = dispatch_pairing_offer(
+            &mut other,
+            &other_interfaces,
+            other_endpoint,
+            other_link_id,
+            other_controller,
+            RequestId([0xB2; 16]),
+        );
+        assert_ne!(requested, active);
+        let mut mismatch = None;
+        engine.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(0xB3),
+                command: PrnsCommand::RejectRemoteControlTargetPairing(
+                    RejectRemoteControlTargetPairing {
+                        attempt_id: requested,
+                    },
+                ),
+            },
+            AttachedInterfaces::new(&interfaces),
+            InstantMillis(2_100),
+            &mut |_| panic!("mismatched rejection needs no entropy"),
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::CommandSettled { settlement, .. }) =
+                    reaction
+                {
+                    mismatch = Some(settlement);
+                }
+            },
+        );
+        assert_eq!(
+            mismatch,
+            Some(Settlement::RejectRemoteControlTargetPairing(Err(
+                RejectRemoteControlTargetPairingFailure::AttemptMismatch { requested, active },
+            ))),
+        );
+        assert!(matches!(
+            engine.remote_control_target_pairing.view(),
+            RemoteControlTargetPairingView::AwaitingBoth(attempt)
+                if attempt.attempt_id() == active
+        ));
+
+        let expired = RemoteControlTargetPairingAborted::AwaitingBoth {
+            attempt_id: active,
+            context: crate::remote_control::RemoteControlPairingContext::new(endpoint, link_id),
+        };
+        let mut expiry_event = None;
+        let mut expiry_settlement = None;
+        let wake = engine.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(0xB4),
+                command: PrnsCommand::ApproveRemoteControlTargetPairing(
+                    ApproveRemoteControlTargetPairing { attempt_id: active },
+                ),
+            },
+            AttachedInterfaces::new(&interfaces),
+            InstantMillis(32_000),
+            &mut |_| panic!("expired approval needs no entropy"),
+            &mut |reaction| match reaction {
+                EngineReaction::Journaled(Journaled::RemoteControlTargetPairingExpired {
+                    aborted,
+                }) => expiry_event = Some(aborted),
+                EngineReaction::Journaled(Journaled::CommandSettled { settlement, .. }) => {
+                    expiry_settlement = Some(settlement);
+                }
+                EngineReaction::Directive(_) | EngineReaction::Journaled(_) => {}
+            },
+        );
+        assert_eq!(expiry_event, Some(expired));
+        assert_eq!(
+            expiry_settlement,
+            Some(Settlement::ApproveRemoteControlTargetPairing(Err(
+                ApproveRemoteControlTargetPairingFailure::Expired { expired },
+            ))),
+        );
+        assert_eq!(
+            engine.remote_control_target_pairing.view(),
+            RemoteControlTargetPairingView::Idle,
+        );
+        assert_eq!(
+            wake.remote_control_pairing,
+            crate::engine::WakeSchedule::At(InstantMillis(61_000)),
+        );
+    }
+
+    #[test]
+    fn approval_after_controller_commit_owes_the_exact_authorization() {
+        let controller = controller_identity();
+        let (mut engine, interfaces, endpoint, link_id, _, _) =
+            open_pairing_link(controller.identity_hash());
+        let attempt_id = dispatch_pairing_offer(
+            &mut engine,
+            &interfaces,
+            endpoint,
+            link_id,
+            controller,
+            RequestId([0xC1; 16]),
+        );
+        let target_signer = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
+        let begin = RemoteControlPairingBegin::new(controller);
+        let (permissions, attempt_timeout) = match engine.remote_control_pairing_view() {
+            RemoteControlPairingView::Open(session) => {
+                (session.permissions().clone(), session.attempt_timeout())
+            }
+            RemoteControlPairingView::Unavailable | RemoteControlPairingView::Closed => {
+                panic!("open pairing")
+            }
+        };
+        let prepared = crate::remote_control::RemoteControlPairingPreparedOffer::new(
+            &target_signer,
+            crate::remote_control::RemoteControlPairingContext::new(endpoint, link_id),
+            &begin,
+            permissions.clone(),
+            attempt_timeout,
+        );
+        let responder = RemoteControlTargetPairingResponder::new(link_id, RequestId([0xC2; 16]));
+        assert_eq!(
+            engine.remote_control_target_pairing.commit(
+                RemoteControlTargetPairingCommitArrival::new(
+                    crate::remote_control::RemoteControlPairingCommit::new(
+                        prepared.transcript(),
+                    ),
+                    responder,
+                ),
+                InstantMillis(2_100),
+            ),
+            crate::remote_control::CommitRemoteControlTargetPairingOutcome::AwaitingTargetApproval {
+                attempt_id,
+            },
+        );
+        let expected_grant =
+            RemoteControlControllerGrant::new(controller, permissions.into_permitted_requests())
+                .unwrap();
+        let mut settlement = None;
+        let wake = engine.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(0xC3),
+                command: PrnsCommand::ApproveRemoteControlTargetPairing(
+                    ApproveRemoteControlTargetPairing { attempt_id },
+                ),
+            },
+            AttachedInterfaces::new(&interfaces),
+            InstantMillis(2_200),
+            &mut |_| panic!("target approval needs no entropy"),
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::CommandSettled {
+                    settlement: observed,
+                    ..
+                }) = reaction
+                {
+                    settlement = Some(observed);
+                }
+            },
+        );
+        assert_eq!(
+            settlement,
+            Some(Settlement::ApproveRemoteControlTargetPairing(Ok(
+                RemoteControlTargetPairingApproval::AuthorizationOwed {
+                    attempt_id,
+                    grant: expected_grant,
+                },
+            ))),
+        );
+        assert!(matches!(
+            engine.remote_control_target_pairing.view(),
+            RemoteControlTargetPairingView::Authorizing(attempt)
+                if attempt.attempt_id() == attempt_id
+        ));
+        assert_eq!(
+            wake.remote_control_pairing,
             crate::engine::WakeSchedule::At(InstantMillis(61_000)),
         );
     }

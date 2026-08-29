@@ -33,9 +33,12 @@ pub use registered_announce_app_data::{
     SetRegisteredAnnounceAppDataRejection,
 };
 pub use remote_control_pairing::{
+    ApproveRemoteControlTargetPairing, ApproveRemoteControlTargetPairingFailure,
     CloseRemoteControlPairing, CloseRemoteControlPairingFailure, CloseRemoteControlPairingOutcome,
     OpenRemoteControlPairing, OpenRemoteControlPairingFailure, OpenRemoteControlPairingRejection,
-    RemoteControlPairingOpened,
+    RejectRemoteControlTargetPairing, RejectRemoteControlTargetPairingFailure,
+    RemoteControlPairingOpened, RemoteControlTargetPairingApproval,
+    RemoteControlTargetPairingRejection,
 };
 pub use request::{
     AllowRequester, AllowRequesterFailure, AllowRequesterRejection, RequestResponseTimeout,
@@ -96,6 +99,8 @@ pub enum PrnsCommand {
     SendPlainPacket(SendPlainPacket),
     OpenRemoteControlPairing(OpenRemoteControlPairing),
     CloseRemoteControlPairing(CloseRemoteControlPairing),
+    ApproveRemoteControlTargetPairing(ApproveRemoteControlTargetPairing),
+    RejectRemoteControlTargetPairing(RejectRemoteControlTargetPairing),
 }
 
 // The Owes* variants hand the caller its whole command payload back (SendSinglePacket rides ~400B of heapless body) beside slim rejections. Outcomes are transient by-value returns, destructured immediately, and the no-alloc core has no Box to shrink them.
@@ -155,6 +160,14 @@ pub enum CommandOutcome {
     CloseRemoteControlPairingRejected {
         id: CommandId,
         failure: CloseRemoteControlPairingFailure,
+    },
+    OwesApproveRemoteControlTargetPairing {
+        id: CommandId,
+        approve: ApproveRemoteControlTargetPairing,
+    },
+    OwesRejectRemoteControlTargetPairing {
+        id: CommandId,
+        reject: RejectRemoteControlTargetPairing,
     },
     OwesPathRequest {
         id: CommandId,
@@ -261,6 +274,12 @@ pub enum Settlement {
     CloseRemoteControlPairing(
         Result<CloseRemoteControlPairingOutcome, CloseRemoteControlPairingFailure>,
     ),
+    ApproveRemoteControlTargetPairing(
+        Result<RemoteControlTargetPairingApproval, ApproveRemoteControlTargetPairingFailure>,
+    ),
+    RejectRemoteControlTargetPairing(
+        Result<RemoteControlTargetPairingRejection, RejectRemoteControlTargetPairingFailure>,
+    ),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -332,6 +351,12 @@ impl<S: StorageLayout> EngineState<S> {
             }
             PrnsCommand::CloseRemoteControlPairing(_) => {
                 self.ingest_close_remote_control_pairing(id)
+            }
+            PrnsCommand::ApproveRemoteControlTargetPairing(approve) => {
+                CommandOutcome::OwesApproveRemoteControlTargetPairing { id, approve }
+            }
+            PrnsCommand::RejectRemoteControlTargetPairing(reject) => {
+                CommandOutcome::OwesRejectRemoteControlTargetPairing { id, reject }
             }
             PrnsCommand::RequestPath(request) => CommandOutcome::OwesPathRequest { id, request },
             PrnsCommand::EstablishLink(establish) => self.ingest_establish_link(id, establish),

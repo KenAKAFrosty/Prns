@@ -129,7 +129,9 @@ impl Settleable for EstablishLink {
             | Settlement::SetRegisteredAnnounceAppData(_)
             | Settlement::SendPlainPacket(_)
             | Settlement::OpenRemoteControlPairing(_)
-            | Settlement::CloseRemoteControlPairing(_) => None,
+            | Settlement::CloseRemoteControlPairing(_)
+            | Settlement::ApproveRemoteControlTargetPairing(_)
+            | Settlement::RejectRemoteControlTargetPairing(_) => None,
         }
     }
 }
@@ -164,7 +166,9 @@ impl Settleable for SendToLink {
             | Settlement::SetRegisteredAnnounceAppData(_)
             | Settlement::SendPlainPacket(_)
             | Settlement::OpenRemoteControlPairing(_)
-            | Settlement::CloseRemoteControlPairing(_) => None,
+            | Settlement::CloseRemoteControlPairing(_)
+            | Settlement::ApproveRemoteControlTargetPairing(_)
+            | Settlement::RejectRemoteControlTargetPairing(_) => None,
         }
     }
 }
@@ -197,7 +201,9 @@ impl Settleable for Identify {
             | Settlement::SetRegisteredAnnounceAppData(_)
             | Settlement::SendPlainPacket(_)
             | Settlement::OpenRemoteControlPairing(_)
-            | Settlement::CloseRemoteControlPairing(_) => None,
+            | Settlement::CloseRemoteControlPairing(_)
+            | Settlement::ApproveRemoteControlTargetPairing(_)
+            | Settlement::RejectRemoteControlTargetPairing(_) => None,
         }
     }
 }
@@ -230,7 +236,9 @@ impl Settleable for CloseLink {
             | Settlement::SetRegisteredAnnounceAppData(_)
             | Settlement::SendPlainPacket(_)
             | Settlement::OpenRemoteControlPairing(_)
-            | Settlement::CloseRemoteControlPairing(_) => None,
+            | Settlement::CloseRemoteControlPairing(_)
+            | Settlement::ApproveRemoteControlTargetPairing(_)
+            | Settlement::RejectRemoteControlTargetPairing(_) => None,
         }
     }
 }

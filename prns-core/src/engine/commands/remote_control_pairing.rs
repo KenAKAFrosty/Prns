@@ -1,8 +1,11 @@
 use crate::identity::held::HoldIdentityError;
 use crate::remote_control::{
+    ApproveRemoteControlTargetPairingOutcome, RejectRemoteControlTargetPairingOutcome,
+    RemoteControlControllerGrant, RemoteControlPairingAttemptId,
     RemoteControlPairingAttemptTimeout, RemoteControlPairingAvailabilityWriteError,
     RemoteControlPairingEndpoint, RemoteControlPairingExpiresAfter,
     RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
+    RemoteControlTargetPairingAborted,
 };
 use crate::routing::delivery::send_plain::SendPlainPacketWriteError;
 use crate::routing::links::LinkId;
@@ -82,7 +85,9 @@ impl Settleable for OpenRemoteControlPairing {
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
             | Settlement::SendPlainPacket(_)
-            | Settlement::CloseRemoteControlPairing(_) => None,
+            | Settlement::CloseRemoteControlPairing(_)
+            | Settlement::ApproveRemoteControlTargetPairing(_)
+            | Settlement::RejectRemoteControlTargetPairing(_) => None,
         }
     }
 }
@@ -138,7 +143,212 @@ impl Settleable for CloseRemoteControlPairing {
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
             | Settlement::SendPlainPacket(_)
-            | Settlement::OpenRemoteControlPairing(_) => None,
+            | Settlement::OpenRemoteControlPairing(_)
+            | Settlement::ApproveRemoteControlTargetPairing(_)
+            | Settlement::RejectRemoteControlTargetPairing(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ApproveRemoteControlTargetPairing {
+    pub attempt_id: RemoteControlPairingAttemptId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlTargetPairingApproval {
+    AwaitingControllerCommit {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
+    AuthorizationOwed {
+        attempt_id: RemoteControlPairingAttemptId,
+        grant: RemoteControlControllerGrant,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApproveRemoteControlTargetPairingFailure {
+    Expired {
+        expired: RemoteControlTargetPairingAborted,
+    },
+    NoActiveAttempt,
+    AttemptMismatch {
+        requested: RemoteControlPairingAttemptId,
+        active: RemoteControlPairingAttemptId,
+    },
+    OfferPendingDispatch {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
+    AlreadyApproved {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
+    FinalizationInProgress {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
+}
+
+impl RemoteControlTargetPairingApproval {
+    pub(crate) const fn from_transition(
+        outcome: ApproveRemoteControlTargetPairingOutcome,
+    ) -> Result<Self, ApproveRemoteControlTargetPairingFailure> {
+        match outcome {
+            ApproveRemoteControlTargetPairingOutcome::AwaitingControllerCommit { attempt_id } => {
+                Ok(Self::AwaitingControllerCommit { attempt_id })
+            }
+            ApproveRemoteControlTargetPairingOutcome::AuthorizationOwed { attempt_id, grant } => {
+                Ok(Self::AuthorizationOwed { attempt_id, grant })
+            }
+            ApproveRemoteControlTargetPairingOutcome::Expired { expired } => {
+                Err(ApproveRemoteControlTargetPairingFailure::Expired { expired })
+            }
+            ApproveRemoteControlTargetPairingOutcome::NoActiveAttempt => {
+                Err(ApproveRemoteControlTargetPairingFailure::NoActiveAttempt)
+            }
+            ApproveRemoteControlTargetPairingOutcome::AttemptMismatch { requested, active } => {
+                Err(ApproveRemoteControlTargetPairingFailure::AttemptMismatch { requested, active })
+            }
+            ApproveRemoteControlTargetPairingOutcome::OfferPendingDispatch { attempt_id } => {
+                Err(ApproveRemoteControlTargetPairingFailure::OfferPendingDispatch { attempt_id })
+            }
+            ApproveRemoteControlTargetPairingOutcome::AlreadyApproved { attempt_id } => {
+                Err(ApproveRemoteControlTargetPairingFailure::AlreadyApproved { attempt_id })
+            }
+            ApproveRemoteControlTargetPairingOutcome::FinalizationInProgress { attempt_id } => {
+                Err(ApproveRemoteControlTargetPairingFailure::FinalizationInProgress { attempt_id })
+            }
+        }
+    }
+}
+
+impl Settleable for ApproveRemoteControlTargetPairing {
+    type Success = RemoteControlTargetPairingApproval;
+    type Failure = ApproveRemoteControlTargetPairingFailure;
+
+    fn into_command(self) -> PrnsCommand {
+        PrnsCommand::ApproveRemoteControlTargetPairing(self)
+    }
+
+    fn from_settlement(
+        settlement: Settlement,
+    ) -> Option<Result<RemoteControlTargetPairingApproval, ApproveRemoteControlTargetPairingFailure>>
+    {
+        match settlement {
+            Settlement::ApproveRemoteControlTargetPairing(result) => Some(result),
+            Settlement::AnnounceNow(_)
+            | Settlement::SetRegisteredAnnounceAppData(_)
+            | Settlement::SendSinglePacket(_)
+            | Settlement::SendGroup(_)
+            | Settlement::RequestPath(_)
+            | Settlement::EstablishLink(_)
+            | Settlement::SendToLink(_)
+            | Settlement::Identify(_)
+            | Settlement::SendRequest(_)
+            | Settlement::Respond(_)
+            | Settlement::CloseLink(_)
+            | Settlement::SendResource(_)
+            | Settlement::SetResourceStrategy(_)
+            | Settlement::SendToChannel(_)
+            | Settlement::AllowRequester(_)
+            | Settlement::SendPlainPacket(_)
+            | Settlement::OpenRemoteControlPairing(_)
+            | Settlement::CloseRemoteControlPairing(_)
+            | Settlement::RejectRemoteControlTargetPairing(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RejectRemoteControlTargetPairing {
+    pub attempt_id: RemoteControlPairingAttemptId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemoteControlTargetPairingRejection {
+    pub aborted: RemoteControlTargetPairingAborted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RejectRemoteControlTargetPairingFailure {
+    Expired {
+        expired: RemoteControlTargetPairingAborted,
+    },
+    NoActiveAttempt,
+    AttemptMismatch {
+        requested: RemoteControlPairingAttemptId,
+        active: RemoteControlPairingAttemptId,
+    },
+    OfferPendingDispatch {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
+    AlreadyApproved {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
+    FinalizationInProgress {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
+}
+
+impl RemoteControlTargetPairingRejection {
+    pub(crate) const fn from_transition(
+        outcome: RejectRemoteControlTargetPairingOutcome,
+    ) -> Result<Self, RejectRemoteControlTargetPairingFailure> {
+        match outcome {
+            RejectRemoteControlTargetPairingOutcome::Rejected { aborted } => Ok(Self { aborted }),
+            RejectRemoteControlTargetPairingOutcome::Expired { expired } => {
+                Err(RejectRemoteControlTargetPairingFailure::Expired { expired })
+            }
+            RejectRemoteControlTargetPairingOutcome::NoActiveAttempt => {
+                Err(RejectRemoteControlTargetPairingFailure::NoActiveAttempt)
+            }
+            RejectRemoteControlTargetPairingOutcome::AttemptMismatch { requested, active } => {
+                Err(RejectRemoteControlTargetPairingFailure::AttemptMismatch { requested, active })
+            }
+            RejectRemoteControlTargetPairingOutcome::OfferPendingDispatch { attempt_id } => {
+                Err(RejectRemoteControlTargetPairingFailure::OfferPendingDispatch { attempt_id })
+            }
+            RejectRemoteControlTargetPairingOutcome::AlreadyApproved { attempt_id } => {
+                Err(RejectRemoteControlTargetPairingFailure::AlreadyApproved { attempt_id })
+            }
+            RejectRemoteControlTargetPairingOutcome::FinalizationInProgress { attempt_id } => {
+                Err(RejectRemoteControlTargetPairingFailure::FinalizationInProgress { attempt_id })
+            }
+        }
+    }
+}
+
+impl Settleable for RejectRemoteControlTargetPairing {
+    type Success = RemoteControlTargetPairingRejection;
+    type Failure = RejectRemoteControlTargetPairingFailure;
+
+    fn into_command(self) -> PrnsCommand {
+        PrnsCommand::RejectRemoteControlTargetPairing(self)
+    }
+
+    fn from_settlement(
+        settlement: Settlement,
+    ) -> Option<Result<RemoteControlTargetPairingRejection, RejectRemoteControlTargetPairingFailure>>
+    {
+        match settlement {
+            Settlement::RejectRemoteControlTargetPairing(result) => Some(result),
+            Settlement::AnnounceNow(_)
+            | Settlement::SetRegisteredAnnounceAppData(_)
+            | Settlement::SendSinglePacket(_)
+            | Settlement::SendGroup(_)
+            | Settlement::RequestPath(_)
+            | Settlement::EstablishLink(_)
+            | Settlement::SendToLink(_)
+            | Settlement::Identify(_)
+            | Settlement::SendRequest(_)
+            | Settlement::Respond(_)
+            | Settlement::CloseLink(_)
+            | Settlement::SendResource(_)
+            | Settlement::SetResourceStrategy(_)
+            | Settlement::SendToChannel(_)
+            | Settlement::AllowRequester(_)
+            | Settlement::SendPlainPacket(_)
+            | Settlement::OpenRemoteControlPairing(_)
+            | Settlement::CloseRemoteControlPairing(_)
+            | Settlement::ApproveRemoteControlTargetPairing(_) => None,
         }
     }
 }

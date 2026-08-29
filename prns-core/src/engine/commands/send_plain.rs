@@ -50,7 +50,9 @@ impl Settleable for SendPlainPacket {
             | Settlement::AllowRequester(_)
             | Settlement::SetRegisteredAnnounceAppData(_)
             | Settlement::OpenRemoteControlPairing(_)
-            | Settlement::CloseRemoteControlPairing(_) => None,
+            | Settlement::CloseRemoteControlPairing(_)
+            | Settlement::ApproveRemoteControlTargetPairing(_)
+            | Settlement::RejectRemoteControlTargetPairing(_) => None,
         }
     }
 }
