@@ -57,8 +57,11 @@ const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
 const UNICAST_REPEER_EVERY: u32 = 3;
 const RENDEZVOUS_RECONNECT: ReconnectPolicy = ReconnectPolicy::STANDARD;
 const REBIND_BEACON_CYCLES: u32 = 3;
-/// A full peer lane drops new datagrams rather than allowing one peer to grow process memory unbounded.
-const PEER_INBOUND_DEPTH: usize = 32;
+/// A full peer lane drops new datagrams rather than allowing one peer to grow process memory
+/// unbounded. Keep enough slots to bridge host scheduler bursts: at depth 32, a saturated
+/// loopback receiver spent most of its time dropping between peer-task turns; 128 retained the
+/// offered datagram rate while remaining bounded to about 150 KiB of payload per peer.
+const TOKIO_PEER_INBOUND_DEPTH: usize = 128;
 const TCP_RENDEZVOUS_ACCEPTED_CAPACITY: u8 = u8::MAX;
 const UDP_PEER_CAPACITY: NonZeroU8 = contract::DEFAULT_DISCOVERY_SERVICE_CAPACITY;
 type AutoWifiBrain = contract::FixedAutoInterfaceProtocol<{ UDP_PEER_CAPACITY.get() as usize }>;
@@ -1546,7 +1549,7 @@ impl Supervisor {
         let Some(data) = self.data.clone() else {
             return;
         };
-        let (inbound_tx, inbound_rx) = mpsc::channel(PEER_INBOUND_DEPTH);
+        let (inbound_tx, inbound_rx) = mpsc::channel(TOKIO_PEER_INBOUND_DEPTH);
         let peer = SocketAddrV6::new(
             peer_address.ip_address,
             self.settings.data_port,
@@ -3249,7 +3252,7 @@ mod tests {
         );
         let shared_addr = shared.local_addr().expect("the shared address is known");
 
-        let (demux_tx, demux_rx) = mpsc::channel::<std::vec::Vec<u8>>(PEER_INBOUND_DEPTH);
+        let (demux_tx, demux_rx) = mpsc::channel::<std::vec::Vec<u8>>(TOKIO_PEER_INBOUND_DEPTH);
         let member = AutoWifiPeer::new(
             shared.clone(),
             peer_addr,
