@@ -170,7 +170,10 @@ import {
   packetFrame,
   positiveInteger,
 } from "./values.js";
-import type { WorkerCapabilityCall } from "./worker_protocol.js";
+import type {
+  WorkerCapabilityCall,
+  WorkerCapabilityCallOutcome,
+} from "./worker_protocol.js";
 import {
   registerWorkerCapabilityDispatcher,
   workerEngineHooks,
@@ -818,56 +821,54 @@ export class Prns {
     }
   }
 
-  async #dispatchPageCapability(call: WorkerCapabilityCall): Promise<unknown> {
-    switch (call.operation) {
-      case "registerInterface":
-        return this.#host.registerInterface(call.value as Parameters<RuntimeHost["registerInterface"]>[0]);
-      case "deactivateInterface":
-        return this.#host.deactivateInterface(interfaceId(call.value));
-      case "ingest":
-        return this.#host.ingest(
-          interfaceId(call.value.interfaceId),
-          packetFrame(call.value.bytes),
-        );
-      case "takeOutbound":
-        return this.#host.takeOutboundFor(
-          interfaceId(call.value.interfaceId),
-          call.value.maximumFrames,
-        );
-      case "waitForOutboundActivity":
-        return this.#host.waitForOutboundActivity(interfaceId(call.value));
-      case "createBluetoothReassembler": {
+  async #dispatchPageCapability<Call extends WorkerCapabilityCall>(
+    call: Call,
+  ): Promise<WorkerCapabilityCallOutcome<Call>> {
+    return match(call as WorkerCapabilityCall, {
+      RegisterInterface: (registration) =>
+        this.#host.registerInterface(registration as Parameters<RuntimeHost["registerInterface"]>[0]),
+      DeactivateInterface: (value) =>
+        this.#host.deactivateInterface(interfaceId(value)),
+      Ingest: ({ interfaceId: id, bytes }) =>
+        this.#host.ingest(interfaceId(id), packetFrame(bytes)),
+      TakeOutbound: ({ interfaceId: id, maximumFrames }) =>
+        this.#host.takeOutboundFor(interfaceId(id), maximumFrames),
+      WaitForOutboundActivity: (value) =>
+        this.#host.waitForOutboundActivity(interfaceId(value)),
+      CreateBluetoothReassembler: () => {
         const id = this.#mintPageCodecId();
         this.#pageBluetoothReassemblers.set(
           id,
           this.#host.createBluetoothReassembler(),
         );
         return id;
-      }
-      case "absorbBluetoothFragment": {
-        const reassembler = this.#pageBluetoothReassemblers.get(call.value.id);
+      },
+      AbsorbBluetoothFragment: ({ id, bytes }) => {
+        const reassembler = this.#pageBluetoothReassemblers.get(id);
         if (reassembler === undefined) {
-          throw new Error(`unknown Bluetooth reassembler ${call.value.id}`);
+          throw new Error(`unknown Bluetooth reassembler ${id}`);
         }
-        return reassembler.absorb(call.value.bytes);
-      }
-      case "releaseBluetoothReassembler":
-        return this.#pageBluetoothReassemblers.delete(call.value);
-      case "createUsbAutoDecoder": {
+        return reassembler.absorb(bytes);
+      },
+      ReleaseBluetoothReassembler: (id) => {
+        this.#pageBluetoothReassemblers.delete(id);
+      },
+      CreateUsbAutoDecoder: () => {
         const id = this.#mintPageCodecId();
         this.#pageUsbAutoDecoders.set(id, this.#host.createUsbAutoDecoder());
         return id;
-      }
-      case "feedUsbAutoDecoder": {
-        const decoder = this.#pageUsbAutoDecoders.get(call.value.id);
+      },
+      FeedUsbAutoDecoder: ({ id, bytes }) => {
+        const decoder = this.#pageUsbAutoDecoders.get(id);
         if (decoder === undefined) {
-          throw new Error(`unknown USB Auto decoder ${call.value.id}`);
+          throw new Error(`unknown USB Auto decoder ${id}`);
         }
-        return decoder.feed(call.value.bytes);
-      }
-      case "releaseUsbAutoDecoder":
-        return this.#pageUsbAutoDecoders.delete(call.value);
-    }
+        return decoder.feed(bytes);
+      },
+      ReleaseUsbAutoDecoder: (id) => {
+        this.#pageUsbAutoDecoders.delete(id);
+      },
+    }) as WorkerCapabilityCallOutcome<Call>;
   }
 
   #mintPageCodecId(): number {

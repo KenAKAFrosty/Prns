@@ -1,6 +1,9 @@
 import type { PrnsDiagnosticEvent } from "./events.js";
 import type { MainThreadPrnsOptions } from "./index.js";
-import type { WorkerCapabilityCall } from "./worker_protocol.js";
+import type {
+  WorkerCapabilityCall,
+  WorkerCapabilityCallOutcome,
+} from "./worker_protocol.js";
 
 export type WorkerEngineHooks = {
   readonly eventBatchSink: (batch: Uint8Array) => void;
@@ -8,9 +11,9 @@ export type WorkerEngineHooks = {
   readonly autoWifiSelectionSeed?: Uint8Array;
 };
 
-type WorkerCapabilityDispatcher = (
-  call: WorkerCapabilityCall,
-) => Promise<unknown>;
+type WorkerCapabilityDispatcher = <Call extends WorkerCapabilityCall>(
+  call: Call,
+) => Promise<WorkerCapabilityCallOutcome<Call>>;
 
 const hooksByOptions = new WeakMap<MainThreadPrnsOptions, WorkerEngineHooks>();
 const capabilityDispatchers = new WeakMap<object, WorkerCapabilityDispatcher>();
@@ -36,10 +39,10 @@ export function registerWorkerCapabilityDispatcher(
   capabilityDispatchers.set(owner, dispatcher);
 }
 
-export function dispatchWorkerCapability(
+export function dispatchWorkerCapability<Call extends WorkerCapabilityCall>(
   owner: object,
-  call: WorkerCapabilityCall,
-): Promise<unknown> {
+  call: Call,
+): Promise<WorkerCapabilityCallOutcome<Call>> {
   const dispatcher = capabilityDispatchers.get(owner);
   if (dispatcher === undefined) {
     return Promise.reject(new Error("worker capability dispatcher is unavailable"));

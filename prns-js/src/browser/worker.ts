@@ -1,4 +1,4 @@
-import { Tag } from "../casework.js";
+import { Tag, match } from "../casework.js";
 import type { HostCommand, LinkId } from "../contract.js";
 import { loadWasmModule } from "./bootstrap.js";
 import { describeHostError } from "./host_errors.js";
@@ -19,12 +19,24 @@ import type { SendResourceOptions, StopOutcome } from "./index.js";
 import type { AutoWifiController } from "./auto_wifi/index.js";
 import type {
   WorkerCall,
+  WorkerCapabilityInvocation,
   WorkerCapabilityRequest,
+  WorkerCapabilityResponse,
+  WorkerCapabilitySettlement,
   WorkerControlRequest,
   WorkerControlResponse,
+  WorkerInvocation,
+  WorkerSettlement,
   WorkerStartMessage,
 } from "./worker_protocol.js";
+import { WORKER_WIRE_MAXIMUM_BYTES } from "./worker_protocol.js";
 import { BoundedWorkerEventSender } from "./worker_event_sender.js";
+import {
+  BatchedPortReceiver,
+  BatchedPortSender,
+  messageTaskScheduler,
+} from "../worker_wire/batched_port.js";
+import { MAXIMUM_WIRE_BATCH_ITEMS } from "../worker_wire/wire_batch.js";
 
 type StartedEngine = {
   readonly engine: Prns;
@@ -39,34 +51,33 @@ const workerScope = globalThis as typeof globalThis & {
 };
 
 workerScope.addEventListener("message", (event) => {
-  if (event.data.type === "initialize") {
+  if (event.data.tag === "Initialize") {
     void initialize(event.data);
   }
 });
 
 async function initialize(message: WorkerStartMessage): Promise<void> {
-  const { control, events, capabilities } = message;
+  const { control, events, capabilities } = message.data;
   control.start();
   events.start();
   capabilities.start();
   let eventFlowFailed = false;
   const eventSender = new BoundedWorkerEventSender(
     events,
-    message.initialization.limits,
+    message.data.initialization.limits,
     {
       protocol: (detail) => {
         if (!eventFlowFailed) {
           eventFlowFailed = true;
-          postControl(control, { type: "protocolFailed", detail });
+          postControl(control, Tag("ProtocolFailed", { detail }));
         }
       },
       backpressure: (rejectedEventBytes) => {
         if (!eventFlowFailed) {
           eventFlowFailed = true;
-          postControl(control, {
-            type: "eventBackpressureExceeded",
+          postControl(control, Tag("EventBackpressureExceeded", {
             rejectedEventBytes,
-          });
+          }));
         }
       },
     },
@@ -76,15 +87,14 @@ async function initialize(message: WorkerStartMessage): Promise<void> {
     started = await startEngine(message, eventSender);
   } catch (error) {
     if (!eventFlowFailed) {
-      postControl(control, {
-        type: "protocolFailed",
+      postControl(control, Tag("ProtocolFailed", {
         detail: describeHostError(error),
-      });
+      }));
     }
     return;
   }
   if (started.tag !== "Ready") {
-    postControl(control, { type: "started", outcome: started });
+    postControl(control, Tag("Started", { outcome: started }));
     return;
   }
   const state = started.data;
@@ -93,28 +103,74 @@ async function initialize(message: WorkerStartMessage): Promise<void> {
     controller: undefined,
   };
   let nextSessionId = 1;
-  postControl(control, {
-    type: "started",
+  postControl(control, Tag("Started", {
     outcome: Tag("Ready", {
       backendInfo: state.engine.backendInfo,
       lifecycle: state.engine.lifecycle,
     }),
+  }));
+  const settlementSender = new BatchedPortSender<WorkerSettlement>({
+    port: control,
+    wrap: (batch) => Tag("Settlements", { batch }),
+    maximumItems: MAXIMUM_WIRE_BATCH_ITEMS,
+    maximumBytes: WORKER_WIRE_MAXIMUM_BYTES,
+    scheduleTask: messageTaskScheduler(),
+    failed: (error) => {
+      postControl(control, Tag("ProtocolFailed", {
+        detail: describeHostError(error),
+      }));
+    },
+  });
+  const capabilitySettlementSender = new BatchedPortSender<WorkerCapabilitySettlement>({
+    port: capabilities,
+    wrap: (batch) => Tag("CapabilitySettlements", { batch }),
+    maximumItems: MAXIMUM_WIRE_BATCH_ITEMS,
+    maximumBytes: WORKER_WIRE_MAXIMUM_BYTES,
+    scheduleTask: messageTaskScheduler(),
+    failed: (error) => {
+      postControl(capabilities, Tag("ProtocolFailed", {
+        detail: describeHostError(error),
+      }));
+    },
+  });
+  const callReceiver = new BatchedPortReceiver<WorkerInvocation>((invocation) => {
+    void settleCall(invocation);
+  });
+  const capabilityReceiver = new BatchedPortReceiver<WorkerCapabilityInvocation>((invocation) => {
+    void settleCapability(invocation);
   });
   control.addEventListener("message", (request: MessageEvent<WorkerControlRequest>) => {
-    void settleCall(request.data);
-  });
-  capabilities.addEventListener("message", (request: MessageEvent<WorkerCapabilityRequest>) => {
-    void settleCapability(request.data);
-  });
-
-  async function settleCall(request: WorkerControlRequest): Promise<void> {
-    if (request.type !== "call") {
-      postControl(control, {
-        type: "protocolFailed",
+    if (request.data.tag !== "Calls") {
+      postControl(control, Tag("ProtocolFailed", {
         detail: "worker control channel received an unknown message",
-      });
+      }));
       return;
     }
+    try {
+      callReceiver.receive(request.data.data.batch);
+    } catch (error) {
+      postControl(control, Tag("ProtocolFailed", {
+        detail: describeHostError(error),
+      }));
+    }
+  });
+  capabilities.addEventListener("message", (request: MessageEvent<WorkerCapabilityRequest>) => {
+    if (request.data.tag !== "CapabilityCalls") {
+      postControl(capabilities, Tag("ProtocolFailed", {
+        detail: "worker capability channel received an unknown message",
+      }));
+      return;
+    }
+    try {
+      capabilityReceiver.receive(request.data.data.batch);
+    } catch (error) {
+      postControl(capabilities, Tag("ProtocolFailed", {
+        detail: describeHostError(error),
+      }));
+    }
+  });
+
+  async function settleCall(request: WorkerInvocation): Promise<void> {
     try {
       const callOutcome = await performCall(
         state.engine,
@@ -123,7 +179,7 @@ async function initialize(message: WorkerStartMessage): Promise<void> {
         () => nextSessionId++,
         autoWifi,
       );
-      const outcome = request.call.operation === "stop"
+      const outcome = request.call.tag === "Stop"
         ? {
             stopOutcome: callOutcome,
             persistedState: state.persistenceState(),
@@ -131,41 +187,32 @@ async function initialize(message: WorkerStartMessage): Promise<void> {
             hostSnapshot: await state.engine.hostSnapshot(),
           }
         : callOutcome;
-      postControl(control, {
-        type: "settled",
+      settlementSender.send({
         id: request.id,
+        call: request.call.tag,
         outcome,
       });
     } catch (error) {
-      postControl(control, {
-        type: "protocolFailed",
+      postControl(control, Tag("ProtocolFailed", {
         id: request.id,
         detail: describeHostError(error),
-      });
+      }));
     }
   }
 
-  async function settleCapability(request: WorkerCapabilityRequest): Promise<void> {
-    if (request.type !== "call") {
-      postControl(capabilities, {
-        type: "protocolFailed",
-        detail: "worker capability channel received an unknown message",
-      });
-      return;
-    }
+  async function settleCapability(request: WorkerCapabilityInvocation): Promise<void> {
     try {
       const outcome = await dispatchWorkerCapability(state.engine, request.call);
-      postControl(capabilities, {
-        type: "settled",
+      capabilitySettlementSender.send({
         id: request.id,
+        call: request.call.tag,
         outcome,
       });
     } catch (error) {
-      postControl(capabilities, {
-        type: "protocolFailed",
+      postControl(capabilities, Tag("ProtocolFailed", {
         id: request.id,
         detail: describeHostError(error),
-      });
+      }));
     }
   }
 }
@@ -174,7 +221,7 @@ async function startEngine(
   message: WorkerStartMessage,
   events: BoundedWorkerEventSender,
 ): Promise<ReturnType<typeof Tag<"Ready", StartedEngine>> | Exclude<Awaited<ReturnType<typeof Prns.create>>, { readonly tag: "Ready" }>> {
-  const initialization = message.initialization;
+  const initialization = message.data.initialization;
   const identityStore: IdentityStore = {
     load: async () => Tag("Loaded", initialization.identity),
     save: async () => Tag("Saved"),
@@ -251,30 +298,20 @@ async function performCall(
   mintSessionId: () => number,
   autoWifi: { controller: AutoWifiController | undefined },
 ): Promise<unknown> {
-  switch (call.operation) {
-    case "registerSingleDestination":
-      return engine.registerSingleDestination(call.value);
-    case "registerNodePage":
-      return engine.registerNodePage(call.value);
-    case "execute":
-      return engine.execute(call.value as HostCommand);
-    case "sendResourceBlob":
-      return engine.sendResourceBlob(
-        call.value.linkId as LinkId,
-        call.value.blob,
-        call.value.options as SendResourceOptions,
-      );
-    case "snapshot":
-      return engine.snapshot();
-    case "hostSnapshot":
-      return engine.hostSnapshot();
-    case "stop":
-      return stopEngine(engine, sessions, autoWifi);
-    case "webSocketConnect": {
-      const outcome = await engine.interfaces.webSocket.connect(
-        call.value.url,
-        call.value.options as Parameters<typeof engine.interfaces.webSocket.connect>[1],
-      );
+  return match(call, {
+    RegisterSingleDestination: (options) => engine.registerSingleDestination(options),
+    RegisterNodePage: (appData) => engine.registerNodePage(appData),
+    Execute: (command) => engine.execute(command as HostCommand),
+    SendResourceBlob: ({ linkId, blob, options }) => engine.sendResourceBlob(
+      linkId as LinkId,
+      blob,
+      options as SendResourceOptions,
+    ),
+    Snapshot: () => engine.snapshot(),
+    HostSnapshot: () => engine.hostSnapshot(),
+    Stop: () => stopEngine(engine, sessions, autoWifi),
+    WebSocketConnect: async ({ url, options }) => {
+      const outcome = await engine.interfaces.webSocket.connect(url, options);
       if (outcome.tag !== "Connected") {
         return outcome;
       }
@@ -288,26 +325,26 @@ async function performCall(
         url: outcome.data.url,
         framing: outcome.data.framing,
       });
-    }
-    case "autoWifiStart":
+    },
+    AutoWifiStart: () => {
       autoWifi.controller = engine.interfaces.autoWifi.start();
       return autoWifi.controller.status;
-    case "autoWifiStatus":
-      return autoWifi.controller?.status ?? Tag("Closed");
-    case "autoWifiClose": {
+    },
+    AutoWifiStatus: () => autoWifi.controller?.status ?? Tag("Closed"),
+    AutoWifiClose: () => {
       const controller = autoWifi.controller;
       autoWifi.controller = undefined;
       return controller?.close() ?? Tag("Closed");
-    }
-    case "interfaceSessionClose": {
-      const session = sessions.get(call.value);
+    },
+    InterfaceSessionClose: (id) => {
+      const session = sessions.get(id);
       if (session === undefined) {
         return Tag("Closed");
       }
-      sessions.delete(call.value);
+      sessions.delete(id);
       return session.close();
-    }
-  }
+    },
+  });
 }
 
 async function stopEngine(
@@ -360,6 +397,9 @@ async function stopEngine(
   });
 }
 
-function postControl(port: MessagePort, message: WorkerControlResponse): void {
+function postControl(
+  port: MessagePort,
+  message: WorkerControlResponse | WorkerCapabilityResponse,
+): void {
   port.postMessage(message);
 }

@@ -74,7 +74,6 @@ import type {
   BleIdentityAvailability,
   PrnsWasmModule,
   RegisterSingleDestinationOptions,
-  RuntimeRegisterInterfaceOptions,
 } from "./runtime_contract.js";
 import { BluetoothInterface } from "./bluetooth/index.js";
 import type { BluetoothRuntimeHost } from "./bluetooth/runtime.js";
@@ -101,15 +100,31 @@ import type {
 import { loadOrCreateAutoWifiSelectionSeed } from "./auto_wifi/index.js";
 import type {
   WorkerCall,
+  WorkerCallOutcome,
   WorkerCapabilityCall,
-  WorkerCapabilityRequest,
-  WorkerControlRequest,
+  WorkerCapabilityCallOutcome,
+  WorkerCapabilityResponse,
+  WorkerCapabilitySettlement,
   WorkerControlResponse,
   WorkerEventAcknowledgement,
   WorkerEventMessage,
   WorkerInitialization,
+  WorkerInvocation,
+  WorkerSettlement,
+  WorkerSessionProjection,
   WorkerStartMessage,
 } from "./worker_protocol.js";
+import {
+  WORKER_WIRE_MAXIMUM_BYTES,
+  workerCall,
+  workerCapabilityCall,
+} from "./worker_protocol.js";
+import {
+  BatchedPortReceiver,
+  BatchedPortSender,
+  messageTaskScheduler,
+} from "../worker_wire/batched_port.js";
+import { MAXIMUM_WIRE_BATCH_ITEMS } from "../worker_wire/wire_batch.js";
 
 type WorkerPreparation = {
   readonly initialization: WorkerInitialization;
@@ -127,13 +142,8 @@ type PendingControlCall = PendingCall & {
   readonly call: WorkerCall;
 };
 
-type WorkerSessionProjection = {
-  readonly id: number;
-  readonly name: "websocket";
-  readonly interfaceId: InterfaceId;
-  readonly status: InterfaceSessionStatus;
-  readonly url: string;
-  readonly framing: WebSocketSession["framing"];
+type PendingCapabilityCall = PendingCall & {
+  readonly call: WorkerCapabilityCall;
 };
 
 const WORKER_START_TIMEOUT_MILLIS = 10_000;
@@ -174,13 +184,12 @@ export async function createDedicatedWorkerPrns(
     prepared.data.bleIdentityAvailability,
   );
   const started = client.started();
-  const message: WorkerStartMessage = {
-    type: "initialize",
+  const message: WorkerStartMessage = Tag("Initialize", {
     initialization: prepared.data.initialization,
     control: controlChannel.port2,
     events: eventChannel.port2,
     capabilities: capabilityChannel.port2,
-  };
+  });
   worker.postMessage(message, [
     controlChannel.port2,
     eventChannel.port2,
@@ -205,8 +214,15 @@ class DedicatedWorkerPrns {
   readonly #persistenceStore: BrowserPersistenceStore | undefined;
   readonly #events: BoundedAsyncLane<PrnsApplicationEvent>;
   readonly #diagnostics: BoundedAsyncLane<PrnsDiagnosticEvent>;
+  readonly #controlSender: BatchedPortSender<WorkerInvocation>;
+  readonly #capabilitySender: BatchedPortSender<{
+    readonly id: number;
+    readonly call: WorkerCapabilityCall;
+  }>;
+  readonly #controlSettlements: BatchedPortReceiver<WorkerSettlement>;
+  readonly #capabilitySettlements: BatchedPortReceiver<WorkerCapabilitySettlement>;
   readonly #pending = new Map<number, PendingControlCall>();
-  readonly #capabilityPending = new Map<number, PendingCall>();
+  readonly #capabilityPending = new Map<number, PendingCapabilityCall>();
   readonly #pageSessions = new Map<string, InterfaceSession>();
   readonly #webSocketSessions = new Map<number, WorkerWebSocketSession>();
   readonly #autoWifi: WorkerAutoWifiInterface;
@@ -255,6 +271,28 @@ class DedicatedWorkerPrns {
       measure: () => 0,
       gap: (count) => Tag("DiagnosticsDropped", { count }),
     });
+    this.#controlSender = new BatchedPortSender({
+      port: control,
+      wrap: (batch) => Tag("Calls", { batch }),
+      maximumItems: Math.min(MAXIMUM_WIRE_BATCH_ITEMS, limits.pendingCommands),
+      maximumBytes: WORKER_WIRE_MAXIMUM_BYTES,
+      scheduleTask: messageTaskScheduler(),
+      failed: (error) => this.#failProtocol(describeHostError(error)),
+    });
+    this.#capabilitySender = new BatchedPortSender({
+      port: capabilities,
+      wrap: (batch) => Tag("CapabilityCalls", { batch }),
+      maximumItems: Math.min(MAXIMUM_WIRE_BATCH_ITEMS, limits.pendingCommands),
+      maximumBytes: WORKER_WIRE_MAXIMUM_BYTES,
+      scheduleTask: messageTaskScheduler(),
+      failed: (error) => this.#failProtocol(describeHostError(error)),
+    });
+    this.#controlSettlements = new BatchedPortReceiver((settlement) => {
+      this.#receiveControlSettlement(settlement);
+    });
+    this.#capabilitySettlements = new BatchedPortReceiver((settlement) => {
+      this.#receiveCapabilitySettlement(settlement);
+    });
     const capabilityHost = new WorkerCapabilityHost(
       wasm,
       bleIdentityAvailability,
@@ -279,7 +317,7 @@ class DedicatedWorkerPrns {
     events.addEventListener("message", (event: MessageEvent<WorkerEventMessage>) => {
       this.#receiveEvent(event.data);
     });
-    capabilities.addEventListener("message", (event: MessageEvent<WorkerControlResponse>) => {
+    capabilities.addEventListener("message", (event: MessageEvent<WorkerCapabilityResponse>) => {
       this.#receiveCapability(event.data);
     });
     control.start();
@@ -320,6 +358,8 @@ class DedicatedWorkerPrns {
       globalThis.clearTimeout(this.#startTimer);
       this.#startTimer = undefined;
     }
+    this.#controlSender.fail();
+    this.#capabilitySender.fail();
     this.#control.close();
     this.#eventsPort.close();
     this.#capabilitiesPort.close();
@@ -329,11 +369,11 @@ class DedicatedWorkerPrns {
   async registerSingleDestination(
     options: RegisterSingleDestinationOptions,
   ): Promise<DestinationRegistrationOutcome> {
-    return this.#call({ operation: "registerSingleDestination", value: options });
+    return this.#call(workerCall("RegisterSingleDestination", options));
   }
 
   async registerNodePage(appData: Uint8Array): Promise<DestinationRegistrationOutcome> {
-    return this.#call({ operation: "registerNodePage", value: appData });
+    return this.#call(workerCall("RegisterNodePage", appData));
   }
 
   execute<Command extends HostCommand>(
@@ -345,7 +385,7 @@ class DedicatedWorkerPrns {
     if (this.#lifecycle.tag !== "Running") {
       return Promise.resolve(commandFailed(Tag("NodeStopped")) as CommandSettlementFor<Command>);
     }
-    return this.#call({ operation: "execute", value: command });
+    return this.#call(workerCall("Execute", command)) as Promise<CommandSettlementFor<Command>>;
   }
 
   announce(destination: DestinationHash, interfaceId?: InterfaceId): Promise<CommandSettlement> {
@@ -432,7 +472,7 @@ class DedicatedWorkerPrns {
     blob: Blob,
     options: SendResourceOptions = {},
   ): Promise<CommandSettlement> {
-    return this.#call({ operation: "sendResourceBlob", value: { linkId, blob, options } });
+    return this.#call(workerCall("SendResourceBlob", { linkId, blob, options }));
   }
 
   setLinkResourceStrategy(linkId: LinkId, strategy: ResourceStrategy): Promise<CommandSettlement> {
@@ -497,12 +537,12 @@ class DedicatedWorkerPrns {
     if (this.#stoppedSnapshot !== undefined) {
       return Promise.resolve(this.#stoppedSnapshot);
     }
-    return this.#call({ operation: "snapshot" });
+    return this.#call(workerCall("Snapshot"));
   }
 
   async hostSnapshot(): Promise<HostSnapshotOutcome> {
     const outcome = this.#stoppedHostSnapshot ??
-      await this.#call<HostSnapshotOutcome>({ operation: "hostSnapshot" });
+      await this.#call(workerCall("HostSnapshot"));
     if (outcome.tag !== "Captured" || this.#persistenceFailureDetail === undefined) {
       return outcome;
     }
@@ -531,13 +571,10 @@ class DedicatedWorkerPrns {
     url: string | URL,
     options: WebSocketConnectOptions,
   ): Promise<WebSocketConnectOutcome> {
-    return this.#call<
-      | { readonly tag: "Connected"; readonly data: WorkerSessionProjection }
-      | Exclude<WebSocketConnectOutcome, { readonly tag: "Connected" }>
-    >({
-      operation: "webSocketConnect",
-      value: { url: url.toString(), options },
-    }).then((outcome) => {
+    return this.#call(workerCall("WebSocketConnect", {
+      url: url.toString(),
+      options,
+    })).then((outcome) => {
       if (outcome.tag !== "Connected") {
         return outcome;
       }
@@ -548,10 +585,7 @@ class DedicatedWorkerPrns {
   }
 
   async closeSession(id: number): Promise<InterfaceCloseOutcome> {
-    const outcome = await this.#call<InterfaceCloseOutcome>({
-      operation: "interfaceSessionClose",
-      value: id,
-    });
+    const outcome = await this.#call(workerCall("InterfaceSessionClose", id));
     if (outcome.tag === "Closed") {
       this.#webSocketSessions.get(id)?.markClosed();
       this.#webSocketSessions.delete(id);
@@ -560,27 +594,22 @@ class DedicatedWorkerPrns {
   }
 
   startAutoWifi(): Promise<AutoWifiControllerStatus> {
-    return this.#call({ operation: "autoWifiStart" });
+    return this.#call(workerCall("AutoWifiStart"));
   }
 
   autoWifiStatus(): Promise<AutoWifiControllerStatus> {
-    return this.#call({ operation: "autoWifiStatus" });
+    return this.#call(workerCall("AutoWifiStatus"));
   }
 
   closeAutoWifi(): Promise<AutoWifiControllerCloseOutcome> {
-    return this.#call({ operation: "autoWifiClose" });
+    return this.#call(workerCall("AutoWifiClose"));
   }
 
   async #performStop(): Promise<StopOutcome> {
     this.#autoWifi.finishFromHostStop();
     const pageSessionFailures = await this.#closePageSessions();
     try {
-      const stopped = await this.#call<{
-        readonly stopOutcome: StopOutcome;
-        readonly persistedState?: unknown;
-        readonly snapshot: SnapshotOutcome;
-        readonly hostSnapshot: HostSnapshotOutcome;
-      }>({ operation: "stop" });
+      const stopped = await this.#call(workerCall("Stop"));
       this.#stoppedSnapshot = stopped.snapshot;
       this.#stoppedHostSnapshot = stopped.hostSnapshot;
       for (const session of this.#webSocketSessions.values()) {
@@ -644,7 +673,7 @@ class DedicatedWorkerPrns {
     return outcomes.filter((outcome): outcome is string => outcome !== undefined);
   }
 
-  #call<Outcome>(call: WorkerCall): Promise<Outcome> {
+  #call<Call extends WorkerCall>(call: Call): Promise<WorkerCallOutcome<Call>> {
     if (this.#terminated) {
       return Promise.reject(new Error("DedicatedWorker has terminated"));
     }
@@ -653,18 +682,19 @@ class DedicatedWorkerPrns {
     }
     const id = this.#nextCallId;
     this.#nextCallId = this.#nextCallId === Number.MAX_SAFE_INTEGER ? 1 : this.#nextCallId + 1;
-    return new Promise((settle, fail) => {
+    return new Promise<WorkerCallOutcome<Call>>((settle, fail) => {
       this.#pending.set(id, {
         call,
         settle: settle as (outcome: unknown) => void,
         fail,
       });
-      const request: WorkerControlRequest = { type: "call", id, call };
-      this.#control.postMessage(request);
+      this.#controlSender.send({ id, call });
     });
   }
 
-  #capabilityCall<Outcome>(call: WorkerCapabilityCall): Promise<Outcome> {
+  #capabilityCall<Call extends WorkerCapabilityCall>(
+    call: Call,
+  ): Promise<WorkerCapabilityCallOutcome<Call>> {
     if (this.#terminated) {
       return Promise.reject(new Error("DedicatedWorker has terminated"));
     }
@@ -673,76 +703,88 @@ class DedicatedWorkerPrns {
     }
     const id = this.#nextCallId;
     this.#nextCallId = this.#nextCallId === Number.MAX_SAFE_INTEGER ? 1 : this.#nextCallId + 1;
-    return new Promise((settle, fail) => {
+    return new Promise<WorkerCapabilityCallOutcome<Call>>((settle, fail) => {
       this.#capabilityPending.set(id, {
+        call,
         settle: settle as (outcome: unknown) => void,
         fail,
       });
-      const request: WorkerCapabilityRequest = { type: "call", id, call };
-      this.#capabilitiesPort.postMessage(request);
+      this.#capabilitySender.send({ id, call });
     });
   }
 
   #receiveControl(message: WorkerControlResponse): void {
-    if (message.type === "started") {
-      if (this.#startSettled || this.#startResolve === undefined) {
-        this.#failProtocol("DedicatedWorker sent duplicate startup state");
-        return;
-      }
-      this.#settleStart(workerStartOutcome(message.outcome));
-      return;
-    }
-    if (message.type === "protocolFailed") {
-      if (message.id !== undefined) {
-        const pending = this.#pending.get(message.id);
-        if (pending !== undefined) {
-          this.#pending.delete(message.id);
-          pending.fail(new Error(message.detail));
+    match_into<void>().from(message, {
+      Started: ({ outcome }) => {
+        if (this.#startSettled || this.#startResolve === undefined) {
+          this.#failProtocol("DedicatedWorker sent duplicate startup state");
           return;
         }
-      }
-      this.#failProtocol(message.detail);
-      return;
-    }
-    if (message.type === "eventBackpressureExceeded") {
-      this.#failBackpressure(message.rejectedEventBytes);
-      return;
-    }
+        this.#settleStart(workerStartOutcome(outcome));
+      },
+      Settlements: ({ batch }) => {
+        this.#controlSettlements.receive(batch);
+      },
+      ProtocolFailed: ({ id, detail }) => {
+        if (id !== undefined) {
+          const pending = this.#pending.get(id);
+          if (pending !== undefined) {
+            this.#pending.delete(id);
+            pending.fail(new Error(detail));
+            return;
+          }
+        }
+        this.#failProtocol(detail);
+      },
+      EventBackpressureExceeded: ({ rejectedEventBytes }) => {
+        this.#failBackpressure(rejectedEventBytes);
+      },
+    });
+  }
+
+  #receiveControlSettlement(message: WorkerSettlement): void {
     const pending = this.#pending.get(message.id);
     if (pending === undefined) {
       this.#failProtocol(`DedicatedWorker settled unknown call ${message.id}`);
+      return;
+    }
+    if (pending.call.tag !== message.call) {
+      this.#failProtocol(`DedicatedWorker settled call ${message.id} as ${message.call}`);
       return;
     }
     this.#pending.delete(message.id);
     pending.settle(message.outcome);
   }
 
-  #receiveCapability(message: WorkerControlResponse): void {
-    if (message.type === "started") {
-      this.#failProtocol("DedicatedWorker capability channel sent startup state");
-      return;
-    }
-    if (message.type === "protocolFailed") {
-      if (message.id !== undefined) {
-        const pending = this.#capabilityPending.get(message.id);
-        if (pending !== undefined) {
-          this.#capabilityPending.delete(message.id);
-          pending.fail(new Error(message.detail));
-          return;
+  #receiveCapability(message: WorkerCapabilityResponse): void {
+    match_into<void>().from(message, {
+      CapabilitySettlements: ({ batch }) => {
+        this.#capabilitySettlements.receive(batch);
+      },
+      ProtocolFailed: ({ id, detail }) => {
+        if (id !== undefined) {
+          const pending = this.#capabilityPending.get(id);
+          if (pending !== undefined) {
+            this.#capabilityPending.delete(id);
+            pending.fail(new Error(detail));
+            return;
+          }
         }
-      }
-      this.#failProtocol(message.detail);
-      return;
-    }
-    if (message.type === "eventBackpressureExceeded") {
-      this.#failProtocol(
-        "DedicatedWorker capability channel reported event backpressure",
-      );
-      return;
-    }
+        this.#failProtocol(detail);
+      },
+    });
+  }
+
+  #receiveCapabilitySettlement(message: WorkerCapabilitySettlement): void {
     const pending = this.#capabilityPending.get(message.id);
     if (pending === undefined) {
       this.#failProtocol(`DedicatedWorker settled unknown capability call ${message.id}`);
+      return;
+    }
+    if (pending.call.tag !== message.call) {
+      this.#failProtocol(
+        `DedicatedWorker settled capability call ${message.id} as ${message.call}`,
+      );
       return;
     }
     this.#capabilityPending.delete(message.id);
@@ -751,8 +793,8 @@ class DedicatedWorkerPrns {
 
   #receiveEvent(message: WorkerEventMessage): void {
     try {
-      if (message.type === "batch") {
-        for (const event of parseEventBatch(new Uint8Array(message.buffer))) {
+      if (message.tag === "Batch") {
+        for (const event of parseEventBatch(new Uint8Array(message.data.buffer))) {
           const outcome = match_into<LanePushOutcome | "Ignored">().from(event, {
             Application: (application) => this.#events.push(application),
             Diagnostic: (diagnostic) => this.#diagnostics.push(diagnostic),
@@ -764,11 +806,11 @@ class DedicatedWorkerPrns {
             return;
           }
         }
-        this.#acknowledgeEvent(message.id);
+        this.#acknowledgeEvent(message.data.id);
         return;
       }
-      if (this.#diagnostics.push(message.event) !== "Rejected") {
-        this.#acknowledgeEvent(message.id);
+      if (this.#diagnostics.push(message.data.event) !== "Rejected") {
+        this.#acknowledgeEvent(message.data.id);
       }
     } catch (error) {
       this.#failProtocol(describeHostError(error));
@@ -776,10 +818,7 @@ class DedicatedWorkerPrns {
   }
 
   #acknowledgeEvent(id: number): void {
-    const acknowledgement: WorkerEventAcknowledgement = {
-      type: "acknowledge",
-      id,
-    };
+    const acknowledgement: WorkerEventAcknowledgement = Tag("Acknowledge", { id });
     this.#eventsPort.postMessage(acknowledgement);
   }
 
@@ -816,8 +855,8 @@ class DedicatedWorkerPrns {
     const error = new Error(detail);
     for (const pending of this.#pending.values()) {
       if (
-        pending.call.operation === "execute" ||
-        pending.call.operation === "sendResourceBlob"
+        pending.call.tag === "Execute" ||
+        pending.call.tag === "SendResourceBlob"
       ) {
         pending.settle(commandFailed(Tag("WriteFailed", { detail })));
       } else {
@@ -854,13 +893,17 @@ class WorkerCapabilityHost implements BluetoothRuntimeHost, UsbAutoRuntimeHost {
   readonly #wasm: PrnsWasmModule;
   readonly #bleIdentityAvailability: BleIdentityAvailability;
   readonly #lifecycle: () => LifecycleState;
-  readonly #call: <Outcome>(call: WorkerCapabilityCall) => Promise<Outcome>;
+  readonly #call: <Call extends WorkerCapabilityCall>(
+    call: Call,
+  ) => Promise<WorkerCapabilityCallOutcome<Call>>;
 
   constructor(
     wasm: PrnsWasmModule,
     bleIdentityAvailability: BleIdentityAvailability,
     lifecycle: () => LifecycleState,
-    call: <Outcome>(call: WorkerCapabilityCall) => Promise<Outcome>,
+    call: <Call extends WorkerCapabilityCall>(
+      call: Call,
+    ) => Promise<WorkerCapabilityCallOutcome<Call>>,
   ) {
     this.#wasm = wasm;
     this.#bleIdentityAvailability = bleIdentityAvailability;
@@ -963,71 +1006,68 @@ class WorkerCapabilityHost implements BluetoothRuntimeHost, UsbAutoRuntimeHost {
     registration: Parameters<UsbAutoRuntimeHost["registerInterface"]>[0],
   ): Promise<Awaited<ReturnType<UsbAutoRuntimeHost["registerInterface"]>>>;
   registerInterface(
-    registration: RuntimeRegisterInterfaceOptions & Record<string, unknown>,
+    registration:
+      | Parameters<BluetoothRuntimeHost["registerInterface"]>[0]
+      | Parameters<UsbAutoRuntimeHost["registerInterface"]>[0],
   ): Promise<
     | Awaited<ReturnType<BluetoothRuntimeHost["registerInterface"]>>
     | Awaited<ReturnType<UsbAutoRuntimeHost["registerInterface"]>>
   > {
-    return this.#call({ operation: "registerInterface", value: registration });
+    return this.#call(workerCapabilityCall("RegisterInterface", registration));
   }
 
   deactivateInterface(
     interfaceId: InterfaceId,
   ): Promise<Awaited<ReturnType<BluetoothRuntimeHost["deactivateInterface"]>>> {
-    return this.#call({ operation: "deactivateInterface", value: interfaceId });
+    return this.#call(workerCapabilityCall("DeactivateInterface", interfaceId));
   }
 
   ingest(
     interfaceId: InterfaceId,
     bytes: Parameters<BluetoothRuntimeHost["ingest"]>[1],
   ): Promise<Awaited<ReturnType<BluetoothRuntimeHost["ingest"]>>> {
-    return this.#call({
-      operation: "ingest",
-      value: { interfaceId, bytes },
-    });
+    return this.#call(workerCapabilityCall("Ingest", { interfaceId, bytes }));
   }
 
   takeOutboundFor(
     interfaceId: InterfaceId,
     maximumFrames?: number,
   ): Promise<Awaited<ReturnType<BluetoothRuntimeHost["takeOutboundFor"]>>> {
-    return this.#call({
-      operation: "takeOutbound",
-      value: {
+    return this.#call(workerCapabilityCall("TakeOutbound", {
         interfaceId,
         ...(maximumFrames === undefined ? {} : { maximumFrames }),
-      },
-    });
+    }));
   }
 
   waitForOutboundActivity(
     interfaceId: InterfaceId,
   ): ReturnType<BluetoothRuntimeHost["waitForOutboundActivity"]> {
-    return this.#call({
-      operation: "waitForOutboundActivity",
-      value: interfaceId,
-    });
+    return this.#call(workerCapabilityCall("WaitForOutboundActivity", interfaceId));
   }
 }
 
 class WorkerBluetoothReassembler {
-  readonly #call: <Outcome>(call: WorkerCapabilityCall) => Promise<Outcome>;
+  readonly #call: <Call extends WorkerCapabilityCall>(
+    call: Call,
+  ) => Promise<WorkerCapabilityCallOutcome<Call>>;
   readonly #id: Promise<number>;
   #released = false;
 
-  constructor(call: <Outcome>(call: WorkerCapabilityCall) => Promise<Outcome>) {
+  constructor(call: <Call extends WorkerCapabilityCall>(
+    call: Call,
+  ) => Promise<WorkerCapabilityCallOutcome<Call>>) {
     this.#call = call;
-    this.#id = call({ operation: "createBluetoothReassembler" });
+    this.#id = call(workerCapabilityCall("CreateBluetoothReassembler"));
   }
 
   async absorb(bytes: Uint8Array): Promise<Uint8Array | undefined> {
     if (this.#released) {
       return undefined;
     }
-    return this.#call({
-      operation: "absorbBluetoothFragment",
-      value: { id: await this.#id, bytes },
-    });
+    return this.#call(workerCapabilityCall("AbsorbBluetoothFragment", {
+      id: await this.#id,
+      bytes,
+    }));
   }
 
   release(): void {
@@ -1035,31 +1075,34 @@ class WorkerBluetoothReassembler {
       return;
     }
     this.#released = true;
-    void this.#id.then((id) => this.#call({
-      operation: "releaseBluetoothReassembler",
-      value: id,
-    })).catch(() => undefined);
+    void this.#id.then((id) => this.#call(
+      workerCapabilityCall("ReleaseBluetoothReassembler", id),
+    )).catch(() => undefined);
   }
 }
 
 class WorkerUsbAutoDecoder {
-  readonly #call: <Outcome>(call: WorkerCapabilityCall) => Promise<Outcome>;
+  readonly #call: <Call extends WorkerCapabilityCall>(
+    call: Call,
+  ) => Promise<WorkerCapabilityCallOutcome<Call>>;
   readonly #id: Promise<number>;
   #released = false;
 
-  constructor(call: <Outcome>(call: WorkerCapabilityCall) => Promise<Outcome>) {
+  constructor(call: <Call extends WorkerCapabilityCall>(
+    call: Call,
+  ) => Promise<WorkerCapabilityCallOutcome<Call>>) {
     this.#call = call;
-    this.#id = call({ operation: "createUsbAutoDecoder" });
+    this.#id = call(workerCapabilityCall("CreateUsbAutoDecoder"));
   }
 
   async feed(bytes: Uint8Array): Promise<unknown[]> {
     if (this.#released) {
       return [];
     }
-    return this.#call({
-      operation: "feedUsbAutoDecoder",
-      value: { id: await this.#id, bytes },
-    });
+    return this.#call(workerCapabilityCall("FeedUsbAutoDecoder", {
+      id: await this.#id,
+      bytes,
+    }));
   }
 
   release(): void {
@@ -1067,10 +1110,9 @@ class WorkerUsbAutoDecoder {
       return;
     }
     this.#released = true;
-    void this.#id.then((id) => this.#call({
-      operation: "releaseUsbAutoDecoder",
-      value: id,
-    })).catch(() => undefined);
+    void this.#id.then((id) => this.#call(
+      workerCapabilityCall("ReleaseUsbAutoDecoder", id),
+    )).catch(() => undefined);
   }
 }
 

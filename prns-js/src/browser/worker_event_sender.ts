@@ -77,7 +77,7 @@ export class BoundedWorkerEventSender {
     }
     const buffer = transferableBuffer(transferable);
     this.#enqueue({
-      message: { type: "batch", id: this.#mintId(), buffer },
+      message: Tag("Batch", { id: this.#mintId(), buffer }),
       ...summary,
     });
   }
@@ -90,7 +90,7 @@ export class BoundedWorkerEventSender {
       return;
     }
     this.#enqueue({
-      message: { type: "diagnostic", id: this.#mintId(), event },
+      message: Tag("Diagnostic", { id: this.#mintId(), event }),
       applicationEvents: 0,
       diagnostics: 1,
       retainedEventBytes: 0,
@@ -123,8 +123,8 @@ export class BoundedWorkerEventSender {
       return;
     }
     this.#inFlight = next;
-    if (next.message.type === "batch") {
-      this.#port.postMessage(next.message, [next.message.buffer]);
+    if (next.message.tag === "Batch") {
+      this.#port.postMessage(next.message, [next.message.data.buffer]);
       return;
     }
     this.#port.postMessage(next.message);
@@ -136,10 +136,10 @@ export class BoundedWorkerEventSender {
     }
     const inFlight = this.#inFlight;
     if (
-      message?.type !== "acknowledge" ||
-      !Number.isSafeInteger(message.id) ||
+      message?.tag !== "Acknowledge" ||
+      !Number.isSafeInteger(message.data.id) ||
       inFlight === undefined ||
-      message.id !== inFlight.message.id
+      message.data.id !== inFlight.message.data.id
     ) {
       this.#failProtocol("DedicatedWorker event channel received an invalid acknowledgement");
       return;
@@ -162,11 +162,10 @@ export class BoundedWorkerEventSender {
     const count = this.#droppedDiagnostics;
     this.#droppedDiagnostics = 0n;
     this.#enqueue({
-      message: {
-        type: "diagnostic",
+      message: Tag("Diagnostic", {
         id: this.#mintId(),
         event: Tag("DiagnosticsDropped", { count }),
-      },
+      }),
       applicationEvents: 0,
       diagnostics: 1,
       retainedEventBytes: 0,

@@ -54,11 +54,6 @@
       "types": "./dist/browser/index.d.ts",
       "import": "./dist/browser/index.js"
     },
-    "./casework": {
-      "types": "./dist/casework.d.ts",
-      "import": "./dist/casework.js",
-      "require": "./dist-cjs/casework.js"
-    },
     "./package.json": "./package.json"
   },
   "engines": {
@@ -71,12 +66,13 @@
     "build:browser": "npm run build:code && node scripts/stage.mjs browser",
     "build": "npm run build:code && node scripts/stage.mjs",
     "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.casework-cjs.json --noEmit && tsc -p tsconfig.examples.json",
-    "test": "npm run build:code && node --test tests/async-lanes.test.mjs tests/browser-auto-wifi-reconnect.test.mjs tests/browser-bluetooth.test.mjs tests/browser-contract.test.mjs tests/browser-resource-send.test.mjs tests/casework.test.mjs tests/event-projection.test.mjs tests/worker-event-sender.test.mjs",
+    "test": "npm run build:code && node --test tests/async-lanes.test.mjs tests/browser-auto-wifi-reconnect.test.mjs tests/browser-bluetooth.test.mjs tests/browser-contract.test.mjs tests/browser-resource-send.test.mjs tests/casework.test.mjs tests/event-projection.test.mjs tests/worker-event-sender.test.mjs tests/worker-wire.test.mjs",
     "test:browser": "npm run build:browser && node tests/browser-smoke.mjs",
     "test:browser:full": "npm --prefix ../prns-wasm run build:wasm && npm run test:browser",
     "test:native": "npm run build:native && node --test tests/native-consumer.test.mjs",
     "test:native:full": "npm --prefix ../prns-napi run build:debug && npm run test:native",
     "test:bun": "npm run build:native && bun tests/bun-consumer.ts",
+    "bench:browser-worker-wire": "npm run build:code && node benchmarks/browser-worker-wire/run.mjs",
     "pack:check": "npm --prefix ../prns-wasm run build:package:wasm && npm run build && npm pack --dry-run"
   },
   "devDependencies": {
@@ -103,5 +99,8 @@
     "networking",
     "napi",
     "wasm"
-  ]
+  ],
+  "dependencies": {
+    "casework": "0.2.2"
+  }
 }
