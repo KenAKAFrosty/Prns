@@ -3,6 +3,7 @@ use crate::identity::vault::IdentitySecretKey;
 use crate::identity::{IdentityHash, IdentityPublicKeys, IDENTITY_SECRET_KEY_LEN};
 use crate::storage::TablePushError;
 
+use super::pairing::RemoteControlPairingPermissions;
 use super::{RemoteControlRequestKind, RemoteControlRequestSet};
 
 pub const REMOTE_CONTROL_NODE_IDENTITY_COUNT: usize = 2;
@@ -230,6 +231,25 @@ impl RemoteControlControllerGrant {
     #[must_use]
     pub fn permits(&self, request: RemoteControlRequestKind) -> bool {
         self.permitted_requests.supports(request)
+    }
+}
+
+impl
+    From<(
+        &RemoteControlControllerIdentity,
+        &RemoteControlPairingPermissions,
+    )> for RemoteControlControllerGrant
+{
+    fn from(
+        (controller, permissions): (
+            &RemoteControlControllerIdentity,
+            &RemoteControlPairingPermissions,
+        ),
+    ) -> Self {
+        Self {
+            controller: *controller,
+            permitted_requests: *permissions.permitted_requests(),
+        }
     }
 }
 

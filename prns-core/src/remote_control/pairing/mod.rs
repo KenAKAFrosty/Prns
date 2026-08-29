@@ -10,9 +10,11 @@ use super::{
 
 mod availability;
 mod exchange;
+mod target_pairing;
 
 pub use availability::*;
 pub use exchange::*;
+pub use target_pairing::*;
 
 pub const REMOTE_CONTROL_PAIRING_APPLICATION_NAME: &str = REMOTE_CONTROL_APPLICATION_NAME;
 pub const REMOTE_CONTROL_PAIRING_APPLICATION_ASPECTS: &[&str] = &[
