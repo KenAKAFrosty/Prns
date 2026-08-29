@@ -634,7 +634,7 @@ requires = ["python3"]
 
 [[task]]
 id = "release.hotfix"
-summary = "Resolve, compose, or verify a target-scoped flasher hotfix."
+summary = "Resolve, compose, or verify a scoped flasher hotfix."
 domain = "release"
 effect = "workspace-write"
 platforms = ["any"]

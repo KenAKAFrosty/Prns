@@ -1,0 +1,91 @@
+{
+  "candidate": {
+    "channel": "stable",
+    "manifest_sha256": "0143926b236c1d33c820fd4cb0f7c430f560c4f663c052eeb13b1c1a88b935f8",
+    "manifest_signature_sha256": "f1a4e9d2ca801d7c63916cc7907ff985a45fd7379dff995014f17b8be571ec3a",
+    "prerelease_published_at": "2026-08-27T14:39:36Z",
+    "signed_candidate_sha256": "512f98becce21eae1de876995c0d98d5eafccde669085f2c8beced7c38407650",
+    "signing_key_id": "1BF5C4D8B140811A",
+    "source_commit": "d9e33cdd877545821af4b9c5d769f064b2940c85",
+    "version": "0.3.7-hotfix.4"
+  },
+  "hardware_deferrals": [
+    {
+      "approved_at": "2026-08-27T14:56:32Z",
+      "approved_by": "github:KenAKAFrosty",
+      "basis": "The R8 target uses the same shared vendor-reference KCT8103L detection and TX/RX control path as the S3R2 target, and its release build passes, but no physical R8 hardware is presently available for the signed candidate.",
+      "board": "heltec-v4-r8",
+      "follow_up": "Capture and review an R8 or other KCT8103L post-flash boot, front-end detection, LoRa operation, and stable-runtime observation after promotion."
+    }
+  ],
+  "hotfix": {
+    "base_manifest_sha256": "d9ee2162d76bb326e71ba949b303cf47e5d10e7fb6fd04419db1d972b909f9ca",
+    "base_release_record_sha256": "4f223c42ee305195a540c0336c57d5d437cc8b29a602c50e9cf49d846059af38",
+    "base_signed_candidate_sha256": "2a3190bd56824791ec95baaa7761cbe2c97018c0e0f1a3d08914b8d97ef50bc0",
+    "base_source_commit": "f13a6d0db253f4f37e473e0663ea379a6565d391",
+    "base_version": "0.3.7-hotfix.3",
+    "changed_boards": [
+      "heltec-v4",
+      "heltec-v4-r8"
+    ],
+    "deferred_hardware": [
+      {
+        "basis": "The R8 target uses the same shared vendor-reference KCT8103L detection and TX/RX control path as the S3R2 target, and its release build passes, but no physical R8 hardware is presently available for the signed candidate.",
+        "board": "heltec-v4-r8",
+        "follow_up": "Capture and review an R8 or other KCT8103L post-flash boot, front-end detection, LoRa operation, and stable-runtime observation after promotion."
+      }
+    ],
+    "physical_boards": [
+      "heltec-v4"
+    ],
+    "summary": "Heltec V4 and V4-R8 dynamic GC1109/KCT8103L LoRa front-end detection and TX/RX control.",
+    "version": "0.3.7-hotfix.4"
+  },
+  "runs": [
+    {
+      "architecture": "x86_64",
+      "board": "heltec-v4",
+      "browser": {
+        "channel": "stable",
+        "name": "chrome",
+        "version": "152.0.7977.54"
+      },
+      "checks": {
+        "gc1109-front-end-detected": "pass",
+        "lora-radio-ready": "pass",
+        "stable-post-boot-runtime": "pass"
+      },
+      "client": {
+        "name": "prns-web-flasher",
+        "version": "0.3.7-hotfix.4"
+      },
+      "completed_at": "2026-08-27T14:56:32Z",
+      "evidence": {
+        "redaction": {
+          "credentials_removed": true,
+          "device_identifiers_removed": true,
+          "local_paths_removed": true,
+          "private_network_data_removed": true,
+          "reviewer": "github:KenAKAFrosty"
+        },
+        "reference": "artifact://qualification/244ab4963d174e15632990049a40668ffd73e2414144beccace260511a4386dd",
+        "sha256": "244ab4963d174e15632990049a40668ffd73e2414144beccace260511a4386dd"
+      },
+      "hardware_identity": "Physical ESP32-S3R2 Heltec V4; unique device identifiers redacted",
+      "hardware_model": "Heltec LoRa 32 V4 (S3R2)",
+      "hardware_revision": "ESP32-S3 revision v0.2",
+      "os": "linux",
+      "os_version": "Release-owner-attested current Linux x86_64 qualification host",
+      "result": "pass",
+      "scenarios": {
+        "correct-board": "pass",
+        "fresh-install": "pass",
+        "post-flash-boot": "pass",
+        "sparse-write": "pass"
+      },
+      "surface": "web",
+      "tester": "github:KenAKAFrosty"
+    }
+  ],
+  "schema": 6
+}

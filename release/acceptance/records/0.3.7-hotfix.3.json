@@ -1,0 +1,167 @@
+{
+  "candidate": {
+    "channel": "stable",
+    "manifest_sha256": "d9ee2162d76bb326e71ba949b303cf47e5d10e7fb6fd04419db1d972b909f9ca",
+    "manifest_signature_sha256": "b90a47db6a3e5cbbfc5b3709370f543ed1a06624df61e784e9c465c05cbfd0a7",
+    "prerelease_published_at": "2026-08-26T00:36:42Z",
+    "signed_candidate_sha256": "2a3190bd56824791ec95baaa7761cbe2c97018c0e0f1a3d08914b8d97ef50bc0",
+    "signing_key_id": "1BF5C4D8B140811A",
+    "source_commit": "f13a6d0db253f4f37e473e0663ea379a6565d391",
+    "version": "0.3.7-hotfix.3"
+  },
+  "hardware_deferrals": [
+    {
+      "approved_at": "2026-08-26T00:42:40Z",
+      "approved_by": "github:KenAKAFrosty",
+      "basis": "The rebuilt S3R2 target uses the same framebuffer-tested battery renderer and display-power state machine exercised on the physical T114; its board-specific radio and flash wiring are unchanged.",
+      "board": "heltec-v4",
+      "follow_up": "Capture and review an S3R2 post-flash boot and battery-face observation after promotion."
+    },
+    {
+      "approved_at": "2026-08-26T00:42:40Z",
+      "approved_by": "github:KenAKAFrosty",
+      "basis": "The rebuilt S3R8 target uses the same framebuffer-tested battery renderer and display-power state machine exercised on the physical T114; its R8-specific memory and radio wiring are unchanged.",
+      "board": "heltec-v4-r8",
+      "follow_up": "Capture and review an S3R8 post-flash boot and battery-face observation after promotion."
+    },
+    {
+      "approved_at": "2026-08-26T00:42:40Z",
+      "approved_by": "github:KenAKAFrosty",
+      "basis": "The rebuilt T-Beam target uses the same framebuffer-tested battery renderer and display-power state machine exercised on the physical T114; its AXP2101, GNSS, radio, and flash wiring are unchanged.",
+      "board": "t-beam-supreme",
+      "follow_up": "Capture and review a T-Beam post-flash boot and battery-face observation after promotion."
+    },
+    {
+      "approved_at": "2026-08-26T00:42:40Z",
+      "approved_by": "github:KenAKAFrosty",
+      "basis": "The rebuilt T-Echo target shares the tested nRF persistence, heartbeat, battery-rendering, and Bluetooth runtime used by the physical T114; its board-specific display, radio, and USB wiring are unchanged.",
+      "board": "t-echo",
+      "follow_up": "Capture and review a T-Echo post-flash boot, display, Bluetooth, and retained-state observation after promotion."
+    },
+    {
+      "approved_at": "2026-08-26T00:42:40Z",
+      "approved_by": "github:KenAKAFrosty",
+      "basis": "The rebuilt T096 target shares the tested Heltec display, nRF persistence, heartbeat, battery-rendering, and Bluetooth runtime used by the physical T114; its PA and GNSS wiring are unchanged.",
+      "board": "t096",
+      "follow_up": "Capture and review a T096 post-flash boot, display, Bluetooth, and retained-state observation after promotion."
+    },
+    {
+      "approved_at": "2026-08-26T00:42:40Z",
+      "approved_by": "github:KenAKAFrosty",
+      "basis": "The rebuilt T-1000E target shares the tested nRF persistence and heartbeat runtime used by the physical T114; its headless board-specific radio, USB, and serial-DFU wiring are unchanged.",
+      "board": "t1000-e",
+      "follow_up": "Capture and review a T-1000E post-flash boot, serial-DFU, and retained-state observation after promotion."
+    },
+    {
+      "approved_at": "2026-08-26T00:42:40Z",
+      "approved_by": "github:KenAKAFrosty",
+      "basis": "The XIAO C6 has no display or nRF runtime; it is rebuilt only to carry the exact fleet hotfix identity, source revision, and reproducible release metadata, with interface logic unchanged.",
+      "board": "xiao-esp32-c6",
+      "follow_up": "Capture and review a XIAO C6 post-flash boot and interface-readiness observation after promotion."
+    }
+  ],
+  "hotfix": {
+    "base_manifest_sha256": "98e7481831580bd4bf07ec46a47e24a99d0ecfbe67f4a5404dcef61464e36527",
+    "base_release_record_sha256": "5903f3f1f8475e1112abf3da23fbcbf1e545a2c0bd62d4985630334fbe1723a4",
+    "base_signed_candidate_sha256": "da3ea5d1dedf34a9054c22d230289e92986cd0305a9b864ef7bebf97248bca24",
+    "base_source_commit": "8fbb8ba72cea5a123caabf0c1a24c9a43d3bb2b1",
+    "base_version": "0.3.7-hotfix.2",
+    "changed_boards": [
+      "heltec-v4",
+      "heltec-v4-r8",
+      "t-beam-supreme",
+      "t-echo",
+      "t096",
+      "t1000-e",
+      "t114",
+      "xiao-esp32-c6"
+    ],
+    "deferred_hardware": [
+      {
+        "basis": "The rebuilt S3R2 target uses the same framebuffer-tested battery renderer and display-power state machine exercised on the physical T114; its board-specific radio and flash wiring are unchanged.",
+        "board": "heltec-v4",
+        "follow_up": "Capture and review an S3R2 post-flash boot and battery-face observation after promotion."
+      },
+      {
+        "basis": "The rebuilt S3R8 target uses the same framebuffer-tested battery renderer and display-power state machine exercised on the physical T114; its R8-specific memory and radio wiring are unchanged.",
+        "board": "heltec-v4-r8",
+        "follow_up": "Capture and review an S3R8 post-flash boot and battery-face observation after promotion."
+      },
+      {
+        "basis": "The rebuilt T-Beam target uses the same framebuffer-tested battery renderer and display-power state machine exercised on the physical T114; its AXP2101, GNSS, radio, and flash wiring are unchanged.",
+        "board": "t-beam-supreme",
+        "follow_up": "Capture and review a T-Beam post-flash boot and battery-face observation after promotion."
+      },
+      {
+        "basis": "The rebuilt T-Echo target shares the tested nRF persistence, heartbeat, battery-rendering, and Bluetooth runtime used by the physical T114; its board-specific display, radio, and USB wiring are unchanged.",
+        "board": "t-echo",
+        "follow_up": "Capture and review a T-Echo post-flash boot, display, Bluetooth, and retained-state observation after promotion."
+      },
+      {
+        "basis": "The rebuilt T096 target shares the tested Heltec display, nRF persistence, heartbeat, battery-rendering, and Bluetooth runtime used by the physical T114; its PA and GNSS wiring are unchanged.",
+        "board": "t096",
+        "follow_up": "Capture and review a T096 post-flash boot, display, Bluetooth, and retained-state observation after promotion."
+      },
+      {
+        "basis": "The rebuilt T-1000E target shares the tested nRF persistence and heartbeat runtime used by the physical T114; its headless board-specific radio, USB, and serial-DFU wiring are unchanged.",
+        "board": "t1000-e",
+        "follow_up": "Capture and review a T-1000E post-flash boot, serial-DFU, and retained-state observation after promotion."
+      },
+      {
+        "basis": "The XIAO C6 has no display or nRF runtime; it is rebuilt only to carry the exact fleet hotfix identity, source revision, and reproducible release metadata, with interface logic unchanged.",
+        "board": "xiao-esp32-c6",
+        "follow_up": "Capture and review a XIAO C6 post-flash boot and interface-readiness observation after promotion."
+      }
+    ],
+    "physical_boards": [
+      "t114"
+    ],
+    "summary": "Fleet rebuild for the refined battery indicator and complete Heltec T114 Hopspot display, Bluetooth Auto, durable state, LoRa, and USB integration.",
+    "version": "0.3.7-hotfix.3"
+  },
+  "runs": [
+    {
+      "architecture": "aarch64",
+      "board": "t114",
+      "checks": {
+        "battery-percentage-indicator": "pass",
+        "bluetooth-auto-active": "pass",
+        "display-control-face": "pass",
+        "durable-learned-state": "pass",
+        "lora-radio-ready": "pass",
+        "usb-auto-ready": "pass"
+      },
+      "client": {
+        "name": "hopspot-flash",
+        "version": "0.3.7-hotfix.3"
+      },
+      "completed_at": "2026-08-26T01:32:28Z",
+      "evidence": {
+        "redaction": {
+          "credentials_removed": true,
+          "device_identifiers_removed": true,
+          "local_paths_removed": true,
+          "private_network_data_removed": true,
+          "reviewer": "github:KenAKAFrosty"
+        },
+        "reference": "artifact://qualification/02e0a155711f48737a63fcf04e7c6dee2f85eec94ebf4c5322d3826836c5d0a8",
+        "sha256": "02e0a155711f48737a63fcf04e7c6dee2f85eec94ebf4c5322d3826836c5d0a8"
+      },
+      "hardware_identity": "qualification-bench-t114-01",
+      "hardware_model": "Heltec Mesh Node T114",
+      "hardware_revision": "HT-n5262 production board; PCB revision is not exposed by the bootloader",
+      "os": "macos",
+      "os_version": "26.4",
+      "result": "pass",
+      "scenarios": {
+        "correct-board": "pass",
+        "fresh-install": "pass",
+        "post-flash-boot": "pass",
+        "uf2-variant": "pass"
+      },
+      "surface": "cli",
+      "tester": "github:KenAKAFrosty"
+    }
+  ],
+  "schema": 6
+}

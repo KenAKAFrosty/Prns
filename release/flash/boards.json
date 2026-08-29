@@ -246,7 +246,7 @@
       "slug": "t114",
       "display_name": "Heltec Mesh Node T114",
       "silicon": "nRF52840 + SX1262",
-      "interfaces": ["LoRa", "USB Auto"],
+      "interfaces": ["BLE Auto", "LoRa", "USB Auto"],
       "icon": "nordicsemiconductor",
       "transport": "uf2-mass-storage",
       "expected_chip": null,
