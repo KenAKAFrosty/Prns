@@ -178,6 +178,7 @@ export class RuntimeHost {
       txBytes: 0,
     });
     this.#outboundQueues.set(key, []);
+    this.#onRuntimeActivity();
     return Tag("Registered", id);
   }
 
@@ -207,13 +208,15 @@ export class RuntimeHost {
     this.#outboundQueues.delete(key);
     this.#overflowedOutbound.delete(key);
     this.#resolveOutboundActivity(key, Tag("InterfaceDetached"));
+    this.#onRuntimeActivity();
     return Tag("Detached");
   }
 
   setContractKind(id: InterfaceId, kind: InterfaceKind): void {
     const active = this.#activeInterfaces.get(byteKey(id));
-    if (active !== undefined) {
+    if (active !== undefined && active.contractKind !== kind) {
       active.contractKind = kind;
+      this.#onRuntimeActivity();
     }
   }
 

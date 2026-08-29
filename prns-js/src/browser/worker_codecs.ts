@@ -165,6 +165,23 @@ export const workerSettlementCodec: WireCodec<WorkerSettlement> = {
   decode: decodeSettlements,
 };
 
+export function workerInvocationWireBytes(value: WorkerInvocation): number {
+  if (isEncodableInvocation(value)) {
+    return 16 + encodedCommandSize(value.call.data as EncodedHostCommand);
+  }
+  if (value.call.tag === "RegisterNodePage") {
+    return 32 + value.call.data.byteLength;
+  }
+  return 256;
+}
+
+export function workerSettlementWireBytes(value: WorkerSettlement): number {
+  if (isEncodableSettlement(value)) {
+    return 17 + encodedSettlementSize(value.outcome as CommandSettlement);
+  }
+  return 256;
+}
+
 function isEncodableInvocation(value: WorkerInvocation): boolean {
   return Number.isSafeInteger(value.id) && value.id > 0 &&
     value.call.tag === "Execute" && isEncodedCommand(value.call.data);

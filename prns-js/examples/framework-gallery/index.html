@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="data:,">
+    <title>Prns framework projection gallery</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">personal-rns browser adapters</p>
+        <h1>One Worker-backed node, six reactive homes</h1>
+        <p id="gallery-status">Starting Prns…</p>
+      </header>
+      <section class="controls">
+        <label>Companion WebSocket <input id="websocket-url" value="Loading companion…"></label>
+        <button id="connect-websocket">Connect WebSocket</button>
+        <button id="request-path">Discover companion path</button>
+        <button id="establish-link">Establish companion link</button>
+        <button class="primary" id="run-journey">Run full journey</button>
+        <button id="connect-bluetooth">Connect Bluetooth</button>
+        <button id="stop-prns">Stop Prns</button>
+        <dl class="journey">
+          <dt>Journey</dt><dd id="journey-state">Loading companion session</dd>
+          <dt>Destination</dt><dd id="companion-destination">Loading…</dd>
+          <dt>Latest outcome</dt><dd><output id="command-outcome">No command issued</output></dd>
+        </dl>
+      </section>
+      <section class="panels">
+        <div id="react-panel"></div>
+        <div id="solid-panel"></div>
+        <div id="vue-panel"></div>
+        <div id="svelte-panel"></div>
+        <div id="qwik-panel"></div>
+        <article
+          class="panel"
+          id="web-component-panel"
+          data-framework="web-component"
+          data-signals:_prns="{}"
+          data-on:prns-change="$_prns = evt.detail"
+        >
+          <h2>Web Component / Datastar</h2>
+          <prns-bridge id="prns-bridge"></prns-bridge>
+          <dl>
+            <dt>Lifecycle</dt><dd id="bridge-lifecycle">Starting</dd>
+            <dt>Interfaces</dt><dd id="bridge-interfaces">0</dd>
+            <dt>Routes</dt><dd id="bridge-routes">0</dd>
+            <dt>Links</dt><dd id="bridge-links">0</dd>
+            <dt>Diagnostics</dt><dd id="bridge-diagnostics">0</dd>
+          </dl>
+          <code>data-on:prns-change="$_prns = evt.detail"</code>
+        </article>
+      </section>
+    </main>
+    <script type="module" src="/entry.dev.tsx"></script>
+  </body>
+</html>

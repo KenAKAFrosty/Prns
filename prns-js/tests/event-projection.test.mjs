@@ -5,6 +5,7 @@ import {
   EventBatchProjectionError,
   decodeEventBatchProjection,
   retainApplicationEventBatchProjection,
+  retainDiagnosticEventBatchProjection,
   summarizeEventBatchProjection,
 } from "../dist/event_projection.js";
 
@@ -83,5 +84,9 @@ test("retains application records when diagnostic transport pressure drops a bat
   assert.deepEqual(
     retainApplicationEventBatchProjection(mixedVector),
     singleDeliveryPayloadVector,
+  );
+  assert.deepEqual(
+    retainDiagnosticEventBatchProjection(mixedVector),
+    linkEstablishedVector,
   );
 });

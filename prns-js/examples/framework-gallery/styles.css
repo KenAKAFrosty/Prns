@@ -1,0 +1,134 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  background: #090c12;
+  color: #edf4ef;
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  width: min(1180px, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 3rem 0;
+}
+
+.eyebrow {
+  color: #6ee7b7;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  font-size: .72rem;
+  font-weight: 800;
+}
+
+h1 {
+  margin: .35rem 0;
+  font-size: clamp(2rem, 5vw, 4rem);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: .75rem;
+  margin: 2rem 0;
+  padding: 1rem;
+  border: 1px solid #293241;
+  border-radius: 1rem;
+  background: #111722;
+}
+
+label {
+  display: grid;
+  gap: .3rem;
+  color: #aab6c4;
+  font-size: .8rem;
+}
+
+input,
+button {
+  border: 1px solid #354258;
+  border-radius: .55rem;
+  background: #0b1019;
+  color: inherit;
+  padding: .65rem .8rem;
+}
+
+input {
+  min-width: min(21rem, calc(100vw - 5rem));
+}
+
+button {
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: #6ee7b7;
+}
+
+button.primary {
+  border-color: #2e8b68;
+  background: #123a2d;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: .45;
+}
+
+output {
+  color: #aab6c4;
+  font-family: ui-monospace, monospace;
+  overflow-wrap: anywhere;
+}
+
+.journey {
+  flex-basis: 100%;
+  grid-template-columns: max-content 1fr;
+  margin: .5rem 0 0;
+  padding-top: 1rem;
+  border-top: 1px solid #293241;
+}
+
+.panels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1rem;
+}
+
+.panel {
+  min-height: 220px;
+  padding: 1rem;
+  border: 1px solid #293241;
+  border-radius: 1rem;
+  background: linear-gradient(145deg, #151d29, #0d121b);
+}
+
+.panel h2 {
+  margin-top: 0;
+  color: #6ee7b7;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: .55rem;
+}
+
+dt {
+  color: #aab6c4;
+}
+
+dd {
+  margin: 0;
+  font-family: ui-monospace, monospace;
+}
+
+code {
+  display: block;
+  overflow-wrap: anywhere;
+  color: #93c5fd;
+  font-size: .72rem;
+}

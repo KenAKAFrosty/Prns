@@ -1,6 +1,7 @@
 import { from } from "../casework.js";
 import type { Tag } from "../casework.js";
 import type {
+  BackendInfo,
   CommandSettlement,
   HostCommand,
   InterfaceId,
@@ -11,7 +12,6 @@ import type {
   AutoWifiControllerCloseOutcome,
   AutoWifiControllerStatus,
 } from "./auto_wifi/index.js";
-import type { PrnsDiagnosticEvent } from "./events.js";
 import type { InterfaceCloseOutcome, InterfaceSessionStatus } from "./interface_contract.js";
 import type {
   BrowserPersistedState,
@@ -23,6 +23,20 @@ import type {
   SnapshotOutcome,
   StopOutcome,
 } from "./index.js";
+import type {
+  ActiveLinkSnapshot,
+  PrnsProjectionSnapshot,
+  PrnsView,
+  ProjectionRevision,
+  ProjectionSynchronization,
+} from "./projections.js";
+import type {
+  HostSnapshot,
+  InterfaceSnapshot,
+  LifecycleState,
+  RouteSnapshot,
+} from "../contract.js";
+import type { PrnsDiagnosticEvent } from "./events.js";
 import type {
   BluetoothRuntimeHost,
 } from "./bluetooth/runtime.js";
@@ -40,6 +54,7 @@ import type {
 } from "./websocket/index.js";
 
 export const WORKER_WIRE_MAXIMUM_BYTES = 1024 * 1024;
+export const MAXIMUM_PENDING_PROJECTION_SYNCHRONIZATIONS = 32;
 
 export type WorkerInitialization = {
   readonly identity: IdentitySecretKey;
@@ -75,7 +90,6 @@ export type WorkerCall =
     >
   | Tag<"Snapshot">
   | Tag<"HostSnapshot">
-  | Tag<"Stop">
   | Tag<
       "WebSocketConnect",
       { readonly url: string; readonly options: WebSocketConnectOptions }
@@ -92,12 +106,6 @@ export type WorkerCallOutcomes = {
   readonly SendResourceBlob: CommandSettlement;
   readonly Snapshot: SnapshotOutcome;
   readonly HostSnapshot: HostSnapshotOutcome;
-  readonly Stop: {
-    readonly stopOutcome: StopOutcome;
-    readonly persistedState?: BrowserPersistedState;
-    readonly snapshot: SnapshotOutcome;
-    readonly hostSnapshot: HostSnapshotOutcome;
-  };
   readonly WebSocketConnect:
     | Tag<"Connected", WorkerSessionProjection>
     | Exclude<WebSocketConnectOutcome, { readonly tag: "Connected" }>;
@@ -203,7 +211,10 @@ export type WorkerEventMessage =
       { readonly id: number; readonly event: PrnsDiagnosticEvent }
     >;
 
-export type WorkerEventAcknowledgement = Tag<"Acknowledge", { readonly id: number }>;
+export type WorkerEventRequest =
+  | Tag<"Acknowledge", { readonly id: number }>
+  | Tag<"ClaimApplicationEvents">
+  | Tag<"ClaimDiagnostics">;
 
 export type WorkerStartMessage = Tag<
   "Initialize",
@@ -212,8 +223,71 @@ export type WorkerStartMessage = Tag<
     readonly control: MessagePort;
     readonly events: MessagePort;
     readonly capabilities: MessagePort;
+    readonly projections: MessagePort;
+    readonly shutdown: MessagePort;
   }
 >;
+
+export type WorkerShutdownRequest = Tag<"Stop">;
+
+export type WorkerShutdownState = {
+  readonly stopOutcome: StopOutcome;
+  readonly persistedState?: BrowserPersistedState;
+  readonly snapshot: SnapshotOutcome;
+  readonly hostSnapshot: HostSnapshotOutcome;
+};
+
+export type WorkerShutdownResponse =
+  | Tag<"Stopped", WorkerShutdownState>
+  | Tag<"ProtocolFailed", { readonly detail: string }>;
+
+export type WorkerProjectionRequest =
+  | Tag<"Observe", { readonly view: Exclude<PrnsView, Tag<"Diagnostics", unknown>> }>
+  | Tag<"Unobserve", { readonly view: Exclude<PrnsView, Tag<"Diagnostics", unknown>> }>
+  | Tag<"ObserveDiagnostics", { readonly maximumEvents: number }>
+  | Tag<"Synchronize", { readonly id: number; readonly view: PrnsView }>
+  | Tag<"AcknowledgeProjection", { readonly id: number }>;
+
+export type WorkerProjectionUpdate =
+  | Tag<"Lifecycle", PrnsProjectionSnapshot<LifecycleState>>
+  | Tag<"Interfaces", PrnsProjectionSnapshot<readonly InterfaceSnapshot[]>>
+  | Tag<"Routes", PrnsProjectionSnapshot<readonly RouteSnapshot[]>>
+  | Tag<"Links", PrnsProjectionSnapshot<readonly ActiveLinkSnapshot[]>>
+  | Tag<
+      "DiagnosticsReset",
+      PrnsProjectionSnapshot<readonly PrnsDiagnosticEvent[]>
+    >
+  | Tag<
+      "DiagnosticsDelta",
+      {
+        readonly revision: ProjectionRevision;
+        readonly dropped: number;
+        readonly appended: readonly PrnsDiagnosticEvent[];
+      }
+    >;
+
+export type WorkerProjectionMessage =
+  | Tag<
+      "ProjectionBatch",
+      {
+        readonly id: number;
+        readonly batch: WireBatch;
+      }
+    >
+  | Tag<
+      "ProjectionSynchronized",
+      {
+        readonly id: number;
+        readonly outcome: ProjectionSynchronization<unknown>;
+      }
+    >
+  | Tag<"ProjectionProtocolFailed", { readonly detail: string }>;
+
+export type WorkerReadyState = {
+  readonly backendInfo: BackendInfo;
+  readonly lifecycle: LifecycleState;
+  readonly hostSnapshot: HostSnapshot;
+};
 
 export const { MakeTag: workerCall } = from<WorkerCall>();
 export const { MakeTag: workerCapabilityCall } = from<WorkerCapabilityCall>();

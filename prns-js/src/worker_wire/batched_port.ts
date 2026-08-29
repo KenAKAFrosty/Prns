@@ -1,11 +1,10 @@
-import { estimateWireBytes } from "./inferred_codec.js";
 import {
   MAXIMUM_WIRE_BATCH_ITEMS,
   WireBatchDecoder,
   WireBatchEncoder,
 } from "./wire_batch.js";
 import type { WireBatch } from "./wire_batch.js";
-import type { WireCodec, WirePackingPolicy } from "./wire_batch.js";
+import type { WireCodec, WireCodecPolicy } from "./wire_batch.js";
 
 export type WirePort = {
   postMessage(message: unknown, transfer?: Transferable[]): void;
@@ -17,10 +16,12 @@ export type BatchedPortOptions<Value> = {
   readonly port: WirePort;
   readonly wrap: (batch: WireBatch) => unknown;
   readonly maximumItems: number;
+  readonly maximumQueuedItems: number;
   readonly maximumBytes: number;
+  readonly measureBytes: (value: Value) => number;
   readonly scheduleTask: TaskScheduler;
   readonly failed: (error: unknown) => void;
-  readonly packingPolicy?: WirePackingPolicy;
+  readonly codecPolicy?: WireCodecPolicy;
   readonly codec?: WireCodec<Value>;
 };
 
@@ -44,9 +45,15 @@ export class BatchedPortSender<Value> {
     if (!Number.isSafeInteger(options.maximumBytes) || options.maximumBytes <= 0) {
       throw new TypeError("batched port byte quantum must be a positive integer");
     }
+    if (
+      !Number.isSafeInteger(options.maximumQueuedItems) ||
+      options.maximumQueuedItems < options.maximumItems
+    ) {
+      throw new TypeError("batched port queue bound must contain at least one item quantum");
+    }
     this.#options = options;
     this.#encoder = new WireBatchEncoder({
-      ...options.packingPolicy,
+      ...options.codecPolicy,
       ...(options.codec === undefined ? {} : { codec: options.codec }),
     });
   }
@@ -54,6 +61,9 @@ export class BatchedPortSender<Value> {
   send(value: Value): void {
     if (this.#failed) {
       throw new Error("batched port sender has failed");
+    }
+    if (this.#queued.length >= this.#options.maximumQueuedItems) {
+      throw new Error("batched port sender queue is full");
     }
     this.#queued.push(value);
     if (!this.#scheduled) {
@@ -72,22 +82,25 @@ export class BatchedPortSender<Value> {
       return;
     }
     this.#scheduled = false;
-    const grain: Value[] = [];
-    let bytes = 0;
-    while (grain.length < this.#options.maximumItems) {
-      if (grain.length >= this.#queued.length) {
-        break;
-      }
-      const value = this.#queued[grain.length] as Value;
-      const valueBytes = estimateWireBytes(value);
-      if (grain.length > 0 && bytes + valueBytes > this.#options.maximumBytes) {
-        break;
-      }
-      grain.push(value);
-      bytes += valueBytes;
-    }
-    this.#queued.splice(0, grain.length);
     try {
+      const grain: Value[] = [];
+      let bytes = 0;
+      while (grain.length < this.#options.maximumItems) {
+        if (grain.length >= this.#queued.length) {
+          break;
+        }
+        const value = this.#queued[grain.length] as Value;
+        const valueBytes = this.#options.measureBytes(value);
+        if (!Number.isSafeInteger(valueBytes) || valueBytes < 0) {
+          throw new TypeError("batched port byte measure must be a non-negative safe integer");
+        }
+        if (grain.length > 0 && bytes + valueBytes > this.#options.maximumBytes) {
+          break;
+        }
+        grain.push(value);
+        bytes += valueBytes;
+      }
+      this.#queued.splice(0, grain.length);
       const encoded = this.#encoder.encode(grain);
       this.#options.port.postMessage(
         this.#options.wrap(encoded.message),

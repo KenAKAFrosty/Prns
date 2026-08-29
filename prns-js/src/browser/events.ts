@@ -231,11 +231,33 @@ const CORRELATED_EVENT_KINDS: ReadonlySet<number> = new Set([
   APPLICATION_EVENT_KIND_CODES.Response,
   APPLICATION_EVENT_KIND_CODES.ResponseSegment,
 ]);
+const DIAGNOSTIC_EVENT_KINDS_SET: ReadonlySet<number> = new Set(
+  Object.values(DIAGNOSTIC_EVENT_KIND_CODES),
+);
 
 export function parseEventBatch(bytes: Uint8Array): ParsedPrnsEvent[] {
   return decodeEventBatchProjection(bytes).map((event) =>
     parseEvent(rawProjectedEvent(event))
   );
+}
+
+export function parseDiagnosticEventBatch(
+  bytes: Uint8Array,
+): PrnsDiagnosticEvent[] {
+  const diagnostics: PrnsDiagnosticEvent[] = [];
+  for (const projected of decodeEventBatchProjection(
+    bytes,
+    DIAGNOSTIC_EVENT_KINDS_SET,
+  )) {
+    match(parseEvent(rawProjectedEvent(projected)), {
+      Diagnostic: (diagnostic) => diagnostics.push(diagnostic),
+      Application: () => undefined,
+      CommandResponse: () => undefined,
+      CommandResponseSegment: () => undefined,
+      CommandSettled: () => undefined,
+    });
+  }
+  return diagnostics;
 }
 
 export function parseCorrelatedEventBatch(bytes: Uint8Array): ParsedPrnsEvent[] {

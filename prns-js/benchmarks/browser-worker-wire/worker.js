@@ -15,13 +15,8 @@ import {
 } from "../../dist/browser/worker_codecs.js";
 
 const requestDecoder = new WireBatchDecoder();
-const responseEncoder = new WireBatchEncoder({ minimumItems: 1 });
-const clonedSettlementSender = settlementSender({
-  packingPolicy: { minimumItems: Number.MAX_SAFE_INTEGER },
-});
-const packedSettlementSender = settlementSender({
-  packingPolicy: { minimumItems: 1 },
-});
+const responseEncoder = new WireBatchEncoder();
+const clonedSettlementSender = settlementSender({});
 const codecSettlementSender = settlementSender({ codec: workerSettlementCodec });
 
 function settlementSender(options) {
@@ -29,7 +24,9 @@ function settlementSender(options) {
   port: self,
   wrap: (batch) => Tag("SettlementFrame", { batch }),
   maximumItems: MAXIMUM_WIRE_BATCH_ITEMS,
+  maximumQueuedItems: MAXIMUM_WIRE_BATCH_ITEMS,
   maximumBytes: 1024 * 1024,
+  measureBytes: () => 256,
   scheduleTask: messageTaskScheduler(),
   failed: fail,
     ...options,
@@ -37,7 +34,6 @@ function settlementSender(options) {
 }
 
 const clonedCommandReceiver = commandReceiver(clonedSettlementSender);
-const packedCommandReceiver = commandReceiver(packedSettlementSender);
 const codecCommandReceiver = commandReceiver(codecSettlementSender, [workerInvocationCodec]);
 
 function commandReceiver(sender, codecs = []) {
@@ -67,7 +63,6 @@ self.addEventListener("message", ({ data }) => {
       self.postMessage(Tag("TransferredNumbers", { id, buffer }), [buffer]);
     },
     ClonedCommandFrame: ({ batch }) => clonedCommandReceiver.receive(batch),
-    PackedCommandFrame: ({ batch }) => packedCommandReceiver.receive(batch),
     CodecCommandFrame: ({ batch }) => codecCommandReceiver.receive(batch),
   });
 });

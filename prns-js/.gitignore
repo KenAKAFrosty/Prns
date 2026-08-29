@@ -1,4 +1,5 @@
 /dist-cjs/
+/examples/framework-gallery/dist-qwik/
 /native/
 /wasm/
 /LICENSE-APACHE

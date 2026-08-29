@@ -68,7 +68,7 @@ pub use crate::wire::WireError as EgressSerializeError;
 pub use command_execution::CommandTiming;
 pub use commands::*;
 pub use destination_retirement::RetireDestinationOutcome;
-pub use introspection::{AnnounceRateState, RouteSnapshot};
+pub use introspection::{ActiveLinkSnapshot, AnnounceRateState, RouteSnapshot};
 pub use node_egress::ReemitAnnounce;
 pub use node_ingress::{IngestIo, IngestPacketReport};
 pub use proof::ResolvedReceiptSettlement;

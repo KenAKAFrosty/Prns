@@ -119,6 +119,7 @@ try {
     bluetoothContract: "Shared",
     bluetoothSession: "Bridged",
     bluetoothWorker: "Bridged",
+    projection: "Reactive",
     stop: "Idempotent",
     compression: "Compressed",
     compressionDetail: "message:message",

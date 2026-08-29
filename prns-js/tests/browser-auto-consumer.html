@@ -12,6 +12,7 @@
         Tag,
         linkId,
         persistentBrowser,
+        prnsView,
       } from "/prns-js/dist/browser/index.js";
 
       async function compressionWorkerOutcome(workerUrl, moduleUrl) {
@@ -413,10 +414,12 @@
             return `Failed:Create:${created.tag}`;
           }
           node = created.data;
+          const interfaces = node.projection(prnsView("Interfaces"));
           const connected = await node.interfaces.bluetooth.connect();
           if (connected.tag !== "Connected") {
             return `Failed:Connect:${connected.tag}`;
           }
+          await waitForBluetoothSmoke(() => interfaces.latest().value.length === 1);
           const stopped = await node.stop();
           node = undefined;
           return stopped.tag === "Stopped" &&
@@ -645,6 +648,17 @@
         document.title = "FAIL";
       } else {
         document.body.dataset.execution = outcome.data.execution;
+        const lifecycleProjection = outcome.data.projection(
+          prnsView("Lifecycle"),
+        );
+        const sameLifecycleProjection = outcome.data.projection(
+          prnsView("Lifecycle"),
+        );
+        const initialProjectionState = lifecycleProjection.latest().value;
+        let lifecycleNotifications = 0;
+        const releaseLifecycle = lifecycleProjection.subscribe(() => {
+          lifecycleNotifications += 1;
+        });
         const unknownLink = linkId(new Uint8Array(16));
         const closed = await outcome.data.closeLink(unknownLink);
         document.body.dataset.command = `${closed.tag}:${closed.data.tag}`;
@@ -675,6 +689,17 @@
         const stopped = await outcome.data.stop();
         const stoppedAgain = await outcome.data.stop();
         const stoppedSnapshot = await outcome.data.hostSnapshot();
+        await Promise.resolve();
+        const finalProjectionState = lifecycleProjection.latest().value;
+        releaseLifecycle();
+        const projectionReactive =
+          lifecycleProjection === sameLifecycleProjection &&
+          initialProjectionState.tag === "Running" &&
+          finalProjectionState.tag === "Stopped" &&
+          lifecycleNotifications >= 1;
+        document.body.dataset.projection = projectionReactive
+          ? "Reactive"
+          : "Failed";
         const stopIdempotent =
           stopped.tag === "Stopped" &&
           stoppedAgain.tag === "AlreadyStopped" &&
@@ -699,6 +724,7 @@
           bluetoothContract === "Shared" &&
           bluetoothSession === "Bridged" &&
           bluetoothWorker === "Bridged" &&
+          projectionReactive &&
           stopIdempotent &&
           compression
             ? "PASS"
@@ -722,6 +748,7 @@
           bluetoothContract: document.body.dataset.bluetoothContract,
           bluetoothSession: document.body.dataset.bluetoothSession,
           bluetoothWorker: document.body.dataset.bluetoothWorker,
+          projection: document.body.dataset.projection,
           stop: document.body.dataset.stop,
           compression: document.body.dataset.compression,
           compressionDetail: document.body.dataset.compressionDetail,

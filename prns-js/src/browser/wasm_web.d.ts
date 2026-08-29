@@ -36,6 +36,7 @@ export declare class PrnsRuntime implements PrnsRuntimeBinding {
   persistedState: PrnsRuntimeBinding["persistedState"];
   restorePersistedState: PrnsRuntimeBinding["restorePersistedState"];
   snapshot: PrnsRuntimeBinding["snapshot"];
+  projectionSnapshot: PrnsRuntimeBinding["projectionSnapshot"];
 }
 
 export declare class UsbAutoDecoder implements UsbAutoDecoderBinding {

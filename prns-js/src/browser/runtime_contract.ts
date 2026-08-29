@@ -53,7 +53,8 @@ export type RuntimeOperation =
   | "ingest"
   | "drain-events"
   | "drain-outbound"
-  | "snapshot";
+  | "snapshot"
+  | "projection-snapshot";
 
 export type RuntimeRejected = Tag<
   "RuntimeRejected",
@@ -164,6 +165,13 @@ export type PrnsRuntimeBinding = {
     options: BrowserPersistedState & { readonly nowMs: InstantMillis },
   ): unknown;
   snapshot(): unknown;
+  projectionSnapshot(request: RuntimeProjectionSnapshotRequest): unknown;
+};
+
+export type RuntimeProjectionSnapshotRequest = {
+  readonly interfaces: boolean;
+  readonly routes: boolean;
+  readonly links: boolean;
 };
 
 export type UsbAutoDecoderBinding = {

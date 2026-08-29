@@ -2,16 +2,18 @@ import { Tag } from "../casework.js";
 import type { PrnsLimits } from "../contract.js";
 import {
   retainApplicationEventBatchProjection,
+  retainDiagnosticEventBatchProjection,
   summarizeEventBatchProjection,
 } from "../event_projection.js";
 import type { EventBatchProjectionSummary } from "../event_projection.js";
 import type { PrnsDiagnosticEvent } from "./events.js";
 import type {
-  WorkerEventAcknowledgement,
+  WorkerEventRequest,
   WorkerEventMessage,
 } from "./worker_protocol.js";
 
 type QueuedWorkerEvent = {
+  readonly lane: "Application" | "Diagnostics";
   readonly message: WorkerEventMessage;
   readonly applicationEvents: number;
   readonly diagnostics: number;
@@ -35,6 +37,8 @@ export class BoundedWorkerEventSender {
   #droppedDiagnostics = 0n;
   #nextId = 1;
   #failed = false;
+  #applicationClaimed = false;
+  #diagnosticsClaimed = false;
 
   constructor(
     port: MessagePort,
@@ -46,8 +50,8 @@ export class BoundedWorkerEventSender {
     this.#failure = failure;
     port.addEventListener(
       "message",
-      (event: MessageEvent<WorkerEventAcknowledgement>) => {
-        this.#receiveAcknowledgement(event.data);
+      (event: MessageEvent<WorkerEventRequest>) => {
+        this.#receive(event.data);
       },
     );
   }
@@ -61,25 +65,37 @@ export class BoundedWorkerEventSender {
       this.#failProtocol(error instanceof Error ? error.message : String(error));
       throw error;
     }
-    let transferable = batch;
-    if (this.#diagnostics + summary.diagnostics > this.#limits.diagnostics) {
-      this.#droppedDiagnostics += BigInt(summary.diagnostics);
-      transferable = retainApplicationEventBatchProjection(batch);
-      summary = {
+    this.#flushDiagnosticGap();
+    if (summary.applicationEvents > 0) {
+      const application = retainApplicationEventBatchProjection(batch);
+      this.#enqueue({
+        lane: "Application",
+        message: Tag("Batch", {
+          id: this.#mintId(),
+          buffer: transferableBuffer(application),
+        }),
         applicationEvents: summary.applicationEvents,
         diagnostics: 0,
         retainedEventBytes: summary.retainedEventBytes,
-      };
+      });
     }
-    this.#flushDiagnosticGap();
-    if (summary.applicationEvents === 0 && summary.diagnostics === 0) {
+    if (this.#diagnostics + summary.diagnostics > this.#limits.diagnostics) {
+      this.#droppedDiagnostics += BigInt(summary.diagnostics);
       return;
     }
-    const buffer = transferableBuffer(transferable);
-    this.#enqueue({
-      message: Tag("Batch", { id: this.#mintId(), buffer }),
-      ...summary,
-    });
+    if (summary.diagnostics > 0) {
+      const diagnostics = retainDiagnosticEventBatchProjection(batch);
+      this.#enqueue({
+        lane: "Diagnostics",
+        message: Tag("Batch", {
+          id: this.#mintId(),
+          buffer: transferableBuffer(diagnostics),
+        }),
+        applicationEvents: 0,
+        diagnostics: summary.diagnostics,
+        retainedEventBytes: 0,
+      });
+    }
   }
 
   sendDiagnostic(event: PrnsDiagnosticEvent): void {
@@ -90,6 +106,7 @@ export class BoundedWorkerEventSender {
       return;
     }
     this.#enqueue({
+      lane: "Diagnostics",
       message: Tag("Diagnostic", { id: this.#mintId(), event }),
       applicationEvents: 0,
       diagnostics: 1,
@@ -118,7 +135,15 @@ export class BoundedWorkerEventSender {
     if (this.#failed || this.#inFlight !== undefined) {
       return;
     }
-    const next = this.#queued.shift();
+    const index = this.#queued.findIndex((queued) =>
+      queued.lane === "Application"
+        ? this.#applicationClaimed
+        : this.#diagnosticsClaimed
+    );
+    if (index < 0) {
+      return;
+    }
+    const next = this.#queued.splice(index, 1)[0];
     if (next === undefined) {
       return;
     }
@@ -130,8 +155,18 @@ export class BoundedWorkerEventSender {
     this.#port.postMessage(next.message);
   }
 
-  #receiveAcknowledgement(message: WorkerEventAcknowledgement): void {
+  #receive(message: WorkerEventRequest): void {
     if (this.#failed) {
+      return;
+    }
+    if (message?.tag === "ClaimApplicationEvents") {
+      this.#applicationClaimed = true;
+      this.#dispatch();
+      return;
+    }
+    if (message?.tag === "ClaimDiagnostics") {
+      this.#diagnosticsClaimed = true;
+      this.#dispatch();
       return;
     }
     const inFlight = this.#inFlight;
@@ -162,6 +197,7 @@ export class BoundedWorkerEventSender {
     const count = this.#droppedDiagnostics;
     this.#droppedDiagnostics = 0n;
     this.#enqueue({
+      lane: "Diagnostics",
       message: Tag("Diagnostic", {
         id: this.#mintId(),
         event: Tag("DiagnosticsDropped", { count }),

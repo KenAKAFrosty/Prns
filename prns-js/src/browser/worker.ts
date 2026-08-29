@@ -26,7 +26,10 @@ import type {
   WorkerControlRequest,
   WorkerControlResponse,
   WorkerInvocation,
+  WorkerProjectionMessage,
   WorkerSettlement,
+  WorkerShutdownRequest,
+  WorkerShutdownResponse,
   WorkerStartMessage,
 } from "./worker_protocol.js";
 import { WORKER_WIRE_MAXIMUM_BYTES } from "./worker_protocol.js";
@@ -41,7 +44,9 @@ import {
   MINIMUM_WORKER_CODEC_ITEMS,
   workerInvocationCodec,
   workerSettlementCodec,
+  workerSettlementWireBytes,
 } from "./worker_codecs.js";
+import { WorkerProjectionServer } from "./worker_projection_server.js";
 
 type StartedEngine = {
   readonly engine: Prns;
@@ -56,16 +61,18 @@ const workerScope = globalThis as typeof globalThis & {
 };
 
 workerScope.addEventListener("message", (event) => {
-  if (event.data.tag === "Initialize") {
+  if (tagOf(event.data) === "Initialize") {
     void initialize(event.data);
   }
 });
 
 async function initialize(message: WorkerStartMessage): Promise<void> {
-  const { control, events, capabilities } = message.data;
+  const { control, events, capabilities, projections, shutdown } = message.data;
   control.start();
   events.start();
   capabilities.start();
+  projections.start();
+  shutdown.start();
   let eventFlowFailed = false;
   const eventSender = new BoundedWorkerEventSender(
     events,
@@ -108,17 +115,60 @@ async function initialize(message: WorkerStartMessage): Promise<void> {
     controller: undefined,
   };
   let nextSessionId = 1;
+  const initialSnapshot = await state.engine.hostSnapshot();
+  if (initialSnapshot.tag !== "Captured") {
+    postControl(control, Tag("ProtocolFailed", {
+      detail: initialSnapshot.data.detail,
+    }));
+    return;
+  }
   postControl(control, Tag("Started", {
     outcome: Tag("Ready", {
       backendInfo: state.engine.backendInfo,
       lifecycle: state.engine.lifecycle,
+      hostSnapshot: initialSnapshot.data,
     }),
   }));
+  new WorkerProjectionServer(projections, state.engine);
+  let shutdownStarted = false;
+  shutdown.addEventListener(
+    "message",
+    (event: MessageEvent<WorkerShutdownRequest>) => {
+      if (tagOf(event.data) !== "Stop") {
+        shutdown.postMessage(Tag("ProtocolFailed", {
+          detail: "worker shutdown channel received an unknown message",
+        }));
+        return;
+      }
+      if (shutdownStarted) {
+        return;
+      }
+      shutdownStarted = true;
+      void stopEngine(state.engine, sessions, autoWifi)
+        .then(async (stopOutcome) => {
+          const persistedState = state.persistenceState();
+          const response: WorkerShutdownResponse = Tag("Stopped", {
+            stopOutcome,
+            ...(persistedState === undefined ? {} : { persistedState }),
+            snapshot: await state.engine.snapshot(),
+            hostSnapshot: await state.engine.hostSnapshot(),
+          });
+          shutdown.postMessage(response);
+        })
+        .catch((error) => {
+          shutdown.postMessage(Tag("ProtocolFailed", {
+            detail: describeHostError(error),
+          }));
+        });
+    },
+  );
   const settlementSender = new BatchedPortSender<WorkerSettlement>({
     port: control,
     wrap: (batch) => Tag("Settlements", { batch }),
     maximumItems: MAXIMUM_WIRE_BATCH_ITEMS,
+    maximumQueuedItems: MAXIMUM_WIRE_BATCH_ITEMS * 2,
     maximumBytes: WORKER_WIRE_MAXIMUM_BYTES,
+    measureBytes: workerSettlementWireBytes,
     scheduleTask: messageTaskScheduler(),
     failed: (error) => {
       postControl(control, Tag("ProtocolFailed", {
@@ -126,13 +176,15 @@ async function initialize(message: WorkerStartMessage): Promise<void> {
       }));
     },
     codec: workerSettlementCodec,
-    packingPolicy: { minimumItems: MINIMUM_WORKER_CODEC_ITEMS },
+    codecPolicy: { minimumCodecItems: MINIMUM_WORKER_CODEC_ITEMS },
   });
   const capabilitySettlementSender = new BatchedPortSender<WorkerCapabilitySettlement>({
     port: capabilities,
     wrap: (batch) => Tag("CapabilitySettlements", { batch }),
     maximumItems: MAXIMUM_WIRE_BATCH_ITEMS,
+    maximumQueuedItems: MAXIMUM_WIRE_BATCH_ITEMS * 2,
     maximumBytes: WORKER_WIRE_MAXIMUM_BYTES,
+    measureBytes: workerCapabilitySettlementWireBytes,
     scheduleTask: messageTaskScheduler(),
     failed: (error) => {
       postControl(capabilities, Tag("ProtocolFailed", {
@@ -142,21 +194,27 @@ async function initialize(message: WorkerStartMessage): Promise<void> {
   });
   const callReceiver = new BatchedPortReceiver<WorkerInvocation>(
     (invocation) => {
+      if (shutdownStarted) {
+        return;
+      }
       void settleCall(invocation);
     },
     [workerInvocationCodec],
   );
   const capabilityReceiver = new BatchedPortReceiver<WorkerCapabilityInvocation>((invocation) => {
+    if (shutdownStarted) {
+      return;
+    }
     void settleCapability(invocation);
   });
   control.addEventListener("message", (request: MessageEvent<WorkerControlRequest>) => {
-    if (request.data.tag !== "Calls") {
-      postControl(control, Tag("ProtocolFailed", {
-        detail: "worker control channel received an unknown message",
-      }));
+    if (shutdownStarted) {
       return;
     }
     try {
+      if (tagOf(request.data) !== "Calls") {
+        throw new TypeError("worker control channel received an unknown message");
+      }
       callReceiver.receive(request.data.data.batch);
     } catch (error) {
       postControl(control, Tag("ProtocolFailed", {
@@ -165,13 +223,13 @@ async function initialize(message: WorkerStartMessage): Promise<void> {
     }
   });
   capabilities.addEventListener("message", (request: MessageEvent<WorkerCapabilityRequest>) => {
-    if (request.data.tag !== "CapabilityCalls") {
-      postControl(capabilities, Tag("ProtocolFailed", {
-        detail: "worker capability channel received an unknown message",
-      }));
+    if (shutdownStarted) {
       return;
     }
     try {
+      if (tagOf(request.data) !== "CapabilityCalls") {
+        throw new TypeError("worker capability channel received an unknown message");
+      }
       capabilityReceiver.receive(request.data.data.batch);
     } catch (error) {
       postControl(capabilities, Tag("ProtocolFailed", {
@@ -181,28 +239,29 @@ async function initialize(message: WorkerStartMessage): Promise<void> {
   });
 
   async function settleCall(request: WorkerInvocation): Promise<void> {
+    if (shutdownStarted) {
+      return;
+    }
     try {
-      const callOutcome = await performCall(
+      const outcome = await performCall(
         state.engine,
         request.call,
         sessions,
         () => nextSessionId++,
         autoWifi,
       );
-      const outcome = request.call.tag === "Stop"
-        ? {
-            stopOutcome: callOutcome,
-            persistedState: state.persistenceState(),
-            snapshot: await state.engine.snapshot(),
-            hostSnapshot: await state.engine.hostSnapshot(),
-          }
-        : callOutcome;
+      if (shutdownStarted) {
+        return;
+      }
       settlementSender.send({
         id: request.id,
         call: request.call.tag,
         outcome,
       });
     } catch (error) {
+      if (shutdownStarted) {
+        return;
+      }
       postControl(control, Tag("ProtocolFailed", {
         id: request.id,
         detail: describeHostError(error),
@@ -211,14 +270,23 @@ async function initialize(message: WorkerStartMessage): Promise<void> {
   }
 
   async function settleCapability(request: WorkerCapabilityInvocation): Promise<void> {
+    if (shutdownStarted) {
+      return;
+    }
     try {
       const outcome = await dispatchWorkerCapability(state.engine, request.call);
+      if (shutdownStarted) {
+        return;
+      }
       capabilitySettlementSender.send({
         id: request.id,
         call: request.call.tag,
         outcome,
       });
     } catch (error) {
+      if (shutdownStarted) {
+        return;
+      }
       postControl(capabilities, Tag("ProtocolFailed", {
         id: request.id,
         detail: describeHostError(error),
@@ -319,7 +387,6 @@ async function performCall(
     ),
     Snapshot: () => engine.snapshot(),
     HostSnapshot: () => engine.hostSnapshot(),
-    Stop: () => stopEngine(engine, sessions, autoWifi),
     WebSocketConnect: async ({ url, options }) => {
       const outcome = await engine.interfaces.webSocket.connect(url, options);
       if (outcome.tag !== "Connected") {
@@ -409,7 +476,26 @@ async function stopEngine(
 
 function postControl(
   port: MessagePort,
-  message: WorkerControlResponse | WorkerCapabilityResponse,
+  message: WorkerControlResponse | WorkerCapabilityResponse | WorkerProjectionMessage,
 ): void {
   port.postMessage(message);
+}
+
+function workerCapabilitySettlementWireBytes(
+  value: WorkerCapabilitySettlement,
+): number {
+  if (value.outcome instanceof Uint8Array) {
+    return 64 + value.outcome.byteLength;
+  }
+  if (Array.isArray(value.outcome)) {
+    return 64 + value.outcome.length * 64;
+  }
+  return 256;
+}
+
+function tagOf(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null || !("tag" in value)) {
+    return undefined;
+  }
+  return typeof value.tag === "string" ? value.tag : undefined;
 }

@@ -109,11 +109,24 @@ export function summarizeEventBatchProjection(
 export function retainApplicationEventBatchProjection(
   bytes: Uint8Array,
 ): Uint8Array {
+  return retainEventBatchProjection(bytes, APPLICATION_EVENT_KINDS);
+}
+
+export function retainDiagnosticEventBatchProjection(
+  bytes: Uint8Array,
+): Uint8Array {
+  return retainEventBatchProjection(bytes, DIAGNOSTIC_EVENT_KINDS);
+}
+
+function retainEventBatchProjection(
+  bytes: Uint8Array,
+  retainedKinds: ReadonlySet<number>,
+): Uint8Array {
   const retainedRecords: Array<{ readonly start: number; readonly end: number }> = [];
   visitEventBatchProjection(bytes, undefined, (kind, start, end) => ({
     field: () => undefined,
     finish: () => {
-      if (APPLICATION_EVENT_KINDS.has(kind)) {
+      if (retainedKinds.has(kind)) {
         retainedRecords.push({ start, end });
       }
     },

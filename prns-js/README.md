@@ -155,6 +155,28 @@ match(settlement.data, {
 ```
 The compiler requires every declared case. Commands settle their returned promises, expected failures are typed tagged outcomes, and public binary values are semantically branded `Uint8Array` instances. Browser backends attach `WebSocketClient` and `BrowserRendezvous` through the bounded cooperative transport and return `UnsupportedByBackend` for native-only interface kinds. Each host reports its current support through `backendInfo` and `capabilities`. Browser destination registration, node-page registration, `snapshot()`, and `hostSnapshot()` are asynchronous so the public API is identical across Worker and main-thread execution. The browser `hostSnapshot()` projects the generated inspection contract with revisioned routes, destination identities, logical interfaces, transfer counters, runtime health, and exact persistence status. A `ResourceAvailable` event owns a `ResourceStream`; its `claim()` method uses the same `Claimed | AlreadyClaimed` contract.
 
+## Observe browser state
+
+Browser projections provide stable, revisioned snapshots for lifecycle, interfaces, routes, active links, and bounded diagnostics. Calling `latest()` is synchronous and does not capture new engine state. A subscription activates demand-driven capture until its release function runs; `synchronize()` explicitly requests a current snapshot and settles as `Synchronized`, `Busy`, or `Unavailable`.
+
+```ts
+import { prnsView } from "personal-rns/browser";
+
+const links = node.projection(prnsView("Links"));
+const release = links.subscribe(() => {
+  renderLinks(links.latest().value);
+});
+
+const synchronized = await links.synchronize();
+if (synchronized.tag === "Synchronized") {
+  renderLinks(synchronized.data.value);
+}
+
+release();
+```
+
+Framework adapters expose the same projections through `personal-rns/react`, `personal-rns/solid`, `personal-rns/vue`, `personal-rns/svelte`, and `personal-rns/qwik`. `personal-rns/web-component` provides the non-framework `prns-bridge` custom element. Each adapter owns subscription cleanup at its framework lifecycle boundary and requires an explicit client-rendered Prns provider or context.
+
 Browser hosts are ephemeral by default. `persistentBrowser()` selects a caller-named `localStorage` root for the host identity, Bluetooth identity, routing state, destination identities, tunnels, and ratchets. Interfaces remain caller-supplied after restart. `stop()` flushes the bounded state before settling, while restoration and flush results appear on the diagnostic stream and in `hostSnapshot()`:
 
 ```ts

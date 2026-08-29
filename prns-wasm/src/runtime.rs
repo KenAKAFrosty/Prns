@@ -1077,6 +1077,70 @@ impl PrnsRuntime {
         );
         object.into()
     }
+
+    #[wasm_bindgen(js_name = projectionSnapshot)]
+    pub fn projection_snapshot(&self, request: JsValue) -> Result<JsValue, JsValue> {
+        let include_interfaces = required_bool(&request, "interfaces")?;
+        let include_routes = required_bool(&request, "routes")?;
+        let include_links = required_bool(&request, "links")?;
+        let object = Object::new();
+        set_bigint(&object, "revision", self.revision);
+        if include_interfaces {
+            let interfaces = Array::new();
+            for interface in &self.interfaces {
+                let row = Object::new();
+                set_bytes(&row, "id", interface.id.as_bytes());
+                set_str(&row, "kind", interface_kind_name(interface.id.kind()));
+                set_usize(&row, "routes", self.engine.route_count_via(interface.id));
+                set_usize(&row, "links", self.engine.link_count_via(interface.id));
+                set_usize(
+                    &row,
+                    "transportedLinks",
+                    self.engine.transported_link_count_via(interface.id),
+                );
+                interfaces.push(&row);
+            }
+            set_value(&object, "interfaces", interfaces.into());
+        }
+        if include_routes {
+            let routes = Array::new();
+            self.engine.visit_route_snapshots(
+                personal_rns::interfaces::AttachedInterfaces::new(&self.interfaces),
+                |route| {
+                    let row = Object::new();
+                    set_bytes(&row, "destination", route.destination.as_bytes());
+                    set_u32(&row, "hops", u32::from(route.hops));
+                    if let NextHop::Via(identity) = route.via {
+                        set_bytes(&row, "viaIdentity", identity.as_bytes());
+                    }
+                    set_bytes(&row, "interfaceId", route.interface.as_bytes());
+                    set_u64(&row, "learnedAtMillis", route.learned_at.0);
+                    set_u64(
+                        &row,
+                        "lastRouteActivityAtMillis",
+                        route.last_route_activity_at.0,
+                    );
+                    set_u64(&row, "expiresAtMillis", route.expires_at.0);
+                    routes.push(&row);
+                },
+            );
+            set_value(&object, "routes", routes.into());
+        }
+        if include_links {
+            let links = Array::new();
+            self.engine.visit_active_link_snapshots(|link| {
+                let row = Object::new();
+                set_bytes(&row, "linkId", link.link_id.as_bytes());
+                set_u64(&row, "rttMillis", link.rtt.millis());
+                if let Some(identity) = link.remote_identity {
+                    set_bytes(&row, "peerIdentity", identity.as_bytes());
+                }
+                links.push(&row);
+            });
+            set_value(&object, "links", links.into());
+        }
+        Ok(object.into())
+    }
 }
 
 impl PrnsRuntime {

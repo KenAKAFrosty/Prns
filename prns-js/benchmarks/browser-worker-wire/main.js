@@ -20,7 +20,7 @@ import {
 } from "../../dist/contract.js";
 
 const worker = new Worker("./worker.js", { type: "module" });
-const requestEncoder = new WireBatchEncoder({ minimumItems: 1 });
+const requestEncoder = new WireBatchEncoder();
 const responseDecoder = new WireBatchDecoder();
 const pending = new Map();
 const clonePending = new Map();
@@ -30,11 +30,7 @@ let nextId = 1;
 
 const clonedBatchCommandSender = commandSender(
   "ClonedCommandFrame",
-  { packingPolicy: { minimumItems: Number.MAX_SAFE_INTEGER } },
-);
-const packedBatchCommandSender = commandSender(
-  "PackedCommandFrame",
-  { packingPolicy: { minimumItems: 1 } },
+  {},
 );
 const codecBatchCommandSender = commandSender(
   "CodecCommandFrame",
@@ -46,7 +42,9 @@ function commandSender(frameTag, options) {
     port: worker,
     wrap: (batch) => Tag(frameTag, { batch }),
     maximumItems: MAXIMUM_WIRE_BATCH_ITEMS,
+    maximumQueuedItems: MAXIMUM_WIRE_BATCH_ITEMS,
     maximumBytes: 1024 * 1024,
+    measureBytes: () => 256,
     scheduleTask: messageTaskScheduler(),
     failed: fail,
     ...options,
@@ -172,11 +170,11 @@ async function rowRound(count) {
   await cloneRows(value);
   await packedRows(value);
   const clone = [];
-  const packed = [];
+  const framedClone = [];
   for (let repetition = 0; repetition < 7; repetition += 1) {
     const order = repetition % 2 === 0
-      ? [[clone, cloneRows], [packed, packedRows]]
-      : [[packed, packedRows], [clone, cloneRows]];
+      ? [[clone, cloneRows], [framedClone, packedRows]]
+      : [[framedClone, packedRows], [clone, cloneRows]];
     for (const [samples, operation] of order) {
       const measured = await measure(() => operation(value));
       if (measured.value.length !== count) {
@@ -188,8 +186,7 @@ async function rowRound(count) {
   return {
     rows: count,
     cloneMedianMs: median(clone),
-    packedMedianMs: median(packed),
-    speedup: median(clone) / median(packed),
+    framedCloneMedianMs: median(framedClone),
   };
 }
 
@@ -199,12 +196,12 @@ async function numericRound(count) {
   await cloneRows(value);
   await packedRows(value);
   const clone = [];
-  const packed = [];
+  const framedClone = [];
   const transfer = [];
   for (let repetition = 0; repetition < 7; repetition += 1) {
     const configurations = [
       [clone, async () => cloneRows(value)],
-      [packed, async () => packedRows(value)],
+      [framedClone, async () => packedRows(value)],
       [transfer, async () => {
         transferred = await transferNumbers(transferred);
         return transferred;
@@ -228,9 +225,8 @@ async function numericRound(count) {
   return {
     values: count,
     plainCloneMedianMs: median(clone),
-    inferredF64MedianMs: median(packed),
+    framedCloneMedianMs: median(framedClone),
     transferredF64MedianMs: median(transfer),
-    inferredSpeedup: median(clone) / median(packed),
     transferSpeedup: median(clone) / median(transfer),
   };
 }
@@ -238,11 +234,9 @@ async function numericRound(count) {
 async function commandRound(count) {
   const warm = Array.from({ length: 32 }, (_, index) => commandValue(index));
   await Promise.all(warm.map((value) => batchedCommand(clonedBatchCommandSender, value)));
-  await Promise.all(warm.map((value) => batchedCommand(packedBatchCommandSender, value)));
   await Promise.all(warm.map((value) => batchedCommand(codecBatchCommandSender, value)));
   const clone = [];
   const clonedBatch = [];
-  const packedBatch = [];
   const codecBatch = [];
   const values = Array.from({ length: count }, (_, index) => commandValue(index));
   const roundsPerSample = Math.max(10, Math.ceil((count < 10 ? 1_000 : 10_000) / count));
@@ -250,7 +244,6 @@ async function commandRound(count) {
     const configurations = [
       [clone, cloneCommand],
       [clonedBatch, (value) => batchedCommand(clonedBatchCommandSender, value)],
-      [packedBatch, (value) => batchedCommand(packedBatchCommandSender, value)],
       [codecBatch, (value) => batchedCommand(codecBatchCommandSender, value)],
     ];
     const order = configurations.map((_, index) =>
@@ -270,11 +263,8 @@ async function commandRound(count) {
     roundsPerSample,
     cloneMedianMs: median(clone),
     clonedBatchMedianMs: median(clonedBatch),
-    packedBatchMedianMs: median(packedBatch),
     codecBatchMedianMs: median(codecBatch),
     clonedBatchSpeedup: median(clone) / median(clonedBatch),
-    packedBatchSpeedup: median(clone) / median(packedBatch),
-    packingSpeedup: median(clonedBatch) / median(packedBatch),
     codecSpeedup: median(clonedBatch) / median(codecBatch),
   };
 }

@@ -106,15 +106,22 @@ import type {
   WorkerCapabilityResponse,
   WorkerCapabilitySettlement,
   WorkerControlResponse,
-  WorkerEventAcknowledgement,
+  WorkerEventRequest,
   WorkerEventMessage,
   WorkerInitialization,
   WorkerInvocation,
+  WorkerProjectionMessage,
+  WorkerProjectionRequest,
+  WorkerProjectionUpdate,
   WorkerSettlement,
   WorkerSessionProjection,
+  WorkerShutdownResponse,
+  WorkerShutdownState,
   WorkerStartMessage,
+  WorkerReadyState,
 } from "./worker_protocol.js";
 import {
+  MAXIMUM_PENDING_PROJECTION_SYNCHRONIZATIONS,
   WORKER_WIRE_MAXIMUM_BYTES,
   workerCall,
   workerCapabilityCall,
@@ -128,8 +135,21 @@ import { MAXIMUM_WIRE_BATCH_ITEMS } from "../worker_wire/wire_batch.js";
 import {
   MINIMUM_WORKER_CODEC_ITEMS,
   workerInvocationCodec,
+  workerInvocationWireBytes,
   workerSettlementCodec,
 } from "./worker_codecs.js";
+import { PrnsProjectionStore } from "./projections.js";
+import type {
+  PrnsProjection,
+  PrnsProjectionValue,
+  PrnsView,
+  ProjectionSynchronization,
+} from "./projections.js";
+import {
+  parseProjectionSynchronization,
+  parseWorkerDiagnosticEvent,
+  parseWorkerProjectionUpdate,
+} from "./worker_projection_validation.js";
 
 type WorkerPreparation = {
   readonly initialization: WorkerInitialization;
@@ -151,8 +171,14 @@ type PendingCapabilityCall = PendingCall & {
   readonly call: WorkerCapabilityCall;
 };
 
+type PendingProjectionSynchronization = {
+  readonly view: PrnsView;
+  readonly settle: (outcome: ProjectionSynchronization<unknown>) => void;
+};
+
 const WORKER_START_TIMEOUT_MILLIS = 10_000;
 const AUTO_WIFI_STATUS_POLL_MILLIS = 250;
+const MAXIMUM_PENDING_CONTROL_CALLS = 32;
 
 export async function createDedicatedWorkerPrns(
   options: DedicatedWorkerPrnsOptions,
@@ -178,11 +204,15 @@ export async function createDedicatedWorkerPrns(
   const controlChannel = new MessageChannel();
   const eventChannel = new MessageChannel();
   const capabilityChannel = new MessageChannel();
+  const projectionChannel = new MessageChannel();
+  const shutdownChannel = new MessageChannel();
   const client = new DedicatedWorkerPrns(
     worker,
     controlChannel.port1,
     eventChannel.port1,
     capabilityChannel.port1,
+    projectionChannel.port1,
+    shutdownChannel.port1,
     prepared.data.initialization.limits,
     prepared.data.persistenceStore,
     prepared.data.wasm,
@@ -194,11 +224,15 @@ export async function createDedicatedWorkerPrns(
     control: controlChannel.port2,
     events: eventChannel.port2,
     capabilities: capabilityChannel.port2,
+    projections: projectionChannel.port2,
+    shutdown: shutdownChannel.port2,
   });
   worker.postMessage(message, [
     controlChannel.port2,
     eventChannel.port2,
     capabilityChannel.port2,
+    projectionChannel.port2,
+    shutdownChannel.port2,
   ]);
   const outcome = await started;
   if (outcome.tag !== "Ready") {
@@ -215,6 +249,8 @@ class DedicatedWorkerPrns {
   readonly #control: MessagePort;
   readonly #eventsPort: MessagePort;
   readonly #capabilitiesPort: MessagePort;
+  readonly #projectionsPort: MessagePort;
+  readonly #shutdownPort: MessagePort;
   readonly #limits: WorkerInitialization["limits"];
   readonly #persistenceStore: BrowserPersistenceStore | undefined;
   readonly #events: BoundedAsyncLane<PrnsApplicationEvent>;
@@ -226,12 +262,19 @@ class DedicatedWorkerPrns {
   }>;
   readonly #controlSettlements: BatchedPortReceiver<WorkerSettlement>;
   readonly #capabilitySettlements: BatchedPortReceiver<WorkerCapabilitySettlement>;
+  readonly #projectionUpdates: BatchedPortReceiver<WorkerProjectionUpdate>;
   readonly #pending = new Map<number, PendingControlCall>();
+  readonly #ignoredSettlements = new Set<number>();
   readonly #capabilityPending = new Map<number, PendingCapabilityCall>();
+  readonly #pendingProjectionSynchronizations = new Map<
+    number,
+    PendingProjectionSynchronization
+  >();
   readonly #pageSessions = new Map<string, InterfaceSession>();
   readonly #webSocketSessions = new Map<number, WorkerWebSocketSession>();
   readonly #autoWifi: WorkerAutoWifiInterface;
   #nextCallId = 1;
+  #nextProjectionSynchronizationId = 1;
   #startSettled = false;
   #startTimer: number | undefined;
   #startResolve:
@@ -245,12 +288,19 @@ class DedicatedWorkerPrns {
   #stoppedSnapshot: SnapshotOutcome | undefined;
   #stoppedHostSnapshot: HostSnapshotOutcome | undefined;
   #persistenceFailureDetail: string | undefined;
+  #projections: PrnsProjectionStore | undefined;
+  #pendingCommandCount = 0;
+  #pendingControlCount = 0;
+  #shutdownResolve: ((state: WorkerShutdownState) => void) | undefined;
+  #shutdownReject: ((error: Error) => void) | undefined;
 
   constructor(
     worker: Worker,
     control: MessagePort,
     events: MessagePort,
     capabilities: MessagePort,
+    projections: MessagePort,
+    shutdown: MessagePort,
     limits: WorkerInitialization["limits"],
     persistenceStore: BrowserPersistenceStore | undefined,
     wasm: PrnsWasmModule,
@@ -260,6 +310,8 @@ class DedicatedWorkerPrns {
     this.#control = control;
     this.#eventsPort = events;
     this.#capabilitiesPort = capabilities;
+    this.#projectionsPort = projections;
+    this.#shutdownPort = shutdown;
     this.#limits = limits;
     this.#persistenceStore = persistenceStore;
     this.#events = new BoundedAsyncLane({
@@ -280,17 +332,21 @@ class DedicatedWorkerPrns {
       port: control,
       wrap: (batch) => Tag("Calls", { batch }),
       maximumItems: Math.min(MAXIMUM_WIRE_BATCH_ITEMS, limits.pendingCommands),
+      maximumQueuedItems: limits.pendingCommands + MAXIMUM_PENDING_CONTROL_CALLS,
       maximumBytes: WORKER_WIRE_MAXIMUM_BYTES,
+      measureBytes: workerInvocationWireBytes,
       scheduleTask: messageTaskScheduler(),
       failed: (error) => this.#failProtocol(describeHostError(error)),
       codec: workerInvocationCodec,
-      packingPolicy: { minimumItems: MINIMUM_WORKER_CODEC_ITEMS },
+      codecPolicy: { minimumCodecItems: MINIMUM_WORKER_CODEC_ITEMS },
     });
     this.#capabilitySender = new BatchedPortSender({
       port: capabilities,
       wrap: (batch) => Tag("CapabilityCalls", { batch }),
       maximumItems: Math.min(MAXIMUM_WIRE_BATCH_ITEMS, limits.pendingCommands),
+      maximumQueuedItems: limits.pendingCommands,
       maximumBytes: WORKER_WIRE_MAXIMUM_BYTES,
+      measureBytes: workerCapabilityInvocationWireBytes,
       scheduleTask: messageTaskScheduler(),
       failed: (error) => this.#failProtocol(describeHostError(error)),
     });
@@ -300,6 +356,9 @@ class DedicatedWorkerPrns {
     );
     this.#capabilitySettlements = new BatchedPortReceiver((settlement) => {
       this.#receiveCapabilitySettlement(settlement);
+    });
+    this.#projectionUpdates = new BatchedPortReceiver((update) => {
+      this.#applyProjectionUpdate(parseWorkerProjectionUpdate(update));
     });
     const capabilityHost = new WorkerCapabilityHost(
       wasm,
@@ -320,17 +379,41 @@ class DedicatedWorkerPrns {
       autoWifi: this.#autoWifi,
     } as unknown as PrnsInterfaces;
     control.addEventListener("message", (event: MessageEvent<WorkerControlResponse>) => {
-      this.#receiveControl(event.data);
+      this.#receiveWorkerMessage(event.data, (message) => {
+        this.#receiveControl(message as WorkerControlResponse);
+      });
     });
     events.addEventListener("message", (event: MessageEvent<WorkerEventMessage>) => {
-      this.#receiveEvent(event.data);
+      this.#receiveWorkerMessage(event.data, (message) => {
+        this.#receiveEvent(message as WorkerEventMessage);
+      });
     });
     capabilities.addEventListener("message", (event: MessageEvent<WorkerCapabilityResponse>) => {
-      this.#receiveCapability(event.data);
+      this.#receiveWorkerMessage(event.data, (message) => {
+        this.#receiveCapability(message as WorkerCapabilityResponse);
+      });
     });
+    projections.addEventListener(
+      "message",
+      (event: MessageEvent<WorkerProjectionMessage>) => {
+        this.#receiveWorkerMessage(event.data, (message) => {
+          this.#receiveProjection(message as WorkerProjectionMessage);
+        });
+      },
+    );
+    shutdown.addEventListener(
+      "message",
+      (event: MessageEvent<WorkerShutdownResponse>) => {
+        this.#receiveWorkerMessage(event.data, (message) => {
+          this.#receiveShutdown(message as WorkerShutdownResponse);
+        });
+      },
+    );
     control.start();
     events.start();
     capabilities.start();
+    projections.start();
+    shutdown.start();
     worker.addEventListener("error", (event) => {
       this.#failProtocol(event.message || "DedicatedWorker failed");
     });
@@ -352,9 +435,29 @@ class DedicatedWorkerPrns {
     });
   }
 
-  acceptStart(data: { readonly backendInfo: BackendInfo; readonly lifecycle: LifecycleState }): void {
+  acceptStart(data: WorkerReadyState): void {
     this.#backendInfo = data.backendInfo;
     this.#lifecycle = data.lifecycle;
+    this.#projections = new PrnsProjectionStore(
+      data.hostSnapshot,
+      data.lifecycle,
+      this.#limits.diagnostics,
+      {
+        observed: (view) => {
+          if (view.tag !== "Diagnostics") {
+            this.#sendProjectionRequest(Tag("Observe", { view }));
+          }
+        },
+        unobserved: (view) => {
+          if (view.tag !== "Diagnostics") {
+            this.#sendProjectionRequest(Tag("Unobserve", { view }));
+          }
+        },
+        synchronize: (view) => this.#synchronizeProjection(view),
+        diagnosticCapacityChanged: (maximumEvents) =>
+          this.#sendProjectionRequest(Tag("ObserveDiagnostics", { maximumEvents })),
+      },
+    );
   }
 
   terminate(): void {
@@ -371,6 +474,8 @@ class DedicatedWorkerPrns {
     this.#control.close();
     this.#eventsPort.close();
     this.#capabilitiesPort.close();
+    this.#projectionsPort.close();
+    this.#shutdownPort.close();
     this.#worker.terminate();
   }
 
@@ -387,7 +492,7 @@ class DedicatedWorkerPrns {
   execute<Command extends HostCommand>(
     command: Command,
   ): Promise<CommandSettlementFor<Command>> {
-    if (this.#pending.size >= this.#limits.pendingCommands) {
+    if (this.#pendingCommandCount >= this.#limits.pendingCommands) {
       return Promise.resolve(commandFailed(Tag("Busy")) as CommandSettlementFor<Command>);
     }
     if (this.#lifecycle.tag !== "Running") {
@@ -480,6 +585,12 @@ class DedicatedWorkerPrns {
     blob: Blob,
     options: SendResourceOptions = {},
   ): Promise<CommandSettlement> {
+    if (this.#pendingCommandCount >= this.#limits.pendingCommands) {
+      return Promise.resolve(commandFailed(Tag("Busy")));
+    }
+    if (this.#lifecycle.tag !== "Running") {
+      return Promise.resolve(commandFailed(Tag("NodeStopped")));
+    }
     return this.#call(workerCall("SendResourceBlob", { linkId, blob, options }));
   }
 
@@ -533,12 +644,29 @@ class DedicatedWorkerPrns {
     });
   }
 
+  projection<View extends PrnsView>(
+    view: View,
+  ): PrnsProjection<PrnsProjectionValue<View>> {
+    if (this.#projections === undefined) {
+      throw new Error("DedicatedWorker projections are not ready");
+    }
+    return this.#projections.projection(view);
+  }
+
   claimEvents(): StreamClaim<PrnsApplicationEvent> {
-    return this.#events.claim();
+    const claim = this.#events.claim();
+    if (claim.tag === "Claimed") {
+      this.#sendEventRequest(Tag("ClaimApplicationEvents"));
+    }
+    return claim;
   }
 
   claimDiagnostics(): StreamClaim<PrnsDiagnosticEvent> {
-    return this.#diagnostics.claim();
+    const claim = this.#diagnostics.claim();
+    if (claim.tag === "Claimed") {
+      this.#sendEventRequest(Tag("ClaimDiagnostics"));
+    }
+    return claim;
   }
 
   snapshot(): Promise<SnapshotOutcome> {
@@ -570,7 +698,8 @@ class DedicatedWorkerPrns {
     if (this.#stopPromise !== undefined) {
       return this.#stopPromise;
     }
-    this.#lifecycle = Tag("Stopping");
+    this.#setLifecycle(Tag("Stopping"));
+    this.#cancelPendingCommands();
     this.#stopPromise = this.#performStop();
     return this.#stopPromise;
   }
@@ -617,7 +746,7 @@ class DedicatedWorkerPrns {
     this.#autoWifi.finishFromHostStop();
     const pageSessionFailures = await this.#closePageSessions();
     try {
-      const stopped = await this.#call(workerCall("Stop"));
+      const stopped = await this.#requestWorkerShutdown();
       this.#stoppedSnapshot = stopped.snapshot;
       this.#stoppedHostSnapshot = stopped.hostSnapshot;
       for (const session of this.#webSocketSessions.values()) {
@@ -646,12 +775,12 @@ class DedicatedWorkerPrns {
       this.#diagnostics.finish();
       if (failures.length > 0) {
         const detail = failures.join("; ");
-        this.#lifecycle = Tag("Failed", { cause: "BackendFailed", detail });
+        this.#setLifecycle(Tag("Failed", { cause: "BackendFailed", detail }));
         return Tag("OperationFailed", { operation: "stop", detail });
       }
-      this.#lifecycle = stopped.stopOutcome.tag === "Stopped"
+      this.#setLifecycle(stopped.stopOutcome.tag === "Stopped"
         ? Tag("Stopped", { reason: "Requested" })
-        : this.#lifecycle;
+        : this.#lifecycle);
       return stopped.stopOutcome;
     } catch (error) {
       const detail = describeHostError(error);
@@ -659,8 +788,71 @@ class DedicatedWorkerPrns {
       return Tag("OperationFailed", { operation: "stop", detail });
     } finally {
       this.#stopCompleted = true;
+      this.#failPendingCalls("DedicatedWorker stopped");
       this.terminate();
     }
+  }
+
+  #requestWorkerShutdown(): Promise<WorkerShutdownState> {
+    return new Promise((resolve, reject) => {
+      this.#shutdownResolve = resolve;
+      this.#shutdownReject = reject;
+      this.#shutdownPort.postMessage(Tag("Stop"));
+    });
+  }
+
+  #receiveShutdown(response: WorkerShutdownResponse): void {
+    const resolve = this.#shutdownResolve;
+    const reject = this.#shutdownReject;
+    if (resolve === undefined || reject === undefined) {
+      this.#failProtocol("DedicatedWorker sent an unexpected shutdown response");
+      return;
+    }
+    if (response.tag === "ProtocolFailed") {
+      const detail = workerProtocolDetail(response.data.detail);
+      this.#shutdownResolve = undefined;
+      this.#shutdownReject = undefined;
+      reject(new Error(detail));
+      return;
+    }
+    if (response.tag !== "Stopped") {
+      throw new TypeError("DedicatedWorker sent an unknown shutdown response");
+    }
+    if (
+      typeof response.data !== "object" ||
+      response.data === null ||
+      response.data.stopOutcome === undefined ||
+      response.data.snapshot === undefined ||
+      response.data.hostSnapshot === undefined
+    ) {
+      throw new TypeError("DedicatedWorker shutdown response is incomplete");
+    }
+    this.#shutdownResolve = undefined;
+    this.#shutdownReject = undefined;
+    resolve(response.data);
+  }
+
+  #cancelPendingCommands(): void {
+    for (const [id, pending] of this.#pending) {
+      if (
+        pending.call.tag !== "Execute" &&
+        pending.call.tag !== "SendResourceBlob"
+      ) {
+        continue;
+      }
+      this.#pending.delete(id);
+      this.#ignoredSettlements.add(id);
+      this.#releaseCallCapacity(pending.call);
+      pending.settle(commandFailed(Tag("NodeStopped")));
+    }
+  }
+
+  #releaseCallCapacity(call: WorkerCall): void {
+    if (call.tag === "Execute" || call.tag === "SendResourceBlob") {
+      this.#pendingCommandCount = Math.max(0, this.#pendingCommandCount - 1);
+      return;
+    }
+    this.#pendingControlCount = Math.max(0, this.#pendingControlCount - 1);
   }
 
   async #closePageSessions(): Promise<string[]> {
@@ -685,7 +877,12 @@ class DedicatedWorkerPrns {
     if (this.#terminated) {
       return Promise.reject(new Error("DedicatedWorker has terminated"));
     }
-    if (this.#pending.size >= this.#limits.pendingCommands) {
+    const command = call.tag === "Execute" || call.tag === "SendResourceBlob";
+    if (command) {
+      if (this.#pendingCommandCount >= this.#limits.pendingCommands) {
+        return Promise.reject(new Error("DedicatedWorker command queue is full"));
+      }
+    } else if (this.#pendingControlCount >= MAXIMUM_PENDING_CONTROL_CALLS) {
       return Promise.reject(new Error("DedicatedWorker control queue is full"));
     }
     const id = this.#nextCallId;
@@ -696,7 +893,18 @@ class DedicatedWorkerPrns {
         settle: settle as (outcome: unknown) => void,
         fail,
       });
-      this.#controlSender.send({ id, call });
+      if (command) {
+        this.#pendingCommandCount += 1;
+      } else {
+        this.#pendingControlCount += 1;
+      }
+      try {
+        this.#controlSender.send({ id, call });
+      } catch (error) {
+        this.#pending.delete(id);
+        this.#releaseCallCapacity(call);
+        fail(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 
@@ -717,7 +925,12 @@ class DedicatedWorkerPrns {
         settle: settle as (outcome: unknown) => void,
         fail,
       });
-      this.#capabilitySender.send({ id, call });
+      try {
+        this.#capabilitySender.send({ id, call });
+      } catch (error) {
+        this.#capabilityPending.delete(id);
+        fail(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 
@@ -738,6 +951,7 @@ class DedicatedWorkerPrns {
           const pending = this.#pending.get(id);
           if (pending !== undefined) {
             this.#pending.delete(id);
+            this.#releaseCallCapacity(pending.call);
             pending.fail(new Error(detail));
             return;
           }
@@ -750,7 +964,29 @@ class DedicatedWorkerPrns {
     });
   }
 
+  #receiveWorkerMessage(
+    message: unknown,
+    receive: (message: { readonly tag: string; readonly data?: unknown }) => void,
+  ): void {
+    try {
+      if (
+        typeof message !== "object" ||
+        message === null ||
+        !("tag" in message) ||
+        typeof message.tag !== "string"
+      ) {
+        throw new TypeError("DedicatedWorker message envelope is malformed");
+      }
+      receive(message as { readonly tag: string; readonly data?: unknown });
+    } catch (error) {
+      this.#failProtocol(describeHostError(error));
+    }
+  }
+
   #receiveControlSettlement(message: WorkerSettlement): void {
+    if (this.#ignoredSettlements.delete(message.id)) {
+      return;
+    }
     const pending = this.#pending.get(message.id);
     if (pending === undefined) {
       this.#failProtocol(`DedicatedWorker settled unknown call ${message.id}`);
@@ -761,6 +997,7 @@ class DedicatedWorkerPrns {
       return;
     }
     this.#pending.delete(message.id);
+    this.#releaseCallCapacity(pending.call);
     pending.settle(message.outcome);
   }
 
@@ -799,9 +1036,116 @@ class DedicatedWorkerPrns {
     pending.settle(message.outcome);
   }
 
+  #receiveProjection(message: WorkerProjectionMessage): void {
+    if (message.tag === "ProjectionProtocolFailed") {
+      this.#failProtocol(workerProtocolDetail(message.data.detail));
+      return;
+    }
+    if (message.tag === "ProjectionSynchronized") {
+      const id = workerMessageId(message.data.id, "projection");
+      const pending = this.#pendingProjectionSynchronizations.get(id);
+      if (pending === undefined) {
+        this.#failProtocol(
+          `DedicatedWorker synchronized unknown projection request ${id}`,
+        );
+        return;
+      }
+      const outcome = parseProjectionSynchronization(
+        pending.view,
+        message.data.outcome,
+      );
+      this.#pendingProjectionSynchronizations.delete(id);
+      pending.settle(outcome);
+      return;
+    }
+    if (message.tag !== "ProjectionBatch") {
+      throw new TypeError("DedicatedWorker sent an unknown projection message");
+    }
+    const id = workerMessageId(message.data.id, "projection");
+    const projections = this.#projections;
+    if (projections === undefined) {
+      this.#failProtocol("DedicatedWorker sent projections before startup completed");
+      return;
+    }
+    try {
+      this.#projectionUpdates.receive(message.data.batch);
+      this.#sendProjectionRequest(
+        Tag("AcknowledgeProjection", { id }),
+      );
+    } catch (error) {
+      this.#failProtocol(describeHostError(error));
+    }
+  }
+
+  #sendProjectionRequest(request: WorkerProjectionRequest): void {
+    if (!this.#terminated) {
+      this.#projectionsPort.postMessage(request);
+    }
+  }
+
+  #synchronizeProjection(
+    view: PrnsView,
+  ): Promise<ProjectionSynchronization<unknown>> {
+    if (this.#lifecycle.tag !== "Running") {
+      return Promise.resolve(Tag("Unavailable", { lifecycle: this.#lifecycle }));
+    }
+    if (
+      this.#pendingProjectionSynchronizations.size >=
+        MAXIMUM_PENDING_PROJECTION_SYNCHRONIZATIONS
+    ) {
+      return Promise.resolve(Tag("Busy"));
+    }
+    const id = this.#nextProjectionSynchronizationId;
+    this.#nextProjectionSynchronizationId = id === Number.MAX_SAFE_INTEGER
+      ? 1
+      : id + 1;
+    return new Promise((resolve) => {
+      this.#pendingProjectionSynchronizations.set(id, {
+        view,
+        settle: resolve,
+      });
+      this.#sendProjectionRequest(Tag("Synchronize", { id, view }));
+    });
+  }
+
+  #applyProjectionUpdate(update: WorkerProjectionUpdate): void {
+    const projections = this.#projections;
+    if (projections === undefined) {
+      throw new Error("DedicatedWorker projection store is unavailable");
+    }
+    match_into<void>().from(update, {
+      Lifecycle: (snapshot) => {
+        this.#lifecycle = snapshot.value;
+        projections.replaceLifecycle(snapshot.value, snapshot.revision);
+      },
+      Interfaces: (snapshot) => projections.replaceInterfaces(
+        snapshot.value,
+        snapshot.revision,
+      ),
+      Routes: (snapshot) => projections.replaceRoutes(
+        snapshot.value,
+        snapshot.revision,
+      ),
+      Links: (snapshot) => projections.replaceLinks(
+        snapshot.value,
+        snapshot.revision,
+      ),
+      DiagnosticsReset: (snapshot) => projections.replaceDiagnostics(
+        snapshot.value,
+        snapshot.revision,
+      ),
+      DiagnosticsDelta: ({ revision, dropped, appended }) =>
+        projections.appendDiagnostics(dropped, appended, revision),
+    });
+  }
+
   #receiveEvent(message: WorkerEventMessage): void {
     try {
       if (message.tag === "Batch") {
+        const id = workerMessageId(message.data.id, "event");
+        if (!(message.data.buffer instanceof ArrayBuffer)) {
+          throw new TypeError("event batch buffer must be an ArrayBuffer");
+        }
         for (const event of parseEventBatch(new Uint8Array(message.data.buffer))) {
           const outcome = match_into<LanePushOutcome | "Ignored">().from(event, {
             Application: (application) => this.#events.push(application),
@@ -814,11 +1158,16 @@ class DedicatedWorkerPrns {
             return;
           }
         }
-        this.#acknowledgeEvent(message.data.id);
+        this.#acknowledgeEvent(id);
         return;
       }
-      if (this.#diagnostics.push(message.data.event) !== "Rejected") {
-        this.#acknowledgeEvent(message.data.id);
+      if (message.tag !== "Diagnostic") {
+        throw new TypeError("DedicatedWorker sent an unknown event message");
+      }
+      const id = workerMessageId(message.data.id, "event");
+      const diagnostic = parseWorkerDiagnosticEvent(message.data.event);
+      if (this.#diagnostics.push(diagnostic) !== "Rejected") {
+        this.#acknowledgeEvent(id);
       }
     } catch (error) {
       this.#failProtocol(describeHostError(error));
@@ -826,8 +1175,13 @@ class DedicatedWorkerPrns {
   }
 
   #acknowledgeEvent(id: number): void {
-    const acknowledgement: WorkerEventAcknowledgement = Tag("Acknowledge", { id });
-    this.#eventsPort.postMessage(acknowledgement);
+    this.#sendEventRequest(Tag("Acknowledge", { id }));
+  }
+
+  #sendEventRequest(request: WorkerEventRequest): void {
+    if (!this.#terminated) {
+      this.#eventsPort.postMessage(request);
+    }
   }
 
   #failBackpressure(rejectedEventBytes: number): void {
@@ -836,11 +1190,11 @@ class DedicatedWorkerPrns {
         detail: "DedicatedWorker application event backpressure exceeded during startup",
       }));
     }
-    this.#lifecycle = Tag("Failed", {
+    this.#setLifecycle(Tag("Failed", {
       cause: "EventBackpressureExceeded",
       limits: this.#limits,
       rejectedEventBytes,
-    });
+    }));
     this.#events.finish();
     this.#diagnostics.finish();
     this.#failPendingCalls("application event backpressure exceeded");
@@ -851,7 +1205,7 @@ class DedicatedWorkerPrns {
     if (!this.#startSettled && this.#startResolve !== undefined) {
       this.#settleStart(Tag("WorkerProtocolFailed", { detail }));
     }
-    this.#lifecycle = Tag("Failed", { cause: "ContractViolated", detail });
+    this.#setLifecycle(Tag("Failed", { cause: "ContractViolated", detail }));
     const error = new Error(detail);
     this.#failPendingCalls(detail);
     this.#events.fail(error);
@@ -859,8 +1213,16 @@ class DedicatedWorkerPrns {
     this.terminate();
   }
 
+  #setLifecycle(lifecycle: LifecycleState): void {
+    this.#lifecycle = lifecycle;
+    this.#projections?.replaceLifecycle(lifecycle);
+  }
+
   #failPendingCalls(detail: string): void {
     const error = new Error(detail);
+    this.#shutdownReject?.(error);
+    this.#shutdownResolve = undefined;
+    this.#shutdownReject = undefined;
     for (const pending of this.#pending.values()) {
       if (
         pending.call.tag === "Execute" ||
@@ -872,6 +1234,15 @@ class DedicatedWorkerPrns {
       }
     }
     this.#pending.clear();
+    this.#pendingCommandCount = 0;
+    this.#pendingControlCount = 0;
+    if (this.#lifecycle.tag !== "Running") {
+      const unavailable = Tag("Unavailable", { lifecycle: this.#lifecycle });
+      for (const pending of this.#pendingProjectionSynchronizations.values()) {
+        pending.settle(unavailable);
+      }
+      this.#pendingProjectionSynchronizations.clear();
+    }
     for (const pending of this.#capabilityPending.values()) {
       pending.fail(error);
     }
@@ -1427,15 +1798,53 @@ function workerStartOutcome(
   const data = outcome.data as {
     readonly backendInfo?: BackendInfo;
     readonly lifecycle?: LifecycleState;
+    readonly hostSnapshot?: HostSnapshot;
   };
-  if (data?.backendInfo === undefined || data.lifecycle === undefined) {
+  if (
+    data?.backendInfo === undefined ||
+    data.lifecycle === undefined ||
+    data.hostSnapshot === undefined
+  ) {
     return Tag("WorkerProtocolFailed", {
       detail: "DedicatedWorker ready response is incomplete",
     });
   }
-  return readyWorker(data.backendInfo, data.lifecycle);
+  return readyWorker({
+    backendInfo: data.backendInfo,
+    lifecycle: data.lifecycle,
+    hostSnapshot: data.hostSnapshot,
+  });
 }
 
-function readyWorker(backendInfo: BackendInfo, lifecycle: LifecycleState) {
-  return Tag("Ready", { backendInfo, lifecycle });
+function readyWorker(state: WorkerReadyState) {
+  return Tag("Ready", state);
+}
+
+function workerMessageId(raw: unknown, channel: string): number {
+  if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw <= 0) {
+    throw new TypeError(`${channel} message id must be a positive safe integer`);
+  }
+  return raw;
+}
+
+function workerProtocolDetail(raw: unknown): string {
+  if (typeof raw !== "string" || raw.length === 0) {
+    throw new TypeError("worker protocol failure detail must be a non-empty string");
+  }
+  return raw;
+}
+
+function workerCapabilityInvocationWireBytes(value: {
+  readonly id: number;
+  readonly call: WorkerCapabilityCall;
+}): number {
+  const call = value.call;
+  if (
+    call.tag === "Ingest" ||
+    call.tag === "AbsorbBluetoothFragment" ||
+    call.tag === "FeedUsbAutoDecoder"
+  ) {
+    return 64 + call.data.bytes.byteLength;
+  }
+  return 256;
 }

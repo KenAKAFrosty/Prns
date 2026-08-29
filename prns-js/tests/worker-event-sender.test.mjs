@@ -25,6 +25,7 @@ test("holds later event batches until the page acknowledges the in-flight batch"
       failures.push({ type: "backpressure", rejectedEventBytes }),
   });
   const firstMessage = nextMessage(channel.port2);
+  channel.port2.postMessage(Tag("ClaimApplicationEvents"));
   sender.sendBatch(Uint8Array.from(singleDeliveryPayloadVector));
   sender.sendBatch(Uint8Array.from(singleDeliveryPayloadVector));
   const first = await firstMessage;
@@ -48,6 +49,7 @@ test("coalesces diagnostics dropped behind a full event channel", async () => {
       failures.push({ type: "backpressure", rejectedEventBytes }),
   });
   const firstMessage = nextMessage(channel.port2);
+  channel.port2.postMessage(Tag("ClaimDiagnostics"));
   sender.sendDiagnostic(Tag("Delivered", { detail: "first" }));
   sender.sendDiagnostic(Tag("Delivered", { detail: "second" }));
   const first = await firstMessage;
@@ -62,9 +64,40 @@ test("coalesces diagnostics dropped behind a full event channel", async () => {
   channel.port2.close();
 });
 
+test("retains diagnostics in the Worker until their public lane is claimed", async () => {
+  const channel = new MessageChannel();
+  const failures = [];
+  const sender = new BoundedWorkerEventSender(channel.port1, limits, {
+    protocol: (detail) => failures.push({ type: "protocol", detail }),
+    backpressure: (rejectedEventBytes) =>
+      failures.push({ type: "backpressure", rejectedEventBytes }),
+  });
+  sender.sendDiagnostic(Tag("Delivered", { detail: "retained" }));
+  await expectNoMessage(channel.port2);
+  const delivery = nextMessage(channel.port2);
+  channel.port2.postMessage(Tag("ClaimDiagnostics"));
+  const message = await delivery;
+  assert.deepEqual(message.data.event, Tag("Delivered", { detail: "retained" }));
+  channel.port2.postMessage(Tag("Acknowledge", { id: message.data.id }));
+  assert.deepEqual(failures, []);
+  channel.port1.close();
+  channel.port2.close();
+});
+
 function nextMessage(port) {
   port.start();
   return new Promise((resolve) => {
     port.addEventListener("message", (event) => resolve(event.data), { once: true });
   });
+}
+
+async function expectNoMessage(port) {
+  let delivered = false;
+  const received = () => {
+    delivered = true;
+  };
+  port.addEventListener("message", received);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  port.removeEventListener("message", received);
+  assert.equal(delivered, false);
 }
