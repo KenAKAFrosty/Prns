@@ -135,7 +135,10 @@ impl RemoteControlNodeIdentitySecrets {
                 encryption: self.controller.parts.encryption_public,
                 signing: self.controller.parts.signing_public,
             }),
-            target: RemoteControlTargetIdentity::new(self.target.parts.hash),
+            target: RemoteControlTargetIdentity::new(IdentityPublicKeys {
+                encryption: self.target.parts.encryption_public,
+                signing: self.target.parts.signing_public,
+            }),
         }
     }
 
@@ -232,18 +235,23 @@ impl RemoteControlControllerGrant {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct RemoteControlTargetIdentity {
-    identity_hash: IdentityHash,
+    public_keys: IdentityPublicKeys,
 }
 
 impl RemoteControlTargetIdentity {
     #[must_use]
-    pub const fn new(identity_hash: IdentityHash) -> Self {
-        Self { identity_hash }
+    pub const fn new(public_keys: IdentityPublicKeys) -> Self {
+        Self { public_keys }
     }
 
     #[must_use]
-    pub const fn identity_hash(&self) -> IdentityHash {
-        self.identity_hash
+    pub const fn public_keys(&self) -> &IdentityPublicKeys {
+        &self.public_keys
+    }
+
+    #[must_use]
+    pub fn identity_hash(&self) -> IdentityHash {
+        self.public_keys.identity_hash()
     }
 }
 
