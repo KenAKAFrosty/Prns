@@ -18,6 +18,9 @@ use crate::engine::{
 };
 use crate::identity::{decrypt_token_in_place_with_ratchets, IdentitySigningPublicKey, OpenedBy};
 use crate::interfaces::InterfaceId;
+use crate::remote_control::{
+    RemoteControlPairingAvailabilityVerification, RemoteControlPairingAvailabilityVerifyOwed,
+};
 use crate::routing::announce::Announce;
 use crate::routing::dedup::PacketHash;
 use crate::routing::ingress::MAX_RATCHET_DECRYPT_PAYLOAD_LEN;
@@ -216,6 +219,7 @@ pub(super) enum CryptoJob {
     VerifyLinkProof(LinkProofVerifyOwed),
     SignLinkProof(LinkProofSignOwed),
     VerifyAnnounce(AnnounceVerifyOwed),
+    VerifyRemoteControlPairingAvailability(RemoteControlPairingAvailabilityVerifyOwed),
 }
 
 impl CryptoJob {
@@ -264,6 +268,10 @@ pub(super) enum CryptoResult {
     AnnounceVerified {
         owed: AnnounceVerifyOwed,
         valid: bool,
+    },
+    RemoteControlPairingAvailabilityVerified {
+        owed: RemoteControlPairingAvailabilityVerifyOwed,
+        verification: RemoteControlPairingAvailabilityVerification,
     },
     StagedSealed {
         link_id: LinkId,
@@ -601,6 +609,10 @@ fn run_crypto_job(job: CryptoJob) -> CryptoResult {
             let valid = Announce::from_wire_unverified(&owed.header, &owed.payload)
                 .is_ok_and(|announce| announce.signature_is_valid());
             CryptoResult::AnnounceVerified { owed, valid }
+        }
+        CryptoJob::VerifyRemoteControlPairingAvailability(owed) => {
+            let verification = owed.verify();
+            CryptoResult::RemoteControlPairingAvailabilityVerified { owed, verification }
         }
     }
 }

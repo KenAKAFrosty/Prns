@@ -1,12 +1,15 @@
 use crate::engine::{
-    AllowRequesterFailure, AnnounceNowFailure, CloseLinkFailure, EstablishLinkFailure,
-    IdentifyFailure, Journaled, LinkClosedReason, RequestPathFailure, RespondFailure,
-    RouteRemovalCause, SendGroupFailure, SendPlainPacketFailure, SendRequestFailure,
-    SendResourceFailure, SendSinglePacketFailure, SendToChannelFailure, SendToLinkFailure,
+    AllowRequesterFailure, AnnounceNowFailure, CloseLinkFailure, CloseRemoteControlPairingFailure,
+    EstablishLinkFailure, IdentifyFailure, Journaled, LinkClosedReason,
+    OpenRemoteControlPairingFailure, RequestPathFailure, RespondFailure, RouteRemovalCause,
+    SendGroupFailure, SendPlainPacketFailure, SendRequestFailure, SendResourceFailure,
+    SendSinglePacketFailure, SendToChannelFailure, SendToLinkFailure,
     SetRegisteredAnnounceAppDataFailure, SetResourceStrategyFailure, Settlement,
 };
+use crate::identity::held::HoldIdentityError;
 use crate::routing::links::resources::table::ApplyHashmapUpdateError;
 use crate::routing::links::resources::ResourceFailureCause;
+use crate::routing::upstream_app_destinations::RegisterDestinationError;
 
 prns_macros::iterable_enum! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +31,8 @@ prns_macros::iterable_enum! {
         SendToChannel,
         AllowRequester,
         SendPlainPacket,
+        OpenRemoteControlPairing,
+        CloseRemoteControlPairing,
     }
 }
 
@@ -266,6 +271,9 @@ impl ReliabilityMetricsSnapshot {
             Journaled::AnnounceHeard { .. }
             | Journaled::SelfRatchetRotated { .. }
             | Journaled::AnnounceHeldDropped { .. }
+            | Journaled::RemoteControlPairingAvailabilityObserved(_)
+            | Journaled::RemoteControlPairingExpired { .. }
+            | Journaled::RemoteControlPairingExpiryFailed { .. }
             | Journaled::Delivered(_)
             | Journaled::LinkEstablished(_)
             | Journaled::PeerIdentified { .. }
@@ -370,6 +378,14 @@ impl From<&Settlement> for SettledOperation {
             },
             Settlement::AllowRequester(result) => Self {
                 operation: Operation::AllowRequester,
+                outcome: result.runtime_outcome(),
+            },
+            Settlement::OpenRemoteControlPairing(result) => Self {
+                operation: Operation::OpenRemoteControlPairing,
+                outcome: result.runtime_outcome(),
+            },
+            Settlement::CloseRemoteControlPairing(result) => Self {
+                operation: Operation::CloseRemoteControlPairing,
                 outcome: result.runtime_outcome(),
             },
         }
@@ -540,6 +556,39 @@ impl From<&AllowRequesterFailure> for RuntimeOperationOutcome {
     }
 }
 
+impl From<&OpenRemoteControlPairingFailure> for RuntimeOperationOutcome {
+    fn from(failure: &OpenRemoteControlPairingFailure) -> Self {
+        match failure {
+            OpenRemoteControlPairingFailure::Rejected(_) => Self::Rejected,
+            OpenRemoteControlPairingFailure::IdentityGenerationExhausted => Self::Untrackable,
+            OpenRemoteControlPairingFailure::HoldIdentity(HoldIdentityError::StoreFull)
+            | OpenRemoteControlPairingFailure::RegisterEndpoint(
+                RegisterDestinationError::RegistryFull | RegisterDestinationError::RatchetTableFull,
+            )
+            | OpenRemoteControlPairingFailure::PayloadCapacity => Self::Backpressure,
+            OpenRemoteControlPairingFailure::RegisterEndpoint(
+                RegisterDestinationError::Name(_)
+                | RegisterDestinationError::UnknownIdentity
+                | RegisterDestinationError::AppDataTooLong
+                | RegisterDestinationError::InvalidGroupKey,
+            ) => Self::DependencyFailed,
+            OpenRemoteControlPairingFailure::WriteAvailability(_)
+            | OpenRemoteControlPairingFailure::WritePacket(_) => Self::WriteFailed,
+        }
+    }
+}
+
+impl From<&CloseRemoteControlPairingFailure> for RuntimeOperationOutcome {
+    fn from(failure: &CloseRemoteControlPairingFailure) -> Self {
+        match failure {
+            CloseRemoteControlPairingFailure::Unavailable => Self::Rejected,
+            CloseRemoteControlPairingFailure::RetirementIncomplete { .. }
+            | CloseRemoteControlPairingFailure::EndpointNotRegistered
+            | CloseRemoteControlPairingFailure::IdentityNotHeld => Self::DependencyFailed,
+        }
+    }
+}
+
 impl From<ResourceFailureCause> for RuntimeResourceFailure {
     fn from(cause: ResourceFailureCause) -> Self {
         match cause {
@@ -623,6 +672,38 @@ mod tests {
         assert_eq!(
             RuntimeOperationOutcome::from(&SendRequestFailure::ResourceCapacity),
             RuntimeOperationOutcome::Backpressure,
+        );
+    }
+
+    #[test]
+    fn pairing_lifecycle_settlements_use_bounded_operation_dimensions() {
+        let mut snapshot = ReliabilityMetricsSnapshot::default();
+        snapshot.record_journaled(&Journaled::CommandSettled {
+            id: CommandId(3),
+            settlement: Settlement::OpenRemoteControlPairing(Err(
+                OpenRemoteControlPairingFailure::IdentityGenerationExhausted,
+            )),
+        });
+        snapshot.record_journaled(&Journaled::CommandSettled {
+            id: CommandId(4),
+            settlement: Settlement::CloseRemoteControlPairing(Err(
+                CloseRemoteControlPairingFailure::EndpointNotRegistered,
+            )),
+        });
+
+        assert_eq!(
+            snapshot.operations.get(
+                RuntimeOperation::OpenRemoteControlPairing,
+                RuntimeOperationOutcome::Untrackable,
+            ),
+            1,
+        );
+        assert_eq!(
+            snapshot.operations.get(
+                RuntimeOperation::CloseRemoteControlPairing,
+                RuntimeOperationOutcome::DependencyFailed,
+            ),
+            1,
         );
     }
 

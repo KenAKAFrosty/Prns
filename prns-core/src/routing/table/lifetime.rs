@@ -60,14 +60,15 @@ where
         warmth: &dyn RouteWarmth,
     ) -> InstantMillis {
         let receiving_interface = self.routes.receiving_interfaces()[i];
-        match interfaces.descriptor_for(receiving_interface) {
+        let network_expiry = match interfaces.descriptor_for(receiving_interface) {
             Some(descriptor) => InstantMillis(
                 anchor
                     .0
                     .saturating_add(route_expiry_millis(descriptor.mode)),
             ),
             None => warmth.warm_until(receiving_interface).unwrap_or(anchor),
-        }
+        };
+        self.routes.retentions()[i].constrain_expiry(self.routes.learned_at()[i], network_expiry)
     }
 
     fn remove_expired_route(

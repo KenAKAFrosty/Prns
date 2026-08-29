@@ -42,6 +42,7 @@ async fn routing_control_drops_a_live_route_and_journals_the_explicit_removal() 
         | Journaled::PersistenceFlushed { .. }
         | Journaled::PersistenceFlushFailed { .. }
         | Journaled::LinkInterfaceMismatch { .. }
+        | Journaled::RemoteControlPairingAvailabilityObserved(_)
         | Journaled::RemoteControlPairingExpired { .. }
         | Journaled::RemoteControlPairingExpiryFailed { .. } => {}
     };
@@ -171,6 +172,7 @@ async fn the_manifold_culls_an_expired_route_at_its_deadline() {
         | Journaled::PersistenceFlushed { .. }
         | Journaled::PersistenceFlushFailed { .. }
         | Journaled::LinkInterfaceMismatch { .. }
+        | Journaled::RemoteControlPairingAvailabilityObserved(_)
         | Journaled::RemoteControlPairingExpired { .. }
         | Journaled::RemoteControlPairingExpiryFailed { .. } => {}
     };

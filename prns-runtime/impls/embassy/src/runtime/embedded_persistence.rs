@@ -409,6 +409,7 @@ where
             | Journaled::ResourceNeedsDecompression { .. }
             | Journaled::ResourceSegmentReceived { .. }
             | Journaled::ResourceAssembled { .. }
+            | Journaled::RemoteControlPairingAvailabilityObserved(_)
             | Journaled::RemoteControlPairingExpired { .. }
             | Journaled::RemoteControlPairingExpiryFailed { .. } => {}
         }
@@ -1327,7 +1328,7 @@ mod tests {
         use crate::interfaces::InterfaceId;
         use crate::routing::announce::{Announce, AnnounceId, DottedNameHash};
         use crate::routing::routes::RouteEntry;
-        use crate::routing::{AnnounceIdRing, NextHop, RouteResponsiveness};
+        use crate::routing::{AnnounceIdRing, NextHop, RouteResponsiveness, RouteRetention};
 
         let signer = InMemoryNodeIdentity::from_secret_key_bytes(&[secret; 64]);
         let announce = Announce::build_signed(
@@ -1347,6 +1348,7 @@ mod tests {
                 responsiveness: RouteResponsiveness::Responsive,
                 receiving_interface: InterfaceId::new([secret; 8]),
                 next_hop: NextHop::Direct,
+                retention: RouteRetention::Network,
             },
             public_keys: announce.public_keys,
             dotted_name_hash: announce.dotted_name_hash,

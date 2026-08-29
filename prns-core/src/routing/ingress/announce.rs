@@ -17,7 +17,9 @@ use crate::routing::announce::{
     AnnounceRateAccounting,
 };
 use crate::routing::warmth::WarmestOf;
-use crate::routing::{DropCause, NextHop, RemovedRoute, UpsertRouteOutcome};
+use crate::routing::{
+    DropCause, NextHop, RemovedRoute, RouteExpiresAfter, RouteRetention, UpsertRouteOutcome,
+};
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::wire::{DestinationHash, DestinationType, WirePacketHeader, BROADCAST_MTU};
 use heapless::Vec as HeaplessVec;
@@ -60,6 +62,19 @@ pub struct AnnounceVerifyOwed {
     pub arrived_at: InstantMillis,
     pub next_hop: NextHop,
     pub is_path_response: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DirectAnnounceIngest {
+    Accepted,
+    Ignored,
+    Blackholed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AnnounceRouteScope {
+    Network,
+    Direct { expires_after: RouteExpiresAfter },
 }
 
 impl<S: StorageLayout> EngineState<S> {
@@ -197,8 +212,64 @@ impl<S: StorageLayout> EngineState<S> {
         on_removed: &mut impl FnMut(RemovedRoute),
         effects: &mut IngestEffects<'a>,
     ) -> AnnounceIngest {
+        match self.ingest_announce_route(
+            identity_hash,
+            arrival,
+            interfaces,
+            on_removed,
+            effects,
+            AnnounceRouteScope::Network,
+        ) {
+            DirectAnnounceIngest::Accepted => {
+                let rebroadcast = self.schedule_rebroadcast(arrival, interfaces, fill_entropy);
+                effects.accepted_announce = Some(AcceptedAnnounceEffect {
+                    observation: crate::routing::announce::AnnounceObservation::from_arrival(
+                        identity_hash,
+                        arrival,
+                    ),
+                    rate_accounting: rebroadcast.rate_accounting,
+                });
+                AnnounceIngest::Accepted(AcceptedAnnounce {
+                    destination: arrival.announce.destination,
+                    hops: arrival.hops,
+                    rebroadcast: rebroadcast.decision,
+                })
+            }
+            DirectAnnounceIngest::Ignored => AnnounceIngest::Ignored,
+            DirectAnnounceIngest::Blackholed => AnnounceIngest::Blackholed,
+        }
+    }
+
+    pub(crate) fn ingest_direct_announce<'a>(
+        &mut self,
+        identity_hash: IdentityHash,
+        arrival: &AnnounceArrival<'a>,
+        expires_after: RouteExpiresAfter,
+        interfaces: AttachedInterfaces<'_>,
+        on_removed: &mut impl FnMut(RemovedRoute),
+        effects: &mut IngestEffects<'a>,
+    ) -> DirectAnnounceIngest {
+        self.ingest_announce_route(
+            identity_hash,
+            arrival,
+            interfaces,
+            on_removed,
+            effects,
+            AnnounceRouteScope::Direct { expires_after },
+        )
+    }
+
+    fn ingest_announce_route<'a>(
+        &mut self,
+        identity_hash: IdentityHash,
+        arrival: &AnnounceArrival<'a>,
+        interfaces: AttachedInterfaces<'_>,
+        on_removed: &mut impl FnMut(RemovedRoute),
+        effects: &mut IngestEffects<'a>,
+        scope: AnnounceRouteScope,
+    ) -> DirectAnnounceIngest {
         if self.identity_blackholes.is_blackholed(&identity_hash) {
-            return AnnounceIngest::Blackholed;
+            return DirectAnnounceIngest::Blackholed;
         }
         let &AnnounceArrival {
             ref announce,
@@ -210,15 +281,18 @@ impl<S: StorageLayout> EngineState<S> {
         let mut remember_outcome =
             self.remember_announced_destination_identity(announce, arrival.arrived_at);
         if remember_outcome == RememberAnnouncedDestinationIdentityOutcome::PublicKeyChanged {
-            return AnnounceIngest::Ignored;
+            return DirectAnnounceIngest::Ignored;
         }
-        if self.network_transport_enabled() {
-            self.scheduled_announces.absorb_echo(
-                &announce.destination,
-                received_hops,
-                arrived_at,
-                MAX_PEER_EMISSIONS,
-            );
+        match scope {
+            AnnounceRouteScope::Network if self.network_transport_enabled() => {
+                self.scheduled_announces.absorb_echo(
+                    &announce.destination,
+                    received_hops,
+                    arrived_at,
+                    MAX_PEER_EMISSIONS,
+                );
+            }
+            AnnounceRouteScope::Network | AnnounceRouteScope::Direct { .. } => {}
         }
 
         self.reconcile_pending_link_route_evidence();
@@ -245,7 +319,7 @@ impl<S: StorageLayout> EngineState<S> {
                     self.unprotected_destination_identity_expiry(&announce.destination),
                 );
             }
-            return AnnounceIngest::Ignored;
+            return DirectAnnounceIngest::Ignored;
         }
 
         let previous_interface = self
@@ -261,9 +335,16 @@ impl<S: StorageLayout> EngineState<S> {
         let dirty = &mut self.dirty_interfaces;
         let destination_identities = &self.destination_identities;
         let scheduled_announces = &mut self.scheduled_announces;
-        let outcome = self.routing_table.upsert_route_with_warmth(
+        let retention = match scope {
+            AnnounceRouteScope::Network => RouteRetention::Network,
+            AnnounceRouteScope::Direct { expires_after } => {
+                RouteRetention::Ephemeral { expires_after }
+            }
+        };
+        let outcome = self.routing_table.upsert_route_with_retention_and_warmth(
             arrival,
             route_evidence_id,
+            retention,
             interfaces,
             &warmth,
             &mut |removed| {
@@ -291,23 +372,11 @@ impl<S: StorageLayout> EngineState<S> {
                     self.mark_interface_dirty(previous);
                 }
 
-                let rebroadcast = self.schedule_rebroadcast(arrival, interfaces, fill_entropy);
-                effects.accepted_announce = Some(AcceptedAnnounceEffect {
-                    observation: crate::routing::announce::AnnounceObservation::from_arrival(
-                        identity_hash,
-                        arrival,
-                    ),
-                    rate_accounting: rebroadcast.rate_accounting,
-                });
-                AnnounceIngest::Accepted(AcceptedAnnounce {
-                    destination: announce.destination,
-                    hops: received_hops,
-                    rebroadcast: rebroadcast.decision,
-                })
+                DirectAnnounceIngest::Accepted
             }
             UpsertRouteOutcome::Dropped(
                 DropCause::PayloadArenaFull | DropCause::RoutingTableFull,
-            ) => AnnounceIngest::Ignored,
+            ) => DirectAnnounceIngest::Ignored,
         }
     }
 }

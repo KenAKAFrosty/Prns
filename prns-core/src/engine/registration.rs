@@ -1123,6 +1123,7 @@ mod tests {
                 responsiveness: RouteResponsiveness::Responsive,
                 receiving_interface: interface,
                 next_hop: NextHop::Direct,
+                retention: crate::routing::RouteRetention::Network,
             },
             public_keys: announce.public_keys,
             dotted_name_hash: announce.dotted_name_hash,

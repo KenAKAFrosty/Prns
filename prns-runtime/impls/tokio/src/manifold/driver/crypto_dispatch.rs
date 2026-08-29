@@ -16,6 +16,7 @@ use super::crypto_pool::{CryptoJob, CryptoPool, CryptoResult, OpenSpanJob, Stage
 use super::egress::{route_reaction, WireScratch};
 use super::interface_topology::InterfaceTopology;
 use super::journal_delivery::JournalDispatch;
+use crate::remote_control::RemoteControlPairingAvailabilityVerification;
 
 pub(super) enum CryptoCompletionEffect {
     NoWakeChange,
@@ -324,6 +325,27 @@ where
                         recorder.record(FrameAccountingEvent::ProtocolViolation);
                     }
                     CryptoCompletionEffect::NoWakeChange
+                }
+            }
+            CryptoResult::RemoteControlPairingAvailabilityVerified { owed, verification } => {
+                match verification {
+                    RemoteControlPairingAvailabilityVerification::Valid => {
+                        CryptoCompletionEffect::WakeSchedules(
+                            engine.resume_remote_control_pairing_availability(
+                                owed,
+                                topology.interfaces.view(),
+                                &mut reaction_sink!(),
+                            ),
+                        )
+                    }
+                    RemoteControlPairingAvailabilityVerification::Invalid => {
+                        if let Some(recorder) =
+                            topology.frame_accounting_recorder(owed.source_interface())
+                        {
+                            recorder.record(FrameAccountingEvent::ProtocolViolation);
+                        }
+                        CryptoCompletionEffect::NoWakeChange
+                    }
                 }
             }
             CryptoResult::SpanOpened {

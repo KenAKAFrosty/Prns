@@ -1,9 +1,13 @@
+use core::num::NonZeroU32;
+
 use crate::identity::IdentitySigner;
+use crate::interfaces::InterfaceId;
 use crate::routing::announce::{
     write_announce_wire_packet, Announce, AnnounceBuildError, AnnounceId, AnnounceValidationError,
-    ANNOUNCE_FIXED_FIELDS_LEN,
+    DottedNameHash, ANNOUNCE_FIXED_FIELDS_LEN,
 };
-use crate::units::{DurationMillis, InstantMillis};
+use crate::routing::RouteExpiresAfter;
+use crate::units::{DurationMillis, HopCount, InstantMillis};
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
     WireError, WirePacketHeader, BROADCAST_MDU, HEADER_MIN_LEN,
@@ -139,12 +143,12 @@ pub enum RemoteControlPairingExpiresAfterError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RemoteControlPairingExpiresAfter(u32);
+pub struct RemoteControlPairingExpiresAfter(NonZeroU32);
 
 impl RemoteControlPairingExpiresAfter {
     #[must_use]
     pub const fn duration(self) -> DurationMillis {
-        DurationMillis(self.0 as u64)
+        DurationMillis(self.0.get() as u64)
     }
 
     #[must_use]
@@ -153,7 +157,7 @@ impl RemoteControlPairingExpiresAfter {
     }
 
     const fn to_wire(self) -> [u8; PAIRING_AVAILABILITY_EXPIRES_AFTER_LEN] {
-        self.0.to_be_bytes()
+        self.0.get().to_be_bytes()
     }
 }
 
@@ -161,22 +165,22 @@ impl TryFrom<DurationMillis> for RemoteControlPairingExpiresAfter {
     type Error = RemoteControlPairingExpiresAfterError;
 
     fn try_from(duration: DurationMillis) -> Result<Self, Self::Error> {
-        if duration.0 == 0 {
-            return Err(RemoteControlPairingExpiresAfterError::Zero);
-        }
         if duration > MAX_REMOTE_CONTROL_PAIRING_EXPIRES_AFTER {
             return Err(RemoteControlPairingExpiresAfterError::TooLong {
                 actual: duration,
                 maximum: MAX_REMOTE_CONTROL_PAIRING_EXPIRES_AFTER,
             });
         }
-        let Ok(millis) = u32::try_from(duration.0) else {
-            return Err(RemoteControlPairingExpiresAfterError::TooLong {
-                actual: duration,
-                maximum: MAX_REMOTE_CONTROL_PAIRING_EXPIRES_AFTER,
-            });
+        let Some(millis) = NonZeroU32::new(duration.0 as u32) else {
+            return Err(RemoteControlPairingExpiresAfterError::Zero);
         };
         Ok(Self(millis))
+    }
+}
+
+impl From<RemoteControlPairingExpiresAfter> for RouteExpiresAfter {
+    fn from(expires_after: RemoteControlPairingExpiresAfter) -> Self {
+        Self::from_nonzero_millis(expires_after.0)
     }
 }
 
@@ -278,6 +282,9 @@ pub enum RemoteControlPairingAvailabilityParseError {
     InnerWire(WireError),
     InnerHeader(RemoteControlPairingAvailabilityInnerHeaderError),
     InnerAnnounce(AnnounceValidationError),
+    UnexpectedDottedNameHash {
+        found: DottedNameHash,
+    },
     SignedHeader(RemoteControlPairingAvailabilityHeaderError),
     HeaderMismatch {
         envelope_version: RemoteControlPairingAvailabilityProtocolVersion,
@@ -302,6 +309,113 @@ pub struct RemoteControlPairingAvailability<'a> {
     announce: Announce<'a>,
     expires_after: RemoteControlPairingExpiresAfter,
     public_app_data: RemoteControlPairingPublicAppData<'a>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct RemoteControlPairingAvailabilityObservation<'a> {
+    endpoint: RemoteControlPairingEndpoint,
+    observed_at: InstantMillis,
+    expires_at: InstantMillis,
+    hops: HopCount,
+    source_interface: InterfaceId,
+    public_app_data: RemoteControlPairingPublicAppData<'a>,
+}
+
+impl RemoteControlPairingAvailabilityObservation<'_> {
+    #[must_use]
+    pub const fn endpoint(&self) -> RemoteControlPairingEndpoint {
+        self.endpoint
+    }
+
+    #[must_use]
+    pub const fn observed_at(&self) -> InstantMillis {
+        self.observed_at
+    }
+
+    #[must_use]
+    pub const fn expires_at(&self) -> InstantMillis {
+        self.expires_at
+    }
+
+    #[must_use]
+    pub const fn source_interface(&self) -> InterfaceId {
+        self.source_interface
+    }
+
+    #[must_use]
+    pub const fn hops(&self) -> HopCount {
+        self.hops
+    }
+
+    #[must_use]
+    pub const fn public_app_data(&self) -> &RemoteControlPairingPublicAppData<'_> {
+        &self.public_app_data
+    }
+}
+
+pub struct RemoteControlPairingAvailabilityVerifyOwed {
+    payload: HeaplessVec<u8, BROADCAST_MDU>,
+    observed_at: InstantMillis,
+    source_interface: InterfaceId,
+    received_hops: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlPairingAvailabilityVerification {
+    Valid,
+    Invalid,
+}
+
+impl RemoteControlPairingAvailabilityVerifyOwed {
+    pub(crate) fn new(
+        payload: &[u8],
+        observed_at: InstantMillis,
+        source_interface: InterfaceId,
+        received_hops: u8,
+    ) -> Result<Self, RemoteControlPairingAvailabilityParseError> {
+        let payload = HeaplessVec::from_slice(payload).map_err(|()| {
+            RemoteControlPairingAvailabilityParseError::PayloadTooLong {
+                actual: payload.len(),
+                maximum: BROADCAST_MDU,
+            }
+        })?;
+        Ok(Self {
+            payload,
+            observed_at,
+            source_interface,
+            received_hops,
+        })
+    }
+
+    #[must_use]
+    pub fn verify(&self) -> RemoteControlPairingAvailabilityVerification {
+        match RemoteControlPairingAvailability::parse_without_signature_verification(&self.payload)
+        {
+            Ok(availability) if availability.announce.signature_is_valid() => {
+                RemoteControlPairingAvailabilityVerification::Valid
+            }
+            Ok(_) | Err(_) => RemoteControlPairingAvailabilityVerification::Invalid,
+        }
+    }
+
+    pub(crate) fn parse_verified(
+        &self,
+    ) -> Result<RemoteControlPairingAvailability<'_>, RemoteControlPairingAvailabilityParseError>
+    {
+        RemoteControlPairingAvailability::parse_without_signature_verification(&self.payload)
+    }
+
+    pub(crate) const fn observed_at(&self) -> InstantMillis {
+        self.observed_at
+    }
+
+    pub const fn source_interface(&self) -> InterfaceId {
+        self.source_interface
+    }
+
+    pub(crate) const fn received_hops(&self) -> u8 {
+        self.received_hops
+    }
 }
 
 impl<'a> RemoteControlPairingAvailability<'a> {
@@ -336,6 +450,42 @@ impl<'a> RemoteControlPairingAvailability<'a> {
     }
 
     pub fn parse(bytes: &'a [u8]) -> Result<Self, RemoteControlPairingAvailabilityParseError> {
+        let availability = Self::parse_without_signature_verification(bytes)?;
+        if !availability.announce.signature_is_valid() {
+            return Err(RemoteControlPairingAvailabilityParseError::InnerAnnounce(
+                AnnounceValidationError::InvalidSignature,
+            ));
+        }
+        Ok(availability)
+    }
+
+    pub(crate) fn into_observation(
+        self,
+        observed_at: InstantMillis,
+        source_interface: InterfaceId,
+        received_hops: u8,
+    ) -> (
+        RemoteControlPairingAvailabilityObservation<'a>,
+        Announce<'a>,
+    ) {
+        let endpoint = self.pairing_endpoint();
+        let expires_at = self.expires_after.deadline_from(observed_at);
+        (
+            RemoteControlPairingAvailabilityObservation {
+                endpoint,
+                observed_at,
+                expires_at,
+                hops: HopCount(received_hops),
+                source_interface,
+                public_app_data: self.public_app_data,
+            },
+            self.announce,
+        )
+    }
+
+    pub(crate) fn parse_without_signature_verification(
+        bytes: &'a [u8],
+    ) -> Result<Self, RemoteControlPairingAvailabilityParseError> {
         if bytes.len() > BROADCAST_MDU {
             return Err(RemoteControlPairingAvailabilityParseError::PayloadTooLong {
                 actual: bytes.len(),
@@ -348,8 +498,15 @@ impl<'a> RemoteControlPairingAvailability<'a> {
             .map_err(RemoteControlPairingAvailabilityParseError::InnerWire)?;
         validate_inner_header(&inner_header)
             .map_err(RemoteControlPairingAvailabilityParseError::InnerHeader)?;
-        let announce = Announce::from_wire(&inner_header, inner_payload)
+        let announce = Announce::from_wire_unverified(&inner_header, inner_payload)
             .map_err(RemoteControlPairingAvailabilityParseError::InnerAnnounce)?;
+        if announce.dotted_name_hash != REMOTE_CONTROL_PAIRING_DOTTED_NAME_HASH {
+            return Err(
+                RemoteControlPairingAvailabilityParseError::UnexpectedDottedNameHash {
+                    found: announce.dotted_name_hash,
+                },
+            );
+        }
         let (signed_version, signed_kind, signed_metadata) =
             parse_availability_header(announce.app_data)
                 .map_err(RemoteControlPairingAvailabilityParseError::SignedHeader)?;
@@ -575,9 +732,16 @@ mod tests {
     fn write_availability_with_signed_app_data(
         signed_app_data: &[u8],
     ) -> ([u8; BROADCAST_MDU], usize) {
+        write_availability_with_name_hash(REMOTE_CONTROL_PAIRING_DOTTED_NAME_HASH, signed_app_data)
+    }
+
+    fn write_availability_with_name_hash(
+        dotted_name_hash: DottedNameHash,
+        signed_app_data: &[u8],
+    ) -> ([u8; BROADCAST_MDU], usize) {
         let announce = Announce::build_signed(
             &signer(),
-            REMOTE_CONTROL_PAIRING_DOTTED_NAME_HASH,
+            dotted_name_hash,
             announce_id(),
             None,
             signed_app_data,
@@ -769,6 +933,30 @@ mod tests {
             Err(RemoteControlPairingAvailabilityParseError::EnvelopeHeader(
                 RemoteControlPairingAvailabilityHeaderError::UnknownKind { found: 2 },
             )),
+        );
+    }
+
+    #[test]
+    fn parser_rejects_a_valid_signature_for_a_non_pairing_destination_name() {
+        let signed_app_data = [
+            RemoteControlPairingAvailabilityProtocolVersion::V1.wire_value(),
+            RemoteControlPairingAvailabilityKind::PairingAvailable.wire_value(),
+            0,
+            0,
+            0,
+            1,
+        ];
+        let wrong_name = DottedNameHash::new([0xA5; crate::wire::DOTTED_NAME_HASH_BYTE_LEN]);
+        let (encoded, encoded_len) =
+            write_availability_with_name_hash(wrong_name, &signed_app_data);
+
+        assert_eq!(
+            RemoteControlPairingAvailability::parse(encoded.get(..encoded_len).unwrap()),
+            Err(
+                RemoteControlPairingAvailabilityParseError::UnexpectedDottedNameHash {
+                    found: wrong_name,
+                },
+            ),
         );
     }
 

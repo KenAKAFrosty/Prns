@@ -5,7 +5,7 @@ use crate::interfaces::InterfaceId;
 use crate::lemire_index::HeapLemireIndex;
 use crate::routing::routes::interface_index::{LinearRouteInterfaceIndex, RouteInterfaceIndex};
 use crate::routing::routes::{RouteEntry, RouteEvidenceId, RouteTable};
-use crate::routing::{NextHop, RouteResponsiveness};
+use crate::routing::{NextHop, RouteResponsiveness, RouteRetention};
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 
@@ -18,6 +18,7 @@ pub struct HeapRouteTableWithInterfaceIndex<I> {
     responsiveness: Vec<RouteResponsiveness>,
     receiving_interface: Vec<InterfaceId>,
     next_hop: Vec<NextHop>,
+    retention: Vec<RouteRetention>,
     evidence_id: Vec<RouteEvidenceId>,
     index: HeapLemireIndex,
     interface_index: I,
@@ -91,6 +92,9 @@ impl<I: RouteInterfaceIndex> RouteTable for HeapRouteTableWithInterfaceIndex<I> 
     fn next_hops(&self) -> &[NextHop] {
         &self.next_hop
     }
+    fn retentions(&self) -> &[RouteRetention] {
+        &self.retention
+    }
     fn evidence_ids(&self) -> &[RouteEvidenceId] {
         &self.evidence_id
     }
@@ -104,6 +108,7 @@ impl<I: RouteInterfaceIndex> RouteTable for HeapRouteTableWithInterfaceIndex<I> 
         self.responsiveness[i] = row.responsiveness;
         self.receiving_interface[i] = row.receiving_interface;
         self.next_hop[i] = row.next_hop;
+        self.retention[i] = row.retention;
     }
 
     fn set_evidence_id(&mut self, i: usize, evidence_id: RouteEvidenceId) {
@@ -128,6 +133,7 @@ impl<I: RouteInterfaceIndex> RouteTable for HeapRouteTableWithInterfaceIndex<I> 
         self.responsiveness.push(row.responsiveness);
         self.receiving_interface.push(row.receiving_interface);
         self.next_hop.push(row.next_hop);
+        self.retention.push(row.retention);
         self.index.insert(i, &self.destination);
         self.interface_index.insert(i, row.receiving_interface);
         Ok(i)
@@ -150,6 +156,7 @@ impl<I: RouteInterfaceIndex> RouteTable for HeapRouteTableWithInterfaceIndex<I> 
         self.responsiveness.swap_remove(i);
         self.receiving_interface.swap_remove(i);
         self.next_hop.swap_remove(i);
+        self.retention.swap_remove(i);
         self.evidence_id.swap_remove(i);
     }
 }
@@ -157,6 +164,9 @@ impl<I: RouteInterfaceIndex> RouteTable for HeapRouteTableWithInterfaceIndex<I> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::num::NonZeroU32;
+
+    use crate::routing::RouteExpiresAfter;
 
     fn dest(byte: u8) -> DestinationHash {
         DestinationHash::new([byte; 16])
@@ -167,6 +177,13 @@ mod tests {
     fn evidence(n: u32) -> RouteEvidenceId {
         RouteEvidenceId::new(n + 1).unwrap()
     }
+    fn retention(learned_at: u64) -> RouteRetention {
+        RouteRetention::Ephemeral {
+            expires_after: RouteExpiresAfter::from_nonzero_millis(
+                NonZeroU32::new((learned_at as u32).saturating_add(1)).unwrap(),
+            ),
+        }
+    }
     fn row(hops: u8, learned_at: u64, receiving_interface: InterfaceId) -> RouteEntry {
         RouteEntry {
             hops,
@@ -175,6 +192,7 @@ mod tests {
             responsiveness: RouteResponsiveness::Responsive,
             receiving_interface,
             next_hop: NextHop::Direct,
+            retention: retention(learned_at),
         }
     }
 
@@ -204,6 +222,7 @@ mod tests {
         table.set_row(0, row(9, 99, iface(0xEE)));
         assert_eq!(table.hops()[0], 9);
         assert_eq!(table.receiving_interfaces()[0], iface(0xEE));
+        assert_eq!(table.retentions()[0], retention(99));
     }
 
     #[test]
@@ -226,6 +245,7 @@ mod tests {
         assert_eq!(table.hops(), &[3, 2]);
         assert_eq!(table.learned_at(), &[InstantMillis(30), InstantMillis(20)]);
         assert_eq!(table.receiving_interfaces(), &[iface(0xE3), iface(0xE2)]);
+        assert_eq!(table.retentions(), &[retention(30), retention(20)]);
         assert_eq!(table.evidence_ids(), &[evidence(3), evidence(2)]);
     }
 
@@ -373,6 +393,7 @@ mod tests {
                         responsiveness: linear.responsiveness()[slot],
                         receiving_interface: iface((rng >> 37) as u8),
                         next_hop: linear.next_hops()[slot],
+                        retention: linear.retentions()[slot],
                     };
                     linear.set_row(slot, route);
                     roaring.set_row(slot, route);

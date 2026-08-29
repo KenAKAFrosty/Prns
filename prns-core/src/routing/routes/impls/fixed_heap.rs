@@ -6,7 +6,7 @@ use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::lemire_index::LemireIndex;
 use crate::routing::routes::{route_index_buckets, RouteEntry, RouteEvidenceId, RouteTable};
-use crate::routing::{NextHop, RouteResponsiveness};
+use crate::routing::{NextHop, RouteResponsiveness, RouteRetention};
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 
@@ -26,6 +26,7 @@ pub struct FixedHeapRouteTable<const N: usize, const BUCKETS: usize, A: Allocato
     responsiveness: Box<[RouteResponsiveness], A>,
     receiving_interface: Box<[InterfaceId], A>,
     next_hop: Box<[NextHop], A>,
+    retention: Box<[RouteRetention], A>,
     evidence_id: Box<[RouteEvidenceId], A>,
 }
 
@@ -53,6 +54,7 @@ impl<const N: usize, const BUCKETS: usize, A: Allocator + Default> Default
             responsiveness: filled(RouteResponsiveness::Responsive, N, A::default()),
             receiving_interface: filled(InterfaceId::new([0u8; 8]), N, A::default()),
             next_hop: filled(NextHop::Direct, N, A::default()),
+            retention: filled(RouteRetention::Network, N, A::default()),
             evidence_id: filled(RouteEvidenceId::FIRST, N, A::default()),
         }
     }
@@ -93,6 +95,9 @@ impl<const N: usize, const BUCKETS: usize, A: Allocator> RouteTable
     fn next_hops(&self) -> &[NextHop] {
         &self.next_hop[..self.len]
     }
+    fn retentions(&self) -> &[RouteRetention] {
+        &self.retention[..self.len]
+    }
     fn evidence_ids(&self) -> &[RouteEvidenceId] {
         &self.evidence_id[..self.len]
     }
@@ -104,6 +109,7 @@ impl<const N: usize, const BUCKETS: usize, A: Allocator> RouteTable
         self.responsiveness[i] = row.responsiveness;
         self.receiving_interface[i] = row.receiving_interface;
         self.next_hop[i] = row.next_hop;
+        self.retention[i] = row.retention;
     }
 
     fn set_evidence_id(&mut self, i: usize, evidence_id: RouteEvidenceId) {
@@ -143,6 +149,7 @@ impl<const N: usize, const BUCKETS: usize, A: Allocator> RouteTable
         self.responsiveness[i] = self.responsiveness[last];
         self.receiving_interface[i] = self.receiving_interface[last];
         self.next_hop[i] = self.next_hop[last];
+        self.retention[i] = self.retention[last];
         self.evidence_id[i] = self.evidence_id[last];
         self.len = last;
     }
@@ -151,7 +158,10 @@ impl<const N: usize, const BUCKETS: usize, A: Allocator> RouteTable
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::num::NonZeroU32;
+
     use crate::routing::routes::route_index_buckets;
+    use crate::routing::RouteExpiresAfter;
 
     fn dest_n(n: u32) -> DestinationHash {
         let key = (n as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
@@ -168,6 +178,14 @@ mod tests {
         RouteEvidenceId::new(n + 1).unwrap()
     }
 
+    fn retention(learned_at: u64) -> RouteRetention {
+        RouteRetention::Ephemeral {
+            expires_after: RouteExpiresAfter::from_nonzero_millis(
+                NonZeroU32::new((learned_at as u32).saturating_add(1)).unwrap(),
+            ),
+        }
+    }
+
     fn row(hops: u8, learned_at: u64, receiving_interface: InterfaceId) -> RouteEntry {
         RouteEntry {
             hops,
@@ -176,6 +194,7 @@ mod tests {
             responsiveness: RouteResponsiveness::Responsive,
             receiving_interface,
             next_hop: NextHop::Direct,
+            retention: retention(learned_at),
         }
     }
 
@@ -199,6 +218,7 @@ mod tests {
         assert_eq!(table.len(), 2);
         assert_eq!(table.destinations(), &[dest_n(1), dest_n(2)]);
         assert_eq!(table.hops(), &[1, 2]);
+        assert_eq!(table.retentions(), &[retention(10), retention(20)]);
         assert_eq!(table.index_of(&dest_n(1)), Some(0));
         assert_eq!(table.index_of(&dest_n(2)), Some(1));
         assert_eq!(table.index_of(&dest_n(999)), None);
@@ -256,6 +276,7 @@ mod tests {
         assert_eq!(table.index_of(&dest_n(3)), Some(0));
         assert_eq!(table.index_of(&dest_n(2)), Some(1));
         assert_eq!(table.hops()[table.index_of(&dest_n(3)).unwrap()], 3);
+        assert_eq!(table.retentions(), &[retention(30), retention(20)]);
         assert_eq!(table.evidence_ids(), &[evidence(3), evidence(2)]);
     }
 

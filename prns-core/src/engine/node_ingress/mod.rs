@@ -5,6 +5,7 @@ mod held_announce_release;
 mod link_handshake_completion;
 mod packet_dispatch;
 mod relay;
+mod remote_control_pairing;
 
 pub use packet_dispatch::{IngestIo, IngestPacketReport};
 

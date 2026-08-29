@@ -8,6 +8,9 @@ use crate::engine::{
 };
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
+use crate::remote_control::{
+    RemoteControlPairingAvailabilityObservation, RemoteControlPairingAvailabilityVerifyOwed,
+};
 use crate::routing::announce::schedule::ScheduleRejection;
 use crate::routing::announce::{AnnounceObservation, AnnounceRateAccounting};
 use crate::routing::dedup::PacketHash;
@@ -28,10 +31,12 @@ use crate::routing::request_handlers::RequestPathHash;
 use crate::units::RttMillis;
 use crate::wire::{DestinationHash, WirePacketHeader};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct IngestEffects<'a> {
     pub destination_identity_expiry: Option<InstantMillis>,
     pub accepted_announce: Option<AcceptedAnnounceEffect<'a>>,
+    pub remote_control_pairing_availability:
+        Option<RemoteControlPairingAvailabilityObservation<'a>>,
     pub held_announce_release: WakeSchedule,
 }
 
@@ -40,6 +45,7 @@ impl Default for IngestEffects<'_> {
         Self {
             destination_identity_expiry: None,
             accepted_announce: None,
+            remote_control_pairing_availability: None,
             held_announce_release: WakeSchedule::Unchanged,
         }
     }
@@ -75,6 +81,7 @@ pub enum DeferredCrypto {
     LinkProofVerify(LinkProofVerifyOwed),
     LinkProofSign(LinkProofSignOwed),
     AnnounceVerify(AnnounceVerifyOwed),
+    RemoteControlPairingAvailabilityVerify(RemoteControlPairingAvailabilityVerifyOwed),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,6 +152,7 @@ pub enum IngestPacketOutcome<'p> {
     OwesDecrypt,
     OwesRatchetDecrypt,
     OwesAnnounceVerify,
+    OwesRemoteControlPairingAvailabilityVerify,
     Proof(ProofIngest),
     Forward(PacketToForward<'p>),
     AnswerPathRequest {

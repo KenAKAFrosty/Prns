@@ -16,6 +16,7 @@ pub(crate) fn emit(event: &PrnsEvent<'_>) {
 
 fn emit_message(message: &Message<'_>) {
     match message {
+        Message::RemoteControlPairingAvailable(_) => {}
         Message::Delivered(delivery) => {
             let (kind, bytes, interface_kind) = delivery_fields(delivery);
             tracing::debug!(
@@ -205,6 +206,17 @@ fn emit_diagnostic(diagnostic: &Diagnostic<'_>) {
             outcome = settlement_outcome(settlement),
             command_id = id.0,
         ),
+        Diagnostic::RemoteControlPairingExpired { endpoint: _ } => tracing::debug!(
+            target: "prns.runtime",
+            event = "remote_control_pairing_expired",
+        ),
+        Diagnostic::RemoteControlPairingExpiryFailed {
+            endpoint: _,
+            failure: _,
+        } => tracing::warn!(
+            target: "prns.runtime",
+            event = "remote_control_pairing_expiry_failed",
+        ),
         Diagnostic::LinkEstablished(established) => {
             tracing::info!(
                 target: "prns.runtime",
@@ -352,6 +364,8 @@ fn settlement_kind(settlement: &Settlement) -> &'static str {
         Settlement::SetResourceStrategy(_) => "set_resource_strategy",
         Settlement::SendToChannel(_) => "send_to_channel",
         Settlement::AllowRequester(_) => "allow_requester",
+        Settlement::OpenRemoteControlPairing(_) => "open_remote_control_pairing",
+        Settlement::CloseRemoteControlPairing(_) => "close_remote_control_pairing",
     }
 }
 
@@ -373,6 +387,8 @@ fn settlement_outcome(settlement: &Settlement) -> &'static str {
         Settlement::SetResourceStrategy(result) => result.is_ok(),
         Settlement::SendToChannel(result) => result.is_ok(),
         Settlement::AllowRequester(result) => result.is_ok(),
+        Settlement::OpenRemoteControlPairing(result) => result.is_ok(),
+        Settlement::CloseRemoteControlPairing(result) => result.is_ok(),
     };
     if succeeded {
         "succeeded"

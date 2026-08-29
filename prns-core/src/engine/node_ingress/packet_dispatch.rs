@@ -209,11 +209,24 @@ impl<S: StorageLayout> EngineState<S> {
             deferred.as_deref_mut(),
             &mut effects,
         );
+
+        //Consider cfg-gating this on metrics/observability?
         let protocol_violation = ProtocolViolationKind::of_outcome(&outcome);
+
         wake_schedule_changes.held_announce_release = effects.held_announce_release;
         let accepted_observation = effects.accepted_announce.take();
+        let remote_control_pairing_availability =
+            effects.remote_control_pairing_availability.take();
         if let Some(expiry) = effects.destination_identity_expiry {
             wake_schedule_changes.expired_destination_identities = WakeSchedule::AtMost(expiry);
+        }
+        if let Some(observation) = remote_control_pairing_availability {
+            self.apply_remote_control_pairing_availability(
+                observation,
+                interfaces,
+                &mut wake_schedule_changes,
+                sink,
+            );
         }
         match outcome {
             IngestPacketOutcome::Announce(ingest) => {
@@ -243,6 +256,7 @@ impl<S: StorageLayout> EngineState<S> {
             IngestPacketOutcome::OwesDecrypt => {}
             IngestPacketOutcome::OwesRatchetDecrypt => {}
             IngestPacketOutcome::OwesAnnounceVerify => {}
+            IngestPacketOutcome::OwesRemoteControlPairingAvailabilityVerify => {}
             IngestPacketOutcome::Proof(ProofIngest::SendSinglePacketDelivered {
                 id,
                 delivered,

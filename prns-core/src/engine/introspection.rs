@@ -1,6 +1,6 @@
 use crate::engine::EngineState;
 use crate::interfaces::{AttachedInterfaces, InterfaceId};
-use crate::routing::routes::{NextHop, RouteEntry};
+use crate::routing::routes::{NextHop, RouteEntry, RouteRetention};
 use crate::routing::warmth::WarmestOf;
 use crate::storage::StorageLayout;
 use crate::units::InstantMillis;
@@ -23,6 +23,7 @@ pub struct RouteSnapshot {
     pub last_route_activity_at: InstantMillis,
     pub expires_at: InstantMillis,
     pub interface: InterfaceId,
+    pub retention: RouteRetention,
 }
 
 fn route_snapshot(
@@ -38,6 +39,7 @@ fn route_snapshot(
         last_route_activity_at: entry.last_route_activity_at,
         expires_at,
         interface: entry.receiving_interface,
+        retention: entry.retention,
     }
 }
 

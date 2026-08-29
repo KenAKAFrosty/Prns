@@ -13,7 +13,9 @@ use crate::engine::{CommandId, HeldDropCause, LinkEstablished, RouteRemovalCause
 use crate::engine::{InstantMillis, Journaled, PersistenceFlushCause, PersistenceFlushTarget};
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
-use crate::remote_control::RemoteControlPairingEndpoint;
+use crate::remote_control::{
+    RemoteControlPairingAvailabilityObservation, RemoteControlPairingEndpoint,
+};
 use crate::routing::delivery::Delivery;
 use crate::routing::links::channel::MessageType;
 use crate::routing::links::request::RequestId;
@@ -32,6 +34,7 @@ pub enum PrnsEvent<'a> {
 /// The data plane: bytes the app owns.
 #[derive(Debug)]
 pub enum Message<'a> {
+    RemoteControlPairingAvailable(RemoteControlPairingAvailabilityObservation<'a>),
     Delivered(Delivery<'a>),
     Request {
         destination: DestinationHash,
@@ -172,6 +175,9 @@ pub enum Diagnostic<'a> {
 impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
     fn from(journaled: Journaled<'a>) -> Self {
         match journaled {
+            Journaled::RemoteControlPairingAvailabilityObserved(observation) => {
+                PrnsEvent::Message(Message::RemoteControlPairingAvailable(observation))
+            }
             Journaled::Delivered(delivery) => PrnsEvent::Message(Message::Delivered(delivery)),
             Journaled::RequestReceived {
                 destination,

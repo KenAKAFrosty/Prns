@@ -163,6 +163,7 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
         | Journaled::ResourceSegmentReceived { .. }
         | Journaled::ResourceAssembled { .. }
         | Journaled::LinkInterfaceMismatch { .. }
+        | Journaled::RemoteControlPairingAvailabilityObserved(_)
         | Journaled::RemoteControlPairingExpired { .. }
         | Journaled::RemoteControlPairingExpiryFailed { .. } => {}
     };
@@ -292,6 +293,7 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
         | Journaled::ResourceSegmentReceived { .. }
         | Journaled::ResourceAssembled { .. }
         | Journaled::LinkInterfaceMismatch { .. }
+        | Journaled::RemoteControlPairingAvailabilityObserved(_)
         | Journaled::RemoteControlPairingExpired { .. }
         | Journaled::RemoteControlPairingExpiryFailed { .. } => {}
     };

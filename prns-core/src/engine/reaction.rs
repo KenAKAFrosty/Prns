@@ -118,6 +118,10 @@ pub enum Journaled<'a> {
         failure: crate::engine::CloseRemoteControlPairingFailure,
     },
 
+    RemoteControlPairingAvailabilityObserved(
+        crate::remote_control::RemoteControlPairingAvailabilityObservation<'a>,
+    ),
+
     /// RNS 1.4.2's `set_link_established_callback` as data.
     LinkEstablished(LinkEstablished),
 
