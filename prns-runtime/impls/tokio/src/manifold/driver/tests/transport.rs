@@ -67,6 +67,8 @@ async fn a_loopback_frame_crosses_the_seam_and_the_rebroadcast_leaves_through_th
         | Journaled::RemoteControlPairingAvailabilityObserved(_)
         | Journaled::RemoteControlPairingExpired { .. }
         | Journaled::RemoteControlTargetPairingConfirmationRequired(_)
+        | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
+        | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
         | Journaled::RemoteControlTargetPairingExpired { .. }
         | Journaled::RemoteControlTargetPairingLinkClosed { .. }
         | Journaled::RemoteControlPairingExpiryFailed { .. } => {}
@@ -426,6 +428,8 @@ async fn a_delivery_answers_with_a_proof_directive_on_the_arrival_lane() {
         | Journaled::RemoteControlPairingAvailabilityObserved(_)
         | Journaled::RemoteControlPairingExpired { .. }
         | Journaled::RemoteControlTargetPairingConfirmationRequired(_)
+        | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
+        | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
         | Journaled::RemoteControlTargetPairingExpired { .. }
         | Journaled::RemoteControlTargetPairingLinkClosed { .. }
         | Journaled::RemoteControlPairingExpiryFailed { .. } => {}

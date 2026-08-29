@@ -750,6 +750,15 @@ fn validate_commit(
             found: found_link,
         });
     }
+    let expected_controller = attempt.transcript.controller().identity_hash();
+    if arrival.identified_controller != expected_controller {
+        return Err(
+            RemoteControlTargetPairingCommitRejection::ControllerIdentityMismatch {
+                expected: expected_controller,
+                identified: arrival.identified_controller,
+            },
+        );
+    }
     if !arrival.commit.matches(&attempt.transcript) {
         return Err(
             RemoteControlTargetPairingCommitRejection::TranscriptMismatch {

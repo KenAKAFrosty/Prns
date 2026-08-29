@@ -14,6 +14,7 @@ use crate::engine::{InstantMillis, Journaled, PersistenceFlushCause, Persistence
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
 use crate::remote_control::{
+    RemoteControlControllerGrant, RemoteControlPairingAttemptId,
     RemoteControlPairingAvailabilityObservation, RemoteControlPairingEndpoint,
     RemoteControlTargetPairingAborted, RemoteControlTargetPairingAttemptView,
 };
@@ -37,6 +38,13 @@ pub enum PrnsEvent<'a> {
 pub enum Message<'a> {
     RemoteControlPairingAvailable(RemoteControlPairingAvailabilityObservation<'a>),
     RemoteControlTargetPairingConfirmationRequired(RemoteControlTargetPairingAttemptView<'a>),
+    RemoteControlTargetPairingControllerCommitted {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
+    RemoteControlTargetPairingAuthorizationRequired {
+        attempt_id: RemoteControlPairingAttemptId,
+        grant: RemoteControlControllerGrant,
+    },
     RemoteControlTargetPairingExpired {
         aborted: RemoteControlTargetPairingAborted,
     },
@@ -190,6 +198,17 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
                 PrnsEvent::Message(Message::RemoteControlTargetPairingConfirmationRequired(
                     attempt,
                 ))
+            }
+            Journaled::RemoteControlTargetPairingControllerCommitted { attempt_id } => {
+                PrnsEvent::Message(Message::RemoteControlTargetPairingControllerCommitted {
+                    attempt_id,
+                })
+            }
+            Journaled::RemoteControlTargetPairingAuthorizationRequired { attempt_id, grant } => {
+                PrnsEvent::Message(Message::RemoteControlTargetPairingAuthorizationRequired {
+                    attempt_id,
+                    grant,
+                })
             }
             Journaled::RemoteControlTargetPairingExpired { aborted } => {
                 PrnsEvent::Message(Message::RemoteControlTargetPairingExpired { aborted })

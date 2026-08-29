@@ -1,7 +1,8 @@
 use crate::engine::{
-    AllowRequesterFailure, AnnounceNowFailure, CloseLinkFailure, CloseRemoteControlPairingFailure,
-    EstablishLinkFailure, IdentifyFailure, Journaled, LinkClosedReason,
-    OpenRemoteControlPairingFailure, RequestPathFailure, RespondFailure, RouteRemovalCause,
+    AllowRequesterFailure, AnnounceNowFailure, ApproveRemoteControlTargetPairingFailure,
+    CloseLinkFailure, CloseRemoteControlPairingFailure, EstablishLinkFailure, IdentifyFailure,
+    Journaled, LinkClosedReason, OpenRemoteControlPairingFailure,
+    RejectRemoteControlTargetPairingFailure, RequestPathFailure, RespondFailure, RouteRemovalCause,
     SendGroupFailure, SendPlainPacketFailure, SendRequestFailure, SendResourceFailure,
     SendSinglePacketFailure, SendToChannelFailure, SendToLinkFailure,
     SetRegisteredAnnounceAppDataFailure, SetResourceStrategyFailure, Settlement,
@@ -33,6 +34,8 @@ prns_macros::iterable_enum! {
         SendPlainPacket,
         OpenRemoteControlPairing,
         CloseRemoteControlPairing,
+        ApproveRemoteControlTargetPairing,
+        RejectRemoteControlTargetPairing,
     }
 }
 
@@ -273,6 +276,8 @@ impl ReliabilityMetricsSnapshot {
             | Journaled::AnnounceHeldDropped { .. }
             | Journaled::RemoteControlPairingAvailabilityObserved(_)
             | Journaled::RemoteControlTargetPairingConfirmationRequired(_)
+            | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
+            | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
             | Journaled::RemoteControlTargetPairingExpired { .. }
             | Journaled::RemoteControlTargetPairingLinkClosed { .. }
             | Journaled::RemoteControlPairingExpired { .. }
@@ -389,6 +394,14 @@ impl From<&Settlement> for SettledOperation {
             },
             Settlement::CloseRemoteControlPairing(result) => Self {
                 operation: Operation::CloseRemoteControlPairing,
+                outcome: result.runtime_outcome(),
+            },
+            Settlement::ApproveRemoteControlTargetPairing(result) => Self {
+                operation: Operation::ApproveRemoteControlTargetPairing,
+                outcome: result.runtime_outcome(),
+            },
+            Settlement::RejectRemoteControlTargetPairing(result) => Self {
+                operation: Operation::RejectRemoteControlTargetPairing,
                 outcome: result.runtime_outcome(),
             },
         }
@@ -596,6 +609,36 @@ impl From<&CloseRemoteControlPairingFailure> for RuntimeOperationOutcome {
     }
 }
 
+impl From<&ApproveRemoteControlTargetPairingFailure> for RuntimeOperationOutcome {
+    fn from(failure: &ApproveRemoteControlTargetPairingFailure) -> Self {
+        match failure {
+            ApproveRemoteControlTargetPairingFailure::Expired { .. } => Self::Timeout,
+            ApproveRemoteControlTargetPairingFailure::NoActiveAttempt
+            | ApproveRemoteControlTargetPairingFailure::AttemptMismatch { .. }
+            | ApproveRemoteControlTargetPairingFailure::OfferPendingDispatch { .. }
+            | ApproveRemoteControlTargetPairingFailure::AlreadyApproved { .. }
+            | ApproveRemoteControlTargetPairingFailure::FinalizationInProgress { .. } => {
+                Self::Sequencing
+            }
+        }
+    }
+}
+
+impl From<&RejectRemoteControlTargetPairingFailure> for RuntimeOperationOutcome {
+    fn from(failure: &RejectRemoteControlTargetPairingFailure) -> Self {
+        match failure {
+            RejectRemoteControlTargetPairingFailure::Expired { .. } => Self::Timeout,
+            RejectRemoteControlTargetPairingFailure::NoActiveAttempt
+            | RejectRemoteControlTargetPairingFailure::AttemptMismatch { .. }
+            | RejectRemoteControlTargetPairingFailure::OfferPendingDispatch { .. }
+            | RejectRemoteControlTargetPairingFailure::AlreadyApproved { .. }
+            | RejectRemoteControlTargetPairingFailure::FinalizationInProgress { .. } => {
+                Self::Sequencing
+            }
+        }
+    }
+}
+
 impl From<ResourceFailureCause> for RuntimeResourceFailure {
     fn from(cause: ResourceFailureCause) -> Self {
         match cause {
@@ -697,6 +740,18 @@ mod tests {
                 CloseRemoteControlPairingFailure::EndpointNotRegistered,
             )),
         });
+        snapshot.record_journaled(&Journaled::CommandSettled {
+            id: CommandId(5),
+            settlement: Settlement::ApproveRemoteControlTargetPairing(Err(
+                ApproveRemoteControlTargetPairingFailure::NoActiveAttempt,
+            )),
+        });
+        snapshot.record_journaled(&Journaled::CommandSettled {
+            id: CommandId(6),
+            settlement: Settlement::RejectRemoteControlTargetPairing(Err(
+                RejectRemoteControlTargetPairingFailure::NoActiveAttempt,
+            )),
+        });
 
         assert_eq!(
             snapshot.operations.get(
@@ -709,6 +764,20 @@ mod tests {
             snapshot.operations.get(
                 RuntimeOperation::CloseRemoteControlPairing,
                 RuntimeOperationOutcome::DependencyFailed,
+            ),
+            1,
+        );
+        assert_eq!(
+            snapshot.operations.get(
+                RuntimeOperation::ApproveRemoteControlTargetPairing,
+                RuntimeOperationOutcome::Sequencing,
+            ),
+            1,
+        );
+        assert_eq!(
+            snapshot.operations.get(
+                RuntimeOperation::RejectRemoteControlTargetPairing,
+                RuntimeOperationOutcome::Sequencing,
             ),
             1,
         );

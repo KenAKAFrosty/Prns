@@ -126,6 +126,15 @@ pub enum Journaled<'a> {
         crate::remote_control::RemoteControlTargetPairingAttemptView<'a>,
     ),
 
+    RemoteControlTargetPairingControllerCommitted {
+        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
+    },
+
+    RemoteControlTargetPairingAuthorizationRequired {
+        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
+        grant: crate::remote_control::RemoteControlControllerGrant,
+    },
+
     RemoteControlTargetPairingExpired {
         aborted: crate::remote_control::RemoteControlTargetPairingAborted,
     },

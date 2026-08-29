@@ -45,6 +45,8 @@ async fn routing_control_drops_a_live_route_and_journals_the_explicit_removal() 
         | Journaled::RemoteControlPairingAvailabilityObserved(_)
         | Journaled::RemoteControlPairingExpired { .. }
         | Journaled::RemoteControlTargetPairingConfirmationRequired(_)
+        | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
+        | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
         | Journaled::RemoteControlTargetPairingExpired { .. }
         | Journaled::RemoteControlTargetPairingLinkClosed { .. }
         | Journaled::RemoteControlPairingExpiryFailed { .. } => {}
@@ -178,6 +180,8 @@ async fn the_manifold_culls_an_expired_route_at_its_deadline() {
         | Journaled::RemoteControlPairingAvailabilityObserved(_)
         | Journaled::RemoteControlPairingExpired { .. }
         | Journaled::RemoteControlTargetPairingConfirmationRequired(_)
+        | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
+        | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
         | Journaled::RemoteControlTargetPairingExpired { .. }
         | Journaled::RemoteControlTargetPairingLinkClosed { .. }
         | Journaled::RemoteControlPairingExpiryFailed { .. } => {}

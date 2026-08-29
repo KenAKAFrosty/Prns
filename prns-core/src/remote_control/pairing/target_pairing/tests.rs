@@ -77,6 +77,7 @@ impl TargetPairingFixture {
         RemoteControlTargetPairingCommitArrival::new(
             RemoteControlPairingCommit::new(self.prepared().transcript()),
             responder(self.link_id, request_fill),
+            self.begin.controller().identity_hash(),
         )
     }
 
@@ -439,11 +440,12 @@ fn controller_commit_then_local_approval_owes_the_same_grant() {
 }
 
 #[test]
-fn mismatched_attempts_links_transcripts_and_duplicate_commits_never_advance() {
+fn mismatched_attempts_links_identities_transcripts_and_duplicate_commits_never_advance() {
     let fixture = TargetPairingFixture::new();
     let mut state = RemoteControlTargetPairingState::default();
     let attempt_id = begin(&mut state, &fixture);
     let other = TargetPairingFixture::with_route(0x75, 0x86);
+    let other_controller = controller(0x76).identity_hash();
     let other_id: RemoteControlPairingAttemptId = other.prepared().transcript().into();
 
     assert_eq!(
@@ -456,6 +458,7 @@ fn mismatched_attempts_links_transcripts_and_duplicate_commits_never_advance() {
     let wrong_link = RemoteControlTargetPairingCommitArrival::new(
         RemoteControlPairingCommit::new(fixture.prepared().transcript()),
         responder(LinkId::new([0x85; TRUNCATED_HASH_BYTE_LEN]), 0x62),
+        fixture.begin.controller().identity_hash(),
     );
     assert_eq!(
         state.commit(wrong_link, ATTEMPT_STARTED_AT),
@@ -467,9 +470,25 @@ fn mismatched_attempts_links_transcripts_and_duplicate_commits_never_advance() {
             },
         },
     );
+    let wrong_identity = RemoteControlTargetPairingCommitArrival::new(
+        RemoteControlPairingCommit::new(fixture.prepared().transcript()),
+        responder(fixture.link_id, 0x63),
+        other_controller,
+    );
+    assert_eq!(
+        state.commit(wrong_identity, ATTEMPT_STARTED_AT),
+        CommitRemoteControlTargetPairingOutcome::Rejected {
+            rejected: wrong_identity.responder(),
+            reason: RemoteControlTargetPairingCommitRejection::ControllerIdentityMismatch {
+                expected: fixture.begin.controller().identity_hash(),
+                identified: other_controller,
+            },
+        },
+    );
     let wrong_transcript = RemoteControlTargetPairingCommitArrival::new(
         RemoteControlPairingCommit::new(other.prepared().transcript()),
-        responder(fixture.link_id, 0x63),
+        responder(fixture.link_id, 0x64),
+        fixture.begin.controller().identity_hash(),
     );
     assert_eq!(
         state.commit(wrong_transcript, ATTEMPT_STARTED_AT),
@@ -482,10 +501,10 @@ fn mismatched_attempts_links_transcripts_and_duplicate_commits_never_advance() {
         },
     );
     assert_eq!(
-        state.commit(fixture.commit(0x64), ATTEMPT_STARTED_AT),
+        state.commit(fixture.commit(0x65), ATTEMPT_STARTED_AT),
         CommitRemoteControlTargetPairingOutcome::AwaitingTargetApproval { attempt_id },
     );
-    let duplicate = fixture.commit(0x65);
+    let duplicate = fixture.commit(0x66);
     assert_eq!(
         state.commit(duplicate, ATTEMPT_STARTED_AT),
         CommitRemoteControlTargetPairingOutcome::Rejected {

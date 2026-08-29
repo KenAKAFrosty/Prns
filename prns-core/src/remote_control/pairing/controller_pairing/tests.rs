@@ -569,7 +569,11 @@ fn real_wire_messages_drive_both_reducers_to_the_same_durable_pairing() {
         RemoteControlPairingRequest::Begin(_) => panic!("commit request"),
     };
     let commit_responder = responder(fixture.link_id, 0x61);
-    let arrival = RemoteControlTargetPairingCommitArrival::new(commit, commit_responder);
+    let arrival = RemoteControlTargetPairingCommitArrival::new(
+        commit,
+        commit_responder,
+        fixture.controller.identity_hash(),
+    );
     let CommitRemoteControlTargetPairingOutcome::AuthorizationOwed {
         attempt_id: authorized,
         grant,

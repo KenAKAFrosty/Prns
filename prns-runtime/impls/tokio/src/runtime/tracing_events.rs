@@ -16,7 +16,12 @@ pub(crate) fn emit(event: &PrnsEvent<'_>) {
 
 fn emit_message(message: &Message<'_>) {
     match message {
-        Message::RemoteControlPairingAvailable(_) => {}
+        Message::RemoteControlPairingAvailable(_)
+        | Message::RemoteControlTargetPairingConfirmationRequired(_)
+        | Message::RemoteControlTargetPairingControllerCommitted { .. }
+        | Message::RemoteControlTargetPairingAuthorizationRequired { .. }
+        | Message::RemoteControlTargetPairingExpired { .. }
+        | Message::RemoteControlTargetPairingLinkClosed { .. } => {}
         Message::Delivered(delivery) => {
             let (kind, bytes, interface_kind) = delivery_fields(delivery);
             tracing::debug!(
@@ -366,6 +371,8 @@ fn settlement_kind(settlement: &Settlement) -> &'static str {
         Settlement::AllowRequester(_) => "allow_requester",
         Settlement::OpenRemoteControlPairing(_) => "open_remote_control_pairing",
         Settlement::CloseRemoteControlPairing(_) => "close_remote_control_pairing",
+        Settlement::ApproveRemoteControlTargetPairing(_) => "approve_remote_control_target_pairing",
+        Settlement::RejectRemoteControlTargetPairing(_) => "reject_remote_control_target_pairing",
     }
 }
 
@@ -389,6 +396,8 @@ fn settlement_outcome(settlement: &Settlement) -> &'static str {
         Settlement::AllowRequester(result) => result.is_ok(),
         Settlement::OpenRemoteControlPairing(result) => result.is_ok(),
         Settlement::CloseRemoteControlPairing(result) => result.is_ok(),
+        Settlement::ApproveRemoteControlTargetPairing(result) => result.is_ok(),
+        Settlement::RejectRemoteControlTargetPairing(result) => result.is_ok(),
     };
     if succeeded {
         "succeeded"

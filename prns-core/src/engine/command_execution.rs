@@ -307,10 +307,29 @@ impl<S: StorageLayout> EngineState<S> {
                 let transition = self
                     .remote_control_target_pairing
                     .approve(approve.attempt_id, now);
-                if let ApproveRemoteControlTargetPairingOutcome::Expired { expired } = transition {
-                    sink(EngineReaction::Journaled(
-                        Journaled::RemoteControlTargetPairingExpired { aborted: expired },
-                    ));
+                match transition {
+                    ApproveRemoteControlTargetPairingOutcome::AuthorizationOwed {
+                        attempt_id,
+                        grant,
+                    } => sink(EngineReaction::Journaled(
+                        Journaled::RemoteControlTargetPairingAuthorizationRequired {
+                            attempt_id,
+                            grant,
+                        },
+                    )),
+                    ApproveRemoteControlTargetPairingOutcome::Expired { expired } => {
+                        sink(EngineReaction::Journaled(
+                            Journaled::RemoteControlTargetPairingExpired { aborted: expired },
+                        ));
+                    }
+                    ApproveRemoteControlTargetPairingOutcome::AwaitingControllerCommit {
+                        ..
+                    }
+                    | ApproveRemoteControlTargetPairingOutcome::NoActiveAttempt
+                    | ApproveRemoteControlTargetPairingOutcome::AttemptMismatch { .. }
+                    | ApproveRemoteControlTargetPairingOutcome::OfferPendingDispatch { .. }
+                    | ApproveRemoteControlTargetPairingOutcome::AlreadyApproved { .. }
+                    | ApproveRemoteControlTargetPairingOutcome::FinalizationInProgress { .. } => {}
                 }
                 settle(
                     sink,

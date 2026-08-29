@@ -217,6 +217,7 @@ impl RemoteControlTargetPairingBeginArrival {
 pub struct RemoteControlTargetPairingCommitArrival {
     pub(super) commit: RemoteControlPairingCommit,
     pub(super) responder: RemoteControlTargetPairingResponder,
+    pub(super) identified_controller: IdentityHash,
 }
 
 impl RemoteControlTargetPairingCommitArrival {
@@ -224,8 +225,13 @@ impl RemoteControlTargetPairingCommitArrival {
     pub const fn new(
         commit: RemoteControlPairingCommit,
         responder: RemoteControlTargetPairingResponder,
+        identified_controller: IdentityHash,
     ) -> Self {
-        Self { commit, responder }
+        Self {
+            commit,
+            responder,
+            identified_controller,
+        }
     }
 
     #[must_use]
@@ -236,6 +242,11 @@ impl RemoteControlTargetPairingCommitArrival {
     #[must_use]
     pub const fn responder(self) -> RemoteControlTargetPairingResponder {
         self.responder
+    }
+
+    #[must_use]
+    pub const fn identified_controller(self) -> IdentityHash {
+        self.identified_controller
     }
 }
 
@@ -371,6 +382,10 @@ pub enum RemoteControlTargetPairingCommitRejection {
     WrongLink {
         expected: LinkId,
         found: LinkId,
+    },
+    ControllerIdentityMismatch {
+        expected: IdentityHash,
+        identified: IdentityHash,
     },
     TranscriptMismatch {
         expected: RemoteControlPairingAttemptId,
