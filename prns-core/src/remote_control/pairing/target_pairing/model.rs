@@ -1,3 +1,4 @@
+use crate::identity::IdentityHash;
 use crate::remote_control::{
     RemoteControlControllerGrant, RemoteControlControllerIdentity, RemoteControlTargetIdentity,
 };
@@ -6,10 +7,12 @@ use crate::routing::links::LinkId;
 use crate::units::InstantMillis;
 
 use super::super::{
-    RemoteControlPairingAttemptTimeout, RemoteControlPairingCommit, RemoteControlPairingCompleted,
+    RemoteControlPairingAttemptId, RemoteControlPairingAttemptTimeout, RemoteControlPairingBegin,
+    RemoteControlPairingCommit, RemoteControlPairingCompleted,
     RemoteControlPairingCompletionSigningError, RemoteControlPairingConfirmationCode,
-    RemoteControlPairingContext, RemoteControlPairingPermissions, RemoteControlPairingTranscript,
-    RemoteControlPairingTranscriptDigest, RemoteControlPairingWindow,
+    RemoteControlPairingContext, RemoteControlPairingOffer, RemoteControlPairingPermissions,
+    RemoteControlPairingTranscript, RemoteControlPairingTranscriptDigest,
+    RemoteControlPairingWindow,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,22 +96,6 @@ impl RemoteControlTargetPairingAttemptWindow {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct RemoteControlTargetPairingAttemptId(RemoteControlPairingTranscriptDigest);
-
-impl RemoteControlTargetPairingAttemptId {
-    #[must_use]
-    pub const fn transcript(self) -> RemoteControlPairingTranscriptDigest {
-        self.0
-    }
-}
-
-impl From<&RemoteControlPairingTranscript> for RemoteControlTargetPairingAttemptId {
-    fn from(transcript: &RemoteControlPairingTranscript) -> Self {
-        Self(transcript.digest())
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoteControlTargetPairingAttemptView<'a> {
     pub(super) transcript: &'a RemoteControlPairingTranscript,
@@ -117,7 +104,7 @@ pub struct RemoteControlTargetPairingAttemptView<'a> {
 
 impl<'a> RemoteControlTargetPairingAttemptView<'a> {
     #[must_use]
-    pub fn attempt_id(self) -> RemoteControlTargetPairingAttemptId {
+    pub fn attempt_id(self) -> RemoteControlPairingAttemptId {
         self.transcript.into()
     }
 
@@ -188,6 +175,43 @@ impl RemoteControlTargetPairingResponder {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct RemoteControlTargetPairingBeginArrival {
+    pub(super) begin: RemoteControlPairingBegin,
+    pub(super) responder: RemoteControlTargetPairingResponder,
+    pub(super) identified_controller: IdentityHash,
+}
+
+impl RemoteControlTargetPairingBeginArrival {
+    #[must_use]
+    pub const fn new(
+        begin: RemoteControlPairingBegin,
+        responder: RemoteControlTargetPairingResponder,
+        identified_controller: IdentityHash,
+    ) -> Self {
+        Self {
+            begin,
+            responder,
+            identified_controller,
+        }
+    }
+
+    #[must_use]
+    pub const fn begin(&self) -> &RemoteControlPairingBegin {
+        &self.begin
+    }
+
+    #[must_use]
+    pub const fn responder(&self) -> RemoteControlTargetPairingResponder {
+        self.responder
+    }
+
+    #[must_use]
+    pub const fn identified_controller(&self) -> IdentityHash {
+        self.identified_controller
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoteControlTargetPairingCommitArrival {
     pub(super) commit: RemoteControlPairingCommit,
@@ -217,23 +241,23 @@ impl RemoteControlTargetPairingCommitArrival {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteControlTargetPairingAborted {
     AwaitingBoth {
-        attempt_id: RemoteControlTargetPairingAttemptId,
+        attempt_id: RemoteControlPairingAttemptId,
         context: RemoteControlPairingContext,
     },
     AwaitingTargetApproval {
-        attempt_id: RemoteControlTargetPairingAttemptId,
+        attempt_id: RemoteControlPairingAttemptId,
         context: RemoteControlPairingContext,
         responder: RemoteControlTargetPairingResponder,
     },
     AwaitingControllerCommit {
-        attempt_id: RemoteControlTargetPairingAttemptId,
+        attempt_id: RemoteControlPairingAttemptId,
         context: RemoteControlPairingContext,
     },
 }
 
 impl RemoteControlTargetPairingAborted {
     #[must_use]
-    pub const fn attempt_id(self) -> RemoteControlTargetPairingAttemptId {
+    pub const fn attempt_id(self) -> RemoteControlPairingAttemptId {
         match self {
             Self::AwaitingBoth { attempt_id, .. }
             | Self::AwaitingTargetApproval { attempt_id, .. }
@@ -251,29 +275,43 @@ impl RemoteControlTargetPairingAborted {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum BeginRemoteControlTargetPairingOutcome {
     Offered {
-        attempt_id: RemoteControlTargetPairingAttemptId,
+        attempt_id: RemoteControlPairingAttemptId,
+        responder: RemoteControlTargetPairingResponder,
+        offer: RemoteControlPairingOffer,
     },
     Expired {
         expired: RemoteControlTargetPairingAborted,
     },
     Busy {
-        active: RemoteControlTargetPairingAttemptId,
+        active: RemoteControlPairingAttemptId,
     },
     PairingUnavailable {
         reason: RemoteControlTargetPairingAttemptWindowError,
+    },
+    Rejected {
+        rejected: RemoteControlTargetPairingResponder,
+        reason: RemoteControlTargetPairingBeginRejection,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlTargetPairingBeginRejection {
+    ControllerIdentityMismatch {
+        claimed: IdentityHash,
+        identified: IdentityHash,
     },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApproveRemoteControlTargetPairingOutcome {
     AwaitingControllerCommit {
-        attempt_id: RemoteControlTargetPairingAttemptId,
+        attempt_id: RemoteControlPairingAttemptId,
     },
     AuthorizationOwed {
-        attempt_id: RemoteControlTargetPairingAttemptId,
+        attempt_id: RemoteControlPairingAttemptId,
         grant: RemoteControlControllerGrant,
     },
     Expired {
@@ -281,14 +319,14 @@ pub enum ApproveRemoteControlTargetPairingOutcome {
     },
     NoActiveAttempt,
     AttemptMismatch {
-        requested: RemoteControlTargetPairingAttemptId,
-        active: RemoteControlTargetPairingAttemptId,
+        requested: RemoteControlPairingAttemptId,
+        active: RemoteControlPairingAttemptId,
     },
     AlreadyApproved {
-        attempt_id: RemoteControlTargetPairingAttemptId,
+        attempt_id: RemoteControlPairingAttemptId,
     },
     FinalizationInProgress {
-        attempt_id: RemoteControlTargetPairingAttemptId,
+        attempt_id: RemoteControlPairingAttemptId,
     },
 }
 
@@ -300,7 +338,7 @@ pub enum RemoteControlTargetPairingCommitRejection {
         found: LinkId,
     },
     TranscriptMismatch {
-        expected: RemoteControlTargetPairingAttemptId,
+        expected: RemoteControlPairingAttemptId,
         found: RemoteControlPairingTranscriptDigest,
     },
     AlreadyCommitted,
@@ -310,10 +348,10 @@ pub enum RemoteControlTargetPairingCommitRejection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommitRemoteControlTargetPairingOutcome {
     AwaitingTargetApproval {
-        attempt_id: RemoteControlTargetPairingAttemptId,
+        attempt_id: RemoteControlPairingAttemptId,
     },
     AuthorizationOwed {
-        attempt_id: RemoteControlTargetPairingAttemptId,
+        attempt_id: RemoteControlPairingAttemptId,
         grant: RemoteControlControllerGrant,
     },
     Expired {
@@ -336,79 +374,57 @@ pub enum RejectRemoteControlTargetPairingOutcome {
     },
     NoActiveAttempt,
     AttemptMismatch {
-        requested: RemoteControlTargetPairingAttemptId,
-        active: RemoteControlTargetPairingAttemptId,
+        requested: RemoteControlPairingAttemptId,
+        active: RemoteControlPairingAttemptId,
     },
     AlreadyApproved {
-        attempt_id: RemoteControlTargetPairingAttemptId,
+        attempt_id: RemoteControlPairingAttemptId,
     },
     FinalizationInProgress {
-        attempt_id: RemoteControlTargetPairingAttemptId,
+        attempt_id: RemoteControlPairingAttemptId,
     },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PersistRemoteControlTargetPairingAuthorizationOutcome {
     CompletionOwed {
-        attempt_id: RemoteControlTargetPairingAttemptId,
+        attempt_id: RemoteControlPairingAttemptId,
+        responder: RemoteControlTargetPairingResponder,
+        completed: RemoteControlPairingCompleted,
     },
     SigningFailed {
-        attempt_id: RemoteControlTargetPairingAttemptId,
+        attempt_id: RemoteControlPairingAttemptId,
         error: RemoteControlPairingCompletionSigningError,
     },
     NoAuthorizationOwed,
     AttemptMismatch {
-        settled: RemoteControlTargetPairingAttemptId,
-        active: RemoteControlTargetPairingAttemptId,
+        settled: RemoteControlPairingAttemptId,
+        active: RemoteControlPairingAttemptId,
     },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FailRemoteControlTargetPairingAuthorizationOutcome {
     Aborted {
-        attempt_id: RemoteControlTargetPairingAttemptId,
+        attempt_id: RemoteControlPairingAttemptId,
         responder: RemoteControlTargetPairingResponder,
     },
     NoAuthorizationOwed,
     AttemptMismatch {
-        settled: RemoteControlTargetPairingAttemptId,
-        active: RemoteControlTargetPairingAttemptId,
+        settled: RemoteControlPairingAttemptId,
+        active: RemoteControlPairingAttemptId,
     },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RemoteControlTargetPairingCompletionView<'a> {
-    pub(super) attempt: RemoteControlTargetPairingAttemptView<'a>,
-    pub(super) responder: RemoteControlTargetPairingResponder,
-    pub(super) completed: &'a RemoteControlPairingCompleted,
-}
-
-impl<'a> RemoteControlTargetPairingCompletionView<'a> {
-    #[must_use]
-    pub const fn attempt(self) -> RemoteControlTargetPairingAttemptView<'a> {
-        self.attempt
-    }
-
-    #[must_use]
-    pub const fn responder(self) -> RemoteControlTargetPairingResponder {
-        self.responder
-    }
-
-    #[must_use]
-    pub const fn completed(self) -> &'a RemoteControlPairingCompleted {
-        self.completed
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompleteRemoteControlTargetPairingOutcome {
     Completed {
-        attempt_id: RemoteControlTargetPairingAttemptId,
+        attempt_id: RemoteControlPairingAttemptId,
     },
     NoCompletionOwed,
     AttemptMismatch {
-        settled: RemoteControlTargetPairingAttemptId,
-        active: RemoteControlTargetPairingAttemptId,
+        settled: RemoteControlPairingAttemptId,
+        active: RemoteControlPairingAttemptId,
     },
 }
 
@@ -422,7 +438,7 @@ pub enum ExpireRemoteControlTargetPairingOutcome {
     },
     NoActiveAttempt,
     FinalizationInProgress {
-        attempt_id: RemoteControlTargetPairingAttemptId,
+        attempt_id: RemoteControlPairingAttemptId,
     },
 }
 
@@ -434,6 +450,6 @@ pub enum CloseRemoteControlTargetPairingLinkOutcome {
     UnrelatedLink,
     NoActiveAttempt,
     FinalizationInProgress {
-        attempt_id: RemoteControlTargetPairingAttemptId,
+        attempt_id: RemoteControlPairingAttemptId,
     },
 }

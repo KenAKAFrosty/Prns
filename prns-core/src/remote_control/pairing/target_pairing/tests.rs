@@ -5,11 +5,12 @@ use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::vault::IdentitySecretKey;
 use crate::identity::{IdentityHash, IdentityPublicKeys, IdentitySigner};
 use crate::remote_control::{
-    RemoteControlControllerGrant, RemoteControlControllerIdentity,
+    RemoteControlControllerGrant, RemoteControlControllerIdentity, RemoteControlPairingAttemptId,
     RemoteControlPairingAttemptTimeout, RemoteControlPairingBegin, RemoteControlPairingCommit,
-    RemoteControlPairingContext, RemoteControlPairingIdentity, RemoteControlPairingPermissions,
-    RemoteControlPairingPreparedOffer, RemoteControlPairingSession, RemoteControlPairingWindow,
-    RemoteControlRequestKind, RemoteControlRequestSet,
+    RemoteControlPairingContext, RemoteControlPairingIdentity, RemoteControlPairingOffer,
+    RemoteControlPairingPermissions, RemoteControlPairingPreparedOffer,
+    RemoteControlPairingSession, RemoteControlPairingWindow, RemoteControlRequestKind,
+    RemoteControlRequestSet,
 };
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
@@ -77,6 +78,14 @@ impl TargetPairingFixture {
             responder(self.link_id, request_fill),
         )
     }
+
+    fn begin_arrival(&self, request_fill: u8) -> RemoteControlTargetPairingBeginArrival {
+        RemoteControlTargetPairingBeginArrival::new(
+            RemoteControlPairingBegin::new(*self.begin.controller()),
+            responder(self.link_id, request_fill),
+            self.begin.controller().identity_hash(),
+        )
+    }
 }
 
 fn signer(fill: u8) -> InMemoryNodeIdentity {
@@ -110,19 +119,34 @@ fn responder(link_id: LinkId, request_fill: u8) -> RemoteControlTargetPairingRes
 fn begin(
     state: &mut RemoteControlTargetPairingState,
     fixture: &TargetPairingFixture,
-) -> RemoteControlTargetPairingAttemptId {
+) -> RemoteControlPairingAttemptId {
+    begin_with_offer(state, fixture).0
+}
+
+fn begin_with_offer(
+    state: &mut RemoteControlTargetPairingState,
+    fixture: &TargetPairingFixture,
+) -> (RemoteControlPairingAttemptId, RemoteControlPairingOffer) {
+    let arrival = fixture.begin_arrival(0x60);
     match state.begin(
         &fixture.target_signer,
         &fixture.session,
-        fixture.link_id,
-        &fixture.begin,
+        &arrival,
         ATTEMPT_STARTED_AT,
         fixture.attempt_timeout(),
     ) {
-        BeginRemoteControlTargetPairingOutcome::Offered { attempt_id } => attempt_id,
+        BeginRemoteControlTargetPairingOutcome::Offered {
+            attempt_id,
+            responder: offered_to,
+            offer,
+        } => {
+            assert_eq!(offered_to, arrival.responder());
+            (attempt_id, offer)
+        }
         BeginRemoteControlTargetPairingOutcome::Expired { .. }
         | BeginRemoteControlTargetPairingOutcome::Busy { .. }
-        | BeginRemoteControlTargetPairingOutcome::PairingUnavailable { .. } => {
+        | BeginRemoteControlTargetPairingOutcome::PairingUnavailable { .. }
+        | BeginRemoteControlTargetPairingOutcome::Rejected { .. } => {
             panic!("fresh state")
         }
     }
@@ -144,10 +168,7 @@ fn attempt_view(
 fn authorize(
     state: &mut RemoteControlTargetPairingState,
     fixture: &TargetPairingFixture,
-) -> (
-    RemoteControlTargetPairingAttemptId,
-    RemoteControlControllerGrant,
-) {
+) -> (RemoteControlPairingAttemptId, RemoteControlControllerGrant) {
     let attempt_id = begin(state, fixture);
     assert_eq!(
         state.approve(attempt_id, ATTEMPT_STARTED_AT),
@@ -219,7 +240,7 @@ fn attempt_windows_are_positive_bounded_by_the_pairing_window_and_overflow_safe(
 fn begin_retains_one_exact_offer_and_refuses_competing_attempts() {
     let fixture = TargetPairingFixture::new();
     let mut state = RemoteControlTargetPairingState::default();
-    let attempt_id = begin(&mut state, &fixture);
+    let (attempt_id, offer) = begin_with_offer(&mut state, &fixture);
     let view = attempt_view(&state);
 
     assert_eq!(view.attempt_id(), attempt_id);
@@ -227,21 +248,51 @@ fn begin_retains_one_exact_offer_and_refuses_competing_attempts() {
     assert_eq!(view.controller(), fixture.begin.controller());
     assert_eq!(view.permissions(), fixture.permissions());
     assert_eq!(view.window().expires_at(), ATTEMPT_EXPIRES_AT);
-    assert_eq!(state.offer(attempt_id), Some(fixture.prepared().offer()));
+    assert_eq!(&offer, fixture.prepared().offer());
 
     let competing = TargetPairingFixture::with_route(0x74, 0x85);
+    let competing_arrival = competing.begin_arrival(0x61);
     assert_eq!(
         state.begin(
             &competing.target_signer,
             &competing.session,
-            competing.link_id,
-            &competing.begin,
+            &competing_arrival,
             ATTEMPT_STARTED_AT,
             competing.attempt_timeout(),
         ),
         BeginRemoteControlTargetPairingOutcome::Busy { active: attempt_id },
     );
     assert_eq!(attempt_view(&state).attempt_id(), attempt_id);
+}
+
+#[test]
+fn begin_requires_the_claimed_controller_to_own_the_identified_link() {
+    let fixture = TargetPairingFixture::new();
+    let mut state = RemoteControlTargetPairingState::default();
+    let identified = controller(0x32).identity_hash();
+    let arrival = RemoteControlTargetPairingBeginArrival::new(
+        RemoteControlPairingBegin::new(*fixture.begin.controller()),
+        responder(fixture.link_id, 0x60),
+        identified,
+    );
+
+    assert_eq!(
+        state.begin(
+            &fixture.target_signer,
+            &fixture.session,
+            &arrival,
+            ATTEMPT_STARTED_AT,
+            fixture.attempt_timeout(),
+        ),
+        BeginRemoteControlTargetPairingOutcome::Rejected {
+            rejected: arrival.responder(),
+            reason: RemoteControlTargetPairingBeginRejection::ControllerIdentityMismatch {
+                claimed: fixture.begin.controller().identity_hash(),
+                identified,
+            },
+        },
+    );
+    assert_eq!(state.view(), RemoteControlTargetPairingView::Idle);
 }
 
 #[test]
@@ -259,7 +310,6 @@ fn local_approval_then_controller_commit_owes_the_exact_grant() {
         state.view(),
         RemoteControlTargetPairingView::Authorizing(attempt) if attempt.attempt_id() == attempt_id
     ));
-    assert_eq!(state.completion(attempt_id), None);
 }
 
 #[test]
@@ -287,7 +337,7 @@ fn mismatched_attempts_links_transcripts_and_duplicate_commits_never_advance() {
     let mut state = RemoteControlTargetPairingState::default();
     let attempt_id = begin(&mut state, &fixture);
     let other = TargetPairingFixture::with_route(0x75, 0x86);
-    let other_id: RemoteControlTargetPairingAttemptId = other.prepared().transcript().into();
+    let other_id: RemoteControlPairingAttemptId = other.prepared().transcript().into();
 
     assert_eq!(
         state.approve(other_id, ATTEMPT_STARTED_AT),
@@ -408,12 +458,12 @@ fn deadlines_expire_confirmations_and_consume_the_triggering_arrival() {
     assert_eq!(state.view(), RemoteControlTargetPairingView::Idle);
 
     let first_id = begin(&mut state, &fixture);
+    let arrival = fixture.begin_arrival(0x67);
     assert_eq!(
         state.begin(
             &fixture.target_signer,
             &fixture.session,
-            fixture.link_id,
-            &fixture.begin,
+            &arrival,
             InstantMillis(8_000),
             fixture.attempt_timeout(),
         ),
@@ -425,12 +475,12 @@ fn deadlines_expire_confirmations_and_consume_the_triggering_arrival() {
         },
     );
     assert_eq!(state.view(), RemoteControlTargetPairingView::Idle);
+    let arrival = fixture.begin_arrival(0x68);
     assert_eq!(
         state.begin(
             &fixture.target_signer,
             &fixture.session,
-            fixture.link_id,
-            &fixture.begin,
+            &arrival,
             PAIRING_EXPIRES_AT,
             fixture.attempt_timeout(),
         ),
@@ -471,9 +521,8 @@ fn completion_does_not_exist_until_the_exact_authorization_is_persisted() {
     let mut state = RemoteControlTargetPairingState::default();
     let (attempt_id, _grant) = authorize(&mut state, &fixture);
     let other = TargetPairingFixture::with_route(0x75, 0x86);
-    let other_id: RemoteControlTargetPairingAttemptId = other.prepared().transcript().into();
+    let other_id: RemoteControlPairingAttemptId = other.prepared().transcript().into();
 
-    assert_eq!(state.completion(attempt_id), None);
     assert_eq!(
         state.authorization_persisted(other_id, &fixture.target_signer),
         PersistRemoteControlTargetPairingAuthorizationOutcome::AttemptMismatch {
@@ -491,19 +540,17 @@ fn completion_does_not_exist_until_the_exact_authorization_is_persisted() {
             },
         },
     );
-    assert_eq!(
-        state.authorization_persisted(attempt_id, &fixture.target_signer),
-        PersistRemoteControlTargetPairingAuthorizationOutcome::CompletionOwed { attempt_id },
-    );
-    let completion = state.completion(attempt_id).unwrap();
-    assert_eq!(completion.attempt().attempt_id(), attempt_id);
-    assert_eq!(completion.responder(), fixture.commit(0x61).responder());
-    assert_eq!(
-        completion
-            .completed()
-            .verify(fixture.prepared().transcript()),
-        Ok(()),
-    );
+    let PersistRemoteControlTargetPairingAuthorizationOutcome::CompletionOwed {
+        attempt_id: completed_attempt,
+        responder,
+        completed,
+    } = state.authorization_persisted(attempt_id, &fixture.target_signer)
+    else {
+        panic!("completion owed")
+    };
+    assert_eq!(completed_attempt, attempt_id);
+    assert_eq!(responder, fixture.commit(0x61).responder());
+    assert_eq!(completed.verify(fixture.prepared().transcript()), Ok(()),);
     assert_eq!(
         state.complete(other_id),
         CompleteRemoteControlTargetPairingOutcome::AttemptMismatch {
@@ -524,7 +571,7 @@ fn failed_authorization_aborts_only_the_correlated_attempt() {
     let mut state = RemoteControlTargetPairingState::default();
     let (attempt_id, _grant) = authorize(&mut state, &fixture);
     let other = TargetPairingFixture::with_route(0x75, 0x86);
-    let other_id: RemoteControlTargetPairingAttemptId = other.prepared().transcript().into();
+    let other_id: RemoteControlPairingAttemptId = other.prepared().transcript().into();
 
     assert_eq!(
         state.authorization_failed(other_id),

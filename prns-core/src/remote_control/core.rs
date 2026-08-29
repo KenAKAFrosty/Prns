@@ -276,6 +276,65 @@ impl RemoteControlTargetIdentity {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlTargetAccessError {
+    NoPermittedRequests,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct RemoteControlTargetAccess {
+    target: RemoteControlTargetIdentity,
+    permitted_requests: RemoteControlRequestSet,
+}
+
+impl RemoteControlTargetAccess {
+    pub fn new(
+        target: RemoteControlTargetIdentity,
+        permitted_requests: RemoteControlRequestSet,
+    ) -> Result<Self, RemoteControlTargetAccessError> {
+        if permitted_requests.is_empty() {
+            return Err(RemoteControlTargetAccessError::NoPermittedRequests);
+        }
+        Ok(Self {
+            target,
+            permitted_requests,
+        })
+    }
+
+    #[must_use]
+    pub const fn target(&self) -> &RemoteControlTargetIdentity {
+        &self.target
+    }
+
+    #[must_use]
+    pub fn endpoint(&self) -> super::RemoteControlEndpoint {
+        self.target.endpoint()
+    }
+
+    #[must_use]
+    pub const fn permitted_requests(&self) -> &RemoteControlRequestSet {
+        &self.permitted_requests
+    }
+
+    #[must_use]
+    pub fn permits(&self, request: RemoteControlRequestKind) -> bool {
+        self.permitted_requests.supports(request)
+    }
+}
+
+impl From<(RemoteControlTargetIdentity, RemoteControlPairingPermissions)>
+    for RemoteControlTargetAccess
+{
+    fn from(
+        (target, permissions): (RemoteControlTargetIdentity, RemoteControlPairingPermissions),
+    ) -> Self {
+        Self {
+            target,
+            permitted_requests: permissions.into_permitted_requests(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetRemoteControlControllerGrantOutcome {
     Added,
     Unchanged,

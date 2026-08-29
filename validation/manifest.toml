@@ -1707,3 +1707,21 @@ name = "request_set_intersection_preserves_exact_membership"
 source = "prns-core/src/remote_control/message.rs"
 group = "remote-control"
 tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "pairing_request_parse_terminates_for_every_bounded_wire_shape"
+source = "prns-core/src/remote_control/pairing/exchange/kani_proofs.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "pairing_response_parse_terminates_for_every_bounded_wire_shape"
+source = "prns-core/src/remote_control/pairing/exchange/kani_proofs.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "controller_attempt_deadlines_are_strictly_future_and_pairing_bounded"
+source = "prns-core/src/remote_control/pairing/controller_pairing/kani_proofs.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]

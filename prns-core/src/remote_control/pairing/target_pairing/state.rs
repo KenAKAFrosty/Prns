@@ -4,9 +4,9 @@ use crate::routing::links::LinkId;
 use crate::units::InstantMillis;
 
 use super::super::{
-    RemoteControlPairingAttemptTimeout, RemoteControlPairingBegin, RemoteControlPairingCompleted,
-    RemoteControlPairingContext, RemoteControlPairingOffer, RemoteControlPairingPreparedOffer,
-    RemoteControlPairingSession,
+    RemoteControlPairingAttemptId, RemoteControlPairingAttemptTimeout,
+    RemoteControlPairingCompleted, RemoteControlPairingContext, RemoteControlPairingPreparedOffer,
+    RemoteControlPairingSession, RemoteControlPairingTranscript,
 };
 use super::model::*;
 
@@ -21,28 +21,24 @@ enum RemoteControlTargetPairingConfirmationProgress {
 
 #[derive(Debug, PartialEq, Eq)]
 struct RemoteControlTargetPairingAttempt {
-    prepared: RemoteControlPairingPreparedOffer,
+    transcript: RemoteControlPairingTranscript,
     window: RemoteControlTargetPairingAttemptWindow,
 }
 
 impl RemoteControlTargetPairingAttempt {
     fn view(&self) -> RemoteControlTargetPairingAttemptView<'_> {
         RemoteControlTargetPairingAttemptView {
-            transcript: self.prepared.transcript(),
+            transcript: &self.transcript,
             window: self.window,
         }
     }
 
-    fn attempt_id(&self) -> RemoteControlTargetPairingAttemptId {
-        self.prepared.transcript().into()
+    fn attempt_id(&self) -> RemoteControlPairingAttemptId {
+        (&self.transcript).into()
     }
 
     fn grant(&self) -> RemoteControlControllerGrant {
-        (
-            self.prepared.transcript().controller(),
-            self.prepared.transcript().permissions(),
-        )
-            .into()
+        (self.transcript.controller(), self.transcript.permissions()).into()
     }
 }
 
@@ -61,7 +57,6 @@ enum RemoteControlTargetPairingPhase {
     Completing {
         attempt: RemoteControlTargetPairingAttempt,
         responder: RemoteControlTargetPairingResponder,
-        completed: RemoteControlPairingCompleted,
     },
 }
 
@@ -99,8 +94,7 @@ impl RemoteControlTargetPairingState {
         &mut self,
         target_signer: &impl IdentitySigner,
         session: &RemoteControlPairingSession,
-        link_id: LinkId,
-        begin: &RemoteControlPairingBegin,
+        arrival: &RemoteControlTargetPairingBeginArrival,
         started_at: InstantMillis,
         attempt_timeout: RemoteControlPairingAttemptTimeout,
     ) -> BeginRemoteControlTargetPairingOutcome {
@@ -109,6 +103,16 @@ impl RemoteControlTargetPairingState {
         }
         if let Some(active) = self.active_attempt_id() {
             return BeginRemoteControlTargetPairingOutcome::Busy { active };
+        }
+        let claimed = arrival.begin.controller().identity_hash();
+        if claimed != arrival.identified_controller {
+            return BeginRemoteControlTargetPairingOutcome::Rejected {
+                rejected: arrival.responder,
+                reason: RemoteControlTargetPairingBeginRejection::ControllerIdentityMismatch {
+                    claimed,
+                    identified: arrival.identified_controller,
+                },
+            };
         }
         let window = match RemoteControlTargetPairingAttemptWindow::new(
             started_at,
@@ -122,35 +126,28 @@ impl RemoteControlTargetPairingState {
         };
         let prepared = RemoteControlPairingPreparedOffer::new(
             target_signer,
-            RemoteControlPairingContext::new(session.endpoint(), link_id),
-            begin,
+            RemoteControlPairingContext::new(session.endpoint(), arrival.responder.link_id()),
+            &arrival.begin,
             session.permissions().clone(),
             attempt_timeout,
         );
-        let attempt = RemoteControlTargetPairingAttempt { prepared, window };
+        let (offer, transcript) = prepared.into_parts();
+        let attempt = RemoteControlTargetPairingAttempt { transcript, window };
         let attempt_id = attempt.attempt_id();
         self.phase = RemoteControlTargetPairingPhase::Confirming {
             attempt,
             progress: RemoteControlTargetPairingConfirmationProgress::Both,
         };
-        BeginRemoteControlTargetPairingOutcome::Offered { attempt_id }
-    }
-
-    #[must_use]
-    pub fn offer(
-        &self,
-        attempt_id: RemoteControlTargetPairingAttemptId,
-    ) -> Option<&RemoteControlPairingOffer> {
-        let attempt = self.attempt()?;
-        if attempt.attempt_id() != attempt_id {
-            return None;
+        BeginRemoteControlTargetPairingOutcome::Offered {
+            attempt_id,
+            responder: arrival.responder,
+            offer,
         }
-        Some(attempt.prepared.offer())
     }
 
     pub fn approve(
         &mut self,
-        requested: RemoteControlTargetPairingAttemptId,
+        requested: RemoteControlPairingAttemptId,
         now: InstantMillis,
     ) -> ApproveRemoteControlTargetPairingOutcome {
         if let Some(expired) = self.take_expired_confirmation(now) {
@@ -206,17 +203,9 @@ impl RemoteControlTargetPairingState {
                 self.phase = RemoteControlTargetPairingPhase::Authorizing { attempt, responder };
                 ApproveRemoteControlTargetPairingOutcome::FinalizationInProgress { attempt_id }
             }
-            RemoteControlTargetPairingPhase::Completing {
-                attempt,
-                responder,
-                completed,
-            } => {
+            RemoteControlTargetPairingPhase::Completing { attempt, responder } => {
                 let attempt_id = attempt.attempt_id();
-                self.phase = RemoteControlTargetPairingPhase::Completing {
-                    attempt,
-                    responder,
-                    completed,
-                };
+                self.phase = RemoteControlTargetPairingPhase::Completing { attempt, responder };
                 ApproveRemoteControlTargetPairingOutcome::FinalizationInProgress { attempt_id }
             }
         }
@@ -290,16 +279,8 @@ impl RemoteControlTargetPairingState {
                     reason: RemoteControlTargetPairingCommitRejection::FinalizationInProgress,
                 }
             }
-            RemoteControlTargetPairingPhase::Completing {
-                attempt,
-                responder,
-                completed,
-            } => {
-                self.phase = RemoteControlTargetPairingPhase::Completing {
-                    attempt,
-                    responder,
-                    completed,
-                };
+            RemoteControlTargetPairingPhase::Completing { attempt, responder } => {
+                self.phase = RemoteControlTargetPairingPhase::Completing { attempt, responder };
                 CommitRemoteControlTargetPairingOutcome::Rejected {
                     rejected: arrival.responder,
                     reason: RemoteControlTargetPairingCommitRejection::FinalizationInProgress,
@@ -316,7 +297,7 @@ impl RemoteControlTargetPairingState {
 
     pub fn reject(
         &mut self,
-        requested: RemoteControlTargetPairingAttemptId,
+        requested: RemoteControlPairingAttemptId,
         now: InstantMillis,
     ) -> RejectRemoteControlTargetPairingOutcome {
         if let Some(expired) = self.take_expired_confirmation(now) {
@@ -357,17 +338,9 @@ impl RemoteControlTargetPairingState {
                 self.phase = RemoteControlTargetPairingPhase::Authorizing { attempt, responder };
                 RejectRemoteControlTargetPairingOutcome::FinalizationInProgress { attempt_id }
             }
-            RemoteControlTargetPairingPhase::Completing {
-                attempt,
-                responder,
-                completed,
-            } => {
+            RemoteControlTargetPairingPhase::Completing { attempt, responder } => {
                 let attempt_id = attempt.attempt_id();
-                self.phase = RemoteControlTargetPairingPhase::Completing {
-                    attempt,
-                    responder,
-                    completed,
-                };
+                self.phase = RemoteControlTargetPairingPhase::Completing { attempt, responder };
                 RejectRemoteControlTargetPairingOutcome::FinalizationInProgress { attempt_id }
             }
         }
@@ -375,7 +348,7 @@ impl RemoteControlTargetPairingState {
 
     pub fn authorization_persisted(
         &mut self,
-        settled: RemoteControlTargetPairingAttemptId,
+        settled: RemoteControlPairingAttemptId,
         target_signer: &impl IdentitySigner,
     ) -> PersistRemoteControlTargetPairingAuthorizationOutcome {
         let phase = core::mem::take(&mut self.phase);
@@ -390,18 +363,14 @@ impl RemoteControlTargetPairingState {
                         active,
                     };
                 }
-                match RemoteControlPairingCompleted::signed_by(
-                    target_signer,
-                    attempt.prepared.transcript(),
-                ) {
+                match RemoteControlPairingCompleted::signed_by(target_signer, &attempt.transcript) {
                     Ok(completed) => {
-                        self.phase = RemoteControlTargetPairingPhase::Completing {
-                            attempt,
-                            responder,
-                            completed,
-                        };
+                        self.phase =
+                            RemoteControlTargetPairingPhase::Completing { attempt, responder };
                         PersistRemoteControlTargetPairingAuthorizationOutcome::CompletionOwed {
                             attempt_id: active,
+                            responder,
+                            completed,
                         }
                     }
                     Err(error) => {
@@ -425,7 +394,7 @@ impl RemoteControlTargetPairingState {
 
     pub fn authorization_failed(
         &mut self,
-        settled: RemoteControlTargetPairingAttemptId,
+        settled: RemoteControlPairingAttemptId,
     ) -> FailRemoteControlTargetPairingAuthorizationOutcome {
         let phase = core::mem::take(&mut self.phase);
         match phase {
@@ -453,47 +422,16 @@ impl RemoteControlTargetPairingState {
         }
     }
 
-    #[must_use]
-    pub fn completion(
-        &self,
-        attempt_id: RemoteControlTargetPairingAttemptId,
-    ) -> Option<RemoteControlTargetPairingCompletionView<'_>> {
-        let RemoteControlTargetPairingPhase::Completing {
-            attempt,
-            responder,
-            completed,
-        } = &self.phase
-        else {
-            return None;
-        };
-        if attempt.attempt_id() != attempt_id {
-            return None;
-        }
-        Some(RemoteControlTargetPairingCompletionView {
-            attempt: attempt.view(),
-            responder: *responder,
-            completed,
-        })
-    }
-
     pub fn complete(
         &mut self,
-        settled: RemoteControlTargetPairingAttemptId,
+        settled: RemoteControlPairingAttemptId,
     ) -> CompleteRemoteControlTargetPairingOutcome {
         let phase = core::mem::take(&mut self.phase);
         match phase {
-            RemoteControlTargetPairingPhase::Completing {
-                attempt,
-                responder,
-                completed,
-            } => {
+            RemoteControlTargetPairingPhase::Completing { attempt, responder } => {
                 let active = attempt.attempt_id();
                 if settled != active {
-                    self.phase = RemoteControlTargetPairingPhase::Completing {
-                        attempt,
-                        responder,
-                        completed,
-                    };
+                    self.phase = RemoteControlTargetPairingPhase::Completing { attempt, responder };
                     return CompleteRemoteControlTargetPairingOutcome::AttemptMismatch {
                         settled,
                         active,
@@ -563,18 +501,10 @@ impl RemoteControlTargetPairingState {
                     CloseRemoteControlTargetPairingLinkOutcome::UnrelatedLink
                 }
             }
-            RemoteControlTargetPairingPhase::Completing {
-                attempt,
-                responder,
-                completed,
-            } => {
+            RemoteControlTargetPairingPhase::Completing { attempt, responder } => {
                 let attempt_id = attempt.attempt_id();
                 let related = attempt.view().context().link_id() == link_id;
-                self.phase = RemoteControlTargetPairingPhase::Completing {
-                    attempt,
-                    responder,
-                    completed,
-                };
+                self.phase = RemoteControlTargetPairingPhase::Completing { attempt, responder };
                 if related {
                     CloseRemoteControlTargetPairingLinkOutcome::FinalizationInProgress {
                         attempt_id,
@@ -595,7 +525,7 @@ impl RemoteControlTargetPairingState {
         }
     }
 
-    fn active_attempt_id(&self) -> Option<RemoteControlTargetPairingAttemptId> {
+    fn active_attempt_id(&self) -> Option<RemoteControlPairingAttemptId> {
         self.attempt()
             .map(RemoteControlTargetPairingAttempt::attempt_id)
     }
@@ -663,7 +593,7 @@ fn validate_commit(
             found: found_link,
         });
     }
-    if !arrival.commit.matches(attempt.prepared.transcript()) {
+    if !arrival.commit.matches(&attempt.transcript) {
         return Err(
             RemoteControlTargetPairingCommitRejection::TranscriptMismatch {
                 expected: attempt.attempt_id(),

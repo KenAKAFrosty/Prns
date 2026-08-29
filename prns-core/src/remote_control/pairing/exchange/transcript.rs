@@ -107,6 +107,22 @@ impl RemoteControlPairingTranscriptDigest {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RemoteControlPairingAttemptId(RemoteControlPairingTranscriptDigest);
+
+impl RemoteControlPairingAttemptId {
+    #[must_use]
+    pub const fn transcript(self) -> RemoteControlPairingTranscriptDigest {
+        self.0
+    }
+}
+
+impl From<&RemoteControlPairingTranscript> for RemoteControlPairingAttemptId {
+    fn from(transcript: &RemoteControlPairingTranscript) -> Self {
+        Self(transcript.digest())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoteControlPairingConfirmationCode(u32);
 
@@ -191,6 +207,25 @@ impl RemoteControlPairingTranscript {
         RemoteControlPairingConfirmationCode(
             u32::from_le_bytes([first, second, third, fourth])
                 .wrapping_rem(PAIRING_CONFIRMATION_CODE_MODULUS),
+        )
+    }
+
+    #[must_use]
+    pub fn into_parts(
+        self,
+    ) -> (
+        RemoteControlPairingContext,
+        RemoteControlControllerIdentity,
+        RemoteControlTargetIdentity,
+        RemoteControlPairingPermissions,
+        RemoteControlPairingAttemptTimeout,
+    ) {
+        (
+            self.context,
+            self.controller,
+            self.target,
+            self.permissions,
+            self.attempt_timeout,
         )
     }
 }

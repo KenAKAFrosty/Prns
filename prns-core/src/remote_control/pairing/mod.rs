@@ -9,10 +9,12 @@ use super::{
 };
 
 mod availability;
+mod controller_pairing;
 mod exchange;
 mod target_pairing;
 
 pub use availability::*;
+pub use controller_pairing::*;
 pub use exchange::*;
 pub use target_pairing::*;
 
