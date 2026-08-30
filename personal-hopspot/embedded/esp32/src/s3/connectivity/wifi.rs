@@ -5,6 +5,7 @@ use super::super::captive_portal::{
 use super::super::*;
 use super::station::{net_task, network_ready_task, wifi_connect_task, StationCredentials};
 use alloc::boxed::Box;
+use personal_rns::wifi_auto::MdnsMulticastFamily;
 
 fn psram_udp_socket<
     const RX_META: usize,
