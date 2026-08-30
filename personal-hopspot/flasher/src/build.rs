@@ -35,7 +35,8 @@ fn embedded_cargo_command() -> Command {
     let mut command = Command::new("cargo");
     command
         .env_remove("RUSTUP_TOOLCHAIN")
-        .env_remove("RUSTFLAGS");
+        .env_remove("RUSTFLAGS")
+        .env_remove("CARGO_TARGET_DIR");
     command
 }
 
