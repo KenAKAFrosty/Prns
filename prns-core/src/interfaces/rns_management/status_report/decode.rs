@@ -584,9 +584,7 @@ fn read_interface(
                 interface_report.blocked_ip_list = read_optional_string_array(reader, path)?
             }
             interface::RSSI => interface_report.rssi = read_optional_i64(reader, path)?,
-            interface::GROUP_ID => {
-                interface_report.group_id = read_optional_string(reader, path)?
-            }
+            interface::GROUP_ID => interface_report.group_id = read_optional_string(reader, path)?,
             interface::FLEET_PEERS => {
                 interface_report.fleet_peers = read_fleet_peers(reader, index)?
             }
@@ -637,7 +635,8 @@ fn read_fleet_peer(
     let mut rssi = RnsOptionalField::Absent;
     for _ in 0..length {
         let key = read_key(reader, RnsStatsFieldScope::Interface(parent_index))?;
-        let path = RnsStatsFieldPath::interface(parent_index, &format!("fleet_peers[{peer_index}].{key}"));
+        let path =
+            RnsStatsFieldPath::interface(parent_index, &format!("fleet_peers[{peer_index}].{key}"));
         ensure_unique(&mut fields, path.clone())?;
         match key.as_str() {
             interface::NAME => name = Some(read_string(reader, path)?),
@@ -651,8 +650,14 @@ fn read_fleet_peer(
         }
     }
     Ok(RnsFleetPeerReport {
-        name: required(name, RnsStatsFieldPath::interface(parent_index, interface::NAME))?,
-        online: required(online, RnsStatsFieldPath::interface(parent_index, interface::STATUS))?,
+        name: required(
+            name,
+            RnsStatsFieldPath::interface(parent_index, interface::NAME),
+        )?,
+        online: required(
+            online,
+            RnsStatsFieldPath::interface(parent_index, interface::STATUS),
+        )?,
         receive_bytes: required(
             receive_bytes,
             RnsStatsFieldPath::interface(parent_index, interface::RECEIVE_BYTES),

@@ -47,18 +47,17 @@ use super::state::lora::{
     LORA_REGION_CANCEL, PRESET_CHOICES,
 };
 use super::state::{
-    GlobalMenuItem, UiMode, ANNOUNCE_MENU_ITEM, BLANK_DISPLAY_MENU_ITEM,
+    GlobalMenuItem, UiMode, ANNOUNCE_MENU_ITEM, BLANK_DISPLAY_MENU_ITEM, BLE_GROUP_MENU_ITEM,
     DISPLAY_AUTO_OFF_MENU_ITEM, LORA_RESET_MENU_ITEM, LORA_TUNE_MENU_ITEM, POWER_MENU_ITEM,
     POWER_ONLY_MENU_ITEMS, RADIO_MENU_ITEM_NO_DISPLAY, SHARED_INSTANCE_CONFIG_MENU_ITEM,
-    SLEEP_MENU_ITEM, STATION_UPLINK_MENU_ITEM, WIFI_MENU_ITEMS, BLE_GROUP_MENU_ITEM,
+    SLEEP_MENU_ITEM, STATION_UPLINK_MENU_ITEM, WIFI_MENU_ITEMS,
 };
 use super::{
     apply_and_persist_radio_profile, card_label, sort_cards_for_display, AccessPointState,
     BleGroupEditor, BluetoothRecoveryMenuDetails, Card, CardActivityTracker, CardKind,
-    GnssAvailability,
-    InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, PersistenceNotice,
-    RadioProfileChangeResult, ScreenContent, SharedInstanceConfigExport, UiAction, UiConfiguration,
-    UiNotice, UiState, UserBlanking,
+    GnssAvailability, InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess,
+    PersistenceNotice, RadioProfileChangeResult, ScreenContent, SharedInstanceConfigExport,
+    UiAction, UiConfiguration, UiNotice, UiState, UserBlanking,
 };
 
 const TEST_WIDTH: usize = WIDTH as usize;

@@ -55,12 +55,8 @@ fn psm_admits_only_the_le_dynamic_range() {
 #[test]
 fn an_advertisement_carries_the_shared_reticulum_ble_service() {
     let mut buf = [0u8; MAX_ADVERTISEMENT_LEN];
-    let len = encode_advertisement(
-        &mut buf,
-        BleRoleCapabilities::DualRole,
-        default_group_tag(),
-    )
-    .unwrap();
+    let len =
+        encode_advertisement(&mut buf, BleRoleCapabilities::DualRole, default_group_tag()).unwrap();
     assert_eq!(len, MAX_ADVERTISEMENT_LEN);
     assert!(contains_service(&buf[..len]));
     assert_eq!(
@@ -819,7 +815,9 @@ fn every_endpoint_round_trips_through_the_greeting() {
         let mut buf = [0u8; CONTROL_MAX_LEN];
         let len = hello.encode(&mut buf).unwrap();
         match Control::decode(&buf[..len]) {
-            Some(Control::Hello { endpoint: decoded, .. }) => assert_eq!(decoded, endpoint),
+            Some(Control::Hello {
+                endpoint: decoded, ..
+            }) => assert_eq!(decoded, endpoint),
             other => panic!("endpoint failed to round-trip: {other:?}"),
         }
     }

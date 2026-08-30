@@ -8,13 +8,13 @@ use embedded_graphics::primitives::Rectangle;
 use embedded_graphics::text::{Baseline, Text};
 
 use crate::screen::state::ble_group::{
-    BleGroupCustomRow, BleGroupEdit, BleGroupName, BleGroupScreen,
-    BLE_GROUP_CHOICES, BLE_GROUP_CUSTOM_ROWS,
+    BleGroupCustomRow, BleGroupEdit, BleGroupName, BleGroupScreen, BLE_GROUP_CHOICES,
+    BLE_GROUP_CUSTOM_ROWS,
 };
 
-use super::lora::LORA_EDITOR_TOP;
 use super::super::layout::*;
 use super::super::primitives::fill;
+use super::lora::LORA_EDITOR_TOP;
 
 const EDITOR_DOT_X: i32 = 1;
 const EDITOR_DOT_SIZE: u32 = 2;
@@ -49,13 +49,8 @@ fn draw_editor_row<D: DrawTarget<Color = BinaryColor>>(
     .into_styled(fill(color))
     .draw(display);
     let style = MonoTextStyle::new(font, color);
-    let _ = Text::with_baseline(
-        text,
-        Point::new(EDITOR_ROW_TEXT_X, y),
-        style,
-        Baseline::Top,
-    )
-    .draw(display);
+    let _ = Text::with_baseline(text, Point::new(EDITOR_ROW_TEXT_X, y), style, Baseline::Top)
+        .draw(display);
 }
 
 fn name_row_text(name: BleGroupName, edit: BleGroupEdit, selected: bool) -> heapless::String<40> {

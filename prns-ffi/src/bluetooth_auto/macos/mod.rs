@@ -24,8 +24,8 @@ use objc2_core_bluetooth::{
 use objc2_foundation::{NSArray, NSData, NSDictionary, NSNumber, NSString};
 
 use prns_core::interfaces::bluetooth_auto::{
-    manufacturer_role_payload, BleAddress, BleRoleCapabilities, BleUuid, GROUP_TAG_LEN,
-    BLE_SERVICE_UUID, COLUMBA_IDENTITY_UUID, COLUMBA_RX_UUID, COLUMBA_TX_UUID, NATIVE_CONTROL_UUID,
+    manufacturer_role_payload, BleAddress, BleRoleCapabilities, BleUuid, BLE_SERVICE_UUID,
+    COLUMBA_IDENTITY_UUID, COLUMBA_RX_UUID, COLUMBA_TX_UUID, GROUP_TAG_LEN, NATIVE_CONTROL_UUID,
     NATIVE_DATA_UUID,
 };
 

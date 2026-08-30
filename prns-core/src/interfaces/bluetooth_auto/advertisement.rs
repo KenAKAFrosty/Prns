@@ -130,10 +130,7 @@ pub fn advertisement_group_tag(adv: &[u8]) -> [u8; GROUP_TAG_LEN] {
 }
 
 /// Group tag from a parsed manufacturer payload (`version | flags | tag…`), if present.
-pub fn group_tag_from_manufacturer(
-    company_id: u16,
-    data: &[u8],
-) -> Option<[u8; GROUP_TAG_LEN]> {
+pub fn group_tag_from_manufacturer(company_id: u16, data: &[u8]) -> Option<[u8; GROUP_TAG_LEN]> {
     if company_id != u16::from_le_bytes(EXPERIMENTAL_ROLE_COMPANY_ID) {
         return None;
     }
@@ -144,10 +141,7 @@ pub fn group_tag_from_manufacturer(
 }
 
 /// Effective discovery group for a manufacturer payload (legacy/missing → default group).
-pub fn manufacturer_discovery_group_tag(
-    company_id: u16,
-    data: &[u8],
-) -> [u8; GROUP_TAG_LEN] {
+pub fn manufacturer_discovery_group_tag(company_id: u16, data: &[u8]) -> [u8; GROUP_TAG_LEN] {
     group_tag_from_manufacturer(company_id, data).unwrap_or_else(default_group_tag)
 }
 

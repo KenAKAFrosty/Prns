@@ -90,8 +90,10 @@ fn identifies_prns_fallback(
         })
 }
 
-fn matches_local_discovery_group(manufacturer_data: Option<&HashMap<u16, Vec<u8>>>) -> bool {
-    let local = default_group_tag();
+fn matches_local_discovery_group(
+    local: [u8; 4],
+    manufacturer_data: Option<&HashMap<u16, Vec<u8>>>,
+) -> bool {
     match manufacturer_data.and_then(|data| data.get(&0xffff)) {
         Some(body) => manufacturer_discovery_groups_match(local, 0xffff, body),
         // No Prns manufacturer field → treat as the default open mesh.
@@ -658,7 +660,11 @@ impl Drop for BluerBackend {
 impl BluerBackend {
     pub const MAX_PEERS: usize = 8;
 
-    pub async fn open(psm: Psm, identity: BleIdentity, group_tag: [u8; 4]) -> Result<Self, BluerError> {
+    pub async fn open(
+        psm: Psm,
+        identity: BleIdentity,
+        group_tag: [u8; 4],
+    ) -> Result<Self, BluerError> {
         let session = Session::new().await?;
         let adapter = session.default_adapter().await?;
         adapter.set_powered(true).await?;
@@ -880,7 +886,10 @@ impl BluerBackend {
             self.gatt_retry_at = None;
         }
         self.ensure_gatt_server().await?;
-        let advertisement = self.adapter.advertise(Self::advertisement(self.group_tag)).await?;
+        let advertisement = self
+            .adapter
+            .advertise(Self::advertisement(self.group_tag))
+            .await?;
         self.advertisement.register(advertisement);
         self.gatt_retry_at = None;
         crate::diagnostic_log::debug!(

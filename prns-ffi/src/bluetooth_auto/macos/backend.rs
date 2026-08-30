@@ -272,7 +272,10 @@ impl MacosBleBackend {
     #[cfg(target_os = "macos")]
     pub const MAX_PEERS: usize = 8;
 
-    pub async fn prepare(identity: BleIdentity, group_tag: [u8; 4]) -> Result<PreparedMacosBleBackend, MacosBleError> {
+    pub async fn prepare(
+        identity: BleIdentity,
+        group_tag: [u8; 4],
+    ) -> Result<PreparedMacosBleBackend, MacosBleError> {
         let (events_tx, events_rx) = tokio_mpsc::unbounded_channel::<Event>();
         let (keepalive, shutdown_rx) = sync_mpsc::channel::<()>();
         let (handles_tx, handles_rx) = oneshot::channel::<Handles>();

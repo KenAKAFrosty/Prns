@@ -369,7 +369,7 @@ async fn become_instance(
     }
     .with_transport_identity(instance.transport_identity)
     .with_network_identity(instance.network_identity)
-.with_probe_responder(instance.probe_responder)
+    .with_probe_responder(instance.probe_responder)
     .with_software_version(std::format!("prnsd {}", env!("CARGO_PKG_VERSION")))
     .bind()
     .await

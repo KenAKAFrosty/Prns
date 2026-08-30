@@ -412,7 +412,9 @@ impl BleBackend<PEER_CAPACITY> for EmbeddedBleBackend {
     }
 
     async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), Closed> {
-        self.hub.advertising_wanted.store(mode.is_on(), Ordering::Relaxed);
+        self.hub
+            .advertising_wanted
+            .store(mode.is_on(), Ordering::Relaxed);
         self.hub.advertise.signal(mode.is_on());
         Ok(())
     }

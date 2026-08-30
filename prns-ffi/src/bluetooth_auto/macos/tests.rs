@@ -3,8 +3,8 @@ use std::time::{Duration, Instant};
 
 use objc2_core_bluetooth::CBCharacteristicProperties;
 use prns_core::interfaces::bluetooth_auto::{
-    default_group_tag, group_tag, manufacturer_role_payload, BleRoleCapabilities, AdvertisingMode,
-    BleBackend, BleIdentity, Control, ScanningMode,
+    default_group_tag, group_tag, manufacturer_role_payload, AdvertisingMode, BleBackend,
+    BleIdentity, BleRoleCapabilities, Control, ScanningMode,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -121,7 +121,8 @@ fn candidate_strength_accepts_prns_name_or_manufacturer_marker() {
 #[test]
 fn candidate_strength_rejects_other_discovery_groups() {
     let other = group_tag(b"mt-leg-b");
-    let default_body = manufacturer_role_payload(BleRoleCapabilities::DualRole, default_group_tag());
+    let default_body =
+        manufacturer_role_payload(BleRoleCapabilities::DualRole, default_group_tag());
     let mut default_mfg = [0u8; 8];
     default_mfg[0] = 0xff;
     default_mfg[1] = 0xff;

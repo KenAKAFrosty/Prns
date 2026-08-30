@@ -87,8 +87,13 @@ impl BleGroupName {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::screen) enum BleGroupScreen {
-    Choice { cursor: usize },
-    Custom { cursor: BleGroupCustomRow, edit: BleGroupEdit },
+    Choice {
+        cursor: usize,
+    },
+    Custom {
+        cursor: BleGroupCustomRow,
+        edit: BleGroupEdit,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

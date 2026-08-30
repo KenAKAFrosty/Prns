@@ -159,7 +159,11 @@ pub(super) fn advertisement_candidate_strength(
     let manufacturer_data = advertisement_data
         .objectForKey(manufacturer_data_key)
         .and_then(|data| data.downcast_ref::<NSData>().map(NSData::to_vec));
-    candidate_strength(local_name_is_prns, manufacturer_data.as_deref(), local_group_tag)
+    candidate_strength(
+        local_name_is_prns,
+        manufacturer_data.as_deref(),
+        local_group_tag,
+    )
 }
 
 #[derive(Default)]

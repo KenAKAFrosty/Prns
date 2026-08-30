@@ -24,7 +24,7 @@ pub struct RemoteTransportStatus {
     pub transport_identity: IdentityHash,
     pub network_identity: Option<IdentityHash>,
     pub uptime: Duration,
-pub probe_responder: Option<prns_core::wire::DestinationHash>,
+    pub probe_responder: Option<prns_core::wire::DestinationHash>,
     pub software_version: Option<String>,
 }
 
@@ -36,7 +36,7 @@ pub fn encode_status_response(
 ) -> Result<Vec<u8>, RemoteResponseEncodeError> {
     let mut stats = interface_stats(inventory);
     if let Some(transport) = transport {
-let mut status = RnsTransportStatus::new(
+        let mut status = RnsTransportStatus::new(
             transport.transport_identity,
             transport.network_identity,
             transport.uptime,
@@ -116,7 +116,7 @@ mod tests {
                 transport_identity: IdentityHash::new([0x11; 16]),
                 network_identity: Some(IdentityHash::new([0x22; 16])),
                 uptime: Duration::from_millis(1_500),
-probe_responder: None,
+                probe_responder: None,
                 software_version: None,
             }),
         )

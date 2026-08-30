@@ -6,7 +6,9 @@ use std::time::Duration;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::Notify;
 
-use prns_core::interfaces::bluetooth_auto::{DEFAULT_GROUP_TAG, GROUP_TAG_LEN, AdvertisingMode, RadioMode, ScanningMode};
+use prns_core::interfaces::bluetooth_auto::{
+    AdvertisingMode, RadioMode, ScanningMode, DEFAULT_GROUP_TAG, GROUP_TAG_LEN,
+};
 use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, PeerProtocol};
 
 use super::outbound::{BoundedByteQueue, BoundedMessageQueue};
@@ -698,10 +700,8 @@ impl AndroidBleBridge {
         };
         let mut queued = false;
         for (conn_id, link) in links.iter_mut() {
-            if matches!(link, LinkRecord::Active(_)) {
-                if closes.enqueue(*conn_id) {
-                    queued |= link.request_close();
-                }
+            if matches!(link, LinkRecord::Active(_)) && closes.enqueue(*conn_id) {
+                queued |= link.request_close();
             }
         }
         drop(closes);

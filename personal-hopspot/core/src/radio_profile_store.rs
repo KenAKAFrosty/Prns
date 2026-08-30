@@ -883,7 +883,9 @@ mod tests {
         let (bytes, len) = block_on(rebooted.load_ble_discovery_group()).unwrap();
         assert_eq!(&bytes[..len as usize], b"mt-leg-a");
         assert_eq!(
-            block_on(rebooted.load(DEFAULT_915_PROFILE)).unwrap().profile,
+            block_on(rebooted.load(DEFAULT_915_PROFILE))
+                .unwrap()
+                .profile,
             changed_profile()
         );
     }

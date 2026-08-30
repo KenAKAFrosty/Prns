@@ -104,9 +104,7 @@ fn prns_owned_host_interfaces_reach_typed_plans() {
 
 #[test]
 fn prns_bluetooth_auto_group_id_defaults_and_overrides() {
-    let defaulted = plan_of(
-        "[interfaces]\n[[BLE]]\ntype = PrnsBluetoothAuto\nenabled = Yes\n",
-    );
+    let defaulted = plan_of("[interfaces]\n[[BLE]]\ntype = PrnsBluetoothAuto\nenabled = Yes\n");
     let PlannedMedium::PrnsBluetoothAuto { group_id } = &named(&defaulted, "BLE").medium else {
         panic!("PrnsBluetoothAuto medium expected")
     };

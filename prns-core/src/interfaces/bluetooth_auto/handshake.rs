@@ -179,8 +179,7 @@ pub const CONTROL_LEGACY_GREETING_LEN: usize = GREETING_GROUP_AT;
 /// Current Hello/Welcome length (includes optional discovery group tag).
 pub const CONTROL_MAX_LEN: usize = GREETING_GROUP_AT + GROUP_TAG_LEN;
 /// Body length after the control tag for identity+endpoint+caps (RSSI optional).
-const GREETING_BODY_MIN_LEN: usize =
-    CONTROL_IDENTITY_LEN + ENDPOINT_LEN + CONTROL_CAP_LEN;
+const GREETING_BODY_MIN_LEN: usize = CONTROL_IDENTITY_LEN + ENDPOINT_LEN + CONTROL_CAP_LEN;
 /// Body length after the control tag for a legacy greeting (id+endpoint+caps+rssi).
 const GREETING_BODY_LEGACY_LEN: usize = GREETING_BODY_MIN_LEN + CONTROL_RSSI_LEN;
 
@@ -489,15 +488,15 @@ fn encode_greeting(
     Some(len)
 }
 
-fn decode_greeting(
-    body: &[u8],
-) -> Option<(
+type DecodedGreeting = (
     BleIdentity,
     Endpoint,
     LinkCapabilities,
     Option<i8>,
     Option<[u8; GROUP_TAG_LEN]>,
-)> {
+);
+
+fn decode_greeting(body: &[u8]) -> Option<DecodedGreeting> {
     if body.len() < GREETING_BODY_MIN_LEN {
         return None;
     }

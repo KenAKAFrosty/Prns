@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use prns_core::interfaces::bluetooth_auto::GROUP_NAME as BLE_GROUP_NAME;
 use prns_core::interfaces::rnode::policy as rnode_policy;
 use prns_core::interfaces::tcp::TcpWireFraming;
 use prns_core::interfaces::websocket::WebSocketFramingSelection;
@@ -7,7 +8,6 @@ pub use prns_core::interfaces::wifi_auto::{
     DiscoveryScope as AutoInterfaceDiscoveryScope,
     MulticastAddressType as AutoInterfaceMulticastAddressType,
 };
-use prns_core::interfaces::bluetooth_auto::GROUP_NAME as BLE_GROUP_NAME;
 use prns_core::interfaces::wifi_auto::{DEFAULT_DATA_PORT, DEFAULT_DISCOVERY_PORT, GROUP_NAME};
 use prns_core::interfaces::{BitrateBps, InterfaceDefaults};
 

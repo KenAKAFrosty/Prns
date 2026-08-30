@@ -1019,8 +1019,7 @@ impl DiscoveredTcpDials {
                 RENDEZVOUS_RECONNECT,
             );
             let client_status = tcp_client.status();
-            let attached_client =
-                fleet.add_named(tcp_client, desired_endpoint.to_string(), None);
+            let attached_client = fleet.add_named(tcp_client, desired_endpoint.to_string(), None);
             self.members.insert(
                 desired_endpoint,
                 AttachedStatus {
@@ -1283,7 +1282,8 @@ impl Supervisor {
                     );
                     let connection_status = tcp_connection.status();
                     let attached_connection =
-                        self.fleet.add_named(tcp_connection, peer_address.to_string(), None);
+                        self.fleet
+                            .add_named(tcp_connection, peer_address.to_string(), None);
                     self.accepted.push(AttachedStatus {
                         attached: attached_connection,
                         status: connection_status,
@@ -1698,7 +1698,8 @@ impl Supervisor {
             return;
         }
         let target = std::format!("127.0.0.1:{}", contract::TCP_RENDEZVOUS_PORT);
-        let client = TcpClientInterface::with_policy(target.clone(), self.policy, RENDEZVOUS_RECONNECT);
+        let client =
+            TcpClientInterface::with_policy(target.clone(), self.policy, RENDEZVOUS_RECONNECT);
         let status = client.status();
         let attached = self.fleet.add_named(client, target, None);
         self.loopback = Some(AttachedStatus { attached, status });

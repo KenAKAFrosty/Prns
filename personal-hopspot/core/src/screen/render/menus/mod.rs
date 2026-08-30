@@ -405,11 +405,7 @@ pub(in crate::screen) fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>
         Point::new(WIDTH - 1, MENU_DIVIDER_Y),
     );
 
-    let items = interface_menu_items(
-        card.kind,
-        shared_instance_config_export,
-        ble_group_editor,
-    );
+    let items = interface_menu_items(card.kind, shared_instance_config_export, ble_group_editor);
     for (index, item) in items.iter().enumerate() {
         let label = if index == POWER_MENU_ITEM {
             if card.connection == ConnectionState::Disabled {

@@ -343,7 +343,8 @@ define_class!(
             self.ivars().scan_activity.store(true, Ordering::Relaxed);
             let peer_id = core_bluetooth_peer_id(peripheral);
             let now = Instant::now();
-            let strength = advertisement_candidate_strength(advertisement_data, self.ivars().group_tag);
+            let strength =
+                advertisement_candidate_strength(advertisement_data, self.ivars().group_tag);
             if cfg!(target_os = "macos")
                 && !self
                     .ivars()

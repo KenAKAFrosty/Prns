@@ -445,7 +445,7 @@ async fn run_platform_bluetooth(
                     link_mtu: BLE_HW_MTU as u16,
                 },
                 group_tag,
-                    status,
+                status,
             )
             .with_policy(policy);
             crate::diagnostic_log::info!(
@@ -490,7 +490,7 @@ async fn run_platform_bluetooth(
                     link_mtu: BLE_HW_MTU as u16,
                 },
                 group_tag,
-                    status,
+                status,
             )
             .with_policy(policy);
             crate::diagnostic_log::info!(
@@ -534,7 +534,7 @@ async fn run_platform_bluetooth(
                     link_mtu: BLE_HW_MTU as u16,
                 },
                 group_tag,
-                    status,
+                status,
             )
             .with_policy(policy);
             crate::diagnostic_log::info!("bluetooth: supervising WinRT (GATT-only)");
@@ -583,7 +583,7 @@ async fn run_platform_bluetooth(
                     link_mtu: BLE_HW_MTU as u16,
                 },
                 group_tag,
-                    status,
+                status,
             )
             .with_policy(policy);
             crate::diagnostic_log::info!(

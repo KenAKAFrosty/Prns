@@ -305,7 +305,10 @@ impl BluetoothAutoStatus {
         let (peers_epoch, _) = watch::channel(0u64);
         Self {
             shared: Arc::new(BluetoothAutoShared {
-                id: InterfaceId::from_channel_tag(InterfaceKind::BluetoothAuto, contract::CHANNEL_TAG),
+                id: InterfaceId::from_channel_tag(
+                    InterfaceKind::BluetoothAuto,
+                    contract::CHANNEL_TAG,
+                ),
                 enabled,
                 peers_epoch,
                 up: AtomicBool::new(false),
@@ -353,7 +356,9 @@ impl BluetoothAutoStatus {
 
     /// Drop every settled/in-flight peer and refresh discovery state without disabling the interface.
     pub fn reset_peers(&self) {
-        self.shared.peers_epoch.send_modify(|epoch| *epoch = epoch.wrapping_add(1));
+        self.shared
+            .peers_epoch
+            .send_modify(|epoch| *epoch = epoch.wrapping_add(1));
     }
 
     fn peers_epoch(&self) -> u64 {

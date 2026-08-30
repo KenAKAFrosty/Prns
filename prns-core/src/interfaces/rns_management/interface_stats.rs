@@ -78,7 +78,7 @@ pub struct RnsTransportStatus {
     transport_identity: IdentityHash,
     network_identity: Option<IdentityHash>,
     uptime: Duration,
-probe_responder: Option<DestinationHash>,
+    probe_responder: Option<DestinationHash>,
     software_version: Option<String>,
 }
 
@@ -92,7 +92,7 @@ impl RnsTransportStatus {
             transport_identity,
             network_identity,
             uptime,
-probe_responder: None,
+            probe_responder: None,
             software_version: None,
         }
     }
@@ -201,7 +201,7 @@ impl RnsInterfaceStats {
             encoder.field(transport::UPTIME)?;
             encoder.float(status.uptime.as_secs_f64());
             encoder.field(transport::PROBE_RESPONDER)?;
-match status.probe_responder {
+            match status.probe_responder {
                 Some(destination) => encoder.binary(destination.as_bytes())?,
                 None => encoder.nil(),
             }

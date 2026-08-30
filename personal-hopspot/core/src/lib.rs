@@ -75,11 +75,11 @@ pub use radio_profile_store::{
 #[cfg(feature = "display")]
 pub use screen::{
     apply_and_persist_radio_profile, card_label, card_label_max_chars, tcp_card_label,
-    AccessPointState, BluetoothRecoveryMenuDetails, Card, CardActivityTracker, CardKind, CardLabel,
-    GnssAvailability, InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess,
-    PersistenceNotice, PresentedNoticeTimer, RadioProfileChangeResult, ScreenContent,
-    SharedInstanceConfigExport, UiAction, UiConfiguration, UiNotice, UiState, UserBlanking,
-    WifiNetworkStatus, WifiStationStatus, BleGroupEditor, BleGroupName, DEFAULT_BLE_GROUP,
+    AccessPointState, BleGroupEditor, BleGroupName, BluetoothRecoveryMenuDetails, Card,
+    CardActivityTracker, CardKind, CardLabel, GnssAvailability, InputEvent, InterfaceMenuDetails,
+    LoRaSpectrumMenuDetails, LocalDocsAccess, PersistenceNotice, PresentedNoticeTimer,
+    RadioProfileChangeResult, ScreenContent, SharedInstanceConfigExport, UiAction, UiConfiguration,
+    UiNotice, UiState, UserBlanking, WifiNetworkStatus, WifiStationStatus, DEFAULT_BLE_GROUP,
 };
 #[cfg(feature = "display")]
 pub use screen::{display, face_64x128};
@@ -203,6 +203,7 @@ pub fn snapshots_to_interface_menu_details(
     ble_interface_menu_details(None, selected_card, snapshots)
 }
 
+#[cfg(feature = "display")]
 pub fn ble_interface_menu_details(
     group_id: Option<&str>,
     selected_card: Option<&Card>,
@@ -341,8 +342,16 @@ mod tests {
     fn ble_details_show_read_only_group_above_peers() {
         let supervisor_id =
             InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);
-        let member_id =
-            InterfaceId::new([InterfaceKind::BluetoothPeer as u8, 0xab, 0xcd, 0, 0, 0, 0, 0]);
+        let member_id = InterfaceId::new([
+            InterfaceKind::BluetoothPeer as u8,
+            0xab,
+            0xcd,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ]);
         let mut supervisor = snapshot(InterfaceKind::BluetoothAuto);
         supervisor.id = supervisor_id;
         let mut member = snapshot(InterfaceKind::BluetoothPeer);
@@ -363,11 +372,8 @@ mod tests {
             last_activity_secs: None,
         };
 
-        let details = ble_interface_menu_details(
-            Some("mt-leg-a"),
-            Some(&card),
-            &[supervisor, member],
-        );
+        let details =
+            ble_interface_menu_details(Some("mt-leg-a"), Some(&card), &[supervisor, member]);
         let rows = details.as_slice();
 
         assert_eq!(rows.len(), 3);

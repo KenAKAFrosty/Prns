@@ -1,12 +1,14 @@
 #[cfg(target_os = "macos")]
 #[tokio::main]
 async fn main() {
-    use prns_core::interfaces::bluetooth_auto::{default_group_tag, 
-        AdvertisingMode, BleBackend, BleIdentity, ScanningMode,
+    use prns_core::interfaces::bluetooth_auto::{
+        default_group_tag, AdvertisingMode, BleBackend, BleIdentity, ScanningMode,
     };
     use prns_ffi::bluetooth_auto::macos::MacosBleBackend;
 
-    let mut backend = match MacosBleBackend::new(BleIdentity::new([0; 16]), default_group_tag()).await {
+    let mut backend = match MacosBleBackend::new(BleIdentity::new([0; 16]), default_group_tag())
+        .await
+    {
         Ok(backend) => backend,
         Err(error) => {
             eprintln!("bluetooth did not power on: {error:?}");

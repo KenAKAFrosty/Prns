@@ -447,7 +447,10 @@ fn ble_interface_menu_is_power_and_back_only() {
     assert_eq!(state.interface_menu_selected_item(), Some(POWER_MENU_ITEM));
     state.handle_input(InputEvent::ShortPress, content);
     assert_eq!(state.interface_menu_selected_item(), Some(1));
-    assert_eq!(state.handle_input(InputEvent::LongPress, content), UiAction::None);
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::None
+    );
 }
 
 #[test]

@@ -4,7 +4,6 @@ use prns_core::interfaces::{
     InterfaceId, InterfaceMode, InterfaceOriginKind, InterfaceSnapshot, Membership, TransferRates,
 };
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InterfaceTimingSnapshot {
     pub id: InterfaceId,
