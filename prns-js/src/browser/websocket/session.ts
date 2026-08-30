@@ -191,6 +191,13 @@ export class BrowserWebSocketSession implements WebSocketSession {
     if (decoded.tag !== "Decoded") {
       return decoded;
     }
+    if (this.framing === "RawPacket") {
+      if (decoded.data.length === 0) {
+        return Tag("Handled");
+      }
+      void this.#submitIngress([decoded.data]);
+      return Tag("Handled");
+    }
     const batch = this.#codec.decode(decoded.data);
     if (this.#codec.canReadOutbound()) {
       this.#resolveFramingWaiters();
@@ -267,31 +274,34 @@ export class BrowserWebSocketSession implements WebSocketSession {
   async #outboundLoop(): Promise<void> {
     try {
       while (!this.#closed) {
-        if (this.#codec.rawFallbackIsArmed()) {
-          const wait = await this.#waitForRawFallback();
-          if (this.#closed) {
-            return;
-          }
-          if (
-            wait.tag === "FallbackDue" &&
-            this.#codec.rawFallbackIsArmed()
-          ) {
-            const pending = this.#codec.releaseRawFallback();
-            if (pending !== undefined) {
-              const written = await this.#writeEncodedFrame(pending);
-              if (written.tag !== "Written") {
-                await this.#fail(written);
-                return;
+        if (this.framing !== "RawPacket") {
+          if (this.#codec.rawFallbackIsArmed()) {
+            const wait = await this.#waitForRawFallback();
+            if (this.#closed) {
+              return;
+            }
+            if (
+              wait.tag === "FallbackDue" &&
+              this.#codec.rawFallbackIsArmed()
+            ) {
+              const pending = this.#codec.releaseRawFallback();
+              if (pending !== undefined) {
+                const written = await this.#writeEncodedFrame(pending);
+                if (written.tag !== "Written") {
+                  await this.#fail(written);
+                  return;
+                }
               }
             }
+            continue;
           }
-          continue;
+          if (!this.#codec.canReadOutbound()) {
+            await this.#waitForFramingReadiness();
+            continue;
+          }
         }
-        if (!this.#codec.canReadOutbound()) {
-          await this.#waitForFramingReadiness();
-          continue;
-        }
-        const maximumFrames = this.#codec.canStageMultipleOutbound()
+        const maximumFrames = this.framing === "RawPacket" ||
+          this.#codec.canStageMultipleOutbound()
           ? Number.MAX_SAFE_INTEGER
           : 1;
         const outbound = await this.#host.nextOutboundFor(
@@ -398,6 +408,9 @@ export class BrowserWebSocketSession implements WebSocketSession {
         length: frame.length,
         maximum: this.#frameCap,
       });
+    }
+    if (this.framing === "RawPacket") {
+      return this.#writeEncodedFrame(frame);
     }
     let encoded: Uint8Array | undefined;
     try {

@@ -36,6 +36,7 @@ test("Automatic USB starts its outbound consumer after confirmation and then sle
 test("WebSocket outbound sleeps while idle and wakes for a runtime batch", async () => {
   const host = new SessionOutboundHost();
   const socket = new FakeSocket();
+  const codec = new FixedCodec();
   const session = new BrowserWebSocketSession(
     host,
     socket,
@@ -43,7 +44,7 @@ test("WebSocket outbound sleeps while idle and wakes for a runtime batch", async
     "ws://localhost:42721/prns",
     16_384,
     "RawPacket",
-    new FixedCodec(),
+    codec,
     () => undefined,
   );
   session.start();
@@ -56,6 +57,8 @@ test("WebSocket outbound sleeps while idle and wakes for a runtime batch", async
   host.queueOutbound({ bytes: new Uint8Array([0x41, 0x42]) });
   await waitUntil(() => socket.outbound.length === 1);
   assert.deepEqual(socket.outbound, [[0x41, 0x42]]);
+  assert.equal(codec.calls, 0);
+  assert.equal(codec.stageOutboundCalls, 0);
   assert.equal(host.outboundTakes, 2);
   const firstClose = session.close();
   const secondClose = session.close();
@@ -94,6 +97,7 @@ test("WebSocket session status pushes a remote close exactly once", async () => 
 test("WebSocket ingress pipelines messages and close drains admitted packets", async () => {
   const host = new DeferredIngressHost();
   const socket = new FakeSocket();
+  const codec = new IngressCodec();
   const session = new BrowserWebSocketSession(
     host,
     socket,
@@ -101,16 +105,18 @@ test("WebSocket ingress pipelines messages and close drains admitted packets", a
     "ws://localhost:42721/prns",
     16_384,
     "RawPacket",
-    new IngressCodec(),
+    codec,
     () => undefined,
   );
   session.start();
 
+  socket.receive(new Uint8Array());
   socket.receive(new Uint8Array([0x71]));
   socket.receive(new Uint8Array([0x72]));
 
   await waitUntil(() => host.ingress.length === 2);
   assert.deepEqual(host.ingress.map(({ bytes }) => bytes), [[0x71], [0x72]]);
+  assert.equal(codec.decodeCalls, 0);
   let closed = false;
   const closing = session.close().then((outcome) => {
     closed = true;
@@ -382,31 +388,43 @@ class FakeUsbTransport {
 }
 
 class FixedCodec {
+  calls = 0;
+  decodeCalls = 0;
+  stageOutboundCalls = 0;
+
   messageCap() {
     return 16_384;
   }
 
   canReadOutbound() {
+    this.calls += 1;
     return true;
   }
 
   canStageMultipleOutbound() {
+    this.calls += 1;
     return true;
   }
 
   rawFallbackIsArmed() {
+    this.calls += 1;
     return false;
   }
 
   rawFallbackDelayMillis() {
+    this.calls += 1;
     return 1_000;
   }
 
   decode() {
+    this.calls += 1;
+    this.decodeCalls += 1;
     return { packets: [] };
   }
 
   stageOutbound(packet) {
+    this.calls += 1;
+    this.stageOutboundCalls += 1;
     return packet;
   }
 }
@@ -452,6 +470,7 @@ class DetectingCodec extends FixedCodec {
 
 class IngressCodec extends FixedCodec {
   decode(message) {
+    this.decodeCalls += 1;
     return { packets: [message] };
   }
 }
