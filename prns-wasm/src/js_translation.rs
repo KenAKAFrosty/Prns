@@ -440,9 +440,7 @@ fn settlement_to_js(object: &Object, settlement: Settlement) {
             let kind = match cause {
                 ResourceFailureCause::CancelledBySender => "ResponseCancelledBySender",
                 ResourceFailureCause::RefusedHashmapUpdate(refusal) => match refusal {
-                    ApplyHashmapUpdateError::BeyondPartCount => {
-                        "ResponseHashmapBeyondPartCount"
-                    }
+                    ApplyHashmapUpdateError::BeyondPartCount => "ResponseHashmapBeyondPartCount",
                     ApplyHashmapUpdateError::SkipsAhead => "ResponseHashmapSkipsAhead",
                     ApplyHashmapUpdateError::HashmapTooLong => "ResponseHashmapTooLong",
                     ApplyHashmapUpdateError::HashmapRagged => "ResponseHashmapRagged",
@@ -554,7 +552,9 @@ fn settlement_to_js(object: &Object, settlement: Settlement) {
         ))) => {
             set_command_failure(object, "RequestAllowListFull", None);
         }
-        Settlement::SendGroup(_) | Settlement::SendPlainPacket(_) => {
+        Settlement::SetRegisteredAnnounceAppData(_)
+        | Settlement::SendGroup(_)
+        | Settlement::SendPlainPacket(_) => {
             set_str(object, "result", "untracked");
         }
     }
