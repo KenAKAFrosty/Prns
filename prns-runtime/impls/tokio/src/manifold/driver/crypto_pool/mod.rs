@@ -2,7 +2,6 @@ use core::cell::{Cell, RefCell};
 use core::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
 use heapless::Vec as HeaplessVec;
 use rtrb::{Consumer, Producer, PushError, RingBuffer};
@@ -401,11 +400,15 @@ pub(super) struct CryptoPool {
     #[cfg(feature = "runtime-metrics")]
     backpressure_deferrals: Cell<u64>,
     packet_verdicts_owed: Cell<usize>,
-    last_packet_verdict_event: Cell<Option<std::time::Instant>>,
+    packet_verdict_hot_turns: Cell<usize>,
 }
 
 impl CryptoPool {
-    const PACKET_VERDICT_LINGER: Duration = Duration::from_micros(200);
+    // Once the last verdict lands, give the manifold a short deterministic chance to receive the
+    // next packet without parking. Activity, rather than a wall-clock read on every select pass,
+    // is the useful signal here. The bounded depth reaches the measured throughput plateau while
+    // still guaranteeing that an idle manifold returns to parking.
+    const PACKET_VERDICT_HOT_TURNS: usize = 512;
 
     pub(super) fn spawn(workers: usize, completion_wake: Arc<Notify>) -> Option<Self> {
         let worker_count = workers.max(1);
@@ -471,7 +474,7 @@ impl CryptoPool {
             #[cfg(feature = "runtime-metrics")]
             backpressure_deferrals: Cell::new(0),
             packet_verdicts_owed: Cell::new(0),
-            last_packet_verdict_event: Cell::new(None),
+            packet_verdict_hot_turns: Cell::new(0),
         })
     }
 
@@ -525,10 +528,11 @@ impl CryptoPool {
             handle.thread().unpark();
         }
         if owes_packet_verdict {
+            if self.packet_verdicts_owed.get() == 0 {
+                self.packet_verdict_hot_turns.set(0);
+            }
             self.packet_verdicts_owed
                 .set(self.packet_verdicts_owed.get().saturating_add(1));
-            self.last_packet_verdict_event
-                .set(Some(std::time::Instant::now()));
         }
         #[cfg(feature = "runtime-metrics")]
         {
@@ -645,20 +649,25 @@ impl CryptoPool {
         has_capacity
     }
 
-    pub(super) fn awaits_packet_verdict(&self) -> bool {
-        self.packet_verdicts_owed.get() > 0
-            || self
-                .last_packet_verdict_event
-                .get()
-                .is_some_and(|at| at.elapsed() < Self::PACKET_VERDICT_LINGER)
+    pub(super) fn take_packet_verdict_hot_turn(&self) -> bool {
+        if self.packet_verdicts_owed.get() > 0 {
+            return true;
+        }
+        let remaining = self.packet_verdict_hot_turns.get();
+        self.packet_verdict_hot_turns
+            .set(remaining.saturating_sub(1));
+        remaining > 0
     }
 
     pub(super) fn packet_verdict_settled(&self) {
         let owed = self.packet_verdicts_owed.get();
         debug_assert!(owed > 0, "a packet verdict landed that no submit counted");
-        self.packet_verdicts_owed.set(owed.saturating_sub(1));
-        self.last_packet_verdict_event
-            .set(Some(std::time::Instant::now()));
+        let remaining = owed.saturating_sub(1);
+        self.packet_verdicts_owed.set(remaining);
+        if remaining == 0 {
+            self.packet_verdict_hot_turns
+                .set(Self::PACKET_VERDICT_HOT_TURNS);
+        }
     }
 
     #[cfg(feature = "runtime-metrics")]

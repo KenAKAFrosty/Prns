@@ -46,7 +46,7 @@ where
     H: Host,
     J: for<'a> FnMut(Journaled<'a>),
 {
-    pub(super) fn dispatch_staged_seal(self) {
+    pub(super) fn dispatch_staged_seal(self, now: InstantMillis) {
         let Self {
             engine,
             host,
@@ -82,7 +82,6 @@ where
                 pool.submit(CryptoJob::SealStaged(Box::new(job)));
             }
             None => {
-                let now = host.now();
                 engine.seal_staged_continuation(
                     &link_id,
                     &mut |entropy| host.fill_entropy(entropy),

@@ -10,13 +10,48 @@ use crate::manifold::Host;
 
 const MAX_TIMER_ARM_MILLIS: u64 = 24 * 60 * 60 * 1_000;
 
-pub(super) fn bounded_timer_deadline(
-    now: Instant,
+/// A manifold-local millisecond clock carried through one complete scheduling step.
+///
+/// The selected branch samples authoritative monotonic time once and every operation in its batch
+/// shares that value. The following scheduling decision reuses it too, eliminating redundant
+/// top-of-loop reads without adding a ticker, wake, shared state, or competing select branch.
+pub(super) struct ManifoldClock {
     logical_now: InstantMillis,
-    at: InstantMillis,
-) -> Instant {
-    let delay = at.0.saturating_sub(logical_now.0).min(MAX_TIMER_ARM_MILLIS);
-    now.checked_add(Duration::from_millis(delay)).unwrap_or(now)
+}
+
+impl ManifoldClock {
+    pub(super) fn new<H: Host>(host: &H) -> Self {
+        Self {
+            logical_now: host.now(),
+        }
+    }
+
+    pub(super) fn now(&self) -> InstantMillis {
+        self.logical_now
+    }
+
+    pub(super) fn immediate_deadline(&self) -> Instant {
+        Instant::now()
+    }
+
+    pub(super) fn timer_deadline(&self, at: InstantMillis) -> Instant {
+        let delay =
+            at.0.saturating_sub(self.logical_now.0)
+                .min(MAX_TIMER_ARM_MILLIS);
+        let raw_now = Instant::now();
+        raw_now
+            .checked_add(Duration::from_millis(delay))
+            .unwrap_or(raw_now)
+    }
+
+    pub(super) fn observe_step<H: Host>(&mut self, host: &H) -> InstantMillis {
+        self.reconcile(host);
+        self.logical_now
+    }
+
+    fn reconcile<H: Host>(&mut self, host: &H) {
+        self.logical_now = self.logical_now.max(host.now());
+    }
 }
 
 pub struct TokioHost {
@@ -160,6 +195,35 @@ impl Host for TokioHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn manifold_clock_carries_time_until_the_next_step() {
+        let host = TokioHost::new();
+        let mut clock = ManifoldClock::new(&host);
+
+        let carried = clock.now();
+        tokio::time::advance(Duration::from_millis(7)).await;
+        assert_eq!(clock.now(), carried);
+
+        clock.observe_step(&host);
+        assert_eq!(clock.now(), InstantMillis(carried.0 + 7));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn manifold_clock_maps_absolute_deadlines_and_bounds_far_future_arms() {
+        let host = TokioHost::start_at(InstantMillis(100));
+        let clock = ManifoldClock::new(&host);
+        let raw_now = Instant::now();
+
+        assert_eq!(
+            clock.timer_deadline(InstantMillis(105)),
+            raw_now + Duration::from_millis(5)
+        );
+        assert_eq!(
+            clock.timer_deadline(InstantMillis(u64::MAX)),
+            raw_now + Duration::from_millis(MAX_TIMER_ARM_MILLIS)
+        );
+    }
 
     #[tokio::test(start_paused = true)]
     async fn logical_time_saturates_at_the_numeric_limit() {

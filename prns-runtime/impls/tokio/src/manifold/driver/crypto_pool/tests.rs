@@ -1,4 +1,20 @@
 use super::*;
+use std::time::Duration;
+
+#[test]
+fn packet_verdict_hotness_is_outstanding_or_a_bounded_activity_budget() {
+    let pool = CryptoPool::spawn(1, Arc::new(Notify::new())).expect("worker spawns");
+
+    pool.packet_verdicts_owed.set(1);
+    assert!(pool.take_packet_verdict_hot_turn());
+    pool.packet_verdict_settled();
+
+    for _ in 0..CryptoPool::PACKET_VERDICT_HOT_TURNS {
+        assert!(pool.take_packet_verdict_hot_turn());
+    }
+    assert!(!pool.take_packet_verdict_hot_turn());
+    assert!(!pool.take_packet_verdict_hot_turn());
+}
 
 #[test]
 fn automatic_workers_use_bounded_efficiency_spillover_and_keep_host_headroom() {

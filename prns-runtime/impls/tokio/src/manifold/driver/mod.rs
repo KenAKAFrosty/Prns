@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use tokio::sync::mpsc::UnboundedReceiver;
-use tokio::time::Instant;
 
 use crate::engine::{EngineState, InstantMillis, Journaled, NextWake, ProofRequest, WakeReason};
 use crate::interfaces::InterfaceIfac;
@@ -49,7 +48,7 @@ use command_dispatch::{CommandDispatch, CommandEffect};
 use crypto_dispatch::{dispatch_open_spans, CryptoCompletionEffect, CryptoDispatch};
 use crypto_pool::CryptoPool;
 use egress::{flush_due_pacers, route_reaction, soonest_pacer_release, WireScratch};
-use host::bounded_timer_deadline;
+use host::ManifoldClock;
 use inbound_dispatch::{InboundContext, InboundDispatch};
 use interface_topology::InterfaceTopology;
 use journal_delivery::JournalDispatch;
@@ -204,10 +203,11 @@ async fn run_inner<S, H, J, P, A>(
     if crypto_pool.is_some() {
         engine.resource_open_lane = ResourceOpenLane::PoolWhenContended;
     }
-    let due_timer = tokio::time::sleep_until(Instant::now());
+    let mut clock = ManifoldClock::new(&host);
+    let due_timer = tokio::time::sleep_until(clock.immediate_deadline());
     tokio::pin!(due_timer);
     let mut armed: Option<(InstantMillis, WakeReason)> = None;
-    let pacer_timer = tokio::time::sleep_until(Instant::now());
+    let pacer_timer = tokio::time::sleep_until(clock.immediate_deadline());
     tokio::pin!(pacer_timer);
     let mut pacer_armed: Option<InstantMillis> = None;
     loop {
@@ -215,28 +215,20 @@ async fn run_inner<S, H, J, P, A>(
             None => pacer_armed = None,
             Some(at) => {
                 if pacer_armed != Some(at) {
-                    pacer_timer.as_mut().reset(bounded_timer_deadline(
-                        Instant::now(),
-                        host.now(),
-                        at,
-                    ));
+                    pacer_timer.as_mut().reset(clock.timer_deadline(at));
                 }
                 pacer_armed = Some(at);
             }
         }
-        match wake_schedules.soonest(host.now()) {
+        match wake_schedules.soonest(clock.now()) {
             NextWake::Idle => armed = None,
             NextWake::Due(reason) => {
-                due_timer.as_mut().reset(Instant::now());
+                due_timer.as_mut().reset(clock.immediate_deadline());
                 armed = Some((InstantMillis(0), reason));
             }
             NextWake::At { at, reason } => {
                 if armed.map(|(deadline, _)| deadline) != Some(at) {
-                    due_timer.as_mut().reset(bounded_timer_deadline(
-                        Instant::now(),
-                        host.now(),
-                        at,
-                    ));
+                    due_timer.as_mut().reset(clock.timer_deadline(at));
                 }
                 armed = Some((at, reason));
             }
@@ -247,6 +239,7 @@ async fn run_inner<S, H, J, P, A>(
         tokio::select! {
             arrived = notify.recv() => {
                 let Some(source) = arrived else { return };
+                let now = clock.observe_step(&host);
                 inbound.mark_ready(source);
                 inbound.collect_ready(&mut notify);
                 inbound.process(InboundContext {
@@ -261,9 +254,11 @@ async fn run_inner<S, H, J, P, A>(
                     should_prove: &mut should_prove,
                     should_accept_resource: &mut should_accept_resource,
                     max_frames_per_lane: MAX_INBOUND_BATCH,
+                    now,
                 });
             }
             _ = tokio::task::yield_now(), if inbound.has_ready_lanes() => {
+                let now = clock.observe_step(&host);
                 inbound.collect_ready(&mut notify);
                 inbound.process(InboundContext {
                     engine: &mut engine,
@@ -277,9 +272,11 @@ async fn run_inner<S, H, J, P, A>(
                     should_prove: &mut should_prove,
                     should_accept_resource: &mut should_accept_resource,
                     max_frames_per_lane: MAX_INBOUND_BATCH,
+                    now,
                 });
             }
             _ = tokio::task::yield_now(), if !inbound.has_ready_lanes() && engine.owed_staged_seal_link().is_some() => {
+                let now = clock.observe_step(&host);
                 CryptoDispatch {
                     engine: &mut engine,
                     host: &mut host,
@@ -288,11 +285,11 @@ async fn run_inner<S, H, J, P, A>(
                     journal: &mut journal,
                     crypto_pool: crypto_pool.as_ref(),
                 }
-                .dispatch_staged_seal();
+                .dispatch_staged_seal(now);
             }
             issued = commands.recv() => {
                 let Some(mut issued) = issued else { return };
-                let now = host.now();
+                let now = clock.observe_step(&host);
                 let mut command_budget = MAX_COMMAND_BATCH;
                 loop {
                 let effect = CommandDispatch {
@@ -333,7 +330,7 @@ async fn run_inner<S, H, J, P, A>(
             }
             () = &mut due_timer, if armed.is_some() => {
                 if let Some((deadline, reason)) = armed.take() {
-                    let now = host.now();
+                    let now = clock.observe_step(&host);
                     if deadline <= now {
                         let wake_schedules_delta = fire_due_reason(
                             &mut engine,
@@ -349,7 +346,7 @@ async fn run_inner<S, H, J, P, A>(
             }
             () = &mut pacer_timer, if pacer_armed.is_some() => {
                 pacer_armed = None;
-                let now = host.now();
+                let now = clock.observe_step(&host);
                 flush_due_pacers(&mut topology.pacers, now, &mut topology.egress, &topology.ifacs);
             }
             _ = async {
@@ -363,7 +360,7 @@ async fn run_inner<S, H, J, P, A>(
                     continue;
                 };
                 let mut next = pool.pop_completion();
-                let now = host.now();
+                let now = clock.observe_step(&host);
                 let mut seal_buf = [0u8; crate::wire::BROADCAST_MTU];
                 while let Some(result) = next {
                     let effect = CryptoDispatch {
@@ -399,7 +396,7 @@ async fn run_inner<S, H, J, P, A>(
                 }
                 dispatch_open_spans(&mut engine, crypto_pool.as_ref());
             }
-            _ = tokio::task::yield_now(), if crypto_pool.as_ref().is_some_and(CryptoPool::awaits_packet_verdict) => {}
+            _ = tokio::task::yield_now(), if crypto_pool.as_ref().is_some_and(CryptoPool::take_packet_verdict_hot_turn) => {}
         }
         if let Some(store) = &store {
             let mut dirty_interfaces = engine.take_dirty_interfaces();

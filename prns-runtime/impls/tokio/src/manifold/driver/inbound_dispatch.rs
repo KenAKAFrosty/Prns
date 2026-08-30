@@ -1,8 +1,8 @@
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::engine::{
-    ClassifiedInboundPacket, DeferredCrypto, EngineState, IngestIo, Journaled, ProofIngest,
-    ProofRequest, Settlement, WakeSchedules,
+    ClassifiedInboundPacket, DeferredCrypto, EngineState, IngestIo, InstantMillis, Journaled,
+    ProofIngest, ProofRequest, Settlement, WakeSchedules,
 };
 use crate::interfaces::{
     FrameAccountingEvent, IfacUnmaskError, InboundPacket, InterfaceId, PacketPhyStats,
@@ -76,8 +76,8 @@ impl InboundDispatch {
             should_prove,
             should_accept_resource,
             max_frames_per_lane,
+            now,
         } = context;
-        let now = host.now();
         let Self {
             ready_lanes,
             unmask_scratch,
@@ -296,6 +296,7 @@ where
     pub(super) should_prove: &'a mut P,
     pub(super) should_accept_resource: &'a mut A,
     pub(super) max_frames_per_lane: usize,
+    pub(super) now: InstantMillis,
 }
 
 fn retain_packet_phy(
