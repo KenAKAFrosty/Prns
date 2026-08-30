@@ -336,6 +336,9 @@ pub(crate) fn request_response_timeout_ms(rtt: RttMillis) -> u64 {
 fn requested_response_timeout_ms(rtt: RttMillis, timeout: RequestResponseTimeout) -> u64 {
     match timeout {
         RequestResponseTimeout::LinkDefault => request_response_timeout_ms(rtt),
+        RequestResponseTimeout::LinkDefaultAtMost { maximum } => {
+            core::cmp::min(request_response_timeout_ms(rtt), maximum.0)
+        }
         RequestResponseTimeout::Exact(timeout) => timeout.0,
     }
 }
@@ -941,6 +944,28 @@ mod tests {
         assert_eq!(
             engine.receipts.earliest_timeout_at(),
             Some(InstantMillis(14_850)),
+        );
+    }
+
+    #[test]
+    fn a_bounded_link_default_never_exceeds_its_maximum() {
+        assert_eq!(
+            requested_response_timeout_ms(
+                RttMillis::new(100),
+                RequestResponseTimeout::LinkDefaultAtMost {
+                    maximum: crate::units::DurationMillis(5_000),
+                },
+            ),
+            5_000,
+        );
+        assert_eq!(
+            requested_response_timeout_ms(
+                RttMillis::new(100),
+                RequestResponseTimeout::LinkDefaultAtMost {
+                    maximum: crate::units::DurationMillis(20_000),
+                },
+            ),
+            12_850,
         );
     }
 

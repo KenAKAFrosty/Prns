@@ -323,6 +323,13 @@ impl<S: StorageLayout> EngineState<S> {
                             Journaled::RemoteControlTargetPairingExpired { aborted: expired },
                         ));
                     }
+                    ApproveRemoteControlTargetPairingOutcome::CompletionRetentionExpired {
+                        attempt_id,
+                    } => sink(EngineReaction::Journaled(
+                        Journaled::RemoteControlTargetPairingCompletionRetentionExpired {
+                            attempt_id,
+                        },
+                    )),
                     ApproveRemoteControlTargetPairingOutcome::AwaitingControllerCommit {
                         ..
                     }
@@ -345,10 +352,25 @@ impl<S: StorageLayout> EngineState<S> {
                 let transition = self
                     .remote_control_target_pairing
                     .reject(reject.attempt_id, now);
-                if let RejectRemoteControlTargetPairingOutcome::Expired { expired } = transition {
-                    sink(EngineReaction::Journaled(
-                        Journaled::RemoteControlTargetPairingExpired { aborted: expired },
-                    ));
+                match transition {
+                    RejectRemoteControlTargetPairingOutcome::Expired { expired } => {
+                        sink(EngineReaction::Journaled(
+                            Journaled::RemoteControlTargetPairingExpired { aborted: expired },
+                        ));
+                    }
+                    RejectRemoteControlTargetPairingOutcome::CompletionRetentionExpired {
+                        attempt_id,
+                    } => sink(EngineReaction::Journaled(
+                        Journaled::RemoteControlTargetPairingCompletionRetentionExpired {
+                            attempt_id,
+                        },
+                    )),
+                    RejectRemoteControlTargetPairingOutcome::Rejected { .. }
+                    | RejectRemoteControlTargetPairingOutcome::NoActiveAttempt
+                    | RejectRemoteControlTargetPairingOutcome::AttemptMismatch { .. }
+                    | RejectRemoteControlTargetPairingOutcome::OfferPendingDispatch { .. }
+                    | RejectRemoteControlTargetPairingOutcome::AlreadyApproved { .. }
+                    | RejectRemoteControlTargetPairingOutcome::FinalizationInProgress { .. } => {}
                 }
                 settle(
                     sink,

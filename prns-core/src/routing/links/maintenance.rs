@@ -152,6 +152,11 @@ impl<S: StorageLayout> EngineState<S> {
                     Journaled::RemoteControlTargetPairingLinkClosed { aborted },
                 ));
             }
+            CloseRemoteControlTargetPairingLinkOutcome::CompletionRetentionEnded { attempt_id } => {
+                sink(EngineReaction::Journaled(
+                    Journaled::RemoteControlTargetPairingCompletionLinkClosed { attempt_id },
+                ));
+            }
             CloseRemoteControlTargetPairingLinkOutcome::UnrelatedLink
             | CloseRemoteControlTargetPairingLinkOutcome::NoActiveAttempt
             | CloseRemoteControlTargetPairingLinkOutcome::FinalizationInProgress { .. } => {}

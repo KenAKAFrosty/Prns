@@ -17,9 +17,9 @@ use crate::interfaces::{AttachedInterfaces, InterfaceId};
 use crate::remote_control::{
     BeginRemoteControlTargetPairingOutcome,
     CloseRemoteControlPairingOutcome as PairingStateCloseOutcome,
-    CommitRemoteControlTargetPairingOutcome, CompleteRemoteControlTargetPairingOutcome,
-    DispatchRemoteControlTargetPairingOfferOutcome, ExpireRemoteControlControllerPairingOutcome,
-    ExpireRemoteControlTargetPairingOutcome, FailRemoteControlTargetPairingAuthorizationOutcome,
+    CommitRemoteControlTargetPairingOutcome, DispatchRemoteControlTargetPairingOfferOutcome,
+    ExpireRemoteControlControllerPairingOutcome, ExpireRemoteControlTargetPairingOutcome,
+    FailRemoteControlTargetPairingAuthorizationOutcome,
     FailRemoteControlTargetPairingOfferDispatchOutcome,
     OpenRemoteControlPairingOutcome as PairingStateOpenOutcome,
     PersistRemoteControlTargetPairingAuthorizationOutcome, RemoteControlControllerPairingView,
@@ -89,6 +89,9 @@ pub(crate) enum RemoteControlPairingRequestOutcome {
     BeginExpired {
         expired: RemoteControlTargetPairingAborted,
     },
+    BeginCompletionRetentionExpired {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
     BeginBusy {
         active: RemoteControlPairingAttemptId,
     },
@@ -112,6 +115,17 @@ pub(crate) enum RemoteControlPairingRequestOutcome {
     CommitAuthorizationOwed {
         attempt_id: RemoteControlPairingAttemptId,
         grant: crate::remote_control::RemoteControlControllerGrant,
+    },
+    CommitCompletionDispatched {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
+    CommitCompletionDispatchFailed {
+        attempt_id: RemoteControlPairingAttemptId,
+        failure: RemoteControlPairingResponseDispatchFailure,
+    },
+    CommitCompletionRetentionExpired {
+        attempt_id: RemoteControlPairingAttemptId,
+        rejected: RemoteControlTargetPairingResponder,
     },
     CommitExpired {
         expired: RemoteControlTargetPairingAborted,
@@ -275,6 +289,42 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
                             grant,
                         }
                     }
+                    CommitRemoteControlTargetPairingOutcome::CompletionOwed {
+                        attempt_id,
+                        responder,
+                        completed,
+                    } => match self.dispatch_remote_control_pairing_response(
+                        responder,
+                        RemoteControlPairingResponse::Completed(completed),
+                        interfaces,
+                        now,
+                        fill_entropy,
+                        sink,
+                    ) {
+                        Ok(()) => RemoteControlPairingRequestOutcome::CommitCompletionDispatched {
+                            attempt_id,
+                        },
+                        Err(failure) => {
+                            RemoteControlPairingRequestOutcome::CommitCompletionDispatchFailed {
+                                attempt_id,
+                                failure,
+                            }
+                        }
+                    },
+                    CommitRemoteControlTargetPairingOutcome::CompletionRetentionExpired {
+                        attempt_id,
+                        rejected,
+                    } => {
+                        sink(EngineReaction::Journaled(
+                            crate::engine::Journaled::RemoteControlTargetPairingCompletionRetentionExpired {
+                                attempt_id,
+                            },
+                        ));
+                        RemoteControlPairingRequestOutcome::CommitCompletionRetentionExpired {
+                            attempt_id,
+                            rejected,
+                        }
+                    }
                     CommitRemoteControlTargetPairingOutcome::Expired { expired, rejected } => {
                         sink(EngineReaction::Journaled(
                             crate::engine::Journaled::RemoteControlTargetPairingExpired {
@@ -321,6 +371,18 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
                 ));
                 return RemoteControlPairingRequestIngressOutcome::Pairing(
                     RemoteControlPairingRequestOutcome::BeginExpired { expired },
+                );
+            }
+            BeginRemoteControlTargetPairingOutcome::CompletionRetentionExpired { attempt_id } => {
+                sink(EngineReaction::Journaled(
+                    crate::engine::Journaled::RemoteControlTargetPairingCompletionRetentionExpired {
+                        attempt_id,
+                    },
+                ));
+                return RemoteControlPairingRequestIngressOutcome::Pairing(
+                    RemoteControlPairingRequestOutcome::BeginCompletionRetentionExpired {
+                        attempt_id,
+                    },
                 );
             }
             BeginRemoteControlTargetPairingOutcome::Busy { active } => {
@@ -521,11 +583,13 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
             RemoteControlTargetPairingAuthorizationPersistence::Persisted => {
                 let target_identity = match self.remote_control_target_pairing.view() {
                     RemoteControlTargetPairingView::Authorizing(attempt)
+                    | RemoteControlTargetPairingView::Completing(attempt)
                         if attempt.attempt_id() == attempt_id =>
                     {
                         attempt.target().identity_hash()
                     }
-                    RemoteControlTargetPairingView::Authorizing(attempt) => {
+                    RemoteControlTargetPairingView::Authorizing(attempt)
+                    | RemoteControlTargetPairingView::Completing(attempt) => {
                         return Err(
                             SettleRemoteControlTargetPairingAuthorizationFailure::AttemptMismatch {
                                 settled: attempt_id,
@@ -537,8 +601,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
                     | RemoteControlTargetPairingView::OfferPrepared(_)
                     | RemoteControlTargetPairingView::AwaitingBoth(_)
                     | RemoteControlTargetPairingView::AwaitingTargetApproval(_)
-                    | RemoteControlTargetPairingView::AwaitingControllerCommit(_)
-                    | RemoteControlTargetPairingView::Completing(_) => return Err(
+                    | RemoteControlTargetPairingView::AwaitingControllerCommit(_) => return Err(
                         SettleRemoteControlTargetPairingAuthorizationFailure::NoAuthorizationOwed {
                             settled: attempt_id,
                         },
@@ -554,7 +617,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
                 };
                 let (attempt_id, responder, completed) = match self
                     .remote_control_target_pairing
-                    .authorization_persisted(attempt_id, &target_signer)
+                    .authorization_persisted(attempt_id, &target_signer, now)
                 {
                     PersistRemoteControlTargetPairingAuthorizationOutcome::CompletionOwed {
                         attempt_id,
@@ -569,6 +632,31 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
                             SettleRemoteControlTargetPairingAuthorizationFailure::CompletionSigningFailed {
                                 attempt_id,
                                 error,
+                            },
+                        )
+                    }
+                    PersistRemoteControlTargetPairingAuthorizationOutcome::AuthorizationPersistedAfterDeadline {
+                        attempt_id,
+                        grant,
+                    } => {
+                        return Ok(
+                            RemoteControlTargetPairingFinalization::AuthorizationRollbackRequired {
+                                attempt_id,
+                                grant,
+                            },
+                        )
+                    }
+                    PersistRemoteControlTargetPairingAuthorizationOutcome::CompletionRetentionExpired {
+                        attempt_id,
+                    } => {
+                        sink(EngineReaction::Journaled(
+                            crate::engine::Journaled::RemoteControlTargetPairingCompletionRetentionExpired {
+                                attempt_id,
+                            },
+                        ));
+                        return Err(
+                            SettleRemoteControlTargetPairingAuthorizationFailure::CompletionRetentionExpired {
+                                attempt_id,
                             },
                         )
                     }
@@ -591,19 +679,6 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
                         )
                     }
                 };
-                match self.remote_control_target_pairing.complete(attempt_id) {
-                    CompleteRemoteControlTargetPairingOutcome::Completed {
-                        attempt_id: completed,
-                    } if completed == attempt_id => {}
-                    transition => {
-                        return Err(
-                            SettleRemoteControlTargetPairingAuthorizationFailure::CompletionStateMismatch {
-                                attempt_id,
-                                transition,
-                            },
-                        )
-                    }
-                }
                 self.dispatch_remote_control_pairing_response(
                     responder,
                     RemoteControlPairingResponse::Completed(completed),
@@ -618,7 +693,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
                         failure,
                     }
                 })?;
-                Ok(RemoteControlTargetPairingFinalization::PairingCompleted { attempt_id })
+                Ok(RemoteControlTargetPairingFinalization::CompletionDispatched { attempt_id })
             }
         }
     }
@@ -909,6 +984,13 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
             ExpireRemoteControlTargetPairingOutcome::Expired { aborted } => {
                 sink(EngineReaction::Journaled(
                     crate::engine::Journaled::RemoteControlTargetPairingExpired { aborted },
+                ));
+            }
+            ExpireRemoteControlTargetPairingOutcome::CompletionRetentionExpired { attempt_id } => {
+                sink(EngineReaction::Journaled(
+                    crate::engine::Journaled::RemoteControlTargetPairingCompletionRetentionExpired {
+                        attempt_id,
+                    },
                 ));
             }
             ExpireRemoteControlTargetPairingOutcome::NotDue { .. }
@@ -2510,7 +2592,7 @@ mod tests {
     }
 
     #[test]
-    fn persisted_authorization_dispatches_a_verifiable_completion_and_returns_idle() {
+    fn persisted_authorization_dispatches_and_retains_a_verifiable_completion() {
         let controller = controller_identity();
         let (mut engine, interfaces, endpoint, link_id, peer_key, _) =
             open_pairing_link(controller.identity_hash());
@@ -2572,19 +2654,93 @@ mod tests {
             panic!("completed response")
         };
         assert_eq!(completed.verify(&transcript), Ok(()));
+
+        let retry_request_id = RequestId([0xF6; 16]);
+        let retry_commit = crate::remote_control::RemoteControlPairingCommit::new(&transcript);
+        let packed_retry =
+            packed_pairing_request(RemoteControlPairingRequest::Commit(retry_commit));
+        let mut retried_frames = std::vec::Vec::new();
+        let mut retried_journaled = 0usize;
+        let retry_outcome = engine.ingest_remote_control_pairing_request(
+            RemoteControlPairingRequestIngress {
+                destination: endpoint.destination_hash(),
+                link_id,
+                request_id: retry_request_id,
+                requester: Some(controller.identity_hash()),
+                path_hash: RequestPathHash::of(REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID),
+                data: &packed_retry,
+            },
+            AttachedInterfaces::new(&interfaces),
+            InstantMillis(2_400),
+            &mut |bytes| bytes.fill(0xF7),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::Send { target, bytes }) => {
+                    retried_frames.push((target, bytes.to_vec()));
+                }
+                EngineReaction::Directive(_) => {}
+                EngineReaction::Journaled(_) => retried_journaled += 1,
+            },
+        );
+        assert_eq!(
+            retry_outcome,
+            RemoteControlPairingRequestIngressOutcome::Pairing(
+                RemoteControlPairingRequestOutcome::CommitCompletionDispatched { attempt_id },
+            ),
+        );
+        assert_eq!(retried_journaled, 0);
+        let [(retry_target, retry_frame)] = retried_frames.as_slice() else {
+            panic!("one retried completion response")
+        };
+        assert_eq!(*retry_target, interfaces[0].id);
+        let (_, retry_sealed) = WirePacketHeader::parse(retry_frame).unwrap();
+        let retry_plaintext_len = peer_key.open(retry_sealed, &mut plaintext).unwrap();
+        let (retry_responded_to, retry_packed_response) =
+            parse_response_plaintext(&plaintext[..retry_plaintext_len]).unwrap();
+        assert_eq!(retry_responded_to, retry_request_id);
+        assert_eq!(
+            RemoteControlPairingResponse::parse(
+                parse_packed_binary(retry_packed_response).unwrap(),
+            ),
+            Ok(RemoteControlPairingResponse::Completed(completed)),
+        );
         assert_eq!(
             settlement,
             Some(Settlement::SettleRemoteControlTargetPairingAuthorization(
-                Ok(RemoteControlTargetPairingFinalization::PairingCompleted { attempt_id },)
+                Ok(RemoteControlTargetPairingFinalization::CompletionDispatched { attempt_id },)
             ),),
         );
         assert_eq!(unexpected_reactions, 0);
+        assert!(matches!(
+            engine.remote_control_target_pairing.view(),
+            RemoteControlTargetPairingView::Completing(attempt)
+                if attempt.attempt_id() == attempt_id
+        ));
+        assert_eq!(
+            wake.remote_control_pairing,
+            crate::engine::WakeSchedule::At(InstantMillis(32_000)),
+        );
+
+        let mut retention_expired = None;
+        let after_expiry = engine.fire_due_remote_control_pairing(
+            InstantMillis(32_000),
+            AttachedInterfaces::new(&interfaces),
+            &mut |_| panic!("completion retention expiry needs no entropy"),
+            &mut |reaction| {
+                if let EngineReaction::Journaled(
+                    Journaled::RemoteControlTargetPairingCompletionRetentionExpired { attempt_id },
+                ) = reaction
+                {
+                    retention_expired = Some(attempt_id);
+                }
+            },
+        );
+        assert_eq!(retention_expired, Some(attempt_id));
         assert_eq!(
             engine.remote_control_target_pairing.view(),
             RemoteControlTargetPairingView::Idle,
         );
         assert_eq!(
-            wake.remote_control_pairing,
+            after_expiry.remote_control_pairing,
             crate::engine::WakeSchedule::At(InstantMillis(61_000)),
         );
     }
@@ -2642,6 +2798,67 @@ mod tests {
                     },
                 )
             ),),
+        );
+        assert_eq!(
+            engine.remote_control_target_pairing.view(),
+            RemoteControlTargetPairingView::Idle,
+        );
+    }
+
+    #[test]
+    fn authorization_persisted_after_deadline_returns_the_grant_for_rollback() {
+        let controller = controller_identity();
+        let (mut engine, interfaces, endpoint, link_id, _, _) =
+            open_pairing_link(controller.identity_hash());
+        let (attempt_id, transcript) = authorize_target_pairing(
+            &mut engine,
+            &interfaces,
+            endpoint,
+            link_id,
+            controller,
+            RequestId([0xB1; 16]),
+            RequestId([0xB2; 16]),
+        );
+        let grant = RemoteControlControllerGrant::new(
+            controller,
+            transcript.permissions().clone().into_permitted_requests(),
+        )
+        .unwrap();
+        let mut directives = 0usize;
+        let mut settlement = None;
+        engine.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(0xB3),
+                command: PrnsCommand::SettleRemoteControlTargetPairingAuthorization(
+                    SettleRemoteControlTargetPairingAuthorization {
+                        attempt_id,
+                        persistence: RemoteControlTargetPairingAuthorizationPersistence::Persisted,
+                    },
+                ),
+            },
+            AttachedInterfaces::new(&interfaces),
+            InstantMillis(32_000),
+            &mut |_| panic!("late persistence needs no entropy"),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(_) => directives += 1,
+                EngineReaction::Journaled(Journaled::CommandSettled {
+                    settlement: observed,
+                    ..
+                }) => settlement = Some(observed),
+                EngineReaction::Journaled(_) => {}
+            },
+        );
+        assert_eq!(directives, 0);
+        assert_eq!(
+            settlement,
+            Some(Settlement::SettleRemoteControlTargetPairingAuthorization(
+                Ok(
+                    RemoteControlTargetPairingFinalization::AuthorizationRollbackRequired {
+                        attempt_id,
+                        grant,
+                    },
+                ),
+            )),
         );
         assert_eq!(
             engine.remote_control_target_pairing.view(),
@@ -2751,7 +2968,7 @@ mod tests {
     }
 
     #[test]
-    fn completion_egress_failure_is_exact_and_terminal() {
+    fn completion_egress_failure_is_exact_and_recoverable() {
         let controller = controller_identity();
         let (mut engine, interfaces, endpoint, link_id, _, _) =
             open_pairing_link(controller.identity_hash());
@@ -2803,10 +3020,48 @@ mod tests {
                 ),
             )),
         );
-        assert_eq!(
+        assert!(matches!(
             engine.remote_control_target_pairing.view(),
-            RemoteControlTargetPairingView::Idle,
+            RemoteControlTargetPairingView::Completing(attempt)
+                if attempt.attempt_id() == attempt_id
+        ));
+
+        let mut retry_directives = 0usize;
+        let mut retry_settlement = None;
+        engine.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(0xAA),
+                command: PrnsCommand::SettleRemoteControlTargetPairingAuthorization(
+                    SettleRemoteControlTargetPairingAuthorization {
+                        attempt_id,
+                        persistence: RemoteControlTargetPairingAuthorizationPersistence::Persisted,
+                    },
+                ),
+            },
+            AttachedInterfaces::new(&interfaces),
+            InstantMillis(2_400),
+            &mut |bytes| bytes.fill(0xAB),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(_) => retry_directives += 1,
+                EngineReaction::Journaled(Journaled::CommandSettled {
+                    settlement: observed,
+                    ..
+                }) => retry_settlement = Some(observed),
+                EngineReaction::Journaled(_) => {}
+            },
         );
+        assert_eq!(retry_directives, 1);
+        assert_eq!(
+            retry_settlement,
+            Some(Settlement::SettleRemoteControlTargetPairingAuthorization(
+                Ok(RemoteControlTargetPairingFinalization::CompletionDispatched { attempt_id }),
+            )),
+        );
+        assert!(matches!(
+            engine.remote_control_target_pairing.view(),
+            RemoteControlTargetPairingView::Completing(attempt)
+                if attempt.attempt_id() == attempt_id
+        ));
     }
 
     #[test]

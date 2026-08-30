@@ -6,8 +6,7 @@ use crate::identity::vault::IdentitySecretKey;
 use crate::identity::{IdentityHash, IdentityPublicKeys, IdentitySigner};
 use crate::remote_control::{
     ApproveRemoteControlTargetPairingOutcome, BeginRemoteControlTargetPairingOutcome,
-    CommitRemoteControlTargetPairingOutcome, CompleteRemoteControlTargetPairingOutcome,
-    DispatchRemoteControlTargetPairingOfferOutcome,
+    CommitRemoteControlTargetPairingOutcome, DispatchRemoteControlTargetPairingOfferOutcome,
     PersistRemoteControlTargetPairingAuthorizationOutcome, RemoteControlControllerIdentity,
     RemoteControlPairingAttemptId, RemoteControlPairingAttemptTimeout, RemoteControlPairingBegin,
     RemoteControlPairingCompleted, RemoteControlPairingContext, RemoteControlPairingIdentity,
@@ -406,6 +405,15 @@ fn approval_is_correlated_irrevocable_and_bounded() {
     assert_eq!(context, fixture.context());
     assert_eq!(expires_at, CONTROLLER_ATTEMPT_EXPIRES_AT);
     assert_eq!(
+        state.approve(attempt_id, InstantMillis(OFFER_RECEIVED_AT.0 + 1)),
+        ApproveRemoteControlControllerPairingOutcome::CommitOwed {
+            attempt_id,
+            commit,
+            context,
+            expires_at,
+        },
+    );
+    assert_eq!(
         state.reject(attempt_id, OFFER_RECEIVED_AT),
         RejectRemoteControlControllerPairingOutcome::AlreadyApproved { attempt_id },
     );
@@ -702,7 +710,11 @@ fn real_wire_messages_drive_both_reducers_to_the_same_durable_pairing() {
         attempt_id: completed_attempt,
         responder: completed_to,
         completed,
-    } = target_state.authorization_persisted(authorized, &fixture.target_signer)
+    } = target_state.authorization_persisted(
+        authorized,
+        &fixture.target_signer,
+        InstantMillis(2_350),
+    )
     else {
         panic!("completion owed")
     };
@@ -717,12 +729,6 @@ fn real_wire_messages_drive_both_reducers_to_the_same_durable_pairing() {
         controller_state.receive_completed(completed, InstantMillis(2_400)),
         ReceiveRemoteControlControllerPairingCompletedOutcome::PersistenceOwed {
             attempt_id: controller_attempt_id,
-        },
-    );
-    assert_eq!(
-        target_state.complete(target_attempt_id),
-        CompleteRemoteControlTargetPairingOutcome::Completed {
-            attempt_id: target_attempt_id,
         },
     );
     let access = controller_state
@@ -745,5 +751,9 @@ fn real_wire_messages_drive_both_reducers_to_the_same_durable_pairing() {
         controller_state.view(),
         RemoteControlControllerPairingView::Idle
     );
-    assert_eq!(target_state.view(), RemoteControlTargetPairingView::Idle);
+    assert!(matches!(
+        target_state.view(),
+        RemoteControlTargetPairingView::Completing(attempt)
+            if attempt.attempt_id() == target_attempt_id
+    ));
 }

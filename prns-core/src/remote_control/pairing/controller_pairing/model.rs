@@ -295,9 +295,6 @@ pub enum ApproveRemoteControlControllerPairingOutcome {
         requested: RemoteControlPairingAttemptId,
         active: RemoteControlPairingAttemptId,
     },
-    AlreadyApproved {
-        attempt_id: RemoteControlPairingAttemptId,
-    },
     PersistenceInProgress {
         attempt_id: RemoteControlPairingAttemptId,
     },

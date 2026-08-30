@@ -20,6 +20,9 @@ pub type SendRequestData = HeaplessVec<u8, MAX_SEND_REQUEST_DATA_LEN>;
 pub enum RequestResponseTimeout {
     #[default]
     LinkDefault,
+    LinkDefaultAtMost {
+        maximum: DurationMillis,
+    },
     Exact(DurationMillis),
 }
 

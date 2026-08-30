@@ -226,9 +226,16 @@ impl RemoteControlControllerPairingState {
             }
             RemoteControlControllerPairingPhase::AwaitingCompletion { transcript, window } => {
                 let attempt_id = (&transcript).into();
+                let commit = crate::remote_control::RemoteControlPairingCommit::new(&transcript);
+                let context = transcript.context();
                 self.phase =
                     RemoteControlControllerPairingPhase::AwaitingCompletion { transcript, window };
-                ApproveRemoteControlControllerPairingOutcome::AlreadyApproved { attempt_id }
+                ApproveRemoteControlControllerPairingOutcome::CommitOwed {
+                    attempt_id,
+                    commit,
+                    context,
+                    expires_at: window.expires_at(),
+                }
             }
             RemoteControlControllerPairingPhase::Persisting { attempt_id, access } => {
                 self.phase = RemoteControlControllerPairingPhase::Persisting { attempt_id, access };

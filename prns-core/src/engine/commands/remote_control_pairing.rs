@@ -1,13 +1,12 @@
 use crate::identity::held::HoldIdentityError;
 use crate::remote_control::{
-    ApproveRemoteControlTargetPairingOutcome, CompleteRemoteControlTargetPairingOutcome,
-    RejectRemoteControlTargetPairingOutcome, RemoteControlControllerGrant,
-    RemoteControlPairingAttemptId, RemoteControlPairingAttemptTimeout,
-    RemoteControlPairingAvailabilityWriteError, RemoteControlPairingCompletionSigningError,
-    RemoteControlPairingEndpoint, RemoteControlPairingExpiresAfter,
-    RemoteControlPairingInvitationCode, RemoteControlPairingPermissions,
-    RemoteControlPairingPublicAppDataBytes, RemoteControlTargetPairingAborted,
-    RemoteControlTargetPairingResponder,
+    ApproveRemoteControlTargetPairingOutcome, RejectRemoteControlTargetPairingOutcome,
+    RemoteControlControllerGrant, RemoteControlPairingAttemptId,
+    RemoteControlPairingAttemptTimeout, RemoteControlPairingAvailabilityWriteError,
+    RemoteControlPairingCompletionSigningError, RemoteControlPairingEndpoint,
+    RemoteControlPairingExpiresAfter, RemoteControlPairingInvitationCode,
+    RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
+    RemoteControlTargetPairingAborted, RemoteControlTargetPairingResponder,
 };
 use crate::routing::delivery::send_plain::SendPlainPacketWriteError;
 use crate::routing::links::LinkId;
@@ -196,6 +195,9 @@ pub enum ApproveRemoteControlTargetPairingFailure {
     FinalizationInProgress {
         attempt_id: RemoteControlPairingAttemptId,
     },
+    CompletionRetentionExpired {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
 }
 
 impl RemoteControlTargetPairingApproval {
@@ -226,6 +228,13 @@ impl RemoteControlTargetPairingApproval {
             }
             ApproveRemoteControlTargetPairingOutcome::FinalizationInProgress { attempt_id } => {
                 Err(ApproveRemoteControlTargetPairingFailure::FinalizationInProgress { attempt_id })
+            }
+            ApproveRemoteControlTargetPairingOutcome::CompletionRetentionExpired { attempt_id } => {
+                Err(
+                    ApproveRemoteControlTargetPairingFailure::CompletionRetentionExpired {
+                        attempt_id,
+                    },
+                )
             }
         }
     }
@@ -301,6 +310,9 @@ pub enum RejectRemoteControlTargetPairingFailure {
     FinalizationInProgress {
         attempt_id: RemoteControlPairingAttemptId,
     },
+    CompletionRetentionExpired {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
 }
 
 impl RemoteControlTargetPairingRejection {
@@ -326,6 +338,13 @@ impl RemoteControlTargetPairingRejection {
             }
             RejectRemoteControlTargetPairingOutcome::FinalizationInProgress { attempt_id } => {
                 Err(RejectRemoteControlTargetPairingFailure::FinalizationInProgress { attempt_id })
+            }
+            RejectRemoteControlTargetPairingOutcome::CompletionRetentionExpired { attempt_id } => {
+                Err(
+                    RejectRemoteControlTargetPairingFailure::CompletionRetentionExpired {
+                        attempt_id,
+                    },
+                )
             }
         }
     }
@@ -386,8 +405,12 @@ pub struct SettleRemoteControlTargetPairingAuthorization {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteControlTargetPairingFinalization {
-    PairingCompleted {
+    CompletionDispatched {
         attempt_id: RemoteControlPairingAttemptId,
+    },
+    AuthorizationRollbackRequired {
+        attempt_id: RemoteControlPairingAttemptId,
+        grant: RemoteControlControllerGrant,
     },
     AuthorizationFailureRecorded {
         attempt_id: RemoteControlPairingAttemptId,
@@ -412,9 +435,8 @@ pub enum SettleRemoteControlTargetPairingAuthorizationFailure {
         attempt_id: RemoteControlPairingAttemptId,
         error: RemoteControlPairingCompletionSigningError,
     },
-    CompletionStateMismatch {
+    CompletionRetentionExpired {
         attempt_id: RemoteControlPairingAttemptId,
-        transition: CompleteRemoteControlTargetPairingOutcome,
     },
     CompletionDispatchFailed {
         attempt_id: RemoteControlPairingAttemptId,

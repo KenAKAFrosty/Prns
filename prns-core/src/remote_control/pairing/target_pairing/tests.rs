@@ -22,6 +22,7 @@ const PAIRING_EXPIRES_AT: InstantMillis = InstantMillis(20_000);
 const ATTEMPT_STARTED_AT: InstantMillis = InstantMillis(2_000);
 const ATTEMPT_EXPIRES_AT: InstantMillis = InstantMillis(7_000);
 const ATTEMPT_TIMEOUT: DurationMillis = DurationMillis(5_000);
+const AUTHORIZATION_PERSISTED_AT: InstantMillis = InstantMillis(3_000);
 
 struct TargetPairingFixture {
     target_signer: InMemoryNodeIdentity,
@@ -173,6 +174,7 @@ fn prepare_offer(
             (attempt_id, offer)
         }
         BeginRemoteControlTargetPairingOutcome::Expired { .. }
+        | BeginRemoteControlTargetPairingOutcome::CompletionRetentionExpired { .. }
         | BeginRemoteControlTargetPairingOutcome::Busy { .. }
         | BeginRemoteControlTargetPairingOutcome::PairingUnavailable { .. }
         | BeginRemoteControlTargetPairingOutcome::Rejected { .. } => {
@@ -189,8 +191,8 @@ fn attempt_view(
         | RemoteControlTargetPairingView::AwaitingBoth(attempt)
         | RemoteControlTargetPairingView::AwaitingTargetApproval(attempt)
         | RemoteControlTargetPairingView::AwaitingControllerCommit(attempt)
-        | RemoteControlTargetPairingView::Authorizing(attempt)
-        | RemoteControlTargetPairingView::Completing(attempt) => attempt,
+        | RemoteControlTargetPairingView::Authorizing(attempt) => attempt,
+        RemoteControlTargetPairingView::Completing(attempt) => attempt,
         RemoteControlTargetPairingView::Idle => panic!("active attempt"),
     }
 }
@@ -266,7 +268,11 @@ fn completing(
 ) -> RemoteControlPairingAttemptId {
     let attempt_id = authorizing(state, fixture);
     assert!(matches!(
-        state.authorization_persisted(attempt_id, &fixture.target_signer),
+        state.authorization_persisted(
+            attempt_id,
+            &fixture.target_signer,
+            AUTHORIZATION_PERSISTED_AT,
+        ),
         PersistRemoteControlTargetPairingAuthorizationOutcome::CompletionOwed {
             attempt_id: completed,
             ..
@@ -799,7 +805,7 @@ fn only_the_attempt_link_can_abort_confirmation() {
 }
 
 #[test]
-fn completion_does_not_exist_until_the_exact_authorization_is_persisted() {
+fn persisted_authorization_retains_one_exact_replayable_completion_until_its_deadline() {
     let fixture = TargetPairingFixture::new();
     let mut state = RemoteControlTargetPairingState::default();
     let (attempt_id, _grant) = authorize(&mut state, &fixture);
@@ -807,14 +813,19 @@ fn completion_does_not_exist_until_the_exact_authorization_is_persisted() {
     let other_id: RemoteControlPairingAttemptId = other.prepared().transcript().into();
 
     assert_eq!(
-        state.authorization_persisted(other_id, &fixture.target_signer),
+        state
+            .authorization_persisted(other_id, &fixture.target_signer, AUTHORIZATION_PERSISTED_AT,),
         PersistRemoteControlTargetPairingAuthorizationOutcome::AttemptMismatch {
             settled: other_id,
             active: attempt_id,
         },
     );
     assert_eq!(
-        state.authorization_persisted(attempt_id, &signer(0x53)),
+        state.authorization_persisted(
+            attempt_id,
+            &signer(0x53),
+            AUTHORIZATION_PERSISTED_AT,
+        ),
         PersistRemoteControlTargetPairingAuthorizationOutcome::SigningFailed {
             attempt_id,
             error: crate::remote_control::RemoteControlPairingCompletionSigningError::TargetIdentityMismatch {
@@ -825,25 +836,135 @@ fn completion_does_not_exist_until_the_exact_authorization_is_persisted() {
     );
     let PersistRemoteControlTargetPairingAuthorizationOutcome::CompletionOwed {
         attempt_id: completed_attempt,
-        responder,
+        responder: initial_responder,
         completed,
-    } = state.authorization_persisted(attempt_id, &fixture.target_signer)
+    } = state.authorization_persisted(
+        attempt_id,
+        &fixture.target_signer,
+        AUTHORIZATION_PERSISTED_AT,
+    )
     else {
         panic!("completion owed")
     };
     assert_eq!(completed_attempt, attempt_id);
-    assert_eq!(responder, fixture.commit(0x61).responder());
+    assert_eq!(initial_responder, fixture.commit(0x61).responder());
     assert_eq!(completed.verify(fixture.prepared().transcript()), Ok(()),);
+    let wrong_controller = controller(0x32).identity_hash();
+    let rejected = responder(fixture.link_id, 0x62);
     assert_eq!(
-        state.complete(other_id),
-        CompleteRemoteControlTargetPairingOutcome::AttemptMismatch {
+        state.commit(
+            RemoteControlTargetPairingCommitArrival::new(
+                fixture.commit(0x61).commit(),
+                rejected,
+                wrong_controller,
+            ),
+            InstantMillis(ATTEMPT_EXPIRES_AT.0 - 1),
+        ),
+        CommitRemoteControlTargetPairingOutcome::Rejected {
+            rejected,
+            reason: RemoteControlTargetPairingCommitRejection::ControllerIdentityMismatch {
+                expected: fixture.begin.controller().identity_hash(),
+                identified: wrong_controller,
+            },
+        },
+    );
+    assert_eq!(
+        state.authorization_persisted(
+            other_id,
+            &fixture.target_signer,
+            InstantMillis(AUTHORIZATION_PERSISTED_AT.0 + 1),
+        ),
+        PersistRemoteControlTargetPairingAuthorizationOutcome::AttemptMismatch {
             settled: other_id,
             active: attempt_id,
         },
     );
     assert_eq!(
-        state.complete(attempt_id),
-        CompleteRemoteControlTargetPairingOutcome::Completed { attempt_id },
+        state.authorization_persisted(
+            attempt_id,
+            &fixture.target_signer,
+            InstantMillis(AUTHORIZATION_PERSISTED_AT.0 + 1),
+        ),
+        PersistRemoteControlTargetPairingAuthorizationOutcome::CompletionOwed {
+            attempt_id,
+            responder: initial_responder,
+            completed,
+        },
+    );
+    let retried_responder = fixture.commit(0x62).responder();
+    assert_eq!(
+        state.commit(
+            fixture.commit(0x62),
+            InstantMillis(ATTEMPT_EXPIRES_AT.0 - 1),
+        ),
+        CommitRemoteControlTargetPairingOutcome::CompletionOwed {
+            attempt_id,
+            responder: retried_responder,
+            completed,
+        },
+    );
+    assert!(matches!(
+        state.view(),
+        RemoteControlTargetPairingView::Completing(attempt)
+            if attempt.attempt_id() == attempt_id
+    ));
+    assert_eq!(
+        state.expire(InstantMillis(ATTEMPT_EXPIRES_AT.0 - 1)),
+        ExpireRemoteControlTargetPairingOutcome::NotDue {
+            expires_at: ATTEMPT_EXPIRES_AT,
+        },
+    );
+    assert_eq!(
+        state.expire(ATTEMPT_EXPIRES_AT),
+        ExpireRemoteControlTargetPairingOutcome::CompletionRetentionExpired { attempt_id },
+    );
+    assert_eq!(state.view(), RemoteControlTargetPairingView::Idle);
+}
+
+#[test]
+fn retained_completion_ends_only_with_its_bound_link() {
+    let fixture = TargetPairingFixture::new();
+    let mut state = RemoteControlTargetPairingState::default();
+    let (attempt_id, _grant) = authorize(&mut state, &fixture);
+    assert!(matches!(
+        state.authorization_persisted(
+            attempt_id,
+            &fixture.target_signer,
+            AUTHORIZATION_PERSISTED_AT,
+        ),
+        PersistRemoteControlTargetPairingAuthorizationOutcome::CompletionOwed { .. },
+    ));
+    assert_eq!(
+        state.close_link(LinkId::new([0xFF; TRUNCATED_HASH_BYTE_LEN])),
+        CloseRemoteControlTargetPairingLinkOutcome::UnrelatedLink,
+    );
+    assert!(matches!(
+        state.view(),
+        RemoteControlTargetPairingView::Completing(attempt)
+            if attempt.attempt_id() == attempt_id
+    ));
+    assert_eq!(
+        state.close_link(fixture.link_id),
+        CloseRemoteControlTargetPairingLinkOutcome::CompletionRetentionEnded { attempt_id },
+    );
+    assert_eq!(state.view(), RemoteControlTargetPairingView::Idle);
+}
+
+#[test]
+fn authorization_persisted_after_the_shared_deadline_returns_the_exact_grant() {
+    let fixture = TargetPairingFixture::new();
+    let mut state = RemoteControlTargetPairingState::default();
+    let (attempt_id, grant) = authorize(&mut state, &fixture);
+    assert_eq!(
+        state.authorization_persisted(
+            attempt_id,
+            &fixture.target_signer,
+            ATTEMPT_EXPIRES_AT,
+        ),
+        PersistRemoteControlTargetPairingAuthorizationOutcome::AuthorizationPersistedAfterDeadline {
+            attempt_id,
+            grant,
+        },
     );
     assert_eq!(state.view(), RemoteControlTargetPairingView::Idle);
 }

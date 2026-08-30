@@ -241,9 +241,11 @@ impl<S: StorageLayout> EngineState<S> {
             | crate::remote_control::RemoteControlTargetPairingView::AwaitingControllerCommit(
                 attempt,
             ) => Some(attempt.window().expires_at()),
+            crate::remote_control::RemoteControlTargetPairingView::Completing(attempt) => {
+                Some(attempt.window().expires_at())
+            }
             crate::remote_control::RemoteControlTargetPairingView::Idle
-            | crate::remote_control::RemoteControlTargetPairingView::Authorizing(_)
-            | crate::remote_control::RemoteControlTargetPairingView::Completing(_) => None,
+            | crate::remote_control::RemoteControlTargetPairingView::Authorizing(_) => None,
         };
         let controller = match self.remote_control_controller_pairing.view() {
             crate::remote_control::RemoteControlControllerPairingView::AwaitingOffer(begin) => {

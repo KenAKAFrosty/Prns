@@ -84,7 +84,9 @@ impl RemoteControlControllerPairingRequest {
         Ok(Self {
             link_id: context.link_id(),
             data,
-            response_timeout: RequestResponseTimeout::Exact(expires_at.duration_since(now)),
+            response_timeout: RequestResponseTimeout::LinkDefaultAtMost {
+                maximum: expires_at.duration_since(now),
+            },
         })
     }
 }
@@ -235,9 +237,6 @@ pub enum ApproveRemoteControlControllerPairingFailure {
     AttemptMismatch {
         requested: RemoteControlPairingAttemptId,
         active: RemoteControlPairingAttemptId,
-    },
-    AlreadyApproved {
-        attempt_id: RemoteControlPairingAttemptId,
     },
     PersistenceInProgress {
         attempt_id: RemoteControlPairingAttemptId,
@@ -451,9 +450,6 @@ impl<S: StorageLayout> EngineState<S> {
                         active,
                     },
                 )
-            }
-            ApproveRemoteControlControllerPairingOutcome::AlreadyApproved { attempt_id } => {
-                Err(ApproveRemoteControlControllerPairingFailure::AlreadyApproved { attempt_id })
             }
             ApproveRemoteControlControllerPairingOutcome::PersistenceInProgress { attempt_id } => {
                 Err(
@@ -683,7 +679,9 @@ mod tests {
                         invitation_code(),
                     ),
                 )),
-                response_timeout: RequestResponseTimeout::Exact(DurationMillis(9_000)),
+                response_timeout: RequestResponseTimeout::LinkDefaultAtMost {
+                    maximum: DurationMillis(9_000),
+                },
                 maximum_response_bytes: ByteLimit::Maximum(
                     RemoteControlPairingResponse::MAX_ENCODED_LEN as u64,
                 ),
@@ -725,7 +723,9 @@ mod tests {
                 data: packed(RemoteControlPairingRequest::Commit(
                     RemoteControlPairingCommit::new(&transcript),
                 )),
-                response_timeout: RequestResponseTimeout::Exact(DurationMillis(2_500)),
+                response_timeout: RequestResponseTimeout::LinkDefaultAtMost {
+                    maximum: DurationMillis(2_500),
+                },
                 maximum_response_bytes: ByteLimit::Maximum(
                     RemoteControlPairingResponse::MAX_ENCODED_LEN as u64,
                 ),

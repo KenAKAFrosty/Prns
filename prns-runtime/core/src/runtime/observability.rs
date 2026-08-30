@@ -281,6 +281,8 @@ impl ReliabilityMetricsSnapshot {
             | Journaled::RemoteControlControllerPairingExpired { .. }
             | Journaled::RemoteControlTargetPairingExpired { .. }
             | Journaled::RemoteControlTargetPairingLinkClosed { .. }
+            | Journaled::RemoteControlTargetPairingCompletionRetentionExpired { .. }
+            | Journaled::RemoteControlTargetPairingCompletionLinkClosed { .. }
             | Journaled::RemoteControlPairingExpired { .. }
             | Journaled::RemoteControlPairingExpiryFailed { .. }
             | Journaled::Delivered(_)

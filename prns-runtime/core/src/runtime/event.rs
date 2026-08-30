@@ -55,6 +55,12 @@ pub enum Message<'a> {
     RemoteControlTargetPairingLinkClosed {
         aborted: RemoteControlTargetPairingAborted,
     },
+    RemoteControlTargetPairingCompletionRetentionExpired {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
+    RemoteControlTargetPairingCompletionLinkClosed {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
     Delivered(Delivery<'a>),
     Request {
         destination: DestinationHash,
@@ -222,6 +228,16 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
             }
             Journaled::RemoteControlTargetPairingLinkClosed { aborted } => {
                 PrnsEvent::Message(Message::RemoteControlTargetPairingLinkClosed { aborted })
+            }
+            Journaled::RemoteControlTargetPairingCompletionRetentionExpired { attempt_id } => {
+                PrnsEvent::Message(
+                    Message::RemoteControlTargetPairingCompletionRetentionExpired { attempt_id },
+                )
+            }
+            Journaled::RemoteControlTargetPairingCompletionLinkClosed { attempt_id } => {
+                PrnsEvent::Message(Message::RemoteControlTargetPairingCompletionLinkClosed {
+                    attempt_id,
+                })
             }
             Journaled::Delivered(delivery) => PrnsEvent::Message(Message::Delivered(delivery)),
             Journaled::RequestReceived {
