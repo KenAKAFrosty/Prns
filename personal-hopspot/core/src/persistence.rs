@@ -36,6 +36,10 @@ impl PersistenceState {
                     || report.route_refused_count > 0
                     || report.route_dropped_count > 0
                     || report.ratchet_refused_count > 0
+                    || report.remote_control_controller_grants_refused_count > 0
+                    || report.remote_control_controller_grants_dropped_count > 0
+                    || report.remote_control_target_accesses_refused_count > 0
+                    || report.remote_control_target_accesses_dropped_count > 0
                 {
                     Some(Self::Recovered)
                 } else {
@@ -56,7 +60,10 @@ impl PersistenceState {
             }
             EmbeddedPersistenceDiagnostic::CompactionStarted { .. } => None,
             EmbeddedPersistenceDiagnostic::DurabilityDeferred { .. } => Some(Self::Deferred),
-            EmbeddedPersistenceDiagnostic::WriteFailed { .. } => Some(Self::Failed),
+            EmbeddedPersistenceDiagnostic::WriteFailed { .. }
+            | EmbeddedPersistenceDiagnostic::RemoteControlPairingFailed { .. } => {
+                Some(Self::Failed)
+            }
         }
     }
 }
@@ -78,6 +85,12 @@ mod tests {
         route_dropped_count: 0,
         ratchet_seeded_count: 0,
         ratchet_refused_count: 0,
+        remote_control_controller_grants_restored_count: 0,
+        remote_control_controller_grants_refused_count: 0,
+        remote_control_controller_grants_dropped_count: 0,
+        remote_control_target_accesses_restored_count: 0,
+        remote_control_target_accesses_refused_count: 0,
+        remote_control_target_accesses_dropped_count: 0,
         warning: None,
     };
 
@@ -112,6 +125,20 @@ mod tests {
             (
                 EmbeddedPersistenceDiagnostic::Restored(EmbeddedPersistenceRestoreReport {
                     ratchet_refused_count: 1,
+                    ..EMPTY_RESTORE
+                }),
+                Some(PersistenceState::Recovered),
+            ),
+            (
+                EmbeddedPersistenceDiagnostic::Restored(EmbeddedPersistenceRestoreReport {
+                    remote_control_controller_grants_refused_count: 1,
+                    ..EMPTY_RESTORE
+                }),
+                Some(PersistenceState::Recovered),
+            ),
+            (
+                EmbeddedPersistenceDiagnostic::Restored(EmbeddedPersistenceRestoreReport {
+                    remote_control_target_accesses_dropped_count: 1,
                     ..EMPTY_RESTORE
                 }),
                 Some(PersistenceState::Recovered),

@@ -8,6 +8,7 @@ use crate::remote_control::{
 pub enum SetRemoteControlControllerGrantServiceError {
     Unavailable,
     CapacityExhausted,
+    TransactionInProgress,
 }
 
 impl From<SetRemoteControlControllerGrantError> for SetRemoteControlControllerGrantServiceError {
@@ -21,6 +22,7 @@ impl From<SetRemoteControlControllerGrantError> for SetRemoteControlControllerGr
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RevokeRemoteControlControllerServiceError {
     Unavailable,
+    TransactionInProgress,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,6 +42,7 @@ impl From<SetRemoteControlControllerGrantServiceError>
             SetRemoteControlControllerGrantServiceError::CapacityExhausted => {
                 Self::CapacityExhausted
             }
+            SetRemoteControlControllerGrantServiceError::TransactionInProgress => Self::Busy,
         }
     }
 }
@@ -55,6 +58,7 @@ impl From<RevokeRemoteControlControllerServiceError> for RevokeRemoteControlCont
     fn from(error: RevokeRemoteControlControllerServiceError) -> Self {
         match error {
             RevokeRemoteControlControllerServiceError::Unavailable => Self::Unavailable,
+            RevokeRemoteControlControllerServiceError::TransactionInProgress => Self::Busy,
         }
     }
 }

@@ -19,6 +19,11 @@ use crate::manifold::Host;
 use crate::remote_control::{RemoteControlEndpoint, RemoteControlNodeIdentities};
 use crate::storage::StorageLayout;
 
+use super::super::remote_control_pairing_persistence::{
+    run_remote_control_pairing_persistence, RemoteControlAuthorizationStoreExchange,
+    RemoteControlPairingManifoldPersistence, RemoteControlPairingPersistenceEvents,
+    RemoteControlPairingPersistenceRequired,
+};
 use super::super::request_endpoints::RequestEndpointSet;
 use super::super::request_runner::{run_router, RunnerRequest};
 use super::super::{
@@ -501,6 +506,7 @@ where
         let request_channel =
             Channel::<M, RunnerRequest<ROUTED_REQUEST_BYTES>, ROUTED_REQUESTS>::new();
         let request_sender = request_channel.sender();
+        let pairing_persistence_events = RemoteControlPairingPersistenceEvents::<M>::new();
         let mut persistence = NoManifoldPersistence;
         let manifold = run_pooled(
             &mut engine,
@@ -517,6 +523,11 @@ where
             },
             |journaled| {
                 handle.route_journaled(journaled, |journaled| {
+                    if let Some(required) =
+                        RemoteControlPairingPersistenceRequired::copy_from(&journaled)
+                    {
+                        pairing_persistence_events.signal(required);
+                    }
                     if let Some(request) = RunnerRequest::copy_from(&journaled) {
                         let _ = request_sender.try_send(request);
                     }
@@ -546,7 +557,9 @@ where
             request_channel.receiver(),
             handle,
         );
-        join(join(manifold, router), drive).await;
+        let pairing_persistence =
+            run_remote_control_pairing_persistence(&pairing_persistence_events, None, handle);
+        join(join(join(manifold, router), pairing_persistence), drive).await;
     }
 
     /// Runs only the manifold for boards that schedule interfaces separately.
@@ -699,7 +712,11 @@ where
         H: ResumableHost,
     {
         let report = persistence
-            .restore(&mut self.node.engine, self.host.now())
+            .restore(
+                &mut self.node.engine,
+                &mut self.node.remote_control,
+                self.host.now(),
+            )
             .await;
         self.host.resume_at(report.logical_start);
         report
@@ -758,6 +775,10 @@ where
         let request_channel =
             Channel::<M, RunnerRequest<ROUTED_REQUEST_BYTES>, ROUTED_REQUESTS>::new();
         let request_sender = request_channel.sender();
+        let pairing_persistence_events = RemoteControlPairingPersistenceEvents::<M>::new();
+        let authorization_stores = RemoteControlAuthorizationStoreExchange::new();
+        let mut pairing_manifold_persistence =
+            RemoteControlPairingManifoldPersistence::new(persistence, &authorization_stores);
         let manifold = run_pooled(
             engine,
             host,
@@ -773,6 +794,11 @@ where
             },
             |journaled| {
                 handle.route_journaled(journaled, |journaled| {
+                    if let Some(required) =
+                        RemoteControlPairingPersistenceRequired::copy_from(&journaled)
+                    {
+                        pairing_persistence_events.signal(required);
+                    }
                     if let Some(request) = RunnerRequest::copy_from(&journaled) {
                         let _ = request_sender.try_send(request);
                     }
@@ -784,7 +810,7 @@ where
                 should_accept_resource: |_| false,
             },
             store,
-            persistence,
+            &mut pairing_manifold_persistence,
         );
         let router = run_router::<
             St,
@@ -797,7 +823,12 @@ where
             ROUTED_REQUESTS,
             ROUTED_REQUEST_BYTES,
         >(state, remote_control, request_channel.receiver(), *handle);
-        join(manifold, router).await;
+        let pairing_persistence = run_remote_control_pairing_persistence(
+            &pairing_persistence_events,
+            Some(&authorization_stores),
+            *handle,
+        );
+        join(join(manifold, router), pairing_persistence).await;
     }
 }
 

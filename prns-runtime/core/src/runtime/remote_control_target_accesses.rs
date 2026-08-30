@@ -7,6 +7,7 @@ use crate::remote_control::{
 pub enum SetRemoteControlTargetAccessServiceError {
     Unavailable,
     CapacityExhausted,
+    TransactionInProgress,
 }
 
 impl From<SetRemoteControlTargetAccessError> for SetRemoteControlTargetAccessServiceError {
@@ -20,6 +21,7 @@ impl From<SetRemoteControlTargetAccessError> for SetRemoteControlTargetAccessSer
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ForgetRemoteControlTargetServiceError {
     Unavailable,
+    TransactionInProgress,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +37,7 @@ impl From<SetRemoteControlTargetAccessServiceError> for SetRemoteControlTargetAc
         match error {
             SetRemoteControlTargetAccessServiceError::Unavailable => Self::Unavailable,
             SetRemoteControlTargetAccessServiceError::CapacityExhausted => Self::CapacityExhausted,
+            SetRemoteControlTargetAccessServiceError::TransactionInProgress => Self::Busy,
         }
     }
 }
@@ -50,6 +53,7 @@ impl From<ForgetRemoteControlTargetServiceError> for ForgetRemoteControlTargetCo
     fn from(error: ForgetRemoteControlTargetServiceError) -> Self {
         match error {
             ForgetRemoteControlTargetServiceError::Unavailable => Self::Unavailable,
+            ForgetRemoteControlTargetServiceError::TransactionInProgress => Self::Busy,
         }
     }
 }

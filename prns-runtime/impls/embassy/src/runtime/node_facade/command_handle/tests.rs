@@ -345,6 +345,23 @@ fn a_cancelled_await_releases_its_slot_and_ignores_a_late_settlement() {
 }
 
 #[test]
+fn a_cancelled_internal_pairing_settlement_releases_its_dedicated_slot() {
+    let pool: Pool<0> = CompletionPool::new();
+    let cancelled = CommandId(0);
+    assert!(pool.remote_control_pairing_settlement.claim(cancelled));
+    pool.remote_control_pairing_settlement.release(cancelled);
+    let mut routed = None;
+    assert!(matches!(
+        pool.route_settlement(cancelled, delivered(1), |settlement| {
+            routed = Some(settlement);
+        }),
+        JournalRoute::Application,
+    ));
+    assert_eq!(routed, Some(delivered(1)));
+    assert!(pool.remote_control_pairing_settlement.claim(CommandId(1)));
+}
+
+#[test]
 fn an_unclaimed_settlement_moves_to_the_application_route() {
     let pool: Pool<0> = CompletionPool::new();
     let mut routed = None;
@@ -494,6 +511,40 @@ fn pairing_lifecycle_preserves_commands_settlements_and_completion_capacity() {
     assert_eq!(
         block_on(bounded.open_remote_control_pairing(open_pairing())),
         Err(RemoteControlPairingControlError::Busy),
+    );
+}
+
+#[test]
+fn internal_pairing_settlement_is_independent_of_public_completion_capacity() {
+    let commands = Channel::<CriticalSectionRawMutex, IssuedCommand, 1>::new();
+    let completions = Pool::<0>::new();
+    let handle = super::PrnsNodeHandle::new(commands.sender(), &completions);
+    let announce = AnnounceNow {
+        destination: PEER,
+        target: AnnounceTarget::AllInterfaces,
+        app_data: AnnounceAppData::Registered,
+    };
+    let expected = announce.clone();
+    let failure = AnnounceNowFailure::Rejected(AnnounceNowRejection::UnknownDestination);
+
+    let (result, ()) = block_on(join(handle.settle_pairing_command(announce), async {
+        let issued = commands.receiver().receive().await;
+        assert_eq!(issued.command, PrnsCommand::AnnounceNow(expected));
+        assert!(matches!(
+            handle.route_journaled(
+                Journaled::CommandSettled {
+                    id: issued.id,
+                    settlement: Settlement::AnnounceNow(Err(failure)),
+                },
+                |_| panic!("internal pairing settlement reached the application"),
+            ),
+            JournalRoute::Awaiter,
+        ));
+    }));
+
+    assert_eq!(
+        result,
+        Err(RemoteControlPairingControlError::Failed(failure)),
     );
 }
 

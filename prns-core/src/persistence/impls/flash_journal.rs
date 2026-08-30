@@ -81,6 +81,8 @@ pub enum FlashJournalRecordKind {
     RouteUpsert = 2,
     RouteRemoval = 3,
     SelfRatchet = 4,
+    RemoteControlControllerGrants = 5,
+    RemoteControlTargetAccesses = 6,
 }
 
 impl FlashJournalRecordKind {
@@ -90,6 +92,8 @@ impl FlashJournalRecordKind {
             2 => Some(Self::RouteUpsert),
             3 => Some(Self::RouteRemoval),
             4 => Some(Self::SelfRatchet),
+            5 => Some(Self::RemoteControlControllerGrants),
+            6 => Some(Self::RemoteControlTargetAccesses),
             _ => None,
         }
     }
@@ -1130,12 +1134,26 @@ mod tests {
                 .append(FlashJournalRecordKind::RouteRemoval, b"second")
                 .await
                 .unwrap();
+            journal
+                .append(
+                    FlashJournalRecordKind::RemoteControlControllerGrants,
+                    b"third",
+                )
+                .await
+                .unwrap();
+            journal
+                .append(
+                    FlashJournalRecordKind::RemoteControlTargetAccesses,
+                    b"fourth",
+                )
+                .await
+                .unwrap();
             let (_, report, records) = open(journal.release()).await;
             assert_eq!(
                 report,
                 FlashJournalRestoreReport {
                     active_epoch: Some(0),
-                    restored_records: 2,
+                    restored_records: 4,
                     warning: None,
                 }
             );
@@ -1144,6 +1162,14 @@ mod tests {
                 vec![
                     (FlashJournalRecordKind::RouteUpsert, b"first".to_vec()),
                     (FlashJournalRecordKind::RouteRemoval, b"second".to_vec()),
+                    (
+                        FlashJournalRecordKind::RemoteControlControllerGrants,
+                        b"third".to_vec(),
+                    ),
+                    (
+                        FlashJournalRecordKind::RemoteControlTargetAccesses,
+                        b"fourth".to_vec(),
+                    ),
                 ]
             );
         });

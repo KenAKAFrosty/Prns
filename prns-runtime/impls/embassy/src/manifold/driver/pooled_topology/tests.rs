@@ -49,14 +49,32 @@ fn dedicated_lanes_own_the_source_id_but_fleet_lanes_preserve_the_member_stamp()
 impl<S: StorageLayout> ManifoldPersistence<S> for AlwaysDuePersistence {
     fn observe(&mut self, _journaled: &Journaled<'_>, _now: InstantMillis) {}
 
-    fn deadline(&self, now: InstantMillis) -> Option<InstantMillis> {
+    fn deadline(&mut self, now: InstantMillis) -> Option<InstantMillis> {
         Some(now)
+    }
+
+    fn observe_remote_control_pairing_failure(
+        &mut self,
+        _failure: crate::runtime::EmbeddedRemoteControlPairingPersistenceFailure,
+    ) {
     }
 
     async fn progress(&mut self, _engine: &mut EngineState<S>, _now: InstantMillis) {
         let progress = self.progress.get() + 1;
         self.progress.set(progress);
         assert!(progress <= 4, "persistence monopolized the executor");
+    }
+
+    async fn store_remote_control_authorization_snapshot(
+        &mut self,
+        _engine: &EngineState<S>,
+        _kind: crate::runtime::RemoteControlAuthorizationSnapshotKind,
+        _snapshot: &crate::runtime::RemoteControlAuthorizationSnapshot,
+        _now: InstantMillis,
+    ) -> crate::runtime::StoreRemoteControlAuthorizationSnapshotOutcome {
+        crate::runtime::StoreRemoteControlAuthorizationSnapshotOutcome::Failed(
+            crate::runtime::EmbeddedPersistenceFailure::Flash,
+        )
     }
 }
 
