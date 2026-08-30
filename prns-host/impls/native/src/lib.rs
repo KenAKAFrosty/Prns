@@ -1114,7 +1114,6 @@ async fn run(
         remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         interfaces: ManuallyAttached,
         persistence,
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         on_event: move |event, _state: &()| {
             if !publish_event(event_sink.as_ref(), event, &event_persistence) {
                 event_backpressure.notify_waiters();
