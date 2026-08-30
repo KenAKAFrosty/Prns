@@ -99,13 +99,14 @@ fn bytes_from_value(value: JsValue, key: &str) -> Result<Vec<u8>, JsValue> {
 }
 
 pub(crate) fn required_u64(object: &JsValue, key: &str) -> Result<u64, JsValue> {
-    u64_from_value(required_value(object, key)?, key)
-}
-
-fn u64_from_value(value: JsValue, key: &str) -> Result<u64, JsValue> {
+    let value = required_value(object, key)?;
     let number = value
         .as_f64()
         .ok_or_else(|| JsValue::from_str(&format!("{key} must be a number")))?;
+    u64_from_number(number, key)
+}
+
+pub(crate) fn u64_from_number(number: f64, key: &str) -> Result<u64, JsValue> {
     if !number.is_finite() || number < 0.0 || number.fract() != 0.0 {
         return Err(JsValue::from_str(&format!(
             "{key} must be a non-negative integer"
@@ -137,7 +138,12 @@ pub(crate) fn optional_u32(object: &JsValue, key: &str) -> Result<Option<u32>, J
 
 pub(crate) fn optional_u64(object: &JsValue, key: &str) -> Result<Option<u64>, JsValue> {
     optional_value(object, key)?
-        .map(|value| u64_from_value(value, key))
+        .map(|value| {
+            let number = value
+                .as_f64()
+                .ok_or_else(|| JsValue::from_str(&format!("{key} must be a number")))?;
+            u64_from_number(number, key)
+        })
         .transpose()
 }
 

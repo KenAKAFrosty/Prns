@@ -5,6 +5,7 @@ mod command_settlement;
 mod event_projection;
 mod input;
 mod js_translation;
+mod outbound_batch;
 mod packed_snapshot;
 mod parameters;
 mod runtime;

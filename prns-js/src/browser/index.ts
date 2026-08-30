@@ -58,7 +58,8 @@ import {
   webCryptoEntropy,
   webCryptoIdentity,
 } from "./bootstrap.js";
-import { byteKey } from "./bytes.js";
+import { byteKey, interfaceKey } from "./bytes.js";
+import type { InterfaceKey } from "./bytes.js";
 import {
   commandFailed,
 } from "./command_settlement.js";
@@ -180,6 +181,7 @@ import {
   nonNegativeInteger,
   nowMillis,
   packetFrame,
+  packetFrameView,
   positiveInteger,
 } from "./values.js";
 import type {
@@ -584,7 +586,7 @@ export class Prns {
     }
   >();
   #responseParts = new Map<bigint, Uint8Array[]>();
-  #attachedInterfaces = new Map<string, InterfaceSession>();
+  #attachedInterfaces = new Map<InterfaceKey, InterfaceSession>();
   #lifecycle: HostLifecycleState = Tag("Running");
   #stopCompleted = false;
   #stopPromise: Promise<StopOutcome> | undefined;
@@ -881,7 +883,7 @@ export class Prns {
       DeactivateInterface: (value) =>
         this.#host.deactivateInterface(interfaceId(value)),
       Ingest: ({ interfaceId: id, bytes }) =>
-        this.#host.ingest(interfaceId(id), packetFrame(bytes)),
+        this.#host.ingest(interfaceId(id), packetFrameView(bytes)),
       NextOutbound: ({ interfaceId: id, maximumFrames }) =>
         this.#host.nextOutboundFor(interfaceId(id), maximumFrames),
       CreateBluetoothReassembler: () => {
@@ -1011,14 +1013,22 @@ export class Prns {
           }),
         ),
       SendLinkPacket: ({ linkId: value, payload }) =>
-        this.#issueCommand("send-link-packet", command, (entropy) =>
-          this.#runtime.sendLinkPacket({
-            linkId: value,
-            payload,
-            nowMs: this.#now(),
-            entropy,
-          }),
-        ),
+        this.#issueCommand("send-link-packet", command, (entropy) => {
+          const nowMs = this.#now();
+          return this.#runtime.sendLinkPacketDirect === undefined
+            ? this.#runtime.sendLinkPacket({
+                linkId: value,
+                payload,
+                nowMs,
+                entropy,
+              })
+            : this.#runtime.sendLinkPacketDirect(
+                value,
+                payload,
+                nowMs,
+                entropy,
+              );
+        }),
       Request: ({
         linkId: value,
         pathHash,
@@ -1533,12 +1543,12 @@ export class Prns {
       return commandFailed(webSocketCommandFailure(connected));
     }
     const session = connected.data;
-    const key = byteKey(session.interfaceId);
+    const key = interfaceKey(session.interfaceId);
     if (this.#attachedInterfaces.has(key)) {
       await session.close();
       return commandFailed(
         Tag("BackendFailed", {
-          detail: `runtime reused active interface identifier ${key}`,
+          detail: `runtime reused active interface identifier ${byteKey(session.interfaceId)}`,
         }),
       );
     }
@@ -1551,7 +1561,7 @@ export class Prns {
   }
 
   async #detachInterface(interfaceId: InterfaceId): Promise<CommandSettlement> {
-    const key = byteKey(interfaceId);
+    const key = interfaceKey(interfaceId);
     const session = this.#attachedInterfaces.get(key);
     if (session === undefined) {
       return commandFailed(Tag("UnknownInterface"));
@@ -1926,7 +1936,7 @@ export class Prns {
     const running = this.#lifecycle.tag === "Running";
     const health: InterfaceHealth = running ? "Connected" : "Disabled";
     return interfaces.map((entry) => {
-      const active = inspection.get(byteKey(entry.id));
+      const active = inspection.get(interfaceKey(entry.id));
       return {
         interfaceId: entry.id,
         ...(active === undefined ? {} : { name: active.name }),

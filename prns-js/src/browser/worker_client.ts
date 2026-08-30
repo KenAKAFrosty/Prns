@@ -84,7 +84,8 @@ import { UsbAutoInterface } from "./usb_auto/index.js";
 import type { UsbAutoRuntimeHost } from "./usb_auto/runtime.js";
 import { RNodeInterface } from "./rnode.js";
 import type { PrnsInterfaces } from "./interfaces.js";
-import { byteKey } from "./bytes.js";
+import { interfaceKey } from "./bytes.js";
+import type { InterfaceKey } from "./bytes.js";
 import { bitrateBps, hardwareMtu, packetFrame } from "./values.js";
 import type { PrnsSnapshot } from "./snapshot.js";
 import {
@@ -273,7 +274,7 @@ class DedicatedWorkerPrns {
     number,
     PendingProjectionSynchronization
   >();
-  readonly #pageSessions = new Map<string, InterfaceSession>();
+  readonly #pageSessions = new Map<InterfaceKey, InterfaceSession>();
   readonly #webSocketSessions = new Map<number, WorkerWebSocketSession>();
   readonly #autoWifi: WorkerAutoWifiInterface;
   #nextCallId = 1;
@@ -373,10 +374,10 @@ class DedicatedWorkerPrns {
     this.interfaces = {
       webSocket: new WorkerWebSocketInterface(this),
       bluetooth: new BluetoothInterface(capabilityHost, (session) =>
-        this.#pageSessions.set(byteKey(session.interfaceId), session),
+        this.#pageSessions.set(interfaceKey(session.interfaceId), session),
       ),
       usbAuto: new UsbAutoInterface(capabilityHost, (session) =>
-        this.#pageSessions.set(byteKey(session.interfaceId), session),
+        this.#pageSessions.set(interfaceKey(session.interfaceId), session),
       ),
       rnode: new RNodeInterface(capabilityHost),
       autoWifi: this.#autoWifi,

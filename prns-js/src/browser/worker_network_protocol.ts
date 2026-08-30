@@ -20,7 +20,7 @@ import type {
   WorkerCapabilityCall,
   WorkerCapabilityOutcomes,
 } from "./worker_protocol.js";
-import { packetFrame } from "./values.js";
+import { packetFrameView } from "./values.js";
 
 export type NetworkWorkerStartMessage = Tagged<
   "InitializeNetworkWorker",
@@ -138,7 +138,7 @@ export function unpackOutboundFrames(
     frames[index] = {
       type: "frame",
       target: Tag("Interface", interfaceId),
-      bytes: packetFrame(new Uint8Array(buffer, payloadOffset, length)),
+      bytes: packetFrameView(new Uint8Array(buffer, payloadOffset, length)),
     };
     payloadOffset += length;
   }

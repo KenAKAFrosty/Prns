@@ -24,6 +24,7 @@ import type {
   WebSocketRuntimeHost,
   WebSocketSession,
 } from "./index.js";
+import { parseWebSocketDecodeBatch } from "./decode_batch.js";
 
 type SessionWriteOutcome = Tag<"Written"> | InterfaceSessionFailure;
 type SessionHandleOutcome = Tag<"Handled"> | InterfaceSessionFailure;
@@ -198,7 +199,10 @@ export class BrowserWebSocketSession implements WebSocketSession {
       void this.#submitIngress([decoded.data]);
       return Tag("Handled");
     }
-    const batch = this.#codec.decode(decoded.data);
+    const packed = this.#codec.decodePacked?.(decoded.data);
+    const batch = packed === undefined
+      ? this.#codec.decode(decoded.data)
+      : parseWebSocketDecodeBatch(packed);
     if (this.#codec.canReadOutbound()) {
       this.#resolveFramingWaiters();
     }

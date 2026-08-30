@@ -46,12 +46,13 @@ use crate::input::{
     link_id_from_vec, optional_array, optional_bool, optional_bytes, optional_i64, optional_string,
     optional_u32, optional_u64, parse_interface_kind, parse_interface_mode, request_id_from_vec,
     request_path_hash_from_vec, required_array, required_bool, required_bytes, required_string,
-    required_u64, secret_key_from_vec,
+    required_u64, secret_key_from_vec, u64_from_number,
 };
 use crate::js_translation::{
     command_settled_to_js, interface_kind_name, outbound_to_js, set_bigint, set_bytes, set_str,
     set_u32, set_u64, set_usize, set_value,
 };
+use crate::outbound_batch::encode as encode_outbound_batch;
 use crate::parameters::{bitrate_bps_u32, BROWSER_PERSISTENCE_VERSION};
 
 #[derive(Clone, Copy)]
@@ -72,8 +73,13 @@ const MAX_PERSISTED_RATCHETS: usize = 4_096;
 pub(crate) struct OutboundFrame {
     pub(crate) target: OutboundTarget,
     pub(crate) bytes: Vec<u8>,
-    pub(crate) announce: bool,
-    pub(crate) hops: Option<u8>,
+    pub(crate) kind: OutboundFrameKind,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum OutboundFrameKind {
+    Frame,
+    Announce { hops: u8 },
 }
 
 #[derive(Clone)]
@@ -455,6 +461,32 @@ impl PrnsRuntime {
         let payload = SendToLinkPayload::from_slice(&required_bytes(&options, "payload")?)
             .map_err(|_| JsValue::from_str("payload exceeds the link packet limit"))?;
         let (now_ms, entropy) = self.command_context(&options)?;
+        Ok(self.issue_link_packet(link_id, payload, now_ms, entropy))
+    }
+
+    #[wasm_bindgen(js_name = sendLinkPacketDirect)]
+    pub fn send_link_packet_direct(
+        &mut self,
+        link_id: Vec<u8>,
+        payload: Vec<u8>,
+        now_ms: f64,
+        entropy: Vec<u8>,
+    ) -> Result<u64, JsValue> {
+        let link_id = link_id_from_vec(link_id)?;
+        let payload = SendToLinkPayload::from_slice(&payload)
+            .map_err(|_| JsValue::from_str("payload exceeds the link packet limit"))?;
+        let now_ms = u64_from_number(now_ms, "nowMs")?;
+        let entropy = self.command_context_values(now_ms, entropy)?;
+        Ok(self.issue_link_packet(link_id, payload, now_ms, entropy))
+    }
+
+    fn issue_link_packet(
+        &mut self,
+        link_id: LinkId,
+        payload: SendToLinkPayload,
+        now_ms: u64,
+        entropy: Vec<u8>,
+    ) -> u64 {
         let id = self.mint_command_id();
         self.ingest_command(
             id,
@@ -462,7 +494,7 @@ impl PrnsRuntime {
             now_ms,
             entropy,
         );
-        Ok(id.0)
+        id.0
     }
 
     #[wasm_bindgen(js_name = request)]
@@ -706,6 +738,28 @@ impl PrnsRuntime {
         let bytes = required_bytes(&options, "bytes")?;
         let now_ms = required_u64(&options, "nowMs")?;
         let entropy = required_bytes(&options, "entropy")?;
+        self.ingest_fields(interface_id, bytes, now_ms, entropy)
+    }
+
+    #[wasm_bindgen(js_name = ingestDirect)]
+    pub fn ingest_direct(
+        &mut self,
+        interface_id: Vec<u8>,
+        bytes: Vec<u8>,
+        now_ms: f64,
+        entropy: Vec<u8>,
+    ) -> Result<(), JsValue> {
+        let now_ms = u64_from_number(now_ms, "nowMs")?;
+        self.ingest_fields(interface_id, bytes, now_ms, entropy)
+    }
+
+    fn ingest_fields(
+        &mut self,
+        interface_id: Vec<u8>,
+        bytes: Vec<u8>,
+        now_ms: u64,
+        entropy: Vec<u8>,
+    ) -> Result<(), JsValue> {
         let entropy = Entropy::try_new(entropy)
             .map_err(|error| JsValue::from_str(&format!("host entropy rejected: {error:?}")))?;
         let step = self
@@ -873,6 +927,14 @@ impl PrnsRuntime {
             drained.push(&outbound_to_js(&frame));
         }
         drained
+    }
+
+    #[wasm_bindgen(js_name = drainOutboundBatch)]
+    pub fn drain_outbound_batch(&mut self) -> Result<Vec<u8>, JsValue> {
+        let batch = encode_outbound_batch(&self.outbound)
+            .map_err(|error| JsValue::from_str(&format!("outbound batch failed: {error:?}")))?;
+        self.outbound.clear();
+        Ok(batch)
     }
 
     #[wasm_bindgen(js_name = persistedState)]
@@ -1190,13 +1252,22 @@ impl PrnsRuntime {
 
     fn command_context(&mut self, options: &JsValue) -> Result<(u64, Vec<u8>), JsValue> {
         let now_ms = required_u64(options, "nowMs")?;
-        let entropy = Entropy::try_new(required_bytes(options, "entropy")?)
+        self.command_context_values(now_ms, required_bytes(options, "entropy")?)
+            .map(|entropy| (now_ms, entropy))
+    }
+
+    fn command_context_values(
+        &mut self,
+        now_ms: u64,
+        entropy: Vec<u8>,
+    ) -> Result<Vec<u8>, JsValue> {
+        let entropy = Entropy::try_new(entropy)
             .map_err(|error| JsValue::from_str(&format!("host entropy rejected: {error:?}")))?;
         let step = self
             .host
             .begin_step(MonotonicMillis::new(now_ms), entropy)
             .map_err(|error| JsValue::from_str(&format!("host time moved backwards: {error:?}")))?;
-        Ok((now_ms, step.entropy.as_bytes().to_vec()))
+        Ok(step.entropy.as_bytes().to_vec())
     }
 
     fn mint_command_id(&mut self) -> CommandId {
@@ -1417,8 +1488,7 @@ fn directive_to_frame(directive: Directive<'_>) -> OutboundFrame {
         Directive::Send { target, bytes } => OutboundFrame {
             target: OutboundTarget::Interface(target),
             bytes: bytes.to_vec(),
-            announce: false,
-            hops: None,
+            kind: OutboundFrameKind::Frame,
         },
         Directive::SendIfOnline {
             target,
@@ -1429,8 +1499,7 @@ fn directive_to_frame(directive: Directive<'_>) -> OutboundFrame {
             OutboundFrame {
                 target: OutboundTarget::Interface(target),
                 bytes: bytes.to_vec(),
-                announce: false,
-                hops: None,
+                kind: OutboundFrameKind::Frame,
             }
         }
         Directive::SendAnnounce {
@@ -1440,8 +1509,7 @@ fn directive_to_frame(directive: Directive<'_>) -> OutboundFrame {
         } => OutboundFrame {
             target: OutboundTarget::Interface(target),
             bytes: bytes.to_vec(),
-            announce: true,
-            hops: Some(hops),
+            kind: OutboundFrameKind::Announce { hops },
         },
         Directive::SendToFleet {
             supervisor,
@@ -1450,8 +1518,7 @@ fn directive_to_frame(directive: Directive<'_>) -> OutboundFrame {
         } => OutboundFrame {
             target: OutboundTarget::Broadcast { supervisor, fan },
             bytes: bytes.to_vec(),
-            announce: false,
-            hops: None,
+            kind: OutboundFrameKind::Frame,
         },
         Directive::SendAnnounceToFleet {
             supervisor,
@@ -1461,8 +1528,7 @@ fn directive_to_frame(directive: Directive<'_>) -> OutboundFrame {
         } => OutboundFrame {
             target: OutboundTarget::Broadcast { supervisor, fan },
             bytes: bytes.to_vec(),
-            announce: true,
-            hops: Some(hops),
+            kind: OutboundFrameKind::Announce { hops },
         },
         Directive::EmitFrame {
             target,
@@ -1475,8 +1541,7 @@ fn directive_to_frame(directive: Directive<'_>) -> OutboundFrame {
             OutboundFrame {
                 target: OutboundTarget::Interface(target),
                 bytes,
-                announce: false,
-                hops: None,
+                kind: OutboundFrameKind::Frame,
             }
         }
     }

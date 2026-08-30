@@ -20,6 +20,7 @@ export declare class PrnsRuntime implements PrnsRuntimeBinding {
   requestPath: PrnsRuntimeBinding["requestPath"];
   identify: PrnsRuntimeBinding["identify"];
   sendLinkPacket: PrnsRuntimeBinding["sendLinkPacket"];
+  sendLinkPacketDirect: NonNullable<PrnsRuntimeBinding["sendLinkPacketDirect"]>;
   request: PrnsRuntimeBinding["request"];
   respond: PrnsRuntimeBinding["respond"];
   resourceSegmentPlan: PrnsRuntimeBinding["resourceSegmentPlan"];
@@ -30,10 +31,12 @@ export declare class PrnsRuntime implements PrnsRuntimeBinding {
   allowRequester: PrnsRuntimeBinding["allowRequester"];
   closeLink: PrnsRuntimeBinding["closeLink"];
   ingest: PrnsRuntimeBinding["ingest"];
+  ingestDirect: NonNullable<PrnsRuntimeBinding["ingestDirect"]>;
   drainEventBatch: PrnsRuntimeBinding["drainEventBatch"];
   drainCommandSettlementBatch(): Uint8Array;
   drainEvents: PrnsRuntimeBinding["drainEvents"];
   drainOutbound: PrnsRuntimeBinding["drainOutbound"];
+  drainOutboundBatch: NonNullable<PrnsRuntimeBinding["drainOutboundBatch"]>;
   persistedState: PrnsRuntimeBinding["persistedState"];
   restorePersistedState: PrnsRuntimeBinding["restorePersistedState"];
   snapshot: PrnsRuntimeBinding["snapshot"];
@@ -64,6 +67,7 @@ export declare class WebSocketFramingCodec
   isDetecting: WebSocketFramingCodecBinding["isDetecting"];
   rawFallbackDelayMillis: WebSocketFramingCodecBinding["rawFallbackDelayMillis"];
   decode: WebSocketFramingCodecBinding["decode"];
+  decodePacked: NonNullable<WebSocketFramingCodecBinding["decodePacked"]>;
   stageOutbound: WebSocketFramingCodecBinding["stageOutbound"];
   releaseRawFallback: WebSocketFramingCodecBinding["releaseRawFallback"];
 }

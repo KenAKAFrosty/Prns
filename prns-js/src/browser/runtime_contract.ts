@@ -144,6 +144,12 @@ export type PrnsRuntimeBinding = {
   requestPath(options: RuntimeDestinationCommandOptions): bigint;
   identify(options: RuntimeIdentifyOptions): bigint;
   sendLinkPacket(options: RuntimeLinkPayloadOptions): bigint;
+  sendLinkPacketDirect?(
+    linkId: LinkId,
+    payload: Uint8Array,
+    nowMs: InstantMillis,
+    entropy: EntropyBytes,
+  ): bigint;
   request(options: RuntimeRequestOptions): bigint;
   respond(options: RuntimeRespondOptions): bigint;
   resourceSegmentPlan(options: RuntimeResourcePlanInput): unknown;
@@ -158,9 +164,16 @@ export type PrnsRuntimeBinding = {
   allowRequester(options: RuntimeAllowRequesterOptions): bigint;
   closeLink(options: RuntimeCloseLinkOptions): bigint;
   ingest(options: RuntimeIngestOptions): void;
+  ingestDirect?(
+    interfaceId: InterfaceId,
+    bytes: PacketFrame,
+    nowMs: InstantMillis,
+    entropy: EntropyBytes,
+  ): void;
   drainEventBatch(): Uint8Array;
   drainCommandSettlementBatch?(): Uint8Array;
   drainEvents(): unknown[];
+  drainOutboundBatch?(): Uint8Array;
   drainOutbound(): unknown[];
   persistedState(options: { readonly nowMs: InstantMillis }): unknown;
   restorePersistedState(
@@ -193,6 +206,7 @@ export type WebSocketFramingCodecBinding = {
   isDetecting(): boolean;
   rawFallbackDelayMillis(): number;
   decode(message: Uint8Array): WebSocketDecodeBatchBinding;
+  decodePacked?(message: Uint8Array): Uint8Array;
   stageOutbound(packet: PacketFrame): Uint8Array | undefined;
   releaseRawFallback(): Uint8Array | undefined;
 };

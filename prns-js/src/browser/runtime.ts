@@ -6,7 +6,8 @@ import type {
   InterfaceRoutingPolicy,
   WebSocketFramingSelection,
 } from "../contract.js";
-import { byteKey } from "./bytes.js";
+import { byteKey, interfaceKey } from "./bytes.js";
+import type { InterfaceKey } from "./bytes.js";
 import { describeHostError } from "./host_errors.js";
 import type { BrowserUsbDeviceFilter } from "./host_apis.js";
 import type { BluetoothHostReassembler } from "./bluetooth/runtime.js";
@@ -15,6 +16,7 @@ import {
   outboundTargets,
   parseOutboundFrame,
 } from "./outbound.js";
+import { parseOutboundBatch } from "./outbound_batch.js";
 import type {
   InterfaceOutboundOutcome,
   NonEmptyPrnsOutboundFrames,
@@ -26,7 +28,7 @@ import {
   bitrateBps,
   channelTag,
   hardwareMtu,
-  packetFrame,
+  packetFrameView,
   positiveInteger,
 } from "./values.js";
 import type {
@@ -99,7 +101,7 @@ export class RuntimeHost {
   readonly #bleIdentityAvailability: BleIdentityAvailability;
   readonly #onRuntimeActivity: () => void;
   #activeInterfaces = new Map<
-    string,
+    InterfaceKey,
     {
       id: InterfaceId;
       name: InterfaceName;
@@ -111,9 +113,9 @@ export class RuntimeHost {
     }
   >();
   #activeRegistrationKeys = new Set<string>();
-  #outboundQueues = new Map<string, PrnsOutboundFrame[]>();
-  #overflowedOutbound = new Set<string>();
-  #outboundWaiters = new Map<string, Set<OutboundWaiter>>();
+  #outboundQueues = new Map<InterfaceKey, PrnsOutboundFrame[]>();
+  #overflowedOutbound = new Set<InterfaceKey>();
+  #outboundWaiters = new Map<InterfaceKey, Set<OutboundWaiter>>();
 
   constructor(
     wasm: PrnsWasmModule,
@@ -164,11 +166,11 @@ export class RuntimeHost {
     } catch (error) {
       return runtimeRejected("register-interface", error);
     }
-    const key = byteKey(id);
+    const key = interfaceKey(id);
     if (this.#activeInterfaces.has(key)) {
       return Tag("AlreadyActive", {
         interface: interfaceName,
-        target: key,
+        target: byteKey(id),
       });
     }
     this.#activeRegistrationKeys.add(registrationKey);
@@ -187,7 +189,7 @@ export class RuntimeHost {
   }
 
   deactivateInterface(id: InterfaceId): InterfaceDetachOutcome {
-    const key = byteKey(id);
+    const key = interfaceKey(id);
     const active = this.#activeInterfaces.get(key);
     if (!active) {
       this.#resolveOutboundWaiters(key, Tag("InterfaceDetached"));
@@ -201,7 +203,7 @@ export class RuntimeHost {
       if (!removed) {
         return runtimeRejected(
           "remove-interface",
-          `runtime did not contain interface ${key}`,
+          `runtime did not contain interface ${byteKey(id)}`,
         );
       }
     } catch (error) {
@@ -217,14 +219,14 @@ export class RuntimeHost {
   }
 
   setContractKind(id: InterfaceId, kind: InterfaceKind): void {
-    const active = this.#activeInterfaces.get(byteKey(id));
+    const active = this.#activeInterfaces.get(interfaceKey(id));
     if (active !== undefined && active.contractKind !== kind) {
       active.contractKind = kind;
       this.#onRuntimeActivity();
     }
   }
 
-  interfaceInspection(): ReadonlyMap<string, RuntimeInterfaceInspection> {
+  interfaceInspection(): ReadonlyMap<InterfaceKey, RuntimeInterfaceInspection> {
     return new Map(
       [...this.#activeInterfaces].map(([key, active]) => [
         key,
@@ -247,13 +249,18 @@ export class RuntimeHost {
       return entropy;
     }
     try {
-      this.#runtime.ingest({
-        interfaceId,
-        bytes,
-        nowMs: this.#now(),
-        entropy: entropy.data,
-      });
-      const active = this.#activeInterfaces.get(byteKey(interfaceId));
+      const nowMs = this.#now();
+      if (this.#runtime.ingestDirect === undefined) {
+        this.#runtime.ingest({
+          interfaceId,
+          bytes,
+          nowMs,
+          entropy: entropy.data,
+        });
+      } else {
+        this.#runtime.ingestDirect(interfaceId, bytes, nowMs, entropy.data);
+      }
+      const active = this.#activeInterfaces.get(interfaceKey(interfaceId));
       if (active !== undefined) {
         active.rxBytes = saturatingAdd(active.rxBytes, bytes.length);
       }
@@ -266,7 +273,13 @@ export class RuntimeHost {
 
   drainOutbound(): RuntimeOutboundDrainOutcome {
     try {
-      return Tag("Drained", this.#runtime.drainOutbound().map(parseOutboundFrame));
+      const packed = this.#runtime.drainOutboundBatch?.();
+      return Tag(
+        "Drained",
+        packed === undefined
+          ? this.#runtime.drainOutbound().map(parseOutboundFrame)
+          : parseOutboundBatch(packed),
+      );
     } catch (error) {
       return runtimeRejected("drain-outbound", error);
     }
@@ -276,8 +289,8 @@ export class RuntimeHost {
     interfaceId: InterfaceId,
     maximumFrames = Number.MAX_SAFE_INTEGER,
   ): Promise<InterfaceOutboundOutcome> {
-    const interfaceKey = byteKey(interfaceId);
-    while (this.#activeInterfaces.has(interfaceKey)) {
+    const key = interfaceKey(interfaceId);
+    while (this.#activeInterfaces.has(key)) {
       const outbound = this.#takeOutboundFor(interfaceId, maximumFrames);
       if (outbound.tag !== "Outbound") {
         return outbound;
@@ -288,7 +301,7 @@ export class RuntimeHost {
           outbound.data as NonEmptyPrnsOutboundFrames,
         );
       }
-      const wake = await this.#waitForOutbound(interfaceKey);
+      const wake = await this.#waitForOutbound(key);
       if (wake.tag === "InterfaceDetached") {
         return wake;
       }
@@ -306,7 +319,7 @@ export class RuntimeHost {
     } catch (error) {
       return runtimeRejected("drain-outbound", error);
     }
-    const interfaceKey = byteKey(interfaceId);
+    const selectedInterfaceKey = interfaceKey(interfaceId);
     const direct: PrnsOutboundFrame[] = [];
     const drained = this.drainOutbound();
     if (drained.tag !== "Drained") {
@@ -315,7 +328,7 @@ export class RuntimeHost {
     for (const frame of drained.data) {
       for (const [key, active] of this.#activeInterfaces) {
         if (outboundTargets(frame.target, active.id, active.supervisorKind)) {
-          if (key === interfaceKey) {
+          if (key === selectedInterfaceKey) {
             direct.push(frame);
             continue;
           }
@@ -330,17 +343,17 @@ export class RuntimeHost {
         }
       }
     }
-    if (this.#overflowedOutbound.delete(interfaceKey)) {
-      this.#outboundQueues.set(interfaceKey, []);
+    if (this.#overflowedOutbound.delete(selectedInterfaceKey)) {
+      this.#outboundQueues.set(selectedInterfaceKey, []);
       return Tag("OutboundQueueFull", {
         capacity: INTERFACE_OUTBOUND_QUEUE_DEPTH,
       });
     }
-    const queued = this.#outboundQueues.get(interfaceKey) ?? [];
+    const queued = this.#outboundQueues.get(selectedInterfaceKey) ?? [];
     const available = queued.concat(direct);
     const outbound = available.slice(0, frameLimit);
-    this.#outboundQueues.set(interfaceKey, available.slice(frameLimit));
-    const active = this.#activeInterfaces.get(interfaceKey);
+    this.#outboundQueues.set(selectedInterfaceKey, available.slice(frameLimit));
+    const active = this.#activeInterfaces.get(selectedInterfaceKey);
     if (active !== undefined) {
       active.txBytes = outbound.reduce(
         (total, frame) => saturatingAdd(total, frame.bytes.length),
@@ -350,7 +363,7 @@ export class RuntimeHost {
     return Tag("Outbound", outbound);
   }
 
-  #waitForOutbound(key: string): Promise<OutboundWaitOutcome> {
+  #waitForOutbound(key: InterfaceKey): Promise<OutboundWaitOutcome> {
     if (!this.#activeInterfaces.has(key)) {
       return Promise.resolve(Tag("InterfaceDetached"));
     }
@@ -370,7 +383,7 @@ export class RuntimeHost {
   }
 
   #resolveOutboundWaiters(
-    key: string,
+    key: InterfaceKey,
     outcome: OutboundWaitOutcome,
   ): void {
     const waiters = this.#outboundWaiters.get(key);
@@ -487,7 +500,7 @@ export class RuntimeHost {
     bytes: Uint8Array,
   ): RuntimeIngestOutcome {
     try {
-      return this.ingest(id, packetFrame(bytes));
+      return this.ingest(id, packetFrameView(bytes));
     } catch (error) {
       return runtimeRejected("ingest", error);
     }
@@ -520,7 +533,7 @@ export class RuntimeHost {
 
   autoWifiIngest(id: InterfaceId, bytes: Uint8Array): RuntimeIngestOutcome {
     try {
-      return this.ingest(id, packetFrame(bytes));
+      return this.ingest(id, packetFrameView(bytes));
     } catch (error) {
       return runtimeRejected("ingest", error);
     }
