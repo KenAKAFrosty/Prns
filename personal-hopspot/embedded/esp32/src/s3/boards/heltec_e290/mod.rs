@@ -37,6 +37,7 @@ impl Esp32S3Board for HeltecE290Board {
     const BOOT_BANNER: &'static str = "HOPSPOT_HELTEC_E290";
     const USB_INTERFACE_ID: InterfaceId = USB_INTERFACE_ID;
     const FLASH_LAYOUT: screen::HopspotS3FlashLayout = screen::S3_16_MIB_FLASH_LAYOUT;
+    const MAX_TX_POWER_DBM: i8 = 22;
     type Display = RetainedBoardDisplay<E290Display>;
     type Battery = screen::NoBattery;
     type Gnss = NoGnss;
