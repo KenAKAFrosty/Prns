@@ -97,6 +97,7 @@ impl CryptoPoolConfig {
 
 const MANIFOLD_IO_HEADROOM: usize = 2;
 const MIN_POOL_WORKERS: usize = 4;
+const MAX_EFFICIENCY_SPILLOVER_WORKERS: usize = 2;
 
 impl PoolWorkers {
     fn resolve(self) -> NonZeroUsize {
@@ -106,15 +107,27 @@ impl PoolWorkers {
                 let logical = std::thread::available_parallelism()
                     .map(NonZeroUsize::get)
                     .unwrap_or(6);
-                let workers = match performance_cores() {
-                    Some(performance) if performance < logical => performance
-                        .saturating_sub(MANIFOLD_IO_HEADROOM)
-                        .max(MIN_POOL_WORKERS),
-                    _ => logical.saturating_sub(MANIFOLD_IO_HEADROOM).max(1),
-                };
+                let workers = automatic_worker_count(logical, performance_cores());
                 NonZeroUsize::new(workers).unwrap_or(NonZeroUsize::MIN)
             }
         }
+    }
+}
+
+fn automatic_worker_count(logical: usize, performance: Option<usize>) -> usize {
+    match performance {
+        Some(performance) if performance < logical => {
+            let performance_workers = performance
+                .saturating_sub(MANIFOLD_IO_HEADROOM)
+                .max(MIN_POOL_WORKERS);
+            let efficiency_spillover = logical
+                .saturating_sub(performance)
+                .min(MAX_EFFICIENCY_SPILLOVER_WORKERS);
+            performance_workers
+                .saturating_add(efficiency_spillover)
+                .min(logical.saturating_sub(MANIFOLD_IO_HEADROOM).max(1))
+        }
+        _ => logical.saturating_sub(MANIFOLD_IO_HEADROOM).max(1),
     }
 }
 
