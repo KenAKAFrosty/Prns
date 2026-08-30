@@ -1,4 +1,6 @@
-use crate::engine::{RemoteControlTargetPairingFinalization, Settlement};
+use crate::engine::{
+    RemoteControlControllerPairingFinalization, RemoteControlTargetPairingFinalization, Settlement,
+};
 use crate::routing::delivery::Delivery;
 
 use super::{Diagnostic, Message, PrnsEvent};
@@ -394,6 +396,9 @@ fn settlement_kind(settlement: &Settlement) -> &'static str {
         Settlement::RejectRemoteControlControllerPairing(_) => {
             "reject_remote_control_controller_pairing"
         }
+        Settlement::SettleRemoteControlControllerPairingPersistence(_) => {
+            "settle_remote_control_controller_pairing_persistence"
+        }
     }
 }
 
@@ -428,6 +433,13 @@ fn settlement_outcome(settlement: &Settlement) -> &'static str {
         Settlement::RemoteControlControllerPairingRequest(result) => result.is_ok(),
         Settlement::ApproveRemoteControlControllerPairing(result) => result.is_ok(),
         Settlement::RejectRemoteControlControllerPairing(result) => result.is_ok(),
+        Settlement::SettleRemoteControlControllerPairingPersistence(Ok(
+            RemoteControlControllerPairingFinalization::Completed { .. },
+        )) => true,
+        Settlement::SettleRemoteControlControllerPairingPersistence(
+            Ok(RemoteControlControllerPairingFinalization::PersistenceFailureRecorded { .. })
+            | Err(_),
+        ) => false,
     };
     if succeeded {
         "succeeded"

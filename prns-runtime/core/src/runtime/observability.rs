@@ -4,12 +4,14 @@ use crate::engine::{
     CloseLinkFailure, CloseRemoteControlPairingFailure, EstablishLinkFailure, IdentifyFailure,
     Journaled, LinkClosedReason, OpenRemoteControlPairingFailure,
     RejectRemoteControlControllerPairingFailure, RejectRemoteControlTargetPairingFailure,
-    RemoteControlControllerPairingRequestBuildError, RemoteControlControllerPairingRequestFailure,
+    RemoteControlControllerPairingFinalization, RemoteControlControllerPairingRequestBuildError,
+    RemoteControlControllerPairingRequestFailure,
     RemoteControlControllerPairingRequestFailureCause, RemoteControlPairingResponseDispatchFailure,
     RemoteControlTargetPairingFinalization, RequestPathFailure, RespondFailure, RouteRemovalCause,
     SendGroupFailure, SendPlainPacketFailure, SendRequestFailure, SendResourceFailure,
     SendSinglePacketFailure, SendToChannelFailure, SendToLinkFailure,
     SetRegisteredAnnounceAppDataFailure, SetResourceStrategyFailure,
+    SettleRemoteControlControllerPairingPersistenceFailure,
     SettleRemoteControlTargetPairingAuthorizationFailure, Settlement,
 };
 use crate::identity::held::HoldIdentityError;
@@ -46,6 +48,7 @@ prns_macros::iterable_enum! {
         RemoteControlControllerPairingRequest,
         ApproveRemoteControlControllerPairing,
         RejectRemoteControlControllerPairing,
+        SettleRemoteControlControllerPairingPersistence,
     }
 }
 
@@ -451,6 +454,20 @@ impl From<&Settlement> for SettledOperation {
                 operation: Operation::RejectRemoteControlControllerPairing,
                 outcome: result.runtime_outcome(),
             },
+            Settlement::SettleRemoteControlControllerPairingPersistence(result) => Self {
+                operation: Operation::SettleRemoteControlControllerPairingPersistence,
+                outcome: match result {
+                    Ok(RemoteControlControllerPairingFinalization::Completed { .. }) => {
+                        RuntimeOperationOutcome::Succeeded
+                    }
+                    Ok(
+                        RemoteControlControllerPairingFinalization::PersistenceFailureRecorded {
+                            ..
+                        },
+                    ) => RuntimeOperationOutcome::DependencyFailed,
+                    Err(failure) => RuntimeOperationOutcome::from(failure),
+                },
+            },
         }
     }
 }
@@ -751,6 +768,19 @@ impl From<&SettleRemoteControlTargetPairingAuthorizationFailure> for RuntimeOper
                 failure,
                 ..
             } => Self::from(failure),
+        }
+    }
+}
+
+impl From<&SettleRemoteControlControllerPairingPersistenceFailure> for RuntimeOperationOutcome {
+    fn from(failure: &SettleRemoteControlControllerPairingPersistenceFailure) -> Self {
+        match failure {
+            SettleRemoteControlControllerPairingPersistenceFailure::NoPersistenceOwed {
+                ..
+            }
+            | SettleRemoteControlControllerPairingPersistenceFailure::AttemptMismatch { .. } => {
+                Self::Sequencing
+            }
         }
     }
 }

@@ -57,7 +57,8 @@ impl Settleable for SendPlainPacket {
             | Settlement::BeginRemoteControlControllerPairing(_)
             | Settlement::ApproveRemoteControlControllerPairing(_)
             | Settlement::RejectRemoteControlControllerPairing(_)
-            | Settlement::RemoteControlControllerPairingRequest(_) => None,
+            | Settlement::RemoteControlControllerPairingRequest(_)
+            | Settlement::SettleRemoteControlControllerPairingPersistence(_) => None,
         }
     }
 }

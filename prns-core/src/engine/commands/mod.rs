@@ -38,10 +38,13 @@ pub use remote_control_controller_pairing::{
     BeginRemoteControlControllerPairing, BeginRemoteControlControllerPairingFailure,
     RejectRemoteControlControllerPairing, RejectRemoteControlControllerPairingFailure,
     RemoteControlControllerPairingApproval, RemoteControlControllerPairingBegun,
+    RemoteControlControllerPairingFinalization, RemoteControlControllerPairingPersistence,
     RemoteControlControllerPairingRejection, RemoteControlControllerPairingRequest,
     RemoteControlControllerPairingRequestBuildError, RemoteControlControllerPairingRequestFailure,
     RemoteControlControllerPairingRequestFailureCause,
     RemoteControlControllerPairingResponseReceived,
+    SettleRemoteControlControllerPairingPersistence,
+    SettleRemoteControlControllerPairingPersistenceFailure,
 };
 pub use remote_control_pairing::{
     ApproveRemoteControlTargetPairing, ApproveRemoteControlTargetPairingFailure,
@@ -119,6 +122,9 @@ pub enum PrnsCommand {
     ApproveRemoteControlControllerPairing(ApproveRemoteControlControllerPairing),
     RejectRemoteControlControllerPairing(RejectRemoteControlControllerPairing),
     RemoteControlControllerPairingRequest(RemoteControlControllerPairingRequest),
+    SettleRemoteControlControllerPairingPersistence(
+        SettleRemoteControlControllerPairingPersistence,
+    ),
 }
 
 // The Owes* variants hand the caller its whole command payload back (SendSinglePacket rides ~400B of heapless body) beside slim rejections. Outcomes are transient by-value returns, destructured immediately, and the no-alloc core has no Box to shrink them.
@@ -202,6 +208,10 @@ pub enum CommandOutcome {
     OwesRejectRemoteControlControllerPairing {
         id: CommandId,
         reject: RejectRemoteControlControllerPairing,
+    },
+    OwesSettleRemoteControlControllerPairingPersistence {
+        id: CommandId,
+        settle_persistence: SettleRemoteControlControllerPairingPersistence,
     },
     OwesPathRequest {
         id: CommandId,
@@ -350,6 +360,12 @@ pub enum Settlement {
             RemoteControlControllerPairingRequestFailure,
         >,
     ),
+    SettleRemoteControlControllerPairingPersistence(
+        Result<
+            RemoteControlControllerPairingFinalization,
+            SettleRemoteControlControllerPairingPersistenceFailure,
+        >,
+    ),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -445,6 +461,12 @@ impl<S: StorageLayout> EngineState<S> {
             }
             PrnsCommand::RemoteControlControllerPairingRequest(request) => {
                 self.ingest_remote_control_controller_pairing_request(id, request)
+            }
+            PrnsCommand::SettleRemoteControlControllerPairingPersistence(settle_persistence) => {
+                CommandOutcome::OwesSettleRemoteControlControllerPairingPersistence {
+                    id,
+                    settle_persistence,
+                }
             }
             PrnsCommand::RequestPath(request) => CommandOutcome::OwesPathRequest { id, request },
             PrnsCommand::EstablishLink(establish) => self.ingest_establish_link(id, establish),

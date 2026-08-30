@@ -6,12 +6,14 @@ use crate::engine::{
 };
 use crate::remote_control::{
     ApproveRemoteControlControllerPairingOutcome, BeginRemoteControlControllerPairingOutcome,
-    FailRemoteControlControllerPairingRequestOutcome, RejectRemoteControlControllerPairingOutcome,
-    RemoteControlControllerPairingAborted, RemoteControlControllerPairingActivity,
-    RemoteControlControllerPairingWindowError, RemoteControlPairingAttemptId,
-    RemoteControlPairingContext, RemoteControlPairingInvitationCode,
+    FailRemoteControlControllerPairingPersistenceOutcome,
+    FailRemoteControlControllerPairingRequestOutcome, PersistRemoteControlControllerPairingOutcome,
+    RejectRemoteControlControllerPairingOutcome, RemoteControlControllerPairingAborted,
+    RemoteControlControllerPairingActivity, RemoteControlControllerPairingWindowError,
+    RemoteControlPairingAttemptId, RemoteControlPairingContext, RemoteControlPairingInvitationCode,
     RemoteControlPairingMessageWriteError, RemoteControlPairingRequest,
-    RemoteControlPairingResponse, REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID,
+    RemoteControlPairingResponse, RemoteControlTargetAccess,
+    REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID,
 };
 use crate::routing::links::request::{
     write_packed_binary_header, PackBinaryError, SendRequestView, MAX_PACKED_BINARY_HEADER_LEN,
@@ -174,7 +176,8 @@ impl Settleable for BeginRemoteControlControllerPairing {
             | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
             | Settlement::ApproveRemoteControlControllerPairing(_)
             | Settlement::RejectRemoteControlControllerPairing(_)
-            | Settlement::RemoteControlControllerPairingRequest(_) => None,
+            | Settlement::RemoteControlControllerPairingRequest(_)
+            | Settlement::SettleRemoteControlControllerPairingPersistence(_) => None,
         }
     }
 }
@@ -272,7 +275,8 @@ impl Settleable for RemoteControlControllerPairingRequest {
             | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
             | Settlement::BeginRemoteControlControllerPairing(_)
             | Settlement::ApproveRemoteControlControllerPairing(_)
-            | Settlement::RejectRemoteControlControllerPairing(_) => None,
+            | Settlement::RejectRemoteControlControllerPairing(_)
+            | Settlement::SettleRemoteControlControllerPairingPersistence(_) => None,
         }
     }
 }
@@ -333,7 +337,8 @@ impl Settleable for ApproveRemoteControlControllerPairing {
             | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
             | Settlement::BeginRemoteControlControllerPairing(_)
             | Settlement::RejectRemoteControlControllerPairing(_)
-            | Settlement::RemoteControlControllerPairingRequest(_) => None,
+            | Settlement::RemoteControlControllerPairingRequest(_)
+            | Settlement::SettleRemoteControlControllerPairingPersistence(_) => None,
         }
     }
 }
@@ -403,6 +408,84 @@ impl Settleable for RejectRemoteControlControllerPairing {
             | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
             | Settlement::BeginRemoteControlControllerPairing(_)
             | Settlement::ApproveRemoteControlControllerPairing(_)
+            | Settlement::RemoteControlControllerPairingRequest(_)
+            | Settlement::SettleRemoteControlControllerPairingPersistence(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlControllerPairingPersistence {
+    Persisted,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SettleRemoteControlControllerPairingPersistence {
+    pub attempt_id: RemoteControlPairingAttemptId,
+    pub persistence: RemoteControlControllerPairingPersistence,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum RemoteControlControllerPairingFinalization {
+    Completed {
+        attempt_id: RemoteControlPairingAttemptId,
+        access: RemoteControlTargetAccess,
+    },
+    PersistenceFailureRecorded {
+        attempt_id: RemoteControlPairingAttemptId,
+        access: RemoteControlTargetAccess,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettleRemoteControlControllerPairingPersistenceFailure {
+    NoPersistenceOwed {
+        settled: RemoteControlPairingAttemptId,
+    },
+    AttemptMismatch {
+        settled: RemoteControlPairingAttemptId,
+        active: RemoteControlPairingAttemptId,
+    },
+}
+
+impl Settleable for SettleRemoteControlControllerPairingPersistence {
+    type Success = RemoteControlControllerPairingFinalization;
+    type Failure = SettleRemoteControlControllerPairingPersistenceFailure;
+
+    fn into_command(self) -> PrnsCommand {
+        PrnsCommand::SettleRemoteControlControllerPairingPersistence(self)
+    }
+
+    fn from_settlement(
+        settlement: Settlement,
+    ) -> Option<Result<RemoteControlControllerPairingFinalization, Self::Failure>> {
+        match settlement {
+            Settlement::SettleRemoteControlControllerPairingPersistence(result) => Some(result),
+            Settlement::AnnounceNow(_)
+            | Settlement::SetRegisteredAnnounceAppData(_)
+            | Settlement::SendSinglePacket(_)
+            | Settlement::SendGroup(_)
+            | Settlement::RequestPath(_)
+            | Settlement::EstablishLink(_)
+            | Settlement::SendToLink(_)
+            | Settlement::Identify(_)
+            | Settlement::SendRequest(_)
+            | Settlement::Respond(_)
+            | Settlement::CloseLink(_)
+            | Settlement::SendResource(_)
+            | Settlement::SetResourceStrategy(_)
+            | Settlement::SendToChannel(_)
+            | Settlement::AllowRequester(_)
+            | Settlement::SendPlainPacket(_)
+            | Settlement::OpenRemoteControlPairing(_)
+            | Settlement::CloseRemoteControlPairing(_)
+            | Settlement::ApproveRemoteControlTargetPairing(_)
+            | Settlement::RejectRemoteControlTargetPairing(_)
+            | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
+            | Settlement::BeginRemoteControlControllerPairing(_)
+            | Settlement::ApproveRemoteControlControllerPairing(_)
+            | Settlement::RejectRemoteControlControllerPairing(_)
             | Settlement::RemoteControlControllerPairingRequest(_) => None,
         }
     }
@@ -565,6 +648,76 @@ impl<S: StorageLayout> EngineState<S> {
             }
         }
     }
+
+    pub(in crate::engine) fn execute_settle_remote_control_controller_pairing_persistence(
+        &mut self,
+        command: SettleRemoteControlControllerPairingPersistence,
+    ) -> Result<
+        RemoteControlControllerPairingFinalization,
+        SettleRemoteControlControllerPairingPersistenceFailure,
+    > {
+        let attempt_id = command.attempt_id;
+        match command.persistence {
+            RemoteControlControllerPairingPersistence::Persisted => {
+                match self
+                    .remote_control_controller_pairing
+                    .persistence_succeeded(attempt_id)
+                {
+                    PersistRemoteControlControllerPairingOutcome::Completed {
+                        attempt_id,
+                        access,
+                    } => Ok(RemoteControlControllerPairingFinalization::Completed {
+                        attempt_id,
+                        access,
+                    }),
+                    PersistRemoteControlControllerPairingOutcome::NoPersistenceOwed => Err(
+                        SettleRemoteControlControllerPairingPersistenceFailure::NoPersistenceOwed {
+                            settled: attempt_id,
+                        },
+                    ),
+                    PersistRemoteControlControllerPairingOutcome::AttemptMismatch {
+                        persisted,
+                        active,
+                    } => Err(
+                        SettleRemoteControlControllerPairingPersistenceFailure::AttemptMismatch {
+                            settled: persisted,
+                            active,
+                        },
+                    ),
+                }
+            }
+            RemoteControlControllerPairingPersistence::Failed => {
+                match self
+                    .remote_control_controller_pairing
+                    .persistence_failed(attempt_id)
+                {
+                    FailRemoteControlControllerPairingPersistenceOutcome::Failed {
+                        attempt_id,
+                        access,
+                    } => Ok(
+                        RemoteControlControllerPairingFinalization::PersistenceFailureRecorded {
+                            attempt_id,
+                            access,
+                        },
+                    ),
+                    FailRemoteControlControllerPairingPersistenceOutcome::NoPersistenceOwed => Err(
+                        SettleRemoteControlControllerPairingPersistenceFailure::NoPersistenceOwed {
+                            settled: attempt_id,
+                        },
+                    ),
+                    FailRemoteControlControllerPairingPersistenceOutcome::AttemptMismatch {
+                        failed,
+                        active,
+                    } => Err(
+                        SettleRemoteControlControllerPairingPersistenceFailure::AttemptMismatch {
+                            settled: failed,
+                            active,
+                        },
+                    ),
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -584,12 +737,14 @@ mod tests {
     use crate::interfaces::{AttachedInterfaces, InboundPacket};
     use crate::remote_control::{
         BeginRemoteControlControllerPairingOutcome,
+        ReceiveRemoteControlControllerPairingCompletedOutcome,
         ReceiveRemoteControlControllerPairingOfferOutcome, RemoteControlControllerIdentity,
         RemoteControlControllerIdentitySecret, RemoteControlControllerPairingView,
         RemoteControlNodeIdentitySecrets, RemoteControlPairingAttemptTimeout,
-        RemoteControlPairingBegin, RemoteControlPairingCommit, RemoteControlPairingIdentity,
-        RemoteControlPairingPermissions, RemoteControlPairingPreparedOffer,
-        RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlTargetIdentitySecret,
+        RemoteControlPairingBegin, RemoteControlPairingCommit, RemoteControlPairingCompleted,
+        RemoteControlPairingIdentity, RemoteControlPairingPermissions,
+        RemoteControlPairingPreparedOffer, RemoteControlRequestKind, RemoteControlRequestSet,
+        RemoteControlTargetIdentitySecret,
     };
     use crate::routing::dedup::PacketHash;
     use crate::routing::links::data::write_link_packet;
@@ -762,6 +917,16 @@ mod tests {
         RemoteControlPairingAttemptId,
         crate::remote_control::RemoteControlPairingTranscript,
     ) {
+        awaiting_confirmation_from(engine, 0x52)
+    }
+
+    fn awaiting_confirmation_from(
+        engine: &mut EngineState<TestStorageLayout>,
+        target_fill: u8,
+    ) -> (
+        RemoteControlPairingAttemptId,
+        crate::remote_control::RemoteControlPairingTranscript,
+    ) {
         let controller = controller();
         let begin = match engine.remote_control_controller_pairing.begin(
             controller,
@@ -785,7 +950,7 @@ mod tests {
             }
         };
         let prepared = RemoteControlPairingPreparedOffer::new(
-            &signer(0x52),
+            &signer(target_fill),
             context(),
             &begin,
             permissions(),
@@ -800,6 +965,33 @@ mod tests {
             panic!("confirmation required")
         };
         (attempt_id, transcript)
+    }
+
+    fn awaiting_persistence(
+        engine: &mut EngineState<TestStorageLayout>,
+    ) -> (
+        RemoteControlPairingAttemptId,
+        IdentityHash,
+        RemoteControlRequestSet,
+    ) {
+        let (attempt_id, transcript) = awaiting_confirmation(engine);
+        assert!(matches!(
+            engine
+                .remote_control_controller_pairing
+                .approve(attempt_id, InstantMillis(2_500)),
+            ApproveRemoteControlControllerPairingOutcome::CommitOwed { .. }
+        ));
+        let target_identity = transcript.target().identity_hash();
+        let permitted_requests = *transcript.permissions().permitted_requests();
+        let completed =
+            RemoteControlPairingCompleted::signed_by(&signer(0x52), &transcript).unwrap();
+        assert_eq!(
+            engine
+                .remote_control_controller_pairing
+                .receive_completed(completed, InstantMillis(3_000)),
+            ReceiveRemoteControlControllerPairingCompletedOutcome::PersistenceOwed { attempt_id },
+        );
+        (attempt_id, target_identity, permitted_requests)
     }
 
     #[test]
@@ -1138,6 +1330,142 @@ mod tests {
             RemoteControlControllerPairingView::Idle,
         );
         assert_eq!(schedules.remote_control_pairing, WakeSchedule::Idle);
+    }
+
+    #[test]
+    fn persisted_controller_access_completes_once_with_the_exact_access() {
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        let (attempt_id, target_identity, permitted_requests) = awaiting_persistence(&mut engine);
+        let command = SettleRemoteControlControllerPairingPersistence {
+            attempt_id,
+            persistence: RemoteControlControllerPairingPersistence::Persisted,
+        };
+
+        let (settlement, schedules) =
+            execute(&mut engine, command.into_command(), InstantMillis(4_000));
+        let Settlement::SettleRemoteControlControllerPairingPersistence(Ok(
+            RemoteControlControllerPairingFinalization::Completed {
+                attempt_id: completed,
+                access,
+            },
+        )) = settlement
+        else {
+            panic!("persistence settled")
+        };
+        assert_eq!(completed, attempt_id);
+        assert_eq!(access.target().identity_hash(), target_identity);
+        assert_eq!(access.permitted_requests(), &permitted_requests);
+        assert_eq!(
+            engine.remote_control_controller_pairing.view(),
+            RemoteControlControllerPairingView::Idle,
+        );
+        assert_eq!(schedules.remote_control_pairing, WakeSchedule::Idle);
+
+        let (repeated, repeated_schedules) =
+            execute(&mut engine, command.into_command(), InstantMillis(4_001));
+        assert_eq!(
+            repeated,
+            Settlement::SettleRemoteControlControllerPairingPersistence(Err(
+                SettleRemoteControlControllerPairingPersistenceFailure::NoPersistenceOwed {
+                    settled: attempt_id,
+                },
+            )),
+        );
+        assert_eq!(
+            repeated_schedules.remote_control_pairing,
+            WakeSchedule::Idle
+        );
+    }
+
+    #[test]
+    fn failed_controller_access_persistence_aborts_with_the_exact_access() {
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        let (attempt_id, target_identity, permitted_requests) = awaiting_persistence(&mut engine);
+
+        let (settlement, schedules) = execute(
+            &mut engine,
+            SettleRemoteControlControllerPairingPersistence {
+                attempt_id,
+                persistence: RemoteControlControllerPairingPersistence::Failed,
+            }
+            .into_command(),
+            InstantMillis(4_000),
+        );
+        let Settlement::SettleRemoteControlControllerPairingPersistence(Ok(
+            RemoteControlControllerPairingFinalization::PersistenceFailureRecorded {
+                attempt_id: failed,
+                access,
+            },
+        )) = settlement
+        else {
+            panic!("persistence failure settled")
+        };
+        assert_eq!(failed, attempt_id);
+        assert_eq!(access.target().identity_hash(), target_identity);
+        assert_eq!(access.permitted_requests(), &permitted_requests);
+        assert_eq!(
+            engine.remote_control_controller_pairing.view(),
+            RemoteControlControllerPairingView::Idle,
+        );
+        assert_eq!(schedules.remote_control_pairing, WakeSchedule::Idle);
+    }
+
+    #[test]
+    fn stale_controller_persistence_cannot_disturb_the_active_attempt() {
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        let (attempt_id, target_identity, permitted_requests) = awaiting_persistence(&mut engine);
+        let mut unrelated = EngineState::<TestStorageLayout>::default();
+        let (unrelated_attempt_id, _) = awaiting_confirmation_from(&mut unrelated, 0x53);
+        assert_ne!(unrelated_attempt_id, attempt_id);
+
+        let (stale, _) = execute(
+            &mut engine,
+            SettleRemoteControlControllerPairingPersistence {
+                attempt_id: unrelated_attempt_id,
+                persistence: RemoteControlControllerPairingPersistence::Persisted,
+            }
+            .into_command(),
+            InstantMillis(4_000),
+        );
+        assert_eq!(
+            stale,
+            Settlement::SettleRemoteControlControllerPairingPersistence(Err(
+                SettleRemoteControlControllerPairingPersistenceFailure::AttemptMismatch {
+                    settled: unrelated_attempt_id,
+                    active: attempt_id,
+                },
+            )),
+        );
+        assert!(matches!(
+            engine.remote_control_controller_pairing.view(),
+            RemoteControlControllerPairingView::Persisting(persistence)
+                if persistence.attempt_id() == attempt_id
+                    && persistence.access().target().identity_hash() == target_identity
+                    && persistence.access().permitted_requests() == &permitted_requests
+        ));
+
+        let (settled, _) = execute(
+            &mut engine,
+            SettleRemoteControlControllerPairingPersistence {
+                attempt_id,
+                persistence: RemoteControlControllerPairingPersistence::Failed,
+            }
+            .into_command(),
+            InstantMillis(4_001),
+        );
+        assert!(matches!(
+            settled,
+            Settlement::SettleRemoteControlControllerPairingPersistence(Ok(
+                RemoteControlControllerPairingFinalization::PersistenceFailureRecorded {
+                    attempt_id: failed,
+                    ..
+                },
+            )) if failed == attempt_id
+        ));
+        assert_eq!(
+            engine.remote_control_controller_pairing.view(),
+            RemoteControlControllerPairingView::Idle,
+        );
     }
 
     #[test]

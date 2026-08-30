@@ -136,7 +136,8 @@ impl Settleable for EstablishLink {
             | Settlement::BeginRemoteControlControllerPairing(_)
             | Settlement::ApproveRemoteControlControllerPairing(_)
             | Settlement::RejectRemoteControlControllerPairing(_)
-            | Settlement::RemoteControlControllerPairingRequest(_) => None,
+            | Settlement::RemoteControlControllerPairingRequest(_)
+            | Settlement::SettleRemoteControlControllerPairingPersistence(_) => None,
         }
     }
 }
@@ -178,7 +179,8 @@ impl Settleable for SendToLink {
             | Settlement::BeginRemoteControlControllerPairing(_)
             | Settlement::ApproveRemoteControlControllerPairing(_)
             | Settlement::RejectRemoteControlControllerPairing(_)
-            | Settlement::RemoteControlControllerPairingRequest(_) => None,
+            | Settlement::RemoteControlControllerPairingRequest(_)
+            | Settlement::SettleRemoteControlControllerPairingPersistence(_) => None,
         }
     }
 }
@@ -218,7 +220,8 @@ impl Settleable for Identify {
             | Settlement::BeginRemoteControlControllerPairing(_)
             | Settlement::ApproveRemoteControlControllerPairing(_)
             | Settlement::RejectRemoteControlControllerPairing(_)
-            | Settlement::RemoteControlControllerPairingRequest(_) => None,
+            | Settlement::RemoteControlControllerPairingRequest(_)
+            | Settlement::SettleRemoteControlControllerPairingPersistence(_) => None,
         }
     }
 }
@@ -258,7 +261,8 @@ impl Settleable for CloseLink {
             | Settlement::BeginRemoteControlControllerPairing(_)
             | Settlement::ApproveRemoteControlControllerPairing(_)
             | Settlement::RejectRemoteControlControllerPairing(_)
-            | Settlement::RemoteControlControllerPairingRequest(_) => None,
+            | Settlement::RemoteControlControllerPairingRequest(_)
+            | Settlement::SettleRemoteControlControllerPairingPersistence(_) => None,
         }
     }
 }
