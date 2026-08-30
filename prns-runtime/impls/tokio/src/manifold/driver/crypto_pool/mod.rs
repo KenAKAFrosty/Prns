@@ -259,7 +259,8 @@ impl CryptoJob {
             | Self::DecryptWithRatchets(_)
             | Self::VerifyLinkProof(_)
             | Self::SignLinkProof(_)
-            | Self::VerifyAnnounce(_) => CryptoJobClass::Latency,
+            | Self::VerifyAnnounce(_)
+            | Self::VerifyRemoteControlPairingAvailability(_) => CryptoJobClass::Latency,
         }
     }
 
@@ -272,7 +273,10 @@ impl CryptoJob {
             Self::OpenSpan(job) => 1 + job.bytes.len().div_ceil(BULK_BYTES_PER_WORK_UNIT),
             Self::VerifyLinkProof(_) | Self::SignLinkProof(_) => 3,
             Self::SealScalars(_) | Self::Decrypt(_) | Self::DecryptWithRatchets(_) => 2,
-            Self::Verify(_) | Self::Sign(_) | Self::VerifyAnnounce(_) => 1,
+            Self::Verify(_)
+            | Self::Sign(_)
+            | Self::VerifyAnnounce(_)
+            | Self::VerifyRemoteControlPairingAvailability(_) => 1,
         }
     }
 }
