@@ -888,14 +888,21 @@ impl<S: StorageLayout> EngineState<S> {
             LinkRequestPolicy::AcceptNone => {
                 return IngestPacketOutcome::Ignored(IgnoreReason::LinkRequestsRefused)
             }
-            LinkRequestPolicy::AcceptDirect
+            LinkRequestPolicy::AcceptDirect | LinkRequestPolicy::AcceptDirectFrom { .. }
                 if header.hops != 0
                     || header.propagation != PropagationType::Broadcast
                     || header.transport_id.is_some() =>
             {
                 return IngestPacketOutcome::Ignored(IgnoreReason::LinkRequestsRefused)
             }
-            LinkRequestPolicy::AcceptAll | LinkRequestPolicy::AcceptDirect => {}
+            LinkRequestPolicy::AcceptDirectFrom { interface }
+                if arrival.source_interface != interface =>
+            {
+                return IngestPacketOutcome::Ignored(IgnoreReason::LinkRequestsRefused)
+            }
+            LinkRequestPolicy::AcceptAll
+            | LinkRequestPolicy::AcceptDirect
+            | LinkRequestPolicy::AcceptDirectFrom { .. } => {}
         }
         if let Some(transport_id) = header.transport_id {
             if self.transport_id() != Some(transport_id) {

@@ -726,6 +726,10 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
             target: open.target,
             payload,
         };
+        let link_request_policy = match open.target {
+            EgressTarget::AllInterfaces => LinkRequestPolicy::AcceptDirect,
+            EgressTarget::Interface(interface) => LinkRequestPolicy::AcceptDirectFrom { interface },
+        };
         let mut frame = [0u8; BROADCAST_MTU];
         let frame_len = self
             .write_commanded_send_plain_packet(&send, &mut frame)
@@ -739,7 +743,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
             REMOTE_CONTROL_PAIRING_APPLICATION_ASPECTS,
             b"",
             ProofStrategy::ProveAll,
-            LinkRequestPolicy::AcceptDirect,
+            link_request_policy,
             RatchetPolicy::NoRatchets,
         ) {
             let _released = self.held_identities.release(&identity_hash);
@@ -1540,7 +1544,9 @@ mod tests {
             .unwrap();
         assert_eq!(
             endpoint_registration.link_request_policy,
-            LinkRequestPolicy::AcceptDirect,
+            LinkRequestPolicy::AcceptDirectFrom {
+                interface: selected,
+            },
         );
         assert_eq!(
             endpoint_registration.maximum_request_bytes,

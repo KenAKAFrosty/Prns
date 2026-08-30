@@ -1,5 +1,6 @@
 use crate::crypto::ratchets::RatchetPolicy;
 use crate::identity::IdentityHash;
+use crate::interfaces::InterfaceId;
 use crate::routing::announce::emit::AnnounceAppDataBytes;
 use crate::routing::announce::{
     derive_destination_hash, derive_plain_destination_hash, expand_name, DottedNameHash,
@@ -24,6 +25,7 @@ pub enum ProofStrategy {
 pub enum LinkRequestPolicy {
     AcceptAll,
     AcceptDirect,
+    AcceptDirectFrom { interface: InterfaceId },
     AcceptNone,
 }
 

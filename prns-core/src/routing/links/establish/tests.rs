@@ -45,8 +45,19 @@ fn arrival() -> InterfaceId {
     InterfaceId::new([0xA1; 8])
 }
 
+fn other_arrival() -> InterfaceId {
+    InterfaceId::new([0xA2; 8])
+}
+
 fn arrival_interfaces() -> [InterfaceDescriptor; 1] {
     [routable_descriptor(arrival())]
+}
+
+fn both_arrival_interfaces() -> [InterfaceDescriptor; 2] {
+    [
+        routable_descriptor(arrival()),
+        routable_descriptor(other_arrival()),
+    ]
 }
 
 fn vector_establish_entropy() -> EstablishLinkEntropy {
@@ -943,6 +954,72 @@ fn an_accept_direct_destination_admits_only_canonical_zero_hop_link_requests() {
             IngestPacketOutcome::OwesLinkProof(_),
         ));
     }
+}
+
+#[test]
+fn an_interface_scoped_direct_destination_refuses_other_direct_interfaces() {
+    let mut initiator = neighbor_with_a_route();
+    let mut wire = [0u8; BROADCAST_MTU];
+    let dispatch = initiator
+        .write_commanded_link_request(
+            CommandId(7),
+            &establish(),
+            InstantMillis(1_000),
+            vector_establish_entropy(),
+            AttachedInterfaces::new(&arrival_interfaces()),
+            &mut wire,
+        )
+        .dispatched();
+    let wire = &wire[..dispatch.wire_bytes];
+
+    let mut responder = EngineState::<TestStorageLayout>::new(fixed_secret_key());
+    let identity = responder.held_identity_hashes()[0];
+    responder
+        .register_single_destination(
+            &identity,
+            "personal",
+            &["node"],
+            b"hello-personal",
+            ProofStrategy::ProveNone,
+            LinkRequestPolicy::AcceptDirectFrom {
+                interface: arrival(),
+            },
+            crate::engine::RatchetPolicy::NoRatchets,
+        )
+        .unwrap();
+
+    let mut wrong_interface_wire = wire.to_vec();
+    assert_eq!(
+        responder.ingest_packet_with(
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface: other_arrival(),
+                bytes: &mut wrong_interface_wire,
+            },
+            &mut |_| {},
+            AttachedInterfaces::new(&both_arrival_interfaces()),
+            &mut |_| {},
+            None,
+        ),
+        IngestPacketOutcome::Ignored(IgnoreReason::LinkRequestsRefused),
+    );
+    assert!(responder.links.is_empty());
+
+    let mut selected_interface_wire = wire.to_vec();
+    assert!(matches!(
+        responder.ingest_packet_with(
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface: arrival(),
+                bytes: &mut selected_interface_wire,
+            },
+            &mut |_| {},
+            AttachedInterfaces::new(&both_arrival_interfaces()),
+            &mut |_| {},
+            None,
+        ),
+        IngestPacketOutcome::OwesLinkProof(_),
+    ));
 }
 
 #[test]
