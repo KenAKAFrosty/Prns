@@ -28,6 +28,10 @@ export class WorkerProjectionServer {
     this.#sender = new WorkerProjectionSender(port, (detail) => {
       this.#post(Tag("ProjectionProtocolFailed", { detail }));
     });
+    bindProjectionChanges(
+      engine.projection(prnsView("Lifecycle")),
+      (snapshot) => this.#sender.send(Tag("Lifecycle", snapshot)),
+    );
     port.addEventListener(
       "message",
       (event: MessageEvent<unknown>) => {
@@ -105,6 +109,13 @@ export class WorkerProjectionServer {
   #post(message: WorkerProjectionMessage): void {
     this.#port.postMessage(message);
   }
+}
+
+function bindProjectionChanges<Value>(
+  projection: PrnsProjection<Value>,
+  send: (snapshot: ReturnType<PrnsProjection<Value>["latest"]>) => void,
+): () => void {
+  return projection.subscribe(() => send(projection.latest()));
 }
 
 function bindProjection(

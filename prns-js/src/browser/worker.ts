@@ -459,21 +459,30 @@ async function performCall(
       }
       return autoWifi.controller.status;
     },
-    AutoWifiClose: () => {
+    AutoWifiClose: async () => {
       const controller = autoWifi.controller;
-      autoWifi.controller = undefined;
-      autoWifi.releaseStatus?.();
-      autoWifi.releaseStatus = undefined;
-      return controller?.close() ?? Tag("Closed");
+      if (controller === undefined) {
+        return Tag("Closed");
+      }
+      const outcome = await controller.close();
+      if (autoWifi.controller === controller) {
+        autoWifi.controller = undefined;
+        autoWifi.releaseStatus?.();
+        autoWifi.releaseStatus = undefined;
+      }
+      return outcome;
     },
-    InterfaceSessionClose: (id) => {
+    InterfaceSessionClose: async (id) => {
       const tracked = sessions.get(id);
       if (tracked === undefined) {
         return Tag("Closed");
       }
-      sessions.delete(id);
-      tracked.releaseStatus();
-      return tracked.session.close();
+      const outcome = await tracked.session.close();
+      if (sessions.get(id) === tracked) {
+        sessions.delete(id);
+        tracked.releaseStatus();
+      }
+      return outcome;
     },
   });
 }

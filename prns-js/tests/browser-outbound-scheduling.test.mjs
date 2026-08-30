@@ -27,7 +27,10 @@ test("Automatic USB starts its outbound consumer after confirmation and then sle
     [0xd0, 0x31, 0x32],
   );
   assert.equal(host.outboundTakes, 2);
-  assert.equal((await session.close()).tag, "Closed");
+  const firstClose = session.close();
+  const secondClose = session.close();
+  assert.equal(firstClose, secondClose);
+  assert.equal((await firstClose).tag, "Closed");
 });
 
 test("WebSocket outbound sleeps while idle and wakes for a runtime batch", async () => {
@@ -54,7 +57,10 @@ test("WebSocket outbound sleeps while idle and wakes for a runtime batch", async
   await waitUntil(() => socket.outbound.length === 1);
   assert.deepEqual(socket.outbound, [[0x41, 0x42]]);
   assert.equal(host.outboundTakes, 2);
-  assert.equal((await session.close()).tag, "Closed");
+  const firstClose = session.close();
+  const secondClose = session.close();
+  assert.equal(firstClose, secondClose);
+  assert.equal((await firstClose).tag, "Closed");
 });
 
 test("WebSocket session status pushes a remote close exactly once", async () => {

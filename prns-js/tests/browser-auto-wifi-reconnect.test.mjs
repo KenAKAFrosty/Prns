@@ -111,6 +111,10 @@ test(
       second.receive(new Uint8Array([0x7e, 0x01, 0x7d]));
       await waitUntil(() => host.inbound.length === 1, 1_000);
       assert.deepEqual(host.inbound, [[0x7e, 0x01, 0x7d]]);
+      const firstClose = controller.close();
+      const secondClose = controller.close();
+      assert.equal(firstClose, secondClose);
+      assert.equal((await firstClose).tag, "Closed");
     } finally {
       releaseStatus();
       await controller.close();

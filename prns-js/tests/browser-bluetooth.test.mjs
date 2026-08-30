@@ -126,7 +126,10 @@ test("Web Bluetooth carries packet fragments over the control characteristic fal
     assert.deepEqual(host.inbound, [[0x51, 0x52, 0x53]]);
     assert.equal(host.controlDecodes, 1);
 
-    assert.equal((await connected.data.close()).tag, "Closed");
+    const firstClose = connected.data.close();
+    const secondClose = connected.data.close();
+    assert.equal(firstClose, secondClose);
+    assert.equal((await firstClose).tag, "Closed");
     assert.equal(device.gatt.connected, false);
     assert.equal(host.deactivations.length, 1);
   } finally {

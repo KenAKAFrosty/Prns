@@ -61,6 +61,7 @@ export class BrowserWebSocketSession implements WebSocketSession {
   #closed = false;
   #released = false;
   #status: InterfaceSessionStatus = Tag("Active");
+  #closePromise: Promise<InterfaceCloseOutcome> | undefined;
 
   constructor(
     host: WebSocketRuntimeHost,
@@ -118,10 +119,20 @@ export class BrowserWebSocketSession implements WebSocketSession {
     void this.#outboundLoop();
   }
 
-  async close(): Promise<InterfaceCloseOutcome> {
-    if (this.#closed) {
-      return closedSessionOutcome(this.#status);
+  close(): Promise<InterfaceCloseOutcome> {
+    if (this.#closePromise !== undefined) {
+      return this.#closePromise;
     }
+    if (this.#closed) {
+      return Promise.resolve(closedSessionOutcome(this.#status));
+    }
+    this.#closePromise = this.#performClose().finally(() => {
+      this.#closePromise = undefined;
+    });
+    return this.#closePromise;
+  }
+
+  async #performClose(): Promise<InterfaceCloseOutcome> {
     this.#closed = true;
     this.#resolveFramingWaiters();
     const causes: InterfaceCleanupFailure[] = [];

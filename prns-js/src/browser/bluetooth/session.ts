@@ -104,6 +104,7 @@ export class BrowserBluetoothSession implements BluetoothSession {
   #status: InterfaceSessionStatus = Tag("Negotiating");
   #connectFailure?: BluetoothConnectFailure;
   #peerWaiter: BluetoothPeerWaiter | undefined;
+  #closePromise: Promise<InterfaceCloseOutcome> | undefined;
 
   constructor(
     host: BluetoothRuntimeHost,
@@ -181,10 +182,20 @@ export class BrowserBluetoothSession implements BluetoothSession {
     return Tag("Started");
   }
 
-  async close(): Promise<InterfaceCloseOutcome> {
-    if (this.#closed) {
-      return closedSessionOutcome(this.#status);
+  close(): Promise<InterfaceCloseOutcome> {
+    if (this.#closePromise !== undefined) {
+      return this.#closePromise;
     }
+    if (this.#closed) {
+      return Promise.resolve(closedSessionOutcome(this.#status));
+    }
+    this.#closePromise = this.#performClose().finally(() => {
+      this.#closePromise = undefined;
+    });
+    return this.#closePromise;
+  }
+
+  async #performClose(): Promise<InterfaceCloseOutcome> {
     this.#closed = true;
     this.#settlePeerWaiter();
     this.#reassembler.release?.();

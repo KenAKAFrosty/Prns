@@ -444,12 +444,12 @@ class DedicatedWorkerPrns {
       this.#limits.diagnostics,
       {
         observed: (view) => {
-          if (view.tag !== "Diagnostics") {
+          if (view.tag !== "Diagnostics" && view.tag !== "Lifecycle") {
             this.#sendProjectionRequest(Tag("Observe", { view }));
           }
         },
         unobserved: (view) => {
-          if (view.tag !== "Diagnostics") {
+          if (view.tag !== "Diagnostics" && view.tag !== "Lifecycle") {
             this.#sendProjectionRequest(Tag("Unobserve", { view }));
           }
         },
@@ -1552,6 +1552,7 @@ class WorkerWebSocketSession implements WebSocketSession {
   readonly #id: number;
   readonly #statusListeners = new Set<(status: InterfaceSessionStatus) => void>();
   #status: InterfaceSessionStatus;
+  #closePromise: Promise<InterfaceCloseOutcome> | undefined;
 
   constructor(client: DedicatedWorkerPrns, projection: WorkerSessionProjection) {
     this.#client = client;
@@ -1580,12 +1581,14 @@ class WorkerWebSocketSession implements WebSocketSession {
     };
   }
 
-  async close(): Promise<InterfaceCloseOutcome> {
-    const outcome = await this.#client.closeSession(this.#id);
-    if (outcome.tag === "Closed") {
-      this.replaceStatus(Tag("Closed"));
+  close(): Promise<InterfaceCloseOutcome> {
+    if (this.#closePromise !== undefined) {
+      return this.#closePromise;
     }
-    return outcome;
+    this.#closePromise = this.#client.closeSession(this.#id).finally(() => {
+      this.#closePromise = undefined;
+    });
+    return this.#closePromise;
   }
 
   markClosed(): void {
@@ -1668,9 +1671,9 @@ class WorkerAutoWifiController {
     };
   }
 
-  async close(): Promise<AutoWifiControllerCloseOutcome> {
+  close(): Promise<AutoWifiControllerCloseOutcome> {
     if (this.#closed) {
-      return Tag("Closed");
+      return Promise.resolve(Tag("Closed"));
     }
     if (this.#closePromise !== undefined) {
       return this.#closePromise;
@@ -1690,6 +1693,9 @@ class WorkerAutoWifiController {
   }
 
   replaceStatus(status: AutoWifiControllerStatus): void {
+    if (status.tag === "Closed") {
+      this.#closed = true;
+    }
     this.#status = status;
     this.#statusVersion += 1;
     for (const changed of this.#statusListeners) {
@@ -1717,7 +1723,7 @@ class WorkerAutoWifiController {
 
   async #performClose(): Promise<AutoWifiControllerCloseOutcome> {
     const outcome = await this.#client.closeAutoWifi();
-    if (outcome.tag === "Closed") {
+    if (outcome.tag === "Closed" && !this.#closed) {
       this.#closed = true;
       this.replaceStatus(Tag("Closed"));
     }

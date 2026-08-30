@@ -257,7 +257,9 @@ export class PrnsProjectionStore {
       return;
     }
     this.#diagnostics.length = 0;
-    this.#diagnostics.push(...events.slice(-this.#diagnosticCapacity));
+    if (this.#diagnosticCapacity > 0) {
+      this.#diagnostics.push(...events.slice(-this.#diagnosticCapacity));
+    }
     this.#refreshDiagnosticEntries(revision);
   }
 
@@ -270,6 +272,9 @@ export class PrnsProjectionStore {
       throw new RangeError("diagnostic delta drop count must be a non-negative safe integer");
     }
     if (!this.#acceptDiagnosticRevision(revision)) {
+      return;
+    }
+    if (this.#diagnosticCapacity === 0) {
       return;
     }
     if (dropped > 0) {

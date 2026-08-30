@@ -115,6 +115,22 @@ test("rejects diagnostic projection capacities outside the node limit", () => {
   );
 });
 
+test("retains no diagnostic reset while its projection is unobserved", () => {
+  const store = new PrnsProjectionStore(snapshot(), lifecycle, 8);
+  const diagnostics = store.projection(
+    prnsView("Diagnostics", { maximumEvents: 3 }),
+  );
+  const event = { tag: "DiagnosticsDropped", data: { count: 1n } };
+
+  store.replaceDiagnostics([event], 2n);
+  store.appendDiagnostics(0, [event], 3n);
+
+  assert.deepEqual(diagnostics.latest().value, []);
+  const release = diagnostics.subscribe(() => undefined);
+  assert.deepEqual(diagnostics.latest().value, []);
+  release();
+});
+
 test("accepts authoritative link snapshots and rejects stale revisions", async () => {
   const store = new PrnsProjectionStore(snapshot(), lifecycle, 8);
   const links = store.projection(prnsView("Links"));

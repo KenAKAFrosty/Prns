@@ -538,9 +538,27 @@
         );
         await Promise.resolve();
         release();
-        return statuses.length === 1 && statuses[0] === "Closed"
+        const local = await prns.interfaces.webSocket.connect(
+          `ws://${location.host}/worker-status-socket`,
+          { framing: "RawPacket" },
+        );
+        if (local.tag !== "Connected") {
+          return `Failed:LocalConnect:${local.tag}`;
+        }
+        const localStatuses = [];
+        const releaseLocal = local.data.subscribeStatus((status) => {
+          localStatuses.push(status.tag);
+        });
+        const firstClose = local.data.close();
+        const secondClose = local.data.close();
+        const localClosed = await firstClose;
+        await Promise.resolve();
+        releaseLocal();
+        return statuses.length === 1 && statuses[0] === "Closed" &&
+            firstClose === secondClose && localClosed.tag === "Closed" &&
+            localStatuses.length === 1 && localStatuses[0] === "Closed"
           ? "PushedOnce"
-          : `Failed:${statuses.join(",")}`;
+          : `Failed:${statuses.join(",")}:${localStatuses.join(",")}`;
       }
 
       function equalBytes(left, right) {

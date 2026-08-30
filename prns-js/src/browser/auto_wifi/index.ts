@@ -224,6 +224,7 @@ export class AutoWifiController {
   #attempt = 0;
   #refreshTimer: number | undefined;
   #recoveryTimer: number | undefined;
+  #closePromise: Promise<AutoWifiControllerCloseOutcome> | undefined;
 
   constructor(host: AutoWifiRuntimeHost, selectionSeed?: Uint8Array) {
     this.#host = host;
@@ -258,10 +259,20 @@ export class AutoWifiController {
     };
   }
 
-  async close(): Promise<AutoWifiControllerCloseOutcome> {
-    if (this.#closed) {
-      return Tag("Closed");
+  close(): Promise<AutoWifiControllerCloseOutcome> {
+    if (this.#closePromise !== undefined) {
+      return this.#closePromise;
     }
+    if (this.#closed) {
+      return Promise.resolve(Tag("Closed"));
+    }
+    this.#closePromise = this.#performClose().finally(() => {
+      this.#closePromise = undefined;
+    });
+    return this.#closePromise;
+  }
+
+  async #performClose(): Promise<AutoWifiControllerCloseOutcome> {
     this.#closed = true;
     if (this.#refreshTimer !== undefined) {
       globalThis.clearInterval(this.#refreshTimer);

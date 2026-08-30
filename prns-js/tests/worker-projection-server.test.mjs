@@ -18,7 +18,7 @@ test("observes on demand, releases, and synchronizes without retaining", async (
   assert.deepEqual(new WireBatchDecoder().decode(observed.data.batch), [
     Tag("Routes", { revision: 1n, value: [] }),
   ]);
-  assert.equal(state.subscriptions, 1);
+  assert.equal(state.subscriptions, 2);
   channel.port2.postMessage(Tag("AcknowledgeProjection", {
     id: observed.data.id,
   }));
@@ -34,7 +34,37 @@ test("observes on demand, releases, and synchronizes without retaining", async (
     outcome: Tag("Synchronized", { revision: 1n, value: [] }),
   }));
   assert.equal(state.releases, 1);
-  assert.equal(state.subscriptions, 1);
+  assert.equal(state.subscriptions, 2);
+  channel.port1.close();
+  channel.port2.close();
+});
+
+test("replicates lifecycle changes without page demand", async () => {
+  const channel = new MessageChannel();
+  const state = projectionState();
+  new WorkerProjectionServer(channel.port1, state.engine);
+  channel.port2.start();
+
+  const changed = nextMessage(channel.port2);
+  state.publish(Tag("Failed", {
+    cause: "ContractViolated",
+    detail: "projection contract failed",
+  }));
+  const message = await changed;
+
+  assert.equal(message.tag, "ProjectionBatch");
+  assert.deepEqual(new WireBatchDecoder().decode(message.data.batch), [
+    Tag("Lifecycle", {
+      revision: 2n,
+      value: Tag("Failed", {
+        cause: "ContractViolated",
+        detail: "projection contract failed",
+      }),
+    }),
+  ]);
+  channel.port2.postMessage(Tag("AcknowledgeProjection", {
+    id: message.data.id,
+  }));
   channel.port1.close();
   channel.port2.close();
 });
@@ -87,14 +117,26 @@ function projectionState() {
   const state = {
     subscriptions: 0,
     releases: 0,
+    revision: 1n,
+    value: [],
+    changed: new Set(),
     engine: undefined,
+    publish(value) {
+      this.revision += 1n;
+      this.value = value;
+      for (const changed of this.changed) {
+        changed();
+      }
+    },
   };
   const projection = {
-    latest: () => ({ revision: 1n, value: [] }),
-    subscribe: () => {
+    latest: () => ({ revision: state.revision, value: state.value }),
+    subscribe: (changed) => {
       state.subscriptions += 1;
+      state.changed.add(changed);
       return () => {
         state.releases += 1;
+        state.changed.delete(changed);
       };
     },
     synchronize: async () => Tag("Synchronized", {
