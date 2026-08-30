@@ -33,6 +33,11 @@ pub(super) enum RemoteControlControllerGrantCommand {
             Result<RevokeRemoteControlControllerOutcome, RevokeRemoteControlControllerServiceError>,
         >,
     },
+    Snapshot {
+        completion: oneshot::Sender<
+            Result<Option<std::vec::Vec<u8>>, crate::persistence::SnapshotSealError>,
+        >,
+    },
 }
 
 #[derive(Clone)]
@@ -82,6 +87,20 @@ impl RemoteControlControllerGrantSender {
             }
         }
     }
+
+    async fn snapshot(
+        &self,
+        completion: oneshot::Sender<
+            Result<Option<std::vec::Vec<u8>>, crate::persistence::SnapshotSealError>,
+        >,
+    ) -> Result<OwnedMutexGuard<()>, RemoteControlControllerGrantSubmissionError> {
+        let operation = self.operation.clone().lock_owned().await;
+        self.commands
+            .send(RemoteControlControllerGrantCommand::Snapshot { completion })
+            .await
+            .map_err(|_| RemoteControlControllerGrantSubmissionError::NodeStopped)?;
+        Ok(operation)
+    }
 }
 
 impl RemoteControlControllerGrantReceiver {
@@ -110,7 +129,51 @@ impl RemoteControlControllerGrantCommand {
                 let outcome = remote_control.revoke_controller(&controller);
                 let _completion = completion.send(outcome);
             }
+            Self::Snapshot { completion } => {
+                if completion.is_closed() {
+                    return;
+                }
+                let mut snapshot = std::vec![
+                    0;
+                    crate::persistence::remote_control_controller_grants_snapshot_capacity(
+                        crate::remote_control::DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS,
+                    )
+                ];
+                let outcome = remote_control
+                    .write_controller_grants_snapshot(&mut snapshot)
+                    .map(|written| {
+                        written.map(|written| {
+                            snapshot.truncate(written);
+                            snapshot
+                        })
+                    });
+                let _completion = completion.send(outcome);
+            }
         }
+    }
+}
+
+impl PrnsNodeHandle {
+    pub(super) async fn snapshot_remote_control_controller_grants(
+        &self,
+    ) -> Result<Option<std::vec::Vec<u8>>, super::PrepareFlushError> {
+        let (completion, settled) = oneshot::channel();
+        let _operation = self
+            .remote_control_controller_grants
+            .snapshot(completion)
+            .await
+            .map_err(|error| match error {
+                RemoteControlControllerGrantSubmissionError::Busy => {
+                    super::PrepareFlushError::NodeStopped
+                }
+                RemoteControlControllerGrantSubmissionError::NodeStopped => {
+                    super::PrepareFlushError::NodeStopped
+                }
+            })?;
+        settled
+            .await
+            .map_err(|_| super::PrepareFlushError::NodeStopped)?
+            .map_err(super::PrepareFlushError::AuthorizationSnapshot)
     }
 }
 

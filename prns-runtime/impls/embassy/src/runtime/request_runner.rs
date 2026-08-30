@@ -16,6 +16,9 @@ use super::node_facade::PrnsNodeHandle;
 use super::remote_control_controller_grants::{
     RemoteControlControllerGrantCommand, RemoteControlControllerGrantCompletion,
 };
+use super::remote_control_target_accesses::{
+    RemoteControlTargetAccessCommand, RemoteControlTargetAccessCompletion,
+};
 use super::request_endpoints::{
     dispatch_request, Decline, InboundRequest, RequestEndpointSet, ResponseCapacityExceeded,
     ResponseSink,
@@ -140,29 +143,50 @@ pub(super) async fn run_router<
 {
     loop {
         match select(
-            commands.next_remote_control_controller_grant_command(),
+            select(
+                commands.next_remote_control_controller_grant_command(),
+                commands.next_remote_control_target_access_command(),
+            ),
             requests.receive(),
         )
         .await
         {
-            Either::First(RemoteControlControllerGrantCommand::SetControllerGrant {
-                id,
-                grant,
-            }) => {
+            Either::First(Either::First(
+                RemoteControlControllerGrantCommand::SetControllerGrant { id, grant },
+            )) => {
                 let outcome = remote_control.set_controller_grant(grant);
                 let _settled = commands.settle_remote_control_controller_grant(
                     id,
                     RemoteControlControllerGrantCompletion::ControllerGrantSet(outcome),
                 );
             }
-            Either::First(RemoteControlControllerGrantCommand::RevokeController {
-                id,
-                controller,
-            }) => {
+            Either::First(Either::First(
+                RemoteControlControllerGrantCommand::RevokeController { id, controller },
+            )) => {
                 let outcome = remote_control.revoke_controller(&controller);
                 let _settled = commands.settle_remote_control_controller_grant(
                     id,
                     RemoteControlControllerGrantCompletion::ControllerRevoked(outcome),
+                );
+            }
+            Either::First(Either::Second(RemoteControlTargetAccessCommand::SetTargetAccess {
+                id,
+                access,
+            })) => {
+                let outcome = remote_control.set_target_access(access);
+                let _settled = commands.settle_remote_control_target_access(
+                    id,
+                    RemoteControlTargetAccessCompletion::TargetAccessSet(outcome),
+                );
+            }
+            Either::First(Either::Second(RemoteControlTargetAccessCommand::ForgetTarget {
+                id,
+                target,
+            })) => {
+                let outcome = remote_control.forget_target(&target);
+                let _settled = commands.settle_remote_control_target_access(
+                    id,
+                    RemoteControlTargetAccessCompletion::TargetForgotten(outcome),
                 );
             }
             Either::Second(request) => {

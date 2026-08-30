@@ -43,6 +43,9 @@ use super::remote_control_controller_grants::RemoteControlControllerGrantSender;
 use super::remote_control_controller_grants::{
     remote_control_controller_grant_lane, RemoteControlControllerGrantReceiver,
 };
+#[cfg(test)]
+use super::remote_control_target_accesses::remote_control_target_access_lane;
+use super::remote_control_target_accesses::RemoteControlTargetAccessSender;
 use super::request_endpoints::RespondToken;
 use super::{InterfaceStore, SendError};
 pub use byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
@@ -55,13 +58,14 @@ pub use node_lifecycle::{
     NodeRunError, NonRoutingIdentityError, PrnsNode, RegisterRequestEndpointError,
     SharedInstanceIdentityError,
 };
+pub(crate) use persistence::RemoteControlAuthorizationPersistence;
 pub use persistence::{
     boot_timeline_origin, wall_clock_timeline_origin, DefaultLocationError,
     DestinationIdentitySeedReport, FlushError, FlushFailurePolicy, FlushMark, FlushReport,
     NodePersistence, PersistenceEvent, PersistenceFlushStatus, PersistenceIntent,
     PersistenceRestoreReport, PersistenceTrigger, PersistenceWorker, PrepareFlushError,
-    PreparedFlush, RatchetSeedReport, RegionFlush, RouteSeedProgress, RouteSeedReport, SaveOnLearn,
-    SaveOnLearnWiring, TunnelSeedReport,
+    PreparedFlush, RatchetSeedReport, RegionFlush, RemoteControlAuthorizationSeedReport,
+    RouteSeedProgress, RouteSeedReport, SaveOnLearn, SaveOnLearnWiring, TunnelSeedReport,
 };
 pub use remote_control::RemoteControlHandle;
 pub use request_response::{RequestOptions, ResponseSendError};
@@ -127,6 +131,7 @@ pub struct PrnsNodeHandle {
     entropy: crate::manifold::driver::TokioEntropy,
     timing_oracle: Arc<Mutex<Option<Arc<dyn BitrateTimingOracle>>>>,
     pub(super) remote_control_controller_grants: RemoteControlControllerGrantSender,
+    pub(super) remote_control_target_accesses: RemoteControlTargetAccessSender,
 }
 
 /// An optional shared-instance timing source. Directly attached nodes do not need one;
@@ -178,6 +183,8 @@ impl PrnsNodeHandle {
         let (iface_build, _iface_build_rx) = tokio::sync::mpsc::unbounded_channel();
         let (remote_control_controller_grants, remote_control_controller_grants_rx) =
             remote_control_controller_grant_lane();
+        let (remote_control_target_accesses, _remote_control_target_accesses_rx) =
+            remote_control_target_access_lane();
         (
             Self {
                 commands,
@@ -191,6 +198,7 @@ impl PrnsNodeHandle {
                 entropy: crate::manifold::driver::TokioEntropy,
                 timing_oracle: Arc::new(Mutex::new(None)),
                 remote_control_controller_grants,
+                remote_control_target_accesses,
             },
             remote_control_controller_grants_rx,
         )

@@ -202,6 +202,16 @@ fn restore_diagnostics_report_seeded_refused_and_dropped_totals() {
             refused_count: 11,
             dropped_count: 12,
         },
+        remote_control_controller_grants: crate::runtime::RemoteControlAuthorizationSeedReport {
+            restored_count: 13,
+            refused_count: 14,
+            dropped_count: 15,
+        },
+        remote_control_target_accesses: crate::runtime::RemoteControlAuthorizationSeedReport {
+            restored_count: 16,
+            refused_count: 17,
+            dropped_count: 18,
+        },
     };
 
     let crate::runtime::Diagnostic::PersistenceRestored {
@@ -225,7 +235,7 @@ fn restore_diagnostics_report_seeded_refused_and_dropped_totals() {
             refused,
             dropped,
         ),
-        (1, 4, 7, 10, 26, 30)
+        (1, 4, 7, 10, 57, 63)
     );
 }
 

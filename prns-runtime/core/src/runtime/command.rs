@@ -80,6 +80,16 @@ pub enum RemoteControlPairingControlError<F> {
     Failed(F),
 }
 
+impl<F> RemoteControlPairingControlError<F> {
+    pub fn map_failure<M>(self, map: impl FnOnce(F) -> M) -> RemoteControlPairingControlError<M> {
+        match self {
+            Self::NodeStopped => RemoteControlPairingControlError::NodeStopped,
+            Self::Busy => RemoteControlPairingControlError::Busy,
+            Self::Failed(failure) => RemoteControlPairingControlError::Failed(map(failure)),
+        }
+    }
+}
+
 pub type OpenRemoteControlPairingControlError =
     RemoteControlPairingControlError<OpenRemoteControlPairingFailure>;
 pub type CloseRemoteControlPairingControlError =

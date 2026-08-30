@@ -7,6 +7,7 @@ use super::{
 };
 
 pub const DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS: usize = 8;
+pub const DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES: usize = 8;
 pub const REMOTE_CONTROL_REQUEST_ENDPOINT_ID: &str = "/remote-control";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

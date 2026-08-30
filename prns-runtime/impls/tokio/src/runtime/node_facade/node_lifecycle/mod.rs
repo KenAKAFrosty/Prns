@@ -39,8 +39,15 @@ use prns_runtime::runtime::{
 use super::super::remote_control_controller_grants::{
     remote_control_controller_grant_lane, RemoteControlControllerGrantReceiver,
 };
+use super::super::remote_control_pairing_persistence::remote_control_pairing_persistence_lane;
+use super::super::remote_control_pairing_persistence::RemoteControlAuthorizationPersistenceFailure;
+use super::super::remote_control_target_accesses::{
+    remote_control_target_access_lane, RemoteControlTargetAccessReceiver,
+};
 use super::super::request_endpoints::{RequestEndpoint, RequestEndpointSet, RespondToken};
-use super::super::request_runner::{run_router, RunnerRequest, REQUEST_QUEUE_DEPTH};
+use super::super::request_runner::{
+    run_router, RemoteControlAuthorizationRuntime, RunnerRequest, REQUEST_QUEUE_DEPTH,
+};
 use super::super::{
     InterfaceStore, Message, PreConfiguredDestination, PrnsEvent, PrnsNodeRecipe, SendError,
 };
@@ -82,6 +89,7 @@ pub struct PrnsNode<St, R, F, S: StorageLayout> {
     notify_rx: UnboundedReceiver<InterfaceId>,
     command_rx: UnboundedReceiver<HostCommand>,
     remote_control_controller_grants_rx: RemoteControlControllerGrantReceiver,
+    remote_control_target_accesses_rx: RemoteControlTargetAccessReceiver,
     iface_build_rx: UnboundedReceiver<DriverMsg>,
     accepted_announce_observer: Option<AcceptedAnnounceObserver>,
     pub(super) crypto_pool: CryptoPoolConfig,
@@ -123,6 +131,7 @@ pub enum NodeRunError {
     InterfaceDriverPanicked,
     PersistenceFailed,
     PersistenceWorkerStopped,
+    RemoteControlAuthorizationPersistenceFailed(RemoteControlAuthorizationPersistenceFailure),
 }
 
 impl fmt::Display for NodeRunError {
@@ -137,6 +146,10 @@ impl fmt::Display for NodeRunError {
             Self::PersistenceWorkerStopped => formatter.write_str(
                 "the recipe-managed persistence worker stopped before completing its contract",
             ),
+            Self::RemoteControlAuthorizationPersistenceFailed(failure) => write!(
+                formatter,
+                "remote-control authorization persistence could not be reconciled: {failure}"
+            ),
         }
     }
 }
@@ -145,7 +158,7 @@ impl std::error::Error for NodeRunError {}
 
 async fn run_node_tasks(
     manifold: impl Future<Output = ()>,
-    request_endpoints: impl Future<Output = ()>,
+    request_endpoints: impl Future<Output = Result<(), RemoteControlAuthorizationPersistenceFailure>>,
     interface_driver: impl Future<Output = ()>,
 ) -> Result<(), NodeRunError> {
     let manifold = AssertUnwindSafe(manifold).catch_unwind();
@@ -154,7 +167,11 @@ async fn run_node_tasks(
     tokio::pin!(manifold, request_endpoints, interface_driver);
     tokio::select! {
         result = &mut manifold => result.map_err(|_| NodeRunError::ManifoldPanicked),
-        result = &mut request_endpoints => result.map_err(|_| NodeRunError::RequestEndpointrPanicked),
+        result = &mut request_endpoints => match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(failure)) => Err(NodeRunError::RemoteControlAuthorizationPersistenceFailed(failure)),
+            Err(_) => Err(NodeRunError::RequestEndpointrPanicked),
+        },
         result = &mut interface_driver => result.map_err(|_| NodeRunError::InterfaceDriverPanicked),
     }
 }
@@ -312,6 +329,8 @@ where
         let (iface_build_tx, iface_build_rx) = mpsc::unbounded_channel();
         let (remote_control_controller_grants, remote_control_controller_grants_rx) =
             remote_control_controller_grant_lane();
+        let (remote_control_target_accesses, remote_control_target_accesses_rx) =
+            remote_control_target_access_lane();
 
         let handle = PrnsNodeHandle {
             commands: command_tx,
@@ -325,6 +344,7 @@ where
             entropy: crate::manifold::driver::TokioEntropy,
             timing_oracle: Arc::new(Mutex::new(None)),
             remote_control_controller_grants,
+            remote_control_target_accesses,
         };
         let (node, interfaces, persistence_intent) = assemble_node(build_recipe(handle.clone()));
         let node_persistence =
@@ -343,6 +363,7 @@ where
             notify_rx,
             command_rx,
             remote_control_controller_grants_rx,
+            remote_control_target_accesses_rx,
             iface_build_rx,
             accepted_announce_observer: None,
             crypto_pool: CryptoPoolConfig::host_default(),
@@ -578,6 +599,7 @@ where
             notify_rx,
             command_rx,
             mut remote_control_controller_grants_rx,
+            mut remote_control_target_accesses_rx,
             iface_build_rx,
             mut accepted_announce_observer,
             crypto_pool,
@@ -590,21 +612,27 @@ where
             mut on_event,
             request_endpoints: _,
         } = node;
-        let (save_on_learn, persistence_worker, restore_diagnostic) = match restored {
-            Some((node_persistence, report)) => {
-                let (save_on_learn, wiring) = persistence::SaveOnLearn::channel();
-                let worker = node_persistence
-                    .worker(handle.clone())
-                    .with_save_on_learn(wiring)
-                    .with_flush_failure_policy(persistence::FlushFailurePolicy::Exit);
-                (
-                    Some(save_on_learn),
-                    Some(worker),
-                    Some(persistence_restored_diagnostic(&report)),
-                )
-            }
-            None => (None, None, None),
-        };
+        let (save_on_learn, persistence_worker, authorization_persistence, restore_diagnostic) =
+            match restored {
+                Some((node_persistence, report)) => {
+                    let (save_on_learn, wiring) = persistence::SaveOnLearn::channel();
+                    let worker = node_persistence
+                        .worker(handle.clone())
+                        .with_save_on_learn(wiring)
+                        .with_flush_failure_policy(persistence::FlushFailurePolicy::Exit);
+                    let authorization_persistence =
+                        worker.remote_control_authorization_persistence();
+                    (
+                        Some(save_on_learn),
+                        Some(worker),
+                        Some(authorization_persistence),
+                        Some(persistence_restored_diagnostic(&report)),
+                    )
+                }
+                None => (None, None, None, None),
+            };
+        let (remote_control_pairing_persistence, mut remote_control_pairing_persistence_rx) =
+            remote_control_pairing_persistence_lane();
         let egress = Egress::new(std::vec::Vec::new());
         let store = handle.store.clone();
         let (req_tx, req_rx) = mpsc::channel(REQUEST_QUEUE_DEPTH);
@@ -635,6 +663,7 @@ where
                     egress,
                 },
                 |journaled| {
+                    remote_control_pairing_persistence.observe(&journaled);
                     if let Journaled::LinkClosed { link_id, .. } = &journaled {
                         admission_cleanup.remove(*link_id);
                     }
@@ -734,7 +763,12 @@ where
                 &state,
                 &mut remote_control,
                 req_rx,
-                &mut remote_control_controller_grants_rx,
+                RemoteControlAuthorizationRuntime {
+                    controller_grants: &mut remote_control_controller_grants_rx,
+                    target_accesses: &mut remote_control_target_accesses_rx,
+                    pairing_persistence: &mut remote_control_pairing_persistence_rx,
+                    persistence: authorization_persistence.as_ref(),
+                },
                 handle.clone(),
             ),
             drive_interfaces(

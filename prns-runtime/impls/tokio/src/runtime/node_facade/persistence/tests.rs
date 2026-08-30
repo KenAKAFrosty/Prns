@@ -5,6 +5,16 @@ use tokio::sync::mpsc::{self, UnboundedReceiver};
 use crate::engine::InstantMillis;
 use crate::identity::Zeroizing;
 use crate::manifold::driver::{HostCommand, SelfRatchetSnapshot};
+use crate::persistence::{
+    remote_control_controller_grants_snapshot_capacity,
+    remote_control_target_accesses_snapshot_capacity, FileStore, PersistedStore, SnapshotRegion,
+};
+use crate::remote_control::{
+    RemoteControlControllerGrant, RemoteControlControllerGrantTable, RemoteControlRequestKind,
+    RemoteControlRequestSet, RemoteControlTargetAccess, RemoteControlTargetAccessTable,
+    RemoteControlTargetIdentity, DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS,
+    DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES,
+};
 use crate::routing::{BlackholeExpiry, BlackholedIdentity};
 use crate::runtime::{ManuallyAttached, NoPersistence, PreConfiguredDestination, PrnsNodeRecipe};
 use crate::wire::DestinationHash;
@@ -201,4 +211,144 @@ fn a_reticulum_dir_nests_snapshots_under_storage_prns() {
     let _ = std::fs::remove_dir_all(&reticulum_dir);
     opened.unwrap();
     assert!(nested);
+}
+
+#[test]
+fn remote_control_authorizations_restore_as_complete_runtime_tables() {
+    let directory = std::env::temp_dir().join(format!(
+        "prns-remote-control-restore-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&directory);
+    let mut store = FileStore::new(&directory);
+    let mut source = PrnsNode::new(PrnsNodeRecipe {
+        transport_identity: None,
+        remote_control: test_remote_control_service(),
+        pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+        app_state: (),
+        storage: crate::storage::GrowableHeap,
+        request_endpoints: crate::request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
+        on_event: |_event, _state: &()| {},
+    });
+    let identities = test_remote_control_service()
+        .configuration()
+        .unwrap()
+        .identity_secrets()
+        .identities();
+    let grant = RemoteControlControllerGrant::new(
+        *identities.controller(),
+        RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
+    )
+    .unwrap();
+    let access = RemoteControlTargetAccess::new(
+        RemoteControlTargetIdentity::new(*identities.target().public_keys()),
+        RemoteControlRequestSet::only(RemoteControlRequestKind::AnnounceSelf),
+    )
+    .unwrap();
+    source
+        .node
+        .remote_control
+        .set_controller_grant(grant)
+        .unwrap();
+    source
+        .node
+        .remote_control
+        .set_target_access(access)
+        .unwrap();
+
+    let mut grants = vec![
+        0;
+        remote_control_controller_grants_snapshot_capacity(
+            DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS,
+        )
+    ];
+    let grants_len = source
+        .node
+        .remote_control
+        .write_controller_grants_snapshot(&mut grants)
+        .unwrap()
+        .unwrap();
+    store
+        .store(
+            SnapshotRegion::RemoteControlControllerGrants,
+            &grants[..grants_len],
+        )
+        .unwrap();
+    let mut accesses = vec![
+        0;
+        remote_control_target_accesses_snapshot_capacity(
+            DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES,
+        )
+    ];
+    let accesses_len = source
+        .node
+        .remote_control
+        .write_target_accesses_snapshot(&mut accesses)
+        .unwrap()
+        .unwrap();
+    store
+        .store(
+            SnapshotRegion::RemoteControlTargetAccesses,
+            &accesses[..accesses_len],
+        )
+        .unwrap();
+
+    let mut restored = PrnsNode::new(PrnsNodeRecipe {
+        transport_identity: None,
+        remote_control: test_remote_control_service(),
+        pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+        app_state: (),
+        storage: crate::storage::GrowableHeap,
+        request_endpoints: crate::request_endpoints![],
+        interfaces: ManuallyAttached,
+        persistence: NoPersistence,
+        on_event: |_event, _state: &()| {},
+    });
+    assert_eq!(
+        restored.seed_remote_control_controller_grants_from_store(&store),
+        super::RemoteControlAuthorizationSeedReport {
+            restored_count: 1,
+            refused_count: 0,
+            dropped_count: 0,
+        },
+    );
+    assert_eq!(
+        restored.seed_remote_control_target_accesses_from_store(&store),
+        super::RemoteControlAuthorizationSeedReport {
+            restored_count: 1,
+            refused_count: 0,
+            dropped_count: 0,
+        },
+    );
+    assert_eq!(
+        restored
+            .node
+            .remote_control
+            .controller_grants()
+            .unwrap()
+            .grants_in_identity_hash_order(),
+        source
+            .node
+            .remote_control
+            .controller_grants()
+            .unwrap()
+            .grants_in_identity_hash_order(),
+    );
+    assert_eq!(
+        restored
+            .node
+            .remote_control
+            .target_accesses()
+            .unwrap()
+            .accesses_in_identity_hash_order(),
+        source
+            .node
+            .remote_control
+            .target_accesses()
+            .unwrap()
+            .accesses_in_identity_hash_order(),
+    );
+    std::fs::remove_dir_all(directory).unwrap();
 }

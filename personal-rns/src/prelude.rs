@@ -1,13 +1,20 @@
 pub use crate::{
-    request_endpoints, AnnounceNowError, CommandId, DestinationHash, Diagnostic, InterfaceStatus,
+    request_endpoints, AnnounceNowError, ApproveRemoteControlControllerPairingControlError,
+    ApproveRemoteControlControllerPairingControlFailure,
+    ApproveRemoteControlTargetPairingControlError, BeginRemoteControlControllerPairingControlError,
+    BeginRemoteControlControllerPairingControlFailure, CommandId, DestinationHash, Diagnostic,
+    ForgetRemoteControlTargetControlError, ForgetRemoteControlTargetServiceError, InterfaceStatus,
     ManuallyAttached, Message, NoPersistence, PacketReceiptDelivered, PreConfiguredDestination,
     PrnsCommand, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, ProofStrategy, RatchetPolicy,
+    RejectRemoteControlControllerPairingControlError, RejectRemoteControlTargetPairingControlError,
     RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure,
     RemoteControlControllerGrantControl, RemoteControlDescribe, RemoteControlError,
-    ResourceMemoryLimits, ResourceStrategy, RevokeRemoteControlControllerControlError,
+    RemoteControlPairingControl, RemoteControlTargetAccessControl, ResourceMemoryLimits,
+    ResourceStrategy, RevokeRemoteControlControllerControlError,
     RevokeRemoteControlControllerServiceError, RuntimeHealth, SendError,
     SetRegisteredAnnounceAppDataError, SetRemoteControlControllerGrantControlError,
-    SetRemoteControlControllerGrantServiceError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
+    SetRemoteControlControllerGrantServiceError, SetRemoteControlTargetAccessControlError,
+    SetRemoteControlTargetAccessServiceError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
 };
 
 pub use crate::remote_control::{
@@ -30,7 +37,8 @@ pub use crate::remote_control::{
     RemoteControlTargetIdentitySecret, RevokeRemoteControlControllerOutcome,
     SetRemoteControlControllerGrantError, SetRemoteControlControllerGrantOutcome,
     SetRemoteControlTargetAccessError, SetRemoteControlTargetAccessOutcome,
-    REMOTE_CONTROL_IDENTITY_VAULT_SLOTS, REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
+    DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES, REMOTE_CONTROL_IDENTITY_VAULT_SLOTS,
+    REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
 };
 
 #[cfg(feature = "alloc")]

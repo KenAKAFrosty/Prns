@@ -80,13 +80,20 @@ pub use prns_runtime::interfaces::InterfaceStatus;
 pub use prns_runtime::routing::links::resources::{ResourceMemoryLimits, ResourceStrategy};
 pub use prns_runtime::routing::ProofStrategy;
 pub use prns_runtime::runtime::{
-    AnnounceNowError, Diagnostic, ManuallyAttached, Message, NoPersistence,
-    PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, RemoteControlAnnounceSelf,
-    RemoteControlAnnounceSelfFailure, RemoteControlControllerGrantControl, RemoteControlDescribe,
-    RemoteControlError, RevokeRemoteControlControllerControlError,
-    RevokeRemoteControlControllerServiceError, RuntimeHealth, SendError,
-    SetRegisteredAnnounceAppDataError, SetRemoteControlControllerGrantControlError,
-    SetRemoteControlControllerGrantServiceError,
+    AnnounceNowError, ApproveRemoteControlControllerPairingControlError,
+    ApproveRemoteControlControllerPairingControlFailure,
+    ApproveRemoteControlTargetPairingControlError, BeginRemoteControlControllerPairingControlError,
+    BeginRemoteControlControllerPairingControlFailure, Diagnostic,
+    ForgetRemoteControlTargetControlError, ForgetRemoteControlTargetServiceError, ManuallyAttached,
+    Message, NoPersistence, PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe,
+    RejectRemoteControlControllerPairingControlError, RejectRemoteControlTargetPairingControlError,
+    RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure,
+    RemoteControlControllerGrantControl, RemoteControlDescribe, RemoteControlError,
+    RemoteControlPairingControl, RemoteControlTargetAccessControl,
+    RevokeRemoteControlControllerControlError, RevokeRemoteControlControllerServiceError,
+    RuntimeHealth, SendError, SetRegisteredAnnounceAppDataError,
+    SetRemoteControlControllerGrantControlError, SetRemoteControlControllerGrantServiceError,
+    SetRemoteControlTargetAccessControlError, SetRemoteControlTargetAccessServiceError,
 };
 pub use prns_runtime::wire::{DestinationHash, TransportId};
 

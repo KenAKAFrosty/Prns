@@ -20,8 +20,14 @@ use prns_runtime::runtime::placement::{
     AdmittedRemoteControlRequest,
 };
 
-use super::node_facade::{PrnsNodeHandle, ResponseSendError};
+use super::node_facade::{
+    PrnsNodeHandle, RemoteControlAuthorizationPersistence, ResponseSendError,
+};
 use super::remote_control_controller_grants::RemoteControlControllerGrantReceiver;
+use super::remote_control_pairing_persistence::{
+    RemoteControlAuthorizationPersistenceFailure, RemoteControlPairingPersistenceReceiver,
+};
+use super::remote_control_target_accesses::RemoteControlTargetAccessReceiver;
 use super::request_endpoints::{dispatch_request, Decline, InboundRequest, RequestEndpointSet};
 use super::request_endpoints::{ResponseCapacityExceeded, ResponseSink};
 use super::AssembledRemoteControl;
@@ -38,6 +44,13 @@ pub(super) struct RunnerRequest {
     pub requested_at: InstantMillis,
     pub rtt: RttMillis,
     pub data: std::vec::Vec<u8>,
+}
+
+pub(super) struct RemoteControlAuthorizationRuntime<'a> {
+    pub controller_grants: &'a mut RemoteControlControllerGrantReceiver,
+    pub target_accesses: &'a mut RemoteControlTargetAccessReceiver,
+    pub pairing_persistence: &'a mut RemoteControlPairingPersistenceReceiver,
+    pub persistence: Option<&'a RemoteControlAuthorizationPersistence>,
 }
 
 impl RunnerRequest {
@@ -175,9 +188,9 @@ pub(super) async fn run_router<St, R: RequestEndpointSet<St>>(
     state: &St,
     remote_control: &mut AssembledRemoteControl,
     mut requests: mpsc::Receiver<RunnerRequest>,
-    remote_control_controller_grants: &mut RemoteControlControllerGrantReceiver,
+    authorization: RemoteControlAuthorizationRuntime<'_>,
     commands: PrnsNodeHandle,
-) {
+) -> Result<(), RemoteControlAuthorizationPersistenceFailure> {
     let mut in_flight = FuturesUnordered::new();
     let mut response_lanes: std::collections::HashMap<LinkId, Weak<Mutex<()>>> =
         std::collections::HashMap::new();
@@ -186,8 +199,16 @@ pub(super) async fn run_router<St, R: RequestEndpointSet<St>>(
         tokio::select! {
             biased;
             Some(()) = in_flight.next(), if !in_flight.is_empty() => {}
-            Some(command) = remote_control_controller_grants.receive() => {
+            Some(command) = authorization.controller_grants.receive() => {
                 command.apply(remote_control);
+            }
+            Some(command) = authorization.target_accesses.receive() => {
+                command.apply(remote_control);
+            }
+            Some(command) = authorization.pairing_persistence.receive() => {
+                command
+                    .apply(remote_control, authorization.persistence, &commands)
+                    .await?;
             }
             request = requests.recv(), if accepting => match request {
                 Some(request) => {
@@ -208,7 +229,7 @@ pub(super) async fn run_router<St, R: RequestEndpointSet<St>>(
                         response_lane,
                     ));
                 }
-                None => break,
+                None => return Ok(()),
             },
         }
     }
@@ -551,11 +572,21 @@ mod tests {
             () = tokio::task::yield_now() => {}
         }
 
+        let (_target_access_sender, mut target_accesses) =
+            super::super::remote_control_target_accesses::remote_control_target_access_lane();
+        let (_pairing_persistence_sender, mut pairing_persistence) =
+            super::super::remote_control_pairing_persistence::remote_control_pairing_persistence_lane();
+
         let router = run_router::<(), PongRequestEndpointSet>(
             &(),
             &mut remote_control,
             request_rx,
-            &mut controller_grants,
+            RemoteControlAuthorizationRuntime {
+                controller_grants: &mut controller_grants,
+                target_accesses: &mut target_accesses,
+                pairing_persistence: &mut pairing_persistence,
+                persistence: None,
+            },
             handle.clone(),
         );
         let exercise = async {
@@ -589,7 +620,7 @@ mod tests {
         tokio::select! {
             biased;
             () = exercise => {}
-            () = &mut router => panic!("router returned while its lanes remained open"),
+            result = &mut router => panic!("router returned while its lanes remained open: {result:?}"),
         }
     }
 }

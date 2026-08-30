@@ -6,7 +6,10 @@ pub mod node;
 pub mod node_introspection;
 pub mod packet_phy_retention;
 mod remote_control;
+mod remote_control_authorizations;
 mod remote_control_controller_grants;
+mod remote_control_pairing;
+mod remote_control_target_accesses;
 pub mod request_endpoints;
 #[cfg(feature = "rns-management")]
 pub mod rns_management;
@@ -51,10 +54,26 @@ pub use remote_control::{
     RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure, RemoteControlDescribe,
     RemoteControlError,
 };
+pub use remote_control_authorizations::{
+    RemoteControlAuthorizationRestoreError, RemoteControlAuthorizationRestoreOutcome,
+};
 pub use remote_control_controller_grants::{
     RemoteControlControllerGrantControl, RevokeRemoteControlControllerControlError,
     RevokeRemoteControlControllerServiceError, SetRemoteControlControllerGrantControlError,
     SetRemoteControlControllerGrantServiceError,
+};
+pub use remote_control_pairing::{
+    ApproveRemoteControlControllerPairingControlError,
+    ApproveRemoteControlControllerPairingControlFailure,
+    ApproveRemoteControlTargetPairingControlError, BeginRemoteControlControllerPairingControlError,
+    BeginRemoteControlControllerPairingControlFailure,
+    RejectRemoteControlControllerPairingControlError, RejectRemoteControlTargetPairingControlError,
+    RemoteControlPairingControl,
+};
+pub use remote_control_target_accesses::{
+    ForgetRemoteControlTargetControlError, ForgetRemoteControlTargetServiceError,
+    RemoteControlTargetAccessControl, SetRemoteControlTargetAccessControlError,
+    SetRemoteControlTargetAccessServiceError,
 };
 
 #[doc(hidden)]
