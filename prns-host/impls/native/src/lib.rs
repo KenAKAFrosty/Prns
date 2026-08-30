@@ -2603,30 +2603,18 @@ fn request_failure(error: SendError<SendRequestFailure>) -> CommandFailure {
         SendError::Failed(SendRequestFailure::LinkClosed) => CommandFailure::LinkClosed,
         SendError::Failed(SendRequestFailure::ResponseTooLarge) => CommandFailure::ResponseTooLarge,
         SendError::Failed(SendRequestFailure::ResponseTransferFailed(cause)) => match cause {
-            ResourceFailureCause::CancelledBySender => {
-                CommandFailure::ResponseCancelledBySender
-            }
+            ResourceFailureCause::CancelledBySender => CommandFailure::ResponseCancelledBySender,
             ResourceFailureCause::RefusedHashmapUpdate(refusal) => match refusal {
                 ApplyHashmapUpdateError::BeyondPartCount => {
                     CommandFailure::ResponseHashmapBeyondPartCount
                 }
-                ApplyHashmapUpdateError::SkipsAhead => {
-                    CommandFailure::ResponseHashmapSkipsAhead
-                }
-                ApplyHashmapUpdateError::HashmapTooLong => {
-                    CommandFailure::ResponseHashmapTooLong
-                }
-                ApplyHashmapUpdateError::HashmapRagged => {
-                    CommandFailure::ResponseHashmapRagged
-                }
+                ApplyHashmapUpdateError::SkipsAhead => CommandFailure::ResponseHashmapSkipsAhead,
+                ApplyHashmapUpdateError::HashmapTooLong => CommandFailure::ResponseHashmapTooLong,
+                ApplyHashmapUpdateError::HashmapRagged => CommandFailure::ResponseHashmapRagged,
             },
-            ResourceFailureCause::RetriesExhausted => {
-                CommandFailure::ResponseRetriesExhausted
-            }
+            ResourceFailureCause::RetriesExhausted => CommandFailure::ResponseRetriesExhausted,
             ResourceFailureCause::LinkVanished => CommandFailure::ResponseLinkVanished,
-            ResourceFailureCause::TransferUnopenable => {
-                CommandFailure::ResponseTransferUnopenable
-            }
+            ResourceFailureCause::TransferUnopenable => CommandFailure::ResponseTransferUnopenable,
             ResourceFailureCause::TransferCorrupt => CommandFailure::ResponseTransferCorrupt,
             ResourceFailureCause::ProofUnsendable => CommandFailure::ResponseProofUnsendable,
             ResourceFailureCause::DecompressionFailed => {

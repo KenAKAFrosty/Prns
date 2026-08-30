@@ -663,14 +663,10 @@ fn request_error(error: personal_rns::SendError<SendRequestFailure>) -> crate::e
                 },
                 ResourceFailureCause::RetriesExhausted => ErrorCode::ResponseRetriesExhausted,
                 ResourceFailureCause::LinkVanished => ErrorCode::ResponseLinkVanished,
-                ResourceFailureCause::TransferUnopenable => {
-                    ErrorCode::ResponseTransferUnopenable
-                }
+                ResourceFailureCause::TransferUnopenable => ErrorCode::ResponseTransferUnopenable,
                 ResourceFailureCause::TransferCorrupt => ErrorCode::ResponseTransferCorrupt,
                 ResourceFailureCause::ProofUnsendable => ErrorCode::ResponseProofUnsendable,
-                ResourceFailureCause::DecompressionFailed => {
-                    ErrorCode::ResponseDecompressionFailed
-                }
+                ResourceFailureCause::DecompressionFailed => ErrorCode::ResponseDecompressionFailed,
                 ResourceFailureCause::DecompressionTimedOut => {
                     ErrorCode::ResponseDecompressionTimedOut
                 }
