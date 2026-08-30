@@ -11,6 +11,7 @@ mod node_ingress;
 mod proof;
 mod reaction;
 mod registration;
+mod remote_control;
 mod remote_control_pairing;
 mod route_evidence;
 mod settlement;
@@ -81,6 +82,8 @@ pub use registration::{
     RouteSeedOutcome, SetTransportIdentityError, UnregisterDestinationOutcome,
     VerifiedPersistedRoute,
 };
+pub use remote_control::ConfigureRemoteControlIdentitiesError;
+pub(crate) use remote_control::RemoteControlControllerIdentityConfiguration;
 pub use remote_control_pairing::{
     ConfigureRemoteControlPairingError, RemoteControlPairingResponseDispatchFailure,
 };

@@ -4,9 +4,9 @@ use crate::engine::EngineState;
 use crate::remote_control::{
     ApproveRemoteControlControllerPairingOutcome, BeginRemoteControlControllerPairingOutcome,
     FailRemoteControlControllerPairingRequestOutcome, RejectRemoteControlControllerPairingOutcome,
-    RemoteControlControllerIdentity, RemoteControlControllerPairingAborted,
-    RemoteControlControllerPairingActivity, RemoteControlControllerPairingWindowError,
-    RemoteControlPairingAttemptId, RemoteControlPairingContext, RemoteControlPairingInvitationCode,
+    RemoteControlControllerPairingAborted, RemoteControlControllerPairingActivity,
+    RemoteControlControllerPairingWindowError, RemoteControlPairingAttemptId,
+    RemoteControlPairingContext, RemoteControlPairingInvitationCode,
     RemoteControlPairingMessageWriteError, RemoteControlPairingRequest,
     RemoteControlPairingResponse, REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID,
 };
@@ -31,7 +31,6 @@ const _: () =
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BeginRemoteControlControllerPairing {
-    pub controller: RemoteControlControllerIdentity,
     pub context: RemoteControlPairingContext,
     pub invitation_code: RemoteControlPairingInvitationCode,
     pub pairing_expires_at: InstantMillis,
@@ -137,6 +136,7 @@ impl RemoteControlControllerPairingBegun {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BeginRemoteControlControllerPairingFailure {
+    ControllerIdentityUnavailable,
     Busy {
         active: RemoteControlControllerPairingActivity,
     },
@@ -363,8 +363,18 @@ impl<S: StorageLayout> EngineState<S> {
         now: InstantMillis,
     ) -> Result<RemoteControlControllerPairingBegun, BeginRemoteControlControllerPairingFailure>
     {
+        let controller = match self.remote_control_controller_identity {
+            crate::engine::RemoteControlControllerIdentityConfiguration::Unavailable => {
+                return Err(
+                    BeginRemoteControlControllerPairingFailure::ControllerIdentityUnavailable,
+                )
+            }
+            crate::engine::RemoteControlControllerIdentityConfiguration::Configured(controller) => {
+                controller
+            }
+        };
         match self.remote_control_controller_pairing.begin(
-            command.controller,
+            controller,
             command.context,
             command.invitation_code,
             now,
@@ -521,10 +531,12 @@ mod tests {
     use crate::interfaces::AttachedInterfaces;
     use crate::remote_control::{
         BeginRemoteControlControllerPairingOutcome,
-        ReceiveRemoteControlControllerPairingOfferOutcome, RemoteControlControllerPairingView,
-        RemoteControlPairingAttemptTimeout, RemoteControlPairingBegin, RemoteControlPairingCommit,
-        RemoteControlPairingIdentity, RemoteControlPairingPermissions,
-        RemoteControlPairingPreparedOffer, RemoteControlRequestKind, RemoteControlRequestSet,
+        ReceiveRemoteControlControllerPairingOfferOutcome, RemoteControlControllerIdentity,
+        RemoteControlControllerIdentitySecret, RemoteControlControllerPairingView,
+        RemoteControlNodeIdentitySecrets, RemoteControlPairingAttemptTimeout,
+        RemoteControlPairingBegin, RemoteControlPairingCommit, RemoteControlPairingIdentity,
+        RemoteControlPairingPermissions, RemoteControlPairingPreparedOffer,
+        RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlTargetIdentitySecret,
     };
     use crate::routing::links::LinkId;
     use crate::units::DurationMillis;
@@ -546,6 +558,27 @@ mod tests {
             encryption: signer.encryption_public_key(),
             signing: signer.signing_public_key(),
         })
+    }
+
+    fn identity_secrets(controller_fill: u8, target_fill: u8) -> RemoteControlNodeIdentitySecrets {
+        RemoteControlNodeIdentitySecrets::new(
+            RemoteControlControllerIdentitySecret::from(IdentitySecretKey::new(
+                [controller_fill; crate::identity::IDENTITY_SECRET_KEY_LEN],
+            )),
+            RemoteControlTargetIdentitySecret::from(IdentitySecretKey::new(
+                [target_fill; crate::identity::IDENTITY_SECRET_KEY_LEN],
+            )),
+        )
+        .unwrap()
+    }
+
+    fn configure_controller(
+        engine: &mut EngineState<TestStorageLayout>,
+    ) -> RemoteControlControllerIdentity {
+        let identities = engine
+            .configure_remote_control_identities(identity_secrets(0x31, 0x32))
+            .unwrap();
+        *identities.controller()
     }
 
     fn context() -> RemoteControlPairingContext {
@@ -653,11 +686,10 @@ mod tests {
     #[test]
     fn begin_returns_the_exact_bounded_request_and_engine_deadline() {
         let mut engine = EngineState::<TestStorageLayout>::default();
-        let controller = controller();
+        let controller = configure_controller(&mut engine);
         let (settlement, schedules) = execute(
             &mut engine,
             PrnsCommand::BeginRemoteControlControllerPairing(BeginRemoteControlControllerPairing {
-                controller,
                 context: context(),
                 invitation_code: invitation_code(),
                 pairing_expires_at: PAIRING_EXPIRES_AT,
@@ -690,7 +722,8 @@ mod tests {
         assert!(matches!(
             engine.remote_control_controller_pairing.view(),
             RemoteControlControllerPairingView::AwaitingOffer(view)
-                if view.context() == context()
+                if view.controller() == &controller
+                    && view.context() == context()
                     && view.window().expires_at() == PAIRING_EXPIRES_AT
         ));
         assert_eq!(
@@ -775,11 +808,10 @@ mod tests {
     #[test]
     fn elapsed_begin_settles_without_creating_request_debt() {
         let mut engine = EngineState::<TestStorageLayout>::default();
-        let controller = controller();
+        configure_controller(&mut engine);
         let (settlement, schedules) = execute(
             &mut engine,
             PrnsCommand::BeginRemoteControlControllerPairing(BeginRemoteControlControllerPairing {
-                controller,
                 context: context(),
                 invitation_code: invitation_code(),
                 pairing_expires_at: PAIRING_EXPIRES_AT,
@@ -802,5 +834,49 @@ mod tests {
             RemoteControlControllerPairingView::Idle,
         );
         assert_eq!(schedules.remote_control_pairing, WakeSchedule::Idle);
+    }
+
+    #[test]
+    fn begin_requires_the_configured_controller_identity() {
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        let (settlement, schedules) = execute(
+            &mut engine,
+            PrnsCommand::BeginRemoteControlControllerPairing(BeginRemoteControlControllerPairing {
+                context: context(),
+                invitation_code: invitation_code(),
+                pairing_expires_at: PAIRING_EXPIRES_AT,
+            }),
+            STARTED_AT,
+        );
+
+        assert_eq!(
+            settlement,
+            Settlement::BeginRemoteControlControllerPairing(Err(
+                BeginRemoteControlControllerPairingFailure::ControllerIdentityUnavailable,
+            )),
+        );
+        assert_eq!(
+            engine.remote_control_controller_pairing.view(),
+            RemoteControlControllerPairingView::Idle,
+        );
+        assert_eq!(schedules.remote_control_pairing, WakeSchedule::Idle);
+    }
+
+    #[test]
+    fn configured_remote_control_identities_cannot_be_replaced() {
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        let first = engine
+            .configure_remote_control_identities(identity_secrets(0x31, 0x32))
+            .unwrap();
+        let expected_hashes = [
+            first.controller().identity_hash(),
+            first.target().identity_hash(),
+        ];
+
+        assert_eq!(
+            engine.configure_remote_control_identities(identity_secrets(0x41, 0x42)),
+            Err(crate::engine::ConfigureRemoteControlIdentitiesError::AlreadyConfigured),
+        );
+        assert_eq!(engine.held_identity_hashes(), &expected_hashes);
     }
 }

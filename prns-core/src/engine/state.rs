@@ -41,6 +41,8 @@ use crate::wire::{DestinationHash, TransportId};
 use core::mem::MaybeUninit;
 use zeroize::Zeroizing;
 
+use super::RemoteControlControllerIdentityConfiguration;
+
 #[cfg(feature = "runtime-metrics")]
 use alloc::vec::Vec;
 
@@ -202,6 +204,7 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) packet_hash_history: S::PacketHashes,
     pub(crate) identity_blackholes: IdentityBlackholes<S::Blackholes>,
     pub(crate) held_identities: HeldIdentities<S::HeldIdentities>,
+    pub(crate) remote_control_controller_identity: RemoteControlControllerIdentityConfiguration,
     pub(crate) remote_control_pairing: RemoteControlPairingState,
     pub(crate) remote_control_controller_pairing: RemoteControlControllerPairingState,
     pub(crate) remote_control_target_pairing: RemoteControlTargetPairingState,
@@ -268,6 +271,8 @@ impl<S: StorageLayout> Default for EngineState<S> {
             packet_hash_history: Default::default(),
             identity_blackholes: IdentityBlackholes::default(),
             held_identities: HeldIdentities::default(),
+            remote_control_controller_identity:
+                RemoteControlControllerIdentityConfiguration::default(),
             remote_control_pairing: RemoteControlPairingState::default(),
             remote_control_controller_pairing: RemoteControlControllerPairingState::default(),
             remote_control_target_pairing: RemoteControlTargetPairingState::default(),
@@ -349,6 +354,10 @@ impl<S: StorageLayout> EngineState<S> {
             write!(packet_hash_history, Default::default());
             write!(identity_blackholes, IdentityBlackholes::default());
             write!(held_identities, HeldIdentities::default());
+            write!(
+                remote_control_controller_identity,
+                RemoteControlControllerIdentityConfiguration::default()
+            );
             write!(remote_control_pairing, RemoteControlPairingState::default());
             write!(
                 remote_control_controller_pairing,

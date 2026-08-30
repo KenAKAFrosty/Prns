@@ -169,7 +169,7 @@ impl AssembledRemoteControl {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigureRemoteControlServiceError {
-    HoldIdentity(HoldIdentityError),
+    ConfigureIdentities(crate::engine::ConfigureRemoteControlIdentitiesError),
     RegisterTarget(RegisterDestinationError),
     ConfigureRequestLimit,
     RegisterRequestEndpoint(TablePushError),
@@ -261,7 +261,7 @@ where
     let (identity_secrets, initial_access, self_announcement) = configuration.into_parts();
     let identities = engine
         .configure_remote_control_identities(identity_secrets)
-        .map_err(ConfigureRemoteControlServiceError::HoldIdentity)?;
+        .map_err(ConfigureRemoteControlServiceError::ConfigureIdentities)?;
     let target_endpoint = identities.target().endpoint();
     let destination = engine
         .register_single_destination(

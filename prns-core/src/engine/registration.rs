@@ -25,6 +25,8 @@ use crate::units::ByteLimit;
 use crate::wire::{DestinationHash, TransportId};
 use zeroize::Zeroizing;
 
+use super::{ConfigureRemoteControlIdentitiesError, RemoteControlControllerIdentityConfiguration};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetTransportIdentityError {
     UnknownIdentity,
@@ -135,10 +137,20 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn configure_remote_control_identities(
         &mut self,
         secrets: RemoteControlNodeIdentitySecrets,
-    ) -> Result<RemoteControlNodeIdentities, HoldIdentityError> {
+    ) -> Result<RemoteControlNodeIdentities, ConfigureRemoteControlIdentitiesError> {
+        match self.remote_control_controller_identity {
+            RemoteControlControllerIdentityConfiguration::Unavailable => {}
+            RemoteControlControllerIdentityConfiguration::Configured(_) => {
+                return Err(ConfigureRemoteControlIdentitiesError::AlreadyConfigured)
+            }
+        }
         let identities = secrets.identities();
         let (controller, target) = secrets.into_parts();
-        self.held_identities.hold_pair(controller, target)?;
+        self.held_identities
+            .hold_pair(controller, target)
+            .map_err(ConfigureRemoteControlIdentitiesError::Hold)?;
+        self.remote_control_controller_identity =
+            RemoteControlControllerIdentityConfiguration::Configured(*identities.controller());
         Ok(identities)
     }
 
