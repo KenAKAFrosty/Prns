@@ -67,7 +67,10 @@ impl Settleable for SendToChannel {
             | Settlement::CloseRemoteControlPairing(_)
             | Settlement::ApproveRemoteControlTargetPairing(_)
             | Settlement::RejectRemoteControlTargetPairing(_)
-            | Settlement::SettleRemoteControlTargetPairingAuthorization(_) => None,
+            | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
+            | Settlement::BeginRemoteControlControllerPairing(_)
+            | Settlement::ApproveRemoteControlControllerPairing(_)
+            | Settlement::RejectRemoteControlControllerPairing(_) => None,
         }
     }
 }

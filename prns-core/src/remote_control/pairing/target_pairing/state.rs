@@ -5,7 +5,8 @@ use crate::units::InstantMillis;
 
 use super::super::{
     RemoteControlPairingAttemptId, RemoteControlPairingCompleted, RemoteControlPairingContext,
-    RemoteControlPairingPreparedOffer, RemoteControlPairingSession, RemoteControlPairingTranscript,
+    RemoteControlPairingInvitationProofInvalid, RemoteControlPairingPreparedOffer,
+    RemoteControlPairingSession, RemoteControlPairingTranscript,
 };
 use super::model::*;
 
@@ -107,12 +108,6 @@ impl RemoteControlTargetPairingState {
         arrival: &RemoteControlTargetPairingBeginArrival,
         started_at: InstantMillis,
     ) -> BeginRemoteControlTargetPairingOutcome {
-        if let Some(expired) = self.take_expired_attempt(started_at) {
-            return BeginRemoteControlTargetPairingOutcome::Expired { expired };
-        }
-        if let Some(active) = self.active_attempt_id() {
-            return BeginRemoteControlTargetPairingOutcome::Busy { active };
-        }
         let claimed = arrival.begin.controller().identity_hash();
         if claimed != arrival.identified_controller {
             return BeginRemoteControlTargetPairingOutcome::Rejected {
@@ -122,6 +117,25 @@ impl RemoteControlTargetPairingState {
                     identified: arrival.identified_controller,
                 },
             };
+        }
+        match session.invitation_verifier().verify(
+            session.endpoint(),
+            arrival.begin.controller(),
+            arrival.begin.invitation_proof(),
+        ) {
+            Ok(()) => {}
+            Err(RemoteControlPairingInvitationProofInvalid) => {
+                return BeginRemoteControlTargetPairingOutcome::Rejected {
+                    rejected: arrival.responder,
+                    reason: RemoteControlTargetPairingBeginRejection::InvalidInvitationProof,
+                };
+            }
+        }
+        if let Some(expired) = self.take_expired_attempt(started_at) {
+            return BeginRemoteControlTargetPairingOutcome::Expired { expired };
+        }
+        if let Some(active) = self.active_attempt_id() {
+            return BeginRemoteControlTargetPairingOutcome::Busy { active };
         }
         let attempt_timeout = session.attempt_timeout();
         let window = match RemoteControlTargetPairingAttemptWindow::new(

@@ -25,15 +25,16 @@ use crate::remote_control::{
     PersistRemoteControlTargetPairingAuthorizationOutcome, RemoteControlControllerPairingView,
     RemoteControlPairingAttemptId, RemoteControlPairingAvailability,
     RemoteControlPairingAvailabilityDestination, RemoteControlPairingAvailabilityDestinationError,
-    RemoteControlPairingIdentity, RemoteControlPairingMessageParseError,
-    RemoteControlPairingMessageWriteError, RemoteControlPairingRequest,
-    RemoteControlPairingResponse, RemoteControlPairingSession, RemoteControlPairingState,
-    RemoteControlPairingView, RemoteControlPairingWindow, RemoteControlTargetPairingAborted,
-    RemoteControlTargetPairingAttemptWindowError, RemoteControlTargetPairingBeginArrival,
-    RemoteControlTargetPairingBeginRejection, RemoteControlTargetPairingCommitArrival,
-    RemoteControlTargetPairingCommitRejection, RemoteControlTargetPairingResponder,
-    RemoteControlTargetPairingView, REMOTE_CONTROL_PAIRING_APPLICATION_ASPECTS,
-    REMOTE_CONTROL_PAIRING_APPLICATION_NAME, REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID,
+    RemoteControlPairingIdentity, RemoteControlPairingInvitationCode,
+    RemoteControlPairingMessageParseError, RemoteControlPairingMessageWriteError,
+    RemoteControlPairingRequest, RemoteControlPairingResponse, RemoteControlPairingSession,
+    RemoteControlPairingState, RemoteControlPairingView, RemoteControlPairingWindow,
+    RemoteControlTargetPairingAborted, RemoteControlTargetPairingAttemptWindowError,
+    RemoteControlTargetPairingBeginArrival, RemoteControlTargetPairingBeginRejection,
+    RemoteControlTargetPairingCommitArrival, RemoteControlTargetPairingCommitRejection,
+    RemoteControlTargetPairingResponder, RemoteControlTargetPairingView,
+    REMOTE_CONTROL_PAIRING_APPLICATION_ASPECTS, REMOTE_CONTROL_PAIRING_APPLICATION_NAME,
+    REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID,
 };
 use crate::routing::announce::{AnnounceEntropy, AnnounceId};
 use crate::routing::links::request::{
@@ -700,6 +701,10 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
         let identity_hash = signer.identity_hash();
         let identity = RemoteControlPairingIdentity::new(identity_hash);
         let endpoint = identity.endpoint();
+        let mut invitation_entropy = [0u8; RemoteControlPairingInvitationCode::ENTROPY_LEN];
+        fill_entropy(&mut invitation_entropy);
+        let invitation_code = RemoteControlPairingInvitationCode::from_entropy(invitation_entropy);
+        let invitation_verifier = invitation_code.verifier();
 
         let mut announce_entropy = [0u8; AnnounceEntropy::LEN];
         fill_entropy(&mut announce_entropy);
@@ -767,6 +772,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
             window,
             open.permissions,
             open.attempt_timeout,
+            invitation_verifier,
         );
         let rejected = match self.remote_control_pairing.open(session, now) {
             PairingStateOpenOutcome::Opened => None,
@@ -798,6 +804,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
         Ok(RemoteControlPairingOpened {
             endpoint,
             expires_at,
+            invitation_code,
         })
     }
 
@@ -963,10 +970,10 @@ mod tests {
         RemoteControlControllerIdentity, RemoteControlControllerPairingAborted,
         RemoteControlPairingAttemptTimeout, RemoteControlPairingBegin, RemoteControlPairingContext,
         RemoteControlPairingEndpoint, RemoteControlPairingExpiresAfter,
-        RemoteControlPairingIdentity, RemoteControlPairingPermissions,
-        RemoteControlPairingPublicAppDataBytes, RemoteControlPairingTranscript,
-        RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlTargetPairingResponder,
-        RemoteControlTargetPairingView,
+        RemoteControlPairingIdentity, RemoteControlPairingInvitationCode,
+        RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
+        RemoteControlPairingTranscript, RemoteControlRequestKind, RemoteControlRequestSet,
+        RemoteControlTargetPairingResponder, RemoteControlTargetPairingView,
     };
     use crate::routing::dedup::PacketHash;
     use crate::routing::links::data::write_link_packet;
@@ -1023,9 +1030,21 @@ mod tests {
         })
     }
 
+    fn invitation_code() -> RemoteControlPairingInvitationCode {
+        RemoteControlPairingInvitationCode::from_value(0xC3C3_C3C3)
+    }
+
+    fn invited_begin(
+        controller: RemoteControlControllerIdentity,
+        endpoint: RemoteControlPairingEndpoint,
+    ) -> RemoteControlPairingBegin {
+        RemoteControlPairingBegin::new(controller, endpoint, invitation_code())
+    }
+
     fn fill_pairing_entropy(bytes: &mut [u8]) {
         match bytes.len() {
             IDENTITY_SECRET_KEY_LEN => bytes.fill(0xA1),
+            RemoteControlPairingInvitationCode::ENTROPY_LEN => bytes.fill(0xC3),
             AnnounceEntropy::LEN => bytes.fill(0xB2),
             length => panic!("unexpected entropy request of {length} bytes"),
         }
@@ -1166,7 +1185,7 @@ mod tests {
         let prepared = crate::remote_control::RemoteControlPairingPreparedOffer::new(
             &target_signer,
             crate::remote_control::RemoteControlPairingContext::new(endpoint, link_id),
-            &RemoteControlPairingBegin::new(controller),
+            &invited_begin(controller, endpoint),
             session.permissions().clone(),
             session.attempt_timeout(),
         );
@@ -1192,10 +1211,9 @@ mod tests {
         request_id: RequestId,
     ) -> RemoteControlPairingAttemptId {
         let mut encoded = [0u8; RemoteControlPairingRequest::MAX_ENCODED_LEN];
-        let encoded_len =
-            RemoteControlPairingRequest::Begin(RemoteControlPairingBegin::new(controller))
-                .write_into(&mut encoded)
-                .unwrap();
+        let encoded_len = RemoteControlPairingRequest::Begin(invited_begin(controller, endpoint))
+            .write_into(&mut encoded)
+            .unwrap();
         let packed = packed_pairing_payload(&encoded[..encoded_len]);
         let outcome = engine.ingest_remote_control_pairing_request(
             RemoteControlPairingRequestIngress {
@@ -1328,11 +1346,14 @@ mod tests {
             engine.remote_control_controller_pairing.begin(
                 controller,
                 context,
+                invitation_code(),
                 InstantMillis(1_000),
                 expires_at,
             ),
             BeginRemoteControlControllerPairingOutcome::BeginOwed {
-                begin: RemoteControlPairingBegin::new(controller),
+                begin: invited_begin(controller, endpoint),
+                context,
+                expires_at,
             },
         );
         let RemoteControlControllerPairingView::AwaitingOffer(begin) =
@@ -1495,6 +1516,7 @@ mod tests {
                 Settlement::OpenRemoteControlPairing(Ok(RemoteControlPairingOpened {
                     endpoint,
                     expires_at: InstantMillis(61_000),
+                    invitation_code: RemoteControlPairingInvitationCode::from_value(0xC3C3_C3C3),
                 })),
             )),
         );
@@ -1509,6 +1531,7 @@ mod tests {
                 ))
                 .unwrap(),
                 RemoteControlPairingAttemptTimeout::try_from(DurationMillis(30_000)).unwrap(),
+                RemoteControlPairingInvitationCode::from_value(0xC3C3_C3C3).verifier(),
             )),
         );
         let endpoint_registration = engine
@@ -1559,9 +1582,9 @@ mod tests {
         let expected_controller = controller_identity();
         let (mut engine, interfaces, endpoint, link_id, peer_key, controller) =
             open_pairing_link(expected_controller.identity_hash());
-        let begin = RemoteControlPairingBegin::new(controller);
+        let begin = invited_begin(controller, endpoint);
         let mut request_frame = pairing_request_frame(
-            RemoteControlPairingRequest::Begin(RemoteControlPairingBegin::new(controller)),
+            RemoteControlPairingRequest::Begin(invited_begin(controller, endpoint)),
             &link_id,
             &peer_key,
         );
@@ -1687,10 +1710,10 @@ mod tests {
     fn mismatched_and_invalid_pairing_requests_are_silently_consumed() {
         let claimed = controller_identity();
         let identified = crate::identity::IdentityHash::new([0xE1; 16]);
-        let (mut mismatch_engine, interfaces, _, link_id, peer_key, _) =
+        let (mut mismatch_engine, interfaces, mismatch_endpoint, link_id, peer_key, _) =
             open_pairing_link(identified);
         let mut mismatch_frame = pairing_request_frame(
-            RemoteControlPairingRequest::Begin(RemoteControlPairingBegin::new(claimed)),
+            RemoteControlPairingRequest::Begin(invited_begin(claimed, mismatch_endpoint)),
             &link_id,
             &peer_key,
         );
@@ -1738,7 +1761,7 @@ mod tests {
         assert_eq!(malformed_reactions, 0);
 
         let target_signer = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
-        let begin = RemoteControlPairingBegin::new(controller);
+        let begin = invited_begin(controller, endpoint);
         let prepared = match invalid_engine.remote_control_pairing_view() {
             RemoteControlPairingView::Open(session) => {
                 crate::remote_control::RemoteControlPairingPreparedOffer::new(
@@ -1783,6 +1806,46 @@ mod tests {
     }
 
     #[test]
+    fn an_invalid_invitation_is_silent_and_cannot_reserve_the_target_attempt() {
+        let controller = controller_identity();
+        let (mut engine, interfaces, endpoint, link_id, peer_key, _) =
+            open_pairing_link(controller.identity_hash());
+        let begin = RemoteControlPairingBegin::new(
+            controller,
+            endpoint,
+            RemoteControlPairingInvitationCode::from_value(0xDEAD_BEEF),
+        );
+        let mut request_frame = pairing_request_frame(
+            RemoteControlPairingRequest::Begin(begin),
+            &link_id,
+            &peer_key,
+        );
+        let mut reactions = 0usize;
+
+        engine.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface: interfaces[0].id,
+                bytes: &mut request_frame,
+            },
+            IngestIo {
+                interfaces: AttachedInterfaces::new(&interfaces),
+                now: InstantMillis(2_000),
+                fill_entropy: &mut |bytes| bytes.fill(0xE4),
+                should_prove: &mut |_| false,
+                should_accept_resource: &mut |_| false,
+                sink: &mut |_| reactions += 1,
+            },
+        );
+
+        assert_eq!(reactions, 0);
+        assert_eq!(
+            engine.remote_control_target_pairing.view(),
+            RemoteControlTargetPairingView::Idle,
+        );
+    }
+
+    #[test]
     fn pairing_ingress_preserves_exact_silent_outcomes() {
         let claimed = controller_identity();
         let claimed_identity = claimed.identity_hash();
@@ -1792,7 +1855,7 @@ mod tests {
         let responder = RemoteControlTargetPairingResponder::new(link_id, request_id);
         let path_hash = RequestPathHash::of(REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID);
         let mut encoded = [0u8; RemoteControlPairingRequest::MAX_ENCODED_LEN];
-        let begin_len = RemoteControlPairingRequest::Begin(RemoteControlPairingBegin::new(claimed))
+        let begin_len = RemoteControlPairingRequest::Begin(invited_begin(claimed, endpoint))
             .write_into(&mut encoded)
             .unwrap();
         let begin = packed_pairing_payload(&encoded[..begin_len]);
@@ -1906,7 +1969,7 @@ mod tests {
         let target_signer = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let commit = match engine.remote_control_pairing_view() {
             RemoteControlPairingView::Open(session) => {
-                let begin = RemoteControlPairingBegin::new(controller_identity());
+                let begin = invited_begin(controller_identity(), endpoint);
                 let prepared = crate::remote_control::RemoteControlPairingPreparedOffer::new(
                     &target_signer,
                     crate::remote_control::RemoteControlPairingContext::new(endpoint, link_id),
@@ -1958,10 +2021,9 @@ mod tests {
         let (mut engine, interfaces, endpoint, link_id, _, _) =
             open_pairing_link(controller.identity_hash());
         let mut encoded = [0u8; RemoteControlPairingRequest::MAX_ENCODED_LEN];
-        let encoded_len =
-            RemoteControlPairingRequest::Begin(RemoteControlPairingBegin::new(controller))
-                .write_into(&mut encoded)
-                .unwrap();
+        let encoded_len = RemoteControlPairingRequest::Begin(invited_begin(controller, endpoint))
+            .write_into(&mut encoded)
+            .unwrap();
         let packed = packed_pairing_payload(&encoded[..encoded_len]);
         let ingress = |request_id| RemoteControlPairingRequestIngress {
             destination: endpoint.destination_hash(),
@@ -2972,10 +3034,10 @@ mod tests {
     #[test]
     fn retiring_the_pairing_link_aborts_only_its_confirmation_attempt() {
         let controller = controller_identity();
-        let (mut engine, interfaces, _, link_id, peer_key, _) =
+        let (mut engine, interfaces, endpoint, link_id, peer_key, _) =
             open_pairing_link(controller.identity_hash());
         let mut request_frame = pairing_request_frame(
-            RemoteControlPairingRequest::Begin(RemoteControlPairingBegin::new(controller)),
+            RemoteControlPairingRequest::Begin(invited_begin(controller, endpoint)),
             &link_id,
             &peer_key,
         );
@@ -3040,10 +3102,9 @@ mod tests {
             open_pairing_link(controller.identity_hash());
         interfaces[0].capabilities.egress = EgressCapability::Disabled;
         let mut encoded = [0u8; RemoteControlPairingRequest::MAX_ENCODED_LEN];
-        let encoded_len =
-            RemoteControlPairingRequest::Begin(RemoteControlPairingBegin::new(controller))
-                .write_into(&mut encoded)
-                .unwrap();
+        let encoded_len = RemoteControlPairingRequest::Begin(invited_begin(controller, endpoint))
+            .write_into(&mut encoded)
+            .unwrap();
         let packed = packed_pairing_payload(&encoded[..encoded_len]);
         let request_id = RequestId([0xEF; 16]);
         let mut reactions = 0usize;

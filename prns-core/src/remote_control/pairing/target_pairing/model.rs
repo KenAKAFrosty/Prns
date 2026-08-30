@@ -345,6 +345,7 @@ pub enum RemoteControlTargetPairingBeginRejection {
         claimed: IdentityHash,
         identified: IdentityHash,
     },
+    InvalidInvitationProof,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

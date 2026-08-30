@@ -4,7 +4,8 @@ use crate::units::InstantMillis;
 
 use super::super::{
     RemoteControlPairingAttemptId, RemoteControlPairingBegin, RemoteControlPairingCompleted,
-    RemoteControlPairingContext, RemoteControlPairingOffer, RemoteControlPairingTranscript,
+    RemoteControlPairingContext, RemoteControlPairingInvitationCode, RemoteControlPairingOffer,
+    RemoteControlPairingTranscript,
 };
 use super::model::*;
 
@@ -14,7 +15,7 @@ enum RemoteControlControllerPairingPhase {
     Idle,
     AwaitingOffer {
         context: RemoteControlPairingContext,
-        begin: RemoteControlPairingBegin,
+        controller: RemoteControlControllerIdentity,
         window: RemoteControlControllerPairingWindow,
     },
     AwaitingApproval {
@@ -43,12 +44,12 @@ impl RemoteControlControllerPairingState {
             RemoteControlControllerPairingPhase::Idle => RemoteControlControllerPairingView::Idle,
             RemoteControlControllerPairingPhase::AwaitingOffer {
                 context,
-                begin,
+                controller,
                 window,
             } => RemoteControlControllerPairingView::AwaitingOffer(
                 RemoteControlControllerPairingBeginView {
                     context: *context,
-                    begin,
+                    controller,
                     window: *window,
                 },
             ),
@@ -83,6 +84,7 @@ impl RemoteControlControllerPairingState {
         &mut self,
         controller: RemoteControlControllerIdentity,
         context: RemoteControlPairingContext,
+        invitation_code: RemoteControlPairingInvitationCode,
         started_at: InstantMillis,
         pairing_expires_at: InstantMillis,
     ) -> BeginRemoteControlControllerPairingOutcome {
@@ -96,13 +98,16 @@ impl RemoteControlControllerPairingState {
                 return BeginRemoteControlControllerPairingOutcome::PairingUnavailable { reason }
             }
         };
+        let begin = RemoteControlPairingBegin::new(controller, context.endpoint(), invitation_code);
         self.phase = RemoteControlControllerPairingPhase::AwaitingOffer {
             context,
-            begin: RemoteControlPairingBegin::new(controller),
+            controller,
             window,
         };
         BeginRemoteControlControllerPairingOutcome::BeginOwed {
-            begin: RemoteControlPairingBegin::new(controller),
+            begin,
+            context,
+            expires_at: window.expires_at(),
         }
     }
 
@@ -118,15 +123,15 @@ impl RemoteControlControllerPairingState {
         match phase {
             RemoteControlControllerPairingPhase::AwaitingOffer {
                 context,
-                begin,
+                controller,
                 window,
             } => {
-                let transcript = match offer.verify(context, &begin) {
+                let transcript = match offer.verify_controller(context, &controller) {
                     Ok(transcript) => transcript,
                     Err(reason) => {
                         self.phase = RemoteControlControllerPairingPhase::AwaitingOffer {
                             context,
-                            begin,
+                            controller,
                             window,
                         };
                         return ReceiveRemoteControlControllerPairingOfferOutcome::Rejected {
@@ -186,12 +191,12 @@ impl RemoteControlControllerPairingState {
             }
             RemoteControlControllerPairingPhase::AwaitingOffer {
                 context,
-                begin,
+                controller,
                 window,
             } => {
                 self.phase = RemoteControlControllerPairingPhase::AwaitingOffer {
                     context,
-                    begin,
+                    controller,
                     window,
                 };
                 ApproveRemoteControlControllerPairingOutcome::OfferNotReceived
@@ -209,11 +214,14 @@ impl RemoteControlControllerPairingState {
                     };
                 }
                 let commit = crate::remote_control::RemoteControlPairingCommit::new(&transcript);
+                let context = transcript.context();
                 self.phase =
                     RemoteControlControllerPairingPhase::AwaitingCompletion { transcript, window };
                 ApproveRemoteControlControllerPairingOutcome::CommitOwed {
                     attempt_id: active,
                     commit,
+                    context,
+                    expires_at: window.expires_at(),
                 }
             }
             RemoteControlControllerPairingPhase::AwaitingCompletion { transcript, window } => {
@@ -244,12 +252,12 @@ impl RemoteControlControllerPairingState {
             }
             RemoteControlControllerPairingPhase::AwaitingOffer {
                 context,
-                begin,
+                controller,
                 window,
             } => {
                 self.phase = RemoteControlControllerPairingPhase::AwaitingOffer {
                     context,
-                    begin,
+                    controller,
                     window,
                 };
                 RejectRemoteControlControllerPairingOutcome::OfferNotReceived
@@ -301,12 +309,12 @@ impl RemoteControlControllerPairingState {
             }
             RemoteControlControllerPairingPhase::AwaitingOffer {
                 context,
-                begin,
+                controller,
                 window,
             } => {
                 self.phase = RemoteControlControllerPairingPhase::AwaitingOffer {
                     context,
-                    begin,
+                    controller,
                     window,
                 };
                 ReceiveRemoteControlControllerPairingCompletedOutcome::OfferNotReceived

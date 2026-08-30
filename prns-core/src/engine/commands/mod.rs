@@ -4,6 +4,7 @@ mod egress;
 mod link;
 mod path;
 mod registered_announce_app_data;
+mod remote_control_controller_pairing;
 mod remote_control_pairing;
 mod request;
 mod resource;
@@ -31,6 +32,15 @@ pub use path::{PathFound, PathRequestId, RequestPath, RequestPathFailure, PATH_R
 pub use registered_announce_app_data::{
     SetRegisteredAnnounceAppData, SetRegisteredAnnounceAppDataFailure,
     SetRegisteredAnnounceAppDataRejection,
+};
+pub use remote_control_controller_pairing::{
+    ApproveRemoteControlControllerPairing, ApproveRemoteControlControllerPairingFailure,
+    BeginRemoteControlControllerPairing, BeginRemoteControlControllerPairingFailure,
+    RejectRemoteControlControllerPairing, RejectRemoteControlControllerPairingFailure,
+    RemoteControlControllerPairingApproval, RemoteControlControllerPairingBegun,
+    RemoteControlControllerPairingRejection, RemoteControlControllerPairingRequest,
+    RemoteControlControllerPairingRequestBuildError,
+    RemoteControlControllerPairingRequestConversionError,
 };
 pub use remote_control_pairing::{
     ApproveRemoteControlTargetPairing, ApproveRemoteControlTargetPairingFailure,
@@ -104,6 +114,9 @@ pub enum PrnsCommand {
     ApproveRemoteControlTargetPairing(ApproveRemoteControlTargetPairing),
     RejectRemoteControlTargetPairing(RejectRemoteControlTargetPairing),
     SettleRemoteControlTargetPairingAuthorization(SettleRemoteControlTargetPairingAuthorization),
+    BeginRemoteControlControllerPairing(BeginRemoteControlControllerPairing),
+    ApproveRemoteControlControllerPairing(ApproveRemoteControlControllerPairing),
+    RejectRemoteControlControllerPairing(RejectRemoteControlControllerPairing),
 }
 
 // The Owes* variants hand the caller its whole command payload back (SendSinglePacket rides ~400B of heapless body) beside slim rejections. Outcomes are transient by-value returns, destructured immediately, and the no-alloc core has no Box to shrink them.
@@ -175,6 +188,18 @@ pub enum CommandOutcome {
     OwesSettleRemoteControlTargetPairingAuthorization {
         id: CommandId,
         settle_authorization: SettleRemoteControlTargetPairingAuthorization,
+    },
+    OwesBeginRemoteControlControllerPairing {
+        id: CommandId,
+        begin: BeginRemoteControlControllerPairing,
+    },
+    OwesApproveRemoteControlControllerPairing {
+        id: CommandId,
+        approve: ApproveRemoteControlControllerPairing,
+    },
+    OwesRejectRemoteControlControllerPairing {
+        id: CommandId,
+        reject: RejectRemoteControlControllerPairing,
     },
     OwesPathRequest {
         id: CommandId,
@@ -293,6 +318,21 @@ pub enum Settlement {
             SettleRemoteControlTargetPairingAuthorizationFailure,
         >,
     ),
+    BeginRemoteControlControllerPairing(
+        Result<RemoteControlControllerPairingBegun, BeginRemoteControlControllerPairingFailure>,
+    ),
+    ApproveRemoteControlControllerPairing(
+        Result<
+            RemoteControlControllerPairingApproval,
+            ApproveRemoteControlControllerPairingFailure,
+        >,
+    ),
+    RejectRemoteControlControllerPairing(
+        Result<
+            RemoteControlControllerPairingRejection,
+            RejectRemoteControlControllerPairingFailure,
+        >,
+    ),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -376,6 +416,15 @@ impl<S: StorageLayout> EngineState<S> {
                     id,
                     settle_authorization,
                 }
+            }
+            PrnsCommand::BeginRemoteControlControllerPairing(begin) => {
+                CommandOutcome::OwesBeginRemoteControlControllerPairing { id, begin }
+            }
+            PrnsCommand::ApproveRemoteControlControllerPairing(approve) => {
+                CommandOutcome::OwesApproveRemoteControlControllerPairing { id, approve }
+            }
+            PrnsCommand::RejectRemoteControlControllerPairing(reject) => {
+                CommandOutcome::OwesRejectRemoteControlControllerPairing { id, reject }
             }
             PrnsCommand::RequestPath(request) => CommandOutcome::OwesPathRequest { id, request },
             PrnsCommand::EstablishLink(establish) => self.ingest_establish_link(id, establish),

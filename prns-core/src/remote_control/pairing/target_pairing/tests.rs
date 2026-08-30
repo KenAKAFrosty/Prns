@@ -7,8 +7,8 @@ use crate::identity::{IdentityHash, IdentityPublicKeys, IdentitySigner};
 use crate::remote_control::{
     RemoteControlControllerGrant, RemoteControlControllerIdentity, RemoteControlPairingAttemptId,
     RemoteControlPairingAttemptTimeout, RemoteControlPairingBegin, RemoteControlPairingCommit,
-    RemoteControlPairingContext, RemoteControlPairingIdentity, RemoteControlPairingOffer,
-    RemoteControlPairingPermissions, RemoteControlPairingPreparedOffer,
+    RemoteControlPairingContext, RemoteControlPairingIdentity, RemoteControlPairingInvitationCode,
+    RemoteControlPairingOffer, RemoteControlPairingPermissions, RemoteControlPairingPreparedOffer,
     RemoteControlPairingSession, RemoteControlPairingWindow, RemoteControlRequestKind,
     RemoteControlRequestSet,
 };
@@ -36,18 +36,24 @@ impl TargetPairingFixture {
     }
 
     fn with_route(endpoint_fill: u8, link_fill: u8) -> Self {
+        let session = RemoteControlPairingSession::new(
+            RemoteControlPairingIdentity::new(IdentityHash::new(
+                [endpoint_fill; TRUNCATED_HASH_BYTE_LEN],
+            )),
+            RemoteControlPairingWindow::new(PAIRING_OPENED_AT, PAIRING_EXPIRES_AT).unwrap(),
+            permissions(),
+            RemoteControlPairingAttemptTimeout::try_from(ATTEMPT_TIMEOUT).unwrap(),
+            invitation_code().verifier(),
+        );
         Self {
             target_signer: signer(0x52),
-            session: RemoteControlPairingSession::new(
-                RemoteControlPairingIdentity::new(IdentityHash::new(
-                    [endpoint_fill; TRUNCATED_HASH_BYTE_LEN],
-                )),
-                RemoteControlPairingWindow::new(PAIRING_OPENED_AT, PAIRING_EXPIRES_AT).unwrap(),
-                permissions(),
-                RemoteControlPairingAttemptTimeout::try_from(ATTEMPT_TIMEOUT).unwrap(),
+            begin: RemoteControlPairingBegin::new(
+                controller(0x31),
+                session.endpoint(),
+                invitation_code(),
             ),
+            session,
             link_id: LinkId::new([link_fill; TRUNCATED_HASH_BYTE_LEN]),
-            begin: RemoteControlPairingBegin::new(controller(0x31)),
         }
     }
 
@@ -83,11 +89,19 @@ impl TargetPairingFixture {
 
     fn begin_arrival(&self, request_fill: u8) -> RemoteControlTargetPairingBeginArrival {
         RemoteControlTargetPairingBeginArrival::new(
-            RemoteControlPairingBegin::new(*self.begin.controller()),
+            RemoteControlPairingBegin::new(
+                *self.begin.controller(),
+                self.session.endpoint(),
+                invitation_code(),
+            ),
             responder(self.link_id, request_fill),
             self.begin.controller().identity_hash(),
         )
     }
+}
+
+fn invitation_code() -> RemoteControlPairingInvitationCode {
+    RemoteControlPairingInvitationCode::from_value(0x1234_ABCD)
 }
 
 fn signer(fill: u8) -> InMemoryNodeIdentity {
@@ -201,6 +215,147 @@ fn authorize(
     (attempt_id, grant)
 }
 
+fn offer_prepared(
+    state: &mut RemoteControlTargetPairingState,
+    fixture: &TargetPairingFixture,
+) -> RemoteControlPairingAttemptId {
+    prepare_offer(state, fixture).0
+}
+
+fn awaiting_both(
+    state: &mut RemoteControlTargetPairingState,
+    fixture: &TargetPairingFixture,
+) -> RemoteControlPairingAttemptId {
+    begin(state, fixture)
+}
+
+fn awaiting_target_approval(
+    state: &mut RemoteControlTargetPairingState,
+    fixture: &TargetPairingFixture,
+) -> RemoteControlPairingAttemptId {
+    let attempt_id = begin(state, fixture);
+    assert_eq!(
+        state.commit(fixture.commit(0x61), ATTEMPT_STARTED_AT),
+        CommitRemoteControlTargetPairingOutcome::AwaitingTargetApproval { attempt_id },
+    );
+    attempt_id
+}
+
+fn awaiting_controller_commit(
+    state: &mut RemoteControlTargetPairingState,
+    fixture: &TargetPairingFixture,
+) -> RemoteControlPairingAttemptId {
+    let attempt_id = begin(state, fixture);
+    assert_eq!(
+        state.approve(attempt_id, ATTEMPT_STARTED_AT),
+        ApproveRemoteControlTargetPairingOutcome::AwaitingControllerCommit { attempt_id },
+    );
+    attempt_id
+}
+
+fn authorizing(
+    state: &mut RemoteControlTargetPairingState,
+    fixture: &TargetPairingFixture,
+) -> RemoteControlPairingAttemptId {
+    authorize(state, fixture).0
+}
+
+fn completing(
+    state: &mut RemoteControlTargetPairingState,
+    fixture: &TargetPairingFixture,
+) -> RemoteControlPairingAttemptId {
+    let attempt_id = authorizing(state, fixture);
+    assert!(matches!(
+        state.authorization_persisted(attempt_id, &fixture.target_signer),
+        PersistRemoteControlTargetPairingAuthorizationOutcome::CompletionOwed {
+            attempt_id: completed,
+            ..
+        } if completed == attempt_id
+    ));
+    attempt_id
+}
+
+#[test]
+fn competing_begins_preserve_every_occupied_target_phase_exactly() {
+    let setups: [fn(
+        &mut RemoteControlTargetPairingState,
+        &TargetPairingFixture,
+    ) -> RemoteControlPairingAttemptId; 6] = [
+        offer_prepared,
+        awaiting_both,
+        awaiting_target_approval,
+        awaiting_controller_commit,
+        authorizing,
+        completing,
+    ];
+
+    for setup in setups {
+        let expected_fixture = TargetPairingFixture::new();
+        let mut expected = RemoteControlTargetPairingState::default();
+        let expected_id = setup(&mut expected, &expected_fixture);
+        let actual_fixture = TargetPairingFixture::new();
+        let mut actual = RemoteControlTargetPairingState::default();
+        assert_eq!(setup(&mut actual, &actual_fixture), expected_id);
+        let competing_controller = controller(0x71);
+        let competing = RemoteControlTargetPairingBeginArrival::new(
+            RemoteControlPairingBegin::new(
+                competing_controller,
+                actual_fixture.session.endpoint(),
+                invitation_code(),
+            ),
+            responder(LinkId::new([0x72; TRUNCATED_HASH_BYTE_LEN]), 0x73),
+            competing_controller.identity_hash(),
+        );
+
+        assert_eq!(
+            actual.begin(
+                &actual_fixture.target_signer,
+                &actual_fixture.session,
+                &competing,
+                ATTEMPT_STARTED_AT,
+            ),
+            BeginRemoteControlTargetPairingOutcome::Busy {
+                active: expected_id,
+            },
+        );
+        assert_eq!(actual, expected);
+    }
+}
+
+#[test]
+fn an_invalid_invitation_cannot_probe_or_mutate_a_retained_target_attempt() {
+    let expected_fixture = TargetPairingFixture::new();
+    let mut expected = RemoteControlTargetPairingState::default();
+    let attempt_id = begin(&mut expected, &expected_fixture);
+    let actual_fixture = TargetPairingFixture::new();
+    let mut actual = RemoteControlTargetPairingState::default();
+    assert_eq!(begin(&mut actual, &actual_fixture), attempt_id);
+    let competing_controller = controller(0x71);
+    let competing = RemoteControlTargetPairingBeginArrival::new(
+        RemoteControlPairingBegin::new(
+            competing_controller,
+            actual_fixture.session.endpoint(),
+            RemoteControlPairingInvitationCode::from_value(0xDEAD_BEEF),
+        ),
+        responder(LinkId::new([0x72; TRUNCATED_HASH_BYTE_LEN]), 0x73),
+        competing_controller.identity_hash(),
+    );
+
+    assert_eq!(
+        actual.begin(
+            &actual_fixture.target_signer,
+            &actual_fixture.session,
+            &competing,
+            ATTEMPT_EXPIRES_AT,
+        ),
+        BeginRemoteControlTargetPairingOutcome::Rejected {
+            rejected: competing.responder(),
+            reason: RemoteControlTargetPairingBeginRejection::InvalidInvitationProof,
+        },
+    );
+    assert_eq!(actual, expected);
+}
+
 #[test]
 fn attempt_windows_are_positive_bounded_by_the_pairing_window_and_overflow_safe() {
     let pairing_window =
@@ -286,7 +441,11 @@ fn begin_requires_the_claimed_controller_to_own_the_identified_link() {
     let mut state = RemoteControlTargetPairingState::default();
     let identified = controller(0x32).identity_hash();
     let arrival = RemoteControlTargetPairingBeginArrival::new(
-        RemoteControlPairingBegin::new(*fixture.begin.controller()),
+        RemoteControlPairingBegin::new(
+            *fixture.begin.controller(),
+            fixture.session.endpoint(),
+            invitation_code(),
+        ),
         responder(fixture.link_id, 0x60),
         identified,
     );

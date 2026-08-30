@@ -17,8 +17,9 @@ use crate::identity::IdentityHash;
 use crate::manifold::driver::HostCommand;
 use crate::remote_control::{
     RemoteControlPairingAttemptTimeout, RemoteControlPairingEndpoint,
-    RemoteControlPairingExpiresAfter, RemoteControlPairingPermissions,
-    RemoteControlPairingPublicAppDataBytes, RemoteControlRequestKind, RemoteControlRequestSet,
+    RemoteControlPairingExpiresAfter, RemoteControlPairingInvitationCode,
+    RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
+    RemoteControlRequestKind, RemoteControlRequestSet,
 };
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
@@ -57,6 +58,18 @@ fn open_pairing() -> OpenRemoteControlPairing {
         .unwrap(),
         public_app_data: RemoteControlPairingPublicAppDataBytes::try_from(b"node".as_slice())
             .unwrap(),
+    }
+}
+
+fn opened_pairing() -> RemoteControlPairingOpened {
+    RemoteControlPairingOpened {
+        endpoint: RemoteControlPairingEndpoint::from(
+            &crate::remote_control::RemoteControlPairingIdentity::new(IdentityHash::new(
+                [0x51; 16],
+            )),
+        ),
+        expires_at: InstantMillis(61_000),
+        invitation_code: RemoteControlPairingInvitationCode::from_value(0x1234_ABCD),
     }
 }
 
@@ -258,18 +271,14 @@ async fn pairing_lifecycle_awaits_and_preserves_exact_commands_and_settlements()
         issued.command,
         PrnsCommand::OpenRemoteControlPairing(expected),
     );
-    let opened = RemoteControlPairingOpened {
-        endpoint: RemoteControlPairingEndpoint::from(
-            &crate::remote_control::RemoteControlPairingIdentity::new(IdentityHash::new(
-                [0x51; 16],
-            )),
-        ),
-        expires_at: InstantMillis(61_000),
-    };
+    let opened = opened_pairing();
     completion
         .send(Settlement::OpenRemoteControlPairing(Ok(opened)))
         .expect("open pairing awaiter");
-    assert_eq!(opening.await.expect("open pairing task"), Ok(opened));
+    assert_eq!(
+        opening.await.expect("open pairing task"),
+        Ok(opened_pairing())
+    );
 
     let issuer = prns.clone();
     let closing = tokio::spawn(async move { issuer.close_remote_control_pairing().await });

@@ -10,8 +10,9 @@ use crate::engine::{
 };
 use crate::remote_control::{
     RemoteControlPairingAttemptTimeout, RemoteControlPairingEndpoint,
-    RemoteControlPairingExpiresAfter, RemoteControlPairingPermissions,
-    RemoteControlPairingPublicAppDataBytes, RemoteControlRequestKind, RemoteControlRequestSet,
+    RemoteControlPairingExpiresAfter, RemoteControlPairingInvitationCode,
+    RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
+    RemoteControlRequestKind, RemoteControlRequestSet,
 };
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
@@ -46,6 +47,18 @@ fn open_pairing() -> OpenRemoteControlPairing {
         .unwrap(),
         public_app_data: RemoteControlPairingPublicAppDataBytes::try_from(b"node".as_slice())
             .unwrap(),
+    }
+}
+
+fn opened_pairing() -> RemoteControlPairingOpened {
+    RemoteControlPairingOpened {
+        endpoint: RemoteControlPairingEndpoint::from(
+            &crate::remote_control::RemoteControlPairingIdentity::new(
+                crate::identity::IdentityHash::new([0x51; 16]),
+            ),
+        ),
+        expires_at: InstantMillis(61_000),
+        invitation_code: RemoteControlPairingInvitationCode::from_value(0x1234_ABCD),
     }
 }
 
@@ -425,14 +438,7 @@ fn pairing_lifecycle_preserves_commands_settlements_and_completion_capacity() {
     let completions = Pool::<1>::new();
     let handle = super::PrnsNodeHandle::new(commands.sender(), &completions);
     let expected = open_pairing();
-    let opened = RemoteControlPairingOpened {
-        endpoint: RemoteControlPairingEndpoint::from(
-            &crate::remote_control::RemoteControlPairingIdentity::new(
-                crate::identity::IdentityHash::new([0x51; 16]),
-            ),
-        ),
-        expires_at: InstantMillis(61_000),
-    };
+    let opened = opened_pairing();
     let (result, ()) = block_on(join(
         handle.open_remote_control_pairing(expected.clone()),
         async {
@@ -446,7 +452,7 @@ fn pairing_lifecycle_preserves_commands_settlements_and_completion_capacity() {
             );
         },
     ));
-    assert_eq!(result, Ok(opened));
+    assert_eq!(result, Ok(opened_pairing()));
 
     let failure = CloseRemoteControlPairingFailure::IdentityNotHeld;
     let (result, ()) = block_on(join(handle.close_remote_control_pairing(), async {

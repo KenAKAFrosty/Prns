@@ -9,6 +9,7 @@ use crate::units::DurationMillis;
 
 use super::super::{RemoteControlPairingEndpoint, RemoteControlPairingPermissions};
 use super::{
+    RemoteControlPairingInvitationCode, RemoteControlPairingInvitationProof,
     RemoteControlPairingProtocolVersion, MAX_REMOTE_CONTROL_PAIRING_ATTEMPT_TIMEOUT,
     PAIRING_ATTEMPT_TIMEOUT_ENCODED_LEN, PAIRING_COMPLETION_DOMAIN,
     PAIRING_CONFIRMATION_CODE_MODULUS, PAIRING_TRANSCRIPT_DIGEST_ENCODED_LEN,
@@ -81,17 +82,41 @@ impl RemoteControlPairingContext {
 #[derive(Debug, PartialEq, Eq)]
 pub struct RemoteControlPairingBegin {
     pub(super) controller: RemoteControlControllerIdentity,
+    pub(super) invitation_proof: RemoteControlPairingInvitationProof,
 }
 
 impl RemoteControlPairingBegin {
     #[must_use]
-    pub const fn new(controller: RemoteControlControllerIdentity) -> Self {
-        Self { controller }
+    pub fn new(
+        controller: RemoteControlControllerIdentity,
+        endpoint: RemoteControlPairingEndpoint,
+        invitation_code: RemoteControlPairingInvitationCode,
+    ) -> Self {
+        let invitation_proof = invitation_code.into_proof(endpoint, &controller);
+        Self {
+            controller,
+            invitation_proof,
+        }
+    }
+
+    pub(super) const fn from_wire(
+        controller: RemoteControlControllerIdentity,
+        invitation_proof: RemoteControlPairingInvitationProof,
+    ) -> Self {
+        Self {
+            controller,
+            invitation_proof,
+        }
     }
 
     #[must_use]
     pub const fn controller(&self) -> &RemoteControlControllerIdentity {
         &self.controller
+    }
+
+    #[must_use]
+    pub const fn invitation_proof(&self) -> &RemoteControlPairingInvitationProof {
+        &self.invitation_proof
     }
 }
 
@@ -264,9 +289,17 @@ impl RemoteControlPairingOffer {
         context: RemoteControlPairingContext,
         begin: &RemoteControlPairingBegin,
     ) -> Result<RemoteControlPairingTranscript, RemoteControlPairingOfferVerificationError> {
+        self.verify_controller(context, begin.controller())
+    }
+
+    pub(crate) fn verify_controller(
+        &self,
+        context: RemoteControlPairingContext,
+        controller: &RemoteControlControllerIdentity,
+    ) -> Result<RemoteControlPairingTranscript, RemoteControlPairingOfferVerificationError> {
         let transcript = RemoteControlPairingTranscript::new(
             context,
-            *begin.controller(),
+            *controller,
             RemoteControlTargetIdentity::new(*self.target.public_keys()),
             self.permissions.clone(),
             self.attempt_timeout,
@@ -458,7 +491,7 @@ fn pairing_transcript_digest(
     permissions: &RemoteControlPairingPermissions,
     attempt_timeout: RemoteControlPairingAttemptTimeout,
 ) -> RemoteControlPairingTranscriptDigest {
-    let version = [RemoteControlPairingProtocolVersion::V1.wire_value()];
+    let version = [RemoteControlPairingProtocolVersion::V2.wire_value()];
     let endpoint = context.endpoint.destination_hash();
     let controller_public_keys = controller.public_keys().public_key_bytes();
     let target_public_keys = target.public_keys().public_key_bytes();

@@ -5,8 +5,9 @@ use crate::remote_control::{
     RemoteControlPairingAttemptId, RemoteControlPairingAttemptTimeout,
     RemoteControlPairingAvailabilityWriteError, RemoteControlPairingCompletionSigningError,
     RemoteControlPairingEndpoint, RemoteControlPairingExpiresAfter,
-    RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
-    RemoteControlTargetPairingAborted, RemoteControlTargetPairingResponder,
+    RemoteControlPairingInvitationCode, RemoteControlPairingPermissions,
+    RemoteControlPairingPublicAppDataBytes, RemoteControlTargetPairingAborted,
+    RemoteControlTargetPairingResponder,
 };
 use crate::routing::delivery::send_plain::SendPlainPacketWriteError;
 use crate::routing::links::LinkId;
@@ -25,10 +26,11 @@ pub struct OpenRemoteControlPairing {
     pub public_app_data: RemoteControlPairingPublicAppDataBytes,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteControlPairingOpened {
     pub endpoint: RemoteControlPairingEndpoint,
     pub expires_at: InstantMillis,
+    pub invitation_code: RemoteControlPairingInvitationCode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,7 +91,10 @@ impl Settleable for OpenRemoteControlPairing {
             | Settlement::CloseRemoteControlPairing(_)
             | Settlement::ApproveRemoteControlTargetPairing(_)
             | Settlement::RejectRemoteControlTargetPairing(_)
-            | Settlement::SettleRemoteControlTargetPairingAuthorization(_) => None,
+            | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
+            | Settlement::BeginRemoteControlControllerPairing(_)
+            | Settlement::ApproveRemoteControlControllerPairing(_)
+            | Settlement::RejectRemoteControlControllerPairing(_) => None,
         }
     }
 }
@@ -148,7 +153,10 @@ impl Settleable for CloseRemoteControlPairing {
             | Settlement::OpenRemoteControlPairing(_)
             | Settlement::ApproveRemoteControlTargetPairing(_)
             | Settlement::RejectRemoteControlTargetPairing(_)
-            | Settlement::SettleRemoteControlTargetPairingAuthorization(_) => None,
+            | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
+            | Settlement::BeginRemoteControlControllerPairing(_)
+            | Settlement::ApproveRemoteControlControllerPairing(_)
+            | Settlement::RejectRemoteControlControllerPairing(_) => None,
         }
     }
 }
@@ -256,7 +264,10 @@ impl Settleable for ApproveRemoteControlTargetPairing {
             | Settlement::OpenRemoteControlPairing(_)
             | Settlement::CloseRemoteControlPairing(_)
             | Settlement::RejectRemoteControlTargetPairing(_)
-            | Settlement::SettleRemoteControlTargetPairingAuthorization(_) => None,
+            | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
+            | Settlement::BeginRemoteControlControllerPairing(_)
+            | Settlement::ApproveRemoteControlControllerPairing(_)
+            | Settlement::RejectRemoteControlControllerPairing(_) => None,
         }
     }
 }
@@ -353,7 +364,10 @@ impl Settleable for RejectRemoteControlTargetPairing {
             | Settlement::OpenRemoteControlPairing(_)
             | Settlement::CloseRemoteControlPairing(_)
             | Settlement::ApproveRemoteControlTargetPairing(_)
-            | Settlement::SettleRemoteControlTargetPairingAuthorization(_) => None,
+            | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
+            | Settlement::BeginRemoteControlControllerPairing(_)
+            | Settlement::ApproveRemoteControlControllerPairing(_)
+            | Settlement::RejectRemoteControlControllerPairing(_) => None,
         }
     }
 }
@@ -440,7 +454,10 @@ impl Settleable for SettleRemoteControlTargetPairingAuthorization {
             | Settlement::OpenRemoteControlPairing(_)
             | Settlement::CloseRemoteControlPairing(_)
             | Settlement::ApproveRemoteControlTargetPairing(_)
-            | Settlement::RejectRemoteControlTargetPairing(_) => None,
+            | Settlement::RejectRemoteControlTargetPairing(_)
+            | Settlement::BeginRemoteControlControllerPairing(_)
+            | Settlement::ApproveRemoteControlControllerPairing(_)
+            | Settlement::RejectRemoteControlControllerPairing(_) => None,
         }
     }
 }

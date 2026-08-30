@@ -25,10 +25,15 @@ struct PairingFixture {
 
 impl PairingFixture {
     fn new() -> Self {
+        let context = context(0x73, 0x84);
         Self {
             target_signer: signer(0x52),
-            context: context(0x73, 0x84),
-            begin: RemoteControlPairingBegin::new(controller(0x31)),
+            context,
+            begin: RemoteControlPairingBegin::new(
+                controller(0x31),
+                context.endpoint(),
+                invitation_code(),
+            ),
         }
     }
 
@@ -43,6 +48,10 @@ impl PairingFixture {
             attempt_timeout(30_000),
         )
     }
+}
+
+fn invitation_code() -> RemoteControlPairingInvitationCode {
+    RemoteControlPairingInvitationCode::from_value(0x1234_ABCD)
 }
 
 fn signer(fill: u8) -> InMemoryNodeIdentity {
@@ -103,7 +112,7 @@ fn pairing_exchange_discriminants_and_bounds_are_stable() {
     assert_eq!(REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID, "/pair");
     assert_eq!(
         RemoteControlPairingProtocolVersion::ALL,
-        [RemoteControlPairingProtocolVersion::V1],
+        [RemoteControlPairingProtocolVersion::V2],
     );
     assert_eq!(
         RemoteControlPairingMessageKind::ALL,
@@ -114,12 +123,12 @@ fn pairing_exchange_discriminants_and_bounds_are_stable() {
             RemoteControlPairingMessageKind::Completed,
         ],
     );
-    assert_eq!(RemoteControlPairingProtocolVersion::V1.wire_value(), 1);
+    assert_eq!(RemoteControlPairingProtocolVersion::V2.wire_value(), 2);
     assert_eq!(RemoteControlPairingMessageKind::Begin.wire_value(), 1);
     assert_eq!(RemoteControlPairingMessageKind::Offer.wire_value(), 2);
     assert_eq!(RemoteControlPairingMessageKind::Commit.wire_value(), 3);
     assert_eq!(RemoteControlPairingMessageKind::Completed.wire_value(), 4);
-    assert_eq!(RemoteControlPairingRequest::MAX_ENCODED_LEN, 66);
+    assert_eq!(RemoteControlPairingRequest::MAX_ENCODED_LEN, 98);
     assert_eq!(RemoteControlPairingResponse::MAX_ENCODED_LEN, 137);
     const {
         assert!(
@@ -234,12 +243,12 @@ fn the_transcript_and_confirmation_code_have_a_pinned_vector() {
     assert_eq!(
         prepared.transcript().digest().as_bytes(),
         &[
-            0xa8, 0x56, 0x69, 0x47, 0xc2, 0xce, 0x4d, 0x86, 0x40, 0xa4, 0x29, 0x85, 0x56, 0x2b,
-            0x0d, 0xbc, 0x47, 0x01, 0x40, 0xf0, 0xc2, 0xb4, 0xa5, 0xdc, 0x24, 0x41, 0xb0, 0x3e,
-            0xfc, 0xe0, 0x70, 0x31,
+            0x94, 0x38, 0x9e, 0x49, 0xf2, 0x95, 0x30, 0x53, 0xd3, 0xd5, 0x2c, 0x5f, 0x51, 0x61,
+            0x9b, 0x4a, 0xab, 0x06, 0x50, 0x5b, 0x2f, 0x94, 0x96, 0x9b, 0x18, 0x06, 0x56, 0x6b,
+            0x3f, 0xb3, 0x56, 0x81,
         ],
     );
-    assert_eq!(prepared.transcript().confirmation_code().value(), 85_800);
+    assert_eq!(prepared.transcript().confirmation_code().value(), 105_940);
 }
 
 #[test]
@@ -264,7 +273,11 @@ fn every_offer_transcript_fact_is_covered_by_the_target_signature() {
     assert_eq!(
         parsed.verify(
             fixture.context,
-            &RemoteControlPairingBegin::new(controller(0x32)),
+            &RemoteControlPairingBegin::new(
+                controller(0x32),
+                fixture.context.endpoint(),
+                invitation_code(),
+            ),
         ),
         Err(RemoteControlPairingOfferVerificationError::InvalidTargetSignature),
     );
@@ -359,7 +372,7 @@ fn commit_and_completed_bind_the_exact_durably_committed_transcript() {
 
 #[test]
 fn parsers_reject_wrong_directions_versions_kinds_lengths_and_noncanonical_fields() {
-    let version = RemoteControlPairingProtocolVersion::V1.wire_value();
+    let version = RemoteControlPairingProtocolVersion::V2.wire_value();
     assert_eq!(
         RemoteControlPairingRequest::parse(&[
             version,
@@ -379,6 +392,13 @@ fn parsers_reject_wrong_directions_versions_kinds_lengths_and_noncanonical_field
             direction: RemoteControlPairingMessageDirection::Response,
             found: RemoteControlPairingMessageKind::Begin,
         }),
+    );
+    assert_eq!(
+        RemoteControlPairingRequest::parse(&[
+            1,
+            RemoteControlPairingMessageKind::Begin.wire_value(),
+        ]),
+        Err(RemoteControlPairingMessageParseError::UnsupportedVersion { found: 1 }),
     );
     assert_eq!(
         RemoteControlPairingRequest::parse(&[0x7F, 1]),

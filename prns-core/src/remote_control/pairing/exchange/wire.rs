@@ -11,11 +11,11 @@ use super::transcript::permission_count;
 use super::{
     RemoteControlPairingAttemptTimeout, RemoteControlPairingAttemptTimeoutError,
     RemoteControlPairingBegin, RemoteControlPairingCommit, RemoteControlPairingCompleted,
-    RemoteControlPairingIdentityRole, RemoteControlPairingMessageDirection,
-    RemoteControlPairingMessageKind, RemoteControlPairingOffer,
-    RemoteControlPairingProtocolVersion, RemoteControlPairingTranscriptDigest,
-    PAIRING_BEGIN_ENCODED_LEN, PAIRING_COMMIT_ENCODED_LEN, PAIRING_COMPLETED_ENCODED_LEN,
-    PAIRING_OFFER_MAX_ENCODED_LEN,
+    RemoteControlPairingIdentityRole, RemoteControlPairingInvitationProof,
+    RemoteControlPairingMessageDirection, RemoteControlPairingMessageKind,
+    RemoteControlPairingOffer, RemoteControlPairingProtocolVersion,
+    RemoteControlPairingTranscriptDigest, PAIRING_BEGIN_ENCODED_LEN, PAIRING_COMMIT_ENCODED_LEN,
+    PAIRING_COMPLETED_ENCODED_LEN, PAIRING_OFFER_MAX_ENCODED_LEN,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -59,8 +59,11 @@ impl RemoteControlPairingRequest {
                     &mut reader,
                     RemoteControlPairingIdentityRole::Controller,
                 )?;
-                Self::Begin(RemoteControlPairingBegin::new(
+                let invitation_proof =
+                    RemoteControlPairingInvitationProof::from_wire(*reader.take()?);
+                Self::Begin(RemoteControlPairingBegin::from_wire(
                     RemoteControlControllerIdentity::new(public_keys),
+                    invitation_proof,
                 ))
             }
             RemoteControlPairingMessageKind::Commit => {
@@ -88,6 +91,7 @@ impl RemoteControlPairingRequest {
         match self {
             Self::Begin(begin) => {
                 writer.write(&begin.controller.public_keys().public_key_bytes())?;
+                writer.write(begin.invitation_proof.as_wire())?;
             }
             Self::Commit(commit) => writer.write(commit.transcript.as_bytes())?,
         }
@@ -240,7 +244,7 @@ fn write_header(
     writer: &mut PairingWireWriter<'_>,
     kind: RemoteControlPairingMessageKind,
 ) -> Result<(), RemoteControlPairingMessageWriteError> {
-    writer.write(&[RemoteControlPairingProtocolVersion::V1.wire_value()])?;
+    writer.write(&[RemoteControlPairingProtocolVersion::V2.wire_value()])?;
     writer.write(&[kind.wire_value()])
 }
 

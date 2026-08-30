@@ -11,10 +11,10 @@ use crate::remote_control::{
     PersistRemoteControlTargetPairingAuthorizationOutcome, RemoteControlControllerIdentity,
     RemoteControlPairingAttemptId, RemoteControlPairingAttemptTimeout, RemoteControlPairingBegin,
     RemoteControlPairingCompleted, RemoteControlPairingContext, RemoteControlPairingIdentity,
-    RemoteControlPairingPermissions, RemoteControlPairingPreparedOffer,
-    RemoteControlPairingRequest, RemoteControlPairingResponse, RemoteControlPairingSession,
-    RemoteControlPairingTranscript, RemoteControlPairingWindow, RemoteControlRequestKind,
-    RemoteControlRequestSet, RemoteControlTargetPairingBeginArrival,
+    RemoteControlPairingInvitationCode, RemoteControlPairingPermissions,
+    RemoteControlPairingPreparedOffer, RemoteControlPairingRequest, RemoteControlPairingResponse,
+    RemoteControlPairingSession, RemoteControlPairingTranscript, RemoteControlPairingWindow,
+    RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlTargetPairingBeginArrival,
     RemoteControlTargetPairingCommitArrival, RemoteControlTargetPairingResponder,
     RemoteControlTargetPairingState, RemoteControlTargetPairingView,
 };
@@ -54,6 +54,7 @@ impl PairingFixture {
                 RemoteControlPairingWindow::new(PAIRING_OPENED_AT, PAIRING_EXPIRES_AT).unwrap(),
                 permissions(),
                 RemoteControlPairingAttemptTimeout::try_from(ATTEMPT_TIMEOUT).unwrap(),
+                RemoteControlPairingInvitationCode::from_value(0x1234_ABCD).verifier(),
             ),
             link_id: LinkId::new([link_fill; TRUNCATED_HASH_BYTE_LEN]),
         }
@@ -112,15 +113,28 @@ fn begin_controller(
     match state.begin(
         fixture.controller,
         fixture.context(),
+        invitation_code(),
         CONTROLLER_STARTED_AT,
         PAIRING_EXPIRES_AT,
     ) {
-        BeginRemoteControlControllerPairingOutcome::BeginOwed { begin } => begin,
+        BeginRemoteControlControllerPairingOutcome::BeginOwed {
+            begin,
+            context,
+            expires_at,
+        } => {
+            assert_eq!(context, fixture.context());
+            assert_eq!(expires_at, PAIRING_EXPIRES_AT);
+            begin
+        }
         BeginRemoteControlControllerPairingOutcome::Busy { .. }
         | BeginRemoteControlControllerPairingOutcome::PairingUnavailable { .. } => {
             panic!("fresh controller")
         }
     }
+}
+
+fn invitation_code() -> RemoteControlPairingInvitationCode {
+    RemoteControlPairingInvitationCode::from_value(0x1234_ABCD)
 }
 
 fn receive_valid_offer(
@@ -158,6 +172,80 @@ fn prepare_completion(
         } if committed == attempt_id
     ));
     (attempt_id, transcript)
+}
+
+fn controller_awaiting_offer(
+    state: &mut RemoteControlControllerPairingState,
+    fixture: &PairingFixture,
+) -> RemoteControlControllerPairingActivity {
+    let _begin = begin_controller(state, fixture);
+    RemoteControlControllerPairingActivity::AwaitingOffer
+}
+
+fn controller_awaiting_approval(
+    state: &mut RemoteControlControllerPairingState,
+    fixture: &PairingFixture,
+) -> RemoteControlControllerPairingActivity {
+    let begin = begin_controller(state, fixture);
+    let (attempt_id, _) = receive_valid_offer(state, fixture, &begin);
+    RemoteControlControllerPairingActivity::AwaitingApproval { attempt_id }
+}
+
+fn controller_awaiting_completion(
+    state: &mut RemoteControlControllerPairingState,
+    fixture: &PairingFixture,
+) -> RemoteControlControllerPairingActivity {
+    let (attempt_id, _) = prepare_completion(state, fixture);
+    RemoteControlControllerPairingActivity::AwaitingCompletion { attempt_id }
+}
+
+fn controller_persisting(
+    state: &mut RemoteControlControllerPairingState,
+    fixture: &PairingFixture,
+) -> RemoteControlControllerPairingActivity {
+    let (attempt_id, transcript) = prepare_completion(state, fixture);
+    let completed =
+        RemoteControlPairingCompleted::signed_by(&fixture.target_signer, &transcript).unwrap();
+    assert_eq!(
+        state.receive_completed(completed, InstantMillis(2_500)),
+        ReceiveRemoteControlControllerPairingCompletedOutcome::PersistenceOwed { attempt_id },
+    );
+    RemoteControlControllerPairingActivity::Persisting { attempt_id }
+}
+
+#[test]
+fn competing_begins_preserve_every_occupied_controller_phase_exactly() {
+    let setups: [fn(
+        &mut RemoteControlControllerPairingState,
+        &PairingFixture,
+    ) -> RemoteControlControllerPairingActivity; 4] = [
+        controller_awaiting_offer,
+        controller_awaiting_approval,
+        controller_awaiting_completion,
+        controller_persisting,
+    ];
+
+    for setup in setups {
+        let expected_fixture = PairingFixture::new();
+        let mut expected = RemoteControlControllerPairingState::default();
+        let active = setup(&mut expected, &expected_fixture);
+        let actual_fixture = PairingFixture::new();
+        let mut actual = RemoteControlControllerPairingState::default();
+        assert_eq!(setup(&mut actual, &actual_fixture), active);
+        let competing = PairingFixture::with_route(0x74, 0x85);
+
+        assert_eq!(
+            actual.begin(
+                competing.controller,
+                competing.context(),
+                invitation_code(),
+                CONTROLLER_STARTED_AT,
+                PAIRING_EXPIRES_AT,
+            ),
+            BeginRemoteControlControllerPairingOutcome::Busy { active },
+        );
+        assert_eq!(actual, expected);
+    }
 }
 
 fn round_trip_request(request: RemoteControlPairingRequest) -> RemoteControlPairingRequest {
@@ -226,6 +314,7 @@ fn begin_retains_the_exact_context_and_refuses_elapsed_or_competing_pairings() {
         state.begin(
             fixture.controller,
             fixture.context(),
+            invitation_code(),
             CONTROLLER_STARTED_AT,
             PAIRING_EXPIRES_AT,
         ),
@@ -239,6 +328,7 @@ fn begin_retains_the_exact_context_and_refuses_elapsed_or_competing_pairings() {
         elapsed.begin(
             fixture.controller,
             fixture.context(),
+            invitation_code(),
             PAIRING_EXPIRES_AT,
             PAIRING_EXPIRES_AT,
         ),
@@ -288,7 +378,11 @@ fn approval_is_correlated_irrevocable_and_bounded() {
     let mut state = RemoteControlControllerPairingState::default();
     let begin = begin_controller(&mut state, &fixture);
     let (attempt_id, _) = receive_valid_offer(&mut state, &fixture, &begin);
-    let other_begin = RemoteControlPairingBegin::new(other.controller);
+    let other_begin = RemoteControlPairingBegin::new(
+        other.controller,
+        other.context().endpoint(),
+        invitation_code(),
+    );
     let other_id: RemoteControlPairingAttemptId = other.prepared(&other_begin).transcript().into();
 
     assert_eq!(
@@ -301,12 +395,16 @@ fn approval_is_correlated_irrevocable_and_bounded() {
     let ApproveRemoteControlControllerPairingOutcome::CommitOwed {
         attempt_id: committed,
         commit,
+        context,
+        expires_at,
     } = state.approve(attempt_id, OFFER_RECEIVED_AT)
     else {
         panic!("commit owed")
     };
     assert_eq!(committed, attempt_id);
     assert_eq!(commit.transcript(), attempt_id.transcript());
+    assert_eq!(context, fixture.context());
+    assert_eq!(expires_at, CONTROLLER_ATTEMPT_EXPIRES_AT);
     assert_eq!(
         state.reject(attempt_id, OFFER_RECEIVED_AT),
         RejectRemoteControlControllerPairingOutcome::AlreadyApproved { attempt_id },
@@ -334,7 +432,11 @@ fn completed_requires_the_exact_transcript_before_persistence() {
     let other = PairingFixture::with_route(0x74, 0x85);
     let mut state = RemoteControlControllerPairingState::default();
     let (attempt_id, transcript) = prepare_completion(&mut state, &fixture);
-    let other_begin = RemoteControlPairingBegin::new(other.controller);
+    let other_begin = RemoteControlPairingBegin::new(
+        other.controller,
+        other.context().endpoint(),
+        invitation_code(),
+    );
     let other_transcript = other.prepared(&other_begin).into_parts().1;
     let wrong =
         RemoteControlPairingCompleted::signed_by(&other.target_signer, &other_transcript).unwrap();
@@ -423,7 +525,11 @@ fn request_failure_aborts_only_the_exchange_link() {
 fn rejection_and_persistence_failure_settle_only_the_exact_attempt() {
     let fixture = PairingFixture::new();
     let other = PairingFixture::with_route(0x74, 0x85);
-    let other_begin = RemoteControlPairingBegin::new(other.controller);
+    let other_begin = RemoteControlPairingBegin::new(
+        other.controller,
+        other.context().endpoint(),
+        invitation_code(),
+    );
     let other_id: RemoteControlPairingAttemptId = other.prepared(&other_begin).transcript().into();
 
     let mut confirming = RemoteControlControllerPairingState::default();
@@ -559,11 +665,15 @@ fn real_wire_messages_drive_both_reducers_to_the_same_durable_pairing() {
     let ApproveRemoteControlControllerPairingOutcome::CommitOwed {
         attempt_id: committed,
         commit,
+        context,
+        expires_at,
     } = controller_state.approve(controller_attempt_id, InstantMillis(2_200))
     else {
         panic!("commit owed")
     };
     assert_eq!(committed, target_attempt_id);
+    assert_eq!(context, fixture.context());
+    assert_eq!(expires_at, CONTROLLER_ATTEMPT_EXPIRES_AT);
     let commit = match round_trip_request(RemoteControlPairingRequest::Commit(commit)) {
         RemoteControlPairingRequest::Commit(commit) => commit,
         RemoteControlPairingRequest::Begin(_) => panic!("commit request"),

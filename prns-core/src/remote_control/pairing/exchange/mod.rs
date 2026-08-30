@@ -5,9 +5,11 @@ use crate::units::DurationMillis;
 
 use super::MAX_REMOTE_CONTROL_PAIRING_EXPIRES_AFTER;
 
+mod invitation;
 mod transcript;
 mod wire;
 
+pub use invitation::*;
 pub use transcript::*;
 pub use wire::*;
 
@@ -21,8 +23,9 @@ const PAIRING_REQUEST_SET_COUNT_ENCODED_LEN: usize = 1;
 const PAIRING_ATTEMPT_TIMEOUT_ENCODED_LEN: usize = 4;
 const PAIRING_TRANSCRIPT_DIGEST_ENCODED_LEN: usize = SHA256_OUTPUT_LEN;
 const PAIRING_SIGNATURE_ENCODED_LEN: usize = Ed25519Signature::LEN;
-const PAIRING_BEGIN_ENCODED_LEN: usize =
-    PAIRING_MESSAGE_HEADER_ENCODED_LEN.saturating_add(PAIRING_IDENTITY_ENCODED_LEN);
+const PAIRING_BEGIN_ENCODED_LEN: usize = PAIRING_MESSAGE_HEADER_ENCODED_LEN
+    .saturating_add(PAIRING_IDENTITY_ENCODED_LEN)
+    .saturating_add(PAIRING_INVITATION_PROOF_ENCODED_LEN);
 const PAIRING_COMMIT_ENCODED_LEN: usize =
     PAIRING_MESSAGE_HEADER_ENCODED_LEN.saturating_add(PAIRING_TRANSCRIPT_DIGEST_ENCODED_LEN);
 const PAIRING_OFFER_MAX_ENCODED_LEN: usize = PAIRING_MESSAGE_HEADER_ENCODED_LEN
@@ -47,7 +50,7 @@ prns_macros::iterable_enum! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[repr(u8)]
     pub enum RemoteControlPairingProtocolVersion {
-        V1 = 1,
+        V2 = 2,
     }
 }
 
@@ -59,7 +62,7 @@ impl RemoteControlPairingProtocolVersion {
 
     const fn from_wire(value: u8) -> Option<Self> {
         match value {
-            1 => Some(Self::V1),
+            2 => Some(Self::V2),
             _ => None,
         }
     }

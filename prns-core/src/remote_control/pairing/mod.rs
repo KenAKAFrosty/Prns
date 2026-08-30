@@ -152,6 +152,7 @@ pub struct RemoteControlPairingSession {
     window: RemoteControlPairingWindow,
     permissions: RemoteControlPairingPermissions,
     attempt_timeout: RemoteControlPairingAttemptTimeout,
+    invitation_verifier: RemoteControlPairingInvitationVerifier,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,12 +180,14 @@ impl RemoteControlPairingSession {
         window: RemoteControlPairingWindow,
         permissions: RemoteControlPairingPermissions,
         attempt_timeout: RemoteControlPairingAttemptTimeout,
+        invitation_verifier: RemoteControlPairingInvitationVerifier,
     ) -> Self {
         Self {
             identity,
             window,
             permissions,
             attempt_timeout,
+            invitation_verifier,
         }
     }
 
@@ -214,6 +217,11 @@ impl RemoteControlPairingSession {
     }
 
     #[must_use]
+    pub const fn invitation_verifier(&self) -> &RemoteControlPairingInvitationVerifier {
+        &self.invitation_verifier
+    }
+
+    #[must_use]
     pub fn into_parts(
         self,
     ) -> (
@@ -221,12 +229,14 @@ impl RemoteControlPairingSession {
         RemoteControlPairingWindow,
         RemoteControlPairingPermissions,
         RemoteControlPairingAttemptTimeout,
+        RemoteControlPairingInvitationVerifier,
     ) {
         (
             self.identity,
             self.window,
             self.permissions,
             self.attempt_timeout,
+            self.invitation_verifier,
         )
     }
 }
@@ -381,6 +391,7 @@ mod tests {
             ))
             .unwrap(),
             RemoteControlPairingAttemptTimeout::try_from(DurationMillis(500)).unwrap(),
+            RemoteControlPairingInvitationCode::from_value(0x1234_ABCD).verifier(),
         )
     }
 

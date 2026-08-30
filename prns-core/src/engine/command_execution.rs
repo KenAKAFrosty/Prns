@@ -6,13 +6,14 @@ use crate::engine::settlement::{culled_settlement, settle};
 use crate::engine::AnnounceCommandOutcome;
 use crate::engine::{
     AllowRequesterFailure, AnnounceNowFailure, AnnounceTarget, AnnounceWriteFailure,
-    CloseLinkFailure, CommandOutcome, CommandedAnnounceWriteOutcome, Directive, EgressTarget,
-    EncryptOwed, EngineReaction, EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome,
-    FanTarget, FinishSendSinglePacketOutcome, IdentifyFailure, IdentifyRejection, InstantMillis,
-    IssuedCommand, Journaled, PathRequestWriteOutcome, RemoteControlTargetPairingApproval,
-    RemoteControlTargetPairingRejection, RequestPathFailure, RespondFailure, RespondRejection,
-    SendGroupEntropy, SendGroupFailure, SendPlainPacketFailure, SendRequestFailure,
-    SendRequestRejection, SendSinglePacketEntropy, SendSinglePacketFailure,
+    ApproveRemoteControlControllerPairingFailure, CloseLinkFailure, CommandOutcome,
+    CommandedAnnounceWriteOutcome, Directive, EgressTarget, EncryptOwed, EngineReaction,
+    EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome, FanTarget,
+    FinishSendSinglePacketOutcome, IdentifyFailure, IdentifyRejection, InstantMillis,
+    IssuedCommand, Journaled, PathRequestWriteOutcome, RejectRemoteControlControllerPairingFailure,
+    RemoteControlTargetPairingApproval, RemoteControlTargetPairingRejection, RequestPathFailure,
+    RespondFailure, RespondRejection, SendGroupEntropy, SendGroupFailure, SendPlainPacketFailure,
+    SendRequestFailure, SendRequestRejection, SendSinglePacketEntropy, SendSinglePacketFailure,
     SendSinglePacketWriteError, SendSinglePacketWriteOutcome, SendToChannelFailure,
     SendToChannelRejection, SendToLinkFailure, SendToLinkRejection,
     SetRegisteredAnnounceAppDataFailure, SetResourceStrategyFailure, Settlement, WakeSchedules,
@@ -373,6 +374,47 @@ impl<S: StorageLayout> EngineState<S> {
                     sink,
                     id,
                     Settlement::SettleRemoteControlTargetPairingAuthorization(result),
+                );
+                wake_schedule_changes.remote_control_pairing = self.remote_control_pairing_wake();
+            }
+            CommandOutcome::OwesBeginRemoteControlControllerPairing { id, begin } => {
+                let result = self.execute_begin_remote_control_controller_pairing(begin, now);
+                settle(
+                    sink,
+                    id,
+                    Settlement::BeginRemoteControlControllerPairing(result),
+                );
+                wake_schedule_changes.remote_control_pairing = self.remote_control_pairing_wake();
+            }
+            CommandOutcome::OwesApproveRemoteControlControllerPairing { id, approve } => {
+                let result = self.execute_approve_remote_control_controller_pairing(approve, now);
+                if let Err(ApproveRemoteControlControllerPairingFailure::Expired { expired }) =
+                    &result
+                {
+                    sink(EngineReaction::Journaled(
+                        Journaled::RemoteControlControllerPairingExpired { aborted: *expired },
+                    ));
+                }
+                settle(
+                    sink,
+                    id,
+                    Settlement::ApproveRemoteControlControllerPairing(result),
+                );
+                wake_schedule_changes.remote_control_pairing = self.remote_control_pairing_wake();
+            }
+            CommandOutcome::OwesRejectRemoteControlControllerPairing { id, reject } => {
+                let result = self.execute_reject_remote_control_controller_pairing(reject, now);
+                if let Err(RejectRemoteControlControllerPairingFailure::Expired { expired }) =
+                    &result
+                {
+                    sink(EngineReaction::Journaled(
+                        Journaled::RemoteControlControllerPairingExpired { aborted: *expired },
+                    ));
+                }
+                settle(
+                    sink,
+                    id,
+                    Settlement::RejectRemoteControlControllerPairing(result),
                 );
                 wake_schedule_changes.remote_control_pairing = self.remote_control_pairing_wake();
             }

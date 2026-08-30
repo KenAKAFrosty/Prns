@@ -126,7 +126,7 @@ pub enum RemoteControlControllerPairingActivity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoteControlControllerPairingBeginView<'a> {
     pub(super) context: RemoteControlPairingContext,
-    pub(super) begin: &'a RemoteControlPairingBegin,
+    pub(super) controller: &'a RemoteControlControllerIdentity,
     pub(super) window: RemoteControlControllerPairingWindow,
 }
 
@@ -138,12 +138,7 @@ impl<'a> RemoteControlControllerPairingBeginView<'a> {
 
     #[must_use]
     pub const fn controller(self) -> &'a RemoteControlControllerIdentity {
-        self.begin.controller()
-    }
-
-    #[must_use]
-    pub const fn begin(self) -> &'a RemoteControlPairingBegin {
-        self.begin
+        self.controller
     }
 
     #[must_use]
@@ -252,6 +247,8 @@ impl RemoteControlControllerPairingAborted {
 pub enum BeginRemoteControlControllerPairingOutcome {
     BeginOwed {
         begin: RemoteControlPairingBegin,
+        context: RemoteControlPairingContext,
+        expires_at: InstantMillis,
     },
     Busy {
         active: RemoteControlControllerPairingActivity,
@@ -286,6 +283,8 @@ pub enum ApproveRemoteControlControllerPairingOutcome {
     CommitOwed {
         attempt_id: RemoteControlPairingAttemptId,
         commit: RemoteControlPairingCommit,
+        context: RemoteControlPairingContext,
+        expires_at: InstantMillis,
     },
     Expired {
         expired: RemoteControlControllerPairingAborted,
