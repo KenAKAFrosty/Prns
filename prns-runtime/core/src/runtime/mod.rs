@@ -6,7 +6,7 @@ pub mod node;
 pub mod node_introspection;
 pub mod packet_phy_retention;
 mod remote_control;
-mod remote_control_access;
+mod remote_control_controller_grants;
 pub mod request_endpoints;
 #[cfg(feature = "rns-management")]
 pub mod rns_management;
@@ -51,9 +51,10 @@ pub use remote_control::{
     RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure, RemoteControlDescribe,
     RemoteControlError,
 };
-pub use remote_control_access::{
-    RemoteControlAccessControl, RevokeRemoteControlControllerControlError,
-    SetRemoteControlControllerGrantControlError,
+pub use remote_control_controller_grants::{
+    RemoteControlControllerGrantControl, RevokeRemoteControlControllerControlError,
+    RevokeRemoteControlControllerServiceError, SetRemoteControlControllerGrantControlError,
+    SetRemoteControlControllerGrantServiceError,
 };
 
 #[doc(hidden)]

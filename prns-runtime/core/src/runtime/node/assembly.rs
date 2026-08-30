@@ -6,10 +6,10 @@ use crate::engine::RatchetPolicy;
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::remote_control::{
-    FixedRemoteControlAccessTable, RemoteControlAccessTable, RemoteControlEndpoint,
-    RemoteControlNodeIdentities, RemoteControlPairingAvailabilityDestination, RemoteControlRequest,
-    RemoteControlRequestSet, RemoteControlSelfAnnouncement, RemoteControlService,
-    RevokeRemoteControlControllerError, RevokeRemoteControlControllerOutcome,
+    FixedRemoteControlControllerGrantTable, RemoteControlControllerGrantTable,
+    RemoteControlEndpoint, RemoteControlNodeIdentities,
+    RemoteControlPairingAvailabilityDestination, RemoteControlRequest, RemoteControlRequestSet,
+    RemoteControlSelfAnnouncement, RemoteControlService, RevokeRemoteControlControllerOutcome,
     SetRemoteControlControllerGrantError, SetRemoteControlControllerGrantOutcome,
     DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS, REMOTE_CONTROL_APPLICATION_ASPECTS,
     REMOTE_CONTROL_APPLICATION_NAME, REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
@@ -24,7 +24,10 @@ use crate::units::ByteLimit;
 use crate::wire::DestinationHash;
 
 use super::super::request_endpoints::RequestEndpointSet;
-use super::super::PrnsEvent;
+use super::super::{
+    PrnsEvent, RevokeRemoteControlControllerServiceError,
+    SetRemoteControlControllerGrantServiceError,
+};
 use super::recipe::{PreConfiguredDestination, PrnsNodeRecipe, ServeMyRequestEndpoints};
 
 pub struct AssembledNode<St, R, F, S>
@@ -48,7 +51,8 @@ struct AvailableRemoteControl {
     identities: RemoteControlNodeIdentities,
     target_endpoint: RemoteControlEndpoint,
     request_endpoint_id: RequestPathHash,
-    access: FixedRemoteControlAccessTable<DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS>,
+    controller_grants:
+        FixedRemoteControlControllerGrantTable<DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS>,
     available_requests: RemoteControlRequestSet,
     self_announcement: RemoteControlSelfAnnouncement,
     pairing_availability_destination: RemoteControlPairingAvailabilityDestination,
@@ -85,11 +89,12 @@ impl AssembledRemoteControl {
     }
 
     #[must_use]
-    pub const fn access(
+    pub const fn controller_grants(
         &self,
-    ) -> Option<&FixedRemoteControlAccessTable<DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS>> {
+    ) -> Option<&FixedRemoteControlControllerGrantTable<DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS>>
+    {
         match &self.available {
-            Some(available) => Some(&available.access),
+            Some(available) => Some(&available.controller_grants),
             None => None,
         }
     }
@@ -126,7 +131,7 @@ impl AssembledRemoteControl {
         destination: DestinationHash,
         path: RequestPathHash,
     ) -> Option<(
-        &FixedRemoteControlAccessTable<DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS>,
+        &FixedRemoteControlControllerGrantTable<DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS>,
         RemoteControlRequestSet,
         RemoteControlSelfAnnouncement,
     )> {
@@ -137,7 +142,7 @@ impl AssembledRemoteControl {
             return None;
         }
         Some((
-            &available.access,
+            &available.controller_grants,
             available.available_requests,
             available.self_announcement,
         ))
@@ -146,23 +151,26 @@ impl AssembledRemoteControl {
     pub fn set_controller_grant(
         &mut self,
         grant: crate::remote_control::RemoteControlControllerGrant,
-    ) -> Result<SetRemoteControlControllerGrantOutcome, SetRemoteControlControllerGrantError> {
+    ) -> Result<SetRemoteControlControllerGrantOutcome, SetRemoteControlControllerGrantServiceError>
+    {
         self.available
             .as_mut()
-            .ok_or(SetRemoteControlControllerGrantError::Unavailable)?
-            .access
+            .ok_or(SetRemoteControlControllerGrantServiceError::Unavailable)?
+            .controller_grants
             .set_controller_grant(grant)
+            .map_err(Into::into)
     }
 
     pub fn revoke_controller(
         &mut self,
         controller: &crate::remote_control::RemoteControlControllerIdentity,
-    ) -> Result<RevokeRemoteControlControllerOutcome, RevokeRemoteControlControllerError> {
+    ) -> Result<RevokeRemoteControlControllerOutcome, RevokeRemoteControlControllerServiceError>
+    {
         Ok(self
             .available
             .as_mut()
-            .ok_or(RevokeRemoteControlControllerError::Unavailable)?
-            .access
+            .ok_or(RevokeRemoteControlControllerServiceError::Unavailable)?
+            .controller_grants
             .revoke_controller(controller))
     }
 }
@@ -173,7 +181,7 @@ pub enum ConfigureRemoteControlServiceError {
     RegisterTarget(RegisterDestinationError),
     ConfigureRequestLimit,
     RegisterRequestEndpoint(TablePushError),
-    BuildAccess(TablePushError),
+    BuildControllerGrants(SetRemoteControlControllerGrantError),
     ConfigurePairing(crate::engine::ConfigureRemoteControlPairingError),
 }
 
@@ -258,7 +266,8 @@ where
         return Ok(AssembledRemoteControl { available: None });
     };
     let available_requests = configuration.available_requests();
-    let (identity_secrets, initial_access, self_announcement) = configuration.into_parts();
+    let (identity_secrets, initial_controller_grants, self_announcement) =
+        configuration.into_parts();
     let identities = engine
         .configure_remote_control_identities(identity_secrets)
         .map_err(ConfigureRemoteControlServiceError::ConfigureIdentities)?;
@@ -288,11 +297,11 @@ where
             RequestPolicy::RequireIdentified,
         )
         .map_err(ConfigureRemoteControlServiceError::RegisterRequestEndpoint)?;
-    let mut access = FixedRemoteControlAccessTable::default();
-    for grant in initial_access.grants() {
-        access
-            .upsert(*grant)
-            .map_err(ConfigureRemoteControlServiceError::BuildAccess)?;
+    let mut controller_grants = FixedRemoteControlControllerGrantTable::default();
+    for grant in initial_controller_grants.grants() {
+        controller_grants
+            .set_controller_grant(*grant)
+            .map_err(ConfigureRemoteControlServiceError::BuildControllerGrants)?;
     }
     let pairing_availability_destination = engine
         .configure_remote_control_pairing(identities.target().identity_hash())
@@ -302,7 +311,7 @@ where
             identities,
             target_endpoint,
             request_endpoint_id,
-            access,
+            controller_grants,
             available_requests,
             self_announcement,
             pairing_availability_destination,
@@ -503,8 +512,8 @@ mod tests {
     use crate::remote_control::{
         RemoteControlControllerGrant, RemoteControlControllerGrants,
         RemoteControlControllerIdentity, RemoteControlControllerIdentitySecret,
-        RemoteControlInitialAccess, RemoteControlNodeIdentitySecrets, RemoteControlRequestKind,
-        RemoteControlRequestSet, RemoteControlStorageRequirements,
+        RemoteControlInitialControllerGrants, RemoteControlNodeIdentitySecrets,
+        RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlStorageRequirements,
         RemoteControlTargetIdentitySecret, REMOTE_CONTROL_NODE_IDENTITY_COUNT,
     };
     use crate::routing::request_handlers::RequestPathHash;
@@ -562,7 +571,7 @@ mod tests {
     fn remote_control_service() -> RemoteControlService<'static> {
         RemoteControlService::new(
             remote_control_identity_secrets(0x71, 0x72),
-            RemoteControlInitialAccess::Nobody,
+            RemoteControlInitialControllerGrants::Nobody,
             RemoteControlSelfAnnouncement::Unavailable,
         )
     }
@@ -648,17 +657,24 @@ mod tests {
     }
 
     #[test]
-    fn remote_control_service_registers_its_independent_target_and_access() {
+    fn remote_control_service_registers_its_independent_target_and_controller_grants() {
         let mut engine = EngineState::<Storage>::default();
         let identity_secrets = remote_control_identity_secrets(0x31, 0x32);
         let expected_identities = identity_secrets.identities();
         let grants = [remote_control_grant(0x41), remote_control_grant(0x51)];
-        let initial_access = RemoteControlInitialAccess::Grants(
+        let mut expected_grants = grants;
+        expected_grants.sort_by(|left, right| {
+            left.controller()
+                .identity_hash()
+                .as_bytes()
+                .cmp(right.controller().identity_hash().as_bytes())
+        });
+        let initial_controller_grants = RemoteControlInitialControllerGrants::Grants(
             RemoteControlControllerGrants::try_from(grants.as_slice()).unwrap(),
         );
         let service = RemoteControlService::new(
             identity_secrets,
-            initial_access,
+            initial_controller_grants,
             RemoteControlSelfAnnouncement::Destination(DestinationHash::new([0x61; 16])),
         );
 
@@ -669,7 +685,13 @@ mod tests {
             RemoteControlPairingAvailabilityDestination::canonical();
 
         assert_eq!(configured.identities(), Some(&expected_identities));
-        assert_eq!(configured.access().unwrap().grants(), grants.as_slice());
+        assert_eq!(
+            configured
+                .controller_grants()
+                .unwrap()
+                .grants_in_identity_hash_order(),
+            expected_grants.as_slice()
+        );
         assert_eq!(
             configured.pairing_availability_destination(),
             Some(pairing_availability_destination),
@@ -758,11 +780,11 @@ mod tests {
         assert_eq!(engine.upstream_app_destinations().count(), 0);
         assert_eq!(
             remote_control.set_controller_grant(grant),
-            Err(SetRemoteControlControllerGrantError::Unavailable),
+            Err(SetRemoteControlControllerGrantServiceError::Unavailable),
         );
         assert_eq!(
             remote_control.revoke_controller(grant.controller()),
-            Err(RevokeRemoteControlControllerError::Unavailable),
+            Err(RevokeRemoteControlControllerServiceError::Unavailable),
         );
     }
 
@@ -790,7 +812,13 @@ mod tests {
             remote_control.set_controller_grant(updated),
             Ok(SetRemoteControlControllerGrantOutcome::Updated { previous: initial }),
         );
-        assert_eq!(remote_control.access().unwrap().grants(), &[updated]);
+        assert_eq!(
+            remote_control
+                .controller_grants()
+                .unwrap()
+                .grants_in_identity_hash_order(),
+            &[updated]
+        );
         assert_eq!(
             remote_control.revoke_controller(updated.controller()),
             Ok(RevokeRemoteControlControllerOutcome::Revoked { grant: updated }),
@@ -799,7 +827,7 @@ mod tests {
             remote_control.revoke_controller(updated.controller()),
             Ok(RevokeRemoteControlControllerOutcome::NotFound),
         );
-        assert!(remote_control.access().unwrap().is_empty());
+        assert!(remote_control.controller_grants().unwrap().is_empty());
     }
 
     #[test]

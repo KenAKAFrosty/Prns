@@ -1,5 +1,5 @@
 use personal_rns::remote_control::{
-    RemoteControlInitialAccess, RemoteControlNodeIdentityGenerationError,
+    RemoteControlInitialControllerGrants, RemoteControlNodeIdentityGenerationError,
     RemoteControlNodeIdentitySecrets, RemoteControlSelfAnnouncement, RemoteControlService,
 };
 use personal_rns::runtime::{fill_os_entropy, OsEntropyError};
@@ -12,7 +12,7 @@ pub(super) fn transient_remote_control_service(
     let identity_secrets = RemoteControlNodeIdentitySecrets::generate(fill_os_entropy)?;
     Ok(RemoteControlService::new(
         identity_secrets,
-        RemoteControlInitialAccess::Nobody,
+        RemoteControlInitialControllerGrants::Nobody,
         RemoteControlSelfAnnouncement::Unavailable,
     ))
 }

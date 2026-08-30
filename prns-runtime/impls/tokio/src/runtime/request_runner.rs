@@ -21,7 +21,7 @@ use prns_runtime::runtime::placement::{
 };
 
 use super::node_facade::{PrnsNodeHandle, ResponseSendError};
-use super::remote_control_access::RemoteControlAccessReceiver;
+use super::remote_control_controller_grants::RemoteControlControllerGrantReceiver;
 use super::request_endpoints::{dispatch_request, Decline, InboundRequest, RequestEndpointSet};
 use super::request_endpoints::{ResponseCapacityExceeded, ResponseSink};
 use super::AssembledRemoteControl;
@@ -69,11 +69,11 @@ fn prepare_request(
     remote_control: &AssembledRemoteControl,
     request: RunnerRequest,
 ) -> PreparedRunnerRequest {
-    let route = if let Some((access, available_requests, self_announcement)) =
+    let route = if let Some((controller_grants, available_requests, self_announcement)) =
         remote_control.request_configuration(request.destination, request.path_hash)
     {
         match admit_remote_control_request(
-            access,
+            controller_grants,
             available_requests,
             self_announcement,
             &request.inbound(),
@@ -175,7 +175,7 @@ pub(super) async fn run_router<St, R: RequestEndpointSet<St>>(
     state: &St,
     remote_control: &mut AssembledRemoteControl,
     mut requests: mpsc::Receiver<RunnerRequest>,
-    remote_control_access: &mut RemoteControlAccessReceiver,
+    remote_control_controller_grants: &mut RemoteControlControllerGrantReceiver,
     commands: PrnsNodeHandle,
 ) {
     let mut in_flight = FuturesUnordered::new();
@@ -186,7 +186,7 @@ pub(super) async fn run_router<St, R: RequestEndpointSet<St>>(
         tokio::select! {
             biased;
             Some(()) = in_flight.next(), if !in_flight.is_empty() => {}
-            Some(command) = remote_control_access.receive() => {
+            Some(command) = remote_control_controller_grants.receive() => {
                 command.apply(remote_control);
             }
             request = requests.recv(), if accepting => match request {
@@ -506,16 +506,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn router_applies_ready_remote_control_access_before_a_ready_request() {
+    async fn router_applies_ready_remote_control_controller_grants_before_a_ready_request() {
         use crate::remote_control::{
             RemoteControlDescription, RemoteControlRequest, RemoteControlRequestKind,
             RemoteControlRequestSet, RemoteControlResponse, RevokeRemoteControlControllerOutcome,
             SetRemoteControlControllerGrantOutcome,
         };
-        use crate::runtime::RemoteControlAccessControl;
+        use crate::runtime::RemoteControlControllerGrantControl;
 
         let (commands, mut command_rx) = mpsc::unbounded_channel();
-        let (handle, mut access) = PrnsNodeHandle::over_with_remote_control_access(commands);
+        let (handle, mut controller_grants) =
+            PrnsNodeHandle::over_with_remote_control_controller_grant_lane(commands);
         let (request_tx, request_rx) = mpsc::channel(1);
         let mut remote_control = remote_control();
         let destination = remote_control.target_endpoint().unwrap().destination_hash();
@@ -546,7 +547,7 @@ mod tests {
         tokio::pin!(setting);
         tokio::select! {
             biased;
-            outcome = &mut setting => panic!("unsettled access change returned: {outcome:?}"),
+            outcome = &mut setting => panic!("unsettled controller_grants change returned: {outcome:?}"),
             () = tokio::task::yield_now() => {}
         }
 
@@ -554,7 +555,7 @@ mod tests {
             &(),
             &mut remote_control,
             request_rx,
-            &mut access,
+            &mut controller_grants,
             handle.clone(),
         );
         let exercise = async {

@@ -5,85 +5,92 @@ use tokio::sync::{oneshot, Mutex, OwnedMutexGuard};
 
 use crate::remote_control::{
     RemoteControlControllerGrant, RemoteControlControllerIdentity,
-    RevokeRemoteControlControllerError, RevokeRemoteControlControllerOutcome,
-    SetRemoteControlControllerGrantError, SetRemoteControlControllerGrantOutcome,
+    RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantOutcome,
 };
 
 use super::node_facade::PrnsNodeHandle;
 use super::{
-    AssembledRemoteControl, RemoteControlAccessControl, RevokeRemoteControlControllerControlError,
-    SetRemoteControlControllerGrantControlError,
+    AssembledRemoteControl, RemoteControlControllerGrantControl,
+    RevokeRemoteControlControllerControlError, RevokeRemoteControlControllerServiceError,
+    SetRemoteControlControllerGrantControlError, SetRemoteControlControllerGrantServiceError,
 };
 
-const REMOTE_CONTROL_ACCESS_QUEUE_DEPTH: usize = 1;
+const REMOTE_CONTROL_CONTROLLER_GRANT_QUEUE_DEPTH: usize = 1;
 
-pub(super) enum RemoteControlAccessCommand {
+pub(super) enum RemoteControlControllerGrantCommand {
     SetControllerGrant {
         grant: RemoteControlControllerGrant,
         completion: oneshot::Sender<
-            Result<SetRemoteControlControllerGrantOutcome, SetRemoteControlControllerGrantError>,
+            Result<
+                SetRemoteControlControllerGrantOutcome,
+                SetRemoteControlControllerGrantServiceError,
+            >,
         >,
     },
     RevokeController {
         controller: RemoteControlControllerIdentity,
         completion: oneshot::Sender<
-            Result<RevokeRemoteControlControllerOutcome, RevokeRemoteControlControllerError>,
+            Result<RevokeRemoteControlControllerOutcome, RevokeRemoteControlControllerServiceError>,
         >,
     },
 }
 
 #[derive(Clone)]
-pub(super) struct RemoteControlAccessSender {
-    commands: mpsc::Sender<RemoteControlAccessCommand>,
+pub(super) struct RemoteControlControllerGrantSender {
+    commands: mpsc::Sender<RemoteControlControllerGrantCommand>,
     operation: Arc<Mutex<()>>,
 }
 
-pub(super) struct RemoteControlAccessReceiver {
-    commands: mpsc::Receiver<RemoteControlAccessCommand>,
+pub(super) struct RemoteControlControllerGrantReceiver {
+    commands: mpsc::Receiver<RemoteControlControllerGrantCommand>,
 }
 
-enum RemoteControlAccessSubmissionError {
+enum RemoteControlControllerGrantSubmissionError {
     Busy,
     NodeStopped,
 }
 
-pub(super) fn remote_control_access_lane(
-) -> (RemoteControlAccessSender, RemoteControlAccessReceiver) {
-    let (commands, receiver) = mpsc::channel(REMOTE_CONTROL_ACCESS_QUEUE_DEPTH);
+pub(super) fn remote_control_controller_grant_lane() -> (
+    RemoteControlControllerGrantSender,
+    RemoteControlControllerGrantReceiver,
+) {
+    let (commands, receiver) = mpsc::channel(REMOTE_CONTROL_CONTROLLER_GRANT_QUEUE_DEPTH);
     (
-        RemoteControlAccessSender {
+        RemoteControlControllerGrantSender {
             commands,
             operation: Arc::new(Mutex::new(())),
         },
-        RemoteControlAccessReceiver { commands: receiver },
+        RemoteControlControllerGrantReceiver { commands: receiver },
     )
 }
 
-impl RemoteControlAccessSender {
+impl RemoteControlControllerGrantSender {
     fn submit(
         &self,
-        command: RemoteControlAccessCommand,
-    ) -> Result<OwnedMutexGuard<()>, RemoteControlAccessSubmissionError> {
+        command: RemoteControlControllerGrantCommand,
+    ) -> Result<OwnedMutexGuard<()>, RemoteControlControllerGrantSubmissionError> {
         let operation = self
             .operation
             .clone()
             .try_lock_owned()
-            .map_err(|_| RemoteControlAccessSubmissionError::Busy)?;
+            .map_err(|_| RemoteControlControllerGrantSubmissionError::Busy)?;
         match self.commands.try_send(command) {
             Ok(()) => Ok(operation),
-            Err(TrySendError::Full(_)) => Err(RemoteControlAccessSubmissionError::Busy),
-            Err(TrySendError::Closed(_)) => Err(RemoteControlAccessSubmissionError::NodeStopped),
+            Err(TrySendError::Full(_)) => Err(RemoteControlControllerGrantSubmissionError::Busy),
+            Err(TrySendError::Closed(_)) => {
+                Err(RemoteControlControllerGrantSubmissionError::NodeStopped)
+            }
         }
     }
 }
 
-impl RemoteControlAccessReceiver {
-    pub(super) async fn receive(&mut self) -> Option<RemoteControlAccessCommand> {
+impl RemoteControlControllerGrantReceiver {
+    pub(super) async fn receive(&mut self) -> Option<RemoteControlControllerGrantCommand> {
         self.commands.recv().await
     }
 }
 
-impl RemoteControlAccessCommand {
+impl RemoteControlControllerGrantCommand {
     pub(super) fn apply(self, remote_control: &mut AssembledRemoteControl) {
         match self {
             Self::SetControllerGrant { grant, completion } => {
@@ -107,7 +114,7 @@ impl RemoteControlAccessCommand {
     }
 }
 
-impl RemoteControlAccessControl for PrnsNodeHandle {
+impl RemoteControlControllerGrantControl for PrnsNodeHandle {
     async fn set_remote_control_controller_grant(
         &self,
         grant: RemoteControlControllerGrant,
@@ -115,14 +122,14 @@ impl RemoteControlAccessControl for PrnsNodeHandle {
     {
         let (completion, settled) = oneshot::channel();
         let _operation = match self
-            .remote_control_access
-            .submit(RemoteControlAccessCommand::SetControllerGrant { grant, completion })
+            .remote_control_controller_grants
+            .submit(RemoteControlControllerGrantCommand::SetControllerGrant { grant, completion })
         {
             Ok(operation) => operation,
-            Err(RemoteControlAccessSubmissionError::Busy) => {
+            Err(RemoteControlControllerGrantSubmissionError::Busy) => {
                 return Err(SetRemoteControlControllerGrantControlError::Busy)
             }
-            Err(RemoteControlAccessSubmissionError::NodeStopped) => {
+            Err(RemoteControlControllerGrantSubmissionError::NodeStopped) => {
                 return Err(SetRemoteControlControllerGrantControlError::NodeStopped)
             }
         };
@@ -138,21 +145,20 @@ impl RemoteControlAccessControl for PrnsNodeHandle {
     ) -> Result<RevokeRemoteControlControllerOutcome, RevokeRemoteControlControllerControlError>
     {
         let (completion, settled) = oneshot::channel();
-        let _operation =
-            match self
-                .remote_control_access
-                .submit(RemoteControlAccessCommand::RevokeController {
-                    controller,
-                    completion,
-                }) {
-                Ok(operation) => operation,
-                Err(RemoteControlAccessSubmissionError::Busy) => {
-                    return Err(RevokeRemoteControlControllerControlError::Busy)
-                }
-                Err(RemoteControlAccessSubmissionError::NodeStopped) => {
-                    return Err(RevokeRemoteControlControllerControlError::NodeStopped)
-                }
-            };
+        let _operation = match self.remote_control_controller_grants.submit(
+            RemoteControlControllerGrantCommand::RevokeController {
+                controller,
+                completion,
+            },
+        ) {
+            Ok(operation) => operation,
+            Err(RemoteControlControllerGrantSubmissionError::Busy) => {
+                return Err(RevokeRemoteControlControllerControlError::Busy)
+            }
+            Err(RemoteControlControllerGrantSubmissionError::NodeStopped) => {
+                return Err(RevokeRemoteControlControllerControlError::NodeStopped)
+            }
+        };
         match settled.await {
             Ok(outcome) => outcome.map_err(Into::into),
             Err(_) => Err(RevokeRemoteControlControllerControlError::NodeStopped),
@@ -165,19 +171,20 @@ mod tests {
     use tokio::sync::{mpsc, oneshot};
 
     use crate::remote_control::{
-        RemoteControlAccessTable, RemoteControlRequestKind, RevokeRemoteControlControllerOutcome,
-        SetRemoteControlControllerGrantError, SetRemoteControlControllerGrantOutcome,
+        RemoteControlControllerGrantTable, RemoteControlRequestKind,
+        RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantOutcome,
     };
 
     use super::super::node_facade::{test_remote_control_grant, PrnsNodeHandle};
     use super::super::{
-        RemoteControlAccessControl, RevokeRemoteControlControllerControlError,
-        SetRemoteControlControllerGrantControlError,
+        RemoteControlControllerGrantControl, RevokeRemoteControlControllerControlError,
+        RevokeRemoteControlControllerServiceError, SetRemoteControlControllerGrantControlError,
+        SetRemoteControlControllerGrantServiceError,
     };
-    use super::RemoteControlAccessCommand;
+    use super::RemoteControlControllerGrantCommand;
 
     #[tokio::test]
-    async fn unavailable_service_rejects_access_changes() {
+    async fn unavailable_service_rejects_controller_grant_changes() {
         let grant = test_remote_control_grant(RemoteControlRequestKind::Describe);
         let mut engine = crate::engine::EngineState::<crate::storage::GrowableHeap>::default();
         let mut remote_control = crate::runtime::configure_remote_control_service(
@@ -187,37 +194,38 @@ mod tests {
         .expect("unavailable RemoteControl requires no storage");
 
         let (completion, settled) = oneshot::channel();
-        RemoteControlAccessCommand::SetControllerGrant { grant, completion }
+        RemoteControlControllerGrantCommand::SetControllerGrant { grant, completion }
             .apply(&mut remote_control);
         assert_eq!(
             settled.await.expect("set completion remains connected"),
-            Err(SetRemoteControlControllerGrantError::Unavailable),
+            Err(SetRemoteControlControllerGrantServiceError::Unavailable),
         );
 
         let (completion, settled) = oneshot::channel();
-        RemoteControlAccessCommand::RevokeController {
+        RemoteControlControllerGrantCommand::RevokeController {
             controller: *grant.controller(),
             completion,
         }
         .apply(&mut remote_control);
         assert_eq!(
             settled.await.expect("revoke completion remains connected"),
-            Err(crate::remote_control::RevokeRemoteControlControllerError::Unavailable,),
+            Err(RevokeRemoteControlControllerServiceError::Unavailable),
         );
     }
 
     #[tokio::test]
-    async fn access_lane_preserves_exact_set_and_revoke_outcomes() {
+    async fn controller_grant_lane_preserves_exact_set_and_revoke_outcomes() {
         let (commands, _command_rx) = mpsc::unbounded_channel();
-        let (handle, mut access) = PrnsNodeHandle::over_with_remote_control_access(commands);
+        let (handle, mut controller_grants) =
+            PrnsNodeHandle::over_with_remote_control_controller_grant_lane(commands);
         let previous = test_remote_control_grant(RemoteControlRequestKind::Describe);
         let grant = test_remote_control_grant(RemoteControlRequestKind::AnnounceSelf);
 
         let (set, ()) = tokio::join!(handle.set_remote_control_controller_grant(grant), async {
-            let Some(RemoteControlAccessCommand::SetControllerGrant {
+            let Some(RemoteControlControllerGrantCommand::SetControllerGrant {
                 grant: submitted,
                 completion,
-            }) = access.receive().await
+            }) = controller_grants.receive().await
             else {
                 panic!("set controller grant command")
             };
@@ -236,10 +244,10 @@ mod tests {
         let (revoke, ()) = tokio::join!(
             handle.revoke_remote_control_controller(*grant.controller()),
             async {
-                let Some(RemoteControlAccessCommand::RevokeController {
+                let Some(RemoteControlControllerGrantCommand::RevokeController {
                     controller,
                     completion,
-                }) = access.receive().await
+                }) = controller_grants.receive().await
                 else {
                     panic!("revoke controller command")
                 };
@@ -256,15 +264,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn access_lane_distinguishes_busy_capacity_and_stopped() {
+    async fn controller_grant_lane_distinguishes_busy_capacity_and_stopped() {
         let (commands, _command_rx) = mpsc::unbounded_channel();
-        let (handle, mut access) = PrnsNodeHandle::over_with_remote_control_access(commands);
+        let (handle, mut controller_grants) =
+            PrnsNodeHandle::over_with_remote_control_controller_grant_lane(commands);
         let grant = test_remote_control_grant(RemoteControlRequestKind::Describe);
         let setting = handle.set_remote_control_controller_grant(grant);
         tokio::pin!(setting);
         tokio::select! {
             biased;
-            outcome = &mut setting => panic!("unsettled access change returned: {outcome:?}"),
+            outcome = &mut setting => panic!("unsettled controller_grants change returned: {outcome:?}"),
             () = tokio::task::yield_now() => {}
         }
 
@@ -278,20 +287,22 @@ mod tests {
                 .await,
             Err(RevokeRemoteControlControllerControlError::Busy),
         );
-        let Some(RemoteControlAccessCommand::SetControllerGrant { completion, .. }) =
-            access.receive().await
+        let Some(RemoteControlControllerGrantCommand::SetControllerGrant { completion, .. }) =
+            controller_grants.receive().await
         else {
             panic!("set controller grant command")
         };
         assert!(completion
-            .send(Err(SetRemoteControlControllerGrantError::CapacityExhausted))
+            .send(Err(
+                SetRemoteControlControllerGrantServiceError::CapacityExhausted,
+            ))
             .is_ok());
         assert_eq!(
             setting.await,
             Err(SetRemoteControlControllerGrantControlError::CapacityExhausted),
         );
 
-        drop(access);
+        drop(controller_grants);
         assert_eq!(
             handle.set_remote_control_controller_grant(grant).await,
             Err(SetRemoteControlControllerGrantControlError::NodeStopped),
@@ -299,13 +310,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_cancelled_received_access_change_does_not_mutate_the_table() {
+    async fn a_cancelled_received_controller_grant_change_does_not_mutate_the_table() {
         let (commands, _command_rx) = mpsc::unbounded_channel();
-        let (handle, mut access) = PrnsNodeHandle::over_with_remote_control_access(commands);
+        let (handle, mut controller_grants) =
+            PrnsNodeHandle::over_with_remote_control_controller_grant_lane(commands);
         let grant = test_remote_control_grant(RemoteControlRequestKind::Describe);
         let changing =
             tokio::spawn(async move { handle.set_remote_control_controller_grant(grant).await });
-        let Some(command) = access.receive().await else {
+        let Some(command) = controller_grants.receive().await else {
             panic!("set controller grant command")
         };
         changing.abort();
@@ -317,20 +329,21 @@ mod tests {
             crate::runtime::configure_remote_control_service(&mut engine, service)
                 .expect("RemoteControl fits growable storage");
         command.apply(&mut remote_control);
-        assert!(remote_control.access().unwrap().is_empty());
+        assert!(remote_control.controller_grants().unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn an_abandoned_queued_access_change_holds_the_lane_until_drained() {
+    async fn an_abandoned_queued_controller_grant_change_holds_the_lane_until_drained() {
         let (commands, _command_rx) = mpsc::unbounded_channel();
-        let (handle, mut access) = PrnsNodeHandle::over_with_remote_control_access(commands);
+        let (handle, mut controller_grants) =
+            PrnsNodeHandle::over_with_remote_control_controller_grant_lane(commands);
         let grant = test_remote_control_grant(RemoteControlRequestKind::Describe);
         {
             let setting = handle.set_remote_control_controller_grant(grant);
             tokio::pin!(setting);
             tokio::select! {
                 biased;
-                outcome = &mut setting => panic!("unsettled access change returned: {outcome:?}"),
+                outcome = &mut setting => panic!("unsettled controller_grants change returned: {outcome:?}"),
                 () = tokio::task::yield_now() => {}
             }
         }
@@ -341,8 +354,8 @@ mod tests {
                 .await,
             Err(RevokeRemoteControlControllerControlError::Busy),
         );
-        let Some(RemoteControlAccessCommand::SetControllerGrant { completion, .. }) =
-            access.receive().await
+        let Some(RemoteControlControllerGrantCommand::SetControllerGrant { completion, .. }) =
+            controller_grants.receive().await
         else {
             panic!("set controller grant command")
         };
@@ -351,8 +364,9 @@ mod tests {
         let (revoke, ()) = tokio::join!(
             handle.revoke_remote_control_controller(*grant.controller()),
             async {
-                let Some(RemoteControlAccessCommand::RevokeController { completion, .. }) =
-                    access.receive().await
+                let Some(RemoteControlControllerGrantCommand::RevokeController {
+                    completion, ..
+                }) = controller_grants.receive().await
                 else {
                     panic!("revoke controller command")
                 };

@@ -5,11 +5,12 @@ pub use prns_runtime::runtime::{
     DestinationIdentityRetentionControlError, Diagnostic, DropRouteOutcome, DropRoutesViaOutcome,
     IdentityBlackholeControl, IdentityBlackholeControlError, IdentityBlackholeSource,
     IdentityBlackholeSourceError, ManuallyAttached, Message, NoPersistence,
-    PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, RemoteControlAccessControl,
-    RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure, RemoteControlDescribe,
-    RemoteControlError, RevokeRemoteControlControllerControlError, RoutingControl,
-    RoutingControlError, RuntimeHealth, SendError, ServeMyRequestEndpoints,
-    SetRegisteredAnnounceAppDataError, SetRemoteControlControllerGrantControlError,
+    PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, RemoteControlAnnounceSelf,
+    RemoteControlAnnounceSelfFailure, RemoteControlControllerGrantControl, RemoteControlDescribe,
+    RemoteControlError, RevokeRemoteControlControllerControlError,
+    RevokeRemoteControlControllerServiceError, RoutingControl, RoutingControlError, RuntimeHealth,
+    SendError, ServeMyRequestEndpoints, SetRegisteredAnnounceAppDataError,
+    SetRemoteControlControllerGrantControlError, SetRemoteControlControllerGrantServiceError,
 };
 
 #[cfg(feature = "alloc")]

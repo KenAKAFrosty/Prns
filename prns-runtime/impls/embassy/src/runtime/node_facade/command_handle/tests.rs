@@ -17,13 +17,13 @@ use crate::remote_control::{
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
-use crate::runtime::remote_control_access::{
-    RemoteControlAccessCommand, RemoteControlAccessCompletion,
+use crate::runtime::remote_control_controller_grants::{
+    RemoteControlControllerGrantCommand, RemoteControlControllerGrantCompletion,
 };
 use crate::runtime::{
-    AnnounceNowError, RemoteControlAccessControl, RemoteControlPairingControlError,
+    AnnounceNowError, RemoteControlControllerGrantControl, RemoteControlPairingControlError,
     RevokeRemoteControlControllerControlError, SendError, SetRegisteredAnnounceAppDataError,
-    SetRemoteControlControllerGrantControlError,
+    SetRemoteControlControllerGrantControlError, SetRemoteControlControllerGrantServiceError,
 };
 use crate::units::{ByteLimit, DurationMillis, InstantMillis, RttMillis};
 use crate::wire::DestinationHash;
@@ -162,7 +162,7 @@ fn a_settled_slot_stays_claimed_until_the_waiter_releases_it() {
 }
 
 #[test]
-fn remote_control_access_preserves_exact_set_and_revoke_settlements() {
+fn remote_control_controller_grants_preserves_exact_set_and_revoke_settlements() {
     let commands = Channel::<CriticalSectionRawMutex, IssuedCommand, 1>::new();
     let completions = Pool::<0>::new();
     let handle = super::PrnsNodeHandle::new(commands.sender(), &completions);
@@ -176,17 +176,17 @@ fn remote_control_access_preserves_exact_set_and_revoke_settlements() {
     let (set, ()) = block_on(join(
         handle.set_remote_control_controller_grant(grant),
         async {
-            let RemoteControlAccessCommand::SetControllerGrant {
+            let RemoteControlControllerGrantCommand::SetControllerGrant {
                 id,
                 grant: submitted,
-            } = handle.next_remote_control_access_command().await
+            } = handle.next_remote_control_controller_grant_command().await
             else {
                 panic!("set controller grant command")
             };
             assert_eq!(submitted, grant);
-            assert!(handle.settle_remote_control_access(
+            assert!(handle.settle_remote_control_controller_grant(
                 id,
-                RemoteControlAccessCompletion::ControllerGrantSet(Ok(
+                RemoteControlControllerGrantCompletion::ControllerGrantSet(Ok(
                     crate::remote_control::SetRemoteControlControllerGrantOutcome::Updated {
                         previous,
                     },
@@ -202,15 +202,15 @@ fn remote_control_access_preserves_exact_set_and_revoke_settlements() {
     let (revoke, ()) = block_on(join(
         handle.revoke_remote_control_controller(*grant.controller()),
         async {
-            let RemoteControlAccessCommand::RevokeController { id, controller } =
-                handle.next_remote_control_access_command().await
+            let RemoteControlControllerGrantCommand::RevokeController { id, controller } =
+                handle.next_remote_control_controller_grant_command().await
             else {
                 panic!("revoke controller command")
             };
             assert_eq!(controller, *grant.controller());
-            assert!(handle.settle_remote_control_access(
+            assert!(handle.settle_remote_control_controller_grant(
                 id,
-                RemoteControlAccessCompletion::ControllerRevoked(Ok(
+                RemoteControlControllerGrantCompletion::ControllerRevoked(Ok(
                     crate::remote_control::RevokeRemoteControlControllerOutcome::Revoked { grant },
                 )),
             ));
@@ -223,7 +223,7 @@ fn remote_control_access_preserves_exact_set_and_revoke_settlements() {
 }
 
 #[test]
-fn remote_control_access_maps_capacity_and_busy_without_crossing_operation_spaces() {
+fn remote_control_controller_grants_maps_capacity_and_busy_without_crossing_operation_spaces() {
     let commands = Channel::<CriticalSectionRawMutex, IssuedCommand, 1>::new();
     let completions = Pool::<0>::new();
     let handle = super::PrnsNodeHandle::new(commands.sender(), &completions);
@@ -234,15 +234,15 @@ fn remote_control_access_maps_capacity_and_busy_without_crossing_operation_space
     let (capacity, ()) = block_on(join(
         handle.set_remote_control_controller_grant(grant),
         async {
-            let RemoteControlAccessCommand::SetControllerGrant { id, .. } =
-                handle.next_remote_control_access_command().await
+            let RemoteControlControllerGrantCommand::SetControllerGrant { id, .. } =
+                handle.next_remote_control_controller_grant_command().await
             else {
                 panic!("set controller grant command")
             };
-            assert!(handle.settle_remote_control_access(
+            assert!(handle.settle_remote_control_controller_grant(
                 id,
-                RemoteControlAccessCompletion::ControllerGrantSet(Err(
-                    crate::remote_control::SetRemoteControlControllerGrantError::CapacityExhausted,
+                RemoteControlControllerGrantCompletion::ControllerGrantSet(Err(
+                    SetRemoteControlControllerGrantServiceError::CapacityExhausted,
                 )),
             ));
         },
@@ -253,8 +253,8 @@ fn remote_control_access_maps_capacity_and_busy_without_crossing_operation_space
     );
 
     let held = completions.mint();
-    assert!(completions.remote_control_access.submit(
-        RemoteControlAccessCommand::RevokeController {
+    assert!(completions.remote_control_controller_grants.submit(
+        RemoteControlControllerGrantCommand::RevokeController {
             id: held,
             controller: *grant.controller(),
         },
@@ -267,56 +267,62 @@ fn remote_control_access_maps_capacity_and_busy_without_crossing_operation_space
         block_on(handle.revoke_remote_control_controller(*grant.controller())),
         Err(RevokeRemoteControlControllerControlError::Busy),
     );
-    completions.remote_control_access.release(held);
+    completions.remote_control_controller_grants.release(held);
 }
 
 #[test]
-fn remote_control_access_ignores_a_settlement_for_a_released_operation() {
+fn remote_control_controller_grants_ignores_a_settlement_for_a_released_operation() {
     let completions = Pool::<0>::new();
     let grant = super::super::test_remote_control_grant(
         crate::remote_control::RemoteControlRequestKind::Describe,
     );
     let released = completions.mint();
-    assert!(completions.remote_control_access.submit(
-        RemoteControlAccessCommand::RevokeController {
+    assert!(completions.remote_control_controller_grants.submit(
+        RemoteControlControllerGrantCommand::RevokeController {
             id: released,
             controller: *grant.controller(),
         },
     ));
-    completions.remote_control_access.release(released);
+    completions
+        .remote_control_controller_grants
+        .release(released);
     let current = completions.mint();
-    assert!(completions.remote_control_access.submit(
-        RemoteControlAccessCommand::RevokeController {
+    assert!(completions.remote_control_controller_grants.submit(
+        RemoteControlControllerGrantCommand::RevokeController {
             id: current,
             controller: *grant.controller(),
         },
     ));
     assert!(matches!(
-        block_on(completions.remote_control_access.next_command()),
-        RemoteControlAccessCommand::RevokeController { id, .. } if id == current,
+        block_on(completions.remote_control_controller_grants.next_command()),
+        RemoteControlControllerGrantCommand::RevokeController { id, .. } if id == current,
     ));
 
-    assert!(!completions.remote_control_access.settle(
+    assert!(!completions.remote_control_controller_grants.settle(
         released,
-        RemoteControlAccessCompletion::ControllerRevoked(Ok(
+        RemoteControlControllerGrantCompletion::ControllerRevoked(Ok(
             crate::remote_control::RevokeRemoteControlControllerOutcome::NotFound,
         )),
     ));
-    assert!(completions.remote_control_access.settle(
+    assert!(completions.remote_control_controller_grants.settle(
         current,
-        RemoteControlAccessCompletion::ControllerRevoked(Ok(
+        RemoteControlControllerGrantCompletion::ControllerRevoked(Ok(
             crate::remote_control::RevokeRemoteControlControllerOutcome::NotFound,
         )),
     ));
     assert!(matches!(
-        block_on(completions.remote_control_access.completion(current)),
-        RemoteControlAccessCompletion::ControllerRevoked(Ok(
+        block_on(
+            completions
+                .remote_control_controller_grants
+                .completion(current)
+        ),
+        RemoteControlControllerGrantCompletion::ControllerRevoked(Ok(
             crate::remote_control::RevokeRemoteControlControllerOutcome::NotFound,
         )),
     ));
-    assert!(!completions.remote_control_access.settle(
+    assert!(!completions.remote_control_controller_grants.settle(
         current,
-        RemoteControlAccessCompletion::ControllerRevoked(Ok(
+        RemoteControlControllerGrantCompletion::ControllerRevoked(Ok(
             crate::remote_control::RevokeRemoteControlControllerOutcome::NotFound,
         )),
     ));

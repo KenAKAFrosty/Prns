@@ -13,7 +13,9 @@ use crate::wire::DestinationHash;
 use prns_runtime::runtime::placement::dispatch_remote_control_request;
 
 use super::node_facade::PrnsNodeHandle;
-use super::remote_control_access::{RemoteControlAccessCommand, RemoteControlAccessCompletion};
+use super::remote_control_controller_grants::{
+    RemoteControlControllerGrantCommand, RemoteControlControllerGrantCompletion,
+};
 use super::request_endpoints::{
     dispatch_request, Decline, InboundRequest, RequestEndpointSet, ResponseCapacityExceeded,
     ResponseSink,
@@ -138,23 +140,29 @@ pub(super) async fn run_router<
 {
     loop {
         match select(
-            commands.next_remote_control_access_command(),
+            commands.next_remote_control_controller_grant_command(),
             requests.receive(),
         )
         .await
         {
-            Either::First(RemoteControlAccessCommand::SetControllerGrant { id, grant }) => {
+            Either::First(RemoteControlControllerGrantCommand::SetControllerGrant {
+                id,
+                grant,
+            }) => {
                 let outcome = remote_control.set_controller_grant(grant);
-                let _settled = commands.settle_remote_control_access(
+                let _settled = commands.settle_remote_control_controller_grant(
                     id,
-                    RemoteControlAccessCompletion::ControllerGrantSet(outcome),
+                    RemoteControlControllerGrantCompletion::ControllerGrantSet(outcome),
                 );
             }
-            Either::First(RemoteControlAccessCommand::RevokeController { id, controller }) => {
+            Either::First(RemoteControlControllerGrantCommand::RevokeController {
+                id,
+                controller,
+            }) => {
                 let outcome = remote_control.revoke_controller(&controller);
-                let _settled = commands.settle_remote_control_access(
+                let _settled = commands.settle_remote_control_controller_grant(
                     id,
-                    RemoteControlAccessCompletion::ControllerRevoked(outcome),
+                    RemoteControlControllerGrantCompletion::ControllerRevoked(outcome),
                 );
             }
             Either::Second(request) => {
@@ -203,12 +211,12 @@ async fn dispatch<
     );
     let responder = inbound.respond_token();
     let mut body = RunnerResponse::Buffered(RespondData::new());
-    let dispatched = if let Some((access, available_requests, self_announcement)) =
+    let dispatched = if let Some((controller_grants, available_requests, self_announcement)) =
         remote_control.request_configuration(request.destination, request.path_hash)
     {
         dispatch_remote_control_request(
             state,
-            access,
+            controller_grants,
             available_requests,
             self_announcement,
             &commands,
@@ -418,10 +426,10 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_remote_control_rejects_access_changes() {
+    fn unavailable_remote_control_rejects_controller_grant_changes() {
         use crate::remote_control::RemoteControlRequestKind;
         use crate::runtime::{
-            RemoteControlAccessControl, RevokeRemoteControlControllerControlError,
+            RemoteControlControllerGrantControl, RevokeRemoteControlControllerControlError,
             SetRemoteControlControllerGrantControlError,
         };
 
@@ -465,13 +473,13 @@ mod tests {
     }
 
     #[test]
-    fn router_applies_ready_remote_control_access_before_a_ready_request() {
+    fn router_applies_ready_remote_control_controller_grants_before_a_ready_request() {
         use crate::remote_control::{
-            RemoteControlAccessTable, RemoteControlDescription, RemoteControlRequest,
+            RemoteControlControllerGrantTable, RemoteControlDescription, RemoteControlRequest,
             RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlResponse,
             RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantOutcome,
         };
-        use crate::runtime::RemoteControlAccessControl;
+        use crate::runtime::RemoteControlControllerGrantControl;
 
         type M = CriticalSectionRawMutex;
         let commands = Channel::<M, crate::engine::IssuedCommand, 1>::new();
@@ -537,6 +545,6 @@ mod tests {
             Either::First(()) => {}
             Either::Second(()) => panic!("router returned"),
         }
-        assert!(remote_control.access().unwrap().is_empty());
+        assert!(remote_control.controller_grants().unwrap().is_empty());
     }
 }

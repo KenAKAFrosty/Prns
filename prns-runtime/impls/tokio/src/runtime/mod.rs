@@ -6,7 +6,7 @@ mod node_facade;
 pub mod node_introspection;
 #[cfg(feature = "rnx")]
 mod process_commands;
-mod remote_control_access;
+mod remote_control_controller_grants;
 mod request_runner;
 mod route_restore;
 

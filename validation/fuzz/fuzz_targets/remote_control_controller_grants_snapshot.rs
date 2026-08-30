@@ -6,16 +6,18 @@ use prns_core::identity::{
     IdentityEncryptionPublicKey, IdentityPublicKeys, IdentitySigningPublicKey,
 };
 use prns_core::persistence::{
-    read_remote_control_access_snapshot, remote_control_access_snapshot_capacity,
-    write_remote_control_access_snapshot,
+    read_remote_control_controller_grants_snapshot,
+    remote_control_controller_grants_snapshot_capacity,
+    write_remote_control_controller_grants_snapshot,
 };
 use prns_core::remote_control::{
-    RemoteControlControllerGrant, RemoteControlControllerIdentity, RemoteControlRequestKind,
+    HeapRemoteControlControllerGrantTable, RemoteControlControllerGrant,
+    RemoteControlControllerGrantTable, RemoteControlControllerIdentity, RemoteControlRequestKind,
     RemoteControlRequestSet,
 };
 
 fuzz_target!(|data: &[u8]| {
-    let mut grants = Vec::new();
+    let mut grants = HeapRemoteControlControllerGrantTable::default();
     for row in data.chunks(2).take(8) {
         let Some(fill) = row.first().copied() else {
             continue;
@@ -35,24 +37,28 @@ fuzz_target!(|data: &[u8]| {
             encryption: IdentityEncryptionPublicKey::new(X25519PublicKey([fill; 32])),
             signing: IdentitySigningPublicKey::new(Ed25519PublicKey([fill.wrapping_add(1); 32])),
         });
-        grants.push(
-            RemoteControlControllerGrant::new(controller, permitted_requests)
-                .expect("the generated request set is nonempty"),
-        );
+        let grant = RemoteControlControllerGrant::new(controller, permitted_requests)
+            .expect("the generated request set is nonempty");
+        grants
+            .set_controller_grant(grant)
+            .expect("the heap table admits every generated grant");
     }
 
-    let mut encoded = vec![0u8; remote_control_access_snapshot_capacity(grants.len())];
-    let written = write_remote_control_access_snapshot(grants.iter().copied(), &mut encoded)
+    let mut encoded = vec![0u8; remote_control_controller_grants_snapshot_capacity(grants.len())];
+    let written = write_remote_control_controller_grants_snapshot(&grants, &mut encoded)
         .expect("the exact snapshot capacity must fit every generated grant");
-    let parsed = read_remote_control_access_snapshot(&encoded[..written])
-        .expect("a freshly written access snapshot must parse");
-    assert_eq!(parsed.collect::<Vec<_>>(), grants);
+    let parsed = read_remote_control_controller_grants_snapshot(&encoded[..written])
+        .expect("a freshly written controller-grant snapshot must parse");
+    assert_eq!(
+        parsed.collect::<Vec<_>>(),
+        grants.grants_in_identity_hash_order(),
+    );
 
     let mut mutated = encoded[..written].to_vec();
     for (byte, mutation) in mutated.iter_mut().zip(data.iter().rev()) {
         *byte ^= mutation;
     }
-    if let Ok(mut parsed) = read_remote_control_access_snapshot(&mutated) {
+    if let Ok(mut parsed) = read_remote_control_controller_grants_snapshot(&mutated) {
         while parsed.next().is_some() {}
         assert_eq!(parsed.len(), 0);
     }

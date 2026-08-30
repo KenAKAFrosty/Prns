@@ -38,9 +38,11 @@ use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 
-use super::remote_control_access::RemoteControlAccessSender;
+use super::remote_control_controller_grants::RemoteControlControllerGrantSender;
 #[cfg(test)]
-use super::remote_control_access::{remote_control_access_lane, RemoteControlAccessReceiver};
+use super::remote_control_controller_grants::{
+    remote_control_controller_grant_lane, RemoteControlControllerGrantReceiver,
+};
 use super::request_endpoints::RespondToken;
 use super::{InterfaceStore, SendError};
 pub use byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
@@ -74,7 +76,7 @@ pub(crate) fn test_remote_control_service(
 ) -> prns_core::remote_control::RemoteControlService<'static> {
     use prns_core::identity::vault::IdentitySecretKey;
     use prns_core::remote_control::{
-        RemoteControlControllerIdentitySecret, RemoteControlInitialAccess,
+        RemoteControlControllerIdentitySecret, RemoteControlInitialControllerGrants,
         RemoteControlNodeIdentitySecrets, RemoteControlSelfAnnouncement, RemoteControlService,
         RemoteControlTargetIdentitySecret,
     };
@@ -90,7 +92,7 @@ pub(crate) fn test_remote_control_service(
     .expect("distinct test identities");
     RemoteControlService::new(
         identity_secrets,
-        RemoteControlInitialAccess::Nobody,
+        RemoteControlInitialControllerGrants::Nobody,
         RemoteControlSelfAnnouncement::Unavailable,
     )
 }
@@ -124,7 +126,7 @@ pub struct PrnsNodeHandle {
     resource_admission: resource_admission::ResourceAdmissionRegistry,
     entropy: crate::manifold::driver::TokioEntropy,
     timing_oracle: Arc<Mutex<Option<Arc<dyn BitrateTimingOracle>>>>,
-    pub(super) remote_control_access: RemoteControlAccessSender,
+    pub(super) remote_control_controller_grants: RemoteControlControllerGrantSender,
 }
 
 /// An optional shared-instance timing source. Directly attached nodes do not need one;
@@ -165,16 +167,17 @@ impl std::error::Error for RuntimeRequestHandlerError {}
 impl PrnsNodeHandle {
     #[cfg(test)]
     pub(crate) fn over(commands: UnboundedSender<HostCommand>) -> Self {
-        Self::over_with_remote_control_access(commands).0
+        Self::over_with_remote_control_controller_grant_lane(commands).0
     }
 
     #[cfg(test)]
-    pub(super) fn over_with_remote_control_access(
+    pub(super) fn over_with_remote_control_controller_grant_lane(
         commands: UnboundedSender<HostCommand>,
-    ) -> (Self, RemoteControlAccessReceiver) {
+    ) -> (Self, RemoteControlControllerGrantReceiver) {
         let (notify_tx, _notify_rx) = tokio::sync::mpsc::unbounded_channel();
         let (iface_build, _iface_build_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (remote_control_access, remote_control_access_rx) = remote_control_access_lane();
+        let (remote_control_controller_grants, remote_control_controller_grants_rx) =
+            remote_control_controller_grant_lane();
         (
             Self {
                 commands,
@@ -187,9 +190,9 @@ impl PrnsNodeHandle {
                 resource_admission: resource_admission::ResourceAdmissionRegistry::default(),
                 entropy: crate::manifold::driver::TokioEntropy,
                 timing_oracle: Arc::new(Mutex::new(None)),
-                remote_control_access,
+                remote_control_controller_grants,
             },
-            remote_control_access_rx,
+            remote_control_controller_grants_rx,
         )
     }
 

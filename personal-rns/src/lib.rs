@@ -81,10 +81,12 @@ pub use prns_runtime::routing::links::resources::{ResourceMemoryLimits, Resource
 pub use prns_runtime::routing::ProofStrategy;
 pub use prns_runtime::runtime::{
     AnnounceNowError, Diagnostic, ManuallyAttached, Message, NoPersistence,
-    PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, RemoteControlAccessControl,
-    RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure, RemoteControlDescribe,
-    RemoteControlError, RevokeRemoteControlControllerControlError, RuntimeHealth, SendError,
+    PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, RemoteControlAnnounceSelf,
+    RemoteControlAnnounceSelfFailure, RemoteControlControllerGrantControl, RemoteControlDescribe,
+    RemoteControlError, RevokeRemoteControlControllerControlError,
+    RevokeRemoteControlControllerServiceError, RuntimeHealth, SendError,
     SetRegisteredAnnounceAppDataError, SetRemoteControlControllerGrantControlError,
+    SetRemoteControlControllerGrantServiceError,
 };
 pub use prns_runtime::wire::{DestinationHash, TransportId};
 

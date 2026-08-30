@@ -18,7 +18,7 @@ pub(crate) fn test_remote_control_service(
 ) -> prns_core::remote_control::RemoteControlService<'static> {
     use prns_core::identity::vault::IdentitySecretKey;
     use prns_core::remote_control::{
-        RemoteControlControllerIdentitySecret, RemoteControlInitialAccess,
+        RemoteControlControllerIdentitySecret, RemoteControlInitialControllerGrants,
         RemoteControlNodeIdentitySecrets, RemoteControlSelfAnnouncement, RemoteControlService,
         RemoteControlTargetIdentitySecret,
     };
@@ -34,7 +34,7 @@ pub(crate) fn test_remote_control_service(
     .expect("distinct test identities");
     RemoteControlService::new(
         identity_secrets,
-        RemoteControlInitialAccess::Nobody,
+        RemoteControlInitialControllerGrants::Nobody,
         RemoteControlSelfAnnouncement::Unavailable,
     )
 }

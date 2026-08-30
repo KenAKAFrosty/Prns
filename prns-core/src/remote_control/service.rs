@@ -58,12 +58,12 @@ impl<'a> TryFrom<&'a [RemoteControlControllerGrant]> for RemoteControlController
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum RemoteControlInitialAccess<'a> {
+pub enum RemoteControlInitialControllerGrants<'a> {
     Nobody,
     Grants(RemoteControlControllerGrants<'a>),
 }
 
-impl RemoteControlInitialAccess<'_> {
+impl RemoteControlInitialControllerGrants<'_> {
     #[must_use]
     pub const fn grants(&self) -> &[RemoteControlControllerGrant] {
         match self {
@@ -89,7 +89,7 @@ pub enum RemoteControlService<'a> {
 
 pub struct RemoteControlConfiguration<'a> {
     identity_secrets: RemoteControlNodeIdentitySecrets,
-    initial_access: RemoteControlInitialAccess<'a>,
+    initial_controller_grants: RemoteControlInitialControllerGrants<'a>,
     self_announcement: RemoteControlSelfAnnouncement,
 }
 
@@ -97,12 +97,12 @@ impl<'a> RemoteControlService<'a> {
     #[must_use]
     pub const fn new(
         identity_secrets: RemoteControlNodeIdentitySecrets,
-        initial_access: RemoteControlInitialAccess<'a>,
+        initial_controller_grants: RemoteControlInitialControllerGrants<'a>,
         self_announcement: RemoteControlSelfAnnouncement,
     ) -> Self {
         Self::Available(RemoteControlConfiguration {
             identity_secrets,
-            initial_access,
+            initial_controller_grants,
             self_announcement,
         })
     }
@@ -144,8 +144,8 @@ impl<'a> RemoteControlConfiguration<'a> {
     }
 
     #[must_use]
-    pub const fn initial_access(&self) -> &RemoteControlInitialAccess<'a> {
-        &self.initial_access
+    pub const fn initial_controller_grants(&self) -> &RemoteControlInitialControllerGrants<'a> {
+        &self.initial_controller_grants
     }
 
     #[must_use]
@@ -170,12 +170,12 @@ impl<'a> RemoteControlConfiguration<'a> {
         self,
     ) -> (
         RemoteControlNodeIdentitySecrets,
-        RemoteControlInitialAccess<'a>,
+        RemoteControlInitialControllerGrants<'a>,
         RemoteControlSelfAnnouncement,
     ) {
         (
             self.identity_secrets,
-            self.initial_access,
+            self.initial_controller_grants,
             self.self_announcement,
         )
     }
@@ -243,8 +243,8 @@ mod tests {
     }
 
     #[test]
-    fn initial_access_requires_an_explicit_nobody_or_nonempty_grant_set() {
-        assert_eq!(RemoteControlInitialAccess::Nobody.grants(), &[],);
+    fn initial_controller_grants_requires_an_explicit_nobody_or_nonempty_grant_set() {
+        assert_eq!(RemoteControlInitialControllerGrants::Nobody.grants(), &[],);
         assert_eq!(
             RemoteControlControllerGrants::try_from([].as_slice()),
             Err(RemoteControlControllerGrantsError::Empty),
@@ -258,15 +258,15 @@ mod tests {
         );
         assert_eq!(
             allowed
-                .map(RemoteControlInitialAccess::Grants)
+                .map(RemoteControlInitialControllerGrants::Grants)
                 .as_ref()
-                .map(RemoteControlInitialAccess::grants),
+                .map(RemoteControlInitialControllerGrants::grants),
             Ok(grants.as_slice()),
         );
     }
 
     #[test]
-    fn initial_access_accepts_exactly_eight_distinct_grants() {
+    fn initial_controller_grants_accepts_exactly_eight_distinct_grants() {
         let maximum =
             core::array::from_fn::<_, DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS, _>(|index| {
                 grant(index as u8)
@@ -289,7 +289,7 @@ mod tests {
     }
 
     #[test]
-    fn initial_access_rejects_duplicate_controller_grants() {
+    fn initial_controller_grants_rejects_duplicate_controller_grants() {
         let duplicate = grant(3);
         let grants = [grant(1), duplicate, grant(2), duplicate];
 
@@ -307,15 +307,18 @@ mod tests {
         let identities = identity_secrets.identities();
         let service = RemoteControlService::new(
             identity_secrets,
-            RemoteControlInitialAccess::Nobody,
+            RemoteControlInitialControllerGrants::Nobody,
             RemoteControlSelfAnnouncement::Unavailable,
         );
 
-        let (identity_secrets, initial_access, self_announcement) =
+        let (identity_secrets, initial_controller_grants, self_announcement) =
             service.into_configuration().unwrap().into_parts();
 
         assert_eq!(identity_secrets.identities(), identities);
-        assert_eq!(initial_access, RemoteControlInitialAccess::Nobody);
+        assert_eq!(
+            initial_controller_grants,
+            RemoteControlInitialControllerGrants::Nobody
+        );
         assert_eq!(
             self_announcement,
             RemoteControlSelfAnnouncement::Unavailable
@@ -327,12 +330,12 @@ mod tests {
         let unavailable = RemoteControlService::Unavailable;
         let describe_only = RemoteControlService::new(
             identity_secrets(),
-            RemoteControlInitialAccess::Nobody,
+            RemoteControlInitialControllerGrants::Nobody,
             RemoteControlSelfAnnouncement::Unavailable,
         );
         let available = RemoteControlService::new(
             identity_secrets(),
-            RemoteControlInitialAccess::Nobody,
+            RemoteControlInitialControllerGrants::Nobody,
             RemoteControlSelfAnnouncement::Destination(DestinationHash::new([0x43; 16])),
         );
 

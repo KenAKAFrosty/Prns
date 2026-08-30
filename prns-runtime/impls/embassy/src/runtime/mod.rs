@@ -1,7 +1,7 @@
 mod embedded_persistence;
 mod interface_store;
 mod node_facade;
-mod remote_control_access;
+mod remote_control_controller_grants;
 mod request_runner;
 mod shared_flash;
 

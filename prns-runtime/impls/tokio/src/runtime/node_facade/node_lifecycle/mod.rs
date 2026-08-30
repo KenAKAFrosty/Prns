@@ -36,8 +36,8 @@ use prns_runtime::runtime::{
     ConfigurePreconfiguredDestinationError, Diagnostic,
 };
 
-use super::super::remote_control_access::{
-    remote_control_access_lane, RemoteControlAccessReceiver,
+use super::super::remote_control_controller_grants::{
+    remote_control_controller_grant_lane, RemoteControlControllerGrantReceiver,
 };
 use super::super::request_endpoints::{RequestEndpoint, RequestEndpointSet, RespondToken};
 use super::super::request_runner::{run_router, RunnerRequest, REQUEST_QUEUE_DEPTH};
@@ -81,7 +81,7 @@ pub struct PrnsNode<St, R, F, S: StorageLayout> {
     pub(super) node: AssembledNode<St, R, F, S>,
     notify_rx: UnboundedReceiver<InterfaceId>,
     command_rx: UnboundedReceiver<HostCommand>,
-    remote_control_access_rx: RemoteControlAccessReceiver,
+    remote_control_controller_grants_rx: RemoteControlControllerGrantReceiver,
     iface_build_rx: UnboundedReceiver<DriverMsg>,
     accepted_announce_observer: Option<AcceptedAnnounceObserver>,
     pub(super) crypto_pool: CryptoPoolConfig,
@@ -310,7 +310,8 @@ where
         let (notify_tx, notify_rx) = mpsc::unbounded_channel();
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (iface_build_tx, iface_build_rx) = mpsc::unbounded_channel();
-        let (remote_control_access, remote_control_access_rx) = remote_control_access_lane();
+        let (remote_control_controller_grants, remote_control_controller_grants_rx) =
+            remote_control_controller_grant_lane();
 
         let handle = PrnsNodeHandle {
             commands: command_tx,
@@ -323,7 +324,7 @@ where
             resource_admission: super::resource_admission::ResourceAdmissionRegistry::default(),
             entropy: crate::manifold::driver::TokioEntropy,
             timing_oracle: Arc::new(Mutex::new(None)),
-            remote_control_access,
+            remote_control_controller_grants,
         };
         let (node, interfaces, persistence_intent) = assemble_node(build_recipe(handle.clone()));
         let node_persistence =
@@ -341,7 +342,7 @@ where
             node,
             notify_rx,
             command_rx,
-            remote_control_access_rx,
+            remote_control_controller_grants_rx,
             iface_build_rx,
             accepted_announce_observer: None,
             crypto_pool: CryptoPoolConfig::host_default(),
@@ -576,7 +577,7 @@ where
             node,
             notify_rx,
             command_rx,
-            mut remote_control_access_rx,
+            mut remote_control_controller_grants_rx,
             iface_build_rx,
             mut accepted_announce_observer,
             crypto_pool,
@@ -733,7 +734,7 @@ where
                 &state,
                 &mut remote_control,
                 req_rx,
-                &mut remote_control_access_rx,
+                &mut remote_control_controller_grants_rx,
                 handle.clone(),
             ),
             drive_interfaces(
