@@ -37,6 +37,9 @@ use prns_runtime::runtime::persistence_snapshots::{
 };
 use wasm_bindgen::prelude::*;
 
+use crate::command_settlement::{
+    encode_batch as encode_command_settlement_batch, CapturedCommandSettlement,
+};
 use crate::event_projection::{capture_journaled, CapturedJournal};
 use crate::input::{
     array_to_strings, destination_hash_from_vec, identity_hash_from_vec, interface_id_from_vec,
@@ -46,8 +49,8 @@ use crate::input::{
     required_u64, secret_key_from_vec,
 };
 use crate::js_translation::{
-    interface_kind_name, outbound_to_js, set_bigint, set_bytes, set_str, set_u32, set_u64,
-    set_usize, set_value,
+    command_settled_to_js, interface_kind_name, outbound_to_js, set_bigint, set_bytes, set_str,
+    set_u32, set_u64, set_usize, set_value,
 };
 use crate::parameters::{bitrate_bps_u32, BROWSER_PERSISTENCE_VERSION};
 
@@ -87,7 +90,7 @@ pub struct PrnsRuntime {
     engine: EngineState<GrowableHeap>,
     interfaces: Vec<InterfaceDescriptor>,
     events: Vec<EventProjection>,
-    control_events: Vec<JsValue>,
+    control_events: Vec<CapturedCommandSettlement>,
     outbound: Vec<OutboundFrame>,
     next_command_id: u64,
     revision: u64,
@@ -841,9 +844,18 @@ impl PrnsRuntime {
     pub fn drain_events(&mut self) -> Array {
         let drained = Array::new();
         for event in self.control_events.drain(..) {
-            drained.push(&event);
+            drained.push(&command_settled_to_js(event));
         }
         drained
+    }
+
+    #[wasm_bindgen(js_name = drainCommandSettlementBatch)]
+    pub fn drain_command_settlement_batch(&mut self) -> Result<Vec<u8>, JsValue> {
+        let batch = encode_command_settlement_batch(&self.control_events).map_err(|error| {
+            JsValue::from_str(&format!("command settlement batch failed: {error:?}"))
+        })?;
+        self.control_events.clear();
+        Ok(batch)
     }
 
     #[wasm_bindgen(js_name = drainEventBatch)]
@@ -1361,7 +1373,7 @@ fn resource_strategy(options: &JsValue) -> Result<ResourceStrategy, JsValue> {
 
 enum CapturedReaction {
     Event(EventProjection),
-    Control(JsValue),
+    Control(CapturedCommandSettlement),
     Outbound(OutboundFrame),
 }
 

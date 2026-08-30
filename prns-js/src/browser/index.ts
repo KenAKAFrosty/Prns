@@ -144,6 +144,7 @@ import {
   sendResourceFromSource,
 } from "./resource_send.js";
 import { browserResourceCompressor } from "./resource_compressor.js";
+import { parseCommandSettlementBatch } from "./command_settlement_batch.js";
 import { describeInterfaceSessionFailure } from "./session.js";
 import { parsePackedSnapshot } from "./packed_snapshot.js";
 import { parseSnapshot } from "./snapshot.js";
@@ -1666,11 +1667,15 @@ export class Prns {
     try {
       const batch = this.#runtime.drainEventBatch();
       hadBatch = batch.byteLength > 16;
+      const drainCommandSettlementBatch = this.#runtime.drainCommandSettlementBatch;
+      const controlEvents = drainCommandSettlementBatch === undefined
+        ? this.#runtime.drainEvents().map(parseEvent)
+        : parseCommandSettlementBatch(drainCommandSettlementBatch.call(this.#runtime));
       parsed = [
         ...(this.#eventBatchSink === undefined
           ? parseEventBatch(batch)
           : parseCorrelatedEventBatch(batch)),
-        ...this.#runtime.drainEvents().map(parseEvent),
+        ...controlEvents,
       ];
       if (batch.byteLength > 16) {
         if (this.#eventBatchSink !== undefined) {

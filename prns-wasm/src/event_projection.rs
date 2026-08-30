@@ -4,19 +4,18 @@ use prns_host::{
     ApplicationEventKind, DiagnosticEventKind, EventField, EventProjection,
     EventProjectionExtensionField, EventProjectionField,
 };
-use wasm_bindgen::JsValue;
 
-use crate::js_translation::command_settled_to_js;
+use crate::command_settlement::CapturedCommandSettlement;
 
 pub(crate) enum CapturedJournal {
     Event(EventProjection),
-    Control(JsValue),
+    Control(CapturedCommandSettlement),
 }
 
 pub(crate) fn capture_journaled(journaled: Journaled<'_>) -> CapturedJournal {
     match journaled {
         Journaled::CommandSettled { id, settlement } => {
-            CapturedJournal::Control(command_settled_to_js(id, settlement))
+            CapturedJournal::Control(CapturedCommandSettlement::capture(id, settlement))
         }
         Journaled::PersistenceFlushed { cause, target } => CapturedJournal::Event(project(
             DiagnosticEventKind::PersistenceFlushed,

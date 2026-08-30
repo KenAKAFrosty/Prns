@@ -31,6 +31,7 @@ export declare class PrnsRuntime implements PrnsRuntimeBinding {
   closeLink: PrnsRuntimeBinding["closeLink"];
   ingest: PrnsRuntimeBinding["ingest"];
   drainEventBatch: PrnsRuntimeBinding["drainEventBatch"];
+  drainCommandSettlementBatch(): Uint8Array;
   drainEvents: PrnsRuntimeBinding["drainEvents"];
   drainOutbound: PrnsRuntimeBinding["drainOutbound"];
   persistedState: PrnsRuntimeBinding["persistedState"];

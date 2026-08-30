@@ -463,6 +463,93 @@ export const EVENT_FIELD_CODES = Object.freeze({
 
 export type EventFieldCode = (typeof EVENT_FIELD_CODES)[keyof typeof EVENT_FIELD_CODES];
 
+export const COMMAND_OUTCOME_KIND_CODES = Object.freeze({
+  Announced: 1,
+  PacketDelivered: 2,
+  LinkCloseQueued: 3,
+  InterfaceAttached: 4,
+  InterfaceDetached: 5,
+  LinkEstablished: 6,
+  PathDiscovered: 7,
+  Identified: 8,
+  ResponseReceived: 9,
+  ResponseSent: 10,
+  ResourceSent: 11,
+  ResourceStrategySet: 12,
+  RequesterAllowed: 13,
+} as const);
+
+export type CommandOutcomeKindCode = (typeof COMMAND_OUTCOME_KIND_CODES)[keyof typeof COMMAND_OUTCOME_KIND_CODES];
+
+export const COMMAND_FAILURE_KIND_CODES = Object.freeze({
+  NodeStopped: 1,
+  Busy: 2,
+  PayloadTooLarge: 3,
+  UnknownDestination: 4,
+  NotSingleDestination: 5,
+  AnnounceAppDataTooLong: 6,
+  UnknownInterface: 7,
+  NoRouteToDestination: 8,
+  NotDirectlyReachable: 9,
+  PacketCulled: 10,
+  DeliveryTimedOut: 11,
+  InvalidBitrate: 12,
+  BindFailed: 13,
+  WriteFailed: 14,
+  UnsupportedByBackend: 15,
+  UnknownLink: 16,
+  LinkNotActive: 17,
+  EntropyUnavailable: 18,
+  NotLinkInitiator: 19,
+  IdentityNotHeld: 20,
+  UnknownRequestHandler: 21,
+  RequestPolicyNotAllowList: 22,
+  RequestAllowListFull: 23,
+  LinkBusy: 24,
+  ResourceTableFull: 25,
+  ResourceMetadataTooLarge: 26,
+  ResourceRejectedByPeer: 27,
+  ResourceSequencingFailed: 28,
+  ResourcePredecessorFailed: 29,
+  ChannelWindowFull: 30,
+  ChannelUntrackable: 31,
+  InvalidChannelMessageType: 32,
+  InvalidConfiguration: 33,
+  ResourceUploadCancelled: 34,
+  ResourceEarlyEof: 35,
+  ResourceLengthOverrun: 36,
+  PermissionDenied: 37,
+  DeviceUnavailable: 38,
+  ConnectFailed: 39,
+  BackendFailed: 40,
+  ResponseTooLarge: 41,
+  LinkClosed: 42,
+  ResponseCancelledBySender: 43,
+  ResponseHashmapBeyondPartCount: 44,
+  ResponseHashmapSkipsAhead: 45,
+  ResponseHashmapTooLong: 46,
+  ResponseHashmapRagged: 47,
+  ResponseRetriesExhausted: 48,
+  ResponseLinkVanished: 49,
+  ResponseTransferUnopenable: 50,
+  ResponseTransferCorrupt: 51,
+  ResponseProofUnsendable: 52,
+  ResponseDecompressionFailed: 53,
+  ResponseDecompressionTimedOut: 54,
+  ResponseOpenTimedOut: 55,
+  ResponseMetadataOverrun: 56,
+} as const);
+
+export type CommandFailureKindCode = (typeof COMMAND_FAILURE_KIND_CODES)[keyof typeof COMMAND_FAILURE_KIND_CODES];
+
+export const DELIVERY_EVIDENCE_KIND_CODES = Object.freeze({
+  ExplicitProof: 1,
+  ImplicitProof: 2,
+  Response: 3,
+} as const);
+
+export type DeliveryEvidenceKindCode = (typeof DELIVERY_EVIDENCE_KIND_CODES)[keyof typeof DELIVERY_EVIDENCE_KIND_CODES];
+
 export type DestinationName = {
   readonly appName: string;
   readonly aspects: readonly string[];

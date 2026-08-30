@@ -1,5 +1,8 @@
 import { Tag } from "../casework.js";
 import {
+  COMMAND_FAILURE_KIND_CODES,
+  COMMAND_OUTCOME_KIND_CODES,
+  DELIVERY_EVIDENCE_KIND_CODES,
   DESTINATION_HASH_LENGTH,
   IDENTITY_HASH_LENGTH,
   INTERFACE_ID_LENGTH,
@@ -67,21 +70,7 @@ const COMMAND_CODES = {
   AllowRequester: 14,
 } as const satisfies Record<EncodedHostCommand["tag"], number>;
 
-const OUTCOME_CODES = {
-  Announced: 0,
-  PacketDelivered: 1,
-  LinkCloseQueued: 2,
-  InterfaceAttached: 3,
-  InterfaceDetached: 4,
-  LinkEstablished: 5,
-  PathDiscovered: 6,
-  Identified: 7,
-  ResponseReceived: 8,
-  ResponseSent: 9,
-  ResourceSent: 10,
-  ResourceStrategySet: 11,
-  RequesterAllowed: 12,
-} as const satisfies Record<CommandOutcome["tag"], number>;
+const OUTCOME_CODES = COMMAND_OUTCOME_KIND_CODES;
 
 type FailureFormats = {
   readonly [Name in CommandFailure["tag"]]: {
@@ -93,67 +82,67 @@ type FailureFormats = {
 };
 
 const FAILURE_FORMATS = {
-  NodeStopped: { code: 0, data: "Unit" },
-  Busy: { code: 1, data: "Unit" },
-  PayloadTooLarge: { code: 2, data: "Unit" },
-  UnknownDestination: { code: 3, data: "Unit" },
-  NotSingleDestination: { code: 4, data: "Unit" },
-  AnnounceAppDataTooLong: { code: 5, data: "Unit" },
-  UnknownInterface: { code: 6, data: "Unit" },
-  NoRouteToDestination: { code: 7, data: "Unit" },
-  NotDirectlyReachable: { code: 8, data: "Unit" },
-  PacketCulled: { code: 9, data: "Unit" },
-  DeliveryTimedOut: { code: 10, data: "Unit" },
-  InvalidBitrate: { code: 11, data: "Unit" },
-  BindFailed: { code: 12, data: "Detail" },
-  WriteFailed: { code: 13, data: "Detail" },
-  UnsupportedByBackend: { code: 14, data: "Unit" },
-  UnknownLink: { code: 15, data: "Unit" },
-  LinkNotActive: { code: 16, data: "Unit" },
-  EntropyUnavailable: { code: 17, data: "Unit" },
-  NotLinkInitiator: { code: 18, data: "Unit" },
-  IdentityNotHeld: { code: 19, data: "Unit" },
-  UnknownRequestHandler: { code: 20, data: "Unit" },
-  RequestPolicyNotAllowList: { code: 21, data: "Unit" },
-  RequestAllowListFull: { code: 22, data: "Unit" },
-  LinkBusy: { code: 23, data: "Unit" },
-  ResourceTableFull: { code: 24, data: "Unit" },
-  ResourceMetadataTooLarge: { code: 25, data: "Unit" },
-  ResourceRejectedByPeer: { code: 26, data: "Unit" },
-  ResourceSequencingFailed: { code: 27, data: "Unit" },
-  ResourcePredecessorFailed: { code: 28, data: "Unit" },
-  ChannelWindowFull: { code: 29, data: "Unit" },
-  ChannelUntrackable: { code: 30, data: "Unit" },
-  InvalidChannelMessageType: { code: 31, data: "Unit" },
-  InvalidConfiguration: { code: 32, data: "Detail" },
-  ResourceUploadCancelled: { code: 33, data: "Unit" },
-  ResourceEarlyEof: { code: 34, data: "Unit" },
-  ResourceLengthOverrun: { code: 35, data: "Unit" },
-  PermissionDenied: { code: 36, data: "Detail" },
-  DeviceUnavailable: { code: 37, data: "Detail" },
-  ConnectFailed: { code: 38, data: "Detail" },
-  BackendFailed: { code: 39, data: "Detail" },
-  ResponseTooLarge: { code: 40, data: "Unit" },
-  LinkClosed: { code: 41, data: "Unit" },
-  ResponseCancelledBySender: { code: 42, data: "Unit" },
-  ResponseHashmapBeyondPartCount: { code: 43, data: "Unit" },
-  ResponseHashmapSkipsAhead: { code: 44, data: "Unit" },
-  ResponseHashmapTooLong: { code: 45, data: "Unit" },
-  ResponseHashmapRagged: { code: 46, data: "Unit" },
-  ResponseRetriesExhausted: { code: 47, data: "Unit" },
-  ResponseLinkVanished: { code: 48, data: "Unit" },
-  ResponseTransferUnopenable: { code: 49, data: "Unit" },
-  ResponseTransferCorrupt: { code: 50, data: "Unit" },
-  ResponseProofUnsendable: { code: 51, data: "Unit" },
-  ResponseDecompressionFailed: { code: 52, data: "Unit" },
-  ResponseDecompressionTimedOut: { code: 53, data: "Unit" },
-  ResponseOpenTimedOut: { code: 54, data: "Unit" },
-  ResponseMetadataOverrun: { code: 55, data: "Unit" },
+  NodeStopped: { code: COMMAND_FAILURE_KIND_CODES.NodeStopped, data: "Unit" },
+  Busy: { code: COMMAND_FAILURE_KIND_CODES.Busy, data: "Unit" },
+  PayloadTooLarge: { code: COMMAND_FAILURE_KIND_CODES.PayloadTooLarge, data: "Unit" },
+  UnknownDestination: { code: COMMAND_FAILURE_KIND_CODES.UnknownDestination, data: "Unit" },
+  NotSingleDestination: { code: COMMAND_FAILURE_KIND_CODES.NotSingleDestination, data: "Unit" },
+  AnnounceAppDataTooLong: { code: COMMAND_FAILURE_KIND_CODES.AnnounceAppDataTooLong, data: "Unit" },
+  UnknownInterface: { code: COMMAND_FAILURE_KIND_CODES.UnknownInterface, data: "Unit" },
+  NoRouteToDestination: { code: COMMAND_FAILURE_KIND_CODES.NoRouteToDestination, data: "Unit" },
+  NotDirectlyReachable: { code: COMMAND_FAILURE_KIND_CODES.NotDirectlyReachable, data: "Unit" },
+  PacketCulled: { code: COMMAND_FAILURE_KIND_CODES.PacketCulled, data: "Unit" },
+  DeliveryTimedOut: { code: COMMAND_FAILURE_KIND_CODES.DeliveryTimedOut, data: "Unit" },
+  InvalidBitrate: { code: COMMAND_FAILURE_KIND_CODES.InvalidBitrate, data: "Unit" },
+  BindFailed: { code: COMMAND_FAILURE_KIND_CODES.BindFailed, data: "Detail" },
+  WriteFailed: { code: COMMAND_FAILURE_KIND_CODES.WriteFailed, data: "Detail" },
+  UnsupportedByBackend: { code: COMMAND_FAILURE_KIND_CODES.UnsupportedByBackend, data: "Unit" },
+  UnknownLink: { code: COMMAND_FAILURE_KIND_CODES.UnknownLink, data: "Unit" },
+  LinkNotActive: { code: COMMAND_FAILURE_KIND_CODES.LinkNotActive, data: "Unit" },
+  EntropyUnavailable: { code: COMMAND_FAILURE_KIND_CODES.EntropyUnavailable, data: "Unit" },
+  NotLinkInitiator: { code: COMMAND_FAILURE_KIND_CODES.NotLinkInitiator, data: "Unit" },
+  IdentityNotHeld: { code: COMMAND_FAILURE_KIND_CODES.IdentityNotHeld, data: "Unit" },
+  UnknownRequestHandler: { code: COMMAND_FAILURE_KIND_CODES.UnknownRequestHandler, data: "Unit" },
+  RequestPolicyNotAllowList: { code: COMMAND_FAILURE_KIND_CODES.RequestPolicyNotAllowList, data: "Unit" },
+  RequestAllowListFull: { code: COMMAND_FAILURE_KIND_CODES.RequestAllowListFull, data: "Unit" },
+  LinkBusy: { code: COMMAND_FAILURE_KIND_CODES.LinkBusy, data: "Unit" },
+  ResourceTableFull: { code: COMMAND_FAILURE_KIND_CODES.ResourceTableFull, data: "Unit" },
+  ResourceMetadataTooLarge: { code: COMMAND_FAILURE_KIND_CODES.ResourceMetadataTooLarge, data: "Unit" },
+  ResourceRejectedByPeer: { code: COMMAND_FAILURE_KIND_CODES.ResourceRejectedByPeer, data: "Unit" },
+  ResourceSequencingFailed: { code: COMMAND_FAILURE_KIND_CODES.ResourceSequencingFailed, data: "Unit" },
+  ResourcePredecessorFailed: { code: COMMAND_FAILURE_KIND_CODES.ResourcePredecessorFailed, data: "Unit" },
+  ChannelWindowFull: { code: COMMAND_FAILURE_KIND_CODES.ChannelWindowFull, data: "Unit" },
+  ChannelUntrackable: { code: COMMAND_FAILURE_KIND_CODES.ChannelUntrackable, data: "Unit" },
+  InvalidChannelMessageType: { code: COMMAND_FAILURE_KIND_CODES.InvalidChannelMessageType, data: "Unit" },
+  InvalidConfiguration: { code: COMMAND_FAILURE_KIND_CODES.InvalidConfiguration, data: "Detail" },
+  ResourceUploadCancelled: { code: COMMAND_FAILURE_KIND_CODES.ResourceUploadCancelled, data: "Unit" },
+  ResourceEarlyEof: { code: COMMAND_FAILURE_KIND_CODES.ResourceEarlyEof, data: "Unit" },
+  ResourceLengthOverrun: { code: COMMAND_FAILURE_KIND_CODES.ResourceLengthOverrun, data: "Unit" },
+  PermissionDenied: { code: COMMAND_FAILURE_KIND_CODES.PermissionDenied, data: "Detail" },
+  DeviceUnavailable: { code: COMMAND_FAILURE_KIND_CODES.DeviceUnavailable, data: "Detail" },
+  ConnectFailed: { code: COMMAND_FAILURE_KIND_CODES.ConnectFailed, data: "Detail" },
+  BackendFailed: { code: COMMAND_FAILURE_KIND_CODES.BackendFailed, data: "Detail" },
+  ResponseTooLarge: { code: COMMAND_FAILURE_KIND_CODES.ResponseTooLarge, data: "Unit" },
+  LinkClosed: { code: COMMAND_FAILURE_KIND_CODES.LinkClosed, data: "Unit" },
+  ResponseCancelledBySender: { code: COMMAND_FAILURE_KIND_CODES.ResponseCancelledBySender, data: "Unit" },
+  ResponseHashmapBeyondPartCount: { code: COMMAND_FAILURE_KIND_CODES.ResponseHashmapBeyondPartCount, data: "Unit" },
+  ResponseHashmapSkipsAhead: { code: COMMAND_FAILURE_KIND_CODES.ResponseHashmapSkipsAhead, data: "Unit" },
+  ResponseHashmapTooLong: { code: COMMAND_FAILURE_KIND_CODES.ResponseHashmapTooLong, data: "Unit" },
+  ResponseHashmapRagged: { code: COMMAND_FAILURE_KIND_CODES.ResponseHashmapRagged, data: "Unit" },
+  ResponseRetriesExhausted: { code: COMMAND_FAILURE_KIND_CODES.ResponseRetriesExhausted, data: "Unit" },
+  ResponseLinkVanished: { code: COMMAND_FAILURE_KIND_CODES.ResponseLinkVanished, data: "Unit" },
+  ResponseTransferUnopenable: { code: COMMAND_FAILURE_KIND_CODES.ResponseTransferUnopenable, data: "Unit" },
+  ResponseTransferCorrupt: { code: COMMAND_FAILURE_KIND_CODES.ResponseTransferCorrupt, data: "Unit" },
+  ResponseProofUnsendable: { code: COMMAND_FAILURE_KIND_CODES.ResponseProofUnsendable, data: "Unit" },
+  ResponseDecompressionFailed: { code: COMMAND_FAILURE_KIND_CODES.ResponseDecompressionFailed, data: "Unit" },
+  ResponseDecompressionTimedOut: { code: COMMAND_FAILURE_KIND_CODES.ResponseDecompressionTimedOut, data: "Unit" },
+  ResponseOpenTimedOut: { code: COMMAND_FAILURE_KIND_CODES.ResponseOpenTimedOut, data: "Unit" },
+  ResponseMetadataOverrun: { code: COMMAND_FAILURE_KIND_CODES.ResponseMetadataOverrun, data: "Unit" },
 } as const satisfies FailureFormats;
 
 const COMMAND_TAGS = invertCodes(COMMAND_CODES, "worker command");
-const OUTCOME_TAGS = invertCodes(OUTCOME_CODES, "command outcome");
-const FAILURE_TAGS = invertFormats(FAILURE_FORMATS, "command failure");
+const OUTCOME_TAGS = invertCodes(OUTCOME_CODES, "command outcome", 1);
+const FAILURE_TAGS = invertFormats(FAILURE_FORMATS, "command failure", 1);
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 
@@ -780,25 +769,25 @@ function decodeResourceCompression(reader: WireReader): ResourceCompression {
 
 function encodeEvidence(value: DeliveryEvidenceKind): number {
   if (value === "ExplicitProof") {
-    return 0;
+    return DELIVERY_EVIDENCE_KIND_CODES.ExplicitProof;
   }
   if (value === "ImplicitProof") {
-    return 1;
+    return DELIVERY_EVIDENCE_KIND_CODES.ImplicitProof;
   }
   if (value === "Response") {
-    return 2;
+    return DELIVERY_EVIDENCE_KIND_CODES.Response;
   }
   throw new TypeError("command outcome contains an unknown delivery evidence kind");
 }
 
 function decodeEvidence(code: number): DeliveryEvidenceKind {
-  if (code === 0) {
+  if (code === DELIVERY_EVIDENCE_KIND_CODES.ExplicitProof) {
     return "ExplicitProof";
   }
-  if (code === 1) {
+  if (code === DELIVERY_EVIDENCE_KIND_CODES.ImplicitProof) {
     return "ImplicitProof";
   }
-  if (code === 2) {
+  if (code === DELIVERY_EVIDENCE_KIND_CODES.Response) {
     return "Response";
   }
   throw new TypeError("command outcome contains an unknown delivery evidence kind");
@@ -832,6 +821,7 @@ function requireItemCount(count: number): void {
 function invertCodes<Names extends string>(
   codes: Readonly<Record<Names, number>>,
   label: string,
+  firstCode = 0,
 ): readonly Names[] {
   const names: (Names | undefined)[] = [];
   for (const name of Object.keys(codes) as Names[]) {
@@ -841,7 +831,7 @@ function invertCodes<Names extends string>(
     }
     names[code] = name;
   }
-  for (let code = 0; code < names.length; code += 1) {
+  for (let code = firstCode; code < names.length; code += 1) {
     if (names[code] === undefined) {
       throw new TypeError(`${label} codes are not contiguous`);
     }
@@ -852,11 +842,12 @@ function invertCodes<Names extends string>(
 function invertFormats<Names extends string>(
   formats: Readonly<Record<Names, { readonly code: number }>>,
   label: string,
+  firstCode = 0,
 ): readonly Names[] {
   const codes = Object.fromEntries(
     (Object.keys(formats) as Names[]).map((name) => [name, formats[name].code]),
   ) as Record<Names, number>;
-  return invertCodes(codes, label);
+  return invertCodes(codes, label, firstCode);
 }
 
 class WireWriter {

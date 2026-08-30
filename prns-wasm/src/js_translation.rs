@@ -1,410 +1,78 @@
 use js_sys::{BigInt, Object, Reflect, Uint8Array};
-use personal_rns::engine::{
-    AllowRequesterFailure, AllowRequesterRejection, AnnounceNowFailure, AnnounceNowRejection,
-    CloseLinkFailure, CloseLinkRejection, CommandId, DeliveryEvidence, DeliveryProof,
-    EstablishLinkFailure, EstablishLinkRejection, FanTarget, IdentifyFailure, IdentifyRejection,
-    RequestPathFailure, RespondFailure, RespondRejection, SendRequestFailure, SendRequestRejection,
-    SendResourceFailure, SendResourceRejection, SendSinglePacketFailure, SendSinglePacketRejection,
-    SendToChannelFailure, SendToChannelRejection, SendToLinkFailure, SendToLinkRejection,
-    SetResourceStrategyFailure, SetResourceStrategyRejection, Settlement,
-};
+use personal_rns::engine::FanTarget;
 use personal_rns::interfaces::bluetooth_auto as bluetooth_contract;
 use personal_rns::interfaces::usb_auto;
 use personal_rns::interfaces::InterfaceKind;
-use personal_rns::routing::links::resources::table::ApplyHashmapUpdateError;
-use personal_rns::routing::links::resources::ResourceFailureCause;
+use prns_host::{CommandOutcome, DeliveryEvidence};
 use wasm_bindgen::prelude::*;
 
+use crate::command_settlement::{CapturedCommandResult, CapturedCommandSettlement};
 use crate::runtime::{OutboundFrame, OutboundTarget};
 
-pub(crate) fn command_settled_to_js(id: CommandId, settlement: Settlement) -> JsValue {
+pub(crate) fn command_settled_to_js(settlement: CapturedCommandSettlement) -> JsValue {
     let object = Object::new();
     set_str(&object, "type", "commandSettled");
-    set_u64(&object, "id", id.0);
-    settlement_to_js(&object, settlement);
+    set_u64(&object, "id", settlement.id().0);
+    match settlement.into_result() {
+        CapturedCommandResult::Untracked => set_str(&object, "result", "untracked"),
+        CapturedCommandResult::Tracked(Ok(outcome)) => {
+            set_str(&object, "result", "succeeded");
+            outcome_to_js(&object, outcome);
+        }
+        CapturedCommandResult::Tracked(Err(failure)) => {
+            set_str(&object, "result", "failed");
+            set_str(&object, "kind", failure.kind().contract_name());
+            if let Some(detail) = failure.detail() {
+                set_str(&object, "detail", detail);
+            }
+        }
+    }
     object.into()
 }
 
-fn settlement_to_js(object: &Object, settlement: Settlement) {
-    match settlement {
-        Settlement::AnnounceNow(Ok(())) => {
-            set_str(object, "result", "succeeded");
-            set_str(object, "kind", "Announced");
-        }
-        Settlement::AnnounceNow(Err(failure)) => match failure {
-            AnnounceNowFailure::Rejected(AnnounceNowRejection::UnknownDestination) => {
-                set_command_failure(object, "UnknownDestination", None);
+fn outcome_to_js(object: &Object, outcome: CommandOutcome) {
+    set_str(object, "kind", outcome.kind().contract_name());
+    match outcome {
+        CommandOutcome::Announced
+        | CommandOutcome::LinkCloseQueued
+        | CommandOutcome::Identified
+        | CommandOutcome::ResourceSent
+        | CommandOutcome::ResourceStrategySet
+        | CommandOutcome::RequesterAllowed => {}
+        CommandOutcome::PacketDelivered {
+            rtt_millis,
+            evidence,
+        } => {
+            set_u64(object, "rttMillis", rtt_millis);
+            set_str(object, "evidence", evidence.kind().contract_name());
+            match evidence {
+                DeliveryEvidence::ExplicitProof(hash) | DeliveryEvidence::ImplicitProof(hash) => {
+                    set_bytes(object, "packetHash", hash.as_bytes());
+                }
+                DeliveryEvidence::Response => {}
             }
-            AnnounceNowFailure::Rejected(AnnounceNowRejection::NotASingleDestination) => {
-                set_command_failure(object, "NotSingleDestination", None);
-            }
-            AnnounceNowFailure::Rejected(AnnounceNowRejection::AppDataTooLong) => {
-                set_command_failure(object, "AnnounceAppDataTooLong", None);
-            }
-            AnnounceNowFailure::Rejected(AnnounceNowRejection::UnknownInterface) => {
-                set_command_failure(object, "UnknownInterface", None);
-            }
-            AnnounceNowFailure::WriteFailed(error) => {
-                set_command_failure(object, "WriteFailed", Some(format!("{error:?}")));
-            }
-        },
-        Settlement::SendSinglePacket(Ok(delivered)) => {
-            set_packet_delivered(object, delivered);
         }
-        Settlement::SendSinglePacket(Err(failure)) => match failure {
-            SendSinglePacketFailure::Rejected(SendSinglePacketRejection::NoRouteToDestination) => {
-                set_command_failure(object, "NoRouteToDestination", None);
-            }
-            SendSinglePacketFailure::Rejected(SendSinglePacketRejection::NotDirectlyReachable) => {
-                set_command_failure(object, "NotDirectlyReachable", None);
-            }
-            SendSinglePacketFailure::WriteFailed(error) => {
-                set_command_failure(object, "WriteFailed", Some(format!("{error:?}")));
-            }
-            SendSinglePacketFailure::Culled => {
-                set_command_failure(object, "PacketCulled", None);
-            }
-            SendSinglePacketFailure::Timeout => {
-                set_command_failure(object, "DeliveryTimedOut", None);
-            }
-        },
-        Settlement::CloseLink(Ok(())) => {
-            set_str(object, "result", "succeeded");
-            set_str(object, "kind", "LinkCloseQueued");
+        CommandOutcome::InterfaceAttached { interface }
+        | CommandOutcome::InterfaceDetached { interface } => {
+            set_bytes(object, "interface", interface.as_bytes());
         }
-        Settlement::CloseLink(Err(CloseLinkFailure::Rejected(CloseLinkRejection::NoSuchLink))) => {
-            set_command_failure(object, "UnknownLink", None);
+        CommandOutcome::LinkEstablished {
+            link_id,
+            rtt_millis,
+        } => {
+            set_bytes(object, "linkId", link_id.as_bytes());
+            set_u64(object, "rttMillis", rtt_millis);
         }
-        Settlement::CloseLink(Err(CloseLinkFailure::Rejected(
-            CloseLinkRejection::LinkNotActive,
-        ))) => {
-            set_command_failure(object, "LinkNotActive", None);
+        CommandOutcome::PathDiscovered { hops } => {
+            set_u32(object, "hops", u32::from(hops));
         }
-        Settlement::CloseLink(Err(CloseLinkFailure::WriteFailed)) => {
-            set_command_failure(object, "WriteFailed", Some("link write failed".to_string()));
+        CommandOutcome::ResponseReceived { data, rtt_millis } => {
+            set_bytes(object, "data", &data);
+            set_u64(object, "rttMillis", rtt_millis);
         }
-        Settlement::RequestPath(Ok(path)) => {
-            set_str(object, "result", "succeeded");
-            set_str(object, "kind", "PathDiscovered");
-            set_u32(object, "hops", u32::from(path.hops.0));
+        CommandOutcome::ResponseSent { rtt_millis } => {
+            set_u64(object, "rttMillis", rtt_millis);
         }
-        Settlement::RequestPath(Err(RequestPathFailure::WriteFailed(error))) => {
-            set_command_failure(object, "WriteFailed", Some(format!("{error:?}")));
-        }
-        Settlement::RequestPath(Err(RequestPathFailure::Timeout)) => {
-            set_command_failure(object, "DeliveryTimedOut", None);
-        }
-        Settlement::RequestPath(Err(RequestPathFailure::Culled)) => {
-            set_command_failure(object, "PacketCulled", None);
-        }
-        Settlement::EstablishLink(Ok(link)) => {
-            set_str(object, "result", "succeeded");
-            set_str(object, "kind", "LinkEstablished");
-            set_bytes(object, "linkId", link.link_id.as_bytes());
-            set_u64(object, "rttMillis", link.rtt_millis);
-        }
-        Settlement::EstablishLink(Err(EstablishLinkFailure::Rejected(
-            EstablishLinkRejection::NoRouteToDestination,
-        ))) => {
-            set_command_failure(object, "NoRouteToDestination", None);
-        }
-        Settlement::EstablishLink(Err(EstablishLinkFailure::Rejected(
-            EstablishLinkRejection::NotDirectlyReachable,
-        ))) => {
-            set_command_failure(object, "NotDirectlyReachable", None);
-        }
-        Settlement::EstablishLink(Err(EstablishLinkFailure::WriteFailed(error))) => {
-            set_command_failure(object, "WriteFailed", Some(format!("{error:?}")));
-        }
-        Settlement::EstablishLink(Err(EstablishLinkFailure::Timeout)) => {
-            set_command_failure(object, "DeliveryTimedOut", None);
-        }
-        Settlement::SendToLink(Ok(delivered)) => {
-            set_packet_delivered(object, delivered);
-        }
-        Settlement::SendToLink(Err(SendToLinkFailure::Rejected(
-            SendToLinkRejection::NoSuchLink,
-        ))) => {
-            set_command_failure(object, "UnknownLink", None);
-        }
-        Settlement::SendToLink(Err(SendToLinkFailure::Rejected(
-            SendToLinkRejection::LinkNotActive,
-        ))) => {
-            set_command_failure(object, "LinkNotActive", None);
-        }
-        Settlement::SendToLink(Err(SendToLinkFailure::WriteFailed(error))) => {
-            set_command_failure(object, "WriteFailed", Some(format!("{error:?}")));
-        }
-        Settlement::SendToLink(Err(SendToLinkFailure::Culled)) => {
-            set_command_failure(object, "PacketCulled", None);
-        }
-        Settlement::SendToLink(Err(SendToLinkFailure::Timeout)) => {
-            set_command_failure(object, "DeliveryTimedOut", None);
-        }
-        Settlement::SendToLink(Err(SendToLinkFailure::LinkClosed)) => {
-            set_command_failure(object, "LinkClosed", None);
-        }
-        Settlement::Identify(Ok(())) => {
-            set_str(object, "result", "succeeded");
-            set_str(object, "kind", "Identified");
-        }
-        Settlement::Identify(Err(IdentifyFailure::Rejected(IdentifyRejection::NoSuchLink))) => {
-            set_command_failure(object, "UnknownLink", None);
-        }
-        Settlement::Identify(Err(IdentifyFailure::Rejected(IdentifyRejection::LinkNotActive))) => {
-            set_command_failure(object, "LinkNotActive", None);
-        }
-        Settlement::Identify(Err(IdentifyFailure::Rejected(IdentifyRejection::NotInitiator))) => {
-            set_command_failure(object, "NotLinkInitiator", None);
-        }
-        Settlement::Identify(Err(IdentifyFailure::Rejected(
-            IdentifyRejection::IdentityNotHeld,
-        ))) => {
-            set_command_failure(object, "IdentityNotHeld", None);
-        }
-        Settlement::Identify(Err(IdentifyFailure::WriteFailed)) => {
-            set_command_failure(
-                object,
-                "WriteFailed",
-                Some("identity write failed".to_string()),
-            );
-        }
-        Settlement::SendRequest(Ok(delivered)) => {
-            set_packet_delivered(object, delivered);
-        }
-        Settlement::SendRequest(Err(SendRequestFailure::Rejected(
-            SendRequestRejection::NoSuchLink,
-        ))) => {
-            set_command_failure(object, "UnknownLink", None);
-        }
-        Settlement::SendRequest(Err(SendRequestFailure::Rejected(
-            SendRequestRejection::LinkNotActive,
-        ))) => {
-            set_command_failure(object, "LinkNotActive", None);
-        }
-        Settlement::SendRequest(Err(SendRequestFailure::WriteFailed)) => {
-            set_command_failure(
-                object,
-                "WriteFailed",
-                Some("request write failed".to_string()),
-            );
-        }
-        Settlement::SendRequest(Err(SendRequestFailure::Culled)) => {
-            set_command_failure(object, "PacketCulled", None);
-        }
-        Settlement::SendRequest(Err(SendRequestFailure::Timeout)) => {
-            set_command_failure(object, "DeliveryTimedOut", None);
-        }
-        Settlement::SendRequest(Err(SendRequestFailure::LinkClosed)) => {
-            set_command_failure(object, "LinkClosed", None);
-        }
-        Settlement::SendRequest(Err(SendRequestFailure::ResponseTransferFailed(cause))) => {
-            let kind = match cause {
-                ResourceFailureCause::CancelledBySender => "ResponseCancelledBySender",
-                ResourceFailureCause::RefusedHashmapUpdate(refusal) => match refusal {
-                    ApplyHashmapUpdateError::BeyondPartCount => "ResponseHashmapBeyondPartCount",
-                    ApplyHashmapUpdateError::SkipsAhead => "ResponseHashmapSkipsAhead",
-                    ApplyHashmapUpdateError::HashmapTooLong => "ResponseHashmapTooLong",
-                    ApplyHashmapUpdateError::HashmapRagged => "ResponseHashmapRagged",
-                },
-                ResourceFailureCause::RetriesExhausted => "ResponseRetriesExhausted",
-                ResourceFailureCause::LinkVanished => "ResponseLinkVanished",
-                ResourceFailureCause::TransferUnopenable => "ResponseTransferUnopenable",
-                ResourceFailureCause::TransferCorrupt => "ResponseTransferCorrupt",
-                ResourceFailureCause::ProofUnsendable => "ResponseProofUnsendable",
-                ResourceFailureCause::DecompressionFailed => "ResponseDecompressionFailed",
-                ResourceFailureCause::DecompressionTimedOut => "ResponseDecompressionTimedOut",
-                ResourceFailureCause::OpenTimedOut => "ResponseOpenTimedOut",
-                ResourceFailureCause::MetadataOverrun => "ResponseMetadataOverrun",
-            };
-            set_command_failure(object, kind, None);
-        }
-        Settlement::SendRequest(Err(SendRequestFailure::ResponseTooLarge)) => {
-            set_command_failure(object, "ResponseTooLarge", None);
-        }
-        Settlement::SendRequest(Err(SendRequestFailure::ResourceCapacity)) => {
-            set_command_failure(object, "ResourceTableFull", None);
-        }
-        Settlement::Respond(Ok(())) => {
-            set_str(object, "result", "succeeded");
-            set_str(object, "kind", "ResponseSent");
-            set_u64(object, "rttMillis", 0);
-        }
-        Settlement::Respond(Err(RespondFailure::Rejected(RespondRejection::NoSuchLink))) => {
-            set_command_failure(object, "UnknownLink", None);
-        }
-        Settlement::Respond(Err(RespondFailure::Rejected(RespondRejection::LinkNotActive))) => {
-            set_command_failure(object, "LinkNotActive", None);
-        }
-        Settlement::Respond(Err(RespondFailure::WriteFailed)) => {
-            set_command_failure(
-                object,
-                "WriteFailed",
-                Some("response write failed".to_string()),
-            );
-        }
-        Settlement::Respond(Err(RespondFailure::Resource(failure))) => {
-            set_resource_failure(object, failure);
-        }
-        Settlement::SendResource(Ok(())) => {
-            set_str(object, "result", "succeeded");
-            set_str(object, "kind", "ResourceSent");
-        }
-        Settlement::SendResource(Err(failure)) => {
-            set_resource_failure(object, failure);
-        }
-        Settlement::SetResourceStrategy(Ok(())) => {
-            set_str(object, "result", "succeeded");
-            set_str(object, "kind", "ResourceStrategySet");
-        }
-        Settlement::SetResourceStrategy(Err(SetResourceStrategyFailure::Rejected(
-            SetResourceStrategyRejection::NoSuchLink,
-        ))) => {
-            set_command_failure(object, "UnknownLink", None);
-        }
-        Settlement::SetResourceStrategy(Err(SetResourceStrategyFailure::Rejected(
-            SetResourceStrategyRejection::LinkNotActive,
-        ))) => {
-            set_command_failure(object, "LinkNotActive", None);
-        }
-        Settlement::SendToChannel(Ok(delivered)) => {
-            set_packet_delivered(object, delivered);
-        }
-        Settlement::SendToChannel(Err(SendToChannelFailure::Rejected(
-            SendToChannelRejection::NoSuchLink,
-        ))) => {
-            set_command_failure(object, "UnknownLink", None);
-        }
-        Settlement::SendToChannel(Err(SendToChannelFailure::Rejected(
-            SendToChannelRejection::LinkNotActive,
-        ))) => {
-            set_command_failure(object, "LinkNotActive", None);
-        }
-        Settlement::SendToChannel(Err(SendToChannelFailure::WriteFailed(error))) => {
-            set_command_failure(object, "WriteFailed", Some(format!("{error:?}")));
-        }
-        Settlement::SendToChannel(Err(SendToChannelFailure::WindowFull)) => {
-            set_command_failure(object, "ChannelWindowFull", None);
-        }
-        Settlement::SendToChannel(Err(SendToChannelFailure::Untrackable)) => {
-            set_command_failure(object, "ChannelUntrackable", None);
-        }
-        Settlement::SendToChannel(Err(SendToChannelFailure::Timeout)) => {
-            set_command_failure(object, "DeliveryTimedOut", None);
-        }
-        Settlement::SendToChannel(Err(SendToChannelFailure::LinkClosed)) => {
-            set_command_failure(object, "LinkClosed", None);
-        }
-        Settlement::AllowRequester(Ok(())) => {
-            set_str(object, "result", "succeeded");
-            set_str(object, "kind", "RequesterAllowed");
-        }
-        Settlement::AllowRequester(Err(AllowRequesterFailure::Rejected(
-            AllowRequesterRejection::NoSuchHandler,
-        ))) => {
-            set_command_failure(object, "UnknownRequestHandler", None);
-        }
-        Settlement::AllowRequester(Err(AllowRequesterFailure::Rejected(
-            AllowRequesterRejection::NoAllowList,
-        ))) => {
-            set_command_failure(object, "RequestPolicyNotAllowList", None);
-        }
-        Settlement::AllowRequester(Err(AllowRequesterFailure::Rejected(
-            AllowRequesterRejection::AllowListFull,
-        ))) => {
-            set_command_failure(object, "RequestAllowListFull", None);
-        }
-        Settlement::SetRegisteredAnnounceAppData(_)
-        | Settlement::SendGroup(_)
-        | Settlement::SendPlainPacket(_)
-        | Settlement::OpenRemoteControlPairing(_)
-        | Settlement::CloseRemoteControlPairing(_)
-        | Settlement::ApproveRemoteControlTargetPairing(_)
-        | Settlement::RejectRemoteControlTargetPairing(_)
-        | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
-        | Settlement::BeginRemoteControlControllerPairing(_)
-        | Settlement::ApproveRemoteControlControllerPairing(_)
-        | Settlement::RejectRemoteControlControllerPairing(_)
-        | Settlement::RemoteControlControllerPairingRequest(_)
-        | Settlement::SettleRemoteControlControllerPairingPersistence(_) => {
-            set_str(object, "result", "untracked");
-        }
-    }
-}
-
-fn set_packet_delivered(object: &Object, delivered: personal_rns::engine::PacketReceiptDelivered) {
-    set_str(object, "result", "succeeded");
-    set_str(object, "kind", "PacketDelivered");
-    set_u64(object, "rttMillis", delivered.rtt.millis());
-    match delivered.evidence {
-        DeliveryEvidence::Proof(DeliveryProof::Explicit(hash)) => {
-            set_str(object, "evidence", "ExplicitProof");
-            set_bytes(object, "packetHash", hash.as_bytes());
-        }
-        DeliveryEvidence::Proof(DeliveryProof::Implicit(hash)) => {
-            set_str(object, "evidence", "ImplicitProof");
-            set_bytes(object, "packetHash", hash.as_bytes());
-        }
-        DeliveryEvidence::Response => {
-            set_str(object, "evidence", "Response");
-        }
-    }
-}
-
-fn set_resource_failure(object: &Object, failure: SendResourceFailure) {
-    match failure {
-        SendResourceFailure::Rejected(SendResourceRejection::NoSuchLink) => {
-            set_command_failure(object, "UnknownLink", None);
-        }
-        SendResourceFailure::Rejected(SendResourceRejection::LinkNotActive) => {
-            set_command_failure(object, "LinkNotActive", None);
-        }
-        SendResourceFailure::Rejected(SendResourceRejection::LinkBusy) => {
-            set_command_failure(object, "LinkBusy", None);
-        }
-        SendResourceFailure::Rejected(SendResourceRejection::TableFull) => {
-            set_command_failure(object, "ResourceTableFull", None);
-        }
-        SendResourceFailure::Rejected(SendResourceRejection::Build(
-            personal_rns::routing::links::resources::build_outgoing::BuildOutgoingResourceError::DataTooLarge,
-        )) => {
-            set_command_failure(object, "PayloadTooLarge", None);
-        }
-        SendResourceFailure::Rejected(SendResourceRejection::Build(
-            personal_rns::routing::links::resources::build_outgoing::BuildOutgoingResourceError::MetadataTooLarge,
-        ))
-        | SendResourceFailure::Rejected(SendResourceRejection::MetadataMisplaced) => {
-            set_command_failure(object, "ResourceMetadataTooLarge", None);
-        }
-        SendResourceFailure::Rejected(SendResourceRejection::Build(error)) => {
-            set_command_failure(object, "WriteFailed", Some(format!("{error:?}")));
-        }
-        SendResourceFailure::WriteFailed => {
-            set_command_failure(object, "WriteFailed", Some("resource write failed".to_string()));
-        }
-        SendResourceFailure::RejectedByPeer => {
-            set_command_failure(object, "ResourceRejectedByPeer", None);
-        }
-        SendResourceFailure::Sequencing => {
-            set_command_failure(object, "ResourceSequencingFailed", None);
-        }
-        SendResourceFailure::Timeout => {
-            set_command_failure(object, "DeliveryTimedOut", None);
-        }
-        SendResourceFailure::LinkClosed => {
-            set_command_failure(object, "LinkClosed", None);
-        }
-        SendResourceFailure::PredecessorFailed => {
-            set_command_failure(object, "ResourcePredecessorFailed", None);
-        }
-    }
-}
-
-fn set_command_failure(object: &Object, kind: &str, detail: Option<String>) {
-    set_str(object, "result", "failed");
-    set_str(object, "kind", kind);
-    if let Some(detail) = detail {
-        set_str(object, "detail", &detail);
     }
 }
 

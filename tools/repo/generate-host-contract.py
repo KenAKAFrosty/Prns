@@ -693,7 +693,14 @@ def ts_output(schema):
     )
     for enum in additional_ts_enums:
         lines.extend([*ts_string_union(enum["name"], enum["values"]), ""])
-    for name in ("ApplicationEventKind", "DiagnosticEventKind", "EventField"):
+    for name in (
+        "ApplicationEventKind",
+        "DiagnosticEventKind",
+        "EventField",
+        "CommandOutcomeKind",
+        "CommandFailureKind",
+        "DeliveryEvidenceKind",
+    ):
         enum = next(item for item in schema["enums"] if item["name"] == name)
         lines.extend([*ts_numeric_inventory(enum["name"], enum["values"]), ""])
     for record in schema.get("records", []):
