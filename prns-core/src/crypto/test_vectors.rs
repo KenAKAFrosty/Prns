@@ -281,4 +281,83 @@ fn low_order_public_keys_are_identified_before_batching() {
     identity[0] = 1;
     let verifier = Ed25519Verifier::new(&Ed25519PublicKey(identity)).expect("identity point");
     assert!(verifier.is_weak());
+    assert_eq!(
+        ed25519_verify_batch(
+            &[b"weak-key input"],
+            &[Ed25519Signature([0u8; Ed25519Signature::LEN])],
+            &[&verifier],
+        ),
+        Err(InvalidSignature)
+    );
+}
+
+#[cfg(feature = "ed25519-batch")]
+#[test]
+fn batch_verification_matches_individual_verdicts_across_deterministic_inputs() {
+    for round in 0usize..96 {
+        let batch_len = 2 + round % 7;
+        let mut messages = Vec::with_capacity(batch_len);
+        let mut publics = Vec::with_capacity(batch_len);
+        let mut signatures = Vec::with_capacity(batch_len);
+        for job in 0..batch_len {
+            let seed = core::array::from_fn(|byte| {
+                (round as u8)
+                    .wrapping_mul(29)
+                    .wrapping_add((job as u8).wrapping_mul(71))
+                    .wrapping_add((byte as u8).wrapping_mul(13))
+                    .wrapping_add(1)
+            });
+            let message_len = 1 + (round * 37 + job * 53) % 511;
+            let message: Vec<_> = (0..message_len)
+                .map(|byte| {
+                    (byte as u8)
+                        .wrapping_mul(17)
+                        .wrapping_add(round as u8)
+                        .wrapping_add(job as u8)
+                })
+                .collect();
+            let secret = Ed25519SecretKey::new(seed);
+            publics.push(ed25519_public_key(&secret));
+            signatures.push(ed25519_sign(&secret, &message));
+            messages.push(message);
+        }
+        let verifiers: Vec<_> = publics
+            .iter()
+            .map(|public| Ed25519Verifier::new(public).expect("generated public key"))
+            .collect();
+        let verifier_refs: Vec<_> = verifiers.iter().collect();
+        let message_refs: Vec<_> = messages.iter().map(Vec::as_slice).collect();
+
+        assert_eq!(
+            ed25519_verify_batch(&message_refs, &signatures, &verifier_refs),
+            Ok(()),
+            "round {round} valid batch"
+        );
+        for corrupted in 0..batch_len {
+            let mut corrupted_signatures = signatures.clone();
+            let byte = (round + corrupted * 11) % Ed25519Signature::LEN;
+            corrupted_signatures[corrupted].0[byte] ^= 1;
+            assert_eq!(
+                ed25519_verify_batch(&message_refs, &corrupted_signatures, &verifier_refs),
+                Err(InvalidSignature),
+                "round {round} corruption {corrupted}"
+            );
+            for (index, ((message, signature), verifier)) in message_refs
+                .iter()
+                .zip(&corrupted_signatures)
+                .zip(&verifier_refs)
+                .enumerate()
+            {
+                assert_eq!(
+                    verifier.verify(message, signature),
+                    if index == corrupted {
+                        Err(InvalidSignature)
+                    } else {
+                        Ok(())
+                    },
+                    "round {round} individual verdict {index}"
+                );
+            }
+        }
+    }
 }

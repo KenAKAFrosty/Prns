@@ -97,7 +97,10 @@ pub fn ed25519_verify_batch(
 ) -> Result<(), InvalidSignature> {
     use alloc::vec::Vec;
 
-    if messages.len() != signatures.len() || messages.len() != verifiers.len() {
+    if messages.len() != signatures.len()
+        || messages.len() != verifiers.len()
+        || verifiers.iter().any(|verifier| verifier.is_weak())
+    {
         return Err(InvalidSignature);
     }
     let signatures: Vec<_> = signatures
