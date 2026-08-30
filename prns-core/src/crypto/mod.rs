@@ -31,6 +31,9 @@ pub use token::{
 };
 
 #[cfg(test)]
+mod test_vectors;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
