@@ -1,8 +1,11 @@
 mod announce;
 mod channel;
+mod egress;
 mod link;
 mod path;
 mod registered_announce_app_data;
+mod remote_control_controller_pairing;
+mod remote_control_pairing;
 mod request;
 mod resource;
 mod send_group;
@@ -18,6 +21,7 @@ pub use channel::{
     SendToChannel, SendToChannelBody, SendToChannelFailure, SendToChannelRejection,
     MAX_SEND_TO_CHANNEL_BODY_LEN,
 };
+pub use egress::{EgressTarget, EgressTargetRejection};
 pub use link::{
     CloseLink, CloseLinkFailure, CloseLinkRejection, EstablishLink, EstablishLinkFailure,
     EstablishLinkRejection, Identify, IdentifyFailure, IdentifyRejection, LinkEstablished,
@@ -29,11 +33,34 @@ pub use registered_announce_app_data::{
     SetRegisteredAnnounceAppData, SetRegisteredAnnounceAppDataFailure,
     SetRegisteredAnnounceAppDataRejection,
 };
+pub use remote_control_controller_pairing::{
+    ApproveRemoteControlControllerPairing, ApproveRemoteControlControllerPairingFailure,
+    BeginRemoteControlControllerPairing, BeginRemoteControlControllerPairingFailure,
+    RejectRemoteControlControllerPairing, RejectRemoteControlControllerPairingFailure,
+    RemoteControlControllerPairingApproval, RemoteControlControllerPairingBegun,
+    RemoteControlControllerPairingFinalization, RemoteControlControllerPairingPersistence,
+    RemoteControlControllerPairingRejection, RemoteControlControllerPairingRequest,
+    RemoteControlControllerPairingRequestBuildError, RemoteControlControllerPairingRequestFailure,
+    RemoteControlControllerPairingRequestFailureCause,
+    RemoteControlControllerPairingResponseReceived,
+    SettleRemoteControlControllerPairingPersistence,
+    SettleRemoteControlControllerPairingPersistenceFailure,
+};
+pub use remote_control_pairing::{
+    ApproveRemoteControlTargetPairing, ApproveRemoteControlTargetPairingFailure,
+    CloseRemoteControlPairing, CloseRemoteControlPairingFailure, CloseRemoteControlPairingOutcome,
+    OpenRemoteControlPairing, OpenRemoteControlPairingFailure, OpenRemoteControlPairingRejection,
+    RejectRemoteControlTargetPairing, RejectRemoteControlTargetPairingFailure,
+    RemoteControlPairingOpened, RemoteControlTargetPairingApproval,
+    RemoteControlTargetPairingAuthorizationPersistence, RemoteControlTargetPairingFinalization,
+    RemoteControlTargetPairingRejection, SettleRemoteControlTargetPairingAuthorization,
+    SettleRemoteControlTargetPairingAuthorizationFailure,
+};
 pub use request::{
     AllowRequester, AllowRequesterFailure, AllowRequesterRejection, RequestResponseTimeout,
     Respond, RespondData, RespondFailure, RespondPayload, RespondRejection, SendRequest,
-    SendRequestData, SendRequestFailure, SendRequestRejection, MAX_RESPOND_DATA_LEN,
-    MAX_SEND_REQUEST_DATA_LEN,
+    SendRequestData, SendRequestFailure, SendRequestIntent, SendRequestRejection,
+    MAX_RESPOND_DATA_LEN, MAX_SEND_REQUEST_DATA_LEN,
 };
 pub use resource::{
     SendResourceFailure, SendResourceRejection, SetResourceStrategy, SetResourceStrategyFailure,
@@ -60,13 +87,13 @@ use crate::units::RttMillis;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CommandId(pub u64);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct IssuedCommand {
     pub id: CommandId,
     pub command: PrnsCommand,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 // repr(C) is CRITICAL here and on every enum that crosses the dual-core embassy channels (PrnsCommand, Settlement, EngineReaction, Journaled, Directive, InterfaceLifecycle): the esp Xtensa toolchain miscompiled the default repr(Rust) layout, and core 1 read Directive's fan target at the wrong offset, corrupting the supervisor's match into UB.
 // Proven on hardware both broken and fixed; do not remove.
 #[repr(C)]
@@ -86,11 +113,23 @@ pub enum PrnsCommand {
     SetResourceStrategy(SetResourceStrategy),
     AllowRequester(AllowRequester),
     SendPlainPacket(SendPlainPacket),
+    OpenRemoteControlPairing(OpenRemoteControlPairing),
+    CloseRemoteControlPairing(CloseRemoteControlPairing),
+    ApproveRemoteControlTargetPairing(ApproveRemoteControlTargetPairing),
+    RejectRemoteControlTargetPairing(RejectRemoteControlTargetPairing),
+    SettleRemoteControlTargetPairingAuthorization(SettleRemoteControlTargetPairingAuthorization),
+    BeginRemoteControlControllerPairing(BeginRemoteControlControllerPairing),
+    ApproveRemoteControlControllerPairing(ApproveRemoteControlControllerPairing),
+    RejectRemoteControlControllerPairing(RejectRemoteControlControllerPairing),
+    RemoteControlControllerPairingRequest(RemoteControlControllerPairingRequest),
+    SettleRemoteControlControllerPairingPersistence(
+        SettleRemoteControlControllerPairingPersistence,
+    ),
 }
 
 // The Owes* variants hand the caller its whole command payload back (SendSinglePacket rides ~400B of heapless body) beside slim rejections. Outcomes are transient by-value returns, destructured immediately, and the no-alloc core has no Box to shrink them.
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum CommandOutcome {
     OwesAnnounce {
         id: CommandId,
@@ -127,6 +166,53 @@ pub enum CommandOutcome {
         id: CommandId,
         send: SendPlainPacket,
     },
+    SendPlainPacketRejected {
+        id: CommandId,
+        rejection: EgressTargetRejection,
+    },
+    OwesOpenRemoteControlPairing {
+        id: CommandId,
+        open: OpenRemoteControlPairing,
+    },
+    OpenRemoteControlPairingRejected {
+        id: CommandId,
+        rejection: OpenRemoteControlPairingRejection,
+    },
+    OwesCloseRemoteControlPairing {
+        id: CommandId,
+    },
+    CloseRemoteControlPairingRejected {
+        id: CommandId,
+        failure: CloseRemoteControlPairingFailure,
+    },
+    OwesApproveRemoteControlTargetPairing {
+        id: CommandId,
+        approve: ApproveRemoteControlTargetPairing,
+    },
+    OwesRejectRemoteControlTargetPairing {
+        id: CommandId,
+        reject: RejectRemoteControlTargetPairing,
+    },
+    OwesSettleRemoteControlTargetPairingAuthorization {
+        id: CommandId,
+        settle_authorization: SettleRemoteControlTargetPairingAuthorization,
+    },
+    OwesBeginRemoteControlControllerPairing {
+        id: CommandId,
+        begin: BeginRemoteControlControllerPairing,
+    },
+    OwesApproveRemoteControlControllerPairing {
+        id: CommandId,
+        approve: ApproveRemoteControlControllerPairing,
+    },
+    OwesRejectRemoteControlControllerPairing {
+        id: CommandId,
+        reject: RejectRemoteControlControllerPairing,
+    },
+    OwesSettleRemoteControlControllerPairingPersistence {
+        id: CommandId,
+        settle_persistence: SettleRemoteControlControllerPairingPersistence,
+    },
     OwesPathRequest {
         id: CommandId,
         request: RequestPath,
@@ -153,6 +239,15 @@ pub enum CommandOutcome {
     },
     SendRequestRejected {
         id: CommandId,
+        rejection: SendRequestRejection,
+    },
+    OwesRemoteControlControllerPairingRequest {
+        id: CommandId,
+        request: RemoteControlControllerPairingRequest,
+    },
+    RemoteControlControllerPairingRequestRejected {
+        id: CommandId,
+        link_id: crate::routing::links::LinkId,
         rejection: SendRequestRejection,
     },
     OwesRespond {
@@ -208,7 +303,7 @@ pub enum CommandOutcome {
 }
 
 /// Paired verb-for-verb with [`PrnsCommand`]: a data boundary erases type-level ties, so the tie is explicit here.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 // repr(C): crosses the dual-core channel; see the layout note on [`PrnsCommand`].
 #[repr(C)]
 pub enum Settlement {
@@ -228,6 +323,49 @@ pub enum Settlement {
     SendToChannel(Result<PacketReceiptDelivered, SendToChannelFailure>),
     AllowRequester(Result<(), AllowRequesterFailure>),
     SendPlainPacket(Result<(), SendPlainPacketFailure>),
+    OpenRemoteControlPairing(Result<RemoteControlPairingOpened, OpenRemoteControlPairingFailure>),
+    CloseRemoteControlPairing(
+        Result<CloseRemoteControlPairingOutcome, CloseRemoteControlPairingFailure>,
+    ),
+    ApproveRemoteControlTargetPairing(
+        Result<RemoteControlTargetPairingApproval, ApproveRemoteControlTargetPairingFailure>,
+    ),
+    RejectRemoteControlTargetPairing(
+        Result<RemoteControlTargetPairingRejection, RejectRemoteControlTargetPairingFailure>,
+    ),
+    SettleRemoteControlTargetPairingAuthorization(
+        Result<
+            RemoteControlTargetPairingFinalization,
+            SettleRemoteControlTargetPairingAuthorizationFailure,
+        >,
+    ),
+    BeginRemoteControlControllerPairing(
+        Result<RemoteControlControllerPairingBegun, BeginRemoteControlControllerPairingFailure>,
+    ),
+    ApproveRemoteControlControllerPairing(
+        Result<
+            RemoteControlControllerPairingApproval,
+            ApproveRemoteControlControllerPairingFailure,
+        >,
+    ),
+    RejectRemoteControlControllerPairing(
+        Result<
+            RemoteControlControllerPairingRejection,
+            RejectRemoteControlControllerPairingFailure,
+        >,
+    ),
+    RemoteControlControllerPairingRequest(
+        Result<
+            RemoteControlControllerPairingResponseReceived,
+            RemoteControlControllerPairingRequestFailure,
+        >,
+    ),
+    SettleRemoteControlControllerPairingPersistence(
+        Result<
+            RemoteControlControllerPairingFinalization,
+            SettleRemoteControlControllerPairingPersistenceFailure,
+        >,
+    ),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -291,7 +429,45 @@ impl<S: StorageLayout> EngineState<S> {
             }
             PrnsCommand::SendSinglePacket(send) => self.ingest_send_single_packet(id, send),
             PrnsCommand::SendGroup(send) => self.ingest_send_group(id, send),
-            PrnsCommand::SendPlainPacket(send) => self.ingest_send_plain_packet(id, send),
+            PrnsCommand::SendPlainPacket(send) => {
+                self.ingest_send_plain_packet(id, send, interfaces)
+            }
+            PrnsCommand::OpenRemoteControlPairing(open) => {
+                self.ingest_open_remote_control_pairing(id, open, interfaces)
+            }
+            PrnsCommand::CloseRemoteControlPairing(_) => {
+                self.ingest_close_remote_control_pairing(id)
+            }
+            PrnsCommand::ApproveRemoteControlTargetPairing(approve) => {
+                CommandOutcome::OwesApproveRemoteControlTargetPairing { id, approve }
+            }
+            PrnsCommand::RejectRemoteControlTargetPairing(reject) => {
+                CommandOutcome::OwesRejectRemoteControlTargetPairing { id, reject }
+            }
+            PrnsCommand::SettleRemoteControlTargetPairingAuthorization(settle_authorization) => {
+                CommandOutcome::OwesSettleRemoteControlTargetPairingAuthorization {
+                    id,
+                    settle_authorization,
+                }
+            }
+            PrnsCommand::BeginRemoteControlControllerPairing(begin) => {
+                CommandOutcome::OwesBeginRemoteControlControllerPairing { id, begin }
+            }
+            PrnsCommand::ApproveRemoteControlControllerPairing(approve) => {
+                CommandOutcome::OwesApproveRemoteControlControllerPairing { id, approve }
+            }
+            PrnsCommand::RejectRemoteControlControllerPairing(reject) => {
+                CommandOutcome::OwesRejectRemoteControlControllerPairing { id, reject }
+            }
+            PrnsCommand::RemoteControlControllerPairingRequest(request) => {
+                self.ingest_remote_control_controller_pairing_request(id, request)
+            }
+            PrnsCommand::SettleRemoteControlControllerPairingPersistence(settle_persistence) => {
+                CommandOutcome::OwesSettleRemoteControlControllerPairingPersistence {
+                    id,
+                    settle_persistence,
+                }
+            }
             PrnsCommand::RequestPath(request) => CommandOutcome::OwesPathRequest { id, request },
             PrnsCommand::EstablishLink(establish) => self.ingest_establish_link(id, establish),
             PrnsCommand::SendToLink(send) => self.ingest_send_to_link(id, send),

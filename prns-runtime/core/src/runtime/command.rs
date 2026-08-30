@@ -4,6 +4,10 @@ use crate::engine::{
     SendPlainPacketFailure, SendSinglePacketFailure, SetRegisteredAnnounceAppData,
     SetRegisteredAnnounceAppDataFailure, SetRegisteredAnnounceAppDataRejection,
 };
+use crate::engine::{
+    CloseRemoteControlPairingFailure, CloseRemoteControlPairingOutcome, OpenRemoteControlPairing,
+    OpenRemoteControlPairingFailure, RemoteControlPairingOpened,
+};
 pub use crate::engine::{DropRouteOutcome, DropRoutesViaOutcome};
 use crate::identity::{
     IdentityHash, MarkDestinationUsedOutcome, ReleaseDestinationOutcome, RetainDestinationOutcome,
@@ -68,6 +72,18 @@ pub enum RoutingControlError {
     NodeStopped,
     Busy,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlPairingControlError<F> {
+    NodeStopped,
+    Busy,
+    Failed(F),
+}
+
+pub type OpenRemoteControlPairingControlError =
+    RemoteControlPairingControlError<OpenRemoteControlPairingFailure>;
+pub type CloseRemoteControlPairingControlError =
+    RemoteControlPairingControlError<CloseRemoteControlPairingFailure>;
 
 pub trait RoutingControl {
     fn drop_route(
@@ -149,6 +165,15 @@ pub trait PrnsNodeApi {
         set: SetRegisteredAnnounceAppData,
     ) -> Result<(), SetRegisteredAnnounceAppDataError>;
 
+    async fn open_remote_control_pairing(
+        &self,
+        open: OpenRemoteControlPairing,
+    ) -> Result<RemoteControlPairingOpened, OpenRemoteControlPairingControlError>;
+
+    async fn close_remote_control_pairing(
+        &self,
+    ) -> Result<CloseRemoteControlPairingOutcome, CloseRemoteControlPairingControlError>;
+
     async fn send_single_packet(
         &self,
         destination: DestinationHash,
@@ -187,6 +212,19 @@ impl PrnsNodeApi for () {
         _set: SetRegisteredAnnounceAppData,
     ) -> Result<(), SetRegisteredAnnounceAppDataError> {
         Err(SetRegisteredAnnounceAppDataError::NodeStopped)
+    }
+
+    async fn open_remote_control_pairing(
+        &self,
+        _open: OpenRemoteControlPairing,
+    ) -> Result<RemoteControlPairingOpened, OpenRemoteControlPairingControlError> {
+        Err(RemoteControlPairingControlError::NodeStopped)
+    }
+
+    async fn close_remote_control_pairing(
+        &self,
+    ) -> Result<CloseRemoteControlPairingOutcome, CloseRemoteControlPairingControlError> {
+        Err(RemoteControlPairingControlError::NodeStopped)
     }
 
     async fn send_single_packet(

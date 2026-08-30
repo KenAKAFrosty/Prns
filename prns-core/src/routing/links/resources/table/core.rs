@@ -341,6 +341,12 @@ pub struct OutgoingResources<C: ResourceTable<OutgoingResourceState>> {
     earliest_timeout: Option<InstantMillis>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinkOwnedOutgoingResource {
+    pub command_id: CommandId,
+    pub correlation: ResourceCorrelation,
+}
+
 impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
     /// One resource per link at a time, matching RNS 1.4.2 `Link.ready_for_new_resource`.
     ///
@@ -622,6 +628,22 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
             }
             None => RemoveOutcome::NotTracked,
         }
+    }
+
+    pub fn pop_for_link(&mut self, link_id: &LinkId) -> Option<LinkOwnedOutgoingResource> {
+        let index = self
+            .table
+            .link_ids()
+            .iter()
+            .position(|candidate| candidate == link_id)?;
+        let state = self.table.states()[index];
+        let resource = LinkOwnedOutgoingResource {
+            command_id: state.command_id,
+            correlation: state.correlation,
+        };
+        self.table.swap_remove(index);
+        self.refresh_earliest_timeout();
+        Some(resource)
     }
 
     pub fn set_timeout_at(&mut self, index: usize, timeout_at: Option<InstantMillis>) {
@@ -1006,6 +1028,14 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
             .position(|(candidate_link, candidate_hash)| {
                 candidate_link == link_id && candidate_hash == hash
             })
+    }
+
+    pub fn first_hash_for_link(&self, link_id: &LinkId) -> Option<ResourceHash> {
+        self.table
+            .link_ids()
+            .iter()
+            .zip(self.table.hashes())
+            .find_map(|(candidate, hash)| (candidate == link_id).then_some(*hash))
     }
 
     pub fn state(&self, index: usize) -> &IncomingResourceState {

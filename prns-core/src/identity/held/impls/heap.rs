@@ -72,6 +72,13 @@ impl HeldIdentityTable for HeapHeldIdentityTable {
         let _encryption_public = self.encryption_publics.pop();
         let _signing_public = self.signing_publics.pop();
     }
+
+    fn swap_remove(&mut self, index: usize) {
+        let _hash = self.hashes.swap_remove(index);
+        let _secrets = self.secrets.swap_remove(index);
+        let _encryption_public = self.encryption_publics.swap_remove(index);
+        let _signing_public = self.signing_publics.swap_remove(index);
+    }
 }
 
 #[cfg(test)]
@@ -98,5 +105,46 @@ mod tests {
         assert!(table.encryption_secret_at(99).is_some());
         assert!(table.signing_secret_at(99).is_some());
         assert!(table.encryption_secret_at(100).is_none());
+    }
+
+    #[test]
+    fn swap_remove_keeps_every_heap_column_aligned() {
+        let mut table = HeapHeldIdentityTable::default();
+        for byte in [1, 2, 3] {
+            table
+                .push(
+                    IdentityHash::new([byte; 16]),
+                    X25519SecretKey::new([byte; 32]),
+                    Ed25519SecretKey::new([byte; 32]),
+                    IdentityEncryptionPublicKey::new(crate::crypto::X25519PublicKey([byte; 32])),
+                    IdentitySigningPublicKey::new(crate::crypto::Ed25519PublicKey([byte; 32])),
+                )
+                .unwrap();
+        }
+
+        table.swap_remove(1);
+
+        assert_eq!(
+            table.hashes(),
+            &[IdentityHash::new([1; 16]), IdentityHash::new([3; 16])],
+        );
+        assert_eq!(
+            table.encryption_publics(),
+            &[
+                IdentityEncryptionPublicKey::new(crate::crypto::X25519PublicKey([1; 32])),
+                IdentityEncryptionPublicKey::new(crate::crypto::X25519PublicKey([3; 32])),
+            ],
+        );
+        assert_eq!(
+            table.signing_publics(),
+            &[
+                IdentitySigningPublicKey::new(crate::crypto::Ed25519PublicKey([1; 32])),
+                IdentitySigningPublicKey::new(crate::crypto::Ed25519PublicKey([3; 32])),
+            ],
+        );
+        assert!(table.encryption_secret_at(1).is_some());
+        assert!(table.signing_secret_at(1).is_some());
+        assert!(table.encryption_secret_at(2).is_none());
+        assert!(table.signing_secret_at(2).is_none());
     }
 }

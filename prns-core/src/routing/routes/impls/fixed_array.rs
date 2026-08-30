@@ -1,7 +1,7 @@
 use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::routing::routes::{RouteEntry, RouteEvidenceId, RouteTable};
-use crate::routing::{NextHop, RouteResponsiveness};
+use crate::routing::{NextHop, RouteResponsiveness, RouteRetention};
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 
@@ -16,6 +16,7 @@ pub struct FixedArrayRouteTable<const MAX_TRACKED_DESTINATIONS: usize> {
     responsiveness: [RouteResponsiveness; MAX_TRACKED_DESTINATIONS],
     receiving_interface: [InterfaceId; MAX_TRACKED_DESTINATIONS],
     next_hop: [NextHop; MAX_TRACKED_DESTINATIONS],
+    retention: [RouteRetention; MAX_TRACKED_DESTINATIONS],
     evidence_id: [RouteEvidenceId; MAX_TRACKED_DESTINATIONS],
 }
 
@@ -32,6 +33,7 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> Default
             responsiveness: [RouteResponsiveness::Responsive; MAX_TRACKED_DESTINATIONS],
             receiving_interface: [InterfaceId::new([0u8; 8]); MAX_TRACKED_DESTINATIONS],
             next_hop: [NextHop::Direct; MAX_TRACKED_DESTINATIONS],
+            retention: [RouteRetention::Network; MAX_TRACKED_DESTINATIONS],
             evidence_id: [RouteEvidenceId::FIRST; MAX_TRACKED_DESTINATIONS],
         }
     }
@@ -68,6 +70,9 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> RouteTable
     fn next_hops(&self) -> &[NextHop] {
         &self.next_hop[..self.len]
     }
+    fn retentions(&self) -> &[RouteRetention] {
+        &self.retention[..self.len]
+    }
     fn evidence_ids(&self) -> &[RouteEvidenceId] {
         &self.evidence_id[..self.len]
     }
@@ -79,6 +84,7 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> RouteTable
         self.responsiveness[i] = row.responsiveness;
         self.receiving_interface[i] = row.receiving_interface;
         self.next_hop[i] = row.next_hop;
+        self.retention[i] = row.retention;
     }
 
     fn set_evidence_id(&mut self, i: usize, evidence_id: RouteEvidenceId) {
@@ -111,6 +117,7 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> RouteTable
         self.responsiveness[i] = self.responsiveness[last];
         self.receiving_interface[i] = self.receiving_interface[last];
         self.next_hop[i] = self.next_hop[last];
+        self.retention[i] = self.retention[last];
         self.evidence_id[i] = self.evidence_id[last];
         self.len = last;
     }
@@ -119,6 +126,9 @@ impl<const MAX_TRACKED_DESTINATIONS: usize> RouteTable
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::num::NonZeroU32;
+
+    use crate::routing::RouteExpiresAfter;
 
     fn dest(byte: u8) -> DestinationHash {
         DestinationHash::new([byte; 16])
@@ -129,6 +139,14 @@ mod tests {
     }
     fn evidence(n: u32) -> RouteEvidenceId {
         RouteEvidenceId::new(n + 1).unwrap()
+    }
+
+    fn retention(learned_at: u64) -> RouteRetention {
+        RouteRetention::Ephemeral {
+            expires_after: RouteExpiresAfter::from_nonzero_millis(
+                NonZeroU32::new((learned_at as u32).saturating_add(1)).unwrap(),
+            ),
+        }
     }
 
     fn row(
@@ -144,6 +162,7 @@ mod tests {
             responsiveness,
             receiving_interface,
             next_hop: NextHop::Direct,
+            retention: retention(learned_at),
         }
     }
 
@@ -182,6 +201,7 @@ mod tests {
             ]
         );
         assert_eq!(table.receiving_interfaces(), &[iface(0xE1), iface(0xE2)]);
+        assert_eq!(table.retentions(), &[retention(10), retention(20)]);
     }
 
     #[test]
@@ -219,6 +239,7 @@ mod tests {
             ]
         );
         assert_eq!(table.receiving_interfaces(), &[iface(0xE9), iface(0xE2)]);
+        assert_eq!(table.retentions(), &[retention(70), retention(20)]);
         assert_eq!(table.evidence_ids(), &[evidence(1), evidence(2)]);
     }
 
@@ -277,6 +298,7 @@ mod tests {
         assert_eq!(table.hops(), &[3, 2]);
         assert_eq!(table.learned_at(), &[InstantMillis(30), InstantMillis(20)]);
         assert_eq!(table.receiving_interfaces(), &[iface(0xE3), iface(0xE2)]);
+        assert_eq!(table.retentions(), &[retention(30), retention(20)]);
         assert_eq!(table.evidence_ids(), &[evidence(3), evidence(2)]);
     }
 

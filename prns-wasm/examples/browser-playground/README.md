@@ -2,7 +2,11 @@
 
 This is the quick guide for the static browser playground published with the Prns
 documentation. It is intentionally ordinary TypeScript, HTML, and CSS. The
-page owns its WebAssembly node exactly as a browser application would. 
+page owns its WebAssembly node exactly as a browser application would. The
+engine, WebSocket connections, and Auto Wi-Fi discovery run on a module
+DedicatedWorker. Permission-gated Web Bluetooth and WebUSB device objects stay
+on the page while their protocol state and packet traffic cross the Worker's
+bounded capability channel.
 
 The page doesn't use React, Solid, Dioxus, or any other web framework. The reason is to avoid making you have to learn a new framework if you're not familiar with the one we happened to choose, and to keep the example as universally-readable as possible.
 

@@ -13,8 +13,8 @@ use crate::routing::announce::{
 };
 use crate::routing::routes::{FixedArrayRouteTable, RouteEntry, RouteEvidenceId, RouteTable};
 use crate::routing::{
-    AnnounceIdRing, DropCause, NextHop, PersistedRouteRow, RemovedRoute, RouteRemovalCause,
-    RouteResponsiveness, SeedRouteOutcome, UpsertRouteOutcome,
+    AnnounceIdRing, DropCause, NextHop, PersistedRouteRow, RemovedRoute, RouteExpiresAfter,
+    RouteRemovalCause, RouteResponsiveness, RouteRetention, SeedRouteOutcome, UpsertRouteOutcome,
 };
 use crate::wire::{DestinationHash, TransportId};
 
@@ -998,6 +998,7 @@ fn explicit_drops_target_one_destination_or_every_route_via_one_transport() {
                 responsiveness: RouteResponsiveness::Unknown,
                 receiving_interface: source(),
                 next_hop: NextHop::Via(via_b),
+                retention: crate::routing::RouteRetention::Network,
             }
         )]
     );
@@ -1587,6 +1588,7 @@ fn seedable_row<'a>(
             responsiveness: RouteResponsiveness::Responsive,
             receiving_interface: source(),
             next_hop: NextHop::Direct,
+            retention: crate::routing::RouteRetention::Network,
         },
         public_keys: announce_for(destination, announce_id(1, 1), None, b"").public_keys,
         dotted_name_hash: DottedNameHash::new([0u8; 10]),
@@ -1747,6 +1749,7 @@ fn authenticated_route_evidence_advances_only_its_live_path() {
             responsiveness: RouteResponsiveness::Responsive,
             receiving_interface: source(),
             next_hop: NextHop::Direct,
+            retention: crate::routing::RouteRetention::Network,
         },
     );
     assert!(
@@ -1854,6 +1857,27 @@ fn a_seeded_row_carries_its_entry_verbatim_where_an_upsert_would_default_it() {
     assert_eq!(
         table.seed_route(&row, RouteEvidenceId::FIRST),
         SeedRouteOutcome::AlreadyPresent
+    );
+}
+
+#[test]
+fn a_seeded_row_cannot_restore_ephemeral_route_retention() {
+    let payload = app_data(0x5D);
+    let mut row = seedable_row(dest(9), &payload, &[]);
+    row.entry.retention = RouteRetention::Ephemeral {
+        expires_after: RouteExpiresAfter::from_nonzero_millis(
+            core::num::NonZeroU32::new(60_000).unwrap(),
+        ),
+    };
+    let mut table: Rt = Rt::default();
+
+    assert_eq!(
+        table.seed_route(&row, RouteEvidenceId::FIRST),
+        SeedRouteOutcome::Seeded,
+    );
+    assert_eq!(
+        table.path_row(&dest(9)).unwrap().retention,
+        RouteRetention::Network,
     );
 }
 

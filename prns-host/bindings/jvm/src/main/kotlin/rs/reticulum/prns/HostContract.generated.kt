@@ -347,7 +347,22 @@ enum class CommandFailureKind(val rawValue: Int) {
     DEVICE_UNAVAILABLE(38),
     CONNECT_FAILED(39),
     BACKEND_FAILED(40),
-    RESPONSE_TOO_LARGE(41);
+    RESPONSE_TOO_LARGE(41),
+    LINK_CLOSED(42),
+    RESPONSE_CANCELLED_BY_SENDER(43),
+    RESPONSE_HASHMAP_BEYOND_PART_COUNT(44),
+    RESPONSE_HASHMAP_SKIPS_AHEAD(45),
+    RESPONSE_HASHMAP_TOO_LONG(46),
+    RESPONSE_HASHMAP_RAGGED(47),
+    RESPONSE_RETRIES_EXHAUSTED(48),
+    RESPONSE_LINK_VANISHED(49),
+    RESPONSE_TRANSFER_UNOPENABLE(50),
+    RESPONSE_TRANSFER_CORRUPT(51),
+    RESPONSE_PROOF_UNSENDABLE(52),
+    RESPONSE_DECOMPRESSION_FAILED(53),
+    RESPONSE_DECOMPRESSION_TIMED_OUT(54),
+    RESPONSE_OPEN_TIMED_OUT(55),
+    RESPONSE_METADATA_OVERRUN(56);
 
     companion object {
         fun fromRawValue(value: Int): CommandFailureKind? = entries.firstOrNull { it.rawValue == value }
@@ -388,7 +403,8 @@ enum class StopReason(val rawValue: Int) {
 enum class LinkClosedReason(val rawValue: Int) {
     TIMEOUT(1),
     PEER_CLOSED(2),
-    MALFORMED_RTT(3);
+    MALFORMED_RTT(3),
+    LOCALLY_CLOSED(4);
 
     companion object {
         fun fromRawValue(value: Int): LinkClosedReason? = entries.firstOrNull { it.rawValue == value }
@@ -1188,6 +1204,36 @@ data class CommandFailureBackendFailed(
 ) : CommandFailure
 
 data object CommandFailureResponseTooLarge : CommandFailure
+
+data object CommandFailureLinkClosed : CommandFailure
+
+data object CommandFailureResponseCancelledBySender : CommandFailure
+
+data object CommandFailureResponseHashmapBeyondPartCount : CommandFailure
+
+data object CommandFailureResponseHashmapSkipsAhead : CommandFailure
+
+data object CommandFailureResponseHashmapTooLong : CommandFailure
+
+data object CommandFailureResponseHashmapRagged : CommandFailure
+
+data object CommandFailureResponseRetriesExhausted : CommandFailure
+
+data object CommandFailureResponseLinkVanished : CommandFailure
+
+data object CommandFailureResponseTransferUnopenable : CommandFailure
+
+data object CommandFailureResponseTransferCorrupt : CommandFailure
+
+data object CommandFailureResponseProofUnsendable : CommandFailure
+
+data object CommandFailureResponseDecompressionFailed : CommandFailure
+
+data object CommandFailureResponseDecompressionTimedOut : CommandFailure
+
+data object CommandFailureResponseOpenTimedOut : CommandFailure
+
+data object CommandFailureResponseMetadataOverrun : CommandFailure
 
 sealed interface ApplicationEvent
 

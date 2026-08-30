@@ -62,7 +62,13 @@ import { byteKey } from "./bytes.js";
 import {
   commandFailed,
 } from "./command_settlement.js";
-import { parseEvent } from "./events.js";
+import {
+  parseCorrelatedEventBatch,
+  parseDiagnosticEventBatch,
+  parseEvent,
+  parseEventBatch,
+  retainedApplicationEventBytes,
+} from "./events.js";
 import type {
   ParsedPrnsEvent,
   PrnsApplicationEvent,
@@ -70,6 +76,15 @@ import type {
 } from "./events.js";
 import type { InterfaceSession } from "./interface_contract.js";
 import { PrnsInterfaces } from "./interfaces.js";
+import { PrnsProjectionStore } from "./projections.js";
+import type {
+  PrnsProjection,
+  PrnsProjectionValue,
+  PrnsView,
+  ProjectionSynchronization,
+} from "./projections.js";
+import { parseRuntimeProjectionSnapshot } from "./projection_snapshot.js";
+import type { RuntimeProjectionSnapshot } from "./projection_snapshot.js";
 import {
   RuntimeHost,
   fillEntropy,
@@ -129,7 +144,9 @@ import {
   sendResourceFromSource,
 } from "./resource_send.js";
 import { browserResourceCompressor } from "./resource_compressor.js";
+import { parseCommandSettlementBatch } from "./command_settlement_batch.js";
 import { describeInterfaceSessionFailure } from "./session.js";
+import { parsePackedSnapshot } from "./packed_snapshot.js";
 import { parseSnapshot } from "./snapshot.js";
 import type { PrnsSnapshot } from "./snapshot.js";
 import {
@@ -143,6 +160,8 @@ import type {
   RuntimeResourceSegmentInput,
   RuntimeResourceSegmentIssueInput,
 } from "./resource_send.js";
+import type { BluetoothHostReassembler } from "./bluetooth/runtime.js";
+import type { UsbAutoHostDecoder } from "./usb_auto/runtime.js";
 import {
   BLE_IDENTITY_LENGTH,
   MIN_ENTROPY_BYTES,
@@ -163,6 +182,16 @@ import {
   packetFrame,
   positiveInteger,
 } from "./values.js";
+import type {
+  WorkerCapabilityCall,
+  WorkerCapabilityCallOutcome,
+  WorkerSnapshotOutcome,
+} from "./worker_protocol.js";
+import {
+  registerWorkerCapabilityDispatcher,
+  registerWorkerSnapshotCapturer,
+  workerEngineHooks,
+} from "./worker_engine_bridge.js";
 import type {
   AppData,
   AppName,
@@ -409,6 +438,8 @@ export type {
 
 export type PrnsCreateOutcome =
   | Tag<"Ready", Prns>
+  | Tag<"WorkerStartFailed", { readonly detail: string }>
+  | Tag<"WorkerProtocolFailed", { readonly detail: string }>
   | Tag<"WasmLoadFailed", { readonly detail: string }>
   | Tag<
       "ContractMismatch",
@@ -486,20 +517,49 @@ export type HostSnapshotOutcome =
   | Tag<"Captured", StableHostSnapshot>
   | RuntimeRejected;
 
+export {
+  PrnsProjectionCapacityError,
+  prnsView,
+} from "./projections.js";
+export type {
+  ActiveLinkSnapshot,
+  PrnsProjection,
+  PrnsProjectionSnapshot,
+  PrnsProjectionValue,
+  PrnsView,
+  ProjectionRevision,
+  ProjectionSynchronization,
+  ProjectionUnavailableLifecycle,
+} from "./projections.js";
+
 type PendingCommand =
   | Tag<"HostCommand", { readonly command: HostCommand }>
   | Tag<"ResourceSegment">;
 
-export type PrnsOptions = {
-  wasm?: PrnsWasmModule;
+type CommonPrnsOptions = {
   resourceCompressionModuleUrl?: URL;
   identityStore?: IdentityStore;
   bleIdentityStore?: StableIdentityStore;
   persistenceStore?: BrowserPersistenceStore;
-  entropy?: EntropySource;
-  now?: () => InstantMillis;
   limits?: HostLimits;
 };
+
+export type PrnsExecution = "DedicatedWorker" | "MainThread";
+
+export type DedicatedWorkerPrnsOptions = CommonPrnsOptions & {
+  execution?: "DedicatedWorker";
+  networkExecution?: "EngineWorker" | "NetworkWorker";
+  wasmModuleUrl?: URL;
+};
+
+export type MainThreadPrnsOptions = CommonPrnsOptions & {
+  execution: "MainThread";
+  wasm?: PrnsWasmModule;
+  entropy?: EntropySource;
+  now?: () => InstantMillis;
+};
+
+export type PrnsOptions = DedicatedWorkerPrnsOptions | MainThreadPrnsOptions;
 
 export function persistentBrowser(root: string = "prns"): PrnsOptions {
   return browserPersistenceStores(root);
@@ -532,6 +592,16 @@ export class Prns {
   #persistenceRestored: boolean;
   #lastPersistenceFlushCause: "Shutdown" | undefined;
   #persistenceFailureDetail: string | undefined;
+  #eventBatchSink: ((batch: Uint8Array) => void) | undefined;
+  #directDiagnosticSink: ((event: PrnsDiagnosticEvent) => void) | undefined;
+  #pageBluetoothReassemblers = new Map<number, BluetoothHostReassembler>();
+  #pageUsbAutoDecoders = new Map<number, UsbAutoHostDecoder>();
+  #nextPageCodecId = 1;
+  #projections: PrnsProjectionStore;
+  #observedProjectionViews = new Set<
+    Exclude<PrnsView["tag"], "Diagnostics" | "Lifecycle">
+  >();
+  #projectionRefreshScheduled = false;
 
   private constructor(
     wasm: PrnsWasmModule,
@@ -544,6 +614,9 @@ export class Prns {
     persistenceStore: BrowserPersistenceStore | undefined,
     persistenceRestored: boolean,
     restorationReport: BrowserPersistenceRestoreReport | undefined,
+    eventBatchSink: ((batch: Uint8Array) => void) | undefined,
+    directDiagnosticSink: ((event: PrnsDiagnosticEvent) => void) | undefined,
+    autoWifiSelectionSeed: Uint8Array | undefined,
   ) {
     this.#runtime = runtime;
     this.#entropy = entropy;
@@ -554,11 +627,13 @@ export class Prns {
       resourceCompressionModuleUrl.href;
     this.#persistenceStore = persistenceStore;
     this.#persistenceRestored = persistenceRestored;
+    this.#eventBatchSink = eventBatchSink;
+    this.#directDiagnosticSink = directDiagnosticSink;
     this.#events = new BoundedAsyncLane<PrnsApplicationEvent>({
       name: "ApplicationEvents",
       maximumValues: limits.applicationEvents,
       maximumBytes: limits.retainedEventBytes,
-      measure: retainedBrowserEventBytes,
+      measure: retainedApplicationEventBytes,
       onRejected: (rejectedEventBytes) =>
         this.#failBackpressure(rejectedEventBytes),
       onBeforeNext: () => this.#pumpEvents(),
@@ -577,15 +652,37 @@ export class Prns {
       entropy,
       now,
       bleIdentityAvailability,
-      () => this.#pumpEvents(),
+      () => {
+        this.#pumpEvents();
+        this.#scheduleProjectionRefresh();
+      },
     );
-    this.interfaces = new PrnsInterfaces(this.#host);
+    registerWorkerCapabilityDispatcher(this, (call) =>
+      this.#dispatchPageCapability(call),
+    );
+    registerWorkerSnapshotCapturer(this, () => this.#captureWorkerSnapshot());
+    this.interfaces = new PrnsInterfaces(this.#host, autoWifiSelectionSeed);
+    this.#projections = new PrnsProjectionStore(
+      this.#captureHostSnapshot(),
+      this.#lifecycle,
+      limits.diagnostics,
+      {
+        observed: (view) => this.#observeProjection(view),
+        unobserved: (view) => this.#unobserveProjection(view),
+        synchronize: (view) => this.#synchronizeProjection(view),
+      },
+    );
     if (restorationReport !== undefined) {
-      this.#diagnostics.push(Tag("PersistenceRestored", restorationReport));
+      this.#publishDiagnostic(Tag("PersistenceRestored", restorationReport));
     }
   }
 
   static async create(options: PrnsOptions): Promise<PrnsCreateOutcome> {
+    if (options.execution !== "MainThread") {
+      const { createDedicatedWorkerPrns } = await import("./worker_client.js");
+      return createDedicatedWorkerPrns(options);
+    }
+    const engineHooks = workerEngineHooks(options);
     const loaded = options.wasm
       ? Tag("Loaded", options.wasm)
       : await loadBundledWasm();
@@ -750,6 +847,9 @@ export class Prns {
           persistenceStore,
           persistedState !== undefined,
           restorationReport,
+          engineHooks?.eventBatchSink,
+          engineHooks?.directDiagnosticSink,
+          engineHooks?.autoWifiSelectionSeed,
         ),
       );
     } catch (error) {
@@ -757,9 +857,9 @@ export class Prns {
     }
   }
 
-  registerSingleDestination(
+  async registerSingleDestination(
     options: RegisterSingleDestinationOptions,
-  ): DestinationRegistrationOutcome {
+  ): Promise<DestinationRegistrationOutcome> {
     try {
       return Tag(
         "Registered",
@@ -770,7 +870,65 @@ export class Prns {
     }
   }
 
-  registerNodePage(appData: Uint8Array): DestinationRegistrationOutcome {
+  async #dispatchPageCapability<Call extends WorkerCapabilityCall>(
+    call: Call,
+  ): Promise<WorkerCapabilityCallOutcome<Call>> {
+    return match(call as WorkerCapabilityCall, {
+      RegisterWebSocket: (registration) =>
+        this.#host.webSocketRegister(registration),
+      RegisterInterface: (registration) =>
+        this.#host.registerInterface(registration as Parameters<RuntimeHost["registerInterface"]>[0]),
+      DeactivateInterface: (value) =>
+        this.#host.deactivateInterface(interfaceId(value)),
+      Ingest: ({ interfaceId: id, bytes }) =>
+        this.#host.ingest(interfaceId(id), packetFrame(bytes)),
+      NextOutbound: ({ interfaceId: id, maximumFrames }) =>
+        this.#host.nextOutboundFor(interfaceId(id), maximumFrames),
+      CreateBluetoothReassembler: () => {
+        const id = this.#mintPageCodecId();
+        this.#pageBluetoothReassemblers.set(
+          id,
+          this.#host.createBluetoothReassembler(),
+        );
+        return id;
+      },
+      AbsorbBluetoothFragment: ({ id, bytes }) => {
+        const reassembler = this.#pageBluetoothReassemblers.get(id);
+        if (reassembler === undefined) {
+          throw new Error(`unknown Bluetooth reassembler ${id}`);
+        }
+        return reassembler.absorb(bytes);
+      },
+      ReleaseBluetoothReassembler: (id) => {
+        this.#pageBluetoothReassemblers.delete(id);
+      },
+      CreateUsbAutoDecoder: () => {
+        const id = this.#mintPageCodecId();
+        this.#pageUsbAutoDecoders.set(id, this.#host.createUsbAutoDecoder());
+        return id;
+      },
+      FeedUsbAutoDecoder: ({ id, bytes }) => {
+        const decoder = this.#pageUsbAutoDecoders.get(id);
+        if (decoder === undefined) {
+          throw new Error(`unknown USB Auto decoder ${id}`);
+        }
+        return decoder.feed(bytes);
+      },
+      ReleaseUsbAutoDecoder: (id) => {
+        this.#pageUsbAutoDecoders.delete(id);
+      },
+    }) as WorkerCapabilityCallOutcome<Call>;
+  }
+
+  #mintPageCodecId(): number {
+    const id = this.#nextPageCodecId;
+    this.#nextPageCodecId = id === Number.MAX_SAFE_INTEGER ? 1 : id + 1;
+    return id;
+  }
+
+  async registerNodePage(
+    appData: Uint8Array,
+  ): Promise<DestinationRegistrationOutcome> {
     try {
       return Tag(
         "Registered",
@@ -1169,6 +1327,10 @@ export class Prns {
     return this.#lifecycle;
   }
 
+  get execution(): PrnsExecution {
+    return "MainThread";
+  }
+
   get backendInfo(): BackendInfo {
     return cooperativeBackendInfo();
   }
@@ -1179,6 +1341,12 @@ export class Prns {
       available: new Set(info.capabilities),
       interfaceKinds: new Set(info.interfaceKinds),
     });
+  }
+
+  projection<View extends PrnsView>(
+    view: View,
+  ): PrnsProjection<PrnsProjectionValue<View>> {
+    return this.#projections.projection(view);
   }
 
   stop(): Promise<StopOutcome> {
@@ -1202,80 +1370,21 @@ export class Prns {
     return this.#diagnostics.claim();
   }
 
-  snapshot(): SnapshotOutcome {
+  async snapshot(): Promise<SnapshotOutcome> {
+    const outcome = this.#captureWorkerSnapshot();
+    if (outcome.tag !== "PackedSnapshot") {
+      return outcome;
+    }
     try {
-      return Tag("Captured", parseSnapshot(this.#runtime.snapshot()));
+      return Tag("Captured", parsePackedSnapshot(outcome.data));
     } catch (error) {
       return runtimeRejected("snapshot", error);
     }
   }
 
-  hostSnapshot(): HostSnapshotOutcome {
+  async hostSnapshot(): Promise<HostSnapshotOutcome> {
     try {
-      const snapshot = parseSnapshot(this.#runtime.snapshot());
-      const inspection = this.#host.interfaceInspection();
-      const running = this.#lifecycle.tag === "Running";
-      const health: InterfaceHealth = running ? "Connected" : "Disabled";
-      const interfaces = snapshot.interfaces.map((entry) => {
-        const active = inspection.get(byteKey(entry.id));
-        return {
-          interfaceId: entry.id,
-          ...(active === undefined ? {} : { name: active.name }),
-          ...(active?.kind === undefined ? {} : { kind: active.kind }),
-          health,
-          rxBytes: BigInt(active?.rxBytes ?? 0),
-          txBytes: BigInt(active?.txBytes ?? 0),
-          routeCount: entry.routes,
-          linkCount: entry.links,
-          transportedLinkCount: entry.transportedLinks,
-        };
-      });
-      const interfaceCount = interfaces.length;
-      const onlineInterfaceCount = running ? interfaceCount : 0;
-      const transportedLinkCount = interfaces.reduce(
-        (total, entry) =>
-          saturatingAdd(total, entry.transportedLinkCount),
-        0,
-      );
-      const rxBytes = interfaces.reduce(
-        (total, entry) => total + entry.rxBytes,
-        0n,
-      );
-      const txBytes = interfaces.reduce(
-        (total, entry) => total + entry.txBytes,
-        0n,
-      );
-      return Tag("Captured", {
-        revision: snapshot.revision,
-        backend: this.backendInfo,
-        interfaces,
-        routes: snapshot.routeSnapshots,
-        activeLinkCount: snapshot.activeLinkCount,
-        destinationIdentities: snapshot.destinationIdentities,
-        runtime: {
-          running,
-          uptimeMillis: Math.max(0, this.#now() - this.#startedAtMillis),
-          interfaceCount,
-          onlineInterfaceCount,
-          routeCount: snapshot.routeSnapshots.length,
-          linkCount: snapshot.activeLinkCount,
-          transportedLinkCount,
-          rxBytes,
-          txBytes,
-          rxBps: 0,
-          txBps: 0,
-        },
-        persistence: {
-          persistent: this.#persistenceStore !== undefined,
-          restored: this.#persistenceRestored,
-          ...(this.#lastPersistenceFlushCause === undefined
-            ? {}
-            : { lastFlushCause: this.#lastPersistenceFlushCause }),
-          ...(this.#persistenceFailureDetail === undefined
-            ? {}
-            : { lastFailureDetail: this.#persistenceFailureDetail }),
-        },
-      });
+      return Tag("Captured", this.#captureHostSnapshot());
     } catch (error) {
       return runtimeRejected("snapshot", error);
     }
@@ -1284,7 +1393,7 @@ export class Prns {
   async #performStop(): Promise<StopOutcome> {
     const preserveFailure = this.#lifecycle.tag === "Failed";
     if (!preserveFailure) {
-      this.#lifecycle = Tag("Stopping");
+      this.#setLifecycle(Tag("Stopping"));
     }
     for (const pending of this.#pendingCommands.values()) {
       pending.settle(commandFailed(Tag("NodeStopped")));
@@ -1292,6 +1401,14 @@ export class Prns {
     this.#pendingCommands.clear();
     this.#responseParts.clear();
     const sessions = [...this.#attachedInterfaces.values()];
+    for (const reassembler of this.#pageBluetoothReassemblers.values()) {
+      reassembler.release?.();
+    }
+    for (const decoder of this.#pageUsbAutoDecoders.values()) {
+      decoder.release?.();
+    }
+    this.#pageBluetoothReassemblers.clear();
+    this.#pageUsbAutoDecoders.clear();
     this.#attachedInterfaces.clear();
     const failures = (
       await Promise.all(
@@ -1323,13 +1440,13 @@ export class Prns {
       if (failure === undefined) {
         this.#lastPersistenceFlushCause = "Shutdown";
         this.#persistenceFailureDetail = undefined;
-        this.#diagnostics.push(
+        this.#publishDiagnostic(
           Tag("PersistenceFlushed", {
             cause: "Shutdown",
             target: "RoutingState",
           }),
         );
-        this.#diagnostics.push(
+        this.#publishDiagnostic(
           Tag("PersistenceFlushed", {
             cause: "Shutdown",
             target: "Ratchets",
@@ -1337,13 +1454,13 @@ export class Prns {
         );
       } else {
         this.#persistenceFailureDetail = failure;
-        this.#diagnostics.push(
+        this.#publishDiagnostic(
           Tag("PersistenceFlushFailed", {
             cause: "Shutdown",
             target: "RoutingState",
           }),
         );
-        this.#diagnostics.push(
+        this.#publishDiagnostic(
           Tag("PersistenceFlushFailed", {
             cause: "Shutdown",
             target: "Ratchets",
@@ -1357,11 +1474,11 @@ export class Prns {
     this.#stopCompleted = true;
     if (failures.length > 0) {
       const detail = failures.join("; ");
-      this.#lifecycle = Tag("Failed", { cause: "BackendFailed", detail });
+      this.#setLifecycle(Tag("Failed", { cause: "BackendFailed", detail }));
       return Tag("OperationFailed", { operation: "stop", detail });
     }
     if (!preserveFailure) {
-      this.#lifecycle = Tag("Stopped", { reason: "Requested" });
+      this.#setLifecycle(Tag("Stopped", { reason: "Requested" }));
     }
     return Tag("Stopped");
   }
@@ -1546,8 +1663,28 @@ export class Prns {
       return;
     }
     let parsed: ParsedPrnsEvent[];
+    let hadBatch = false;
     try {
-      parsed = this.#runtime.drainEvents().map(parseEvent);
+      const batch = this.#runtime.drainEventBatch();
+      hadBatch = batch.byteLength > 16;
+      const drainCommandSettlementBatch = this.#runtime.drainCommandSettlementBatch;
+      const controlEvents = drainCommandSettlementBatch === undefined
+        ? this.#runtime.drainEvents().map(parseEvent)
+        : parseCommandSettlementBatch(drainCommandSettlementBatch.call(this.#runtime));
+      parsed = [
+        ...(this.#eventBatchSink === undefined
+          ? parseEventBatch(batch)
+          : parseCorrelatedEventBatch(batch)),
+        ...controlEvents,
+      ];
+      if (batch.byteLength > 16) {
+        if (this.#eventBatchSink !== undefined) {
+          for (const diagnostic of parseDiagnosticEventBatch(batch)) {
+            this.#projections.publishDiagnostic(diagnostic);
+          }
+        }
+        this.#eventBatchSink?.(batch);
+      }
     } catch (error) {
       this.#failContract(describeHostError(error));
       return;
@@ -1555,20 +1692,20 @@ export class Prns {
     for (const event of parsed) {
       match(event, {
         Application: (application) => {
-          this.#events.push(application);
+          this.#publishApplication(application);
         },
         Diagnostic: (diagnostic) => {
-          this.#diagnostics.push(diagnostic);
+          this.#publishDiagnostic(diagnostic);
         },
         CommandResponse: ({ commandId: responseCommandId, event }) => {
-          this.#events.push(event);
+          this.#publishApplication(event);
           this.#responseParts.set(responseCommandId, [event.data.data]);
         },
         CommandResponseSegment: ({
           commandId: responseCommandId,
           event,
         }) => {
-          this.#events.push(event);
+          this.#publishApplication(event);
           const parts = this.#responseParts.get(responseCommandId) ?? [];
           parts.push(event.data.data);
           this.#responseParts.set(responseCommandId, parts);
@@ -1596,6 +1733,24 @@ export class Prns {
         },
       });
     }
+    if (parsed.length > 0 || hadBatch) {
+      this.#scheduleProjectionRefresh();
+    }
+  }
+
+  #publishApplication(event: PrnsApplicationEvent): void {
+    if (this.#eventBatchSink === undefined) {
+      this.#events.push(event);
+    }
+  }
+
+  #publishDiagnostic(event: PrnsDiagnosticEvent): void {
+    this.#projections.publishDiagnostic(event);
+    if (this.#eventBatchSink === undefined) {
+      this.#diagnostics.push(event);
+      return;
+    }
+    this.#directDiagnosticSink?.(event);
   }
 
   #commandSettlement(
@@ -1652,21 +1807,21 @@ export class Prns {
   }
 
   #failBackpressure(rejectedEventBytes: number): void {
-    this.#lifecycle = Tag("Failed", {
+    this.#setLifecycle(Tag("Failed", {
       cause: "EventBackpressureExceeded",
       limits: this.#limits,
       rejectedEventBytes,
-    });
+    }));
     this.#events.finish();
     this.#diagnostics.finish();
     this.#settleFailedCommands("application event backpressure exceeded");
   }
 
   #failContract(detail: string): void {
-    this.#lifecycle = Tag("Failed", {
+    this.#setLifecycle(Tag("Failed", {
       cause: "ContractViolated",
       detail,
-    });
+    }));
     const error = new Error(detail);
     this.#events.fail(error);
     this.#diagnostics.fail(error);
@@ -1679,6 +1834,210 @@ export class Prns {
     }
     this.#pendingCommands.clear();
     this.#responseParts.clear();
+  }
+
+  #observeProjection(view: PrnsView): void {
+    if (
+      view.tag === "Diagnostics" ||
+      view.tag === "Lifecycle"
+    ) {
+      return;
+    }
+    this.#observedProjectionViews.add(view.tag);
+    this.#scheduleProjectionRefresh();
+  }
+
+  #unobserveProjection(view: PrnsView): void {
+    if (
+      view.tag === "Diagnostics" ||
+      view.tag === "Lifecycle"
+    ) {
+      return;
+    }
+    this.#observedProjectionViews.delete(view.tag);
+  }
+
+  async #synchronizeProjection(
+    view: PrnsView,
+  ): Promise<ProjectionSynchronization<unknown>> {
+    if (this.#lifecycle.tag !== "Running") {
+      return Tag("Unavailable", { lifecycle: this.#lifecycle });
+    }
+    if (view.tag === "Lifecycle" || view.tag === "Diagnostics") {
+      return Tag("Synchronized", this.#projections.projection(view).latest());
+    }
+    try {
+      this.#refreshProjectionViews(new Set([view.tag]));
+      return Tag("Synchronized", this.#projections.projection(view).latest());
+    } catch (error) {
+      this.#failContract(describeHostError(error));
+      return this.#lifecycle.tag === "Running"
+        ? Tag("Busy")
+        : Tag("Unavailable", { lifecycle: this.#lifecycle });
+    }
+  }
+
+  #refreshProjectionViews(
+    views: ReadonlySet<Exclude<PrnsView["tag"], "Diagnostics" | "Lifecycle">>,
+  ): void {
+    if (views.size === 0) {
+      return;
+    }
+    const snapshot = parseRuntimeProjectionSnapshot(
+      this.#runtime.projectionSnapshot({
+        interfaces: views.has("Interfaces"),
+        routes: views.has("Routes"),
+        links: views.has("Links"),
+      }),
+    );
+    this.#applyRuntimeProjectionSnapshot(snapshot, views);
+  }
+
+  #applyRuntimeProjectionSnapshot(
+    snapshot: RuntimeProjectionSnapshot,
+    views: ReadonlySet<Exclude<PrnsView["tag"], "Diagnostics" | "Lifecycle">>,
+  ): void {
+    if (views.has("Interfaces")) {
+      if (snapshot.interfaces === undefined) {
+        throw new Error("runtime omitted requested interface projection");
+      }
+      this.#projections.replaceInterfaces(
+        this.#projectInterfaces(snapshot.interfaces),
+      );
+    }
+    if (views.has("Routes")) {
+      if (snapshot.routes === undefined) {
+        throw new Error("runtime omitted requested route projection");
+      }
+      this.#projections.replaceRoutes(snapshot.routes);
+    }
+    if (views.has("Links")) {
+      if (snapshot.links === undefined) {
+        throw new Error("runtime omitted requested link projection");
+      }
+      this.#projections.replaceLinks(snapshot.links);
+    }
+  }
+
+  #projectInterfaces(
+    interfaces: ReadonlyArray<PrnsSnapshot["interfaces"][number]>,
+  ): StableHostSnapshot["interfaces"] {
+    const inspection = this.#host.interfaceInspection();
+    const running = this.#lifecycle.tag === "Running";
+    const health: InterfaceHealth = running ? "Connected" : "Disabled";
+    return interfaces.map((entry) => {
+      const active = inspection.get(byteKey(entry.id));
+      return {
+        interfaceId: entry.id,
+        ...(active === undefined ? {} : { name: active.name }),
+        ...(active?.kind === undefined ? {} : { kind: active.kind }),
+        health,
+        rxBytes: BigInt(active?.rxBytes ?? 0),
+        txBytes: BigInt(active?.txBytes ?? 0),
+        routeCount: entry.routes,
+        linkCount: entry.links,
+        transportedLinkCount: entry.transportedLinks,
+      };
+    });
+  }
+
+  #captureHostSnapshot(): StableHostSnapshot {
+    const captured = this.#captureWorkerSnapshot();
+    if (captured.tag === "RuntimeRejected") {
+      throw new Error(captured.data.detail);
+    }
+    const snapshot = captured.tag === "PackedSnapshot"
+      ? parsePackedSnapshot(captured.data)
+      : captured.data;
+    const interfaces = this.#projectInterfaces(snapshot.interfaces);
+    const running = this.#lifecycle.tag === "Running";
+    const interfaceCount = interfaces.length;
+    const transportedLinkCount = interfaces.reduce(
+      (total, entry) => saturatingAdd(total, entry.transportedLinkCount),
+      0,
+    );
+    const rxBytes = interfaces.reduce(
+      (total, entry) => total + entry.rxBytes,
+      0n,
+    );
+    const txBytes = interfaces.reduce(
+      (total, entry) => total + entry.txBytes,
+      0n,
+    );
+    return {
+      revision: snapshot.revision,
+      backend: this.backendInfo,
+      interfaces,
+      routes: snapshot.routeSnapshots,
+      activeLinkCount: snapshot.activeLinkCount,
+      destinationIdentities: snapshot.destinationIdentities,
+      runtime: {
+        running,
+        uptimeMillis: Math.max(0, this.#now() - this.#startedAtMillis),
+        interfaceCount,
+        onlineInterfaceCount: running ? interfaceCount : 0,
+        routeCount: snapshot.routeSnapshots.length,
+        linkCount: snapshot.activeLinkCount,
+        transportedLinkCount,
+        rxBytes,
+        txBytes,
+        rxBps: 0,
+        txBps: 0,
+      },
+      persistence: {
+        persistent: this.#persistenceStore !== undefined,
+        restored: this.#persistenceRestored,
+        ...(this.#lastPersistenceFlushCause === undefined
+          ? {}
+          : { lastFlushCause: this.#lastPersistenceFlushCause }),
+        ...(this.#persistenceFailureDetail === undefined
+          ? {}
+          : { lastFailureDetail: this.#persistenceFailureDetail }),
+      },
+    };
+  }
+
+  #captureWorkerSnapshot(): WorkerSnapshotOutcome {
+    try {
+      const snapshotPacked = this.#runtime.snapshotPacked;
+      if (snapshotPacked === undefined) {
+        return Tag("Captured", parseSnapshot(this.#runtime.snapshot()));
+      }
+      const bytes = snapshotPacked.call(this.#runtime);
+      if (!(bytes instanceof Uint8Array)) {
+        throw new TypeError("runtime packed snapshot is not a Uint8Array");
+      }
+      return Tag("PackedSnapshot", bytes);
+    } catch (error) {
+      return runtimeRejected("snapshot", error);
+    }
+  }
+
+  #scheduleProjectionRefresh(): void {
+    if (
+      this.#projectionRefreshScheduled ||
+      this.#observedProjectionViews.size === 0
+    ) {
+      return;
+    }
+    this.#projectionRefreshScheduled = true;
+    queueMicrotask(() => {
+      this.#projectionRefreshScheduled = false;
+      if (this.#lifecycle.tag === "Failed") {
+        return;
+      }
+      try {
+        this.#refreshProjectionViews(this.#observedProjectionViews);
+      } catch (error) {
+        this.#failContract(describeHostError(error));
+      }
+    });
+  }
+
+  #setLifecycle(lifecycle: HostLifecycleState): void {
+    this.#lifecycle = lifecycle;
+    this.#projections.replaceLifecycle(lifecycle);
+    this.#scheduleProjectionRefresh();
   }
 }
 
@@ -1757,31 +2116,4 @@ function webSocketCommandFailure(
     RuntimeRejected: ({ operation, detail }) =>
       Tag("BackendFailed", { detail: `${operation}: ${detail}` }),
   });
-}
-
-function retainedBrowserEventBytes(event: PrnsApplicationEvent): number {
-  return match_into<number>().from(event, {
-    SingleDelivery: ({ plaintext }) => plaintext.length,
-    LinkDelivery: ({ plaintext }) => plaintext.length,
-    Request: ({ data }) => data.length,
-    Response: ({ data }) => data.length,
-    ResponseSegment: ({ data }) => data.length,
-    ResourceAvailable: ({ resource, metadata }) =>
-      exactBytesAsSafeNumber(resource.totalBytes, "resource.totalBytes") +
-      (metadata?.length ?? 0),
-    ResourceSegment: ({ data, metadata }) =>
-      data.length + (metadata?.length ?? 0),
-    ResourceNeedsDecompression: ({ stream }) => stream.length,
-    ChannelMessage: ({ data }) => data.length,
-  });
-}
-
-function exactBytesAsSafeNumber(value: bigint, name: string): number {
-  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new PrnsValidationError(
-      "invalid-number",
-      `${name} exceeds the JavaScript safe-integer limit`,
-    );
-  }
-  return Number(value);
 }

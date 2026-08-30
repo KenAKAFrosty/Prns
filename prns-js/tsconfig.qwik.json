@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "@builder.io/qwik",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "skipLibCheck": true,
+    "rootDir": "src/browser/adapters",
+    "outDir": "dist/qwik-types",
+    "emitDeclarationOnly": true
+  },
+  "include": ["src/browser/adapters/qwik.tsx"]
+}

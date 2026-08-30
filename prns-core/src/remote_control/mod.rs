@@ -11,20 +11,20 @@
     clippy::wildcard_in_or_patterns
 )]
 
-mod announcement_data;
 mod bootstrap;
 mod core;
 mod endpoint;
 mod impls;
 mod message;
+mod pairing;
 mod service;
 
 pub use self::core::*;
-pub use announcement_data::*;
 pub use bootstrap::*;
 pub use endpoint::*;
 pub use impls::*;
 pub use message::*;
+pub use pairing::*;
 pub use service::*;
 
 #[cfg(test)]

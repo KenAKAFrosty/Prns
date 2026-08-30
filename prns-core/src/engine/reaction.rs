@@ -109,6 +109,64 @@ pub enum Journaled<'a> {
         settlement: Settlement,
     },
 
+    RemoteControlPairingExpired {
+        endpoint: crate::remote_control::RemoteControlPairingEndpoint,
+    },
+
+    RemoteControlPairingExpiryFailed {
+        endpoint: crate::remote_control::RemoteControlPairingEndpoint,
+        failure: crate::engine::CloseRemoteControlPairingFailure,
+    },
+
+    RemoteControlPairingAvailabilityObserved(
+        crate::remote_control::RemoteControlPairingAvailabilityObservation<'a>,
+    ),
+
+    RemoteControlTargetPairingConfirmationRequired(
+        crate::remote_control::RemoteControlTargetPairingAttemptView<'a>,
+    ),
+
+    RemoteControlTargetPairingControllerCommitted {
+        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
+    },
+
+    RemoteControlTargetPairingAuthorizationRequired {
+        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
+        grant: crate::remote_control::RemoteControlControllerGrant,
+    },
+
+    RemoteControlControllerPairingConfirmationRequired(
+        crate::remote_control::RemoteControlControllerPairingAttemptView<'a>,
+    ),
+
+    RemoteControlControllerPairingPersistenceRequired(
+        crate::remote_control::RemoteControlControllerPairingPersistenceView<'a>,
+    ),
+
+    RemoteControlControllerPairingExpired {
+        aborted: crate::remote_control::RemoteControlControllerPairingAborted,
+    },
+
+    RemoteControlControllerPairingLinkClosed {
+        aborted: crate::remote_control::RemoteControlControllerPairingAborted,
+    },
+
+    RemoteControlTargetPairingExpired {
+        aborted: crate::remote_control::RemoteControlTargetPairingAborted,
+    },
+
+    RemoteControlTargetPairingLinkClosed {
+        aborted: crate::remote_control::RemoteControlTargetPairingAborted,
+    },
+
+    RemoteControlTargetPairingCompletionRetentionExpired {
+        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
+    },
+
+    RemoteControlTargetPairingCompletionLinkClosed {
+        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
+    },
+
     /// RNS 1.4.2's `set_link_established_callback` as data.
     LinkEstablished(LinkEstablished),
 
@@ -220,6 +278,7 @@ pub enum LinkClosedReason {
     Timeout,
     PeerClosed,
     MalformedRtt,
+    LocallyClosed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

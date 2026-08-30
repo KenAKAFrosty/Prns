@@ -5,5 +5,9 @@
     "outDir": "dist-examples",
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "src/**/*.cts", "examples/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.cts", "examples/**/*.ts"],
+  "exclude": [
+    "examples/**/dist*/**",
+    "examples/**/vite*.config.ts"
+  ]
 }

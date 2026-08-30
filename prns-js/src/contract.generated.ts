@@ -70,12 +70,14 @@ export function isCapabilityName(value: unknown): value is CapabilityName {
 export type LinkClosedReason =
   | "Timeout"
   | "PeerClosed"
-  | "MalformedRtt";
+  | "MalformedRtt"
+  | "LocallyClosed";
 
 export const LINK_CLOSED_REASON_VALUES: readonly LinkClosedReason[] = Object.freeze([
   "Timeout",
   "PeerClosed",
   "MalformedRtt",
+  "LocallyClosed",
 ]);
 
 export function isLinkClosedReason(value: unknown): value is LinkClosedReason {
@@ -376,6 +378,177 @@ export const SERIAL_STOP_BITS_VALUES: readonly SerialStopBits[] = Object.freeze(
 export function isSerialStopBits(value: unknown): value is SerialStopBits {
   return typeof value === "string" && (SERIAL_STOP_BITS_VALUES as readonly string[]).includes(value);
 }
+
+export const APPLICATION_EVENT_KIND_CODES = Object.freeze({
+  SingleDelivery: 100,
+  Request: 101,
+  Response: 102,
+  ResponseSegment: 103,
+  ResourceAvailable: 104,
+  ResourceSegment: 105,
+  ResourceNeedsDecompression: 106,
+  ChannelMessage: 107,
+  LinkDelivery: 108,
+} as const);
+
+export type ApplicationEventKindCode = (typeof APPLICATION_EVENT_KIND_CODES)[keyof typeof APPLICATION_EVENT_KIND_CODES];
+
+export const DIAGNOSTIC_EVENT_KIND_CODES = Object.freeze({
+  AnnounceHeard: 200,
+  LinkEstablished: 201,
+  PeerIdentified: 202,
+  LinkClosed: 203,
+  LinkInterfaceMismatch: 204,
+  ResourceAssembled: 205,
+  ResourceFailed: 206,
+  ResourceSendProgress: 207,
+  SelfRatchetRotated: 208,
+  AnnounceHeldDropped: 209,
+  Delivered: 210,
+  RouteExpired: 211,
+  RouteEvicted: 212,
+  RouteInterfaceGone: 213,
+  RouteDropped: 214,
+  BackendDiagnostic: 215,
+  DiagnosticsDropped: 216,
+  PersistenceRestored: 217,
+  PersistenceFlushed: 218,
+  PersistenceFlushFailed: 219,
+} as const);
+
+export type DiagnosticEventKindCode = (typeof DIAGNOSTIC_EVENT_KIND_CODES)[keyof typeof DIAGNOSTIC_EVENT_KIND_CODES];
+
+export const EVENT_FIELD_CODES = Object.freeze({
+  Destination: 1,
+  SourceInterface: 2,
+  Plaintext: 3,
+  LinkId: 4,
+  RequestId: 5,
+  Requester: 6,
+  PathHash: 7,
+  RttMillis: 8,
+  Data: 9,
+  SegmentIndex: 10,
+  TotalSegments: 11,
+  Hash: 12,
+  OriginalHash: 13,
+  Metadata: 14,
+  TotalBytes: 15,
+  StreamId: 16,
+  UncompressedDataBytes: 17,
+  MessageType: 18,
+  Identity: 19,
+  Reason: 20,
+  AttachedInterface: 21,
+  ArrivedOn: 22,
+  TotalSizeBytes: 23,
+  Cause: 24,
+  TransferredBytes: 25,
+  PhysicalTransferredBytes: 26,
+  Detail: 27,
+  Kind: 28,
+  DroppedCount: 29,
+  Hops: 30,
+  Stream: 31,
+  Routes: 32,
+  DestinationIdentities: 33,
+  Tunnels: 34,
+  Ratchets: 35,
+  Refused: 36,
+  Dropped: 37,
+  PersistenceCause: 38,
+  PersistenceTarget: 39,
+  AppData: 40,
+} as const);
+
+export type EventFieldCode = (typeof EVENT_FIELD_CODES)[keyof typeof EVENT_FIELD_CODES];
+
+export const COMMAND_OUTCOME_KIND_CODES = Object.freeze({
+  Announced: 1,
+  PacketDelivered: 2,
+  LinkCloseQueued: 3,
+  InterfaceAttached: 4,
+  InterfaceDetached: 5,
+  LinkEstablished: 6,
+  PathDiscovered: 7,
+  Identified: 8,
+  ResponseReceived: 9,
+  ResponseSent: 10,
+  ResourceSent: 11,
+  ResourceStrategySet: 12,
+  RequesterAllowed: 13,
+} as const);
+
+export type CommandOutcomeKindCode = (typeof COMMAND_OUTCOME_KIND_CODES)[keyof typeof COMMAND_OUTCOME_KIND_CODES];
+
+export const COMMAND_FAILURE_KIND_CODES = Object.freeze({
+  NodeStopped: 1,
+  Busy: 2,
+  PayloadTooLarge: 3,
+  UnknownDestination: 4,
+  NotSingleDestination: 5,
+  AnnounceAppDataTooLong: 6,
+  UnknownInterface: 7,
+  NoRouteToDestination: 8,
+  NotDirectlyReachable: 9,
+  PacketCulled: 10,
+  DeliveryTimedOut: 11,
+  InvalidBitrate: 12,
+  BindFailed: 13,
+  WriteFailed: 14,
+  UnsupportedByBackend: 15,
+  UnknownLink: 16,
+  LinkNotActive: 17,
+  EntropyUnavailable: 18,
+  NotLinkInitiator: 19,
+  IdentityNotHeld: 20,
+  UnknownRequestHandler: 21,
+  RequestPolicyNotAllowList: 22,
+  RequestAllowListFull: 23,
+  LinkBusy: 24,
+  ResourceTableFull: 25,
+  ResourceMetadataTooLarge: 26,
+  ResourceRejectedByPeer: 27,
+  ResourceSequencingFailed: 28,
+  ResourcePredecessorFailed: 29,
+  ChannelWindowFull: 30,
+  ChannelUntrackable: 31,
+  InvalidChannelMessageType: 32,
+  InvalidConfiguration: 33,
+  ResourceUploadCancelled: 34,
+  ResourceEarlyEof: 35,
+  ResourceLengthOverrun: 36,
+  PermissionDenied: 37,
+  DeviceUnavailable: 38,
+  ConnectFailed: 39,
+  BackendFailed: 40,
+  ResponseTooLarge: 41,
+  LinkClosed: 42,
+  ResponseCancelledBySender: 43,
+  ResponseHashmapBeyondPartCount: 44,
+  ResponseHashmapSkipsAhead: 45,
+  ResponseHashmapTooLong: 46,
+  ResponseHashmapRagged: 47,
+  ResponseRetriesExhausted: 48,
+  ResponseLinkVanished: 49,
+  ResponseTransferUnopenable: 50,
+  ResponseTransferCorrupt: 51,
+  ResponseProofUnsendable: 52,
+  ResponseDecompressionFailed: 53,
+  ResponseDecompressionTimedOut: 54,
+  ResponseOpenTimedOut: 55,
+  ResponseMetadataOverrun: 56,
+} as const);
+
+export type CommandFailureKindCode = (typeof COMMAND_FAILURE_KIND_CODES)[keyof typeof COMMAND_FAILURE_KIND_CODES];
+
+export const DELIVERY_EVIDENCE_KIND_CODES = Object.freeze({
+  ExplicitProof: 1,
+  ImplicitProof: 2,
+  Response: 3,
+} as const);
+
+export type DeliveryEvidenceKindCode = (typeof DELIVERY_EVIDENCE_KIND_CODES)[keyof typeof DELIVERY_EVIDENCE_KIND_CODES];
 
 export type DestinationName = {
   readonly appName: string;
@@ -993,7 +1166,22 @@ export type CommandFailure =
         readonly detail: string;
       }
     >
-  | Tag<"ResponseTooLarge">;
+  | Tag<"ResponseTooLarge">
+  | Tag<"LinkClosed">
+  | Tag<"ResponseCancelledBySender">
+  | Tag<"ResponseHashmapBeyondPartCount">
+  | Tag<"ResponseHashmapSkipsAhead">
+  | Tag<"ResponseHashmapTooLong">
+  | Tag<"ResponseHashmapRagged">
+  | Tag<"ResponseRetriesExhausted">
+  | Tag<"ResponseLinkVanished">
+  | Tag<"ResponseTransferUnopenable">
+  | Tag<"ResponseTransferCorrupt">
+  | Tag<"ResponseProofUnsendable">
+  | Tag<"ResponseDecompressionFailed">
+  | Tag<"ResponseDecompressionTimedOut">
+  | Tag<"ResponseOpenTimedOut">
+  | Tag<"ResponseMetadataOverrun">;
 
 export type ApplicationEvent =
   | Tag<

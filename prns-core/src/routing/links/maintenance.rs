@@ -1,7 +1,15 @@
 use crate::engine::EngineState;
-use crate::engine::{CloseLink, CloseLinkRejection, CommandId, CommandOutcome};
+use crate::engine::{
+    settle, CloseLink, CloseLinkRejection, CommandId, CommandOutcome, EngineReaction, Journaled,
+    LinkClosedReason, SendResourceFailure, SendToChannelFailure, Settlement,
+};
 use crate::interfaces::InterfaceId;
+use crate::remote_control::{
+    CloseRemoteControlControllerPairingLinkOutcome, CloseRemoteControlTargetPairingLinkOutcome,
+};
 use crate::routing::links::channel::table::ChannelTable;
+use crate::routing::links::resources::send::resource_settlement;
+use crate::routing::links::resources::ResourceFailureCause;
 use crate::routing::links::table::LinkPhase;
 use crate::routing::links::{LinkId, LinkKey};
 use crate::storage::StorageLayout;
@@ -107,8 +115,10 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn write_owed_link_close(
         &mut self,
         link_id: &LinkId,
+        reason: LinkClosedReason,
         iv: &[u8; 16],
         buf: &mut [u8],
+        sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> Result<LinkCloseDispatch, WriteLinkCloseError> {
         let (key, fire_on) = match self.links.phase_for(link_id) {
             Some(LinkPhase::Active {
@@ -121,21 +131,94 @@ impl<S: StorageLayout> EngineState<S> {
                 return Err(WriteLinkCloseError::NoSuchLink);
             }
         };
-        let wire_bytes =
-            write_link_close(link_id, key, iv, buf).map_err(|_| WriteLinkCloseError::Serialize)?;
+        let dispatch = write_link_close(link_id, key, iv, buf)
+            .map(|wire_bytes| LinkCloseDispatch {
+                wire_bytes,
+                fire_on,
+            })
+            .map_err(|_| WriteLinkCloseError::Serialize);
+        self.retire_link(link_id, reason, sink);
+        dispatch
+    }
+
+    pub(crate) fn retire_link(
+        &mut self,
+        link_id: &LinkId,
+        reason: LinkClosedReason,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        match self.remote_control_controller_pairing.close_link(*link_id) {
+            CloseRemoteControlControllerPairingLinkOutcome::Aborted { aborted } => {
+                sink(EngineReaction::Journaled(
+                    Journaled::RemoteControlControllerPairingLinkClosed { aborted },
+                ));
+            }
+            CloseRemoteControlControllerPairingLinkOutcome::UnrelatedLink
+            | CloseRemoteControlControllerPairingLinkOutcome::NoActiveAttempt
+            | CloseRemoteControlControllerPairingLinkOutcome::PersistenceInProgress { .. } => {}
+        }
+        match self.remote_control_target_pairing.close_link(*link_id) {
+            CloseRemoteControlTargetPairingLinkOutcome::Aborted { aborted } => {
+                sink(EngineReaction::Journaled(
+                    Journaled::RemoteControlTargetPairingLinkClosed { aborted },
+                ));
+            }
+            CloseRemoteControlTargetPairingLinkOutcome::CompletionRetentionEnded { attempt_id } => {
+                sink(EngineReaction::Journaled(
+                    Journaled::RemoteControlTargetPairingCompletionLinkClosed { attempt_id },
+                ));
+            }
+            CloseRemoteControlTargetPairingLinkOutcome::UnrelatedLink
+            | CloseRemoteControlTargetPairingLinkOutcome::NoActiveAttempt
+            | CloseRemoteControlTargetPairingLinkOutcome::FinalizationInProgress { .. } => {}
+        }
+        let attached_interface = match self.links.phase_for(link_id) {
+            Some(LinkPhase::Active {
+                attached_interface, ..
+            }) => Some(*attached_interface),
+            Some(LinkPhase::Handshake { .. } | LinkPhase::Pending { .. }) | None => None,
+        };
+        while let Some(hash) = self.incoming_resources.first_hash_for_link(link_id) {
+            self.fail_incoming_resource(link_id, &hash, ResourceFailureCause::LinkVanished, sink);
+        }
+        while let Some(resource) = self.outgoing_resources.pop_for_link(link_id) {
+            settle(
+                sink,
+                resource.command_id,
+                resource_settlement(resource.correlation, Err(SendResourceFailure::LinkClosed)),
+            );
+        }
+        if let Some(index) = self.channels.index_of(link_id) {
+            while self.channels.outstanding_count(index) > 0 {
+                let id = self.channels.outstanding_command_id(index, 0);
+                self.channels.retire_outstanding(index, 0);
+                settle(
+                    sink,
+                    id,
+                    Settlement::SendToChannel(Err(SendToChannelFailure::LinkClosed)),
+                );
+            }
+        }
+        while let Some(receipt) = self.receipts.pop_for_link(link_id) {
+            settle(
+                sink,
+                receipt.command_id,
+                self.link_closed_settlement(*link_id, receipt.kind),
+            );
+        }
         self.reconcile_pending_link_route_evidence();
         self.links.remove(link_id);
         self.channels.close(link_id);
         self.pending_resource_offers.remove_link(link_id);
         self.incoming_assemblies.clear(link_id);
         self.outgoing_assemblies.clear(link_id);
-        if let Some(interface) = fire_on {
+        if let Some(interface) = attached_interface {
             self.mark_interface_dirty(interface);
         }
-        Ok(LinkCloseDispatch {
-            wire_bytes,
-            fire_on,
-        })
+        sink(EngineReaction::Journaled(Journaled::LinkClosed {
+            link_id: *link_id,
+            reason,
+        }));
     }
 }
 
@@ -208,6 +291,150 @@ mod tests {
         assert_eq!(buf[18], 0xFC, "the context byte names the LINKCLOSE");
         let opened = key.open_in_place(&mut buf[19..n]).unwrap();
         assert_eq!(opened, link_id.as_bytes());
+    }
+
+    #[test]
+    fn a_close_write_failure_still_finishes_local_retirement() {
+        use crate::routing::links::resources::receive::tests_support::{
+            engine_with_active_link, link_id,
+        };
+
+        let mut engine = engine_with_active_link();
+        let link_id = link_id();
+        let mut closed = std::vec::Vec::new();
+        assert_eq!(
+            engine.write_owed_link_close(
+                &link_id,
+                LinkClosedReason::LocallyClosed,
+                &[0x51; 16],
+                &mut [0u8; 1],
+                &mut |reaction| {
+                    if let EngineReaction::Journaled(Journaled::LinkClosed { link_id, reason }) =
+                        reaction
+                    {
+                        closed.push((link_id, reason));
+                    }
+                },
+            ),
+            Err(WriteLinkCloseError::Serialize),
+        );
+        assert!(!engine.links.has_local_link(&link_id));
+        assert_eq!(closed, [(link_id, LinkClosedReason::LocallyClosed)],);
+    }
+
+    #[test]
+    fn retiring_a_link_settles_and_removes_every_link_owned_operation() {
+        use crate::crypto::Ed25519PublicKey;
+        use crate::engine::{
+            CommandId, InstantMillis, Journaled, SendRequestFailure, SendToLinkFailure,
+        };
+        use crate::identity::IdentitySigningPublicKey;
+        use crate::routing::dedup::PacketHash;
+        use crate::routing::delivery::receipts::{OutstandingReceipt, ReceiptKind};
+        use crate::routing::links::channel::table::{OutstandingSend, TxOutcome};
+        use crate::routing::links::channel::{ChannelSequence, MessageType};
+        use crate::routing::links::resources::receive::tests_support::{
+            accept_everything, advertise_from, advertisement_frame, engine_with_active_link,
+            feed_judged, link_id,
+        };
+
+        let mut engine = engine_with_active_link();
+        let link_id = link_id();
+        accept_everything(&mut engine);
+        let incoming = advertisement_frame(b"incoming", None);
+        let _ = feed_judged(&mut engine, &incoming, 2_000, &mut |_| true);
+        let _ = advertise_from(&mut engine, b"outgoing", None);
+
+        let channel = engine.channels.ensure(&link_id).unwrap();
+        assert_eq!(
+            engine.channels.push_outstanding(
+                channel,
+                OutstandingSend {
+                    packet_hash: PacketHash::new([0x31; 32]),
+                    command_id: CommandId(31),
+                    sequence: ChannelSequence(0),
+                    message_type: MessageType(7),
+                    body: b"channel",
+                    iv: [0x32; 16],
+                    sent_at: InstantMillis(2_100),
+                    timeout_at: InstantMillis(9_000),
+                },
+            ),
+            TxOutcome::Tracked,
+        );
+
+        let signing = IdentitySigningPublicKey::new(Ed25519PublicKey([0x33; 32]));
+        assert_eq!(
+            engine.receipts.track(OutstandingReceipt {
+                packet_hash: PacketHash::new([0x34; 32]),
+                command_id: CommandId(34),
+                kind: ReceiptKind::SendToLink(link_id),
+                peer_signing_key: signing,
+                sent_at: InstantMillis(2_100),
+                timeout_at: InstantMillis(9_000),
+            }),
+            None,
+        );
+        assert_eq!(
+            engine.receipts.track(OutstandingReceipt {
+                packet_hash: PacketHash::new([0x35; 32]),
+                command_id: CommandId(35),
+                kind: ReceiptKind::SendRequest {
+                    link_id,
+                    response: crate::routing::delivery::receipts::RequestReceiptPolicy::ApplicationUnlimited,
+                },
+                peer_signing_key: signing,
+                sent_at: InstantMillis(2_100),
+                timeout_at: InstantMillis(9_000),
+            }),
+            None,
+        );
+
+        let mut settlements = std::vec::Vec::new();
+        let mut failures = std::vec::Vec::new();
+        engine.retire_link(
+            &link_id,
+            LinkClosedReason::LocallyClosed,
+            &mut |reaction| match reaction {
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    settlements.push((id, settlement));
+                }
+                EngineReaction::Journaled(Journaled::ResourceFailed { hash, cause, .. }) => {
+                    failures.push((hash, cause));
+                }
+                EngineReaction::Journaled(_) | EngineReaction::Directive(_) => {}
+            },
+        );
+
+        assert_eq!(
+            settlements,
+            [
+                (
+                    CommandId(7),
+                    Settlement::SendResource(Err(SendResourceFailure::LinkClosed)),
+                ),
+                (
+                    CommandId(31),
+                    Settlement::SendToChannel(Err(SendToChannelFailure::LinkClosed)),
+                ),
+                (
+                    CommandId(34),
+                    Settlement::SendToLink(Err(SendToLinkFailure::LinkClosed)),
+                ),
+                (
+                    CommandId(35),
+                    Settlement::SendRequest(Err(SendRequestFailure::LinkClosed)),
+                ),
+            ],
+        );
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].1, ResourceFailureCause::LinkVanished);
+        assert!(engine.links.is_empty());
+        assert!(engine.channels.is_empty());
+        assert!(engine.receipts.is_empty());
+        assert!(engine.incoming_resources.is_empty());
+        assert!(engine.outgoing_resources.is_empty());
+        assert!(engine.pending_resource_offers.is_empty());
     }
 }
 

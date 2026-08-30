@@ -9,7 +9,7 @@ use personal_rns::interfaces::InterfaceId;
 use personal_rns::routing::routes::{
     LinearHeapRouteTable, RoaringHeapRouteTable, RouteEntry, RouteEvidenceId, RouteTable,
 };
-use personal_rns::routing::{NextHop, RouteResponsiveness};
+use personal_rns::routing::{NextHop, RouteResponsiveness, RouteRetention};
 use personal_rns::wire::DestinationHash;
 
 fn destination(row: u32) -> DestinationHash {
@@ -32,6 +32,7 @@ fn route(receiving_interface: InterfaceId) -> RouteEntry {
         responsiveness: RouteResponsiveness::Responsive,
         receiving_interface,
         next_hop: NextHop::Direct,
+        retention: RouteRetention::Network,
     }
 }
 

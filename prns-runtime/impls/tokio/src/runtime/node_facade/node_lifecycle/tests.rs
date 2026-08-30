@@ -16,8 +16,8 @@ use crate::interfaces::{
 use crate::manifold::interface_seam::{Interface, InterfaceSeam};
 use crate::remote_control::{
     RemoteControlControllerIdentitySecret, RemoteControlInitialAccess,
-    RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
-    RemoteControlService, RemoteControlTargetIdentitySecret,
+    RemoteControlNodeIdentitySecrets, RemoteControlSelfAnnouncement, RemoteControlService,
+    RemoteControlTargetIdentitySecret,
 };
 use crate::routing::announce::AnnounceObservation;
 use crate::routing::links::resources::{ResourceMemoryLimits, ResourceStrategy};
@@ -260,7 +260,6 @@ fn controller_and_target_identities_coexist_without_a_transport_identity() {
     let controller_identity = expected_identities.controller().identity_hash();
     let remote_control = RemoteControlService::new(
         remote_control_secrets,
-        RemoteControlPublicAppData::try_from(b"".as_slice()).unwrap(),
         RemoteControlInitialAccess::Nobody,
         RemoteControlSelfAnnouncement::Unavailable,
     );
