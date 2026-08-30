@@ -16,7 +16,7 @@ use crate::routing::links::resources::assemble_incoming::{
 use crate::routing::links::resources::assembly::AssemblyProgress;
 use crate::routing::links::resources::control::{write_proof_plaintext, PROOF_PLAINTEXT_LEN};
 use crate::routing::links::resources::streamed_open::{
-    OpenProgress, OpenedStream, ResourceOpenLane,
+    ExternalOpenVerification, OpenProgress, OpenedStream, ResourceOpenLane,
 };
 use crate::routing::links::resources::table::{IncomingResourceState, IncomingResourceStatus};
 use crate::routing::links::resources::{
@@ -101,7 +101,9 @@ impl<S: StorageLayout> EngineState<S> {
                     OpenProgress::NotBegun | OpenProgress::Chewing { .. } => {
                         open_transfer(key, transfer)
                     }
-                    OpenProgress::ExternallyOpened { plaintext_byte_len } => Ok(&transfer
+                    OpenProgress::ExternallyOpened {
+                        plaintext_byte_len, ..
+                    } => Ok(&transfer
                         [crate::routing::links::resources::RESOURCE_NONCE_LEN..plaintext_byte_len]),
                 };
                 match stream {
@@ -146,19 +148,38 @@ impl<S: StorageLayout> EngineState<S> {
             let (transfer, streamed) = self
                 .incoming_resources
                 .transfer_and_streamed_open_mut(index);
-            let opened = match core::mem::take(streamed) {
-                OpenProgress::Parked(open) => open.conclude(transfer),
-                OpenProgress::NotBegun | OpenProgress::Chewing { .. } => {
-                    open_transfer(key, transfer).map(OpenedStream::rehashing)
+            let verified = match core::mem::take(streamed) {
+                OpenProgress::Parked(open) => {
+                    verify_prove_split(open.conclude(transfer), &state, hash, link_id, mtu)
                 }
-                OpenProgress::ExternallyOpened { plaintext_byte_len } => {
-                    Ok(OpenedStream::rehashing(
-                        &transfer[crate::routing::links::resources::RESOURCE_NONCE_LEN
-                            ..plaintext_byte_len],
-                    ))
+                OpenProgress::NotBegun | OpenProgress::Chewing { .. } => verify_prove_split(
+                    open_transfer(key, transfer).map(OpenedStream::rehashing),
+                    &state,
+                    hash,
+                    link_id,
+                    mtu,
+                ),
+                OpenProgress::ExternallyOpened {
+                    plaintext_byte_len,
+                    verification,
+                } => {
+                    let stream = &transfer
+                        [crate::routing::links::resources::RESOURCE_NONCE_LEN..plaintext_byte_len];
+                    match verification {
+                        ExternalOpenVerification::Rehash => verify_prove_split(
+                            Ok(OpenedStream::rehashing(stream)),
+                            &state,
+                            hash,
+                            link_id,
+                            mtu,
+                        ),
+                        ExternalOpenVerification::Verified(proof) => {
+                            prove_split(stream, proof, &state, hash, link_id, mtu)
+                        }
+                    }
                 }
             };
-            match verify_prove_split(opened, &state, hash, link_id, mtu) {
+            match verified {
                 Err(cause) => Err(cause),
                 Ok(verified) => {
                     emit_proof(verified.prove, fire_on, sink);
@@ -754,15 +775,26 @@ fn verify_prove_split<'t>(
     let Ok(proof) = opened.verify_and_prove(&state.salt_nonce, hash) else {
         return Err(ResourceFailureCause::TransferCorrupt);
     };
+    prove_split(opened.stream, proof, state, hash, link_id, mtu)
+}
+
+fn prove_split<'t>(
+    stream: &'t [u8],
+    proof: ResourceProof,
+    state: &IncomingResourceState,
+    hash: &ResourceHash,
+    link_id: &LinkId,
+    mtu: usize,
+) -> Result<VerifiedSegment<'t>, ResourceFailureCause> {
     let Some(prove) = proof_emission(link_id, hash, &proof, mtu) else {
         return Err(ResourceFailureCause::ProofUnsendable);
     };
-    let (metadata, data) = split_metadata_block(state, opened.stream)?;
+    let (metadata, data) = split_metadata_block(state, stream)?;
     Ok(VerifiedSegment {
         prove,
         metadata,
         data,
-        stream_byte_len: opened.stream.len() as u64,
+        stream_byte_len: stream.len() as u64,
     })
 }
 

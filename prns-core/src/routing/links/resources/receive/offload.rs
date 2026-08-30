@@ -6,7 +6,9 @@
 //! state, or concluding a transfer that finished arriving while the worker chewed.
 
 use crate::engine::{EngineReaction, EngineState, InstantMillis, WakeSchedules};
-use crate::routing::links::resources::streamed_open::{OpenProgress, StreamedOpen};
+use crate::routing::links::resources::streamed_open::{
+    ExternalOpenVerification, OpenProgress, StreamedOpen,
+};
 use crate::routing::links::resources::table::IncomingResourceStatus;
 use crate::routing::links::resources::ResourceHash;
 use crate::routing::links::LinkId;
@@ -36,6 +38,9 @@ pub struct ExternalOpenJobView<'a> {
     pub hash: ResourceHash,
     pub key: &'a crate::routing::links::LinkKey,
     pub sealed: &'a [u8],
+    pub compression: crate::routing::links::resources::ResourceCompression,
+    pub salt_nonce: crate::routing::links::resources::SaltNonce,
+    pub total_segments: u64,
 }
 
 impl ExternalOpenJobView<'_> {
@@ -70,6 +75,9 @@ impl<S: StorageLayout> EngineState<S> {
                 hash: *self.incoming_resources.hash_at(index),
                 key,
                 sealed: self.incoming_resources.sealed_transfer(index),
+                compression: state.compression,
+                salt_nonce: state.salt_nonce,
+                total_segments: state.total_segments,
             })
         })
     }
@@ -122,6 +130,55 @@ impl<S: StorageLayout> EngineState<S> {
             transfer[..plaintext.len()].copy_from_slice(plaintext);
             *slot = OpenProgress::ExternallyOpened {
                 plaintext_byte_len: plaintext.len(),
+                verification: ExternalOpenVerification::Rehash,
+            };
+        }
+        self.conclude_resource(link_id, hash, now, sink);
+    }
+
+    pub fn apply_external_open_verified(
+        &mut self,
+        link_id: &LinkId,
+        hash: &ResourceHash,
+        plaintext: &[u8],
+        calculated_hash: ResourceHash,
+        proof: crate::routing::links::resources::ResourceProof,
+        now: InstantMillis,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        let Some(index) = self.external_opening_index(link_id, hash) else {
+            return;
+        };
+        let state = *self.incoming_resources.state(index);
+        if state.compression != crate::routing::links::resources::ResourceCompression::Uncompressed
+            || plaintext.len() < crate::routing::links::resources::RESOURCE_NONCE_LEN
+            || plaintext.len() > state.sealed_transfer_bytes
+        {
+            self.fail_incoming_resource(
+                link_id,
+                hash,
+                crate::routing::links::resources::ResourceFailureCause::TransferUnopenable,
+                sink,
+            );
+            return;
+        }
+        if calculated_hash != *hash {
+            self.fail_incoming_resource(
+                link_id,
+                hash,
+                crate::routing::links::resources::ResourceFailureCause::TransferCorrupt,
+                sink,
+            );
+            return;
+        }
+        {
+            let (transfer, slot) = self
+                .incoming_resources
+                .transfer_and_streamed_open_mut(index);
+            transfer[..plaintext.len()].copy_from_slice(plaintext);
+            *slot = OpenProgress::ExternallyOpened {
+                plaintext_byte_len: plaintext.len(),
+                verification: ExternalOpenVerification::Verified(proof),
             };
         }
         self.conclude_resource(link_id, hash, now, sink);
@@ -405,6 +462,85 @@ mod tests {
             settled.settlements[0],
             (CommandId(7), Settlement::SendResource(Ok(()))),
         ));
+    }
+
+    #[test]
+    fn an_externally_verified_open_delivers_with_the_supplied_proof() {
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        let data = four_part_payload();
+        let (link_id, hash) = park_external_transfer(&mut sender, &mut receiver, &data);
+        let view = receiver.external_open_job_view().unwrap();
+        let salt_nonce = view.salt_nonce;
+        let mut sealed = view.sealed.to_vec();
+        let plaintext = link_key().open_in_place(&mut sealed).unwrap().to_vec();
+        let proof = crate::routing::links::resources::assemble_incoming::verify_and_prove(
+            &plaintext[crate::routing::links::resources::RESOURCE_NONCE_LEN..],
+            &salt_nonce,
+            &hash,
+        )
+        .unwrap();
+        receiver.mark_external_opening(&link_id, &hash);
+
+        let mut frames = std::vec::Vec::new();
+        let mut received = std::vec::Vec::new();
+        receiver.apply_external_open_verified(
+            &link_id,
+            &hash,
+            &plaintext,
+            hash,
+            proof,
+            InstantMillis(2_500),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                    if let Some(frame) = filled_frame(fill) {
+                        frames.push(frame);
+                    }
+                }
+                EngineReaction::Journaled(Journaled::ResourceReceived { data, .. }) => {
+                    received.push(data.to_vec());
+                }
+                _ => {}
+            },
+        );
+
+        assert_eq!(received, [data]);
+        assert_eq!(frames.len(), 1);
+        let settled = feed(&mut sender, &frames[0], 3_000);
+        assert!(matches!(
+            settled.settlements[0],
+            (CommandId(7), Settlement::SendResource(Ok(()))),
+        ));
+    }
+
+    #[test]
+    fn an_externally_verified_open_refuses_a_mismatched_calculated_hash() {
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        let data = four_part_payload();
+        let (link_id, hash) = park_external_transfer(&mut sender, &mut receiver, &data);
+        let mut sealed = receiver.external_open_job_view().unwrap().sealed.to_vec();
+        let plaintext = link_key().open_in_place(&mut sealed).unwrap().to_vec();
+        receiver.mark_external_opening(&link_id, &hash);
+
+        let mut failed = std::vec::Vec::new();
+        receiver.apply_external_open_verified(
+            &link_id,
+            &hash,
+            &plaintext,
+            ResourceHash::new([0xA7; 32]),
+            crate::routing::links::resources::ResourceProof::new([0xB8; 32]),
+            InstantMillis(2_500),
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::ResourceFailed { cause, .. }) = reaction
+                {
+                    failed.push(cause);
+                }
+            },
+        );
+
+        assert_eq!(failed, [ResourceFailureCause::TransferCorrupt]);
+        assert!(receiver.incoming_resources.is_empty());
     }
 
     #[test]

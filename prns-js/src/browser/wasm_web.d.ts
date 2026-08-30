@@ -31,6 +31,9 @@ export declare class PrnsRuntime implements PrnsRuntimeBinding {
   completeResourceSegmentSeal: NonNullable<
     PrnsRuntimeBinding["completeResourceSegmentSeal"]
   >;
+  completeResourceSegmentSealDigests: NonNullable<
+    PrnsRuntimeBinding["completeResourceSegmentSealDigests"]
+  >;
   retryResourceSegmentSeal: NonNullable<
     PrnsRuntimeBinding["retryResourceSegmentSeal"]
   >;
@@ -42,6 +45,9 @@ export declare class PrnsRuntime implements PrnsRuntimeBinding {
   >;
   completeResourceOpen: NonNullable<
     PrnsRuntimeBinding["completeResourceOpen"]
+  >;
+  completeResourceOpenDigests: NonNullable<
+    PrnsRuntimeBinding["completeResourceOpenDigests"]
   >;
   rejectResourceOpen: NonNullable<
     PrnsRuntimeBinding["rejectResourceOpen"]

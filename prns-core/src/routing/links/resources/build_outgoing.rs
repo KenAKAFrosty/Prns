@@ -265,7 +265,7 @@ pub enum HashmapWriteOutcome {
     DidNotCollide,
 }
 
-fn write_hashmap_without_collision(
+pub(crate) fn write_hashmap_without_collision(
     sealed: &[u8],
     sdu: usize,
     salt_nonce: &SaltNonce,

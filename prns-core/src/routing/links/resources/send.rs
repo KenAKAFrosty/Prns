@@ -22,8 +22,9 @@ use crate::routing::links::resources::advertisement::{
 use crate::routing::links::resources::assembly::StaticResponseContinuation;
 use crate::routing::links::resources::build_outgoing::{
     build_outgoing_resource_enveloped, finish_staged_resource, outgoing_resource_buffer_shape,
-    seal_staged_resource, winning_candidate, BuildOutgoingResourceError, SealedStagedResource,
-    SALT_REROLL_CAP, STAGED_STREAM_OFFSET,
+    seal_staged_resource, winning_candidate, write_hashmap_without_collision,
+    BuildOutgoingResourceError, HashmapWriteOutcome, SealedStagedResource, SALT_REROLL_CAP,
+    STAGED_STREAM_OFFSET,
 };
 use crate::routing::links::resources::control::{
     parse_cancel_plaintext, parse_part_request_plaintext, parse_proof_plaintext,
@@ -65,9 +66,18 @@ pub struct OffloadedStagedSeal<'a> {
 pub struct StagedSealJobView<'a> {
     pub key: &'a crate::routing::links::LinkKey,
     pub sdu: usize,
+    pub total_segments: u64,
     pub nonce_prefixed_bytes: usize,
     /// The worker's whole input: the reserved IV span, the stream nonce, and the parked raw stream.
     pub plaintext: &'a [u8],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExternalStagedDigestOutcome {
+    Applied,
+    Collision,
+    Stale,
+    Invalid,
 }
 
 impl StagedSealJobView<'_> {
@@ -1045,6 +1055,7 @@ impl<S: StorageLayout> EngineState<S> {
         Some(StagedSealJobView {
             key: link.key,
             sdu: state.sdu,
+            total_segments: state.total_segments,
             nonce_prefixed_bytes: state.staged_plaintext_bytes,
             plaintext: self.outgoing_resources.staged_plaintext(index),
         })
@@ -1120,6 +1131,68 @@ impl<S: StorageLayout> EngineState<S> {
             Ok(sealed) => self.record_staged_seal(index, &sealed),
             Err(error) => self.fail_staged_seal(index, &link_id, error, sink),
         }
+    }
+
+    pub fn apply_external_staged_seal_digests(
+        &mut self,
+        link_id: LinkId,
+        stream_nonce: [u8; RESOURCE_NONCE_LEN],
+        nonce_prefixed_bytes: usize,
+        sealed_bytes: &[u8],
+        salt_nonce: crate::routing::links::resources::SaltNonce,
+        hash: ResourceHash,
+        expected_proof: crate::routing::links::resources::ResourceProof,
+    ) -> ExternalStagedDigestOutcome {
+        let matching = (0..self.outgoing_resources.len()).find(|&index| {
+            let state = self.outgoing_resources.state(index);
+            self.outgoing_resources.link_at(index) == &link_id
+                && state.status == OutgoingResourceStatus::StagedSealing
+                && state.staged_plaintext_bytes == nonce_prefixed_bytes
+                && self.outgoing_resources.staged_plaintext(index)[16..16 + RESOURCE_NONCE_LEN]
+                    == stream_nonce
+        });
+        let Some(index) = matching else {
+            return ExternalStagedDigestOutcome::Stale;
+        };
+        let sdu = self.outgoing_resources.state(index).sdu;
+        let Some(stream_bytes) = nonce_prefixed_bytes.checked_sub(RESOURCE_NONCE_LEN) else {
+            return ExternalStagedDigestOutcome::Invalid;
+        };
+        if sdu == 0
+            || sealed_bytes.len()
+                != crate::routing::links::resources::sealed_transfer_bytes(stream_bytes)
+        {
+            return ExternalStagedDigestOutcome::Invalid;
+        }
+        let part_count = sealed_bytes.len().div_ceil(sdu);
+        let names_len = part_count.saturating_mul(MAP_HASH_LEN);
+        let regions = self.outgoing_resources.seal_regions_mut(index);
+        if regions.transfer.len() < sealed_bytes.len() || regions.hashmap.len() < names_len {
+            return ExternalStagedDigestOutcome::Invalid;
+        }
+        if matches!(
+            write_hashmap_without_collision(
+                sealed_bytes,
+                sdu,
+                &salt_nonce,
+                &mut regions.hashmap[..names_len],
+            ),
+            HashmapWriteOutcome::Collided,
+        ) {
+            return ExternalStagedDigestOutcome::Collision;
+        }
+        regions.transfer[..sealed_bytes.len()].copy_from_slice(sealed_bytes);
+        self.record_staged_seal(
+            index,
+            &SealedStagedResource {
+                sealed_transfer_bytes: sealed_bytes.len(),
+                part_count,
+                hash,
+                salt_nonce,
+                expected_proof,
+            },
+        );
+        ExternalStagedDigestOutcome::Applied
     }
 
     /// A pool worker's seal verdict lands on the row only if it still matches the job's stream nonce and length; a row that died or was replaced meanwhile drops the verdict silently.

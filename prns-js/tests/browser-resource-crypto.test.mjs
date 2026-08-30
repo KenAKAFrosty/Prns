@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
 import {
+  WebCryptoResourceDigester,
   WebCryptoResourceOpener,
   WebCryptoResourceSealer,
   parseResourceOpenJob,
   parseResourceSealBegin,
+  resourceDigestExecution,
 } from "../dist/browser/resource_crypto.js";
 
 function sealJob() {
@@ -14,6 +17,7 @@ function sealJob() {
     linkId: Uint8Array.from({ length: 16 }, (_, index) => index),
     streamNonce: Uint8Array.of(1, 2, 3, 4),
     noncePrefixedBytes: 21,
+    totalSegments: 1,
     plaintext: Uint8Array.of(
       1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
     ),
@@ -56,6 +60,8 @@ test("Web Crypto resource tokens open exactly and refuse authentication failures
     signingKey: job.signingKey,
     encryptionKey: job.encryptionKey,
     sealed,
+    hashPlan: { tag: "OpenedStream", data: { salt: Uint8Array.of(9, 8, 7, 6) } },
+    totalSegments: 1,
   });
   assert.notEqual(openJob, undefined);
   assert.deepEqual(
@@ -69,4 +75,36 @@ test("Web Crypto resource tokens open exactly and refuse authentication failures
     await new WebCryptoResourceOpener().open({ ...openJob, sealed: tampered }),
     { tag: "Refused", data: undefined },
   );
+});
+
+test("Web Crypto resource digests match independent SHA-256 hash and proof bytes", async () => {
+  const stream = Uint8Array.from({ length: 257 }, (_, index) => index);
+  const plaintext = new Uint8Array(stream.length + 4);
+  plaintext.set(Uint8Array.of(1, 2, 3, 4));
+  plaintext.set(stream, 4);
+  const salt = Uint8Array.of(9, 8, 7, 6);
+  const expectedHash = new Uint8Array(
+    createHash("sha256").update(stream).update(salt).digest(),
+  );
+  const expectedProof = new Uint8Array(
+    createHash("sha256").update(stream).update(expectedHash).digest(),
+  );
+  const digests = await new WebCryptoResourceDigester().digest(plaintext, salt);
+  assert.deepEqual(digests.hash, expectedHash);
+  assert.deepEqual(digests.proof, expectedProof);
+});
+
+test("resource digest execution keeps small isolated work local and offloads overlap", () => {
+  assert.deepEqual(resourceDigestExecution(512 * 1_024 + 4, 2), {
+    tag: "PortableWasm",
+    data: undefined,
+  });
+  assert.deepEqual(resourceDigestExecution(1_024 * 1_024 + 4, 1), {
+    tag: "WebCrypto",
+    data: undefined,
+  });
+  assert.deepEqual(resourceDigestExecution(512 * 1_024 + 4, 3), {
+    tag: "WebCrypto",
+    data: undefined,
+  });
 });

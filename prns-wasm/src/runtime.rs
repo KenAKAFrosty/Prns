@@ -758,6 +758,7 @@ impl PrnsRuntime {
         set_bytes(&job, "linkId", link_id.as_bytes());
         set_bytes(&job, "streamNonce", &stream_nonce);
         set_usize(&job, "noncePrefixedBytes", nonce_prefixed_bytes);
+        set_u64(&job, "totalSegments", view.total_segments);
         set_bytes(&job, "plaintext", plaintext);
         set_bytes(&job, "signingKey", &signing_key);
         set_bytes(&job, "encryptionKey", &encryption_key);
@@ -813,6 +814,70 @@ impl PrnsRuntime {
         Ok(())
     }
 
+    #[wasm_bindgen(js_name = completeResourceSegmentSealDigests)]
+    pub fn complete_resource_segment_seal_digests(
+        &mut self,
+        options: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let stream_nonce: [u8; 4] = required_bytes(&options, "streamNonce")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("streamNonce must be exactly 4 bytes"))?;
+        let nonce_prefixed_bytes = usize::try_from(required_u64(
+            &options,
+            "noncePrefixedBytes",
+        )?)
+        .map_err(|_| JsValue::from_str("noncePrefixedBytes is too large"))?;
+        let sealed = required_bytes(&options, "sealed")?;
+        let salt: [u8; 4] = required_bytes(&options, "salt")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("salt must be exactly 4 bytes"))?;
+        let hash: [u8; 32] = required_bytes(&options, "hash")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("hash must be exactly 32 bytes"))?;
+        let proof: [u8; 32] = required_bytes(&options, "proof")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("proof must be exactly 32 bytes"))?;
+        let now_ms = required_u64(&options, "nowMs")?;
+        let promotion_entropy: [u8; 16] = required_bytes(&options, "promotionEntropy")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("promotionEntropy must be exactly 16 bytes"))?;
+        let outcome = self.engine.apply_external_staged_seal_digests(
+            link_id,
+            stream_nonce,
+            nonce_prefixed_bytes,
+            &sealed,
+            personal_rns::routing::links::resources::SaltNonce::new(salt),
+            personal_rns::routing::links::resources::ResourceHash::new(hash),
+            personal_rns::routing::links::resources::ResourceProof::new(proof),
+        );
+        if outcome
+            == personal_rns::routing::links::resources::send::ExternalStagedDigestOutcome::Applied
+        {
+            let mut entropy = EntropyCursor::new(promotion_entropy.to_vec());
+            let mut reactions = Vec::new();
+            self.engine.promote_staged_resource(
+                &link_id,
+                InstantMillis(now_ms),
+                &mut |out| entropy.fill(out),
+                &mut |reaction| reactions.push(capture_reaction(reaction)),
+            );
+            self.apply_captured(reactions);
+        }
+        let result = Object::new();
+        set_str(
+            &result,
+            "tag",
+            match outcome {
+                personal_rns::routing::links::resources::send::ExternalStagedDigestOutcome::Applied => "Applied",
+                personal_rns::routing::links::resources::send::ExternalStagedDigestOutcome::Collision => "Collision",
+                personal_rns::routing::links::resources::send::ExternalStagedDigestOutcome::Stale => "Stale",
+                personal_rns::routing::links::resources::send::ExternalStagedDigestOutcome::Invalid => "Invalid",
+            },
+        );
+        Ok(result.into())
+    }
+
     #[wasm_bindgen(js_name = retryResourceSegmentSeal)]
     pub fn retry_resource_segment_seal(&mut self, options: JsValue) -> Result<(), JsValue> {
         let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
@@ -850,6 +915,9 @@ impl PrnsRuntime {
         let signing_key = *view.signing_key_material();
         let encryption_key = *view.encryption_key_material();
         let sealed = view.sealed.to_vec();
+        let compression = view.compression;
+        let salt_nonce = view.salt_nonce;
+        let total_segments = view.total_segments;
         self.engine.mark_external_opening(&link_id, &hash);
         let job = Object::new();
         set_bytes(&job, "linkId", link_id.as_bytes());
@@ -857,6 +925,20 @@ impl PrnsRuntime {
         set_bytes(&job, "signingKey", &signing_key);
         set_bytes(&job, "encryptionKey", &encryption_key);
         set_bytes(&job, "sealed", &sealed);
+        set_u64(&job, "totalSegments", total_segments);
+        let hash_plan = Object::new();
+        match compression {
+            personal_rns::routing::links::resources::ResourceCompression::Uncompressed => {
+                let data = Object::new();
+                set_str(&hash_plan, "tag", "OpenedStream");
+                set_bytes(&data, "salt", salt_nonce.as_bytes());
+                set_value(&hash_plan, "data", data.into());
+            }
+            personal_rns::routing::links::resources::ResourceCompression::Bz2 => {
+                set_str(&hash_plan, "tag", "AfterDecompression");
+            }
+        }
+        set_value(&job, "hashPlan", hash_plan.into());
         job.into()
     }
 
@@ -873,6 +955,34 @@ impl PrnsRuntime {
             &link_id,
             &personal_rns::routing::links::resources::ResourceHash::new(hash),
             &plaintext,
+            InstantMillis(now_ms),
+            &mut |reaction| reactions.push(capture_reaction(reaction)),
+        );
+        self.apply_captured(reactions);
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = completeResourceOpenDigests)]
+    pub fn complete_resource_open_digests(&mut self, options: JsValue) -> Result<(), JsValue> {
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let hash: [u8; 32] = required_bytes(&options, "hash")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("hash must be exactly 32 bytes"))?;
+        let calculated_hash: [u8; 32] = required_bytes(&options, "calculatedHash")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("calculatedHash must be exactly 32 bytes"))?;
+        let proof: [u8; 32] = required_bytes(&options, "proof")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("proof must be exactly 32 bytes"))?;
+        let plaintext = required_bytes(&options, "plaintext")?;
+        let now_ms = required_u64(&options, "nowMs")?;
+        let mut reactions = Vec::new();
+        self.engine.apply_external_open_verified(
+            &link_id,
+            &personal_rns::routing::links::resources::ResourceHash::new(hash),
+            &plaintext,
+            personal_rns::routing::links::resources::ResourceHash::new(calculated_hash),
+            personal_rns::routing::links::resources::ResourceProof::new(proof),
             InstantMillis(now_ms),
             &mut |reaction| reactions.push(capture_reaction(reaction)),
         );

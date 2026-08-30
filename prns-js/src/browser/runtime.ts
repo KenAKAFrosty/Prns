@@ -39,8 +39,10 @@ import type {
 } from "./values.js";
 import type { WebSocketRuntimeRegistration } from "./websocket/index.js";
 import {
+  WebCryptoResourceDigester,
   WebCryptoResourceOpener,
   parseResourceOpenJob,
+  resourceDigestExecution,
 } from "./resource_crypto.js";
 import type {
   ResourceCryptoExecution,
@@ -109,6 +111,8 @@ export class RuntimeHost {
   readonly #bleIdentityAvailability: BleIdentityAvailability;
   readonly #onRuntimeActivity: () => void;
   readonly #resourceOpener = new WebCryptoResourceOpener();
+  readonly #resourceDigester = new WebCryptoResourceDigester();
+  readonly #resourceCrypto: ResourceCryptoExecution;
   #activeInterfaces = new Map<
     InterfaceKey,
     {
@@ -140,9 +144,10 @@ export class RuntimeHost {
     this.#entropy = entropy;
     this.#now = now;
     this.#bleIdentityAvailability = bleIdentityAvailability;
+    this.#resourceCrypto = resourceCrypto;
     this.#onRuntimeActivity = onRuntimeActivity;
     if (
-      resourceCrypto.tag === "WebCrypto" &&
+      resourceCrypto.tag !== "PortableWasm" &&
       this.#runtime.enableResourceWebCrypto !== undefined
     ) {
       this.#runtime.enableResourceWebCrypto();
@@ -309,13 +314,35 @@ export class RuntimeHost {
   async #settleResourceOpen(job: ResourceOpenJob): Promise<void> {
     try {
       const outcome = await this.#resourceOpener.open(job);
-      match(outcome, {
-        Opened: (plaintext) => this.#runtime.completeResourceOpen!({
-          linkId: linkId(job.linkId),
-          hash: job.hash,
-          plaintext,
-          nowMs: this.#now(),
-        }),
+      await match(outcome, {
+        Opened: async (plaintext) => {
+          if (
+            this.#resourceCrypto.tag === "WebCrypto" &&
+            this.#runtime.completeResourceOpenDigests !== undefined &&
+            job.hashPlan.tag === "OpenedStream" &&
+            resourceDigestExecution(plaintext.length, job.totalSegments).tag === "WebCrypto"
+          ) {
+            const digests = await this.#resourceDigester.digest(
+              plaintext,
+              job.hashPlan.data.salt,
+            );
+            this.#runtime.completeResourceOpenDigests({
+              linkId: linkId(job.linkId),
+              hash: job.hash,
+              calculatedHash: digests.hash,
+              proof: digests.proof,
+              plaintext,
+              nowMs: this.#now(),
+            });
+            return;
+          }
+          this.#runtime.completeResourceOpen!({
+            linkId: linkId(job.linkId),
+            hash: job.hash,
+            plaintext,
+            nowMs: this.#now(),
+          });
+        },
         Refused: () => this.#runtime.rejectResourceOpen!({
           linkId: linkId(job.linkId),
           hash: job.hash,

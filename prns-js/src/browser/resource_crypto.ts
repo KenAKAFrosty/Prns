@@ -9,6 +9,7 @@ export type ResourceSealJob = {
   readonly linkId: OwnedBytes;
   readonly streamNonce: OwnedBytes;
   readonly noncePrefixedBytes: number;
+  readonly totalSegments: number;
   readonly plaintext: OwnedBytes;
   readonly signingKey: OwnedBytes;
   readonly encryptionKey: OwnedBytes;
@@ -27,7 +28,26 @@ export type ResourceOpenJob = {
   readonly signingKey: OwnedBytes;
   readonly encryptionKey: OwnedBytes;
   readonly sealed: OwnedBytes;
+  readonly hashPlan: ResourceOpenHashPlan;
+  readonly totalSegments: number;
 };
+
+export type ResourceOpenHashPlan =
+  | Tag<"OpenedStream", { readonly salt: OwnedBytes }>
+  | Tag<"AfterDecompression">;
+
+export type ResourceDigests = {
+  readonly hash: OwnedBytes;
+  readonly proof: OwnedBytes;
+};
+
+export type ResourceDigestLanding =
+  | Tag<"Applied">
+  | Tag<"Collision">
+  | Tag<"Stale">
+  | Tag<"Invalid">;
+
+export type ResourceDigestExecution = Tag<"PortableWasm"> | Tag<"WebCrypto">;
 
 export type ResourceOpenOutcome =
   | Tag<"Opened", OwnedBytes>
@@ -39,6 +59,43 @@ type ImportedResourceKeys = {
 };
 
 const RESOURCE_KEY_CACHE_CAPACITY = 64;
+const RESOURCE_NONCE_BYTES = 4;
+const WEB_CRYPTO_RESOURCE_DIGEST_MIN_BYTES = 768 * 1_024;
+
+export function resourceDigestExecution(
+  noncePrefixedByteLength: number,
+  totalSegments: number,
+): ResourceDigestExecution {
+  const streamByteLength = noncePrefixedByteLength - RESOURCE_NONCE_BYTES;
+  return streamByteLength >= WEB_CRYPTO_RESOURCE_DIGEST_MIN_BYTES || totalSegments >= 3
+    ? Tag("WebCrypto")
+    : Tag("PortableWasm");
+}
+
+export class WebCryptoResourceDigester {
+  async digest(
+    noncePrefixedPlaintext: Uint8Array,
+    salt: Uint8Array,
+  ): Promise<ResourceDigests> {
+    if (salt.length !== RESOURCE_NONCE_BYTES) {
+      throw new TypeError("resource digest salt must be exactly 4 bytes");
+    }
+    if (noncePrefixedPlaintext.length < RESOURCE_NONCE_BYTES) {
+      throw new TypeError("resource digest plaintext must include its 4-byte nonce");
+    }
+    const stream = noncePrefixedPlaintext.subarray(RESOURCE_NONCE_BYTES);
+    const input = new Uint8Array(stream.length + 32);
+    input.set(stream);
+    input.set(salt, stream.length);
+    const hash = new Uint8Array(await crypto.subtle.digest(
+      "SHA-256",
+      input.subarray(0, stream.length + salt.length),
+    )) as OwnedBytes;
+    input.set(hash, stream.length);
+    const proof = new Uint8Array(await crypto.subtle.digest("SHA-256", input)) as OwnedBytes;
+    return { hash, proof };
+  }
+}
 
 export class WebCryptoResourceSealer {
   readonly #keys = new Map<string, Promise<ImportedResourceKeys>>();
@@ -157,6 +214,7 @@ export function parseResourceSealBegin(raw: unknown): ResourceSealBegin {
     linkId: bytesField(data, "linkId", 16),
     streamNonce: bytesField(data, "streamNonce", 4),
     noncePrefixedBytes: positiveIntegerField(data, "noncePrefixedBytes"),
+    totalSegments: positiveIntegerField(data, "totalSegments"),
     plaintext: bytesField(data, "plaintext"),
     signingKey: bytesField(data, "signingKey", 32),
     encryptionKey: bytesField(data, "encryptionKey", 32),
@@ -178,13 +236,35 @@ export function parseResourceOpenJob(raw: unknown): ResourceOpenJob | undefined 
     return undefined;
   }
   const job = record(raw, "resource open job");
+  const hashPlan = record(job.hashPlan, "resource open hash plan");
+  const hashPlanTag = stringField(hashPlan, "tag");
+  const parsedHashPlan = hashPlanTag === "OpenedStream"
+    ? Tag("OpenedStream", {
+      salt: bytesField(record(hashPlan.data, "resource open hash plan data"), "salt", 4),
+    })
+    : hashPlanTag === "AfterDecompression"
+    ? Tag("AfterDecompression")
+    : undefined;
+  if (parsedHashPlan === undefined) {
+    throw new TypeError(`unknown resource open hash plan tag ${hashPlanTag}`);
+  }
   return {
     linkId: bytesField(job, "linkId", 16),
     hash: bytesField(job, "hash", 32),
     signingKey: bytesField(job, "signingKey", 32),
     encryptionKey: bytesField(job, "encryptionKey", 32),
     sealed: bytesField(job, "sealed"),
+    hashPlan: parsedHashPlan,
+    totalSegments: positiveIntegerField(job, "totalSegments"),
   };
+}
+
+export function parseResourceDigestLanding(raw: unknown): ResourceDigestLanding {
+  const tag = stringField(record(raw, "resource digest landing"), "tag");
+  if (tag === "Applied" || tag === "Collision" || tag === "Stale" || tag === "Invalid") {
+    return Tag(tag);
+  }
+  throw new TypeError(`unknown resource digest landing tag ${tag}`);
 }
 
 function record(value: unknown, name: string): Record<string, unknown> {

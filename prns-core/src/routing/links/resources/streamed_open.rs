@@ -108,7 +108,14 @@ pub enum OpenProgress {
     },
     ExternallyOpened {
         plaintext_byte_len: usize,
+        verification: ExternalOpenVerification,
     },
+}
+
+#[derive(Debug)]
+pub enum ExternalOpenVerification {
+    Rehash,
+    Verified(ResourceProof),
 }
 
 /// Who runs the chew — the runtime declares its capability once at construction.

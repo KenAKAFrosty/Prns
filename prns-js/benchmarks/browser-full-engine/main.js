@@ -247,7 +247,7 @@ async function prepareTarget(webSocketUrl, lane) {
   const created = await Prns.create({
     execution: "DedicatedWorker",
     networkExecution: "EngineWorker",
-    resourceCrypto: lane === "WebCrypto" ? Tag("WebCrypto") : Tag("PortableWasm"),
+    resourceCrypto: Tag(lane),
     wasmModuleUrl: new URL("/prns-js/wasm/prns_wasm.js", location.href),
   });
   requireTag(created, "Ready", "target startup");

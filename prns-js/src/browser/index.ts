@@ -146,8 +146,11 @@ import {
 } from "./resource_send.js";
 import { browserResourceCompressor } from "./resource_compressor.js";
 import {
+  WebCryptoResourceDigester,
   WebCryptoResourceSealer,
+  parseResourceDigestLanding,
   parseResourceSealBegin,
+  resourceDigestExecution,
 } from "./resource_crypto.js";
 import type { ResourceCryptoExecution, ResourceSealJob } from "./resource_crypto.js";
 export type { ResourceCryptoExecution } from "./resource_crypto.js";
@@ -584,6 +587,7 @@ export class Prns {
   #limits: HostLimits;
   #resourceCompressionModuleUrl: string;
   #resourceCrypto: ResourceCryptoExecution;
+  #resourceDigester = new WebCryptoResourceDigester();
   #resourceSealer = new WebCryptoResourceSealer();
   #resourceSealTurns = new Map<string, Promise<void>>();
   #events: BoundedAsyncLane<PrnsApplicationEvent>;
@@ -1612,7 +1616,7 @@ export class Prns {
     input: RuntimeResourceSegmentIssueInput,
   ): Promise<CommandSettlement> {
     if (
-      this.#resourceCrypto.tag === "WebCrypto" &&
+      this.#resourceCrypto.tag !== "PortableWasm" &&
       this.#runtime.sendResourceSegmentWebCrypto !== undefined &&
       this.#runtime.completeResourceSegmentSeal !== undefined &&
       this.#runtime.retryResourceSegmentSeal !== undefined
@@ -1676,15 +1680,56 @@ export class Prns {
       if (begun.tag === "Seal") {
         try {
           const sealed = await this.#resourceSealer.seal(begun.data);
-          this.#runtime.completeResourceSegmentSeal!({
-            linkId: linkId(begun.data.linkId),
-            streamNonce: begun.data.streamNonce,
-            noncePrefixedBytes: begun.data.noncePrefixedBytes,
-            sealed,
-            salts: begun.data.salts,
-            promotionEntropy: begun.data.promotionEntropy,
-            nowMs: this.#now(),
-          });
+          if (
+            this.#resourceCrypto.tag === "WebCrypto" &&
+            this.#runtime.completeResourceSegmentSealDigests !== undefined &&
+            resourceDigestExecution(
+              begun.data.plaintext.length,
+              begun.data.totalSegments,
+            ).tag === "WebCrypto"
+          ) {
+            let landed = false;
+            for (let offset = 0; offset < begun.data.salts.length; offset += 4) {
+              const salt = begun.data.salts.subarray(offset, offset + 4);
+              const digests = await this.#resourceDigester.digest(
+                begun.data.plaintext,
+                salt,
+              );
+              const landing = parseResourceDigestLanding(
+                this.#runtime.completeResourceSegmentSealDigests({
+                  linkId: linkId(begun.data.linkId),
+                  streamNonce: begun.data.streamNonce,
+                  noncePrefixedBytes: begun.data.noncePrefixedBytes,
+                  sealed,
+                  salt,
+                  hash: digests.hash,
+                  proof: digests.proof,
+                  promotionEntropy: begun.data.promotionEntropy,
+                  nowMs: this.#now(),
+                }),
+              );
+              if (landing.tag === "Applied" || landing.tag === "Stale") {
+                landed = true;
+                break;
+              }
+              if (landing.tag === "Invalid") {
+                throw new TypeError("resource digest landing was invalid");
+              }
+            }
+            if (!landed) {
+              throw new TypeError("resource digest salts exhausted");
+            }
+          } else {
+            this.#runtime.completeResourceSegmentSeal!({
+              linkId: linkId(begun.data.linkId),
+              streamNonce: begun.data.streamNonce,
+              noncePrefixedBytes: begun.data.noncePrefixedBytes,
+              sealed,
+              salts: begun.data.salts,
+              promotionEntropy: begun.data.promotionEntropy,
+              nowMs: this.#now(),
+            });
+          }
         } catch {
           this.#runtime.retryResourceSegmentSeal!({
             linkId: linkId(begun.data.linkId),

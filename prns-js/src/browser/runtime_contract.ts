@@ -164,6 +164,17 @@ export type PrnsRuntimeBinding = {
     readonly promotionEntropy: Uint8Array;
     readonly nowMs: InstantMillis;
   }): void;
+  completeResourceSegmentSealDigests?(options: {
+    readonly linkId: LinkId;
+    readonly streamNonce: Uint8Array;
+    readonly noncePrefixedBytes: number;
+    readonly sealed: Uint8Array;
+    readonly salt: Uint8Array;
+    readonly hash: Uint8Array;
+    readonly proof: Uint8Array;
+    readonly promotionEntropy: Uint8Array;
+    readonly nowMs: InstantMillis;
+  }): unknown;
   retryResourceSegmentSeal?(options: {
     readonly linkId: LinkId;
     readonly nowMs: InstantMillis;
@@ -174,6 +185,14 @@ export type PrnsRuntimeBinding = {
   completeResourceOpen?(options: {
     readonly linkId: LinkId;
     readonly hash: Uint8Array;
+    readonly plaintext: Uint8Array;
+    readonly nowMs: InstantMillis;
+  }): void;
+  completeResourceOpenDigests?(options: {
+    readonly linkId: LinkId;
+    readonly hash: Uint8Array;
+    readonly calculatedHash: Uint8Array;
+    readonly proof: Uint8Array;
     readonly plaintext: Uint8Array;
     readonly nowMs: InstantMillis;
   }): void;
