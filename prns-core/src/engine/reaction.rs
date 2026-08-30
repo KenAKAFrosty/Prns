@@ -139,6 +139,10 @@ pub enum Journaled<'a> {
         aborted: crate::remote_control::RemoteControlControllerPairingAborted,
     },
 
+    RemoteControlControllerPairingLinkClosed {
+        aborted: crate::remote_control::RemoteControlControllerPairingAborted,
+    },
+
     RemoteControlTargetPairingExpired {
         aborted: crate::remote_control::RemoteControlTargetPairingAborted,
     },

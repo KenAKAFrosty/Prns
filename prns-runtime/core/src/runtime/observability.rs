@@ -1,11 +1,15 @@
 use crate::engine::{
-    AllowRequesterFailure, AnnounceNowFailure, ApproveRemoteControlTargetPairingFailure,
+    AllowRequesterFailure, AnnounceNowFailure, ApproveRemoteControlControllerPairingFailure,
+    ApproveRemoteControlTargetPairingFailure, BeginRemoteControlControllerPairingFailure,
     CloseLinkFailure, CloseRemoteControlPairingFailure, EstablishLinkFailure, IdentifyFailure,
     Journaled, LinkClosedReason, OpenRemoteControlPairingFailure,
-    RejectRemoteControlTargetPairingFailure, RequestPathFailure, RespondFailure, RouteRemovalCause,
+    RejectRemoteControlControllerPairingFailure, RejectRemoteControlTargetPairingFailure,
+    RemoteControlControllerPairingRequestBuildError, RemoteControlPairingResponseDispatchFailure,
+    RemoteControlTargetPairingFinalization, RequestPathFailure, RespondFailure, RouteRemovalCause,
     SendGroupFailure, SendPlainPacketFailure, SendRequestFailure, SendResourceFailure,
     SendSinglePacketFailure, SendToChannelFailure, SendToLinkFailure,
-    SetRegisteredAnnounceAppDataFailure, SetResourceStrategyFailure, Settlement,
+    SetRegisteredAnnounceAppDataFailure, SetResourceStrategyFailure,
+    SettleRemoteControlTargetPairingAuthorizationFailure, Settlement,
 };
 use crate::identity::held::HoldIdentityError;
 use crate::routing::links::resources::table::ApplyHashmapUpdateError;
@@ -36,6 +40,10 @@ prns_macros::iterable_enum! {
         CloseRemoteControlPairing,
         ApproveRemoteControlTargetPairing,
         RejectRemoteControlTargetPairing,
+        SettleRemoteControlTargetPairingAuthorization,
+        BeginRemoteControlControllerPairing,
+        ApproveRemoteControlControllerPairing,
+        RejectRemoteControlControllerPairing,
     }
 }
 
@@ -279,6 +287,7 @@ impl ReliabilityMetricsSnapshot {
             | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
             | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
             | Journaled::RemoteControlControllerPairingExpired { .. }
+            | Journaled::RemoteControlControllerPairingLinkClosed { .. }
             | Journaled::RemoteControlTargetPairingExpired { .. }
             | Journaled::RemoteControlTargetPairingLinkClosed { .. }
             | Journaled::RemoteControlTargetPairingCompletionRetentionExpired { .. }
@@ -405,6 +414,33 @@ impl From<&Settlement> for SettledOperation {
             },
             Settlement::RejectRemoteControlTargetPairing(result) => Self {
                 operation: Operation::RejectRemoteControlTargetPairing,
+                outcome: result.runtime_outcome(),
+            },
+            Settlement::SettleRemoteControlTargetPairingAuthorization(result) => Self {
+                operation: Operation::SettleRemoteControlTargetPairingAuthorization,
+                outcome: match result {
+                    Ok(RemoteControlTargetPairingFinalization::CompletionDispatched { .. }) => {
+                        RuntimeOperationOutcome::Succeeded
+                    }
+                    Ok(RemoteControlTargetPairingFinalization::AuthorizationRollbackRequired {
+                        ..
+                    }) => RuntimeOperationOutcome::Timeout,
+                    Ok(RemoteControlTargetPairingFinalization::AuthorizationFailureRecorded {
+                        ..
+                    }) => RuntimeOperationOutcome::DependencyFailed,
+                    Err(failure) => RuntimeOperationOutcome::from(failure),
+                },
+            },
+            Settlement::BeginRemoteControlControllerPairing(result) => Self {
+                operation: Operation::BeginRemoteControlControllerPairing,
+                outcome: result.runtime_outcome(),
+            },
+            Settlement::ApproveRemoteControlControllerPairing(result) => Self {
+                operation: Operation::ApproveRemoteControlControllerPairing,
+                outcome: result.runtime_outcome(),
+            },
+            Settlement::RejectRemoteControlControllerPairing(result) => Self {
+                operation: Operation::RejectRemoteControlControllerPairing,
                 outcome: result.runtime_outcome(),
             },
         }
@@ -615,7 +651,10 @@ impl From<&CloseRemoteControlPairingFailure> for RuntimeOperationOutcome {
 impl From<&ApproveRemoteControlTargetPairingFailure> for RuntimeOperationOutcome {
     fn from(failure: &ApproveRemoteControlTargetPairingFailure) -> Self {
         match failure {
-            ApproveRemoteControlTargetPairingFailure::Expired { .. } => Self::Timeout,
+            ApproveRemoteControlTargetPairingFailure::Expired { .. }
+            | ApproveRemoteControlTargetPairingFailure::CompletionRetentionExpired { .. } => {
+                Self::Timeout
+            }
             ApproveRemoteControlTargetPairingFailure::NoActiveAttempt
             | ApproveRemoteControlTargetPairingFailure::AttemptMismatch { .. }
             | ApproveRemoteControlTargetPairingFailure::OfferPendingDispatch { .. }
@@ -630,12 +669,112 @@ impl From<&ApproveRemoteControlTargetPairingFailure> for RuntimeOperationOutcome
 impl From<&RejectRemoteControlTargetPairingFailure> for RuntimeOperationOutcome {
     fn from(failure: &RejectRemoteControlTargetPairingFailure) -> Self {
         match failure {
-            RejectRemoteControlTargetPairingFailure::Expired { .. } => Self::Timeout,
+            RejectRemoteControlTargetPairingFailure::Expired { .. }
+            | RejectRemoteControlTargetPairingFailure::CompletionRetentionExpired { .. } => {
+                Self::Timeout
+            }
             RejectRemoteControlTargetPairingFailure::NoActiveAttempt
             | RejectRemoteControlTargetPairingFailure::AttemptMismatch { .. }
             | RejectRemoteControlTargetPairingFailure::OfferPendingDispatch { .. }
             | RejectRemoteControlTargetPairingFailure::AlreadyApproved { .. }
             | RejectRemoteControlTargetPairingFailure::FinalizationInProgress { .. } => {
+                Self::Sequencing
+            }
+        }
+    }
+}
+
+impl From<&RemoteControlControllerPairingRequestBuildError> for RuntimeOperationOutcome {
+    fn from(failure: &RemoteControlControllerPairingRequestBuildError) -> Self {
+        match failure {
+            RemoteControlControllerPairingRequestBuildError::Encode(_)
+            | RemoteControlControllerPairingRequestBuildError::Pack(_) => Self::WriteFailed,
+            RemoteControlControllerPairingRequestBuildError::Capacity { .. } => Self::Backpressure,
+        }
+    }
+}
+
+impl From<&RemoteControlPairingResponseDispatchFailure> for RuntimeOperationOutcome {
+    fn from(failure: &RemoteControlPairingResponseDispatchFailure) -> Self {
+        match failure {
+            RemoteControlPairingResponseDispatchFailure::Encode(_)
+            | RemoteControlPairingResponseDispatchFailure::Pack(_)
+            | RemoteControlPairingResponseDispatchFailure::Write(_) => Self::WriteFailed,
+            RemoteControlPairingResponseDispatchFailure::Capacity { .. } => Self::Backpressure,
+            RemoteControlPairingResponseDispatchFailure::EgressUnavailable { .. } => {
+                Self::DependencyFailed
+            }
+        }
+    }
+}
+
+impl From<&SettleRemoteControlTargetPairingAuthorizationFailure> for RuntimeOperationOutcome {
+    fn from(failure: &SettleRemoteControlTargetPairingAuthorizationFailure) -> Self {
+        match failure {
+            SettleRemoteControlTargetPairingAuthorizationFailure::NoAuthorizationOwed {
+                ..
+            }
+            | SettleRemoteControlTargetPairingAuthorizationFailure::AttemptMismatch { .. } => {
+                Self::Sequencing
+            }
+            SettleRemoteControlTargetPairingAuthorizationFailure::TargetSignerUnavailable {
+                ..
+            }
+            | SettleRemoteControlTargetPairingAuthorizationFailure::CompletionSigningFailed {
+                ..
+            } => Self::DependencyFailed,
+            SettleRemoteControlTargetPairingAuthorizationFailure::CompletionRetentionExpired {
+                ..
+            } => Self::Timeout,
+            SettleRemoteControlTargetPairingAuthorizationFailure::CompletionDispatchFailed {
+                failure,
+                ..
+            } => Self::from(failure),
+        }
+    }
+}
+
+impl From<&BeginRemoteControlControllerPairingFailure> for RuntimeOperationOutcome {
+    fn from(failure: &BeginRemoteControlControllerPairingFailure) -> Self {
+        match failure {
+            BeginRemoteControlControllerPairingFailure::ControllerIdentityUnavailable => {
+                Self::DependencyFailed
+            }
+            BeginRemoteControlControllerPairingFailure::Busy { .. } => Self::Sequencing,
+            BeginRemoteControlControllerPairingFailure::PairingUnavailable { .. } => Self::Timeout,
+            BeginRemoteControlControllerPairingFailure::RequestBuild { failure, .. } => {
+                Self::from(failure)
+            }
+        }
+    }
+}
+
+impl From<&ApproveRemoteControlControllerPairingFailure> for RuntimeOperationOutcome {
+    fn from(failure: &ApproveRemoteControlControllerPairingFailure) -> Self {
+        match failure {
+            ApproveRemoteControlControllerPairingFailure::Expired { .. } => Self::Timeout,
+            ApproveRemoteControlControllerPairingFailure::NoActiveAttempt
+            | ApproveRemoteControlControllerPairingFailure::OfferNotReceived
+            | ApproveRemoteControlControllerPairingFailure::AttemptMismatch { .. }
+            | ApproveRemoteControlControllerPairingFailure::PersistenceInProgress { .. } => {
+                Self::Sequencing
+            }
+            ApproveRemoteControlControllerPairingFailure::RequestBuild { failure, .. } => {
+                Self::from(failure)
+            }
+        }
+    }
+}
+
+impl From<&RejectRemoteControlControllerPairingFailure> for RuntimeOperationOutcome {
+    fn from(failure: &RejectRemoteControlControllerPairingFailure) -> Self {
+        match failure {
+            RejectRemoteControlControllerPairingFailure::Expired { .. } => Self::Timeout,
+            RejectRemoteControlControllerPairingFailure::NoActiveAttempt
+            | RejectRemoteControlControllerPairingFailure::OfferNotReceived
+            | RejectRemoteControlControllerPairingFailure::AttemptMismatch { .. }
+            | RejectRemoteControlControllerPairingFailure::AlreadyApproved { .. }
+            | RejectRemoteControlControllerPairingFailure::PersistenceInProgress { .. } => {
                 Self::Sequencing
             }
         }
@@ -755,6 +894,24 @@ mod tests {
                 RejectRemoteControlTargetPairingFailure::NoActiveAttempt,
             )),
         });
+        snapshot.record_journaled(&Journaled::CommandSettled {
+            id: CommandId(7),
+            settlement: Settlement::BeginRemoteControlControllerPairing(Err(
+                BeginRemoteControlControllerPairingFailure::ControllerIdentityUnavailable,
+            )),
+        });
+        snapshot.record_journaled(&Journaled::CommandSettled {
+            id: CommandId(8),
+            settlement: Settlement::ApproveRemoteControlControllerPairing(Err(
+                ApproveRemoteControlControllerPairingFailure::NoActiveAttempt,
+            )),
+        });
+        snapshot.record_journaled(&Journaled::CommandSettled {
+            id: CommandId(9),
+            settlement: Settlement::RejectRemoteControlControllerPairing(Err(
+                RejectRemoteControlControllerPairingFailure::NoActiveAttempt,
+            )),
+        });
 
         assert_eq!(
             snapshot.operations.get(
@@ -780,6 +937,27 @@ mod tests {
         assert_eq!(
             snapshot.operations.get(
                 RuntimeOperation::RejectRemoteControlTargetPairing,
+                RuntimeOperationOutcome::Sequencing,
+            ),
+            1,
+        );
+        assert_eq!(
+            snapshot.operations.get(
+                RuntimeOperation::BeginRemoteControlControllerPairing,
+                RuntimeOperationOutcome::DependencyFailed,
+            ),
+            1,
+        );
+        assert_eq!(
+            snapshot.operations.get(
+                RuntimeOperation::ApproveRemoteControlControllerPairing,
+                RuntimeOperationOutcome::Sequencing,
+            ),
+            1,
+        );
+        assert_eq!(
+            snapshot.operations.get(
+                RuntimeOperation::RejectRemoteControlControllerPairing,
                 RuntimeOperationOutcome::Sequencing,
             ),
             1,

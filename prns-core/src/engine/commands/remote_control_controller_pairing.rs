@@ -879,4 +879,53 @@ mod tests {
         );
         assert_eq!(engine.held_identity_hashes(), &expected_hashes);
     }
+
+    #[test]
+    fn retiring_the_exchange_link_aborts_and_journals_controller_pairing() {
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        let controller = configure_controller(&mut engine);
+        let BeginRemoteControlControllerPairingOutcome::BeginOwed { .. } =
+            engine.remote_control_controller_pairing.begin(
+                controller,
+                context(),
+                invitation_code(),
+                STARTED_AT,
+                PAIRING_EXPIRES_AT,
+            )
+        else {
+            panic!("fresh controller pairing")
+        };
+        let mut pairing_closed = None;
+        let mut link_closed = None;
+
+        engine.retire_link(
+            &context().link_id(),
+            crate::engine::LinkClosedReason::PeerClosed,
+            &mut |reaction| match reaction {
+                EngineReaction::Journaled(
+                    Journaled::RemoteControlControllerPairingLinkClosed { aborted },
+                ) => pairing_closed = Some(aborted),
+                EngineReaction::Journaled(Journaled::LinkClosed { link_id, reason }) => {
+                    link_closed = Some((link_id, reason));
+                }
+                EngineReaction::Journaled(_) | EngineReaction::Directive(_) => {}
+            },
+        );
+
+        assert_eq!(
+            pairing_closed,
+            Some(RemoteControlControllerPairingAborted::AwaitingOffer { context: context() }),
+        );
+        assert_eq!(
+            link_closed,
+            Some((
+                context().link_id(),
+                crate::engine::LinkClosedReason::PeerClosed,
+            )),
+        );
+        assert_eq!(
+            engine.remote_control_controller_pairing.view(),
+            RemoteControlControllerPairingView::Idle,
+        );
+    }
 }

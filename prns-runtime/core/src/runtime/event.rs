@@ -49,6 +49,9 @@ pub enum Message<'a> {
     RemoteControlControllerPairingExpired {
         aborted: RemoteControlControllerPairingAborted,
     },
+    RemoteControlControllerPairingLinkClosed {
+        aborted: RemoteControlControllerPairingAborted,
+    },
     RemoteControlTargetPairingExpired {
         aborted: RemoteControlTargetPairingAborted,
     },
@@ -222,6 +225,9 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
             }
             Journaled::RemoteControlControllerPairingExpired { aborted } => {
                 PrnsEvent::Message(Message::RemoteControlControllerPairingExpired { aborted })
+            }
+            Journaled::RemoteControlControllerPairingLinkClosed { aborted } => {
+                PrnsEvent::Message(Message::RemoteControlControllerPairingLinkClosed { aborted })
             }
             Journaled::RemoteControlTargetPairingExpired { aborted } => {
                 PrnsEvent::Message(Message::RemoteControlTargetPairingExpired { aborted })
@@ -446,18 +452,27 @@ mod tests {
     }
 
     #[test]
-    fn controller_pairing_expiry_is_an_app_facing_message() {
+    fn controller_pairing_terminal_network_events_are_app_facing_messages() {
         let context = RemoteControlPairingContext::new(
             RemoteControlPairingIdentity::new(IdentityHash::new([0x81; 16])).endpoint(),
             LinkId::new([0x82; 16]),
         );
-        let event = PrnsEvent::from(Journaled::RemoteControlControllerPairingExpired {
-            aborted: RemoteControlControllerPairingAborted::AwaitingOffer { context },
-        });
+        let aborted = RemoteControlControllerPairingAborted::AwaitingOffer { context };
+        let expired = PrnsEvent::from(Journaled::RemoteControlControllerPairingExpired { aborted });
+        let link_closed =
+            PrnsEvent::from(Journaled::RemoteControlControllerPairingLinkClosed { aborted });
 
         assert!(matches!(
-            event,
+            expired,
             PrnsEvent::Message(Message::RemoteControlControllerPairingExpired {
+                aborted: RemoteControlControllerPairingAborted::AwaitingOffer {
+                    context: observed,
+                },
+            }) if observed == context
+        ));
+        assert!(matches!(
+            link_closed,
+            PrnsEvent::Message(Message::RemoteControlControllerPairingLinkClosed {
                 aborted: RemoteControlControllerPairingAborted::AwaitingOffer {
                     context: observed,
                 },

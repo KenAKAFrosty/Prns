@@ -530,6 +530,69 @@ fn request_failure_aborts_only_the_exchange_link() {
 }
 
 #[test]
+fn link_closure_aborts_only_the_exchange_link_before_persistence() {
+    let fixture = PairingFixture::new();
+    let unrelated = LinkId::new([0x99; TRUNCATED_HASH_BYTE_LEN]);
+    assert_eq!(
+        RemoteControlControllerPairingState::default().close_link(fixture.link_id),
+        CloseRemoteControlControllerPairingLinkOutcome::NoActiveAttempt,
+    );
+    let mut awaiting_offer = RemoteControlControllerPairingState::default();
+    let _begin = begin_controller(&mut awaiting_offer, &fixture);
+
+    assert_eq!(
+        awaiting_offer.close_link(unrelated),
+        CloseRemoteControlControllerPairingLinkOutcome::UnrelatedLink,
+    );
+    assert_eq!(
+        awaiting_offer.close_link(fixture.link_id),
+        CloseRemoteControlControllerPairingLinkOutcome::Aborted {
+            aborted: RemoteControlControllerPairingAborted::AwaitingOffer {
+                context: fixture.context(),
+            },
+        },
+    );
+    assert_eq!(
+        awaiting_offer.view(),
+        RemoteControlControllerPairingView::Idle
+    );
+
+    let mut awaiting_approval = RemoteControlControllerPairingState::default();
+    let begin = begin_controller(&mut awaiting_approval, &fixture);
+    let (approval_attempt_id, _transcript) =
+        receive_valid_offer(&mut awaiting_approval, &fixture, &begin);
+    assert_eq!(
+        awaiting_approval.close_link(fixture.link_id),
+        CloseRemoteControlControllerPairingLinkOutcome::Aborted {
+            aborted: RemoteControlControllerPairingAborted::AwaitingApproval {
+                attempt_id: approval_attempt_id,
+                context: fixture.context(),
+            },
+        },
+    );
+    assert_eq!(
+        awaiting_approval.view(),
+        RemoteControlControllerPairingView::Idle,
+    );
+
+    let mut awaiting_completion = RemoteControlControllerPairingState::default();
+    let (attempt_id, _transcript) = prepare_completion(&mut awaiting_completion, &fixture);
+    assert_eq!(
+        awaiting_completion.close_link(fixture.link_id),
+        CloseRemoteControlControllerPairingLinkOutcome::Aborted {
+            aborted: RemoteControlControllerPairingAborted::AwaitingCompletion {
+                attempt_id,
+                context: fixture.context(),
+            },
+        },
+    );
+    assert_eq!(
+        awaiting_completion.view(),
+        RemoteControlControllerPairingView::Idle,
+    );
+}
+
+#[test]
 fn rejection_and_persistence_failure_settle_only_the_exact_attempt() {
     let fixture = PairingFixture::new();
     let other = PairingFixture::with_route(0x74, 0x85);

@@ -67,8 +67,11 @@ async fn a_commanded_announce_fans_to_every_interface_and_settles() {
         | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
         | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
         | Journaled::RemoteControlControllerPairingExpired { .. }
+        | Journaled::RemoteControlControllerPairingLinkClosed { .. }
         | Journaled::RemoteControlTargetPairingExpired { .. }
         | Journaled::RemoteControlTargetPairingLinkClosed { .. }
+        | Journaled::RemoteControlTargetPairingCompletionRetentionExpired { .. }
+        | Journaled::RemoteControlTargetPairingCompletionLinkClosed { .. }
         | Journaled::RemoteControlPairingExpiryFailed { .. } => {}
     };
 

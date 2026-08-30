@@ -5,7 +5,9 @@ use crate::engine::{
     Settlement,
 };
 use crate::interfaces::InterfaceId;
-use crate::remote_control::CloseRemoteControlTargetPairingLinkOutcome;
+use crate::remote_control::{
+    CloseRemoteControlControllerPairingLinkOutcome, CloseRemoteControlTargetPairingLinkOutcome,
+};
 use crate::routing::links::channel::table::ChannelTable;
 use crate::routing::links::resources::send::resource_settlement;
 use crate::routing::links::resources::ResourceFailureCause;
@@ -146,6 +148,16 @@ impl<S: StorageLayout> EngineState<S> {
         reason: LinkClosedReason,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) {
+        match self.remote_control_controller_pairing.close_link(*link_id) {
+            CloseRemoteControlControllerPairingLinkOutcome::Aborted { aborted } => {
+                sink(EngineReaction::Journaled(
+                    Journaled::RemoteControlControllerPairingLinkClosed { aborted },
+                ));
+            }
+            CloseRemoteControlControllerPairingLinkOutcome::UnrelatedLink
+            | CloseRemoteControlControllerPairingLinkOutcome::NoActiveAttempt
+            | CloseRemoteControlControllerPairingLinkOutcome::PersistenceInProgress { .. } => {}
+        }
         match self.remote_control_target_pairing.close_link(*link_id) {
             CloseRemoteControlTargetPairingLinkOutcome::Aborted { aborted } => {
                 sink(EngineReaction::Journaled(

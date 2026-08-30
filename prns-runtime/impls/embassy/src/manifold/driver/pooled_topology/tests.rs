@@ -169,8 +169,11 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
         | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
         | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
         | Journaled::RemoteControlControllerPairingExpired { .. }
+        | Journaled::RemoteControlControllerPairingLinkClosed { .. }
         | Journaled::RemoteControlTargetPairingExpired { .. }
         | Journaled::RemoteControlTargetPairingLinkClosed { .. }
+        | Journaled::RemoteControlTargetPairingCompletionRetentionExpired { .. }
+        | Journaled::RemoteControlTargetPairingCompletionLinkClosed { .. }
         | Journaled::RemoteControlPairingExpiryFailed { .. } => {}
     };
 
@@ -305,8 +308,11 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
         | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
         | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
         | Journaled::RemoteControlControllerPairingExpired { .. }
+        | Journaled::RemoteControlControllerPairingLinkClosed { .. }
         | Journaled::RemoteControlTargetPairingExpired { .. }
         | Journaled::RemoteControlTargetPairingLinkClosed { .. }
+        | Journaled::RemoteControlTargetPairingCompletionRetentionExpired { .. }
+        | Journaled::RemoteControlTargetPairingCompletionLinkClosed { .. }
         | Journaled::RemoteControlPairingExpiryFailed { .. } => {}
     };
 
