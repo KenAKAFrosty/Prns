@@ -1,4 +1,4 @@
-use super::{CompletionPool, JournalRoute, RequestSlotGuard, NO_AWAITER};
+use super::{CompletionPool, JournalRoute, RequestSlotGuard, ResponseCapture, NO_AWAITER};
 use crate::engine::{
     AnnounceAppData, AnnounceNow, AnnounceNowFailure, AnnounceNowRejection, AnnounceTarget,
     CloseRemoteControlPairing, CloseRemoteControlPairingFailure, CommandId, DeliveryEvidence,
@@ -339,6 +339,18 @@ fn a_cancelled_await_releases_its_slot_and_ignores_a_late_settlement() {
 }
 
 #[test]
+fn an_unclaimed_settlement_moves_to_the_application_route() {
+    let pool: Pool<0> = CompletionPool::new();
+    let mut routed = None;
+    let route = pool.route_settlement(CommandId(7), delivered(11), |settlement| {
+        routed = Some(settlement);
+    });
+
+    assert!(matches!(route, JournalRoute::Application));
+    assert_eq!(routed, Some(delivered(11)));
+}
+
+#[test]
 fn a_cancelled_request_releases_its_slot_and_routes_late_delivery_to_the_application() {
     let pool = CompletionPool::<CriticalSectionRawMutex, 0, 1, 4>::new();
     let id = CommandId(0);
@@ -351,7 +363,7 @@ fn a_cancelled_request_releases_its_slot_and_routes_late_delivery_to_the_applica
 
     assert!(matches!(
         pool.capture_response(id, &[1, 2]),
-        JournalRoute::Application,
+        ResponseCapture::NotAwaited,
     ));
     assert!(!pool.settle_request(
         id,
@@ -564,22 +576,28 @@ fn bounded_request_captures_the_response_before_its_borrow_expires() {
         );
         let response = [0x43, 0x65, 0x87];
         assert!(matches!(
-            handle.route_journaled(&Journaled::ResponseReceived {
-                command_id: issued.id,
-                link_id,
-                request_id: RequestId([0xA9; 16]),
-                data: &response,
-            }),
+            handle.route_journaled(
+                Journaled::ResponseReceived {
+                    command_id: issued.id,
+                    link_id,
+                    request_id: RequestId([0xA9; 16]),
+                    data: &response,
+                },
+                |_| {},
+            ),
             JournalRoute::Awaiter,
         ));
         assert!(matches!(
-            handle.route_journaled(&Journaled::CommandSettled {
-                id: issued.id,
-                settlement: Settlement::SendRequest(Ok(PacketReceiptDelivered {
-                    rtt: RttMillis::new(29),
-                    evidence: DeliveryEvidence::Response,
-                })),
-            }),
+            handle.route_journaled(
+                Journaled::CommandSettled {
+                    id: issued.id,
+                    settlement: Settlement::SendRequest(Ok(PacketReceiptDelivered {
+                        rtt: RttMillis::new(29),
+                        evidence: DeliveryEvidence::Response,
+                    })),
+                },
+                |_| {},
+            ),
             JournalRoute::Awaiter,
         ));
     }));
@@ -604,25 +622,31 @@ fn bounded_request_concatenates_segments_and_preserves_failures() {
         let issued = commands.receiver().receive().await;
         for (segment_index, data) in [(0, &[1, 2][..]), (1, &[3, 4, 5][..])] {
             assert!(matches!(
-                handle.route_journaled(&Journaled::ResponseSegmentReceived {
-                    command_id: issued.id,
-                    link_id,
-                    request_id: RequestId([0x54; 16]),
-                    segment_index,
-                    total_segments: 2,
-                    data,
-                }),
+                handle.route_journaled(
+                    Journaled::ResponseSegmentReceived {
+                        command_id: issued.id,
+                        link_id,
+                        request_id: RequestId([0x54; 16]),
+                        segment_index,
+                        total_segments: 2,
+                        data,
+                    },
+                    |_| {},
+                ),
                 JournalRoute::Awaiter,
             ));
         }
         assert!(matches!(
-            handle.route_journaled(&Journaled::CommandSettled {
-                id: issued.id,
-                settlement: Settlement::SendRequest(Ok(PacketReceiptDelivered {
-                    rtt: RttMillis::new(31),
-                    evidence: DeliveryEvidence::Response,
-                })),
-            }),
+            handle.route_journaled(
+                Journaled::CommandSettled {
+                    id: issued.id,
+                    settlement: Settlement::SendRequest(Ok(PacketReceiptDelivered {
+                        rtt: RttMillis::new(31),
+                        evidence: DeliveryEvidence::Response,
+                    })),
+                },
+                |_| {},
+            ),
             JournalRoute::Awaiter,
         ));
     }));
@@ -634,10 +658,13 @@ fn bounded_request_concatenates_segments_and_preserves_failures() {
     let (result, ()) = block_on(join(handle.request(link_id, path_hash, &[]), async {
         let issued = commands.receiver().receive().await;
         assert!(matches!(
-            handle.route_journaled(&Journaled::CommandSettled {
-                id: issued.id,
-                settlement: Settlement::SendRequest(Err(SendRequestFailure::Timeout)),
-            }),
+            handle.route_journaled(
+                Journaled::CommandSettled {
+                    id: issued.id,
+                    settlement: Settlement::SendRequest(Err(SendRequestFailure::Timeout)),
+                },
+                |_| {},
+            ),
             JournalRoute::Awaiter,
         ));
     }));
@@ -657,22 +684,28 @@ fn bounded_request_refuses_response_bytes_beyond_its_static_capacity() {
         async {
             let issued = commands.receiver().receive().await;
             assert!(matches!(
-                handle.route_journaled(&Journaled::ResponseReceived {
-                    command_id: issued.id,
-                    link_id,
-                    request_id: RequestId([0x98; 16]),
-                    data: &[1, 2, 3, 4],
-                }),
+                handle.route_journaled(
+                    Journaled::ResponseReceived {
+                        command_id: issued.id,
+                        link_id,
+                        request_id: RequestId([0x98; 16]),
+                        data: &[1, 2, 3, 4],
+                    },
+                    |_| {},
+                ),
                 JournalRoute::Awaiter,
             ));
             assert!(matches!(
-                handle.route_journaled(&Journaled::CommandSettled {
-                    id: issued.id,
-                    settlement: Settlement::SendRequest(Ok(PacketReceiptDelivered {
-                        rtt: RttMillis::new(41),
-                        evidence: DeliveryEvidence::Response,
-                    })),
-                }),
+                handle.route_journaled(
+                    Journaled::CommandSettled {
+                        id: issued.id,
+                        settlement: Settlement::SendRequest(Ok(PacketReceiptDelivered {
+                            rtt: RttMillis::new(41),
+                            evidence: DeliveryEvidence::Response,
+                        })),
+                    },
+                    |_| {},
+                ),
                 JournalRoute::Awaiter,
             ));
         },

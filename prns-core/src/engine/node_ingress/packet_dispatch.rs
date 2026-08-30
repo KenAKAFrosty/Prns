@@ -12,7 +12,9 @@ use crate::engine::LinkClosedReason;
 use crate::engine::{
     DeferredCrypto, Directive, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis,
     Journaled, LinkEstablished, PathResponseWriteOutcome, ProofIngest, ProtocolViolationKind,
-    SendRequestFailure, Settlement, WakeSchedule, WakeSchedules,
+    RemoteControlControllerPairingRequestFailureCause,
+    RemoteControlControllerPairingResponseArrival, RemoteControlControllerPairingResponseReceived,
+    SendRequestFailure, SendRequestIntent, Settlement, WakeSchedule, WakeSchedules,
 };
 use crate::identity::{IdentitySigner, ENCRYPTION_IV_LEN};
 use crate::interfaces::AttachedInterfaces;
@@ -447,29 +449,65 @@ impl<S: StorageLayout> EngineState<S> {
             }
             IngestPacketOutcome::ResponseSettled {
                 id,
+                intent,
                 delivered,
                 link_id,
                 request_id,
                 data,
             } => {
-                sink(EngineReaction::Journaled(Journaled::ResponseReceived {
-                    command_id: id,
-                    link_id,
-                    request_id,
-                    data,
-                }));
-                settle(sink, id, Settlement::SendRequest(Ok(delivered)));
+                let settlement = match intent {
+                    SendRequestIntent::Application => {
+                        sink(EngineReaction::Journaled(Journaled::ResponseReceived {
+                            command_id: id,
+                            link_id,
+                            request_id,
+                            data,
+                        }));
+                        Settlement::SendRequest(Ok(delivered))
+                    }
+                    SendRequestIntent::RemoteControlControllerPairing => {
+                        let admission = self.admit_remote_control_controller_pairing_response(
+                            RemoteControlControllerPairingResponseArrival::new(link_id, data),
+                            now,
+                            sink,
+                        );
+                        let effect = self
+                            .remote_control_controller_pairing_response_effect(link_id, admission);
+                        Settlement::RemoteControlControllerPairingRequest(Ok(
+                            RemoteControlControllerPairingResponseReceived {
+                                delivered,
+                                admission,
+                                effect,
+                            },
+                        ))
+                    }
+                };
+                settle(sink, id, settlement);
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                if intent == SendRequestIntent::RemoteControlControllerPairing {
+                    wake_schedule_changes.remote_control_pairing =
+                        self.remote_control_pairing_wake();
+                }
             }
-            IngestPacketOutcome::ResponseTooLarge { id, .. } => {
-                settle(
-                    sink,
-                    id,
-                    Settlement::SendRequest(Err(SendRequestFailure::ResponseTooLarge)),
+            IngestPacketOutcome::ResponseTooLarge {
+                id,
+                intent,
+                link_id,
+                ..
+            } => {
+                let settlement = self.failed_send_request_settlement(
+                    link_id,
+                    intent,
+                    SendRequestFailure::ResponseTooLarge,
                 );
+                settle(sink, id, settlement);
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                if intent == SendRequestIntent::RemoteControlControllerPairing {
+                    wake_schedule_changes.remote_control_pairing =
+                        self.remote_control_pairing_wake();
+                }
             }
             IngestPacketOutcome::ChannelDataReceived {
                 link_id,
@@ -592,6 +630,21 @@ impl<S: StorageLayout> EngineState<S> {
                     wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
                 }
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+            }
+            IngestPacketOutcome::PairingResponseResourceUnsupported {
+                link_id,
+                hash,
+                settled_request,
+            } => {
+                self.reject_offered_resource(&link_id, &hash, now, fill_entropy, sink);
+                let settlement = self.failed_remote_control_controller_pairing_request_settlement(
+                    link_id,
+                    RemoteControlControllerPairingRequestFailureCause::ResourceResponseUnsupported,
+                );
+                settle(sink, settled_request, settlement);
+                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+                wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                wake_schedule_changes.remote_control_pairing = self.remote_control_pairing_wake();
             }
             IngestPacketOutcome::ResourceAdmissionPending => {
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();

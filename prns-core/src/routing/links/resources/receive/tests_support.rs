@@ -368,7 +368,10 @@ pub(crate) fn track_pending_request_with_limit<S: StorageLayout>(
         command_id,
         kind: ReceiptKind::SendRequest {
             link_id: link_id(),
-            maximum_response_bytes,
+            response: crate::routing::delivery::receipts::RequestReceiptPolicy::new(
+                maximum_response_bytes,
+                crate::engine::SendRequestIntent::Application,
+            ),
         },
         peer_signing_key: IdentitySigningPublicKey::new(Ed25519PublicKey([0x99; 32])),
         sent_at: InstantMillis(sent_at),

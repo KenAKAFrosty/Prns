@@ -198,6 +198,7 @@ pub enum IngestPacketOutcome<'p> {
     },
     ResponseSettled {
         id: CommandId,
+        intent: crate::engine::SendRequestIntent,
         delivered: PacketReceiptDelivered,
         link_id: LinkId,
         request_id: RequestId,
@@ -205,6 +206,7 @@ pub enum IngestPacketOutcome<'p> {
     },
     ResponseTooLarge {
         id: CommandId,
+        intent: crate::engine::SendRequestIntent,
         link_id: LinkId,
         request_id: RequestId,
     },
@@ -237,6 +239,11 @@ pub enum IngestPacketOutcome<'p> {
         link_id: LinkId,
         hash: ResourceHash,
         settled_request: Option<CommandId>,
+    },
+    PairingResponseResourceUnsupported {
+        link_id: LinkId,
+        hash: ResourceHash,
+        settled_request: CommandId,
     },
     /// A validated and policy-approved advertisement is waiting for an
     /// incoming Resource row, or a retry coalesced into that existing wait.

@@ -87,11 +87,12 @@ pub use remote_control::{
     AdmitRemoteControlControllerPairingResponseOutcome, ConfigureRemoteControlIdentitiesError,
     RemoteControlControllerPairingResponseArrival,
     RemoteControlControllerPairingResponseBridgeInvariantViolation,
+    RemoteControlControllerPairingResponseEffect,
 };
 pub use remote_control_pairing::{
     ConfigureRemoteControlPairingError, RemoteControlPairingResponseDispatchFailure,
 };
-pub(crate) use settlement::{link_closed_settlement, settle};
+pub(crate) use settlement::settle;
 pub use state::{
     EngineProtocolPolicy, EngineState, LinkMtuDiscovery, LocalHopCountOverride,
     LocalOriginHopCount, ProofForm, RecursivePathRequestDefault,

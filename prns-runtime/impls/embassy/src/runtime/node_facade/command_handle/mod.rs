@@ -72,6 +72,11 @@ pub(super) enum JournalRoute {
     Awaiter,
 }
 
+enum ResponseCapture {
+    NotAwaited,
+    Captured,
+}
+
 impl<const RESPONSE_BYTES: usize> RequestAwaited<RESPONSE_BYTES> {
     fn awaits(&self, id: CommandId) -> bool {
         match self {
@@ -158,6 +163,7 @@ impl<
         });
     }
 
+    #[cfg(test)]
     fn settle(&self, id: CommandId, settlement: Settlement) -> bool {
         self.awaited.lock(|cell| {
             let awaited = cell.borrow();
@@ -185,6 +191,7 @@ impl<
         });
     }
 
+    #[cfg(test)]
     fn settle_request(&self, id: CommandId, settlement: Settlement) -> bool {
         self.requests.lock(|cell| {
             let requests = cell.borrow();
@@ -202,13 +209,37 @@ impl<
         self.request_slots[slot].wait().await
     }
 
-    fn capture_response(&self, id: CommandId, data: &[u8]) -> JournalRoute {
+    fn route_settlement(
+        &self,
+        id: CommandId,
+        settlement: Settlement,
+        on_unclaimed: impl FnOnce(Settlement),
+    ) -> JournalRoute {
+        let request_slot = self
+            .requests
+            .lock(|cell| cell.borrow().iter().position(|entry| entry.awaits(id)));
+        if let Some(slot) = request_slot {
+            self.request_slots[slot].signal(settlement);
+            return JournalRoute::Awaiter;
+        }
+        let completion_slot = self
+            .awaited
+            .lock(|cell| cell.borrow().iter().position(|awaited| *awaited == id.0));
+        if let Some(slot) = completion_slot {
+            self.slots[slot].signal(settlement);
+            return JournalRoute::Awaiter;
+        }
+        on_unclaimed(settlement);
+        JournalRoute::Application
+    }
+
+    fn capture_response(&self, id: CommandId, data: &[u8]) -> ResponseCapture {
         self.requests.lock(|cell| {
             let mut requests = cell.borrow_mut();
             let Some(RequestAwaited::Awaiting { response, .. }) =
                 requests.iter_mut().find(|entry| entry.awaits(id))
             else {
-                return JournalRoute::Application;
+                return ResponseCapture::NotAwaited;
             };
             match response {
                 RequestResponse::Awaiting => {
@@ -226,7 +257,7 @@ impl<
                 }
                 RequestResponse::TooLarge => {}
             }
-            JournalRoute::Awaiter
+            ResponseCapture::Captured
         })
     }
 
@@ -644,24 +675,39 @@ impl<
         }
     }
 
-    pub(super) fn route_journaled(&self, journaled: &Journaled<'_>) -> JournalRoute {
-        match journaled {
+    pub(super) fn route_journaled<'event, A>(
+        &self,
+        journaled: Journaled<'event>,
+        on_application: A,
+    ) -> JournalRoute
+    where
+        A: FnOnce(Journaled<'event>),
+    {
+        let response = match &journaled {
             Journaled::ResponseReceived {
                 command_id, data, ..
             }
             | Journaled::ResponseSegmentReceived {
                 command_id, data, ..
-            } => self.pool.capture_response(*command_id, data),
-            Journaled::CommandSettled { id, settlement } => {
-                if self.pool.settle_request(*id, settlement.clone())
-                    || self.pool.settle(*id, settlement.clone())
-                {
-                    JournalRoute::Awaiter
-                } else {
-                    JournalRoute::Application
-                }
+            } => Some((*command_id, *data)),
+            _ => None,
+        };
+        if let Some((command_id, data)) = response {
+            match self.pool.capture_response(command_id, data) {
+                ResponseCapture::Captured => return JournalRoute::Awaiter,
+                ResponseCapture::NotAwaited => {}
             }
-            _ => JournalRoute::Application,
+        }
+        match journaled {
+            Journaled::CommandSettled { id, settlement } => {
+                self.pool.route_settlement(id, settlement, |settlement| {
+                    on_application(Journaled::CommandSettled { id, settlement })
+                })
+            }
+            journaled => {
+                on_application(journaled);
+                JournalRoute::Application
+            }
         }
     }
 

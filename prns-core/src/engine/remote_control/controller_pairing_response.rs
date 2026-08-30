@@ -1,5 +1,6 @@
 use crate::engine::{EngineReaction, EngineState, Journaled};
 use crate::remote_control::{
+    FailRemoteControlControllerPairingRequestOutcome,
     ReceiveRemoteControlControllerPairingCompletedOutcome,
     ReceiveRemoteControlControllerPairingOfferOutcome, RemoteControlControllerPairingView,
     RemoteControlPairingAttemptId, RemoteControlPairingMessageParseError,
@@ -57,7 +58,53 @@ pub enum AdmitRemoteControlControllerPairingResponseOutcome {
     InvariantViolation(RemoteControlControllerPairingResponseBridgeInvariantViolation),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlControllerPairingResponseEffect {
+    Advanced,
+    NotAdvanced(FailRemoteControlControllerPairingRequestOutcome),
+}
+
 impl<S: StorageLayout> EngineState<S> {
+    pub(crate) fn remote_control_controller_pairing_response_effect(
+        &mut self,
+        link_id: LinkId,
+        admission: AdmitRemoteControlControllerPairingResponseOutcome,
+    ) -> RemoteControlControllerPairingResponseEffect {
+        match admission {
+            AdmitRemoteControlControllerPairingResponseOutcome::Offer(
+                ReceiveRemoteControlControllerPairingOfferOutcome::ConfirmationRequired { .. },
+            )
+            | AdmitRemoteControlControllerPairingResponseOutcome::Completed(
+                ReceiveRemoteControlControllerPairingCompletedOutcome::PersistenceOwed { .. },
+            ) => RemoteControlControllerPairingResponseEffect::Advanced,
+            AdmitRemoteControlControllerPairingResponseOutcome::NoActivePairing
+            | AdmitRemoteControlControllerPairingResponseOutcome::UnrelatedLink { .. }
+            | AdmitRemoteControlControllerPairingResponseOutcome::MalformedEnvelope(_)
+            | AdmitRemoteControlControllerPairingResponseOutcome::MalformedResponse(_)
+            | AdmitRemoteControlControllerPairingResponseOutcome::Offer(
+                ReceiveRemoteControlControllerPairingOfferOutcome::Expired { .. }
+                | ReceiveRemoteControlControllerPairingOfferOutcome::Rejected { .. }
+                | ReceiveRemoteControlControllerPairingOfferOutcome::NoActiveAttempt
+                | ReceiveRemoteControlControllerPairingOfferOutcome::Unexpected { .. }
+                | ReceiveRemoteControlControllerPairingOfferOutcome::PairingUnavailable { .. },
+            )
+            | AdmitRemoteControlControllerPairingResponseOutcome::Completed(
+                ReceiveRemoteControlControllerPairingCompletedOutcome::Expired { .. }
+                | ReceiveRemoteControlControllerPairingCompletedOutcome::Rejected { .. }
+                | ReceiveRemoteControlControllerPairingCompletedOutcome::NoActiveAttempt
+                | ReceiveRemoteControlControllerPairingCompletedOutcome::OfferNotReceived
+                | ReceiveRemoteControlControllerPairingCompletedOutcome::ApprovalRequired { .. }
+                | ReceiveRemoteControlControllerPairingCompletedOutcome::AlreadyReceived { .. },
+            )
+            | AdmitRemoteControlControllerPairingResponseOutcome::InvariantViolation(_) => {
+                RemoteControlControllerPairingResponseEffect::NotAdvanced(
+                    self.remote_control_controller_pairing
+                        .request_failed(link_id),
+                )
+            }
+        }
+    }
+
     pub fn admit_remote_control_controller_pairing_response(
         &mut self,
         arrival: RemoteControlControllerPairingResponseArrival<'_>,
@@ -354,16 +401,23 @@ mod tests {
         let (offer, _transcript, _target_signer) = prepared_offer(&begin);
         let packed = packed_response(offer);
 
+        let unrelated = engine.admit_remote_control_controller_pairing_response(
+            RemoteControlControllerPairingResponseArrival::new(UNRELATED_LINK_ID, &packed),
+            OFFERED_AT,
+            &mut |_| panic!("unrelated response must be silent"),
+        );
         assert_eq!(
-            engine.admit_remote_control_controller_pairing_response(
-                RemoteControlControllerPairingResponseArrival::new(UNRELATED_LINK_ID, &packed),
-                OFFERED_AT,
-                &mut |_| panic!("unrelated response must be silent"),
-            ),
+            unrelated,
             AdmitRemoteControlControllerPairingResponseOutcome::UnrelatedLink {
                 expected: LINK_ID,
                 received: UNRELATED_LINK_ID,
             },
+        );
+        assert_eq!(
+            engine.remote_control_controller_pairing_response_effect(UNRELATED_LINK_ID, unrelated,),
+            RemoteControlControllerPairingResponseEffect::NotAdvanced(
+                FailRemoteControlControllerPairingRequestOutcome::UnrelatedLink,
+            ),
         );
         assert_eq!(
             engine.admit_remote_control_controller_pairing_response(

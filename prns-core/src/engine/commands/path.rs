@@ -71,7 +71,8 @@ impl Settleable for RequestPath {
             | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
             | Settlement::BeginRemoteControlControllerPairing(_)
             | Settlement::ApproveRemoteControlControllerPairing(_)
-            | Settlement::RejectRemoteControlControllerPairing(_) => None,
+            | Settlement::RejectRemoteControlControllerPairing(_)
+            | Settlement::RemoteControlControllerPairingRequest(_) => None,
         }
     }
 }

@@ -37,6 +37,12 @@ pub struct SendRequest {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendRequestIntent {
+    Application,
+    RemoteControlControllerPairing,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendRequestRejection {
     NoSuchLink,
     LinkNotActive,
@@ -155,7 +161,8 @@ impl Settleable for SendRequest {
             | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
             | Settlement::BeginRemoteControlControllerPairing(_)
             | Settlement::ApproveRemoteControlControllerPairing(_)
-            | Settlement::RejectRemoteControlControllerPairing(_) => None,
+            | Settlement::RejectRemoteControlControllerPairing(_)
+            | Settlement::RemoteControlControllerPairingRequest(_) => None,
         }
     }
 }
@@ -194,7 +201,8 @@ impl Settleable for Respond {
             | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
             | Settlement::BeginRemoteControlControllerPairing(_)
             | Settlement::ApproveRemoteControlControllerPairing(_)
-            | Settlement::RejectRemoteControlControllerPairing(_) => None,
+            | Settlement::RejectRemoteControlControllerPairing(_)
+            | Settlement::RemoteControlControllerPairingRequest(_) => None,
         }
     }
 }
@@ -233,7 +241,8 @@ impl Settleable for AllowRequester {
             | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
             | Settlement::BeginRemoteControlControllerPairing(_)
             | Settlement::ApproveRemoteControlControllerPairing(_)
-            | Settlement::RejectRemoteControlControllerPairing(_) => None,
+            | Settlement::RejectRemoteControlControllerPairing(_)
+            | Settlement::RemoteControlControllerPairingRequest(_) => None,
         }
     }
 }

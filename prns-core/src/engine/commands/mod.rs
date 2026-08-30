@@ -39,8 +39,9 @@ pub use remote_control_controller_pairing::{
     RejectRemoteControlControllerPairing, RejectRemoteControlControllerPairingFailure,
     RemoteControlControllerPairingApproval, RemoteControlControllerPairingBegun,
     RemoteControlControllerPairingRejection, RemoteControlControllerPairingRequest,
-    RemoteControlControllerPairingRequestBuildError,
-    RemoteControlControllerPairingRequestConversionError,
+    RemoteControlControllerPairingRequestBuildError, RemoteControlControllerPairingRequestFailure,
+    RemoteControlControllerPairingRequestFailureCause,
+    RemoteControlControllerPairingResponseReceived,
 };
 pub use remote_control_pairing::{
     ApproveRemoteControlTargetPairing, ApproveRemoteControlTargetPairingFailure,
@@ -55,8 +56,8 @@ pub use remote_control_pairing::{
 pub use request::{
     AllowRequester, AllowRequesterFailure, AllowRequesterRejection, RequestResponseTimeout,
     Respond, RespondData, RespondFailure, RespondPayload, RespondRejection, SendRequest,
-    SendRequestData, SendRequestFailure, SendRequestRejection, MAX_RESPOND_DATA_LEN,
-    MAX_SEND_REQUEST_DATA_LEN,
+    SendRequestData, SendRequestFailure, SendRequestIntent, SendRequestRejection,
+    MAX_RESPOND_DATA_LEN, MAX_SEND_REQUEST_DATA_LEN,
 };
 pub use resource::{
     SendResourceFailure, SendResourceRejection, SetResourceStrategy, SetResourceStrategyFailure,
@@ -83,13 +84,13 @@ use crate::units::RttMillis;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CommandId(pub u64);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct IssuedCommand {
     pub id: CommandId,
     pub command: PrnsCommand,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 // repr(C) is CRITICAL here and on every enum that crosses the dual-core embassy channels (PrnsCommand, Settlement, EngineReaction, Journaled, Directive, InterfaceLifecycle): the esp Xtensa toolchain miscompiled the default repr(Rust) layout, and core 1 read Directive's fan target at the wrong offset, corrupting the supervisor's match into UB.
 // Proven on hardware both broken and fixed; do not remove.
 #[repr(C)]
@@ -117,11 +118,12 @@ pub enum PrnsCommand {
     BeginRemoteControlControllerPairing(BeginRemoteControlControllerPairing),
     ApproveRemoteControlControllerPairing(ApproveRemoteControlControllerPairing),
     RejectRemoteControlControllerPairing(RejectRemoteControlControllerPairing),
+    RemoteControlControllerPairingRequest(RemoteControlControllerPairingRequest),
 }
 
 // The Owes* variants hand the caller its whole command payload back (SendSinglePacket rides ~400B of heapless body) beside slim rejections. Outcomes are transient by-value returns, destructured immediately, and the no-alloc core has no Box to shrink them.
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum CommandOutcome {
     OwesAnnounce {
         id: CommandId,
@@ -229,6 +231,15 @@ pub enum CommandOutcome {
         id: CommandId,
         rejection: SendRequestRejection,
     },
+    OwesRemoteControlControllerPairingRequest {
+        id: CommandId,
+        request: RemoteControlControllerPairingRequest,
+    },
+    RemoteControlControllerPairingRequestRejected {
+        id: CommandId,
+        link_id: crate::routing::links::LinkId,
+        rejection: SendRequestRejection,
+    },
     OwesRespond {
         id: CommandId,
         respond: Respond,
@@ -282,7 +293,7 @@ pub enum CommandOutcome {
 }
 
 /// Paired verb-for-verb with [`PrnsCommand`]: a data boundary erases type-level ties, so the tie is explicit here.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 // repr(C): crosses the dual-core channel; see the layout note on [`PrnsCommand`].
 #[repr(C)]
 pub enum Settlement {
@@ -331,6 +342,12 @@ pub enum Settlement {
         Result<
             RemoteControlControllerPairingRejection,
             RejectRemoteControlControllerPairingFailure,
+        >,
+    ),
+    RemoteControlControllerPairingRequest(
+        Result<
+            RemoteControlControllerPairingResponseReceived,
+            RemoteControlControllerPairingRequestFailure,
         >,
     ),
 }
@@ -425,6 +442,9 @@ impl<S: StorageLayout> EngineState<S> {
             }
             PrnsCommand::RejectRemoteControlControllerPairing(reject) => {
                 CommandOutcome::OwesRejectRemoteControlControllerPairing { id, reject }
+            }
+            PrnsCommand::RemoteControlControllerPairingRequest(request) => {
+                self.ingest_remote_control_controller_pairing_request(id, request)
             }
             PrnsCommand::RequestPath(request) => CommandOutcome::OwesPathRequest { id, request },
             PrnsCommand::EstablishLink(establish) => self.ingest_establish_link(id, establish),

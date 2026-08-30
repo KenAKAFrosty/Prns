@@ -2,7 +2,7 @@ use crate::engine::node_egress::{
     allows_announce_rebroadcast, fan_frame, fleet_announce_fan_target,
     fleet_fan_target_reaches_any_member,
 };
-use crate::engine::settlement::{settle, timeout_settlement};
+use crate::engine::settlement::settle;
 #[cfg(feature = "runtime-metrics")]
 use crate::engine::AnnounceOrigin;
 use crate::engine::{
@@ -28,11 +28,13 @@ impl<S: StorageLayout> EngineState<S> {
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         while let Some(expired) = self.receipts.pop_expired(now) {
-            settle(sink, expired.command_id, timeout_settlement(expired.kind));
+            let settlement = self.timeout_settlement(expired.kind);
+            settle(sink, expired.command_id, settlement);
         }
         WakeSchedules {
             receipt_timeouts: self.receipt_timeouts_wake(),
             resource_deadlines: self.resource_deadlines_wake(),
+            remote_control_pairing: self.remote_control_pairing_wake(),
             ..WakeSchedules::UNCHANGED
         }
     }

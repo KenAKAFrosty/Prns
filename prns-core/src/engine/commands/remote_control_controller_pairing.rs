@@ -1,6 +1,9 @@
 use heapless::Vec as HeaplessVec;
 
-use crate::engine::EngineState;
+use crate::engine::{
+    AdmitRemoteControlControllerPairingResponseOutcome, EngineState,
+    RemoteControlControllerPairingResponseEffect,
+};
 use crate::remote_control::{
     ApproveRemoteControlControllerPairingOutcome, BeginRemoteControlControllerPairingOutcome,
     FailRemoteControlControllerPairingRequestOutcome, RejectRemoteControlControllerPairingOutcome,
@@ -11,15 +14,15 @@ use crate::remote_control::{
     RemoteControlPairingResponse, REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID,
 };
 use crate::routing::links::request::{
-    write_packed_binary_header, PackBinaryError, MAX_PACKED_BINARY_HEADER_LEN,
+    write_packed_binary_header, PackBinaryError, SendRequestView, MAX_PACKED_BINARY_HEADER_LEN,
 };
 use crate::routing::request_handlers::RequestPathHash;
 use crate::storage::StorageLayout;
 use crate::units::{ByteLimit, InstantMillis};
 
 use super::{
-    PrnsCommand, RequestResponseTimeout, SendRequest, SendRequestData, Settleable, Settlement,
-    MAX_SEND_REQUEST_DATA_LEN,
+    PacketReceiptDelivered, PrnsCommand, RequestResponseTimeout, SendRequestFailure, Settleable,
+    Settlement, MAX_SEND_REQUEST_DATA_LEN,
 };
 
 const MAX_REMOTE_CONTROL_CONTROLLER_PAIRING_REQUEST_DATA_LEN: usize =
@@ -43,12 +46,7 @@ pub enum RemoteControlControllerPairingRequestBuildError {
     Capacity { required: usize, maximum: usize },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RemoteControlControllerPairingRequestConversionError {
-    Capacity { required: usize, maximum: usize },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct RemoteControlControllerPairingRequest {
     link_id: crate::routing::links::LinkId,
     data: RemoteControlControllerPairingRequestData,
@@ -88,32 +86,23 @@ impl RemoteControlControllerPairingRequest {
             },
         })
     }
-}
 
-impl TryFrom<RemoteControlControllerPairingRequest> for SendRequest {
-    type Error = RemoteControlControllerPairingRequestConversionError;
+    pub(crate) fn send_request(&self) -> SendRequestView<'_> {
+        SendRequestView::new(
+            self.link_id,
+            RequestPathHash::of(REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID),
+            self.data.as_slice(),
+            self.response_timeout,
+            ByteLimit::Maximum(RemoteControlPairingResponse::MAX_ENCODED_LEN as u64),
+        )
+    }
 
-    fn try_from(request: RemoteControlControllerPairingRequest) -> Result<Self, Self::Error> {
-        let required = request.data.len();
-        let data = SendRequestData::from_slice(request.data.as_slice()).map_err(|()| {
-            RemoteControlControllerPairingRequestConversionError::Capacity {
-                required,
-                maximum: MAX_SEND_REQUEST_DATA_LEN,
-            }
-        })?;
-        Ok(Self {
-            link_id: request.link_id,
-            path_hash: RequestPathHash::of(REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID),
-            data,
-            response_timeout: request.response_timeout,
-            maximum_response_bytes: ByteLimit::Maximum(
-                RemoteControlPairingResponse::MAX_ENCODED_LEN as u64,
-            ),
-        })
+    pub(crate) const fn link_id(&self) -> crate::routing::links::LinkId {
+        self.link_id
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct RemoteControlControllerPairingBegun {
     request: RemoteControlControllerPairingRequest,
 }
@@ -184,7 +173,8 @@ impl Settleable for BeginRemoteControlControllerPairing {
             | Settlement::RejectRemoteControlTargetPairing(_)
             | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
             | Settlement::ApproveRemoteControlControllerPairing(_)
-            | Settlement::RejectRemoteControlControllerPairing(_) => None,
+            | Settlement::RejectRemoteControlControllerPairing(_)
+            | Settlement::RemoteControlControllerPairingRequest(_) => None,
         }
     }
 }
@@ -194,7 +184,7 @@ pub struct ApproveRemoteControlControllerPairing {
     pub attempt_id: RemoteControlPairingAttemptId,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct RemoteControlControllerPairingApproval {
     attempt_id: RemoteControlPairingAttemptId,
     request: RemoteControlControllerPairingRequest,
@@ -224,6 +214,66 @@ impl RemoteControlControllerPairingApproval {
     #[must_use]
     pub fn into_request(self) -> RemoteControlControllerPairingRequest {
         self.request
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemoteControlControllerPairingResponseReceived {
+    pub delivered: PacketReceiptDelivered,
+    pub admission: AdmitRemoteControlControllerPairingResponseOutcome,
+    pub effect: RemoteControlControllerPairingResponseEffect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlControllerPairingRequestFailureCause {
+    Request(SendRequestFailure),
+    ResourceResponseUnsupported,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemoteControlControllerPairingRequestFailure {
+    pub cause: RemoteControlControllerPairingRequestFailureCause,
+    pub exchange: FailRemoteControlControllerPairingRequestOutcome,
+}
+
+impl Settleable for RemoteControlControllerPairingRequest {
+    type Success = RemoteControlControllerPairingResponseReceived;
+    type Failure = RemoteControlControllerPairingRequestFailure;
+
+    fn into_command(self) -> PrnsCommand {
+        PrnsCommand::RemoteControlControllerPairingRequest(self)
+    }
+
+    fn from_settlement(
+        settlement: Settlement,
+    ) -> Option<Result<RemoteControlControllerPairingResponseReceived, Self::Failure>> {
+        match settlement {
+            Settlement::RemoteControlControllerPairingRequest(result) => Some(result),
+            Settlement::AnnounceNow(_)
+            | Settlement::SetRegisteredAnnounceAppData(_)
+            | Settlement::SendSinglePacket(_)
+            | Settlement::SendGroup(_)
+            | Settlement::RequestPath(_)
+            | Settlement::EstablishLink(_)
+            | Settlement::SendToLink(_)
+            | Settlement::Identify(_)
+            | Settlement::SendRequest(_)
+            | Settlement::Respond(_)
+            | Settlement::CloseLink(_)
+            | Settlement::SendResource(_)
+            | Settlement::SetResourceStrategy(_)
+            | Settlement::SendToChannel(_)
+            | Settlement::AllowRequester(_)
+            | Settlement::SendPlainPacket(_)
+            | Settlement::OpenRemoteControlPairing(_)
+            | Settlement::CloseRemoteControlPairing(_)
+            | Settlement::ApproveRemoteControlTargetPairing(_)
+            | Settlement::RejectRemoteControlTargetPairing(_)
+            | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
+            | Settlement::BeginRemoteControlControllerPairing(_)
+            | Settlement::ApproveRemoteControlControllerPairing(_)
+            | Settlement::RejectRemoteControlControllerPairing(_) => None,
+        }
     }
 }
 
@@ -282,7 +332,8 @@ impl Settleable for ApproveRemoteControlControllerPairing {
             | Settlement::RejectRemoteControlTargetPairing(_)
             | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
             | Settlement::BeginRemoteControlControllerPairing(_)
-            | Settlement::RejectRemoteControlControllerPairing(_) => None,
+            | Settlement::RejectRemoteControlControllerPairing(_)
+            | Settlement::RemoteControlControllerPairingRequest(_) => None,
         }
     }
 }
@@ -351,7 +402,8 @@ impl Settleable for RejectRemoteControlControllerPairing {
             | Settlement::RejectRemoteControlTargetPairing(_)
             | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
             | Settlement::BeginRemoteControlControllerPairing(_)
-            | Settlement::ApproveRemoteControlControllerPairing(_) => None,
+            | Settlement::ApproveRemoteControlControllerPairing(_)
+            | Settlement::RemoteControlControllerPairingRequest(_) => None,
         }
     }
 }
@@ -520,15 +572,16 @@ mod tests {
     #![allow(clippy::panic, clippy::unwrap_used)]
 
     use super::*;
-    use crate::engine::test_support::TestStorageLayout;
+    use crate::engine::test_support::{filled_frame, routable_descriptor, TestStorageLayout};
     use crate::engine::{
-        CommandId, EngineReaction, EngineState, IssuedCommand, Journaled, WakeSchedule,
-        WakeSchedules,
+        CommandId, DeliveryEvidence, Directive, EngineReaction, EngineState, IngestIo,
+        IssuedCommand, Journaled, PacketReceiptDelivered, SendRequest, SendRequestData,
+        SendRequestIntent, WakeSchedule, WakeSchedules,
     };
     use crate::identity::in_memory::InMemoryNodeIdentity;
     use crate::identity::vault::IdentitySecretKey;
     use crate::identity::{IdentityHash, IdentityPublicKeys, IdentitySigner};
-    use crate::interfaces::AttachedInterfaces;
+    use crate::interfaces::{AttachedInterfaces, InboundPacket};
     use crate::remote_control::{
         BeginRemoteControlControllerPairingOutcome,
         ReceiveRemoteControlControllerPairingOfferOutcome, RemoteControlControllerIdentity,
@@ -538,8 +591,15 @@ mod tests {
         RemoteControlPairingPermissions, RemoteControlPairingPreparedOffer,
         RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlTargetIdentitySecret,
     };
-    use crate::routing::links::LinkId;
-    use crate::units::DurationMillis;
+    use crate::routing::dedup::PacketHash;
+    use crate::routing::links::data::write_link_packet;
+    use crate::routing::links::request::{write_response_plaintext, RequestId};
+    use crate::routing::links::resources::receive::tests_support::{
+        advertise_response_segment_from, engine_with_active_link, feed, lane, link_id, link_key,
+    };
+    use crate::routing::links::resources::ResourceSegment;
+    use crate::units::{DurationMillis, RttMillis};
+    use crate::wire::{WireContext, BROADCAST_MTU};
 
     const STARTED_AT: InstantMillis = InstantMillis(1_000);
     const PAIRING_EXPIRES_AT: InstantMillis = InstantMillis(10_000);
@@ -584,7 +644,7 @@ mod tests {
     fn context() -> RemoteControlPairingContext {
         RemoteControlPairingContext::new(
             RemoteControlPairingIdentity::new(IdentityHash::new([0x73; 16])).endpoint(),
-            LinkId::new([0x84; 16]),
+            link_id(),
         )
     }
 
@@ -608,6 +668,17 @@ mod tests {
         data.extend_from_slice(&header[..header_len]).unwrap();
         data.extend_from_slice(&encoded[..encoded_len]).unwrap();
         data
+    }
+
+    fn packed_response(response: RemoteControlPairingResponse) -> std::vec::Vec<u8> {
+        let mut encoded = [0u8; RemoteControlPairingResponse::MAX_ENCODED_LEN];
+        let encoded_len = response.write_into(&mut encoded).unwrap();
+        let mut header = [0u8; MAX_PACKED_BINARY_HEADER_LEN];
+        let header_len = write_packed_binary_header(encoded_len, &mut header).unwrap();
+        let mut packed = std::vec::Vec::with_capacity(header_len + encoded_len);
+        packed.extend_from_slice(&header[..header_len]);
+        packed.extend_from_slice(&encoded[..encoded_len]);
+        packed
     }
 
     fn execute(
@@ -635,6 +706,54 @@ mod tests {
             },
         );
         (settled.unwrap(), schedules)
+    }
+
+    fn dispatch_begin_request(
+        engine: &mut EngineState<TestStorageLayout>,
+    ) -> (RemoteControlControllerIdentity, RequestId) {
+        let controller = configure_controller(engine);
+        let (begin_settlement, _) = execute(
+            engine,
+            PrnsCommand::BeginRemoteControlControllerPairing(BeginRemoteControlControllerPairing {
+                context: context(),
+                invitation_code: invitation_code(),
+                pairing_expires_at: PAIRING_EXPIRES_AT,
+            }),
+            STARTED_AT,
+        );
+        let Settlement::BeginRemoteControlControllerPairing(Ok(begun)) = begin_settlement else {
+            panic!("begin request")
+        };
+        let interfaces = [routable_descriptor(lane())];
+        let mut request_frame = None;
+        let mut request_settled = false;
+        engine.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(0xC2),
+                command: begun.into_request().into_command(),
+            },
+            AttachedInterfaces::new(&interfaces),
+            STARTED_AT,
+            &mut |bytes| bytes.fill(0xA5),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                    request_frame = filled_frame(fill);
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled {
+                    id: CommandId(0xC2),
+                    ..
+                }) => request_settled = true,
+                EngineReaction::Directive(_) | EngineReaction::Journaled(_) => {}
+            },
+        );
+        assert!(!request_settled);
+        let request_id =
+            RequestId::of_packet(&PacketHash::of_wire_packet(&request_frame.unwrap()).unwrap());
+        assert_eq!(
+            engine.receipts.pending_request_intent(request_id),
+            Some(SendRequestIntent::RemoteControlControllerPairing),
+        );
+        (controller, request_id)
     }
 
     fn awaiting_confirmation(
@@ -699,26 +818,21 @@ mod tests {
         let Settlement::BeginRemoteControlControllerPairing(Ok(begun)) = settlement else {
             panic!("begin settled")
         };
-        assert_eq!(
-            SendRequest::try_from(begun.into_request()).unwrap(),
-            SendRequest {
-                link_id: context().link_id(),
-                path_hash: RequestPathHash::of(REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID),
-                data: packed(RemoteControlPairingRequest::Begin(
-                    RemoteControlPairingBegin::new(
-                        controller,
-                        context().endpoint(),
-                        invitation_code(),
-                    ),
-                )),
-                response_timeout: RequestResponseTimeout::LinkDefaultAtMost {
-                    maximum: DurationMillis(9_000),
-                },
-                maximum_response_bytes: ByteLimit::Maximum(
-                    RemoteControlPairingResponse::MAX_ENCODED_LEN as u64,
-                ),
+        let request = begun.into_request();
+        let expected = SendRequest {
+            link_id: context().link_id(),
+            path_hash: RequestPathHash::of(REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID),
+            data: packed(RemoteControlPairingRequest::Begin(
+                RemoteControlPairingBegin::new(controller, context().endpoint(), invitation_code()),
+            )),
+            response_timeout: RequestResponseTimeout::LinkDefaultAtMost {
+                maximum: DurationMillis(9_000),
             },
-        );
+            maximum_response_bytes: ByteLimit::Maximum(
+                RemoteControlPairingResponse::MAX_ENCODED_LEN as u64,
+            ),
+        };
+        assert_eq!(request.send_request(), (&expected).into());
         assert!(matches!(
             engine.remote_control_controller_pairing.view(),
             RemoteControlControllerPairingView::AwaitingOffer(view)
@@ -730,6 +844,228 @@ mod tests {
             schedules.remote_control_pairing,
             WakeSchedule::At(PAIRING_EXPIRES_AT),
         );
+    }
+
+    #[test]
+    fn exact_pairing_request_receipt_admits_offer_without_application_response() {
+        let mut engine = engine_with_active_link();
+        let (controller, request_id) = dispatch_begin_request(&mut engine);
+        let interfaces = [routable_descriptor(lane())];
+
+        let begin =
+            RemoteControlPairingBegin::new(controller, context().endpoint(), invitation_code());
+        let prepared = RemoteControlPairingPreparedOffer::new(
+            &signer(0x52),
+            context(),
+            &begin,
+            permissions(),
+            RemoteControlPairingAttemptTimeout::try_from(DurationMillis(3_000)).unwrap(),
+        );
+        let (offer, transcript) = prepared.into_parts();
+        let attempt_id = (&transcript).into();
+        let packed = packed_response(RemoteControlPairingResponse::Offer(offer));
+        let mut plaintext = [0u8; BROADCAST_MTU];
+        let plaintext_len = write_response_plaintext(&request_id, &packed, &mut plaintext).unwrap();
+        let mut response_frame = [0u8; BROADCAST_MTU];
+        let response_len = write_link_packet(
+            &link_id(),
+            &link_key(),
+            BROADCAST_MTU,
+            WireContext::Response,
+            &plaintext[..plaintext_len],
+            &[0xB5; 16],
+            &mut response_frame,
+        )
+        .unwrap();
+        let mut response_settlement = None;
+        let mut confirmation = None;
+        let mut application_responses = 0usize;
+        engine.ingest_packet_into(
+            InboundPacket {
+                arrived_at: OFFERED_AT,
+                source_interface: lane(),
+                bytes: &mut response_frame[..response_len],
+            },
+            IngestIo {
+                interfaces: AttachedInterfaces::new(&interfaces),
+                now: OFFERED_AT,
+                fill_entropy: &mut |_| {},
+                should_prove: &mut |_| false,
+                should_accept_resource: &mut |_| false,
+                sink: &mut |reaction| match reaction {
+                    EngineReaction::Journaled(
+                        Journaled::RemoteControlControllerPairingConfirmationRequired(view),
+                    ) => confirmation = Some(view.attempt_id()),
+                    EngineReaction::Journaled(Journaled::ResponseReceived { .. }) => {
+                        application_responses = application_responses.saturating_add(1);
+                    }
+                    EngineReaction::Journaled(Journaled::CommandSettled {
+                        id: CommandId(0xC2),
+                        settlement,
+                    }) => response_settlement = Some(settlement),
+                    EngineReaction::Directive(_) | EngineReaction::Journaled(_) => {}
+                },
+            },
+        );
+
+        assert_eq!(
+            response_settlement,
+            Some(Settlement::RemoteControlControllerPairingRequest(Ok(
+                RemoteControlControllerPairingResponseReceived {
+                    delivered: PacketReceiptDelivered {
+                        rtt: RttMillis::new(1_000),
+                        evidence: DeliveryEvidence::Response,
+                    },
+                    admission: AdmitRemoteControlControllerPairingResponseOutcome::Offer(
+                        ReceiveRemoteControlControllerPairingOfferOutcome::ConfirmationRequired {
+                            attempt_id,
+                        },
+                    ),
+                    effect: RemoteControlControllerPairingResponseEffect::Advanced,
+                },
+            ))),
+        );
+        assert_eq!(confirmation, Some(attempt_id));
+        assert_eq!(application_responses, 0);
+        assert!(!engine.receipts.has_pending_request(request_id));
+        assert!(matches!(
+            engine.remote_control_controller_pairing.view(),
+            RemoteControlControllerPairingView::AwaitingApproval(view)
+                if view.attempt_id() == attempt_id
+        ));
+    }
+
+    #[test]
+    fn pairing_request_timeout_settles_typed_and_aborts_exchange() {
+        let mut engine = engine_with_active_link();
+        let (_, request_id) = dispatch_begin_request(&mut engine);
+        let mut settlement = None;
+
+        engine.settle_timed_out_receipts(PAIRING_EXPIRES_AT, &mut |reaction| match reaction {
+            EngineReaction::Journaled(Journaled::CommandSettled {
+                id: CommandId(0xC2),
+                settlement: settled,
+            }) => settlement = Some(settled),
+            EngineReaction::Directive(_) | EngineReaction::Journaled(_) => {}
+        });
+
+        assert_eq!(
+            settlement,
+            Some(Settlement::RemoteControlControllerPairingRequest(Err(
+                RemoteControlControllerPairingRequestFailure {
+                    cause: RemoteControlControllerPairingRequestFailureCause::Request(
+                        SendRequestFailure::Timeout,
+                    ),
+                    exchange: FailRemoteControlControllerPairingRequestOutcome::Aborted {
+                        aborted: RemoteControlControllerPairingAborted::AwaitingOffer {
+                            context: context(),
+                        },
+                    },
+                },
+            ))),
+        );
+        assert_eq!(
+            engine.remote_control_controller_pairing.view(),
+            RemoteControlControllerPairingView::Idle,
+        );
+        assert!(!engine.receipts.has_pending_request(request_id));
+    }
+
+    #[test]
+    fn malformed_pairing_response_retires_consumed_exchange() {
+        let mut engine = engine_with_active_link();
+        let (_, request_id) = dispatch_begin_request(&mut engine);
+        let mut plaintext = [0u8; BROADCAST_MTU];
+        let plaintext_len = write_response_plaintext(&request_id, &[0x00], &mut plaintext).unwrap();
+        let mut response_frame = [0u8; BROADCAST_MTU];
+        let response_len = write_link_packet(
+            &link_id(),
+            &link_key(),
+            BROADCAST_MTU,
+            WireContext::Response,
+            &plaintext[..plaintext_len],
+            &[0xB6; 16],
+            &mut response_frame,
+        )
+        .unwrap();
+
+        let capture = feed(&mut engine, &response_frame[..response_len], OFFERED_AT.0);
+
+        assert_eq!(
+            capture.settlements,
+            std::vec![(
+                CommandId(0xC2),
+                Settlement::RemoteControlControllerPairingRequest(Ok(
+                    RemoteControlControllerPairingResponseReceived {
+                        delivered: PacketReceiptDelivered {
+                            rtt: RttMillis::new(1_000),
+                            evidence: DeliveryEvidence::Response,
+                        },
+                        admission:
+                            AdmitRemoteControlControllerPairingResponseOutcome::MalformedEnvelope(
+                                crate::routing::links::request::PackedBinaryParseError::NotBinary,
+                            ),
+                        effect: RemoteControlControllerPairingResponseEffect::NotAdvanced(
+                            FailRemoteControlControllerPairingRequestOutcome::Aborted {
+                                aborted: RemoteControlControllerPairingAborted::AwaitingOffer {
+                                    context: context(),
+                                },
+                            },
+                        ),
+                    },
+                )),
+            )],
+        );
+        assert_eq!(
+            engine.remote_control_controller_pairing.view(),
+            RemoteControlControllerPairingView::Idle,
+        );
+        assert!(!engine.receipts.has_pending_request(request_id));
+    }
+
+    #[test]
+    fn pairing_request_rejects_resource_response_and_aborts_exchange() {
+        let mut engine = engine_with_active_link();
+        let (_, request_id) = dispatch_begin_request(&mut engine);
+        let mut sender = engine_with_active_link();
+        let advertisement = advertise_response_segment_from(
+            &mut sender,
+            CommandId(0xD1),
+            request_id,
+            b"offer",
+            None,
+            ResourceSegment::whole(5),
+            1_500,
+        );
+
+        let capture = feed(&mut engine, &advertisement, OFFERED_AT.0);
+
+        assert_eq!(
+            capture.settlements,
+            std::vec![
+                (
+                    CommandId(0xC2),
+                    Settlement::RemoteControlControllerPairingRequest(Err(
+                        RemoteControlControllerPairingRequestFailure {
+                            cause: RemoteControlControllerPairingRequestFailureCause::ResourceResponseUnsupported,
+                            exchange:
+                                FailRemoteControlControllerPairingRequestOutcome::Aborted {
+                                    aborted:
+                                        RemoteControlControllerPairingAborted::AwaitingOffer {
+                                            context: context(),
+                                        },
+                                },
+                        },
+                    )),
+                ),
+            ],
+        );
+        assert_eq!(capture.frames.len(), 1);
+        assert_eq!(
+            engine.remote_control_controller_pairing.view(),
+            RemoteControlControllerPairingView::Idle,
+        );
+        assert!(!engine.receipts.has_pending_request(request_id));
     }
 
     #[test]
@@ -748,22 +1084,21 @@ mod tests {
             panic!("approval settled")
         };
         assert_eq!(approval.attempt_id(), attempt_id);
-        assert_eq!(
-            SendRequest::try_from(approval.into_request()).unwrap(),
-            SendRequest {
-                link_id: context().link_id(),
-                path_hash: RequestPathHash::of(REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID),
-                data: packed(RemoteControlPairingRequest::Commit(
-                    RemoteControlPairingCommit::new(&transcript),
-                )),
-                response_timeout: RequestResponseTimeout::LinkDefaultAtMost {
-                    maximum: DurationMillis(2_500),
-                },
-                maximum_response_bytes: ByteLimit::Maximum(
-                    RemoteControlPairingResponse::MAX_ENCODED_LEN as u64,
-                ),
+        let request = approval.into_request();
+        let expected = SendRequest {
+            link_id: context().link_id(),
+            path_hash: RequestPathHash::of(REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID),
+            data: packed(RemoteControlPairingRequest::Commit(
+                RemoteControlPairingCommit::new(&transcript),
+            )),
+            response_timeout: RequestResponseTimeout::LinkDefaultAtMost {
+                maximum: DurationMillis(2_500),
             },
-        );
+            maximum_response_bytes: ByteLimit::Maximum(
+                RemoteControlPairingResponse::MAX_ENCODED_LEN as u64,
+            ),
+        };
+        assert_eq!(request.send_request(), (&expected).into());
         assert!(matches!(
             engine.remote_control_controller_pairing.view(),
             RemoteControlControllerPairingView::AwaitingCompletion(view)

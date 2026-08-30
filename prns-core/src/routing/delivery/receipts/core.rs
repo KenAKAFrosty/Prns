@@ -1,6 +1,5 @@
 use crate::crypto::{Ed25519Signature, Ed25519Verifier};
-use crate::engine::CommandId;
-use crate::engine::InstantMillis;
+use crate::engine::{CommandId, InstantMillis, SendRequestIntent};
 use crate::identity::IdentitySigningPublicKey;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::request::RequestId;
@@ -18,7 +17,7 @@ pub enum ReceiptKind {
     SendToLink(LinkId),
     SendRequest {
         link_id: LinkId,
-        maximum_response_bytes: ByteLimit,
+        response: RequestReceiptPolicy,
     },
 }
 
@@ -29,6 +28,64 @@ const _: () = {
 impl ReceiptKind {
     const fn is_request(self) -> bool {
         matches!(self, Self::SendRequest { .. })
+    }
+
+    pub(crate) const fn request(
+        link_id: LinkId,
+        maximum_response_bytes: ByteLimit,
+        intent: SendRequestIntent,
+    ) -> Self {
+        Self::SendRequest {
+            link_id,
+            response: RequestReceiptPolicy::new(maximum_response_bytes, intent),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestReceiptPolicy {
+    ApplicationUnlimited,
+    ApplicationMaximum(u64),
+    RemoteControlControllerPairingUnlimited,
+    RemoteControlControllerPairingMaximum(u64),
+}
+
+impl RequestReceiptPolicy {
+    pub(crate) const fn new(limit: ByteLimit, intent: SendRequestIntent) -> Self {
+        match (intent, limit) {
+            (SendRequestIntent::Application, ByteLimit::Unlimited) => Self::ApplicationUnlimited,
+            (SendRequestIntent::Application, ByteLimit::Maximum(maximum)) => {
+                Self::ApplicationMaximum(maximum)
+            }
+            (SendRequestIntent::RemoteControlControllerPairing, ByteLimit::Unlimited) => {
+                Self::RemoteControlControllerPairingUnlimited
+            }
+            (SendRequestIntent::RemoteControlControllerPairing, ByteLimit::Maximum(maximum)) => {
+                Self::RemoteControlControllerPairingMaximum(maximum)
+            }
+        }
+    }
+
+    pub const fn intent(self) -> SendRequestIntent {
+        match self {
+            Self::ApplicationUnlimited | Self::ApplicationMaximum(_) => {
+                SendRequestIntent::Application
+            }
+            Self::RemoteControlControllerPairingUnlimited
+            | Self::RemoteControlControllerPairingMaximum(_) => {
+                SendRequestIntent::RemoteControlControllerPairing
+            }
+        }
+    }
+
+    pub const fn maximum_response_bytes(self) -> ByteLimit {
+        match self {
+            Self::ApplicationUnlimited | Self::RemoteControlControllerPairingUnlimited => {
+                ByteLimit::Unlimited
+            }
+            Self::ApplicationMaximum(maximum)
+            | Self::RemoteControlControllerPairingMaximum(maximum) => ByteLimit::Maximum(maximum),
+        }
     }
 }
 
@@ -46,6 +103,13 @@ pub struct OutstandingReceipt {
 pub struct ProvenReceipt {
     pub command_id: CommandId,
     pub kind: ReceiptKind,
+    pub sent_at: InstantMillis,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProvenRequestReceipt {
+    pub command_id: CommandId,
+    pub intent: SendRequestIntent,
     pub sent_at: InstantMillis,
 }
 
@@ -80,7 +144,7 @@ pub struct CulledReceipt {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkOwnedReceiptKind {
     SendToLink,
-    SendRequest,
+    SendRequest(SendRequestIntent),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,8 +261,11 @@ impl<C: ReceiptTable> Receipts<C> {
                     Some((index, LinkOwnedReceiptKind::SendToLink))
                 }
                 ReceiptKind::SendRequest {
-                    link_id: candidate, ..
-                } if candidate == link_id => Some((index, LinkOwnedReceiptKind::SendRequest)),
+                    link_id: candidate,
+                    response,
+                } if candidate == link_id => {
+                    Some((index, LinkOwnedReceiptKind::SendRequest(response.intent())))
+                }
                 ReceiptKind::SendSinglePacket { .. }
                 | ReceiptKind::SendToLink(_)
                 | ReceiptKind::SendRequest { .. } => None,
@@ -336,11 +403,15 @@ impl<C: ReceiptTable> Receipts<C> {
     }
 
     /// A response names its request by the truncated hash of the request packet; the session key authenticated it, so no signature gates this.
-    pub fn settle_by_request_id(&mut self, request_id: RequestId) -> Option<ProvenReceipt> {
+    pub fn settle_by_request_id(&mut self, request_id: RequestId) -> Option<ProvenRequestReceipt> {
         let index = self.request_row_index(request_id)?;
-        let proven = ProvenReceipt {
+        let intent = match *self.table.kinds().get(index)? {
+            ReceiptKind::SendRequest { response, .. } => response.intent(),
+            ReceiptKind::SendSinglePacket { .. } | ReceiptKind::SendToLink(_) => return None,
+        };
+        let proven = ProvenRequestReceipt {
             command_id: *self.table.command_ids().get(index)?,
-            kind: *self.table.kinds().get(index)?,
+            intent,
             sent_at: *self.table.sent_ats().get(index)?,
         };
         self.table.remove(index);
@@ -362,10 +433,15 @@ impl<C: ReceiptTable> Receipts<C> {
     pub fn pending_request_response_limit(&self, request_id: RequestId) -> Option<ByteLimit> {
         let index = self.request_row_index(request_id)?;
         match self.table.kinds().get(index)? {
-            ReceiptKind::SendRequest {
-                maximum_response_bytes,
-                ..
-            } => Some(*maximum_response_bytes),
+            ReceiptKind::SendRequest { response, .. } => Some(response.maximum_response_bytes()),
+            ReceiptKind::SendSinglePacket { .. } | ReceiptKind::SendToLink(_) => None,
+        }
+    }
+
+    pub fn pending_request_intent(&self, request_id: RequestId) -> Option<SendRequestIntent> {
+        let index = self.request_row_index(request_id)?;
+        match self.table.kinds().get(index)? {
+            ReceiptKind::SendRequest { response, .. } => Some(response.intent()),
             ReceiptKind::SendSinglePacket { .. } | ReceiptKind::SendToLink(_) => None,
         }
     }
@@ -739,7 +815,7 @@ mod tests {
             command_id: CommandId(4),
             kind: ReceiptKind::SendRequest {
                 link_id: LinkId::new([0x2A; 16]),
-                maximum_response_bytes: ByteLimit::Unlimited,
+                response: RequestReceiptPolicy::ApplicationUnlimited,
             },
             peer_signing_key: key,
             sent_at: InstantMillis(100),
@@ -778,7 +854,7 @@ mod tests {
             command_id: CommandId(43),
             kind: ReceiptKind::SendRequest {
                 link_id,
-                maximum_response_bytes: ByteLimit::Unlimited,
+                response: RequestReceiptPolicy::ApplicationUnlimited,
             },
             peer_signing_key: key,
             sent_at: InstantMillis(100),
@@ -799,7 +875,7 @@ mod tests {
             receipts.pop_for_link(&link_id),
             Some(LinkOwnedReceipt {
                 command_id: CommandId(43),
-                kind: LinkOwnedReceiptKind::SendRequest,
+                kind: LinkOwnedReceiptKind::SendRequest(SendRequestIntent::Application),
             }),
         );
         assert_eq!(

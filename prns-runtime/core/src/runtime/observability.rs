@@ -4,7 +4,8 @@ use crate::engine::{
     CloseLinkFailure, CloseRemoteControlPairingFailure, EstablishLinkFailure, IdentifyFailure,
     Journaled, LinkClosedReason, OpenRemoteControlPairingFailure,
     RejectRemoteControlControllerPairingFailure, RejectRemoteControlTargetPairingFailure,
-    RemoteControlControllerPairingRequestBuildError, RemoteControlPairingResponseDispatchFailure,
+    RemoteControlControllerPairingRequestBuildError, RemoteControlControllerPairingRequestFailure,
+    RemoteControlControllerPairingRequestFailureCause, RemoteControlPairingResponseDispatchFailure,
     RemoteControlTargetPairingFinalization, RequestPathFailure, RespondFailure, RouteRemovalCause,
     SendGroupFailure, SendPlainPacketFailure, SendRequestFailure, SendResourceFailure,
     SendSinglePacketFailure, SendToChannelFailure, SendToLinkFailure,
@@ -42,6 +43,7 @@ prns_macros::iterable_enum! {
         RejectRemoteControlTargetPairing,
         SettleRemoteControlTargetPairingAuthorization,
         BeginRemoteControlControllerPairing,
+        RemoteControlControllerPairingRequest,
         ApproveRemoteControlControllerPairing,
         RejectRemoteControlControllerPairing,
     }
@@ -437,6 +439,10 @@ impl From<&Settlement> for SettledOperation {
                 operation: Operation::BeginRemoteControlControllerPairing,
                 outcome: result.runtime_outcome(),
             },
+            Settlement::RemoteControlControllerPairingRequest(result) => Self {
+                operation: Operation::RemoteControlControllerPairingRequest,
+                outcome: result.runtime_outcome(),
+            },
             Settlement::ApproveRemoteControlControllerPairing(result) => Self {
                 operation: Operation::ApproveRemoteControlControllerPairing,
                 outcome: result.runtime_outcome(),
@@ -696,6 +702,19 @@ impl From<&RemoteControlControllerPairingRequestBuildError> for RuntimeOperation
     }
 }
 
+impl From<&RemoteControlControllerPairingRequestFailure> for RuntimeOperationOutcome {
+    fn from(failure: &RemoteControlControllerPairingRequestFailure) -> Self {
+        match &failure.cause {
+            RemoteControlControllerPairingRequestFailureCause::Request(failure) => {
+                Self::from(failure)
+            }
+            RemoteControlControllerPairingRequestFailureCause::ResourceResponseUnsupported => {
+                Self::ResponseTransferFailed
+            }
+        }
+    }
+}
+
 impl From<&RemoteControlPairingResponseDispatchFailure> for RuntimeOperationOutcome {
     fn from(failure: &RemoteControlPairingResponseDispatchFailure) -> Self {
         match failure {
@@ -914,6 +933,15 @@ mod tests {
                 RejectRemoteControlControllerPairingFailure::NoActiveAttempt,
             )),
         });
+        snapshot.record_journaled(&Journaled::CommandSettled {
+            id: CommandId(10),
+            settlement: Settlement::RemoteControlControllerPairingRequest(Err(
+                RemoteControlControllerPairingRequestFailure {
+                    cause: RemoteControlControllerPairingRequestFailureCause::ResourceResponseUnsupported,
+                    exchange: crate::remote_control::FailRemoteControlControllerPairingRequestOutcome::NoActiveAttempt,
+                },
+            )),
+        });
 
         assert_eq!(
             snapshot.operations.get(
@@ -961,6 +989,13 @@ mod tests {
             snapshot.operations.get(
                 RuntimeOperation::RejectRemoteControlControllerPairing,
                 RuntimeOperationOutcome::Sequencing,
+            ),
+            1,
+        );
+        assert_eq!(
+            snapshot.operations.get(
+                RuntimeOperation::RemoteControlControllerPairingRequest,
+                RuntimeOperationOutcome::ResponseTransferFailed,
             ),
             1,
         );

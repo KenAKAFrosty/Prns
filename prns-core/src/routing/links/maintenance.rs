@@ -1,8 +1,7 @@
 use crate::engine::EngineState;
 use crate::engine::{
-    link_closed_settlement, settle, CloseLink, CloseLinkRejection, CommandId, CommandOutcome,
-    EngineReaction, Journaled, LinkClosedReason, SendResourceFailure, SendToChannelFailure,
-    Settlement,
+    settle, CloseLink, CloseLinkRejection, CommandId, CommandOutcome, EngineReaction, Journaled,
+    LinkClosedReason, SendResourceFailure, SendToChannelFailure, Settlement,
 };
 use crate::interfaces::InterfaceId;
 use crate::remote_control::{
@@ -204,7 +203,7 @@ impl<S: StorageLayout> EngineState<S> {
             settle(
                 sink,
                 receipt.command_id,
-                link_closed_settlement(receipt.kind),
+                self.link_closed_settlement(*link_id, receipt.kind),
             );
         }
         self.reconcile_pending_link_route_evidence();
@@ -338,7 +337,6 @@ mod tests {
             accept_everything, advertise_from, advertisement_frame, engine_with_active_link,
             feed_judged, link_id,
         };
-        use crate::units::ByteLimit;
 
         let mut engine = engine_with_active_link();
         let link_id = link_id();
@@ -383,7 +381,7 @@ mod tests {
                 command_id: CommandId(35),
                 kind: ReceiptKind::SendRequest {
                     link_id,
-                    maximum_response_bytes: ByteLimit::Unlimited,
+                    response: crate::routing::delivery::receipts::RequestReceiptPolicy::ApplicationUnlimited,
                 },
                 peer_signing_key: signing,
                 sent_at: InstantMillis(2_100),

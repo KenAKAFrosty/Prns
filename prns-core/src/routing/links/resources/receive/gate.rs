@@ -133,6 +133,18 @@ impl<S: StorageLayout> EngineState<S> {
             else {
                 return IngestPacketOutcome::Ignored(IgnoreReason::UnmatchedResponse);
             };
+            if self.receipts.pending_request_intent(id)
+                == Some(crate::engine::SendRequestIntent::RemoteControlControllerPairing)
+            {
+                let Some(settled_request) = self.receipts.settle_by_request_id(id) else {
+                    return IngestPacketOutcome::Ignored(IgnoreReason::UnmatchedResponse);
+                };
+                return IngestPacketOutcome::PairingResponseResourceUnsupported {
+                    link_id,
+                    hash: advertisement.hash,
+                    settled_request: settled_request.command_id,
+                };
+            }
             if !maximum_response_bytes.allows(advertisement.data_bytes) {
                 let settled_request = self
                     .receipts
@@ -516,7 +528,8 @@ mod tests {
             command_id: CommandId(42),
             kind: ReceiptKind::SendRequest {
                 link_id: link_id(),
-                maximum_response_bytes: crate::units::ByteLimit::Unlimited,
+                response:
+                    crate::routing::delivery::receipts::RequestReceiptPolicy::ApplicationUnlimited,
             },
             peer_signing_key: IdentitySigningPublicKey::new(Ed25519PublicKey([0x99; 32])),
             sent_at: InstantMillis(1_800),

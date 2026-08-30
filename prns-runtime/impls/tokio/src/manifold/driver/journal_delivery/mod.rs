@@ -167,13 +167,17 @@ impl JournalDelivery {
     }
 
     fn settle_or_forward<'a>(&mut self, journaled: Journaled<'a>) -> Option<Journaled<'a>> {
-        if let Journaled::CommandSettled { id, settlement } = &journaled {
-            if let Some(completion) = self.completions.remove(id) {
-                let _ = completion.send(settlement.clone());
-                return None;
+        match journaled {
+            Journaled::CommandSettled { id, settlement } => {
+                if let Some(completion) = self.completions.remove(&id) {
+                    let _ = completion.send(settlement);
+                    None
+                } else {
+                    Some(Journaled::CommandSettled { id, settlement })
+                }
             }
+            journaled => Some(journaled),
         }
-        Some(journaled)
     }
 
     fn route_request_or_forward<'a>(&mut self, journaled: Journaled<'a>) -> Option<Journaled<'a>> {

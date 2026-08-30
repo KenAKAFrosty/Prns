@@ -6,9 +6,9 @@
 
 use crate::crypto::sha256;
 use crate::engine::{
-    CommandId, CommandOutcome, RequestResponseTimeout, Respond, RespondData, RespondPayload,
-    RespondRejection, SendRequest, SendRequestRejection, MAX_RESPOND_DATA_LEN,
-    MAX_SEND_REQUEST_DATA_LEN,
+    CommandId, CommandOutcome, RemoteControlControllerPairingRequest, RequestResponseTimeout,
+    Respond, RespondData, RespondPayload, RespondRejection, SendRequest, SendRequestRejection,
+    MAX_RESPOND_DATA_LEN, MAX_SEND_REQUEST_DATA_LEN,
 };
 use crate::engine::{EngineState, InstantMillis};
 use crate::identity::IdentitySigningPublicKey;
@@ -367,20 +367,84 @@ fn seal_link_frame(
     Some((header_len, header_len + sealed))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SendRequestView<'a> {
+    link_id: LinkId,
+    path_hash: RequestPathHash,
+    data: &'a [u8],
+    response_timeout: RequestResponseTimeout,
+    maximum_response_bytes: crate::units::ByteLimit,
+}
+
+impl<'a> SendRequestView<'a> {
+    pub(crate) const fn new(
+        link_id: LinkId,
+        path_hash: RequestPathHash,
+        data: &'a [u8],
+        response_timeout: RequestResponseTimeout,
+        maximum_response_bytes: crate::units::ByteLimit,
+    ) -> Self {
+        Self {
+            link_id,
+            path_hash,
+            data,
+            response_timeout,
+            maximum_response_bytes,
+        }
+    }
+
+    pub(crate) const fn link_id(self) -> LinkId {
+        self.link_id
+    }
+
+    pub(crate) const fn data(self) -> &'a [u8] {
+        self.data
+    }
+}
+
+impl<'a> From<&'a SendRequest> for SendRequestView<'a> {
+    fn from(request: &'a SendRequest) -> Self {
+        Self::new(
+            request.link_id,
+            request.path_hash,
+            request.data.as_slice(),
+            request.response_timeout,
+            request.maximum_response_bytes,
+        )
+    }
+}
+
 impl<S: StorageLayout> EngineState<S> {
     pub fn ingest_send_request(&self, id: CommandId, request: SendRequest) -> CommandOutcome {
-        match self.links.phase_for(&request.link_id) {
-            None => CommandOutcome::SendRequestRejected {
+        match self.send_request_rejection(request.link_id) {
+            Ok(()) => CommandOutcome::OwesSendRequest { id, request },
+            Err(rejection) => CommandOutcome::SendRequestRejected { id, rejection },
+        }
+    }
+
+    pub(crate) fn ingest_remote_control_controller_pairing_request(
+        &self,
+        id: CommandId,
+        request: RemoteControlControllerPairingRequest,
+    ) -> CommandOutcome {
+        let link_id = request.link_id();
+        match self.send_request_rejection(link_id) {
+            Ok(()) => CommandOutcome::OwesRemoteControlControllerPairingRequest { id, request },
+            Err(rejection) => CommandOutcome::RemoteControlControllerPairingRequestRejected {
                 id,
-                rejection: SendRequestRejection::NoSuchLink,
+                link_id,
+                rejection,
             },
+        }
+    }
+
+    fn send_request_rejection(&self, link_id: LinkId) -> Result<(), SendRequestRejection> {
+        match self.links.phase_for(&link_id) {
+            None => Err(SendRequestRejection::NoSuchLink),
             Some(LinkPhase::Pending { .. } | LinkPhase::Handshake { .. }) => {
-                CommandOutcome::SendRequestRejected {
-                    id,
-                    rejection: SendRequestRejection::LinkNotActive,
-                }
+                Err(SendRequestRejection::LinkNotActive)
             }
-            Some(LinkPhase::Active { .. }) => CommandOutcome::OwesSendRequest { id, request },
+            Some(LinkPhase::Active { .. }) => Ok(()),
         }
     }
 
@@ -455,10 +519,11 @@ impl<S: StorageLayout> EngineState<S> {
             && data.len() <= MAX_SEND_REQUEST_DATA_LEN
     }
 
-    pub fn write_commanded_send_request(
+    pub(crate) fn write_commanded_send_request(
         &mut self,
         id: CommandId,
-        request: &SendRequest,
+        request: SendRequestView<'_>,
+        intent: crate::engine::SendRequestIntent,
         now: InstantMillis,
         iv: &[u8; 16],
         buf: &mut [u8],
@@ -480,7 +545,7 @@ impl<S: StorageLayout> EngineState<S> {
 
         let mut plaintext = [0u8; WRAPPED_PLAINTEXT_CAP];
         let plain_len =
-            write_request_plaintext(now, &request.path_hash, &request.data, &mut plaintext)
+            write_request_plaintext(now, &request.path_hash, request.data, &mut plaintext)
                 .map_err(|_| LinkRequestWriteError::BufferTooShort)?;
         if plain_len > link_mdu(*mtu) {
             return Err(LinkRequestWriteError::PayloadTooLong);
@@ -504,10 +569,7 @@ impl<S: StorageLayout> EngineState<S> {
         let culled = self.receipts.track(OutstandingReceipt {
             packet_hash,
             command_id: id,
-            kind: ReceiptKind::SendRequest {
-                link_id: request.link_id,
-                maximum_response_bytes: request.maximum_response_bytes,
-            },
+            kind: ReceiptKind::request(request.link_id, request.maximum_response_bytes, intent),
             peer_signing_key: IdentitySigningPublicKey::new(peer_signing),
             sent_at: now,
             timeout_at: InstantMillis(now.0.saturating_add(timeout_ms)),
@@ -542,10 +604,11 @@ impl<S: StorageLayout> EngineState<S> {
         let _ = self.receipts.track(OutstandingReceipt {
             packet_hash: PacketHash::new(sha256(packed_request)),
             command_id: id,
-            kind: ReceiptKind::SendRequest {
-                link_id: *link_id,
+            kind: ReceiptKind::request(
+                *link_id,
                 maximum_response_bytes,
-            },
+                crate::engine::SendRequestIntent::Application,
+            ),
             peer_signing_key: IdentitySigningPublicKey::new(peer_signing),
             sent_at: now,
             timeout_at: InstantMillis(now.0.saturating_add(timeout_ms)),
@@ -904,7 +967,8 @@ mod tests {
             let mut buf = [0u8; 600];
             engine_with_an_active_link_at(link_id, 300).write_commanded_send_request(
                 CommandId(2),
-                &request,
+                (&request).into(),
+                crate::engine::SendRequestIntent::Application,
                 InstantMillis(2_000),
                 &[0u8; 16],
                 &mut buf,
@@ -935,7 +999,8 @@ mod tests {
         engine
             .write_commanded_send_request(
                 CommandId(2),
-                &request,
+                (&request).into(),
+                crate::engine::SendRequestIntent::Application,
                 InstantMillis(2_000),
                 &[0u8; 16],
                 &mut buf,
@@ -987,7 +1052,8 @@ mod tests {
         engine
             .write_commanded_send_request(
                 CommandId(2),
-                &request,
+                (&request).into(),
+                crate::engine::SendRequestIntent::Application,
                 InstantMillis(2_000),
                 &[0u8; 16],
                 &mut buf,

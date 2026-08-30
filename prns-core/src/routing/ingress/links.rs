@@ -794,6 +794,7 @@ impl<S: StorageLayout> EngineState<S> {
             self.links.note_inbound(&link_id, arrived_at);
             return IngestPacketOutcome::ResponseTooLarge {
                 id: proven.command_id,
+                intent: proven.intent,
                 link_id,
                 request_id,
             };
@@ -804,6 +805,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.links.note_inbound(&link_id, arrived_at);
         IngestPacketOutcome::ResponseSettled {
             id: proven.command_id,
+            intent: proven.intent,
             delivered: PacketReceiptDelivered {
                 rtt: RttMillis::measured_between(proven.sent_at, arrived_at),
                 evidence: DeliveryEvidence::Response,

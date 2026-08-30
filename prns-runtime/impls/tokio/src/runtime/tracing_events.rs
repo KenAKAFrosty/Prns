@@ -385,6 +385,9 @@ fn settlement_kind(settlement: &Settlement) -> &'static str {
         Settlement::BeginRemoteControlControllerPairing(_) => {
             "begin_remote_control_controller_pairing"
         }
+        Settlement::RemoteControlControllerPairingRequest(_) => {
+            "remote_control_controller_pairing_request"
+        }
         Settlement::ApproveRemoteControlControllerPairing(_) => {
             "approve_remote_control_controller_pairing"
         }
@@ -422,6 +425,7 @@ fn settlement_outcome(settlement: &Settlement) -> &'static str {
         )) => false,
         Settlement::SettleRemoteControlTargetPairingAuthorization(result) => result.is_ok(),
         Settlement::BeginRemoteControlControllerPairing(result) => result.is_ok(),
+        Settlement::RemoteControlControllerPairingRequest(result) => result.is_ok(),
         Settlement::ApproveRemoteControlControllerPairing(result) => result.is_ok(),
         Settlement::RejectRemoteControlControllerPairing(result) => result.is_ok(),
     };
