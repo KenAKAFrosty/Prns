@@ -69,8 +69,8 @@ hmac = { version = "0.13", default-features = false }
 hkdf = { version = "0.13", default-features = false }
 aes = { version = "0.8", default-features = false }
 cbc = { version = "0.1", default-features = false, features = ["block-padding"] }
-ed25519-dalek = { version = "2", default-features = false, features = ["zeroize", "fast"] }
-x25519-dalek = { version = "2", default-features = false, features = ["precomputed-tables", "static_secrets"] }
+ed25519-dalek = { version = "3", default-features = false, features = ["zeroize", "fast"] }
+x25519-dalek = { version = "3", default-features = false, features = ["precomputed-tables", "static_secrets"] }
 zeroize = { version = "1", default-features = false, features = ["derive"] }
 base64 = { version = "0.22", optional = true, default-features = false, features = ["alloc"] }
 data-encoding = { version = "2", optional = true, default-features = false, features = ["alloc"] }
