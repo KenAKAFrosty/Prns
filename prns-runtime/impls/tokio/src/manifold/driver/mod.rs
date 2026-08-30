@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::Instant;
 
@@ -45,7 +47,7 @@ pub use prns_runtime::runtime::{
 
 use command_dispatch::{CommandDispatch, CommandEffect};
 use crypto_dispatch::{dispatch_open_spans, CryptoCompletionEffect, CryptoDispatch};
-use crypto_pool::{CryptoPool, CryptoResult};
+use crypto_pool::CryptoPool;
 use egress::{flush_due_pacers, route_reaction, soonest_pacer_release, WireScratch};
 use host::bounded_timer_deadline;
 use inbound_dispatch::{InboundContext, InboundDispatch};
@@ -195,11 +197,10 @@ async fn run_inner<S, H, J, P, A>(
     }
     const MAX_INBOUND_BATCH: usize = 64;
     const MAX_COMMAND_BATCH: usize = 64;
-    let (crypto_tx, mut crypto_rx) = tokio::sync::mpsc::unbounded_channel::<CryptoResult>();
+    let crypto_completion_wake = Arc::new(tokio::sync::Notify::new());
     let crypto_pool = crypto_pool_config
         .resolved_worker_count()
-        .and_then(|workers| CryptoPool::spawn(workers.get(), crypto_tx.clone()));
-    let _crypto_tx = crypto_tx;
+        .and_then(|workers| CryptoPool::spawn(workers.get(), crypto_completion_wake.clone()));
     if crypto_pool.is_some() {
         engine.resource_open_lane = ResourceOpenLane::PoolWhenContended;
     }
@@ -240,6 +241,9 @@ async fn run_inner<S, H, J, P, A>(
                 armed = Some((at, reason));
             }
         }
+        // `Notify` is only the hole-punch into Tokio. Ring ownership and this durable count carry
+        // the actual completion, so select cancellation or permit coalescing cannot strand work.
+        let crypto_completions_ready = crypto_pool.as_ref().is_some_and(CryptoPool::has_completion);
         tokio::select! {
             arrived = notify.recv() => {
                 let Some(source) = arrived else { return };
@@ -348,8 +352,17 @@ async fn run_inner<S, H, J, P, A>(
                 let now = host.now();
                 flush_due_pacers(&mut topology.pacers, now, &mut topology.egress, &topology.ifacs);
             }
-            verdict = crypto_rx.recv(), if crypto_pool.is_some() => {
-                let mut next = verdict;
+            _ = async {
+                if crypto_completions_ready {
+                    tokio::task::yield_now().await;
+                } else {
+                    crypto_completion_wake.notified().await;
+                }
+            }, if crypto_pool.is_some() => {
+                let Some(pool) = crypto_pool.as_ref() else {
+                    continue;
+                };
+                let mut next = pool.pop_completion();
                 let now = host.now();
                 let mut seal_buf = [0u8; crate::wire::BROADCAST_MTU];
                 while let Some(result) = next {
@@ -382,7 +395,7 @@ async fn run_inner<S, H, J, P, A>(
                             dispatch_open_spans(&mut engine, crypto_pool.as_ref());
                         }
                     }
-                    next = crypto_rx.try_recv().ok();
+                    next = pool.pop_completion();
                 }
                 dispatch_open_spans(&mut engine, crypto_pool.as_ref());
             }

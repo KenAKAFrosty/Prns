@@ -1,12 +1,12 @@
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 use core::num::NonZeroUsize;
-use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use heapless::Vec as HeaplessVec;
-use tokio::sync::mpsc::UnboundedSender;
+use rtrb::{Consumer, Producer, PushError, RingBuffer};
+use tokio::sync::Notify;
 
 use crate::crypto::{
     ed25519_sign, x25519_diffie_hellman, x25519_keys_for_seal, Ed25519Signature, Ed25519Verifier,
@@ -301,17 +301,33 @@ impl CryptoResult {
     }
 }
 
-struct CryptoQueue {
-    jobs: Mutex<VecDeque<CryptoJob>>,
-    len: AtomicUsize,
+pub(super) struct CryptoCompletion {
+    pub(super) worker: usize,
+    pub(super) result: CryptoResult,
+}
+
+struct CryptoPoolState {
+    queued_jobs: AtomicUsize,
+    /// Durable readiness behind the coalescing `Notify`: a cancelled manifold wait can lose its
+    /// place in Tokio's waiter queue, but it cannot lose this count or strand a result ring.
+    ready_results: AtomicUsize,
     backpressure_depth: usize,
-    ready: Condvar,
     shutdown: AtomicBool,
 }
 
+struct CryptoWorker {
+    /// The manifold owns this producer and the worker owns its matching consumer.
+    job_producer: RefCell<Option<Producer<CryptoJob>>>,
+    /// The worker owns this ring's producer and the manifold owns this consumer.
+    result_consumer: RefCell<Option<Consumer<CryptoResult>>>,
+    handle: Option<std::thread::JoinHandle<()>>,
+    outstanding_jobs: Cell<usize>,
+}
+
 pub(super) struct CryptoPool {
-    queue: Arc<CryptoQueue>,
-    workers: Vec<std::thread::JoinHandle<()>>,
+    state: Arc<CryptoPoolState>,
+    workers: Vec<CryptoWorker>,
+    next_completion: Cell<usize>,
     #[cfg(feature = "runtime-metrics")]
     submitted_jobs: Cell<u64>,
     #[cfg(feature = "runtime-metrics")]
@@ -327,35 +343,57 @@ pub(super) struct CryptoPool {
 impl CryptoPool {
     const PACKET_VERDICT_LINGER: Duration = Duration::from_micros(200);
 
-    pub(super) fn spawn(workers: usize, results: UnboundedSender<CryptoResult>) -> Option<Self> {
-        let queue = Arc::new(CryptoQueue {
-            jobs: Mutex::new(VecDeque::new()),
-            len: AtomicUsize::new(0),
+    pub(super) fn spawn(workers: usize, completion_wake: Arc<Notify>) -> Option<Self> {
+        let worker_count = workers.max(1);
+        let state = Arc::new(CryptoPoolState {
+            queued_jobs: AtomicUsize::new(0),
+            ready_results: AtomicUsize::new(0),
             backpressure_depth: crypto_backpressure_depth(workers),
-            ready: Condvar::new(),
             shutdown: AtomicBool::new(false),
         });
-        let mut handles = Vec::with_capacity(workers.max(1));
-        for _ in 0..workers.max(1) {
-            let worker_queue = queue.clone();
-            let worker_results = results.clone();
+        let mut worker_slots: Vec<CryptoWorker> = Vec::with_capacity(worker_count);
+        for worker in 0..worker_count {
+            let (job_producer, job_consumer) = RingBuffer::new(CRYPTO_WORKER_JOB_RING_DEPTH);
+            let (result_producer, result_consumer) =
+                RingBuffer::new(CRYPTO_WORKER_RESULT_RING_DEPTH);
+            let worker_state = state.clone();
+            let worker_completion_wake = completion_wake.clone();
             match std::thread::Builder::new()
-                .spawn(move || crypto_worker(&worker_queue, &worker_results))
-            {
-                Ok(handle) => handles.push(handle),
+                .name(format!("prns-crypto-{worker}"))
+                .spawn(move || {
+                    crypto_worker(
+                        &worker_state,
+                        job_consumer,
+                        result_producer,
+                        &worker_completion_wake,
+                    );
+                }) {
+                Ok(handle) => worker_slots.push(CryptoWorker {
+                    job_producer: RefCell::new(Some(job_producer)),
+                    result_consumer: RefCell::new(Some(result_consumer)),
+                    handle: Some(handle),
+                    outstanding_jobs: Cell::new(0),
+                }),
                 Err(_) => {
-                    queue.shutdown.store(true, Ordering::Release);
-                    queue.ready.notify_all();
-                    for worker in handles {
-                        let _ = worker.join();
+                    state.shutdown.store(true, Ordering::Release);
+                    for slot in &worker_slots {
+                        if let Some(handle) = &slot.handle {
+                            handle.thread().unpark();
+                        }
+                    }
+                    for slot in &mut worker_slots {
+                        if let Some(handle) = slot.handle.take() {
+                            let _ = handle.join();
+                        }
                     }
                     return None;
                 }
             }
         }
         Some(Self {
-            queue,
-            workers: handles,
+            state,
+            workers: worker_slots,
+            next_completion: Cell::new(0),
             #[cfg(feature = "runtime-metrics")]
             submitted_jobs: Cell::new(0),
             #[cfg(feature = "runtime-metrics")]
@@ -370,38 +408,121 @@ impl CryptoPool {
     }
 
     pub(super) fn submit(&self, job: CryptoJob) {
-        let queue = &*self.queue;
-        if let Ok(mut jobs) = queue.jobs.lock() {
-            if job.owes_packet_verdict() {
-                self.packet_verdicts_owed
-                    .set(self.packet_verdicts_owed.get().saturating_add(1));
-                self.last_packet_verdict_event
-                    .set(Some(std::time::Instant::now()));
+        let owes_packet_verdict = job.owes_packet_verdict();
+        let selected_worker = self.worker_for();
+        let queue_depth = self
+            .state
+            .queued_jobs
+            .fetch_add(1, Ordering::Release)
+            .saturating_add(1);
+        let mut pending = Some(job);
+        let worker = loop {
+            let mut worker = selected_worker;
+            for _ in 0..self.workers.len() {
+                let Some(job) = pending.take() else {
+                    unreachable!("a crypto job is either pending or was pushed");
+                };
+                let pushed = match self.workers[worker].job_producer.borrow_mut().as_mut() {
+                    Some(producer) => producer.push(job),
+                    None => Err(PushError::Full(job)),
+                };
+                match pushed {
+                    Ok(()) => break,
+                    Err(PushError::Full(job)) => pending = Some(job),
+                }
+                worker += 1;
+                if worker == self.workers.len() {
+                    worker = 0;
+                }
             }
-            jobs.push_back(job);
-            #[cfg(feature = "runtime-metrics")]
-            let queue_depth = queue.len.fetch_add(1, Ordering::Release).saturating_add(1);
-            #[cfg(not(feature = "runtime-metrics"))]
-            let _ = queue.len.fetch_add(1, Ordering::Release);
-            #[cfg(feature = "runtime-metrics")]
-            {
-                self.submitted_jobs
-                    .set(self.submitted_jobs.get().saturating_add(1));
-                self.maximum_queue_depth
-                    .set(self.maximum_queue_depth.get().max(queue_depth));
+            if pending.is_none() {
+                break worker;
             }
-            drop(jobs);
-            queue.ready.notify_one();
+            std::thread::yield_now();
+        };
+        let slot = &self.workers[worker];
+        slot.outstanding_jobs
+            .set(slot.outstanding_jobs.get().saturating_add(1));
+        if let Some(handle) = &self.workers[worker].handle {
+            handle.thread().unpark();
         }
+        if owes_packet_verdict {
+            self.packet_verdicts_owed
+                .set(self.packet_verdicts_owed.get().saturating_add(1));
+            self.last_packet_verdict_event
+                .set(Some(std::time::Instant::now()));
+        }
+        #[cfg(feature = "runtime-metrics")]
+        {
+            self.submitted_jobs
+                .set(self.submitted_jobs.get().saturating_add(1));
+            self.maximum_queue_depth
+                .set(self.maximum_queue_depth.get().max(queue_depth));
+        }
+        #[cfg(not(feature = "runtime-metrics"))]
+        let _ = queue_depth;
+    }
+
+    fn worker_for(&self) -> usize {
+        self.workers
+            .iter()
+            .enumerate()
+            .map(|(worker, slot)| (worker, slot.outstanding_jobs.get()))
+            .min_by_key(|&(worker, load)| (load, worker))
+            .map_or(0, |(worker, _)| worker)
+    }
+
+    pub(super) fn record_completed(&self, worker: usize) {
+        if let Some(slot) = self.workers.get(worker) {
+            let outstanding = slot.outstanding_jobs.get();
+            debug_assert!(outstanding > 0, "a worker completed a job it did not own");
+            slot.outstanding_jobs.set(outstanding.saturating_sub(1));
+        }
+        #[cfg(feature = "runtime-metrics")]
+        self.completed_jobs
+            .set(self.completed_jobs.get().saturating_add(1));
+    }
+
+    pub(super) fn pop_completion(&self) -> Option<CryptoCompletion> {
+        // Start after the last successful worker so one continuously full ring cannot starve the
+        // other workers' continuations.
+        let mut worker = self.next_completion.get();
+        for _ in 0..self.workers.len() {
+            let result = self.workers[worker]
+                .result_consumer
+                .borrow_mut()
+                .as_mut()
+                .and_then(|consumer| consumer.pop().ok());
+            if let Some(result) = result {
+                let previous = self.state.ready_results.fetch_sub(1, Ordering::AcqRel);
+                debug_assert!(previous > 0, "a result ring held an uncounted completion");
+                self.next_completion
+                    .set(if worker + 1 == self.workers.len() {
+                        0
+                    } else {
+                        worker + 1
+                    });
+                return Some(CryptoCompletion { worker, result });
+            }
+            worker += 1;
+            if worker == self.workers.len() {
+                worker = 0;
+            }
+        }
+        None
+    }
+
+    pub(super) fn has_completion(&self) -> bool {
+        self.state.ready_results.load(Ordering::Acquire) > 0
     }
 
     pub(super) fn has_queue_capacity(&self, additional: usize) -> bool {
         let has_capacity = self
-            .queue
-            .len
+            .state
+            .queued_jobs
             .load(Ordering::Acquire)
             .saturating_add(additional)
-            <= self.queue.backpressure_depth;
+            <= self.state.backpressure_depth;
         #[cfg(feature = "runtime-metrics")]
         if !has_capacity {
             self.backpressure_deferrals
@@ -427,17 +548,11 @@ impl CryptoPool {
     }
 
     #[cfg(feature = "runtime-metrics")]
-    pub(super) fn record_completed(&self) {
-        self.completed_jobs
-            .set(self.completed_jobs.get().saturating_add(1));
-    }
-
-    #[cfg(feature = "runtime-metrics")]
     pub(super) fn metrics_snapshot(&self) -> CryptoMetricsSnapshot {
         CryptoMetricsSnapshot {
             submitted_jobs: self.submitted_jobs.get(),
             completed_jobs: self.completed_jobs.get(),
-            queue_depth: bounded_u32(self.queue.len.load(Ordering::Acquire)),
+            queue_depth: bounded_u32(self.state.queued_jobs.load(Ordering::Acquire)),
             maximum_queue_depth: bounded_u32(self.maximum_queue_depth.get()),
             backpressure_deferrals: self.backpressure_deferrals.get(),
             packet_verdicts_owed: bounded_u32(self.packet_verdicts_owed.get()),
@@ -452,25 +567,35 @@ fn bounded_u32(value: usize) -> u32 {
 
 impl Drop for CryptoPool {
     fn drop(&mut self) {
-        self.queue.shutdown.store(true, Ordering::Release);
-        let mut jobs = self
-            .queue
-            .jobs
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        jobs.clear();
-        self.queue.len.store(0, Ordering::Release);
-        drop(jobs);
-        self.queue.ready.notify_all();
-        for worker in self.workers.drain(..) {
-            let _ = worker.join();
+        self.state.shutdown.store(true, Ordering::Release);
+        for worker in &self.workers {
+            if let Some(handle) = &worker.handle {
+                handle.thread().unpark();
+            }
         }
+        for worker in &mut self.workers {
+            if let Some(handle) = worker.handle.take() {
+                let _ = handle.join();
+            }
+            worker.job_producer.get_mut().take();
+            worker.result_consumer.get_mut().take();
+        }
+        self.state.queued_jobs.store(0, Ordering::Release);
+        self.state.ready_results.store(0, Ordering::Release);
     }
 }
 
-const CRYPTO_QUEUE_PER_WORKER: usize = 4;
+const CRYPTO_QUEUE_PER_WORKER: usize = 2;
 const MIN_CRYPTO_QUEUE_DEPTH: usize = 16;
 const MAX_CRYPTO_QUEUE_DEPTH: usize = 64;
+const CRYPTO_WORKER_JOB_RING_DEPTH: usize = 16;
+// Claim only the jobs visible at the start of a worker pass, then execute the first immediately.
+// This amortizes the SPSC ring's head publication without coalescing or delaying a lone job.
+const CRYPTO_WORKER_CLAIM_DEPTH: usize = 8;
+// A worker must always be able to return a command-sized burst while the single manifold is still
+// submitting it. This is storage headroom only; admission remains governed by the much smaller
+// `crypto_backpressure_depth` above.
+const CRYPTO_WORKER_RESULT_RING_DEPTH: usize = 128;
 
 fn crypto_backpressure_depth(workers: usize) -> usize {
     workers
@@ -478,7 +603,10 @@ fn crypto_backpressure_depth(workers: usize) -> usize {
         .clamp(MIN_CRYPTO_QUEUE_DEPTH, MAX_CRYPTO_QUEUE_DEPTH)
 }
 
-fn run_crypto_job(job: CryptoJob) -> CryptoResult {
+const WORKER_VERIFIER_CACHE_DEPTH: usize = 8;
+type WorkerVerifierCache = [Option<Ed25519Verifier>; WORKER_VERIFIER_CACHE_DEPTH];
+
+fn run_crypto_job(job: CryptoJob, verifier_cache: &mut WorkerVerifierCache) -> CryptoResult {
     match job {
         CryptoJob::SealStaged(job) => {
             let StagedSealJob {
@@ -535,20 +663,14 @@ fn run_crypto_job(job: CryptoJob) -> CryptoResult {
             }
         }
         CryptoJob::Verify(job) => {
-            let valid = Ed25519Verifier::new(job.signing_key.as_ed25519())
-                .map(|verifier| {
+            let valid = cached_verifier(verifier_cache, job.signing_key.as_ed25519()).is_some_and(
+                |verifier| {
                     verifier
                         .verify(job.packet_hash.as_bytes(), &job.signature)
                         .is_ok()
-                })
-                .unwrap_or(false);
-            CryptoResult::Verified {
-                id: job.id,
-                packet_hash: job.packet_hash,
-                settlement: job.settlement,
-                arrived_at: job.arrived_at,
-                valid,
-            }
+                },
+            );
+            verified_result(job, valid)
         }
         CryptoJob::SealScalars(owed) => {
             let (ephemeral_public, shared) =
@@ -618,31 +740,90 @@ fn run_crypto_job(job: CryptoJob) -> CryptoResult {
     }
 }
 
-fn crypto_worker(queue: &CryptoQueue, results: &UnboundedSender<CryptoResult>) {
-    let Ok(mut jobs) = queue.jobs.lock() else {
-        return;
-    };
+fn verified_result(job: EngineVerifyJob, valid: bool) -> CryptoResult {
+    CryptoResult::Verified {
+        id: job.id,
+        packet_hash: job.packet_hash,
+        settlement: job.settlement,
+        arrived_at: job.arrived_at,
+        valid,
+    }
+}
+
+fn cached_verifier<'a>(
+    cache: &'a mut WorkerVerifierCache,
+    public: &crate::crypto::Ed25519PublicKey,
+) -> Option<&'a Ed25519Verifier> {
+    if let Some(index) = cache
+        .iter()
+        .position(|entry| matches!(entry, Some(verifier) if verifier.public_key() == public))
+    {
+        cache.swap(0, index);
+        return cache[0].as_ref();
+    }
+    let verifier = Ed25519Verifier::new(public).ok()?;
+    cache.rotate_right(1);
+    cache[0] = Some(verifier);
+    cache[0].as_ref()
+}
+
+fn crypto_worker(
+    state: &CryptoPoolState,
+    mut jobs: Consumer<CryptoJob>,
+    mut results: Producer<CryptoResult>,
+    completion_wake: &Notify,
+) {
+    let mut verifier_cache = core::array::from_fn(|_| None);
     loop {
-        if queue.shutdown.load(Ordering::Acquire) {
+        if state.shutdown.load(Ordering::Acquire) {
             return;
         }
-        match jobs.pop_front() {
-            Some(job) => {
-                queue.len.fetch_sub(1, Ordering::Release);
-                drop(jobs);
-                if results.send(run_crypto_job(job)).is_err() {
-                    return;
-                }
-                let Ok(relocked) = queue.jobs.lock() else {
-                    return;
-                };
-                jobs = relocked;
+        let available = jobs.slots().min(CRYPTO_WORKER_CLAIM_DEPTH);
+        if available == 0 {
+            std::thread::park();
+            continue;
+        }
+        let Ok(chunk) = jobs.read_chunk(available) else {
+            continue;
+        };
+        state.queued_jobs.fetch_sub(available, Ordering::Release);
+        for job in chunk {
+            let result = run_crypto_job(job, &mut verifier_cache);
+            if !publish_crypto_result(result, state, &mut results, completion_wake) {
+                return;
             }
-            None => {
-                let Ok(waited) = queue.ready.wait(jobs) else {
-                    return;
-                };
-                jobs = waited;
+        }
+    }
+}
+
+fn publish_crypto_result(
+    result: CryptoResult,
+    state: &CryptoPoolState,
+    results: &mut Producer<CryptoResult>,
+    completion_wake: &Notify,
+) -> bool {
+    let mut pending = Some(result);
+    // Reserve readiness before publishing into the ring. The manifold may be draining a different
+    // worker concurrently; counting first prevents it from observing an uncounted result between
+    // the ring's publish and a later atomic increment.
+    state.ready_results.fetch_add(1, Ordering::Release);
+    loop {
+        if state.shutdown.load(Ordering::Acquire) {
+            state.ready_results.fetch_sub(1, Ordering::Release);
+            return false;
+        }
+        let Some(result) = pending.take() else {
+            unreachable!("a crypto result is either pending or was pushed");
+        };
+        match results.push(result) {
+            Ok(()) => {
+                completion_wake.notify_one();
+                return true;
+            }
+            Err(PushError::Full(result)) => {
+                pending = Some(result);
+                completion_wake.notify_one();
+                std::thread::yield_now();
             }
         }
     }

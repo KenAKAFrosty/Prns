@@ -12,7 +12,9 @@ use crate::routing::links::resources::{MAP_HASH_LEN, RESOURCE_NONCE_LEN};
 use crate::routing::proof::EXPLICIT_PROOF_WIRE_LEN;
 use crate::storage::StorageLayout;
 
-use super::crypto_pool::{CryptoJob, CryptoPool, CryptoResult, OpenSpanJob, StagedSealJob};
+use super::crypto_pool::{
+    CryptoCompletion, CryptoJob, CryptoPool, CryptoResult, OpenSpanJob, StagedSealJob,
+};
 use super::egress::{route_reaction, WireScratch};
 use super::interface_topology::InterfaceTopology;
 use super::journal_delivery::JournalDispatch;
@@ -101,7 +103,7 @@ where
 
     pub(super) fn complete<P>(
         self,
-        result: CryptoResult,
+        completion: CryptoCompletion,
         now: InstantMillis,
         seal_buf: &mut [u8; crate::wire::BROADCAST_MTU],
         should_prove: &mut P,
@@ -117,9 +119,9 @@ where
             journal,
             crypto_pool,
         } = self;
+        let CryptoCompletion { worker, result } = completion;
         if let Some(pool) = crypto_pool {
-            #[cfg(feature = "runtime-metrics")]
-            pool.record_completed();
+            pool.record_completed(worker);
             if result.settles_packet_verdict() {
                 pool.packet_verdict_settled();
             }
