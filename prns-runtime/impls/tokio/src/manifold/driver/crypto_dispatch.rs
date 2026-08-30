@@ -119,9 +119,13 @@ where
             journal,
             crypto_pool,
         } = self;
-        let CryptoCompletion { worker, result } = completion;
+        let CryptoCompletion {
+            worker,
+            result,
+            work,
+        } = completion;
         if let Some(pool) = crypto_pool {
-            pool.record_completed(worker);
+            pool.record_completed(worker, work);
             if result.settles_packet_verdict() {
                 pool.packet_verdict_settled();
             }
