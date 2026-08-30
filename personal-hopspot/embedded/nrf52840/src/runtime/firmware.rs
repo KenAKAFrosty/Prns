@@ -614,7 +614,9 @@ pub async fn run(spawner: Spawner) -> ! {
                                         LORA_CONTROL.apply(profile).await
                                             == LoRaApplyOutcome::Applied
                                     },
-                                    || async { lora_profile_store.save(profile).await.is_ok() },
+                                    || async {
+                                        lora_profile_store.save(profile, None).await.is_ok()
+                                    },
                                 )
                                 .await;
                                 if result.applied() {
@@ -657,18 +659,18 @@ pub async fn run(spawner: Spawner) -> ! {
                                 ui_state.open_ble_group_editor(group.as_str());
                             }
                             hopspot::UiAction::SetBleDiscoveryGroup(name) => {
-                                let result = hopspot::apply_and_persist_radio_profile(
-                                    async {
-                                        super::bluetooth_auto::set_discovery_group(name.as_str())
-                                    },
-                                    || async {
-                                        lora_profile_store
-                                            .save_ble_discovery_group(name.as_str().as_bytes())
-                                            .await
-                                            .is_ok()
-                                    },
-                                )
-                                .await;
+                                let result =
+                                    if !super::bluetooth_auto::set_discovery_group(name.as_str()) {
+                                        hopspot::RadioProfileChangeResult::ApplyFailed
+                                    } else if lora_profile_store
+                                        .save(working_lora_profile, Some(name.as_str().as_bytes()))
+                                        .await
+                                        .is_ok()
+                                    {
+                                        hopspot::RadioProfileChangeResult::Saved
+                                    } else {
+                                        hopspot::RadioProfileChangeResult::ProfileNotSaved
+                                    };
                                 if result.applied() {
                                     BluetoothAutoStatus::new(&BLE_SHARED).reset_peers();
                                 }

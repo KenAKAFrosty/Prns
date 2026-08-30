@@ -96,7 +96,9 @@ const GROUP_NAME_MAX: usize = 16;
 
 #[derive(Clone, Copy)]
 struct LiveDiscoveryGroup {
+    #[allow(dead_code)]
     bytes: [u8; GROUP_NAME_MAX],
+    #[allow(dead_code)]
     len: u8,
     tag: [u8; GROUP_TAG_LEN],
     installed: bool,
@@ -112,6 +114,7 @@ impl LiveDiscoveryGroup {
         }
     }
 
+    #[allow(dead_code)]
     fn as_str(&self) -> &str {
         core::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or(GROUP_NAME)
     }
@@ -129,17 +132,18 @@ static LIVE_GROUP: BlockingMutex<Mtx, Cell<LiveDiscoveryGroup>> =
     BlockingMutex::new(Cell::new(LiveDiscoveryGroup::uninstalled()));
 
 fn ensure_installed() {
-    LIVE_GROUP.lock(|slot| {
-        let current = slot.get();
-        if current.installed {
-            return;
-        }
-        if let Some(live) = live_group_from(compile_time_discovery_group()) {
-            slot.set(live);
-        }
-    });
+    let already = LIVE_GROUP.lock(|slot| slot.get().installed);
+    if already {
+        return;
+    }
+    let _ = set_discovery_group(compile_time_discovery_group());
 }
 
+#[cfg(any(
+    feature = "board-t-echo",
+    feature = "board-t096",
+    feature = "board-t114"
+))]
 pub(super) fn local_discovery_group() -> heapless::String<GROUP_NAME_MAX> {
     ensure_installed();
     LIVE_GROUP.lock(|slot| {
@@ -155,6 +159,11 @@ pub(crate) fn local_discovery_group_tag() -> [u8; GROUP_TAG_LEN] {
     LIVE_GROUP.lock(|slot| slot.get().tag)
 }
 
+#[cfg(any(
+    feature = "board-t-echo",
+    feature = "board-t096",
+    feature = "board-t114"
+))]
 pub(crate) fn install_discovery_group(name: &str) {
     let _ = set_discovery_group(name);
 }
@@ -1489,13 +1498,12 @@ pub(super) async fn acceptor(sd: &'static Softdevice, hub: &'static BleHub) -> !
         let index = slot.index();
 
         let mut adv_buf = [0u8; 31];
-        let adv_len =
-            encode_advertisement(
-                &mut adv_buf,
-                BleRoleCapabilities::DualRole,
-                local_discovery_group_tag(),
-            )
-            .unwrap_or(0);
+        let adv_len = encode_advertisement(
+            &mut adv_buf,
+            BleRoleCapabilities::DualRole,
+            local_discovery_group_tag(),
+        )
+        .unwrap_or(0);
         debug_assert_eq!(
             adv_len, 31,
             "SoftDevice classic ADV must fill the 31-byte budget with the group tag"

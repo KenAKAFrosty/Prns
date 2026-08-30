@@ -901,7 +901,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                                 == LoRaApplyOutcome::Applied
                                         },
                                         || async {
-                                            match lora_profile_store.save(profile).await {
+                                            match lora_profile_store.save(profile, None).await {
                                                 Ok(()) => true,
                                                 Err(error) => {
                                                     log::error!(
@@ -969,23 +969,29 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                     ui_state.open_ble_group_editor(group.as_str());
                                 }
                                 screen::UiAction::SetBleDiscoveryGroup(name) => {
-                                    let result = screen::apply_and_persist_radio_profile(
-                                        async {
-                                            crate::bluetooth_auto::set_discovery_group(name.as_str())
-                                        },
-                                        || async {
-                                            #[cfg(feature = "lora")]
+                                    let applied =
+                                        crate::bluetooth_auto::set_discovery_group(name.as_str());
+                                    let result = if !applied {
+                                        screen::RadioProfileChangeResult::ApplyFailed
+                                    } else {
+                                        #[cfg(feature = "lora")]
+                                        {
+                                            if lora_profile_store
+                                                .save(
+                                                    working_lora_profile,
+                                                    Some(name.as_str().as_bytes()),
+                                                )
+                                                .await
+                                                .is_ok()
                                             {
-                                                lora_profile_store
-                                                    .save_ble_discovery_group(name.as_str().as_bytes())
-                                                    .await
-                                                    .is_ok()
+                                                screen::RadioProfileChangeResult::Saved
+                                            } else {
+                                                screen::RadioProfileChangeResult::ProfileNotSaved
                                             }
-                                            #[cfg(not(feature = "lora"))]
-                                            true
-                                        },
-                                    )
-                                    .await;
+                                        }
+                                        #[cfg(not(feature = "lora"))]
+                                        screen::RadioProfileChangeResult::Saved
+                                    };
                                     if result.applied() {
                                         BluetoothAutoStatus::new(&BLE_SHARED).reset_peers();
                                     }

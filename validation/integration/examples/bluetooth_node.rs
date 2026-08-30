@@ -1,3 +1,4 @@
+#[cfg(target_os = "macos")]
 use prns_core::interfaces::bluetooth_auto::default_group_tag;
 #[cfg(target_os = "macos")]
 #[tokio::main]
@@ -87,6 +88,7 @@ async fn main() {
         identity,
         endpoint,
         capabilities,
+        default_group_tag(),
     ));
     println!(
         "[macos] up — supervising native bluetooth (CoreBluetooth), L2CAP psm {:#06x}",

@@ -99,11 +99,20 @@ where
     pub async fn save(
         &mut self,
         profile: RadioProfile,
+        ble_group: Option<&[u8]>,
     ) -> Result<(), RadioProfileStoreError<F::Error>> {
         if profile.validate().is_err() {
             return Err(RadioProfileStoreError::InvalidProfile);
         }
-        self.commit(StoredValue::Profile(profile)).await
+        if let Some(name) = ble_group {
+            if !ble_group_name_valid(name) {
+                return Err(RadioProfileStoreError::InvalidProfile);
+            }
+            self.commit_with_ble_group(StoredValue::Profile(profile), Some(name))
+                .await
+        } else {
+            self.commit(StoredValue::Profile(profile)).await
+        }
     }
 
     pub async fn reset(&mut self) -> Result<(), RadioProfileStoreError<F::Error>> {
@@ -842,7 +851,7 @@ mod tests {
         );
 
         let profile = changed_profile();
-        block_on(store.save(profile)).unwrap();
+        block_on(store.save(profile, None)).unwrap();
         assert_eq!(
             block_on(store.load(DEFAULT_915_PROFILE)).unwrap(),
             LoadedRadioProfile {
@@ -874,7 +883,7 @@ mod tests {
         let (bytes, len) = block_on(store.load_ble_discovery_group()).unwrap();
         assert_eq!(&bytes[..len as usize], b"mt-leg-a");
 
-        block_on(store.save(changed_profile())).unwrap();
+        block_on(store.save(changed_profile(), None)).unwrap();
         let (bytes, len) = block_on(store.load_ble_discovery_group()).unwrap();
         assert_eq!(&bytes[..len as usize], b"mt-leg-a");
 
@@ -891,16 +900,29 @@ mod tests {
     }
 
     #[test]
+    fn saving_a_profile_can_replace_the_ble_discovery_group() {
+        let mut store = RadioProfileStore::new(FakeFlash::erased(), PAGES);
+        block_on(store.save_ble_discovery_group(b"mt-leg-a")).unwrap();
+        block_on(store.save(changed_profile(), Some(b"mt-leg-b"))).unwrap();
+        let (bytes, len) = block_on(store.load_ble_discovery_group()).unwrap();
+        assert_eq!(&bytes[..len as usize], b"mt-leg-b");
+        assert_eq!(
+            block_on(store.load(DEFAULT_915_PROFILE)).unwrap().profile,
+            changed_profile()
+        );
+    }
+
+    #[test]
     fn every_interrupted_mutation_preserves_the_previous_committed_profile() {
         let mut initial = RadioProfileStore::new(FakeFlash::erased(), PAGES);
-        block_on(initial.save(DEFAULT_915_PROFILE)).unwrap();
+        block_on(initial.save(DEFAULT_915_PROFILE, None)).unwrap();
         let bytes = initial.into_flash().bytes;
 
         for fail_mutation in 0..4 {
             let mut flash = FakeFlash::from_bytes(bytes);
             flash.fail_mutation = Some(fail_mutation);
             let mut interrupted = RadioProfileStore::new(flash, PAGES);
-            assert!(block_on(interrupted.save(changed_profile())).is_err());
+            assert!(block_on(interrupted.save(changed_profile(), None)).is_err());
             let flash = interrupted.into_flash();
             let mut rebooted = RadioProfileStore::new(FakeFlash::from_bytes(flash.bytes), PAGES);
             assert_eq!(
@@ -926,7 +948,7 @@ mod tests {
             let mut flash = FakeFlash::from_bytes(bytes);
             flash.fail_mutation = Some(fail_mutation);
             let mut interrupted = RadioProfileStore::new(flash, PAGES);
-            assert!(block_on(interrupted.save(changed_profile())).is_err());
+            assert!(block_on(interrupted.save(changed_profile(), None)).is_err());
             let flash = interrupted.into_flash();
             let mut rebooted = RadioProfileStore::new(FakeFlash::from_bytes(flash.bytes), PAGES);
             let loaded = block_on(rebooted.load(future_default)).unwrap();
@@ -941,12 +963,12 @@ mod tests {
     #[test]
     fn failed_readback_verification_preserves_the_previous_profile() {
         let mut initial = RadioProfileStore::new(FakeFlash::erased(), PAGES);
-        block_on(initial.save(DEFAULT_915_PROFILE)).unwrap();
+        block_on(initial.save(DEFAULT_915_PROFILE, None)).unwrap();
         let mut flash = initial.into_flash();
         flash.corrupt_after_commit = true;
         let mut store = RadioProfileStore::new(flash, PAGES);
         assert_eq!(
-            block_on(store.save(changed_profile())),
+            block_on(store.save(changed_profile(), None)),
             Err(RadioProfileStoreError::VerificationFailed)
         );
         let mut rebooted = RadioProfileStore::new(store.into_flash(), PAGES);
@@ -958,8 +980,8 @@ mod tests {
     #[test]
     fn corrupt_newest_falls_back_and_two_corrupt_slots_reset() {
         let mut store = RadioProfileStore::new(FakeFlash::erased(), PAGES);
-        block_on(store.save(DEFAULT_915_PROFILE)).unwrap();
-        block_on(store.save(changed_profile())).unwrap();
+        block_on(store.save(DEFAULT_915_PROFILE, None)).unwrap();
+        block_on(store.save(changed_profile(), None)).unwrap();
         let mut flash = store.into_flash();
         flash.bytes[4096 + CHECKSUM_OFFSET] ^= 1;
         let mut recovered = RadioProfileStore::new(flash, PAGES);
@@ -978,8 +1000,8 @@ mod tests {
     #[test]
     fn unreadable_newest_generation_still_reports_recovery() {
         let mut store = RadioProfileStore::new(FakeFlash::erased(), PAGES);
-        block_on(store.save(DEFAULT_915_PROFILE)).unwrap();
-        block_on(store.save(changed_profile())).unwrap();
+        block_on(store.save(DEFAULT_915_PROFILE, None)).unwrap();
+        block_on(store.save(changed_profile(), None)).unwrap();
         let mut flash = store.into_flash();
         flash.bytes[4096] ^= 1;
 

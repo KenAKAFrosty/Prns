@@ -71,7 +71,9 @@ const GROUP_NAME_MAX: usize = 16;
 
 #[derive(Clone, Copy)]
 struct LiveDiscoveryGroup {
+    #[allow(dead_code)]
     bytes: [u8; GROUP_NAME_MAX],
+    #[allow(dead_code)]
     len: u8,
     tag: [u8; GROUP_TAG_LEN],
     installed: bool,
@@ -87,6 +89,7 @@ impl LiveDiscoveryGroup {
         }
     }
 
+    #[allow(dead_code)]
     fn as_str(&self) -> &str {
         core::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or(GROUP_NAME)
     }
@@ -120,17 +123,14 @@ fn live_hub() -> Option<&'static BleHub> {
 }
 
 fn ensure_installed() {
-    LIVE_GROUP.lock(|slot| {
-        let current = slot.get();
-        if current.installed {
-            return;
-        }
-        if let Some(live) = live_group_from(compile_time_discovery_group()) {
-            slot.set(live);
-        }
-    });
+    let already = LIVE_GROUP.lock(|slot| slot.get().installed);
+    if already {
+        return;
+    }
+    let _ = set_discovery_group(compile_time_discovery_group());
 }
 
+#[cfg(feature = "display")]
 pub(crate) fn local_discovery_group() -> HeaplessString<GROUP_NAME_MAX> {
     ensure_installed();
     LIVE_GROUP.lock(|slot| {
@@ -146,6 +146,7 @@ pub(crate) fn local_discovery_group_tag() -> [u8; GROUP_TAG_LEN] {
     LIVE_GROUP.lock(|slot| slot.get().tag)
 }
 
+#[cfg(feature = "display")]
 pub(crate) fn install_discovery_group(name: &str) {
     let _ = set_discovery_group(name);
 }
