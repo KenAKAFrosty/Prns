@@ -174,7 +174,7 @@ pub fn Landing() -> Element {
                     p { class: "text-[0.7rem] font-bold tracking-[0.18em] uppercase text-accent",
                         {t!("standards-benchmarked-label")}
                     }
-                    p { class: "mt-2 text-base font-semibold text-paper tracking-tight",
+                    h3 { class: "mt-2 text-base font-semibold text-paper tracking-tight",
                         {t!("standards-benchmarked-headline")}
                     }
                     p { class: "mt-2 text-sm text-soft leading-relaxed",
@@ -318,7 +318,7 @@ fn InterfaceCard(
                     "{label}"
                 }
             }
-            p { class: "mt-3 text-base font-semibold text-paper leading-snug",
+            h3 { class: "mt-3 text-base font-semibold text-paper leading-snug",
                 "{headline}"
             }
             p { class: "mt-2 text-sm text-soft leading-relaxed",
@@ -344,7 +344,7 @@ fn StandardsCard(label: String, headline: String, body: String) -> Element {
             p { class: "text-[0.7rem] font-bold tracking-[0.18em] uppercase text-accent",
                 "{label}"
             }
-            p { class: "mt-2 text-base font-semibold text-paper tracking-tight",
+            h3 { class: "mt-2 text-base font-semibold text-paper tracking-tight",
                 "{headline}"
             }
             p { class: "mt-2 text-sm text-soft leading-relaxed",
@@ -372,7 +372,7 @@ fn UseCaseCard(
     let overview = rsx! {
         div { class: "route-header flex items-center gap-2.5",
             UseCaseGlyph { kind: glyph }
-            span { class: "text-base font-semibold text-paper leading-snug",
+            h3 { class: "text-base font-semibold text-paper leading-snug",
                 "{headline}"
             }
         }

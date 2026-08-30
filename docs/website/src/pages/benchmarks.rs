@@ -8,7 +8,7 @@ use crate::routes::Route;
 // page render the same files. Tests hold the index, host pages, and published assets
 // together so a newly published host cannot leave a dead site route behind.
 const INDEX_MD: &str = include_str!("../../../../benchmarks/RESULTS.md");
-const HOST_PAGES: &[(&str, &str)] = &[
+pub(crate) const HOST_PAGES: &[(&str, &str)] = &[
     (
         "aarch64-apple-darwin",
         include_str!("../../../../benchmarks/RESULTS-aarch64-apple-darwin.md"),
