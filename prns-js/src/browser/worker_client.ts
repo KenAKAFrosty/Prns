@@ -1762,6 +1762,7 @@ async function prepareWorker(
       ...(persistence.data === undefined ? {} : { persistedState: persistence.data }),
       persistenceEnabled: options.persistenceStore !== undefined,
       limits,
+      networkExecution: options.networkExecution ?? "EngineWorker",
       ...(options.resourceCompressionModuleUrl === undefined
         ? {}
         : { resourceCompressionModuleUrl: options.resourceCompressionModuleUrl.href }),

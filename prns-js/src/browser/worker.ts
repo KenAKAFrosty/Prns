@@ -8,7 +8,10 @@ import {
   bindWorkerEngineOptions,
   dispatchWorkerCapability,
 } from "./worker_engine_bridge.js";
-import type { InterfaceSessionStatus } from "./interface_contract.js";
+import type {
+  InterfaceCloseOutcome,
+  InterfaceSessionStatus,
+} from "./interface_contract.js";
 import type {
   BrowserPersistedState,
   BrowserPersistenceStore,
@@ -20,7 +23,6 @@ import type {
   AutoWifiController,
   AutoWifiControllerStatus,
 } from "./auto_wifi/index.js";
-import type { WebSocketSession } from "./websocket/index.js";
 import type {
   WorkerCall,
   WorkerCapabilityInvocation,
@@ -51,6 +53,7 @@ import {
   workerSettlementWireBytes,
 } from "./worker_codecs.js";
 import { WorkerProjectionServer } from "./worker_projection_server.js";
+import { WorkerNetworkClient } from "./worker_network_client.js";
 
 type StartedEngine = {
   readonly engine: Prns;
@@ -58,7 +61,7 @@ type StartedEngine = {
 };
 
 type WorkerSession = {
-  readonly session: WebSocketSession;
+  readonly close: () => Promise<InterfaceCloseOutcome>;
   readonly releaseStatus: () => void;
 };
 
@@ -130,6 +133,30 @@ async function initialize(message: WorkerStartMessage): Promise<void> {
     releaseStatus: undefined,
   };
   let nextSessionId = 1;
+  let network: WorkerNetworkClient | undefined;
+  if (message.data.initialization.networkExecution === "NetworkWorker") {
+    const created = await WorkerNetworkClient.create(
+      message.data.initialization,
+      state.engine,
+      (id, status) => {
+        postControl(control, Tag("SessionStatusChanged", { id, status }));
+        if (status.tag === "Closed" || status.tag === "Failed") {
+          sessions.delete(id);
+        }
+      },
+      (detail) => {
+        postControl(control, Tag("ProtocolFailed", { detail }));
+      },
+    );
+    if (created.tag !== "Ready") {
+      await state.engine.stop();
+      postControl(control, Tag("ProtocolFailed", {
+        detail: created.data.detail,
+      }));
+      return;
+    }
+    network = created.data;
+  }
   const initialSnapshot = await state.engine.hostSnapshot();
   if (initialSnapshot.tag !== "Captured") {
     postControl(control, Tag("ProtocolFailed", {
@@ -159,7 +186,7 @@ async function initialize(message: WorkerStartMessage): Promise<void> {
         return;
       }
       shutdownStarted = true;
-      void stopEngine(state.engine, sessions, autoWifi)
+      void stopEngine(state.engine, sessions, autoWifi, network)
         .then(async (stopOutcome) => {
           const persistedState = state.persistenceState();
           const response: WorkerShutdownResponse = Tag("Stopped", {
@@ -263,6 +290,7 @@ async function initialize(message: WorkerStartMessage): Promise<void> {
         request.call,
         sessions,
         () => nextSessionId++,
+        network,
         autoWifi,
         (id, status) => {
           postControl(control, Tag("SessionStatusChanged", { id, status }));
@@ -411,6 +439,7 @@ async function performCall(
   call: WorkerCall,
   sessions: Map<number, WorkerSession>,
   mintSessionId: () => number,
+  network: WorkerNetworkClient | undefined,
   autoWifi: WorkerAutoWifi,
   sessionStatusChanged: (id: number, status: InterfaceSessionStatus) => void,
   autoWifiStatusChanged: (status: AutoWifiControllerStatus) => void,
@@ -427,6 +456,17 @@ async function performCall(
     Snapshot: () => engine.snapshot(),
     HostSnapshot: () => engine.hostSnapshot(),
     WebSocketConnect: async ({ url, options }) => {
+      if (network !== undefined) {
+        const id = mintSessionId();
+        const outcome = await network.connect(id, url, options);
+        if (outcome.tag === "Connected") {
+          sessions.set(id, {
+            close: () => network.closeSession(id),
+            releaseStatus: () => undefined,
+          });
+        }
+        return outcome;
+      }
       const outcome = await engine.interfaces.webSocket.connect(url, options);
       if (outcome.tag !== "Connected") {
         return outcome;
@@ -440,7 +480,10 @@ async function performCall(
           sessions.delete(id);
         }
       });
-      sessions.set(id, { session: outcome.data, releaseStatus });
+      sessions.set(id, {
+        close: () => outcome.data.close(),
+        releaseStatus,
+      });
       return Tag("Connected", {
         id,
         name: outcome.data.name,
@@ -477,7 +520,7 @@ async function performCall(
       if (tracked === undefined) {
         return Tag("Closed");
       }
-      const outcome = await tracked.session.close();
+      const outcome = await tracked.close();
       if (sessions.get(id) === tracked) {
         sessions.delete(id);
         tracked.releaseStatus();
@@ -491,6 +534,7 @@ async function stopEngine(
   engine: Prns,
   sessions: Map<number, WorkerSession>,
   autoWifi: WorkerAutoWifi,
+  network: WorkerNetworkClient | undefined,
 ): Promise<StopOutcome> {
   const failures: string[] = [];
   const activeSessions = [...sessions.values()];
@@ -499,7 +543,7 @@ async function stopEngine(
     activeSessions.map(async (tracked): Promise<string | undefined> => {
       try {
         tracked.releaseStatus();
-        const outcome = await tracked.session.close();
+        const outcome = await tracked.close();
         return outcome.tag === "Closed"
           ? undefined
           : describeInterfaceSessionFailure(outcome);
@@ -527,6 +571,7 @@ async function stopEngine(
       failures.push(describeHostError(error));
     }
   }
+  network?.terminate();
   const stopped = await engine.stop();
   if (stopped.tag === "OperationFailed") {
     failures.push(stopped.data.detail);

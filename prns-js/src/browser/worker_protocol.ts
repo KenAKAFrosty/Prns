@@ -49,8 +49,10 @@ import type {
 } from "./usb_auto/runtime.js";
 import type { BleIdentity, IdentitySecretKey } from "./values.js";
 import type {
+  WebSocketRuntimeRegistration,
   WebSocketConnectOptions,
   WebSocketConnectOutcome,
+  WebSocketRuntimeHost,
   WebSocketSession,
 } from "./websocket/index.js";
 
@@ -66,6 +68,7 @@ export type WorkerInitialization = {
   readonly resourceCompressionModuleUrl?: string;
   readonly wasmModuleUrl?: string;
   readonly autoWifiSelectionSeed?: Uint8Array;
+  readonly networkExecution: "EngineWorker" | "NetworkWorker";
 };
 
 export type WorkerSessionProjection = {
@@ -129,6 +132,7 @@ export type WorkerSettlement = {
 };
 
 export type WorkerCapabilityCall =
+  | Tag<"RegisterWebSocket", WebSocketRuntimeRegistration>
   | Tag<
       "RegisterInterface",
       | Parameters<BluetoothRuntimeHost["registerInterface"]>[0]
@@ -157,6 +161,7 @@ export type WorkerCapabilityCall =
   | Tag<"ReleaseUsbAutoDecoder", number>;
 
 export type WorkerCapabilityOutcomes = {
+  readonly RegisterWebSocket: Awaited<ReturnType<WebSocketRuntimeHost["webSocketRegister"]>>;
   readonly RegisterInterface:
     | Awaited<ReturnType<BluetoothRuntimeHost["registerInterface"]>>
     | Awaited<ReturnType<UsbAutoRuntimeHost["registerInterface"]>>;

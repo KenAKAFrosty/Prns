@@ -91,6 +91,45 @@ test("WebSocket session status pushes a remote close exactly once", async () => 
   assert.deepEqual(statuses, ["Closed"]);
 });
 
+test("WebSocket ingress pipelines messages and close drains admitted packets", async () => {
+  const host = new DeferredIngressHost();
+  const socket = new FakeSocket();
+  const session = new BrowserWebSocketSession(
+    host,
+    socket,
+    new Uint8Array([1, 0, 0, 0, 0, 0, 0, 0]),
+    "ws://localhost:42721/prns",
+    16_384,
+    "RawPacket",
+    new IngressCodec(),
+    () => undefined,
+  );
+  session.start();
+
+  socket.receive(new Uint8Array([0x71]));
+  socket.receive(new Uint8Array([0x72]));
+
+  await waitUntil(() => host.ingress.length === 2);
+  assert.deepEqual(host.ingress.map(({ bytes }) => bytes), [[0x71], [0x72]]);
+  let closed = false;
+  const closing = session.close().then((outcome) => {
+    closed = true;
+    return outcome;
+  });
+  await Promise.resolve();
+  assert.equal(host.deactivations, 0);
+  assert.equal(closed, false);
+
+  host.accept(0);
+  await Promise.resolve();
+  assert.equal(host.deactivations, 0);
+  assert.equal(closed, false);
+
+  host.accept(1);
+  assert.equal((await closing).tag, "Closed");
+  assert.equal(host.deactivations, 1);
+});
+
 test("WebSocket framing evidence wakes outbound before the fallback deadline", async () => {
   const host = new SessionOutboundHost([
     { bytes: new Uint8Array([0x51, 0x52]) },
@@ -271,6 +310,26 @@ class SessionOutboundHost {
   }
 }
 
+class DeferredIngressHost extends SessionOutboundHost {
+  deactivations = 0;
+  ingress = [];
+
+  webSocketIngest(_interfaceId, bytes) {
+    return new Promise((settle) => {
+      this.ingress.push({ bytes: [...bytes], settle });
+    });
+  }
+
+  accept(index) {
+    this.ingress[index].settle(Tag("Accepted"));
+  }
+
+  deactivateInterface() {
+    this.deactivations += 1;
+    return super.deactivateInterface();
+  }
+}
+
 class UsbSessionHost extends SessionOutboundHost {
   createUsbAutoDecoder() {
     return {
@@ -388,6 +447,12 @@ class DetectingCodec extends FixedCodec {
     this.#pending = undefined;
     this.#ready = true;
     return pending;
+  }
+}
+
+class IngressCodec extends FixedCodec {
+  decode(message) {
+    return { packets: [message] };
   }
 }
 

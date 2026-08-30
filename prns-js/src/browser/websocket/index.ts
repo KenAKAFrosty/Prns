@@ -78,16 +78,17 @@ type WebSocketIngestOutcome =
   | Tag<"Accepted">
   | EntropyFailure
   | RuntimeRejected;
+type WebSocketHostOutcome<Outcome> = Outcome | Promise<Outcome>;
 export type WebSocketRuntimeHost = InterfaceOutboundHost & {
-  runtimeReadiness(): Tag<"Ready"> | RuntimeRejected;
+  runtimeReadiness(): WebSocketHostOutcome<Tag<"Ready"> | RuntimeRejected>;
   webSocketRegister(
     options: WebSocketRuntimeRegistration,
-  ): WebSocketRegistrationOutcome;
-  deactivateInterface(id: InterfaceId): WebSocketDetachOutcome;
+  ): WebSocketHostOutcome<WebSocketRegistrationOutcome>;
+  deactivateInterface(id: InterfaceId): WebSocketHostOutcome<WebSocketDetachOutcome>;
   webSocketIngest(
     id: InterfaceId,
     bytes: Uint8Array,
-  ): WebSocketIngestOutcome;
+  ): WebSocketHostOutcome<WebSocketIngestOutcome>;
   createWebSocketFramingCodec(
     selection: WebSocketFramingSelection,
   ): WebSocketFramingCodecBinding;
@@ -127,7 +128,7 @@ export class WebSocketInterface {
     url: string | URL,
     options: WebSocketConnectOptions = {},
   ): Promise<WebSocketConnectOutcome> {
-    const ready = this.#host.runtimeReadiness();
+    const ready = await this.#host.runtimeReadiness();
     if (ready.tag !== "Ready") {
       return ready;
     }
@@ -165,7 +166,7 @@ export class WebSocketInterface {
       }
       socket = opened.data;
       stage = "RuntimeRegistration";
-      const registered = this.#host.webSocketRegister({
+      const registered = await this.#host.webSocketRegister({
         channelTag: tag,
         bitrateBps:
           options.bitrateBps ?? defaultWebSocketBitrate(this.#host, target),
@@ -194,7 +195,7 @@ export class WebSocketInterface {
       return Tag("Connected", session);
     } catch (error) {
       if (interfaceId) {
-        this.#host.deactivateInterface(interfaceId);
+        await this.#host.deactivateInterface(interfaceId);
       }
       closeBrowserWebSocket(socket);
       this.#activeTags.delete(tagKey);

@@ -27,6 +27,9 @@ import type {
 
 type SessionWriteOutcome = Tag<"Written"> | InterfaceSessionFailure;
 type SessionHandleOutcome = Tag<"Handled"> | InterfaceSessionFailure;
+type WebSocketIngestOutcome = Awaited<
+  ReturnType<WebSocketRuntimeHost["webSocketIngest"]>
+>;
 type WebSocketDecodeOutcome =
   | Tag<"Decoded", Uint8Array>
   | Extract<
@@ -57,6 +60,7 @@ export class BrowserWebSocketSession implements WebSocketSession {
   readonly #framingWaiters = new Set<() => void>();
   readonly #statusListeners = new Set<(status: InterfaceSessionStatus) => void>();
   #readQueue: Promise<void> = Promise.resolve();
+  #ingressQueue: Promise<void> = Promise.resolve();
   #writeQueue: Promise<SessionWriteOutcome> = Promise.resolve(Tag("Written"));
   #closed = false;
   #released = false;
@@ -136,7 +140,9 @@ export class BrowserWebSocketSession implements WebSocketSession {
     this.#closed = true;
     this.#resolveFramingWaiters();
     const causes: InterfaceCleanupFailure[] = [];
-    const detached = this.#host.deactivateInterface(this.interfaceId);
+    await this.#readQueue;
+    await this.#ingressQueue;
+    const detached = await this.#host.deactivateInterface(this.interfaceId);
     if (detached.tag !== "Detached") {
       causes.push(Tag("RuntimeDetachFailed", { detail: detached.data.detail }));
     }
@@ -189,17 +195,16 @@ export class BrowserWebSocketSession implements WebSocketSession {
     if (this.#codec.canReadOutbound()) {
       this.#resolveFramingWaiters();
     }
-    for (const packet of batch.packets) {
-      if (this.#closed) {
-        return Tag("Handled");
-      }
-      const ingested = this.#host.webSocketIngest(this.interfaceId, packet);
-      if (ingested.tag !== "Accepted") {
-        return ingested;
-      }
+    if (this.#closed) {
+      return Tag("Handled");
     }
+    const ingress = this.#submitIngress(batch.packets);
     const pending = batch.resolvedOutbound;
     if (pending !== undefined) {
+      const ingested = await ingress;
+      if (ingested.tag !== "Handled") {
+        return ingested;
+      }
       const written = await this.#writeEncodedFrame(pending);
       if (written.tag !== "Written") {
         return written;
@@ -214,11 +219,49 @@ export class BrowserWebSocketSession implements WebSocketSession {
     }
     this.#closed = true;
     this.#resolveFramingWaiters();
-    const detached = this.#host.deactivateInterface(this.interfaceId);
+    void this.#finishRemoteClose();
+  }
+
+  async #finishRemoteClose(): Promise<void> {
+    await this.#readQueue;
+    await this.#ingressQueue;
+    const detached = await this.#host.deactivateInterface(this.interfaceId);
     this.#replaceStatus(
       detached.tag === "Detached" ? Tag("Closed") : Tag("Failed", detached),
     );
     this.#releaseOnce();
+  }
+
+  #submitIngress(
+    packets: readonly Uint8Array[],
+  ): Promise<SessionHandleOutcome> {
+    if (packets.length === 0) {
+      return Promise.resolve(Tag("Handled"));
+    }
+    const settlement = Promise.all(
+      packets.map((packet) =>
+        Promise.resolve(
+          this.#host.webSocketIngest(this.interfaceId, packet),
+        )
+      ),
+    ).then((outcomes): SessionHandleOutcome =>
+      firstIngressFailure(outcomes) ?? Tag("Handled")
+    );
+    const observed = settlement
+      .then(async (outcome) => {
+        if (outcome.tag !== "Handled" && !this.#closed) {
+          await this.#fail(outcome);
+        }
+      })
+      .catch(async (error: unknown) => {
+        if (!this.#closed) {
+          await this.#fail(unexpectedSessionFailure(error));
+        }
+      });
+    this.#ingressQueue = Promise.all([this.#ingressQueue, observed]).then(
+      () => undefined,
+    );
+    return settlement;
   }
 
   async #outboundLoop(): Promise<void> {
@@ -284,7 +327,7 @@ export class BrowserWebSocketSession implements WebSocketSession {
     this.#replaceStatus(Tag("Failed", sessionFailure));
     this.#closed = true;
     this.#resolveFramingWaiters();
-    this.#host.deactivateInterface(this.interfaceId);
+    await this.#host.deactivateInterface(this.interfaceId);
     this.#releaseOnce();
     await this.#writeQueue;
     closeBrowserWebSocket(this.#socket);
@@ -409,6 +452,15 @@ export class BrowserWebSocketSession implements WebSocketSession {
       this.#release();
     }
   }
+}
+
+function firstIngressFailure(
+  outcomes: readonly WebSocketIngestOutcome[],
+): Exclude<WebSocketIngestOutcome, Tag<"Accepted">> | undefined {
+  return outcomes.find(
+    (outcome): outcome is Exclude<WebSocketIngestOutcome, Tag<"Accepted">> =>
+      outcome.tag !== "Accepted",
+  );
 }
 
 

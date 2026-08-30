@@ -544,6 +544,7 @@ export type PrnsExecution = "DedicatedWorker" | "MainThread";
 
 export type DedicatedWorkerPrnsOptions = CommonPrnsOptions & {
   execution?: "DedicatedWorker";
+  networkExecution?: "EngineWorker" | "NetworkWorker";
   wasmModuleUrl?: URL;
 };
 
@@ -868,6 +869,8 @@ export class Prns {
     call: Call,
   ): Promise<WorkerCapabilityCallOutcome<Call>> {
     return match(call as WorkerCapabilityCall, {
+      RegisterWebSocket: (registration) =>
+        this.#host.webSocketRegister(registration),
       RegisterInterface: (registration) =>
         this.#host.registerInterface(registration as Parameters<RuntimeHost["registerInterface"]>[0]),
       DeactivateInterface: (value) =>
