@@ -9,7 +9,10 @@ use prns_flash_manifest::{
 };
 use serde::Serialize;
 
-use crate::platforms::{BoardFlashTarget, BoardTarget, PreparationProfile, SHIPPING_BOARD_TARGETS};
+use crate::platforms::{
+    BoardFlashTarget, BoardTarget, PreparationProfile, QUALIFICATION_BOARD_TARGETS,
+    SHIPPING_BOARD_TARGETS,
+};
 
 use super::contract::BridgePhase;
 
@@ -398,6 +401,7 @@ pub(super) fn shares_serial_chip_identity(target: &BoardTarget) -> bool {
     };
     SHIPPING_BOARD_TARGETS
         .iter()
+        .chain(QUALIFICATION_BOARD_TARGETS.iter())
         .filter(|candidate| {
             candidate
                 .flash_target
@@ -442,6 +446,7 @@ mod tests {
     #[test]
     fn generated_catalog_owns_transport_provisioning_and_same_chip_confirmation() {
         let heltec = board_target_by_slug("heltec-v4").expect("shipping board");
+        let e290 = board_target_by_slug("heltec-e290").expect("qualification board");
         let t_beam = board_target_by_slug("t-beam-supreme").expect("shipping board");
         let xiao = board_target_by_slug("xiao-esp32-c6").expect("shipping board");
         let t_echo = board_target_by_slug("t-echo").expect("shipping board");
@@ -472,6 +477,10 @@ mod tests {
             BoardFlashTarget::Uf2MassStorage { .. }
         ));
         assert!(shares_serial_chip_identity(heltec));
+        assert_eq!(
+            shares_serial_chip_identity(e290),
+            cfg!(feature = "local-dev-flasher")
+        );
         assert!(shares_serial_chip_identity(t_beam));
         assert!(!shares_serial_chip_identity(xiao));
         assert!(!shares_serial_chip_identity(t_echo));

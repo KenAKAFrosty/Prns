@@ -1,5 +1,7 @@
 use super::*;
-use personal_hopspot_core::display::{DisplayBlankReason, DisplayVisibility, MonotonicMillis};
+use personal_hopspot_core::display::{
+    DisplayBlankReason, DisplayDuration, DisplayVisibility, MonotonicMillis, PresentationUrgency,
+};
 use personal_rns::remote_control::{
     RemoteControlInitialAccess, RemoteControlSelfAnnouncement, RemoteControlService,
 };
@@ -8,9 +10,29 @@ fn display_now() -> MonotonicMillis {
     MonotonicMillis::new(embassy_time::Instant::now().as_millis())
 }
 
+const NOTICE_DURATION: DisplayDuration = match DisplayDuration::from_millis(NOTICE_MS) {
+    Ok(duration) => duration,
+    Err(_) => panic!("the notice duration is nonzero"),
+};
+const STARTUP_NOTICE_DURATION: DisplayDuration = match DisplayDuration::from_millis(5_000) {
+    Ok(duration) => duration,
+    Err(_) => panic!("the startup notice duration is nonzero"),
+};
+
+fn show_notice(
+    state: &mut screen::UiState,
+    timer: &mut screen::PresentedNoticeTimer,
+    notice: screen::UiNotice,
+    duration: DisplayDuration,
+) {
+    state.show_notice(notice);
+    timer.stage(notice, duration);
+}
+
 pub(crate) async fn run<B: Esp32S3Board>(spawner: Spawner)
 where
     B::Display: 'static,
+    <B::Display as S3BoardDisplay>::Runtime: 'static,
     B::Battery: 'static,
     B::Gnss: 'static,
 {
@@ -31,6 +53,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     hardware: S3BoardHardware<B::Display, B::Battery, B::Gnss>,
 ) where
     B::Display: 'static,
+    <B::Display as S3BoardDisplay>::Runtime: 'static,
     B::Battery: 'static,
     B::Gnss: 'static,
 {
@@ -421,8 +444,14 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             .is_some()
             .then_some(profile_startup_notice)
             .flatten();
+        let mut notice_timer = screen::PresentedNoticeTimer::new();
         if let Some(notice) = startup_notice {
-            ui_state.show_notice(notice);
+            show_notice(
+                &mut ui_state,
+                &mut notice_timer,
+                notice,
+                STARTUP_NOTICE_DURATION,
+            );
         }
         #[cfg(feature = "lora")]
         let mut working_lora_profile = lora_profile;
@@ -439,13 +468,12 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         let mut ticks_to_battery_sample: u8 = 0;
         let mut ticks_to_battery_display: u8 = 0;
         let mut activity = screen::CardActivityTracker::<8>::new();
-        let mut notice_until_ms =
-            startup_notice.map(|notice| (embassy_time::Instant::now().as_millis() + 5_000, notice));
         let mut render_tick = Ticker::every(RENDER_INTERVAL);
         let mut settle_after_draw = false;
         let mut persistence_notice = screen::PersistenceNotice::new();
         let mut first_render_pending = true;
         let mut first_render_started = false;
+        let mut presentation_urgency = PresentationUrgency::Immediate;
         loop {
             if ticks_to_battery_sample == 0 {
                 sampled_battery_state = battery_gauge.sample(&mut battery_source);
@@ -510,22 +538,29 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 menu_ap_ssid,
             );
             ui_state.sync(content);
-            persistence_notice.update(
-                &mut ui_state,
-                crate::persistence::persistence_state(),
-                now_ms,
-            );
-            if let Some((until, owner)) = notice_until_ms {
-                if now_ms >= until {
-                    notice_until_ms = None;
-                    if ui_state.clear_notice_if(owner) {
-                        if let Some(notice) = pending_startup_notice.take() {
-                            ui_state.show_notice(notice);
-                            notice_until_ms = Some((now_ms + 5_000, notice));
-                        }
-                    } else {
-                        pending_startup_notice = None;
+            if let Some(notice) =
+                persistence_notice.observe(crate::persistence::persistence_state())
+            {
+                show_notice(
+                    &mut ui_state,
+                    &mut notice_timer,
+                    notice,
+                    STARTUP_NOTICE_DURATION,
+                );
+                presentation_urgency = PresentationUrgency::Immediate;
+            }
+            if let Some(owner) = notice_timer.expire(MonotonicMillis::new(now_ms)) {
+                if ui_state.clear_notice_if(owner) {
+                    if let Some(notice) = pending_startup_notice.take() {
+                        show_notice(
+                            &mut ui_state,
+                            &mut notice_timer,
+                            notice,
+                            STARTUP_NOTICE_DURATION,
+                        );
                     }
+                } else {
+                    pending_startup_notice = None;
                 }
             }
             if let Err(error) = display.poll_blanking(MonotonicMillis::new(now_ms), display_now) {
@@ -538,32 +573,40 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 boot_stage(BootPhase::DisplayFirstRenderBegin);
                 first_render_started = true;
             }
-            match display.render_and_present(
-                screen::face_64x128::RenderInput {
-                    content,
-                    battery: battery_state,
-                    gnss: ui_state.gnss_visible().then(B::Gnss::snapshot).flatten(),
-                    state: &ui_state,
-                    interface_menu_details: &interface_menu_details,
-                },
-                MonotonicMillis::new(now_ms),
-                display_now,
-            ) {
-                Ok(ImmediatePresentation::Presented) if first_render_pending => {
+            match display
+                .render_and_present(
+                    screen::face_64x128::RenderInput {
+                        content,
+                        battery: battery_state,
+                        gnss: ui_state.gnss_visible().then(B::Gnss::snapshot).flatten(),
+                        state: &ui_state,
+                        interface_menu_details: &interface_menu_details,
+                    },
+                    MonotonicMillis::new(now_ms),
+                    presentation_urgency,
+                    display_now,
+                )
+                .await
+            {
+                Ok(S3Presentation::Presented) if first_render_pending => {
                     boot_stage(BootPhase::DisplayFirstRenderComplete);
                     first_render_pending = false;
+                    notice_timer.presentation_succeeded(ui_state.visible_notice(), display_now());
                 }
-                Ok(ImmediatePresentation::Unavailable) if first_render_pending => {
+                Ok(S3Presentation::Unavailable) if first_render_pending => {
                     boot_stage(BootPhase::DisplayFirstRenderUnavailable);
                     first_render_pending = false;
                 }
-                Ok(ImmediatePresentation::Failed) => {
+                Ok(S3Presentation::Failed) => {
                     log::error!("display presentation failed");
                 }
+                Ok(S3Presentation::Presented | S3Presentation::Unchanged) => {
+                    notice_timer.presentation_succeeded(ui_state.visible_notice(), display_now());
+                }
                 Ok(
-                    ImmediatePresentation::Unavailable
-                    | ImmediatePresentation::Withheld
-                    | ImmediatePresentation::Presented,
+                    S3Presentation::Unavailable
+                    | S3Presentation::Withheld
+                    | S3Presentation::DeferredUntil(_),
                 ) => {}
                 Err(error) => log::error!("display presentation state failed: {error:?}"),
             }
@@ -581,288 +624,342 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             {
                 Either3::Third(()) => {
                     settle_after_draw = true;
+                    presentation_urgency = PresentationUrgency::Telemetry;
                 }
                 Either3::Second(()) => {
                     ticks_to_battery_sample = ticks_to_battery_sample.saturating_sub(1);
                     ticks_to_battery_display = ticks_to_battery_display.saturating_sub(1);
+                    presentation_urgency = PresentationUrgency::Telemetry;
                 }
-                Either3::First(event) => {
-                    let now_ms = embassy_time::Instant::now().as_millis();
-                    match display.button_pressed(MonotonicMillis::new(now_ms), display_now) {
-                        Ok(screen::display::DisplayButtonOutcome::WakeAndConsume) => {
-                            if display.visibility() == DisplayVisibility::Visible {
-                                ui_state.show_notice(screen::UiNotice::Awake);
-                                notice_until_ms =
-                                    Some((now_ms + NOTICE_MS, screen::UiNotice::Awake));
-                            }
-                            continue;
-                        }
-                        Ok(screen::display::DisplayButtonOutcome::ForwardToUi) => {}
-                        Err(error) => {
-                            log::error!("display button handling failed: {error:?}");
-                            continue;
-                        }
-                    }
-                    match ui_state.handle_input(event, content) {
-                        screen::UiAction::BlankDisplay => {
-                            ui_state.show_notice(screen::UiNotice::DisplayOff);
-                            notice_until_ms =
-                                Some((now_ms + NOTICE_MS, screen::UiNotice::DisplayOff));
-                            if let Err(error) = display.schedule_blanking(
-                                MonotonicMillis::new(now_ms.saturating_add(NOTICE_MS)),
-                                DisplayBlankReason::DisplayOnly,
-                            ) {
-                                log::error!("display-off scheduling failed: {error:?}");
-                            }
-                        }
-                        screen::UiAction::ToggleDisplayAutoOff => {
-                            match display.toggle_auto_off(MonotonicMillis::new(now_ms)) {
-                                Ok(auto_off) => {
-                                    let notice = match auto_off {
-                                        screen::display::DisplayAutoOff::Enabled => {
-                                            screen::UiNotice::DisplayAutoOffOn
-                                        }
-                                        screen::display::DisplayAutoOff::Disabled => {
-                                            screen::UiNotice::DisplayAutoOffOff
-                                        }
-                                    };
-                                    ui_state.show_notice(notice);
-                                    notice_until_ms = Some((now_ms + NOTICE_MS, notice));
+                Either3::First(first_event) => {
+                    let mut next_event = Some(first_event);
+                    for index in 0..BUTTON_EVENT_CAPACITY {
+                        let Some(event) = next_event.take() else {
+                            break;
+                        };
+                        presentation_urgency = PresentationUrgency::Immediate;
+                        let now_ms = embassy_time::Instant::now().as_millis();
+                        let forward_to_ui = match display
+                            .button_pressed(MonotonicMillis::new(now_ms), display_now)
+                        {
+                            Ok(screen::display::DisplayButtonOutcome::WakeAndConsume) => {
+                                if display.visibility() == DisplayVisibility::Visible {
+                                    show_notice(
+                                        &mut ui_state,
+                                        &mut notice_timer,
+                                        screen::UiNotice::Awake,
+                                        NOTICE_DURATION,
+                                    );
                                 }
-                                Err(error) => {
-                                    log::error!("display auto-off toggle failed: {error:?}");
-                                }
+                                false
                             }
-                        }
-                        screen::UiAction::ControlGnss(command) => {
-                            B::Gnss::control(command);
-                        }
-                        screen::UiAction::Sleep => {
-                            ui_state.show_notice(screen::UiNotice::Sleeping);
-                            notice_until_ms =
-                                Some((now_ms + NOTICE_MS, screen::UiNotice::Sleeping));
-                            if let Err(error) = display.schedule_blanking(
-                                MonotonicMillis::new(now_ms.saturating_add(DISPLAY_SLEEP_DELAY_MS)),
-                                DisplayBlankReason::SystemSleep,
-                            ) {
-                                log::error!("system-sleep display scheduling failed: {error:?}");
+                            Ok(screen::display::DisplayButtonOutcome::ForwardToUi) => true,
+                            Err(error) => {
+                                log::error!("display button handling failed: {error:?}");
+                                false
                             }
-                            usb_status.disable();
-                            if let Some(status) = lora_card_status {
-                                status.disable();
-                            }
-                            if let Some(status) = wifi_status.as_ref() {
-                                status.disable();
-                                status.disable_station_uplink();
-                            }
-                            if let Some(status) = espnow_card_status {
-                                status.disable();
-                            }
-                            if let Some(tcp) = tcp_status {
-                                tcp.disable();
-                            }
-                            {
-                                let status = BluetoothAutoStatus::new(&BLE_SHARED);
-                                status.disable();
-                            }
-                            B::Gnss::control(screen::GnssReceiverCommand::Disable);
-                        }
-                        screen::UiAction::Wake => {
-                            if let Err(error) =
-                                display.request_visible(MonotonicMillis::new(now_ms), display_now)
-                            {
-                                log::error!("display wake failed: {error:?}");
-                            }
-                            ui_state.show_notice(screen::UiNotice::Awake);
-                            notice_until_ms = Some((now_ms + NOTICE_MS, screen::UiNotice::Awake));
-                            usb_status.enable();
-                            if let Some(status) = lora_card_status {
-                                status.enable();
-                            }
-                            if let Some(status) = wifi_status.as_ref() {
-                                status.enable_station_uplink();
-                                status.enable();
-                            }
-                            if let Some(status) = espnow_card_status {
-                                status.enable();
-                            }
-                            if let Some(tcp) = tcp_status {
-                                tcp.enable();
-                            }
-                            {
-                                let status = BluetoothAutoStatus::new(&BLE_SHARED);
-                                status.enable();
-                            }
-                            if ui_state.gnss_visible() {
-                                B::Gnss::control(screen::GnssReceiverCommand::Enable);
-                            }
-                        }
-                        screen::UiAction::Announce => {
-                            boot_stage(BootPhase::AnnounceBegin);
-                            ui_state.show_notice(screen::UiNotice::Announcing);
-                            notice_until_ms = Some((
-                                embassy_time::Instant::now().as_millis() + NOTICE_MS,
-                                screen::UiNotice::Announcing,
-                            ));
-                            let node_queued = handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
-                                destination: node_page_destination,
-                                target: AnnounceTarget::AllInterfaces,
-                                app_data: AnnounceAppData::Registered,
-                            }));
-                            boot_stage(BootPhase::AnnounceNodeIssueReturned);
-                            log::info!(
-                                "announce-ui destination=node queued={}",
-                                node_queued.is_some()
-                            );
-                        }
-                        screen::UiAction::ToggleSelectedInterface => {
-                            if let Some(card) = ui_state.selected_card(content.cards) {
-                                let mut handled = false;
-                                let mut show_toggle_notice = |enabled: bool| {
-                                    let notice = if enabled {
-                                        screen::UiNotice::TurningOff
-                                    } else {
-                                        screen::UiNotice::TurningOn
-                                    };
-                                    ui_state.show_notice(notice);
-                                    notice_until_ms = Some((
-                                        embassy_time::Instant::now().as_millis() + NOTICE_MS,
-                                        notice,
-                                    ));
-                                };
-                                if card.id() == usb_status.id() {
-                                    show_toggle_notice(usb_status.is_enabled());
-                                    usb_status.toggle_enabled();
-                                    handled = true;
-                                }
-                                if !handled && Some(card.id()) == lora_card_id {
-                                    if let Some(status) = lora_card_status {
-                                        show_toggle_notice(status.is_enabled());
-                                        status.toggle_enabled();
-                                        handled = true;
+                        };
+                        if forward_to_ui {
+                            let action = ui_state.handle_input(event, content);
+                            notice_timer.reconcile(ui_state.visible_notice());
+                            match action {
+                                screen::UiAction::BlankDisplay => {
+                                    show_notice(
+                                        &mut ui_state,
+                                        &mut notice_timer,
+                                        screen::UiNotice::DisplayOff,
+                                        NOTICE_DURATION,
+                                    );
+                                    if let Err(error) = display.schedule_blanking(
+                                        MonotonicMillis::new(now_ms.saturating_add(NOTICE_MS)),
+                                        DisplayBlankReason::DisplayOnly,
+                                    ) {
+                                        log::error!("display-off scheduling failed: {error:?}");
                                     }
                                 }
-                                if !handled {
+                                screen::UiAction::ToggleDisplayAutoOff => {
+                                    match display.toggle_auto_off(MonotonicMillis::new(now_ms)) {
+                                        Ok(auto_off) => {
+                                            let notice = match auto_off {
+                                                screen::display::DisplayAutoOff::Enabled => {
+                                                    screen::UiNotice::DisplayAutoOffOn
+                                                }
+                                                screen::display::DisplayAutoOff::Disabled => {
+                                                    screen::UiNotice::DisplayAutoOffOff
+                                                }
+                                            };
+                                            show_notice(
+                                                &mut ui_state,
+                                                &mut notice_timer,
+                                                notice,
+                                                NOTICE_DURATION,
+                                            );
+                                        }
+                                        Err(error) => {
+                                            log::error!(
+                                                "display auto-off toggle failed: {error:?}"
+                                            );
+                                        }
+                                    }
+                                }
+                                screen::UiAction::ControlGnss(command) => {
+                                    B::Gnss::control(command);
+                                }
+                                screen::UiAction::Sleep => {
+                                    show_notice(
+                                        &mut ui_state,
+                                        &mut notice_timer,
+                                        screen::UiNotice::Sleeping,
+                                        NOTICE_DURATION,
+                                    );
+                                    if let Err(error) = display.schedule_blanking(
+                                        MonotonicMillis::new(
+                                            now_ms.saturating_add(DISPLAY_SLEEP_DELAY_MS),
+                                        ),
+                                        DisplayBlankReason::SystemSleep,
+                                    ) {
+                                        log::error!(
+                                            "system-sleep display scheduling failed: {error:?}"
+                                        );
+                                    }
+                                    usb_status.disable();
+                                    if let Some(status) = lora_card_status {
+                                        status.disable();
+                                    }
                                     if let Some(status) = wifi_status.as_ref() {
-                                        if card.id() == status.id() {
-                                            show_toggle_notice(status.is_enabled());
-                                            status.toggle_enabled();
+                                        status.disable();
+                                        status.disable_station_uplink();
+                                    }
+                                    if let Some(status) = espnow_card_status {
+                                        status.disable();
+                                    }
+                                    if let Some(tcp) = tcp_status {
+                                        tcp.disable();
+                                    }
+                                    {
+                                        let status = BluetoothAutoStatus::new(&BLE_SHARED);
+                                        status.disable();
+                                    }
+                                    B::Gnss::control(screen::GnssReceiverCommand::Disable);
+                                }
+                                screen::UiAction::Wake => {
+                                    if let Err(error) = display
+                                        .request_visible(MonotonicMillis::new(now_ms), display_now)
+                                    {
+                                        log::error!("display wake failed: {error:?}");
+                                    }
+                                    show_notice(
+                                        &mut ui_state,
+                                        &mut notice_timer,
+                                        screen::UiNotice::Awake,
+                                        NOTICE_DURATION,
+                                    );
+                                    usb_status.enable();
+                                    if let Some(status) = lora_card_status {
+                                        status.enable();
+                                    }
+                                    if let Some(status) = wifi_status.as_ref() {
+                                        status.enable_station_uplink();
+                                        status.enable();
+                                    }
+                                    if let Some(status) = espnow_card_status {
+                                        status.enable();
+                                    }
+                                    if let Some(tcp) = tcp_status {
+                                        tcp.enable();
+                                    }
+                                    {
+                                        let status = BluetoothAutoStatus::new(&BLE_SHARED);
+                                        status.enable();
+                                    }
+                                    if ui_state.gnss_visible() {
+                                        B::Gnss::control(screen::GnssReceiverCommand::Enable);
+                                    }
+                                }
+                                screen::UiAction::Announce => {
+                                    boot_stage(BootPhase::AnnounceBegin);
+                                    show_notice(
+                                        &mut ui_state,
+                                        &mut notice_timer,
+                                        screen::UiNotice::Announcing,
+                                        NOTICE_DURATION,
+                                    );
+                                    let node_queued =
+                                        handle.issue(PrnsCommand::AnnounceNow(AnnounceNow {
+                                            destination: node_page_destination,
+                                            target: AnnounceTarget::AllInterfaces,
+                                            app_data: AnnounceAppData::Registered,
+                                        }));
+                                    boot_stage(BootPhase::AnnounceNodeIssueReturned);
+                                    log::info!(
+                                        "announce-ui destination=node queued={}",
+                                        node_queued.is_some()
+                                    );
+                                }
+                                screen::UiAction::ToggleSelectedInterface => {
+                                    if let Some(card) = ui_state.selected_card(content.cards) {
+                                        let mut handled = false;
+                                        let mut show_toggle_notice = |enabled: bool| {
+                                            let notice = if enabled {
+                                                screen::UiNotice::TurningOff
+                                            } else {
+                                                screen::UiNotice::TurningOn
+                                            };
+                                            show_notice(
+                                                &mut ui_state,
+                                                &mut notice_timer,
+                                                notice,
+                                                NOTICE_DURATION,
+                                            );
+                                        };
+                                        if card.id() == usb_status.id() {
+                                            show_toggle_notice(usb_status.is_enabled());
+                                            usb_status.toggle_enabled();
                                             handled = true;
                                         }
-                                    }
-                                }
-                                if !handled && Some(card.id()) == espnow_card_id {
-                                    if let Some(status) = espnow_card_status {
-                                        show_toggle_notice(status.is_enabled());
-                                        status.toggle_enabled();
-                                        handled = true;
-                                    }
-                                }
-                                if !handled {
-                                    if let (Some(tcp), Some(tcp_id)) = (tcp_status, tcp_id) {
-                                        if card.id() == tcp_id {
-                                            show_toggle_notice(tcp.is_enabled());
-                                            tcp.toggle_enabled();
-                                            {
+                                        if !handled && Some(card.id()) == lora_card_id {
+                                            if let Some(status) = lora_card_status {
+                                                show_toggle_notice(status.is_enabled());
+                                                status.toggle_enabled();
                                                 handled = true;
                                             }
                                         }
-                                    }
-                                }
-                                if !handled && card.id() == BLE_SUPERVISOR_ID {
-                                    let status = BluetoothAutoStatus::new(&BLE_SHARED);
-                                    show_toggle_notice(status.is_enabled());
-                                    status.toggle_enabled();
-                                }
-                            }
-                        }
-                        screen::UiAction::ToggleStationUplink => {
-                            if let Some(status) = wifi_status.as_ref() {
-                                let notice = if status.is_station_uplink_enabled() {
-                                    screen::UiNotice::DisconnectingAp
-                                } else {
-                                    screen::UiNotice::ReconnectingAp
-                                };
-                                ui_state.show_notice(notice);
-                                notice_until_ms = Some((
-                                    embassy_time::Instant::now().as_millis() + NOTICE_MS,
-                                    notice,
-                                ));
-                                status.toggle_station_uplink();
-                            }
-                        }
-                        screen::UiAction::OpenLoRaEditor => {
-                            #[cfg(feature = "lora")]
-                            ui_state.open_lora_editor(working_lora_profile);
-                        }
-                        #[cfg(not(feature = "lora"))]
-                        screen::UiAction::SetLoRaProfile(_)
-                        | screen::UiAction::ResetLoRaProfile => {}
-                        #[cfg(feature = "lora")]
-                        screen::UiAction::SetLoRaProfile(profile) => {
-                            let result = screen::apply_and_persist_radio_profile(
-                                async {
-                                    LORA_CONTROL.apply(profile).await == LoRaApplyOutcome::Applied
-                                },
-                                || async {
-                                    match lora_profile_store.save(profile).await {
-                                        Ok(()) => true,
-                                        Err(error) => {
-                                            log::error!("LoRa profile save failed: {error:?}");
-                                            false
+                                        if !handled {
+                                            if let Some(status) = wifi_status.as_ref() {
+                                                if card.id() == status.id() {
+                                                    show_toggle_notice(status.is_enabled());
+                                                    status.toggle_enabled();
+                                                    handled = true;
+                                                }
+                                            }
+                                        }
+                                        if !handled && Some(card.id()) == espnow_card_id {
+                                            if let Some(status) = espnow_card_status {
+                                                show_toggle_notice(status.is_enabled());
+                                                status.toggle_enabled();
+                                                handled = true;
+                                            }
+                                        }
+                                        if !handled {
+                                            if let (Some(tcp), Some(tcp_id)) = (tcp_status, tcp_id)
+                                            {
+                                                if card.id() == tcp_id {
+                                                    show_toggle_notice(tcp.is_enabled());
+                                                    tcp.toggle_enabled();
+                                                    {
+                                                        handled = true;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if !handled && card.id() == BLE_SUPERVISOR_ID {
+                                            let status = BluetoothAutoStatus::new(&BLE_SHARED);
+                                            show_toggle_notice(status.is_enabled());
+                                            status.toggle_enabled();
                                         }
                                     }
-                                },
-                            )
-                            .await;
-                            if result.applied() {
-                                working_lora_profile = profile;
-                            }
-                            let notice = result.notice();
-                            ui_state.show_notice(notice);
-                            notice_until_ms = Some((
-                                embassy_time::Instant::now().as_millis() + NOTICE_MS,
-                                notice,
-                            ));
-                        }
-                        #[cfg(feature = "lora")]
-                        screen::UiAction::ResetLoRaProfile => {
-                            let result = screen::apply_and_persist_radio_profile(
-                                async {
-                                    LORA_CONTROL.apply(DEFAULT_915_PROFILE).await
-                                        == LoRaApplyOutcome::Applied
-                                },
-                                || async {
-                                    match lora_profile_store.reset().await {
-                                        Ok(()) => true,
-                                        Err(error) => {
-                                            log::error!("LoRa profile reset failed: {error:?}");
-                                            false
-                                        }
+                                }
+                                screen::UiAction::ToggleStationUplink => {
+                                    if let Some(status) = wifi_status.as_ref() {
+                                        let notice = if status.is_station_uplink_enabled() {
+                                            screen::UiNotice::DisconnectingAp
+                                        } else {
+                                            screen::UiNotice::ReconnectingAp
+                                        };
+                                        show_notice(
+                                            &mut ui_state,
+                                            &mut notice_timer,
+                                            notice,
+                                            NOTICE_DURATION,
+                                        );
+                                        status.toggle_station_uplink();
                                     }
-                                },
-                            )
-                            .await;
-                            if result.applied() {
-                                working_lora_profile = DEFAULT_915_PROFILE;
+                                }
+                                screen::UiAction::OpenLoRaEditor => {
+                                    #[cfg(feature = "lora")]
+                                    ui_state.open_lora_editor(working_lora_profile);
+                                }
+                                #[cfg(not(feature = "lora"))]
+                                screen::UiAction::SetLoRaProfile(_)
+                                | screen::UiAction::ResetLoRaProfile => {}
+                                #[cfg(feature = "lora")]
+                                screen::UiAction::SetLoRaProfile(profile) => {
+                                    let result = screen::apply_and_persist_radio_profile(
+                                        async {
+                                            LORA_CONTROL.apply(profile).await
+                                                == LoRaApplyOutcome::Applied
+                                        },
+                                        || async {
+                                            match lora_profile_store.save(profile).await {
+                                                Ok(()) => true,
+                                                Err(error) => {
+                                                    log::error!(
+                                                        "LoRa profile save failed: {error:?}"
+                                                    );
+                                                    false
+                                                }
+                                            }
+                                        },
+                                    )
+                                    .await;
+                                    if result.applied() {
+                                        working_lora_profile = profile;
+                                    }
+                                    let notice = result.notice();
+                                    show_notice(
+                                        &mut ui_state,
+                                        &mut notice_timer,
+                                        notice,
+                                        NOTICE_DURATION,
+                                    );
+                                }
+                                #[cfg(feature = "lora")]
+                                screen::UiAction::ResetLoRaProfile => {
+                                    let result = screen::apply_and_persist_radio_profile(
+                                        async {
+                                            LORA_CONTROL.apply(DEFAULT_915_PROFILE).await
+                                                == LoRaApplyOutcome::Applied
+                                        },
+                                        || async {
+                                            match lora_profile_store.reset().await {
+                                                Ok(()) => true,
+                                                Err(error) => {
+                                                    log::error!(
+                                                        "LoRa profile reset failed: {error:?}"
+                                                    );
+                                                    false
+                                                }
+                                            }
+                                        },
+                                    )
+                                    .await;
+                                    if result.applied() {
+                                        working_lora_profile = DEFAULT_915_PROFILE;
+                                    }
+                                    let notice = result.notice();
+                                    show_notice(
+                                        &mut ui_state,
+                                        &mut notice_timer,
+                                        notice,
+                                        NOTICE_DURATION,
+                                    );
+                                }
+                                screen::UiAction::SwapRadioMode => {
+                                    let next = match radio_mode {
+                                        RadioMode::Ble => RadioMode::AccessPoint,
+                                        RadioMode::AccessPoint => RadioMode::Ble,
+                                    };
+                                    request_radio_mode(next);
+                                }
+                                screen::UiAction::OpenDocs => {}
+                                screen::UiAction::CopySharedInstanceConfig => {}
+                                screen::UiAction::None => {}
                             }
-                            let notice = result.notice();
-                            ui_state.show_notice(notice);
-                            notice_until_ms = Some((
-                                embassy_time::Instant::now().as_millis() + NOTICE_MS,
-                                notice,
-                            ));
                         }
-                        screen::UiAction::SwapRadioMode => {
-                            let next = match radio_mode {
-                                RadioMode::Ble => RadioMode::AccessPoint,
-                                RadioMode::AccessPoint => RadioMode::Ble,
-                            };
-                            request_radio_mode(next);
+                        if index + 1 == BUTTON_EVENT_CAPACITY {
+                            break;
                         }
-                        screen::UiAction::OpenDocs => {}
-                        screen::UiAction::CopySharedInstanceConfig => {}
-                        screen::UiAction::None => {}
+                        next_event = BUTTON_EVENTS.try_receive().ok();
                     }
                 }
             }

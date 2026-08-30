@@ -21,6 +21,7 @@ mod soft_ap;
 
 pub use destinations::{
     hopspot_destination_hashes, HopspotDestinationHashes, HopspotDestinationSet,
+    HOPSPOT_DESTINATION_COUNT, HOPSPOT_IDENTITY_COUNT,
 };
 pub use flash_identity::{
     bootstrap_flash_ble_identity, bootstrap_flash_node_identity, FlashIdentityError,
@@ -76,9 +77,9 @@ pub use screen::{
     apply_and_persist_radio_profile, card_label, card_label_max_chars, tcp_card_label,
     AccessPointState, BluetoothRecoveryMenuDetails, Card, CardActivityTracker, CardKind, CardLabel,
     GnssAvailability, InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess,
-    PersistenceNotice, RadioProfileChangeResult, ScreenContent, SharedInstanceConfigExport,
-    UiAction, UiConfiguration, UiNotice, UiState, UserBlanking, WifiNetworkStatus,
-    WifiStationStatus,
+    PersistenceNotice, PresentedNoticeTimer, RadioProfileChangeResult, ScreenContent,
+    SharedInstanceConfigExport, UiAction, UiConfiguration, UiNotice, UiState, UserBlanking,
+    WifiNetworkStatus, WifiStationStatus,
 };
 #[cfg(feature = "display")]
 pub use screen::{display, face_64x128};

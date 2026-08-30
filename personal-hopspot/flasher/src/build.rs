@@ -1055,7 +1055,7 @@ mod tests {
     #[test]
     fn all_catalog_boards_have_a_build_recipe() -> Result<(), Box<dyn std::error::Error>> {
         let catalog = prns_flash_manifest::board_catalog()?;
-        assert_eq!(catalog.boards.len(), 8);
+        assert_eq!(catalog.boards.len(), 9);
         assert!(catalog.boards.iter().all(|board| {
             matches!(
                 (&board.transport, &board.build),

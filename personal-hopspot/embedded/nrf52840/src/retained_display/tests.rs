@@ -1,6 +1,6 @@
 use embassy_futures::block_on;
 use personal_hopspot_core::display::{
-    DisplayDuration, EinkPolicyConfiguration, PartialRefreshLimit,
+    DisplayDuration, EinkPolicyConfiguration, EinkRefreshPolicy, PartialRefreshLimit,
 };
 use personal_hopspot_core::{
     AccessPointState, GnssAvailability, InterfaceMenuDetails, ScreenContent,
@@ -75,8 +75,10 @@ impl RetainedDisplayDevice for FakeDisplay {
 fn policy() -> EinkPolicy {
     EinkPolicy::new(EinkPolicyConfiguration {
         telemetry_minimum: DisplayDuration::from_millis(1_000).unwrap(),
-        partial_refresh_limit: PartialRefreshLimit::new(2).unwrap(),
-        full_refresh_maximum_age: DisplayDuration::from_millis(10_000).unwrap(),
+        refresh: EinkRefreshPolicy::Partial {
+            maximum_consecutive: PartialRefreshLimit::new(2).unwrap(),
+            full_maximum_age: DisplayDuration::from_millis(10_000).unwrap(),
+        },
     })
     .unwrap()
 }

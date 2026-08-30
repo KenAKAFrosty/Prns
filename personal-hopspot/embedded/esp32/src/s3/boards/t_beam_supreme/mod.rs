@@ -21,7 +21,7 @@ use personal_hopspot_core as screen;
 use static_cell::StaticCell;
 
 use crate::s3::{
-    self, BoardDisplay, BoardFace, Esp32S3Board, ImmediateDisplayDevice, S3BoardHardware,
+    self, BoardFace, Esp32S3Board, ImmediateBoardDisplay, ImmediateDisplayDevice, S3BoardHardware,
     S3InterfaceHardware, S3ManifoldHardware,
 };
 
@@ -321,7 +321,7 @@ impl Esp32S3Board for TBeamSupremeBoard {
     const BOOT_BANNER: &'static str = "HOPSPOT_TBEAM_SUPREME";
     const USB_INTERFACE_ID: InterfaceId = USB_INTERFACE_ID;
     const FLASH_LAYOUT: screen::HopspotS3FlashLayout = screen::S3_8_MIB_FLASH_LAYOUT;
-    type Display = Sh1106I2c<TBeamI2c>;
+    type Display = ImmediateBoardDisplay<Sh1106I2c<TBeamI2c>>;
     type Battery = Axp2101Battery;
     type Gnss = TBeamSupremeGnss;
 
@@ -330,7 +330,7 @@ impl Esp32S3Board for TBeamSupremeBoard {
     ) -> S3BoardHardware<Self::Display, Self::Battery, Self::Gnss> {
         let (sw_int1, timebase, rtc) = s3::boot_common!(p, Self::BOOT_BANNER);
 
-        s3::boot_stage(s3::BootPhase::OledBegin);
+        s3::boot_stage(s3::BootPhase::DisplayHardwareBegin);
         // AXP2101 PMU first (I2C1 on SDA 42 / SCL 41): the LoRa + OLED rails boot OFF, so nothing else
         // on those rails responds until this enables them. The handle is kept as the battery sense.
         let mut pmu_i2c = I2c::new(
@@ -381,9 +381,9 @@ impl Esp32S3Board for TBeamSupremeBoard {
         let mut display = Sh1106I2c::new(i2c);
         let oled_ok = display.init().is_ok();
         s3::boot_stage(if oled_ok {
-            s3::BootPhase::OledReady
+            s3::BootPhase::DisplayHardwareReady
         } else {
-            s3::BootPhase::OledFailed
+            s3::BootPhase::DisplayHardwareFailed
         });
         if oled_ok {
             let mut frame = screen::face_64x128::Frame::new();
@@ -445,9 +445,9 @@ impl Esp32S3Board for TBeamSupremeBoard {
         S3BoardHardware {
             face: BoardFace {
                 display: if oled_ok {
-                    BoardDisplay::initialized(display)
+                    ImmediateBoardDisplay::initialized(display)
                 } else {
-                    BoardDisplay::initialization_failed(display)
+                    ImmediateBoardDisplay::initialization_failed(display)
                 },
                 battery,
                 button: Input::new(

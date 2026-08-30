@@ -10,33 +10,88 @@ use personal_hopspot_core::display::{
 use personal_hopspot_core::face_64x128::{Frame, RenderInput, HEIGHT, WIDTH};
 use personal_hopspot_core::UserBlanking;
 
+use crate::display_runtime::{
+    ImmediateBoardDisplay, S3BoardDisplay, S3DisplayRuntime, S3Presentation,
+};
+
 const BLANKING_RETRY_BACKOFF_DURATION: DisplayDuration = match DisplayDuration::from_millis(500) {
     Ok(duration) => duration,
     Err(_) => panic!("the display retry backoff is nonzero"),
 };
 
-pub(crate) enum BoardDisplay<D> {
-    Initialized(D),
-    InitializationFailed(D),
-}
+impl<D: ImmediateDisplayDevice> S3BoardDisplay for ImmediateBoardDisplay<D> {
+    type Runtime = ImmediateDisplayRuntime<D>;
 
-impl<D> BoardDisplay<D> {
-    pub(crate) const fn initialized(device: D) -> Self {
-        Self::Initialized(device)
-    }
-
-    pub(crate) const fn initialization_failed(device: D) -> Self {
-        Self::InitializationFailed(device)
-    }
-
-    pub(crate) fn into_runtime(self, now: MonotonicMillis) -> ImmediateDisplayRuntime<D>
-    where
-        D: ImmediateDisplayDevice,
-    {
+    fn into_runtime(self, now: MonotonicMillis) -> ImmediateDisplayRuntime<D> {
         match self {
             Self::Initialized(device) => ImmediateDisplayRuntime::available(device, now),
             Self::InitializationFailed(device) => ImmediateDisplayRuntime::unavailable(device),
         }
+    }
+}
+
+impl<D: ImmediateDisplayDevice> S3DisplayRuntime for ImmediateDisplayRuntime<D> {
+    type PresentationError = ImmediatePresentationError;
+
+    fn user_blanking(&self) -> UserBlanking {
+        ImmediateDisplayRuntime::user_blanking(self)
+    }
+
+    fn visibility(&self) -> DisplayVisibility {
+        ImmediateDisplayRuntime::visibility(self)
+    }
+
+    async fn render_and_present(
+        &mut self,
+        input: RenderInput<'_, '_>,
+        planned_at: MonotonicMillis,
+        _urgency: PresentationUrgency,
+        completed_at: impl FnOnce() -> MonotonicMillis,
+    ) -> Result<S3Presentation, Self::PresentationError> {
+        ImmediateDisplayRuntime::render_and_present(self, input, planned_at, completed_at).map(
+            |presentation| match presentation {
+                ImmediatePresentation::Unavailable => S3Presentation::Unavailable,
+                ImmediatePresentation::Withheld => S3Presentation::Withheld,
+                ImmediatePresentation::Presented => S3Presentation::Presented,
+                ImmediatePresentation::Failed => S3Presentation::Failed,
+            },
+        )
+    }
+
+    fn poll_blanking(
+        &mut self,
+        now: MonotonicMillis,
+        completed_at: impl FnOnce() -> MonotonicMillis,
+    ) -> Result<BlankingDecision, BlankingError> {
+        ImmediateDisplayRuntime::poll_blanking(self, now, completed_at)
+    }
+
+    fn schedule_blanking(
+        &mut self,
+        at: MonotonicMillis,
+        reason: DisplayBlankReason,
+    ) -> Result<(), BlankingError> {
+        ImmediateDisplayRuntime::schedule_blanking(self, at, reason)
+    }
+
+    fn button_pressed(
+        &mut self,
+        now: MonotonicMillis,
+        completed_at: impl FnOnce() -> MonotonicMillis,
+    ) -> Result<DisplayButtonOutcome, BlankingError> {
+        ImmediateDisplayRuntime::button_pressed(self, now, completed_at)
+    }
+
+    fn request_visible(
+        &mut self,
+        now: MonotonicMillis,
+        completed_at: impl FnOnce() -> MonotonicMillis,
+    ) -> Result<BlankingDecision, BlankingError> {
+        ImmediateDisplayRuntime::request_visible(self, now, completed_at)
+    }
+
+    fn toggle_auto_off(&mut self, now: MonotonicMillis) -> Result<DisplayAutoOff, BlankingError> {
+        ImmediateDisplayRuntime::toggle_auto_off(self, now)
     }
 }
 
@@ -308,7 +363,8 @@ mod tests {
     fn failed_immediate_presentation_retries_the_latest_canonical_frame() {
         let mut device = FakeDisplay::succeeding();
         device.presentation_outcome = PresentationOutcome::Failed;
-        let mut runtime = BoardDisplay::initialized(device).into_runtime(MonotonicMillis::new(0));
+        let mut runtime =
+            ImmediateBoardDisplay::initialized(device).into_runtime(MonotonicMillis::new(0));
         let state = ui_state(runtime.user_blanking());
         let details = personal_hopspot_core::InterfaceMenuDetails::empty();
 
@@ -349,7 +405,7 @@ mod tests {
 
     #[test]
     fn successful_blank_and_wake_change_visibility_after_hardware_completion() {
-        let mut runtime = BoardDisplay::initialized(FakeDisplay::succeeding())
+        let mut runtime = ImmediateBoardDisplay::initialized(FakeDisplay::succeeding())
             .into_runtime(MonotonicMillis::new(0));
 
         assert!(runtime.user_blanking().is_available());
@@ -373,7 +429,7 @@ mod tests {
 
     #[test]
     fn shipping_auto_off_blanks_after_exactly_sixty_seconds() {
-        let mut runtime = BoardDisplay::initialized(FakeDisplay::succeeding())
+        let mut runtime = ImmediateBoardDisplay::initialized(FakeDisplay::succeeding())
             .into_runtime(MonotonicMillis::new(0));
 
         assert_eq!(
@@ -396,7 +452,8 @@ mod tests {
     fn failed_blank_and_wake_retry_without_claiming_the_target_visibility() {
         let mut display = FakeDisplay::succeeding();
         display.blanking_result = BlankingResult::Failed;
-        let mut runtime = BoardDisplay::initialized(display).into_runtime(MonotonicMillis::new(0));
+        let mut runtime =
+            ImmediateBoardDisplay::initialized(display).into_runtime(MonotonicMillis::new(0));
 
         runtime
             .schedule_blanking(MonotonicMillis::new(1), DisplayBlankReason::DisplayOnly)
@@ -427,7 +484,7 @@ mod tests {
 
     #[test]
     fn unavailable_hardware_cannot_advertise_user_blanking() {
-        let runtime = BoardDisplay::initialization_failed(FakeDisplay::succeeding())
+        let runtime = ImmediateBoardDisplay::initialization_failed(FakeDisplay::succeeding())
             .into_runtime(MonotonicMillis::new(0));
 
         assert!(!runtime.user_blanking().is_available());

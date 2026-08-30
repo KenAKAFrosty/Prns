@@ -1,0 +1,42 @@
+{
+  "changed_boards": [
+    "heltec-v4",
+    "heltec-v4-r8"
+  ],
+  "qualification": {
+    "deferred_hardware": [
+      {
+        "basis": "The R8 target uses the same shared vendor-reference KCT8103L detection and TX/RX control path as the S3R2 target, and its release build passes, but no physical R8 hardware is presently available for the signed candidate.",
+        "board": "heltec-v4-r8",
+        "follow_up": "Capture and review an R8 or other KCT8103L post-flash boot, front-end detection, LoRa operation, and stable-runtime observation after promotion."
+      }
+    ],
+    "physical_boards": [
+      "heltec-v4"
+    ],
+    "required_checks": [
+      "gc1109-front-end-detected",
+      "lora-radio-ready",
+      "stable-post-boot-runtime"
+    ],
+    "required_scenarios": [
+      "correct-board",
+      "fresh-install",
+      "post-flash-boot",
+      "sparse-write"
+    ],
+    "surfaces": [
+      "web"
+    ]
+  },
+  "release": {
+    "base_manifest_sha256": "d9ee2162d76bb326e71ba949b303cf47e5d10e7fb6fd04419db1d972b909f9ca",
+    "base_release_record_sha256": "4f223c42ee305195a540c0336c57d5d437cc8b29a602c50e9cf49d846059af38",
+    "base_signed_candidate_sha256": "2a3190bd56824791ec95baaa7761cbe2c97018c0e0f1a3d08914b8d97ef50bc0",
+    "base_source_commit": "f13a6d0db253f4f37e473e0663ea379a6565d391",
+    "base_version": "0.3.7-hotfix.3",
+    "version": "0.3.7-hotfix.4"
+  },
+  "schema": 1,
+  "summary": "Heltec V4 and V4-R8 dynamic GC1109/KCT8103L LoRa front-end detection and TX/RX control."
+}

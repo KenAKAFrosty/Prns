@@ -12,6 +12,8 @@ use crate::node_pages;
 
 const DELIVERY_APP_NAME: &str = "lxmf";
 const DELIVERY_ASPECTS: &[&str] = &["delivery"];
+pub const HOPSPOT_DESTINATION_COUNT: usize = 2;
+pub const HOPSPOT_IDENTITY_COUNT: usize = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HopspotDestinationHashes {
@@ -44,7 +46,9 @@ impl<'a> HopspotDestinationSet<'a> {
     }
 
     #[must_use]
-    pub fn into_preconfigured_destinations(self) -> [PreConfiguredDestination<'a>; 2] {
+    pub fn into_preconfigured_destinations(
+        self,
+    ) -> [PreConfiguredDestination<'a>; HOPSPOT_DESTINATION_COUNT] {
         [
             PreConfiguredDestination::Single {
                 app_name: DELIVERY_APP_NAME,

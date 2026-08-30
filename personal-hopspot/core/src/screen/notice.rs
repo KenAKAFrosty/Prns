@@ -1,5 +1,5 @@
-use personal_hopspot_core::display::{DisplayDuration, MonotonicMillis};
-use personal_hopspot_core::UiNotice;
+use super::display::{DisplayDuration, MonotonicMillis};
+use super::UiNotice;
 
 #[derive(Clone, Copy)]
 struct PendingNotice {
@@ -13,25 +13,26 @@ struct ArmedNotice {
     expires_at: MonotonicMillis,
 }
 
-pub(crate) struct PresentedNoticeTimer {
+pub struct PresentedNoticeTimer {
     pending: Option<PendingNotice>,
     armed: Option<ArmedNotice>,
 }
 
 impl PresentedNoticeTimer {
-    pub(crate) const fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             pending: None,
             armed: None,
         }
     }
 
-    pub(crate) fn stage(&mut self, owner: UiNotice, duration: DisplayDuration) {
+    pub fn stage(&mut self, owner: UiNotice, duration: DisplayDuration) {
         self.pending = Some(PendingNotice { owner, duration });
         self.armed = None;
     }
 
-    pub(crate) fn reconcile(&mut self, visible: Option<UiNotice>) {
+    pub fn reconcile(&mut self, visible: Option<UiNotice>) {
         if self
             .pending
             .is_some_and(|pending| Some(pending.owner) != visible)
@@ -43,7 +44,7 @@ impl PresentedNoticeTimer {
         }
     }
 
-    pub(crate) fn presentation_succeeded(
+    pub fn presentation_succeeded(
         &mut self,
         visible: Option<UiNotice>,
         completed_at: MonotonicMillis,
@@ -61,7 +62,7 @@ impl PresentedNoticeTimer {
         Some(pending.owner)
     }
 
-    pub(crate) fn expire(&mut self, now: MonotonicMillis) -> Option<UiNotice> {
+    pub fn expire(&mut self, now: MonotonicMillis) -> Option<UiNotice> {
         let armed = self.armed?;
         if now < armed.expires_at {
             return None;
@@ -70,11 +71,18 @@ impl PresentedNoticeTimer {
         Some(armed.owner)
     }
 
-    pub(crate) const fn deadline(&self) -> Option<MonotonicMillis> {
+    #[must_use]
+    pub const fn deadline(&self) -> Option<MonotonicMillis> {
         match self.armed {
             Some(armed) => Some(armed.expires_at),
             None => None,
         }
+    }
+}
+
+impl Default for PresentedNoticeTimer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -95,7 +103,7 @@ mod tests {
         assert_eq!(timer.deadline(), None);
         assert_eq!(timer.expire(MonotonicMillis::new(10_000)), None);
         assert_eq!(
-            timer.presentation_succeeded(Some(UiNotice::Announcing), MonotonicMillis::new(10_000),),
+            timer.presentation_succeeded(Some(UiNotice::Announcing), MonotonicMillis::new(10_000)),
             Some(UiNotice::Announcing)
         );
         assert_eq!(timer.deadline(), Some(MonotonicMillis::new(11_000)));
@@ -113,7 +121,7 @@ mod tests {
         timer.reconcile(Some(UiNotice::Awake));
 
         assert_eq!(
-            timer.presentation_succeeded(Some(UiNotice::Awake), MonotonicMillis::new(1_000),),
+            timer.presentation_succeeded(Some(UiNotice::Awake), MonotonicMillis::new(1_000)),
             None
         );
         assert_eq!(timer.deadline(), None);

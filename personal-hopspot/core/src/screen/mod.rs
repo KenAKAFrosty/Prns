@@ -2,6 +2,7 @@ pub mod display;
 pub mod face_64x128;
 mod limits;
 mod model;
+mod notice;
 mod render;
 mod state;
 
@@ -11,6 +12,7 @@ pub use model::{
     CardLabel, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, ScreenContent,
     WifiNetworkStatus, WifiStationStatus,
 };
+pub use notice::PresentedNoticeTimer;
 pub use render::cards::card_label_max_chars;
 pub use state::{
     apply_and_persist_radio_profile, AccessPointState, GnssAvailability, InputEvent,

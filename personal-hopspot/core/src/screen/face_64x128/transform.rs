@@ -79,6 +79,7 @@ impl PhysicalPoint {
 pub enum PanelScale {
     OneToOne,
     ThreeToTwo,
+    TwoToOne,
     FifteenToEight,
 }
 
@@ -87,6 +88,7 @@ impl PanelScale {
         match self {
             Self::OneToOne => (1, 1),
             Self::ThreeToTwo => (3, 2),
+            Self::TwoToOne => (2, 1),
             Self::FifteenToEight => (15, 8),
         }
     }
@@ -94,9 +96,11 @@ impl PanelScale {
     fn source_coordinate(self, scaled: u32) -> u32 {
         let (numerator, denominator) = self.ratio();
         match self {
-            // T-Echo paints rounded source rectangles; the TFTs sample once per destination
-            // pixel. Their qualified rasterization rules therefore require different inverses.
-            Self::ThreeToTwo => covered_source_coordinate(scaled, numerator, denominator),
+            // Retained panels paint source rectangles; the TFTs sample once per destination pixel.
+            // Their qualified rasterization rules therefore require different inverses.
+            Self::ThreeToTwo | Self::TwoToOne => {
+                covered_source_coordinate(scaled, numerator, denominator)
+            }
             Self::OneToOne | Self::FifteenToEight => {
                 sampled_source_coordinate(scaled, numerator, denominator)
             }
@@ -279,6 +283,15 @@ mod tests {
         .unwrap();
         assert_eq!(t_echo.viewport().origin(), PhysicalPoint::new(4, 52));
         assert_eq!(t_echo.viewport().size(), PanelSize::new(192, 96).unwrap());
+
+        let e290 = PanelTransform::centered(
+            PanelSize::new(296, 128).unwrap(),
+            PanelScale::TwoToOne,
+            QuarterTurn::Clockwise,
+        )
+        .unwrap();
+        assert_eq!(e290.viewport().origin(), PhysicalPoint::new(20, 0));
+        assert_eq!(e290.viewport().size(), PanelSize::new(256, 128).unwrap());
     }
 
     #[test]

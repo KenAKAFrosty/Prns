@@ -45,11 +45,8 @@ use super::bluetooth_auto::{
 use super::entropy::{initialize_runtime_entropy, runtime_entropy, RUNTIME_ENTROPY_SEED_LEN};
 use super::interface_cards::{build_cards, build_snapshots};
 use super::node::*;
-use super::notice::PresentedNoticeTimer;
+use hopspot::PresentedNoticeTimer;
 
-const PARTIAL_REFRESH_LIMIT: u32 = 64;
-const FULL_REFRESH_MAX_AGE_MS: u64 = 30 * 60 * 1_000;
-const TELEMETRY_MIN_INTERVAL_MS: u64 = 5_000;
 const STATS_POLL: Duration = Duration::from_secs(1);
 const NOTICE_DURATION: hopspot::display::DisplayDuration =
     match hopspot::display::DisplayDuration::from_millis(900) {
@@ -63,22 +60,6 @@ const STARTUP_NOTICE_DURATION: hopspot::display::DisplayDuration =
     };
 const USB_CONFIG_DESCRIPTOR_BYTES: usize = 64;
 const USB_BOS_DESCRIPTOR_BYTES: usize = 64;
-
-fn retained_policy() -> hopspot::display::EinkPolicy {
-    hopspot::display::EinkPolicy::new(hopspot::display::EinkPolicyConfiguration {
-        telemetry_minimum: hopspot::display::DisplayDuration::from_millis(
-            TELEMETRY_MIN_INTERVAL_MS,
-        )
-        .expect("T-Echo telemetry spacing is nonzero"),
-        partial_refresh_limit: hopspot::display::PartialRefreshLimit::new(PARTIAL_REFRESH_LIMIT)
-            .expect("T-Echo partial refresh limit is nonzero"),
-        full_refresh_maximum_age: hopspot::display::DisplayDuration::from_millis(
-            FULL_REFRESH_MAX_AGE_MS,
-        )
-        .expect("T-Echo full refresh age is nonzero"),
-    })
-    .expect("T-Echo telemetry spacing does not exceed its full refresh age")
-}
 
 fn show_notice(
     state: &mut hopspot::UiState,
@@ -360,7 +341,7 @@ pub async fn run(spawner: Spawner) -> ! {
     let ui_handle = PrnsNodeHandle::new(COMMANDS.sender(), &COMPLETION);
     let render = async move {
         let mut saadc = saadc;
-        let mut display = display.into_runtime(retained_policy());
+        let mut display = display.into_runtime(board::retained_policy());
         let mut ui_state = hopspot::UiState::new(hopspot::UiConfiguration {
             storage_limits: <Storage as StorageLayout>::LIMITS,
             user_blanking: display.user_blanking(),

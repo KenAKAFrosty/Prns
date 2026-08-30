@@ -28,6 +28,7 @@ async fn main() {
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         on_event: |_event, _state| {},
         interfaces: |node: &PrnsNodeHandle| {
             node.attach(AutoWifi::default());
@@ -45,6 +46,7 @@ async fn main() {
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         on_event: move |event, _state| {
             if let PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard {
                 destination,

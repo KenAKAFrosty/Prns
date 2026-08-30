@@ -30,7 +30,7 @@ on:
         default: ""
         type: string
       hotfix_version:
-        description: Committed target-scoped hotfix identity; empty for an ordinary VERSION release
+        description: Committed scoped hotfix identity; empty for an ordinary VERSION release
         required: false
         default: ""
         type: string
@@ -273,7 +273,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - name: Resolve ordinary or target-scoped flasher version
+      - name: Resolve ordinary or scoped-hotfix flasher version
         env:
           HOTFIX_VERSION: ${{ inputs.hotfix_version }}
         shell: bash
@@ -346,7 +346,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - name: Resolve ordinary or target-scoped flasher version
+      - name: Resolve ordinary or scoped-hotfix flasher version
         env:
           HOTFIX_VERSION: ${{ inputs.hotfix_version }}
         run: |
@@ -486,7 +486,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - name: Resolve ordinary or target-scoped flasher version
+      - name: Resolve ordinary or scoped-hotfix flasher version
         env:
           HOTFIX_VERSION: ${{ inputs.hotfix_version }}
         run: |
@@ -531,7 +531,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - name: Resolve ordinary or target-scoped flasher version
+      - name: Resolve ordinary or scoped-hotfix flasher version
         env:
           HOTFIX_VERSION: ${{ inputs.hotfix_version }}
         run: |

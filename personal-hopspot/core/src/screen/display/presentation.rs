@@ -9,28 +9,39 @@ pub enum EinkPolicyError {
 #[derive(Debug, Eq, PartialEq)]
 pub struct EinkPolicyConfiguration {
     pub telemetry_minimum: DisplayDuration,
-    pub partial_refresh_limit: PartialRefreshLimit,
-    pub full_refresh_maximum_age: DisplayDuration,
+    pub refresh: EinkRefreshPolicy,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EinkRefreshPolicy {
+    FullOnly,
+    Partial {
+        maximum_consecutive: PartialRefreshLimit,
+        full_maximum_age: DisplayDuration,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EinkPolicy {
     telemetry_minimum: DisplayDuration,
-    partial_refresh_limit: PartialRefreshLimit,
-    full_refresh_maximum_age: DisplayDuration,
+    refresh: EinkRefreshPolicy,
 }
 
 impl EinkPolicy {
     pub const fn new(configuration: EinkPolicyConfiguration) -> Result<Self, EinkPolicyError> {
-        if configuration.telemetry_minimum.as_millis()
-            > configuration.full_refresh_maximum_age.as_millis()
-        {
-            return Err(EinkPolicyError::TelemetryMinimumExceedsFullMaximumAge);
+        match configuration.refresh {
+            EinkRefreshPolicy::FullOnly => {}
+            EinkRefreshPolicy::Partial {
+                full_maximum_age, ..
+            } => {
+                if configuration.telemetry_minimum.as_millis() > full_maximum_age.as_millis() {
+                    return Err(EinkPolicyError::TelemetryMinimumExceedsFullMaximumAge);
+                }
+            }
         }
         Ok(Self {
             telemetry_minimum: configuration.telemetry_minimum,
-            partial_refresh_limit: configuration.partial_refresh_limit,
-            full_refresh_maximum_age: configuration.full_refresh_maximum_age,
+            refresh: configuration.refresh,
         })
     }
 }
@@ -269,13 +280,19 @@ impl Presenter {
         let PresentationPolicy::RetainedEink(policy) = self.policy else {
             return RefreshKind::Immediate;
         };
+        let EinkRefreshPolicy::Partial {
+            maximum_consecutive,
+            full_maximum_age,
+        } = policy.refresh
+        else {
+            return RefreshKind::Full;
+        };
         let full_expired = self.last_full.is_some_and(|last| {
-            now.as_millis().saturating_sub(last.as_millis())
-                >= policy.full_refresh_maximum_age.as_millis()
+            now.as_millis().saturating_sub(last.as_millis()) >= full_maximum_age.as_millis()
         });
         if self.knowledge == PresentationKnowledge::Unknown
             || self.last_full.is_none()
-            || self.partials_since_full >= policy.partial_refresh_limit.get()
+            || self.partials_since_full >= maximum_consecutive.get()
             || full_expired
         {
             RefreshKind::Full

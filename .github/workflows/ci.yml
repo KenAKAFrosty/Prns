@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [trunk]
+    branches: [trunk, main]
   pull_request:
   workflow_dispatch:
 
@@ -59,6 +59,41 @@ jobs:
       - run: cargo test --workspace --locked
       - name: doc (intra-doc links are load-bearing navigation)
         run: cargo doc --locked -p prns-core -p prns-runtime -p personal-rns --no-deps --document-private-items --quiet
+
+  cargo-check:
+    name: Cargo check (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        include:
+          - name: Linux
+            runner: ubuntu-24.04
+            command: ./tools/prns repo cargo-check
+          - name: macOS
+            runner: macos-latest
+            command: ./tools/prns repo cargo-check
+          - name: Windows
+            runner: windows-latest
+            command: .\tools\prns.cmd repo cargo-check
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          shared-key: repository-cargo-check
+      - name: Install Linux native development packages
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libsdl2-dev pkg-config
+      - name: Install macOS native development packages
+        if: runner.os == 'macOS'
+        run: brew install sdl2
+      - name: Compile-check every host-compatible Cargo workspace
+        run: ${{ matrix.command }}
 
   feature-configs:
     # The jobs above only build the default features (`std` + `std-sync-host`). The async host
@@ -544,6 +579,7 @@ jobs:
       - fmt
       - clippy
       - test
+      - cargo-check
       - feature-configs
       - flasher-contracts
       - release-workflow-contracts
@@ -561,6 +597,7 @@ jobs:
       FMT_RESULT: ${{ needs.fmt.result }}
       CLIPPY_RESULT: ${{ needs.clippy.result }}
       TEST_RESULT: ${{ needs.test.result }}
+      CARGO_CHECK_RESULT: ${{ needs.cargo-check.result }}
       FEATURES_RESULT: ${{ needs.feature-configs.result }}
       FLASHER_RESULT: ${{ needs.flasher-contracts.result }}
       WORKFLOWS_RESULT: ${{ needs.release-workflow-contracts.result }}
@@ -579,6 +616,7 @@ jobs:
             "$FMT_RESULT" \
             "$CLIPPY_RESULT" \
             "$TEST_RESULT" \
+            "$CARGO_CHECK_RESULT" \
             "$FEATURES_RESULT" \
             "$FLASHER_RESULT" \
             "$WORKFLOWS_RESULT" \

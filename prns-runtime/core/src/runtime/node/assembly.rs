@@ -504,8 +504,8 @@ mod tests {
         RemoteControlControllerGrant, RemoteControlControllerGrants,
         RemoteControlControllerIdentity, RemoteControlControllerIdentitySecret,
         RemoteControlInitialAccess, RemoteControlNodeIdentitySecrets, RemoteControlRequestKind,
-        RemoteControlRequestSet, RemoteControlTargetIdentitySecret,
-        REMOTE_CONTROL_NODE_IDENTITY_COUNT,
+        RemoteControlRequestSet, RemoteControlStorageRequirements,
+        RemoteControlTargetIdentitySecret, REMOTE_CONTROL_NODE_IDENTITY_COUNT,
     };
     use crate::routing::request_handlers::RequestPathHash;
     use crate::runtime::request_endpoints::{Decline, RequestContext, RequestEndpointPolicy};
@@ -513,6 +513,20 @@ mod tests {
     use crate::storage::TestFixedStorage;
 
     type Storage = TestFixedStorage<4, 4, 128, 4, 4, 4, 2, 2, 2, 2, 2, 2>;
+    type RemoteControlOnlyStorage = TestFixedStorage<
+        4,
+        4,
+        128,
+        { RemoteControlStorageRequirements::AVAILABLE.upstream_app_destinations() },
+        { RemoteControlStorageRequirements::AVAILABLE.held_identities() },
+        4,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+    >;
 
     struct Routes;
 
@@ -694,6 +708,29 @@ mod tests {
                 .map(|registered| registered.kind),
             Some(crate::routing::upstream_app_destinations::UpstreamAppDestinationKind::Plain),
         );
+    }
+
+    #[test]
+    fn available_remote_control_fits_its_storage_requirements() {
+        let requirements = &RemoteControlStorageRequirements::AVAILABLE;
+        let mut engine = EngineState::<RemoteControlOnlyStorage>::default();
+        let configured = configure_remote_control_service(&mut engine, remote_control_service())
+            .expect("available RemoteControl fits its advertised storage requirements");
+
+        assert!(configured.is_available());
+        assert!(configured.request_endpoint_id().is_some());
+        assert_eq!(
+            (
+                <RemoteControlOnlyStorage as crate::storage::StorageLayout>::LIMITS.held_identities,
+                <RemoteControlOnlyStorage as crate::storage::StorageLayout>::LIMITS
+                    .upstream_app_destinations,
+            ),
+            (
+                crate::storage::StorageCapacity::Fixed(requirements.held_identities()),
+                crate::storage::StorageCapacity::Fixed(requirements.upstream_app_destinations()),
+            ),
+        );
+        assert_eq!(requirements.request_handlers(), 1);
     }
 
     #[test]

@@ -7,8 +7,39 @@ use super::pairing::RemoteControlPairingPermissions;
 use super::{RemoteControlRequestKind, RemoteControlRequestSet};
 
 pub const REMOTE_CONTROL_NODE_IDENTITY_COUNT: usize = 2;
-pub const REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY: usize = 3;
-pub const REMOTE_CONTROL_REQUIRED_UPSTREAM_APP_DESTINATION_CAPACITY: usize = 3;
+pub struct RemoteControlStorageRequirements {
+    held_identities: usize,
+    upstream_app_destinations: usize,
+    request_handlers: usize,
+}
+
+impl RemoteControlStorageRequirements {
+    pub const AVAILABLE: Self = Self {
+        held_identities: 3,
+        upstream_app_destinations: 3,
+        request_handlers: 1,
+    };
+
+    #[must_use]
+    pub const fn held_identities(&self) -> usize {
+        self.held_identities
+    }
+
+    #[must_use]
+    pub const fn upstream_app_destinations(&self) -> usize {
+        self.upstream_app_destinations
+    }
+
+    #[must_use]
+    pub const fn request_handlers(&self) -> usize {
+        self.request_handlers
+    }
+}
+
+pub const REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY: usize =
+    RemoteControlStorageRequirements::AVAILABLE.held_identities();
+pub const REMOTE_CONTROL_REQUIRED_UPSTREAM_APP_DESTINATION_CAPACITY: usize =
+    RemoteControlStorageRequirements::AVAILABLE.upstream_app_destinations();
 
 pub struct RemoteControlControllerIdentitySecret {
     parts: IdentityParts,

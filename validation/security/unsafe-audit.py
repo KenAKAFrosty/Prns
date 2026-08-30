@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic unsafe inventory for every shipped Cargo graph.
+"""Deterministic unsafe inventory for every release-relevant Cargo graph.
 
 Unlike cargo-geiger, this scanner deliberately does not parse Rust syntax. It tokenizes Rust source
 while discarding nested comments, cooked strings, raw strings, byte strings, and character literals,
@@ -48,6 +48,11 @@ GRAPHS = (
         "esp32-c6",
         "personal-hopspot/embedded/esp32/boards/xiao-esp32-c6/Cargo.toml",
         "riscv32imac-unknown-none-elf",
+    ),
+    (
+        "esp32-s3-heltec-e290",
+        "personal-hopspot/embedded/esp32/boards/heltec-e290/Cargo.toml",
+        "xtensa-esp32s3-none-elf",
     ),
     (
         "esp32-s3-heltec",

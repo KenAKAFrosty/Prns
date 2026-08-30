@@ -72,6 +72,11 @@
       "target": "riscv32imac-unknown-none-elf"
     },
     {
+      "manifest": "personal-hopspot/embedded/esp32/boards/heltec-e290/Cargo.toml",
+      "name": "esp32-s3-heltec-e290",
+      "target": "xtensa-esp32s3-none-elf"
+    },
+    {
       "manifest": "personal-hopspot/embedded/esp32/boards/heltec-v4/Cargo.toml",
       "name": "esp32-s3-heltec",
       "target": "xtensa-esp32s3-none-elf"
@@ -143,6 +148,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -246,6 +252,9 @@
           "alloc"
         ],
         "esp32-s3-heltec": [
+          "alloc"
+        ],
+        "esp32-s3-heltec-e290": [
           "alloc"
         ],
         "esp32-s3-heltec-r8": [
@@ -491,14 +500,14 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": [],
         "ios": [],
-        "nrf52840": [],
-        "wasm": []
+        "nrf52840": []
       },
       "name": "autocfg",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -520,11 +529,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "ios": [],
-        "nrf52840": [],
-        "wasm": []
+        "nrf52840": []
       },
       "name": "az",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -561,6 +570,10 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "default",
+          "std"
+        ],
+        "esp32-s3-heltec-e290": [
           "default",
           "std"
         ],
@@ -728,6 +741,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -746,6 +760,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -783,6 +798,7 @@
         ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -841,6 +857,9 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "std"
+        ],
+        "esp32-s3-heltec-e290": [
           "std"
         ],
         "esp32-s3-heltec-r8": [
@@ -934,6 +953,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -966,6 +986,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -998,6 +1019,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -1168,6 +1190,9 @@
         "esp32-s3-heltec": [
           "uuid"
         ],
+        "esp32-s3-heltec-e290": [
+          "uuid"
+        ],
         "esp32-s3-heltec-r8": [
           "uuid"
         ],
@@ -1270,6 +1295,9 @@
         "esp32-s3-heltec": [
           "uuid"
         ],
+        "esp32-s3-heltec-e290": [
+          "uuid"
+        ],
         "esp32-s3-heltec-r8": [
           "uuid"
         ],
@@ -1311,6 +1339,7 @@
     {
       "graphs": {
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -1338,6 +1367,7 @@
         ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "nrf52840": []
@@ -1386,6 +1416,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -1488,6 +1519,10 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-e290": [
+          "default",
+          "std"
+        ],
         "esp32-s3-heltec-r8": [
           "default",
           "std"
@@ -1567,6 +1602,9 @@
         "esp32-s3-heltec": [
           "default"
         ],
+        "esp32-s3-heltec-e290": [
+          "default"
+        ],
         "esp32-s3-heltec-r8": [
           "default"
         ],
@@ -1633,6 +1671,9 @@
           "block-padding"
         ],
         "esp32-s3-heltec": [
+          "block-padding"
+        ],
+        "esp32-s3-heltec-e290": [
           "block-padding"
         ],
         "esp32-s3-heltec-r8": [
@@ -1755,6 +1796,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -1839,6 +1881,9 @@
           "block-padding"
         ],
         "esp32-s3-heltec": [
+          "block-padding"
+        ],
+        "esp32-s3-heltec-e290": [
           "block-padding"
         ],
         "esp32-s3-heltec-r8": [
@@ -2028,6 +2073,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -2110,6 +2156,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -2150,6 +2197,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -2171,6 +2219,10 @@
           "no-cache-pad"
         ],
         "esp32-s3-heltec": [
+          "default",
+          "no-cache-pad"
+        ],
+        "esp32-s3-heltec-e290": [
           "default",
           "no-cache-pad"
         ],
@@ -2446,6 +2498,10 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-e290": [
+          "default",
+          "std"
+        ],
         "esp32-s3-heltec-r8": [
           "default",
           "std"
@@ -2503,6 +2559,9 @@
           "restore-state-u32"
         ],
         "esp32-s3-heltec": [
+          "restore-state-u32"
+        ],
+        "esp32-s3-heltec-e290": [
           "restore-state-u32"
         ],
         "esp32-s3-heltec-r8": [
@@ -2784,6 +2843,7 @@
         ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [
@@ -2822,6 +2882,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -2854,6 +2915,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -2946,6 +3008,11 @@
           "zeroize"
         ],
         "esp32-s3-heltec": [
+          "digest",
+          "precomputed-tables",
+          "zeroize"
+        ],
+        "esp32-s3-heltec-e290": [
           "digest",
           "precomputed-tables",
           "zeroize"
@@ -3113,6 +3180,10 @@
           "default",
           "suggestions"
         ],
+        "esp32-s3-heltec-e290": [
+          "default",
+          "suggestions"
+        ],
         "esp32-s3-heltec-r8": [
           "default",
           "suggestions"
@@ -3145,6 +3216,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -3166,6 +3238,10 @@
           "suggestions"
         ],
         "esp32-s3-heltec": [
+          "default",
+          "suggestions"
+        ],
+        "esp32-s3-heltec-e290": [
           "default",
           "suggestions"
         ],
@@ -3245,6 +3321,10 @@
           "strsim",
           "suggestions"
         ],
+        "esp32-s3-heltec-e290": [
+          "strsim",
+          "suggestions"
+        ],
         "esp32-s3-heltec-r8": [
           "strsim",
           "suggestions"
@@ -3277,6 +3357,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -3298,6 +3379,10 @@
           "suggestions"
         ],
         "esp32-s3-heltec": [
+          "strsim",
+          "suggestions"
+        ],
+        "esp32-s3-heltec-e290": [
           "strsim",
           "suggestions"
         ],
@@ -3347,6 +3432,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -3367,6 +3453,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -3385,6 +3472,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -3546,6 +3634,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -3647,6 +3736,11 @@
           "default"
         ],
         "esp32-s3-heltec": [
+          "block-buffer",
+          "core-api",
+          "default"
+        ],
+        "esp32-s3-heltec-e290": [
           "block-buffer",
           "core-api",
           "default"
@@ -3759,6 +3853,11 @@
           "mac"
         ],
         "esp32-s3-heltec": [
+          "block-api",
+          "default",
+          "mac"
+        ],
+        "esp32-s3-heltec-e290": [
           "block-api",
           "default",
           "mac"
@@ -3881,6 +3980,9 @@
         "esp32-s3-heltec": [
           "default"
         ],
+        "esp32-s3-heltec-e290": [
+          "default"
+        ],
         "esp32-s3-heltec-r8": [
           "default"
         ],
@@ -3902,6 +4004,7 @@
     {
       "graphs": {
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -3919,6 +4022,7 @@
     {
       "graphs": {
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -4000,6 +4104,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -4018,6 +4123,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -4059,6 +4165,9 @@
           "default"
         ],
         "esp32-s3-heltec": [
+          "default"
+        ],
+        "esp32-s3-heltec-e290": [
           "default"
         ],
         "esp32-s3-heltec-r8": [
@@ -4136,6 +4245,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -4195,6 +4305,10 @@
           "zeroize"
         ],
         "esp32-s3-heltec": [
+          "fast",
+          "zeroize"
+        ],
+        "esp32-s3-heltec-e290": [
           "fast",
           "zeroize"
         ],
@@ -4303,6 +4417,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "nrf52840": [
@@ -4324,6 +4439,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "nrf52840": [
@@ -4347,6 +4463,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "nrf52840": []
@@ -4368,6 +4485,9 @@
           "timer-item-size-6-words"
         ],
         "esp32-s3-heltec": [
+          "timer-item-size-6-words"
+        ],
+        "esp32-s3-heltec-e290": [
           "timer-item-size-6-words"
         ],
         "esp32-s3-heltec-r8": [
@@ -4403,6 +4523,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -4426,6 +4547,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "nrf52840": []
@@ -4537,6 +4659,16 @@
           "tcp",
           "udp"
         ],
+        "esp32-s3-heltec-e290": [
+          "dhcpv4",
+          "dns",
+          "medium-ethernet",
+          "multicast",
+          "proto-ipv4",
+          "proto-ipv6",
+          "tcp",
+          "udp"
+        ],
         "esp32-s3-heltec-r8": [
           "dhcpv4",
           "dns",
@@ -4612,6 +4744,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -4642,6 +4775,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -4690,6 +4824,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -4715,6 +4850,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -4740,6 +4876,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -4770,6 +4907,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -4804,6 +4942,9 @@
         "esp32-s3-heltec": [
           "tick-hz-1_000_000"
         ],
+        "esp32-s3-heltec-e290": [
+          "tick-hz-1_000_000"
+        ],
         "esp32-s3-heltec-r8": [
           "tick-hz-1_000_000"
         ],
@@ -4833,6 +4974,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "nrf52840": []
@@ -4859,6 +5001,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -4891,6 +5034,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -4917,6 +5061,9 @@
         "esp32-s3-heltec": [
           "default"
         ],
+        "esp32-s3-heltec-e290": [
+          "default"
+        ],
         "esp32-s3-heltec-r8": [
           "default"
         ],
@@ -4939,6 +5086,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -4976,6 +5124,9 @@
         "esp32-s3-heltec": [
           "default"
         ],
+        "esp32-s3-heltec-e290": [
+          "default"
+        ],
         "esp32-s3-heltec-r8": [
           "default"
         ],
@@ -4986,9 +5137,6 @@
           "default"
         ],
         "nrf52840": [
-          "default"
-        ],
-        "wasm": [
           "default"
         ]
       },
@@ -5026,6 +5174,9 @@
         "esp32-s3-heltec": [
           "default"
         ],
+        "esp32-s3-heltec-e290": [
+          "default"
+        ],
         "esp32-s3-heltec-r8": [
           "default"
         ],
@@ -5036,9 +5187,6 @@
           "default"
         ],
         "nrf52840": [
-          "default"
-        ],
-        "wasm": [
           "default"
         ]
       },
@@ -5100,6 +5248,9 @@
         "esp32-s3-heltec": [
           "unproven"
         ],
+        "esp32-s3-heltec-e290": [
+          "unproven"
+        ],
         "esp32-s3-heltec-r8": [
           "unproven"
         ],
@@ -5136,6 +5287,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -5166,6 +5318,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -5188,6 +5341,9 @@
     {
       "graphs": {
         "esp32-s3-heltec": [
+          "async"
+        ],
+        "esp32-s3-heltec-e290": [
           "async"
         ],
         "esp32-s3-heltec-r8": [
@@ -5222,6 +5378,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -5251,6 +5408,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -5281,6 +5439,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -5310,6 +5469,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -5340,6 +5500,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -5369,6 +5530,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -5399,6 +5561,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -5431,6 +5594,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -5528,6 +5692,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -5546,6 +5711,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -5605,6 +5771,7 @@
         "desktop-macos": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-macos": []
@@ -5682,6 +5849,12 @@
           "global-allocator",
           "internal-heap-stats"
         ],
+        "esp32-s3-heltec-e290": [
+          "compat",
+          "default",
+          "global-allocator",
+          "internal-heap-stats"
+        ],
         "esp32-s3-heltec-r8": [
           "compat",
           "default",
@@ -5716,6 +5889,13 @@
           "println"
         ],
         "esp32-s3-heltec": [
+          "esp32c6",
+          "esp32s3",
+          "panic-handler",
+          "print-float-registers",
+          "println"
+        ],
+        "esp32-s3-heltec-e290": [
           "esp32c6",
           "esp32s3",
           "panic-handler",
@@ -5764,6 +5944,13 @@
           "esp32s3",
           "validation"
         ],
+        "esp32-s3-heltec-e290": [
+          "default",
+          "esp-rom-sys",
+          "esp32c6",
+          "esp32s3",
+          "validation"
+        ],
         "esp32-s3-heltec-r8": [
           "default",
           "esp-rom-sys",
@@ -5796,6 +5983,9 @@
           "build"
         ],
         "esp32-s3-heltec": [
+          "build"
+        ],
+        "esp32-s3-heltec-e290": [
           "build"
         ],
         "esp32-s3-heltec-r8": [
@@ -5832,6 +6022,19 @@
           "unstable"
         ],
         "esp32-s3-heltec": [
+          "__bluetooth",
+          "__usb_otg",
+          "critical-section",
+          "default",
+          "esp32c6",
+          "esp32s3",
+          "exception-handler",
+          "float-save-restore",
+          "requires-unstable",
+          "rt",
+          "unstable"
+        ],
+        "esp32-s3-heltec-e290": [
           "__bluetooth",
           "__usb_otg",
           "critical-section",
@@ -5898,6 +6101,13 @@
           "rtc-fast",
           "rtc-slow"
         ],
+        "esp32-s3-heltec-e290": [
+          "__esp_idf_bootloader",
+          "has-lp-core",
+          "has-ulp-core",
+          "rtc-fast",
+          "rtc-slow"
+        ],
         "esp32-s3-heltec-r8": [
           "__esp_idf_bootloader",
           "has-lp-core",
@@ -5938,6 +6148,12 @@
           "esp32c6",
           "esp32s3"
         ],
+        "esp32-s3-heltec-e290": [
+          "_device-selected",
+          "build-script",
+          "esp32c6",
+          "esp32s3"
+        ],
         "esp32-s3-heltec-r8": [
           "_device-selected",
           "build-script",
@@ -5972,6 +6188,10 @@
           "esp32c6",
           "esp32s3"
         ],
+        "esp32-s3-heltec-e290": [
+          "esp32c6",
+          "esp32s3"
+        ],
         "esp32-s3-heltec-r8": [
           "esp32c6",
           "esp32s3"
@@ -6001,6 +6221,12 @@
           "log-04"
         ],
         "esp32-s3-heltec": [
+          "esp32c6",
+          "esp32s3",
+          "jtag-serial",
+          "log-04"
+        ],
+        "esp32-s3-heltec-e290": [
           "esp32c6",
           "esp32s3",
           "jtag-serial",
@@ -6056,6 +6282,18 @@
           "wifi",
           "xtensa-lx-rt"
         ],
+        "esp32-s3-heltec-e290": [
+          "__has_unstable_feature_enabled",
+          "ble",
+          "coex",
+          "esp-alloc",
+          "esp-now",
+          "esp32c6",
+          "esp32s3",
+          "unstable",
+          "wifi",
+          "xtensa-lx-rt"
+        ],
         "esp32-s3-heltec-r8": [
           "__has_unstable_feature_enabled",
           "ble",
@@ -6084,11 +6322,11 @@
       "name": "esp-radio",
       "source": "personal-hopspot/embedded/esp32/vendor/esp-radio-0.18.0",
       "unsafe": {
-        "blocks": 437,
-        "externs": 511,
+        "blocks": 439,
+        "externs": 513,
         "functions": 12,
         "impls": 3,
-        "tokens": 1021
+        "tokens": 1027
       },
       "version": "0.18.0"
     },
@@ -6101,6 +6339,12 @@
           "ipc-implementations"
         ],
         "esp32-s3-heltec": [
+          "esp-sync",
+          "esp32c6",
+          "esp32s3",
+          "ipc-implementations"
+        ],
+        "esp32-s3-heltec-e290": [
           "esp-sync",
           "esp32c6",
           "esp32s3",
@@ -6157,6 +6401,10 @@
           "esp32c6",
           "esp32s3"
         ],
+        "esp32-s3-heltec-e290": [
+          "esp32c6",
+          "esp32s3"
+        ],
         "esp32-s3-heltec-r8": [
           "esp32c6",
           "esp32s3"
@@ -6188,6 +6436,14 @@
           "esp32s3"
         ],
         "esp32-s3-heltec": [
+          "alloc",
+          "default",
+          "embassy",
+          "esp-radio",
+          "esp32c6",
+          "esp32s3"
+        ],
+        "esp32-s3-heltec-e290": [
           "alloc",
           "default",
           "embassy",
@@ -6233,6 +6489,10 @@
           "esp32c6",
           "esp32s3"
         ],
+        "esp32-s3-heltec-e290": [
+          "esp32c6",
+          "esp32s3"
+        ],
         "esp32-s3-heltec-r8": [
           "esp32c6",
           "esp32s3"
@@ -6260,6 +6520,10 @@
           "fs"
         ],
         "esp32-s3-heltec": [
+          "esp32sx",
+          "fs"
+        ],
+        "esp32-s3-heltec-e290": [
           "esp32sx",
           "fs"
         ],
@@ -6291,6 +6555,9 @@
         "esp32-s3-heltec": [
           "default"
         ],
+        "esp32-s3-heltec-e290": [
+          "default"
+        ],
         "esp32-s3-heltec-r8": [
           "default"
         ],
@@ -6317,6 +6584,9 @@
         "esp32-s3-heltec": [
           "default"
         ],
+        "esp32-s3-heltec-e290": [
+          "default"
+        ],
         "esp32-s3-heltec-r8": [
           "default"
         ],
@@ -6325,7 +6595,7 @@
         ]
       },
       "name": "esp-wifi-sys-esp32s3",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "source": "personal-hopspot/embedded/esp32/vendor/esp-wifi-sys-esp32s3-0.2.0",
       "unsafe": {
         "blocks": 231,
         "externs": 224,
@@ -6343,6 +6613,11 @@
           "rt"
         ],
         "esp32-s3-heltec": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
+        "esp32-s3-heltec-e290": [
           "critical-section",
           "default",
           "rt"
@@ -6381,6 +6656,11 @@
           "default",
           "rt"
         ],
+        "esp32-s3-heltec-e290": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
         "esp32-s3-heltec-r8": [
           "critical-section",
           "default",
@@ -6411,6 +6691,11 @@
           "rt"
         ],
         "esp32-s3-heltec": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
+        "esp32-s3-heltec-e290": [
           "critical-section",
           "default",
           "rt"
@@ -6449,6 +6734,11 @@
           "default",
           "rt"
         ],
+        "esp32-s3-heltec-e290": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
         "esp32-s3-heltec-r8": [
           "critical-section",
           "default",
@@ -6479,6 +6769,11 @@
           "rt"
         ],
         "esp32-s3-heltec": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
+        "esp32-s3-heltec-e290": [
           "critical-section",
           "default",
           "rt"
@@ -6517,6 +6812,11 @@
           "default",
           "rt"
         ],
+        "esp32-s3-heltec-e290": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
         "esp32-s3-heltec-r8": [
           "critical-section",
           "default",
@@ -6547,6 +6847,11 @@
           "rt"
         ],
         "esp32-s3-heltec": [
+          "critical-section",
+          "default",
+          "rt"
+        ],
+        "esp32-s3-heltec-e290": [
           "critical-section",
           "default",
           "rt"
@@ -6823,6 +7128,11 @@
           "num-traits",
           "ratio"
         ],
+        "esp32-s3-heltec-e290": [
+          "default",
+          "num-traits",
+          "ratio"
+        ],
         "esp32-s3-heltec-r8": [
           "default",
           "num-traits",
@@ -6839,11 +7149,6 @@
           "ratio"
         ],
         "nrf52840": [
-          "default",
-          "num-traits",
-          "ratio"
-        ],
-        "wasm": [
           "default",
           "num-traits",
           "ratio"
@@ -6928,6 +7233,10 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "default",
+          "std"
+        ],
+        "esp32-s3-heltec-e290": [
           "default",
           "std"
         ],
@@ -7043,6 +7352,9 @@
         "esp32-s3-heltec": [
           "default"
         ],
+        "esp32-s3-heltec-e290": [
+          "default"
+        ],
         "esp32-s3-heltec-r8": [
           "default"
         ],
@@ -7128,6 +7440,14 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "alloc",
+          "async-await",
+          "default",
+          "executor",
+          "futures-executor",
+          "std"
+        ],
+        "esp32-s3-heltec-e290": [
           "alloc",
           "async-await",
           "default",
@@ -7268,6 +7588,13 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "alloc",
+          "default",
+          "futures-sink",
+          "sink",
+          "std"
+        ],
+        "esp32-s3-heltec-e290": [
           "alloc",
           "default",
           "futures-sink",
@@ -7397,6 +7724,11 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "esp32-s3-heltec-e290": [
           "alloc",
           "default",
           "std"
@@ -7499,6 +7831,9 @@
         "esp32-s3-heltec": [
           "std"
         ],
+        "esp32-s3-heltec-e290": [
+          "std"
+        ],
         "esp32-s3-heltec-r8": [
           "std"
         ],
@@ -7554,6 +7889,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -7605,6 +7941,9 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "std"
+        ],
+        "esp32-s3-heltec-e290": [
           "std"
         ],
         "esp32-s3-heltec-r8": [
@@ -7694,6 +8033,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "ios": [],
@@ -7767,6 +8107,10 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "alloc",
+          "std"
+        ],
+        "esp32-s3-heltec-e290": [
           "alloc",
           "std"
         ],
@@ -7866,6 +8210,10 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "alloc",
+          "std"
+        ],
+        "esp32-s3-heltec-e290": [
           "alloc",
           "std"
         ],
@@ -8096,6 +8444,21 @@
           "slab",
           "std"
         ],
+        "esp32-s3-heltec-e290": [
+          "alloc",
+          "async-await",
+          "async-await-macro",
+          "channel",
+          "futures-channel",
+          "futures-io",
+          "futures-macro",
+          "futures-sink",
+          "io",
+          "memchr",
+          "sink",
+          "slab",
+          "std"
+        ],
         "esp32-s3-heltec-r8": [
           "alloc",
           "async-await",
@@ -8236,6 +8599,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -8280,6 +8644,9 @@
           "more_lengths"
         ],
         "esp32-s3-heltec": [
+          "more_lengths"
+        ],
+        "esp32-s3-heltec-e290": [
           "more_lengths"
         ],
         "esp32-s3-heltec-r8": [
@@ -8343,6 +8710,7 @@
         ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -8429,6 +8797,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -8475,6 +8844,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -8555,6 +8925,7 @@
         "desktop-macos": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-macos": []
@@ -8582,6 +8953,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -8613,6 +8985,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -8663,6 +9036,7 @@
         "desktop-linux": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": []
@@ -8719,6 +9093,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -8751,6 +9126,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -8790,6 +9166,23 @@
         "tokens": 5
       },
       "version": "0.5.12"
+    },
+    {
+      "graphs": {
+        "esp32-s3-heltec-e290": [
+          "default"
+        ]
+      },
+      "name": "hopspot-heltec-e290",
+      "source": "personal-hopspot/embedded/esp32/boards/heltec-e290",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.1.0"
     },
     {
       "graphs": {
@@ -8956,6 +9349,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "ios": [],
@@ -9147,6 +9541,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -9226,6 +9621,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -9320,6 +9716,10 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-e290": [
+          "default",
+          "std"
+        ],
         "esp32-s3-heltec-r8": [
           "default",
           "std"
@@ -9348,6 +9748,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -9394,6 +9795,9 @@
         "esp32-s3-heltec": [
           "block-padding"
         ],
+        "esp32-s3-heltec-e290": [
+          "block-padding"
+        ],
         "esp32-s3-heltec-r8": [
           "block-padding"
         ],
@@ -9434,6 +9838,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -9500,6 +9905,10 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "default",
+          "std"
+        ],
+        "esp32-s3-heltec-e290": [
           "default",
           "std"
         ],
@@ -9612,6 +10021,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -9636,6 +10046,10 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "alloc",
+          "std"
+        ],
+        "esp32-s3-heltec-e290": [
           "alloc",
           "std"
         ],
@@ -9868,6 +10282,9 @@
         "esp32-s3-heltec": [
           "rust-allocator"
         ],
+        "esp32-s3-heltec-e290": [
+          "rust-allocator"
+        ],
         "esp32-s3-heltec-r8": [
           "rust-allocator"
         ],
@@ -9947,6 +10364,11 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "default",
+          "extra_traits",
+          "std"
+        ],
+        "esp32-s3-heltec-e290": [
           "default",
           "extra_traits",
           "std"
@@ -10053,6 +10475,9 @@
           "const_mut_refs"
         ],
         "esp32-s3-heltec": [
+          "const_mut_refs"
+        ],
+        "esp32-s3-heltec-e290": [
           "const_mut_refs"
         ],
         "esp32-s3-heltec-r8": [
@@ -10173,6 +10598,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -10230,6 +10656,10 @@
           "atomic_usize",
           "default"
         ],
+        "esp32-s3-heltec-e290": [
+          "atomic_usize",
+          "default"
+        ],
         "esp32-s3-heltec-r8": [
           "atomic_usize",
           "default"
@@ -10269,6 +10699,10 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "release_max_level_info",
+          "std"
+        ],
+        "esp32-s3-heltec-e290": [
           "release_max_level_info",
           "std"
         ],
@@ -10391,6 +10825,10 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-e290": [
+          "default",
+          "std"
+        ],
         "esp32-s3-heltec-r8": [
           "default",
           "std"
@@ -10501,6 +10939,9 @@
         "esp32-s3-heltec": [
           "map"
         ],
+        "esp32-s3-heltec-e290": [
+          "map"
+        ],
         "esp32-s3-heltec-r8": [
           "map"
         ],
@@ -10540,6 +10981,13 @@
           "syn1",
           "syn2"
         ],
+        "esp32-s3-heltec-e290": [
+          "default",
+          "macros",
+          "syn",
+          "syn1",
+          "syn2"
+        ],
         "esp32-s3-heltec-r8": [
           "default",
           "macros",
@@ -10569,6 +11017,7 @@
     {
       "graphs": {
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -10606,6 +11055,11 @@
     {
       "graphs": {
         "esp32-s3-heltec": [
+          "default",
+          "doctests",
+          "pulldown-cmark"
+        ],
+        "esp32-s3-heltec-e290": [
           "default",
           "doctests",
           "pulldown-cmark"
@@ -10736,6 +11190,11 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-e290": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "esp32-s3-heltec-r8": [
           "alloc",
           "default",
@@ -10835,11 +11294,11 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "ios": [],
-        "nrf52840": [],
-        "wasm": []
+        "nrf52840": []
       },
       "name": "micromath",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -10939,6 +11398,11 @@
           "os-poll"
         ],
         "esp32-s3-heltec": [
+          "net",
+          "os-ext",
+          "os-poll"
+        ],
+        "esp32-s3-heltec-e290": [
           "net",
           "os-ext",
           "os-poll"
@@ -11099,6 +11563,9 @@
         "esp32-s3-heltec": [
           "unstable"
         ],
+        "esp32-s3-heltec-e290": [
+          "unstable"
+        ],
         "esp32-s3-heltec-r8": [
           "unstable"
         ],
@@ -11135,6 +11602,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -11220,6 +11688,12 @@
           "gateway"
         ],
         "esp32-s3-heltec": [
+          "android-extra",
+          "apple-system-configuration-extra",
+          "default",
+          "gateway"
+        ],
+        "esp32-s3-heltec-e290": [
           "android-extra",
           "apple-system-configuration-extra",
           "default",
@@ -11559,6 +12033,7 @@
         "desktop-linux": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": []
@@ -11665,6 +12140,10 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-e290": [
+          "default",
+          "std"
+        ],
         "esp32-s3-heltec-r8": [
           "default",
           "std"
@@ -11692,8 +12171,7 @@
         "nrf52840": [
           "default",
           "std"
-        ],
-        "wasm": []
+        ]
       },
       "name": "num-traits",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -13540,6 +14018,10 @@
           "elf",
           "read_core"
         ],
+        "esp32-s3-heltec-e290": [
+          "elf",
+          "read_core"
+        ],
         "esp32-s3-heltec-r8": [
           "elf",
           "read_core"
@@ -13809,6 +14291,7 @@
         "desktop-linux": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": []
@@ -13886,36 +14369,51 @@
     {
       "graphs": {
         "android": [
+          "display",
           "host"
         ],
         "desktop-linux": [
+          "display",
           "host"
         ],
         "desktop-macos": [
+          "display",
           "host"
         ],
         "desktop-windows": [
+          "display",
           "host"
         ],
         "engine": [
-          "default"
+          "default",
+          "display"
         ],
         "esp32-c6": [
+          "display",
           "embedded"
         ],
         "esp32-s3-heltec": [
+          "display",
+          "embedded"
+        ],
+        "esp32-s3-heltec-e290": [
+          "display",
           "embedded"
         ],
         "esp32-s3-heltec-r8": [
+          "display",
           "embedded"
         ],
         "esp32-s3-tbeam": [
+          "display",
           "embedded"
         ],
         "ios": [
+          "display",
           "host"
         ],
         "nrf52840": [
+          "display",
           "embedded"
         ],
         "wasm": []
@@ -13959,6 +14457,7 @@
         "esp32-c6": [
           "bluetooth-auto",
           "default",
+          "display",
           "esp-now",
           "lora",
           "tcp",
@@ -13968,6 +14467,17 @@
         "esp32-s3-heltec": [
           "bluetooth-auto",
           "default",
+          "display",
+          "esp-now",
+          "lora",
+          "tcp",
+          "usb",
+          "wifi-auto"
+        ],
+        "esp32-s3-heltec-e290": [
+          "bluetooth-auto",
+          "default",
+          "display",
           "esp-now",
           "lora",
           "tcp",
@@ -13977,6 +14487,7 @@
         "esp32-s3-heltec-r8": [
           "bluetooth-auto",
           "default",
+          "display",
           "esp-now",
           "lora",
           "tcp",
@@ -13986,6 +14497,7 @@
         "esp32-s3-tbeam": [
           "bluetooth-auto",
           "default",
+          "display",
           "esp-now",
           "lora",
           "tcp",
@@ -13996,11 +14508,11 @@
       "name": "personal-hopspot-esp32",
       "source": "personal-hopspot/embedded/esp32",
       "unsafe": {
-        "blocks": 777,
-        "externs": 553,
-        "functions": 121,
-        "impls": 37,
-        "tokens": 1619
+        "blocks": 1012,
+        "externs": 779,
+        "functions": 123,
+        "impls": 39,
+        "tokens": 2086
       },
       "version": "0.1.0"
     },
@@ -14217,6 +14729,20 @@
           "usb",
           "wifi-auto"
         ],
+        "esp32-s3-heltec-e290": [
+          "alloc",
+          "bluetooth-auto",
+          "embassy-host",
+          "esp-now",
+          "external-alloc",
+          "flash",
+          "log",
+          "lora",
+          "tcp",
+          "tcp-dns",
+          "usb",
+          "wifi-auto"
+        ],
         "esp32-s3-heltec-r8": [
           "alloc",
           "bluetooth-auto",
@@ -14397,6 +14923,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -14531,6 +15058,13 @@
           "require-cas",
           "unsafe-assume-single-core"
         ],
+        "esp32-s3-heltec-e290": [
+          "critical-section",
+          "default",
+          "fallback",
+          "require-cas",
+          "unsafe-assume-single-core"
+        ],
         "esp32-s3-heltec-r8": [
           "critical-section",
           "default",
@@ -14604,6 +15138,9 @@
         "esp32-s3-heltec": [
           "portable-atomic"
         ],
+        "esp32-s3-heltec-e290": [
+          "portable-atomic"
+        ],
         "esp32-s3-heltec-r8": [
           "portable-atomic"
         ],
@@ -14626,6 +15163,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -14858,6 +15396,14 @@
           "std",
           "tokio-host"
         ],
+        "esp32-s3-heltec-e290": [
+          "alloc",
+          "embassy-host",
+          "external-alloc",
+          "flash",
+          "std",
+          "tokio-host"
+        ],
         "esp32-s3-heltec-r8": [
           "alloc",
           "embassy-host",
@@ -14966,11 +15512,11 @@
       "name": "prns-ffi",
       "source": "prns-ffi",
       "unsafe": {
-        "blocks": 123,
+        "blocks": 124,
         "externs": 3,
         "functions": 0,
         "impls": 22,
-        "tokens": 184
+        "tokens": 185
       },
       "version": "0.3.7"
     },
@@ -15103,6 +15649,17 @@
           "wifi-auto"
         ],
         "esp32-s3-heltec": [
+          "bluetooth-auto",
+          "bluetooth-auto-trouble",
+          "esp-now",
+          "log",
+          "lora",
+          "tcp",
+          "tcp-dns",
+          "usb",
+          "wifi-auto"
+        ],
+        "esp32-s3-heltec-e290": [
           "bluetooth-auto",
           "bluetooth-auto-trouble",
           "esp-now",
@@ -15315,6 +15872,15 @@
           "usb",
           "wifi-auto"
         ],
+        "esp32-s3-heltec-e290": [
+          "bluetooth-auto",
+          "log",
+          "network-device-selection",
+          "serial",
+          "tcp",
+          "usb",
+          "wifi-auto"
+        ],
         "esp32-s3-heltec-r8": [
           "bluetooth-auto",
           "log",
@@ -15427,6 +15993,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -15547,6 +16114,12 @@
           "resource-bzip2",
           "std"
         ],
+        "esp32-s3-heltec-e290": [
+          "alloc",
+          "external-alloc",
+          "resource-bzip2",
+          "std"
+        ],
         "esp32-s3-heltec-r8": [
           "alloc",
           "external-alloc",
@@ -15641,6 +16214,10 @@
           "alloc",
           "log"
         ],
+        "esp32-s3-heltec-e290": [
+          "alloc",
+          "log"
+        ],
         "esp32-s3-heltec-r8": [
           "alloc",
           "log"
@@ -15710,6 +16287,7 @@
         ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [
@@ -15821,6 +16399,7 @@
         "desktop-linux": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -15838,6 +16417,14 @@
     {
       "graphs": {
         "esp32-s3-heltec": [
+          "default",
+          "parser",
+          "proc-macro",
+          "proc-macro2",
+          "quote",
+          "smallvec"
+        ],
+        "esp32-s3-heltec-e290": [
           "default",
           "parser",
           "proc-macro",
@@ -15912,6 +16499,10 @@
           "proc-macro"
         ],
         "esp32-s3-heltec": [
+          "default",
+          "proc-macro"
+        ],
+        "esp32-s3-heltec-e290": [
           "default",
           "proc-macro"
         ],
@@ -16033,6 +16624,7 @@
     {
       "graphs": {
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -16132,6 +16724,10 @@
           "default",
           "proc-macro"
         ],
+        "esp32-s3-heltec-e290": [
+          "default",
+          "proc-macro"
+        ],
         "esp32-s3-heltec-r8": [
           "default",
           "proc-macro"
@@ -16224,6 +16820,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -16365,6 +16962,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -16395,6 +16993,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -16435,6 +17034,7 @@
         ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [
@@ -16858,6 +17458,9 @@
         "esp32-s3-heltec": [
           "unstable"
         ],
+        "esp32-s3-heltec-e290": [
+          "unstable"
+        ],
         "esp32-s3-heltec-r8": [
           "unstable"
         ],
@@ -16931,6 +17534,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -16962,6 +17566,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -17008,6 +17613,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -17292,6 +17898,7 @@
         "desktop-linux": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "nrf-dfu-browser": [],
@@ -17347,6 +17954,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -17403,6 +18011,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -17540,6 +18149,9 @@
         "esp32-s3-heltec": [
           "openocd-semihosting"
         ],
+        "esp32-s3-heltec-e290": [
+          "openocd-semihosting"
+        ],
         "esp32-s3-heltec-r8": [
           "openocd-semihosting"
         ],
@@ -17614,6 +18226,10 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "default",
+          "std"
+        ],
+        "esp32-s3-heltec-e290": [
           "default",
           "std"
         ],
@@ -17727,6 +18343,12 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "esp32-s3-heltec-e290": [
           "default",
           "derive",
           "serde_derive",
@@ -17878,6 +18500,11 @@
           "result",
           "std"
         ],
+        "esp32-s3-heltec-e290": [
+          "alloc",
+          "result",
+          "std"
+        ],
         "esp32-s3-heltec-r8": [
           "alloc",
           "result",
@@ -17955,6 +18582,9 @@
           "default"
         ],
         "esp32-s3-heltec": [
+          "default"
+        ],
+        "esp32-s3-heltec-e290": [
           "default"
         ],
         "esp32-s3-heltec-r8": [
@@ -18099,6 +18729,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -18124,6 +18755,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -18153,6 +18785,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -18233,6 +18866,7 @@
         ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -18269,6 +18903,7 @@
         ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -18430,6 +19065,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -18540,6 +19176,10 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-e290": [
+          "default",
+          "std"
+        ],
         "esp32-s3-heltec-r8": [
           "default",
           "std"
@@ -18585,6 +19225,9 @@
     {
       "graphs": {
         "esp32-s3-heltec": [
+          "const_generics"
+        ],
+        "esp32-s3-heltec-e290": [
           "const_generics"
         ],
         "esp32-s3-heltec-r8": [
@@ -18753,6 +19396,20 @@
           "socket-tcp",
           "socket-udp"
         ],
+        "esp32-s3-heltec-e290": [
+          "async",
+          "medium-ethernet",
+          "multicast",
+          "proto-dhcpv4",
+          "proto-dns",
+          "proto-ipv4",
+          "proto-ipv6",
+          "socket",
+          "socket-dhcpv4",
+          "socket-dns",
+          "socket-tcp",
+          "socket-udp"
+        ],
         "esp32-s3-heltec-r8": [
           "async",
           "medium-ethernet",
@@ -18879,6 +19536,9 @@
         "esp32-s3-heltec": [
           "all"
         ],
+        "esp32-s3-heltec-e290": [
+          "all"
+        ],
         "esp32-s3-heltec-r8": [
           "all"
         ],
@@ -18930,6 +19590,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -18948,6 +19609,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -19016,6 +19678,11 @@
           "embedded-graphics-core",
           "graphics"
         ],
+        "esp32-s3-heltec-e290": [
+          "default",
+          "embedded-graphics-core",
+          "graphics"
+        ],
         "esp32-s3-heltec-r8": [
           "default",
           "embedded-graphics-core",
@@ -19068,6 +19735,7 @@
         ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -19122,6 +19790,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -19167,6 +19836,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -19225,6 +19895,10 @@
           "derive",
           "strum_macros"
         ],
+        "esp32-s3-heltec-e290": [
+          "derive",
+          "strum_macros"
+        ],
         "esp32-s3-heltec-r8": [
           "derive",
           "strum_macros"
@@ -19266,6 +19940,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -19292,6 +19967,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -19318,6 +19994,9 @@
           "default"
         ],
         "esp32-s3-heltec": [
+          "default"
+        ],
+        "esp32-s3-heltec-e290": [
           "default"
         ],
         "esp32-s3-heltec-r8": [
@@ -19353,6 +20032,18 @@
           "visit-mut"
         ],
         "esp32-s3-heltec": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "quote",
+          "visit-mut"
+        ],
+        "esp32-s3-heltec-e290": [
           "clone-impls",
           "default",
           "derive",
@@ -19491,6 +20182,18 @@
           "visit-mut"
         ],
         "esp32-s3-heltec": [
+          "clone-impls",
+          "default",
+          "derive",
+          "extra-traits",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit",
+          "visit-mut"
+        ],
+        "esp32-s3-heltec-e290": [
           "clone-impls",
           "default",
           "derive",
@@ -19879,6 +20582,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -20416,6 +21120,22 @@
           "tokio-macros",
           "windows-sys"
         ],
+        "esp32-s3-heltec-e290": [
+          "bytes",
+          "default",
+          "fs",
+          "io-util",
+          "libc",
+          "macros",
+          "mio",
+          "net",
+          "rt",
+          "socket2",
+          "sync",
+          "time",
+          "tokio-macros",
+          "windows-sys"
+        ],
         "esp32-s3-heltec-r8": [
           "bytes",
           "default",
@@ -20576,6 +21296,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "ios": [],
@@ -20908,6 +21629,11 @@
           "default",
           "std"
         ],
+        "esp32-s3-heltec-e290": [
+          "alloc",
+          "default",
+          "std"
+        ],
         "esp32-s3-heltec-r8": [
           "alloc",
           "default",
@@ -20936,6 +21662,9 @@
           "parse"
         ],
         "esp32-s3-heltec": [
+          "parse"
+        ],
+        "esp32-s3-heltec-e290": [
           "parse"
         ],
         "esp32-s3-heltec-r8": [
@@ -20989,6 +21718,11 @@
           "std"
         ],
         "esp32-s3-heltec": [
+          "alloc",
+          "default",
+          "std"
+        ],
+        "esp32-s3-heltec-e290": [
           "alloc",
           "default",
           "std"
@@ -21401,6 +22135,19 @@
           "scan",
           "trouble-host-macros"
         ],
+        "esp32-s3-heltec-e290": [
+          "central",
+          "default-packet-pool",
+          "default-packet-pool-mtu-512",
+          "default-packet-pool-size-32",
+          "default-packet-pool-size-8",
+          "derive",
+          "gatt",
+          "log",
+          "peripheral",
+          "scan",
+          "trouble-host-macros"
+        ],
         "esp32-s3-heltec-r8": [
           "central",
           "default-packet-pool",
@@ -21541,6 +22288,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -21675,6 +22423,9 @@
         "esp32-s3-heltec": [
           "const-generics"
         ],
+        "esp32-s3-heltec-e290": [
+          "const-generics"
+        ],
         "esp32-s3-heltec-r8": [
           "const-generics"
         ],
@@ -21730,6 +22481,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -21762,6 +22514,7 @@
     {
       "graphs": {
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -21788,6 +22541,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -21820,6 +22574,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -21841,6 +22596,10 @@
           "default"
         ],
         "esp32-s3-heltec": [
+          "cjk",
+          "default"
+        ],
+        "esp32-s3-heltec-e290": [
           "cjk",
           "default"
         ],
@@ -21868,6 +22627,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -21932,6 +22692,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "nrf52840": []
@@ -22061,6 +22822,12 @@
           "v4"
         ],
         "esp32-s3-heltec": [
+          "default",
+          "rng",
+          "std",
+          "v4"
+        ],
+        "esp32-s3-heltec-e290": [
           "default",
           "rng",
           "std",
@@ -22208,6 +22975,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "nrf52840": []
@@ -22252,6 +23020,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -22283,6 +23052,7 @@
         "desktop-windows": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
@@ -23188,6 +23958,14 @@
           "parser",
           "std"
         ],
+        "esp32-s3-heltec-e290": [
+          "alloc",
+          "ascii",
+          "binary",
+          "default",
+          "parser",
+          "std"
+        ],
         "esp32-s3-heltec-r8": [
           "alloc",
           "ascii",
@@ -23321,6 +24099,10 @@
           "precomputed-tables",
           "static_secrets"
         ],
+        "esp32-s3-heltec-e290": [
+          "precomputed-tables",
+          "static_secrets"
+        ],
         "esp32-s3-heltec-r8": [
           "precomputed-tables",
           "static_secrets"
@@ -23385,6 +24167,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -23405,6 +24188,9 @@
           "float-save-restore"
         ],
         "esp32-s3-heltec": [
+          "float-save-restore"
+        ],
+        "esp32-s3-heltec-e290": [
           "float-save-restore"
         ],
         "esp32-s3-heltec-r8": [
@@ -23429,6 +24215,7 @@
       "graphs": {
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -23600,6 +24387,7 @@
         ],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": []
       },
@@ -23759,6 +24547,11 @@
           "derive",
           "zeroize_derive"
         ],
+        "esp32-s3-heltec-e290": [
+          "alloc",
+          "derive",
+          "zeroize_derive"
+        ],
         "esp32-s3-heltec-r8": [
           "alloc",
           "derive",
@@ -23852,6 +24645,7 @@
         "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
         "ios": [],

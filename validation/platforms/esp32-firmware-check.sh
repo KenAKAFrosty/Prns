@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Compile every ESP shipping face on its real architecture without paying the
-# release lane's artifact assembly and reproducibility cost. This is the PR
-# forcing function for target-gated S3/C6 code that a host build cannot see.
+# Compile every shipping ESP face and cataloged qualification target on its real
+# architecture without paying the release lane's artifact assembly and
+# reproducibility cost. This is the PR forcing function for target-gated S3/C6
+# code that a host build cannot see.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -13,6 +14,7 @@ cd "$root"
     cd personal-hopspot/embedded/esp32
 
     cargo +esp check --release --locked \
+        -p hopspot-heltec-e290 \
         -p hopspot-heltec-v4 \
         -p hopspot-heltec-v4-r8 \
         -p hopspot-t-beam-supreme \

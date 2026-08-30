@@ -1708,6 +1708,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hopspot-heltec-e290"
+version = "0.1.0"
+dependencies = [
+ "embassy-executor",
+ "esp-hal",
+ "esp-rtos",
+ "personal-hopspot-esp32",
+]
+
+[[package]]
 name = "hopspot-heltec-v4"
 version = "0.1.0"
 dependencies = [
@@ -2391,6 +2401,7 @@ dependencies = [
  "embassy-time",
  "embedded-graphics",
  "embedded-hal 1.0.0",
+ "embedded-hal-async",
  "embedded-hal-bus",
  "embedded-io 0.7.1",
  "embedded-io-async 0.7.0",

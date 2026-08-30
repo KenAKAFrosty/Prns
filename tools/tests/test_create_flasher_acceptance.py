@@ -361,7 +361,7 @@ class AcceptanceScaffoldTests(unittest.TestCase):
             surfaces=("web",),
             required_scenarios=("fresh-install", "post-flash-boot"),
             required_checks=("tcp-client-enabled-boot",),
-            summary="Fixture target-scoped firmware hotfix qualification.",
+            summary="Fixture scoped firmware hotfix qualification.",
         )
         record = CONTRACT.hotfix_scaffold(
             self.manifest_document,

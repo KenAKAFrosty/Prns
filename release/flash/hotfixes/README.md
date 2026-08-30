@@ -1,6 +1,6 @@
 # Flasher hotfix specifications
 
-A file named `SUITE_VERSION-hotfix.N.json` authorizes one immutable, target-scoped flasher release.
+A file named `SUITE_VERSION-hotfix.N.json` authorizes one immutable, scoped flasher release.
 The repository `VERSION` remains the suite version. The specification pins the exact current stable
 base and lists every board whose firmware must be rebuilt.
 
@@ -16,8 +16,9 @@ hotfix_version=SUITE_VERSION-hotfix.N
 
 The base may be the suite release or an earlier numbered hotfix in the same suite. Candidate
 construction builds only `changed_boards`, inherits every other shipping target byte-for-byte, and
-writes `metadata/hotfix.json`. Validation rejects altered inherited bytes, a mismatched history
-head, an uncommitted specification, or a declaration that rebuilds every shipping board.
+writes `metadata/hotfix.json`. A fleet hotfix may list every shipping board, in which case the
+inherited set is empty. Validation rejects altered inherited bytes, unchanged freshly built
+artifacts, a mismatched history head, or an uncommitted specification.
 
 `qualification.physical_boards` and `qualification.deferred_hardware` must be disjoint and exactly
 partition `changed_boards`. Physical boards get one schema-6 row for each listed surface and must

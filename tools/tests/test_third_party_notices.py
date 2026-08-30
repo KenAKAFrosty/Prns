@@ -34,7 +34,12 @@ class ThirdPartyNoticeTests(unittest.TestCase):
         )
         self.assertEqual(
             entries[package][2],
-            ("ESP32-S3 Heltec", "ESP32-S3 Heltec R8", "ESP32-S3 T-Beam"),
+            (
+                "ESP32-S3 Heltec",
+                "ESP32-S3 Heltec E290",
+                "ESP32-S3 Heltec R8",
+                "ESP32-S3 T-Beam",
+            ),
         )
 
     def test_notice_text_normalizes_presentation_only_whitespace(self) -> None:

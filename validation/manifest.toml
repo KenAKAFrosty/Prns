@@ -67,6 +67,7 @@ cargo_manifests = [
     "personal-hopspot/core/Cargo.toml",
     "personal-hopspot/desktop/Cargo.toml",
     "personal-hopspot/embedded/esp32/Cargo.toml",
+    "personal-hopspot/embedded/esp32/boards/heltec-e290/Cargo.toml",
     "personal-hopspot/embedded/esp32/boards/heltec-v4/Cargo.toml",
     "personal-hopspot/embedded/esp32/boards/heltec-v4-r8/Cargo.toml",
     "personal-hopspot/embedded/esp32/boards/t-beam-supreme/Cargo.toml",
@@ -145,6 +146,16 @@ format_manifests = [
 
 [registry.format_package_overrides]
 "personal-hopspot/embedded/nrf52840/Cargo.toml" = ["t-echo"]
+
+[[registry.cargo_check_delegations]]
+workspace = "personal-hopspot/embedded/esp32"
+suite = "esp32-firmware-check"
+reason = "The ESP Rust fork and real Xtensa/RISC-V targets own this workspace more truthfully than a host check."
+
+[[registry.cargo_check_delegations]]
+workspace = "personal-hopspot/embedded/nrf52840"
+suite = "embedded-builds"
+reason = "The complete Nordic board and SoftDevice matrix is compiled for thumbv7em-none-eabihf by its PR suite."
 
 [[registry.asset_exemptions]]
 path = "prns-wasm/smoke/smoke.ts"
@@ -400,7 +411,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 120
 command = ["__RUNNER_PYTHON__", "tools/prns", "verify"]
-inputs = ["tools/prns", "tools/tasks.toml", "tools/README.md", ".githooks/pre-push"]
+inputs = ["tools/prns", "tools/tasks.toml", "tools/repo/cargo-check.py", "tools/README.md", ".githooks/pre-push"]
 artifacts = "validation-artifacts/results/tool-registry"
 
 [[suite]]

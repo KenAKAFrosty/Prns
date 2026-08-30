@@ -10,20 +10,39 @@ use core::alloc::Layout;
 use core::ptr::NonNull;
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+use personal_hopspot_core::{HOPSPOT_DESTINATION_COUNT, HOPSPOT_IDENTITY_COUNT};
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+use personal_rns::remote_control::RemoteControlStorageRequirements;
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 use personal_rns::runtime::request_endpoints::RequestEndpointSet;
 #[cfg(target_arch = "xtensa")]
 use personal_rns::storage::Esp32S3;
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const REMOTE_CONTROL_STORAGE: RemoteControlStorageRequirements =
+    RemoteControlStorageRequirements::AVAILABLE;
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const UPSTREAM_APP_DESTINATION_CAPACITY: usize =
+    HOPSPOT_DESTINATION_COUNT + REMOTE_CONTROL_STORAGE.upstream_app_destinations();
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
+const HELD_IDENTITY_CAPACITY: usize =
+    HOPSPOT_IDENTITY_COUNT + REMOTE_CONTROL_STORAGE.held_identities();
+#[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
 const NODE_REQUEST_HANDLER_CAPACITY: usize =
     <personal_hopspot_core::node_pages::NodePageRoutes as RequestEndpointSet<()>>::REGISTRATIONS
-        .len();
+        .len()
+        + REMOTE_CONTROL_STORAGE.request_handlers();
 
 /// The engine's storage recipe: the small coordination shell stays inline in SRAM, while
 /// high-count or bulky columns (including links, routes, announces, history, app-data, and
 /// resource buffers) are placed in PSRAM through `PsramAlloc`.
 #[cfg(target_arch = "xtensa")]
-pub type EngineStorageType = Esp32S3<PsramAlloc, NODE_REQUEST_HANDLER_CAPACITY>;
+pub type EngineStorageType = Esp32S3<
+    PsramAlloc,
+    NODE_REQUEST_HANDLER_CAPACITY,
+    UPSTREAM_APP_DESTINATION_CAPACITY,
+    HELD_IDENTITY_CAPACITY,
+>;
 
 #[cfg(target_arch = "riscv32")]
 pub use riscv::C6Storage;
@@ -208,10 +227,6 @@ mod riscv {
     use personal_rns::identity::held::FixedHeldIdentityTable;
     use personal_rns::manifold::interface_seam::EMBEDDED_MAX_LINK_MTU;
     use personal_rns::prelude::*;
-    use personal_rns::remote_control::{
-        REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY,
-        REMOTE_CONTROL_REQUIRED_UPSTREAM_APP_DESTINATION_CAPACITY,
-    };
     use personal_rns::routing::announce::destination_announce_limit::FixedDestinationAnnounceLimitTable;
     use personal_rns::routing::announce::held::FixedHeldAnnounceTable;
     use personal_rns::routing::announce::interface_announce_limit::FixedInterfaceAnnounceLimitTable;
@@ -260,12 +275,8 @@ mod riscv {
         // Keep cheap relationships abundant while channels and resource continuations borrow
         // smaller shared tables. None of these counts constrain the eight-peer BLE controller.
         pub(crate) const TRACKED_DESTINATIONS: usize = 36;
-        const APPLICATION_DESTINATIONS: usize = 2;
-        const APPLICATION_IDENTITIES: usize = 1;
-        const UPSTREAM_APP_DESTINATIONS: usize = Self::APPLICATION_DESTINATIONS
-            .saturating_add(REMOTE_CONTROL_REQUIRED_UPSTREAM_APP_DESTINATION_CAPACITY);
-        const HELD_IDENTITIES: usize = Self::APPLICATION_IDENTITIES
-            .saturating_add(REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY);
+        const UPSTREAM_APP_DESTINATIONS: usize = super::UPSTREAM_APP_DESTINATION_CAPACITY;
+        const HELD_IDENTITIES: usize = super::HELD_IDENTITY_CAPACITY;
         pub const LINK_SESSIONS: usize = 12;
         const TRANSPORTED_LINKS: usize = 8;
         const CHANNELS: usize = 2;
