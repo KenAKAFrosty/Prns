@@ -145,6 +145,7 @@ import {
 } from "./resource_send.js";
 import { browserResourceCompressor } from "./resource_compressor.js";
 import { describeInterfaceSessionFailure } from "./session.js";
+import { parsePackedSnapshot } from "./packed_snapshot.js";
 import { parseSnapshot } from "./snapshot.js";
 import type { PrnsSnapshot } from "./snapshot.js";
 import {
@@ -183,9 +184,11 @@ import {
 import type {
   WorkerCapabilityCall,
   WorkerCapabilityCallOutcome,
+  WorkerSnapshotOutcome,
 } from "./worker_protocol.js";
 import {
   registerWorkerCapabilityDispatcher,
+  registerWorkerSnapshotCapturer,
   workerEngineHooks,
 } from "./worker_engine_bridge.js";
 import type {
@@ -656,6 +659,7 @@ export class Prns {
     registerWorkerCapabilityDispatcher(this, (call) =>
       this.#dispatchPageCapability(call),
     );
+    registerWorkerSnapshotCapturer(this, () => this.#captureWorkerSnapshot());
     this.interfaces = new PrnsInterfaces(this.#host, autoWifiSelectionSeed);
     this.#projections = new PrnsProjectionStore(
       this.#captureHostSnapshot(),
@@ -1366,8 +1370,12 @@ export class Prns {
   }
 
   async snapshot(): Promise<SnapshotOutcome> {
+    const outcome = this.#captureWorkerSnapshot();
+    if (outcome.tag !== "PackedSnapshot") {
+      return outcome;
+    }
     try {
-      return Tag("Captured", parseSnapshot(this.#runtime.snapshot()));
+      return Tag("Captured", parsePackedSnapshot(outcome.data));
     } catch (error) {
       return runtimeRejected("snapshot", error);
     }
@@ -1929,7 +1937,13 @@ export class Prns {
   }
 
   #captureHostSnapshot(): StableHostSnapshot {
-    const snapshot = parseSnapshot(this.#runtime.snapshot());
+    const captured = this.#captureWorkerSnapshot();
+    if (captured.tag === "RuntimeRejected") {
+      throw new Error(captured.data.detail);
+    }
+    const snapshot = captured.tag === "PackedSnapshot"
+      ? parsePackedSnapshot(captured.data)
+      : captured.data;
     const interfaces = this.#projectInterfaces(snapshot.interfaces);
     const running = this.#lifecycle.tag === "Running";
     const interfaceCount = interfaces.length;
@@ -1976,6 +1990,22 @@ export class Prns {
           : { lastFailureDetail: this.#persistenceFailureDetail }),
       },
     };
+  }
+
+  #captureWorkerSnapshot(): WorkerSnapshotOutcome {
+    try {
+      const snapshotPacked = this.#runtime.snapshotPacked;
+      if (snapshotPacked === undefined) {
+        return Tag("Captured", parseSnapshot(this.#runtime.snapshot()));
+      }
+      const bytes = snapshotPacked.call(this.#runtime);
+      if (!(bytes instanceof Uint8Array)) {
+        throw new TypeError("runtime packed snapshot is not a Uint8Array");
+      }
+      return Tag("PackedSnapshot", bytes);
+    } catch (error) {
+      return runtimeRejected("snapshot", error);
+    }
   }
 
   #scheduleProjectionRefresh(): void {

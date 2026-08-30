@@ -6,6 +6,7 @@ import { describeInterfaceSessionFailure } from "./session.js";
 import { Prns } from "./index.js";
 import {
   bindWorkerEngineOptions,
+  captureWorkerSnapshot,
   dispatchWorkerCapability,
 } from "./worker_engine_bridge.js";
 import type {
@@ -453,7 +454,7 @@ async function performCall(
       blob,
       options as SendResourceOptions,
     ),
-    Snapshot: () => engine.snapshot(),
+    Snapshot: () => captureWorkerSnapshot(engine),
     HostSnapshot: () => engine.hostSnapshot(),
     WebSocketConnect: async ({ url, options }) => {
       if (network !== undefined) {

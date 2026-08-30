@@ -211,6 +211,26 @@ test("the Prns settlement codec round trips every outcome and failure shape", ()
   assert.deepEqual(decoder.decode(encoded.message), settlements);
 });
 
+test("the Prns settlement codec carries packed snapshots without string tags on its wire", () => {
+  const settlements = Array.from(
+    { length: MINIMUM_WORKER_CODEC_ITEMS },
+    (_, index) => ({
+      id: index + 1,
+      call: "Snapshot",
+      outcome: Tag("PackedSnapshot", fixedBytes(96 + index, index)),
+    }),
+  );
+  const encoder = new WireBatchEncoder({
+    codec: workerSettlementCodec,
+    minimumCodecItems: MINIMUM_WORKER_CODEC_ITEMS,
+  });
+  const decoder = new WireBatchDecoder([workerSettlementCodec]);
+  const encoded = encoder.encode(settlements);
+  assert.equal(encoded.message.tag, "CodecBatch");
+  assert.deepEqual(encoded.transfer, [encoded.message.data.payload]);
+  assert.deepEqual(decoder.decode(encoded.message), settlements);
+});
+
 test("Prns codecs decline unsupported control calls to native clone", () => {
   const invocation = { id: 1, call: Tag("Snapshot") };
   const encoded = new WireBatchEncoder({ codec: workerInvocationCodec }).encode([invocation]);

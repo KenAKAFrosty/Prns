@@ -1078,6 +1078,11 @@ impl PrnsRuntime {
         object.into()
     }
 
+    #[wasm_bindgen(js_name = snapshotPacked)]
+    pub fn snapshot_packed(&self) -> Vec<u8> {
+        crate::packed_snapshot::encode(&self.engine, &self.interfaces, self.revision)
+    }
+
     #[wasm_bindgen(js_name = projectionSnapshot)]
     pub fn projection_snapshot(&self, request: JsValue) -> Result<JsValue, JsValue> {
         let include_interfaces = required_bool(&request, "interfaces")?;

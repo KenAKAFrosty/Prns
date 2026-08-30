@@ -4,6 +4,7 @@ mod bluetooth_auto;
 mod event_projection;
 mod input;
 mod js_translation;
+mod packed_snapshot;
 mod parameters;
 mod runtime;
 mod usb_auto;

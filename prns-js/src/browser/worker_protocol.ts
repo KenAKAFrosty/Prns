@@ -131,6 +131,10 @@ export type WorkerSettlement = {
   readonly outcome: unknown;
 };
 
+export type WorkerSnapshotOutcome =
+  | Tag<"PackedSnapshot", Uint8Array>
+  | SnapshotOutcome;
+
 export type WorkerCapabilityCall =
   | Tag<"RegisterWebSocket", WebSocketRuntimeRegistration>
   | Tag<

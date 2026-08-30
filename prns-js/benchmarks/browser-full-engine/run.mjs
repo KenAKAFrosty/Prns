@@ -15,6 +15,12 @@ const chromium = [
   "/usr/bin/google-chrome",
 ].find((candidate) => candidate && existsSync(candidate));
 assert.ok(chromium, "Chromium is required for the browser full-engine benchmark");
+const wasmArtifactPath = resolve("../prns-wasm/smoke/pkg/prns_wasm_bg.wasm");
+const wasmArtifact = await readFile(wasmArtifactPath);
+const wasmArtifactProvenance = {
+  byteLength: wasmArtifact.byteLength,
+  sha256: createHash("sha256").update(wasmArtifact).digest("hex"),
+};
 
 let settleResult;
 let nextRelayMeasurementId = 1;
@@ -40,6 +46,7 @@ const server = createServer(async (request, response) => {
       assert.ok(address && typeof address === "object");
       response.end(JSON.stringify({
         webSocketUrl: `ws://127.0.0.1:${address.port}/browser-full-engine-relay`,
+        wasmArtifact: wasmArtifactProvenance,
       }));
       return;
     }
@@ -131,9 +138,13 @@ const relaySockets = new Set();
 server.on("upgrade", (request, socket) => {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   const key = request.headers["sec-websocket-key"];
+  const peer = url.searchParams.get("peer");
+  const lane = url.searchParams.get("lane");
   if (
     url.pathname !== "/browser-full-engine-relay" ||
-    typeof key !== "string"
+    typeof key !== "string" ||
+    peer === null ||
+    lane === null
   ) {
     socket.destroy();
     return;
@@ -150,7 +161,8 @@ server.on("upgrade", (request, socket) => {
     "",
   ].join("\r\n"));
   relaySockets.add(socket);
-  socket.prnsPeer = url.searchParams.get("peer");
+  socket.prnsPeer = peer;
+  socket.prnsLane = lane;
   let buffered = Buffer.alloc(0);
   let fragments = [];
   socket.on("data", (chunk) => {
@@ -243,7 +255,11 @@ try {
 function broadcastBinary(sender, payload) {
   const frame = serverFrame(payload, 2);
   for (const socket of relaySockets) {
-    if (socket !== sender && !socket.destroyed) {
+    if (
+      socket !== sender &&
+      !socket.destroyed &&
+      socket.prnsLane === sender.prnsLane
+    ) {
       socket.write(frame);
     }
   }

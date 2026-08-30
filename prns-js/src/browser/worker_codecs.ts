@@ -43,6 +43,12 @@ const WORKER_INVOCATION_MAGIC = 0x5052_4951;
 const WORKER_SETTLEMENT_MAGIC = 0x5052_5351;
 export const MINIMUM_WORKER_CODEC_ITEMS = 10;
 
+const SETTLEMENT_CALL_CODES = {
+  Execute: 0,
+  SendResourceBlob: 1,
+  Snapshot: 2,
+} as const;
+
 const COMMAND_CODES = {
   Announce: 0,
   SendSinglePacket: 1,
@@ -176,6 +182,9 @@ export function workerInvocationWireBytes(value: WorkerInvocation): number {
 }
 
 export function workerSettlementWireBytes(value: WorkerSettlement): number {
+  if (isPackedSnapshotSettlement(value)) {
+    return 17 + bytesSize(value.outcome.data);
+  }
   if (isEncodableSettlement(value)) {
     return 17 + encodedSettlementSize(value.outcome as CommandSettlement);
   }
@@ -188,9 +197,25 @@ function isEncodableInvocation(value: WorkerInvocation): boolean {
 }
 
 function isEncodableSettlement(value: WorkerSettlement): boolean {
-  return Number.isSafeInteger(value.id) && value.id > 0 &&
-    (value.call === "Execute" || value.call === "SendResourceBlob") &&
-    isCommandSettlement(value.outcome);
+  if (!Number.isSafeInteger(value.id) || value.id <= 0) {
+    return false;
+  }
+  return isPackedSnapshotSettlement(value) ||
+    ((value.call === "Execute" || value.call === "SendResourceBlob") &&
+      isCommandSettlement(value.outcome));
+}
+
+function isPackedSnapshotSettlement(
+  value: WorkerSettlement,
+): value is WorkerSettlement & {
+  readonly call: "Snapshot";
+  readonly outcome: { readonly tag: "PackedSnapshot"; readonly data: Uint8Array };
+} {
+  return value.call === "Snapshot" &&
+    typeof value.outcome === "object" &&
+    value.outcome !== null &&
+    (value.outcome as { readonly tag?: unknown }).tag === "PackedSnapshot" &&
+    (value.outcome as { readonly data?: unknown }).data instanceof Uint8Array;
 }
 
 function isEncodedCommand(value: HostCommand): value is EncodedHostCommand {
@@ -457,7 +482,9 @@ function encodeSettlements(values: readonly WorkerSettlement[]): ArrayBuffer {
     }
     byteLength = addSize(
       byteLength,
-      8 + 1 + encodedSettlementSize(value.outcome as CommandSettlement),
+      8 + 1 + (isPackedSnapshotSettlement(value)
+        ? bytesSize(value.outcome.data)
+        : encodedSettlementSize(value.outcome as CommandSettlement)),
     );
   }
   const writer = new WireWriter(byteLength);
@@ -465,7 +492,12 @@ function encodeSettlements(values: readonly WorkerSettlement[]): ArrayBuffer {
   writer.u32(values.length);
   for (const value of values) {
     writer.f64(value.id);
-    writer.u8(value.call === "Execute" ? 0 : 1);
+    if (isPackedSnapshotSettlement(value)) {
+      writer.u8(SETTLEMENT_CALL_CODES.Snapshot);
+      writer.bytes(value.outcome.data);
+      continue;
+    }
+    writer.u8(SETTLEMENT_CALL_CODES[value.call as "Execute" | "SendResourceBlob"]);
     encodeSettlement(value.outcome as CommandSettlement, writer);
   }
   return writer.finish();
@@ -479,14 +511,23 @@ function decodeSettlements(buffer: ArrayBuffer): readonly WorkerSettlement[] {
   for (let index = 0; index < count; index += 1) {
     const id = reader.safeId();
     const callCode = reader.u8();
-    if (callCode !== 0 && callCode !== 1) {
-      throw new TypeError("worker settlement contains an unknown call code");
+    if (callCode === SETTLEMENT_CALL_CODES.Execute) {
+      values[index] = { id, call: "Execute", outcome: decodeSettlement(reader) };
+      continue;
     }
-    values[index] = {
-      id,
-      call: callCode === 0 ? "Execute" : "SendResourceBlob",
-      outcome: decodeSettlement(reader),
-    };
+    if (callCode === SETTLEMENT_CALL_CODES.SendResourceBlob) {
+      values[index] = { id, call: "SendResourceBlob", outcome: decodeSettlement(reader) };
+      continue;
+    }
+    if (callCode === SETTLEMENT_CALL_CODES.Snapshot) {
+      values[index] = {
+        id,
+        call: "Snapshot",
+        outcome: Tag("PackedSnapshot", reader.bytes()),
+      };
+      continue;
+    }
+    throw new TypeError("worker settlement contains an unknown call code");
   }
   reader.requireFinished();
   return values;

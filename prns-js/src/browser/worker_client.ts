@@ -49,6 +49,8 @@ import type {
   InterfaceSessionStatus,
 } from "./interface_contract.js";
 import { describeInterfaceSessionFailure } from "./session.js";
+import { parsePackedSnapshot } from "./packed_snapshot.js";
+import { parseSnapshot } from "./snapshot.js";
 import {
   BrowserLocalStorageBleIdentityStore,
   describePersistenceStoreFailure,
@@ -115,6 +117,7 @@ import type {
   WorkerProjectionRequest,
   WorkerProjectionUpdate,
   WorkerSettlement,
+  WorkerSnapshotOutcome,
   WorkerSessionProjection,
   WorkerShutdownResponse,
   WorkerShutdownState,
@@ -1024,7 +1027,9 @@ class DedicatedWorkerPrns {
     }
     this.#pending.delete(message.id);
     this.#releaseCallCapacity(pending.call);
-    pending.settle(message.outcome);
+    pending.settle(pending.call.tag === "Snapshot"
+      ? workerSnapshotOutcome(message.outcome)
+      : message.outcome);
   }
 
   #receiveCapability(message: WorkerCapabilityResponse): void {
@@ -1963,6 +1968,20 @@ function workerTaggedValue(
     throw new TypeError(`DedicatedWorker ${label} is malformed`);
   }
   return raw as { readonly tag: string; readonly data?: unknown };
+}
+
+function workerSnapshotOutcome(raw: unknown): SnapshotOutcome {
+  const outcome = workerTaggedValue(raw, "snapshot outcome") as WorkerSnapshotOutcome;
+  return match_into<SnapshotOutcome>().from(outcome, {
+    PackedSnapshot: (bytes) => {
+      if (!(bytes instanceof Uint8Array)) {
+        throw new TypeError("DedicatedWorker packed snapshot is malformed");
+      }
+      return Tag("Captured", parsePackedSnapshot(bytes));
+    },
+    Captured: (snapshot) => Tag("Captured", parseSnapshot(snapshot)),
+    RuntimeRejected: (failure) => Tag("RuntimeRejected", failure),
+  });
 }
 
 function workerCallBusyOutcome<Call extends WorkerCall>(

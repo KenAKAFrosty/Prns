@@ -166,6 +166,7 @@ export type PrnsRuntimeBinding = {
     options: BrowserPersistedState & { readonly nowMs: InstantMillis },
   ): unknown;
   snapshot(): unknown;
+  snapshotPacked?(): Uint8Array;
   projectionSnapshot(request: RuntimeProjectionSnapshotRequest): unknown;
 };
 

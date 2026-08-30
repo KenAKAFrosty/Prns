@@ -22,21 +22,24 @@ run().catch(reportFailure);
 async function run() {
   await progress("session");
   const session = await loadSession();
-  await progress("target");
-  const target = await prepareTarget(session.webSocketUrl);
+  await progress("target-EngineWorker");
+  const engineTarget = await prepareTarget(session.webSocketUrl, "EngineWorker");
   await progress("engine-worker");
   const engineWorker = await prepare(
     "EngineWorker",
     session.webSocketUrl,
-    target.destination,
+    engineTarget,
   );
+  await progress("target-NetworkWorker");
+  const networkTarget = await prepareTarget(session.webSocketUrl, "NetworkWorker");
   await progress("network-worker");
   const networkWorker = await prepare(
     "NetworkWorker",
     session.webSocketUrl,
-    target.destination,
+    networkTarget,
   );
   const configurations = [engineWorker, networkWorker];
+  const targets = [engineTarget, networkTarget];
   const payloads = Array.from(
     { length: Math.max(...workloads.map((workload) => workload.commands)) },
     (_, index) => payload(index),
@@ -53,7 +56,7 @@ async function run() {
   try {
     for (const configuration of configurations) {
       await progress(`warmup-${configuration.execution}`);
-      await commandRun(configuration, workloads[1], payloads, target.deliveries);
+      await commandRun(configuration, workloads[1], payloads);
     }
     for (let repetition = 0; repetition < REPETITIONS; repetition += 1) {
       const order = repetition % 2 === 0
@@ -67,7 +70,6 @@ async function run() {
               configuration,
               workload,
               payloads,
-              target.deliveries,
             ),
           );
         }
@@ -79,13 +81,13 @@ async function run() {
             configuration,
             contentionWorkload,
             payloads,
-            target.deliveries,
           ),
         );
       }
     }
     const result = {
       userAgent: navigator.userAgent,
+      wasmArtifact: session.wasmArtifact,
       repetitions: REPETITIONS,
       payloadBytes: PAYLOAD_BYTES,
       journey: configurations.map((configuration) => configuration.journey),
@@ -107,7 +109,7 @@ async function run() {
     };
     document.getElementById("result").textContent = JSON.stringify(result, null, 2);
     await Promise.all(configurations.map((configuration) => configuration.stop()));
-    await target.stop();
+    await Promise.all(targets.map((target) => target.stop()));
     await fetch("/browser-full-engine-result", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -116,13 +118,13 @@ async function run() {
   } catch (error) {
     await Promise.allSettled([
       ...configurations.map((configuration) => configuration.stop()),
-      target.stop(),
+      ...targets.map((target) => target.stop()),
     ]);
     throw error;
   }
 }
 
-async function prepare(execution, webSocketUrl, destination) {
+async function prepare(execution, webSocketUrl, target) {
   const started = performance.now();
   const created = await Prns.create({
     execution: "DedicatedWorker",
@@ -142,10 +144,10 @@ async function prepare(execution, webSocketUrl, destination) {
     projection.subscribe(() => undefined)
   );
   const connected = await measure(() =>
-    prns.interfaces.webSocket.connect(relayPeerUrl(webSocketUrl, execution))
+    prns.interfaces.webSocket.connect(relayPeerUrl(webSocketUrl, execution, execution))
   );
   requireTag(connected.value, "Connected", `${execution} WebSocket connection`);
-  const discovered = await measure(() => prns.requestPath(destination));
+  const discovered = await measure(() => prns.requestPath(target.destination));
   if (discovered.value.tag !== "Succeeded") {
     throw new Error(`${execution} path debug: ${JSON.stringify({
       lifecycle: prns.lifecycle,
@@ -155,7 +157,7 @@ async function prepare(execution, webSocketUrl, destination) {
     }, (_key, value) => typeof value === "bigint" ? value.toString() : value)}`);
   }
   requireSettlement(discovered.value, "PathDiscovered", `${execution} path request`);
-  const established = await measure(() => prns.establishLink(destination));
+  const established = await measure(() => prns.establishLink(target.destination));
   const link = requireSettlement(established.value, "LinkEstablished", `${execution} link`);
   await waitFor(() =>
     interfaces.latest().value.length === 1 &&
@@ -171,6 +173,7 @@ async function prepare(execution, webSocketUrl, destination) {
     execution,
     linkId: link.data.data.linkId,
     prns,
+    deliveries: target.deliveries,
     journey: {
       execution,
       startupMillis,
@@ -201,7 +204,7 @@ async function prepare(execution, webSocketUrl, destination) {
   };
 }
 
-async function prepareTarget(webSocketUrl) {
+async function prepareTarget(webSocketUrl, lane) {
   const created = await Prns.create({
     execution: "DedicatedWorker",
     networkExecution: "EngineWorker",
@@ -219,7 +222,7 @@ async function prepareTarget(webSocketUrl) {
   requireTag(claimed, "Claimed", "target application event claim");
   const deliveries = deliveryTracker(claimed.data);
   const connected = await prns.interfaces.webSocket.connect(
-    relayPeerUrl(webSocketUrl, "Target"),
+    relayPeerUrl(webSocketUrl, "Target", lane),
   );
   requireTag(connected, "Connected", "target WebSocket connection");
   return {
@@ -232,12 +235,12 @@ async function prepareTarget(webSocketUrl) {
   };
 }
 
-async function commandRun(configuration, workload, payloads, deliveries) {
+async function commandRun(configuration, workload, payloads) {
   const observer = taskDelayObserver();
   const runId = nextRunId;
   nextRunId += 1;
   const runPayloads = payloadsForRun(payloads, workload.commands, runId);
-  const delivered = deliveries.expect(runId, workload.commands);
+  const delivered = configuration.deliveries.expect(runId, workload.commands);
   let submissionMillis = 0;
   const started = performance.now();
   for (let offset = 0; offset < workload.commands; offset += workload.grain) {
@@ -269,11 +272,11 @@ async function commandRun(configuration, workload, payloads, deliveries) {
   };
 }
 
-async function contentionRun(configuration, workload, payloads, deliveries) {
+async function contentionRun(configuration, workload, payloads) {
   const runId = nextRunId;
   nextRunId += 1;
   const runPayloads = payloadsForRun(payloads, workload.packets, runId);
-  const delivered = deliveries.expect(runId, workload.packets);
+  const delivered = configuration.deliveries.expect(runId, workload.packets);
   const relayMeasurement = await startRelayMeasurement(
     configuration.execution,
     workload.packets,
@@ -498,12 +501,14 @@ async function loadSession() {
 }
 
 async function progress(stage) {
+  performance.mark(`prns-browser-full-engine:${stage}`);
   await fetch(`/browser-full-engine-progress?stage=${encodeURIComponent(stage)}`);
 }
 
-function relayPeerUrl(webSocketUrl, peer) {
+function relayPeerUrl(webSocketUrl, peer, lane) {
   const url = new URL(webSocketUrl);
   url.searchParams.set("peer", peer);
+  url.searchParams.set("lane", lane);
   return url.href;
 }
 

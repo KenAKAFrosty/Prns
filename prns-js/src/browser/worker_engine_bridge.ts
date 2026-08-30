@@ -3,6 +3,7 @@ import type { MainThreadPrnsOptions } from "./index.js";
 import type {
   WorkerCapabilityCall,
   WorkerCapabilityCallOutcome,
+  WorkerSnapshotOutcome,
 } from "./worker_protocol.js";
 
 export type WorkerEngineHooks = {
@@ -17,6 +18,7 @@ type WorkerCapabilityDispatcher = <Call extends WorkerCapabilityCall>(
 
 const hooksByOptions = new WeakMap<MainThreadPrnsOptions, WorkerEngineHooks>();
 const capabilityDispatchers = new WeakMap<object, WorkerCapabilityDispatcher>();
+const snapshotCapturers = new WeakMap<object, () => WorkerSnapshotOutcome>();
 
 export function bindWorkerEngineOptions(
   options: MainThreadPrnsOptions,
@@ -48,4 +50,19 @@ export function dispatchWorkerCapability<Call extends WorkerCapabilityCall>(
     return Promise.reject(new Error("worker capability dispatcher is unavailable"));
   }
   return dispatcher(call);
+}
+
+export function registerWorkerSnapshotCapturer(
+  owner: object,
+  capture: () => WorkerSnapshotOutcome,
+): void {
+  snapshotCapturers.set(owner, capture);
+}
+
+export function captureWorkerSnapshot(owner: object): WorkerSnapshotOutcome {
+  const capture = snapshotCapturers.get(owner);
+  if (capture === undefined) {
+    throw new Error("worker snapshot capturer is unavailable");
+  }
+  return capture();
 }
