@@ -14,11 +14,10 @@ import type {
   ConnectTimedOut,
   InterfaceConnectStage,
   InterfaceSession,
-  InterfaceSessionFailure,
   InvalidTarget,
   PermissionDenied,
 } from "../interface_contract.js";
-import type { PrnsOutboundFrame } from "../outbound.js";
+import type { InterfaceOutboundHost } from "../outbound.js";
 import type {
   EntropyFailure,
   RuntimeRejected,
@@ -29,6 +28,7 @@ import type {
   ChannelTag,
   HardwareMtu,
 } from "../values.js";
+import { bitrateBps } from "../values.js";
 import {
   BrowserWebSocketSession,
   closeBrowserWebSocket,
@@ -38,6 +38,7 @@ export type WebSocketSession = InterfaceSession & {
   readonly name: "websocket";
   readonly url: string;
   readonly framing: WebSocketFramingSelection;
+  subscribeStatus(changed: (status: InterfaceSession["status"]) => void): () => void;
 };
 
 export type WebSocketConnectOptions = {
@@ -77,12 +78,7 @@ type WebSocketIngestOutcome =
   | Tag<"Accepted">
   | EntropyFailure
   | RuntimeRejected;
-type WebSocketOutboundOutcome =
-  | Tag<"Outbound", readonly PrnsOutboundFrame[]>
-  | Extract<InterfaceSessionFailure, Tag<"OutboundQueueFull", unknown>>
-  | RuntimeRejected;
-
-export type WebSocketRuntimeHost = {
+export type WebSocketRuntimeHost = InterfaceOutboundHost & {
   runtimeReadiness(): Tag<"Ready"> | RuntimeRejected;
   webSocketRegister(
     options: WebSocketRuntimeRegistration,
@@ -92,10 +88,6 @@ export type WebSocketRuntimeHost = {
     id: InterfaceId,
     bytes: Uint8Array,
   ): WebSocketIngestOutcome;
-  takeOutboundFor(
-    id: InterfaceId,
-    maximumFrames?: number,
-  ): WebSocketOutboundOutcome;
   createWebSocketFramingCodec(
     selection: WebSocketFramingSelection,
   ): WebSocketFramingCodecBinding;
@@ -117,6 +109,7 @@ type CanonicalWebSocketOutcome =
   | InvalidTarget<"websocket">;
 
 const CONNECT_TIMEOUT_MS = 10_000;
+const LOOPBACK_BITRATE_FACTOR = 2;
 const DEFAULT_FRAMING_SELECTION: WebSocketFramingSelection = "Auto";
 export const BROWSER_RENDEZVOUS_FRAMING_SELECTION: WebSocketFramingSelection =
   "RawPacket";
@@ -175,7 +168,7 @@ export class WebSocketInterface {
       const registered = this.#host.webSocketRegister({
         channelTag: tag,
         bitrateBps:
-          options.bitrateBps ?? this.#host.websocketBitrateBps(),
+          options.bitrateBps ?? defaultWebSocketBitrate(this.#host, target),
         hardwareMtu:
           options.hardwareMtu ?? this.#host.websocketHardwareMtu(),
         ...(options.routing === undefined ? {} : { routing: options.routing }),
@@ -207,6 +200,33 @@ export class WebSocketInterface {
       this.#activeTags.delete(tagKey);
       return connectFailure("websocket", stage, error);
     }
+  }
+}
+
+function defaultWebSocketBitrate(
+  host: WebSocketRuntimeHost,
+  target: string,
+): BitrateBps {
+  return isLoopbackWebSocketUrl(target)
+    ? loopbackWebSocketBitrate(host.websocketBitrateBps())
+    : host.websocketBitrateBps();
+}
+
+export function loopbackWebSocketBitrate(
+  ordinaryBitrate: BitrateBps,
+): BitrateBps {
+  return bitrateBps(Number(ordinaryBitrate) * LOOPBACK_BITRATE_FACTOR);
+}
+
+export function isLoopbackWebSocketUrl(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return hostname === "localhost" ||
+      hostname.endsWith(".localhost") ||
+      hostname === "[::1]" ||
+      hostname.split(".").length === 4 && hostname.split(".")[0] === "127";
+  } catch {
+    return false;
   }
 }
 

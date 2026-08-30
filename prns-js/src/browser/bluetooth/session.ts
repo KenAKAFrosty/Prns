@@ -11,7 +11,6 @@ import type {
 import {
   closeFailed,
   closedSessionOutcome,
-  delay,
   describeInterfaceSessionFailure,
   hasCleanupFailures,
   unexpectedSessionFailure,
@@ -57,6 +56,11 @@ type BluetoothStartOutcome = Tag<"Started"> | BluetoothConnectFailure;
 type BluetoothHandleOutcome =
   | SessionHandleOutcome
   | AlreadyActive<"bluetooth">;
+type BluetoothPeerOutcome = Tag<"Confirmed"> | BluetoothConnectFailure;
+type BluetoothPeerWaiter = {
+  readonly timer: number;
+  readonly resolve: (outcome: BluetoothPeerOutcome) => void;
+};
 
 const HANDSHAKE_TIMEOUT_MS = 10_000;
 
@@ -99,6 +103,7 @@ export class BrowserBluetoothSession implements BluetoothSession {
   #confirmed = false;
   #status: InterfaceSessionStatus = Tag("Negotiating");
   #connectFailure?: BluetoothConnectFailure;
+  #peerWaiter: BluetoothPeerWaiter | undefined;
 
   constructor(
     host: BluetoothRuntimeHost,
@@ -181,6 +186,7 @@ export class BrowserBluetoothSession implements BluetoothSession {
       return closedSessionOutcome(this.#status);
     }
     this.#closed = true;
+    this.#settlePeerWaiter();
     this.#reassembler.release?.();
     this.#removeEventListeners();
     const causes: InterfaceCleanupFailure[] = [];
@@ -211,31 +217,50 @@ export class BrowserBluetoothSession implements BluetoothSession {
     return Tag("Closed");
   }
 
-  async #waitForPeer(): Promise<Tag<"Confirmed"> | BluetoothConnectFailure> {
-    const started = Date.now();
-    while (!this.#confirmed && !this.#closed && !this.#connectFailure) {
-      if (Date.now() - started > HANDSHAKE_TIMEOUT_MS) {
+  #waitForPeer(): Promise<BluetoothPeerOutcome> {
+    const current = this.#peerOutcome();
+    if (current !== undefined) {
+      return Promise.resolve(current);
+    }
+    return new Promise((resolve) => {
+      const timer = globalThis.setTimeout(() => {
         const timedOut: ConnectTimedOut<"bluetooth"> = Tag("TimedOut", {
           interface: "bluetooth",
           stage: "Handshake",
           timeoutMs: HANDSHAKE_TIMEOUT_MS,
         });
         this.#abortConnect(timedOut);
-        return timedOut;
-      }
-      await delay(25);
-    }
-    if (this.#connectFailure) {
+      }, HANDSHAKE_TIMEOUT_MS);
+      this.#peerWaiter = { timer, resolve };
+      this.#settlePeerWaiter();
+    });
+  }
+
+  #peerOutcome(): BluetoothPeerOutcome | undefined {
+    if (this.#connectFailure !== undefined) {
       return this.#connectFailure;
     }
-    if (!this.#confirmed) {
-      return Tag("ConnectionFailed", {
-        interface: "bluetooth",
-        stage: "Handshake",
-        detail: "Bluetooth link closed before peer confirmation",
-      });
+    if (this.#confirmed) {
+      return Tag("Confirmed");
     }
-    return Tag("Confirmed");
+    return this.#closed
+      ? Tag("ConnectionFailed", {
+          interface: "bluetooth",
+          stage: "Handshake",
+          detail: "Bluetooth link closed before peer confirmation",
+        })
+      : undefined;
+  }
+
+  #settlePeerWaiter(): void {
+    const waiter = this.#peerWaiter;
+    const outcome = this.#peerOutcome();
+    if (waiter === undefined || outcome === undefined) {
+      return;
+    }
+    this.#peerWaiter = undefined;
+    globalThis.clearTimeout(waiter.timer);
+    waiter.resolve(outcome);
   }
 
   async #handleControlEvent(
@@ -291,6 +316,7 @@ export class BrowserBluetoothSession implements BluetoothSession {
         this.#interfaceId = registered.data;
         this.#confirmed = true;
         this.#status = Tag("Active");
+        this.#settlePeerWaiter();
         return Tag("Handled");
       },
       Close: async (reason) => {
@@ -325,7 +351,11 @@ export class BrowserBluetoothSession implements BluetoothSession {
     }
     let frame: Uint8Array | undefined;
     try {
-      frame = await this.#reassembler.absorb(bytes);
+      const absorbed = await this.#reassembler.absorb(bytes);
+      if (absorbed !== undefined && !(absorbed instanceof Uint8Array)) {
+        return absorbed;
+      }
+      frame = absorbed;
     } catch (error) {
       return Tag("ProtocolViolation", {
         protocol: "Bluetooth",
@@ -371,6 +401,7 @@ export class BrowserBluetoothSession implements BluetoothSession {
         : unexpectedSessionFailure(describeBluetoothConnectFailure(failure)),
     );
     this.#closed = true;
+    this.#settlePeerWaiter();
     this.#reassembler.release?.();
     this.#removeEventListeners();
     if (this.#interfaceId) {
@@ -386,7 +417,10 @@ export class BrowserBluetoothSession implements BluetoothSession {
         if (!this.#confirmed || !interfaceId) {
           return;
         }
-        const outbound = await this.#host.takeOutboundFor(interfaceId);
+        const outbound = await this.#host.nextOutboundFor(interfaceId);
+        if (outbound.tag === "InterfaceDetached") {
+          return;
+        }
         if (outbound.tag !== "Outbound") {
           await this.#fail(outbound);
           return;
@@ -399,13 +433,6 @@ export class BrowserBluetoothSession implements BluetoothSession {
               return;
             }
           }
-        }
-        if (outbound.data.length > 0) {
-          continue;
-        }
-        const activity = await this.#host.waitForOutboundActivity(interfaceId);
-        if (activity.tag === "InterfaceDetached") {
-          return;
         }
       }
     } catch (error) {

@@ -74,6 +74,7 @@ import type {
   BleIdentityAvailability,
   PrnsWasmModule,
   RegisterSingleDestinationOptions,
+  RuntimeRejected,
 } from "./runtime_contract.js";
 import { BluetoothInterface } from "./bluetooth/index.js";
 import type { BluetoothRuntimeHost } from "./bluetooth/runtime.js";
@@ -177,7 +178,6 @@ type PendingProjectionSynchronization = {
 };
 
 const WORKER_START_TIMEOUT_MILLIS = 10_000;
-const AUTO_WIFI_STATUS_POLL_MILLIS = 250;
 const MAXIMUM_PENDING_CONTROL_CALLS = 32;
 
 export async function createDedicatedWorkerPrns(
@@ -734,10 +734,6 @@ class DedicatedWorkerPrns {
     return this.#call(workerCall("AutoWifiStart"));
   }
 
-  autoWifiStatus(): Promise<AutoWifiControllerStatus> {
-    return this.#call(workerCall("AutoWifiStatus"));
-  }
-
   closeAutoWifi(): Promise<AutoWifiControllerCloseOutcome> {
     return this.#call(workerCall("AutoWifiClose"));
   }
@@ -880,10 +876,10 @@ class DedicatedWorkerPrns {
     const command = call.tag === "Execute" || call.tag === "SendResourceBlob";
     if (command) {
       if (this.#pendingCommandCount >= this.#limits.pendingCommands) {
-        return Promise.reject(new Error("DedicatedWorker command queue is full"));
+        return Promise.resolve(workerCallBusyOutcome(call));
       }
     } else if (this.#pendingControlCount >= MAXIMUM_PENDING_CONTROL_CALLS) {
-      return Promise.reject(new Error("DedicatedWorker control queue is full"));
+      return Promise.resolve(workerCallBusyOutcome(call));
     }
     const id = this.#nextCallId;
     this.#nextCallId = this.#nextCallId === Number.MAX_SAFE_INTEGER ? 1 : this.#nextCallId + 1;
@@ -898,13 +894,17 @@ class DedicatedWorkerPrns {
       } else {
         this.#pendingControlCount += 1;
       }
-      try {
-        this.#controlSender.send({ id, call });
-      } catch (error) {
-        this.#pending.delete(id);
-        this.#releaseCallCapacity(call);
-        fail(error instanceof Error ? error : new Error(String(error)));
+      const admission = this.#controlSender.send({ id, call });
+      if (admission.tag === "Sent") {
+        return;
       }
+      this.#pending.delete(id);
+      this.#releaseCallCapacity(call);
+      if (admission.tag === "Busy") {
+        settle(workerCallBusyOutcome(call));
+        return;
+      }
+      fail(new Error("DedicatedWorker control sender has failed"));
     });
   }
 
@@ -915,7 +915,9 @@ class DedicatedWorkerPrns {
       return Promise.reject(new Error("DedicatedWorker has terminated"));
     }
     if (this.#capabilityPending.size >= this.#limits.pendingCommands) {
-      return Promise.reject(new Error("DedicatedWorker capability queue is full"));
+      return Promise.resolve(
+        workerAdmissionRejected("capability") as WorkerCapabilityCallOutcome<Call>,
+      );
     }
     const id = this.#nextCallId;
     this.#nextCallId = this.#nextCallId === Number.MAX_SAFE_INTEGER ? 1 : this.#nextCallId + 1;
@@ -925,12 +927,18 @@ class DedicatedWorkerPrns {
         settle: settle as (outcome: unknown) => void,
         fail,
       });
-      try {
-        this.#capabilitySender.send({ id, call });
-      } catch (error) {
-        this.#capabilityPending.delete(id);
-        fail(error instanceof Error ? error : new Error(String(error)));
+      const admission = this.#capabilitySender.send({ id, call });
+      if (admission.tag === "Sent") {
+        return;
       }
+      this.#capabilityPending.delete(id);
+      if (admission.tag === "Busy") {
+        settle(
+          workerAdmissionRejected("capability") as WorkerCapabilityCallOutcome<Call>,
+        );
+        return;
+      }
+      fail(new Error("DedicatedWorker capability sender has failed"));
     });
   }
 
@@ -945,6 +953,24 @@ class DedicatedWorkerPrns {
       },
       Settlements: ({ batch }) => {
         this.#controlSettlements.receive(batch);
+      },
+      SessionStatusChanged: ({ id: rawId, status }) => {
+        const id = workerMessageId(rawId, "session status");
+        const session = this.#webSocketSessions.get(id);
+        if (session === undefined) {
+          this.#failProtocol(`DedicatedWorker updated unknown session ${id}`);
+          return;
+        }
+        const parsed = workerSessionStatus(status);
+        session.replaceStatus(parsed);
+        if (parsed.tag === "Closed" || parsed.tag === "Failed") {
+          this.#webSocketSessions.delete(id);
+        }
+      },
+      AutoWifiStatusChanged: (status) => {
+        if (!this.#autoWifi.replaceStatus(workerAutoWifiStatus(status))) {
+          this.#failProtocol("DedicatedWorker updated inactive Auto Wi-Fi state");
+        }
       },
       ProtocolFailed: ({ id, detail }) => {
         if (id !== undefined) {
@@ -1408,20 +1434,14 @@ class WorkerCapabilityHost implements BluetoothRuntimeHost, UsbAutoRuntimeHost {
     return this.#call(workerCapabilityCall("Ingest", { interfaceId, bytes }));
   }
 
-  takeOutboundFor(
+  nextOutboundFor(
     interfaceId: InterfaceId,
     maximumFrames?: number,
-  ): Promise<Awaited<ReturnType<BluetoothRuntimeHost["takeOutboundFor"]>>> {
-    return this.#call(workerCapabilityCall("TakeOutbound", {
-        interfaceId,
-        ...(maximumFrames === undefined ? {} : { maximumFrames }),
+  ): Promise<Awaited<ReturnType<BluetoothRuntimeHost["nextOutboundFor"]>>> {
+    return this.#call(workerCapabilityCall("NextOutbound", {
+      interfaceId,
+      ...(maximumFrames === undefined ? {} : { maximumFrames }),
     }));
-  }
-
-  waitForOutboundActivity(
-    interfaceId: InterfaceId,
-  ): ReturnType<BluetoothRuntimeHost["waitForOutboundActivity"]> {
-    return this.#call(workerCapabilityCall("WaitForOutboundActivity", interfaceId));
   }
 }
 
@@ -1429,7 +1449,7 @@ class WorkerBluetoothReassembler {
   readonly #call: <Call extends WorkerCapabilityCall>(
     call: Call,
   ) => Promise<WorkerCapabilityCallOutcome<Call>>;
-  readonly #id: Promise<number>;
+  readonly #id: Promise<number | RuntimeRejected>;
   #released = false;
 
   constructor(call: <Call extends WorkerCapabilityCall>(
@@ -1439,12 +1459,18 @@ class WorkerBluetoothReassembler {
     this.#id = call(workerCapabilityCall("CreateBluetoothReassembler"));
   }
 
-  async absorb(bytes: Uint8Array): Promise<Uint8Array | undefined> {
+  async absorb(
+    bytes: Uint8Array,
+  ): Promise<Uint8Array | undefined | RuntimeRejected> {
     if (this.#released) {
       return undefined;
     }
+    const id = await this.#id;
+    if (isRuntimeRejected(id)) {
+      return id;
+    }
     return this.#call(workerCapabilityCall("AbsorbBluetoothFragment", {
-      id: await this.#id,
+      id,
       bytes,
     }));
   }
@@ -1454,9 +1480,10 @@ class WorkerBluetoothReassembler {
       return;
     }
     this.#released = true;
-    void this.#id.then((id) => this.#call(
-      workerCapabilityCall("ReleaseBluetoothReassembler", id),
-    )).catch(() => undefined);
+    void this.#id.then((id) => isRuntimeRejected(id)
+      ? undefined
+      : this.#call(workerCapabilityCall("ReleaseBluetoothReassembler", id))
+    ).catch(() => undefined);
   }
 }
 
@@ -1464,7 +1491,7 @@ class WorkerUsbAutoDecoder {
   readonly #call: <Call extends WorkerCapabilityCall>(
     call: Call,
   ) => Promise<WorkerCapabilityCallOutcome<Call>>;
-  readonly #id: Promise<number>;
+  readonly #id: Promise<number | RuntimeRejected>;
   #released = false;
 
   constructor(call: <Call extends WorkerCapabilityCall>(
@@ -1474,12 +1501,16 @@ class WorkerUsbAutoDecoder {
     this.#id = call(workerCapabilityCall("CreateUsbAutoDecoder"));
   }
 
-  async feed(bytes: Uint8Array): Promise<unknown[]> {
+  async feed(bytes: Uint8Array): Promise<unknown[] | RuntimeRejected> {
     if (this.#released) {
       return [];
     }
+    const id = await this.#id;
+    if (isRuntimeRejected(id)) {
+      return id;
+    }
     return this.#call(workerCapabilityCall("FeedUsbAutoDecoder", {
-      id: await this.#id,
+      id,
       bytes,
     }));
   }
@@ -1489,9 +1520,10 @@ class WorkerUsbAutoDecoder {
       return;
     }
     this.#released = true;
-    void this.#id.then((id) => this.#call(
-      workerCapabilityCall("ReleaseUsbAutoDecoder", id),
-    )).catch(() => undefined);
+    void this.#id.then((id) => isRuntimeRejected(id)
+      ? undefined
+      : this.#call(workerCapabilityCall("ReleaseUsbAutoDecoder", id))
+    ).catch(() => undefined);
   }
 }
 
@@ -1518,6 +1550,7 @@ class WorkerWebSocketSession implements WebSocketSession {
   readonly framing: WebSocketSession["framing"];
   readonly #client: DedicatedWorkerPrns;
   readonly #id: number;
+  readonly #statusListeners = new Set<(status: InterfaceSessionStatus) => void>();
   #status: InterfaceSessionStatus;
 
   constructor(client: DedicatedWorkerPrns, projection: WorkerSessionProjection) {
@@ -1533,16 +1566,37 @@ class WorkerWebSocketSession implements WebSocketSession {
     return this.#status;
   }
 
+  subscribeStatus(
+    changed: (status: InterfaceSessionStatus) => void,
+  ): () => void {
+    this.#statusListeners.add(changed);
+    let subscribed = true;
+    return () => {
+      if (!subscribed) {
+        return;
+      }
+      subscribed = false;
+      this.#statusListeners.delete(changed);
+    };
+  }
+
   async close(): Promise<InterfaceCloseOutcome> {
     const outcome = await this.#client.closeSession(this.#id);
     if (outcome.tag === "Closed") {
-      this.#status = Tag("Closed");
+      this.replaceStatus(Tag("Closed"));
     }
     return outcome;
   }
 
   markClosed(): void {
-    this.#status = Tag("Closed");
+    this.replaceStatus(Tag("Closed"));
+  }
+
+  replaceStatus(status: InterfaceSessionStatus): void {
+    this.#status = status;
+    for (const changed of this.#statusListeners) {
+      changed(status);
+    }
   }
 }
 
@@ -1566,23 +1620,30 @@ class WorkerAutoWifiInterface {
   finishFromHostStop(): void {
     this.#controller?.finishFromHostStop();
   }
+
+  replaceStatus(status: AutoWifiControllerStatus): boolean {
+    const controller = this.#controller;
+    if (controller === undefined) {
+      return false;
+    }
+    if (!controller.closed) {
+      controller.replaceStatus(status);
+    }
+    return true;
+  }
 }
 
 class WorkerAutoWifiController {
   readonly #client: DedicatedWorkerPrns;
+  readonly #statusListeners = new Set<(status: AutoWifiControllerStatus) => void>();
   #status: AutoWifiControllerStatus = Tag("Starting");
+  #statusVersion = 0;
   #closed = false;
-  #timer: number;
-  #refreshing: Promise<void> | undefined;
+  #closePromise: Promise<AutoWifiControllerCloseOutcome> | undefined;
 
   constructor(client: DedicatedWorkerPrns) {
     this.#client = client;
-    this.#refreshing = this.#start().finally(() => {
-      this.#refreshing = undefined;
-    });
-    this.#timer = globalThis.setInterval(() => {
-      this.#scheduleRefresh();
-    }, AUTO_WIFI_STATUS_POLL_MILLIS);
+    void this.#start();
   }
 
   get status(): AutoWifiControllerStatus {
@@ -1593,15 +1654,31 @@ class WorkerAutoWifiController {
     return this.#closed;
   }
 
+  subscribeStatus(
+    changed: (status: AutoWifiControllerStatus) => void,
+  ): () => void {
+    this.#statusListeners.add(changed);
+    let subscribed = true;
+    return () => {
+      if (!subscribed) {
+        return;
+      }
+      subscribed = false;
+      this.#statusListeners.delete(changed);
+    };
+  }
+
   async close(): Promise<AutoWifiControllerCloseOutcome> {
     if (this.#closed) {
       return Tag("Closed");
     }
-    this.#closed = true;
-    globalThis.clearInterval(this.#timer);
-    const outcome = await this.#client.closeAutoWifi();
-    this.#status = Tag("Closed");
-    return outcome;
+    if (this.#closePromise !== undefined) {
+      return this.#closePromise;
+    }
+    this.#closePromise = this.#performClose().finally(() => {
+      this.#closePromise = undefined;
+    });
+    return this.#closePromise;
   }
 
   finishFromHostStop(): void {
@@ -1609,54 +1686,42 @@ class WorkerAutoWifiController {
       return;
     }
     this.#closed = true;
-    globalThis.clearInterval(this.#timer);
-    this.#status = Tag("Closed");
+    this.replaceStatus(Tag("Closed"));
   }
 
-  async #refresh(): Promise<void> {
-    if (this.#closed) {
-      return;
+  replaceStatus(status: AutoWifiControllerStatus): void {
+    this.#status = status;
+    this.#statusVersion += 1;
+    for (const changed of this.#statusListeners) {
+      changed(status);
     }
-    try {
-      const status = await this.#client.autoWifiStatus();
-      if (!this.#closed) {
-        this.#status = status;
-      }
-    } catch (error) {
-      if (this.#closed) {
-        return;
-      }
-      this.#status = Tag(
-        "Unavailable",
-        Tag("DiscoveryFailed", { detail: describeHostError(error) }),
-      );
-    }
-  }
-
-  #scheduleRefresh(): void {
-    if (this.#closed || this.#refreshing !== undefined) {
-      return;
-    }
-    this.#refreshing = this.#refresh().finally(() => {
-      this.#refreshing = undefined;
-    });
   }
 
   async #start(): Promise<void> {
+    const version = this.#statusVersion;
     try {
       const status = await this.#client.startAutoWifi();
-      if (!this.#closed) {
-        this.#status = status;
+      if (!this.#closed && this.#statusVersion === version) {
+        this.replaceStatus(status);
       }
     } catch (error) {
-      if (this.#closed) {
+      if (this.#closed || this.#statusVersion !== version) {
         return;
       }
-      this.#status = Tag(
+      this.replaceStatus(Tag(
         "Unavailable",
         Tag("DiscoveryFailed", { detail: describeHostError(error) }),
-      );
+      ));
     }
+  }
+
+  async #performClose(): Promise<AutoWifiControllerCloseOutcome> {
+    const outcome = await this.#client.closeAutoWifi();
+    if (outcome.tag === "Closed") {
+      this.#closed = true;
+      this.replaceStatus(Tag("Closed"));
+    }
+    return outcome;
   }
 }
 
@@ -1832,6 +1897,97 @@ function workerProtocolDetail(raw: unknown): string {
     throw new TypeError("worker protocol failure detail must be a non-empty string");
   }
   return raw;
+}
+
+function workerSessionStatus(raw: unknown): InterfaceSessionStatus {
+  const status = workerTaggedValue(raw, "session status") as InterfaceSessionStatus;
+  return match_into<InterfaceSessionStatus>().from(status, {
+    Negotiating: () => Tag("Negotiating"),
+    Active: () => Tag("Active"),
+    Closed: () => Tag("Closed"),
+    Failed: (failure) => {
+      workerTaggedValue(failure, "session failure");
+      return Tag("Failed", failure);
+    },
+  });
+}
+
+function workerAutoWifiStatus(raw: unknown): AutoWifiControllerStatus {
+  const status = workerTaggedValue(raw, "Auto Wi-Fi status") as AutoWifiControllerStatus;
+  return match_into<AutoWifiControllerStatus>().from(status, {
+    Starting: () => Tag("Starting"),
+    Discovering: ({ attempt }) => {
+      if (!Number.isSafeInteger(attempt) || attempt < 0) {
+        throw new TypeError("Auto Wi-Fi discovery attempt must be a non-negative safe integer");
+      }
+      return Tag("Discovering", { attempt });
+    },
+    Active: ({ gateways }) => Tag("Active", {
+      gateways: gateways.map((gateway) => {
+        if (
+          typeof gateway.id !== "string" ||
+          typeof gateway.url !== "string" ||
+          !(gateway.interfaceId instanceof Uint8Array) ||
+          typeof gateway.localhost !== "boolean"
+        ) {
+          throw new TypeError("Auto Wi-Fi gateway status is malformed");
+        }
+        return gateway;
+      }),
+    }),
+    Unavailable: (failure) => {
+      workerTaggedValue(failure, "Auto Wi-Fi failure");
+      return Tag("Unavailable", failure);
+    },
+    Closed: () => Tag("Closed"),
+  });
+}
+
+function workerTaggedValue(
+  raw: unknown,
+  label: string,
+): { readonly tag: string; readonly data?: unknown } {
+  if (
+    typeof raw !== "object" ||
+    raw === null ||
+    !("tag" in raw) ||
+    typeof raw.tag !== "string"
+  ) {
+    throw new TypeError(`DedicatedWorker ${label} is malformed`);
+  }
+  return raw as { readonly tag: string; readonly data?: unknown };
+}
+
+function workerCallBusyOutcome<Call extends WorkerCall>(
+  call: Call,
+): WorkerCallOutcome<Call> {
+  const rejected = workerAdmissionRejected("control");
+  return match_into<unknown>().from(call as WorkerCall, {
+    RegisterSingleDestination: () => rejected,
+    RegisterNodePage: () => rejected,
+    Execute: () => commandFailed(Tag("Busy")),
+    SendResourceBlob: () => commandFailed(Tag("Busy")),
+    Snapshot: () => rejected,
+    HostSnapshot: () => rejected,
+    WebSocketConnect: () => rejected,
+    AutoWifiStart: () => Tag("Unavailable", rejected),
+    AutoWifiClose: () => rejected,
+    InterfaceSessionClose: () => rejected,
+  }) as WorkerCallOutcome<Call>;
+}
+
+function workerAdmissionRejected(
+  channel: "control" | "capability",
+): RuntimeRejected {
+  return Tag("RuntimeRejected", {
+    operation: "worker-admission",
+    detail: `DedicatedWorker ${channel} channel is busy`,
+  });
+}
+
+function isRuntimeRejected(value: unknown): value is RuntimeRejected {
+  return typeof value === "object" && value !== null &&
+    "tag" in value && value.tag === "RuntimeRejected";
 }
 
 function workerCapabilityInvocationWireBytes(value: {

@@ -1,3 +1,5 @@
+import { Tag } from "../casework.js";
+import type { Tag as Tagged } from "../casework.js";
 import {
   MAXIMUM_WIRE_BATCH_ITEMS,
   WireBatchDecoder,
@@ -11,6 +13,11 @@ export type WirePort = {
 };
 
 export type TaskScheduler = (task: () => void) => void;
+
+export type BatchedPortSendOutcome =
+  | Tagged<"Sent">
+  | Tagged<"Busy">
+  | Tagged<"Failed">;
 
 export type BatchedPortOptions<Value> = {
   readonly port: WirePort;
@@ -58,18 +65,19 @@ export class BatchedPortSender<Value> {
     });
   }
 
-  send(value: Value): void {
+  send(value: Value): BatchedPortSendOutcome {
     if (this.#failed) {
-      throw new Error("batched port sender has failed");
+      return Tag("Failed");
     }
     if (this.#queued.length >= this.#options.maximumQueuedItems) {
-      throw new Error("batched port sender queue is full");
+      return Tag("Busy");
     }
     this.#queued.push(value);
     if (!this.#scheduled) {
       this.#scheduled = true;
       queueMicrotask(() => this.#flush());
     }
+    return Tag("Sent");
   }
 
   fail(): void {

@@ -8,7 +8,7 @@ import {
   bindWorkerEngineOptions,
   dispatchWorkerCapability,
 } from "./worker_engine_bridge.js";
-import type { InterfaceSession } from "./interface_contract.js";
+import type { InterfaceSessionStatus } from "./interface_contract.js";
 import type {
   BrowserPersistedState,
   BrowserPersistenceStore,
@@ -16,7 +16,11 @@ import type {
   StableIdentityStore,
 } from "./persistence.js";
 import type { SendResourceOptions, StopOutcome } from "./index.js";
-import type { AutoWifiController } from "./auto_wifi/index.js";
+import type {
+  AutoWifiController,
+  AutoWifiControllerStatus,
+} from "./auto_wifi/index.js";
+import type { WebSocketSession } from "./websocket/index.js";
 import type {
   WorkerCall,
   WorkerCapabilityInvocation,
@@ -51,6 +55,16 @@ import { WorkerProjectionServer } from "./worker_projection_server.js";
 type StartedEngine = {
   readonly engine: Prns;
   readonly persistenceState: () => BrowserPersistedState | undefined;
+};
+
+type WorkerSession = {
+  readonly session: WebSocketSession;
+  readonly releaseStatus: () => void;
+};
+
+type WorkerAutoWifi = {
+  controller: AutoWifiController | undefined;
+  releaseStatus: (() => void) | undefined;
 };
 
 const workerScope = globalThis as typeof globalThis & {
@@ -110,9 +124,10 @@ async function initialize(message: WorkerStartMessage): Promise<void> {
     return;
   }
   const state = started.data;
-  const sessions = new Map<number, InterfaceSession>();
-  const autoWifi: { controller: AutoWifiController | undefined } = {
+  const sessions = new Map<number, WorkerSession>();
+  const autoWifi: WorkerAutoWifi = {
     controller: undefined,
+    releaseStatus: undefined,
   };
   let nextSessionId = 1;
   const initialSnapshot = await state.engine.hostSnapshot();
@@ -249,15 +264,29 @@ async function initialize(message: WorkerStartMessage): Promise<void> {
         sessions,
         () => nextSessionId++,
         autoWifi,
+        (id, status) => {
+          postControl(control, Tag("SessionStatusChanged", { id, status }));
+        },
+        (status) => {
+          postControl(control, Tag("AutoWifiStatusChanged", status));
+        },
       );
       if (shutdownStarted) {
         return;
       }
-      settlementSender.send({
+      const admission = settlementSender.send({
         id: request.id,
         call: request.call.tag,
         outcome,
       });
+      if (admission.tag !== "Sent") {
+        postControl(control, Tag("ProtocolFailed", {
+          id: request.id,
+          detail: admission.tag === "Busy"
+            ? "worker settlement channel is busy"
+            : "worker settlement channel has failed",
+        }));
+      }
     } catch (error) {
       if (shutdownStarted) {
         return;
@@ -278,11 +307,19 @@ async function initialize(message: WorkerStartMessage): Promise<void> {
       if (shutdownStarted) {
         return;
       }
-      capabilitySettlementSender.send({
+      const admission = capabilitySettlementSender.send({
         id: request.id,
         call: request.call.tag,
         outcome,
       });
+      if (admission.tag !== "Sent") {
+        postControl(capabilities, Tag("ProtocolFailed", {
+          id: request.id,
+          detail: admission.tag === "Busy"
+            ? "worker capability settlement channel is busy"
+            : "worker capability settlement channel has failed",
+        }));
+      }
     } catch (error) {
       if (shutdownStarted) {
         return;
@@ -372,9 +409,11 @@ async function startEngine(
 async function performCall(
   engine: Prns,
   call: WorkerCall,
-  sessions: Map<number, InterfaceSession>,
+  sessions: Map<number, WorkerSession>,
   mintSessionId: () => number,
-  autoWifi: { controller: AutoWifiController | undefined },
+  autoWifi: WorkerAutoWifi,
+  sessionStatusChanged: (id: number, status: InterfaceSessionStatus) => void,
+  autoWifiStatusChanged: (status: AutoWifiControllerStatus) => void,
 ): Promise<unknown> {
   return match(call, {
     RegisterSingleDestination: (options) => engine.registerSingleDestination(options),
@@ -393,7 +432,15 @@ async function performCall(
         return outcome;
       }
       const id = mintSessionId();
-      sessions.set(id, outcome.data);
+      let releaseStatus = (): void => undefined;
+      releaseStatus = outcome.data.subscribeStatus((status) => {
+        sessionStatusChanged(id, status);
+        if (status.tag === "Closed" || status.tag === "Failed") {
+          releaseStatus();
+          sessions.delete(id);
+        }
+      });
+      sessions.set(id, { session: outcome.data, releaseStatus });
       return Tag("Connected", {
         id,
         name: outcome.data.name,
@@ -404,38 +451,46 @@ async function performCall(
       });
     },
     AutoWifiStart: () => {
-      autoWifi.controller = engine.interfaces.autoWifi.start();
+      const controller = engine.interfaces.autoWifi.start();
+      if (autoWifi.controller !== controller) {
+        autoWifi.releaseStatus?.();
+        autoWifi.controller = controller;
+        autoWifi.releaseStatus = controller.subscribeStatus(autoWifiStatusChanged);
+      }
       return autoWifi.controller.status;
     },
-    AutoWifiStatus: () => autoWifi.controller?.status ?? Tag("Closed"),
     AutoWifiClose: () => {
       const controller = autoWifi.controller;
       autoWifi.controller = undefined;
+      autoWifi.releaseStatus?.();
+      autoWifi.releaseStatus = undefined;
       return controller?.close() ?? Tag("Closed");
     },
     InterfaceSessionClose: (id) => {
-      const session = sessions.get(id);
-      if (session === undefined) {
+      const tracked = sessions.get(id);
+      if (tracked === undefined) {
         return Tag("Closed");
       }
       sessions.delete(id);
-      return session.close();
+      tracked.releaseStatus();
+      return tracked.session.close();
     },
   });
 }
 
 async function stopEngine(
   engine: Prns,
-  sessions: Map<number, InterfaceSession>,
-  autoWifi: { controller: AutoWifiController | undefined },
+  sessions: Map<number, WorkerSession>,
+  autoWifi: WorkerAutoWifi,
 ): Promise<StopOutcome> {
   const failures: string[] = [];
   const activeSessions = [...sessions.values()];
   sessions.clear();
   const sessionOutcomes = await Promise.all(
-    activeSessions.map(async (session): Promise<string | undefined> => {
+    activeSessions.map(async (tracked): Promise<string | undefined> => {
       try {
-        const outcome = await session.close();
+        tracked.releaseStatus();
+        const outcome = await tracked.session.close();
         return outcome.tag === "Closed"
           ? undefined
           : describeInterfaceSessionFailure(outcome);
@@ -451,6 +506,8 @@ async function stopEngine(
   );
   const autoWifiController = autoWifi.controller;
   autoWifi.controller = undefined;
+  autoWifi.releaseStatus?.();
+  autoWifi.releaseStatus = undefined;
   if (autoWifiController !== undefined) {
     try {
       const closed = await autoWifiController.close();

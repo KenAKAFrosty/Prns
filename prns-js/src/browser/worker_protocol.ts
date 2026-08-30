@@ -42,6 +42,7 @@ import type {
 } from "./bluetooth/runtime.js";
 import type {
   RegisterSingleDestinationOptions,
+  RuntimeRejected,
 } from "./runtime_contract.js";
 import type {
   UsbAutoRuntimeHost,
@@ -95,7 +96,6 @@ export type WorkerCall =
       { readonly url: string; readonly options: WebSocketConnectOptions }
     >
   | Tag<"AutoWifiStart">
-  | Tag<"AutoWifiStatus">
   | Tag<"AutoWifiClose">
   | Tag<"InterfaceSessionClose", number>;
 
@@ -110,7 +110,6 @@ export type WorkerCallOutcomes = {
     | Tag<"Connected", WorkerSessionProjection>
     | Exclude<WebSocketConnectOutcome, { readonly tag: "Connected" }>;
   readonly AutoWifiStart: AutoWifiControllerStatus;
-  readonly AutoWifiStatus: AutoWifiControllerStatus;
   readonly AutoWifiClose: AutoWifiControllerCloseOutcome;
   readonly InterfaceSessionClose: InterfaceCloseOutcome;
 };
@@ -141,10 +140,9 @@ export type WorkerCapabilityCall =
       { readonly interfaceId: Uint8Array; readonly bytes: Uint8Array }
     >
   | Tag<
-      "TakeOutbound",
+      "NextOutbound",
       { readonly interfaceId: Uint8Array; readonly maximumFrames?: number }
     >
-  | Tag<"WaitForOutboundActivity", Uint8Array>
   | Tag<"CreateBluetoothReassembler">
   | Tag<
       "AbsorbBluetoothFragment",
@@ -164,8 +162,7 @@ export type WorkerCapabilityOutcomes = {
     | Awaited<ReturnType<UsbAutoRuntimeHost["registerInterface"]>>;
   readonly DeactivateInterface: Awaited<ReturnType<BluetoothRuntimeHost["deactivateInterface"]>>;
   readonly Ingest: Awaited<ReturnType<BluetoothRuntimeHost["ingest"]>>;
-  readonly TakeOutbound: Awaited<ReturnType<BluetoothRuntimeHost["takeOutboundFor"]>>;
-  readonly WaitForOutboundActivity: Awaited<ReturnType<BluetoothRuntimeHost["waitForOutboundActivity"]>>;
+  readonly NextOutbound: Awaited<ReturnType<BluetoothRuntimeHost["nextOutboundFor"]>>;
   readonly CreateBluetoothReassembler: number;
   readonly AbsorbBluetoothFragment: Uint8Array | undefined;
   readonly ReleaseBluetoothReassembler: void;
@@ -175,7 +172,7 @@ export type WorkerCapabilityOutcomes = {
 };
 
 export type WorkerCapabilityCallOutcome<Call extends WorkerCapabilityCall> =
-  WorkerCapabilityOutcomes[Call["tag"]];
+  WorkerCapabilityOutcomes[Call["tag"]] | RuntimeRejected;
 
 export type WorkerCapabilityInvocation = {
   readonly id: number;
@@ -194,6 +191,11 @@ export type WorkerCapabilityRequest = Tag<"CapabilityCalls", { readonly batch: W
 export type WorkerControlResponse =
   | Tag<"Started", { readonly outcome: unknown }>
   | Tag<"Settlements", { readonly batch: WireBatch }>
+  | Tag<
+      "SessionStatusChanged",
+      { readonly id: number; readonly status: InterfaceSessionStatus }
+    >
+  | Tag<"AutoWifiStatusChanged", AutoWifiControllerStatus>
   | Tag<
       "EventBackpressureExceeded",
       { readonly rejectedEventBytes: number }

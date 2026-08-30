@@ -10,13 +10,17 @@ import type {
   PermissionDenied,
 } from "../interface_contract.js";
 import type { HostApiUnavailable } from "../host_apis.js";
-import type { PrnsOutboundFrame } from "../outbound.js";
+import type { InterfaceOutboundHost } from "../outbound.js";
 import type { RuntimeRejected } from "../runtime_contract.js";
 import type {
   BitrateBps,
   HardwareMtu,
   PacketFrame,
 } from "../values.js";
+import {
+  isLoopbackWebSocketUrl,
+  loopbackWebSocketBitrate,
+} from "../websocket/index.js";
 
 declare const rendezvousIdBrand: unique symbol;
 
@@ -55,10 +59,6 @@ export type AutoWifiControllerCloseOutcome = Tag<"Closed"> | RuntimeRejected;
 
 type AutoWifiDetachOutcome = Tag<"Detached"> | RuntimeRejected;
 type AutoWifiIngestOutcome = Tag<"Accepted"> | InterfaceSessionFailure;
-type AutoWifiOutboundOutcome =
-  | Tag<"Outbound", readonly PrnsOutboundFrame[]>
-  | InterfaceSessionFailure;
-
 type AutoWifiWebSocketDecodeOutcome =
   | Tag<"Decoded", Uint8Array>
   | Extract<
@@ -68,12 +68,14 @@ type AutoWifiWebSocketDecodeOutcome =
       | Tag<"TransferFailed", unknown>
     >;
 
-export type AutoWifiRuntimeHost = {
+export type AutoWifiRuntimeHost = InterfaceOutboundHost & {
   autoWifiReady(): Tag<"Ready"> | RuntimeRejected;
-  autoWifiRegister(id: Uint8Array): AutoWifiRegistrationOutcome;
+  autoWifiRegister(
+    id: Uint8Array,
+    bitrate: BitrateBps,
+  ): AutoWifiRegistrationOutcome;
   autoWifiDeactivate(id: InterfaceId): AutoWifiDetachOutcome;
   autoWifiIngest(id: InterfaceId, bytes: Uint8Array): AutoWifiIngestOutcome;
-  autoWifiTakeOutbound(id: InterfaceId): AutoWifiOutboundOutcome;
   autoWifiBitrateBps(): BitrateBps;
   autoWifiHardwareMtu(): HardwareMtu;
   autoWifiFrameCap(): number;
@@ -95,7 +97,6 @@ const CONNECT_TIMEOUT_MS = 10_000;
 const FETCH_TIMEOUT_MS = 10_000;
 const REFRESH_INTERVAL_MS = 15_000;
 const CATALOG_EXPIRY_MS = 60_000;
-const OUTBOUND_POLL_MS = 25;
 const BUFFER_POLL_MS = 4;
 const MIN_BUFFER_LIMIT = 1024 * 1024;
 const MAX_PENDING_TRANSPORT_FRAMES = 64;
@@ -214,6 +215,7 @@ export class AutoWifiController {
   readonly #known = new Map<BrowserRendezvousId, KnownGateway>();
   readonly #sessions = new Map<BrowserRendezvousId, AutoWifiGatewaySession>();
   readonly #recoveries = new RecoverySchedule<BrowserRendezvousId>();
+  readonly #statusListeners = new Set<(status: AutoWifiControllerStatus) => void>();
   readonly #seed: Promise<SelectionSeedOutcome>;
   #status: AutoWifiControllerStatus = Tag("Starting");
   #refreshing = false;
@@ -242,6 +244,20 @@ export class AutoWifiController {
     return this.#closed;
   }
 
+  subscribeStatus(
+    changed: (status: AutoWifiControllerStatus) => void,
+  ): () => void {
+    this.#statusListeners.add(changed);
+    let subscribed = true;
+    return () => {
+      if (!subscribed) {
+        return;
+      }
+      subscribed = false;
+      this.#statusListeners.delete(changed);
+    };
+  }
+
   async close(): Promise<AutoWifiControllerCloseOutcome> {
     if (this.#closed) {
       return Tag("Closed");
@@ -258,7 +274,7 @@ export class AutoWifiController {
     this.#known.clear();
     this.#recoveries.clear();
     const outcomes = await Promise.all(sessions.map((session) => session.close()));
-    this.#status = Tag("Closed");
+    this.#replaceStatus(Tag("Closed"));
     return (
       outcomes.find(
         (outcome): outcome is RuntimeRejected => outcome.tag === "RuntimeRejected",
@@ -288,7 +304,7 @@ export class AutoWifiController {
     );
     this.#attempt += 1;
     if (this.#sessions.size === 0) {
-      this.#status = Tag("Discovering", { attempt: this.#attempt });
+      this.#replaceStatus(Tag("Discovering", { attempt: this.#attempt }));
     }
     try {
       const ready = this.#host.autoWifiReady();
@@ -331,7 +347,7 @@ export class AutoWifiController {
           this.#known.set(gateway.id, {
             ...gateway,
             lastSeen: now,
-            localhost: isLocalhostUrl(gateway.url),
+            localhost: isLoopbackWebSocketUrl(gateway.url),
           });
         }
       }
@@ -497,7 +513,12 @@ export class AutoWifiController {
         detail: `gateway ${probe.id} disconnected before runtime registration`,
       });
     }
-    const registered = this.#host.autoWifiRegister(probe.idBytes);
+    const registered = this.#host.autoWifiRegister(
+      probe.idBytes,
+      probe.localhost
+        ? loopbackWebSocketBitrate(this.#host.autoWifiBitrateBps())
+        : this.#host.autoWifiBitrateBps(),
+    );
     if (registered.tag !== "Registered") {
       closeSocket(claimed.data.socket);
       return registered;
@@ -551,7 +572,7 @@ export class AutoWifiController {
     } else if (outcome.tag === "RuntimeRejected") {
       this.#setUnavailable(outcome);
     } else {
-      this.#status = Tag("Discovering", { attempt: this.#attempt + 1 });
+      this.#replaceStatus(Tag("Discovering", { attempt: this.#attempt + 1 }));
     }
     this.#scheduleRecovery();
     this.#requestRefresh();
@@ -566,12 +587,19 @@ export class AutoWifiController {
         }
         return left.id.localeCompare(right.id);
       });
-    this.#status = Tag("Active", { gateways });
+    this.#replaceStatus(Tag("Active", { gateways }));
   }
 
   #setUnavailable(failure: AutoWifiFailure): void {
     if (!this.#closed && this.#sessions.size === 0) {
-      this.#status = Tag("Unavailable", failure);
+      this.#replaceStatus(Tag("Unavailable", failure));
+    }
+  }
+
+  #replaceStatus(status: AutoWifiControllerStatus): void {
+    this.#status = status;
+    for (const changed of this.#statusListeners) {
+      changed(status);
     }
   }
 
@@ -834,7 +862,10 @@ class AutoWifiGatewaySession {
 
   async #outboundLoop(): Promise<void> {
     while (!this.#closed) {
-      const outbound = this.#host.autoWifiTakeOutbound(this.interfaceId);
+      const outbound = await this.#host.nextOutboundFor(this.interfaceId);
+      if (outbound.tag === "InterfaceDetached") {
+        return;
+      }
       if (outbound.tag !== "Outbound") {
         await this.close();
         return;
@@ -862,7 +893,6 @@ class AutoWifiGatewaySession {
           return;
         }
       }
-      await wait(OUTBOUND_POLL_MS);
     }
   }
 
@@ -967,7 +997,7 @@ async function probeGateway(
               ...decoded.data,
               url: canonical.data,
               pending: new PendingGatewaySocket(socket, frameCap),
-              localhost: isLocalhostUrl(canonical.data),
+              localhost: isLoopbackWebSocketUrl(canonical.data),
             }),
           );
         })
@@ -1418,19 +1448,6 @@ function closeSocket(socket: WebSocket): void {
     socket.close();
   } catch {
     return;
-  }
-}
-
-function isLocalhostUrl(value: string): boolean {
-  try {
-    const hostname = new URL(value).hostname.toLowerCase();
-    return (
-      hostname === "localhost" ||
-      hostname === "[::1]" ||
-      hostname.split(".").length === 4 && hostname.split(".")[0] === "127"
-    );
-  } catch {
-    return false;
   }
 }
 

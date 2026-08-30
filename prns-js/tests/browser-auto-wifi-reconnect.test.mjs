@@ -61,15 +61,36 @@ test(
     });
     const host = new AutoWifiHost();
     const controller = new AutoWifiController(host);
+    const statuses = [];
+    const releaseStatus = controller.subscribeStatus((status) => {
+      statuses.push(status.tag);
+    });
 
     try {
       await waitUntil(() => host.registrations.length === 1, 2_000);
+      await waitUntil(() => controller.status.tag === "Active", 1_000);
+      assert.ok(statuses.includes("Active"));
+      assert.deepEqual(host.registrationBitrates, [1_000_000_000]);
       const first = FakeWebSocket.connected()[0];
       assert.ok(first);
+      await waitUntil(() => host.outboundTakes === 1, 1_000);
+      await new Promise((resolve) => setTimeout(resolve, 75));
+      assert.equal(host.outboundTakes, 1);
+
+      host.queueOutbound(host.interfaceIds[0], {
+        bytes: new Uint8Array([0x31, 0x32, 0x33]),
+      });
+      await waitUntil(() => first.outbound.length === 1, 1_000);
+      assert.deepEqual(first.outbound, [[0x31, 0x32, 0x33]]);
 
       const disconnectedAt = Date.now();
+      const reconnectTransitions = statuses.length;
       first.disconnect();
       await waitUntil(() => host.deactivations.length === 1, 1_000);
+      await waitUntil(
+        () => statuses.slice(reconnectTransitions).includes("Discovering"),
+        1_000,
+      );
       await new Promise((resolve) => setTimeout(resolve, 100));
       assert.equal(FakeWebSocket.localAttempts(), 1);
       await waitUntil(() => host.registrations.length === 2, 7_000);
@@ -83,10 +104,15 @@ test(
 
       const second = FakeWebSocket.connected()[0];
       assert.ok(second);
+      await waitUntil(
+        () => statuses.slice(reconnectTransitions).includes("Active"),
+        1_000,
+      );
       second.receive(new Uint8Array([0x7e, 0x01, 0x7d]));
       await waitUntil(() => host.inbound.length === 1, 1_000);
       assert.deepEqual(host.inbound, [[0x7e, 0x01, 0x7d]]);
     } finally {
+      releaseStatus();
       await controller.close();
       restoreFetch();
       restoreStorage();
@@ -98,23 +124,40 @@ test(
 
 class AutoWifiHost {
   registrations = [];
+  registrationBitrates = [];
   deactivations = [];
   inbound = [];
+  interfaceIds = [];
+  outboundTakes = 0;
+  #outbound = new Map();
+  #outboundWaiters = new Map();
 
   autoWifiReady() {
     return Tag("Ready");
   }
 
-  autoWifiRegister(id) {
+  autoWifiRegister(id, bitrate) {
     this.registrations.push(new Uint8Array(id));
-    return Tag(
-      "Registered",
-      new Uint8Array([this.registrations.length, 0, 0, 0, 0, 0, 0, 0]),
-    );
+    this.registrationBitrates.push(bitrate);
+    const interfaceId = new Uint8Array([
+      this.registrations.length,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+    ]);
+    this.interfaceIds.push(interfaceId);
+    return Tag("Registered", interfaceId);
   }
 
   autoWifiDeactivate(id) {
     this.deactivations.push(new Uint8Array(id));
+    const key = bytesHex(id);
+    this.#outboundWaiters.get(key)?.(Tag("InterfaceDetached"));
+    this.#outboundWaiters.delete(key);
     return Tag("Detached");
   }
 
@@ -123,12 +166,34 @@ class AutoWifiHost {
     return Tag("Accepted");
   }
 
-  autoWifiTakeOutbound() {
-    return Tag("Outbound", []);
+  nextOutboundFor(id) {
+    this.outboundTakes += 1;
+    const key = bytesHex(id);
+    const outbound = this.#outbound.get(key) ?? [];
+    if (outbound.length > 0) {
+      this.#outbound.delete(key);
+      return Promise.resolve(Tag("Outbound", outbound));
+    }
+    return new Promise((resolve) => {
+      this.#outboundWaiters.set(key, resolve);
+    });
+  }
+
+  queueOutbound(id, frame) {
+    const key = bytesHex(id);
+    const waiter = this.#outboundWaiters.get(key);
+    if (waiter !== undefined) {
+      this.#outboundWaiters.delete(key);
+      waiter(Tag("Outbound", [frame]));
+      return;
+    }
+    const outbound = this.#outbound.get(key) ?? [];
+    outbound.push(frame);
+    this.#outbound.set(key, outbound);
   }
 
   autoWifiBitrateBps() {
-    return 100_000_000;
+    return 500_000_000;
   }
 
   autoWifiHardwareMtu() {
@@ -165,6 +230,7 @@ class FakeWebSocket {
   binaryType = "blob";
   protocol = "";
   readyState = 0;
+  outbound = [];
 
   constructor(url, protocol) {
     this.url = url;
@@ -195,6 +261,7 @@ class FakeWebSocket {
 
   send(bytes) {
     if (bytes.byteLength !== 10) {
+      this.outbound.push([...bytes]);
       return;
     }
     const hello = new Uint8Array(26);

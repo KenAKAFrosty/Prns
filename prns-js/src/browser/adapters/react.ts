@@ -45,7 +45,7 @@ export function usePrnsProjection<View extends PrnsView>(
 ): PrnsProjectionValue<View> {
   const projection = usePrns().projection(view);
   return useSyncExternalStore(
-    projection.subscribe,
+    (changed) => projection.subscribe(changed),
     () => projection.latest().value,
   );
 }

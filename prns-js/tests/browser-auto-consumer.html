@@ -322,15 +322,16 @@
               inbound.push(new Uint8Array(bytes));
               return Tag("Accepted");
             },
-            takeOutboundFor: () => {
-              const frames = outbound;
-              outbound = [];
-              return Tag("Outbound", frames);
-            },
-            waitForOutboundActivity: () =>
-              new Promise((resolve) => {
+            nextOutboundFor: () => {
+              if (outbound.length > 0) {
+                const frames = outbound;
+                outbound = [];
+                return Promise.resolve(Tag("Outbound", frames));
+              }
+              return new Promise((resolve) => {
                 outboundWaiter = resolve;
-              }),
+              });
+            },
           };
           control.onWrite = (bytes) => {
             const hello = wasm.bluetoothDecodeControl(bytes);
@@ -342,13 +343,17 @@
           if (connected.tag !== "Connected") {
             return `Failed:Connect:${connected.tag}`;
           }
-          await waitForBluetoothSmoke(
+          await waitForBrowserSmoke(
             () => data.writes.length === expectedOutbound.length,
+            "Bluetooth outbound",
           );
           for (const fragment of wasm.bluetoothDataFragments(inboundPacket)) {
             data.notify(fragment);
           }
-          await waitForBluetoothSmoke(() => inbound.length === 1);
+          await waitForBrowserSmoke(
+            () => inbound.length === 1,
+            "Bluetooth inbound",
+          );
           const outboundMatches = expectedOutbound.every(
             (fragment, index) => equalBytes(fragment, data.writes[index]),
           );
@@ -414,12 +419,14 @@
             return `Failed:Create:${created.tag}`;
           }
           node = created.data;
-          const interfaces = node.projection(prnsView("Interfaces"));
           const connected = await node.interfaces.bluetooth.connect();
           if (connected.tag !== "Connected") {
             return `Failed:Connect:${connected.tag}`;
           }
-          await waitForBluetoothSmoke(() => interfaces.latest().value.length === 1);
+          const active = await node.hostSnapshot();
+          if (active.tag !== "Captured" || active.data.interfaces.length !== 1) {
+            return `Failed:Snapshot:${active.tag}`;
+          }
           const stopped = await node.stop();
           node = undefined;
           return stopped.tag === "Stopped" &&
@@ -502,14 +509,38 @@
         }
       }
 
-      async function waitForBluetoothSmoke(ready) {
+      async function waitForBrowserSmoke(ready, subject) {
         const deadline = performance.now() + 2_000;
         while (!ready()) {
           if (performance.now() >= deadline) {
-            throw new Error("Bluetooth session smoke timed out");
+            throw new Error(`${subject} smoke timed out`);
           }
           await new Promise((resolve) => setTimeout(resolve, 5));
         }
+      }
+
+      async function workerWebSocketStatusOutcome(prns) {
+        const connected = await prns.interfaces.webSocket.connect(
+          `ws://${location.host}/worker-status-socket`,
+          { framing: "RawPacket" },
+        );
+        if (connected.tag !== "Connected") {
+          return `Failed:Connect:${connected.tag}`;
+        }
+        const statuses = [];
+        const release = connected.data.subscribeStatus((status) => {
+          statuses.push(status.tag);
+        });
+        await fetch("/close-worker-status-sockets", { method: "POST" });
+        await waitForBrowserSmoke(
+          () => connected.data.status.tag === "Closed",
+          "DedicatedWorker WebSocket status",
+        );
+        await Promise.resolve();
+        release();
+        return statuses.length === 1 && statuses[0] === "Closed"
+          ? "PushedOnce"
+          : `Failed:${statuses.join(",")}`;
       }
 
       function equalBytes(left, right) {
@@ -685,7 +716,38 @@
         document.body.dataset.snapshot = snapshotConsistent
           ? "Consistent"
           : "Inconsistent";
+        const controlCalls = Array.from(
+          { length: 33 },
+          () => outcome.data.snapshot(),
+        );
+        const admissionOutcome = await controlCalls[32];
+        await Promise.all(controlCalls.slice(0, 32));
+        const admission = admissionOutcome.tag === "RuntimeRejected"
+          ? `${admissionOutcome.tag}:${admissionOutcome.data.operation}`
+          : admissionOutcome.tag;
+        document.body.dataset.admission = admission;
         const autoWifi = outcome.data.interfaces.autoWifi.start();
+        await waitForBrowserSmoke(
+          () => autoWifi.status.tag !== "Starting",
+          "DedicatedWorker Auto Wi-Fi startup",
+        );
+        const autoWifiSaturation = Array.from(
+          { length: 32 },
+          () => outcome.data.snapshot(),
+        );
+        const autoWifiCloseAdmission = await autoWifi.close();
+        await Promise.all(autoWifiSaturation);
+        const autoWifiAdmission =
+          autoWifiCloseAdmission.tag === "RuntimeRejected" &&
+          autoWifiCloseAdmission.data.operation === "worker-admission" &&
+          !autoWifi.closed
+            ? "Retained"
+            : `Failed:${autoWifiCloseAdmission.tag}:${autoWifi.closed}`;
+        document.body.dataset.autoWifiAdmission = autoWifiAdmission;
+        const webSocketWorkerStatus = await workerWebSocketStatusOutcome(
+          outcome.data,
+        );
+        document.body.dataset.webSocketWorkerStatus = webSocketWorkerStatus;
         const stopped = await outcome.data.stop();
         const stoppedAgain = await outcome.data.stop();
         const stoppedSnapshot = await outcome.data.hostSnapshot();
@@ -721,10 +783,13 @@
           persistenceFailures === "Typed" &&
           routePersistence === "Restored" &&
           webSocketFraming === "Resolved" &&
+          webSocketWorkerStatus === "PushedOnce" &&
           bluetoothContract === "Shared" &&
           bluetoothSession === "Bridged" &&
           bluetoothWorker === "Bridged" &&
           projectionReactive &&
+          admission === "RuntimeRejected:worker-admission" &&
+          autoWifiAdmission === "Retained" &&
           stopIdempotent &&
           compression
             ? "PASS"
@@ -745,10 +810,14 @@
           persistenceFailures: document.body.dataset.persistenceFailures,
           routePersistence: document.body.dataset.routePersistence,
           webSocketFraming: document.body.dataset.webSocketFraming,
+          webSocketWorkerStatus:
+            document.body.dataset.webSocketWorkerStatus,
           bluetoothContract: document.body.dataset.bluetoothContract,
           bluetoothSession: document.body.dataset.bluetoothSession,
           bluetoothWorker: document.body.dataset.bluetoothWorker,
           projection: document.body.dataset.projection,
+          admission: document.body.dataset.admission,
+          autoWifiAdmission: document.body.dataset.autoWifiAdmission,
           stop: document.body.dataset.stop,
           compression: document.body.dataset.compression,
           compressionDetail: document.body.dataset.compressionDetail,

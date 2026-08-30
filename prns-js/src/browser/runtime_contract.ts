@@ -54,7 +54,8 @@ export type RuntimeOperation =
   | "drain-events"
   | "drain-outbound"
   | "snapshot"
-  | "projection-snapshot";
+  | "projection-snapshot"
+  | "worker-admission";
 
 export type RuntimeRejected = Tag<
   "RuntimeRejected",

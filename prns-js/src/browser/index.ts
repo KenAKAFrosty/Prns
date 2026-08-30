@@ -874,10 +874,8 @@ export class Prns {
         this.#host.deactivateInterface(interfaceId(value)),
       Ingest: ({ interfaceId: id, bytes }) =>
         this.#host.ingest(interfaceId(id), packetFrame(bytes)),
-      TakeOutbound: ({ interfaceId: id, maximumFrames }) =>
-        this.#host.takeOutboundFor(interfaceId(id), maximumFrames),
-      WaitForOutboundActivity: (value) =>
-        this.#host.waitForOutboundActivity(interfaceId(value)),
+      NextOutbound: ({ interfaceId: id, maximumFrames }) =>
+        this.#host.nextOutboundFor(interfaceId(id), maximumFrames),
       CreateBluetoothReassembler: () => {
         const id = this.#mintPageCodecId();
         this.#pageBluetoothReassemblers.set(

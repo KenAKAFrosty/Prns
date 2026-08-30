@@ -1,11 +1,8 @@
 import type { Tag } from "../../casework.js";
 import type { InterfaceId } from "../../contract.js";
 import type { BrowserUsbDeviceFilter } from "../host_apis.js";
-import type {
-  AlreadyActive,
-  InterfaceSessionFailure,
-} from "../interface_contract.js";
-import type { PrnsOutboundFrame } from "../outbound.js";
+import type { AlreadyActive } from "../interface_contract.js";
+import type { InterfaceOutboundHost } from "../outbound.js";
 import type {
   EntropyFailure,
   RuntimeRejected,
@@ -37,19 +34,14 @@ type UsbAutoIngestOutcome =
   | EntropyFailure
   | RuntimeRejected;
 
-type UsbAutoOutboundOutcome =
-  | Tag<"Outbound", readonly PrnsOutboundFrame[]>
-  | Extract<InterfaceSessionFailure, Tag<"OutboundQueueFull", unknown>>
-  | RuntimeRejected;
-
 type UsbAutoHostOutcome<Outcome> = Outcome | Promise<Outcome>;
 
 export type UsbAutoHostDecoder = {
-  feed(chunk: Uint8Array): UsbAutoHostOutcome<unknown[]>;
+  feed(chunk: Uint8Array): UsbAutoHostOutcome<unknown[] | RuntimeRejected>;
   release?(): void;
 };
 
-export type UsbAutoRuntimeHost = {
+export type UsbAutoRuntimeHost = InterfaceOutboundHost & {
   runtimeReadiness(): Tag<"Ready"> | RuntimeRejected;
   defaultUsbAutoFilters(): readonly BrowserUsbDeviceFilter[];
   usbAutoHostBitrateBps(): BitrateBps;
@@ -64,5 +56,4 @@ export type UsbAutoRuntimeHost = {
   ): UsbAutoHostOutcome<UsbAutoRegistrationOutcome>;
   deactivateInterface(id: InterfaceId): UsbAutoHostOutcome<UsbAutoDetachOutcome>;
   ingest(id: InterfaceId, bytes: PacketFrame): UsbAutoHostOutcome<UsbAutoIngestOutcome>;
-  takeOutboundFor(id: InterfaceId): UsbAutoHostOutcome<UsbAutoOutboundOutcome>;
 };

@@ -269,7 +269,10 @@ test("same-turn sends coalesce and later grains yield through tasks", async () =
     failed: assert.fail,
   });
   for (let index = 0; index < 10; index += 1) {
-    sender.send({ index, value: index * 2 });
+    assert.deepEqual(
+      sender.send({ index, value: index * 2 }),
+      Tag("Sent"),
+    );
   }
   assert.equal(messages.length, 0);
   await Promise.resolve();
@@ -290,7 +293,7 @@ test("same-turn sends coalesce and later grains yield through tasks", async () =
   );
 });
 
-test("batched ports reject admission beyond their structural queue bound", () => {
+test("batched ports report admission pressure within their structural queue bound", () => {
   const sender = new BatchedPortSender({
     port: { postMessage: () => undefined },
     wrap: (batch) => batch,
@@ -301,8 +304,9 @@ test("batched ports reject admission beyond their structural queue bound", () =>
     scheduleTask: queueMicrotask,
     failed: assert.fail,
   });
-  sender.send(1);
-  sender.send(2);
-  assert.throws(() => sender.send(3), /queue is full/);
+  assert.deepEqual(sender.send(1), Tag("Sent"));
+  assert.deepEqual(sender.send(2), Tag("Sent"));
+  assert.deepEqual(sender.send(3), Tag("Busy"));
   sender.fail();
+  assert.deepEqual(sender.send(4), Tag("Failed"));
 });

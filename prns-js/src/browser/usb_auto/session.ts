@@ -31,7 +31,6 @@ type SessionHandleOutcome = Tag<"Handled"> | InterfaceSessionFailure;
 type RawUsbAutoMessageType = "hello" | "helloAck" | "data";
 
 const PROBE_INTERVAL_MS = 500;
-const OUTBOUND_POLL_MS = 25;
 const RAW_MESSAGE_TYPES: ReadonlySet<string> =
   new Set<RawUsbAutoMessageType>(["hello", "helloAck", "data"]);
 
@@ -67,7 +66,6 @@ export class BrowserUsbAutoSession implements UsbAutoSession {
   start(): void {
     void this.#readLoop();
     void this.#probeLoop();
-    void this.#outboundLoop();
   }
 
   async close(): Promise<InterfaceCloseOutcome> {
@@ -116,7 +114,12 @@ export class BrowserUsbAutoSession implements UsbAutoSession {
         }
         let messages: unknown[];
         try {
-          messages = await this.#decoder.feed(chunk);
+          const decoded = await this.#decoder.feed(chunk);
+          if (!Array.isArray(decoded)) {
+            await this.#fail(decoded);
+            return;
+          }
+          messages = decoded;
         } catch (error) {
           await this.#fail(
             Tag("ProtocolViolation", {
@@ -177,23 +180,23 @@ export class BrowserUsbAutoSession implements UsbAutoSession {
   async #outboundLoop(): Promise<void> {
     try {
       while (!this.#closed) {
-        if (this.#confirmed) {
-          const outbound = await this.#host.takeOutboundFor(this.interfaceId);
-          if (outbound.tag !== "Outbound") {
-            await this.#fail(outbound);
+        const outbound = await this.#host.nextOutboundFor(this.interfaceId);
+        if (outbound.tag === "InterfaceDetached") {
+          return;
+        }
+        if (outbound.tag !== "Outbound") {
+          await this.#fail(outbound);
+          return;
+        }
+        for (const frame of outbound.data) {
+          const written = await this.#writeFrame(
+            this.#host.usbAutoDataFrame(frame.bytes),
+          );
+          if (written.tag !== "Written") {
+            await this.#fail(written);
             return;
           }
-          for (const frame of outbound.data) {
-            const written = await this.#writeFrame(
-              this.#host.usbAutoDataFrame(frame.bytes),
-            );
-            if (written.tag !== "Written") {
-              await this.#fail(written);
-              return;
-            }
-          }
         }
-        await delay(OUTBOUND_POLL_MS);
       }
     } catch (error) {
       if (!this.#closed) {
@@ -232,8 +235,12 @@ export class BrowserUsbAutoSession implements UsbAutoSession {
   }
 
   #confirmPeer(): void {
+    if (this.#confirmed) {
+      return;
+    }
     this.#confirmed = true;
     this.#status = Tag("Active");
+    void this.#outboundLoop();
   }
 
   async #fail(sessionFailure: InterfaceSessionFailure): Promise<void> {

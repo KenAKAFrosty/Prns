@@ -183,7 +183,7 @@ test("Web Bluetooth sleeps while idle and wakes for runtime activity", async () 
     host.queueOutbound({ bytes: new Uint8Array([0x71, 0x72]) });
     await waitUntil(() => data.responseWrites.length === 1);
     assert.deepEqual(data.responseWrites, [[FRAGMENT, 0x71, 0x72]]);
-    assert.equal(host.outboundTakes, 3);
+    assert.equal(host.outboundTakes, 2);
     assert.equal((await connected.data.close()).tag, "Closed");
   } finally {
     restoreNavigator();
@@ -306,14 +306,13 @@ class BluetoothHost {
     return Tag("Accepted");
   }
 
-  takeOutboundFor() {
+  nextOutboundFor() {
     this.outboundTakes += 1;
-    const outbound = this.#outbound;
-    this.#outbound = [];
-    return Tag("Outbound", outbound);
-  }
-
-  waitForOutboundActivity() {
+    if (this.#outbound.length > 0) {
+      const outbound = this.#outbound;
+      this.#outbound = [];
+      return Promise.resolve(Tag("Outbound", outbound));
+    }
     return new Promise((resolve) => {
       this.#outboundWaiters.push(resolve);
     });
@@ -321,7 +320,12 @@ class BluetoothHost {
 
   queueOutbound(frame) {
     this.#outbound.push(frame);
-    this.#resolveOutboundWaiters(Tag("RuntimeAdvanced"));
+    if (this.#outboundWaiters.length === 0) {
+      return;
+    }
+    const outbound = this.#outbound;
+    this.#outbound = [];
+    this.#resolveOutboundWaiters(Tag("Outbound", outbound));
   }
 
   #resolveOutboundWaiters(outcome) {
