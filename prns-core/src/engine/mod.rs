@@ -82,8 +82,12 @@ pub use registration::{
     RouteSeedOutcome, SetTransportIdentityError, UnregisterDestinationOutcome,
     VerifiedPersistedRoute,
 };
-pub use remote_control::ConfigureRemoteControlIdentitiesError;
 pub(crate) use remote_control::RemoteControlControllerIdentityConfiguration;
+pub use remote_control::{
+    AdmitRemoteControlControllerPairingResponseOutcome, ConfigureRemoteControlIdentitiesError,
+    RemoteControlControllerPairingResponseArrival,
+    RemoteControlControllerPairingResponseBridgeInvariantViolation,
+};
 pub use remote_control_pairing::{
     ConfigureRemoteControlPairingError, RemoteControlPairingResponseDispatchFailure,
 };

@@ -28,6 +28,7 @@ enum RemoteControlControllerPairingPhase {
     },
     Persisting {
         attempt_id: RemoteControlPairingAttemptId,
+        context: RemoteControlPairingContext,
         access: RemoteControlTargetAccess,
     },
 }
@@ -69,14 +70,17 @@ impl RemoteControlControllerPairingState {
                     },
                 )
             }
-            RemoteControlControllerPairingPhase::Persisting { attempt_id, access } => {
-                RemoteControlControllerPairingView::Persisting(
-                    RemoteControlControllerPairingPersistenceView {
-                        attempt_id: *attempt_id,
-                        access,
-                    },
-                )
-            }
+            RemoteControlControllerPairingPhase::Persisting {
+                attempt_id,
+                context,
+                access,
+            } => RemoteControlControllerPairingView::Persisting(
+                RemoteControlControllerPairingPersistenceView {
+                    attempt_id: *attempt_id,
+                    context: *context,
+                    access,
+                },
+            ),
         }
     }
 
@@ -237,8 +241,8 @@ impl RemoteControlControllerPairingState {
                     expires_at: window.expires_at(),
                 }
             }
-            RemoteControlControllerPairingPhase::Persisting { attempt_id, access } => {
-                self.phase = RemoteControlControllerPairingPhase::Persisting { attempt_id, access };
+            phase @ RemoteControlControllerPairingPhase::Persisting { attempt_id, .. } => {
+                self.phase = phase;
                 ApproveRemoteControlControllerPairingOutcome::PersistenceInProgress { attempt_id }
             }
         }
@@ -294,8 +298,8 @@ impl RemoteControlControllerPairingState {
                     RemoteControlControllerPairingPhase::AwaitingCompletion { transcript, window };
                 RejectRemoteControlControllerPairingOutcome::AlreadyApproved { attempt_id }
             }
-            RemoteControlControllerPairingPhase::Persisting { attempt_id, access } => {
-                self.phase = RemoteControlControllerPairingPhase::Persisting { attempt_id, access };
+            phase @ RemoteControlControllerPairingPhase::Persisting { attempt_id, .. } => {
+                self.phase = phase;
                 RejectRemoteControlControllerPairingOutcome::PersistenceInProgress { attempt_id }
             }
         }
@@ -346,18 +350,19 @@ impl RemoteControlControllerPairingState {
                         reason,
                     };
                 }
-                let (_context, _controller, target, permissions, _attempt_timeout) =
+                let (context, _controller, target, permissions, _attempt_timeout) =
                     transcript.into_parts();
                 self.phase = RemoteControlControllerPairingPhase::Persisting {
                     attempt_id,
+                    context,
                     access: (target, permissions).into(),
                 };
                 ReceiveRemoteControlControllerPairingCompletedOutcome::PersistenceOwed {
                     attempt_id,
                 }
             }
-            RemoteControlControllerPairingPhase::Persisting { attempt_id, access } => {
-                self.phase = RemoteControlControllerPairingPhase::Persisting { attempt_id, access };
+            phase @ RemoteControlControllerPairingPhase::Persisting { attempt_id, .. } => {
+                self.phase = phase;
                 ReceiveRemoteControlControllerPairingCompletedOutcome::AlreadyReceived {
                     attempt_id,
                 }
@@ -373,6 +378,7 @@ impl RemoteControlControllerPairingState {
         let RemoteControlControllerPairingPhase::Persisting {
             attempt_id: active,
             access,
+            ..
         } = &self.phase
         else {
             return None;
@@ -389,10 +395,17 @@ impl RemoteControlControllerPairingState {
     ) -> PersistRemoteControlControllerPairingOutcome {
         let phase = core::mem::take(&mut self.phase);
         match phase {
-            RemoteControlControllerPairingPhase::Persisting { attempt_id, access } => {
+            RemoteControlControllerPairingPhase::Persisting {
+                attempt_id,
+                context,
+                access,
+            } => {
                 if persisted != attempt_id {
-                    self.phase =
-                        RemoteControlControllerPairingPhase::Persisting { attempt_id, access };
+                    self.phase = RemoteControlControllerPairingPhase::Persisting {
+                        attempt_id,
+                        context,
+                        access,
+                    };
                     return PersistRemoteControlControllerPairingOutcome::AttemptMismatch {
                         persisted,
                         active: attempt_id,
@@ -416,10 +429,17 @@ impl RemoteControlControllerPairingState {
     ) -> FailRemoteControlControllerPairingPersistenceOutcome {
         let phase = core::mem::take(&mut self.phase);
         match phase {
-            RemoteControlControllerPairingPhase::Persisting { attempt_id, access } => {
+            RemoteControlControllerPairingPhase::Persisting {
+                attempt_id,
+                context,
+                access,
+            } => {
                 if failed != attempt_id {
-                    self.phase =
-                        RemoteControlControllerPairingPhase::Persisting { attempt_id, access };
+                    self.phase = RemoteControlControllerPairingPhase::Persisting {
+                        attempt_id,
+                        context,
+                        access,
+                    };
                     return FailRemoteControlControllerPairingPersistenceOutcome::AttemptMismatch {
                         failed,
                         active: attempt_id,
@@ -583,13 +603,18 @@ impl RemoteControlControllerPairingState {
                     },
                 )
             }
-            RemoteControlControllerPairingPhase::Persisting { attempt_id, access } => {
-                self.phase = RemoteControlControllerPairingPhase::Persisting { attempt_id, access };
+            phase @ RemoteControlControllerPairingPhase::Persisting {
+                attempt_id,
+                context,
+                ..
+            } if context.link_id() == link_id => {
+                self.phase = phase;
                 RemoteControlControllerPairingLinkAbort::PersistenceInProgress { attempt_id }
             }
             phase @ (RemoteControlControllerPairingPhase::AwaitingOffer { .. }
             | RemoteControlControllerPairingPhase::AwaitingApproval { .. }
-            | RemoteControlControllerPairingPhase::AwaitingCompletion { .. }) => {
+            | RemoteControlControllerPairingPhase::AwaitingCompletion { .. }
+            | RemoteControlControllerPairingPhase::Persisting { .. }) => {
                 self.phase = phase;
                 RemoteControlControllerPairingLinkAbort::UnrelatedLink
             }

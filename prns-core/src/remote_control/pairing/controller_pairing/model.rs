@@ -193,6 +193,7 @@ impl<'a> RemoteControlControllerPairingAttemptView<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoteControlControllerPairingPersistenceView<'a> {
     pub(super) attempt_id: RemoteControlPairingAttemptId,
+    pub(super) context: RemoteControlPairingContext,
     pub(super) access: &'a RemoteControlTargetAccess,
 }
 
@@ -200,6 +201,11 @@ impl<'a> RemoteControlControllerPairingPersistenceView<'a> {
     #[must_use]
     pub const fn attempt_id(self) -> RemoteControlPairingAttemptId {
         self.attempt_id
+    }
+
+    #[must_use]
+    pub const fn context(self) -> RemoteControlPairingContext {
+        self.context
     }
 
     #[must_use]

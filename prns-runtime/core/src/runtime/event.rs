@@ -15,6 +15,7 @@ use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
 use crate::remote_control::{
     RemoteControlControllerGrant, RemoteControlControllerPairingAborted,
+    RemoteControlControllerPairingAttemptView, RemoteControlControllerPairingPersistenceView,
     RemoteControlPairingAttemptId, RemoteControlPairingAvailabilityObservation,
     RemoteControlPairingEndpoint, RemoteControlTargetPairingAborted,
     RemoteControlTargetPairingAttemptView,
@@ -46,6 +47,12 @@ pub enum Message<'a> {
         attempt_id: RemoteControlPairingAttemptId,
         grant: RemoteControlControllerGrant,
     },
+    RemoteControlControllerPairingConfirmationRequired(
+        RemoteControlControllerPairingAttemptView<'a>,
+    ),
+    RemoteControlControllerPairingPersistenceRequired(
+        RemoteControlControllerPairingPersistenceView<'a>,
+    ),
     RemoteControlControllerPairingExpired {
         aborted: RemoteControlControllerPairingAborted,
     },
@@ -222,6 +229,16 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
                     attempt_id,
                     grant,
                 })
+            }
+            Journaled::RemoteControlControllerPairingConfirmationRequired(pairing) => {
+                PrnsEvent::Message(Message::RemoteControlControllerPairingConfirmationRequired(
+                    pairing,
+                ))
+            }
+            Journaled::RemoteControlControllerPairingPersistenceRequired(pairing) => {
+                PrnsEvent::Message(Message::RemoteControlControllerPairingPersistenceRequired(
+                    pairing,
+                ))
             }
             Journaled::RemoteControlControllerPairingExpired { aborted } => {
                 PrnsEvent::Message(Message::RemoteControlControllerPairingExpired { aborted })
