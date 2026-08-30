@@ -1769,6 +1769,7 @@ async function prepareWorker(
       persistenceEnabled: options.persistenceStore !== undefined,
       limits,
       networkExecution: options.networkExecution ?? "EngineWorker",
+      resourceCrypto: options.resourceCrypto ?? Tag("PortableWasm"),
       ...(options.resourceCompressionModuleUrl === undefined
         ? {}
         : { resourceCompressionModuleUrl: options.resourceCompressionModuleUrl.href }),

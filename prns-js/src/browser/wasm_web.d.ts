@@ -25,6 +25,30 @@ export declare class PrnsRuntime implements PrnsRuntimeBinding {
   respond: PrnsRuntimeBinding["respond"];
   resourceSegmentPlan: PrnsRuntimeBinding["resourceSegmentPlan"];
   sendResourceSegment: PrnsRuntimeBinding["sendResourceSegment"];
+  sendResourceSegmentWebCrypto: NonNullable<
+    PrnsRuntimeBinding["sendResourceSegmentWebCrypto"]
+  >;
+  completeResourceSegmentSeal: NonNullable<
+    PrnsRuntimeBinding["completeResourceSegmentSeal"]
+  >;
+  retryResourceSegmentSeal: NonNullable<
+    PrnsRuntimeBinding["retryResourceSegmentSeal"]
+  >;
+  enableResourceWebCrypto: NonNullable<
+    PrnsRuntimeBinding["enableResourceWebCrypto"]
+  >;
+  takeResourceOpenJob: NonNullable<
+    PrnsRuntimeBinding["takeResourceOpenJob"]
+  >;
+  completeResourceOpen: NonNullable<
+    PrnsRuntimeBinding["completeResourceOpen"]
+  >;
+  rejectResourceOpen: NonNullable<
+    PrnsRuntimeBinding["rejectResourceOpen"]
+  >;
+  retryResourceOpen: NonNullable<
+    PrnsRuntimeBinding["retryResourceOpen"]
+  >;
   setLinkResourceStrategy: PrnsRuntimeBinding["setLinkResourceStrategy"];
   setDestinationResourceStrategy: PrnsRuntimeBinding["setDestinationResourceStrategy"];
   sendChannelMessage: PrnsRuntimeBinding["sendChannelMessage"];

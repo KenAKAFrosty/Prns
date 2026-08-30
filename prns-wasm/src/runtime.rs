@@ -22,6 +22,7 @@ use personal_rns::routing::links::resources::{
     ResourceBody, ResourceCorrelation, ResourceMetadata, ResourceSend, ResourceSendPlan,
     ResourceSendPlanError, ResourceStrategy, MAX_EFFICIENT_SIZE,
 };
+use personal_rns::routing::links::resources::streamed_open::ResourceOpenLane;
 use personal_rns::routing::links::LinkId;
 use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use personal_rns::routing::routes::NextHop;
@@ -657,6 +658,260 @@ impl PrnsRuntime {
         );
         self.apply_captured(reactions);
         Ok(id.0)
+    }
+
+    #[wasm_bindgen(js_name = sendResourceSegmentWebCrypto)]
+    pub fn send_resource_segment_web_crypto(
+        &mut self,
+        options: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let data = required_bytes(&options, "payload")?;
+        let compressed_candidate = optional_bytes(&options, "compressedCandidate")?;
+        let metadata_kind = required_string(&options, "metadata")?;
+        let packed_metadata = optional_bytes(&options, "packedMetadata")?;
+        let packed_metadata_bytes = optional_u32(&options, "packedMetadataBytes")?;
+        let (metadata, metadata_len) = match (
+            metadata_kind.as_str(),
+            &packed_metadata,
+            packed_metadata_bytes,
+        ) {
+            ("none", None, None) => (ResourceMetadata::None, None),
+            ("packed", Some(packed), None) => {
+                (ResourceMetadata::Packed(packed), Some(packed.len() as u64))
+            }
+            ("sentInFirstSegment", None, Some(packed_len)) => (
+                ResourceMetadata::SentInFirstSegment { packed_len },
+                Some(u64::from(packed_len)),
+            ),
+            _ => {
+                return Err(JsValue::from_str(
+                    "resource segment metadata fields are inconsistent",
+                ));
+            }
+        };
+        let total_data_bytes = required_u64(&options, "totalDataBytes")?;
+        let segment_index = required_u64(&options, "segmentIndex")?;
+        let plan = ResourceSendPlan::new(total_data_bytes, metadata_len, MAX_EFFICIENT_SIZE as u64)
+            .map_err(|error| {
+                JsValue::from_str(&format!("resource send plan rejected: {error:?}"))
+            })?;
+        let segment = plan
+            .segment(segment_index)
+            .ok_or_else(|| JsValue::from_str("resource segment index is outside the send plan"))?;
+        let expected_data_bytes = segment.data_end.saturating_sub(segment.data_start);
+        if data.len() as u64 != expected_data_bytes {
+            return Err(JsValue::from_str(
+                "resource segment payload does not match the send plan",
+            ));
+        }
+        let (now_ms, entropy) = self.command_context(&options)?;
+        let id = self.mint_command_id();
+        let mut entropy = EntropyCursor::new(entropy);
+        let mut reactions = Vec::new();
+        self.engine.ingest_send_resource_segment_external_into(
+            &ResourceSend {
+                id,
+                link_id,
+                body: ResourceBody {
+                    data: &data,
+                    compressed_candidate: compressed_candidate.as_deref(),
+                    metadata,
+                },
+                correlation: ResourceCorrelation::Unsolicited,
+            },
+            segment.segment,
+            InstantMillis(now_ms),
+            &mut |out| entropy.fill(out),
+            &mut |reaction| reactions.push(capture_reaction(reaction)),
+        );
+        self.apply_captured(reactions);
+        let Some(view) = self.engine.staged_seal_job_view(&link_id) else {
+            let outcome = Object::new();
+            let data = Object::new();
+            set_str(&outcome, "tag", "Inline");
+            set_bigint(&data, "commandId", id.0);
+            set_value(&outcome, "data", data.into());
+            return Ok(outcome.into());
+        };
+        let nonce_prefixed_bytes = view.nonce_prefixed_bytes;
+        let plaintext = &view.plaintext[16..16 + nonce_prefixed_bytes];
+        let stream_nonce: [u8; 4] = plaintext[..4]
+            .try_into()
+            .map_err(|_| JsValue::from_str("staged resource nonce is unavailable"))?;
+        let signing_key = *view.signing_key_material();
+        let encryption_key = *view.encryption_key_material();
+        let mut seal_iv = [0u8; 16];
+        entropy.fill(&mut seal_iv);
+        let mut salts = [[0u8; 4];
+            personal_rns::routing::links::resources::build_outgoing::SALT_REROLL_CAP];
+        for salt in &mut salts {
+            entropy.fill(salt);
+        }
+        let mut promotion_entropy = [0u8; 16];
+        entropy.fill(&mut promotion_entropy);
+        let flat_salts = salts.as_flattened();
+        let outcome = Object::new();
+        let job = Object::new();
+        set_str(&outcome, "tag", "Seal");
+        set_bigint(&job, "commandId", id.0);
+        set_bytes(&job, "linkId", link_id.as_bytes());
+        set_bytes(&job, "streamNonce", &stream_nonce);
+        set_usize(&job, "noncePrefixedBytes", nonce_prefixed_bytes);
+        set_bytes(&job, "plaintext", plaintext);
+        set_bytes(&job, "signingKey", &signing_key);
+        set_bytes(&job, "encryptionKey", &encryption_key);
+        set_bytes(&job, "sealIv", &seal_iv);
+        set_bytes(&job, "salts", flat_salts);
+        set_bytes(&job, "promotionEntropy", &promotion_entropy);
+        set_value(&outcome, "data", job.into());
+        self.engine.mark_staged_sealing(&link_id);
+        Ok(outcome.into())
+    }
+
+    #[wasm_bindgen(js_name = completeResourceSegmentSeal)]
+    pub fn complete_resource_segment_seal(&mut self, options: JsValue) -> Result<(), JsValue> {
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let stream_nonce: [u8; 4] = required_bytes(&options, "streamNonce")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("streamNonce must be exactly 4 bytes"))?;
+        let nonce_prefixed_bytes = usize::try_from(required_u64(
+            &options,
+            "noncePrefixedBytes",
+        )?)
+        .map_err(|_| JsValue::from_str("noncePrefixedBytes is too large"))?;
+        let sealed = required_bytes(&options, "sealed")?;
+        let flat_salts = required_bytes(&options, "salts")?;
+        let salts: [[u8; 4];
+            personal_rns::routing::links::resources::build_outgoing::SALT_REROLL_CAP] = flat_salts
+            .as_slice()
+            .as_chunks::<4>()
+            .0
+            .try_into()
+            .map_err(|_| JsValue::from_str("salts must contain exactly eight 4-byte values"))?;
+        let now_ms = required_u64(&options, "nowMs")?;
+        let promotion_entropy: [u8; 16] = required_bytes(&options, "promotionEntropy")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("promotionEntropy must be exactly 16 bytes"))?;
+        let mut entropy = EntropyCursor::new(promotion_entropy.to_vec());
+        let mut reactions = Vec::new();
+        self.engine.apply_external_staged_seal(
+            link_id,
+            stream_nonce,
+            nonce_prefixed_bytes,
+            &sealed,
+            salts,
+            &mut |reaction| reactions.push(capture_reaction(reaction)),
+        );
+        self.engine.promote_staged_resource(
+            &link_id,
+            InstantMillis(now_ms),
+            &mut |out| entropy.fill(out),
+            &mut |reaction| reactions.push(capture_reaction(reaction)),
+        );
+        self.apply_captured(reactions);
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = retryResourceSegmentSeal)]
+    pub fn retry_resource_segment_seal(&mut self, options: JsValue) -> Result<(), JsValue> {
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let (now_ms, entropy) = self.command_context(&options)?;
+        let mut entropy = EntropyCursor::new(entropy);
+        let mut reactions = Vec::new();
+        self.engine.requeue_staged_seal(&link_id);
+        self.engine.seal_staged_continuation(
+            &link_id,
+            &mut |out| entropy.fill(out),
+            &mut |reaction| reactions.push(capture_reaction(reaction)),
+        );
+        self.engine.promote_staged_resource(
+            &link_id,
+            InstantMillis(now_ms),
+            &mut |out| entropy.fill(out),
+            &mut |reaction| reactions.push(capture_reaction(reaction)),
+        );
+        self.apply_captured(reactions);
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = enableResourceWebCrypto)]
+    pub fn enable_resource_web_crypto(&mut self) {
+        self.engine.resource_open_lane = ResourceOpenLane::ExternalWhole;
+    }
+
+    #[wasm_bindgen(js_name = takeResourceOpenJob)]
+    pub fn take_resource_open_job(&mut self) -> JsValue {
+        let Some(view) = self.engine.external_open_job_view() else {
+            return JsValue::UNDEFINED;
+        };
+        let link_id = view.link_id;
+        let hash = view.hash;
+        let signing_key = *view.signing_key_material();
+        let encryption_key = *view.encryption_key_material();
+        let sealed = view.sealed.to_vec();
+        self.engine.mark_external_opening(&link_id, &hash);
+        let job = Object::new();
+        set_bytes(&job, "linkId", link_id.as_bytes());
+        set_bytes(&job, "hash", hash.as_bytes());
+        set_bytes(&job, "signingKey", &signing_key);
+        set_bytes(&job, "encryptionKey", &encryption_key);
+        set_bytes(&job, "sealed", &sealed);
+        job.into()
+    }
+
+    #[wasm_bindgen(js_name = completeResourceOpen)]
+    pub fn complete_resource_open(&mut self, options: JsValue) -> Result<(), JsValue> {
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let hash: [u8; 32] = required_bytes(&options, "hash")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("hash must be exactly 32 bytes"))?;
+        let plaintext = required_bytes(&options, "plaintext")?;
+        let now_ms = required_u64(&options, "nowMs")?;
+        let mut reactions = Vec::new();
+        self.engine.apply_external_open(
+            &link_id,
+            &personal_rns::routing::links::resources::ResourceHash::new(hash),
+            &plaintext,
+            InstantMillis(now_ms),
+            &mut |reaction| reactions.push(capture_reaction(reaction)),
+        );
+        self.apply_captured(reactions);
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = rejectResourceOpen)]
+    pub fn reject_resource_open(&mut self, options: JsValue) -> Result<(), JsValue> {
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let hash: [u8; 32] = required_bytes(&options, "hash")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("hash must be exactly 32 bytes"))?;
+        let mut reactions = Vec::new();
+        self.engine.reject_external_open(
+            &link_id,
+            &personal_rns::routing::links::resources::ResourceHash::new(hash),
+            &mut |reaction| reactions.push(capture_reaction(reaction)),
+        );
+        self.apply_captured(reactions);
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = retryResourceOpen)]
+    pub fn retry_resource_open(&mut self, options: JsValue) -> Result<(), JsValue> {
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let hash: [u8; 32] = required_bytes(&options, "hash")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("hash must be exactly 32 bytes"))?;
+        let now_ms = required_u64(&options, "nowMs")?;
+        let mut reactions = Vec::new();
+        self.engine.retry_external_open_inline(
+            &link_id,
+            &personal_rns::routing::links::resources::ResourceHash::new(hash),
+            InstantMillis(now_ms),
+            &mut |reaction| reactions.push(capture_reaction(reaction)),
+        );
+        self.apply_captured(reactions);
+        Ok(())
     }
 
     #[wasm_bindgen(js_name = setLinkResourceStrategy)]

@@ -31,7 +31,157 @@ pub struct OffloadedOpenSpan<'a> {
     pub bytes: &'a [u8],
 }
 
+pub struct ExternalOpenJobView<'a> {
+    pub link_id: LinkId,
+    pub hash: ResourceHash,
+    pub key: &'a crate::routing::links::LinkKey,
+    pub sealed: &'a [u8],
+}
+
+impl ExternalOpenJobView<'_> {
+    pub fn signing_key_material(&self) -> &[u8; 32] {
+        self.key.token_material_halves().0
+    }
+
+    pub fn encryption_key_material(&self) -> &[u8; 32] {
+        self.key.token_material_halves().1
+    }
+}
+
 impl<S: StorageLayout> EngineState<S> {
+    pub fn external_open_job_view(&self) -> Option<ExternalOpenJobView<'_>> {
+        (0..self.incoming_resources.len()).find_map(|index| {
+            let state = self.incoming_resources.state(index);
+            if state.status != IncomingResourceStatus::AwaitingOpen {
+                return None;
+            }
+            let (_, slot) = self.incoming_resources.transfer_and_streamed_open(index);
+            if !matches!(slot, OpenProgress::NotBegun) {
+                return None;
+            }
+            let link_id = *self.incoming_resources.link_at(index);
+            let crate::routing::links::table::LinkPhase::Active { key, .. } =
+                self.links.phase_for(&link_id)?
+            else {
+                return None;
+            };
+            Some(ExternalOpenJobView {
+                link_id,
+                hash: *self.incoming_resources.hash_at(index),
+                key,
+                sealed: self.incoming_resources.sealed_transfer(index),
+            })
+        })
+    }
+
+    pub fn mark_external_opening(&mut self, link_id: &LinkId, hash: &ResourceHash) {
+        let Some(index) = self.incoming_resources.lookup(link_id, hash) else {
+            return;
+        };
+        if self.incoming_resources.state(index).status != IncomingResourceStatus::AwaitingOpen {
+            return;
+        }
+        let sealed_len = self.incoming_resources.state(index).sealed_transfer_bytes;
+        let (_, slot) = self
+            .incoming_resources
+            .transfer_and_streamed_open_mut(index);
+        if matches!(slot, OpenProgress::NotBegun) {
+            *slot = OpenProgress::Chewing {
+                dispatched: 0..sealed_len,
+            };
+        }
+    }
+
+    pub fn apply_external_open(
+        &mut self,
+        link_id: &LinkId,
+        hash: &ResourceHash,
+        plaintext: &[u8],
+        now: InstantMillis,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        let Some(index) = self.external_opening_index(link_id, hash) else {
+            return;
+        };
+        let sealed_len = self.incoming_resources.state(index).sealed_transfer_bytes;
+        if plaintext.len() < crate::routing::links::resources::RESOURCE_NONCE_LEN
+            || plaintext.len() > sealed_len
+        {
+            self.fail_incoming_resource(
+                link_id,
+                hash,
+                crate::routing::links::resources::ResourceFailureCause::TransferUnopenable,
+                sink,
+            );
+            return;
+        }
+        {
+            let (transfer, slot) = self
+                .incoming_resources
+                .transfer_and_streamed_open_mut(index);
+            transfer[..plaintext.len()].copy_from_slice(plaintext);
+            *slot = OpenProgress::ExternallyOpened {
+                plaintext_byte_len: plaintext.len(),
+            };
+        }
+        self.conclude_resource(link_id, hash, now, sink);
+    }
+
+    pub fn reject_external_open(
+        &mut self,
+        link_id: &LinkId,
+        hash: &ResourceHash,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        if self.external_opening_index(link_id, hash).is_none() {
+            return;
+        }
+        self.fail_incoming_resource(
+            link_id,
+            hash,
+            crate::routing::links::resources::ResourceFailureCause::TransferUnopenable,
+            sink,
+        );
+    }
+
+    pub fn retry_external_open_inline(
+        &mut self,
+        link_id: &LinkId,
+        hash: &ResourceHash,
+        now: InstantMillis,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        let Some(index) = self.external_opening_index(link_id, hash) else {
+            return;
+        };
+        let (_, slot) = self
+            .incoming_resources
+            .transfer_and_streamed_open_mut(index);
+        *slot = OpenProgress::NotBegun;
+        self.incoming_resources.state_mut(index).status = IncomingResourceStatus::Transferring;
+        let lane = core::mem::replace(
+            &mut self.resource_open_lane,
+            crate::routing::links::resources::streamed_open::ResourceOpenLane::Inline,
+        );
+        self.conclude_resource(link_id, hash, now, sink);
+        self.resource_open_lane = lane;
+    }
+
+    fn external_opening_index(&self, link_id: &LinkId, hash: &ResourceHash) -> Option<usize> {
+        let index = self.incoming_resources.lookup(link_id, hash)?;
+        let state = self.incoming_resources.state(index);
+        if state.status != IncomingResourceStatus::AwaitingOpen {
+            return None;
+        }
+        let (_, slot) = self.incoming_resources.transfer_and_streamed_open(index);
+        matches!(
+            slot,
+            OpenProgress::Chewing { dispatched }
+                if *dispatched == (0..state.sealed_transfer_bytes)
+        )
+        .then_some(index)
+    }
+
     /// The next incoming row whose parked open trails its frontier — one chew is dispatchable
     /// per row at a time (the spans chain through the state), and a row already `Chewing`
     /// waits for its verdict.
@@ -197,6 +347,114 @@ mod tests {
 
     fn decoy_payload() -> std::vec::Vec<u8> {
         b"a second live open keeps the pool lane contended! ".repeat(31)
+    }
+
+    fn park_external_transfer(
+        sender: &mut EngineState<crate::engine::test_support::TestStorageLayout>,
+        receiver: &mut EngineState<crate::engine::test_support::TestStorageLayout>,
+        data: &[u8],
+    ) -> (LinkId, ResourceHash) {
+        receiver.resource_open_lane = ResourceOpenLane::ExternalWhole;
+        accept_everything(receiver);
+        let advertisement = advertise(sender, data, 1_500);
+        let pull = feed(receiver, &advertisement, 2_000);
+        let serve = feed(sender, &pull.frames[0].1, 2_100);
+        for (arrived, (_, part)) in serve.frames.iter().enumerate() {
+            let capture = feed(receiver, part, 2_200 + arrived as u64);
+            assert!(capture.received.is_empty());
+        }
+        let job = receiver.external_open_job_view().unwrap();
+        (job.link_id, job.hash)
+    }
+
+    #[test]
+    fn an_external_whole_open_delivers_and_proves() {
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        let data = four_part_payload();
+        let (link_id, hash) = park_external_transfer(&mut sender, &mut receiver, &data);
+        let mut sealed = receiver.external_open_job_view().unwrap().sealed.to_vec();
+        let plaintext = link_key().open_in_place(&mut sealed).unwrap().to_vec();
+        receiver.mark_external_opening(&link_id, &hash);
+
+        let mut frames = std::vec::Vec::new();
+        let mut received = std::vec::Vec::new();
+        receiver.apply_external_open(
+            &link_id,
+            &hash,
+            &plaintext,
+            InstantMillis(2_500),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                    if let Some(frame) = filled_frame(fill) {
+                        frames.push(frame);
+                    }
+                }
+                EngineReaction::Journaled(Journaled::ResourceReceived { data, .. }) => {
+                    received.push(data.to_vec());
+                }
+                _ => {}
+            },
+        );
+
+        assert_eq!(received, [data]);
+        assert_eq!(frames.len(), 1);
+        assert!(receiver.incoming_resources.is_empty());
+        let settled = feed(&mut sender, &frames[0], 3_000);
+        assert!(matches!(
+            settled.settlements[0],
+            (CommandId(7), Settlement::SendResource(Ok(()))),
+        ));
+    }
+
+    #[test]
+    fn an_external_open_refusal_only_fails_the_marked_job() {
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        let data = four_part_payload();
+        let (link_id, hash) = park_external_transfer(&mut sender, &mut receiver, &data);
+        let mut failed = std::vec::Vec::new();
+
+        receiver.reject_external_open(&link_id, &hash, &mut |_| {
+            panic!("an unmarked row ignores a stale refusal")
+        });
+        assert!(receiver.external_open_job_view().is_some());
+        receiver.mark_external_opening(&link_id, &hash);
+        receiver.reject_external_open(&link_id, &hash, &mut |reaction| {
+            if let EngineReaction::Journaled(Journaled::ResourceFailed { cause, .. }) = reaction {
+                failed.push(cause);
+            }
+        });
+
+        assert_eq!(failed, [ResourceFailureCause::TransferUnopenable]);
+        assert!(receiver.incoming_resources.is_empty());
+    }
+
+    #[test]
+    fn an_external_open_runtime_failure_retries_the_same_row_inline() {
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        let data = four_part_payload();
+        let (link_id, hash) = park_external_transfer(&mut sender, &mut receiver, &data);
+        receiver.mark_external_opening(&link_id, &hash);
+
+        let mut received = std::vec::Vec::new();
+        receiver.retry_external_open_inline(
+            &link_id,
+            &hash,
+            InstantMillis(2_500),
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::ResourceReceived { data, .. }) =
+                    reaction
+                {
+                    received.push(data.to_vec());
+                }
+            },
+        );
+
+        assert_eq!(received, [data]);
+        assert!(receiver.incoming_resources.is_empty());
+        assert_eq!(receiver.resource_open_lane, ResourceOpenLane::ExternalWhole);
     }
 
     /// Stand up the contention [`ResourceOpenLane::PoolWhenContended`] gates on: a second

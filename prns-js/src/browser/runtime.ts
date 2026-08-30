@@ -1,5 +1,5 @@
-import { Tag } from "../casework.js";
-import { interfaceId } from "../contract.js";
+import { Tag, match } from "../casework.js";
+import { interfaceId, linkId } from "../contract.js";
 import type {
   InterfaceId,
   InterfaceKind,
@@ -38,6 +38,14 @@ import type {
   PacketFrame,
 } from "./values.js";
 import type { WebSocketRuntimeRegistration } from "./websocket/index.js";
+import {
+  WebCryptoResourceOpener,
+  parseResourceOpenJob,
+} from "./resource_crypto.js";
+import type {
+  ResourceCryptoExecution,
+  ResourceOpenJob,
+} from "./resource_crypto.js";
 import type {
   BleIdentityAvailability,
   BluetoothReassemblerBinding,
@@ -100,6 +108,7 @@ export class RuntimeHost {
   readonly #now: () => InstantMillis;
   readonly #bleIdentityAvailability: BleIdentityAvailability;
   readonly #onRuntimeActivity: () => void;
+  readonly #resourceOpener = new WebCryptoResourceOpener();
   #activeInterfaces = new Map<
     InterfaceKey,
     {
@@ -123,6 +132,7 @@ export class RuntimeHost {
     entropy: EntropySource,
     now: () => InstantMillis,
     bleIdentityAvailability: BleIdentityAvailability,
+    resourceCrypto: ResourceCryptoExecution,
     onRuntimeActivity: () => void,
   ) {
     this.#wasm = wasm;
@@ -131,6 +141,12 @@ export class RuntimeHost {
     this.#now = now;
     this.#bleIdentityAvailability = bleIdentityAvailability;
     this.#onRuntimeActivity = onRuntimeActivity;
+    if (
+      resourceCrypto.tag === "WebCrypto" &&
+      this.#runtime.enableResourceWebCrypto !== undefined
+    ) {
+      this.#runtime.enableResourceWebCrypto();
+    }
   }
 
   runtimeReadiness(): RuntimeReadyOutcome {
@@ -264,11 +280,56 @@ export class RuntimeHost {
       if (active !== undefined) {
         active.rxBytes = saturatingAdd(active.rxBytes, bytes.length);
       }
+      this.#drainResourceOpenJobs();
       this.notifyRuntimeActivity();
       return Tag("Accepted");
     } catch (error) {
       return runtimeRejected("ingest", error);
     }
+  }
+
+  #drainResourceOpenJobs(): void {
+    if (
+      this.#runtime.takeResourceOpenJob === undefined ||
+      this.#runtime.completeResourceOpen === undefined ||
+      this.#runtime.rejectResourceOpen === undefined ||
+      this.#runtime.retryResourceOpen === undefined
+    ) {
+      return;
+    }
+    while (true) {
+      const job = parseResourceOpenJob(this.#runtime.takeResourceOpenJob());
+      if (job === undefined) {
+        return;
+      }
+      void this.#settleResourceOpen(job);
+    }
+  }
+
+  async #settleResourceOpen(job: ResourceOpenJob): Promise<void> {
+    try {
+      const outcome = await this.#resourceOpener.open(job);
+      match(outcome, {
+        Opened: (plaintext) => this.#runtime.completeResourceOpen!({
+          linkId: linkId(job.linkId),
+          hash: job.hash,
+          plaintext,
+          nowMs: this.#now(),
+        }),
+        Refused: () => this.#runtime.rejectResourceOpen!({
+          linkId: linkId(job.linkId),
+          hash: job.hash,
+        }),
+      });
+    } catch {
+      this.#runtime.retryResourceOpen!({
+        linkId: linkId(job.linkId),
+        hash: job.hash,
+        nowMs: this.#now(),
+      });
+    }
+    this.notifyRuntimeActivity();
+    this.#drainResourceOpenJobs();
   }
 
   drainOutbound(): RuntimeOutboundDrainOutcome {

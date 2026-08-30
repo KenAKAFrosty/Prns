@@ -154,6 +154,38 @@ export type PrnsRuntimeBinding = {
   respond(options: RuntimeRespondOptions): bigint;
   resourceSegmentPlan(options: RuntimeResourcePlanInput): unknown;
   sendResourceSegment(options: RuntimeResourceSegmentInput): bigint;
+  sendResourceSegmentWebCrypto?(options: RuntimeResourceSegmentInput): unknown;
+  completeResourceSegmentSeal?(options: {
+    readonly linkId: LinkId;
+    readonly streamNonce: Uint8Array;
+    readonly noncePrefixedBytes: number;
+    readonly sealed: Uint8Array;
+    readonly salts: Uint8Array;
+    readonly promotionEntropy: Uint8Array;
+    readonly nowMs: InstantMillis;
+  }): void;
+  retryResourceSegmentSeal?(options: {
+    readonly linkId: LinkId;
+    readonly nowMs: InstantMillis;
+    readonly entropy: EntropyBytes;
+  }): void;
+  enableResourceWebCrypto?(): void;
+  takeResourceOpenJob?(): unknown | undefined;
+  completeResourceOpen?(options: {
+    readonly linkId: LinkId;
+    readonly hash: Uint8Array;
+    readonly plaintext: Uint8Array;
+    readonly nowMs: InstantMillis;
+  }): void;
+  rejectResourceOpen?(options: {
+    readonly linkId: LinkId;
+    readonly hash: Uint8Array;
+  }): void;
+  retryResourceOpen?(options: {
+    readonly linkId: LinkId;
+    readonly hash: Uint8Array;
+    readonly nowMs: InstantMillis;
+  }): void;
   setLinkResourceStrategy(
     options: RuntimeLinkResourceStrategyOptions,
   ): bigint;

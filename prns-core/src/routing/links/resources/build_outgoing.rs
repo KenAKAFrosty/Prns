@@ -77,27 +77,41 @@ pub struct SealedStagedResource {
 pub fn seal_staged_resource(
     key: &LinkKey,
     seal_iv: &[u8; 16],
-    mut fresh_salt: impl FnMut() -> [u8; RESOURCE_NONCE_LEN],
+    fresh_salt: impl FnMut() -> [u8; RESOURCE_NONCE_LEN],
     sdu: usize,
     nonce_prefixed_bytes: usize,
     regions: BuildRegions<'_>,
 ) -> Result<SealedStagedResource, BuildOutgoingResourceError> {
     let BuildRegions { transfer, hashmap } = regions;
-    if sdu == 0 {
-        return Err(BuildOutgoingResourceError::SduTooSmall);
-    }
     let stream_end = 16 + nonce_prefixed_bytes;
     let digest_prefix = Sha256PrefixState::absorb(&[&transfer[STAGED_STREAM_OFFSET..stream_end]]);
     let sealed_transfer_bytes = key
         .seal_in_place(seal_iv, transfer, nonce_prefixed_bytes)
         .map_err(BuildOutgoingResourceError::Seal)?;
-    let part_count = sealed_transfer_bytes.div_ceil(sdu);
+    finish_staged_resource(
+        digest_prefix,
+        &transfer[..sealed_transfer_bytes],
+        fresh_salt,
+        sdu,
+        hashmap,
+    )
+}
+
+pub(crate) fn finish_staged_resource(
+    digest_prefix: Sha256PrefixState,
+    sealed: &[u8],
+    mut fresh_salt: impl FnMut() -> [u8; RESOURCE_NONCE_LEN],
+    sdu: usize,
+    hashmap: &mut [u8],
+) -> Result<SealedStagedResource, BuildOutgoingResourceError> {
+    if sdu == 0 {
+        return Err(BuildOutgoingResourceError::SduTooSmall);
+    }
+    let part_count = sealed.len().div_ceil(sdu);
     let hashmap_len = part_count * MAP_HASH_LEN;
     if hashmap.len() < hashmap_len {
         return Err(BuildOutgoingResourceError::HashmapBufferTooShort);
     }
-
-    let sealed = &transfer[..sealed_transfer_bytes];
     for _ in 0..SALT_REROLL_CAP {
         let salt_nonce = SaltNonce::new(fresh_salt());
         if matches!(
@@ -108,7 +122,7 @@ pub fn seal_staged_resource(
         }
         let digests = digest_prefix.digests_with_suffix(salt_nonce.as_bytes());
         return Ok(SealedStagedResource {
-            sealed_transfer_bytes,
+            sealed_transfer_bytes: sealed.len(),
             part_count,
             hash: ResourceHash::new(digests.with_suffix),
             salt_nonce,

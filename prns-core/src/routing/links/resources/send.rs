@@ -1,5 +1,6 @@
 //! RNS 1.4.2 `Resource(data, link)` plus `Resource.advertise`.
 
+use crate::crypto::Sha256PrefixState;
 use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis, Journaled};
 use crate::engine::{RespondFailure, SendResourceFailure, SendResourceRejection, Settlement};
 use crate::interfaces::InterfaceId;
@@ -20,8 +21,9 @@ use crate::routing::links::resources::advertisement::{
 };
 use crate::routing::links::resources::assembly::StaticResponseContinuation;
 use crate::routing::links::resources::build_outgoing::{
-    build_outgoing_resource_enveloped, outgoing_resource_buffer_shape, seal_staged_resource,
-    winning_candidate, BuildOutgoingResourceError, SealedStagedResource, STAGED_STREAM_OFFSET,
+    build_outgoing_resource_enveloped, finish_staged_resource, outgoing_resource_buffer_shape,
+    seal_staged_resource, winning_candidate, BuildOutgoingResourceError, SealedStagedResource,
+    SALT_REROLL_CAP, STAGED_STREAM_OFFSET,
 };
 use crate::routing::links::resources::control::{
     parse_cancel_plaintext, parse_part_request_plaintext, parse_proof_plaintext,
@@ -34,8 +36,9 @@ use crate::routing::links::resources::table::{
 use crate::routing::links::resources::{
     resource_sdu, ResourceBody, ResourceCorrelation, ResourceHash, ResourceMetadata,
     ResourcePartRequest, ResourceSegment, ResourceSend, HASHMAP_MAX_LEN, MAP_HASH_LEN,
-    MAX_ADVERTISEMENT_RETRIES, PART_REQUEST_MAX_RETRIES, PER_RETRY_DELAY_MS, PROCESSING_GRACE_MS,
-    PROOF_TIMEOUT_FACTOR, RESOURCE_HASH_LEN, RESOURCE_NONCE_LEN, SENDER_GRACE_MS,
+    MAX_ADVERTISEMENT_RETRIES, METADATA_PREFIX_LEN, PART_REQUEST_MAX_RETRIES, PER_RETRY_DELAY_MS,
+    PROCESSING_GRACE_MS, PROOF_TIMEOUT_FACTOR, RESOURCE_HASH_LEN, RESOURCE_NONCE_LEN,
+    SENDER_GRACE_MS,
 };
 use crate::routing::links::table::{ActiveLinkLookup, LinkPhase};
 use crate::routing::links::LinkId;
@@ -67,10 +70,26 @@ pub struct StagedSealJobView<'a> {
     pub plaintext: &'a [u8],
 }
 
+impl StagedSealJobView<'_> {
+    pub fn signing_key_material(&self) -> &[u8; 32] {
+        self.key.token_material_halves().0
+    }
+
+    pub fn encryption_key_material(&self) -> &[u8; 32] {
+        self.key.token_material_halves().1
+    }
+}
+
 /// How a landed segment is addressed for its post-landing patch: a built row by its hash, but a raw row only by index because its hash column is still the placeholder.
 enum RowLanding {
     Built(ResourceHash),
     Raw(usize),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ResourceSealLane {
+    Inline,
+    External,
 }
 
 pub(crate) enum ResourceProofClassification {
@@ -245,6 +264,7 @@ impl<S: StorageLayout> EngineState<S> {
                 total_data_bytes,
             },
             &envelope[..envelope_len],
+            ResourceSealLane::Inline,
             now,
             fill_entropy,
             sink,
@@ -356,7 +376,37 @@ impl<S: StorageLayout> EngineState<S> {
     where
         F: FnMut(&mut [u8]),
     {
-        self.ingest_send_resource_segment_enveloped(send, segment, &[], now, fill_entropy, sink)
+        self.ingest_send_resource_segment_enveloped(
+            send,
+            segment,
+            &[],
+            ResourceSealLane::Inline,
+            now,
+            fill_entropy,
+            sink,
+        )
+    }
+
+    pub fn ingest_send_resource_segment_external_into<F>(
+        &mut self,
+        send: &ResourceSend<'_>,
+        segment: ResourceSegment,
+        now: InstantMillis,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> crate::engine::WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+    {
+        self.ingest_send_resource_segment_enveloped(
+            send,
+            segment,
+            &[],
+            ResourceSealLane::External,
+            now,
+            fill_entropy,
+            sink,
+        )
     }
 
     fn ingest_send_resource_segment_enveloped<F>(
@@ -364,6 +414,7 @@ impl<S: StorageLayout> EngineState<S> {
         send: &ResourceSend<'_>,
         segment: ResourceSegment,
         envelope: &[u8],
+        seal_lane: ResourceSealLane,
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -472,8 +523,13 @@ impl<S: StorageLayout> EngineState<S> {
             correlation,
             segment,
         };
-        let raw_stages = lane == TrackLane::Staged
-            && winning_candidate(body.compressed_candidate, envelope.len() + data.len()).is_none();
+        let staged_metadata_bytes = match body.metadata {
+            ResourceMetadata::Packed(packed) => METADATA_PREFIX_LEN + packed.len(),
+            ResourceMetadata::None | ResourceMetadata::SentInFirstSegment { .. } => 0,
+        };
+        let staged_stream_bytes = staged_metadata_bytes + envelope.len() + data.len();
+        let raw_stages = (lane == TrackLane::Staged || seal_lane == ResourceSealLane::External)
+            && winning_candidate(body.compressed_candidate, staged_stream_bytes).is_none();
         let tracked = if raw_stages {
             let mut stream_nonce = [0u8; RESOURCE_NONCE_LEN];
             fill_entropy(&mut stream_nonce);
@@ -481,11 +537,22 @@ impl<S: StorageLayout> EngineState<S> {
                 .stage_raw(
                     command,
                     body.metadata.travels(),
-                    envelope.len() + data.len(),
+                    staged_stream_bytes,
                     |transfer| {
                         transfer[16..STAGED_STREAM_OFFSET].copy_from_slice(&stream_nonce);
-                        let stream_start = STAGED_STREAM_OFFSET + envelope.len();
-                        transfer[STAGED_STREAM_OFFSET..stream_start].copy_from_slice(envelope);
+                        let mut stream_start = STAGED_STREAM_OFFSET;
+                        if let ResourceMetadata::Packed(packed) = body.metadata {
+                            let prefix = (packed.len() as u32).to_be_bytes();
+                            transfer[stream_start..stream_start + METADATA_PREFIX_LEN]
+                                .copy_from_slice(&prefix[1..]);
+                            stream_start += METADATA_PREFIX_LEN;
+                            transfer[stream_start..stream_start + packed.len()]
+                                .copy_from_slice(packed);
+                            stream_start += packed.len();
+                        }
+                        transfer[stream_start..stream_start + envelope.len()]
+                            .copy_from_slice(envelope);
+                        stream_start += envelope.len();
                         transfer[stream_start..stream_start + data.len()].copy_from_slice(data);
                     },
                 )
@@ -937,6 +1004,9 @@ impl<S: StorageLayout> EngineState<S> {
         state.expected_proof = sealed.expected_proof;
         state.staged_plaintext_bytes = 0;
         state.status = OutgoingResourceStatus::StagedSealed;
+        if state.segment_index == 1 {
+            state.original_hash = sealed.hash;
+        }
     }
 
     fn fail_staged_seal(
@@ -987,6 +1057,68 @@ impl<S: StorageLayout> EngineState<S> {
         let state = self.outgoing_resources.state_mut(index);
         if state.status == OutgoingResourceStatus::Staged {
             state.status = OutgoingResourceStatus::StagedSealing;
+        }
+    }
+
+    pub fn requeue_staged_seal(&mut self, link_id: &LinkId) {
+        let Some(index) = self.outgoing_resources.staged_index(link_id) else {
+            return;
+        };
+        let state = self.outgoing_resources.state_mut(index);
+        if state.status == OutgoingResourceStatus::StagedSealing {
+            state.status = OutgoingResourceStatus::Staged;
+        }
+    }
+
+    pub fn apply_external_staged_seal(
+        &mut self,
+        link_id: LinkId,
+        stream_nonce: [u8; RESOURCE_NONCE_LEN],
+        nonce_prefixed_bytes: usize,
+        sealed_bytes: &[u8],
+        salts: [[u8; RESOURCE_NONCE_LEN]; SALT_REROLL_CAP],
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        let matching = (0..self.outgoing_resources.len()).find(|&index| {
+            let state = self.outgoing_resources.state(index);
+            self.outgoing_resources.link_at(index) == &link_id
+                && state.status == OutgoingResourceStatus::StagedSealing
+                && state.staged_plaintext_bytes == nonce_prefixed_bytes
+                && self.outgoing_resources.staged_plaintext(index)[16..16 + RESOURCE_NONCE_LEN]
+                    == stream_nonce
+        });
+        let Some(index) = matching else {
+            return;
+        };
+        let stream_end = 16 + nonce_prefixed_bytes;
+        let digest_prefix = Sha256PrefixState::absorb(&[&self
+            .outgoing_resources
+            .staged_plaintext(index)[STAGED_STREAM_OFFSET..stream_end]]);
+        let sdu = self.outgoing_resources.state(index).sdu;
+        let mut fresh_salts = salts.iter().copied();
+        let outcome = {
+            let regions = self.outgoing_resources.seal_regions_mut(index);
+            if regions.transfer.len() < sealed_bytes.len() {
+                Err(BuildOutgoingResourceError::Seal(
+                    crate::crypto::BufferTooShort,
+                ))
+            } else {
+                let outcome = finish_staged_resource(
+                    digest_prefix,
+                    sealed_bytes,
+                    || fresh_salts.next().unwrap_or_default(),
+                    sdu,
+                    regions.hashmap,
+                );
+                if outcome.is_ok() {
+                    regions.transfer[..sealed_bytes.len()].copy_from_slice(sealed_bytes);
+                }
+                outcome
+            }
+        };
+        match outcome {
+            Ok(sealed) => self.record_staged_seal(index, &sealed),
+            Err(error) => self.fail_staged_seal(index, &link_id, error, sink),
         }
     }
 
@@ -1068,6 +1200,13 @@ impl<S: StorageLayout> EngineState<S> {
             return;
         }
         let hash = *self.outgoing_resources.hash_at(index);
+        let state = self.outgoing_resources.state(index);
+        if state.segment_index == 1
+            && state.total_segments > 1
+            && self.outgoing_assemblies.original_hash(link_id).is_none()
+        {
+            self.outgoing_assemblies.begin(*link_id, hash);
+        }
         let ActiveLinkLookup::Active(link) = self.links.active_view(link_id) else {
             self.fail_staged_continuation(link_id, sink);
             return;
@@ -1629,6 +1768,46 @@ mod tests {
         capture
     }
 
+    fn send_segment_external_with_metadata<S: StorageLayout>(
+        engine: &mut EngineState<S>,
+        id: u64,
+        data: &[u8],
+        segment: ResourceSegment,
+        metadata: ResourceMetadata<'_>,
+    ) -> SendCapture {
+        let mut capture = SendCapture {
+            frames: std::vec::Vec::new(),
+            settlements: std::vec::Vec::new(),
+        };
+        engine.ingest_send_resource_segment_external_into(
+            &ResourceSend {
+                id: CommandId(id),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data,
+                    compressed_candidate: None,
+                    metadata,
+                },
+                correlation: ResourceCorrelation::Unsolicited,
+            },
+            segment,
+            InstantMillis(1_500),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
+                    if let Some(frame) = filled_frame(fill) {
+                        capture.frames.push((target, frame));
+                    }
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    capture.settlements.push((id, settlement));
+                }
+                _ => {}
+            },
+        );
+        capture
+    }
+
     static CASE1_PLAINTEXT: LazyLock<std::vec::Vec<u8>> =
         LazyLock::new(|| b"reticulum resources ride the link ".repeat(40));
     static MULTI_SEGMENT_STATIC_RESPONSE: [u8; STATIC_RESPONSE_SEGMENT_BYTES * 2 + 31_337] =
@@ -1752,6 +1931,105 @@ mod tests {
             )]
         ));
         assert!(engine.outgoing_resources.is_empty());
+    }
+
+    #[test]
+    fn an_external_seal_preserves_metadata_and_ignores_a_stale_verdict() {
+        let mut engine = sender_with_active_link();
+        let data = b"the browser crypto lane preserves the resource stream";
+        let metadata = [0x82, 0xA1, b'n', 0x01];
+        let initial = send_segment_external_with_metadata(
+            &mut engine,
+            31,
+            data,
+            ResourceSegment {
+                index: 1,
+                total_segments: 1,
+                total_data_bytes: data.len() as u64,
+            },
+            ResourceMetadata::Packed(&metadata),
+        );
+        assert!(initial.frames.is_empty());
+        assert!(initial.settlements.is_empty());
+
+        let (nonce_prefixed_bytes, plaintext) = {
+            let view = engine.staged_seal_job_view(&link_id()).unwrap();
+            (
+                view.nonce_prefixed_bytes,
+                view.plaintext[16..16 + view.nonce_prefixed_bytes].to_vec(),
+            )
+        };
+        let stream_nonce: [u8; RESOURCE_NONCE_LEN] =
+            plaintext[..RESOURCE_NONCE_LEN].try_into().unwrap();
+        let mut sealed = std::vec![
+            0;
+            crate::routing::links::resources::sealed_transfer_bytes(
+                nonce_prefixed_bytes - RESOURCE_NONCE_LEN,
+            )
+        ];
+        let sealed_len = link_key()
+            .seal(&[0xD1; 16], &plaintext, &mut sealed)
+            .unwrap();
+        sealed.truncate(sealed_len);
+        let salts = [[0xD2; RESOURCE_NONCE_LEN]; SALT_REROLL_CAP];
+        engine.mark_staged_sealing(&link_id());
+        engine.apply_external_staged_seal(
+            link_id(),
+            [0xEE; RESOURCE_NONCE_LEN],
+            nonce_prefixed_bytes,
+            &sealed,
+            salts,
+            &mut |_| panic!("a stale seal verdict emits nothing"),
+        );
+        assert_eq!(
+            engine
+                .outgoing_resources
+                .state(engine.outgoing_resources.staged_index(&link_id()).unwrap())
+                .status,
+            OutgoingResourceStatus::StagedSealing,
+        );
+
+        engine.apply_external_staged_seal(
+            link_id(),
+            stream_nonce,
+            nonce_prefixed_bytes,
+            &sealed,
+            salts,
+            &mut |_| {},
+        );
+        let mut advertised = std::vec::Vec::new();
+        engine.promote_staged_resource(
+            &link_id(),
+            InstantMillis(1_600),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA6),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    if let Some(frame) = filled_frame(fill) {
+                        advertised.push(frame);
+                    }
+                }
+            },
+        );
+        assert_eq!(advertised.len(), 1);
+        let (_, payload) = WirePacketHeader::parse(&advertised[0]).unwrap();
+        let mut opened_advertisement = payload.to_vec();
+        let advertisement = ResourceAdvertisement::parse(
+            link_key().open_in_place(&mut opened_advertisement).unwrap(),
+        )
+        .unwrap();
+        let index = engine
+            .outgoing_resources
+            .lookup(&link_id(), &advertisement.hash)
+            .unwrap();
+        let mut opened_transfer = engine.outgoing_resources.sealed_transfer(index).to_vec();
+        let opened = link_key().open_in_place(&mut opened_transfer).unwrap();
+        let mut expected = std::vec::Vec::new();
+        expected.extend_from_slice(&(metadata.len() as u32).to_be_bytes()[1..]);
+        expected.extend_from_slice(&metadata);
+        expected.extend_from_slice(data);
+        assert_eq!(&opened[RESOURCE_NONCE_LEN..], expected);
+        assert_eq!(advertisement.original_hash, advertisement.hash);
+        assert!(advertisement.flags.has_metadata);
     }
 
     #[test]

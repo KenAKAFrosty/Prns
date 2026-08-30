@@ -42,3 +42,93 @@ pub fn compress_resource_candidate(options: JsValue) -> Result<Option<Vec<u8>>, 
         ),
     )
 }
+
+#[wasm_bindgen(js_name = profileTokenSeal)]
+pub fn profile_token_seal(bytes: u32, iterations: u32) -> Result<u32, JsValue> {
+    if bytes == 0 || iterations == 0 {
+        return Err(JsValue::from_str("bytes and iterations must be positive"));
+    }
+    let bytes = bytes as usize;
+    let key_bytes = [0x5a; 64];
+    let key = personal_rns::crypto::TokenKey::from_aes256(&key_bytes);
+    let plaintext = vec![0xa5; bytes];
+    let mut sealed = vec![0; personal_rns::crypto::sealed_len(bytes)];
+    let mut checksum = 0u32;
+    for iteration in 0..iterations {
+        let iv = [iteration as u8; 16];
+        let sealed_len = personal_rns::crypto::token_seal(
+            &key,
+            &iv,
+            &plaintext,
+            &mut sealed,
+        )
+        .map_err(|_| JsValue::from_str("token seal failed"))?;
+        checksum = checksum.wrapping_add(u32::from(sealed[sealed_len - 1]));
+    }
+    Ok(checksum)
+}
+
+#[wasm_bindgen(js_name = profileTokenVector)]
+pub fn profile_token_vector(bytes: u32) -> Result<Vec<u8>, JsValue> {
+    if bytes == 0 {
+        return Err(JsValue::from_str("bytes must be positive"));
+    }
+    let bytes = bytes as usize;
+    let key_bytes = [0x5a; 64];
+    let key = personal_rns::crypto::TokenKey::from_aes256(&key_bytes);
+    let plaintext = vec![0xa5; bytes];
+    let mut sealed = vec![0; personal_rns::crypto::sealed_len(bytes)];
+    let sealed_len = personal_rns::crypto::token_seal(
+        &key,
+        &[0x3c; 16],
+        &plaintext,
+        &mut sealed,
+    )
+    .map_err(|_| JsValue::from_str("token vector seal failed"))?;
+    sealed.truncate(sealed_len);
+    Ok(sealed)
+}
+
+#[wasm_bindgen(js_name = profileTokenOpen)]
+pub fn profile_token_open(bytes: u32, iterations: u32) -> Result<u32, JsValue> {
+    if bytes == 0 || iterations == 0 {
+        return Err(JsValue::from_str("bytes and iterations must be positive"));
+    }
+    let bytes = bytes as usize;
+    let key_bytes = [0x5a; 64];
+    let key = personal_rns::crypto::TokenKey::from_aes256(&key_bytes);
+    let plaintext = vec![0xa5; bytes];
+    let mut sealed = vec![0; personal_rns::crypto::sealed_len(bytes)];
+    let sealed_len = personal_rns::crypto::token_seal(
+        &key,
+        &[0x3c; 16],
+        &plaintext,
+        &mut sealed,
+    )
+    .map_err(|_| JsValue::from_str("token preparation failed"))?;
+    let mut opened = vec![0; sealed_len];
+    let mut checksum = 0u32;
+    for _ in 0..iterations {
+        let opened_len = personal_rns::crypto::token_open(
+            &key,
+            &sealed[..sealed_len],
+            &mut opened,
+        )
+        .map_err(|_| JsValue::from_str("token open failed"))?;
+        checksum = checksum.wrapping_add(u32::from(opened[opened_len - 1]));
+    }
+    Ok(checksum)
+}
+
+#[wasm_bindgen(js_name = profileSha256)]
+pub fn profile_sha256(bytes: u32, iterations: u32) -> Result<u32, JsValue> {
+    if bytes == 0 || iterations == 0 {
+        return Err(JsValue::from_str("bytes and iterations must be positive"));
+    }
+    let payload = vec![0xa5; bytes as usize];
+    let mut checksum = 0u32;
+    for _ in 0..iterations {
+        checksum = checksum.wrapping_add(u32::from(personal_rns::crypto::sha256(&payload)[0]));
+    }
+    Ok(checksum)
+}

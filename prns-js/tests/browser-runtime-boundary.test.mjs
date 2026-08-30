@@ -81,6 +81,7 @@ function runtimeHost(runtime) {
     (length) => Tag("Filled", Uint8Array.from({ length }, () => 0x31)),
     () => 42,
     Tag("Available", new Uint8Array(16)),
+    Tag("PortableWasm"),
     () => undefined,
   );
 }

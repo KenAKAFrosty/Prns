@@ -15,7 +15,9 @@ use crate::routing::links::resources::assemble_incoming::{
 };
 use crate::routing::links::resources::assembly::AssemblyProgress;
 use crate::routing::links::resources::control::{write_proof_plaintext, PROOF_PLAINTEXT_LEN};
-use crate::routing::links::resources::streamed_open::{OpenProgress, OpenedStream};
+use crate::routing::links::resources::streamed_open::{
+    OpenProgress, OpenedStream, ResourceOpenLane,
+};
 use crate::routing::links::resources::table::{IncomingResourceState, IncomingResourceStatus};
 use crate::routing::links::resources::{
     ResourceCompression, ResourceCorrelation, ResourceFailureCause, ResourceHash, ResourceProof,
@@ -61,6 +63,21 @@ impl<S: StorageLayout> EngineState<S> {
             LinkRole::Initiator { .. } => None,
         };
 
+        if self.resource_open_lane == ResourceOpenLane::ExternalWhole
+            && state.status == IncomingResourceStatus::Transferring
+            && matches!(
+                self.incoming_resources.transfer_and_streamed_open(index).1,
+                OpenProgress::NotBegun,
+            )
+        {
+            self.incoming_resources.state_mut(index).status = IncomingResourceStatus::AwaitingOpen;
+            self.incoming_resources.set_timeout_at(
+                index,
+                Some(InstantMillis(now.0.saturating_add(OPEN_VERDICT_GRACE_MS))),
+            );
+            return ConcludeResourceOutcome::AwaitingOpenVerdict;
+        }
+
         if let (_, OpenProgress::Chewing { .. }) =
             self.incoming_resources.transfer_and_streamed_open(index)
         {
@@ -84,6 +101,8 @@ impl<S: StorageLayout> EngineState<S> {
                     OpenProgress::NotBegun | OpenProgress::Chewing { .. } => {
                         open_transfer(key, transfer)
                     }
+                    OpenProgress::ExternallyOpened { plaintext_byte_len } => Ok(&transfer
+                        [crate::routing::links::resources::RESOURCE_NONCE_LEN..plaintext_byte_len]),
                 };
                 match stream {
                     Ok(stream) => {
@@ -131,6 +150,12 @@ impl<S: StorageLayout> EngineState<S> {
                 OpenProgress::Parked(open) => open.conclude(transfer),
                 OpenProgress::NotBegun | OpenProgress::Chewing { .. } => {
                     open_transfer(key, transfer).map(OpenedStream::rehashing)
+                }
+                OpenProgress::ExternallyOpened { plaintext_byte_len } => {
+                    Ok(OpenedStream::rehashing(
+                        &transfer[crate::routing::links::resources::RESOURCE_NONCE_LEN
+                            ..plaintext_byte_len],
+                    ))
                 }
             };
             match verify_prove_split(opened, &state, hash, link_id, mtu) {

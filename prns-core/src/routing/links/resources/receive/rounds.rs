@@ -224,6 +224,9 @@ impl<S: StorageLayout> EngineState<S> {
     /// Walk the [`StreamedOpen`] up to the consecutive frontier the placement just extended — or, when the chew is the pool's, only make sure it has begun: the runtime walks the chews through [`owed_open_span`](EngineState::owed_open_span) and its pool's verdicts.
     /// An intentional deviation in timing only: RNS 1.4.2 opens the joined transfer whole at assembly, we spread the same work under the part arrivals it was waiting on.
     fn advance_streamed_open(&mut self, index: usize) {
+        if self.resource_open_lane == ResourceOpenLane::ExternalWhole {
+            return;
+        }
         let state = *self.incoming_resources.state(index);
         let Some(height) = state.consecutive_completed else {
             return;
@@ -235,6 +238,7 @@ impl<S: StorageLayout> EngineState<S> {
         let chews_here = match self.resource_open_lane {
             ResourceOpenLane::Inline => true,
             ResourceOpenLane::PoolWhenContended => !self.receiving_concurrently(),
+            ResourceOpenLane::ExternalWhole => return,
         };
         let contiguous_byte_len = ((height + 1) * state.sdu).min(state.sealed_transfer_bytes);
         let (transfer, slot) = self

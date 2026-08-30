@@ -145,6 +145,12 @@ import {
   sendResourceFromSource,
 } from "./resource_send.js";
 import { browserResourceCompressor } from "./resource_compressor.js";
+import {
+  WebCryptoResourceSealer,
+  parseResourceSealBegin,
+} from "./resource_crypto.js";
+import type { ResourceCryptoExecution, ResourceSealJob } from "./resource_crypto.js";
+export type { ResourceCryptoExecution } from "./resource_crypto.js";
 import { parseCommandSettlementBatch } from "./command_settlement_batch.js";
 import { describeInterfaceSessionFailure } from "./session.js";
 import { parsePackedSnapshot } from "./packed_snapshot.js";
@@ -540,6 +546,7 @@ type PendingCommand =
 
 type CommonPrnsOptions = {
   resourceCompressionModuleUrl?: URL;
+  resourceCrypto?: ResourceCryptoExecution;
   identityStore?: IdentityStore;
   bleIdentityStore?: StableIdentityStore;
   persistenceStore?: BrowserPersistenceStore;
@@ -576,6 +583,9 @@ export class Prns {
   #startedAtMillis: number;
   #limits: HostLimits;
   #resourceCompressionModuleUrl: string;
+  #resourceCrypto: ResourceCryptoExecution;
+  #resourceSealer = new WebCryptoResourceSealer();
+  #resourceSealTurns = new Map<string, Promise<void>>();
   #events: BoundedAsyncLane<PrnsApplicationEvent>;
   #diagnostics: BoundedAsyncLane<PrnsDiagnosticEvent>;
   #pendingCommands = new Map<
@@ -613,6 +623,7 @@ export class Prns {
     bleIdentityAvailability: BleIdentityAvailability,
     limits: HostLimits,
     resourceCompressionModuleUrl: URL,
+    resourceCrypto: ResourceCryptoExecution,
     persistenceStore: BrowserPersistenceStore | undefined,
     persistenceRestored: boolean,
     restorationReport: BrowserPersistenceRestoreReport | undefined,
@@ -627,6 +638,7 @@ export class Prns {
     this.#limits = limits;
     this.#resourceCompressionModuleUrl =
       resourceCompressionModuleUrl.href;
+    this.#resourceCrypto = resourceCrypto;
     this.#persistenceStore = persistenceStore;
     this.#persistenceRestored = persistenceRestored;
     this.#eventBatchSink = eventBatchSink;
@@ -654,6 +666,7 @@ export class Prns {
       entropy,
       now,
       bleIdentityAvailability,
+      resourceCrypto,
       () => {
         this.#pumpEvents();
         this.#scheduleProjectionRefresh();
@@ -846,6 +859,7 @@ export class Prns {
           limits,
           options.resourceCompressionModuleUrl ??
             bundledWasmModuleUrl(),
+          options.resourceCrypto ?? Tag("PortableWasm"),
           persistenceStore,
           persistedState !== undefined,
           restorationReport,
@@ -1597,6 +1611,14 @@ export class Prns {
   #issueResourceSegment(
     input: RuntimeResourceSegmentIssueInput,
   ): Promise<CommandSettlement> {
+    if (
+      this.#resourceCrypto.tag === "WebCrypto" &&
+      this.#runtime.sendResourceSegmentWebCrypto !== undefined &&
+      this.#runtime.completeResourceSegmentSeal !== undefined &&
+      this.#runtime.retryResourceSegmentSeal !== undefined
+    ) {
+      return this.#issueWebCryptoResourceSegment(input);
+    }
     return this.#issuePendingCommand(
       "send-resource",
       Tag("ResourceSegment"),
@@ -1607,6 +1629,78 @@ export class Prns {
           entropy,
         }),
     );
+  }
+
+  async #issueWebCryptoResourceSegment(
+    input: RuntimeResourceSegmentIssueInput,
+  ): Promise<CommandSettlement> {
+    const turnKey = byteKey(input.linkId);
+    const previous = this.#resourceSealTurns.get(turnKey) ?? Promise.resolve();
+    let releaseTurn = (): void => undefined;
+    const turn = new Promise<void>((resolve) => {
+      releaseTurn = resolve;
+    });
+    this.#resourceSealTurns.set(turnKey, turn);
+    await previous;
+    try {
+      if (this.#lifecycle.tag !== "Running") {
+        return commandFailed(Tag("NodeStopped"));
+      }
+      if (this.#pendingCommands.size >= this.#limits.pendingCommands) {
+        return commandFailed(Tag("Busy"));
+      }
+      const entropy = this.#entropyBytes();
+      if (entropy.tag !== "Filled") {
+        return commandFailed(Tag("EntropyUnavailable"));
+      }
+      let begun;
+      try {
+        begun = parseResourceSealBegin(
+          this.#runtime.sendResourceSegmentWebCrypto!({
+            ...input,
+            nowMs: this.#now(),
+            entropy: entropy.data,
+          }),
+        );
+      } catch (error) {
+        return commandFailed(browserCommandFailure("send-resource", error));
+      }
+      const id = commandId(begun.data.commandId);
+      const settlement = new Promise<CommandSettlement>((settle) => {
+        this.#pendingCommands.set(id, {
+          pending: Tag("ResourceSegment"),
+          settle,
+        });
+      });
+      this.#host.notifyRuntimeActivity();
+      if (begun.tag === "Seal") {
+        try {
+          const sealed = await this.#resourceSealer.seal(begun.data);
+          this.#runtime.completeResourceSegmentSeal!({
+            linkId: linkId(begun.data.linkId),
+            streamNonce: begun.data.streamNonce,
+            noncePrefixedBytes: begun.data.noncePrefixedBytes,
+            sealed,
+            salts: begun.data.salts,
+            promotionEntropy: begun.data.promotionEntropy,
+            nowMs: this.#now(),
+          });
+        } catch {
+          this.#runtime.retryResourceSegmentSeal!({
+            linkId: linkId(begun.data.linkId),
+            nowMs: this.#now(),
+            entropy: entropyBytes(resourceSealFallbackEntropy(begun.data)),
+          });
+        }
+        this.#host.notifyRuntimeActivity();
+      }
+      return settlement;
+    } finally {
+      releaseTurn();
+      if (this.#resourceSealTurns.get(turnKey) === turn) {
+        this.#resourceSealTurns.delete(turnKey);
+      }
+    }
   }
 
   #issuePendingCommand(
@@ -2049,6 +2143,14 @@ export class Prns {
     this.#projections.replaceLifecycle(lifecycle);
     this.#scheduleProjectionRefresh();
   }
+}
+
+function resourceSealFallbackEntropy(job: ResourceSealJob): Uint8Array {
+  const entropy = new Uint8Array(MIN_ENTROPY_BYTES);
+  entropy.set(job.sealIv);
+  entropy.set(job.salts, job.sealIv.length);
+  entropy.set(job.promotionEntropy, job.sealIv.length + job.salts.length);
+  return entropy;
 }
 
 function browserCommandFailure(

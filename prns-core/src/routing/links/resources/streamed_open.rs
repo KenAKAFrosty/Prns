@@ -106,6 +106,9 @@ pub enum OpenProgress {
     Chewing {
         dispatched: core::ops::Range<usize>,
     },
+    ExternallyOpened {
+        plaintext_byte_len: usize,
+    },
 }
 
 /// Who runs the chew — the runtime declares its capability once at construction.
@@ -120,6 +123,7 @@ pub enum ResourceOpenLane {
     #[default]
     Inline,
     PoolWhenContended,
+    ExternalWhole,
 }
 
 /// A concluded transfer's nonce-stripped stream, carrying the verify midstate when one streamed in.
