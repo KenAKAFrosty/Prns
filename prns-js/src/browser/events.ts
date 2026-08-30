@@ -115,7 +115,10 @@ export type ResourceDiagnosticEvent = Extract<
 export type RuntimeDiagnosticEvent = Extract<
   DiagnosticEvent,
   Tag<
-    "SelfRatchetRotated" | "AnnounceHeldDropped" | "Delivered",
+    | "SelfRatchetRotated"
+    | "AnnounceHeldDropped"
+    | "Delivered"
+    | "BackendDiagnostic",
     unknown
   >
 >;
@@ -165,6 +168,7 @@ type RawEventType =
   | "singleDelivery"
   | "linkDelivery"
   | "delivered"
+  | "backendDiagnostic"
   | "linkClosed"
   | "linkInterfaceMismatch"
   | "resourceReceived"
@@ -203,6 +207,7 @@ const RAW_EVENT_TYPES: ReadonlySet<string> = new Set<RawEventType>([
   "singleDelivery",
   "linkDelivery",
   "delivered",
+  "backendDiagnostic",
   "linkClosed",
   "linkInterfaceMismatch",
   "resourceReceived",
@@ -433,6 +438,14 @@ export function parseEvent(raw: unknown): ParsedPrnsEvent {
         "Diagnostic",
         Tag("Delivered", { detail: stringField(data, "detail") }),
       ),
+    backendDiagnostic: (data) =>
+      Tag(
+        "Diagnostic",
+        Tag("BackendDiagnostic", {
+          kind: stringField(data, "kind"),
+          detail: stringField(data, "detail"),
+        }),
+      ),
     linkClosed: (data) =>
       Tag(
         "Diagnostic",
@@ -613,6 +626,8 @@ function rawProjectedEvent(event: EventProjection): Record<string, unknown> {
       return { type: "announceHeldDropped", ...raw };
     case DIAGNOSTIC_EVENT_KIND_CODES.Delivered:
       return { type: "delivered", ...raw };
+    case DIAGNOSTIC_EVENT_KIND_CODES.BackendDiagnostic:
+      return { type: "backendDiagnostic", ...raw };
     case DIAGNOSTIC_EVENT_KIND_CODES.RouteExpired:
       return { type: "routeExpired", ...raw };
     case DIAGNOSTIC_EVENT_KIND_CODES.RouteEvicted:
@@ -692,6 +707,8 @@ function projectedFieldName(id: number): string {
       return "cause";
     case EVENT_FIELD_CODES.Detail:
       return "detail";
+    case EVENT_FIELD_CODES.Kind:
+      return "kind";
     case EVENT_FIELD_CODES.Hops:
       return "hops";
     case EVENT_FIELD_CODES.Stream:

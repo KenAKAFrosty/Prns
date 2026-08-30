@@ -1,265 +1,27 @@
 use js_sys::{BigInt, Object, Reflect, Uint8Array};
 use personal_rns::engine::{
     AllowRequesterFailure, AllowRequesterRejection, AnnounceNowFailure, AnnounceNowRejection,
-    CloseLinkFailure, CloseLinkRejection, DeliveryEvidence, DeliveryProof, EstablishLinkFailure,
-    EstablishLinkRejection, FanTarget, IdentifyFailure, IdentifyRejection, Journaled,
-    LinkClosedReason, RequestPathFailure, RespondFailure, RespondRejection, RouteRemovalCause,
-    SendRequestFailure, SendRequestRejection, SendResourceFailure, SendResourceRejection,
-    SendSinglePacketFailure, SendSinglePacketRejection, SendToChannelFailure,
-    SendToChannelRejection, SendToLinkFailure, SendToLinkRejection, SetResourceStrategyFailure,
-    SetResourceStrategyRejection, Settlement,
+    CloseLinkFailure, CloseLinkRejection, CommandId, DeliveryEvidence, DeliveryProof,
+    EstablishLinkFailure, EstablishLinkRejection, FanTarget, IdentifyFailure, IdentifyRejection,
+    RequestPathFailure, RespondFailure, RespondRejection, SendRequestFailure, SendRequestRejection,
+    SendResourceFailure, SendResourceRejection, SendSinglePacketFailure, SendSinglePacketRejection,
+    SendToChannelFailure, SendToChannelRejection, SendToLinkFailure, SendToLinkRejection,
+    SetResourceStrategyFailure, SetResourceStrategyRejection, Settlement,
 };
 use personal_rns::interfaces::bluetooth_auto as bluetooth_contract;
 use personal_rns::interfaces::usb_auto;
 use personal_rns::interfaces::InterfaceKind;
-use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::resources::table::ApplyHashmapUpdateError;
 use personal_rns::routing::links::resources::ResourceFailureCause;
 use wasm_bindgen::prelude::*;
 
 use crate::runtime::{OutboundFrame, OutboundTarget};
 
-pub(crate) fn journaled_to_js(journaled: Journaled<'_>) -> JsValue {
+pub(crate) fn command_settled_to_js(id: CommandId, settlement: Settlement) -> JsValue {
     let object = Object::new();
-    match journaled {
-        Journaled::PersistenceFlushed { cause, target } => {
-            set_str(&object, "type", "persistenceFlushed");
-            set_str(&object, "cause", cause.name());
-            set_str(&object, "target", target.name());
-        }
-        Journaled::PersistenceFlushFailed { cause, target } => {
-            set_str(&object, "type", "persistenceFlushFailed");
-            set_str(&object, "cause", cause.name());
-            set_str(&object, "target", target.name());
-        }
-        Journaled::AnnounceHeard { observation, .. } => {
-            set_str(&object, "type", "announce");
-            set_bytes(&object, "appData", observation.app_data);
-            set_bytes(&object, "destination", observation.destination.as_bytes());
-            set_u32(&object, "hops", u32::from(observation.hops.0));
-            set_bytes(
-                &object,
-                "sourceInterface",
-                observation.source_interface.as_bytes(),
-            );
-        }
-        Journaled::SelfRatchetRotated { destination } => {
-            set_str(&object, "type", "selfRatchetRotated");
-            set_bytes(&object, "destination", destination.as_bytes());
-        }
-        Journaled::AnnounceHeldDropped {
-            destination,
-            source_interface,
-            cause,
-        } => {
-            set_str(&object, "type", "announceHeldDropped");
-            set_bytes(&object, "destination", destination.as_bytes());
-            set_bytes(&object, "sourceInterface", source_interface.as_bytes());
-            set_str(&object, "cause", &format!("{cause:?}"));
-        }
-        Journaled::CommandSettled { id, settlement } => {
-            set_str(&object, "type", "commandSettled");
-            set_u64(&object, "id", id.0);
-            settlement_to_js(&object, settlement);
-        }
-        Journaled::LinkEstablished(link) => {
-            set_str(&object, "type", "linkEstablished");
-            set_bytes(&object, "linkId", link.link_id.as_bytes());
-            set_u64(&object, "rttMillis", link.rtt_millis);
-        }
-        Journaled::PeerIdentified { link_id, identity } => {
-            set_str(&object, "type", "peerIdentified");
-            set_bytes(&object, "linkId", link_id.as_bytes());
-            set_bytes(&object, "identity", identity.as_bytes());
-        }
-        Journaled::RequestReceived {
-            destination,
-            link_id,
-            request_id,
-            requester,
-            path_hash,
-            rtt,
-            data,
-            ..
-        } => {
-            set_str(&object, "type", "request");
-            set_bytes(&object, "destination", destination.as_bytes());
-            set_bytes(&object, "linkId", link_id.as_bytes());
-            set_bytes(&object, "requestId", &request_id.0);
-            if let Some(requester) = requester {
-                set_bytes(&object, "requester", requester.as_bytes());
-            }
-            set_bytes(&object, "pathHash", path_hash.as_bytes());
-            set_u64(&object, "rttMillis", rtt.millis());
-            set_bytes(&object, "data", data);
-        }
-        Journaled::ResponseReceived {
-            command_id,
-            link_id,
-            request_id,
-            data,
-            ..
-        } => {
-            set_str(&object, "type", "response");
-            set_u64(&object, "commandId", command_id.0);
-            set_bytes(&object, "linkId", link_id.as_bytes());
-            set_bytes(&object, "requestId", &request_id.0);
-            set_bytes(&object, "data", data);
-        }
-        Journaled::ResponseSegmentReceived {
-            command_id,
-            link_id,
-            request_id,
-            segment_index,
-            total_segments,
-            data,
-            ..
-        } => {
-            set_str(&object, "type", "responseSegment");
-            set_u64(&object, "commandId", command_id.0);
-            set_bytes(&object, "linkId", link_id.as_bytes());
-            set_bytes(&object, "requestId", &request_id.0);
-            set_u64(&object, "segmentIndex", segment_index);
-            set_u64(&object, "totalSegments", total_segments);
-            set_bytes(&object, "data", data);
-        }
-        Journaled::ChannelMessageReceived {
-            link_id,
-            message_type,
-            data,
-        } => {
-            set_str(&object, "type", "channelMessage");
-            set_bytes(&object, "linkId", link_id.as_bytes());
-            set_u64(&object, "messageType", u64::from(message_type.0));
-            set_bytes(&object, "data", data);
-        }
-        Journaled::Delivered(Delivery::Single(delivery)) => {
-            set_str(&object, "type", "singleDelivery");
-            set_bytes(&object, "destination", delivery.destination.as_bytes());
-            set_bytes(&object, "plaintext", delivery.plaintext);
-            set_bytes(
-                &object,
-                "sourceInterface",
-                delivery.source_interface.as_bytes(),
-            );
-        }
-        Journaled::Delivered(Delivery::Plain(delivery)) => {
-            set_str(&object, "type", "delivered");
-            set_str(&object, "detail", &format!("{delivery:?}"));
-        }
-        Journaled::Delivered(Delivery::Group(delivery)) => {
-            set_str(&object, "type", "delivered");
-            set_str(&object, "detail", &format!("{delivery:?}"));
-        }
-        Journaled::Delivered(Delivery::Link(delivery)) => {
-            set_str(&object, "type", "linkDelivery");
-            set_bytes(&object, "linkId", delivery.link_id.as_bytes());
-            set_bytes(&object, "plaintext", delivery.plaintext);
-            set_bytes(
-                &object,
-                "sourceInterface",
-                delivery.source_interface.as_bytes(),
-            );
-        }
-        Journaled::LinkClosed { link_id, reason } => {
-            set_str(&object, "type", "linkClosed");
-            set_bytes(&object, "linkId", link_id.as_bytes());
-            set_str(
-                &object,
-                "reason",
-                match reason {
-                    LinkClosedReason::Timeout => "timeout",
-                    LinkClosedReason::PeerClosed => "peerClosed",
-                    LinkClosedReason::MalformedRtt => "malformedRtt",
-                    LinkClosedReason::LocallyClosed => "locallyClosed",
-                },
-            );
-        }
-        Journaled::LinkInterfaceMismatch {
-            link_id,
-            attached_interface,
-            arrived_on,
-        } => {
-            set_str(&object, "type", "linkInterfaceMismatch");
-            set_bytes(&object, "linkId", link_id.as_bytes());
-            set_bytes(&object, "attachedInterface", attached_interface.as_bytes());
-            set_bytes(&object, "arrivedOn", arrived_on.as_bytes());
-        }
-        Journaled::ResourceReceived {
-            link_id,
-            hash,
-            metadata,
-            data,
-        } => {
-            set_str(&object, "type", "resourceReceived");
-            set_bytes(&object, "linkId", link_id.as_bytes());
-            set_bytes(&object, "hash", hash.as_bytes());
-            if let Some(metadata) = metadata {
-                set_bytes(&object, "metadata", metadata);
-            }
-            set_bytes(&object, "data", data);
-        }
-        Journaled::ResourceFailed {
-            link_id,
-            hash,
-            cause,
-        } => {
-            set_str(&object, "type", "resourceFailed");
-            set_bytes(&object, "linkId", link_id.as_bytes());
-            set_bytes(&object, "hash", hash.as_bytes());
-            set_str(&object, "cause", &format!("{cause:?}"));
-        }
-        Journaled::ResourceNeedsDecompression {
-            link_id,
-            hash,
-            stream,
-            uncompressed_data_bytes,
-        } => {
-            set_str(&object, "type", "resourceNeedsDecompression");
-            set_bytes(&object, "linkId", link_id.as_bytes());
-            set_bytes(&object, "hash", hash.as_bytes());
-            set_bytes(&object, "stream", stream);
-            set_bigint(&object, "uncompressedDataBytes", uncompressed_data_bytes);
-        }
-        Journaled::ResourceSegmentReceived {
-            link_id,
-            original_hash,
-            segment_index,
-            total_segments,
-            metadata,
-            data,
-        } => {
-            set_str(&object, "type", "resourceSegment");
-            set_bytes(&object, "linkId", link_id.as_bytes());
-            set_bytes(&object, "originalHash", original_hash.as_bytes());
-            set_u64(&object, "segmentIndex", segment_index);
-            set_u64(&object, "totalSegments", total_segments);
-            if let Some(metadata) = metadata {
-                set_bytes(&object, "metadata", metadata);
-            }
-            set_bytes(&object, "data", data);
-        }
-        Journaled::ResourceAssembled {
-            link_id,
-            original_hash,
-            total_size_bytes,
-        } => {
-            set_str(&object, "type", "resourceAssembled");
-            set_bytes(&object, "linkId", link_id.as_bytes());
-            set_bytes(&object, "originalHash", original_hash.as_bytes());
-            set_bigint(&object, "totalSizeBytes", total_size_bytes);
-        }
-        Journaled::RouteRemoved { destination, cause } => {
-            let kind = match cause {
-                RouteRemovalCause::Expired => "routeExpired",
-                RouteRemovalCause::Evicted => "routeEvicted",
-                RouteRemovalCause::InterfaceGone => "routeInterfaceGone",
-                RouteRemovalCause::Dropped => "routeDropped",
-            };
-            set_str(&object, "type", kind);
-            set_bytes(&object, "destination", destination.as_bytes());
-        }
-    }
+    set_str(&object, "type", "commandSettled");
+    set_u64(&object, "id", id.0);
+    settlement_to_js(&object, settlement);
     object.into()
 }
 
@@ -554,7 +316,17 @@ fn settlement_to_js(object: &Object, settlement: Settlement) {
         }
         Settlement::SetRegisteredAnnounceAppData(_)
         | Settlement::SendGroup(_)
-        | Settlement::SendPlainPacket(_) => {
+        | Settlement::SendPlainPacket(_)
+        | Settlement::OpenRemoteControlPairing(_)
+        | Settlement::CloseRemoteControlPairing(_)
+        | Settlement::ApproveRemoteControlTargetPairing(_)
+        | Settlement::RejectRemoteControlTargetPairing(_)
+        | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
+        | Settlement::BeginRemoteControlControllerPairing(_)
+        | Settlement::ApproveRemoteControlControllerPairing(_)
+        | Settlement::RejectRemoteControlControllerPairing(_)
+        | Settlement::RemoteControlControllerPairingRequest(_)
+        | Settlement::SettleRemoteControlControllerPairingPersistence(_) => {
             set_str(object, "result", "untracked");
         }
     }

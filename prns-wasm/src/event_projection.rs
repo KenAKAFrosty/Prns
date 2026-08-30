@@ -6,7 +6,7 @@ use prns_host::{
 };
 use wasm_bindgen::JsValue;
 
-use crate::js_translation::journaled_to_js;
+use crate::js_translation::command_settled_to_js;
 
 pub(crate) enum CapturedJournal {
     Event(EventProjection),
@@ -15,8 +15,8 @@ pub(crate) enum CapturedJournal {
 
 pub(crate) fn capture_journaled(journaled: Journaled<'_>) -> CapturedJournal {
     match journaled {
-        journaled @ Journaled::CommandSettled { .. } => {
-            CapturedJournal::Control(journaled_to_js(journaled))
+        Journaled::CommandSettled { id, settlement } => {
+            CapturedJournal::Control(command_settled_to_js(id, settlement))
         }
         Journaled::PersistenceFlushed { cause, target } => CapturedJournal::Event(project(
             DiagnosticEventKind::PersistenceFlushed,
@@ -60,6 +60,80 @@ pub(crate) fn capture_journaled(journaled: Journaled<'_>) -> CapturedJournal {
                 text(EventField::Cause, &format!("{cause:?}")),
             ],
         )),
+        Journaled::RemoteControlPairingExpired { endpoint } => {
+            remote_control_diagnostic("RemoteControlPairingExpired", format!("{endpoint:?}"))
+        }
+        Journaled::RemoteControlPairingExpiryFailed { endpoint, failure } => {
+            remote_control_diagnostic(
+                "RemoteControlPairingExpiryFailed",
+                format!("endpoint={endpoint:?}, failure={failure:?}"),
+            )
+        }
+        Journaled::RemoteControlPairingAvailabilityObserved(observation) => {
+            remote_control_diagnostic(
+                "RemoteControlPairingAvailabilityObserved",
+                format!("{observation:?}"),
+            )
+        }
+        Journaled::RemoteControlTargetPairingConfirmationRequired(attempt) => {
+            remote_control_diagnostic(
+                "RemoteControlTargetPairingConfirmationRequired",
+                format!("{attempt:?}"),
+            )
+        }
+        Journaled::RemoteControlTargetPairingControllerCommitted { attempt_id } => {
+            remote_control_diagnostic(
+                "RemoteControlTargetPairingControllerCommitted",
+                format!("{attempt_id:?}"),
+            )
+        }
+        Journaled::RemoteControlTargetPairingAuthorizationRequired { attempt_id, grant } => {
+            remote_control_diagnostic(
+                "RemoteControlTargetPairingAuthorizationRequired",
+                format!("attempt_id={attempt_id:?}, grant={grant:?}"),
+            )
+        }
+        Journaled::RemoteControlControllerPairingConfirmationRequired(attempt) => {
+            remote_control_diagnostic(
+                "RemoteControlControllerPairingConfirmationRequired",
+                format!("{attempt:?}"),
+            )
+        }
+        Journaled::RemoteControlControllerPairingPersistenceRequired(persistence) => {
+            remote_control_diagnostic(
+                "RemoteControlControllerPairingPersistenceRequired",
+                format!("{persistence:?}"),
+            )
+        }
+        Journaled::RemoteControlControllerPairingExpired { aborted } => remote_control_diagnostic(
+            "RemoteControlControllerPairingExpired",
+            format!("{aborted:?}"),
+        ),
+        Journaled::RemoteControlControllerPairingLinkClosed { aborted } => {
+            remote_control_diagnostic(
+                "RemoteControlControllerPairingLinkClosed",
+                format!("{aborted:?}"),
+            )
+        }
+        Journaled::RemoteControlTargetPairingExpired { aborted } => {
+            remote_control_diagnostic("RemoteControlTargetPairingExpired", format!("{aborted:?}"))
+        }
+        Journaled::RemoteControlTargetPairingLinkClosed { aborted } => remote_control_diagnostic(
+            "RemoteControlTargetPairingLinkClosed",
+            format!("{aborted:?}"),
+        ),
+        Journaled::RemoteControlTargetPairingCompletionRetentionExpired { attempt_id } => {
+            remote_control_diagnostic(
+                "RemoteControlTargetPairingCompletionRetentionExpired",
+                format!("{attempt_id:?}"),
+            )
+        }
+        Journaled::RemoteControlTargetPairingCompletionLinkClosed { attempt_id } => {
+            remote_control_diagnostic(
+                "RemoteControlTargetPairingCompletionLinkClosed",
+                format!("{attempt_id:?}"),
+            )
+        }
         Journaled::LinkEstablished(link) => CapturedJournal::Event(project(
             DiagnosticEventKind::LinkEstablished,
             [
@@ -290,6 +364,16 @@ pub(crate) fn capture_journaled(journaled: Journaled<'_>) -> CapturedJournal {
     }
 }
 
+fn remote_control_diagnostic(kind: &str, detail: String) -> CapturedJournal {
+    CapturedJournal::Event(project(
+        DiagnosticEventKind::BackendDiagnostic,
+        [
+            text(EventField::Kind, kind),
+            text(EventField::Detail, &detail),
+        ],
+    ))
+}
+
 fn project<const FIELD_COUNT: usize>(
     kind: impl Into<prns_host::EventProjectionKind>,
     fields: [EventProjectionField; FIELD_COUNT],
@@ -316,9 +400,11 @@ fn u64(field: EventField, value: u64) -> EventProjectionField {
 #[cfg(test)]
 mod tests {
     use personal_rns::engine::CommandId;
+    use personal_rns::identity::IdentityHash;
+    use personal_rns::remote_control::RemoteControlPairingIdentity;
     use personal_rns::routing::links::request::RequestId;
     use personal_rns::routing::links::LinkId;
-    use prns_host::ApplicationEventKind;
+    use prns_host::{ApplicationEventKind, DiagnosticEventKind};
 
     use super::*;
 
@@ -342,6 +428,27 @@ mod tests {
                 EventProjectionField::bytes(EventField::LinkId.into(), vec![1; 16]),
                 EventProjectionField::bytes(EventField::RequestId.into(), vec![2; 16]),
                 EventProjectionField::bytes(EventField::Data.into(), vec![3, 4, 5]),
+            ]
+        );
+    }
+
+    #[test]
+    fn remote_control_journals_remain_visible_without_a_public_host_variant() {
+        let endpoint = RemoteControlPairingIdentity::new(IdentityHash::new([0x81; 16])).endpoint();
+        let captured = capture_journaled(Journaled::RemoteControlPairingExpired { endpoint });
+        let CapturedJournal::Event(event) = captured else {
+            panic!("remote-control journal projected as control data");
+        };
+
+        assert_eq!(event.kind(), DiagnosticEventKind::BackendDiagnostic.into());
+        assert_eq!(
+            event.fields(),
+            &[
+                EventProjectionField::text(
+                    EventField::Kind.into(),
+                    "RemoteControlPairingExpired".to_string(),
+                ),
+                EventProjectionField::text(EventField::Detail.into(), format!("{endpoint:?}"),),
             ]
         );
     }

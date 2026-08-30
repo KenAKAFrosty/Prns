@@ -769,9 +769,7 @@ fn every_response_transfer_failure_reaches_its_stable_host_outcome() {
             CommandFailure::ResponseCancelledBySender,
         ),
         (
-            ResourceFailureCause::RefusedHashmapUpdate(
-                ApplyHashmapUpdateError::BeyondPartCount,
-            ),
+            ResourceFailureCause::RefusedHashmapUpdate(ApplyHashmapUpdateError::BeyondPartCount),
             CommandFailure::ResponseHashmapBeyondPartCount,
         ),
         (

@@ -7,6 +7,7 @@ import {
   prnsView,
 } from "../dist/browser/index.js";
 import { PrnsProjectionStore } from "../dist/browser/projections.js";
+import { parseEvent } from "../dist/browser/events.js";
 import { parseRuntimeProjectionSnapshot } from "../dist/browser/projection_snapshot.js";
 import {
   parseProjectionSynchronization,
@@ -14,6 +15,23 @@ import {
 } from "../dist/browser/worker_projection_validation.js";
 
 const lifecycle = { tag: "Running", data: undefined };
+
+test("preserves remote-control journals through backend diagnostics", () => {
+  assert.deepEqual(
+    parseEvent({
+      type: "backendDiagnostic",
+      kind: "RemoteControlPairingExpired",
+      detail: "endpoint=example",
+    }),
+    Tag(
+      "Diagnostic",
+      Tag("BackendDiagnostic", {
+        kind: "RemoteControlPairingExpired",
+        detail: "endpoint=example",
+      }),
+    ),
+  );
+});
 
 function snapshot(revision = 1n, routes = []) {
   return {

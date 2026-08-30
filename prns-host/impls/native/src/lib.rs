@@ -1113,6 +1113,7 @@ async fn run(
         request_endpoints: request_endpoints![],
         interfaces: ManuallyAttached,
         persistence,
+        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         on_event: move |event, _state: &()| {
             if !publish_event(event_sink.as_ref(), event, &event_persistence) {
                 event_backpressure.notify_waiters();
@@ -2850,6 +2851,102 @@ fn update_persistence_snapshot(
 
 fn publish_message(sink: &dyn NativeEventSink, message: Message<'_>) -> bool {
     let event = match message {
+        Message::RemoteControlPairingAvailable(observation) => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlPairingAvailable",
+                format!("{observation:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlTargetPairingConfirmationRequired(attempt) => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlTargetPairingConfirmationRequired",
+                format!("{attempt:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlTargetPairingControllerCommitted { attempt_id } => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlTargetPairingControllerCommitted",
+                format!("{attempt_id:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlTargetPairingAuthorizationRequired { attempt_id, grant } => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlTargetPairingAuthorizationRequired",
+                format!("attempt_id={attempt_id:?}, grant={grant:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlControllerPairingConfirmationRequired(attempt) => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlControllerPairingConfirmationRequired",
+                format!("{attempt:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlControllerPairingPersistenceRequired(persistence) => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlControllerPairingPersistenceRequired",
+                format!("{persistence:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlControllerPairingExpired { aborted } => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlControllerPairingExpired",
+                format!("{aborted:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlControllerPairingLinkClosed { aborted } => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlControllerPairingLinkClosed",
+                format!("{aborted:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlTargetPairingExpired { aborted } => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlTargetPairingExpired",
+                format!("{aborted:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlTargetPairingLinkClosed { aborted } => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlTargetPairingLinkClosed",
+                format!("{aborted:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlTargetPairingCompletionRetentionExpired { attempt_id } => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlTargetPairingCompletionRetentionExpired",
+                format!("{attempt_id:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlTargetPairingCompletionLinkClosed { attempt_id } => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlTargetPairingCompletionLinkClosed",
+                format!("{attempt_id:?}"),
+            );
+            return true;
+        }
         Message::Delivered(Delivery::Single(delivery)) => {
             ApplicationEvent::SingleDelivery(SingleDelivery {
                 destination: host_destination(delivery.destination),
@@ -2968,6 +3065,13 @@ fn publish_message(sink: &dyn NativeEventSink, message: Message<'_>) -> bool {
     sink.publish_application(event)
 }
 
+fn publish_remote_control_diagnostic(sink: &dyn NativeEventSink, kind: &str, detail: String) {
+    sink.publish_diagnostic(DiagnosticEvent::BackendDiagnostic {
+        kind: kind.to_string(),
+        detail,
+    });
+}
+
 fn translate_diagnostic(diagnostic: Diagnostic<'_>) -> Option<DiagnosticEvent> {
     Some(match diagnostic {
         Diagnostic::PersistenceRestored {
@@ -3027,6 +3131,18 @@ fn translate_diagnostic(diagnostic: Diagnostic<'_>) -> Option<DiagnosticEvent> {
             kind: "commandSettled".to_string(),
             detail: format!("{}:{settlement:?}", id.0),
         },
+        Diagnostic::RemoteControlPairingExpired { endpoint } => {
+            DiagnosticEvent::BackendDiagnostic {
+                kind: "RemoteControlPairingExpired".to_string(),
+                detail: format!("{endpoint:?}"),
+            }
+        }
+        Diagnostic::RemoteControlPairingExpiryFailed { endpoint, failure } => {
+            DiagnosticEvent::BackendDiagnostic {
+                kind: "RemoteControlPairingExpiryFailed".to_string(),
+                detail: format!("endpoint={endpoint:?}, failure={failure:?}"),
+            }
+        }
         Diagnostic::SelfRatchetRotated { destination } => DiagnosticEvent::SelfRatchetRotated {
             destination: host_destination(destination),
         },
