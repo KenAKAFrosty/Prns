@@ -79,7 +79,7 @@ pub use screen::{
     GnssAvailability, InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess,
     PersistenceNotice, PresentedNoticeTimer, RadioProfileChangeResult, ScreenContent,
     SharedInstanceConfigExport, UiAction, UiConfiguration, UiNotice, UiState, UserBlanking,
-    WifiNetworkStatus, WifiStationStatus,
+    WifiNetworkStatus, WifiStationStatus, BleGroupEditor, BleGroupName, DEFAULT_BLE_GROUP,
 };
 #[cfg(feature = "display")]
 pub use screen::{display, face_64x128};

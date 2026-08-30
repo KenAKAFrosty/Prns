@@ -125,6 +125,14 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     #[cfg(feature = "lora")]
     let lora_profile = loaded_lora_profile.profile;
     #[cfg(feature = "lora")]
+    {
+        if let Some((bytes, len)) = lora_profile_store.load_ble_discovery_group().await {
+            if let Ok(name) = core::str::from_utf8(&bytes[..len as usize]) {
+                crate::bluetooth_auto::install_discovery_group(name);
+            }
+        }
+    }
+    #[cfg(feature = "lora")]
     let profile_startup_notice = loaded_lora_profile.notice.map(|notice| match notice {
         screen::RadioProfileLoadNotice::Recovered => screen::UiNotice::ProfileRecovered,
         screen::RadioProfileLoadNotice::Reset => screen::UiNotice::ProfileReset,
@@ -440,6 +448,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
             access_point,
             shared_instance_config_export: screen::SharedInstanceConfigExport::Unavailable,
             gnss: B::Gnss::AVAILABILITY,
+            ble_group_editor: screen::BleGroupEditor::Available,
         });
         let startup_notice = identity_startup_notice.or(profile_startup_notice);
         let mut pending_startup_notice = identity_startup_notice
@@ -955,6 +964,38 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 }
                                 screen::UiAction::OpenDocs => {}
                                 screen::UiAction::CopySharedInstanceConfig => {}
+                                screen::UiAction::OpenBleGroupEditor => {
+                                    let group = crate::bluetooth_auto::local_discovery_group();
+                                    ui_state.open_ble_group_editor(group.as_str());
+                                }
+                                screen::UiAction::SetBleDiscoveryGroup(name) => {
+                                    let result = screen::apply_and_persist_radio_profile(
+                                        async {
+                                            crate::bluetooth_auto::set_discovery_group(name.as_str())
+                                        },
+                                        || async {
+                                            #[cfg(feature = "lora")]
+                                            {
+                                                lora_profile_store
+                                                    .save_ble_discovery_group(name.as_str().as_bytes())
+                                                    .await
+                                                    .is_ok()
+                                            }
+                                            #[cfg(not(feature = "lora"))]
+                                            true
+                                        },
+                                    )
+                                    .await;
+                                    if result.applied() {
+                                        BluetoothAutoStatus::new(&BLE_SHARED).reset_peers();
+                                    }
+                                    show_notice(
+                                        &mut ui_state,
+                                        &mut notice_timer,
+                                        result.notice(),
+                                        NOTICE_DURATION,
+                                    );
+                                }
                                 screen::UiAction::None => {}
                             }
                         }

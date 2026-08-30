@@ -527,7 +527,9 @@ pub(crate) fn set_ble_discovery_group(group_id: &str) -> bool {
     }
     state.group_id = group_id.to_string();
     let bridge = ble_bridge();
-    bridge.set_local_group_tag(group_tag(group_id.as_bytes()));
+    let tag = group_tag(group_id.as_bytes());
+    log::info!("BLE discovery group set to {group_id}");
+    bridge.set_local_group_tag(tag);
     drop(slot);
     {
         let manager = lock_manager();

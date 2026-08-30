@@ -329,11 +329,14 @@ pub(super) fn build_interface_menu_details(
             )
         }
         Some(screen::CardKind::Usb) => screen::usb_interface_menu_details(usb.connection()),
-        Some(screen::CardKind::Ble) => screen::ble_interface_menu_details(
-            Some(crate::bluetooth_auto::local_discovery_group()),
-            selected_card,
-            snapshots,
-        ),
+        Some(screen::CardKind::Ble) => {
+            let group = crate::bluetooth_auto::local_discovery_group();
+            screen::ble_interface_menu_details(
+                Some(group.as_str()),
+                selected_card,
+                snapshots,
+            )
+        }
         Some(screen::CardKind::Tcp) => {
             let mut details = screen::InterfaceMenuDetails::empty();
             if let Some(tcp) = wifi_config.tcp_client.as_ref() {

@@ -21,6 +21,7 @@ use cards::{draw_card_peek, draw_card_with_selection, draw_footer, draw_global_r
 use glyphs::draw_title_bar;
 use gnss::draw_gnss_panel;
 use layout::*;
+use menus::ble_group::draw_ble_group_editor;
 use menus::lora::draw_lora_editor;
 use menus::{
     draw_global_menu, draw_interface_menu, draw_limits_page, draw_notice, draw_radio_confirm,
@@ -53,6 +54,11 @@ pub(super) fn draw<D: DrawTarget<Color = BinaryColor>>(
         return;
     }
 
+    if let UiMode::BleGroupEditor { screen, name } = state.mode {
+        draw_ble_group_editor(display, screen, name);
+        return;
+    }
+
     if let UiMode::LimitsPage { page } = state.mode {
         let rows = build_limit_rows(state.storage_limits);
         draw_limits_page(display, page, &rows);
@@ -81,6 +87,7 @@ pub(super) fn draw<D: DrawTarget<Color = BinaryColor>>(
                 selected_card,
                 selected_item,
                 state.shared_instance_config_export,
+                state.ble_group_editor,
                 interface_menu_details,
             );
             return;

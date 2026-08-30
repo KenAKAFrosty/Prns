@@ -72,6 +72,7 @@ fn ui_state(user_blanking: UserBlanking) -> personal_hopspot_core::UiState {
         shared_instance_config_export:
             personal_hopspot_core::SharedInstanceConfigExport::Unavailable,
         gnss: personal_hopspot_core::GnssAvailability::Unavailable,
+        ble_group_editor: personal_hopspot_core::BleGroupEditor::Unavailable,
     })
 }
 

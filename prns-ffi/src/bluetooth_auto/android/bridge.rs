@@ -295,8 +295,20 @@ impl AndroidBleBridge {
     }
 
     pub fn set_local_group_tag(&self, tag: [u8; GROUP_TAG_LEN]) {
-        if let Ok(mut slot) = self.shared.local_group_tag.lock() {
-            *slot = tag;
+        let changed = if let Ok(mut slot) = self.shared.local_group_tag.lock() {
+            if *slot == tag {
+                false
+            } else {
+                *slot = tag;
+                true
+            }
+        } else {
+            false
+        };
+        if changed {
+            // The advertised manufacturer payload is snapshotted when advertising starts.
+            // Wake the radio pump so Kotlin rebuilds it without cycling the radio.
+            self.shared.work.wake();
         }
     }
 

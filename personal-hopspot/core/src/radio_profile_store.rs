@@ -10,6 +10,12 @@ const PROFILE_KIND: u8 = 1;
 const DEFAULT_KIND: u8 = 2;
 const COMMIT_WORD: u32 = 0x5449_4D43;
 const RECORD_LEN: usize = 48;
+const BLE_GROUP_OFFSET: usize = 64;
+const BLE_GROUP_RECORD_LEN: usize = 32;
+const BLE_GROUP_MAGIC: [u8; 4] = *b"HSBG";
+const BLE_GROUP_VERSION: u16 = 1;
+const BLE_GROUP_NAME_MAX: usize = 16;
+const BLE_GROUP_CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789-_";
 const PROFILE_PAYLOAD_LEN: usize = 12;
 const CHECKSUM_OFFSET: usize = 20;
 const COMMIT_OFFSET: usize = 28;
@@ -104,11 +110,41 @@ where
         self.commit(StoredValue::Default).await
     }
 
+    pub async fn load_ble_discovery_group(&mut self) -> Option<([u8; BLE_GROUP_NAME_MAX], u8)> {
+        let slots = self.read_slots().await.ok()?;
+        let active = select_active(&slots)?;
+        self.read_ble_group(self.pages[active]).await.ok().flatten()
+    }
+
+    pub async fn save_ble_discovery_group(
+        &mut self,
+        name: &[u8],
+    ) -> Result<(), RadioProfileStoreError<F::Error>> {
+        if !ble_group_name_valid(name) {
+            return Err(RadioProfileStoreError::InvalidProfile);
+        }
+        let slots = self.read_slots().await?;
+        let value = select_active(&slots)
+            .and_then(|index| slots[index].record())
+            .map_or(StoredValue::Default, |record| record.value);
+        self.commit_with_ble_group(value, Some(name)).await
+    }
+
     pub fn into_flash(self) -> F {
         self.flash
     }
 
     async fn commit(&mut self, value: StoredValue) -> Result<(), RadioProfileStoreError<F::Error>> {
+        let group = self.load_ble_discovery_group().await;
+        let group_ref = group.as_ref().map(|(bytes, len)| &bytes[..*len as usize]);
+        self.commit_with_ble_group(value, group_ref).await
+    }
+
+    async fn commit_with_ble_group(
+        &mut self,
+        value: StoredValue,
+        ble_group: Option<&[u8]>,
+    ) -> Result<(), RadioProfileStoreError<F::Error>> {
         self.validate_layout()?;
         let slots = self.read_slots().await?;
         let active = select_active(&slots);
@@ -154,6 +190,42 @@ where
         if decoded != (StoredRecord { generation, value }) {
             return Err(RadioProfileStoreError::VerificationFailed);
         }
+        if let Some(name) = ble_group {
+            self.write_ble_group(page, name).await?;
+        }
+        Ok(())
+    }
+
+    async fn read_ble_group(
+        &mut self,
+        page: u32,
+    ) -> Result<Option<([u8; BLE_GROUP_NAME_MAX], u8)>, RadioProfileStoreError<F::Error>> {
+        let mut bytes = [0u8; BLE_GROUP_RECORD_LEN];
+        self.flash
+            .read(page + BLE_GROUP_OFFSET as u32, &mut bytes)
+            .await
+            .map_err(RadioProfileStoreError::Flash)?;
+        Ok(decode_ble_group(&bytes))
+    }
+
+    async fn write_ble_group(
+        &mut self,
+        page: u32,
+        name: &[u8],
+    ) -> Result<(), RadioProfileStoreError<F::Error>> {
+        let record = encode_ble_group(name).ok_or(RadioProfileStoreError::InvalidProfile)?;
+        self.flash
+            .write(page + BLE_GROUP_OFFSET as u32, &record)
+            .await
+            .map_err(RadioProfileStoreError::Flash)?;
+        let mut verified = [0u8; BLE_GROUP_RECORD_LEN];
+        self.flash
+            .read(page + BLE_GROUP_OFFSET as u32, &mut verified)
+            .await
+            .map_err(RadioProfileStoreError::Flash)?;
+        if verified != record {
+            return Err(RadioProfileStoreError::VerificationFailed);
+        }
         Ok(())
     }
 
@@ -185,6 +257,9 @@ where
             || !4usize.is_multiple_of(F::WRITE_SIZE)
             || !(COMMIT_OFFSET + 4).is_multiple_of(F::WRITE_SIZE)
             || !(RECORD_LEN - COMMIT_OFFSET - 4).is_multiple_of(F::WRITE_SIZE)
+            || !BLE_GROUP_OFFSET.is_multiple_of(F::WRITE_SIZE)
+            || !BLE_GROUP_RECORD_LEN.is_multiple_of(F::WRITE_SIZE)
+            || BLE_GROUP_OFFSET + BLE_GROUP_RECORD_LEN > F::ERASE_SIZE
             || self.pages[0] == self.pages[1]
         {
             return Err(RadioProfileStoreError::InvalidLayout);
@@ -318,6 +393,59 @@ fn generation_hint(bytes: &[u8; RECORD_LEN]) -> Option<u64> {
             bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
         ])
     })
+}
+
+fn ble_group_name_valid(name: &[u8]) -> bool {
+    !name.is_empty()
+        && name.len() <= BLE_GROUP_NAME_MAX
+        && name.iter().all(|byte| BLE_GROUP_CHARSET.contains(byte))
+}
+
+fn encode_ble_group(name: &[u8]) -> Option<[u8; BLE_GROUP_RECORD_LEN]> {
+    if !ble_group_name_valid(name) {
+        return None;
+    }
+    let mut bytes = [0xFF; BLE_GROUP_RECORD_LEN];
+    bytes[..4].copy_from_slice(&BLE_GROUP_MAGIC);
+    bytes[4..6].copy_from_slice(&BLE_GROUP_VERSION.to_le_bytes());
+    bytes[6] = name.len() as u8;
+    bytes[7] = 0;
+    bytes[8..8 + name.len()].copy_from_slice(name);
+    bytes[24..28].fill(0);
+    let checksum = crc32(&bytes[..24]);
+    bytes[24..28].copy_from_slice(&checksum.to_le_bytes());
+    bytes[28..32].copy_from_slice(&COMMIT_WORD.to_le_bytes());
+    Some(bytes)
+}
+
+fn decode_ble_group(bytes: &[u8; BLE_GROUP_RECORD_LEN]) -> Option<([u8; BLE_GROUP_NAME_MAX], u8)> {
+    if bytes.iter().all(|byte| *byte == 0xFF) {
+        return None;
+    }
+    if bytes[..4] != BLE_GROUP_MAGIC
+        || u16::from_le_bytes(bytes[4..6].try_into().ok()?) != BLE_GROUP_VERSION
+        || bytes[7] != 0
+        || u32::from_le_bytes(bytes[28..32].try_into().ok()?) != COMMIT_WORD
+    {
+        return None;
+    }
+    let len = bytes[6] as usize;
+    if len == 0 || len > BLE_GROUP_NAME_MAX {
+        return None;
+    }
+    let mut checksum_input = *bytes;
+    checksum_input[24..28].fill(0);
+    let found = u32::from_le_bytes(bytes[24..28].try_into().ok()?);
+    if crc32(&checksum_input[..24]) != found {
+        return None;
+    }
+    let name = &bytes[8..8 + len];
+    if !ble_group_name_valid(name) {
+        return None;
+    }
+    let mut stored = [0u8; BLE_GROUP_NAME_MAX];
+    stored[..len].copy_from_slice(name);
+    Some((stored, len as u8))
 }
 
 fn encode_profile(profile: RadioProfile, out: &mut [u8]) {
@@ -736,6 +864,27 @@ mod tests {
                 follows_default: true,
                 notice: None,
             }
+        );
+    }
+
+    #[test]
+    fn ble_discovery_group_survives_lora_save_and_reboot() {
+        let mut store = RadioProfileStore::new(FakeFlash::erased(), PAGES);
+        block_on(store.save_ble_discovery_group(b"mt-leg-a")).unwrap();
+        let (bytes, len) = block_on(store.load_ble_discovery_group()).unwrap();
+        assert_eq!(&bytes[..len as usize], b"mt-leg-a");
+
+        block_on(store.save(changed_profile())).unwrap();
+        let (bytes, len) = block_on(store.load_ble_discovery_group()).unwrap();
+        assert_eq!(&bytes[..len as usize], b"mt-leg-a");
+
+        let flash = store.into_flash();
+        let mut rebooted = RadioProfileStore::new(FakeFlash::from_bytes(flash.bytes), PAGES);
+        let (bytes, len) = block_on(rebooted.load_ble_discovery_group()).unwrap();
+        assert_eq!(&bytes[..len as usize], b"mt-leg-a");
+        assert_eq!(
+            block_on(rebooted.load(DEFAULT_915_PROFILE)).unwrap().profile,
+            changed_profile()
         );
     }
 

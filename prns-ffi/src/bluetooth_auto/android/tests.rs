@@ -30,6 +30,21 @@ fn disabled_radio_exposes_no_android_ble_work() {
 }
 
 #[test]
+fn set_local_group_tag_wakes_radio_work() {
+    let bridge = AndroidBleBridge::new();
+    let before = bridge.work_generation();
+    bridge.set_local_group_tag([0x11, 0x22, 0x33, 0x44]);
+    assert_ne!(bridge.work_generation(), before);
+    let after = bridge.work_generation();
+    bridge.set_local_group_tag([0x11, 0x22, 0x33, 0x44]);
+    assert_eq!(
+        bridge.work_generation(),
+        after,
+        "unchanged discovery group must not bounce advertising"
+    );
+}
+
+#[test]
 fn advertising_or_scanning_without_enabled_stays_invisible() {
     let bridge = AndroidBleBridge::new();
 

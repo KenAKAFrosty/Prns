@@ -21,6 +21,7 @@ fn ui_state() -> UiState {
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: personal_hopspot_core::SharedInstanceConfigExport::Available,
         gnss: personal_hopspot_core::GnssAvailability::Unavailable,
+        ble_group_editor: personal_hopspot_core::BleGroupEditor::Available,
     })
 }
 
@@ -95,6 +96,18 @@ impl HopspotFace {
             | UiAction::SetLoRaProfile(_)
             | UiAction::ResetLoRaProfile
             | UiAction::SwapRadioMode => {}
+            UiAction::OpenBleGroupEditor => {
+                let group = crate::engine::ble_discovery_group()
+                    .unwrap_or_else(|| personal_hopspot_core::DEFAULT_BLE_GROUP.to_string());
+                self.state.open_ble_group_editor(&group);
+            }
+            UiAction::SetBleDiscoveryGroup(name) => {
+                if crate::engine::set_ble_discovery_group(name.as_str()) {
+                    self.show_notice(UiNotice::Saved);
+                } else {
+                    self.show_notice(UiNotice::ApplyFailed);
+                }
+            }
         }
         action
     }

@@ -84,19 +84,112 @@ const PREFERRED_SUPERVISION_TIMEOUT: u16 = 400;
 /// Override at compile time without touching BLE identity flash:
 /// `PRNS_BLE_DISCOVERY_GROUP=mt-leg-a` / `mt-leg-b` (lab islands).
 /// Empty / unset keeps the open-mesh default (`reticulum`).
-pub(super) fn local_discovery_group() -> &'static str {
+/// A saved on-device group replaces this until flash is erased.
+const fn compile_time_discovery_group() -> &'static str {
     match option_env!("PRNS_BLE_DISCOVERY_GROUP") {
         Some(group) if !group.is_empty() => group,
         _ => GROUP_NAME,
     }
 }
 
-pub(crate) fn local_discovery_group_tag() -> [u8; GROUP_TAG_LEN] {
-    match local_discovery_group() {
-        GROUP_NAME => default_group_tag(),
-        group => group_tag(group.as_bytes()),
+const GROUP_NAME_MAX: usize = 16;
+
+#[derive(Clone, Copy)]
+struct LiveDiscoveryGroup {
+    bytes: [u8; GROUP_NAME_MAX],
+    len: u8,
+    tag: [u8; GROUP_TAG_LEN],
+    installed: bool,
+}
+
+impl LiveDiscoveryGroup {
+    const fn uninstalled() -> Self {
+        Self {
+            bytes: [0; GROUP_NAME_MAX],
+            len: 0,
+            tag: [0; GROUP_TAG_LEN],
+            installed: false,
+        }
+    }
+
+    fn as_str(&self) -> &str {
+        core::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or(GROUP_NAME)
     }
 }
+
+fn group_tag_for(name: &[u8]) -> [u8; GROUP_TAG_LEN] {
+    if name == GROUP_NAME.as_bytes() {
+        default_group_tag()
+    } else {
+        group_tag(name)
+    }
+}
+
+static LIVE_GROUP: BlockingMutex<Mtx, Cell<LiveDiscoveryGroup>> =
+    BlockingMutex::new(Cell::new(LiveDiscoveryGroup::uninstalled()));
+
+fn ensure_installed() {
+    LIVE_GROUP.lock(|slot| {
+        let current = slot.get();
+        if current.installed {
+            return;
+        }
+        if let Some(live) = live_group_from(compile_time_discovery_group()) {
+            slot.set(live);
+        }
+    });
+}
+
+pub(super) fn local_discovery_group() -> heapless::String<GROUP_NAME_MAX> {
+    ensure_installed();
+    LIVE_GROUP.lock(|slot| {
+        let group = slot.get();
+        let mut name = heapless::String::new();
+        let _ = name.push_str(group.as_str());
+        name
+    })
+}
+
+pub(crate) fn local_discovery_group_tag() -> [u8; GROUP_TAG_LEN] {
+    ensure_installed();
+    LIVE_GROUP.lock(|slot| slot.get().tag)
+}
+
+pub(crate) fn install_discovery_group(name: &str) {
+    let _ = set_discovery_group(name);
+}
+
+pub(crate) fn set_discovery_group(name: &str) -> bool {
+    let Some(live) = live_group_from(name) else {
+        return false;
+    };
+    LIVE_GROUP.lock(|slot| slot.set(live));
+    if HUB.advertising_wanted.load(Ordering::Relaxed) {
+        HUB.advertise.signal(true);
+    }
+    true
+}
+
+fn live_group_from(name: &str) -> Option<LiveDiscoveryGroup> {
+    let name = name.trim().as_bytes();
+    if name.is_empty() || name.len() > GROUP_NAME_MAX {
+        return None;
+    }
+    if !name.iter().all(|byte| {
+        byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-' || *byte == b'_'
+    }) {
+        return None;
+    }
+    let mut bytes = [0u8; GROUP_NAME_MAX];
+    bytes[..name.len()].copy_from_slice(name);
+    Some(LiveDiscoveryGroup {
+        bytes,
+        len: name.len() as u8,
+        tag: group_tag_for(name),
+        installed: true,
+    })
+}
+
 const SIGHTING_PACING: Duration = Duration::from_millis(200);
 const SCAN_ERROR_BACKOFF: Duration = Duration::from_millis(500);
 /// One scan window before the scanner releases the central-radio permit (10 ms units), so a pending
@@ -438,6 +531,7 @@ pub(super) struct BleHub {
     sightings: Channel<Mtx, SeenPeer, SIGHTING_DEPTH>,
     scan_enabled: Signal<Mtx, bool>,
     radio_enabled: AtomicBool,
+    advertising_wanted: AtomicBool,
 }
 
 impl BleHub {
@@ -453,6 +547,7 @@ impl BleHub {
             sightings: Channel::new(),
             scan_enabled: Signal::new(),
             radio_enabled: AtomicBool::new(false),
+            advertising_wanted: AtomicBool::new(false),
         }
     }
 
@@ -511,7 +606,23 @@ impl BleBackend<{ NrfBleBackend::MAX_PEERS }> for NrfBleBackend {
     type Error = Closed;
     type Link = NrfBleLink;
 
+    fn local_group_tag(&self) -> Option<[u8; 4]> {
+        Some(local_discovery_group_tag())
+    }
+
+    fn drop_all_links(&mut self) {
+        for (index, assign) in self.hub.assign.iter().enumerate() {
+            self.hub.connection_slots.request_close(index);
+            assign.clear();
+        }
+        self.hub.ready.clear();
+        self.hub.dial_failed.clear();
+    }
+
     async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), Closed> {
+        self.hub
+            .advertising_wanted
+            .store(mode.is_on(), Ordering::Relaxed);
         self.hub.advertise.signal(mode.is_on());
         Ok(())
     }
@@ -525,6 +636,7 @@ impl BleBackend<{ NrfBleBackend::MAX_PEERS }> for NrfBleBackend {
         let enabled = mode.is_on();
         self.hub.radio_enabled.store(enabled, Ordering::Relaxed);
         if !enabled {
+            self.hub.advertising_wanted.store(false, Ordering::Relaxed);
             self.hub.advertise.signal(false);
             self.hub.scan_enabled.signal(false);
             for (index, assign) in self.hub.assign.iter().enumerate() {

@@ -64,6 +64,8 @@ impl MobileActionCode {
             | UiAction::OpenLoRaEditor
             | UiAction::SetLoRaProfile(_)
             | UiAction::ResetLoRaProfile
+            | UiAction::OpenBleGroupEditor
+            | UiAction::SetBleDiscoveryGroup(_)
             | UiAction::SwapRadioMode => Self::None,
         }
     }

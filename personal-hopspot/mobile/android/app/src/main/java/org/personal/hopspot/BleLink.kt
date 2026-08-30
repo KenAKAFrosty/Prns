@@ -81,6 +81,9 @@ class BleLink(private val context: Context) {
     @Volatile
     private var advertisingWanted = false
 
+    /** Manufacturer group tag last given to `startAdvertising`; null when not advertising. */
+    private var advertisedGroupTag: ByteArray? = null
+
     @Volatile
     private var scanningWanted = false
 
@@ -609,14 +612,21 @@ class BleLink(private val context: Context) {
     private fun startRadioStatePump() {
         startWorker("radio-state") {
             var lastState = Int.MIN_VALUE
+            var lastGroupTag = ByteArray(0)
             var generation = NativeBridge.nativeBleWorkGeneration()
             while (running) {
                 val state = NativeBridge.nativeBleDesiredState()
+                val groupTag = localGroupTag()
                 val wantsRadio = (state and NativeBridge.BLE_RADIO_ENABLED) != 0
-                if (state != lastState || wantsRadio && !radioActive) {
+                val groupChanged = lastGroupTag.size == 4 && !lastGroupTag.contentEquals(groupTag)
+                if (state != lastState || groupChanged || wantsRadio && !radioActive) {
                     val wasActive = radioActive
+                    if (groupChanged) {
+                        peerDiscoveryAllowed.clear()
+                    }
                     applyDesiredRadioState(state)
                     lastState = state
+                    lastGroupTag = groupTag
                     if (!wasActive && radioActive) {
                         NativeBridge.nativeBleWakePumps()
                     }
@@ -1562,8 +1572,20 @@ class BleLink(private val context: Context) {
 
     @Synchronized
     private fun startAdvertise(adapter: BluetoothAdapter) {
-        if (!running || !radioActive || !advertisingWanted || advertiser != null) {
+        if (!running || !radioActive || !advertisingWanted) {
             return
+        }
+        val tag = localGroupTag()
+        if (advertiser != null) {
+            if (advertisedGroupTag?.contentEquals(tag) == true) {
+                return
+            }
+            Log.i(
+                TAG,
+                "restarting advertise for discovery group " +
+                    tag.joinToString("") { "%02x".format(it) },
+            )
+            stopAdvertise()
         }
         val advertiser = adapter.bluetoothLeAdvertiser ?: return
         val settings = AdvertiseSettings.Builder()
@@ -1576,21 +1598,20 @@ class BleLink(private val context: Context) {
             .addServiceUuid(ParcelUuid(PRNS_SERVICE))
             .addManufacturerData(
                 PRNS_ROLE_COMPANY_ID,
-                localGroupTag().let { tag ->
-                    byteArrayOf(
-                        PRNS_ROLE_VERSION,
-                        PRNS_ROLE_DUAL_MODE,
-                        tag[0],
-                        tag[1],
-                        tag[2],
-                        tag[3],
-                    )
-                },
+                byteArrayOf(
+                    PRNS_ROLE_VERSION,
+                    PRNS_ROLE_DUAL_MODE,
+                    tag[0],
+                    tag[1],
+                    tag[2],
+                    tag[3],
+                ),
             )
             .build()
         try {
             advertiser.startAdvertising(settings, data, advertiseCallback)
             this.advertiser = advertiser
+            advertisedGroupTag = tag
         } catch (e: SecurityException) {
             Log.w(TAG, "advertise permission denied: $e")
         }
@@ -1604,6 +1625,7 @@ class BleLink(private val context: Context) {
     private fun stopAdvertise() {
         runCatching { advertiser?.stopAdvertising(advertiseCallback) }
         advertiser = null
+        advertisedGroupTag = null
     }
 
     fun stop() {

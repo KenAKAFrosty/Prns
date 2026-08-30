@@ -4,6 +4,9 @@ use super::discovery::{
 };
 use super::sessions::{serve_central, serve_peripheral, CentralGattSetup};
 use super::*;
+use prns_core::interfaces::bluetooth_auto::{
+    encode_advertisement, BleRoleCapabilities, MAX_ADVERTISEMENT_LEN,
+};
 
 pub async fn serve_slot<T: TroubleTransport>(
     idx: usize,
@@ -77,7 +80,6 @@ pub async fn serve_slot<T: TroubleTransport>(
 pub async fn acceptor<T: TroubleTransport>(
     hub: &'static BleHub,
     peripheral: &mut Peripheral<'static, TroubleController<T>, DefaultPacketPool>,
-    adv_data: &[u8],
 ) {
     let mut enabled = false;
     loop {
@@ -110,11 +112,18 @@ pub async fn acceptor<T: TroubleTransport>(
             }
         };
         let radio = hub.acquire_radio().await;
+        let mut adv_data = [0u8; MAX_ADVERTISEMENT_LEN];
+        let adv_len = encode_advertisement(
+            &mut adv_data,
+            BleRoleCapabilities::DualRole,
+            hub.discovery_group_tag(),
+        )
+        .unwrap_or(0);
         let advertiser = match peripheral
             .advertise(
                 &advertisement_parameters(window),
                 Advertisement::ConnectableScannableUndirected {
-                    adv_data,
+                    adv_data: &adv_data[..adv_len],
                     scan_data: &[],
                 },
             )

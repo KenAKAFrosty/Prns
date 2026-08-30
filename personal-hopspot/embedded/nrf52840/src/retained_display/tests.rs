@@ -3,7 +3,7 @@ use personal_hopspot_core::display::{
     DisplayDuration, EinkPolicyConfiguration, EinkRefreshPolicy, PartialRefreshLimit,
 };
 use personal_hopspot_core::{
-    AccessPointState, GnssAvailability, InterfaceMenuDetails, ScreenContent,
+    AccessPointState, BleGroupEditor, GnssAvailability, InterfaceMenuDetails, ScreenContent,
     SharedInstanceConfigExport, UiConfiguration, UiNotice, UiState, UserBlanking,
 };
 
@@ -90,6 +90,7 @@ fn ui_state() -> UiState {
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: SharedInstanceConfigExport::Unavailable,
         gnss: GnssAvailability::Unavailable,
+        ble_group_editor: BleGroupEditor::Unavailable,
     })
 }
 
