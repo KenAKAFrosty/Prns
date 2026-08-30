@@ -225,7 +225,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     pub fn remote_control_pairing_wake(&self) -> WakeSchedule {
-        let window = match self.remote_control_pairing_view() {
+        let availability = match self.remote_control_pairing_view() {
             crate::remote_control::RemoteControlPairingView::Open(session) => {
                 Some(session.window().expires_at())
             }
@@ -245,10 +245,26 @@ impl<S: StorageLayout> EngineState<S> {
             | crate::remote_control::RemoteControlTargetPairingView::Authorizing(_)
             | crate::remote_control::RemoteControlTargetPairingView::Completing(_) => None,
         };
-        WakeSchedule::from_deadline(match (window, attempt) {
-            (Some(window), Some(attempt)) => Some(window.min(attempt)),
-            (window, attempt) => window.or(attempt),
-        })
+        let controller = match self.remote_control_controller_pairing.view() {
+            crate::remote_control::RemoteControlControllerPairingView::AwaitingOffer(begin) => {
+                Some(begin.window().expires_at())
+            }
+            crate::remote_control::RemoteControlControllerPairingView::AwaitingApproval(
+                attempt,
+            )
+            | crate::remote_control::RemoteControlControllerPairingView::AwaitingCompletion(
+                attempt,
+            ) => Some(attempt.window().expires_at()),
+            crate::remote_control::RemoteControlControllerPairingView::Idle
+            | crate::remote_control::RemoteControlControllerPairingView::Persisting(_) => None,
+        };
+        WakeSchedule::from_deadline(
+            availability
+                .into_iter()
+                .chain(attempt)
+                .chain(controller)
+                .min(),
+        )
     }
 
     pub fn route_expiry_wake(&self, interfaces: AttachedInterfaces<'_>) -> WakeSchedule {

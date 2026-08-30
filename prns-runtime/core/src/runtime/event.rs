@@ -14,9 +14,10 @@ use crate::engine::{InstantMillis, Journaled, PersistenceFlushCause, Persistence
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
 use crate::remote_control::{
-    RemoteControlControllerGrant, RemoteControlPairingAttemptId,
-    RemoteControlPairingAvailabilityObservation, RemoteControlPairingEndpoint,
-    RemoteControlTargetPairingAborted, RemoteControlTargetPairingAttemptView,
+    RemoteControlControllerGrant, RemoteControlControllerPairingAborted,
+    RemoteControlPairingAttemptId, RemoteControlPairingAvailabilityObservation,
+    RemoteControlPairingEndpoint, RemoteControlTargetPairingAborted,
+    RemoteControlTargetPairingAttemptView,
 };
 use crate::routing::delivery::Delivery;
 use crate::routing::links::channel::MessageType;
@@ -44,6 +45,9 @@ pub enum Message<'a> {
     RemoteControlTargetPairingAuthorizationRequired {
         attempt_id: RemoteControlPairingAttemptId,
         grant: RemoteControlControllerGrant,
+    },
+    RemoteControlControllerPairingExpired {
+        aborted: RemoteControlControllerPairingAborted,
     },
     RemoteControlTargetPairingExpired {
         aborted: RemoteControlTargetPairingAborted,
@@ -209,6 +213,9 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
                     attempt_id,
                     grant,
                 })
+            }
+            Journaled::RemoteControlControllerPairingExpired { aborted } => {
+                PrnsEvent::Message(Message::RemoteControlControllerPairingExpired { aborted })
             }
             Journaled::RemoteControlTargetPairingExpired { aborted } => {
                 PrnsEvent::Message(Message::RemoteControlTargetPairingExpired { aborted })
@@ -390,6 +397,10 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::remote_control::{
+        RemoteControlControllerPairingAborted, RemoteControlPairingContext,
+        RemoteControlPairingIdentity,
+    };
     use crate::routing::announce::{AnnounceObservation, AnnounceRateAccounting};
     use crate::units::HopCount;
 
@@ -415,6 +426,26 @@ mod tests {
                 app_data: observed,
                 ..
             }) if observed == app_data
+        ));
+    }
+
+    #[test]
+    fn controller_pairing_expiry_is_an_app_facing_message() {
+        let context = RemoteControlPairingContext::new(
+            RemoteControlPairingIdentity::new(IdentityHash::new([0x81; 16])).endpoint(),
+            LinkId::new([0x82; 16]),
+        );
+        let event = PrnsEvent::from(Journaled::RemoteControlControllerPairingExpired {
+            aborted: RemoteControlControllerPairingAborted::AwaitingOffer { context },
+        });
+
+        assert!(matches!(
+            event,
+            PrnsEvent::Message(Message::RemoteControlControllerPairingExpired {
+                aborted: RemoteControlControllerPairingAborted::AwaitingOffer {
+                    context: observed,
+                },
+            }) if observed == context
         ));
     }
 }

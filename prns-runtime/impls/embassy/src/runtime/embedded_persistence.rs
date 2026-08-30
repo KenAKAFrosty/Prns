@@ -414,6 +414,7 @@ where
             | Journaled::RemoteControlTargetPairingConfirmationRequired(_)
             | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
             | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
+            | Journaled::RemoteControlControllerPairingExpired { .. }
             | Journaled::RemoteControlTargetPairingExpired { .. }
             | Journaled::RemoteControlTargetPairingLinkClosed { .. }
             | Journaled::RemoteControlPairingExpiryFailed { .. } => {}

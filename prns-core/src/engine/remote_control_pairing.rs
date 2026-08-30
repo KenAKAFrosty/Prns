@@ -18,22 +18,22 @@ use crate::remote_control::{
     BeginRemoteControlTargetPairingOutcome,
     CloseRemoteControlPairingOutcome as PairingStateCloseOutcome,
     CommitRemoteControlTargetPairingOutcome, CompleteRemoteControlTargetPairingOutcome,
-    DispatchRemoteControlTargetPairingOfferOutcome, ExpireRemoteControlTargetPairingOutcome,
-    FailRemoteControlTargetPairingAuthorizationOutcome,
+    DispatchRemoteControlTargetPairingOfferOutcome, ExpireRemoteControlControllerPairingOutcome,
+    ExpireRemoteControlTargetPairingOutcome, FailRemoteControlTargetPairingAuthorizationOutcome,
     FailRemoteControlTargetPairingOfferDispatchOutcome,
     OpenRemoteControlPairingOutcome as PairingStateOpenOutcome,
-    PersistRemoteControlTargetPairingAuthorizationOutcome, RemoteControlPairingAttemptId,
-    RemoteControlPairingAvailability, RemoteControlPairingAvailabilityDestination,
-    RemoteControlPairingAvailabilityDestinationError, RemoteControlPairingIdentity,
-    RemoteControlPairingMessageParseError, RemoteControlPairingMessageWriteError,
-    RemoteControlPairingRequest, RemoteControlPairingResponse, RemoteControlPairingSession,
-    RemoteControlPairingState, RemoteControlPairingView, RemoteControlPairingWindow,
-    RemoteControlTargetPairingAborted, RemoteControlTargetPairingAttemptWindowError,
-    RemoteControlTargetPairingBeginArrival, RemoteControlTargetPairingBeginRejection,
-    RemoteControlTargetPairingCommitArrival, RemoteControlTargetPairingCommitRejection,
-    RemoteControlTargetPairingResponder, RemoteControlTargetPairingView,
-    REMOTE_CONTROL_PAIRING_APPLICATION_ASPECTS, REMOTE_CONTROL_PAIRING_APPLICATION_NAME,
-    REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID,
+    PersistRemoteControlTargetPairingAuthorizationOutcome, RemoteControlControllerPairingView,
+    RemoteControlPairingAttemptId, RemoteControlPairingAvailability,
+    RemoteControlPairingAvailabilityDestination, RemoteControlPairingAvailabilityDestinationError,
+    RemoteControlPairingIdentity, RemoteControlPairingMessageParseError,
+    RemoteControlPairingMessageWriteError, RemoteControlPairingRequest,
+    RemoteControlPairingResponse, RemoteControlPairingSession, RemoteControlPairingState,
+    RemoteControlPairingView, RemoteControlPairingWindow, RemoteControlTargetPairingAborted,
+    RemoteControlTargetPairingAttemptWindowError, RemoteControlTargetPairingBeginArrival,
+    RemoteControlTargetPairingBeginRejection, RemoteControlTargetPairingCommitArrival,
+    RemoteControlTargetPairingCommitRejection, RemoteControlTargetPairingResponder,
+    RemoteControlTargetPairingView, REMOTE_CONTROL_PAIRING_APPLICATION_ASPECTS,
+    REMOTE_CONTROL_PAIRING_APPLICATION_NAME, REMOTE_CONTROL_PAIRING_REQUEST_ENDPOINT_ID,
 };
 use crate::routing::announce::{AnnounceEntropy, AnnounceId};
 use crate::routing::links::request::{
@@ -181,6 +181,11 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
     #[must_use]
     pub const fn remote_control_pairing_view(&self) -> RemoteControlPairingView<'_> {
         self.remote_control_pairing.view()
+    }
+
+    #[must_use]
+    pub fn remote_control_controller_pairing_view(&self) -> RemoteControlControllerPairingView<'_> {
+        self.remote_control_controller_pairing.view()
     }
 
     pub(crate) fn ingest_remote_control_pairing_request<F>(
@@ -879,6 +884,16 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
     where
         F: FnMut(&mut [u8]),
     {
+        match self.remote_control_controller_pairing.expire(now) {
+            ExpireRemoteControlControllerPairingOutcome::Expired { aborted } => {
+                sink(EngineReaction::Journaled(
+                    crate::engine::Journaled::RemoteControlControllerPairingExpired { aborted },
+                ));
+            }
+            ExpireRemoteControlControllerPairingOutcome::NotDue { .. }
+            | ExpireRemoteControlControllerPairingOutcome::NoActiveAttempt
+            | ExpireRemoteControlControllerPairingOutcome::PersistenceInProgress { .. } => {}
+        }
         match self.remote_control_target_pairing.expire(now) {
             ExpireRemoteControlTargetPairingOutcome::Expired { aborted } => {
                 sink(EngineReaction::Journaled(
@@ -944,12 +959,14 @@ mod tests {
     use crate::identity::{IdentityPublicKeys, IdentitySigner};
     use crate::interfaces::{EgressCapability, InboundPacket, InterfaceDescriptor, InterfaceId};
     use crate::remote_control::{
-        RemoteControlControllerGrant, RemoteControlControllerIdentity,
-        RemoteControlPairingAttemptTimeout, RemoteControlPairingBegin,
+        BeginRemoteControlControllerPairingOutcome, RemoteControlControllerGrant,
+        RemoteControlControllerIdentity, RemoteControlControllerPairingAborted,
+        RemoteControlPairingAttemptTimeout, RemoteControlPairingBegin, RemoteControlPairingContext,
         RemoteControlPairingEndpoint, RemoteControlPairingExpiresAfter,
-        RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
-        RemoteControlPairingTranscript, RemoteControlRequestKind, RemoteControlRequestSet,
-        RemoteControlTargetPairingResponder, RemoteControlTargetPairingView,
+        RemoteControlPairingIdentity, RemoteControlPairingPermissions,
+        RemoteControlPairingPublicAppDataBytes, RemoteControlPairingTranscript,
+        RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlTargetPairingResponder,
+        RemoteControlTargetPairingView,
     };
     use crate::routing::dedup::PacketHash;
     use crate::routing::links::data::write_link_packet;
@@ -1297,6 +1314,79 @@ mod tests {
                 if attempt.attempt_id() == attempt_id
         ));
         (attempt_id, transcript)
+    }
+
+    #[test]
+    fn controller_pairing_deadline_is_engine_owned_woken_and_journaled() {
+        let mut engine = crate::engine::EngineState::<TestStorageLayout>::default();
+        let controller = controller_identity();
+        let endpoint = RemoteControlPairingIdentity::new(stable_target_identity()).endpoint();
+        let link_id = LinkId::new([0x91; 16]);
+        let context = RemoteControlPairingContext::new(endpoint, link_id);
+        let expires_at = InstantMillis(5_000);
+        assert_eq!(
+            engine.remote_control_controller_pairing.begin(
+                controller,
+                context,
+                InstantMillis(1_000),
+                expires_at,
+            ),
+            BeginRemoteControlControllerPairingOutcome::BeginOwed {
+                begin: RemoteControlPairingBegin::new(controller),
+            },
+        );
+        let RemoteControlControllerPairingView::AwaitingOffer(begin) =
+            engine.remote_control_controller_pairing_view()
+        else {
+            panic!("awaiting offer")
+        };
+        assert_eq!(begin.context(), context);
+        assert_eq!(begin.window().expires_at(), expires_at);
+        assert_eq!(
+            engine.remote_control_pairing_wake(),
+            crate::engine::WakeSchedule::At(expires_at),
+        );
+
+        let no_interfaces: [InterfaceDescriptor; 0] = [];
+        let mut early_reactions = 0usize;
+        let early = engine.fire_due_remote_control_pairing(
+            InstantMillis(4_999),
+            AttachedInterfaces::new(&no_interfaces),
+            &mut |_| panic!("controller expiry needs no entropy"),
+            &mut |_| early_reactions += 1,
+        );
+        assert_eq!(early_reactions, 0);
+        assert_eq!(
+            early.remote_control_pairing,
+            crate::engine::WakeSchedule::At(expires_at),
+        );
+
+        let mut expired = None;
+        let due = engine.fire_due_remote_control_pairing(
+            expires_at,
+            AttachedInterfaces::new(&no_interfaces),
+            &mut |_| panic!("controller expiry needs no entropy"),
+            &mut |reaction| {
+                if let EngineReaction::Journaled(
+                    Journaled::RemoteControlControllerPairingExpired { aborted },
+                ) = reaction
+                {
+                    expired = Some(aborted);
+                }
+            },
+        );
+        assert_eq!(
+            expired,
+            Some(RemoteControlControllerPairingAborted::AwaitingOffer { context }),
+        );
+        assert_eq!(
+            engine.remote_control_controller_pairing_view(),
+            RemoteControlControllerPairingView::Idle,
+        );
+        assert_eq!(
+            due.remote_control_pairing,
+            crate::engine::WakeSchedule::Idle,
+        );
     }
 
     #[test]

@@ -20,6 +20,7 @@ fn emit_message(message: &Message<'_>) {
         | Message::RemoteControlTargetPairingConfirmationRequired(_)
         | Message::RemoteControlTargetPairingControllerCommitted { .. }
         | Message::RemoteControlTargetPairingAuthorizationRequired { .. }
+        | Message::RemoteControlControllerPairingExpired { .. }
         | Message::RemoteControlTargetPairingExpired { .. }
         | Message::RemoteControlTargetPairingLinkClosed { .. } => {}
         Message::Delivered(delivery) => {
