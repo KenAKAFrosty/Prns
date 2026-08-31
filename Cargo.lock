@@ -320,6 +320,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
 dependencies = [
  "hybrid-array",
+ "zeroize",
 ]
 
 [[package]]
@@ -1051,6 +1052,7 @@ dependencies = [
  "const-oid",
  "crypto-common 0.2.2",
  "ctutils",
+ "zeroize",
 ]
 
 [[package]]
@@ -1910,6 +1912,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9155a582abd142abc056962c29e3ce5ff2ad5469f4246b537ed42c5deba857da"
 dependencies = [
  "typenum",
+ "zeroize",
 ]
 
 [[package]]
@@ -3056,6 +3059,7 @@ dependencies = [
  "base64",
  "cbc",
  "cfg-if",
+ "chacha20",
  "crc32fast",
  "data-encoding",
  "ed25519-dalek",
@@ -3065,10 +3069,12 @@ dependencies = [
  "heapless 0.8.0",
  "hkdf 0.13.0",
  "hmac 0.13.0",
+ "hybrid-array",
  "keyring",
  "md-5 0.11.0",
  "prns-macros",
  "proptest",
+ "rand_core 0.10.1",
  "rayon",
  "rmp",
  "rmpv",
@@ -3076,6 +3082,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "static_assertions",
  "x25519-dalek",
  "zeroize",
 ]

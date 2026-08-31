@@ -9,6 +9,7 @@ extern crate alloc;
 pub mod capabilities;
 pub mod crypto;
 pub mod engine;
+pub mod entropy;
 pub mod identity;
 pub mod interfaces;
 pub mod lemire_index;
