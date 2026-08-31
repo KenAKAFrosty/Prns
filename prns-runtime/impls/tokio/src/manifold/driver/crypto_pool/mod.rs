@@ -13,15 +13,14 @@ use crate::crypto::{
     X25519PublicKey, X25519SharedSecret,
 };
 use crate::engine::{
-    AnnounceVerifyOwed, CommandId, DecryptOwed, DeferredProofSign, EncryptOwed, InstantMillis,
-    RatchetDecryptOwed, Settlement,
+    AnnounceVerification, AnnounceVerifyOwed, CommandId, DecryptOwed, DeferredProofSign,
+    EncryptOwed, InstantMillis, RatchetDecryptOwed, Settlement,
 };
 use crate::identity::{decrypt_token_in_place_with_ratchets, IdentitySigningPublicKey, OpenedBy};
 use crate::interfaces::InterfaceId;
 use crate::remote_control::{
     RemoteControlPairingAvailabilityVerification, RemoteControlPairingAvailabilityVerifyOwed,
 };
-use crate::routing::announce::Announce;
 use crate::routing::dedup::PacketHash;
 use crate::routing::ingress::MAX_RATCHET_DECRYPT_PAYLOAD_LEN;
 use crate::routing::links::handshake::{
@@ -266,10 +265,7 @@ pub(super) enum CryptoResult {
         shared: X25519SharedSecret,
         signature: Ed25519Signature,
     },
-    AnnounceVerified {
-        owed: AnnounceVerifyOwed,
-        valid: bool,
-    },
+    AnnounceVerification(AnnounceVerification),
     RemoteControlPairingAvailabilityVerification(RemoteControlPairingAvailabilityVerification),
     StagedSealed {
         command_id: CommandId,
@@ -606,11 +602,7 @@ fn run_crypto_job(job: CryptoJob) -> CryptoResult {
                 signature,
             }
         }
-        CryptoJob::VerifyAnnounce(owed) => {
-            let valid = Announce::from_wire_unverified(&owed.header, &owed.payload)
-                .is_ok_and(|announce| announce.signature_is_valid());
-            CryptoResult::AnnounceVerified { owed, valid }
-        }
+        CryptoJob::VerifyAnnounce(owed) => CryptoResult::AnnounceVerification(owed.verify()),
         CryptoJob::VerifyRemoteControlPairingAvailability(owed) => {
             CryptoResult::RemoteControlPairingAvailabilityVerification(owed.verify())
         }

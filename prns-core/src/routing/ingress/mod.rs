@@ -10,7 +10,10 @@ mod remote_control_pairing;
 pub(super) mod testkit;
 mod upstream_delivery;
 
-pub use announce::{AcceptedAnnounce, AnnounceIngest, AnnounceVerifyOwed, RebroadcastDecision};
+pub use announce::{
+    AcceptedAnnounce, AnnounceIngest, AnnounceVerification, AnnounceVerifyOwed, InvalidAnnounce,
+    RebroadcastDecision, VerifiedAnnounce,
+};
 pub use classification::{ClassifiedInboundPacket, DataPacket, Ingress};
 pub use forward::PacketToForward;
 pub use links::ForwardedLinkRequestBody;

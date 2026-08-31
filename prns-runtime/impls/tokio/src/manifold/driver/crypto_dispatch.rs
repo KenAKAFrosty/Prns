@@ -1,6 +1,6 @@
 use crate::engine::{
-    Directive, EngineReaction, EngineState, InstantMillis, Journaled, ProofRequest,
-    ResolvedReceiptSettlement, WakeSchedules,
+    AnnounceVerification, Directive, EngineReaction, EngineState, InstantMillis, Journaled,
+    ProofRequest, ResolvedReceiptSettlement, WakeSchedules,
 };
 use crate::identity::OpenedToken;
 use crate::interfaces::FrameAccountingEvent;
@@ -313,23 +313,24 @@ where
                     ..WakeSchedules::UNCHANGED
                 })
             }
-            CryptoResult::AnnounceVerified { owed, valid } => {
-                if valid {
+            CryptoResult::AnnounceVerification(verification) => match verification {
+                AnnounceVerification::Verified(verified) => {
                     CryptoCompletionEffect::WakeSchedules(engine.resume_announce(
-                        owed,
+                        verified,
                         topology.interfaces.view(),
                         &mut |entropy| host.fill_entropy(entropy),
                         &mut reaction_sink!(),
                     ))
-                } else {
+                }
+                AnnounceVerification::Invalid(invalid) => {
                     if let Some(recorder) =
-                        topology.frame_accounting_recorder(owed.source_interface)
+                        topology.frame_accounting_recorder(invalid.source_interface())
                     {
                         recorder.record(FrameAccountingEvent::ProtocolViolation);
                     }
                     CryptoCompletionEffect::NoWakeChange
                 }
-            }
+            },
             CryptoResult::RemoteControlPairingAvailabilityVerification(verification) => {
                 match verification {
                     RemoteControlPairingAvailabilityVerification::Verified(verified) => {

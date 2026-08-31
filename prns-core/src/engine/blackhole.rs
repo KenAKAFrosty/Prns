@@ -167,7 +167,9 @@ mod tests {
         bytes_from_hex, test_fill_entropy, tick_capture, transporting_interfaces,
         transporting_node, TestStorageLayout, RNS_1_4_2_ANNOUNCE,
     };
-    use crate::engine::{AnnounceIngest, DeferredCrypto, IngestPacketOutcome, WakeSchedule};
+    use crate::engine::{
+        AnnounceIngest, AnnounceVerification, DeferredCrypto, IngestPacketOutcome, WakeSchedule,
+    };
     use crate::interfaces::{AttachedInterfaces, InboundPacket, InterfaceId};
     use crate::routing::ingress::Ingress;
     use crate::routing::{BlackholeExpiry, RouteRemovalCause};
@@ -336,9 +338,13 @@ mod tests {
         let DeferredCrypto::AnnounceVerify(owed) = deferred else {
             panic!("the announce verification was deferred");
         };
+        let verified = match owed.verify() {
+            AnnounceVerification::Verified(verified) => verified,
+            AnnounceVerification::Invalid(_) => panic!("the reference announce should verify"),
+        };
 
         engine.resume_announce(
-            owed,
+            verified,
             AttachedInterfaces::new(&interfaces),
             &mut test_fill_entropy,
             &mut |_| {},

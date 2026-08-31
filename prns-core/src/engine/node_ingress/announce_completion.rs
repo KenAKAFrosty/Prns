@@ -1,8 +1,8 @@
 use super::journal_route_removal;
 use crate::engine::settlement::settle;
 use crate::engine::{
-    AnnounceIngest, AnnounceVerifyOwed, EngineReaction, EngineState, Journaled, PathFound,
-    Settlement, WakeSchedule, WakeSchedules,
+    AnnounceIngest, EngineReaction, EngineState, Journaled, PathFound, Settlement,
+    VerifiedAnnounce, WakeSchedule, WakeSchedules,
 };
 use crate::interfaces::{AttachedInterfaces, InterfaceId};
 use crate::routing::announce::{Announce, AnnounceArrival};
@@ -76,11 +76,12 @@ impl<S: StorageLayout> EngineState<S> {
 
     pub fn resume_announce(
         &mut self,
-        owed: AnnounceVerifyOwed,
+        verified: VerifiedAnnounce,
         interfaces: AttachedInterfaces<'_>,
         fill_entropy: &mut impl FnMut(&mut [u8]),
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
+        let owed = verified.into_owed();
         let mut wake = WakeSchedules::UNCHANGED;
         let Ok((announce, identity_hash)) =
             Announce::from_wire_unverified_with_identity(&owed.header, &owed.payload)
