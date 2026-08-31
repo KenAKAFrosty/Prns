@@ -106,12 +106,24 @@ impl RemoteControlControllerPairingRequest {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct RemoteControlControllerPairingBegun {
+    controller_identity_hash: crate::identity::IdentityHash,
     request: RemoteControlControllerPairingRequest,
 }
 
 impl RemoteControlControllerPairingBegun {
-    pub(crate) const fn new(request: RemoteControlControllerPairingRequest) -> Self {
-        Self { request }
+    pub(crate) const fn new(
+        controller_identity_hash: crate::identity::IdentityHash,
+        request: RemoteControlControllerPairingRequest,
+    ) -> Self {
+        Self {
+            controller_identity_hash,
+            request,
+        }
+    }
+
+    #[must_use]
+    pub const fn controller_identity_hash(&self) -> crate::identity::IdentityHash {
+        self.controller_identity_hash
     }
 
     #[must_use]
@@ -525,7 +537,10 @@ impl<S: StorageLayout> EngineState<S> {
                 expires_at,
                 now,
             ) {
-                Ok(request) => Ok(RemoteControlControllerPairingBegun::new(request)),
+                Ok(request) => Ok(RemoteControlControllerPairingBegun::new(
+                    controller.identity_hash(),
+                    request,
+                )),
                 Err(failure) => {
                     let rollback = self
                         .remote_control_controller_pairing
@@ -1010,6 +1025,7 @@ mod tests {
         let Settlement::BeginRemoteControlControllerPairing(Ok(begun)) = settlement else {
             panic!("begin settled")
         };
+        assert_eq!(begun.controller_identity_hash(), controller.identity_hash());
         let request = begun.into_request();
         let expected = SendRequest {
             link_id: context().link_id(),

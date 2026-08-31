@@ -52,11 +52,12 @@ use super::super::{
     ForgetRemoteControlTargetControlError, OpenRemoteControlPairingControlError, PrnsNodeApi,
     RejectRemoteControlControllerPairingControlError, RejectRemoteControlTargetPairingControlError,
     RemoteControlControllerGrantControl, RemoteControlPairingControl,
-    RemoteControlPairingControlError, RemoteControlTargetAccessControl,
-    RemoteControlTargetInventory, RemoteControlTargetInventoryControlError,
-    ResolveRemoteControlTargetControlError, ResolvedRemoteControlTarget,
-    RevokeRemoteControlControllerControlError, SendError, SetRegisteredAnnounceAppDataError,
-    SetRemoteControlControllerGrantControlError, SetRemoteControlTargetAccessControlError,
+    RemoteControlPairingControlError, RemoteControlPairingLinkCleanupOutcome,
+    RemoteControlTargetAccessControl, RemoteControlTargetInventory,
+    RemoteControlTargetInventoryControlError, ResolveRemoteControlTargetControlError,
+    ResolvedRemoteControlTarget, RevokeRemoteControlControllerControlError, SendError,
+    SetRegisteredAnnounceAppDataError, SetRemoteControlControllerGrantControlError,
+    SetRemoteControlTargetAccessControlError,
 };
 
 const NO_AWAITER: u64 = u64::MAX;
@@ -1324,9 +1325,25 @@ impl<
         crate::engine::RemoteControlControllerPairingResponseReceived,
         BeginRemoteControlControllerPairingControlError,
     > {
+        let link_id = begin.context.link_id();
         let begun = self.settle_pairing_command(begin).await.map_err(|error| {
             error.map_failure(BeginRemoteControlControllerPairingControlFailure::Begin)
         })?;
+        if let Err(error) = self
+            .identify(link_id, begun.controller_identity_hash())
+            .await
+        {
+            let cleanup = match self.close_link(link_id) {
+                true => RemoteControlPairingLinkCleanupOutcome::Queued,
+                false => RemoteControlPairingLinkCleanupOutcome::NotQueued,
+            };
+            return Err(RemoteControlPairingControlError::Failed(
+                BeginRemoteControlControllerPairingControlFailure::Identify {
+                    failure: error,
+                    cleanup,
+                },
+            ));
+        }
         self.settle_pairing_command(begun.into_request())
             .await
             .map_err(|error| {

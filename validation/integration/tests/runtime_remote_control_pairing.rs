@@ -204,10 +204,6 @@ async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
             .establish_link(availability.endpoint.destination_hash())
             .await
             .expect("the controller links to the ephemeral pairing endpoint");
-        controller_handle
-            .identify(link_id, controller_identity.identity_hash())
-            .await
-            .expect("the controller identifies on the pairing link");
 
         let _offered = controller_handle
             .begin_remote_control_controller_pairing(BeginRemoteControlControllerPairing {

@@ -8,11 +8,21 @@ use crate::engine::{
     RemoteControlTargetPairingApproval, RemoteControlTargetPairingRejection,
 };
 
-use super::RemoteControlPairingControlError;
+use super::{RemoteControlPairingControlError, SendError};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlPairingLinkCleanupOutcome {
+    Queued,
+    NotQueued,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BeginRemoteControlControllerPairingControlFailure {
     Begin(BeginRemoteControlControllerPairingFailure),
+    Identify {
+        failure: SendError<crate::engine::IdentifyFailure>,
+        cleanup: RemoteControlPairingLinkCleanupOutcome,
+    },
     Request(RemoteControlControllerPairingRequestFailure),
 }
 

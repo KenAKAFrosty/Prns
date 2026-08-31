@@ -69,7 +69,7 @@ pub use remote_control_pairing::{
     ApproveRemoteControlTargetPairingControlError, BeginRemoteControlControllerPairingControlError,
     BeginRemoteControlControllerPairingControlFailure,
     RejectRemoteControlControllerPairingControlError, RejectRemoteControlTargetPairingControlError,
-    RemoteControlPairingControl,
+    RemoteControlPairingControl, RemoteControlPairingLinkCleanupOutcome,
 };
 pub use remote_control_target_accesses::{
     AuthorizedRemoteControlTarget, ForgetRemoteControlTargetControlError,
