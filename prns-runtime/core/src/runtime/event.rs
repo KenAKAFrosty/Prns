@@ -15,10 +15,9 @@ use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
 use crate::remote_control::{
     RemoteControlControllerGrant, RemoteControlControllerPairingAborted,
-    RemoteControlControllerPairingAttemptView, RemoteControlControllerPairingPersistenceView,
-    RemoteControlPairingAttemptId, RemoteControlPairingAvailabilityObservation,
-    RemoteControlPairingEndpoint, RemoteControlTargetPairingAborted,
-    RemoteControlTargetPairingAttemptView,
+    RemoteControlControllerPairingPersistenceView, RemoteControlPairingAttemptId,
+    RemoteControlPairingAvailabilityObservation, RemoteControlPairingEndpoint,
+    RemoteControlTargetPairingAborted,
 };
 use crate::routing::delivery::Delivery;
 use crate::routing::links::channel::MessageType;
@@ -28,6 +27,8 @@ use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::units::RttMillis;
 use crate::wire::DestinationHash;
+
+use super::{RemoteControlControllerPairingConfirmation, RemoteControlTargetPairingConfirmation};
 
 #[derive(Debug)]
 pub enum PrnsEvent<'a> {
@@ -39,7 +40,7 @@ pub enum PrnsEvent<'a> {
 #[derive(Debug)]
 pub enum Message<'a> {
     RemoteControlPairingAvailable(RemoteControlPairingAvailabilityObservation<'a>),
-    RemoteControlTargetPairingConfirmationRequired(RemoteControlTargetPairingAttemptView<'a>),
+    RemoteControlTargetPairingConfirmationRequired(RemoteControlTargetPairingConfirmation),
     RemoteControlTargetPairingControllerCommitted {
         attempt_id: RemoteControlPairingAttemptId,
     },
@@ -50,9 +51,7 @@ pub enum Message<'a> {
     RemoteControlTargetPairingAuthorizationPersisted {
         attempt_id: RemoteControlPairingAttemptId,
     },
-    RemoteControlControllerPairingConfirmationRequired(
-        RemoteControlControllerPairingAttemptView<'a>,
-    ),
+    RemoteControlControllerPairingConfirmationRequired(RemoteControlControllerPairingConfirmation),
     RemoteControlControllerPairingPersistenceRequired(
         RemoteControlControllerPairingPersistenceView<'a>,
     ),
@@ -222,7 +221,7 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
             }
             Journaled::RemoteControlTargetPairingConfirmationRequired(attempt) => {
                 PrnsEvent::Message(Message::RemoteControlTargetPairingConfirmationRequired(
-                    attempt,
+                    attempt.into(),
                 ))
             }
             Journaled::RemoteControlTargetPairingControllerCommitted { attempt_id } => {
@@ -243,7 +242,7 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
             }
             Journaled::RemoteControlControllerPairingConfirmationRequired(pairing) => {
                 PrnsEvent::Message(Message::RemoteControlControllerPairingConfirmationRequired(
-                    pairing,
+                    pairing.into(),
                 ))
             }
             Journaled::RemoteControlControllerPairingPersistenceRequired(pairing) => {

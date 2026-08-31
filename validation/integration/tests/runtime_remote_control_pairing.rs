@@ -6,14 +6,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use personal_rns::engine::{
     AdmitRemoteControlControllerPairingResponseOutcome, AnnounceAppData, AnnounceNow,
-    AnnounceTarget, ApproveRemoteControlControllerPairing, ApproveRemoteControlTargetPairing,
-    EgressTarget, OpenRemoteControlPairing, OpenRemoteControlPairingFailure,
+    AnnounceTarget, EgressTarget, OpenRemoteControlPairing, OpenRemoteControlPairingFailure,
     OpenRemoteControlPairingRejection,
     RemoteControlControllerPairingResponseEffect, RemoteControlPairingOpened,
     RemoteControlTargetPairingApproval,
 };
 use personal_rns::identity::vault::IdentitySecretKey;
-use personal_rns::identity::IdentityPublicKeys;
 use personal_rns::persistence::{
     read_remote_control_controller_grants_snapshot, read_remote_control_target_accesses_snapshot,
     FileStore, PersistedStore, SnapshotRegion,
@@ -21,9 +19,8 @@ use personal_rns::persistence::{
 use personal_rns::prelude::*;
 use personal_rns::remote_control::{
     ReceiveRemoteControlControllerPairingCompletedOutcome, RemoteControlControllerGrant,
-    RemoteControlPairingAttemptId, RemoteControlPairingAttemptTimeout,
-    RemoteControlPairingConfirmationCode, RemoteControlPairingContext,
-    RemoteControlPairingEndpoint, RemoteControlPairingExpiresAfter,
+    RemoteControlPairingAttemptTimeout, RemoteControlPairingEndpoint,
+    RemoteControlPairingExpiresAfter,
     RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
     RemoteControlTargetAccess, RemoteControlTargetIdentity, SetRemoteControlControllerGrantOutcome,
 };
@@ -44,16 +41,6 @@ struct PairingAvailability {
     endpoint: RemoteControlPairingEndpoint,
     expires_at: InstantMillis,
     public_app_data: std::vec::Vec<u8>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct PairingConfirmation {
-    attempt_id: RemoteControlPairingAttemptId,
-    context: RemoteControlPairingContext,
-    code: RemoteControlPairingConfirmationCode,
-    controller: RemoteControlControllerIdentity,
-    target: IdentityPublicKeys,
-    permissions: RemoteControlPairingPermissions,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -91,14 +78,7 @@ async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
             PrnsEvent::Message(Message::RemoteControlTargetPairingConfirmationRequired(
                 pairing,
             )) => {
-                let _ignored = target_confirmation_tx.send(PairingConfirmation {
-                    attempt_id: pairing.attempt_id(),
-                    context: pairing.context(),
-                    code: pairing.confirmation_code(),
-                    controller: *pairing.controller(),
-                    target: *pairing.target().public_keys(),
-                    permissions: pairing.permissions().clone(),
-                });
+                let _ignored = target_confirmation_tx.send(pairing);
             }
             PrnsEvent::Message(Message::RemoteControlTargetPairingAuthorizationPersisted {
                 attempt_id,
@@ -145,14 +125,7 @@ async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
             PrnsEvent::Message(Message::RemoteControlControllerPairingConfirmationRequired(
                 pairing,
             )) => {
-                let _ignored = controller_confirmation_tx.send(PairingConfirmation {
-                    attempt_id: pairing.attempt_id(),
-                    context: pairing.context(),
-                    code: pairing.confirmation_code(),
-                    controller: *pairing.controller(),
-                    target: *pairing.target().public_keys(),
-                    permissions: pairing.permissions().clone(),
-                });
+                let _ignored = controller_confirmation_tx.send(pairing);
             }
             PrnsEvent::Message(Message::RemoteControlControllerPairingAuthorizationPersisted {
                 attempt_id,
@@ -217,21 +190,22 @@ async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
             .recv()
             .await
             .expect("the controller asks for confirmation");
-        assert_eq!(controller_confirmation, target_confirmation);
+        assert_eq!(
+            controller_confirmation.confirmation(),
+            target_confirmation.confirmation(),
+        );
 
-        let attempt_id = controller_confirmation.attempt_id;
+        let attempt_id = controller_confirmation.confirmation().attempt_id();
+        assert_eq!(target_confirmation.rejection().attempt_id, attempt_id);
+        assert_eq!(controller_confirmation.rejection().attempt_id, attempt_id);
         assert_eq!(
             target_handle
-                .approve_remote_control_target_pairing(ApproveRemoteControlTargetPairing {
-                    attempt_id,
-                })
+                .approve_remote_control_target_pairing(target_confirmation.approval())
                 .await,
             Ok(RemoteControlTargetPairingApproval::AwaitingControllerCommit { attempt_id }),
         );
         let completed = controller_handle
-            .approve_remote_control_controller_pairing(ApproveRemoteControlControllerPairing {
-                attempt_id,
-            })
+            .approve_remote_control_controller_pairing(controller_confirmation.approval())
             .await
             .expect("the target returns a valid signed completion");
         assert_eq!(

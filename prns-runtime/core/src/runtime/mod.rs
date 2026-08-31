@@ -9,6 +9,7 @@ mod remote_control;
 mod remote_control_authorizations;
 mod remote_control_controller_grants;
 mod remote_control_pairing;
+mod remote_control_pairing_confirmation;
 mod remote_control_pairing_initiation;
 mod remote_control_target_accesses;
 mod remote_control_target_connection;
@@ -71,6 +72,10 @@ pub use remote_control_pairing::{
     BeginRemoteControlControllerPairingControlFailure,
     RejectRemoteControlControllerPairingControlError, RejectRemoteControlTargetPairingControlError,
     RemoteControlPairingControl, RemoteControlPairingLinkCleanupOutcome,
+};
+pub use remote_control_pairing_confirmation::{
+    RemoteControlControllerPairingConfirmation, RemoteControlPairingConfirmation,
+    RemoteControlTargetPairingConfirmation,
 };
 pub use remote_control_pairing_initiation::{
     InitiateRemoteControlControllerPairing, InitiateRemoteControlControllerPairingError,
