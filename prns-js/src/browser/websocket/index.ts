@@ -14,11 +14,10 @@ import type {
   ConnectTimedOut,
   InterfaceConnectStage,
   InterfaceSession,
-  InterfaceSessionFailure,
   InvalidTarget,
   PermissionDenied,
 } from "../interface_contract.js";
-import type { PrnsOutboundFrame } from "../outbound.js";
+import type { InterfaceOutboundHost } from "../outbound.js";
 import type {
   EntropyFailure,
   RuntimeRejected,
@@ -29,6 +28,7 @@ import type {
   ChannelTag,
   HardwareMtu,
 } from "../values.js";
+import { bitrateBps } from "../values.js";
 import {
   BrowserWebSocketSession,
   closeBrowserWebSocket,
@@ -38,6 +38,7 @@ export type WebSocketSession = InterfaceSession & {
   readonly name: "websocket";
   readonly url: string;
   readonly framing: WebSocketFramingSelection;
+  subscribeStatus(changed: (status: InterfaceSession["status"]) => void): () => void;
 };
 
 export type WebSocketConnectOptions = {
@@ -77,25 +78,17 @@ type WebSocketIngestOutcome =
   | Tag<"Accepted">
   | EntropyFailure
   | RuntimeRejected;
-type WebSocketOutboundOutcome =
-  | Tag<"Outbound", readonly PrnsOutboundFrame[]>
-  | Extract<InterfaceSessionFailure, Tag<"OutboundQueueFull", unknown>>
-  | RuntimeRejected;
-
-export type WebSocketRuntimeHost = {
-  runtimeReadiness(): Tag<"Ready"> | RuntimeRejected;
+type WebSocketHostOutcome<Outcome> = Outcome | Promise<Outcome>;
+export type WebSocketRuntimeHost = InterfaceOutboundHost & {
+  runtimeReadiness(): WebSocketHostOutcome<Tag<"Ready"> | RuntimeRejected>;
   webSocketRegister(
     options: WebSocketRuntimeRegistration,
-  ): WebSocketRegistrationOutcome;
-  deactivateInterface(id: InterfaceId): WebSocketDetachOutcome;
+  ): WebSocketHostOutcome<WebSocketRegistrationOutcome>;
+  deactivateInterface(id: InterfaceId): WebSocketHostOutcome<WebSocketDetachOutcome>;
   webSocketIngest(
     id: InterfaceId,
     bytes: Uint8Array,
-  ): WebSocketIngestOutcome;
-  takeOutboundFor(
-    id: InterfaceId,
-    maximumFrames?: number,
-  ): WebSocketOutboundOutcome;
+  ): WebSocketHostOutcome<WebSocketIngestOutcome>;
   createWebSocketFramingCodec(
     selection: WebSocketFramingSelection,
   ): WebSocketFramingCodecBinding;
@@ -117,6 +110,7 @@ type CanonicalWebSocketOutcome =
   | InvalidTarget<"websocket">;
 
 const CONNECT_TIMEOUT_MS = 10_000;
+const LOOPBACK_BITRATE_FACTOR = 2;
 const DEFAULT_FRAMING_SELECTION: WebSocketFramingSelection = "Auto";
 export const BROWSER_RENDEZVOUS_FRAMING_SELECTION: WebSocketFramingSelection =
   "RawPacket";
@@ -134,7 +128,7 @@ export class WebSocketInterface {
     url: string | URL,
     options: WebSocketConnectOptions = {},
   ): Promise<WebSocketConnectOutcome> {
-    const ready = this.#host.runtimeReadiness();
+    const ready = await this.#host.runtimeReadiness();
     if (ready.tag !== "Ready") {
       return ready;
     }
@@ -172,10 +166,10 @@ export class WebSocketInterface {
       }
       socket = opened.data;
       stage = "RuntimeRegistration";
-      const registered = this.#host.webSocketRegister({
+      const registered = await this.#host.webSocketRegister({
         channelTag: tag,
         bitrateBps:
-          options.bitrateBps ?? this.#host.websocketBitrateBps(),
+          options.bitrateBps ?? defaultWebSocketBitrate(this.#host, target),
         hardwareMtu:
           options.hardwareMtu ?? this.#host.websocketHardwareMtu(),
         ...(options.routing === undefined ? {} : { routing: options.routing }),
@@ -201,12 +195,39 @@ export class WebSocketInterface {
       return Tag("Connected", session);
     } catch (error) {
       if (interfaceId) {
-        this.#host.deactivateInterface(interfaceId);
+        await this.#host.deactivateInterface(interfaceId);
       }
       closeBrowserWebSocket(socket);
       this.#activeTags.delete(tagKey);
       return connectFailure("websocket", stage, error);
     }
+  }
+}
+
+function defaultWebSocketBitrate(
+  host: WebSocketRuntimeHost,
+  target: string,
+): BitrateBps {
+  return isLoopbackWebSocketUrl(target)
+    ? loopbackWebSocketBitrate(host.websocketBitrateBps())
+    : host.websocketBitrateBps();
+}
+
+export function loopbackWebSocketBitrate(
+  ordinaryBitrate: BitrateBps,
+): BitrateBps {
+  return bitrateBps(Number(ordinaryBitrate) * LOOPBACK_BITRATE_FACTOR);
+}
+
+export function isLoopbackWebSocketUrl(value: string): boolean {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return hostname === "localhost" ||
+      hostname.endsWith(".localhost") ||
+      hostname === "[::1]" ||
+      hostname.split(".").length === 4 && hostname.split(".")[0] === "127";
+  } catch {
+    return false;
   }
 }
 

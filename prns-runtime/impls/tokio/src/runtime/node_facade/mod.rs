@@ -19,13 +19,15 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 
 use crate::engine::{
-    AllowRequester, AllowRequesterFailure, AnnounceNow, CloseLink, CommandId, EstablishLink,
-    EstablishLinkFailure, Identify, IdentifyFailure, IssuedCommand, LinkEstablished,
-    PacketReceiptDelivered, PathFound, PathRequestId, PrnsCommand, RequestPath, RequestPathFailure,
-    SendGroup, SendGroupFailure, SendGroupPayload, SendPlainPacket, SendPlainPacketFailure,
-    SendPlainPacketPayload, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
-    SendToChannel, SendToChannelBody, SendToChannelFailure, SendToLink, SendToLinkFailure,
-    SendToLinkPayload, SetRegisteredAnnounceAppData, Settlement, PATH_REQUEST_ID_LEN,
+    AllowRequester, AllowRequesterFailure, AnnounceNow, CloseLink, CloseRemoteControlPairing,
+    CloseRemoteControlPairingOutcome, CommandId, EgressTarget, EstablishLink, EstablishLinkFailure,
+    Identify, IdentifyFailure, IssuedCommand, LinkEstablished, OpenRemoteControlPairing,
+    PacketReceiptDelivered, PathFound, PathRequestId, PrnsCommand, RemoteControlPairingOpened,
+    RequestPath, RequestPathFailure, SendGroup, SendGroupFailure, SendGroupPayload,
+    SendPlainPacket, SendPlainPacketFailure, SendPlainPacketPayload, SendSinglePacket,
+    SendSinglePacketFailure, SendSinglePacketPayload, SendToChannel, SendToChannelBody,
+    SendToChannelFailure, SendToLink, SendToLinkFailure, SendToLinkPayload,
+    SetRegisteredAnnounceAppData, Settlement, PATH_REQUEST_ID_LEN,
 };
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
@@ -73,8 +75,8 @@ pub(crate) fn test_remote_control_service(
     use prns_core::identity::vault::IdentitySecretKey;
     use prns_core::remote_control::{
         RemoteControlControllerIdentitySecret, RemoteControlInitialAccess,
-        RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData,
-        RemoteControlSelfAnnouncement, RemoteControlService, RemoteControlTargetIdentitySecret,
+        RemoteControlNodeIdentitySecrets, RemoteControlSelfAnnouncement, RemoteControlService,
+        RemoteControlTargetIdentitySecret,
     };
 
     let identity_secrets = RemoteControlNodeIdentitySecrets::new(
@@ -88,7 +90,6 @@ pub(crate) fn test_remote_control_service(
     .expect("distinct test identities");
     RemoteControlService::new(
         identity_secrets,
-        RemoteControlPublicAppData::try_from(b"".as_slice()).expect("empty app data"),
         RemoteControlInitialAccess::Nobody,
         RemoteControlSelfAnnouncement::Unavailable,
     )
@@ -304,6 +305,7 @@ impl PrnsNodeHandle {
         match self
             .settle(PrnsCommand::SendPlainPacket(SendPlainPacket {
                 destination,
+                target: EgressTarget::AllInterfaces,
                 payload,
             }))
             .await
@@ -467,6 +469,38 @@ impl PrnsNodeHandle {
         }
     }
 
+    pub async fn open_remote_control_pairing(
+        &self,
+        open: OpenRemoteControlPairing,
+    ) -> Result<RemoteControlPairingOpened, super::OpenRemoteControlPairingControlError> {
+        match self
+            .settle(PrnsCommand::OpenRemoteControlPairing(open))
+            .await
+        {
+            Some(Settlement::OpenRemoteControlPairing(result)) => {
+                result.map_err(super::RemoteControlPairingControlError::Failed)
+            }
+            Some(_) | None => Err(super::RemoteControlPairingControlError::NodeStopped),
+        }
+    }
+
+    pub async fn close_remote_control_pairing(
+        &self,
+    ) -> Result<CloseRemoteControlPairingOutcome, super::CloseRemoteControlPairingControlError>
+    {
+        match self
+            .settle(PrnsCommand::CloseRemoteControlPairing(
+                CloseRemoteControlPairing,
+            ))
+            .await
+        {
+            Some(Settlement::CloseRemoteControlPairing(result)) => {
+                result.map_err(super::RemoteControlPairingControlError::Failed)
+            }
+            Some(_) | None => Err(super::RemoteControlPairingControlError::NodeStopped),
+        }
+    }
+
     pub async fn allow_requester(
         &self,
         allow: AllowRequester,
@@ -575,6 +609,20 @@ impl super::PrnsNodeApi for PrnsNodeHandle {
         set: SetRegisteredAnnounceAppData,
     ) -> Result<(), super::SetRegisteredAnnounceAppDataError> {
         self.set_registered_announce_app_data(set).await
+    }
+
+    async fn open_remote_control_pairing(
+        &self,
+        open: OpenRemoteControlPairing,
+    ) -> Result<RemoteControlPairingOpened, super::OpenRemoteControlPairingControlError> {
+        self.open_remote_control_pairing(open).await
+    }
+
+    async fn close_remote_control_pairing(
+        &self,
+    ) -> Result<CloseRemoteControlPairingOutcome, super::CloseRemoteControlPairingControlError>
+    {
+        self.close_remote_control_pairing().await
     }
 
     async fn send_single_packet(

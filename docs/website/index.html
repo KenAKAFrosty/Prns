@@ -4,18 +4,13 @@
     <meta charset="UTF-8" />
     <meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!-- dx fills this empty title from Dioxus.toml [web.app] title. -->
+    <!-- Dioxus SSG replaces the shell title and adds route-specific metadata. -->
     <title></title>
-    <meta name="description" content="A high-performance Rust port of Reticulum (RNS). A deterministic, no_std, alloc-free core, from a five-dollar microcontroller to a cloud server." />
     <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
-    <link rel="canonical" href="https://reticulum.rs/" />
 
-    <!-- Open Graph (kept in static HTML so crawlers, which do not run wasm, can read it) -->
+    <!-- Site-wide social-card fields; route-specific fields come from Dioxus. -->
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Prns" />
-    <meta property="og:title" content="Prns: High-performance Reticulum, built to run on any device" />
-    <meta property="og:description" content="A deterministic, no_std, alloc-free core. From a five-dollar microcontroller to a cloud server." />
-    <meta property="og:url" content="https://reticulum.rs/" />
     <meta property="og:image" content="https://reticulum.rs/assets/og.png" />
     <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
@@ -24,8 +19,6 @@
 
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Prns: High-performance Reticulum, built to run on any device" />
-    <meta name="twitter:description" content="A fast, deterministic, no_std, alloc-free core. From a five-dollar microcontroller to a cloud server." />
     <meta name="twitter:image" content="https://reticulum.rs/assets/og.png" />
   </head>
   <body>

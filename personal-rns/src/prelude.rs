@@ -19,14 +19,14 @@ pub use crate::remote_control::{
     RemoteControlNodeIdentityBootstrapError, RemoteControlNodeIdentityGenerationError,
     RemoteControlNodeIdentityOrigins, RemoteControlNodeIdentitySecrets,
     RemoteControlNodeIdentitySecretsError, RemoteControlProtocolError,
-    RemoteControlProtocolErrorKind, RemoteControlProtocolVersion, RemoteControlPublicAppData,
-    RemoteControlRequest, RemoteControlRequestKind, RemoteControlRequestParseError,
-    RemoteControlRequestSet, RemoteControlResponse, RemoteControlResponseKind,
-    RemoteControlResponseParseError, RemoteControlSelfAnnouncement, RemoteControlService,
-    RemoteControlTargetIdentity, RemoteControlTargetIdentitySecret,
-    RevokeRemoteControlControllerError, RevokeRemoteControlControllerOutcome,
-    SetRemoteControlControllerGrantError, SetRemoteControlControllerGrantOutcome,
-    REMOTE_CONTROL_IDENTITY_VAULT_SLOTS, REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
+    RemoteControlProtocolErrorKind, RemoteControlProtocolVersion, RemoteControlRequest,
+    RemoteControlRequestKind, RemoteControlRequestParseError, RemoteControlRequestSet,
+    RemoteControlResponse, RemoteControlResponseKind, RemoteControlResponseParseError,
+    RemoteControlSelfAnnouncement, RemoteControlService, RemoteControlTargetIdentity,
+    RemoteControlTargetIdentitySecret, RevokeRemoteControlControllerError,
+    RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantError,
+    SetRemoteControlControllerGrantOutcome, REMOTE_CONTROL_IDENTITY_VAULT_SLOTS,
+    REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
 };
 
 #[cfg(feature = "alloc")]

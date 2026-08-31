@@ -13,6 +13,13 @@ use crate::engine::{CommandId, HeldDropCause, LinkEstablished, RouteRemovalCause
 use crate::engine::{InstantMillis, Journaled, PersistenceFlushCause, PersistenceFlushTarget};
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
+use crate::remote_control::{
+    RemoteControlControllerGrant, RemoteControlControllerPairingAborted,
+    RemoteControlControllerPairingAttemptView, RemoteControlControllerPairingPersistenceView,
+    RemoteControlPairingAttemptId, RemoteControlPairingAvailabilityObservation,
+    RemoteControlPairingEndpoint, RemoteControlTargetPairingAborted,
+    RemoteControlTargetPairingAttemptView,
+};
 use crate::routing::delivery::Delivery;
 use crate::routing::links::channel::MessageType;
 use crate::routing::links::request::RequestId;
@@ -31,6 +38,39 @@ pub enum PrnsEvent<'a> {
 /// The data plane: bytes the app owns.
 #[derive(Debug)]
 pub enum Message<'a> {
+    RemoteControlPairingAvailable(RemoteControlPairingAvailabilityObservation<'a>),
+    RemoteControlTargetPairingConfirmationRequired(RemoteControlTargetPairingAttemptView<'a>),
+    RemoteControlTargetPairingControllerCommitted {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
+    RemoteControlTargetPairingAuthorizationRequired {
+        attempt_id: RemoteControlPairingAttemptId,
+        grant: RemoteControlControllerGrant,
+    },
+    RemoteControlControllerPairingConfirmationRequired(
+        RemoteControlControllerPairingAttemptView<'a>,
+    ),
+    RemoteControlControllerPairingPersistenceRequired(
+        RemoteControlControllerPairingPersistenceView<'a>,
+    ),
+    RemoteControlControllerPairingExpired {
+        aborted: RemoteControlControllerPairingAborted,
+    },
+    RemoteControlControllerPairingLinkClosed {
+        aborted: RemoteControlControllerPairingAborted,
+    },
+    RemoteControlTargetPairingExpired {
+        aborted: RemoteControlTargetPairingAborted,
+    },
+    RemoteControlTargetPairingLinkClosed {
+        aborted: RemoteControlTargetPairingAborted,
+    },
+    RemoteControlTargetPairingCompletionRetentionExpired {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
+    RemoteControlTargetPairingCompletionLinkClosed {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
     Delivered(Delivery<'a>),
     Request {
         destination: DestinationHash,
@@ -128,6 +168,13 @@ pub enum Diagnostic<'a> {
         id: CommandId,
         settlement: Settlement,
     },
+    RemoteControlPairingExpired {
+        endpoint: RemoteControlPairingEndpoint,
+    },
+    RemoteControlPairingExpiryFailed {
+        endpoint: RemoteControlPairingEndpoint,
+        failure: crate::engine::CloseRemoteControlPairingFailure,
+    },
     LinkEstablished(LinkEstablished),
     PeerIdentified {
         link_id: LinkId,
@@ -164,6 +211,57 @@ pub enum Diagnostic<'a> {
 impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
     fn from(journaled: Journaled<'a>) -> Self {
         match journaled {
+            Journaled::RemoteControlPairingAvailabilityObserved(observation) => {
+                PrnsEvent::Message(Message::RemoteControlPairingAvailable(observation))
+            }
+            Journaled::RemoteControlTargetPairingConfirmationRequired(attempt) => {
+                PrnsEvent::Message(Message::RemoteControlTargetPairingConfirmationRequired(
+                    attempt,
+                ))
+            }
+            Journaled::RemoteControlTargetPairingControllerCommitted { attempt_id } => {
+                PrnsEvent::Message(Message::RemoteControlTargetPairingControllerCommitted {
+                    attempt_id,
+                })
+            }
+            Journaled::RemoteControlTargetPairingAuthorizationRequired { attempt_id, grant } => {
+                PrnsEvent::Message(Message::RemoteControlTargetPairingAuthorizationRequired {
+                    attempt_id,
+                    grant,
+                })
+            }
+            Journaled::RemoteControlControllerPairingConfirmationRequired(pairing) => {
+                PrnsEvent::Message(Message::RemoteControlControllerPairingConfirmationRequired(
+                    pairing,
+                ))
+            }
+            Journaled::RemoteControlControllerPairingPersistenceRequired(pairing) => {
+                PrnsEvent::Message(Message::RemoteControlControllerPairingPersistenceRequired(
+                    pairing,
+                ))
+            }
+            Journaled::RemoteControlControllerPairingExpired { aborted } => {
+                PrnsEvent::Message(Message::RemoteControlControllerPairingExpired { aborted })
+            }
+            Journaled::RemoteControlControllerPairingLinkClosed { aborted } => {
+                PrnsEvent::Message(Message::RemoteControlControllerPairingLinkClosed { aborted })
+            }
+            Journaled::RemoteControlTargetPairingExpired { aborted } => {
+                PrnsEvent::Message(Message::RemoteControlTargetPairingExpired { aborted })
+            }
+            Journaled::RemoteControlTargetPairingLinkClosed { aborted } => {
+                PrnsEvent::Message(Message::RemoteControlTargetPairingLinkClosed { aborted })
+            }
+            Journaled::RemoteControlTargetPairingCompletionRetentionExpired { attempt_id } => {
+                PrnsEvent::Message(
+                    Message::RemoteControlTargetPairingCompletionRetentionExpired { attempt_id },
+                )
+            }
+            Journaled::RemoteControlTargetPairingCompletionLinkClosed { attempt_id } => {
+                PrnsEvent::Message(Message::RemoteControlTargetPairingCompletionLinkClosed {
+                    attempt_id,
+                })
+            }
             Journaled::Delivered(delivery) => PrnsEvent::Message(Message::Delivered(delivery)),
             Journaled::RequestReceived {
                 destination,
@@ -277,6 +375,15 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
             Journaled::CommandSettled { id, settlement } => {
                 PrnsEvent::Diagnostic(Diagnostic::CommandSettled { id, settlement })
             }
+            Journaled::RemoteControlPairingExpired { endpoint } => {
+                PrnsEvent::Diagnostic(Diagnostic::RemoteControlPairingExpired { endpoint })
+            }
+            Journaled::RemoteControlPairingExpiryFailed { endpoint, failure } => {
+                PrnsEvent::Diagnostic(Diagnostic::RemoteControlPairingExpiryFailed {
+                    endpoint,
+                    failure,
+                })
+            }
             Journaled::PersistenceFlushed { cause, target } => {
                 PrnsEvent::Diagnostic(Diagnostic::PersistenceFlushed { cause, target })
             }
@@ -329,6 +436,10 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::remote_control::{
+        RemoteControlControllerPairingAborted, RemoteControlPairingContext,
+        RemoteControlPairingIdentity,
+    };
     use crate::routing::announce::{AnnounceObservation, AnnounceRateAccounting};
     use crate::units::HopCount;
 
@@ -354,6 +465,35 @@ mod tests {
                 app_data: observed,
                 ..
             }) if observed == app_data
+        ));
+    }
+
+    #[test]
+    fn controller_pairing_terminal_network_events_are_app_facing_messages() {
+        let context = RemoteControlPairingContext::new(
+            RemoteControlPairingIdentity::new(IdentityHash::new([0x81; 16])).endpoint(),
+            LinkId::new([0x82; 16]),
+        );
+        let aborted = RemoteControlControllerPairingAborted::AwaitingOffer { context };
+        let expired = PrnsEvent::from(Journaled::RemoteControlControllerPairingExpired { aborted });
+        let link_closed =
+            PrnsEvent::from(Journaled::RemoteControlControllerPairingLinkClosed { aborted });
+
+        assert!(matches!(
+            expired,
+            PrnsEvent::Message(Message::RemoteControlControllerPairingExpired {
+                aborted: RemoteControlControllerPairingAborted::AwaitingOffer {
+                    context: observed,
+                },
+            }) if observed == context
+        ));
+        assert!(matches!(
+            link_closed,
+            PrnsEvent::Message(Message::RemoteControlControllerPairingLinkClosed {
+                aborted: RemoteControlControllerPairingAborted::AwaitingOffer {
+                    context: observed,
+                },
+            }) if observed == context
         ));
     }
 }

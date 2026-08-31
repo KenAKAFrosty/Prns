@@ -1,11 +1,18 @@
-use super::{CompletionPool, JournalRoute, RequestSlotGuard, NO_AWAITER};
+use super::{CompletionPool, JournalRoute, RequestSlotGuard, ResponseCapture, NO_AWAITER};
 use crate::engine::{
     AnnounceAppData, AnnounceNow, AnnounceNowFailure, AnnounceNowRejection, AnnounceTarget,
-    CommandId, DeliveryEvidence, IssuedCommand, Journaled, PacketReceiptDelivered, PrnsCommand,
-    SendGroupFailure, SendGroupRejection, SendPlainPacketFailure, SendRequestFailure,
-    SetRegisteredAnnounceAppData, SetRegisteredAnnounceAppDataFailure,
+    CloseRemoteControlPairing, CloseRemoteControlPairingFailure, CommandId, DeliveryEvidence,
+    IssuedCommand, Journaled, OpenRemoteControlPairing, PacketReceiptDelivered, PrnsCommand,
+    RemoteControlPairingOpened, SendGroupFailure, SendGroupRejection, SendPlainPacketFailure,
+    SendRequestFailure, SetRegisteredAnnounceAppData, SetRegisteredAnnounceAppDataFailure,
     SetRegisteredAnnounceAppDataRejection, Settlement, MAX_SEND_GROUP_PLAINTEXT_LEN,
     MAX_SEND_PLAIN_PACKET_PAYLOAD_LEN,
+};
+use crate::remote_control::{
+    RemoteControlPairingAttemptTimeout, RemoteControlPairingEndpoint,
+    RemoteControlPairingExpiresAfter, RemoteControlPairingInvitationCode,
+    RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
+    RemoteControlRequestKind, RemoteControlRequestSet,
 };
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
@@ -14,10 +21,11 @@ use crate::runtime::remote_control_access::{
     RemoteControlAccessCommand, RemoteControlAccessCompletion,
 };
 use crate::runtime::{
-    AnnounceNowError, RemoteControlAccessControl, RevokeRemoteControlControllerControlError,
-    SendError, SetRegisteredAnnounceAppDataError, SetRemoteControlControllerGrantControlError,
+    AnnounceNowError, RemoteControlAccessControl, RemoteControlPairingControlError,
+    RevokeRemoteControlControllerControlError, SendError, SetRegisteredAnnounceAppDataError,
+    SetRemoteControlControllerGrantControlError,
 };
-use crate::units::{ByteLimit, RttMillis};
+use crate::units::{ByteLimit, DurationMillis, InstantMillis, RttMillis};
 use crate::wire::DestinationHash;
 use embassy_futures::{block_on, join::join};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -26,6 +34,33 @@ use portable_atomic::Ordering;
 
 type Pool<const COMPLETIONS: usize> = CompletionPool<CriticalSectionRawMutex, COMPLETIONS>;
 const PEER: DestinationHash = DestinationHash::new([0xAB; 16]);
+
+fn open_pairing() -> OpenRemoteControlPairing {
+    OpenRemoteControlPairing {
+        target: crate::engine::EgressTarget::AllInterfaces,
+        expires_after: RemoteControlPairingExpiresAfter::try_from(DurationMillis(60_000)).unwrap(),
+        attempt_timeout: RemoteControlPairingAttemptTimeout::try_from(DurationMillis(30_000))
+            .unwrap(),
+        permissions: RemoteControlPairingPermissions::try_from(RemoteControlRequestSet::only(
+            RemoteControlRequestKind::Describe,
+        ))
+        .unwrap(),
+        public_app_data: RemoteControlPairingPublicAppDataBytes::try_from(b"node".as_slice())
+            .unwrap(),
+    }
+}
+
+fn opened_pairing() -> RemoteControlPairingOpened {
+    RemoteControlPairingOpened {
+        endpoint: RemoteControlPairingEndpoint::from(
+            &crate::remote_control::RemoteControlPairingIdentity::new(
+                crate::identity::IdentityHash::new([0x51; 16]),
+            ),
+        ),
+        expires_at: InstantMillis(61_000),
+        invitation_code: RemoteControlPairingInvitationCode::from_value(0x1234_ABCD),
+    }
+}
 
 fn delivered(ms: u64) -> Settlement {
     Settlement::SendSinglePacket(Ok(PacketReceiptDelivered {
@@ -304,6 +339,18 @@ fn a_cancelled_await_releases_its_slot_and_ignores_a_late_settlement() {
 }
 
 #[test]
+fn an_unclaimed_settlement_moves_to_the_application_route() {
+    let pool: Pool<0> = CompletionPool::new();
+    let mut routed = None;
+    let route = pool.route_settlement(CommandId(7), delivered(11), |settlement| {
+        routed = Some(settlement);
+    });
+
+    assert!(matches!(route, JournalRoute::Application));
+    assert_eq!(routed, Some(delivered(11)));
+}
+
+#[test]
 fn a_cancelled_request_releases_its_slot_and_routes_late_delivery_to_the_application() {
     let pool = CompletionPool::<CriticalSectionRawMutex, 0, 1, 4>::new();
     let id = CommandId(0);
@@ -316,7 +363,7 @@ fn a_cancelled_request_releases_its_slot_and_routes_late_delivery_to_the_applica
 
     assert!(matches!(
         pool.capture_response(id, &[1, 2]),
-        JournalRoute::Application,
+        ResponseCapture::NotAwaited,
     ));
     assert!(!pool.settle_request(
         id,
@@ -395,6 +442,53 @@ fn awaited_plain_and_group_sends_preserve_commands_and_typed_settlements() {
         assert!(completions.settle(issued.id, Settlement::SendGroup(Err(failure))));
     }));
     assert_eq!(group, Err(SendError::Failed(failure)));
+}
+
+#[test]
+fn pairing_lifecycle_preserves_commands_settlements_and_completion_capacity() {
+    let commands = Channel::<CriticalSectionRawMutex, IssuedCommand, 1>::new();
+    let completions = Pool::<1>::new();
+    let handle = super::PrnsNodeHandle::new(commands.sender(), &completions);
+    let expected = open_pairing();
+    let opened = opened_pairing();
+    let (result, ()) = block_on(join(
+        handle.open_remote_control_pairing(expected.clone()),
+        async {
+            let issued = commands.receiver().receive().await;
+            assert_eq!(
+                issued.command,
+                PrnsCommand::OpenRemoteControlPairing(expected),
+            );
+            assert!(
+                completions.settle(issued.id, Settlement::OpenRemoteControlPairing(Ok(opened)),)
+            );
+        },
+    ));
+    assert_eq!(result, Ok(opened_pairing()));
+
+    let failure = CloseRemoteControlPairingFailure::IdentityNotHeld;
+    let (result, ()) = block_on(join(handle.close_remote_control_pairing(), async {
+        let issued = commands.receiver().receive().await;
+        assert_eq!(
+            issued.command,
+            PrnsCommand::CloseRemoteControlPairing(CloseRemoteControlPairing),
+        );
+        assert!(completions.settle(
+            issued.id,
+            Settlement::CloseRemoteControlPairing(Err(failure)),
+        ));
+    }));
+    assert_eq!(
+        result,
+        Err(RemoteControlPairingControlError::Failed(failure)),
+    );
+
+    let no_completions = Pool::<0>::new();
+    let bounded = super::PrnsNodeHandle::new(commands.sender(), &no_completions);
+    assert_eq!(
+        block_on(bounded.open_remote_control_pairing(open_pairing())),
+        Err(RemoteControlPairingControlError::Busy),
+    );
 }
 
 #[test]
@@ -482,22 +576,28 @@ fn bounded_request_captures_the_response_before_its_borrow_expires() {
         );
         let response = [0x43, 0x65, 0x87];
         assert!(matches!(
-            handle.route_journaled(&Journaled::ResponseReceived {
-                command_id: issued.id,
-                link_id,
-                request_id: RequestId([0xA9; 16]),
-                data: &response,
-            }),
+            handle.route_journaled(
+                Journaled::ResponseReceived {
+                    command_id: issued.id,
+                    link_id,
+                    request_id: RequestId([0xA9; 16]),
+                    data: &response,
+                },
+                |_| {},
+            ),
             JournalRoute::Awaiter,
         ));
         assert!(matches!(
-            handle.route_journaled(&Journaled::CommandSettled {
-                id: issued.id,
-                settlement: Settlement::SendRequest(Ok(PacketReceiptDelivered {
-                    rtt: RttMillis::new(29),
-                    evidence: DeliveryEvidence::Response,
-                })),
-            }),
+            handle.route_journaled(
+                Journaled::CommandSettled {
+                    id: issued.id,
+                    settlement: Settlement::SendRequest(Ok(PacketReceiptDelivered {
+                        rtt: RttMillis::new(29),
+                        evidence: DeliveryEvidence::Response,
+                    })),
+                },
+                |_| {},
+            ),
             JournalRoute::Awaiter,
         ));
     }));
@@ -522,25 +622,31 @@ fn bounded_request_concatenates_segments_and_preserves_failures() {
         let issued = commands.receiver().receive().await;
         for (segment_index, data) in [(0, &[1, 2][..]), (1, &[3, 4, 5][..])] {
             assert!(matches!(
-                handle.route_journaled(&Journaled::ResponseSegmentReceived {
-                    command_id: issued.id,
-                    link_id,
-                    request_id: RequestId([0x54; 16]),
-                    segment_index,
-                    total_segments: 2,
-                    data,
-                }),
+                handle.route_journaled(
+                    Journaled::ResponseSegmentReceived {
+                        command_id: issued.id,
+                        link_id,
+                        request_id: RequestId([0x54; 16]),
+                        segment_index,
+                        total_segments: 2,
+                        data,
+                    },
+                    |_| {},
+                ),
                 JournalRoute::Awaiter,
             ));
         }
         assert!(matches!(
-            handle.route_journaled(&Journaled::CommandSettled {
-                id: issued.id,
-                settlement: Settlement::SendRequest(Ok(PacketReceiptDelivered {
-                    rtt: RttMillis::new(31),
-                    evidence: DeliveryEvidence::Response,
-                })),
-            }),
+            handle.route_journaled(
+                Journaled::CommandSettled {
+                    id: issued.id,
+                    settlement: Settlement::SendRequest(Ok(PacketReceiptDelivered {
+                        rtt: RttMillis::new(31),
+                        evidence: DeliveryEvidence::Response,
+                    })),
+                },
+                |_| {},
+            ),
             JournalRoute::Awaiter,
         ));
     }));
@@ -552,10 +658,13 @@ fn bounded_request_concatenates_segments_and_preserves_failures() {
     let (result, ()) = block_on(join(handle.request(link_id, path_hash, &[]), async {
         let issued = commands.receiver().receive().await;
         assert!(matches!(
-            handle.route_journaled(&Journaled::CommandSettled {
-                id: issued.id,
-                settlement: Settlement::SendRequest(Err(SendRequestFailure::Timeout)),
-            }),
+            handle.route_journaled(
+                Journaled::CommandSettled {
+                    id: issued.id,
+                    settlement: Settlement::SendRequest(Err(SendRequestFailure::Timeout)),
+                },
+                |_| {},
+            ),
             JournalRoute::Awaiter,
         ));
     }));
@@ -575,22 +684,28 @@ fn bounded_request_refuses_response_bytes_beyond_its_static_capacity() {
         async {
             let issued = commands.receiver().receive().await;
             assert!(matches!(
-                handle.route_journaled(&Journaled::ResponseReceived {
-                    command_id: issued.id,
-                    link_id,
-                    request_id: RequestId([0x98; 16]),
-                    data: &[1, 2, 3, 4],
-                }),
+                handle.route_journaled(
+                    Journaled::ResponseReceived {
+                        command_id: issued.id,
+                        link_id,
+                        request_id: RequestId([0x98; 16]),
+                        data: &[1, 2, 3, 4],
+                    },
+                    |_| {},
+                ),
                 JournalRoute::Awaiter,
             ));
             assert!(matches!(
-                handle.route_journaled(&Journaled::CommandSettled {
-                    id: issued.id,
-                    settlement: Settlement::SendRequest(Ok(PacketReceiptDelivered {
-                        rtt: RttMillis::new(41),
-                        evidence: DeliveryEvidence::Response,
-                    })),
-                }),
+                handle.route_journaled(
+                    Journaled::CommandSettled {
+                        id: issued.id,
+                        settlement: Settlement::SendRequest(Ok(PacketReceiptDelivered {
+                            rtt: RttMillis::new(41),
+                            evidence: DeliveryEvidence::Response,
+                        })),
+                    },
+                    |_| {},
+                ),
                 JournalRoute::Awaiter,
             ));
         },

@@ -1,9 +1,11 @@
 use crate::engine::EngineState;
+use crate::identity::IdentityHash;
 use crate::interfaces::{AttachedInterfaces, InterfaceId};
-use crate::routing::routes::{NextHop, RouteEntry};
+use crate::routing::links::LinkId;
+use crate::routing::routes::{NextHop, RouteEntry, RouteRetention};
 use crate::routing::warmth::WarmestOf;
 use crate::storage::StorageLayout;
-use crate::units::InstantMillis;
+use crate::units::{InstantMillis, RttMillis};
 use crate::wire::DestinationHash;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,6 +25,14 @@ pub struct RouteSnapshot {
     pub last_route_activity_at: InstantMillis,
     pub expires_at: InstantMillis,
     pub interface: InterfaceId,
+    pub retention: RouteRetention,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveLinkSnapshot {
+    pub link_id: LinkId,
+    pub rtt: RttMillis,
+    pub remote_identity: Option<IdentityHash>,
 }
 
 fn route_snapshot(
@@ -38,6 +48,7 @@ fn route_snapshot(
         last_route_activity_at: entry.last_route_activity_at,
         expires_at,
         interface: entry.receiving_interface,
+        retention: entry.retention,
     }
 }
 
@@ -56,6 +67,17 @@ impl<S: StorageLayout> EngineState<S> {
                 rate_violations: entry.rate_violations,
             });
         }
+    }
+
+    pub fn visit_active_link_snapshots(&self, mut visit: impl FnMut(ActiveLinkSnapshot)) {
+        self.links
+            .visit_active_links(|link_id, rtt, remote_identity| {
+                visit(ActiveLinkSnapshot {
+                    link_id,
+                    rtt,
+                    remote_identity,
+                });
+            });
     }
 
     pub fn visit_route_snapshots(

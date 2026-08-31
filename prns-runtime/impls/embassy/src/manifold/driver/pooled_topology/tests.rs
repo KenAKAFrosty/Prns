@@ -162,7 +162,21 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
         | Journaled::ResourceNeedsDecompression { .. }
         | Journaled::ResourceSegmentReceived { .. }
         | Journaled::ResourceAssembled { .. }
-        | Journaled::LinkInterfaceMismatch { .. } => {}
+        | Journaled::LinkInterfaceMismatch { .. }
+        | Journaled::RemoteControlPairingAvailabilityObserved(_)
+        | Journaled::RemoteControlPairingExpired { .. }
+        | Journaled::RemoteControlTargetPairingConfirmationRequired(_)
+        | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
+        | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
+        | Journaled::RemoteControlControllerPairingConfirmationRequired(_)
+        | Journaled::RemoteControlControllerPairingPersistenceRequired(_)
+        | Journaled::RemoteControlControllerPairingExpired { .. }
+        | Journaled::RemoteControlControllerPairingLinkClosed { .. }
+        | Journaled::RemoteControlTargetPairingExpired { .. }
+        | Journaled::RemoteControlTargetPairingLinkClosed { .. }
+        | Journaled::RemoteControlTargetPairingCompletionRetentionExpired { .. }
+        | Journaled::RemoteControlTargetPairingCompletionLinkClosed { .. }
+        | Journaled::RemoteControlPairingExpiryFailed { .. } => {}
     };
 
     let mut egress: PooledEgress<1> = PooledEgress::new();
@@ -289,7 +303,21 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
         | Journaled::ResourceNeedsDecompression { .. }
         | Journaled::ResourceSegmentReceived { .. }
         | Journaled::ResourceAssembled { .. }
-        | Journaled::LinkInterfaceMismatch { .. } => {}
+        | Journaled::LinkInterfaceMismatch { .. }
+        | Journaled::RemoteControlPairingAvailabilityObserved(_)
+        | Journaled::RemoteControlPairingExpired { .. }
+        | Journaled::RemoteControlTargetPairingConfirmationRequired(_)
+        | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
+        | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
+        | Journaled::RemoteControlControllerPairingConfirmationRequired(_)
+        | Journaled::RemoteControlControllerPairingPersistenceRequired(_)
+        | Journaled::RemoteControlControllerPairingExpired { .. }
+        | Journaled::RemoteControlControllerPairingLinkClosed { .. }
+        | Journaled::RemoteControlTargetPairingExpired { .. }
+        | Journaled::RemoteControlTargetPairingLinkClosed { .. }
+        | Journaled::RemoteControlTargetPairingCompletionRetentionExpired { .. }
+        | Journaled::RemoteControlTargetPairingCompletionLinkClosed { .. }
+        | Journaled::RemoteControlPairingExpiryFailed { .. } => {}
     };
 
     let mut egress: PooledEgress<1> = PooledEgress::new();
