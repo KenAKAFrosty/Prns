@@ -21,12 +21,11 @@ use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, In
 use personal_rns::manifold::tokio::TokioInterfaceStatus;
 use personal_rns::node_introspection::NodeIntrospection;
 use personal_rns::remote_control::{
-    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
-    RemoteControlService,
+    RemoteControlInitialAccess, RemoteControlSelfAnnouncement, RemoteControlService,
 };
 use personal_rns::runtime::{
-    Diagnostic, ManuallyAttached, NodeRunError, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
-    RemoteControlIdentityDirectory,
+    Diagnostic, ManuallyAttached, NodeRunError, PrnsEvent, PrnsNode, PrnsNodeHandle,
+    PrnsNodeRecipe, RemoteControlIdentityDirectory,
 };
 use personal_rns::storage::GrowableHeap;
 #[cfg(target_os = "ios")]
@@ -571,25 +570,20 @@ async fn run_engine(
         ),
     );
 
-    let remote_control_bootstrap = match RemoteControlIdentityDirectory::new(
-        storage_directory.join("remote_control"),
-    )
-    .load_or_generate()
-    {
-        Ok(bootstrap) => bootstrap,
-        Err(error) => {
-            diagnostic(
-                "remote_control",
-                format_args!("state=failed error={error}"),
-            );
-            let _ = ready_tx.send(Err(MobileEngineFailure::StorageConfiguration));
-            return;
-        }
-    };
+    let remote_control_bootstrap =
+        match RemoteControlIdentityDirectory::new(storage_directory.join("remote_control"))
+            .load_or_generate()
+        {
+            Ok(bootstrap) => bootstrap,
+            Err(error) => {
+                diagnostic("remote_control", format_args!("state=failed error={error}"));
+                let _ = ready_tx.send(Err(MobileEngineFailure::StorageConfiguration));
+                return;
+            }
+        };
     let (remote_control_identity_secrets, _) = remote_control_bootstrap.into_parts();
     let remote_control = RemoteControlService::new(
         remote_control_identity_secrets,
-        RemoteControlPublicAppData::empty(),
         RemoteControlInitialAccess::Nobody,
         RemoteControlSelfAnnouncement::Destination(destination_hashes.node_page),
     );
@@ -604,7 +598,6 @@ async fn run_engine(
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: personal_hopspot_core::node_pages::NodePageRoutes,
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
         on_event: move |event: PrnsEvent<'_>, _state: &()| match event {

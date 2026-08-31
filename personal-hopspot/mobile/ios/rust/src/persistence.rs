@@ -171,8 +171,8 @@ mod tests {
     };
     use personal_rns::remote_control::{
         RemoteControlControllerIdentitySecret, RemoteControlInitialAccess,
-        RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
-        RemoteControlService, RemoteControlTargetIdentitySecret,
+        RemoteControlNodeIdentitySecrets, RemoteControlSelfAnnouncement, RemoteControlService,
+        RemoteControlTargetIdentitySecret,
     };
     use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
     use personal_rns::runtime::{
@@ -266,7 +266,6 @@ mod tests {
             app_state: (),
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
-            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
             interfaces: ManuallyAttached,
             persistence: NoPersistence,
             on_event: |_event, _state| {},
@@ -290,7 +289,6 @@ mod tests {
             app_state: (),
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
-            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
             interfaces: |handle: &PrnsNodeHandle| {
                 handle.attach(client);
             },
@@ -368,7 +366,6 @@ mod tests {
             app_state: (),
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
-            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
             interfaces: ManuallyAttached,
             persistence: NoPersistence,
             on_event: |_event, _state| {},
@@ -395,7 +392,6 @@ mod tests {
             app_state: (),
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
-            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
             interfaces: move |handle: &PrnsNodeHandle| {
                 handle.attach(requester_client);
             },
@@ -437,7 +433,6 @@ mod tests {
         .expect("test controller and target identities must remain distinct");
         RemoteControlService::new(
             identity_secrets,
-            RemoteControlPublicAppData::empty(),
             RemoteControlInitialAccess::Nobody,
             RemoteControlSelfAnnouncement::Unavailable,
         )
@@ -474,7 +469,6 @@ mod tests {
             app_state: (),
             storage: GrowableHeap,
             request_endpoints: personal_rns::request_endpoints![],
-            remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
             interfaces: ManuallyAttached,
             persistence: NoPersistence,
             on_event,

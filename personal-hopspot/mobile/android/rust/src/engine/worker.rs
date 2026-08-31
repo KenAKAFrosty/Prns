@@ -14,8 +14,7 @@ use personal_rns::interfaces::bluetooth_auto::{
 };
 use personal_rns::interfaces::wifi_direct::GoIntent;
 use personal_rns::remote_control::{
-    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
-    RemoteControlService,
+    RemoteControlInitialAccess, RemoteControlSelfAnnouncement, RemoteControlService,
 };
 use personal_rns::runtime::{
     Diagnostic, ManuallyAttached, PrnsEvent, PrnsNode, PrnsNodeRecipe,
@@ -117,7 +116,6 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
     let (remote_control_identity_secrets, _) = remote_control_bootstrap.into_parts();
     let remote_control = RemoteControlService::new(
         remote_control_identity_secrets,
-        RemoteControlPublicAppData::empty(),
         RemoteControlInitialAccess::Nobody,
         RemoteControlSelfAnnouncement::Destination(destination_hashes.node_page),
     );
@@ -138,7 +136,6 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: personal_hopspot_core::node_pages::NodePageRoutes,
-        remote_control: personal_rns::remote_control::RemoteControlService::Unavailable,
         interfaces: ManuallyAttached,
         persistence: NoPersistence,
         on_event: move |event, _state: &()| {
