@@ -7,6 +7,7 @@ import { dirname, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const repositoryRoot = resolve(packageRoot, "..");
 const chromium = [
   process.env.CHROMIUM_PATH,
   "/snap/bin/chromium",
@@ -19,6 +20,7 @@ assert.ok(chromium, "Chromium is required for the browser crypto worker benchmar
 const contentTypes = new Map([
   [".html", "text/html; charset=utf-8"],
   [".js", "text/javascript; charset=utf-8"],
+  [".wasm", "application/wasm"],
 ]);
 let settleResult;
 const resultPromise = new Promise((resolveResult) => {
@@ -41,9 +43,12 @@ const server = createServer(async (request, response) => {
       settleResult(result);
       return;
     }
-    const path = resolve(packageRoot, `.${decodeURIComponent(url.pathname)}`);
+    const root = url.pathname.startsWith("/prns-wasm/")
+      ? repositoryRoot
+      : packageRoot;
+    const path = resolve(root, `.${decodeURIComponent(url.pathname)}`);
     const metadata = await stat(path);
-    assert.ok(path.startsWith(`${packageRoot}/`) && metadata.isFile());
+    assert.ok(path.startsWith(`${root}/`) && metadata.isFile());
     response.writeHead(200, {
       "content-type": contentTypes.get(extname(path)) ?? "application/octet-stream",
     });
@@ -87,7 +92,10 @@ try {
   if (result.error !== undefined) {
     throw new Error(result.error);
   }
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  const output = process.argv.includes("--summary")
+    ? summarize(result)
+    : result;
+  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
 } finally {
   clearTimeout(benchmarkTimeout);
   browser?.kill("SIGTERM");
@@ -95,4 +103,58 @@ try {
   await new Promise((resolveClosed, rejectClosed) => {
     server.close((error) => error ? rejectClosed(error) : resolveClosed());
   });
+}
+
+function summarize(result) {
+  return {
+    userAgent: result.userAgent,
+    hardwareConcurrency: result.hardwareConcurrency,
+    gatewayReadiness: result.gatewayReadiness,
+    protocol: result.protocolPerformance
+      .filter(({ lanes }) => lanes === 4)
+      .map(({ operation, configuration, elapsedMillis, operationsPerSecond }) => ({
+        operation,
+        configuration,
+        elapsedMillis,
+        operationsPerSecond,
+      })),
+    portableWasm: result.portableWasmWorkers.results
+      .filter(({ configuration }) => configuration !== "OneWorker")
+      .map(({
+        operation,
+        mode,
+        configuration,
+        elapsedMillis,
+        operationsPerSecond,
+        speedupOverInline,
+        medianCoordinatorP95Millis,
+      }) => ({
+        operation,
+        mode,
+        configuration,
+        elapsedMillis,
+        operationsPerSecond,
+        speedupOverInline,
+        medianCoordinatorP95Millis,
+      })),
+    resources: result.results
+      .filter(({ lanes }) => lanes === 4)
+      .map(({
+        resourceBytes,
+        jobs,
+        configuration,
+        elapsedMillis,
+        mebibytesPerSecond,
+        speedupOverInline,
+        medianCoordinatorP95Millis,
+      }) => ({
+        resourceBytes,
+        jobs,
+        configuration,
+        elapsedMillis,
+        mebibytesPerSecond,
+        speedupOverInline,
+        medianCoordinatorP95Millis,
+      })),
+  };
 }

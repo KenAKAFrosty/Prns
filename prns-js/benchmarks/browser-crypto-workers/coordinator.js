@@ -13,6 +13,8 @@ import {
   WebCryptoHkdfSha256Deriver,
   WebCryptoX25519Deriver,
 } from "../../dist/browser/protocol_crypto.js";
+import { measurePortableWasmWorkers } from "./portable_wasm_benchmark.js";
+import { ConcurrentWebCryptoGateway } from "./concurrent_webcrypto_gateway.js";
 
 const MEBIBYTE = 1_024 * 1_024;
 const SAMPLE_REPETITIONS = 5;
@@ -41,11 +43,17 @@ async function run() {
   const oneWorker = new WebCryptoWorkerPool(1);
   const twoWorkers = new WebCryptoWorkerPool(2);
   const fourWorkers = new WebCryptoWorkerPool(4);
+  const gatewayOne = new ConcurrentWebCryptoGateway(1);
+  const gatewayTwo = new ConcurrentWebCryptoGateway(2);
+  const gatewayFour = new ConcurrentWebCryptoGateway(4);
   try {
-    const [oneReady, twoReady, fourReady] = await Promise.all([
+    const [oneReady, twoReady, fourReady, gatewayOneReady, gatewayTwoReady, gatewayFourReady] = await Promise.all([
       oneWorker.ready(),
       twoWorkers.ready(),
       fourWorkers.ready(),
+      gatewayOne.ready(),
+      gatewayTwo.ready(),
+      gatewayFour.ready(),
     ]);
     if (oneReady.tag !== "Ready" || oneReady.data.workers !== 1) {
       throw new Error("one-worker crypto pool did not start exactly one Worker");
@@ -56,14 +64,36 @@ async function run() {
     if (fourReady.tag !== "Ready" || fourReady.data.workers !== 4) {
       throw new Error("four-worker crypto pool did not start exactly four Workers");
     }
+    for (const [maximumInFlight, readiness] of [
+      [1, gatewayOneReady],
+      [2, gatewayTwoReady],
+      [4, gatewayFourReady],
+    ]) {
+      if (
+        readiness.tag !== "Ready" ||
+        readiness.data.workers !== 1 ||
+        readiness.data.maximumInFlight !== maximumInFlight
+      ) {
+        throw new Error(`WebCrypto gateway did not start with concurrency ${maximumInFlight}`);
+      }
+    }
     const protocolCrypto = await exerciseProtocolCrypto(twoWorkers, twoReady.data.compatibility);
-    const protocolPerformance = await measureProtocolCrypto(twoWorkers);
+    const protocolPerformance = await measureProtocolCrypto(
+      twoWorkers,
+      gatewayOne,
+      gatewayTwo,
+      gatewayFour,
+    );
+    const portableWasmWorkers = await measurePortableWasmWorkers(latencyProbe);
     const boundedAdmission = await exerciseBoundedAdmission(oneWorker);
     const configurations = [
       { name: "Inline", executor: inline },
       { name: "OneWorker", executor: new PoolResourceCrypto(oneWorker) },
       { name: "TwoWorkers", executor: new PoolResourceCrypto(twoWorkers) },
       { name: "FourWorkers", executor: new PoolResourceCrypto(fourWorkers) },
+      { name: "Gateway1", executor: new PoolResourceCrypto(gatewayOne) },
+      { name: "Gateway2", executor: new PoolResourceCrypto(gatewayTwo) },
+      { name: "Gateway4", executor: new PoolResourceCrypto(gatewayFour) },
     ];
     for (const configuration of configurations) {
       await exercise(configuration.executor, 64 * 1_024, 2, 2, 0);
@@ -134,15 +164,33 @@ async function run() {
         two: twoReady.data.workers,
         four: fourReady.data.workers,
       },
+      gatewayReadiness: {
+        one: {
+          configured: gatewayOneReady.data.maximumInFlight,
+          observed: gatewayOne.maximumObservedInFlight(),
+        },
+        two: {
+          configured: gatewayTwoReady.data.maximumInFlight,
+          observed: gatewayTwo.maximumObservedInFlight(),
+        },
+        four: {
+          configured: gatewayFourReady.data.maximumInFlight,
+          observed: gatewayFour.maximumObservedInFlight(),
+        },
+      },
       boundedAdmission,
       protocolCrypto,
       protocolPerformance,
+      portableWasmWorkers,
       results,
     };
   } finally {
     oneWorker.close();
     twoWorkers.close();
     fourWorkers.close();
+    gatewayOne.close();
+    gatewayTwo.close();
+    gatewayFour.close();
   }
 }
 
@@ -273,10 +321,13 @@ async function exerciseProtocolCrypto(pool, compatibility) {
   };
 }
 
-async function measureProtocolCrypto(pool) {
+async function measureProtocolCrypto(pool, gatewayOne, gatewayTwo, gatewayFour) {
   const configurations = [
     { name: "Inline", executor: new InlineProtocolCrypto() },
     { name: "TwoWorkers", executor: new PoolProtocolCrypto(pool) },
+    { name: "Gateway1", executor: new PoolProtocolCrypto(gatewayOne) },
+    { name: "Gateway2", executor: new PoolProtocolCrypto(gatewayTwo) },
+    { name: "Gateway4", executor: new PoolProtocolCrypto(gatewayFour) },
   ];
   const operations = ["Ed25519Sign", "Ed25519Verify", "X25519", "HkdfSha256"];
   const operationCount = 128;
@@ -285,7 +336,7 @@ async function measureProtocolCrypto(pool) {
     for (const configuration of configurations) {
       await exerciseProtocolOperation(configuration.executor, operation, 4, 2);
     }
-    for (const lanes of [1, 2]) {
+    for (const lanes of [1, 2, 4]) {
       const samples = new Map(configurations.map(({ name }) => [name, []]));
       for (let repetition = 0; repetition < SAMPLE_REPETITIONS; repetition += 1) {
         let expectedChecksum;
