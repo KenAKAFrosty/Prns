@@ -406,7 +406,7 @@ pub(crate) fn advertise_response_segment_from<S: StorageLayout>(
         segment,
         InstantMillis(at),
         &mut |bytes: &mut [u8]| bytes.fill(0xA5),
-        &mut |reaction| {
+        &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| {
             if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
                 frame = filled_frame(fill);
             }

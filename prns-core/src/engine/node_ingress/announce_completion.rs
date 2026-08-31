@@ -10,14 +10,14 @@ use crate::routing::ingress::{AcceptedAnnounceEffect, IngestEffects};
 use crate::storage::StorageLayout;
 
 impl<S: StorageLayout> EngineState<S> {
-    pub(super) fn apply_announce_ingest(
+    pub(super) fn apply_announce_ingest<Work>(
         &mut self,
         ingest: AnnounceIngest,
         accepted_observation: Option<AcceptedAnnounceEffect<'_>>,
         source: InterfaceId,
         interfaces: AttachedInterfaces<'_>,
         wake: &mut WakeSchedules,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) {
         #[cfg(feature = "runtime-metrics")]
         self.record_announce_ingress(source, ingest);

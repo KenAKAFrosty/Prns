@@ -53,10 +53,7 @@ fn accepted_announces_schedule_a_rebroadcast_and_tick_emits_them() {
             source_interface: InterfaceId::new([0u8; 8]),
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&transporting_interfaces()),
-        &mut |_| {},
-        None,
     );
     assert_eq!(out, rns_1_4_2_announce_accepted(1));
     assert_eq!(state.scheduled_announce_count(), 1);
@@ -97,10 +94,7 @@ fn a_rebroadcast_reproduces_the_rns_1_4_2_retransmitted_wire() {
             source_interface: InterfaceId::new([0u8; 8]),
             bytes: &mut heard,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&transporting_interfaces()),
-        &mut |_| {},
-        None,
     );
     assert_eq!(state.scheduled_announce_count(), 1);
 
@@ -129,10 +123,7 @@ fn a_directed_scheduled_announce_fires_only_to_its_target_interface() {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         )
     else {
         panic!("the announce is accepted");
@@ -179,10 +170,7 @@ fn rebroadcast_fan_for(
             source_interface: InterfaceId::new([0u8; 8]),
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&transporting_interfaces()),
-        &mut |_| {},
-        None,
     );
     assert_eq!(state.scheduled_announce_count(), 1);
 
@@ -252,10 +240,7 @@ fn a_bluetooth_peer_announce_rebroadcasts_to_usb_device_transport() {
             source_interface: source,
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&interfaces),
-        &mut |_| {},
-        None,
     );
     assert_eq!(out, rns_1_4_2_announce_accepted(1));
     assert_eq!(state.scheduled_announce_count(), 1);
@@ -292,10 +277,7 @@ fn a_scheduled_announce_emits_once_for_a_supervised_interface_fleet() {
             source_interface: InterfaceId::new([InterfaceKind::Loopback as u8; 8]),
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&transporting_interfaces()),
-        &mut |_| {},
-        None,
     );
 
     let mut fleets = std::vec::Vec::new();
@@ -333,10 +315,7 @@ fn our_own_repeat_echoed_back_is_deduplicated() {
             source_interface: source,
             bytes: &mut echo,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&interfaces),
-        &mut |_| {},
-        None,
     );
     assert_eq!(
         out,
@@ -372,10 +351,7 @@ fn an_onward_announce_echo_cancels_the_pending_retransmit() {
             source_interface: source,
             bytes: &mut echo,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&interfaces),
-        &mut |_| {},
-        None,
     );
     assert_eq!(
         state.scheduled_announce_count(),
@@ -418,10 +394,7 @@ fn a_local_client_announce_can_leave_on_a_transmit_only_interface() {
             source_interface: source,
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&interfaces),
-        &mut |_| {},
-        None,
     );
 
     let mut targets = std::vec::Vec::new();
@@ -476,10 +449,7 @@ fn a_local_clients_announce_is_also_withheld_from_access_point_egress() {
             source_interface: app,
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&interfaces),
-        &mut |_| {},
-        None,
     );
     assert_eq!(state.scheduled_announce_count(), 1);
 
@@ -515,10 +485,7 @@ fn a_scheduled_local_client_announce_uses_the_hop_count_override_at_external_egr
             source_interface: local_client,
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&interfaces),
-        &mut |_| {},
-        None,
     );
     assert_eq!(out, rns_1_4_2_announce_accepted(0));
 
@@ -610,10 +577,7 @@ fn scheduled_announces_are_not_emitted_before_their_due_time() {
             source_interface: InterfaceId::new([0u8; 8]),
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&transporting_interfaces()),
-        &mut |_| {},
-        None,
     );
     assert_eq!(state.scheduled_announce_count(), 1);
 
@@ -644,10 +608,7 @@ fn same_inputs_produce_byte_identical_emissions_on_two_engines() {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
     }
     let left_bytes = tick_capture(&mut left, now, AttachedInterfaces::new(&interfaces));
@@ -691,10 +652,7 @@ fn fire_due_scheduled_announces_emits_then_re_arms_until_the_cap() {
             source_interface: InterfaceId::new([0u8; 8]),
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&transporting_interfaces()),
-        &mut |_| {},
-        None,
     );
     assert_eq!(state.scheduled_announce_count(), 1);
 
@@ -762,10 +720,7 @@ fn an_ignored_echo_that_cancels_a_rebroadcast_reports_the_emptied_lane() {
             source_interface: InterfaceId::new([0u8; 8]),
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&transporting_interfaces()),
-        &mut |_| {},
-        None,
     );
     assert_eq!(state.scheduled_announce_count(), 1);
 
@@ -789,7 +744,7 @@ fn an_ignored_echo_that_cancels_a_rebroadcast_reports_the_emptied_lane() {
     let echo = |state: &mut EngineState<TestStorageLayout>, now: u64| -> WakeSchedule {
         let mut bytes = rebroadcast.clone();
         state
-            .ingest_packet_into(
+            .ingest_packet_inline_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(now),
                     source_interface: InterfaceId::new([0u8; 8]),
@@ -890,10 +845,7 @@ fn the_cull_journals_an_orphan_as_route_interface_gone() {
             source_interface: source,
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&[routable_descriptor(source)]),
-        &mut |_| {},
-        None,
     );
     assert_eq!(engine.route_count(), 1);
     let destination = DestinationHash::new(
@@ -951,10 +903,7 @@ fn expiring_a_route_cancels_its_scheduled_announce_and_wake() {
             source_interface: source,
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&interfaces),
-        &mut |_| {},
-        None,
     );
     let destination = DestinationHash::new(
         bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
@@ -993,10 +942,7 @@ fn a_dropped_route_marks_its_interface_so_the_destination_count_recomputes() {
             source_interface: source,
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&[routable_descriptor(source)]),
-        &mut |_| {},
-        None,
     );
 
     let mut on_insert = std::vec::Vec::new();
@@ -1102,10 +1048,7 @@ fn overdue_transport_recovery_emissions(
             source_interface: received,
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&interfaces),
-        &mut |_| {},
-        None,
     );
     let destination = DestinationHash::new(
         bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
@@ -1172,10 +1115,7 @@ fn an_unproved_transported_link_to_a_neighbor_marks_the_route_unresponsive() {
             source_interface: source,
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&interfaces),
-        &mut |_| {},
-        None,
     );
     let destination = DestinationHash::new(
         bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
@@ -1246,10 +1186,7 @@ fn an_unproved_neighbor_link_fires_a_path_request_away_from_the_received_lane() 
             source_interface: received,
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&interfaces),
-        &mut |_| {},
-        None,
     );
     let destination = DestinationHash::new(
         bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
@@ -1334,10 +1271,7 @@ fn an_unproved_link_recovers_when_the_initiator_is_the_neighbor_too() {
             source_interface: received,
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&interfaces),
-        &mut |_| {},
-        None,
     );
     let destination = DestinationHash::new(
         bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
@@ -1404,10 +1338,7 @@ fn an_unproved_link_from_a_local_client_rediscovers_everywhere_without_a_mark() 
             source_interface: received,
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&interfaces),
-        &mut |_| {},
-        None,
     );
     let destination = DestinationHash::new(
         bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
@@ -1482,10 +1413,7 @@ fn a_boundary_arrival_interface_rediscovers_without_the_unresponsive_mark() {
             source_interface: received,
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&learn_view),
-        &mut |_| {},
-        None,
     );
     let destination = DestinationHash::new(
         bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")
@@ -1553,10 +1481,7 @@ fn a_may_return_departure_holds_the_bounced_peers_routes_through_the_grace() {
             source_interface: source,
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&[routable_descriptor(source), routable_descriptor(other)]),
-        &mut |_| {},
-        None,
     );
     assert_eq!(engine.route_count(), 1);
 
@@ -1617,10 +1542,7 @@ fn a_growable_hosts_route_index_rebuilds_for_departure_warmth() {
             source_interface: source,
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&attached),
-        &mut |_| {},
-        None,
     );
     assert!(matches!(
         engine.route_expiry_wake(AttachedInterfaces::new(&attached)),
@@ -1648,10 +1570,7 @@ fn a_forgotten_departure_culls_the_routes_at_once() {
             source_interface: source,
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&[routable_descriptor(source)]),
-        &mut |_| {},
-        None,
     );
     assert_eq!(engine.route_count(), 1);
 
@@ -1682,10 +1601,7 @@ fn a_returned_interface_resumes_normal_route_aging() {
             source_interface: source,
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&[routable_descriptor(source)]),
-        &mut |_| {},
-        None,
     );
 
     engine.interface_departed(source, Departure::MayReturn, InstantMillis(2_000));
@@ -1719,10 +1635,7 @@ fn a_recently_requested_destination_holds_off_the_overdue_links_path_request() {
             source_interface: received,
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&interfaces),
-        &mut |_| {},
-        None,
     );
     let destination = DestinationHash::new(
         bytes_from_hex("16f8a6d3f7d7c5b6f106d293804d7314")

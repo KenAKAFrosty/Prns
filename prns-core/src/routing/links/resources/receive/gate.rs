@@ -25,6 +25,41 @@ use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 use crate::wire::{DestinationType, PacketType, WireContext};
 
+pub(crate) enum AcceptedResourceAdmission {
+    Pull {
+        link_id: LinkId,
+        hash: ResourceHash,
+    },
+    Pending,
+    CapacityRejected {
+        link_id: LinkId,
+        hash: ResourceHash,
+        settled_request: Option<CommandId>,
+    },
+    Ignored(IgnoreReason),
+}
+
+impl<'packet> From<AcceptedResourceAdmission> for IngestPacketOutcome<'packet> {
+    fn from(admission: AcceptedResourceAdmission) -> Self {
+        match admission {
+            AcceptedResourceAdmission::Pull { link_id, hash } => {
+                Self::OwesResourcePull { link_id, hash }
+            }
+            AcceptedResourceAdmission::Pending => Self::ResourceAdmissionPending,
+            AcceptedResourceAdmission::CapacityRejected {
+                link_id,
+                hash,
+                settled_request,
+            } => Self::ResourceCapacityRejected {
+                link_id,
+                hash,
+                settled_request,
+            },
+            AcceptedResourceAdmission::Ignored(reason) => Self::Ignored(reason),
+        }
+    }
+}
+
 impl<S: StorageLayout> EngineState<S> {
     pub(crate) fn ingest_set_resource_strategy(
         &mut self,
@@ -253,12 +288,14 @@ impl<S: StorageLayout> EngineState<S> {
             };
         }
         match policy {
-            GatePolicy::Admit { .. } => self.admit_or_queue_accepted_resource(
-                link_id,
-                advertisement.original_hash,
-                accepted,
-                arrived_at,
-            ),
+            GatePolicy::Admit { .. } => self
+                .admit_or_queue_accepted_resource(
+                    link_id,
+                    advertisement.original_hash,
+                    accepted,
+                    arrived_at,
+                )
+                .into(),
             GatePolicy::OfferToApp => IngestPacketOutcome::ResourceOffered {
                 link_id,
                 original_hash: advertisement.original_hash,
@@ -273,7 +310,7 @@ impl<S: StorageLayout> EngineState<S> {
         original_hash: ResourceHash,
         accepted: AcceptedResource<'_>,
         arrived_at: InstantMillis,
-    ) -> IngestPacketOutcome<'static> {
+    ) -> AcceptedResourceAdmission {
         match self.incoming_resources.admission_for(&link_id, accepted) {
             IncomingResourceAdmission::Available | IncomingResourceAdmission::AlreadyReceiving => {
                 self.admit_accepted_resource(link_id, original_hash, accepted, arrived_at)
@@ -281,7 +318,9 @@ impl<S: StorageLayout> EngineState<S> {
             IncomingResourceAdmission::TemporarilyFull => {
                 let frozen_link_rtt = match self.links.phase_for(&link_id) {
                     Some(LinkPhase::Active { rtt, .. }) => *rtt,
-                    _ => return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch),
+                    _ => {
+                        return AcceptedResourceAdmission::Ignored(IgnoreReason::LinkPhaseMismatch)
+                    }
                 };
                 let pending = match PendingResourceOffer::try_from_accepted(
                     link_id,
@@ -298,7 +337,7 @@ impl<S: StorageLayout> EngineState<S> {
                         | PendingResourceOfferError::HashmapTooLong
                         | PendingResourceOfferError::HashmapRagged
                         | PendingResourceOfferError::HashmapBeyondPartCount,
-                    ) => return IngestPacketOutcome::Ignored(IgnoreReason::Malformed),
+                    ) => return AcceptedResourceAdmission::Ignored(IgnoreReason::Malformed),
                 };
                 let outcome = self.pending_resource_offers.queue(pending);
                 self.links.note_inbound(&link_id, arrived_at);
@@ -306,10 +345,10 @@ impl<S: StorageLayout> EngineState<S> {
                     QueuePendingResourceOfferOutcome::Queued => {
                         #[cfg(feature = "runtime-metrics")]
                         self.record_resource_admission_event(ResourceAdmissionEvent::Queued);
-                        IngestPacketOutcome::ResourceAdmissionPending
+                        AcceptedResourceAdmission::Pending
                     }
                     QueuePendingResourceOfferOutcome::RetryCoalesced => {
-                        IngestPacketOutcome::ResourceAdmissionPending
+                        AcceptedResourceAdmission::Pending
                     }
                     QueuePendingResourceOfferOutcome::TableFull => self.resource_capacity_rejected(
                         link_id,
@@ -323,7 +362,7 @@ impl<S: StorageLayout> EngineState<S> {
                 self.resource_capacity_rejected(link_id, accepted.hash, accepted.correlation)
             }
             IncomingResourceAdmission::Malformed => {
-                IngestPacketOutcome::Ignored(IgnoreReason::Malformed)
+                AcceptedResourceAdmission::Ignored(IgnoreReason::Malformed)
             }
         }
     }
@@ -333,7 +372,7 @@ impl<S: StorageLayout> EngineState<S> {
         link_id: LinkId,
         hash: ResourceHash,
         correlation: ResourceCorrelation,
-    ) -> IngestPacketOutcome<'static> {
+    ) -> AcceptedResourceAdmission {
         #[cfg(feature = "runtime-metrics")]
         self.record_resource_admission_event(ResourceAdmissionEvent::Rejected);
         let settled_request = match correlation {
@@ -343,7 +382,7 @@ impl<S: StorageLayout> EngineState<S> {
                 .map(|receipt| receipt.command_id),
             ResourceCorrelation::Request { .. } | ResourceCorrelation::Unsolicited => None,
         };
-        IngestPacketOutcome::ResourceCapacityRejected {
+        AcceptedResourceAdmission::CapacityRejected {
             link_id,
             hash,
             settled_request,
@@ -356,7 +395,7 @@ impl<S: StorageLayout> EngineState<S> {
         original_hash: ResourceHash,
         accepted: AcceptedResource<'_>,
         arrived_at: InstantMillis,
-    ) -> IngestPacketOutcome<'static> {
+    ) -> AcceptedResourceAdmission {
         let hash = accepted.hash;
         let correlation = accepted.correlation;
         let segment_index = accepted.segment_index;
@@ -378,14 +417,14 @@ impl<S: StorageLayout> EngineState<S> {
                 AcceptIncomingResourceError::TableFull
                 | AcceptIncomingResourceError::TransferTooLarge
                 | AcceptIncomingResourceError::TooManyParts,
-            ) => return IngestPacketOutcome::Ignored(IgnoreReason::CapacityExhausted),
+            ) => return AcceptedResourceAdmission::Ignored(IgnoreReason::CapacityExhausted),
             Err(AcceptIncomingResourceError::AlreadyReceiving) => {
                 // RNS 1.4.2 sends an advertisement immediately before registering the outgoing
                 // resource, so a fast first pull can reach it in that gap and be discarded. Its
                 // watchdog rebuilds each advertisement retry with a fresh IV; packet dedup sees
                 // a new frame, while this table recognizes the active resource. Refreshing the
                 // pull here closes that race without admitting a second transfer.
-                return IngestPacketOutcome::OwesResourcePull { link_id, hash };
+                return AcceptedResourceAdmission::Pull { link_id, hash };
             }
             Err(
                 AcceptIncomingResourceError::EmptyTransfer
@@ -394,7 +433,7 @@ impl<S: StorageLayout> EngineState<S> {
                 | AcceptIncomingResourceError::HashmapTooLong
                 | AcceptIncomingResourceError::HashmapRagged
                 | AcceptIncomingResourceError::HashmapBeyondPartCount,
-            ) => return IngestPacketOutcome::Ignored(IgnoreReason::Malformed),
+            ) => return AcceptedResourceAdmission::Ignored(IgnoreReason::Malformed),
         };
         {
             let state = self.incoming_resources.state_mut(index);
@@ -412,17 +451,17 @@ impl<S: StorageLayout> EngineState<S> {
             self.receipts.claim_request_for_transfer(id);
         }
         self.links.note_inbound(&link_id, arrived_at);
-        IngestPacketOutcome::OwesResourcePull { link_id, hash }
+        AcceptedResourceAdmission::Pull { link_id, hash }
     }
 
     /// RNS 1.4.2 `Resource.reject`: the declined segment's bare hash, sealed under the link key, context `RESOURCE_RCL`.
-    pub(crate) fn reject_offered_resource<F>(
+    pub(crate) fn reject_offered_resource<F, Work>(
         &mut self,
         link_id: &LinkId,
         hash: &ResourceHash,
         now: InstantMillis,
         fill_random: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) where
         F: FnMut(&mut [u8]),
     {
@@ -1749,7 +1788,7 @@ mod tests {
                 crate::engine::LinkClosedReason::LocallyClosed,
                 &test_entropy_bytes::<16>(0x91),
                 &mut close,
-                &mut |_| {},
+                &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| {},
             )
             .unwrap();
         assert!(receiver.pending_resource_offers.is_empty());

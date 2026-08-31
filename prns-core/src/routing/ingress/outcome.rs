@@ -16,9 +16,7 @@ use crate::routing::announce::{AnnounceObservation, AnnounceRateAccounting};
 use crate::routing::dedup::PacketHash;
 use crate::routing::delivery::Delivery;
 use crate::routing::links::channel::{ChannelSequence, MessageType};
-use crate::routing::links::handshake::{
-    AcceptedLinkRequest, LinkProofSignOwed, LinkProofVerifyOwed, LinkRttError,
-};
+use crate::routing::links::handshake::{AcceptedLinkRequest, LinkProofVerifyOwed, LinkRttError};
 use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::table::AcceptedResource;
 use crate::routing::links::resources::{
@@ -26,7 +24,7 @@ use crate::routing::links::resources::{
 };
 use crate::routing::links::LinkId;
 use crate::routing::path_requests::seen::PathRequestIdBytes;
-use crate::routing::proof::{DeferredLinkReceiptSign, ProofIngest, ProofObligation};
+use crate::routing::proof::{ProofIngest, ProofObligation};
 use crate::routing::request_handlers::RequestPathHash;
 use crate::units::RttMillis;
 use crate::wire::{DestinationHash, WirePacketHeader};
@@ -70,20 +68,6 @@ impl IngestEffects<'_> {
 
 /// RNS 1.4.2 `Transport.packet_filter` drops PLAIN and GROUP data received more than one hop out.
 pub const NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS: u8 = 1;
-
-#[derive(Default)]
-#[allow(clippy::large_enum_variant)]
-pub enum DeferredCrypto {
-    #[default]
-    Empty,
-    Decrypt(DecryptOwed),
-    RatchetDecrypt(RatchetDecryptOwed),
-    LinkProofVerify(LinkProofVerifyOwed),
-    LinkProofSign(LinkProofSignOwed),
-    LinkReceiptSign(DeferredLinkReceiptSign),
-    AnnounceVerify(AnnounceVerifyOwed),
-    RemoteControlPairingAvailabilityVerify(RemoteControlPairingAvailabilityVerifyOwed),
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkRttOwed {
@@ -143,17 +127,18 @@ pub enum ProtocolViolationKind {
     InvalidProof,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub enum IngestPacketOutcome<'p> {
     Announce(AnnounceIngest),
     Delivery {
         delivery: Delivery<'p>,
         proof: ProofObligation,
     },
-    OwesDecrypt,
-    OwesRatchetDecrypt,
-    OwesAnnounceVerify,
-    OwesRemoteControlPairingAvailabilityVerify,
+    OwesDecrypt(DecryptOwed),
+    OwesRatchetDecrypt(RatchetDecryptOwed),
+    OwesAnnounceVerify(AnnounceVerifyOwed),
+    OwesRemoteControlPairingAvailabilityVerify(RemoteControlPairingAvailabilityVerifyOwed),
     Proof(ProofIngest),
     Forward(PacketToForward<'p>),
     AnswerPathRequest {
@@ -279,7 +264,7 @@ pub enum IngestPacketOutcome<'p> {
     },
     OwesLinkProof(AcceptedLinkRequest),
     OwesLinkRtt(LinkRttOwed),
-    OwesLinkProofVerify,
+    OwesLinkProofVerify(LinkProofVerifyOwed),
     LinkActivated {
         link_id: LinkId,
         rtt_millis: u64,

@@ -146,10 +146,7 @@ mod tests {
                 source_interface: InterfaceId::new([0xB2; 8]),
                 bytes: &mut announce,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
 
         let mut in_transport = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET_VIA_TRANSPORT);
@@ -202,10 +199,7 @@ mod tests {
                 source_interface: InterfaceId::new([0xA1; 8]),
                 bytes: &mut replay,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert_eq!(
             again,
@@ -225,10 +219,7 @@ mod tests {
                 source_interface: InterfaceId::new([0xB2; 8]),
                 bytes: &mut announce,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         let learned_expiry = relay
             .routing_table
@@ -242,10 +233,7 @@ mod tests {
                 source_interface: InterfaceId::new([0xA1; 8]),
                 bytes: &mut in_transport,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert!(
             matches!(out, IngestPacketOutcome::Forward(_)),
@@ -287,10 +275,7 @@ mod tests {
                 source_interface: InterfaceId::new([0xB2; 8]),
                 bytes: &mut relayed[..header_len + payload.len()],
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
 
         let mut in_transport = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET_VIA_TRANSPORT);
@@ -300,10 +285,7 @@ mod tests {
                 source_interface: InterfaceId::new([0xA1; 8]),
                 bytes: &mut in_transport,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
 
         let IngestPacketOutcome::Forward(forward) = out else {
@@ -336,10 +318,7 @@ mod tests {
                 source_interface: iface(0xB2),
                 bytes: &mut announce,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
 
         let mut direct = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET);
@@ -349,10 +328,7 @@ mod tests {
                 source_interface: app,
                 bytes: &mut direct,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
 
         let IngestPacketOutcome::Forward(forward) = out else {
@@ -380,10 +356,7 @@ mod tests {
                 source_interface: iface(0xB2),
                 bytes: &mut announce,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
 
         let mut direct = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET);
@@ -393,10 +366,7 @@ mod tests {
                 source_interface: iface(0xA1),
                 bytes: &mut direct,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
 
         assert_eq!(
@@ -418,10 +388,7 @@ mod tests {
                 source_interface: iface(0xB2),
                 bytes: &mut announce,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
 
         let mut in_transport = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET_VIA_TRANSPORT);
@@ -432,10 +399,7 @@ mod tests {
                 source_interface: iface(0xA1),
                 bytes: &mut in_transport,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
 
         assert_eq!(out, IngestPacketOutcome::Ignored(IgnoreReason::NotForUs));
@@ -454,10 +418,7 @@ mod tests {
                 source_interface: app,
                 bytes: &mut announce,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
 
         let mut in_transport = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET_VIA_TRANSPORT);
@@ -468,10 +429,7 @@ mod tests {
                 source_interface: iface(0xA1),
                 bytes: &mut in_transport,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
 
         let IngestPacketOutcome::Forward(forward) = out else {
@@ -494,10 +452,7 @@ mod tests {
                 source_interface: InterfaceId::new([0xB2; 8]),
                 bytes: &mut announce,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         let mut in_transport = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET_VIA_TRANSPORT);
         let out = relay.ingest_packet_with(
@@ -506,10 +461,7 @@ mod tests {
                 source_interface: InterfaceId::new([0xA1; 8]),
                 bytes: &mut in_transport,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         let IngestPacketOutcome::Forward(forward) = out else {
             panic!("the data leg must forward first");
@@ -547,10 +499,7 @@ mod tests {
                 source_interface: InterfaceId::new([0xB2; 8]),
                 bytes: &mut right_lane[..proof_len],
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         let IngestPacketOutcome::Forward(returned) = out else {
             panic!("the proof must ride the reverse route, got {out:?}");
@@ -573,10 +522,7 @@ mod tests {
                 source_interface: InterfaceId::new([0xB2; 8]),
                 bytes: &mut wrong_lane[..proof_len],
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert_eq!(
             out,

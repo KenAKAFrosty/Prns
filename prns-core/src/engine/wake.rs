@@ -127,6 +127,36 @@ impl WakeSchedules {
         }
     }
 
+    /// Composes a later delta after this delta without pretending either one is a live schedule.
+    ///
+    /// Use [`Self::merge`] when `self` is the manifold's currently armed schedule. Use this method
+    /// when several engine steps are completed before their ordered changes are returned to that
+    /// manifold. In particular, composition preserves [`WakeSchedule::AtMost`] as a conditional
+    /// update instead of turning it into an exact deadline.
+    pub fn compose(&mut self, later: WakeSchedules) {
+        for (slot, change) in [
+            (&mut self.scheduled_announces, later.scheduled_announces),
+            (&mut self.receipt_timeouts, later.receipt_timeouts),
+            (&mut self.path_request_timeouts, later.path_request_timeouts),
+            (&mut self.expired_routes, later.expired_routes),
+            (
+                &mut self.expired_destination_identities,
+                later.expired_destination_identities,
+            ),
+            (&mut self.expired_blackholes, later.expired_blackholes),
+            (&mut self.link_deadlines, later.link_deadlines),
+            (&mut self.resource_deadlines, later.resource_deadlines),
+            (&mut self.channel_timeouts, later.channel_timeouts),
+            (&mut self.held_announce_release, later.held_announce_release),
+            (
+                &mut self.remote_control_pairing,
+                later.remote_control_pairing,
+            ),
+        ] {
+            *slot = compose_wake_delta(*slot, change);
+        }
+    }
+
     pub fn soonest(&self, now: InstantMillis) -> NextWake {
         let mut earliest: Option<(InstantMillis, WakeReason)> = None;
         for (wake, reason) in [
@@ -340,6 +370,23 @@ fn merge_earliest(
     }
 }
 
+fn compose_wake_delta(earlier: WakeSchedule, later: WakeSchedule) -> WakeSchedule {
+    match later {
+        WakeSchedule::Unchanged => earlier,
+        WakeSchedule::AtMost(later_ceiling) => match earlier {
+            WakeSchedule::Unchanged => WakeSchedule::AtMost(later_ceiling),
+            WakeSchedule::AtMost(earlier_ceiling) => {
+                WakeSchedule::AtMost(earlier_ceiling.min(later_ceiling))
+            }
+            WakeSchedule::At(earlier_exact) if earlier_exact <= later_ceiling => {
+                WakeSchedule::At(earlier_exact)
+            }
+            WakeSchedule::Idle | WakeSchedule::At(_) => WakeSchedule::At(later_ceiling),
+        },
+        replacement => replacement,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,10 +421,7 @@ mod tests {
                 source_interface: InterfaceId::new([0xEE; 8]),
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert_eq!(state.scheduled_announce_count(), 1);
 
@@ -419,10 +463,7 @@ mod tests {
                 source_interface: source,
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&interfaces),
-            &mut |_| {},
-            None,
         );
         assert_eq!(state.route_count(), 1);
         assert_eq!(
@@ -601,6 +642,60 @@ mod tests {
     }
 
     #[test]
+    fn composing_an_at_most_delta_preserves_its_conditional_meaning() {
+        let mut combined = WakeSchedules::UNCHANGED;
+        combined.compose(WakeSchedules {
+            expired_routes: WakeSchedule::AtMost(InstantMillis(7_000)),
+            ..WakeSchedules::UNCHANGED
+        });
+        assert_eq!(
+            combined.expired_routes,
+            WakeSchedule::AtMost(InstantMillis(7_000)),
+        );
+
+        let mut live = schedules(
+            WakeSchedule::Idle,
+            WakeSchedule::Idle,
+            WakeSchedule::Idle,
+            WakeSchedule::At(InstantMillis(3_000)),
+        );
+        live.merge(combined);
+        assert_eq!(live.expired_routes, WakeSchedule::At(InstantMillis(3_000)));
+    }
+
+    #[test]
+    fn composing_at_most_deltas_keeps_the_earliest_ceiling() {
+        let mut combined = WakeSchedules {
+            expired_routes: WakeSchedule::AtMost(InstantMillis(7_000)),
+            ..WakeSchedules::UNCHANGED
+        };
+        combined.compose(WakeSchedules {
+            expired_routes: WakeSchedule::AtMost(InstantMillis(5_000)),
+            ..WakeSchedules::UNCHANGED
+        });
+        assert_eq!(
+            combined.expired_routes,
+            WakeSchedule::AtMost(InstantMillis(5_000)),
+        );
+    }
+
+    #[test]
+    fn composing_after_an_exact_delta_applies_the_later_ceiling() {
+        let mut combined = WakeSchedules {
+            expired_routes: WakeSchedule::At(InstantMillis(9_000)),
+            ..WakeSchedules::UNCHANGED
+        };
+        combined.compose(WakeSchedules {
+            expired_routes: WakeSchedule::AtMost(InstantMillis(5_000)),
+            ..WakeSchedules::UNCHANGED
+        });
+        assert_eq!(
+            combined.expired_routes,
+            WakeSchedule::At(InstantMillis(5_000)),
+        );
+    }
+
+    #[test]
     fn wake_schedules_delta_tracks_a_recompute_across_a_rebroadcast_lifecycle() {
         let mut state = transporting_node();
         let descriptors = transporting_interfaces();
@@ -608,7 +703,7 @@ mod tests {
         let mut schedules = state.wake_schedules(interfaces);
 
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-        let delta = state.ingest_packet_into(
+        let delta = state.ingest_packet_inline_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
@@ -703,10 +798,7 @@ mod tests {
                 source_interface: source,
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&roaming_view),
-            &mut |_| {},
-            None,
         );
         assert_eq!(state.route_count(), 1);
 
@@ -730,7 +822,7 @@ mod tests {
         let mut schedules = state.wake_schedules(interfaces);
 
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-        let delta = state.ingest_packet_into(
+        let delta = state.ingest_packet_inline_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0xEE; 8]),
@@ -777,7 +869,7 @@ mod tests {
         let mut schedules = state.wake_schedules(interfaces);
 
         let mut first = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-        let delta = state.ingest_packet_into(
+        let delta = state.ingest_packet_inline_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0xEE; 8]),
@@ -798,7 +890,7 @@ mod tests {
 
         let mut journal = std::vec::Vec::new();
         let mut second = bytes_from_hex(RNS_1_4_2_RATCHETED_ANNOUNCE);
-        let delta = state.ingest_packet_into(
+        let delta = state.ingest_packet_inline_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: InterfaceId::new([0xEE; 8]),

@@ -168,10 +168,7 @@ mod tests {
                 source_interface: first_conn,
                 bytes: &mut announce,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&first_view),
-            &mut |_| {},
-            None,
         );
         let mut synth = synthesize_wire(0xAB);
         let _ = before_reboot.ingest_packet_with(
@@ -180,10 +177,7 @@ mod tests {
                 source_interface: first_conn,
                 bytes: &mut synth,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&first_view),
-            &mut |_| {},
-            None,
         );
 
         let mut rebooted = transporting_node();
@@ -214,10 +208,7 @@ mod tests {
                 source_interface: second_conn,
                 bytes: &mut synth_again,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&second_view),
-            &mut |_| {},
-            None,
         );
         assert_eq!(
             rebooted

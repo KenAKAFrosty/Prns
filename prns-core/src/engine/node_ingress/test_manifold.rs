@@ -1,0 +1,211 @@
+//! Deprecated inline fixture for protocol tests that predate explicit owed-work continuations.
+
+use std::collections::VecDeque;
+
+use crate::crypto::{ed25519_sign, x25519_diffie_hellman, x25519_keys_for_seal};
+use crate::engine::{
+    CryptoOwed, Directive, EngineReaction, EngineState, IngestIo, OwedWork, WakeSchedules,
+};
+use crate::identity::decrypt_token_in_place_with_ratchets;
+use crate::interfaces::InboundPacket;
+use crate::remote_control::RemoteControlPairingAvailabilityVerification;
+use crate::routing::announce::Announce;
+use crate::routing::links::handshake::{link_proof_signature_valid, link_proof_signed_data};
+use crate::routing::proof::{EXPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN};
+use crate::storage::StorageLayout;
+use crate::wire::BROADCAST_MTU;
+
+impl<S: StorageLayout> EngineState<S> {
+    /// Runs the old test-fixture shape: drive every immediately ready crypto continuation inline.
+    /// Production and continuation-focused tests must use [`Self::ingest_packet_into`] directly.
+    #[deprecated(
+        note = "test-only inline compatibility manifold; drive Directive::Fulfill and resume_* explicitly"
+    )]
+    pub(crate) fn ingest_packet_inline_for_test<F, P, A, K>(
+        &mut self,
+        packet: InboundPacket<'_>,
+        io: IngestIo<'_, F, P, A, K>,
+    ) -> WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+        P: FnMut(&crate::routing::proof::ProofRequest) -> bool,
+        A: FnMut(&crate::routing::links::resources::ResourceOffer) -> bool,
+        K: FnMut(EngineReaction<'_, OwedWork<'_>>),
+    {
+        let IngestIo {
+            interfaces,
+            now,
+            fill_random,
+            should_prove,
+            should_accept_resource,
+            sink,
+        } = io;
+        let mut ready = VecDeque::new();
+        let report = self.ingest_packet_into_report(
+            packet,
+            IngestIo {
+                interfaces,
+                now,
+                fill_random: &mut *fill_random,
+                should_prove: &mut *should_prove,
+                should_accept_resource: &mut *should_accept_resource,
+                sink: &mut |reaction| route_or_capture_crypto(reaction, &mut ready, sink),
+            },
+        );
+        let mut wake = report.wake_schedules;
+
+        while let Some(work) = ready.pop_front() {
+            match work {
+                CryptoOwed::Encrypt(owed) => {
+                    let (ephemeral_public, shared) =
+                        x25519_keys_for_seal(&owed.ephemeral_secret, &owed.dh_target);
+                    let mut wire = [0u8; BROADCAST_MTU];
+                    wake.compose(self.complete_send_single_packet_deferred(
+                        owed,
+                        ephemeral_public,
+                        shared,
+                        interfaces,
+                        &mut wire,
+                        &mut |reaction| sink(reaction.map_work(|never| match never {})),
+                    ));
+                }
+                CryptoOwed::Decrypt(owed) => {
+                    let shared =
+                        x25519_diffie_hellman(&owed.encryption_secret, &owed.ephemeral_public);
+                    self.resume_decrypt(owed, shared, interfaces, should_prove, &mut |reaction| {
+                        route_or_capture_crypto(reaction, &mut ready, sink)
+                    });
+                }
+                CryptoOwed::RatchetDecrypt(mut owed) => {
+                    if let Ok(opened) = decrypt_token_in_place_with_ratchets(
+                        &owed.ratchet_secrets,
+                        &owed.encryption_secret,
+                        &owed.identity,
+                        owed.identity_key_fallback,
+                        &mut owed.token,
+                    ) {
+                        let mut plaintext = heapless::Vec::<
+                            u8,
+                            { crate::routing::ingress::MAX_RATCHET_DECRYPT_PAYLOAD_LEN },
+                        >::new();
+                        if plaintext.extend_from_slice(opened.plaintext).is_ok() {
+                            let opened_by = opened.opened_by;
+                            self.resume_ratchet_decrypt(
+                                owed,
+                                crate::identity::OpenedToken {
+                                    opened_by,
+                                    plaintext: &plaintext,
+                                },
+                                interfaces,
+                                should_prove,
+                                &mut |reaction| route_or_capture_crypto(reaction, &mut ready, sink),
+                            );
+                        }
+                    }
+                }
+                CryptoOwed::LinkProofVerify(owed) => {
+                    if link_proof_signature_valid(&owed) {
+                        let shared = x25519_diffie_hellman(
+                            &owed.initiator_secret,
+                            &owed.responder_encryption,
+                        );
+                        wake.compose(self.resume_link_proof(
+                            owed,
+                            shared,
+                            interfaces,
+                            now,
+                            fill_random,
+                            &mut |reaction| sink(reaction.map_work(|never| match never {})),
+                        ));
+                    }
+                }
+                CryptoOwed::LinkProofSign(owed) => {
+                    let (responder_encryption, shared) = x25519_keys_for_seal(
+                        &owed.ephemeral_secret,
+                        &owed.request.initiator_encryption,
+                    );
+                    let signed_data = link_proof_signed_data(
+                        &owed.request.link_id,
+                        &responder_encryption,
+                        owed.responder_signing.as_ed25519(),
+                        owed.mtu,
+                        owed.request.mode,
+                    );
+                    let signature = ed25519_sign(&owed.signing_secret, &signed_data);
+                    wake.compose(self.resume_link_proof_sign(
+                        owed,
+                        responder_encryption,
+                        shared,
+                        signature,
+                        interfaces,
+                        &mut |reaction| sink(reaction.map_work(|never| match never {})),
+                    ));
+                }
+                CryptoOwed::ProofSign(owed) => {
+                    let signature = ed25519_sign(&owed.signing_secret, owed.packet_hash.as_bytes());
+                    let mut proof = [0u8; EXPLICIT_PROOF_WIRE_LEN];
+                    if let Ok(written) =
+                        self.write_signed_proof(&owed.packet_hash, &signature, &mut proof)
+                    {
+                        sink(EngineReaction::Directive(Directive::Send {
+                            target: owed.target,
+                            bytes: &proof[..written],
+                        }));
+                    }
+                }
+                CryptoOwed::LinkReceiptSign(owed) => {
+                    let signature = ed25519_sign(&owed.signing_secret, owed.packet_hash.as_bytes());
+                    let mut proof = [0u8; LINK_PROOF_WIRE_LEN];
+                    if let Ok(written) = self.complete_link_receipt_sign(
+                        &owed.link_id,
+                        &owed.packet_hash,
+                        &signature,
+                        now,
+                        &mut proof,
+                    ) {
+                        sink(EngineReaction::Directive(Directive::Send {
+                            target: owed.target,
+                            bytes: &proof[..written],
+                        }));
+                    }
+                }
+                CryptoOwed::AnnounceVerify(owed) => {
+                    if Announce::from_wire_unverified(&owed.header, &owed.payload)
+                        .is_ok_and(|announce| announce.signature_is_valid())
+                    {
+                        wake.compose(self.resume_announce(
+                            owed,
+                            interfaces,
+                            fill_random,
+                            &mut |reaction| sink(reaction.map_work(|never| match never {})),
+                        ));
+                    }
+                }
+                CryptoOwed::RemoteControlPairingAvailabilityVerify(owed) => {
+                    if owed.verify() == RemoteControlPairingAvailabilityVerification::Valid {
+                        wake.compose(self.resume_remote_control_pairing_availability(
+                            owed,
+                            interfaces,
+                            &mut |reaction| sink(reaction.map_work(|never| match never {})),
+                        ));
+                    }
+                }
+            }
+        }
+
+        wake
+    }
+}
+
+fn route_or_capture_crypto(
+    reaction: EngineReaction<'_, OwedWork<'_>>,
+    ready: &mut VecDeque<CryptoOwed>,
+    sink: &mut impl FnMut(EngineReaction<'_, OwedWork<'_>>),
+) {
+    match reaction {
+        EngineReaction::Directive(Directive::Fulfill(OwedWork::Crypto(work))) => {
+            ready.push_back(work);
+        }
+        other => sink(other),
+    }
+}

@@ -10,12 +10,12 @@ use crate::routing::ingress::{
 use crate::storage::StorageLayout;
 
 impl<S: StorageLayout> EngineState<S> {
-    pub(super) fn apply_remote_control_pairing_availability(
+    pub(super) fn apply_remote_control_pairing_availability<Work>(
         &mut self,
         observation: RemoteControlPairingAvailabilityObservation<'_>,
         interfaces: AttachedInterfaces<'_>,
         wake: &mut WakeSchedules,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) {
         let destination = observation.endpoint().destination_hash();
         sink(EngineReaction::Journaled(

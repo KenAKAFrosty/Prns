@@ -693,10 +693,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert_eq!(out, rns_1_4_2_announce_accepted(1));
         assert_eq!(state.route_count(), 1);

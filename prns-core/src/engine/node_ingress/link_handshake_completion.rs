@@ -16,13 +16,13 @@ use crate::units::RttMillis;
 use crate::wire::BROADCAST_MTU;
 
 impl<S: StorageLayout> EngineState<S> {
-    fn emit_link_established(
+    fn emit_link_established<Work>(
         command_id: CommandId,
         link_id: LinkId,
         rtt: RttMillis,
         target: InterfaceId,
         written: &[u8],
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) {
         sink(EngineReaction::Directive(Directive::Send {
             target,
@@ -38,14 +38,14 @@ impl<S: StorageLayout> EngineState<S> {
         );
     }
 
-    pub(super) fn process_owes_link_rtt<F>(
+    pub(super) fn process_owes_link_rtt<F, Work>(
         &mut self,
         owed: LinkRttOwed,
         source: InterfaceId,
         interfaces: AttachedInterfaces<'_>,
         _now: InstantMillis,
         fill_random: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) -> WakeSchedule
     where
         F: FnMut(&mut [u8]),

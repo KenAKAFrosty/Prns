@@ -353,6 +353,7 @@ impl RemoteControlPairingAvailabilityObservation<'_> {
     }
 }
 
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub struct RemoteControlPairingAvailabilityVerifyOwed {
     payload: HeaplessVec<u8, BROADCAST_MDU>,
     observed_at: InstantMillis,

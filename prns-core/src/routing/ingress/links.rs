@@ -1,6 +1,9 @@
 use super::classification::DataPacket;
+use super::dispatch::IngressCryptoMode;
 use super::forward::PacketToForward;
-use super::outcome::{DeferredCrypto, IgnoreReason, IngestPacketOutcome, LinkRttOwed};
+#[cfg(test)]
+use super::outcome::LinkRttOwed;
+use super::outcome::{IgnoreReason, IngestPacketOutcome};
 use crate::crypto::X25519PublicKey;
 use crate::engine::{
     DeliveryEvidence, EngineState, InstantMillis, LinkClosedReason, PacketReceiptDelivered,
@@ -469,7 +472,7 @@ impl<S: StorageLayout> EngineState<S> {
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
-        deferred: Option<&mut DeferredCrypto>,
+        crypto: IngressCryptoMode,
     ) -> IngestPacketOutcome<'p> {
         let Some(LinkPhase::Pending {
             destination: link_destination,
@@ -495,54 +498,58 @@ impl<S: StorageLayout> EngineState<S> {
         let requested_at = *requested_at;
         let command_id = *command_id;
         let mode = *mode;
-        if let Some(deferred) = deferred {
-            let Ok(parsed) = link_proof_parse(&link_id, payload, &responder_signing) else {
-                return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
-            };
-            if parsed.proof.mode != mode {
-                return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
+        match crypto {
+            IngressCryptoMode::Owed => {
+                let Ok(parsed) = link_proof_parse(&link_id, payload, &responder_signing) else {
+                    return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
+                };
+                if parsed.proof.mode != mode {
+                    return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
+                }
+                IngestPacketOutcome::OwesLinkProofVerify(LinkProofVerifyOwed {
+                    link_id,
+                    source_interface,
+                    received_hops,
+                    responder_encryption: parsed.proof.responder_encryption,
+                    responder_signing,
+                    initiator_secret: initiator_secret.cloned(),
+                    command_id,
+                    arrived_at,
+                    rtt: RttMillis::measured_between(requested_at, arrived_at),
+                    mtu: if parsed.proof.mtu == 0 {
+                        BROADCAST_MTU
+                    } else {
+                        parsed.proof.mtu
+                    },
+                    signed_data: parsed.signed_data,
+                    signed_bytes: parsed.signed_bytes,
+                    signature: parsed.signature,
+                })
             }
-            *deferred = DeferredCrypto::LinkProofVerify(LinkProofVerifyOwed {
-                link_id,
-                source_interface,
-                received_hops,
-                responder_encryption: parsed.proof.responder_encryption,
-                responder_signing,
-                initiator_secret: initiator_secret.cloned(),
-                command_id,
-                arrived_at,
-                rtt: RttMillis::measured_between(requested_at, arrived_at),
-                mtu: if parsed.proof.mtu == 0 {
-                    BROADCAST_MTU
-                } else {
-                    parsed.proof.mtu
-                },
-                signed_data: parsed.signed_data,
-                signed_bytes: parsed.signed_bytes,
-                signature: parsed.signature,
-            });
-            return IngestPacketOutcome::OwesLinkProofVerify;
+            #[cfg(test)]
+            IngressCryptoMode::Inline => {
+                let Ok(proof) = link_proof_from(&link_id, payload, &responder_signing) else {
+                    return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
+                };
+                if proof.mode != mode {
+                    return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
+                }
+                IngestPacketOutcome::OwesLinkRtt(LinkRttOwed {
+                    link_id,
+                    received_hops,
+                    responder_encryption: proof.responder_encryption,
+                    responder_signing,
+                    command_id,
+                    arrived_at,
+                    rtt: RttMillis::measured_between(requested_at, arrived_at),
+                    mtu: if proof.mtu == 0 {
+                        BROADCAST_MTU
+                    } else {
+                        proof.mtu
+                    },
+                })
+            }
         }
-        let Ok(proof) = link_proof_from(&link_id, payload, &responder_signing) else {
-            return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
-        };
-        if proof.mode != mode {
-            return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
-        }
-        IngestPacketOutcome::OwesLinkRtt(LinkRttOwed {
-            link_id,
-            received_hops,
-            responder_encryption: proof.responder_encryption,
-            responder_signing,
-            command_id,
-            arrived_at,
-            rtt: RttMillis::measured_between(requested_at, arrived_at),
-            mtu: if proof.mtu == 0 {
-                BROADCAST_MTU
-            } else {
-                proof.mtu
-            },
-        })
     }
 
     pub(super) fn ingest_link_rtt(

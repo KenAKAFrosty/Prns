@@ -1,6 +1,8 @@
 //! RNS 1.4.2 `Resource(data, link)` plus `Resource.advertise`.
 
-use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis, Journaled, OwedWork};
+use crate::engine::{
+    CommandId, Directive, EngineReaction, EngineState, InstantMillis, Journaled, OwedWork,
+};
 use crate::engine::{RespondFailure, SendResourceFailure, SendResourceRejection, Settlement};
 use crate::interfaces::InterfaceId;
 use crate::rncp::write_file_metadata;
@@ -214,6 +216,27 @@ pub(crate) fn resource_settlement(
     }
 }
 
+fn settle_resource_failure<Work>(
+    sink: &mut impl FnMut(EngineReaction<'_, Work>),
+    id: CommandId,
+    correlation: ResourceCorrelation,
+    failure: SendResourceFailure,
+) {
+    sink(EngineReaction::Journaled(Journaled::CommandSettled {
+        id,
+        settlement: resource_settlement(correlation, Err(failure)),
+    }));
+}
+
+fn reject_tracked_resource<Work>(
+    sink: &mut impl FnMut(EngineReaction<'_, Work>),
+    id: CommandId,
+    correlation: ResourceCorrelation,
+    error: TrackOutgoingResourceError,
+) {
+    settle_resource_failure(sink, id, correlation, tracked_resource_failure(error));
+}
+
 fn static_response_stream_capacity(transfer_capacity: usize) -> usize {
     let mut stream_bytes = STATIC_RESPONSE_SEGMENT_BYTES
         .min(crate::routing::links::resources::MAX_EFFICIENT_SIZE)
@@ -401,7 +424,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn execute_resource_build_inline<'a, F>(
         &mut self,
         owed: ResourceBuildOwed<'a>,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
     ) -> InlineResourceBuildCompleted<'a>
     where
         F: FnMut(&mut [u8]),
@@ -409,11 +432,11 @@ impl<S: StorageLayout> EngineState<S> {
         let ResourceBuildOwed { plan, body } = owed;
         let reservation = plan.reservation();
         let mut seal_iv = [0u8; 16];
-        fill_entropy(&mut seal_iv);
+        fill_random(&mut seal_iv);
         let mut nonces = [[0u8; RESOURCE_NONCE_LEN];
             crate::routing::links::resources::build_outgoing::SALT_REROLL_CAP + 1];
         for nonce in &mut nonces {
-            fill_entropy(nonce);
+            fill_random(nonce);
         }
         let outcome = match self
             .outgoing_resources
@@ -441,7 +464,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         completed: InlineResourceBuildCompleted<'_>,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> crate::engine::WakeSchedules
     where
@@ -463,7 +486,7 @@ impl<S: StorageLayout> EngineState<S> {
             request_data,
             landing,
             now,
-            fill_entropy,
+            fill_random,
             sink,
         )
     }
@@ -474,7 +497,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         completed: ResourceBuildCompleted<'_>,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> crate::engine::WakeSchedules
     where
@@ -495,7 +518,7 @@ impl<S: StorageLayout> EngineState<S> {
             request_data,
             landing,
             now,
-            fill_entropy,
+            fill_random,
             sink,
         )
     }
@@ -506,7 +529,7 @@ impl<S: StorageLayout> EngineState<S> {
         request_data: &[u8],
         landing: ResourceBuildLanding,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> crate::engine::WakeSchedules
     where
@@ -550,7 +573,7 @@ impl<S: StorageLayout> EngineState<S> {
         let fire_on = link.attached_interface;
         let rtt_millis = link.rtt.millis();
         let mut adv_iv = [0u8; 16];
-        fill_entropy(&mut adv_iv);
+        fill_random(&mut adv_iv);
         let mut wake = crate::engine::WakeSchedules::UNCHANGED;
         match emit_resource_advertisement(
             &self.outgoing_resources,
@@ -746,12 +769,12 @@ impl<S: StorageLayout> EngineState<S> {
         wake
     }
 
-    pub(crate) fn continue_static_response_into<F>(
+    pub(crate) fn continue_static_response_into<F, Work>(
         &mut self,
         link_id: &LinkId,
         now: InstantMillis,
         fill_random: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) -> crate::engine::WakeSchedules
     where
         F: FnMut(&mut [u8]),
@@ -819,13 +842,13 @@ impl<S: StorageLayout> EngineState<S> {
     /// `total_data_bytes` is the whole transfer's uncompressed DATA length. The engine adds the metadata block on top, and RNS 1.4.2 advertises the sum (the `d` field) on every segment, never the segment's own size.
     ///
     /// A continuation whose live segment failed on the wire before this command reached the engine settles `PredecessorFailed` without advertising. A pipelining host therefore cannot revive a dead transfer's tail.
-    pub fn ingest_send_resource_segment_into<F>(
+    pub fn ingest_send_resource_segment_into<F, Work>(
         &mut self,
         send: &ResourceSend<'_>,
         segment: ResourceSegment,
         now: InstantMillis,
         fill_random: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) -> crate::engine::WakeSchedules
     where
         F: FnMut(&mut [u8]),
@@ -833,14 +856,14 @@ impl<S: StorageLayout> EngineState<S> {
         self.ingest_send_resource_segment_enveloped(send, segment, &[], now, fill_random, sink)
     }
 
-    fn ingest_send_resource_segment_enveloped<F>(
+    fn ingest_send_resource_segment_enveloped<F, Work>(
         &mut self,
         send: &ResourceSend<'_>,
         segment: ResourceSegment,
         envelope: &[u8],
         now: InstantMillis,
         fill_random: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) -> crate::engine::WakeSchedules
     where
         F: FnMut(&mut [u8]),
@@ -858,16 +881,10 @@ impl<S: StorageLayout> EngineState<S> {
         } = segment;
         let data = body.data;
         let mut wake_schedule_changes = crate::engine::WakeSchedules::UNCHANGED;
-        let settle = |sink: &mut dyn FnMut(EngineReaction<'_>), failure| {
-            sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                id,
-                settlement: resource_settlement(correlation, Err(failure)),
-            }));
-        };
         let validated = match self.validate_outgoing_resource_send(send, segment) {
             Ok(validated) => validated,
             Err(failure) => {
-                settle(sink, failure);
+                settle_resource_failure(sink, id, correlation, failure);
                 return wake_schedule_changes;
             }
         };
@@ -879,16 +896,13 @@ impl<S: StorageLayout> EngineState<S> {
                 link.rtt.millis(),
             ),
             ActiveLinkLookup::Inactive | ActiveLinkLookup::Absent => {
-                unreachable!("resource validation observed this link active without mutating it")
+                settle_resource_failure(sink, id, correlation, SendResourceFailure::LinkClosed);
+                return wake_schedule_changes;
             }
         };
 
         let sdu = validated.sdu;
         let uncompressed_data_bytes = validated.uncompressed_data_bytes;
-        let reject = |sink: &mut dyn FnMut(EngineReaction<'_>),
-                      error: TrackOutgoingResourceError| {
-            settle(sink, tracked_resource_failure(error));
-        };
         let lane = validated.lane;
 
         let command = TrackedCommand {
@@ -920,7 +934,12 @@ impl<S: StorageLayout> EngineState<S> {
             let shape = match outgoing_resource_buffer_shape(envelope.len(), &body, sdu) {
                 Ok(shape) => shape,
                 Err(error) => {
-                    reject(sink, TrackOutgoingResourceError::Build(error));
+                    reject_tracked_resource(
+                        sink,
+                        id,
+                        correlation,
+                        TrackOutgoingResourceError::Build(error),
+                    );
                     return wake_schedule_changes;
                 }
             };
@@ -947,7 +966,7 @@ impl<S: StorageLayout> EngineState<S> {
         let landing = match tracked {
             Ok(landing) => landing,
             Err(error) => {
-                reject(sink, error);
+                reject_tracked_resource(sink, id, correlation, error);
                 return wake_schedule_changes;
             }
         };
@@ -1016,7 +1035,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             AdvertisementWriteOutcome::DidNotWrite => {
                 self.outgoing_resources.remove(&link_id, &hash);
-                settle(sink, SendResourceFailure::WriteFailed);
+                settle_resource_failure(sink, id, correlation, SendResourceFailure::WriteFailed);
             }
         }
         wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
@@ -1147,13 +1166,13 @@ impl<S: StorageLayout> EngineState<S> {
     /// RNS 1.4.2 `Resource.request`: parts go back raw (slices of the sealed stream,  no token around them).
     ///
     /// A request that breaks the segment sequencing cancels the transfer as the reference does, except we settle the command with the failure's name.
-    pub(crate) fn serve_resource_request<F>(
+    pub(crate) fn serve_resource_request<F, Work>(
         &mut self,
         request: &ResourcePartRequest<'_>,
         fire_on: InterfaceId,
         now: InstantMillis,
         fill_random: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) where
         F: FnMut(&mut [u8]),
     {
@@ -1313,11 +1332,11 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// The deferred seal, run the moment the live segment's last part is served: the receiver spends the next stretch ingesting and verifying, so the continuation's seal rides that window instead of sitting on the advertise path.
-    pub fn seal_staged_continuation<F>(
+    pub fn seal_staged_continuation<F, Work>(
         &mut self,
         link_id: &LinkId,
         fill_random: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) where
         F: FnMut(&mut [u8]),
     {
@@ -1365,11 +1384,11 @@ impl<S: StorageLayout> EngineState<S> {
         state.status = OutgoingResourceStatus::StagedSealed;
     }
 
-    fn fail_staged_seal(
+    fn fail_staged_seal<Work>(
         &mut self,
         index: usize,
         error: BuildOutgoingResourceError,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) {
         let state = self.outgoing_resources.state(index);
         let id = state.command_id;
@@ -1415,10 +1434,10 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// A pool worker's seal verdict lands on the row only if it still matches the job's stream nonce and length; a row that died or was replaced meanwhile drops the verdict silently.
-    pub fn apply_offloaded_staged_seal(
+    pub fn apply_offloaded_staged_seal<Work>(
         &mut self,
         verdict: OffloadedStagedSeal<'_>,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) {
         let OffloadedStagedSeal {
             link_id,
@@ -1462,12 +1481,12 @@ impl<S: StorageLayout> EngineState<S> {
 
     /// The staged continuation's advertisement, owed since its build and released by the live segment's proof.
     /// Runs in the same inbound pass as the proof settle, so the receiver sees the next advertisement exactly where the reference's sender would first build it.
-    pub fn promote_staged_resource<F>(
+    pub fn promote_staged_resource<F, Work>(
         &mut self,
         link_id: &LinkId,
         now: InstantMillis,
         fill_random: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) where
         F: FnMut(&mut [u8]),
     {
@@ -1547,10 +1566,10 @@ impl<S: StorageLayout> EngineState<S> {
 
     /// A staged continuation dies with whatever killed the segment ahead of it; nothing rides the wire because nothing was ever advertised.
     /// Drains every staged row because a follower can wait behind a still-sealing row, and both fall together.
-    pub(crate) fn fail_staged_continuation(
+    pub(crate) fn fail_staged_continuation<Work>(
         &mut self,
         link_id: &LinkId,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) {
         while let Some(index) = self.outgoing_resources.staged_index(link_id) {
             let state = self.outgoing_resources.state(index);
@@ -1568,14 +1587,14 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// RNS 1.4.2 `Resource.cancel`
-    pub(crate) fn cancel_outgoing_resource<F>(
+    pub(crate) fn cancel_outgoing_resource<F, Work>(
         &mut self,
         link_id: &LinkId,
         hash: &ResourceHash,
         failure: SendResourceFailure,
         now: InstantMillis,
         fill_random: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) where
         F: FnMut(&mut [u8]),
     {
@@ -1786,13 +1805,13 @@ enum AdvertisementWriteOutcome {
     DidNotWrite,
 }
 
-fn emit_resource_advertisement<C>(
+fn emit_resource_advertisement<C, Work>(
     outgoing: &crate::routing::links::resources::table::OutgoingResources<C>,
     link_id: &LinkId,
     hash: &ResourceHash,
     lane: &AdvertisementLane<'_>,
     adv_iv: &[u8; 16],
-    sink: &mut impl FnMut(EngineReaction<'_>),
+    sink: &mut impl FnMut(EngineReaction<'_, Work>),
 ) -> AdvertisementWriteOutcome
 where
     C: crate::routing::links::resources::table::ResourceTable<
@@ -2054,7 +2073,7 @@ mod tests {
             segment,
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
-            &mut |reaction| match reaction {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| match reaction {
                 EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
                     if let Some(frame) = filled_frame(fill) {
                         capture.frames.push((target, frame));
@@ -3191,7 +3210,7 @@ mod tests {
             engine.seal_staged_continuation(
                 &owed,
                 &mut |bytes: &mut [u8]| bytes.fill(0xB2),
-                &mut |_| {},
+                &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| {},
             );
         }
         capture
@@ -3433,7 +3452,7 @@ mod tests {
                 names: &worker_names[..sealed_meta.part_count * MAP_HASH_LEN],
                 outcome: Ok(sealed_meta),
             },
-            &mut |_| {},
+            &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| {},
         );
         assert!(
             engine
@@ -3452,7 +3471,7 @@ mod tests {
                 names: &worker_names[..sealed_meta.part_count * MAP_HASH_LEN],
                 outcome: Ok(sealed_meta),
             },
-            &mut |_| {},
+            &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| {},
         );
         let sealed_index = engine
             .outgoing_resources
@@ -3468,7 +3487,7 @@ mod tests {
             &link_id(),
             InstantMillis(3_000),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
-            &mut |reaction| {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| {
                 if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
                     if let Some(frame) = filled_frame(fill) {
                         promoted_frames.push(frame);

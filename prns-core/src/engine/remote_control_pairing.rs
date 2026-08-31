@@ -203,13 +203,13 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
         self.remote_control_controller_pairing.view()
     }
 
-    pub(crate) fn ingest_remote_control_pairing_request<F>(
+    pub(crate) fn ingest_remote_control_pairing_request<F, Work>(
         &mut self,
         ingress: RemoteControlPairingRequestIngress<'_>,
         interfaces: AttachedInterfaces<'_>,
         now: InstantMillis,
         fill_random: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) -> RemoteControlPairingRequestIngressOutcome
     where
         F: FnMut(&mut [u8]),
@@ -474,14 +474,14 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
         }
     }
 
-    fn dispatch_remote_control_pairing_response<F>(
+    fn dispatch_remote_control_pairing_response<F, Work>(
         &mut self,
         responder: RemoteControlTargetPairingResponder,
         response: RemoteControlPairingResponse,
         interfaces: AttachedInterfaces<'_>,
         now: InstantMillis,
         fill_random: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) -> Result<(), RemoteControlPairingResponseDispatchFailure>
     where
         F: FnMut(&mut [u8]),
@@ -1312,7 +1312,7 @@ mod tests {
             AttachedInterfaces::new(interfaces),
             InstantMillis(2_000),
             &mut |bytes| bytes.fill(0xF7),
-            &mut |_| {},
+            &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| {},
         );
         let RemoteControlPairingRequestIngressOutcome::Pairing(
             RemoteControlPairingRequestOutcome::OfferDispatched { attempt_id },
@@ -1389,7 +1389,7 @@ mod tests {
             AttachedInterfaces::new(interfaces),
             InstantMillis(2_200),
             &mut |_| panic!("accepted Commit needs no entropy before completion"),
-            &mut |reaction| {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| {
                 if let EngineReaction::Journaled(
                     Journaled::RemoteControlTargetPairingAuthorizationRequired {
                         attempt_id: observed,
@@ -1961,7 +1961,7 @@ mod tests {
                 AttachedInterfaces::new(&interfaces),
                 InstantMillis(2_000),
                 &mut |bytes| bytes.fill(0xE9),
-                &mut |_| reactions += 1,
+                &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| reactions += 1,
             ),
             RemoteControlPairingRequestIngressOutcome::Pairing(
                 RemoteControlPairingRequestOutcome::BeginRejected {
@@ -1987,7 +1987,7 @@ mod tests {
                 AttachedInterfaces::new(&interfaces),
                 InstantMillis(2_000),
                 &mut |bytes| bytes.fill(0xEA),
-                &mut |_| reactions += 1,
+                &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| reactions += 1,
             ),
             RemoteControlPairingRequestIngressOutcome::Pairing(
                 RemoteControlPairingRequestOutcome::Unidentified,
@@ -2006,7 +2006,7 @@ mod tests {
                 AttachedInterfaces::new(&interfaces),
                 InstantMillis(2_000),
                 &mut |bytes| bytes.fill(0xEB),
-                &mut |_| reactions += 1,
+                &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| reactions += 1,
             ),
             RemoteControlPairingRequestIngressOutcome::ForwardToApplication,
         );
@@ -2023,7 +2023,7 @@ mod tests {
                 AttachedInterfaces::new(&interfaces),
                 InstantMillis(2_000),
                 &mut |bytes| bytes.fill(0xEC),
-                &mut |_| reactions += 1,
+                &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| reactions += 1,
             ),
             RemoteControlPairingRequestIngressOutcome::Pairing(
                 RemoteControlPairingRequestOutcome::MalformedEnvelope(
@@ -2045,7 +2045,7 @@ mod tests {
                 AttachedInterfaces::new(&interfaces),
                 InstantMillis(2_000),
                 &mut |bytes| bytes.fill(0xED),
-                &mut |_| reactions += 1,
+                &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| reactions += 1,
             ),
             RemoteControlPairingRequestIngressOutcome::Pairing(
                 RemoteControlPairingRequestOutcome::MalformedMessage(
@@ -2086,7 +2086,7 @@ mod tests {
                 AttachedInterfaces::new(&interfaces),
                 InstantMillis(2_000),
                 &mut |bytes| bytes.fill(0xEE),
-                &mut |_| reactions += 1,
+                &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| reactions += 1,
             ),
             RemoteControlPairingRequestIngressOutcome::Pairing(
                 RemoteControlPairingRequestOutcome::CommitRejected {
@@ -2125,7 +2125,7 @@ mod tests {
             AttachedInterfaces::new(&interfaces),
             InstantMillis(2_000),
             &mut |bytes| bytes.fill(0xF2),
-            &mut |_| {},
+            &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| {},
         );
         let RemoteControlPairingRequestIngressOutcome::Pairing(
             RemoteControlPairingRequestOutcome::OfferDispatched { attempt_id },
@@ -2140,7 +2140,9 @@ mod tests {
                 AttachedInterfaces::new(&interfaces),
                 InstantMillis(2_001),
                 &mut |bytes| bytes.fill(0xF4),
-                &mut |_| competing_reactions += 1,
+                &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| {
+                    competing_reactions += 1
+                },
             ),
             RemoteControlPairingRequestIngressOutcome::Pairing(
                 RemoteControlPairingRequestOutcome::BeginBusy { active: attempt_id },
@@ -2159,7 +2161,7 @@ mod tests {
                 AttachedInterfaces::new(&interfaces),
                 InstantMillis(32_000),
                 &mut |bytes| bytes.fill(0xF6),
-                &mut |reaction| {
+                &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| {
                     if let EngineReaction::Journaled(
                         Journaled::RemoteControlTargetPairingExpired { aborted },
                     ) = reaction
@@ -2428,7 +2430,7 @@ mod tests {
             AttachedInterfaces::new(&interfaces),
             InstantMillis(2_100),
             &mut |_| panic!("accepted Commit needs no entropy before completion"),
-            &mut |reaction| {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| {
                 if let EngineReaction::Journaled(
                     Journaled::RemoteControlTargetPairingControllerCommitted {
                         attempt_id: observed,
@@ -2561,7 +2563,7 @@ mod tests {
             AttachedInterfaces::new(&interfaces),
             InstantMillis(2_200),
             &mut |_| panic!("accepted Commit needs no entropy before completion"),
-            &mut |reaction| {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| {
                 if let EngineReaction::Journaled(
                     Journaled::RemoteControlTargetPairingAuthorizationRequired {
                         attempt_id: observed,
@@ -2672,7 +2674,7 @@ mod tests {
             AttachedInterfaces::new(&interfaces),
             InstantMillis(2_400),
             &mut |bytes| bytes.fill(0xF7),
-            &mut |reaction| match reaction {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| match reaction {
                 EngineReaction::Directive(Directive::Send { target, bytes }) => {
                     retried_frames.push((target, bytes.to_vec()));
                 }
@@ -3095,7 +3097,7 @@ mod tests {
                 AttachedInterfaces::new(&interfaces),
                 InstantMillis(2_100),
                 &mut |_| panic!("rejected Commit needs no entropy"),
-                &mut |_| reactions += 1,
+                &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| reactions += 1,
             ),
             RemoteControlPairingRequestIngressOutcome::Pairing(
                 RemoteControlPairingRequestOutcome::CommitRejected {
@@ -3125,7 +3127,7 @@ mod tests {
                 AttachedInterfaces::new(&interfaces),
                 InstantMillis(2_100),
                 &mut |_| panic!("rejected Commit needs no entropy"),
-                &mut |_| reactions += 1,
+                &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| reactions += 1,
             ),
             RemoteControlPairingRequestIngressOutcome::Pairing(
                 RemoteControlPairingRequestOutcome::CommitRejected {
@@ -3157,7 +3159,7 @@ mod tests {
                 AttachedInterfaces::new(&interfaces),
                 InstantMillis(2_100),
                 &mut |_| panic!("rejected Commit needs no entropy"),
-                &mut |_| reactions += 1,
+                &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| reactions += 1,
             ),
             RemoteControlPairingRequestIngressOutcome::Pairing(
                 RemoteControlPairingRequestOutcome::CommitRejected {
@@ -3191,7 +3193,7 @@ mod tests {
                 AttachedInterfaces::new(&interfaces),
                 InstantMillis(2_100),
                 &mut |_| panic!("accepted Commit needs no entropy before completion"),
-                &mut |_| reactions += 1,
+                &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| reactions += 1,
             ),
             RemoteControlPairingRequestIngressOutcome::Pairing(
                 RemoteControlPairingRequestOutcome::CommitAwaitingTargetApproval { attempt_id },
@@ -3211,7 +3213,7 @@ mod tests {
                 AttachedInterfaces::new(&interfaces),
                 InstantMillis(2_200),
                 &mut |_| panic!("rejected Commit needs no entropy"),
-                &mut |_| reactions += 1,
+                &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| reactions += 1,
             ),
             RemoteControlPairingRequestIngressOutcome::Pairing(
                 RemoteControlPairingRequestOutcome::CommitRejected {
@@ -3262,7 +3264,7 @@ mod tests {
             AttachedInterfaces::new(&interfaces),
             InstantMillis(32_000),
             &mut |_| panic!("expired Commit needs no entropy"),
-            &mut |reaction| {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| {
                 if let EngineReaction::Journaled(Journaled::RemoteControlTargetPairingExpired {
                     aborted,
                 }) = reaction
@@ -3330,7 +3332,7 @@ mod tests {
         engine.retire_link(
             &link_id,
             crate::engine::LinkClosedReason::PeerClosed,
-            &mut |reaction| match reaction {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| match reaction {
                 EngineReaction::Journaled(Journaled::RemoteControlTargetPairingLinkClosed {
                     aborted,
                 }) => pairing_link_closed = Some(aborted.attempt_id()),
@@ -3380,7 +3382,7 @@ mod tests {
             AttachedInterfaces::new(&interfaces),
             InstantMillis(2_000),
             &mut |bytes| bytes.fill(0xF0),
-            &mut |_| reactions += 1,
+            &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| reactions += 1,
         );
         let RemoteControlPairingRequestIngressOutcome::Pairing(
             RemoteControlPairingRequestOutcome::OfferDispatchFailed {

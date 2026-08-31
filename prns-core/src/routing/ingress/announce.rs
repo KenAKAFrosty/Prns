@@ -54,6 +54,7 @@ pub enum RebroadcastDecision {
 }
 
 /// Owns the payload because the arrival slot may be recycled before deferred verification completes.
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub struct AnnounceVerifyOwed {
     pub payload: HeaplessVec<u8, BROADCAST_MTU>,
     pub header: WirePacketHeader,
@@ -427,7 +428,7 @@ mod tests {
     };
     use crate::routing::announce::Announce;
     use crate::routing::ingress::testkit::iface;
-    use crate::routing::ingress::{DeferredCrypto, IgnoreReason, IngestPacketOutcome};
+    use crate::routing::ingress::{IgnoreReason, IngestPacketOutcome};
     use crate::storage::TestFixedStorage;
     use crate::wire::{TransportId, WireContext, HEADER_MIN_LEN};
 
@@ -444,10 +445,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut response,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
                 destination: DestinationHash::new(
@@ -478,10 +476,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut announce,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
                 rebroadcast: RebroadcastDecision::Scheduled,
@@ -506,10 +501,7 @@ mod tests {
                 source_interface: app,
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&interfaces),
-            &mut |_| {},
-            None,
         );
 
         assert!(matches!(
@@ -553,7 +545,7 @@ mod tests {
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let mut sent = std::vec::Vec::new();
 
-        leaf.ingest_packet_into(
+        leaf.ingest_packet_inline_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: network,
@@ -642,10 +634,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut first,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&rate_limited),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
                 rebroadcast: RebroadcastDecision::Scheduled,
@@ -659,10 +648,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut second,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&rate_limited),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
                 rebroadcast: RebroadcastDecision::RateBlocked,
@@ -727,10 +713,7 @@ mod tests {
                 source_interface: source,
                 bytes: &mut first,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&rate_limited),
-            &mut |_| {},
-            None,
         );
         assert!(matches!(
             relay.ingest_packet_with(
@@ -739,10 +722,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut second,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&rate_limited),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
                 rebroadcast: RebroadcastDecision::Scheduled,
@@ -782,10 +762,7 @@ mod tests {
                     source_interface: InterfaceId::new([0xA1; 8]),
                     bytes: &mut relayed,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Ignored),
             "a transport echoing our announce back must not become a route to ourselves",
@@ -808,10 +785,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&[leaf]),
-            &mut |_| {},
-            None,
         );
 
         assert_eq!(
@@ -841,10 +815,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert_eq!(first, rns_1_4_2_announce_accepted(1));
         assert_eq!(state.route_count(), 1);
@@ -855,10 +826,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert_eq!(
             second,
@@ -894,10 +862,7 @@ mod tests {
                     source_interface: low,
                     bytes: &mut first,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             rns_1_4_2_announce_accepted(1),
         );
@@ -908,10 +873,7 @@ mod tests {
                     source_interface: high,
                     bytes: &mut replay,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             rns_1_4_2_announce_accepted(1),
         );
@@ -931,10 +893,7 @@ mod tests {
                     source_interface: invalid,
                     bytes: &mut forgery,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid),
         );
@@ -952,28 +911,21 @@ mod tests {
     fn deferred_announce_verify_matches_inline_accept_and_gates_forgeries() {
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let mut state = transporting_node();
-        let mut deferred = DeferredCrypto::default();
-        let outcome = state.ingest_packet_with(
+        let IngestPacketOutcome::OwesAnnounceVerify(owed) = state.ingest_packet_step_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            Some(&mut deferred),
-        );
-        assert_eq!(outcome, IngestPacketOutcome::OwesAnnounceVerify);
+        ) else {
+            panic!("the announce owes signature verification");
+        };
         assert_eq!(
             state.route_count(),
             0,
             "no route is learned before the verify resumes"
         );
-
-        let DeferredCrypto::AnnounceVerify(owed) = deferred else {
-            panic!("the obligation is captured for the pool");
-        };
         let announce = Announce::from_wire_unverified(&owed.header, &owed.payload)
             .expect("the captured bytes re-parse");
         assert!(announce.signature_is_valid(), "the real announce verifies");
@@ -1015,10 +967,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut at_limit,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert_eq!(out, rns_1_4_2_announce_accepted(128));
 
@@ -1031,10 +980,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut beyond,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert_eq!(out, IngestPacketOutcome::Ignored(IgnoreReason::Malformed));
         assert_eq!(state.route_count(), 0);
@@ -1055,10 +1001,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert_eq!(out, rns_1_4_2_announce_accepted(1));
 
@@ -1083,10 +1026,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
 
         assert_eq!(
@@ -1132,10 +1072,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut relayed[..header_len + payload.len()],
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert_eq!(out, rns_1_4_2_announce_accepted(2));
         assert_eq!(
@@ -1156,10 +1093,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut direct,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert_eq!(
             fresh
@@ -1184,10 +1118,7 @@ mod tests {
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
 
         assert_eq!(
@@ -1220,10 +1151,7 @@ mod tests {
                 source_interface: source,
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&[routable_descriptor(source)]),
-            &mut |_| {},
-            None,
         );
 
         let IngestPacketOutcome::Announce(AnnounceIngest::Accepted(accepted)) = outcome else {
@@ -1315,7 +1243,7 @@ mod tests {
         ] {
             let mut wire = flood_announce(seed, 5);
             let arrived_at = InstantMillis(arrived_at_ms);
-            let delta = relay.ingest_packet_into(
+            let delta = relay.ingest_packet_inline_for_test(
                 InboundPacket {
                     arrived_at,
                     source_interface: source,
@@ -1353,7 +1281,7 @@ mod tests {
         let arrived_at = InstantMillis(LIMIT_TEST_RELATCH_ARRIVAL_MS);
         let mut wire = flood_announce(6, 5);
         let mut held_drop = None;
-        let delta = relay.ingest_packet_into(
+        let delta = relay.ingest_packet_inline_for_test(
             InboundPacket {
                 arrived_at,
                 source_interface: source,
@@ -1394,7 +1322,7 @@ mod tests {
         let arrived_at = InstantMillis(LIMIT_TEST_RELATCH_ARRIVAL_MS);
         let mut wire = flood_announce(6, 5);
         *wire.last_mut().unwrap() ^= 0xFF;
-        let delta = relay.ingest_packet_into(
+        let delta = relay.ingest_packet_inline_for_test(
             InboundPacket {
                 arrived_at,
                 source_interface: source,
@@ -1432,53 +1360,67 @@ mod tests {
         let mut state = EngineState::<TinyStorage>::default();
         pin_transport_id(&mut state, TEST_TRANSPORT_ID);
         let mut first_wire = flood_announce(0x11, 1);
-        let IngestPacketOutcome::Announce(AnnounceIngest::Accepted(first)) = state
-            .ingest_packet_with(
-                InboundPacket {
-                    arrived_at: InstantMillis(1_000),
-                    source_interface: first_source,
-                    bytes: &mut first_wire,
-                },
-                &mut |_| {},
-                AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
-            )
-        else {
-            panic!("the first route should be accepted");
-        };
-        assert_eq!(first.rebroadcast, RebroadcastDecision::Scheduled);
+        state.ingest_packet_inline_for_test(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: first_source,
+                bytes: &mut first_wire,
+            },
+            IngestIo {
+                interfaces: AttachedInterfaces::new(&interfaces),
+                now: InstantMillis(1_000),
+                fill_random: &mut |bytes| bytes.fill(0),
+                should_prove: &mut |_| false,
+                should_accept_resource: &mut |_| false,
+                sink: &mut |_| {},
+            },
+        );
+        let first_destination = state
+            .scheduled_announces
+            .iter()
+            .next()
+            .map(|entry| entry.destination)
+            .expect("the first accepted route schedules its rebroadcast");
 
         let mut removed = std::vec::Vec::new();
+        let mut second_destination = None;
         let mut second_wire = flood_announce(0x22, 1);
-        let IngestPacketOutcome::Announce(AnnounceIngest::Accepted(second)) = state
-            .ingest_packet_with(
-                InboundPacket {
-                    arrived_at: InstantMillis(2_000),
-                    source_interface: second_source,
-                    bytes: &mut second_wire,
+        state.ingest_packet_inline_for_test(
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface: second_source,
+                bytes: &mut second_wire,
+            },
+            IngestIo {
+                interfaces: AttachedInterfaces::new(&interfaces),
+                now: InstantMillis(2_000),
+                fill_random: &mut |bytes| bytes.fill(0),
+                should_prove: &mut |_| false,
+                should_accept_resource: &mut |_| false,
+                sink: &mut |reaction| match reaction {
+                    EngineReaction::Journaled(Journaled::RouteRemoved { destination, cause }) => {
+                        removed.push((destination, cause))
+                    }
+                    EngineReaction::Journaled(Journaled::AnnounceHeard { observation, .. }) => {
+                        second_destination = Some(observation.destination);
+                    }
+                    _ => {}
                 },
-                &mut |_| {},
-                AttachedInterfaces::new(&interfaces),
-                &mut |route| removed.push(route),
-                None,
-            )
-        else {
-            panic!("the replacement route should be accepted");
-        };
+            },
+        );
 
-        assert_eq!(second.rebroadcast, RebroadcastDecision::Scheduled);
         assert_eq!(removed.len(), 1);
-        assert_eq!(removed[0].destination, first.destination);
-        assert_eq!(removed[0].cause, crate::routing::RouteRemovalCause::Evicted);
+        assert_eq!(removed[0].0, first_destination);
+        assert_eq!(removed[0].1, crate::routing::RouteRemovalCause::Evicted);
         assert_eq!(state.scheduled_announce_count(), 1);
+        let second_destination = second_destination.expect("the replacement route is installed");
         assert_eq!(
             state
                 .scheduled_announces
                 .iter()
                 .next()
                 .map(|entry| entry.destination),
-            Some(second.destination),
+            Some(second_destination),
         );
     }
 
@@ -1500,10 +1442,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ) {
                 IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)) => accepted += 1,
                 IngestPacketOutcome::Announce(AnnounceIngest::Held) => held += 1,
@@ -1599,10 +1538,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             );
             assert!(
                 !matches!(out, IngestPacketOutcome::Announce(AnnounceIngest::Held)),
@@ -1631,10 +1567,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             );
             assert_eq!(
                 out,
@@ -1651,10 +1584,7 @@ mod tests {
                 source_interface: source,
                 bytes: &mut real,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&interfaces),
-            &mut |_| {},
-            None,
         );
         assert!(
             matches!(out, IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_))),

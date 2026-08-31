@@ -127,10 +127,7 @@ mod tests {
                 source_interface: InterfaceId::new([0xA1; 8]),
                 bytes: &mut announce,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert!(
             matches!(

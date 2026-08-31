@@ -26,13 +26,13 @@ use crate::wire::{DestinationType, PacketType, WireContext};
 
 impl<S: StorageLayout> EngineState<S> {
     /// RNS 1.4.2 `Resource.request_next`; the request flags hashmap-exhausted, carrying the last known name, when the window runs past the names received.
-    pub(crate) fn emit_resource_pull<F>(
+    pub(crate) fn emit_resource_pull<F, Work>(
         &mut self,
         link_id: &LinkId,
         hash: &ResourceHash,
         now: InstantMillis,
         fill_random: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) -> EmitResourcePullOutcome
     where
         F: FnMut(&mut [u8]),
@@ -774,7 +774,7 @@ mod loop_tests {
                 },
                 InstantMillis(1_000),
                 &mut |bytes: &mut [u8]| bytes.fill(0xA5),
-                &mut |reaction| {
+                &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| {
                     if let EngineReaction::Journaled(Journaled::CommandSettled {
                         settlement: settled,
                         ..
@@ -821,7 +821,7 @@ mod loop_tests {
             segment,
             InstantMillis(base_time),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
-            &mut |reaction| {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| {
                 if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
                     advertisement = filled_frame(fill);
                 }
@@ -984,7 +984,7 @@ mod loop_tests {
             segment,
             InstantMillis(at),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
-            &mut |reaction| {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| {
                 if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
                     frame = filled_frame(fill);
                 }
@@ -1143,7 +1143,7 @@ mod loop_tests {
                 crate::engine::LinkClosedReason::LocallyClosed,
                 &[0u8; 16],
                 &mut buf,
-                &mut |_| {},
+                &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| {},
             )
             .unwrap();
         assert!(

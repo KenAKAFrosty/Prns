@@ -3,7 +3,10 @@
 use crate::engine::Journaled;
 use crate::engine::{CommandId, SendRequestFailure};
 use crate::engine::{DeliveryEvidence, PacketReceiptDelivered, Settlement};
-use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis};
+use crate::engine::{
+    Directive, EngineReaction, EngineState, InstantMillis, OwedWork,
+    ResourceDecompressionCompleted, ResourceDecompressionOwed,
+};
 use crate::routing::delivery::receipts::{ReceiptTable, Receipts};
 use crate::routing::links::data::link_raw_frame_ceiling;
 use crate::routing::links::data::write_link_raw_packet;
@@ -34,7 +37,7 @@ impl<S: StorageLayout> EngineState<S> {
         link_id: &LinkId,
         hash: &ResourceHash,
         now: InstantMillis,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, OwedWork<'_>>),
     ) -> ConcludeResourceOutcome {
         let Some(index) = self.incoming_resources.lookup(link_id, hash) else {
             return ConcludeResourceOutcome::NotTracked;
@@ -87,14 +90,14 @@ impl<S: StorageLayout> EngineState<S> {
                 };
                 match stream {
                     Ok(stream) => {
-                        sink(EngineReaction::Journaled(
-                            Journaled::ResourceNeedsDecompression {
+                        sink(EngineReaction::Directive(Directive::Fulfill(
+                            OwedWork::ResourceDecompression(ResourceDecompressionOwed {
                                 link_id: *link_id,
                                 hash: *hash,
                                 stream,
                                 uncompressed_data_bytes: state.uncompressed_data_bytes,
-                            },
-                        ));
+                            }),
+                        )));
                         true
                     }
                     Err(_) => false,
@@ -204,13 +207,13 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// A completed response chain settles its request in place of the `ResourceAssembled` journal; a chain still assembling hands the claimed request's timeout back until the next advertisement re-claims it.
-    fn advance_split_assembly(
+    fn advance_split_assembly<Work>(
         &mut self,
         link_id: &LinkId,
         segment: ConcludedSegment,
         link_rtt: RttMillis,
         now: InstantMillis,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) {
         let ConcludedSegment {
             original_hash,
@@ -252,12 +255,12 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// The one exit every dead incoming transfer leaves through: the slot retires (window and rate bequeathed to the link), the failure event carries the cause, and a response transfer's claimed request settles with it.
-    pub(crate) fn fail_incoming_resource(
+    pub(crate) fn fail_incoming_resource<Work>(
         &mut self,
         link_id: &LinkId,
         hash: &ResourceHash,
         cause: ResourceFailureCause,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) -> ConcludeResourceOutcome {
         let settled_request = self.settle_response_claim(link_id, hash);
         self.retire_incoming_resource(link_id, hash);
@@ -295,14 +298,17 @@ impl<S: StorageLayout> EngineState<S> {
     /// Verified exactly like an uncompressed assembly.
     /// The host signals its own inflate failure with an empty slice.
     /// A borrow-taking entry point beside the command queue (so a mebibyte never rides an enum).
-    pub fn provide_decompressed(
+    pub fn resume_resource_decompression<Work>(
         &mut self,
-        link_id: LinkId,
-        hash: ResourceHash,
-        plaintext: &[u8],
+        completed: ResourceDecompressionCompleted<'_>,
         now: InstantMillis,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) -> crate::engine::WakeSchedules {
+        let ResourceDecompressionCompleted {
+            link_id,
+            hash,
+            plaintext,
+        } = completed;
         let mut wake_schedule_changes = crate::engine::WakeSchedules::UNCHANGED;
         let Some(index) = self.incoming_resources.lookup(&link_id, &hash) else {
             return wake_schedule_changes;
@@ -453,13 +459,13 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// [`Self::fail_incoming_resource`] for a slot already retired (the inflate seam retires before it judges), so the claim settles off the caller's copied correlation.
-    fn fail_retired_incoming_resource(
+    fn fail_retired_incoming_resource<Work>(
         &mut self,
         link_id: &LinkId,
         hash: &ResourceHash,
         correlation: ResourceCorrelation,
         cause: ResourceFailureCause,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) {
         sink(EngineReaction::Journaled(Journaled::ResourceFailed {
             link_id: *link_id,
@@ -524,11 +530,11 @@ fn response_application_data(request_id: RequestId, data: &[u8]) -> Option<&[u8]
 }
 
 /// Correlated deliveries (a request or a settled response) carry no metadata lane because the reference's request/response machinery never reads it. A block on those transfers therefore strips and drops.
-fn deliver_single_segment<C: ReceiptTable>(
+fn deliver_single_segment<C: ReceiptTable, Work>(
     receipts: &mut Receipts<C>,
     segment: AssembledSingleSegment<'_>,
     now: InstantMillis,
-    sink: &mut impl FnMut(EngineReaction<'_>),
+    sink: &mut impl FnMut(EngineReaction<'_, Work>),
 ) {
     let AssembledSingleSegment {
         destination,
@@ -634,10 +640,10 @@ struct VerifiedSplitSegment<'a> {
 }
 
 /// The split mirror of [`deliver_single_segment`]: a response chain's segments answer their pending request, with the metadata lane stripped and dropped the same way; everything else journals a plain segment.
-fn deliver_split_segment<C: ReceiptTable>(
+fn deliver_split_segment<C: ReceiptTable, Work>(
     receipts: &Receipts<C>,
     segment: VerifiedSplitSegment<'_>,
-    sink: &mut impl FnMut(EngineReaction<'_>),
+    sink: &mut impl FnMut(EngineReaction<'_, Work>),
 ) {
     let VerifiedSplitSegment {
         link_id,
@@ -756,10 +762,10 @@ fn proof_emission(
     })
 }
 
-fn emit_proof(
+fn emit_proof<Work>(
     prove: ProofEmission,
     fire_on: crate::interfaces::InterfaceId,
-    sink: &mut impl FnMut(EngineReaction<'_>),
+    sink: &mut impl FnMut(EngineReaction<'_, Work>),
 ) {
     let mut fill = |slot: &mut [u8]| -> Option<usize> {
         write_link_raw_packet(
@@ -916,14 +922,15 @@ mod seam_tests {
                 should_accept_resource:
                     &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                 sink: &mut |reaction| {
-                    if let EngineReaction::Journaled(Journaled::ResourceNeedsDecompression {
-                        hash,
-                        stream,
-                        uncompressed_data_bytes,
-                        ..
-                    }) = reaction
+                    if let EngineReaction::Directive(Directive::Fulfill(
+                        OwedWork::ResourceDecompression(owed),
+                    )) = reaction
                     {
-                        needs = Some((hash, stream.to_vec(), uncompressed_data_bytes));
+                        needs = Some((
+                            owed.hash,
+                            owed.stream.to_vec(),
+                            owed.uncompressed_data_bytes,
+                        ));
                     }
                 },
             },
@@ -946,12 +953,14 @@ mod seam_tests {
 
         let mut frames = std::vec::Vec::new();
         let mut received = std::vec::Vec::new();
-        receiver.provide_decompressed(
-            link_id(),
-            hash,
-            &plaintext,
+        receiver.resume_resource_decompression(
+            ResourceDecompressionCompleted {
+                link_id: link_id(),
+                hash: hash,
+                plaintext: &plaintext,
+            },
             InstantMillis(2_400),
-            &mut |reaction| match reaction {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| match reaction {
                 EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
                     if let Some(frame) = filled_frame(fill) {
                         frames.push(frame);
@@ -1028,14 +1037,15 @@ mod seam_tests {
                 should_accept_resource:
                     &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                 sink: &mut |reaction| {
-                    if let EngineReaction::Journaled(Journaled::ResourceNeedsDecompression {
-                        hash,
-                        stream,
-                        uncompressed_data_bytes,
-                        ..
-                    }) = reaction
+                    if let EngineReaction::Directive(Directive::Fulfill(
+                        OwedWork::ResourceDecompression(owed),
+                    )) = reaction
                     {
-                        needs = Some((hash, stream.to_vec(), uncompressed_data_bytes));
+                        needs = Some((
+                            owed.hash,
+                            owed.stream.to_vec(),
+                            owed.uncompressed_data_bytes,
+                        ));
                     }
                 },
             },
@@ -1053,12 +1063,14 @@ mod seam_tests {
 
         let mut frames = std::vec::Vec::new();
         let mut received = std::vec::Vec::new();
-        receiver.provide_decompressed(
-            link_id(),
-            hash,
-            &composite,
+        receiver.resume_resource_decompression(
+            ResourceDecompressionCompleted {
+                link_id: link_id(),
+                hash: hash,
+                plaintext: &composite,
+            },
             InstantMillis(2_400),
-            &mut |reaction| match reaction {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| match reaction {
                 EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
                     if let Some(frame) = filled_frame(fill) {
                         frames.push(frame);
@@ -1162,12 +1174,14 @@ mod seam_tests {
         corrupted[0] ^= 1;
         let mut failed = std::vec::Vec::new();
         let mut frames = 0usize;
-        receiver.provide_decompressed(
-            link_id(),
-            hash,
-            &corrupted,
+        receiver.resume_resource_decompression(
+            ResourceDecompressionCompleted {
+                link_id: link_id(),
+                hash: hash,
+                plaintext: &corrupted,
+            },
             InstantMillis(2_400),
-            &mut |reaction| match reaction {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| match reaction {
                 EngineReaction::Journaled(Journaled::ResourceFailed { hash, .. }) => {
                     failed.push(hash);
                 }
@@ -1179,12 +1193,14 @@ mod seam_tests {
         assert_eq!(frames, 0, "a failed inflate proves nothing");
         assert!(receiver.incoming_resources.is_empty());
 
-        receiver.provide_decompressed(
-            link_id(),
-            hash,
-            &plaintext,
+        receiver.resume_resource_decompression(
+            ResourceDecompressionCompleted {
+                link_id: link_id(),
+                hash: hash,
+                plaintext: &plaintext,
+            },
             InstantMillis(2_500),
-            &mut |_| {
+            &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| {
                 panic!("a retired transfer answers nothing");
             },
         );
@@ -1195,12 +1211,14 @@ mod seam_tests {
         let mut receiver = engine_with_active_link();
         accept_everything(&mut receiver);
         let mut touched = false;
-        receiver.provide_decompressed(
-            link_id(),
-            ResourceHash::new([0x42; 32]),
-            b"anything",
+        receiver.resume_resource_decompression(
+            ResourceDecompressionCompleted {
+                link_id: link_id(),
+                hash: ResourceHash::new([0x42; 32]),
+                plaintext: b"anything",
+            },
             InstantMillis(2_400),
-            &mut |_| touched = true,
+            &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| touched = true,
         );
         assert!(!touched, "an unknown transfer answers nothing");
     }
@@ -1293,13 +1311,11 @@ mod seam_tests {
                 should_accept_resource:
                     &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                 sink: &mut |reaction| {
-                    if let EngineReaction::Journaled(Journaled::ResourceNeedsDecompression {
-                        hash,
-                        stream,
-                        ..
-                    }) = reaction
+                    if let EngineReaction::Directive(Directive::Fulfill(
+                        OwedWork::ResourceDecompression(owed),
+                    )) = reaction
                     {
-                        needs = Some((hash, stream.to_vec()));
+                        needs = Some((owed.hash, owed.stream.to_vec()));
                     }
                 },
             },
@@ -1310,12 +1326,14 @@ mod seam_tests {
         let mut proof_frames = 0usize;
         let mut responses = std::vec::Vec::new();
         let mut settled_ok = false;
-        requester.provide_decompressed(
-            link_id(),
-            hash,
-            &response,
+        requester.resume_resource_decompression(
+            ResourceDecompressionCompleted {
+                link_id: link_id(),
+                hash: hash,
+                plaintext: &response,
+            },
             InstantMillis(2_400),
-            &mut |reaction| match reaction {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| match reaction {
                 EngineReaction::Directive(Directive::EmitFrame { .. }) => proof_frames += 1,
                 EngineReaction::Journaled(Journaled::ResponseReceived {
                     command_id,
@@ -1414,12 +1432,11 @@ mod seam_tests {
                 should_accept_resource:
                     &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                 sink: &mut |reaction| {
-                    if let EngineReaction::Journaled(Journaled::ResourceNeedsDecompression {
-                        hash,
-                        ..
-                    }) = reaction
+                    if let EngineReaction::Directive(Directive::Fulfill(
+                        OwedWork::ResourceDecompression(owed),
+                    )) = reaction
                     {
-                        needs = Some(hash);
+                        needs = Some(owed.hash);
                     }
                 },
             },
@@ -1427,12 +1444,14 @@ mod seam_tests {
         let hash = needs.expect("the compressed request reaches the inflate seam");
 
         let mut requests = std::vec::Vec::new();
-        responder.provide_decompressed(
-            link_id(),
-            hash,
-            &packed_request,
+        responder.resume_resource_decompression(
+            ResourceDecompressionCompleted {
+                link_id: link_id(),
+                hash: hash,
+                plaintext: &packed_request,
+            },
             InstantMillis(2_400),
-            &mut |reaction| {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| {
                 if let EngineReaction::Journaled(Journaled::RequestReceived {
                     destination,
                     request_id: rid,
@@ -1478,7 +1497,7 @@ mod seam_tests {
             segment,
             InstantMillis(at),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
-            &mut |reaction| {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| {
                 if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
                     advertisement = filled_frame(fill);
                 }
@@ -1506,13 +1525,11 @@ mod seam_tests {
                 should_accept_resource:
                     &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                 sink: &mut |reaction| {
-                    if let EngineReaction::Journaled(Journaled::ResourceNeedsDecompression {
-                        hash,
-                        stream,
-                        ..
-                    }) = reaction
+                    if let EngineReaction::Directive(Directive::Fulfill(
+                        OwedWork::ResourceDecompression(owed),
+                    )) = reaction
                     {
-                        needs = Some((hash, stream.to_vec()));
+                        needs = Some((owed.hash, owed.stream.to_vec()));
                     }
                 },
             },
@@ -1523,12 +1540,14 @@ mod seam_tests {
         let mut segments = std::vec::Vec::new();
         let mut assembled = std::vec::Vec::new();
         let mut proof_frame = None;
-        receiver.provide_decompressed(
-            link_id(),
-            hash,
-            data,
+        receiver.resume_resource_decompression(
+            ResourceDecompressionCompleted {
+                link_id: link_id(),
+                hash: hash,
+                plaintext: data,
+            },
             InstantMillis(at + 400),
-            &mut |reaction| match reaction {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| match reaction {
                 EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
                     proof_frame = filled_frame(fill);
                 }
@@ -1996,12 +2015,11 @@ mod seam_tests {
                     should_accept_resource:
                         &mut |_: &crate::routing::links::resources::ResourceOffer| false,
                     sink: &mut |reaction| {
-                        if let EngineReaction::Journaled(Journaled::ResourceNeedsDecompression {
-                            hash,
-                            ..
-                        }) = reaction
+                        if let EngineReaction::Directive(Directive::Fulfill(
+                            OwedWork::ResourceDecompression(owed),
+                        )) = reaction
                         {
-                            needs = Some(hash);
+                            needs = Some(owed.hash);
                         }
                     },
                 },
@@ -2011,12 +2029,14 @@ mod seam_tests {
             let mut response_segments = std::vec::Vec::new();
             let mut settled = std::vec::Vec::new();
             let mut proof_frame = None;
-            requester.provide_decompressed(
-                link_id(),
-                hash,
-                data,
+            requester.resume_resource_decompression(
+                ResourceDecompressionCompleted {
+                    link_id: link_id(),
+                    hash: hash,
+                    plaintext: data,
+                },
                 InstantMillis(at + 400),
-                &mut |reaction| match reaction {
+                &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| match reaction {
                     EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
                         proof_frame = filled_frame(fill);
                     }

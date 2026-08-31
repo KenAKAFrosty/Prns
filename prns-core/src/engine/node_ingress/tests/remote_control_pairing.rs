@@ -1,8 +1,7 @@
 use crate::engine::test_support::{fixed_secret_key, routable_descriptor, TestStorageLayout};
 use crate::engine::{
-    CommandId, DeferredCrypto, Directive, EngineReaction, EngineState, IgnoreReason, IngestIo,
-    IngestPacketOutcome, Journaled, PathRequestId, PathRequestWriteOutcome, RequestPath,
-    WakeSchedule,
+    CommandId, Directive, EngineReaction, EngineState, IgnoreReason, IngestIo, IngestPacketOutcome,
+    Journaled, PathRequestId, PathRequestWriteOutcome, RequestPath, WakeSchedule,
 };
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::IDENTITY_SECRET_KEY_LEN;
@@ -90,7 +89,7 @@ fn a_verified_zero_hop_availability_installs_one_direct_route_and_one_typed_obse
     let mut ordinary_deliveries = 0;
     let mut directives = 0;
 
-    let wake = engine.ingest_packet_into(
+    let wake = engine.ingest_packet_inline_for_test(
         InboundPacket {
             arrived_at: OBSERVED_AT,
             source_interface: SOURCE,
@@ -209,26 +208,19 @@ fn deferred_verification_owns_the_availability_and_preserves_arrival_provenance(
     let interfaces = [routable_descriptor(SOURCE)];
     let mut engine = configured_engine();
     let mut wire = availability_wire(canonical_outer_header());
-    let mut deferred = DeferredCrypto::default();
-    let outcome = engine.ingest_packet_with(
-        InboundPacket {
-            arrived_at: OBSERVED_AT,
-            source_interface: SOURCE,
-            bytes: &mut wire,
-        },
-        &mut |_| {},
-        AttachedInterfaces::new(&interfaces),
-        &mut |_| {},
-        Some(&mut deferred),
-    );
-    assert_eq!(
-        outcome,
-        IngestPacketOutcome::OwesRemoteControlPairingAvailabilityVerify,
-    );
-    assert_eq!(engine.route_count(), 0);
-    let DeferredCrypto::RemoteControlPairingAvailabilityVerify(owed) = deferred else {
-        panic!("pairing availability should owe its own verification");
+    let IngestPacketOutcome::OwesRemoteControlPairingAvailabilityVerify(owed) = engine
+        .ingest_packet_step_with(
+            InboundPacket {
+                arrived_at: OBSERVED_AT,
+                source_interface: SOURCE,
+                bytes: &mut wire,
+            },
+            AttachedInterfaces::new(&interfaces),
+        )
+    else {
+        panic!("pairing availability owes signature verification");
     };
+    assert_eq!(engine.route_count(), 0);
     assert_eq!(
         owed.verify(),
         RemoteControlPairingAvailabilityVerification::Valid
@@ -259,24 +251,17 @@ fn deferred_verification_names_a_structurally_valid_tampered_availability_as_inv
     let mut wire = availability_wire(canonical_outer_header());
     let last = wire.len() - 1;
     wire[last] ^= 1;
-    let mut deferred = DeferredCrypto::default();
-
-    assert_eq!(
-        engine.ingest_packet_with(
+    let IngestPacketOutcome::OwesRemoteControlPairingAvailabilityVerify(owed) = engine
+        .ingest_packet_step_with(
             InboundPacket {
                 arrived_at: OBSERVED_AT,
                 source_interface: SOURCE,
                 bytes: &mut wire,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&interfaces),
-            &mut |_| {},
-            Some(&mut deferred),
-        ),
-        IngestPacketOutcome::OwesRemoteControlPairingAvailabilityVerify,
-    );
-    let DeferredCrypto::RemoteControlPairingAvailabilityVerify(owed) = deferred else {
-        panic!("pairing availability should owe its own verification");
+        )
+    else {
+        panic!("pairing availability owes signature verification");
     };
     assert_eq!(
         owed.verify(),
@@ -311,7 +296,7 @@ fn direct_pairing_availability_does_not_settle_network_path_discovery() {
     ));
 
     let mut wire = availability_wire(canonical_outer_header());
-    let wake = engine.ingest_packet_into(
+    let wake = engine.ingest_packet_inline_for_test(
         InboundPacket {
             arrived_at: OBSERVED_AT,
             source_interface: SOURCE,
@@ -343,7 +328,7 @@ fn pairing_route_activity_cannot_extend_the_advertised_deadline_or_enter_persist
     let mut engine = configured_engine();
     let mut wire = availability_wire(canonical_outer_header());
     let mut endpoint = None;
-    engine.ingest_packet_into(
+    engine.ingest_packet_inline_for_test(
         InboundPacket {
             arrived_at: OBSERVED_AT,
             source_interface: SOURCE,
@@ -421,8 +406,6 @@ fn every_nonzero_hop_pairing_availability_is_ignored_before_verification() {
             },
             &payload[..payload_len],
         );
-        let mut deferred = DeferredCrypto::default();
-
         assert_eq!(
             engine.ingest_packet_with(
                 InboundPacket {
@@ -430,14 +413,10 @@ fn every_nonzero_hop_pairing_availability_is_ignored_before_verification() {
                     source_interface: SOURCE,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                Some(&mut deferred),
             ),
             IngestPacketOutcome::Ignored(expected),
         );
-        assert!(matches!(deferred, DeferredCrypto::Empty));
         assert_eq!(engine.route_count(), 0);
     }
 }
@@ -458,20 +437,15 @@ fn invalid_outer_shapes_are_rejected_before_pairing_crypto_is_deferred() {
     ] {
         let mut engine = configured_engine();
         let mut wire = availability_wire(header);
-        let mut deferred = DeferredCrypto::default();
         let outcome = engine.ingest_packet_with(
             InboundPacket {
                 arrived_at: OBSERVED_AT,
                 source_interface: SOURCE,
                 bytes: &mut wire,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&interfaces),
-            &mut |_| {},
-            Some(&mut deferred),
         );
         assert!(matches!(outcome, IngestPacketOutcome::Ignored(_)));
-        assert!(matches!(deferred, DeferredCrypto::Empty));
         assert_eq!(engine.route_count(), 0);
     }
 }

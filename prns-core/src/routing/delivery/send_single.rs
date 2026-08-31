@@ -561,10 +561,7 @@ mod tests {
                 source_interface: arrival,
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert_eq!(
             outcome,
@@ -1101,10 +1098,7 @@ mod tests {
         assert_eq!(
             peer.ingest_packet_with(
                 plain_data_packet(&mut wire),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -1191,10 +1185,7 @@ mod tests {
                     source_interface: arrival(),
                     bytes: &mut proof,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Proof(ProofIngest::SendSinglePacketDelivered {
                 id: CommandId(7),
@@ -1221,10 +1212,7 @@ mod tests {
                     source_interface: arrival(),
                     bytes: &mut replay,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Proof(ProofIngest::Ignored),
             "settlement removed the receipt, so a replayed proof finds nothing",
@@ -1328,10 +1316,7 @@ mod tests {
                     source_interface: arrival(),
                     bytes: &mut proof,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Proof(crate::engine::ProofIngest::SendSinglePacketDelivered {
                 id: CommandId(7),
@@ -1366,10 +1351,7 @@ mod tests {
                     source_interface: arrival(),
                     bytes: &mut packet,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Proof(ProofIngest::SendSinglePacketDelivered {
                 id: CommandId(7),
@@ -1414,10 +1396,7 @@ mod tests {
                     source_interface: arrival(),
                     bytes: &mut proof,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Proof(ProofIngest::SendSinglePacketDelivered {
                 id: CommandId(7),
@@ -1452,10 +1431,7 @@ mod tests {
                     source_interface: arrival(),
                     bytes: &mut packet,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Proof(ProofIngest::Ignored),
         );
@@ -1478,10 +1454,7 @@ mod tests {
                     source_interface: arrival(),
                     bytes: &mut packet,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Proof(ProofIngest::Ignored),
         );

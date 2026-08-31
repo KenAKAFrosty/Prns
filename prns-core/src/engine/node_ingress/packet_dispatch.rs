@@ -1,18 +1,17 @@
 use super::delivery::DeliveryIo;
-use super::journal_route_removal;
 use super::relay::{RelayAudience, RelayPathRequest};
 
 use crate::crypto::ratchets::RatchetRotation;
-use crate::crypto::{ed25519_sign, X25519SecretKey};
+use crate::crypto::X25519SecretKey;
 use crate::engine::remote_control_pairing::{
     RemoteControlPairingRequestIngress, RemoteControlPairingRequestIngressOutcome,
 };
 use crate::engine::settlement::settle;
 use crate::engine::LinkClosedReason;
 use crate::engine::{
-    DeferredCrypto, Directive, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis,
-    Journaled, LinkEstablished, PathResponseWriteOutcome, ProofIngest, ProtocolViolationKind,
-    RemoteControlControllerPairingRequestFailureCause,
+    CryptoOwed, Directive, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis,
+    Journaled, LinkEstablished, OwedWork, PathResponseWriteOutcome, ProofIngest,
+    ProtocolViolationKind, RemoteControlControllerPairingRequestFailureCause,
     RemoteControlControllerPairingResponseArrival, RemoteControlControllerPairingResponseReceived,
     SendRequestFailure, SendRequestIntent, Settlement, WakeSchedule, WakeSchedules,
 };
@@ -24,10 +23,9 @@ use crate::routing::links::channel::receive::receive as channel_receive;
 use crate::routing::links::establish::link_mtu_ceiling;
 use crate::routing::links::handshake::{negotiated_link_mtu, LinkProofSignOwed};
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_ECHO};
+use crate::routing::links::resources::receive::gate::AcceptedResourceAdmission;
 use crate::routing::links::resources::ResourceOffer;
-use crate::routing::proof::{
-    DeferredProofSign, ProofRequest, EXPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN,
-};
+use crate::routing::proof::{ProofRequest, LINK_PROOF_WIRE_LEN};
 use crate::storage::StorageLayout;
 use crate::wire::{BROADCAST_MTU, HEADER_MAX_LEN};
 
@@ -36,7 +34,7 @@ where
     FillEntropy: FnMut(&mut [u8]),
     OnProofRequest: FnMut(&ProofRequest) -> bool,
     OnResourceOffer: FnMut(&ResourceOffer) -> bool,
-    Sink: FnMut(EngineReaction<'_>),
+    Sink: FnMut(EngineReaction<'_, OwedWork<'_>>),
 {
     pub interfaces: AttachedInterfaces<'a>,
     pub now: InstantMillis,
@@ -62,7 +60,7 @@ impl<S: StorageLayout> EngineState<S> {
         F: FnMut(&mut [u8]),
         P: FnMut(&ProofRequest) -> bool,
         A: FnMut(&ResourceOffer) -> bool,
-        K: FnMut(EngineReaction<'_>),
+        K: FnMut(EngineReaction<'_, OwedWork<'_>>),
     {
         self.ingest_packet_into_report(packet, io).wake_schedules
     }
@@ -76,7 +74,7 @@ impl<S: StorageLayout> EngineState<S> {
         F: FnMut(&mut [u8]),
         P: FnMut(&ProofRequest) -> bool,
         A: FnMut(&ResourceOffer) -> bool,
-        K: FnMut(EngineReaction<'_>),
+        K: FnMut(EngineReaction<'_, OwedWork<'_>>),
     {
         self.ingest_classified_into_report(ClassifiedInboundPacket::classify(packet), io)
     }
@@ -90,7 +88,7 @@ impl<S: StorageLayout> EngineState<S> {
         F: FnMut(&mut [u8]),
         P: FnMut(&ProofRequest) -> bool,
         A: FnMut(&ResourceOffer) -> bool,
-        K: FnMut(EngineReaction<'_>),
+        K: FnMut(EngineReaction<'_, OwedWork<'_>>),
     {
         self.ingest_classified_into_report(packet, io)
             .wake_schedules
@@ -105,95 +103,7 @@ impl<S: StorageLayout> EngineState<S> {
         F: FnMut(&mut [u8]),
         P: FnMut(&ProofRequest) -> bool,
         A: FnMut(&ResourceOffer) -> bool,
-        K: FnMut(EngineReaction<'_>),
-    {
-        let IngestIo {
-            interfaces,
-            now,
-            fill_random,
-            should_prove,
-            should_accept_resource,
-            sink,
-        } = io;
-        let mut deferred_sign: Option<DeferredProofSign> = None;
-        let report = self.ingest_classified_into_deferring_report(
-            packet,
-            IngestIo {
-                interfaces,
-                now,
-                fill_random: &mut *fill_random,
-                should_prove: &mut *should_prove,
-                should_accept_resource: &mut *should_accept_resource,
-                sink: &mut *sink,
-            },
-            &mut deferred_sign,
-            None,
-        );
-        if let Some(deferred) = deferred_sign {
-            let signature = ed25519_sign(&deferred.signing_secret, deferred.packet_hash.as_bytes());
-            let mut proof = [0u8; EXPLICIT_PROOF_WIRE_LEN];
-            if let Ok(written) =
-                self.write_signed_proof(&deferred.packet_hash, &signature, &mut proof)
-            {
-                sink(EngineReaction::Directive(Directive::Send {
-                    target: deferred.target,
-                    bytes: &proof[..written],
-                }));
-            }
-        }
-        report
-    }
-
-    pub fn ingest_packet_into_deferring<F, P, A, K>(
-        &mut self,
-        packet: InboundPacket<'_>,
-        io: IngestIo<'_, F, P, A, K>,
-        deferred_sign: &mut Option<DeferredProofSign>,
-        deferred: Option<&mut DeferredCrypto>,
-    ) -> WakeSchedules
-    where
-        F: FnMut(&mut [u8]),
-        P: FnMut(&ProofRequest) -> bool,
-        A: FnMut(&ResourceOffer) -> bool,
-        K: FnMut(EngineReaction<'_>),
-    {
-        self.ingest_classified_into_deferring(
-            ClassifiedInboundPacket::classify(packet),
-            io,
-            deferred_sign,
-            deferred,
-        )
-    }
-
-    pub fn ingest_classified_into_deferring<F, P, A, K>(
-        &mut self,
-        packet: ClassifiedInboundPacket<'_>,
-        io: IngestIo<'_, F, P, A, K>,
-        deferred_sign: &mut Option<DeferredProofSign>,
-        deferred: Option<&mut DeferredCrypto>,
-    ) -> WakeSchedules
-    where
-        F: FnMut(&mut [u8]),
-        P: FnMut(&ProofRequest) -> bool,
-        A: FnMut(&ResourceOffer) -> bool,
-        K: FnMut(EngineReaction<'_>),
-    {
-        self.ingest_classified_into_deferring_report(packet, io, deferred_sign, deferred)
-            .wake_schedules
-    }
-
-    pub fn ingest_classified_into_deferring_report<F, P, A, K>(
-        &mut self,
-        packet: ClassifiedInboundPacket<'_>,
-        io: IngestIo<'_, F, P, A, K>,
-        deferred_sign: &mut Option<DeferredProofSign>,
-        mut deferred: Option<&mut DeferredCrypto>,
-    ) -> IngestPacketReport
-    where
-        F: FnMut(&mut [u8]),
-        P: FnMut(&ProofRequest) -> bool,
-        A: FnMut(&ResourceOffer) -> bool,
-        K: FnMut(EngineReaction<'_>),
+        K: FnMut(EngineReaction<'_, OwedWork<'_>>),
     {
         let IngestIo {
             interfaces,
@@ -206,14 +116,7 @@ impl<S: StorageLayout> EngineState<S> {
         let (source, ingress) = packet.into_parts();
         let mut wake_schedule_changes = WakeSchedules::UNCHANGED;
         let mut effects = IngestEffects::default();
-        let outcome = self.ingest_classified_with_effects(
-            ingress,
-            &mut *fill_random,
-            interfaces,
-            &mut |removed| sink(EngineReaction::Journaled(journal_route_removal(removed))),
-            deferred.as_deref_mut(),
-            &mut effects,
-        );
+        let outcome = self.ingest_classified_with_effects(ingress, interfaces, &mut effects);
 
         //Consider cfg-gating this on metrics/observability?
         let protocol_violation = ProtocolViolationKind::of_outcome(&outcome);
@@ -253,16 +156,30 @@ impl<S: StorageLayout> EngineState<S> {
                     &mut DeliveryIo {
                         interfaces,
                         should_prove: &mut *should_prove,
-                        deferred_sign: &mut *deferred_sign,
-                        deferred: deferred.as_deref_mut(),
                         sink: &mut *sink,
                     },
                 );
             }
-            IngestPacketOutcome::OwesDecrypt => {}
-            IngestPacketOutcome::OwesRatchetDecrypt => {}
-            IngestPacketOutcome::OwesAnnounceVerify => {}
-            IngestPacketOutcome::OwesRemoteControlPairingAvailabilityVerify => {}
+            IngestPacketOutcome::OwesDecrypt(owed) => {
+                sink(EngineReaction::Directive(Directive::Fulfill(
+                    OwedWork::Crypto(CryptoOwed::Decrypt(owed)),
+                )));
+            }
+            IngestPacketOutcome::OwesRatchetDecrypt(owed) => {
+                sink(EngineReaction::Directive(Directive::Fulfill(
+                    OwedWork::Crypto(CryptoOwed::RatchetDecrypt(owed)),
+                )));
+            }
+            IngestPacketOutcome::OwesAnnounceVerify(owed) => {
+                sink(EngineReaction::Directive(Directive::Fulfill(
+                    OwedWork::Crypto(CryptoOwed::AnnounceVerify(owed)),
+                )));
+            }
+            IngestPacketOutcome::OwesRemoteControlPairingAvailabilityVerify(owed) => {
+                sink(EngineReaction::Directive(Directive::Fulfill(
+                    OwedWork::Crypto(CryptoOwed::RemoteControlPairingAvailabilityVerify(owed)),
+                )));
+            }
             IngestPacketOutcome::Proof(ProofIngest::SendSinglePacketDelivered {
                 id,
                 delivered,
@@ -405,7 +322,11 @@ impl<S: StorageLayout> EngineState<S> {
             IngestPacketOutcome::OwesLinkRtt(owed) => {
                 self.process_owes_link_rtt(owed, source, interfaces, now, fill_random, sink);
             }
-            IngestPacketOutcome::OwesLinkProofVerify => {}
+            IngestPacketOutcome::OwesLinkProofVerify(owed) => {
+                sink(EngineReaction::Directive(Directive::Fulfill(
+                    OwedWork::Crypto(CryptoOwed::LinkProofVerify(owed)),
+                )));
+            }
             IngestPacketOutcome::RequestReceived {
                 destination,
                 link_id,
@@ -587,11 +508,11 @@ impl<S: StorageLayout> EngineState<S> {
                         accepted,
                         now,
                     ) {
-                        IngestPacketOutcome::OwesResourcePull { link_id, hash } => {
+                        AcceptedResourceAdmission::Pull { link_id, hash } => {
                             self.emit_resource_pull(&link_id, &hash, now, fill_random, sink);
                         }
-                        IngestPacketOutcome::ResourceAdmissionPending => {}
-                        IngestPacketOutcome::ResourceCapacityRejected {
+                        AcceptedResourceAdmission::Pending => {}
+                        AcceptedResourceAdmission::CapacityRejected {
                             link_id,
                             hash,
                             settled_request,
@@ -607,8 +528,7 @@ impl<S: StorageLayout> EngineState<S> {
                                 );
                             }
                         }
-                        IngestPacketOutcome::Ignored(_) => {}
-                        _ => unreachable!("Resource admission returned an unrelated outcome"),
+                        AcceptedResourceAdmission::Ignored(_) => {}
                     }
                     wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
                     wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
@@ -763,11 +683,11 @@ impl<S: StorageLayout> EngineState<S> {
                 if interfaces.is_egress_eligible(source, Egress::Transmit) {
                     let mut secret_bytes = [0u8; X25519SecretKey::LEN];
                     fill_random(&mut secret_bytes);
-                    if let Some(deferred) = deferred {
-                        if let Some(held) = self.held_identities.get(&accepted.identity) {
-                            let signing_secret = held.signing_secret_clone();
-                            let responder_signing = held.signing_public_key();
-                            *deferred = DeferredCrypto::LinkProofSign(LinkProofSignOwed {
+                    if let Some(held) = self.held_identities.get(&accepted.identity) {
+                        let signing_secret = held.signing_secret_clone();
+                        let responder_signing = held.signing_public_key();
+                        sink(EngineReaction::Directive(Directive::Fulfill(
+                            OwedWork::Crypto(CryptoOwed::LinkProofSign(LinkProofSignOwed {
                                 request: accepted.request,
                                 identity: accepted.identity,
                                 proof_strategy: accepted.proof_strategy,
@@ -781,21 +701,8 @@ impl<S: StorageLayout> EngineState<S> {
                                 signing_secret,
                                 responder_signing,
                                 ephemeral_secret: X25519SecretKey::new(secret_bytes),
-                            });
-                        }
-                    } else {
-                        let mut buf = [0u8; BROADCAST_MTU];
-                        if let Ok(written) = self.write_owed_link_proof(
-                            &accepted,
-                            X25519SecretKey::new(secret_bytes),
-                            link_mtu_ceiling(interfaces, source),
-                            &mut buf,
-                        ) {
-                            sink(EngineReaction::Directive(Directive::Send {
-                                target: source,
-                                bytes: &buf[..written],
-                            }));
-                        }
+                            })),
+                        )));
                     }
                 }
             }

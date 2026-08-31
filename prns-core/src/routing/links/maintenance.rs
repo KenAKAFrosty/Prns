@@ -112,13 +112,13 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// Seal the LINKCLOSE the way RNS 1.4.2 `Link.teardown` does (the link_id  encrypted under the session key) then forget the link; the dropped row zeroizes its key material.
-    pub fn write_owed_link_close(
+    pub fn write_owed_link_close<Work>(
         &mut self,
         link_id: &LinkId,
         reason: LinkClosedReason,
         iv: &[u8; 16],
         buf: &mut [u8],
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) -> Result<LinkCloseDispatch, WriteLinkCloseError> {
         let (key, fire_on) = match self.links.phase_for(link_id) {
             Some(LinkPhase::Active {
@@ -141,11 +141,11 @@ impl<S: StorageLayout> EngineState<S> {
         dispatch
     }
 
-    pub(crate) fn retire_link(
+    pub(crate) fn retire_link<Work>(
         &mut self,
         link_id: &LinkId,
         reason: LinkClosedReason,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) {
         match self.remote_control_controller_pairing.close_link(*link_id) {
             CloseRemoteControlControllerPairingLinkOutcome::Aborted { aborted } => {
@@ -308,7 +308,7 @@ mod tests {
                 LinkClosedReason::LocallyClosed,
                 &[0x51; 16],
                 &mut [0u8; 1],
-                &mut |reaction| {
+                &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| {
                     if let EngineReaction::Journaled(Journaled::LinkClosed { link_id, reason }) =
                         reaction
                     {
@@ -395,7 +395,7 @@ mod tests {
         engine.retire_link(
             &link_id,
             LinkClosedReason::LocallyClosed,
-            &mut |reaction| match reaction {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| match reaction {
                 EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
                     settlements.push((id, settlement));
                 }

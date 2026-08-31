@@ -105,11 +105,11 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    pub fn admit_remote_control_controller_pairing_response(
+    pub fn admit_remote_control_controller_pairing_response<Work>(
         &mut self,
         arrival: RemoteControlControllerPairingResponseArrival<'_>,
         received_at: InstantMillis,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) -> AdmitRemoteControlControllerPairingResponseOutcome {
         let expected_link = match self.remote_control_controller_pairing.view() {
             RemoteControlControllerPairingView::Idle => {
@@ -360,7 +360,7 @@ mod tests {
         let outcome = engine.admit_remote_control_controller_pairing_response(
             RemoteControlControllerPairingResponseArrival::new(LINK_ID, &packed),
             OFFERED_AT,
-            &mut |reaction| match reaction {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| match reaction {
                 EngineReaction::Journaled(
                     Journaled::RemoteControlControllerPairingConfirmationRequired(pairing),
                 ) => {
@@ -404,7 +404,9 @@ mod tests {
         let unrelated = engine.admit_remote_control_controller_pairing_response(
             RemoteControlControllerPairingResponseArrival::new(UNRELATED_LINK_ID, &packed),
             OFFERED_AT,
-            &mut |_| panic!("unrelated response must be silent"),
+            &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| {
+                panic!("unrelated response must be silent")
+            },
         );
         assert_eq!(
             unrelated,
@@ -423,7 +425,9 @@ mod tests {
             engine.admit_remote_control_controller_pairing_response(
                 RemoteControlControllerPairingResponseArrival::new(LINK_ID, &[0x00]),
                 OFFERED_AT,
-                &mut |_| panic!("malformed response must be silent"),
+                &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| {
+                    panic!("malformed response must be silent")
+                },
             ),
             AdmitRemoteControlControllerPairingResponseOutcome::MalformedEnvelope(
                 PackedBinaryParseError::NotBinary,
@@ -434,7 +438,9 @@ mod tests {
             engine.admit_remote_control_controller_pairing_response(
                 RemoteControlControllerPairingResponseArrival::new(LINK_ID, &malformed_response,),
                 OFFERED_AT,
-                &mut |_| panic!("malformed response must be silent"),
+                &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| {
+                    panic!("malformed response must be silent")
+                },
             ),
             AdmitRemoteControlControllerPairingResponseOutcome::MalformedResponse(
                 RemoteControlPairingMessageParseError::Truncated,
@@ -456,7 +462,7 @@ mod tests {
         let _offer = engine.admit_remote_control_controller_pairing_response(
             RemoteControlControllerPairingResponseArrival::new(LINK_ID, &offer),
             OFFERED_AT,
-            &mut |_| {},
+            &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| {},
         );
         let attempt_id = (&transcript).into();
         assert!(matches!(
@@ -475,7 +481,9 @@ mod tests {
             engine.admit_remote_control_controller_pairing_response(
                 RemoteControlControllerPairingResponseArrival::new(UNRELATED_LINK_ID, &completed,),
                 COMPLETED_AT,
-                &mut |_| panic!("unrelated completion must be silent"),
+                &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| {
+                    panic!("unrelated completion must be silent")
+                },
             ),
             AdmitRemoteControlControllerPairingResponseOutcome::UnrelatedLink {
                 expected: LINK_ID,
@@ -485,7 +493,7 @@ mod tests {
         let outcome = engine.admit_remote_control_controller_pairing_response(
             RemoteControlControllerPairingResponseArrival::new(LINK_ID, &completed),
             COMPLETED_AT,
-            &mut |reaction| match reaction {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| match reaction {
                 EngineReaction::Journaled(
                     Journaled::RemoteControlControllerPairingPersistenceRequired(pairing),
                 ) => {
@@ -543,7 +551,7 @@ mod tests {
         let outcome = engine.admit_remote_control_controller_pairing_response(
             RemoteControlControllerPairingResponseArrival::new(LINK_ID, &offer),
             PAIRING_EXPIRES_AT,
-            &mut |reaction| match reaction {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| match reaction {
                 EngineReaction::Journaled(Journaled::RemoteControlControllerPairingExpired {
                     aborted,
                 }) => journaled = Some(aborted),

@@ -197,14 +197,15 @@ impl<S: StorageLayout> EngineState<S> {
                 offer.accepted(),
                 offer.first_arrived_at(),
             );
-            if let crate::routing::ingress::IngestPacketOutcome::OwesResourcePull {
-                link_id,
-                hash,
-            } = outcome
-            {
-                #[cfg(feature = "runtime-metrics")]
-                self.record_resource_admission_event(ResourceAdmissionEvent::Promoted);
-                self.emit_resource_pull(&link_id, &hash, now, fill_random, sink);
+            match outcome {
+                super::gate::AcceptedResourceAdmission::Pull { link_id, hash } => {
+                    #[cfg(feature = "runtime-metrics")]
+                    self.record_resource_admission_event(ResourceAdmissionEvent::Promoted);
+                    self.emit_resource_pull(&link_id, &hash, now, fill_random, sink);
+                }
+                super::gate::AcceptedResourceAdmission::Pending
+                | super::gate::AcceptedResourceAdmission::CapacityRejected { .. }
+                | super::gate::AcceptedResourceAdmission::Ignored(_) => {}
             }
         }
     }

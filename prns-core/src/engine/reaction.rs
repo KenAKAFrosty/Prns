@@ -6,12 +6,16 @@ use crate::identity::IdentityHash;
 use crate::interfaces::{InterfaceId, InterfaceKind};
 use crate::routing::announce::held::HeldDropCause;
 use crate::routing::announce::{AnnounceObservation, AnnounceRateAccounting};
+use crate::routing::delivery::send_single::EncryptOwed;
 use crate::routing::delivery::Delivery;
+use crate::routing::ingress::{AnnounceVerifyOwed, DecryptOwed, RatchetDecryptOwed};
 use crate::routing::links::channel::MessageType;
+use crate::routing::links::handshake::{LinkProofSignOwed, LinkProofVerifyOwed};
 use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::send::ResourceBuildOwed;
 use crate::routing::links::resources::{ResourceFailureCause, ResourceHash};
 use crate::routing::links::LinkId;
+use crate::routing::proof::{DeferredLinkReceiptSign, DeferredProofSign};
 use crate::routing::request_handlers::RequestPathHash;
 use crate::routing::RouteRemovalCause;
 use crate::units::RttMillis;
@@ -31,6 +35,20 @@ pub enum EngineReaction<'a, Work = NoOwedWork> {
 /// Its uninhabited shape lets runtimes route those reactions without an impossible fallback.
 pub enum NoOwedWork {}
 
+impl<'a, Work> EngineReaction<'a, Work> {
+    /// Changes only the externally fulfilled-work channel while preserving the reaction itself.
+    ///
+    /// This is especially useful when a narrower engine entry point returns
+    /// [`NoOwedWork`]: the exhaustive `match never {}` widens that reaction for a manifold that
+    /// routes the complete [`OwedWork`] contract without inventing an impossible fallback.
+    pub fn map_work<Mapped>(self, map: impl FnOnce(Work) -> Mapped) -> EngineReaction<'a, Mapped> {
+        match self {
+            Self::Journaled(journaled) => EngineReaction::Journaled(journaled),
+            Self::Directive(directive) => EngineReaction::Directive(directive.map_work(map)),
+        }
+    }
+}
+
 /// Work the engine has fully authorized but asks its surrounding manifold to fulfill.
 ///
 /// The enum names protocol work, never a scheduling decision. A runtime may fulfill a variant
@@ -38,7 +56,54 @@ pub enum NoOwedWork {}
 /// transition that requested it.
 #[repr(C)]
 pub enum OwedWork<'a> {
+    Crypto(CryptoOwed),
     ResourceBuild(ResourceBuildOwed<'a>),
+    ResourceDecompression(ResourceDecompressionOwed<'a>),
+}
+
+/// Cryptographic work whose policy inputs are complete and whose pure operation may run outside
+/// the engine. Every variant owns its continuation material so a runtime can move it directly
+/// into a worker envelope without another packet-buffer copy.
+#[repr(C)]
+#[allow(clippy::large_enum_variant)]
+pub enum CryptoOwed {
+    Encrypt(EncryptOwed),
+    Decrypt(DecryptOwed),
+    RatchetDecrypt(RatchetDecryptOwed),
+    LinkProofVerify(LinkProofVerifyOwed),
+    LinkProofSign(LinkProofSignOwed),
+    ProofSign(DeferredProofSign),
+    LinkReceiptSign(DeferredLinkReceiptSign),
+    AnnounceVerify(AnnounceVerifyOwed),
+    RemoteControlPairingAvailabilityVerify(
+        crate::remote_control::RemoteControlPairingAvailabilityVerifyOwed,
+    ),
+}
+
+impl<'a> From<CryptoOwed> for OwedWork<'a> {
+    fn from(owed: CryptoOwed) -> Self {
+        Self::Crypto(owed)
+    }
+}
+
+/// A compressed resource stream the engine has authenticated and asks its runtime to inflate.
+/// The stream remains in the incoming-resource row; a worker runtime explicitly materializes an
+/// owned job while this borrow is live, while an inline runtime may consume the view directly.
+#[repr(C)]
+pub struct ResourceDecompressionOwed<'a> {
+    pub link_id: LinkId,
+    pub hash: ResourceHash,
+    pub stream: &'a [u8],
+    pub uncompressed_data_bytes: u64,
+}
+
+/// A runtime's completed resource inflate, submitted as a later engine input.
+#[repr(C)]
+pub struct ResourceDecompressionCompleted<'a> {
+    pub link_id: LinkId,
+    pub hash: ResourceHash,
+    /// Empty means the runtime could not produce a valid bounded inflate.
+    pub plaintext: &'a [u8],
 }
 
 #[repr(C)]
@@ -259,13 +324,6 @@ pub enum Journaled<'a> {
         cause: ResourceFailureCause,
     },
 
-    ResourceNeedsDecompression {
-        link_id: LinkId,
-        hash: ResourceHash,
-        stream: &'a [u8],
-        uncompressed_data_bytes: u64,
-    },
-
     /// One segment of a split resource landed / progress toward [`Journaled::ResourceAssembled`].
     /// `metadata` rides segment one only, stripped from the stream head like the single-segment delivery.
     ResourceSegmentReceived {
@@ -359,4 +417,83 @@ pub enum Directive<'a, Work = NoOwedWork> {
         fan: FanTarget,
         bytes: &'a [u8],
     },
+}
+
+impl<'a, Work> Directive<'a, Work> {
+    /// Changes only [`Directive::Fulfill`]'s work type and leaves every routed directive intact.
+    pub fn map_work<Mapped>(self, map: impl FnOnce(Work) -> Mapped) -> Directive<'a, Mapped> {
+        match self {
+            Self::Fulfill(work) => Directive::Fulfill(map(work)),
+            Self::Send { target, bytes } => Directive::Send { target, bytes },
+            Self::SendIfOnline {
+                target,
+                bytes,
+                on_send,
+            } => Directive::SendIfOnline {
+                target,
+                bytes,
+                on_send,
+            },
+            Self::SendAnnounce {
+                target,
+                bytes,
+                hops,
+                #[cfg(feature = "runtime-metrics")]
+                origin,
+            } => Directive::SendAnnounce {
+                target,
+                bytes,
+                hops,
+                #[cfg(feature = "runtime-metrics")]
+                origin,
+            },
+            Self::SendToFleet {
+                supervisor,
+                fan,
+                bytes,
+            } => Directive::SendToFleet {
+                supervisor,
+                fan,
+                bytes,
+            },
+            Self::SendAnnounceToFleet {
+                supervisor,
+                fan,
+                bytes,
+                hops,
+                #[cfg(feature = "runtime-metrics")]
+                origin,
+            } => Directive::SendAnnounceToFleet {
+                supervisor,
+                fan,
+                bytes,
+                hops,
+                #[cfg(feature = "runtime-metrics")]
+                origin,
+            },
+            Self::EmitFrame {
+                target,
+                size_hint,
+                fill,
+            } => Directive::EmitFrame {
+                target,
+                size_hint,
+                fill,
+            },
+            #[cfg(feature = "runtime-metrics")]
+            Self::SendMeasuredLocalAnnounce { target, bytes } => {
+                Directive::SendMeasuredLocalAnnounce { target, bytes }
+            }
+            #[cfg(feature = "runtime-metrics")]
+            Self::SendMeasuredLocalAnnounceToFleet {
+                supervisor,
+                fan,
+                bytes,
+            } => Directive::SendMeasuredLocalAnnounceToFleet {
+                supervisor,
+                fan,
+                bytes,
+            },
+        }
+    }
 }

@@ -180,10 +180,7 @@ mod tests {
             ..
         } = state.ingest_packet_with(
             plain_data_packet(&mut buf[..len]),
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         )
         else {
             panic!("our own GROUP send round-trips back through delivery");

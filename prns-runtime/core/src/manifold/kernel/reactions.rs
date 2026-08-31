@@ -193,7 +193,7 @@ mod tests {
         let mut on_send = || records += 1;
         let mut egress = CountingEgress { sends: 0 };
 
-        route_reaction(
+        route_reaction::<crate::engine::NoOwedWork>(
             EngineReaction::Directive(Directive::SendIfOnline {
                 target,
                 bytes: b"path request",

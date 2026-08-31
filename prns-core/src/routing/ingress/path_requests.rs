@@ -369,10 +369,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::AnswerPathRequest { destination: local },
         );
@@ -456,10 +453,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
@@ -502,10 +496,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)),
         ));
@@ -543,10 +534,7 @@ mod tests {
                     source_interface: iface(0xB2),
                     bytes: &mut announce,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)),
         ));
@@ -583,10 +571,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ForwardRecursivePathRequest {
                 destination: stranger,
@@ -620,10 +605,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ForwardRecursivePathRequest {
                 destination: stranger,
@@ -656,13 +638,10 @@ mod tests {
                     source_interface: first_ingress,
                     bytes: &mut first_wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&[
                     discovering_descriptor(first_ingress, InterfaceMode::Full),
                     discovering_descriptor(first_egress, InterfaceMode::Full),
                 ]),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ForwardRecursivePathRequest {
                 destination: stranger,
@@ -676,13 +655,10 @@ mod tests {
                     source_interface: first_egress,
                     bytes: &mut second_wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&[
                     discovering_descriptor(first_egress, InterfaceMode::Full),
                     discovering_descriptor(second_egress, InterfaceMode::Full),
                 ]),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ForwardRecursivePathRequest {
                 destination: stranger,
@@ -711,10 +687,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
@@ -841,10 +814,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ) {
                 IngestPacketOutcome::ForwardRecursivePathRequest { .. } => forwarded += 1,
                 IngestPacketOutcome::Ignored(IgnoreReason::RateLimited) if forwarded > 0 => {
@@ -878,10 +848,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut first,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ForwardRecursivePathRequest { .. },
         ));
@@ -894,10 +861,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut second,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::Superseded),
         );
@@ -917,10 +881,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
@@ -956,10 +917,7 @@ mod tests {
                     source_interface: app,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ForwardLocalClientPathRequest {
                 destination: stranger,
@@ -1105,10 +1063,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             );
         }
 
@@ -1138,10 +1093,7 @@ mod tests {
                     source_interface: uplink,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::RelayPathRequestToLocalClients {
                 destination: stranger,
@@ -1172,10 +1124,7 @@ mod tests {
                     source_interface: uplink,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
             "with no apps sharing the instance, an unanswerable full-mode request stays silent",
@@ -1196,10 +1145,7 @@ mod tests {
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
@@ -1239,10 +1185,7 @@ mod tests {
                     source_interface: iface(0xB2),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)),
         ));
@@ -1314,10 +1257,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::PathResponseScheduleRejected {
                 destination: cached,
@@ -1352,10 +1292,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -1375,10 +1312,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
             "a different transport id but the same id is the same request, so it is deduplicated",
@@ -1406,10 +1340,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::RouteUnresponsive),
             "an unresponsive route is withheld so a node with a live path answers instead",
@@ -1431,10 +1362,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -1458,10 +1386,7 @@ mod tests {
                 source_interface: iface(0xB2),
                 bytes: &mut announce,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
 
         let request = |requester: [u8; 16], id: u8| {
@@ -1480,10 +1405,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut loops_back,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::LoopPrevented),
             "the requester is the next hop we would route through; answering would loop",
@@ -1497,10 +1419,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut other_requester,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -1520,10 +1439,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::Malformed),
             "a bare destination carries no id, so the reference ignores it",
@@ -1541,10 +1457,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -1576,10 +1489,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -1606,10 +1516,7 @@ mod tests {
                 source_interface: requester,
                 bytes: &mut wire,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&roaming_view),
-            &mut |_| {},
-            None,
         );
         assert_eq!(
             relay.scheduled_announces.iter().next().unwrap().due_at,
@@ -1630,10 +1537,7 @@ mod tests {
                     source_interface: learned_on,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&roaming_view),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::LoopPrevented),
             "a roaming interface does not answer for a route that lives on it",
@@ -1658,10 +1562,7 @@ mod tests {
                     source_interface: learned_on,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&full_view),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -1680,10 +1581,7 @@ mod tests {
                 source_interface: iface(0xA1),
                 bytes: &mut wire,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert_eq!(
             relay.scheduled_announces.iter().next().unwrap().directed_to,
@@ -1720,10 +1618,7 @@ mod tests {
                 source_interface: requester,
                 bytes: &mut wire,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&interfaces),
-            &mut |_| {},
-            None,
         );
 
         let mut early = std::vec::Vec::new();
@@ -1785,10 +1680,7 @@ mod tests {
                 source_interface: iface(0xB2),
                 bytes: &mut announce,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
 
         let mut wire = path_request_wire(cached);
@@ -1799,10 +1691,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
             "without a transport role a node never answers from cache, even holding the route",
@@ -1827,10 +1716,7 @@ mod tests {
                 source_interface: uplink,
                 bytes: &mut announce,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
 
         let mut wire = path_request_wire(cached);
@@ -1841,10 +1727,7 @@ mod tests {
                     source_interface: app,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&[routable_descriptor(app), routable_descriptor(uplink)]),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ScheduledPathResponse { destination: cached },
             "a non-transport shared instance answers its local client from cache, like RNS is_from_local_client",
@@ -1868,10 +1751,7 @@ mod tests {
                     source_interface: app,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ForwardLocalClientPathRequest {
                 destination: stranger,
@@ -1898,10 +1778,7 @@ mod tests {
                     source_interface: uplink,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::RelayPathRequestToLocalClients {
                 destination: stranger,
@@ -1922,10 +1799,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
@@ -1943,10 +1817,7 @@ mod tests {
                     source_interface: iface(0xA1),
                     bytes: &mut first,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -1961,10 +1832,7 @@ mod tests {
                     source_interface: iface(0xB2),
                     bytes: &mut echo,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
             "the same (destination, id) is a duplicate, not answered again",

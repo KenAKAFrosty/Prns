@@ -1,6 +1,7 @@
 use super::announce::DirectAnnounceIngest;
 use super::classification::DataPacket;
-use super::outcome::{DeferredCrypto, IgnoreReason, IngestEffects, IngestPacketOutcome};
+use super::dispatch::IngressCryptoMode;
+use super::outcome::{IgnoreReason, IngestEffects, IngestPacketOutcome};
 use crate::engine::{EngineState, InstantMillis};
 use crate::interfaces::{AttachedInterfaces, InterfaceId};
 use crate::remote_control::{
@@ -31,10 +32,9 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         data: DataPacket<'p>,
         arrival: RemoteControlPairingAvailabilityArrival,
-        interfaces: AttachedInterfaces<'_>,
-        on_removed: &mut impl FnMut(RemovedRoute),
-        deferred: Option<&mut DeferredCrypto>,
-        effects: &mut IngestEffects<'p>,
+        crypto: IngressCryptoMode,
+        _interfaces: AttachedInterfaces<'_>,
+        _effects: &mut IngestEffects<'p>,
     ) -> IngestPacketOutcome<'p> {
         let RemoteControlPairingAvailabilityArrival {
             received_hops,
@@ -60,38 +60,47 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored(IgnoreReason::UnhandledContext);
         }
 
-        if let Some(deferred) = deferred {
-            if let Err(error) =
-                RemoteControlPairingAvailability::parse_without_signature_verification(data.payload)
-            {
-                return IngestPacketOutcome::Ignored(pairing_availability_ignore_reason(error));
+        match crypto {
+            IngressCryptoMode::Owed => {
+                if let Err(error) =
+                    RemoteControlPairingAvailability::parse_without_signature_verification(
+                        data.payload,
+                    )
+                {
+                    return IngestPacketOutcome::Ignored(pairing_availability_ignore_reason(error));
+                }
+                let owed = match RemoteControlPairingAvailabilityVerifyOwed::new(
+                    data.payload,
+                    arrived_at,
+                    source_interface,
+                    received_hops,
+                ) {
+                    Ok(owed) => owed,
+                    Err(_) => return IngestPacketOutcome::Ignored(IgnoreReason::CapacityExhausted),
+                };
+                IngestPacketOutcome::OwesRemoteControlPairingAvailabilityVerify(owed)
             }
-            let owed = match RemoteControlPairingAvailabilityVerifyOwed::new(
-                data.payload,
-                arrived_at,
-                source_interface,
-                received_hops,
-            ) {
-                Ok(owed) => owed,
-                Err(_) => return IngestPacketOutcome::Ignored(IgnoreReason::CapacityExhausted),
-            };
-            *deferred = DeferredCrypto::RemoteControlPairingAvailabilityVerify(owed);
-            return IngestPacketOutcome::OwesRemoteControlPairingAvailabilityVerify;
+            #[cfg(test)]
+            IngressCryptoMode::Inline => {
+                let availability = match RemoteControlPairingAvailability::parse(data.payload) {
+                    Ok(availability) => availability,
+                    Err(error) => {
+                        return IngestPacketOutcome::Ignored(pairing_availability_ignore_reason(
+                            error,
+                        ))
+                    }
+                };
+                pairing_availability_outcome(
+                    self.ingest_verified_remote_control_pairing_availability(
+                        availability,
+                        arrival,
+                        _interfaces,
+                        &mut |_| {},
+                        _effects,
+                    ),
+                )
+            }
         }
-
-        let availability = match RemoteControlPairingAvailability::parse(data.payload) {
-            Ok(availability) => availability,
-            Err(error) => {
-                return IngestPacketOutcome::Ignored(pairing_availability_ignore_reason(error))
-            }
-        };
-        pairing_availability_outcome(self.ingest_verified_remote_control_pairing_availability(
-            availability,
-            arrival,
-            interfaces,
-            on_removed,
-            effects,
-        ))
     }
 
     pub(crate) fn ingest_verified_remote_control_pairing_availability<'p>(
@@ -137,6 +146,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 }
 
+#[cfg(test)]
 fn pairing_availability_outcome<'p>(
     outcome: IngestRemoteControlPairingAvailability,
 ) -> IngestPacketOutcome<'p> {

@@ -13,10 +13,7 @@ fn ingest_counts_each_packet_without_a_clock() {
             source_interface: InterfaceId::new([0u8; 8]),
             bytes: &mut first_bytes,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&transporting_interfaces()),
-        &mut |_| {},
-        None,
     );
     let mut second_bytes = [4];
     let second = state.ingest_packet_with(
@@ -25,10 +22,7 @@ fn ingest_counts_each_packet_without_a_clock() {
             source_interface: InterfaceId::new([0u8; 8]),
             bytes: &mut second_bytes,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&transporting_interfaces()),
-        &mut |_| {},
-        None,
     );
 
     assert_eq!(first, IngestPacketOutcome::Ignored(IgnoreReason::Malformed));
@@ -47,13 +41,7 @@ fn ingest_processes_but_does_not_accept_non_announce_bytes() {
         source_interface: InterfaceId::new([0u8; 8]),
         bytes: &mut [0x00, 0x00, 0x01, 0x02, 0x03],
     };
-    let out = state.ingest_packet_with(
-        junk,
-        &mut |_| {},
-        AttachedInterfaces::new(&transporting_interfaces()),
-        &mut |_| {},
-        None,
-    );
+    let out = state.ingest_packet_with(junk, AttachedInterfaces::new(&transporting_interfaces()));
     assert_eq!(out, IngestPacketOutcome::Ignored(IgnoreReason::Malformed));
     assert_eq!(state.route_count(), 0);
 }
@@ -69,10 +57,7 @@ fn an_ifac_flagged_packet_is_dropped_on_an_open_interface() {
             source_interface: InterfaceId::new([0u8; 8]),
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&transporting_interfaces()),
-        &mut |_| {},
-        None,
     );
     assert_eq!(out, IngestPacketOutcome::Ignored(IgnoreReason::IfacRefused));
     assert_eq!(state.route_count(), 0);

@@ -1564,7 +1564,7 @@ mod tests {
         engine.retire_link(
             &context().link_id(),
             crate::engine::LinkClosedReason::PeerClosed,
-            &mut |reaction| match reaction {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| match reaction {
                 EngineReaction::Journaled(
                     Journaled::RemoteControlControllerPairingLinkClosed { aborted },
                 ) => pairing_closed = Some(aborted),

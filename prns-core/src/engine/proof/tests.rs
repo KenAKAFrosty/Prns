@@ -40,10 +40,7 @@ fn write_proof_is_byte_identical_to_the_rns_1_4_2_implicit_proof() {
 
     let outcome = state.ingest_packet_with(
         plain_data_packet(&mut raw),
-        &mut |_| {},
         AttachedInterfaces::new(&transporting_interfaces()),
-        &mut |_| {},
-        None,
     );
     let IngestPacketOutcome::Delivery {
         proof: ProofObligation::Owed(owed),
@@ -111,10 +108,7 @@ fn a_prove_if_delivery_defers_the_proof_to_the_app() {
         proof: ProofObligation::OwedIfApp(_),
     } = state.ingest_packet_with(
         plain_data_packet(&mut raw),
-        &mut |_| {},
         AttachedInterfaces::new(&transporting_interfaces()),
-        &mut |_| {},
-        None,
     )
     else {
         panic!("a ProveIf delivery defers its proof to the app");
@@ -133,7 +127,7 @@ fn prove_if_proof_directive(
     let mut decide = decide;
     let mut seen = std::vec::Vec::new();
     let mut proved = false;
-    state.ingest_packet_into(
+    state.ingest_packet_inline_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_000),
             source_interface: InterfaceId::new([0xEE; 8]),
@@ -185,7 +179,7 @@ fn delivery_is_journaled_before_the_prove_if_decision_and_proof_egress() {
     let (mut state, identity, destination) = prove_if_state();
     let mut raw = sealed_single_packet(&identity, destination, b"persist-before-proof");
     let steps = core::cell::RefCell::new(std::vec::Vec::new());
-    state.ingest_packet_into(
+    state.ingest_packet_inline_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_000),
             source_interface: InterfaceId::new([0xEE; 8]),

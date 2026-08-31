@@ -264,8 +264,7 @@ impl<S: StorageLayout> EngineState<S> {
 mod tests {
     use super::*;
     use crate::engine::test_support::{
-        bytes_from_hex, test_fill_entropy, transporting_interfaces, transporting_node,
-        RNS_1_4_2_ANNOUNCE,
+        bytes_from_hex, transporting_interfaces, transporting_node, RNS_1_4_2_ANNOUNCE,
     };
     use crate::engine::DropRouteOutcome;
     use crate::engine::{AnnounceIngest, IngestPacketOutcome, WakeSchedule};
@@ -292,10 +291,7 @@ mod tests {
                     source_interface: InterfaceId::new([0xA1; 8]),
                     bytes: &mut wire,
                 },
-                &mut test_fill_entropy,
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)),
         ));

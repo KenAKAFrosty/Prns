@@ -317,6 +317,7 @@ pub struct LinkProofParsed {
 }
 
 /// Moves through the seam (the secret is not `Copy`); the verdict rides back as the derived shared secret, so a valid proof never makes a second pool round-trip.
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub struct LinkProofVerifyOwed {
     pub link_id: LinkId,
     pub source_interface: InterfaceId,

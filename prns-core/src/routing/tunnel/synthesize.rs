@@ -282,10 +282,7 @@ mod tests {
                 source_interface: first_conn,
                 bytes: &mut announce,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&interfaces),
-            &mut |_| {},
-            None,
         );
         assert_eq!(
             relay
@@ -303,10 +300,7 @@ mod tests {
                 source_interface: first_conn,
                 bytes: &mut synth,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&interfaces),
-            &mut |_| {},
-            None,
         );
         assert!(relay.tunnels.warm_until(first_conn).is_some());
 
@@ -330,10 +324,7 @@ mod tests {
                 source_interface: second_conn,
                 bytes: &mut synth_again,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&second_view),
-            &mut |_| {},
-            None,
         );
         assert_eq!(
             relay

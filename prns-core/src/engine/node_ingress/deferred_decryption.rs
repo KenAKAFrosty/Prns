@@ -1,10 +1,10 @@
 use super::delivery::DeliveryIo;
 use crate::crypto::X25519SharedSecret;
-use crate::engine::{DecryptOwed, EngineReaction, EngineState, RatchetDecryptOwed};
+use crate::engine::{DecryptOwed, EngineReaction, EngineState, OwedWork, RatchetDecryptOwed};
 use crate::identity::{decrypt_finish_in_place, OpenedBy, OpenedToken};
 use crate::interfaces::AttachedInterfaces;
 use crate::routing::delivery::{Delivery, SingleDelivery};
-use crate::routing::proof::{DeferredProofSign, ProofObligation, ProofOwed, ProofRequest};
+use crate::routing::proof::{ProofObligation, ProofOwed, ProofRequest};
 use crate::storage::StorageLayout;
 
 impl<S: StorageLayout> EngineState<S> {
@@ -14,8 +14,7 @@ impl<S: StorageLayout> EngineState<S> {
         shared: X25519SharedSecret,
         interfaces: AttachedInterfaces<'_>,
         should_prove: &mut impl FnMut(&ProofRequest) -> bool,
-        deferred_sign: &mut Option<DeferredProofSign>,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, OwedWork<'static>>),
     ) {
         let DecryptOwed {
             destination,
@@ -54,8 +53,6 @@ impl<S: StorageLayout> EngineState<S> {
             &mut DeliveryIo {
                 interfaces,
                 should_prove: &mut *should_prove,
-                deferred_sign: &mut *deferred_sign,
-                deferred: None,
                 sink: &mut *sink,
             },
         );
@@ -67,8 +64,7 @@ impl<S: StorageLayout> EngineState<S> {
         opened: OpenedToken<'_>,
         interfaces: AttachedInterfaces<'_>,
         should_prove: &mut impl FnMut(&ProofRequest) -> bool,
-        deferred_sign: &mut Option<DeferredProofSign>,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, OwedWork<'static>>),
     ) {
         let proof = ProofObligation::for_delivery(
             owed.proof_strategy,
@@ -93,8 +89,6 @@ impl<S: StorageLayout> EngineState<S> {
             &mut DeliveryIo {
                 interfaces,
                 should_prove: &mut *should_prove,
-                deferred_sign: &mut *deferred_sign,
-                deferred: None,
                 sink: &mut *sink,
             },
         );

@@ -116,7 +116,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         verdict: OffloadedOpenSpan<'_>,
         now: InstantMillis,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, crate::engine::OwedWork<'_>>),
     ) -> WakeSchedules {
         let OffloadedOpenSpan {
             link_id,

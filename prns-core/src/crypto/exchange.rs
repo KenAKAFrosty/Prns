@@ -11,6 +11,25 @@ impl X25519PublicKey {
 #[derive(Zeroize, ZeroizeOnDrop)]
 pub struct X25519SecretKey([u8; 32]);
 
+// Test assertions need to compare complete typed ingress outcomes, some of which own secret
+// material. Keep those conveniences out of production builds and never print the key bytes.
+#[cfg(test)]
+impl core::fmt::Debug for X25519SecretKey {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("X25519SecretKey([REDACTED])")
+    }
+}
+
+#[cfg(test)]
+impl PartialEq for X25519SecretKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+#[cfg(test)]
+impl Eq for X25519SecretKey {}
+
 #[derive(Zeroize, ZeroizeOnDrop)]
 pub struct X25519SharedSecret([u8; 32]);
 

@@ -74,8 +74,9 @@ pub use node_egress::ReemitAnnounce;
 pub use node_ingress::{IngestIo, IngestPacketReport};
 pub use proof::ResolvedReceiptSettlement;
 pub use reaction::{
-    Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason, NoOwedWork, OwedWork,
-    PersistenceFlushCause, PersistenceFlushTarget,
+    CryptoOwed, Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason, NoOwedWork,
+    OwedWork, PersistenceFlushCause, PersistenceFlushTarget, ResourceDecompressionCompleted,
+    ResourceDecompressionOwed,
 };
 pub use registration::{
     PersistedRoutePreflightError, PersistedRouteSignaturePending, PersistedRouteVerificationError,
@@ -118,8 +119,8 @@ pub use crate::routing::delivery::send_single::{
 };
 pub use crate::routing::ingress::{
     AcceptedAnnounce, AnnounceIngest, AnnounceVerifyOwed, ClassifiedInboundPacket, DataPacket,
-    DecryptOwed, DeferredCrypto, IgnoreReason, IngestPacketOutcome, Ingress, LinkRttOwed,
-    PacketToForward, ProtocolViolationKind, RatchetDecryptOwed, RebroadcastDecision,
+    DecryptOwed, IgnoreReason, IngestPacketOutcome, Ingress, LinkRttOwed, PacketToForward,
+    ProtocolViolationKind, RatchetDecryptOwed, RebroadcastDecision,
 };
 pub use crate::routing::links::data::{
     link_mdu, LinkDataError, SendToLinkDispatch, SendToLinkWriteError, LINK_MDU,

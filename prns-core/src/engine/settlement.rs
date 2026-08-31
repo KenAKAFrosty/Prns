@@ -8,8 +8,8 @@ use crate::routing::delivery::receipts::{LinkOwnedReceiptKind, ReceiptKind};
 use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 
-pub(crate) fn settle(
-    sink: &mut impl FnMut(EngineReaction<'_>),
+pub(crate) fn settle<Work>(
+    sink: &mut impl FnMut(EngineReaction<'_, Work>),
     id: CommandId,
     settlement: Settlement,
 ) {

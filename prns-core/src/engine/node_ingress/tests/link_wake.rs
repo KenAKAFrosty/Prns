@@ -1,5 +1,7 @@
 use crate::engine::test_support::{routable_descriptor, test_entropy_bytes, TestStorageLayout};
-use crate::engine::{CommandId, DeferredCrypto, EngineReaction, EngineState, IngestIo};
+use crate::engine::{
+    CommandId, CryptoOwed, Directive, EngineReaction, EngineState, IngestIo, OwedWork,
+};
 use crate::interfaces::{AttachedInterfaces, InboundPacket, InterfaceId};
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_ECHO};
 use crate::routing::links::table::{InitiatedLink, LinkActivation, LinkPhase, RespondingLink};
@@ -200,10 +202,9 @@ fn pooled_link_delivery_defers_receipt_signing_and_completion_preserves_the_wire
         &mut frame,
     )
     .unwrap();
-    let mut deferred_sign = None;
-    let mut deferred = DeferredCrypto::default();
+    let mut owed_sign = None;
     let mut sent_inline = false;
-    engine.ingest_packet_into_deferring(
+    engine.ingest_packet_into(
         InboundPacket {
             arrived_at: InstantMillis(2_000),
             source_interface: lane,
@@ -215,19 +216,19 @@ fn pooled_link_delivery_defers_receipt_signing_and_completion_preserves_the_wire
             fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_| true,
             should_accept_resource: &mut |_| false,
-            sink: &mut |reaction| {
-                sent_inline |= matches!(reaction, EngineReaction::Directive(_));
+            sink: &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::Fulfill(OwedWork::Crypto(
+                    CryptoOwed::LinkReceiptSign(owed),
+                ))) => owed_sign = Some(owed),
+                EngineReaction::Directive(Directive::Fulfill(_)) | EngineReaction::Journaled(_) => {
+                }
+                EngineReaction::Directive(_) => sent_inline = true,
             },
         },
-        &mut deferred_sign,
-        Some(&mut deferred),
     );
 
-    assert!(deferred_sign.is_none());
     assert!(!sent_inline, "pooled ingest must not sign or send inline");
-    let DeferredCrypto::LinkReceiptSign(owed) = deferred else {
-        panic!("the LINK receipt signature must be deferred to host crypto");
-    };
+    let owed = owed_sign.expect("the LINK receipt signature is emitted as owed work");
     assert_eq!(owed.target, lane);
     assert_eq!(owed.link_id, link_id);
 
