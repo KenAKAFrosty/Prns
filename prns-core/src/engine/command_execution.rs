@@ -11,11 +11,12 @@ use crate::engine::{
     EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome, FanTarget,
     FinishSendSinglePacketOutcome, IdentifyFailure, IdentifyRejection, InstantMillis,
     IssuedCommand, Journaled, PathRequestWriteOutcome, RejectRemoteControlControllerPairingFailure,
-    RemoteControlTargetPairingApproval, RemoteControlTargetPairingRejection, RequestPathFailure,
-    RespondFailure, RespondRejection, SendGroupEntropy, SendGroupFailure, SendPlainPacketFailure,
-    SendRequestFailure, SendRequestRejection, SendSinglePacketEntropy, SendSinglePacketFailure,
-    SendSinglePacketWriteError, SendSinglePacketWriteOutcome, SendToChannelFailure,
-    SendToChannelRejection, SendToLinkFailure, SendToLinkRejection,
+    RemoteControlControllerPairingFinalization, RemoteControlTargetPairingApproval,
+    RemoteControlTargetPairingFinalization, RemoteControlTargetPairingRejection,
+    RequestPathFailure, RespondFailure, RespondRejection, SendGroupEntropy, SendGroupFailure,
+    SendPlainPacketFailure, SendRequestFailure, SendRequestRejection, SendSinglePacketEntropy,
+    SendSinglePacketFailure, SendSinglePacketWriteError, SendSinglePacketWriteOutcome,
+    SendToChannelFailure, SendToChannelRejection, SendToLinkFailure, SendToLinkRejection,
     SetRegisteredAnnounceAppDataFailure, SetResourceStrategyFailure, Settlement, WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
@@ -487,6 +488,16 @@ impl<S: StorageLayout> EngineState<S> {
                     fill_entropy,
                     sink,
                 );
+                if let Ok(RemoteControlTargetPairingFinalization::CompletionDispatched {
+                    attempt_id,
+                }) = &result
+                {
+                    sink(EngineReaction::Journaled(
+                        Journaled::RemoteControlTargetPairingAuthorizationPersisted {
+                            attempt_id: *attempt_id,
+                        },
+                    ));
+                }
                 settle(
                     sink,
                     id,
@@ -542,6 +553,17 @@ impl<S: StorageLayout> EngineState<S> {
                 let result = self.execute_settle_remote_control_controller_pairing_persistence(
                     settle_persistence,
                 );
+                if let Ok(RemoteControlControllerPairingFinalization::Completed {
+                    attempt_id,
+                    ..
+                }) = &result
+                {
+                    sink(EngineReaction::Journaled(
+                        Journaled::RemoteControlControllerPairingAuthorizationPersisted {
+                            attempt_id: *attempt_id,
+                        },
+                    ));
+                }
                 settle(
                     sink,
                     id,

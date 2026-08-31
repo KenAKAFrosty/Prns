@@ -69,8 +69,10 @@ async fn a_loopback_frame_crosses_the_seam_and_the_rebroadcast_leaves_through_th
         | Journaled::RemoteControlTargetPairingConfirmationRequired(_)
         | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
         | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
+        | Journaled::RemoteControlTargetPairingAuthorizationPersisted { .. }
         | Journaled::RemoteControlControllerPairingConfirmationRequired(_)
         | Journaled::RemoteControlControllerPairingPersistenceRequired(_)
+        | Journaled::RemoteControlControllerPairingAuthorizationPersisted { .. }
         | Journaled::RemoteControlControllerPairingExpired { .. }
         | Journaled::RemoteControlControllerPairingLinkClosed { .. }
         | Journaled::RemoteControlTargetPairingExpired { .. }
@@ -436,8 +438,10 @@ async fn a_delivery_answers_with_a_proof_directive_on_the_arrival_lane() {
         | Journaled::RemoteControlTargetPairingConfirmationRequired(_)
         | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
         | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
+        | Journaled::RemoteControlTargetPairingAuthorizationPersisted { .. }
         | Journaled::RemoteControlControllerPairingConfirmationRequired(_)
         | Journaled::RemoteControlControllerPairingPersistenceRequired(_)
+        | Journaled::RemoteControlControllerPairingAuthorizationPersisted { .. }
         | Journaled::RemoteControlControllerPairingExpired { .. }
         | Journaled::RemoteControlControllerPairingLinkClosed { .. }
         | Journaled::RemoteControlTargetPairingExpired { .. }

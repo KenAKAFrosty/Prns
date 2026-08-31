@@ -1,19 +1,30 @@
 #![expect(clippy::expect_used)]
 
 use core::time::Duration;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use personal_rns::engine::{
-    BeginRemoteControlControllerPairing, EgressTarget, OpenRemoteControlPairing,
-    OpenRemoteControlPairingFailure, OpenRemoteControlPairingRejection, RemoteControlPairingOpened,
+    AdmitRemoteControlControllerPairingResponseOutcome, ApproveRemoteControlControllerPairing,
+    ApproveRemoteControlTargetPairing, BeginRemoteControlControllerPairing, EgressTarget,
+    OpenRemoteControlPairing, OpenRemoteControlPairingFailure, OpenRemoteControlPairingRejection,
+    RemoteControlControllerPairingResponseEffect, RemoteControlPairingOpened,
+    RemoteControlTargetPairingApproval,
 };
 use personal_rns::identity::vault::IdentitySecretKey;
 use personal_rns::identity::IdentityPublicKeys;
+use personal_rns::persistence::{
+    read_remote_control_controller_grants_snapshot, read_remote_control_target_accesses_snapshot,
+    FileStore, PersistedStore, SnapshotRegion,
+};
 use personal_rns::prelude::*;
 use personal_rns::remote_control::{
+    ReceiveRemoteControlControllerPairingCompletedOutcome, RemoteControlControllerGrant,
     RemoteControlPairingAttemptId, RemoteControlPairingAttemptTimeout,
     RemoteControlPairingConfirmationCode, RemoteControlPairingContext,
     RemoteControlPairingEndpoint, RemoteControlPairingExpiresAfter,
     RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
+    RemoteControlTargetAccess, RemoteControlTargetIdentity,
 };
 use personal_rns::runtime::RemoteControlPairingControlError;
 use personal_rns::units::{DurationMillis, InstantMillis};
@@ -22,6 +33,7 @@ const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(10);
 const PAIRING_WINDOW: DurationMillis = DurationMillis(60_000);
 const PAIRING_ATTEMPT_TIMEOUT: DurationMillis = DurationMillis(30_000);
 const PUBLIC_APP_DATA: &[u8] = b"integration target";
+static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 struct PairingAvailability {
     endpoint: RemoteControlPairingEndpoint,
@@ -40,13 +52,16 @@ struct PairingConfirmation {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn direct_pairing_reaches_the_same_confirmation_on_both_nodes() {
+async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
+    let persistence = PairingPersistenceDirectories::new();
     let target_identity_secrets = remote_control_identity_secrets(0xA1, 0xA2);
+    let target_public_keys = *target_identity_secrets.identities().target().public_keys();
     let controller_identity_secrets = remote_control_identity_secrets(0xB1, 0xB2);
     let controller_identity = *controller_identity_secrets.identities().controller();
 
     let (target_confirmation_tx, mut target_confirmation_rx) =
         tokio::sync::mpsc::unbounded_channel();
+    let (target_persisted_tx, mut target_persisted_rx) = tokio::sync::mpsc::unbounded_channel();
     let target = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         remote_control: remote_control_service(target_identity_secrets),
@@ -54,24 +69,29 @@ async fn direct_pairing_reaches_the_same_confirmation_on_both_nodes() {
         app_state: (),
         storage: GrowableHeap,
         request_endpoints: request_endpoints![],
-        on_event: move |event, _state| {
-            let PrnsEvent::Message(Message::RemoteControlTargetPairingConfirmationRequired(
+        on_event: move |event, _state| match event {
+            PrnsEvent::Message(Message::RemoteControlTargetPairingConfirmationRequired(
                 pairing,
-            )) = event
-            else {
-                return;
-            };
-            let _ignored = target_confirmation_tx.send(PairingConfirmation {
-                attempt_id: pairing.attempt_id(),
-                context: pairing.context(),
-                code: pairing.confirmation_code(),
-                controller: *pairing.controller(),
-                target: *pairing.target().public_keys(),
-                permissions: pairing.permissions().clone(),
-            });
+            )) => {
+                let _ignored = target_confirmation_tx.send(PairingConfirmation {
+                    attempt_id: pairing.attempt_id(),
+                    context: pairing.context(),
+                    code: pairing.confirmation_code(),
+                    controller: *pairing.controller(),
+                    target: *pairing.target().public_keys(),
+                    permissions: pairing.permissions().clone(),
+                });
+            }
+            PrnsEvent::Message(Message::RemoteControlTargetPairingAuthorizationPersisted {
+                attempt_id,
+            }) => {
+                let _ignored = target_persisted_tx.send(attempt_id);
+            }
+            PrnsEvent::Message(_) | PrnsEvent::Diagnostic(_) => {}
         },
         interfaces: ManuallyAttached,
-        persistence: NoPersistence,
+        persistence: NodePersistence::custom_dir(&persistence.target)
+            .expect("the target persistence directory is usable"),
     });
     let target_handle = target.handle();
 
@@ -86,6 +106,8 @@ async fn direct_pairing_reaches_the_same_confirmation_on_both_nodes() {
 
     let (availability_tx, mut availability_rx) = tokio::sync::mpsc::unbounded_channel();
     let (controller_confirmation_tx, mut controller_confirmation_rx) =
+        tokio::sync::mpsc::unbounded_channel();
+    let (controller_persisted_tx, mut controller_persisted_rx) =
         tokio::sync::mpsc::unbounded_channel();
     let controller = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
@@ -114,12 +136,18 @@ async fn direct_pairing_reaches_the_same_confirmation_on_both_nodes() {
                     permissions: pairing.permissions().clone(),
                 });
             }
+            PrnsEvent::Message(Message::RemoteControlControllerPairingAuthorizationPersisted {
+                attempt_id,
+            }) => {
+                let _ignored = controller_persisted_tx.send(attempt_id);
+            }
             PrnsEvent::Message(_) | PrnsEvent::Diagnostic(_) => {}
         },
         interfaces: move |node: &PrnsNodeHandle| {
             node.attach(TcpClientInterface::new(server_address));
         },
-        persistence: NoPersistence,
+        persistence: NodePersistence::custom_dir(&persistence.controller)
+            .expect("the controller persistence directory is usable"),
     });
     let controller_handle = controller.handle();
 
@@ -181,20 +209,108 @@ async fn direct_pairing_reaches_the_same_confirmation_on_both_nodes() {
             .await
             .expect("the controller asks for confirmation");
         assert_eq!(controller_confirmation, target_confirmation);
+
+        let attempt_id = controller_confirmation.attempt_id;
+        assert_eq!(
+            target_handle
+                .approve_remote_control_target_pairing(ApproveRemoteControlTargetPairing {
+                    attempt_id,
+                })
+                .await,
+            Ok(RemoteControlTargetPairingApproval::AwaitingControllerCommit { attempt_id }),
+        );
+        let completed = controller_handle
+            .approve_remote_control_controller_pairing(ApproveRemoteControlControllerPairing {
+                attempt_id,
+            })
+            .await
+            .expect("the target returns a valid signed completion");
+        assert_eq!(
+            completed.admission,
+            AdmitRemoteControlControllerPairingResponseOutcome::Completed(
+                ReceiveRemoteControlControllerPairingCompletedOutcome::PersistenceOwed {
+                    attempt_id,
+                },
+            ),
+        );
+        assert_eq!(
+            completed.effect,
+            RemoteControlControllerPairingResponseEffect::Advanced,
+        );
+
+        assert_eq!(
+            target_persisted_rx
+                .recv()
+                .await
+                .expect("the target authorization persistence completes"),
+            attempt_id,
+        );
+        assert_eq!(
+            controller_persisted_rx
+                .recv()
+                .await
+                .expect("the controller authorization persistence completes"),
+            attempt_id,
+        );
+
+        assert_eq!(
+            persisted_controller_grants(&persistence.target),
+            [RemoteControlControllerGrant::new(
+                controller_identity,
+                RemoteControlRequestSet::all(),
+            )
+            .expect("the complete request set is not empty")],
+        );
+        assert_eq!(
+            persisted_target_accesses(&persistence.controller),
+            [RemoteControlTargetAccess::new(
+                RemoteControlTargetIdentity::new(target_public_keys),
+                RemoteControlRequestSet::all(),
+            )
+            .expect("the complete request set is not empty")],
+        );
     };
 
     tokio::select! {
         result = tokio::time::timeout(EXCHANGE_TIMEOUT, exchange) => {
-            result.expect("pairing reaches confirmation within the bounded test window");
+            result.expect("pairing completes within the bounded test window");
         }
         result = target.run() => {
             result.expect("the target node runs");
-            panic!("the target stopped before pairing reached confirmation");
+            panic!("the target stopped before pairing completed");
         }
         result = controller.run() => {
             result.expect("the controller node runs");
-            panic!("the controller stopped before pairing reached confirmation");
+            panic!("the controller stopped before pairing completed");
         }
+    }
+}
+
+struct PairingPersistenceDirectories {
+    target: PathBuf,
+    controller: PathBuf,
+}
+
+impl PairingPersistenceDirectories {
+    fn new() -> Self {
+        let sequence = TEST_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "prns-pairing-integration-{}-{sequence}",
+            std::process::id(),
+        ));
+        Self {
+            target: root.join("target"),
+            controller: root.join("controller"),
+        }
+    }
+}
+
+impl Drop for PairingPersistenceDirectories {
+    fn drop(&mut self) {
+        let Some(root) = self.target.parent() else {
+            return;
+        };
+        let _removed = std::fs::remove_dir_all(root);
     }
 }
 
@@ -255,4 +371,32 @@ async fn open_pairing_when_attached(
             Err(error) => return Err(error),
         }
     }
+}
+
+fn persisted_controller_grants(directory: &Path) -> std::vec::Vec<RemoteControlControllerGrant> {
+    let snapshot = load_snapshot(directory, SnapshotRegion::RemoteControlControllerGrants);
+    read_remote_control_controller_grants_snapshot(&snapshot)
+        .expect("the target stored a valid controller-grant snapshot")
+        .collect()
+}
+
+fn persisted_target_accesses(directory: &Path) -> std::vec::Vec<RemoteControlTargetAccess> {
+    let snapshot = load_snapshot(directory, SnapshotRegion::RemoteControlTargetAccesses);
+    read_remote_control_target_accesses_snapshot(&snapshot)
+        .expect("the controller stored a valid target-access snapshot")
+        .collect()
+}
+
+fn load_snapshot(directory: &Path, region: SnapshotRegion) -> std::vec::Vec<u8> {
+    let store = FileStore::new(directory);
+    let stored_len = store
+        .stored_len(region)
+        .expect("the authorization snapshot metadata is readable")
+        .expect("the authorization snapshot exists");
+    let mut snapshot = std::vec![0; stored_len];
+    let loaded = store
+        .load(region, &mut snapshot)
+        .expect("the authorization snapshot is readable")
+        .expect("the authorization snapshot exists");
+    loaded.to_vec()
 }

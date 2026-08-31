@@ -2608,6 +2608,7 @@ mod tests {
         );
         let mut sent = std::vec::Vec::new();
         let mut settlement = None;
+        let mut authorization_persisted = None;
         let mut unexpected_reactions = 0usize;
         let wake = engine.ingest_command_into(
             IssuedCommand {
@@ -2630,6 +2631,9 @@ mod tests {
                     settlement: observed,
                     ..
                 }) => settlement = Some(observed),
+                EngineReaction::Journaled(
+                    Journaled::RemoteControlTargetPairingAuthorizationPersisted { attempt_id },
+                ) => authorization_persisted = Some(attempt_id),
                 EngineReaction::Directive(_) | EngineReaction::Journaled(_) => {
                     unexpected_reactions += 1;
                 }
@@ -2709,6 +2713,7 @@ mod tests {
                 Ok(RemoteControlTargetPairingFinalization::CompletionDispatched { attempt_id },)
             ),),
         );
+        assert_eq!(authorization_persisted, Some(attempt_id));
         assert_eq!(unexpected_reactions, 0);
         assert!(matches!(
             engine.remote_control_target_pairing.view(),

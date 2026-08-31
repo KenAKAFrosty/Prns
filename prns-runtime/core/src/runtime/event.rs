@@ -47,12 +47,18 @@ pub enum Message<'a> {
         attempt_id: RemoteControlPairingAttemptId,
         grant: RemoteControlControllerGrant,
     },
+    RemoteControlTargetPairingAuthorizationPersisted {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
     RemoteControlControllerPairingConfirmationRequired(
         RemoteControlControllerPairingAttemptView<'a>,
     ),
     RemoteControlControllerPairingPersistenceRequired(
         RemoteControlControllerPairingPersistenceView<'a>,
     ),
+    RemoteControlControllerPairingAuthorizationPersisted {
+        attempt_id: RemoteControlPairingAttemptId,
+    },
     RemoteControlControllerPairingExpired {
         aborted: RemoteControlControllerPairingAborted,
     },
@@ -230,6 +236,11 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
                     grant,
                 })
             }
+            Journaled::RemoteControlTargetPairingAuthorizationPersisted { attempt_id } => {
+                PrnsEvent::Message(Message::RemoteControlTargetPairingAuthorizationPersisted {
+                    attempt_id,
+                })
+            }
             Journaled::RemoteControlControllerPairingConfirmationRequired(pairing) => {
                 PrnsEvent::Message(Message::RemoteControlControllerPairingConfirmationRequired(
                     pairing,
@@ -239,6 +250,11 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
                 PrnsEvent::Message(Message::RemoteControlControllerPairingPersistenceRequired(
                     pairing,
                 ))
+            }
+            Journaled::RemoteControlControllerPairingAuthorizationPersisted { attempt_id } => {
+                PrnsEvent::Message(
+                    Message::RemoteControlControllerPairingAuthorizationPersisted { attempt_id },
+                )
             }
             Journaled::RemoteControlControllerPairingExpired { aborted } => {
                 PrnsEvent::Message(Message::RemoteControlControllerPairingExpired { aborted })
