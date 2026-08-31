@@ -812,15 +812,17 @@ mod tests {
             via_switch_id: RnsOptionalField::Absent,
             blocked_ip_list: RnsOptionalField::Absent,
             rssi: RnsOptionalField::Absent,
-            fleet_peers: vec![personal_rns::interfaces::rns_management::RnsFleetPeerReport {
-                name: String::from("ab12… @ AA:BB:CC:DD:EE:FF"),
-                online: true,
-                receive_bytes: 40,
-                transmit_bytes: 20,
-                receive_speed_bps: 0.0,
-                transmit_speed_bps: 0.0,
-                rssi: RnsOptionalField::Value(-61),
-            }],
+            fleet_peers: vec![
+                personal_rns::interfaces::rns_management::RnsFleetPeerReport {
+                    name: String::from("ab12… @ AA:BB:CC:DD:EE:FF"),
+                    online: true,
+                    receive_bytes: 40,
+                    transmit_bytes: 20,
+                    receive_speed_bps: 0.0,
+                    transmit_speed_bps: 0.0,
+                    rssi: RnsOptionalField::Value(-61),
+                },
+            ],
         };
         let mut output = String::new();
         write_optional(&mut output, "    Group     : ", "", &status.group_id);

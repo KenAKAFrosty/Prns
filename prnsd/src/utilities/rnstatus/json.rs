@@ -278,7 +278,10 @@ fn interface_value(status: &RnsInterfaceStatusReport) -> Value {
 
 fn fleet_peer_value(peer: &RnsFleetPeerReport) -> Value {
     let mut fields = Map::new();
-    fields.insert(String::from(interface::NAME), Value::String(peer.name.clone()));
+    fields.insert(
+        String::from(interface::NAME),
+        Value::String(peer.name.clone()),
+    );
     fields.insert(String::from(interface::STATUS), peer.online.into());
     fields.insert(
         String::from(interface::RECEIVE_BYTES),

@@ -8,6 +8,7 @@ use embassy_futures::join::join;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex as BridgeMutex;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use esp_radio::ble::controller::BleConnector;
+#[cfg(feature = "display")]
 use heapless::String as HeaplessString;
 use personal_rns::bluetooth_auto::{BluetoothAuto, BluetoothAutoShared, BluetoothAutoStatus};
 use personal_rns::interfaces::bluetooth_auto::{
