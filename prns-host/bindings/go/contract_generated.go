@@ -308,6 +308,21 @@ const (
 	CommandFailureKindConnectFailed CommandFailureKind = 39
 	CommandFailureKindBackendFailed CommandFailureKind = 40
 	CommandFailureKindResponseTooLarge CommandFailureKind = 41
+	CommandFailureKindLinkClosed CommandFailureKind = 42
+	CommandFailureKindResponseCancelledBySender CommandFailureKind = 43
+	CommandFailureKindResponseHashmapBeyondPartCount CommandFailureKind = 44
+	CommandFailureKindResponseHashmapSkipsAhead CommandFailureKind = 45
+	CommandFailureKindResponseHashmapTooLong CommandFailureKind = 46
+	CommandFailureKindResponseHashmapRagged CommandFailureKind = 47
+	CommandFailureKindResponseRetriesExhausted CommandFailureKind = 48
+	CommandFailureKindResponseLinkVanished CommandFailureKind = 49
+	CommandFailureKindResponseTransferUnopenable CommandFailureKind = 50
+	CommandFailureKindResponseTransferCorrupt CommandFailureKind = 51
+	CommandFailureKindResponseProofUnsendable CommandFailureKind = 52
+	CommandFailureKindResponseDecompressionFailed CommandFailureKind = 53
+	CommandFailureKindResponseDecompressionTimedOut CommandFailureKind = 54
+	CommandFailureKindResponseOpenTimedOut CommandFailureKind = 55
+	CommandFailureKindResponseMetadataOverrun CommandFailureKind = 56
 )
 
 type DeliveryEvidenceKind uint32
@@ -341,6 +356,7 @@ const (
 	LinkClosedReasonTimeout LinkClosedReason = 1
 	LinkClosedReasonPeerClosed LinkClosedReason = 2
 	LinkClosedReasonMalformedRtt LinkClosedReason = 3
+	LinkClosedReasonLocallyClosed LinkClosedReason = 4
 )
 
 type ApplicationEventKind uint32
@@ -1258,6 +1274,66 @@ func (CommandFailureBackendFailed) commandFailure() {}
 type CommandFailureResponseTooLarge struct{}
 
 func (CommandFailureResponseTooLarge) commandFailure() {}
+
+type CommandFailureLinkClosed struct{}
+
+func (CommandFailureLinkClosed) commandFailure() {}
+
+type CommandFailureResponseCancelledBySender struct{}
+
+func (CommandFailureResponseCancelledBySender) commandFailure() {}
+
+type CommandFailureResponseHashmapBeyondPartCount struct{}
+
+func (CommandFailureResponseHashmapBeyondPartCount) commandFailure() {}
+
+type CommandFailureResponseHashmapSkipsAhead struct{}
+
+func (CommandFailureResponseHashmapSkipsAhead) commandFailure() {}
+
+type CommandFailureResponseHashmapTooLong struct{}
+
+func (CommandFailureResponseHashmapTooLong) commandFailure() {}
+
+type CommandFailureResponseHashmapRagged struct{}
+
+func (CommandFailureResponseHashmapRagged) commandFailure() {}
+
+type CommandFailureResponseRetriesExhausted struct{}
+
+func (CommandFailureResponseRetriesExhausted) commandFailure() {}
+
+type CommandFailureResponseLinkVanished struct{}
+
+func (CommandFailureResponseLinkVanished) commandFailure() {}
+
+type CommandFailureResponseTransferUnopenable struct{}
+
+func (CommandFailureResponseTransferUnopenable) commandFailure() {}
+
+type CommandFailureResponseTransferCorrupt struct{}
+
+func (CommandFailureResponseTransferCorrupt) commandFailure() {}
+
+type CommandFailureResponseProofUnsendable struct{}
+
+func (CommandFailureResponseProofUnsendable) commandFailure() {}
+
+type CommandFailureResponseDecompressionFailed struct{}
+
+func (CommandFailureResponseDecompressionFailed) commandFailure() {}
+
+type CommandFailureResponseDecompressionTimedOut struct{}
+
+func (CommandFailureResponseDecompressionTimedOut) commandFailure() {}
+
+type CommandFailureResponseOpenTimedOut struct{}
+
+func (CommandFailureResponseOpenTimedOut) commandFailure() {}
+
+type CommandFailureResponseMetadataOverrun struct{}
+
+func (CommandFailureResponseMetadataOverrun) commandFailure() {}
 
 type ApplicationEvent interface {
 	applicationEvent()

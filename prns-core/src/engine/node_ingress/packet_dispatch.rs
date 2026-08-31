@@ -4,12 +4,17 @@ use super::relay::{RelayAudience, RelayPathRequest};
 
 use crate::crypto::ratchets::RatchetRotation;
 use crate::crypto::{ed25519_sign, X25519SecretKey};
+use crate::engine::remote_control_pairing::{
+    RemoteControlPairingRequestIngress, RemoteControlPairingRequestIngressOutcome,
+};
 use crate::engine::settlement::settle;
 use crate::engine::LinkClosedReason;
 use crate::engine::{
     DeferredCrypto, Directive, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis,
     Journaled, LinkEstablished, PathResponseWriteOutcome, ProofIngest, ProtocolViolationKind,
-    SendRequestFailure, Settlement, WakeSchedule, WakeSchedules,
+    RemoteControlControllerPairingRequestFailureCause,
+    RemoteControlControllerPairingResponseArrival, RemoteControlControllerPairingResponseReceived,
+    SendRequestFailure, SendRequestIntent, Settlement, WakeSchedule, WakeSchedules,
 };
 use crate::identity::{IdentitySigner, ENCRYPTION_IV_LEN};
 use crate::interfaces::AttachedInterfaces;
@@ -209,11 +214,24 @@ impl<S: StorageLayout> EngineState<S> {
             deferred.as_deref_mut(),
             &mut effects,
         );
+
+        //Consider cfg-gating this on metrics/observability?
         let protocol_violation = ProtocolViolationKind::of_outcome(&outcome);
+
         wake_schedule_changes.held_announce_release = effects.held_announce_release;
         let accepted_observation = effects.accepted_announce.take();
+        let remote_control_pairing_availability =
+            effects.remote_control_pairing_availability.take();
         if let Some(expiry) = effects.destination_identity_expiry {
             wake_schedule_changes.expired_destination_identities = WakeSchedule::AtMost(expiry);
+        }
+        if let Some(observation) = remote_control_pairing_availability {
+            self.apply_remote_control_pairing_availability(
+                observation,
+                interfaces,
+                &mut wake_schedule_changes,
+                sink,
+            );
         }
         match outcome {
             IngestPacketOutcome::Announce(ingest) => {
@@ -243,6 +261,7 @@ impl<S: StorageLayout> EngineState<S> {
             IngestPacketOutcome::OwesDecrypt => {}
             IngestPacketOutcome::OwesRatchetDecrypt => {}
             IngestPacketOutcome::OwesAnnounceVerify => {}
+            IngestPacketOutcome::OwesRemoteControlPairingAvailabilityVerify => {}
             IngestPacketOutcome::Proof(ProofIngest::SendSinglePacketDelivered {
                 id,
                 delivered,
@@ -396,42 +415,99 @@ impl<S: StorageLayout> EngineState<S> {
                 rtt,
                 data,
             } => {
-                sink(EngineReaction::Journaled(Journaled::RequestReceived {
-                    destination,
-                    link_id,
-                    request_id,
-                    requester,
-                    path_hash,
-                    requested_at,
-                    rtt,
-                    data,
-                }));
+                match self.ingest_remote_control_pairing_request(
+                    RemoteControlPairingRequestIngress {
+                        destination,
+                        link_id,
+                        request_id,
+                        requester,
+                        path_hash,
+                        data,
+                    },
+                    interfaces,
+                    now,
+                    fill_entropy,
+                    sink,
+                ) {
+                    RemoteControlPairingRequestIngressOutcome::Pairing(_pairing_outcome) => {
+                        wake_schedule_changes.remote_control_pairing =
+                            self.remote_control_pairing_wake();
+                    }
+                    RemoteControlPairingRequestIngressOutcome::ForwardToApplication => {
+                        sink(EngineReaction::Journaled(Journaled::RequestReceived {
+                            destination,
+                            link_id,
+                            request_id,
+                            requester,
+                            path_hash,
+                            requested_at,
+                            rtt,
+                            data,
+                        }));
+                    }
+                }
             }
             IngestPacketOutcome::ResponseSettled {
                 id,
+                intent,
                 delivered,
                 link_id,
                 request_id,
                 data,
             } => {
-                sink(EngineReaction::Journaled(Journaled::ResponseReceived {
-                    command_id: id,
-                    link_id,
-                    request_id,
-                    data,
-                }));
-                settle(sink, id, Settlement::SendRequest(Ok(delivered)));
+                let settlement = match intent {
+                    SendRequestIntent::Application => {
+                        sink(EngineReaction::Journaled(Journaled::ResponseReceived {
+                            command_id: id,
+                            link_id,
+                            request_id,
+                            data,
+                        }));
+                        Settlement::SendRequest(Ok(delivered))
+                    }
+                    SendRequestIntent::RemoteControlControllerPairing => {
+                        let admission = self.admit_remote_control_controller_pairing_response(
+                            RemoteControlControllerPairingResponseArrival::new(link_id, data),
+                            now,
+                            sink,
+                        );
+                        let effect = self
+                            .remote_control_controller_pairing_response_effect(link_id, admission);
+                        Settlement::RemoteControlControllerPairingRequest(Ok(
+                            RemoteControlControllerPairingResponseReceived {
+                                delivered,
+                                admission,
+                                effect,
+                            },
+                        ))
+                    }
+                };
+                settle(sink, id, settlement);
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                if intent == SendRequestIntent::RemoteControlControllerPairing {
+                    wake_schedule_changes.remote_control_pairing =
+                        self.remote_control_pairing_wake();
+                }
             }
-            IngestPacketOutcome::ResponseTooLarge { id, .. } => {
-                settle(
-                    sink,
-                    id,
-                    Settlement::SendRequest(Err(SendRequestFailure::ResponseTooLarge)),
+            IngestPacketOutcome::ResponseTooLarge {
+                id,
+                intent,
+                link_id,
+                ..
+            } => {
+                let settlement = self.failed_send_request_settlement(
+                    link_id,
+                    intent,
+                    SendRequestFailure::ResponseTooLarge,
                 );
+                settle(sink, id, settlement);
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                if intent == SendRequestIntent::RemoteControlControllerPairing {
+                    wake_schedule_changes.remote_control_pairing =
+                        self.remote_control_pairing_wake();
+                }
             }
             IngestPacketOutcome::ChannelDataReceived {
                 link_id,
@@ -555,6 +631,21 @@ impl<S: StorageLayout> EngineState<S> {
                 }
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
+            IngestPacketOutcome::PairingResponseResourceUnsupported {
+                link_id,
+                hash,
+                settled_request,
+            } => {
+                self.reject_offered_resource(&link_id, &hash, now, fill_entropy, sink);
+                let settlement = self.failed_remote_control_controller_pairing_request_settlement(
+                    link_id,
+                    RemoteControlControllerPairingRequestFailureCause::ResourceResponseUnsupported,
+                );
+                settle(sink, settled_request, settlement);
+                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+                wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                wake_schedule_changes.remote_control_pairing = self.remote_control_pairing_wake();
+            }
             IngestPacketOutcome::ResourceAdmissionPending => {
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
@@ -597,7 +688,7 @@ impl<S: StorageLayout> EngineState<S> {
                     settle(
                         sink,
                         id,
-                        Settlement::SendRequest(Err(SendRequestFailure::Timeout)),
+                        Settlement::SendRequest(Err(SendRequestFailure::from(cause))),
                     );
                     wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
                 }
@@ -720,17 +811,16 @@ impl<S: StorageLayout> EngineState<S> {
                 }
             }
             IngestPacketOutcome::LinkClosedByPeer { link_id } => {
-                sink(EngineReaction::Journaled(Journaled::LinkClosed {
-                    link_id,
-                    reason: LinkClosedReason::PeerClosed,
-                }));
+                self.retire_link(&link_id, LinkClosedReason::PeerClosed, sink);
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::OwesLinkClose { link_id, reason } => {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
                 fill_entropy(&mut iv);
                 let mut buf = [0u8; BROADCAST_MTU];
-                if let Ok(dispatch) = self.write_owed_link_close(&link_id, &iv, &mut buf) {
+                if let Ok(dispatch) =
+                    self.write_owed_link_close(&link_id, reason, &iv, &mut buf, sink)
+                {
                     let target = dispatch.fire_on.unwrap_or(source);
                     if interfaces.is_egress_eligible(target, Egress::Transmit) {
                         sink(EngineReaction::Directive(Directive::Send {
@@ -738,10 +828,6 @@ impl<S: StorageLayout> EngineState<S> {
                             bytes: &buf[..dispatch.wire_bytes],
                         }));
                     }
-                    sink(EngineReaction::Journaled(Journaled::LinkClosed {
-                        link_id,
-                        reason,
-                    }));
                 }
             }
             IngestPacketOutcome::LinkInterfaceMismatch {

@@ -72,6 +72,14 @@ impl WebSocketWireFraming {
         }
     }
 
+    pub const fn maximum_encoded_len(self, packet_len: usize) -> usize {
+        match self {
+            Self::RawPacket => packet_len,
+            Self::Hdlc => rns_serial_framing::max_encoded_len(packet_len),
+            Self::Kiss => kiss_framing::max_encoded_len(packet_len),
+        }
+    }
+
     pub fn encode(self, input: &[u8], output: &mut [u8]) -> Result<usize, EncodeError> {
         if input.is_empty() || input.len() > FRAME_CAP {
             return Err(EncodeError::InvalidPacketLength);
@@ -373,6 +381,22 @@ mod tests {
         assert_eq!(
             WebSocketWireFraming::from_name("Raw"),
             Err(WebSocketWireFramingParseError::UnknownFraming)
+        );
+    }
+
+    #[test]
+    fn actual_packet_length_bounds_encoding_allocation() {
+        assert_eq!(
+            WebSocketWireFraming::RawPacket.maximum_encoded_len(431),
+            431
+        );
+        assert_eq!(
+            WebSocketWireFraming::Hdlc.maximum_encoded_len(431),
+            rns_serial_framing::max_encoded_len(431),
+        );
+        assert_eq!(
+            WebSocketWireFraming::Kiss.maximum_encoded_len(431),
+            kiss_framing::max_encoded_len(431),
         );
     }
 }

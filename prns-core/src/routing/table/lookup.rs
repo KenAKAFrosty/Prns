@@ -160,6 +160,7 @@ where
             receiving_interface: self.routes.receiving_interfaces()[i],
             next_hop: self.routes.next_hops()[i],
             last_route_activity_at: self.routes.last_route_activity_at()[i],
+            retention: self.routes.retentions()[i],
         }
     }
 

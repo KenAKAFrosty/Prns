@@ -2,8 +2,8 @@ use crate::identity::IdentityHash;
 use crate::wire::DestinationHash;
 
 use super::{
-    RemoteControlControllerGrant, RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData,
-    RemoteControlRequestKind, RemoteControlRequestSet,
+    RemoteControlControllerGrant, RemoteControlNodeIdentitySecrets, RemoteControlRequestKind,
+    RemoteControlRequestSet,
 };
 
 pub const DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS: usize = 8;
@@ -89,7 +89,6 @@ pub enum RemoteControlService<'a> {
 
 pub struct RemoteControlConfiguration<'a> {
     identity_secrets: RemoteControlNodeIdentitySecrets,
-    default_public_app_data: RemoteControlPublicAppData<'a>,
     initial_access: RemoteControlInitialAccess<'a>,
     self_announcement: RemoteControlSelfAnnouncement,
 }
@@ -98,13 +97,11 @@ impl<'a> RemoteControlService<'a> {
     #[must_use]
     pub const fn new(
         identity_secrets: RemoteControlNodeIdentitySecrets,
-        default_public_app_data: RemoteControlPublicAppData<'a>,
         initial_access: RemoteControlInitialAccess<'a>,
         self_announcement: RemoteControlSelfAnnouncement,
     ) -> Self {
         Self::Available(RemoteControlConfiguration {
             identity_secrets,
-            default_public_app_data,
             initial_access,
             self_announcement,
         })
@@ -147,11 +144,6 @@ impl<'a> RemoteControlConfiguration<'a> {
     }
 
     #[must_use]
-    pub const fn default_public_app_data(&self) -> &RemoteControlPublicAppData<'a> {
-        &self.default_public_app_data
-    }
-
-    #[must_use]
     pub const fn initial_access(&self) -> &RemoteControlInitialAccess<'a> {
         &self.initial_access
     }
@@ -178,13 +170,11 @@ impl<'a> RemoteControlConfiguration<'a> {
         self,
     ) -> (
         RemoteControlNodeIdentitySecrets,
-        RemoteControlPublicAppData<'a>,
         RemoteControlInitialAccess<'a>,
         RemoteControlSelfAnnouncement,
     ) {
         (
             self.identity_secrets,
-            self.default_public_app_data,
             self.initial_access,
             self.self_announcement,
         )
@@ -315,20 +305,16 @@ mod tests {
     fn service_moves_all_configuration_back_out_without_cloning_secrets() {
         let identity_secrets = identity_secrets();
         let identities = identity_secrets.identities();
-        let default_public_app_data =
-            RemoteControlPublicAppData::try_from(b"application".as_slice()).unwrap();
         let service = RemoteControlService::new(
             identity_secrets,
-            default_public_app_data,
             RemoteControlInitialAccess::Nobody,
             RemoteControlSelfAnnouncement::Unavailable,
         );
 
-        let (identity_secrets, default_public_app_data, initial_access, self_announcement) =
+        let (identity_secrets, initial_access, self_announcement) =
             service.into_configuration().unwrap().into_parts();
 
         assert_eq!(identity_secrets.identities(), identities);
-        assert_eq!(default_public_app_data.as_bytes(), b"application");
         assert_eq!(initial_access, RemoteControlInitialAccess::Nobody);
         assert_eq!(
             self_announcement,
@@ -341,13 +327,11 @@ mod tests {
         let unavailable = RemoteControlService::Unavailable;
         let describe_only = RemoteControlService::new(
             identity_secrets(),
-            RemoteControlPublicAppData::empty(),
             RemoteControlInitialAccess::Nobody,
             RemoteControlSelfAnnouncement::Unavailable,
         );
         let available = RemoteControlService::new(
             identity_secrets(),
-            RemoteControlPublicAppData::empty(),
             RemoteControlInitialAccess::Nobody,
             RemoteControlSelfAnnouncement::Destination(DestinationHash::new([0x43; 16])),
         );

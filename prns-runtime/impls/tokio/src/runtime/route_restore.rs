@@ -299,7 +299,7 @@ mod tests {
     use crate::routing::routes::RouteEntry;
     use crate::routing::{
         AnnounceIdRing, BlackholeExpiry, BlackholedIdentity, NextHop, PersistedRouteRow,
-        RouteResponsiveness,
+        RouteResponsiveness, RouteRetention,
     };
     use crate::storage::GrowableHeap;
     use crate::wire::DestinationHash;
@@ -325,6 +325,7 @@ mod tests {
                 responsiveness: RouteResponsiveness::Responsive,
                 receiving_interface: InterfaceId::new([index as u8; 8]),
                 next_hop: NextHop::Direct,
+                retention: RouteRetention::Network,
             },
             public_keys: announce.public_keys,
             dotted_name_hash: announce.dotted_name_hash,
