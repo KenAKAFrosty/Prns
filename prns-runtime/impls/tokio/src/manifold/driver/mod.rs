@@ -346,6 +346,7 @@ async fn run_inner<S, H, J, P, A, C>(
                     wire_scratch: &mut wire_scratch,
                     journal: &mut journal,
                     crypto_pool: crypto_pool.as_ref(),
+                    owed_work: &mut owed_work,
                 }
                 .complete(result, now, &mut seal_buf, &mut should_prove);
                 match effect {
@@ -388,6 +389,7 @@ async fn run_inner<S, H, J, P, A, C>(
                 should_prove: &mut should_prove,
                 should_accept_resource: &mut should_accept_resource,
                 max_frames_per_lane: MAX_INBOUND_BATCH,
+                owed_work: &mut owed_work,
                 now,
             });
             progressed = true;
@@ -402,6 +404,7 @@ async fn run_inner<S, H, J, P, A, C>(
                 wire_scratch: &mut wire_scratch,
                 journal: &mut journal,
                 crypto_pool: crypto_pool.as_ref(),
+                owed_work: &mut owed_work,
             }
             .dispatch_staged_seal(now);
             progressed = true;
@@ -516,6 +519,7 @@ async fn run_inner<S, H, J, P, A, C>(
                     wire_scratch: &mut wire_scratch,
                     journal: &mut journal,
                     crypto_pool: crypto_pool.as_ref(),
+                    owed_work: &mut owed_work,
                 }
                 .complete(
                     CryptoCompletion {

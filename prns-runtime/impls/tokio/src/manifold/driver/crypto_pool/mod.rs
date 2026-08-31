@@ -12,8 +12,8 @@ use crate::crypto::{
     Ed25519Signature, Ed25519Verifier, X25519PublicKey, X25519SharedSecret,
 };
 use crate::engine::{
-    AnnounceVerifyOwed, CommandId, DecryptOwed, DeferredLinkReceiptSign, DeferredProofSign,
-    EncryptOwed, InstantMillis, RatchetDecryptOwed, Settlement,
+    AnnounceVerifyOwed, CommandId, CryptoOwed, DecryptOwed, DeferredLinkReceiptSign,
+    DeferredProofSign, EncryptOwed, InstantMillis, RatchetDecryptOwed, Settlement,
 };
 use crate::identity::{decrypt_token_in_place_with_ratchets, IdentitySigningPublicKey, OpenedBy};
 use crate::interfaces::InterfaceId;
@@ -231,10 +231,18 @@ pub(super) struct OpenSpanJob {
     pub(super) bytes: Vec<u8>,
 }
 
+pub(super) struct ResourceDecompressionJob {
+    pub(super) link_id: LinkId,
+    pub(super) hash: ResourceHash,
+    pub(super) stream: Vec<u8>,
+    pub(super) uncompressed_data_bytes: u64,
+}
+
 #[allow(clippy::large_enum_variant)]
 pub(super) enum CryptoJob {
     Verify(EngineVerifyJob),
     BuildResource(Box<ResourceBuildJob>),
+    DecompressResource(Box<ResourceDecompressionJob>),
     SealStaged(Box<StagedSealJob>),
     OpenSpan(Box<OpenSpanJob>),
     SealScalars(EncryptOwed),
@@ -258,6 +266,22 @@ enum CryptoJobClass {
 const BULK_BYTES_PER_WORK_UNIT: usize = 8 * 1024;
 
 impl CryptoJob {
+    pub(super) fn from_owed(owed: CryptoOwed) -> Self {
+        match owed {
+            CryptoOwed::Encrypt(owed) => Self::SealScalars(owed),
+            CryptoOwed::Decrypt(owed) => Self::Decrypt(owed),
+            CryptoOwed::RatchetDecrypt(owed) => Self::DecryptWithRatchets(Box::new(owed)),
+            CryptoOwed::LinkProofVerify(owed) => Self::VerifyLinkProof(owed),
+            CryptoOwed::LinkProofSign(owed) => Self::SignLinkProof(owed),
+            CryptoOwed::ProofSign(owed) => Self::Sign(owed),
+            CryptoOwed::LinkReceiptSign(owed) => Self::SignLinkReceipt(owed),
+            CryptoOwed::AnnounceVerify(owed) => Self::VerifyAnnounce(owed),
+            CryptoOwed::RemoteControlPairingAvailabilityVerify(owed) => {
+                Self::VerifyRemoteControlPairingAvailability(owed)
+            }
+        }
+    }
+
     fn owes_packet_verdict(&self) -> bool {
         !matches!(self, Self::BuildResource(_) | Self::SealStaged(_))
     }
@@ -265,9 +289,10 @@ impl CryptoJob {
     fn scheduling_class(&self) -> CryptoJobClass {
         match self {
             Self::Verify(_) => CryptoJobClass::Verify,
-            Self::BuildResource(_) | Self::SealStaged(_) | Self::OpenSpan(_) => {
-                CryptoJobClass::Bulk
-            }
+            Self::BuildResource(_)
+            | Self::DecompressResource(_)
+            | Self::SealStaged(_)
+            | Self::OpenSpan(_) => CryptoJobClass::Bulk,
             Self::SealScalars(_)
             | Self::Sign(_)
             | Self::Decrypt(_)
@@ -286,6 +311,9 @@ impl CryptoJob {
     fn estimated_work(&self) -> usize {
         match self {
             Self::BuildResource(job) => 1 + job.data.len().div_ceil(BULK_BYTES_PER_WORK_UNIT),
+            Self::DecompressResource(job) => {
+                1 + job.stream.len().div_ceil(BULK_BYTES_PER_WORK_UNIT)
+            }
             Self::SealStaged(job) => 1 + job.plaintext.len().div_ceil(BULK_BYTES_PER_WORK_UNIT),
             Self::OpenSpan(job) => 1 + job.bytes.len().div_ceil(BULK_BYTES_PER_WORK_UNIT),
             Self::VerifyLinkProof(_) | Self::SignLinkProof(_) => 3,
@@ -367,6 +395,11 @@ pub(super) enum CryptoResult {
         transfer: Vec<u8>,
         names: Vec<u8>,
         outcome: Result<BuiltResource, BuildOutgoingResourceError>,
+    },
+    ResourceDecompressed {
+        link_id: LinkId,
+        hash: ResourceHash,
+        plaintext: Vec<u8>,
     },
     StagedSealed {
         link_id: LinkId,
@@ -897,6 +930,25 @@ type WorkerVerifierCache = [Option<Ed25519Verifier>; WORKER_VERIFIER_CACHE_DEPTH
 fn run_crypto_job(job: CryptoJob, verifier_cache: &mut WorkerVerifierCache) -> CryptoResult {
     match job {
         CryptoJob::BuildResource(job) => run_resource_build_job(*job),
+        CryptoJob::DecompressResource(job) => {
+            let ResourceDecompressionJob {
+                link_id,
+                hash,
+                stream,
+                uncompressed_data_bytes,
+            } = *job;
+            let maximum = prns_runtime::resource_compression::resource_decompression_bound(
+                uncompressed_data_bytes,
+            );
+            let plaintext =
+                prns_runtime::resource_compression::decompress_bounded(&stream, maximum)
+                    .unwrap_or_default();
+            CryptoResult::ResourceDecompressed {
+                link_id,
+                hash,
+                plaintext,
+            }
+        }
         CryptoJob::SealStaged(job) => {
             let StagedSealJob {
                 link_id,
@@ -1040,6 +1092,11 @@ fn run_crypto_job(job: CryptoJob, verifier_cache: &mut WorkerVerifierCache) -> C
             CryptoResult::RemoteControlPairingAvailabilityVerified { owed, verification }
         }
     }
+}
+
+pub(super) fn run_crypto_job_inline(job: CryptoJob) -> CryptoResult {
+    let mut verifier_cache: WorkerVerifierCache = std::array::from_fn(|_| None);
+    run_crypto_job(job, &mut verifier_cache)
 }
 
 pub(super) fn run_resource_build_job(job: ResourceBuildJob) -> CryptoResult {

@@ -97,19 +97,6 @@ fn emit_message(message: &Message<'_>) {
             link_id = ?link_id.as_bytes(),
             resource_hash = ?hash.as_bytes(),
         ),
-        Message::ResourceNeedsDecompression {
-            link_id,
-            hash,
-            stream,
-            uncompressed_data_bytes,
-        } => tracing::debug!(
-            target: "prns.runtime",
-            event = "resource_decompression_requested",
-            compressed_bytes = stream.len(),
-            uncompressed_bytes = uncompressed_data_bytes,
-            link_id = ?link_id.as_bytes(),
-            resource_hash = ?hash.as_bytes(),
-        ),
         Message::ResourceSegment {
             link_id,
             original_hash,

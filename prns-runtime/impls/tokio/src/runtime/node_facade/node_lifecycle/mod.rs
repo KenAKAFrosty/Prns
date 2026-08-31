@@ -21,10 +21,8 @@ use crate::engine::{
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{IdentityHash, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::InterfaceId;
-use crate::manifold::compression;
 use crate::manifold::driver::{
-    self as manifold_driver, CryptoPoolConfig, Egress, HostCommand, ProvideDecompressedHostCommand,
-    TokioClock, TokioHost,
+    self as manifold_driver, CryptoPoolConfig, Egress, HostCommand, TokioClock, TokioHost,
 };
 use crate::remote_control::{RemoteControlEndpoint, RemoteControlNodeIdentities};
 use crate::routing::announce::AnnounceObservation;
@@ -49,19 +47,9 @@ use super::super::{
     InterfaceStore, Message, PreConfiguredDestination, PrnsEvent, PrnsNodeRecipe, SendError,
 };
 use super::interface_lifecycle::{drive_interfaces, DriverMsg};
-use super::resource_transfer::resource_segment_decompression_bound;
 use super::{persistence, AttachIntent, PrnsNodeHandle, PrnsNodeLocalHandle};
 
-const INFLATE_QUEUE_PER_WORKER: usize = 4;
-const MAX_INFLATE_PARALLELISM: usize = 8;
 const LOCAL_COMMAND_DEPTH: usize = 128;
-
-fn inflate_parallelism() -> usize {
-    std::thread::available_parallelism()
-        .map(std::num::NonZeroUsize::get)
-        .unwrap_or(1)
-        .clamp(1, MAX_INFLATE_PARALLELISM)
-}
 
 type AcceptedAnnounceObserver = Box<dyn for<'a> FnMut(AnnounceObservation<'a>) + Send>;
 
@@ -743,12 +731,6 @@ where
         let egress = Egress::new(std::vec::Vec::new());
         let store = handle.store.clone();
         let (req_tx, req_rx) = mpsc::channel(REQUEST_QUEUE_DEPTH);
-        let inflate_commands = handle.commands.clone();
-        let inflate_workers = inflate_parallelism();
-        let inflate_admission = Arc::new(tokio::sync::Semaphore::new(
-            inflate_workers.saturating_mul(INFLATE_QUEUE_PER_WORKER),
-        ));
-        let inflate_execution = Arc::new(tokio::sync::Semaphore::new(inflate_workers));
         let admission_decider = handle.resource_admission.clone();
         let admission_cleanup = handle.resource_admission.clone();
         let manifold = async {
@@ -773,54 +755,6 @@ where
                 |journaled| {
                     if let Journaled::LinkClosed { link_id, .. } = &journaled {
                         admission_cleanup.remove(*link_id);
-                    }
-                    if let Journaled::ResourceNeedsDecompression {
-                        link_id,
-                        hash,
-                        stream,
-                        uncompressed_data_bytes,
-                    } = &journaled
-                    {
-                        let (link_id, hash, uncompressed_data_bytes) =
-                            (*link_id, *hash, *uncompressed_data_bytes);
-                        let stream = stream.to_vec();
-                        let commands = inflate_commands.clone();
-                        let admission = inflate_admission.clone().try_acquire_owned();
-                        let execution = inflate_execution.clone();
-                        let Ok(admission) = admission else {
-                            let _ = commands.send(HostCommand::ProvideDecompressed(
-                                ProvideDecompressedHostCommand {
-                                    link_id,
-                                    hash,
-                                    plaintext: std::vec::Vec::new().into(),
-                                },
-                            ));
-                            return;
-                        };
-                        tokio::spawn(async move {
-                            let Ok(execution) = execution.acquire_owned().await else {
-                                return;
-                            };
-                            let plaintext = tokio::task::spawn_blocking(move || {
-                                compression::decompress_bounded(
-                                    &stream,
-                                    resource_segment_decompression_bound(uncompressed_data_bytes),
-                                )
-                                .unwrap_or_default()
-                            })
-                            .await
-                            .unwrap_or_default();
-                            drop(execution);
-                            drop(admission);
-                            let _ = commands.send(HostCommand::ProvideDecompressed(
-                                ProvideDecompressedHostCommand {
-                                    link_id,
-                                    hash,
-                                    plaintext: plaintext.into(),
-                                },
-                            ));
-                        });
-                        return;
                     }
                     notify_accepted_announce(&mut accepted_announce_observer, &journaled);
                     let event = PrnsEvent::from(journaled);

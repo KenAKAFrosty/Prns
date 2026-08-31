@@ -4,6 +4,7 @@ use crate::engine::{
     SendSinglePacketFailure, SendSinglePacketPrepared, SendSinglePacketWriteError, Settlement,
     WakeSchedules,
 };
+use crate::interfaces::InterfaceIfac;
 use crate::manifold::Host;
 use crate::routing::links::request::{write_request_plaintext, RequestId, REQUEST_WIRE_OVERHEAD};
 use crate::routing::links::resources::{
@@ -20,11 +21,36 @@ use crate::storage::StorageLayout;
 use prns_runtime::runtime::persistence_snapshots;
 
 use super::crypto_pool::{CryptoJob, CryptoPool};
-use super::egress::{clear_announce_queues, route_reaction, route_reaction_with_work, WireScratch};
+use super::egress::{
+    clear_announce_queues, route_reaction, route_reaction_with_work, Egress, InterfacePacer,
+    WireScratch,
+};
 use super::host_protocol::{HostCommand, HostResourcePayload, RequestAnyHostCommand};
 use super::interface_topology::InterfaceTopology;
 use super::journal_delivery::JournalDispatch;
 use super::owed_work::PendingOwedWork;
+
+fn route_command_reaction<J>(
+    reaction: EngineReaction<'_>,
+    egress: &mut Egress,
+    ifacs: &[InterfaceIfac],
+    pacers: &mut [InterfacePacer],
+    wire_scratch: &mut WireScratch,
+    journal: &mut JournalDispatch<J>,
+    now: InstantMillis,
+) where
+    J: for<'a> FnMut(Journaled<'a>),
+{
+    route_reaction(
+        reaction,
+        egress,
+        ifacs,
+        pacers,
+        wire_scratch,
+        now,
+        &mut |journaled| journal.route(journaled),
+    );
+}
 
 pub(super) enum CommandEffect {
     Delta(WakeSchedules),
@@ -70,26 +96,6 @@ where
             crypto_pool,
             owed_work,
         } = self;
-        macro_rules! journaled_sink {
-            () => {
-                |journaled| journal.route(journaled)
-            };
-        }
-        macro_rules! reaction_sink {
-            () => {
-                |reaction| {
-                    route_reaction(
-                        reaction,
-                        &mut topology.egress,
-                        &topology.ifacs,
-                        &mut topology.pacers,
-                        wire_scratch,
-                        now,
-                        &mut journaled_sink!(),
-                    )
-                }
-            };
-        }
         macro_rules! defer_send_single_packet {
             ($pool:expr, $id:expr, $send:expr, $timing:expr) => {{
                 let mut entropy_bytes = [0u8; SendSinglePacketEntropy::LEN];
@@ -120,7 +126,7 @@ where
                             &mut topology.pacers,
                             wire_scratch,
                             now,
-                            &mut journaled_sink!(),
+                            &mut |journaled| journal.route(journaled),
                         );
                     }
                     SendSinglePacketPrepared::RouteVanished { id } => {
@@ -138,7 +144,7 @@ where
                             &mut topology.pacers,
                             wire_scratch,
                             now,
-                            &mut journaled_sink!(),
+                            &mut |journaled| journal.route(journaled),
                         );
                     }
                 }
@@ -175,9 +181,13 @@ where
                             &mut topology.pacers,
                             wire_scratch,
                             now,
-                            &mut journaled_sink!(),
+                            &mut |journaled| journal.route(journaled),
                             &mut |work| match work {
                                 OwedWork::ResourceBuild(owed) => plan = Some(owed.into_plan()),
+                                OwedWork::Crypto(owed) => owed_work.push_crypto(owed),
+                                OwedWork::ResourceDecompression(owed) => {
+                                    owed_work.push(OwedWork::ResourceDecompression(owed));
+                                }
                             },
                         )
                     },
@@ -211,7 +221,17 @@ where
                         topology.interfaces.view(),
                         now,
                         &mut |entropy| host.fill_random(entropy),
-                        &mut reaction_sink!(),
+                        &mut |reaction| {
+                            route_command_reaction(
+                                reaction,
+                                &mut topology.egress,
+                                &topology.ifacs,
+                                &mut topology.pacers,
+                                wire_scratch,
+                                journal,
+                                now,
+                            )
+                        },
                     )),
                 }
             }
@@ -232,7 +252,17 @@ where
                         topology.interfaces.view(),
                         now,
                         &mut |entropy| host.fill_random(entropy),
-                        &mut reaction_sink!(),
+                        &mut |reaction| {
+                            route_command_reaction(
+                                reaction,
+                                &mut topology.egress,
+                                &topology.ifacs,
+                                &mut topology.pacers,
+                                wire_scratch,
+                                journal,
+                                now,
+                            )
+                        },
                     )),
                 }
             }
@@ -248,7 +278,17 @@ where
                         now,
                         timing,
                         &mut |entropy| host.fill_random(entropy),
-                        &mut reaction_sink!(),
+                        &mut |reaction| {
+                            route_command_reaction(
+                                reaction,
+                                &mut topology.egress,
+                                &topology.ifacs,
+                                &mut topology.pacers,
+                                wire_scratch,
+                                journal,
+                                now,
+                            )
+                        },
                     )),
                 }
             }
@@ -269,7 +309,17 @@ where
                         now,
                         timing,
                         &mut |entropy| host.fill_random(entropy),
-                        &mut reaction_sink!(),
+                        &mut |reaction| {
+                            route_command_reaction(
+                                reaction,
+                                &mut topology.egress,
+                                &topology.ifacs,
+                                &mut topology.pacers,
+                                wire_scratch,
+                                journal,
+                                now,
+                            )
+                        },
                     )),
                 }
             }
@@ -298,7 +348,17 @@ where
                         },
                         now,
                         &mut |entropy| host.fill_random(entropy),
-                        &mut reaction_sink!(),
+                        &mut |reaction| {
+                            route_command_reaction(
+                                reaction,
+                                &mut topology.egress,
+                                &topology.ifacs,
+                                &mut topology.pacers,
+                                wire_scratch,
+                                journal,
+                                now,
+                            )
+                        },
                     ),
                 ),
             },
@@ -339,7 +399,17 @@ where
                             },
                             now,
                             &mut |entropy| host.fill_random(entropy),
-                            &mut reaction_sink!(),
+                            &mut |reaction| {
+                                route_command_reaction(
+                                    reaction,
+                                    &mut topology.egress,
+                                    &topology.ifacs,
+                                    &mut topology.pacers,
+                                    wire_scratch,
+                                    journal,
+                                    now,
+                                )
+                            },
                         ),
                     )
                 }
@@ -366,7 +436,17 @@ where
                         topology.interfaces.view(),
                         now,
                         &mut |entropy| host.fill_random(entropy),
-                        &mut reaction_sink!(),
+                        &mut |reaction| {
+                            route_command_reaction(
+                                reaction,
+                                &mut topology.egress,
+                                &topology.ifacs,
+                                &mut topology.pacers,
+                                wire_scratch,
+                                journal,
+                                now,
+                            )
+                        },
                     ),
                     None => engine.ingest_send_resource_into(
                         &ResourceSend {
@@ -384,7 +464,17 @@ where
                         },
                         now,
                         &mut |entropy| host.fill_random(entropy),
-                        &mut reaction_sink!(),
+                        &mut |reaction| {
+                            route_command_reaction(
+                                reaction,
+                                &mut topology.egress,
+                                &topology.ifacs,
+                                &mut topology.pacers,
+                                wire_scratch,
+                                journal,
+                                now,
+                            )
+                        },
                     ),
                 };
                 CommandEffect::Delta(delta)
@@ -417,7 +507,17 @@ where
                             topology.interfaces.view(),
                             now,
                             &mut |entropy| host.fill_random(entropy),
-                            &mut reaction_sink!(),
+                            &mut |reaction| {
+                                route_command_reaction(
+                                    reaction,
+                                    &mut topology.egress,
+                                    &topology.ifacs,
+                                    &mut topology.pacers,
+                                    wire_scratch,
+                                    journal,
+                                    now,
+                                )
+                            },
                         ),
                         Err(_) => journal.fail_request(id),
                     }
@@ -444,7 +544,17 @@ where
                                 },
                                 now,
                                 &mut |entropy| host.fill_random(entropy),
-                                &mut reaction_sink!(),
+                                &mut |reaction| {
+                                    route_command_reaction(
+                                        reaction,
+                                        &mut topology.egress,
+                                        &topology.ifacs,
+                                        &mut topology.pacers,
+                                        wire_scratch,
+                                        journal,
+                                        now,
+                                    )
+                                },
                             )
                         }
                         Err(_) => journal.fail_request(id),
@@ -453,12 +563,24 @@ where
                 CommandEffect::Delta(delta)
             }
             HostCommand::ProvideDecompressed(provide) => {
-                CommandEffect::Delta(engine.provide_decompressed(
-                    provide.link_id,
-                    provide.hash,
-                    provide.plaintext.as_slice(),
+                CommandEffect::Delta(engine.resume_resource_decompression(
+                    crate::engine::ResourceDecompressionCompleted {
+                        link_id: provide.link_id,
+                        hash: provide.hash,
+                        plaintext: provide.plaintext.as_slice(),
+                    },
                     now,
-                    &mut reaction_sink!(),
+                    &mut |reaction| {
+                        route_command_reaction(
+                            reaction,
+                            &mut topology.egress,
+                            &topology.ifacs,
+                            &mut topology.pacers,
+                            wire_scratch,
+                            journal,
+                            now,
+                        )
+                    },
                 ))
             }
             HostCommand::AddInterface(add) => match topology.attach(engine, add, now) {
@@ -621,7 +743,7 @@ where
                         &mut topology.pacers,
                         wire_scratch,
                         now,
-                        &mut journaled_sink!(),
+                        &mut |journaled| journal.route(journaled),
                     );
                 }
                 CommandEffect::UNCHANGED

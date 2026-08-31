@@ -55,7 +55,6 @@ async fn a_commanded_announce_fans_to_every_interface_and_settles() {
         | Journaled::LinkClosed { .. }
         | Journaled::ResourceReceived { .. }
         | Journaled::ResourceFailed { .. }
-        | Journaled::ResourceNeedsDecompression { .. }
         | Journaled::ResourceSegmentReceived { .. }
         | Journaled::ResourceAssembled { .. }
         | Journaled::PersistenceFlushed { .. }

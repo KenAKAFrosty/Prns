@@ -30,14 +30,6 @@ pub enum ResourceSendError {
 /// RNS 1.4.2 `Resource.AUTO_COMPRESS_MAX_SIZE`
 pub const AUTO_COMPRESS_MAX_LEN: u64 = 64 * 1024 * 1024;
 
-pub(super) const fn resource_segment_decompression_bound(uncompressed_data_bytes: u64) -> u64 {
-    if uncompressed_data_bytes < MAX_EFFICIENT_SIZE as u64 {
-        uncompressed_data_bytes
-    } else {
-        MAX_EFFICIENT_SIZE as u64
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SegmentCompression {
     Attempt { up_to_byte_len: u64 },

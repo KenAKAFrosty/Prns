@@ -309,7 +309,6 @@ impl ReliabilityMetricsSnapshot {
             | Journaled::ResponseSegmentReceived { .. }
             | Journaled::ChannelMessageReceived { .. }
             | Journaled::ResourceReceived { .. }
-            | Journaled::ResourceNeedsDecompression { .. }
             | Journaled::ResourceSegmentReceived { .. }
             | Journaled::ResourceAssembled { .. } => {}
         }

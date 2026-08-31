@@ -1,9 +1,9 @@
 use crate::engine::{
-    Directive, EngineReaction, EngineState, InstantMillis, Journaled, ProofRequest,
-    ResolvedReceiptSettlement, WakeSchedules,
+    Directive, EngineReaction, EngineState, InstantMillis, Journaled, OwedWork, ProofRequest,
+    ResolvedReceiptSettlement, ResourceDecompressionCompleted, WakeSchedules,
 };
 use crate::identity::OpenedToken;
-use crate::interfaces::FrameAccountingEvent;
+use crate::interfaces::{FrameAccountingEvent, InterfaceIfac};
 use crate::manifold::Host;
 use crate::routing::links::resources::build_outgoing::SALT_REROLL_CAP;
 use crate::routing::links::resources::receive::offload::OffloadedOpenSpan;
@@ -15,10 +15,59 @@ use crate::storage::StorageLayout;
 use super::crypto_pool::{
     CryptoCompletion, CryptoJob, CryptoPool, CryptoResult, OpenSpanJob, StagedSealJob,
 };
-use super::egress::{route_reaction, WireScratch};
+use super::egress::{
+    route_reaction, route_reaction_with_work, Egress, InterfacePacer, WireScratch,
+};
 use super::interface_topology::InterfaceTopology;
 use super::journal_delivery::JournalDispatch;
+use super::owed_work::PendingOwedWork;
 use crate::remote_control::RemoteControlPairingAvailabilityVerification;
+
+fn route_completion_reaction<J>(
+    reaction: EngineReaction<'_, OwedWork<'_>>,
+    egress: &mut Egress,
+    ifacs: &[InterfaceIfac],
+    pacers: &mut [InterfacePacer],
+    wire_scratch: &mut WireScratch,
+    journal: &mut JournalDispatch<J>,
+    owed_work: &mut PendingOwedWork,
+    now: InstantMillis,
+) where
+    J: for<'a> FnMut(Journaled<'a>),
+{
+    route_reaction_with_work(
+        reaction,
+        egress,
+        ifacs,
+        pacers,
+        wire_scratch,
+        now,
+        &mut |journaled| journal.route(journaled),
+        &mut |work| owed_work.push(work),
+    );
+}
+
+fn route_completed_reaction_without_work<J>(
+    reaction: EngineReaction<'_>,
+    egress: &mut Egress,
+    ifacs: &[InterfaceIfac],
+    pacers: &mut [InterfacePacer],
+    wire_scratch: &mut WireScratch,
+    journal: &mut JournalDispatch<J>,
+    now: InstantMillis,
+) where
+    J: for<'a> FnMut(Journaled<'a>),
+{
+    route_reaction(
+        reaction,
+        egress,
+        ifacs,
+        pacers,
+        wire_scratch,
+        now,
+        &mut |journaled| journal.route(journaled),
+    );
+}
 
 pub(super) enum CryptoCompletionEffect {
     NoWakeChange,
@@ -38,6 +87,7 @@ where
     pub(super) wire_scratch: &'a mut WireScratch,
     pub(super) journal: &'a mut JournalDispatch<J>,
     pub(super) crypto_pool: Option<&'a CryptoPool>,
+    pub(super) owed_work: &'a mut PendingOwedWork,
 }
 
 impl<S, H, J> CryptoDispatch<'_, S, H, J>
@@ -54,6 +104,7 @@ where
             wire_scratch,
             journal,
             crypto_pool,
+            owed_work: _,
         } = self;
         let Some(link_id) = engine.owed_staged_seal_link() else {
             return;
@@ -118,6 +169,7 @@ where
             wire_scratch,
             journal,
             crypto_pool,
+            owed_work,
         } = self;
         let CryptoCompletion {
             worker,
@@ -130,27 +182,6 @@ where
                 pool.packet_verdict_settled();
             }
         }
-        macro_rules! journaled_sink {
-            () => {
-                |journaled| journal.route(journaled)
-            };
-        }
-        macro_rules! reaction_sink {
-            () => {
-                |reaction| {
-                    route_reaction(
-                        reaction,
-                        &mut topology.egress,
-                        &topology.ifacs,
-                        &mut topology.pacers,
-                        wire_scratch,
-                        now,
-                        &mut journaled_sink!(),
-                    )
-                }
-            };
-        }
-
         match result {
             CryptoResult::Verified {
                 id,
@@ -171,7 +202,7 @@ where
                             &mut topology.pacers,
                             wire_scratch,
                             now,
-                            &mut journaled_sink!(),
+                            &mut |journaled| journal.route(journaled),
                         );
                         settled_receipt_effect(engine)
                     }
@@ -191,7 +222,17 @@ where
                     shared,
                     topology.interfaces.view(),
                     seal_buf,
-                    &mut reaction_sink!(),
+                    &mut |reaction| {
+                        route_completed_reaction_without_work(
+                            reaction,
+                            &mut topology.egress,
+                            &topology.ifacs,
+                            &mut topology.pacers,
+                            wire_scratch,
+                            journal,
+                            now,
+                        )
+                    },
                 ))
             }
             CryptoResult::Signed {
@@ -212,7 +253,7 @@ where
                         &mut topology.pacers,
                         wire_scratch,
                         now,
-                        &mut journaled_sink!(),
+                        &mut |journaled| journal.route(journaled),
                     );
                 }
                 CryptoCompletionEffect::NoWakeChange
@@ -241,29 +282,34 @@ where
                         &mut topology.pacers,
                         wire_scratch,
                         now,
-                        &mut journaled_sink!(),
+                        &mut |journaled| journal.route(journaled),
                     );
                 }
                 CryptoCompletionEffect::NoWakeChange
             }
             CryptoResult::Decrypted { owed, shared } => {
-                let mut deferred_sign = None;
                 engine.resume_decrypt(
                     owed,
                     shared,
                     topology.interfaces.view(),
                     should_prove,
-                    &mut deferred_sign,
-                    &mut reaction_sink!(),
+                    &mut |reaction| {
+                        route_completion_reaction(
+                            reaction,
+                            &mut topology.egress,
+                            &topology.ifacs,
+                            &mut topology.pacers,
+                            wire_scratch,
+                            journal,
+                            owed_work,
+                            now,
+                        )
+                    },
                 );
-                if let (Some(deferred), Some(pool)) = (deferred_sign, crypto_pool) {
-                    pool.submit(CryptoJob::Sign(deferred));
-                }
                 CryptoCompletionEffect::NoWakeChange
             }
             CryptoResult::RatchetDecrypted { owed, opened } => {
                 if let Some((opened_by, plaintext)) = opened {
-                    let mut deferred_sign = None;
                     engine.resume_ratchet_decrypt(
                         *owed,
                         OpenedToken {
@@ -272,12 +318,19 @@ where
                         },
                         topology.interfaces.view(),
                         should_prove,
-                        &mut deferred_sign,
-                        &mut reaction_sink!(),
+                        &mut |reaction| {
+                            route_completion_reaction(
+                                reaction,
+                                &mut topology.egress,
+                                &topology.ifacs,
+                                &mut topology.pacers,
+                                wire_scratch,
+                                journal,
+                                owed_work,
+                                now,
+                            )
+                        },
                     );
-                    if let (Some(deferred), Some(pool)) = (deferred_sign, crypto_pool) {
-                        pool.submit(CryptoJob::Sign(deferred));
-                    }
                 }
                 CryptoCompletionEffect::NoWakeChange
             }
@@ -288,7 +341,17 @@ where
                     topology.interfaces.view(),
                     now,
                     &mut |entropy| host.fill_random(entropy),
-                    &mut reaction_sink!(),
+                    &mut |reaction| {
+                        route_completed_reaction_without_work(
+                            reaction,
+                            &mut topology.egress,
+                            &topology.ifacs,
+                            &mut topology.pacers,
+                            wire_scratch,
+                            journal,
+                            now,
+                        )
+                    },
                 )),
                 None => {
                     if let Some(recorder) =
@@ -310,7 +373,17 @@ where
                 shared,
                 signature,
                 topology.interfaces.view(),
-                &mut reaction_sink!(),
+                &mut |reaction| {
+                    route_completed_reaction_without_work(
+                        reaction,
+                        &mut topology.egress,
+                        &topology.ifacs,
+                        &mut topology.pacers,
+                        wire_scratch,
+                        journal,
+                        now,
+                    )
+                },
             )),
             CryptoResult::ResourceBuilt {
                 reservation,
@@ -328,7 +401,41 @@ where
                 },
                 now,
                 &mut |entropy| host.fill_random(entropy),
-                &mut reaction_sink!(),
+                &mut |reaction| {
+                    route_completed_reaction_without_work(
+                        reaction,
+                        &mut topology.egress,
+                        &topology.ifacs,
+                        &mut topology.pacers,
+                        wire_scratch,
+                        journal,
+                        now,
+                    )
+                },
+            )),
+            CryptoResult::ResourceDecompressed {
+                link_id,
+                hash,
+                plaintext,
+            } => CryptoCompletionEffect::WakeSchedules(engine.resume_resource_decompression(
+                ResourceDecompressionCompleted {
+                    link_id,
+                    hash,
+                    plaintext: &plaintext,
+                },
+                now,
+                &mut |reaction| {
+                    route_completion_reaction(
+                        reaction,
+                        &mut topology.egress,
+                        &topology.ifacs,
+                        &mut topology.pacers,
+                        wire_scratch,
+                        journal,
+                        owed_work,
+                        now,
+                    )
+                },
             )),
             CryptoResult::StagedSealed {
                 link_id,
@@ -349,13 +456,35 @@ where
                         names: &names[..names_len],
                         outcome,
                     },
-                    &mut reaction_sink!(),
+                    &mut |reaction| {
+                        route_completion_reaction(
+                            reaction,
+                            &mut topology.egress,
+                            &topology.ifacs,
+                            &mut topology.pacers,
+                            wire_scratch,
+                            journal,
+                            owed_work,
+                            now,
+                        )
+                    },
                 );
                 engine.promote_staged_resource(
                     &link_id,
                     now,
                     &mut |entropy| host.fill_random(entropy),
-                    &mut reaction_sink!(),
+                    &mut |reaction| {
+                        route_completion_reaction(
+                            reaction,
+                            &mut topology.egress,
+                            &topology.ifacs,
+                            &mut topology.pacers,
+                            wire_scratch,
+                            journal,
+                            owed_work,
+                            now,
+                        )
+                    },
                 );
                 CryptoCompletionEffect::WakeSchedules(WakeSchedules {
                     resource_deadlines: engine.resource_deadlines_wake(),
@@ -368,7 +497,17 @@ where
                         owed,
                         topology.interfaces.view(),
                         &mut |entropy| host.fill_random(entropy),
-                        &mut reaction_sink!(),
+                        &mut |reaction| {
+                            route_completed_reaction_without_work(
+                                reaction,
+                                &mut topology.egress,
+                                &topology.ifacs,
+                                &mut topology.pacers,
+                                wire_scratch,
+                                journal,
+                                now,
+                            )
+                        },
                     ))
                 } else {
                     if let Some(recorder) =
@@ -386,7 +525,17 @@ where
                             engine.resume_remote_control_pairing_availability(
                                 owed,
                                 topology.interfaces.view(),
-                                &mut reaction_sink!(),
+                                &mut |reaction| {
+                                    route_completed_reaction_without_work(
+                                        reaction,
+                                        &mut topology.egress,
+                                        &topology.ifacs,
+                                        &mut topology.pacers,
+                                        wire_scratch,
+                                        journal,
+                                        now,
+                                    )
+                                },
                             ),
                         )
                     }
@@ -415,7 +564,18 @@ where
                     bytes: &bytes,
                 },
                 now,
-                &mut reaction_sink!(),
+                &mut |reaction| {
+                    route_completion_reaction(
+                        reaction,
+                        &mut topology.egress,
+                        &topology.ifacs,
+                        &mut topology.pacers,
+                        wire_scratch,
+                        journal,
+                        owed_work,
+                        now,
+                    )
+                },
             )),
         }
     }

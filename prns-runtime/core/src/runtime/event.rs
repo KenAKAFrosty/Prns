@@ -102,12 +102,6 @@ pub enum Message<'a> {
         metadata: Option<&'a [u8]>,
         data: &'a [u8],
     },
-    ResourceNeedsDecompression {
-        link_id: LinkId,
-        hash: ResourceHash,
-        stream: &'a [u8],
-        uncompressed_data_bytes: u64,
-    },
     ResourceSegment {
         link_id: LinkId,
         original_hash: ResourceHash,
@@ -316,17 +310,6 @@ impl<'a> From<Journaled<'a>> for PrnsEvent<'a> {
                 hash,
                 metadata,
                 data,
-            }),
-            Journaled::ResourceNeedsDecompression {
-                link_id,
-                hash,
-                stream,
-                uncompressed_data_bytes,
-            } => PrnsEvent::Message(Message::ResourceNeedsDecompression {
-                link_id,
-                hash,
-                stream,
-                uncompressed_data_bytes,
             }),
             Journaled::ResourceSegmentReceived {
                 link_id,

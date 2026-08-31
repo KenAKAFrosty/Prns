@@ -2,12 +2,13 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::crypto::ed25519_sign;
 use crate::engine::{
-    ClassifiedInboundPacket, DeferredCrypto, DeferredLinkReceiptSign, Directive, EngineReaction,
-    EngineState, IngestIo, InstantMillis, Journaled, ProofIngest, ProofRequest, Settlement,
-    WakeSchedules,
+    ClassifiedInboundPacket, CryptoOwed, DeferredLinkReceiptSign, Directive, EngineReaction,
+    EngineState, IngestIo, InstantMillis, Journaled, OwedWork, ProofIngest, ProofRequest,
+    Settlement, WakeSchedules,
 };
 use crate::interfaces::{
-    FrameAccountingEvent, IfacUnmaskError, InboundPacket, InterfaceId, PacketPhyStats,
+    FrameAccountingEvent, IfacUnmaskError, InboundPacket, InterfaceId, InterfaceIfac,
+    PacketPhyStats,
 };
 use crate::manifold::kernel::merge_wake_schedules_delta;
 use crate::manifold::Host;
@@ -20,9 +21,46 @@ use crate::wire::DestinationHash;
 
 use super::crypto_dispatch::dispatch_open_spans;
 use super::crypto_pool::{CryptoJob, CryptoPool, EngineVerifyJob};
-use super::egress::{ifac_for, route_reaction, WireScratch};
+use super::egress::{
+    ifac_for, route_reaction, route_reaction_with_work, Egress, InterfacePacer, WireScratch,
+};
 use super::interface_topology::InterfaceTopology;
 use super::journal_delivery::JournalDispatch;
+use super::owed_work::PendingOwedWork;
+
+fn route_ingress_reaction<J>(
+    reaction: EngineReaction<'_, OwedWork<'_>>,
+    egress: &mut Egress,
+    ifacs: &[InterfaceIfac],
+    pacers: &mut [InterfacePacer],
+    wire_scratch: &mut WireScratch,
+    journal: &mut JournalDispatch<J>,
+    owed_work: &mut PendingOwedWork,
+    link_receipt_signs: &mut std::vec::Vec<DeferredLinkReceiptSign>,
+    now: InstantMillis,
+) where
+    J: for<'a> FnMut(Journaled<'a>),
+{
+    route_reaction_with_work(
+        reaction,
+        egress,
+        ifacs,
+        pacers,
+        wire_scratch,
+        now,
+        &mut |journaled| journal.route(journaled),
+        &mut |work| match work {
+            OwedWork::Crypto(CryptoOwed::LinkReceiptSign(owed)) => {
+                link_receipt_signs.push(owed);
+            }
+            OwedWork::Crypto(owed) => owed_work.push_crypto(owed),
+            OwedWork::ResourceBuild(owed) => owed_work.push(OwedWork::ResourceBuild(owed)),
+            OwedWork::ResourceDecompression(owed) => {
+                owed_work.push(OwedWork::ResourceDecompression(owed));
+            }
+        },
+    );
+}
 
 pub(super) struct InboundDispatch {
     ready_lanes: std::vec::Vec<InterfaceId>,
@@ -90,6 +128,7 @@ impl InboundDispatch {
             should_prove,
             should_accept_resource,
             max_frames_per_lane,
+            owed_work,
             now,
         } = context;
         let Self {
@@ -98,27 +137,6 @@ impl InboundDispatch {
             link_receipt_signs,
             inline_link_receipt_signs,
         } = self;
-        macro_rules! journaled_sink {
-            () => {
-                |journaled| journal.route(journaled)
-            };
-        }
-        macro_rules! reaction_sink {
-            () => {
-                |reaction| {
-                    route_reaction(
-                        reaction,
-                        &mut topology.egress,
-                        &topology.ifacs,
-                        &mut topology.pacers,
-                        wire_scratch,
-                        now,
-                        &mut journaled_sink!(),
-                    )
-                }
-            };
-        }
-
         for &source in ready_lanes.iter() {
             debug_assert!(link_receipt_signs.is_empty());
             debug_assert!(inline_link_receipt_signs.is_empty());
@@ -133,7 +151,12 @@ impl InboundDispatch {
             lane.acknowledge();
             for _ in 0..max_frames_per_lane {
                 if crypto_pool.is_some_and(|pool| {
-                    !pool.has_queue_capacity(link_receipt_signs.len().saturating_add(2))
+                    !pool.has_queue_capacity(
+                        owed_work
+                            .len()
+                            .saturating_add(link_receipt_signs.len())
+                            .saturating_add(2),
+                    )
                 }) {
                     break;
                 }
@@ -211,66 +234,29 @@ impl InboundDispatch {
                         }
                     }
                 }
-                let ingest_report = match crypto_pool {
-                    Some(pool) => {
-                        let mut deferred_sign = None;
-                        let mut deferred = DeferredCrypto::default();
-                        let report = engine.ingest_classified_into_deferring_report(
-                            packet,
-                            IngestIo {
-                                interfaces: topology.interfaces.view(),
+                let ingest_report = engine.ingest_classified_into_report(
+                    packet,
+                    IngestIo {
+                        interfaces: topology.interfaces.view(),
+                        now,
+                        fill_random: &mut |entropy| host.fill_random(entropy),
+                        should_prove,
+                        should_accept_resource,
+                        sink: &mut |reaction| {
+                            route_ingress_reaction(
+                                reaction,
+                                &mut topology.egress,
+                                &topology.ifacs,
+                                &mut topology.pacers,
+                                wire_scratch,
+                                journal,
+                                owed_work,
+                                link_receipt_signs,
                                 now,
-                                fill_random: &mut |entropy| host.fill_random(entropy),
-                                should_prove,
-                                should_accept_resource,
-                                sink: &mut reaction_sink!(),
-                            },
-                            &mut deferred_sign,
-                            Some(&mut deferred),
-                        );
-                        if let Some(owed) = deferred_sign {
-                            pool.submit(CryptoJob::Sign(owed));
-                        }
-                        match deferred {
-                            DeferredCrypto::Empty => {}
-                            DeferredCrypto::Decrypt(owed) => {
-                                pool.submit(CryptoJob::Decrypt(owed));
-                            }
-                            DeferredCrypto::RatchetDecrypt(owed) => {
-                                pool.submit(CryptoJob::DecryptWithRatchets(Box::new(owed)));
-                            }
-                            DeferredCrypto::LinkProofVerify(owed) => {
-                                pool.submit(CryptoJob::VerifyLinkProof(owed));
-                            }
-                            DeferredCrypto::LinkProofSign(owed) => {
-                                pool.submit(CryptoJob::SignLinkProof(owed));
-                            }
-                            DeferredCrypto::LinkReceiptSign(owed) => {
-                                link_receipt_signs.push(owed);
-                            }
-                            DeferredCrypto::AnnounceVerify(owed) => {
-                                pool.submit(CryptoJob::VerifyAnnounce(owed));
-                            }
-                            DeferredCrypto::RemoteControlPairingAvailabilityVerify(owed) => {
-                                pool.submit(CryptoJob::VerifyRemoteControlPairingAvailability(
-                                    owed,
-                                ));
-                            }
-                        }
-                        report
-                    }
-                    None => engine.ingest_classified_into_report(
-                        packet,
-                        IngestIo {
-                            interfaces: topology.interfaces.view(),
-                            now,
-                            fill_random: &mut |entropy| host.fill_random(entropy),
-                            should_prove,
-                            should_accept_resource,
-                            sink: &mut reaction_sink!(),
+                            );
                         },
-                    ),
-                };
+                    },
+                );
                 if let (Some(recorder), Some(violation)) =
                     (&frame_accounting, ingest_report.protocol_violation)
                 {
@@ -289,14 +275,21 @@ impl InboundDispatch {
                 );
                 dispatch_open_spans(engine, crypto_pool);
             }
-            if let Some(pool) = crypto_pool {
-                for _ in 0..INLINE_LINK_RECEIPT_TRANCHE {
+            {
+                let inline_receipts = if crypto_pool.is_some() {
+                    INLINE_LINK_RECEIPT_TRANCHE
+                } else {
+                    usize::MAX
+                };
+                for _ in 0..inline_receipts {
                     let Some(receipt) = link_receipt_signs.pop() else {
                         break;
                     };
                     inline_link_receipt_signs.push(receipt);
                 }
-                pool.submit_link_receipts(link_receipt_signs);
+                if let Some(pool) = crypto_pool {
+                    pool.submit_link_receipts(link_receipt_signs);
+                }
                 for owed in inline_link_receipt_signs.drain(..) {
                     let signature = ed25519_sign(&owed.signing_secret, owed.packet_hash.as_bytes());
                     let mut proof = [0u8; LINK_PROOF_WIRE_LEN];
@@ -317,7 +310,7 @@ impl InboundDispatch {
                             &mut topology.pacers,
                             wire_scratch,
                             now,
-                            &mut journaled_sink!(),
+                            &mut |journaled| journal.route(journaled),
                         );
                     }
                 }
@@ -352,6 +345,7 @@ where
     pub(super) should_prove: &'a mut P,
     pub(super) should_accept_resource: &'a mut A,
     pub(super) max_frames_per_lane: usize,
+    pub(super) owed_work: &'a mut PendingOwedWork,
     pub(super) now: InstantMillis,
 }
 
