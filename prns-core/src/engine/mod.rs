@@ -85,9 +85,10 @@ pub use registration::{
 pub(crate) use remote_control::RemoteControlControllerIdentityConfiguration;
 pub use remote_control::{
     AdmitRemoteControlControllerPairingResponseOutcome, ConfigureRemoteControlIdentitiesError,
+    ConfigureRemoteControlServiceError, ConfiguredRemoteControlService,
     RemoteControlControllerPairingResponseArrival,
     RemoteControlControllerPairingResponseBridgeInvariantViolation,
-    RemoteControlControllerPairingResponseEffect,
+    RemoteControlControllerPairingResponseEffect, RemoteControlServiceConfiguration,
 };
 pub use remote_control_pairing::{
     ConfigureRemoteControlPairingError, RemoteControlPairingResponseDispatchFailure,

@@ -87,6 +87,22 @@ impl<C: RequestHandlerTable> RequestHandlers<C> {
             .position(|(candidate, hash)| candidate == destination && hash == path_hash)
     }
 
+    pub(crate) fn first_path_for_destination(
+        &self,
+        destination: &DestinationHash,
+    ) -> Option<RequestPathHash> {
+        let slot = self
+            .table
+            .destinations()
+            .iter()
+            .position(|candidate| candidate == destination)?;
+        self.table.path_hashes().get(slot).copied()
+    }
+
+    pub(crate) fn has_capacity_for(&self, additional: usize) -> bool {
+        additional <= self.table.capacity().saturating_sub(self.table.len())
+    }
+
     /// Register (or re-register) a handler: last write wins, and a policy change starts from an empty allow list, the same upsert posture destination registration takes.
     pub fn register(
         &mut self,

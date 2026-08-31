@@ -1,8 +1,8 @@
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 
-use crate::engine::EngineState;
 use crate::engine::RatchetPolicy;
+use crate::engine::{EngineState, RemoteControlServiceConfiguration};
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::remote_control::{
@@ -12,11 +12,10 @@ use crate::remote_control::{
     RemoteControlSelfAnnouncement, RemoteControlService, RemoteControlTargetAccessTable,
     RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantError,
     SetRemoteControlControllerGrantOutcome, DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS,
-    DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES, REMOTE_CONTROL_APPLICATION_ASPECTS,
-    REMOTE_CONTROL_APPLICATION_NAME, REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
+    DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES,
 };
 use crate::routing::links::resources::ResourceStrategy;
-use crate::routing::request_handlers::{RequestHandlerError, RequestPathHash, RequestPolicy};
+use crate::routing::request_handlers::{RequestHandlerError, RequestPathHash};
 use crate::routing::upstream_app_destinations::RegisterDestinationError;
 use crate::routing::{LinkRequestPolicy, ProofStrategy};
 use crate::storage::StorageLayout;
@@ -325,12 +324,8 @@ impl AssembledRemoteControl {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigureRemoteControlServiceError {
-    ConfigureIdentities(crate::engine::ConfigureRemoteControlIdentitiesError),
-    RegisterTarget(RegisterDestinationError),
-    ConfigureRequestLimit,
-    RegisterRequestEndpoint(TablePushError),
     BuildControllerGrants(SetRemoteControlControllerGrantError),
-    ConfigurePairing(crate::engine::ConfigureRemoteControlPairingError),
+    ConfigureService(crate::engine::ConfigureRemoteControlServiceError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -416,44 +411,20 @@ where
     let available_requests = configuration.available_requests();
     let (identity_secrets, initial_controller_grants, self_announcement) =
         configuration.into_parts();
-    let identities = engine
-        .configure_remote_control_identities(identity_secrets)
-        .map_err(ConfigureRemoteControlServiceError::ConfigureIdentities)?;
-    let target_endpoint = identities.target().endpoint();
-    let destination = engine
-        .register_single_destination(
-            &identities.target().identity_hash(),
-            REMOTE_CONTROL_APPLICATION_NAME,
-            REMOTE_CONTROL_APPLICATION_ASPECTS,
-            b"",
-            ProofStrategy::ProveAll,
-            LinkRequestPolicy::AcceptAll,
-            RatchetPolicy::NoRatchets,
-        )
-        .map_err(ConfigureRemoteControlServiceError::RegisterTarget)?;
-    if !engine.set_maximum_request_bytes(
-        &destination,
-        ByteLimit::Maximum(REMOTE_CONTROL_REQUEST_PLAINTEXT_MAX as u64),
-    ) {
-        return Err(ConfigureRemoteControlServiceError::ConfigureRequestLimit);
-    }
-    let request_endpoint_id = RequestPathHash::of(REMOTE_CONTROL_REQUEST_ENDPOINT_ID);
-    engine
-        .register_request_handler_hash(
-            &destination,
-            request_endpoint_id,
-            RequestPolicy::RequireIdentified,
-        )
-        .map_err(ConfigureRemoteControlServiceError::RegisterRequestEndpoint)?;
     let mut controller_grants = FixedRemoteControlControllerGrantTable::default();
     for grant in initial_controller_grants.grants() {
         controller_grants
             .set_controller_grant(*grant)
             .map_err(ConfigureRemoteControlServiceError::BuildControllerGrants)?;
     }
-    let pairing_availability_destination = engine
-        .configure_remote_control_pairing(identities.target().identity_hash())
-        .map_err(ConfigureRemoteControlServiceError::ConfigurePairing)?;
+    let configured_service = engine
+        .configure_remote_control_service(RemoteControlServiceConfiguration {
+            identity_secrets,
+            maximum_request_bytes: ByteLimit::Maximum(REMOTE_CONTROL_REQUEST_PLAINTEXT_MAX as u64),
+        })
+        .map_err(ConfigureRemoteControlServiceError::ConfigureService)?;
+    let (identities, target_endpoint, request_endpoint_id, pairing_availability_destination) =
+        configured_service.into_parts();
     Ok(AssembledRemoteControl {
         available: Some(AvailableRemoteControl {
             identities,

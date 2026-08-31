@@ -384,6 +384,10 @@ impl<C: UpstreamAppDestinationTable> UpstreamAppDestinations<C> {
         self.table.is_empty()
     }
 
+    pub(crate) fn has_capacity_for(&self, additional: usize) -> bool {
+        additional <= self.table.capacity().saturating_sub(self.table.len())
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = UpstreamAppDestination> + '_ {
         self.table
             .destinations()
