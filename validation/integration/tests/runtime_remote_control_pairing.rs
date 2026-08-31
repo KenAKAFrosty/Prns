@@ -6,9 +6,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use personal_rns::engine::{
     AdmitRemoteControlControllerPairingResponseOutcome, AnnounceAppData, AnnounceNow,
-    AnnounceTarget, EgressTarget, OpenRemoteControlPairing, OpenRemoteControlPairingFailure,
-    OpenRemoteControlPairingRejection, RemoteControlControllerPairingResponseEffect,
-    RemoteControlPairingOpened, RemoteControlTargetPairingApproval,
+    AnnounceTarget, EgressTarget, LinkClosedReason, OpenRemoteControlPairing,
+    OpenRemoteControlPairingFailure, OpenRemoteControlPairingRejection,
+    RemoteControlControllerPairingResponseEffect, RemoteControlPairingOpened,
+    RemoteControlTargetPairingApproval,
 };
 use personal_rns::identity::vault::IdentitySecretKey;
 use personal_rns::persistence::{
@@ -68,6 +69,7 @@ async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
     let (target_persisted_tx, mut target_persisted_rx) = tokio::sync::mpsc::unbounded_channel();
     let (target_completion_link_closed_tx, mut target_completion_link_closed_rx) =
         tokio::sync::mpsc::unbounded_channel();
+    let (target_link_closed_tx, mut target_link_closed_rx) = tokio::sync::mpsc::unbounded_channel();
     let target = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         remote_control: remote_control_service(target_identity_secrets),
@@ -91,6 +93,9 @@ async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
             }) => {
                 let _ignored = target_completion_link_closed_tx.send(attempt_id);
             }
+            PrnsEvent::Diagnostic(Diagnostic::LinkClosed { link_id, reason }) => {
+                let _ignored = target_link_closed_tx.send((link_id, reason));
+            }
             PrnsEvent::Message(_) | PrnsEvent::Diagnostic(_) => {}
         },
         interfaces: ManuallyAttached,
@@ -112,6 +117,8 @@ async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
     let (controller_confirmation_tx, mut controller_confirmation_rx) =
         tokio::sync::mpsc::unbounded_channel();
     let (controller_persisted_tx, mut controller_persisted_rx) =
+        tokio::sync::mpsc::unbounded_channel();
+    let (controller_link_closed_tx, mut controller_link_closed_rx) =
         tokio::sync::mpsc::unbounded_channel();
     let controller = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
@@ -137,6 +144,9 @@ async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
                 attempt_id,
             }) => {
                 let _ignored = controller_persisted_tx.send(attempt_id);
+            }
+            PrnsEvent::Diagnostic(Diagnostic::LinkClosed { link_id, reason }) => {
+                let _ignored = controller_link_closed_tx.send((link_id, reason));
             }
             PrnsEvent::Message(_) | PrnsEvent::Diagnostic(_) => {}
         },
@@ -202,6 +212,7 @@ async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
         );
 
         let attempt_id = controller_confirmation.confirmation().attempt_id();
+        let pairing_link = controller_confirmation.confirmation().context().link_id();
         assert_eq!(target_confirmation.rejection().attempt_id, attempt_id);
         assert_eq!(controller_confirmation.rejection().attempt_id, attempt_id);
         assert_eq!(
@@ -248,6 +259,22 @@ async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
                 .expect("the controller retires the completed pairing link"),
             attempt_id,
         );
+        assert_eq!(
+            controller_link_closed_rx
+                .recv()
+                .await
+                .expect("the controller retires the exact pairing link"),
+            (pairing_link, LinkClosedReason::LocallyClosed),
+        );
+        assert_eq!(
+            target_link_closed_rx
+                .recv()
+                .await
+                .expect("the target observes the exact pairing link retirement"),
+            (pairing_link, LinkClosedReason::PeerClosed),
+        );
+        assert_eq!(controller_handle.link_count().await, 0);
+        assert_eq!(target_handle.link_count().await, 0);
 
         assert_eq!(
             persisted_controller_grants(&persistence.target),
