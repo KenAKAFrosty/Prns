@@ -18,6 +18,11 @@ export type ResourceSealJob = {
   readonly promotionEntropy: OwnedBytes;
 };
 
+export type ResourceSealCryptoJob = Pick<
+  ResourceSealJob,
+  "linkId" | "plaintext" | "signingKey" | "encryptionKey" | "sealIv"
+>;
+
 export type ResourceSealBegin =
   | Tag<"Inline", { readonly commandId: bigint }>
   | Tag<"Seal", ResourceSealJob>;
@@ -31,6 +36,11 @@ export type ResourceOpenJob = {
   readonly hashPlan: ResourceOpenHashPlan;
   readonly totalSegments: number;
 };
+
+export type ResourceOpenCryptoJob = Pick<
+  ResourceOpenJob,
+  "linkId" | "signingKey" | "encryptionKey" | "sealed"
+>;
 
 export type ResourceOpenHashPlan =
   | Tag<"OpenedStream", { readonly salt: OwnedBytes }>
@@ -100,7 +110,7 @@ export class WebCryptoResourceDigester {
 export class WebCryptoResourceSealer {
   readonly #keys = new Map<string, Promise<ImportedResourceKeys>>();
 
-  async seal(job: ResourceSealJob): Promise<Uint8Array> {
+  async seal(job: ResourceSealCryptoJob): Promise<OwnedBytes> {
     const keys = await this.#keysFor(job);
     const encrypted = new Uint8Array(await crypto.subtle.encrypt(
       { name: "AES-CBC", iv: job.sealIv },
@@ -116,10 +126,10 @@ export class WebCryptoResourceSealer {
       token.subarray(0, token.length - 32),
     ));
     token.set(tag, token.length - 32);
-    return token;
+    return token as OwnedBytes;
   }
 
-  #keysFor(job: ResourceSealJob): Promise<ImportedResourceKeys> {
+  #keysFor(job: ResourceSealCryptoJob): Promise<ImportedResourceKeys> {
     const key = byteKey(job.linkId);
     const existing = this.#keys.get(key);
     if (existing !== undefined) {
@@ -149,7 +159,7 @@ export class WebCryptoResourceSealer {
 export class WebCryptoResourceOpener {
   readonly #keys = new Map<string, Promise<ImportedResourceKeys>>();
 
-  async open(job: ResourceOpenJob): Promise<ResourceOpenOutcome> {
+  async open(job: ResourceOpenCryptoJob): Promise<ResourceOpenOutcome> {
     if (job.sealed.length < 64 || (job.sealed.length - 48) % 16 !== 0) {
       return Tag("Refused");
     }
@@ -172,7 +182,7 @@ export class WebCryptoResourceOpener {
     }
   }
 
-  #keysFor(job: ResourceOpenJob): Promise<ImportedResourceKeys> {
+  #keysFor(job: ResourceOpenCryptoJob): Promise<ImportedResourceKeys> {
     const key = byteKey(job.linkId);
     const existing = this.#keys.get(key);
     if (existing !== undefined) {

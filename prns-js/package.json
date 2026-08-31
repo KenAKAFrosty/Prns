@@ -97,6 +97,7 @@
     "test:native:full": "npm --prefix ../prns-napi run build:debug && npm run test:native",
     "test:bun": "npm run build:native && bun tests/bun-consumer.ts",
     "bench:browser-worker-wire": "npm run build:code && node benchmarks/browser-worker-wire/run.mjs",
+    "bench:browser-crypto-workers": "npm run build:code && node benchmarks/browser-crypto-workers/run.mjs",
     "bench:browser-projections": "npm run build:code && node benchmarks/browser-projections/run.mjs",
     "bench:browser-full-engine": "npm --prefix ../prns-wasm run build:package:wasm && npm run build && node benchmarks/browser-full-engine/run.mjs",
     "pack:check": "npm --prefix ../prns-wasm run build:package:wasm && npm run build && npm pack --dry-run"

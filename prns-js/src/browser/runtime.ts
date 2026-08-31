@@ -39,15 +39,13 @@ import type {
 } from "./values.js";
 import type { WebSocketRuntimeRegistration } from "./websocket/index.js";
 import {
-  WebCryptoResourceDigester,
-  WebCryptoResourceOpener,
   parseResourceOpenJob,
   resourceDigestExecution,
 } from "./resource_crypto.js";
 import type {
-  ResourceCryptoExecution,
   ResourceOpenJob,
 } from "./resource_crypto.js";
+import type { BrowserResourceCryptoExecutor } from "./resource_crypto_pool.js";
 import type {
   BleIdentityAvailability,
   BluetoothReassemblerBinding,
@@ -110,9 +108,7 @@ export class RuntimeHost {
   readonly #now: () => InstantMillis;
   readonly #bleIdentityAvailability: BleIdentityAvailability;
   readonly #onRuntimeActivity: () => void;
-  readonly #resourceOpener = new WebCryptoResourceOpener();
-  readonly #resourceDigester = new WebCryptoResourceDigester();
-  readonly #resourceCrypto: ResourceCryptoExecution;
+  #resourceCryptoExecutor: BrowserResourceCryptoExecutor | undefined;
   #activeInterfaces = new Map<
     InterfaceKey,
     {
@@ -136,7 +132,7 @@ export class RuntimeHost {
     entropy: EntropySource,
     now: () => InstantMillis,
     bleIdentityAvailability: BleIdentityAvailability,
-    resourceCrypto: ResourceCryptoExecution,
+    resourceCryptoExecutor: BrowserResourceCryptoExecutor | undefined,
     onRuntimeActivity: () => void,
   ) {
     this.#wasm = wasm;
@@ -144,10 +140,10 @@ export class RuntimeHost {
     this.#entropy = entropy;
     this.#now = now;
     this.#bleIdentityAvailability = bleIdentityAvailability;
-    this.#resourceCrypto = resourceCrypto;
+    this.#resourceCryptoExecutor = resourceCryptoExecutor;
     this.#onRuntimeActivity = onRuntimeActivity;
     if (
-      resourceCrypto.tag !== "PortableWasm" &&
+      resourceCryptoExecutor !== undefined &&
       this.#runtime.enableResourceWebCrypto !== undefined
     ) {
       this.#runtime.enableResourceWebCrypto();
@@ -295,6 +291,7 @@ export class RuntimeHost {
 
   #drainResourceOpenJobs(): void {
     if (
+      this.#resourceCryptoExecutor === undefined ||
       this.#runtime.takeResourceOpenJob === undefined ||
       this.#runtime.completeResourceOpen === undefined ||
       this.#runtime.rejectResourceOpen === undefined ||
@@ -312,26 +309,42 @@ export class RuntimeHost {
   }
 
   async #settleResourceOpen(job: ResourceOpenJob): Promise<void> {
+    const executor = this.#resourceCryptoExecutor;
+    if (executor === undefined) {
+      return;
+    }
     try {
-      const outcome = await this.#resourceOpener.open(job);
+      const outcome = await executor.open(job);
+      if (this.#resourceCryptoExecutor !== executor) {
+        return;
+      }
       await match(outcome, {
         Opened: async (plaintext) => {
           if (
-            this.#resourceCrypto.tag === "WebCrypto" &&
             this.#runtime.completeResourceOpenDigests !== undefined &&
             job.hashPlan.tag === "OpenedStream" &&
             resourceDigestExecution(plaintext.length, job.totalSegments).tag === "WebCrypto"
           ) {
-            const digests = await this.#resourceDigester.digest(
+            const digestOutcome = await executor.digest(
               plaintext,
               job.hashPlan.data.salt,
             );
+            if (this.#resourceCryptoExecutor !== executor) {
+              return;
+            }
+            if (digestOutcome.tag !== "Digested") {
+              throw new TypeError(
+                digestOutcome.tag === "Busy"
+                  ? "resource crypto pool is busy"
+                  : digestOutcome.data.detail,
+              );
+            }
             this.#runtime.completeResourceOpenDigests({
               linkId: linkId(job.linkId),
               hash: job.hash,
-              calculatedHash: digests.hash,
-              proof: digests.proof,
-              plaintext,
+              calculatedHash: digestOutcome.data.hash,
+              proof: digestOutcome.data.proof,
+              plaintext: digestOutcome.data.plaintext,
               nowMs: this.#now(),
             });
             return;
@@ -347,8 +360,17 @@ export class RuntimeHost {
           linkId: linkId(job.linkId),
           hash: job.hash,
         }),
+        Busy: () => {
+          throw new TypeError("resource crypto pool is busy");
+        },
+        Failed: ({ detail }) => {
+          throw new TypeError(detail);
+        },
       });
     } catch {
+      if (this.#resourceCryptoExecutor !== executor) {
+        return;
+      }
       this.#runtime.retryResourceOpen!({
         linkId: linkId(job.linkId),
         hash: job.hash,
@@ -357,6 +379,10 @@ export class RuntimeHost {
     }
     this.notifyRuntimeActivity();
     this.#drainResourceOpenJobs();
+  }
+
+  stopResourceCrypto(): void {
+    this.#resourceCryptoExecutor = undefined;
   }
 
   drainOutbound(): RuntimeOutboundDrainOutcome {

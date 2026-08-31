@@ -146,13 +146,12 @@ import {
 } from "./resource_send.js";
 import { browserResourceCompressor } from "./resource_compressor.js";
 import {
-  WebCryptoResourceDigester,
-  WebCryptoResourceSealer,
   parseResourceDigestLanding,
   parseResourceSealBegin,
   resourceDigestExecution,
 } from "./resource_crypto.js";
 import type { ResourceCryptoExecution, ResourceSealJob } from "./resource_crypto.js";
+import { BrowserResourceCryptoExecutor } from "./resource_crypto_pool.js";
 export type { ResourceCryptoExecution } from "./resource_crypto.js";
 import { parseCommandSettlementBatch } from "./command_settlement_batch.js";
 import { describeInterfaceSessionFailure } from "./session.js";
@@ -547,6 +546,8 @@ type PendingCommand =
   | Tag<"HostCommand", { readonly command: HostCommand }>
   | Tag<"ResourceSegment">;
 
+const WEB_CRYPTO_RESOURCE_WORKERS = 2;
+
 type CommonPrnsOptions = {
   resourceCompressionModuleUrl?: URL;
   resourceCrypto?: ResourceCryptoExecution;
@@ -586,9 +587,7 @@ export class Prns {
   #startedAtMillis: number;
   #limits: HostLimits;
   #resourceCompressionModuleUrl: string;
-  #resourceCrypto: ResourceCryptoExecution;
-  #resourceDigester = new WebCryptoResourceDigester();
-  #resourceSealer = new WebCryptoResourceSealer();
+  #resourceCryptoExecutor: BrowserResourceCryptoExecutor | undefined;
   #resourceSealTurns = new Map<string, Promise<void>>();
   #events: BoundedAsyncLane<PrnsApplicationEvent>;
   #diagnostics: BoundedAsyncLane<PrnsDiagnosticEvent>;
@@ -642,7 +641,10 @@ export class Prns {
     this.#limits = limits;
     this.#resourceCompressionModuleUrl =
       resourceCompressionModuleUrl.href;
-    this.#resourceCrypto = resourceCrypto;
+    this.#resourceCryptoExecutor = match(resourceCrypto, {
+      PortableWasm: () => undefined,
+      WebCrypto: () => new BrowserResourceCryptoExecutor(WEB_CRYPTO_RESOURCE_WORKERS),
+    });
     this.#persistenceStore = persistenceStore;
     this.#persistenceRestored = persistenceRestored;
     this.#eventBatchSink = eventBatchSink;
@@ -670,7 +672,7 @@ export class Prns {
       entropy,
       now,
       bleIdentityAvailability,
-      resourceCrypto,
+      this.#resourceCryptoExecutor,
       () => {
         this.#pumpEvents();
         this.#scheduleProjectionRefresh();
@@ -1428,6 +1430,9 @@ export class Prns {
     }
     this.#pendingCommands.clear();
     this.#responseParts.clear();
+    this.#host.stopResourceCrypto();
+    this.#resourceCryptoExecutor?.close();
+    this.#resourceCryptoExecutor = undefined;
     const sessions = [...this.#attachedInterfaces.values()];
     for (const reassembler of this.#pageBluetoothReassemblers.values()) {
       reassembler.release?.();
@@ -1616,7 +1621,7 @@ export class Prns {
     input: RuntimeResourceSegmentIssueInput,
   ): Promise<CommandSettlement> {
     if (
-      this.#resourceCrypto.tag !== "PortableWasm" &&
+      this.#resourceCryptoExecutor !== undefined &&
       this.#runtime.sendResourceSegmentWebCrypto !== undefined &&
       this.#runtime.completeResourceSegmentSeal !== undefined &&
       this.#runtime.retryResourceSegmentSeal !== undefined
@@ -1678,23 +1683,52 @@ export class Prns {
       });
       this.#host.notifyRuntimeActivity();
       if (begun.tag === "Seal") {
+        const executor = this.#resourceCryptoExecutor;
         try {
-          const sealed = await this.#resourceSealer.seal(begun.data);
+          if (executor === undefined) {
+            throw new TypeError("resource crypto executor is unavailable");
+          }
+          const sealedOutcome = await executor.seal(begun.data);
           if (
-            this.#resourceCrypto.tag === "WebCrypto" &&
+            this.#resourceCryptoExecutor !== executor ||
+            this.#lifecycle.tag !== "Running"
+          ) {
+            return settlement;
+          }
+          if (sealedOutcome.tag !== "Sealed") {
+            throw new TypeError(
+              sealedOutcome.tag === "Busy"
+                ? "resource crypto pool is busy"
+                : sealedOutcome.data.detail,
+            );
+          }
+          const sealed = sealedOutcome.data.sealed;
+          let plaintext = sealedOutcome.data.plaintext;
+          if (
             this.#runtime.completeResourceSegmentSealDigests !== undefined &&
             resourceDigestExecution(
-              begun.data.plaintext.length,
+              begun.data.noncePrefixedBytes,
               begun.data.totalSegments,
             ).tag === "WebCrypto"
           ) {
             let landed = false;
             for (let offset = 0; offset < begun.data.salts.length; offset += 4) {
               const salt = begun.data.salts.subarray(offset, offset + 4);
-              const digests = await this.#resourceDigester.digest(
-                begun.data.plaintext,
-                salt,
-              );
+              const digestOutcome = await executor.digest(plaintext, salt);
+              if (
+                this.#resourceCryptoExecutor !== executor ||
+                this.#lifecycle.tag !== "Running"
+              ) {
+                return settlement;
+              }
+              if (digestOutcome.tag !== "Digested") {
+                throw new TypeError(
+                  digestOutcome.tag === "Busy"
+                    ? "resource crypto pool is busy"
+                    : digestOutcome.data.detail,
+                );
+              }
+              plaintext = digestOutcome.data.plaintext;
               const landing = parseResourceDigestLanding(
                 this.#runtime.completeResourceSegmentSealDigests({
                   linkId: linkId(begun.data.linkId),
@@ -1702,8 +1736,8 @@ export class Prns {
                   noncePrefixedBytes: begun.data.noncePrefixedBytes,
                   sealed,
                   salt,
-                  hash: digests.hash,
-                  proof: digests.proof,
+                  hash: digestOutcome.data.hash,
+                  proof: digestOutcome.data.proof,
                   promotionEntropy: begun.data.promotionEntropy,
                   nowMs: this.#now(),
                 }),
@@ -1731,11 +1765,16 @@ export class Prns {
             });
           }
         } catch {
-          this.#runtime.retryResourceSegmentSeal!({
-            linkId: linkId(begun.data.linkId),
-            nowMs: this.#now(),
-            entropy: entropyBytes(resourceSealFallbackEntropy(begun.data)),
-          });
+          if (
+            this.#resourceCryptoExecutor === executor &&
+            this.#lifecycle.tag === "Running"
+          ) {
+            this.#runtime.retryResourceSegmentSeal!({
+              linkId: linkId(begun.data.linkId),
+              nowMs: this.#now(),
+              entropy: entropyBytes(resourceSealFallbackEntropy(begun.data)),
+            });
+          }
         }
         this.#host.notifyRuntimeActivity();
       }
