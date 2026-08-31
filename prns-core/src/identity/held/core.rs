@@ -11,6 +11,12 @@ pub enum HoldIdentityError {
     StoreFull,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReleaseHeldIdentityOutcome {
+    Released,
+    NotHeld,
+}
+
 pub trait HeldIdentityTable {
     fn capacity(&self) -> usize;
     fn len(&self) -> usize;
@@ -35,6 +41,7 @@ pub trait HeldIdentityTable {
     ) -> Result<usize, HoldIdentityError>;
 
     fn pop(&mut self);
+    fn swap_remove(&mut self, index: usize);
 }
 
 #[derive(Default)]
@@ -116,6 +123,19 @@ impl<C: HeldIdentityTable> HeldIdentities<C> {
 
     pub fn is_empty(&self) -> bool {
         self.table.is_empty()
+    }
+
+    pub fn release(&mut self, hash: &IdentityHash) -> ReleaseHeldIdentityOutcome {
+        let Some(index) = self
+            .table
+            .hashes()
+            .iter()
+            .position(|candidate| candidate == hash)
+        else {
+            return ReleaseHeldIdentityOutcome::NotHeld;
+        };
+        self.table.swap_remove(index);
+        ReleaseHeldIdentityOutcome::Released
     }
 
     fn push_parts(&mut self, parts: IdentityParts) -> Result<(), HoldIdentityError> {
@@ -274,6 +294,10 @@ mod tests {
         fn pop(&mut self) {
             self.inner.pop();
         }
+
+        fn swap_remove(&mut self, index: usize) {
+            self.inner.swap_remove(index);
+        }
     }
 
     fn secret_key_bytes(fill: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
@@ -366,6 +390,53 @@ mod tests {
         assert_eq!(identities.hold(first_secret), Ok(first_hash));
         assert_eq!(identities.hold_pair(first, second), Ok(()));
         assert_eq!(identities.hashes(), &expected);
+    }
+
+    #[test]
+    fn release_erases_one_identity_and_reclaims_its_capacity() {
+        let first = secret_key_bytes(0x11);
+        let second = secret_key_bytes(0x33);
+        let third = secret_key_bytes(0x55);
+        let first_hash = InMemoryNodeIdentity::from_secret_key_bytes(&first).identity_hash();
+        let second_identity = InMemoryNodeIdentity::from_secret_key_bytes(&second);
+        let second_hash = second_identity.identity_hash();
+        let third_identity = InMemoryNodeIdentity::from_secret_key_bytes(&third);
+        let third_hash = third_identity.identity_hash();
+        let mut identities = TestIdentities::default();
+        identities.hold(first).unwrap();
+        identities.hold(second).unwrap();
+
+        assert_eq!(
+            identities.release(&first_hash),
+            ReleaseHeldIdentityOutcome::Released,
+        );
+        assert_eq!(identities.hashes(), &[second_hash]);
+        assert_eq!(identities.hold(third), Ok(third_hash));
+        assert_eq!(identities.hashes(), &[second_hash, third_hash]);
+
+        let message = b"retained identity alignment";
+        assert_eq!(
+            identities.get(&second_hash).map(|held| held.sign(message)),
+            Some(second_identity.sign(message)),
+        );
+        assert_eq!(
+            identities.get(&third_hash).map(|held| held.sign(message)),
+            Some(third_identity.sign(message)),
+        );
+    }
+
+    #[test]
+    fn releasing_an_unheld_identity_is_inert() {
+        let held = secret_key_bytes(0x11);
+        let held_hash = InMemoryNodeIdentity::from_secret_key_bytes(&held).identity_hash();
+        let mut identities = TestIdentities::default();
+        identities.hold(held).unwrap();
+
+        assert_eq!(
+            identities.release(&IdentityHash::new([0x99; 16])),
+            ReleaseHeldIdentityOutcome::NotHeld,
+        );
+        assert_eq!(identities.hashes(), &[held_hash]);
     }
 
     #[test]

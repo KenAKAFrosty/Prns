@@ -254,6 +254,21 @@ public enum CommandFailureKind: UInt32, Sendable {
     case connectFailed = 39
     case backendFailed = 40
     case responseTooLarge = 41
+    case linkClosed = 42
+    case responseCancelledBySender = 43
+    case responseHashmapBeyondPartCount = 44
+    case responseHashmapSkipsAhead = 45
+    case responseHashmapTooLong = 46
+    case responseHashmapRagged = 47
+    case responseRetriesExhausted = 48
+    case responseLinkVanished = 49
+    case responseTransferUnopenable = 50
+    case responseTransferCorrupt = 51
+    case responseProofUnsendable = 52
+    case responseDecompressionFailed = 53
+    case responseDecompressionTimedOut = 54
+    case responseOpenTimedOut = 55
+    case responseMetadataOverrun = 56
 }
 
 public enum DeliveryEvidenceKind: UInt32, Sendable {
@@ -279,6 +294,7 @@ public enum LinkClosedReason: UInt32, Sendable {
     case timeout = 1
     case peerClosed = 2
     case malformedRtt = 3
+    case locallyClosed = 4
 }
 
 public enum ApplicationEventKind: UInt32, Sendable {
@@ -858,6 +874,21 @@ public enum CommandFailure: Sendable {
     case connectFailed(detail: String)
     case backendFailed(detail: String)
     case responseTooLarge
+    case linkClosed
+    case responseCancelledBySender
+    case responseHashmapBeyondPartCount
+    case responseHashmapSkipsAhead
+    case responseHashmapTooLong
+    case responseHashmapRagged
+    case responseRetriesExhausted
+    case responseLinkVanished
+    case responseTransferUnopenable
+    case responseTransferCorrupt
+    case responseProofUnsendable
+    case responseDecompressionFailed
+    case responseDecompressionTimedOut
+    case responseOpenTimedOut
+    case responseMetadataOverrun
 }
 
 public enum ApplicationEvent: Sendable {

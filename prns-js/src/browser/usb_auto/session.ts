@@ -17,9 +17,8 @@ import type {
   InterfaceSessionFailure,
   InterfaceSessionStatus,
 } from "../interface_contract.js";
-import type { UsbAutoDecoderBinding } from "../runtime_contract.js";
 import type { UsbAutoSession } from "./index.js";
-import type { UsbAutoRuntimeHost } from "./runtime.js";
+import type { UsbAutoHostDecoder, UsbAutoRuntimeHost } from "./runtime.js";
 import { WebUsbAutoTransport } from "./transport.js";
 import type { UsbAutoWriteOutcome } from "./transport.js";
 
@@ -32,7 +31,6 @@ type SessionHandleOutcome = Tag<"Handled"> | InterfaceSessionFailure;
 type RawUsbAutoMessageType = "hello" | "helloAck" | "data";
 
 const PROBE_INTERVAL_MS = 500;
-const OUTBOUND_POLL_MS = 25;
 const RAW_MESSAGE_TYPES: ReadonlySet<string> =
   new Set<RawUsbAutoMessageType>(["hello", "helloAck", "data"]);
 
@@ -42,12 +40,13 @@ export class BrowserUsbAutoSession implements UsbAutoSession {
 
   readonly #host: UsbAutoRuntimeHost;
   readonly #transport: WebUsbAutoTransport;
-  readonly #decoder: UsbAutoDecoderBinding;
+  readonly #decoder: UsbAutoHostDecoder;
   readonly #nodeTag: Uint8Array;
   #writeQueue: Promise<UsbAutoWriteOutcome> = Promise.resolve(Tag("Written"));
   #closed = false;
   #confirmed = false;
   #status: InterfaceSessionStatus = Tag("Negotiating");
+  #closePromise: Promise<InterfaceCloseOutcome> | undefined;
 
   constructor(
     host: UsbAutoRuntimeHost,
@@ -68,16 +67,26 @@ export class BrowserUsbAutoSession implements UsbAutoSession {
   start(): void {
     void this.#readLoop();
     void this.#probeLoop();
-    void this.#outboundLoop();
   }
 
-  async close(): Promise<InterfaceCloseOutcome> {
-    if (this.#closed) {
-      return closedSessionOutcome(this.#status);
+  close(): Promise<InterfaceCloseOutcome> {
+    if (this.#closePromise !== undefined) {
+      return this.#closePromise;
     }
+    if (this.#closed) {
+      return Promise.resolve(closedSessionOutcome(this.#status));
+    }
+    this.#closePromise = this.#performClose().finally(() => {
+      this.#closePromise = undefined;
+    });
+    return this.#closePromise;
+  }
+
+  async #performClose(): Promise<InterfaceCloseOutcome> {
     this.#closed = true;
+    this.#decoder.release?.();
     const causes: InterfaceCleanupFailure[] = [];
-    const detached = this.#host.deactivateInterface(this.interfaceId);
+    const detached = await this.#host.deactivateInterface(this.interfaceId);
     if (detached.tag !== "Detached") {
       causes.push(Tag("RuntimeDetachFailed", { detail: detached.data.detail }));
     }
@@ -116,7 +125,12 @@ export class BrowserUsbAutoSession implements UsbAutoSession {
         }
         let messages: unknown[];
         try {
-          messages = this.#decoder.feed(chunk);
+          const decoded = await this.#decoder.feed(chunk);
+          if (!Array.isArray(decoded)) {
+            await this.#fail(decoded);
+            return;
+          }
+          messages = decoded;
         } catch (error) {
           await this.#fail(
             Tag("ProtocolViolation", {
@@ -177,23 +191,23 @@ export class BrowserUsbAutoSession implements UsbAutoSession {
   async #outboundLoop(): Promise<void> {
     try {
       while (!this.#closed) {
-        if (this.#confirmed) {
-          const outbound = this.#host.takeOutboundFor(this.interfaceId);
-          if (outbound.tag !== "Outbound") {
-            await this.#fail(outbound);
+        const outbound = await this.#host.nextOutboundFor(this.interfaceId);
+        if (outbound.tag === "InterfaceDetached") {
+          return;
+        }
+        if (outbound.tag !== "Outbound") {
+          await this.#fail(outbound);
+          return;
+        }
+        for (const frame of outbound.data) {
+          const written = await this.#writeFrame(
+            this.#host.usbAutoDataFrame(frame.bytes),
+          );
+          if (written.tag !== "Written") {
+            await this.#fail(written);
             return;
           }
-          for (const frame of outbound.data) {
-            const written = await this.#writeFrame(
-              this.#host.usbAutoDataFrame(frame.bytes),
-            );
-            if (written.tag !== "Written") {
-              await this.#fail(written);
-              return;
-            }
-          }
         }
-        await delay(OUTBOUND_POLL_MS);
       }
     } catch (error) {
       if (!this.#closed) {
@@ -220,7 +234,7 @@ export class BrowserUsbAutoSession implements UsbAutoSession {
       },
       Data: async (bytes) => {
         if (this.#confirmed && bytes.length > 0) {
-          const ingested = this.#host.ingest(
+          const ingested = await this.#host.ingest(
             this.interfaceId,
             packetFrame(bytes),
           );
@@ -232,8 +246,12 @@ export class BrowserUsbAutoSession implements UsbAutoSession {
   }
 
   #confirmPeer(): void {
+    if (this.#confirmed) {
+      return;
+    }
     this.#confirmed = true;
     this.#status = Tag("Active");
+    void this.#outboundLoop();
   }
 
   async #fail(sessionFailure: InterfaceSessionFailure): Promise<void> {
@@ -242,7 +260,8 @@ export class BrowserUsbAutoSession implements UsbAutoSession {
     }
     this.#status = Tag("Failed", sessionFailure);
     this.#closed = true;
-    this.#host.deactivateInterface(this.interfaceId);
+    this.#decoder.release?.();
+    await this.#host.deactivateInterface(this.interfaceId);
     await this.#writeQueue;
     await this.#transport.close();
   }

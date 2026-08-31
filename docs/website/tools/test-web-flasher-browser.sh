@@ -26,9 +26,13 @@ rm -rf -- "$dioxus_dist"
 PRNS_BUILD_VERSION="$fixture_version" \
 PRNS_BUILD_COMMIT="$fixture_commit" \
 PRNS_BUILD_CHANNEL=stable \
-dx build --platform web --debug-symbols false --release --locked --features browser-test-fixture
+dx build --web --ssg --force-sequential true --debug-symbols false --release --locked --features browser-test-fixture
 
 test -f "$dioxus_dist/index.html"
+PRNS_BUILD_VERSION="$fixture_version" \
+PRNS_BUILD_COMMIT="$fixture_commit" \
+PRNS_BUILD_CHANNEL=stable \
+cargo run --locked --features browser-test-fixture --bin finalize_ssg -- "$dioxus_dist"
 cp -R "$dioxus_dist/." "$site/"
 cp "$website/target/hosted-assets/prns-flash.js" "$site/assets/flasher/prns-flash.js"
 cp "$website/target/hosted-assets/prns-flash.js.map" "$site/assets/flasher/prns-flash.js.map"

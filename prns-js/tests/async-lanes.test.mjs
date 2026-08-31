@@ -4,7 +4,7 @@ import { test } from "node:test";
 import {
   BoundedAsyncLane,
 } from "../dist/async_lanes.js";
-import { match } from "personal-rns/casework";
+import { match } from "../dist/casework.js";
 
 test("application pressure rejects without losing accepted values", async () => {
   let rejectedBytes = 0;

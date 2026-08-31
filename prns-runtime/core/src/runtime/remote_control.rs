@@ -392,6 +392,25 @@ mod tests {
             <() as PrnsNodeApi>::set_registered_announce_app_data(&(), set).await
         }
 
+        async fn open_remote_control_pairing(
+            &self,
+            open: crate::engine::OpenRemoteControlPairing,
+        ) -> Result<
+            crate::engine::RemoteControlPairingOpened,
+            super::super::OpenRemoteControlPairingControlError,
+        > {
+            <() as PrnsNodeApi>::open_remote_control_pairing(&(), open).await
+        }
+
+        async fn close_remote_control_pairing(
+            &self,
+        ) -> Result<
+            crate::engine::CloseRemoteControlPairingOutcome,
+            super::super::CloseRemoteControlPairingControlError,
+        > {
+            <() as PrnsNodeApi>::close_remote_control_pairing(&()).await
+        }
+
         async fn send_single_packet(
             &self,
             destination: DestinationHash,

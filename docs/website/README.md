@@ -38,6 +38,24 @@ The tests verify canonical benchmark-results inclusion and link rewriting,
 generated benchmark routes, the flash catalog contract, and the platform
 claims the site is allowed to make.
 
+## Static production build
+
+The production site uses Dioxus fullstack static-site generation. The server
+binary exists only while DX discovers and renders the declared static routes;
+the deployable artifact is still a static `public` directory.
+
+```console
+dx build --web --ssg --force-sequential true --release --locked
+cargo run --locked --bin finalize_ssg -- target/dx/reticulum-site/release/web/public
+```
+
+The finalization command does not render pages. It verifies Dioxus's output,
+copies the rendered `/404` route to the host-standard root `404.html`, and
+writes `sitemap.xml` from the same typed route inventory used by SSG.
+Sequential mode is deliberate: it prevents the client bundle from racing and
+overwriting an already-rendered root page when local builds run both targets in
+parallel.
+
 ## Hosted boundary
 
 The default website includes the platform matrix, the web flasher, benchmark

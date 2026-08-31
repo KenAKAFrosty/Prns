@@ -55,9 +55,14 @@ let nextChannelTag = 0;
 export class UsbAutoInterface {
   readonly name = "usb-auto" as const;
   readonly #host: UsbAutoRuntimeHost;
+  readonly #onConnected: ((session: UsbAutoSession) => void) | undefined;
 
-  constructor(host: UsbAutoRuntimeHost) {
+  constructor(
+    host: UsbAutoRuntimeHost,
+    onConnected?: (session: UsbAutoSession) => void,
+  ) {
     this.#host = host;
+    this.#onConnected = onConnected;
   }
 
   async connect(
@@ -90,7 +95,7 @@ export class UsbAutoInterface {
       }
       transport = opened.data;
       stage = "RuntimeRegistration";
-      const registered = this.#host.registerInterface({
+      const registered = await this.#host.registerInterface({
         interfaceName: "usb-auto",
         kind: "auto-usb-host",
         channelTag: browserUsbAutoChannelTag(requested.data),
@@ -105,10 +110,11 @@ export class UsbAutoInterface {
       stage = "Handshake";
       const session = new BrowserUsbAutoSession(this.#host, transport, interfaceId);
       session.start();
+      this.#onConnected?.(session);
       return Tag("Connected", session);
     } catch (error) {
       if (interfaceId) {
-        this.#host.deactivateInterface(interfaceId);
+        await this.#host.deactivateInterface(interfaceId);
       }
       await transport?.close();
       return connectFailure("usb-auto", stage, error);

@@ -2,12 +2,12 @@ use crate::engine::node_egress::{
     allows_announce_rebroadcast, fan_frame, fleet_announce_fan_target,
     fleet_fan_target_reaches_any_member,
 };
-use crate::engine::settlement::{settle, timeout_settlement};
+use crate::engine::settlement::settle;
 #[cfg(feature = "runtime-metrics")]
 use crate::engine::AnnounceOrigin;
 use crate::engine::{
     Directive, EngineReaction, EngineState, EstablishLinkFailure, FanTarget, InstantMillis,
-    Journaled, LinkClosedReason, ReemitAnnounce, RequestPathFailure, Settlement, WakeSchedules,
+    LinkClosedReason, ReemitAnnounce, RequestPathFailure, Settlement, WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{AttachedInterfaces, Egress};
@@ -28,11 +28,13 @@ impl<S: StorageLayout> EngineState<S> {
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         while let Some(expired) = self.receipts.pop_expired(now) {
-            settle(sink, expired.command_id, timeout_settlement(expired.kind));
+            let settlement = self.timeout_settlement(expired.kind);
+            settle(sink, expired.command_id, settlement);
         }
         WakeSchedules {
             receipt_timeouts: self.receipt_timeouts_wake(),
             resource_deadlines: self.resource_deadlines_wake(),
+            remote_control_pairing: self.remote_control_pairing_wake(),
             ..WakeSchedules::UNCHANGED
         }
     }
@@ -345,7 +347,9 @@ impl<S: StorageLayout> EngineState<S> {
             let mut iv = [0u8; ENCRYPTION_IV_LEN];
             fill_entropy(&mut iv);
             let mut buf = [0u8; BROADCAST_MTU];
-            if let Ok(dispatch) = self.write_owed_link_close(&link_id, &iv, &mut buf) {
+            if let Ok(dispatch) =
+                self.write_owed_link_close(&link_id, LinkClosedReason::Timeout, &iv, &mut buf, sink)
+            {
                 if let Some(target) = dispatch.fire_on {
                     if interfaces.is_egress_eligible(target, Egress::Transmit) {
                         sink(EngineReaction::Directive(Directive::Send {
@@ -354,10 +358,6 @@ impl<S: StorageLayout> EngineState<S> {
                         }));
                     }
                 }
-                sink(EngineReaction::Journaled(Journaled::LinkClosed {
-                    link_id,
-                    reason: LinkClosedReason::Timeout,
-                }));
             }
         }
     }

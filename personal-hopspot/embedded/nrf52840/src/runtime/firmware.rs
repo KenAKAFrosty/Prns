@@ -19,8 +19,7 @@ use personal_rns::lora::{LoRaApplyOutcome, LoRaInterface, LoRaInterfaceInput, Lo
 use personal_rns::manifold::embassy::{EmbassyHost, EmbassyInterfaceStatus};
 use personal_rns::manifold::interface_seam::Interface;
 use personal_rns::remote_control::{
-    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
-    RemoteControlService,
+    RemoteControlInitialAccess, RemoteControlSelfAnnouncement, RemoteControlService,
 };
 use personal_rns::runtime::{Fleet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe};
 use personal_rns::storage::StorageLayout;
@@ -221,7 +220,6 @@ pub async fn run(spawner: Spawner) -> ! {
     let node_page_destination = destination_hashes.node_page;
     let remote_control = RemoteControlService::new(
         remote_control_identity_secrets,
-        RemoteControlPublicAppData::empty(),
         RemoteControlInitialAccess::Nobody,
         RemoteControlSelfAnnouncement::Destination(node_page_destination),
     );

@@ -24,6 +24,8 @@ use personal_rns::interfaces::{
 };
 use personal_rns::node_introspection::{DestinationIdentityQuery, NodeIntrospection};
 use personal_rns::routing::links::channel::MessageType;
+use personal_rns::routing::links::resources::table::ApplyHashmapUpdateError;
+use personal_rns::routing::links::resources::ResourceFailureCause;
 use personal_rns::routing::{
     BlackholeExpiry, BlackholeIdentityOutcome, BlackholedIdentity, NextHop,
     UnblackholeIdentityOutcome,
@@ -616,6 +618,9 @@ fn send_link_error(error: personal_rns::SendError<SendToLinkFailure>) -> crate::
         personal_rns::SendError::Failed(SendToLinkFailure::Timeout) => {
             code_err(ErrorCode::DeliveryTimedOut, "delivery timed out")
         }
+        personal_rns::SendError::Failed(SendToLinkFailure::LinkClosed) => {
+            code_err(ErrorCode::LinkClosed, "link closed")
+        }
     }
 }
 
@@ -641,6 +646,34 @@ fn request_error(error: personal_rns::SendError<SendRequestFailure>) -> crate::e
         }
         personal_rns::SendError::Failed(SendRequestFailure::Timeout) => {
             code_err(ErrorCode::DeliveryTimedOut, "request timed out")
+        }
+        personal_rns::SendError::Failed(SendRequestFailure::LinkClosed) => {
+            code_err(ErrorCode::LinkClosed, "link closed")
+        }
+        personal_rns::SendError::Failed(SendRequestFailure::ResponseTransferFailed(cause)) => {
+            let code = match cause {
+                ResourceFailureCause::CancelledBySender => ErrorCode::ResponseCancelledBySender,
+                ResourceFailureCause::RefusedHashmapUpdate(refusal) => match refusal {
+                    ApplyHashmapUpdateError::BeyondPartCount => {
+                        ErrorCode::ResponseHashmapBeyondPartCount
+                    }
+                    ApplyHashmapUpdateError::SkipsAhead => ErrorCode::ResponseHashmapSkipsAhead,
+                    ApplyHashmapUpdateError::HashmapTooLong => ErrorCode::ResponseHashmapTooLong,
+                    ApplyHashmapUpdateError::HashmapRagged => ErrorCode::ResponseHashmapRagged,
+                },
+                ResourceFailureCause::RetriesExhausted => ErrorCode::ResponseRetriesExhausted,
+                ResourceFailureCause::LinkVanished => ErrorCode::ResponseLinkVanished,
+                ResourceFailureCause::TransferUnopenable => ErrorCode::ResponseTransferUnopenable,
+                ResourceFailureCause::TransferCorrupt => ErrorCode::ResponseTransferCorrupt,
+                ResourceFailureCause::ProofUnsendable => ErrorCode::ResponseProofUnsendable,
+                ResourceFailureCause::DecompressionFailed => ErrorCode::ResponseDecompressionFailed,
+                ResourceFailureCause::DecompressionTimedOut => {
+                    ErrorCode::ResponseDecompressionTimedOut
+                }
+                ResourceFailureCause::OpenTimedOut => ErrorCode::ResponseOpenTimedOut,
+                ResourceFailureCause::MetadataOverrun => ErrorCode::ResponseMetadataOverrun,
+            };
+            code_err(code, &format!("response transfer failed: {cause:?}"))
         }
         personal_rns::SendError::Failed(SendRequestFailure::ResponseTooLarge) => {
             code_err(ErrorCode::ResponseTooLarge, "response is too large")
@@ -708,6 +741,9 @@ fn channel_error(error: personal_rns::SendError<SendToChannelFailure>) -> crate:
         personal_rns::SendError::Failed(SendToChannelFailure::Timeout) => {
             code_err(ErrorCode::DeliveryTimedOut, "channel delivery timed out")
         }
+        personal_rns::SendError::Failed(SendToChannelFailure::LinkClosed) => {
+            code_err(ErrorCode::LinkClosed, "link closed")
+        }
     }
 }
 
@@ -753,6 +789,7 @@ fn send_resource_failure(failure: SendResourceFailure) -> crate::errors::CodeErr
         SendResourceFailure::Timeout => {
             code_err(ErrorCode::DeliveryTimedOut, "resource delivery timed out")
         }
+        SendResourceFailure::LinkClosed => code_err(ErrorCode::LinkClosed, "link closed"),
         SendResourceFailure::PredecessorFailed => code_err(
             ErrorCode::ResourcePredecessorFailed,
             "resource predecessor failed",
@@ -1574,6 +1611,25 @@ fn host_command_error(error: HostCommandFailure) -> crate::errors::CodeError {
         HostCommandFailure::Busy => ErrorCode::Busy,
         HostCommandFailure::PayloadTooLarge => ErrorCode::PayloadTooLarge,
         HostCommandFailure::ResponseTooLarge => ErrorCode::ResponseTooLarge,
+        HostCommandFailure::LinkClosed => ErrorCode::LinkClosed,
+        HostCommandFailure::ResponseCancelledBySender => ErrorCode::ResponseCancelledBySender,
+        HostCommandFailure::ResponseHashmapBeyondPartCount => {
+            ErrorCode::ResponseHashmapBeyondPartCount
+        }
+        HostCommandFailure::ResponseHashmapSkipsAhead => ErrorCode::ResponseHashmapSkipsAhead,
+        HostCommandFailure::ResponseHashmapTooLong => ErrorCode::ResponseHashmapTooLong,
+        HostCommandFailure::ResponseHashmapRagged => ErrorCode::ResponseHashmapRagged,
+        HostCommandFailure::ResponseRetriesExhausted => ErrorCode::ResponseRetriesExhausted,
+        HostCommandFailure::ResponseLinkVanished => ErrorCode::ResponseLinkVanished,
+        HostCommandFailure::ResponseTransferUnopenable => ErrorCode::ResponseTransferUnopenable,
+        HostCommandFailure::ResponseTransferCorrupt => ErrorCode::ResponseTransferCorrupt,
+        HostCommandFailure::ResponseProofUnsendable => ErrorCode::ResponseProofUnsendable,
+        HostCommandFailure::ResponseDecompressionFailed => ErrorCode::ResponseDecompressionFailed,
+        HostCommandFailure::ResponseDecompressionTimedOut => {
+            ErrorCode::ResponseDecompressionTimedOut
+        }
+        HostCommandFailure::ResponseOpenTimedOut => ErrorCode::ResponseOpenTimedOut,
+        HostCommandFailure::ResponseMetadataOverrun => ErrorCode::ResponseMetadataOverrun,
         HostCommandFailure::InvalidBitrate | HostCommandFailure::InvalidConfiguration { .. } => {
             ErrorCode::InvalidArgument
         }
