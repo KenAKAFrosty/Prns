@@ -7,6 +7,7 @@ use personal_rns::interfaces::bluetooth_auto::{
     decode_persisted_ble_identity, encode_persisted_ble_identity, BleIdentity,
     PersistedBleIdentityError, BLE_IDENTITY_LEN, PERSISTED_BLE_IDENTITY_LEN,
 };
+use prns_core::entropy::{EntropySource, RuntimeEntropy};
 
 use crate::{
     HopspotNodeIdentity, IdentityBootstrap, IdentityStorageName, BLE_IDENTITY_STORAGE,
@@ -24,7 +25,29 @@ pub enum FlashIdentityError<E> {
     Verification,
 }
 
+pub fn bootstrap_flash_node_identity_with_runtime_entropy<
+    F: NorFlash,
+    S: EntropySource,
+    const SLOTS: usize,
+>(
+    vault: &mut FlashVault<F, SLOTS>,
+    entropy: &mut RuntimeEntropy<S>,
+) -> IdentityBootstrap<HopspotNodeIdentity, FlashIdentityError<F::Error>> {
+    bootstrap_flash_node_identity_inner(vault, &mut |output| entropy.fill_random(output))
+}
+
+#[deprecated(
+    since = "0.4.0",
+    note = "use bootstrap_flash_node_identity_with_runtime_entropy"
+)]
 pub fn bootstrap_flash_node_identity<F: NorFlash, const SLOTS: usize>(
+    vault: &mut FlashVault<F, SLOTS>,
+    fill_entropy: &mut impl FnMut(&mut [u8]),
+) -> IdentityBootstrap<HopspotNodeIdentity, FlashIdentityError<F::Error>> {
+    bootstrap_flash_node_identity_inner(vault, fill_entropy)
+}
+
+fn bootstrap_flash_node_identity_inner<F: NorFlash, const SLOTS: usize>(
     vault: &mut FlashVault<F, SLOTS>,
     fill_entropy: &mut impl FnMut(&mut [u8]),
 ) -> IdentityBootstrap<HopspotNodeIdentity, FlashIdentityError<F::Error>> {
@@ -68,7 +91,29 @@ pub fn bootstrap_flash_node_identity<F: NorFlash, const SLOTS: usize>(
     }
 }
 
+pub fn bootstrap_flash_ble_identity_with_runtime_entropy<
+    F: NorFlash,
+    S: EntropySource,
+    const SLOTS: usize,
+>(
+    vault: &mut FlashVault<F, SLOTS>,
+    entropy: &mut RuntimeEntropy<S>,
+) -> IdentityBootstrap<BleIdentity, FlashIdentityError<F::Error>> {
+    bootstrap_flash_ble_identity_inner(vault, &mut |output| entropy.fill_random(output))
+}
+
+#[deprecated(
+    since = "0.4.0",
+    note = "use bootstrap_flash_ble_identity_with_runtime_entropy"
+)]
 pub fn bootstrap_flash_ble_identity<F: NorFlash, const SLOTS: usize>(
+    vault: &mut FlashVault<F, SLOTS>,
+    fill_entropy: &mut impl FnMut(&mut [u8]),
+) -> IdentityBootstrap<BleIdentity, FlashIdentityError<F::Error>> {
+    bootstrap_flash_ble_identity_inner(vault, fill_entropy)
+}
+
+fn bootstrap_flash_ble_identity_inner<F: NorFlash, const SLOTS: usize>(
     vault: &mut FlashVault<F, SLOTS>,
     fill_entropy: &mut impl FnMut(&mut [u8]),
 ) -> IdentityBootstrap<BleIdentity, FlashIdentityError<F::Error>> {
@@ -340,6 +385,8 @@ impl<E: core::fmt::Debug> core::fmt::Display for FlashIdentityError<E> {
 
 #[cfg(test)]
 mod tests {
+    use core::convert::Infallible;
+
     use super::*;
     use embedded_storage::nor_flash::{ErrorType, NorFlashError, NorFlashErrorKind, ReadNorFlash};
 
@@ -435,15 +482,37 @@ mod tests {
         }
     }
 
-    fn fill(byte: u8) -> impl FnMut(&mut [u8]) {
-        move |bytes| bytes.fill(byte)
+    struct TestEntropySource(u8);
+
+    impl EntropySource for TestEntropySource {
+        type Error = Infallible;
+
+        fn try_fill_entropy(&mut self, output: &mut [u8]) -> Result<(), Self::Error> {
+            output.fill(self.0);
+            Ok(())
+        }
+    }
+
+    fn runtime_entropy(seed: u8) -> RuntimeEntropy<TestEntropySource> {
+        RuntimeEntropy::try_new(TestEntropySource(seed)).unwrap()
+    }
+
+    fn generated_node_secret(seed: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
+        HopspotNodeIdentity::generate(&mut runtime_entropy(seed)).transport_secret()
+    }
+
+    fn generated_ble_identity(seed: u8) -> BleIdentity {
+        BleIdentity::generate(&mut runtime_entropy(seed))
     }
 
     #[test]
     fn node_identity_is_created_then_loaded_from_the_same_vault() {
         let flash = {
             let mut vault = FlashVault::<_, 1>::new(FakeFlash::new(), 0);
-            let created = bootstrap_flash_node_identity(&mut vault, &mut fill(0x31));
+            let created = bootstrap_flash_node_identity_with_runtime_entropy(
+                &mut vault,
+                &mut runtime_entropy(0x31),
+            );
             assert!(matches!(
                 created.persistence(),
                 crate::IdentityPersistence::Created
@@ -451,14 +520,17 @@ mod tests {
             vault.release()
         };
         let mut vault = FlashVault::<_, 1>::new(flash, 0);
-        let loaded = bootstrap_flash_node_identity(&mut vault, &mut fill(0x92));
+        let loaded = bootstrap_flash_node_identity_with_runtime_entropy(
+            &mut vault,
+            &mut runtime_entropy(0x92),
+        );
         assert!(matches!(
             loaded.persistence(),
             crate::IdentityPersistence::Loaded
         ));
         assert_eq!(
             loaded.into_identity().secret(),
-            &[0x31; IDENTITY_SECRET_KEY_LEN]
+            &generated_node_secret(0x31)[..]
         );
     }
 
@@ -466,19 +538,25 @@ mod tests {
     fn corrupt_node_identity_is_reseeded() {
         let mut flash = {
             let mut vault = FlashVault::<_, 1>::new(FakeFlash::new(), 0);
-            let _ = bootstrap_flash_node_identity(&mut vault, &mut fill(0x41));
+            let _ = bootstrap_flash_node_identity_with_runtime_entropy(
+                &mut vault,
+                &mut runtime_entropy(0x41),
+            );
             vault.release()
         };
         flash.bytes[100] ^= 0x01;
         let mut vault = FlashVault::<_, 1>::new(flash, 0);
-        let recovered = bootstrap_flash_node_identity(&mut vault, &mut fill(0x42));
+        let recovered = bootstrap_flash_node_identity_with_runtime_entropy(
+            &mut vault,
+            &mut runtime_entropy(0x42),
+        );
         assert!(matches!(
             recovered.persistence(),
             crate::IdentityPersistence::Recovered(_)
         ));
         assert_eq!(
             recovered.into_identity().secret(),
-            &[0x42; IDENTITY_SECRET_KEY_LEN]
+            &generated_node_secret(0x42)[..],
         );
     }
 
@@ -487,14 +565,17 @@ mod tests {
         let mut flash = FakeFlash::new();
         flash.fail_reads = true;
         let mut vault = FlashVault::<_, 1>::new(flash, 0);
-        let ephemeral = bootstrap_flash_node_identity(&mut vault, &mut fill(0x53));
+        let ephemeral = bootstrap_flash_node_identity_with_runtime_entropy(
+            &mut vault,
+            &mut runtime_entropy(0x53),
+        );
         assert!(matches!(
             ephemeral.persistence(),
             crate::IdentityPersistence::Ephemeral(_)
         ));
         assert_eq!(
             ephemeral.into_identity().secret(),
-            &[0x53; IDENTITY_SECRET_KEY_LEN]
+            &generated_node_secret(0x53)[..],
         );
     }
 
@@ -503,14 +584,17 @@ mod tests {
         let mut flash = FakeFlash::new();
         flash.fail_writes = true;
         let mut vault = FlashVault::<_, 1>::new(flash, 0);
-        let ephemeral = bootstrap_flash_node_identity(&mut vault, &mut fill(0x54));
+        let ephemeral = bootstrap_flash_node_identity_with_runtime_entropy(
+            &mut vault,
+            &mut runtime_entropy(0x54),
+        );
         assert!(matches!(
             ephemeral.persistence(),
             crate::IdentityPersistence::Ephemeral(_)
         ));
         assert_eq!(
             ephemeral.into_identity().secret(),
-            &[0x54; IDENTITY_SECRET_KEY_LEN]
+            &generated_node_secret(0x54)[..],
         );
     }
 
@@ -518,7 +602,10 @@ mod tests {
     fn ble_identity_uses_the_protected_blob_record() {
         let flash = {
             let mut vault = FlashVault::<_, 1>::new(FakeFlash::new(), 0);
-            let created = bootstrap_flash_ble_identity(&mut vault, &mut fill(0x64));
+            let created = bootstrap_flash_ble_identity_with_runtime_entropy(
+                &mut vault,
+                &mut runtime_entropy(0x64),
+            );
             assert!(matches!(
                 created.persistence(),
                 crate::IdentityPersistence::Created
@@ -526,34 +613,37 @@ mod tests {
             vault.release()
         };
         let mut vault = FlashVault::<_, 1>::new(flash, 0);
-        let loaded = bootstrap_flash_ble_identity(&mut vault, &mut fill(0x65));
+        let loaded = bootstrap_flash_ble_identity_with_runtime_entropy(
+            &mut vault,
+            &mut runtime_entropy(0x65),
+        );
         assert!(matches!(
             loaded.persistence(),
             crate::IdentityPersistence::Loaded
         ));
-        assert_eq!(
-            loaded.into_identity(),
-            BleIdentity::new([0x64; BLE_IDENTITY_LEN])
-        );
+        assert_eq!(loaded.into_identity(), generated_ble_identity(0x64));
     }
 
     #[test]
     fn corrupt_ble_identity_is_reseeded() {
         let mut flash = {
             let mut vault = FlashVault::<_, 1>::new(FakeFlash::new(), 0);
-            let _ = bootstrap_flash_ble_identity(&mut vault, &mut fill(0x71));
+            let _ = bootstrap_flash_ble_identity_with_runtime_entropy(
+                &mut vault,
+                &mut runtime_entropy(0x71),
+            );
             vault.release()
         };
         flash.bytes[100] ^= 0x01;
         let mut vault = FlashVault::<_, 1>::new(flash, 0);
-        let recovered = bootstrap_flash_ble_identity(&mut vault, &mut fill(0x72));
+        let recovered = bootstrap_flash_ble_identity_with_runtime_entropy(
+            &mut vault,
+            &mut runtime_entropy(0x72),
+        );
         assert!(matches!(
             recovered.persistence(),
             crate::IdentityPersistence::Recovered(_)
         ));
-        assert_eq!(
-            recovered.into_identity(),
-            BleIdentity::new([0x72; BLE_IDENTITY_LEN])
-        );
+        assert_eq!(recovered.into_identity(), generated_ble_identity(0x72));
     }
 }

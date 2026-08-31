@@ -1,3 +1,6 @@
+use core::convert::Infallible;
+
+use crate::entropy::{EntropySource, RuntimeEntropy};
 use crate::identity::vault::{
     IdentityLabel, IdentityLabelError, IdentityOrigin, IdentitySecretKey, IdentityVault,
 };
@@ -143,9 +146,34 @@ pub struct RemoteControlNodeIdentityBootstrap {
 }
 
 impl RemoteControlNodeIdentityBootstrap {
+    pub fn load_or_generate_with_runtime_entropy<Vault, S>(
+        vault: &mut Vault,
+        entropy: &mut RuntimeEntropy<S>,
+    ) -> Result<Self, RemoteControlNodeIdentityBootstrapError<Vault::Error, Infallible>>
+    where
+        Vault: IdentityVault,
+        S: EntropySource,
+    {
+        Self::load_or_generate_inner(vault, |output| {
+            entropy.fill_random(output);
+            Ok(())
+        })
+    }
+
+    #[deprecated(since = "0.4.0", note = "use load_or_generate_with_runtime_entropy")]
     pub fn load_or_generate<Vault, EntropyError>(
         vault: &mut Vault,
-        mut fill_entropy: impl FnMut(&mut [u8]) -> Result<(), EntropyError>,
+        fill_entropy: impl FnMut(&mut [u8]) -> Result<(), EntropyError>,
+    ) -> Result<Self, RemoteControlNodeIdentityBootstrapError<Vault::Error, EntropyError>>
+    where
+        Vault: IdentityVault,
+    {
+        Self::load_or_generate_inner(vault, fill_entropy)
+    }
+
+    fn load_or_generate_inner<Vault, EntropyError>(
+        vault: &mut Vault,
+        mut fill_random: impl FnMut(&mut [u8]) -> Result<(), EntropyError>,
     ) -> Result<Self, RemoteControlNodeIdentityBootstrapError<Vault::Error, EntropyError>>
     where
         Vault: IdentityVault,
@@ -175,7 +203,7 @@ impl RemoteControlNodeIdentityBootstrap {
             Some(secret) => secret,
             None => {
                 let mut secret = Zeroizing::new([0; IDENTITY_SECRET_KEY_LEN]);
-                fill_entropy(&mut secret[..])
+                fill_random(&mut secret[..])
                     .map_err(RemoteControlNodeIdentityBootstrapError::ControllerEntropy)?;
                 secret
             }
@@ -184,7 +212,7 @@ impl RemoteControlNodeIdentityBootstrap {
             Some(secret) => secret,
             None => {
                 let mut secret = Zeroizing::new([0; IDENTITY_SECRET_KEY_LEN]);
-                fill_entropy(&mut secret[..])
+                fill_random(&mut secret[..])
                     .map_err(RemoteControlNodeIdentityBootstrapError::TargetEntropy)?;
                 secret
             }
@@ -285,6 +313,8 @@ impl RemoteControlNodeIdentityBootstrap {
 
 #[cfg(test)]
 mod tests {
+    #![allow(deprecated)]
+
     use std::collections::HashMap;
 
     use super::*;
@@ -382,6 +412,21 @@ mod tests {
         Unavailable,
     }
 
+    struct TestEntropySource(u8);
+
+    impl EntropySource for TestEntropySource {
+        type Error = Infallible;
+
+        fn try_fill_entropy(&mut self, output: &mut [u8]) -> Result<(), Self::Error> {
+            output.fill(self.0);
+            Ok(())
+        }
+    }
+
+    fn runtime_entropy(seed: u8) -> RuntimeEntropy<TestEntropySource> {
+        RuntimeEntropy::try_new(TestEntropySource(seed)).unwrap()
+    }
+
     fn distinct_entropy() -> impl FnMut(&mut [u8]) -> Result<(), EntropyError> {
         let mut fill = 0x31;
         move |bytes| {
@@ -394,10 +439,13 @@ mod tests {
     #[test]
     fn fresh_bootstrap_generates_verifies_and_returns_both_secrets() {
         let mut vault = MemoryVault::default();
+        let mut entropy = runtime_entropy(0x31);
 
-        let bootstrap =
-            RemoteControlNodeIdentityBootstrap::load_or_generate(&mut vault, distinct_entropy())
-                .unwrap();
+        let bootstrap = RemoteControlNodeIdentityBootstrap::load_or_generate_with_runtime_entropy(
+            &mut vault,
+            &mut entropy,
+        )
+        .unwrap();
 
         assert_eq!(
             bootstrap.origins(),
@@ -420,22 +468,20 @@ mod tests {
     #[test]
     fn subsequent_bootstrap_loads_the_stable_pair_without_entropy() {
         let mut vault = MemoryVault::default();
-        let first =
-            RemoteControlNodeIdentityBootstrap::load_or_generate(&mut vault, distinct_entropy())
-                .unwrap();
-        let first_identities = first.secrets().identities();
-        let mut entropy_calls = 0;
-
-        let second = RemoteControlNodeIdentityBootstrap::load_or_generate(
+        let first = RemoteControlNodeIdentityBootstrap::load_or_generate_with_runtime_entropy(
             &mut vault,
-            |_bytes| -> Result<(), EntropyError> {
-                entropy_calls += 1;
-                Ok(())
-            },
+            &mut runtime_entropy(0x31),
+        )
+        .unwrap();
+        let first_identities = first.secrets().identities();
+        let mut load_entropy = runtime_entropy(0x92);
+        let mut untouched_entropy = runtime_entropy(0x92);
+        let second = RemoteControlNodeIdentityBootstrap::load_or_generate_with_runtime_entropy(
+            &mut vault,
+            &mut load_entropy,
         )
         .unwrap();
 
-        assert_eq!(entropy_calls, 0);
         assert_eq!(second.secrets().identities(), first_identities);
         assert_eq!(
             second.origins(),
@@ -444,6 +490,12 @@ mod tests {
                 target: IdentityOrigin::Loaded,
             },
         );
+
+        let mut after_load = [0_u8; 32];
+        let mut untouched = [0_u8; 32];
+        load_entropy.fill_random(&mut after_load);
+        untouched_entropy.fill_random(&mut untouched);
+        assert_eq!(after_load, untouched);
     }
 
     #[test]

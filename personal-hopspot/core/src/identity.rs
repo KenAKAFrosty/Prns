@@ -1,4 +1,5 @@
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use prns_core::entropy::{EntropySource, RuntimeEntropy};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IdentityStorageName(&'static str);
@@ -19,6 +20,13 @@ pub struct HopspotNodeIdentity {
 impl HopspotNodeIdentity {
     pub fn new(secret: Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>) -> Self {
         Self { secret }
+    }
+
+    #[must_use]
+    pub fn generate<S: EntropySource>(entropy: &mut RuntimeEntropy<S>) -> Self {
+        let mut secret = Zeroizing::new([0_u8; IDENTITY_SECRET_KEY_LEN]);
+        entropy.fill_random(&mut secret[..]);
+        Self::new(secret)
     }
 
     pub fn secret(&self) -> &[u8; IDENTITY_SECRET_KEY_LEN] {

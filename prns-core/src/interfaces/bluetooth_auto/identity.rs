@@ -1,3 +1,5 @@
+use crate::entropy::{EntropySource, RuntimeEntropy};
+
 pub const GROUP_ID: &[u8] = b"bluetooth-auto";
 pub const BLE_IDENTITY_LEN: usize = 16;
 pub const PERSISTED_BLE_IDENTITY_LEN: usize = 40;
@@ -26,6 +28,13 @@ pub struct BleIdentity([u8; BLE_IDENTITY_LEN]);
 
 impl BleIdentity {
     pub const fn new(bytes: [u8; BLE_IDENTITY_LEN]) -> Self {
+        Self(bytes)
+    }
+
+    #[must_use]
+    pub fn generate<S: EntropySource>(entropy: &mut RuntimeEntropy<S>) -> Self {
+        let mut bytes = [0_u8; BLE_IDENTITY_LEN];
+        entropy.fill_random(&mut bytes);
         Self(bytes)
     }
 
@@ -87,7 +96,37 @@ impl std::error::Error for PersistedBleIdentityError {}
 
 #[cfg(test)]
 mod tests {
+    use core::convert::Infallible;
+
     use super::*;
+
+    struct TestEntropySource(u8);
+
+    impl EntropySource for TestEntropySource {
+        type Error = Infallible;
+
+        fn try_fill_entropy(&mut self, output: &mut [u8]) -> Result<(), Self::Error> {
+            output.fill(self.0);
+            Ok(())
+        }
+    }
+
+    fn runtime_entropy(seed: u8) -> RuntimeEntropy<TestEntropySource> {
+        RuntimeEntropy::try_new(TestEntropySource(seed)).unwrap()
+    }
+
+    #[test]
+    fn generated_identity_comes_from_the_runtime_stream() {
+        let mut first_entropy = runtime_entropy(0x41);
+        let mut reference_entropy = runtime_entropy(0x41);
+
+        let first = BleIdentity::generate(&mut first_entropy);
+        let reference = BleIdentity::generate(&mut reference_entropy);
+        let second = BleIdentity::generate(&mut first_entropy);
+
+        assert_eq!(first, reference);
+        assert_ne!(first, second);
+    }
 
     #[test]
     fn persisted_identity_record_round_trips_and_detects_partial_writes() {

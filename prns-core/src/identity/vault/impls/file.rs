@@ -195,6 +195,8 @@ impl std::error::Error for FileVaultError {
 
 #[cfg(test)]
 mod tests {
+    #![allow(deprecated)]
+
     use super::*;
     use crate::identity::vault::{load_or_generate, IdentityOrigin};
     use std::sync::atomic::{AtomicU32, Ordering};

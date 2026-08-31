@@ -140,6 +140,8 @@ impl<E: std::error::Error + 'static> std::error::Error for RnsCompatibilityVault
 
 #[cfg(test)]
 mod tests {
+    #![allow(deprecated)]
+
     use super::*;
     use crate::identity::vault::{load_or_generate, IdentityOrigin};
     use std::collections::HashMap;

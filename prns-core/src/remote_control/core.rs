@@ -1,3 +1,4 @@
+use crate::entropy::{EntropySource, RuntimeEntropy};
 use crate::identity::in_memory::{IdentityParts, InMemoryNodeIdentity};
 use crate::identity::vault::IdentitySecretKey;
 use crate::identity::{IdentityHash, IdentityPublicKeys, IDENTITY_SECRET_KEY_LEN};
@@ -117,6 +118,20 @@ pub struct RemoteControlNodeIdentitySecrets {
 }
 
 impl RemoteControlNodeIdentitySecrets {
+    pub fn generate_with_runtime_entropy<S: EntropySource>(
+        entropy: &mut RuntimeEntropy<S>,
+    ) -> Result<Self, RemoteControlNodeIdentitySecretsError> {
+        let mut controller = IdentitySecretKey::new([0; IDENTITY_SECRET_KEY_LEN]);
+        entropy.fill_random(&mut controller[..]);
+        let mut target = IdentitySecretKey::new([0; IDENTITY_SECRET_KEY_LEN]);
+        entropy.fill_random(&mut target[..]);
+        Self::new(
+            RemoteControlControllerIdentitySecret::from(controller),
+            RemoteControlTargetIdentitySecret::from(target),
+        )
+    }
+
+    #[deprecated(since = "0.4.0", note = "use generate_with_runtime_entropy")]
     pub fn generate<EntropyError>(
         mut fill_entropy: impl FnMut(&mut [u8]) -> Result<(), EntropyError>,
     ) -> Result<Self, RemoteControlNodeIdentityGenerationError<EntropyError>> {

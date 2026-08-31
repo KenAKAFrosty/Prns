@@ -415,6 +415,8 @@ impl<E: core::fmt::Debug> core::fmt::Display for FlashVaultError<E> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(deprecated)]
+
     use super::*;
     use crate::identity::vault::{load_or_generate, IdentityOrigin};
     use crate::remote_control::{

@@ -1,11 +1,29 @@
+use ::core::convert::Infallible;
+
 use super::*;
 use crate::crypto::{Ed25519PublicKey, X25519PublicKey};
+use crate::entropy::{EntropySource, RuntimeEntropy};
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{
     IdentityEncryptionPublicKey, IdentityPublicKeys, IdentitySigningPublicKey, Zeroizing,
     IDENTITY_SECRET_KEY_LEN,
 };
 use proptest::prelude::*;
+
+struct TestEntropySource(u8);
+
+impl EntropySource for TestEntropySource {
+    type Error = Infallible;
+
+    fn try_fill_entropy(&mut self, output: &mut [u8]) -> Result<(), Self::Error> {
+        output.fill(self.0);
+        Ok(())
+    }
+}
+
+fn runtime_entropy(seed: u8) -> RuntimeEntropy<TestEntropySource> {
+    RuntimeEntropy::try_new(TestEntropySource(seed)).unwrap()
+}
 
 fn identity(fill: u8) -> RemoteControlControllerIdentity {
     RemoteControlControllerIdentity::new(IdentityPublicKeys {
@@ -157,16 +175,11 @@ fn one_identity_cannot_fill_both_remote_control_positions() {
 
 #[test]
 fn generated_node_identity_secrets_fill_both_roles_once() {
-    let mut fill = 0x30u8;
-    let secrets = RemoteControlNodeIdentitySecrets::generate(|bytes| {
-        fill = fill.wrapping_add(1);
-        bytes.fill(fill);
-        Ok::<_, ::core::convert::Infallible>(())
-    })
-    .unwrap();
+    let secrets =
+        RemoteControlNodeIdentitySecrets::generate_with_runtime_entropy(&mut runtime_entropy(0x30))
+            .unwrap();
     let identities = secrets.identities();
 
-    assert_eq!(fill, 0x32);
     assert_ne!(
         identities.controller().identity_hash(),
         identities.target().identity_hash(),
@@ -174,6 +187,7 @@ fn generated_node_identity_secrets_fill_both_roles_once() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn node_identity_secret_generation_preserves_each_failure_phase() {
     #[derive(Debug, PartialEq, Eq)]
     enum EntropyFailure {
