@@ -75,8 +75,10 @@ npm run build:flasher
 
 rm -rf -- "$dioxus_dist" "$hosted"
 PRNS_BUILD_CHANNEL=stable \
-dx build --platform web --debug-symbols false --release --locked
+dx build --web --ssg --force-sequential true --debug-symbols false --release --locked
 test -f "$dioxus_dist/index.html"
+PRNS_BUILD_CHANNEL=stable \
+cargo run --locked --bin finalize_ssg -- "$dioxus_dist"
 mkdir -p "$hosted"
 cp -R "$dioxus_dist/." "$hosted/"
 mkdir -p "$hosted/assets/flasher"

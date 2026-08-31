@@ -30,11 +30,15 @@ export declare class PrnsRuntime implements PrnsRuntimeBinding {
   allowRequester: PrnsRuntimeBinding["allowRequester"];
   closeLink: PrnsRuntimeBinding["closeLink"];
   ingest: PrnsRuntimeBinding["ingest"];
+  drainEventBatch: PrnsRuntimeBinding["drainEventBatch"];
+  drainCommandSettlementBatch(): Uint8Array;
   drainEvents: PrnsRuntimeBinding["drainEvents"];
   drainOutbound: PrnsRuntimeBinding["drainOutbound"];
   persistedState: PrnsRuntimeBinding["persistedState"];
   restorePersistedState: PrnsRuntimeBinding["restorePersistedState"];
   snapshot: PrnsRuntimeBinding["snapshot"];
+  snapshotPacked(): Uint8Array;
+  projectionSnapshot: PrnsRuntimeBinding["projectionSnapshot"];
 }
 
 export declare class UsbAutoDecoder implements UsbAutoDecoderBinding {

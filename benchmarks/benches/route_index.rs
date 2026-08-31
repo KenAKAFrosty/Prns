@@ -16,7 +16,7 @@ use personal_rns::routing::routes::{
     route_index_buckets, FixedArrayRouteTable, FixedIndexedRouteTable, RouteEntry, RouteEvidenceId,
     RouteTable,
 };
-use personal_rns::routing::{NextHop, RouteResponsiveness};
+use personal_rns::routing::{NextHop, RouteResponsiveness, RouteRetention};
 use personal_rns::wire::DestinationHash;
 
 fn dest_n(n: u32) -> DestinationHash {
@@ -39,6 +39,7 @@ fn route_row() -> RouteEntry {
         responsiveness: RouteResponsiveness::Responsive,
         receiving_interface: InterfaceId::new([0u8; 8]),
         next_hop: NextHop::Direct,
+        retention: RouteRetention::Network,
     }
 }
 

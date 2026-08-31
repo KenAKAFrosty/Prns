@@ -35,6 +35,7 @@ pub fn Shell() -> Element {
     }));
 
     rsx! {
+        crate::seo::PageMetadata { key: "{route}", route }
         div { class: "min-h-screen flex flex-col bg-ink text-paper",
             EnglishDocsNotice {}
             TopNav {}

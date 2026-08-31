@@ -57,11 +57,78 @@ const BEACON_INTERVAL: Duration = Duration::from_millis(1600);
 const UNICAST_REPEER_EVERY: u32 = 3;
 const RENDEZVOUS_RECONNECT: ReconnectPolicy = ReconnectPolicy::STANDARD;
 const REBIND_BEACON_CYCLES: u32 = 3;
-/// A full peer lane drops new datagrams rather than allowing one peer to grow process memory unbounded.
-const PEER_INBOUND_DEPTH: usize = 32;
+/// A full peer lane drops new datagrams rather than allowing one peer to grow process memory
+/// unbounded. Keep enough slots to bridge host scheduler bursts: at depth 32, a saturated
+/// loopback receiver spent most of its time dropping between peer-task turns; 128 retained the
+/// offered datagram rate while remaining bounded to about 150 KiB of payload per peer.
+const TOKIO_PEER_INBOUND_DEPTH: usize = 128;
+/// Amortize socket readiness and supervisor selection without monopolizing the shared interface
+/// driver. A half-full peer lane leaves room for two maximum drains before backpressure.
+const TOKIO_DATA_BURST_MAX: usize = TOKIO_PEER_INBOUND_DEPTH / 4;
+const TOKIO_DATA_YIELD_HEADROOM: usize = TOKIO_PEER_INBOUND_DEPTH / 2;
 const TCP_RENDEZVOUS_ACCEPTED_CAPACITY: u8 = u8::MAX;
 const UDP_PEER_CAPACITY: NonZeroU8 = contract::DEFAULT_DISCOVERY_SERVICE_CAPACITY;
 type AutoWifiBrain = contract::FixedAutoInterfaceProtocol<{ UDP_PEER_CAPACITY.get() as usize }>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InboundRoute {
+    Admitted { remaining_capacity: usize },
+    Backpressured,
+    Ignored,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DataDrainStop {
+    BudgetExhausted,
+    SocketEmpty,
+    Backpressured,
+    Unroutable,
+    SocketUnavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DataDrainReport {
+    received: usize,
+    minimum_headroom: usize,
+    stop: DataDrainStop,
+}
+
+impl DataDrainReport {
+    const fn empty(stop: DataDrainStop) -> Self {
+        Self {
+            received: 0,
+            minimum_headroom: usize::MAX,
+            stop,
+        }
+    }
+
+    fn record_route(&mut self, route: InboundRoute) -> bool {
+        match route {
+            InboundRoute::Admitted { remaining_capacity } => {
+                self.minimum_headroom = self.minimum_headroom.min(remaining_capacity);
+                if remaining_capacity == 0 {
+                    self.stop = DataDrainStop::Backpressured;
+                    false
+                } else {
+                    true
+                }
+            }
+            InboundRoute::Backpressured => {
+                self.stop = DataDrainStop::Backpressured;
+                false
+            }
+            InboundRoute::Ignored => {
+                self.stop = DataDrainStop::Unroutable;
+                false
+            }
+        }
+    }
+
+    const fn should_yield(&self) -> bool {
+        self.minimum_headroom <= TOKIO_DATA_YIELD_HEADROOM
+            || matches!(self.stop, DataDrainStop::Backpressured)
+    }
+}
 
 pub struct AutoWifiPeer {
     id: InterfaceId,
@@ -828,10 +895,15 @@ impl InterfaceSupervisor for AutoWifi {
                     &mut data_buffer,
                 ) => {
                     if let Some((received_bytes, source_address)) = received_data_datagram {
-                        supervisor.route_inbound(
-                            source_address,
-                            &data_buffer[..received_bytes],
+                        let report = drain_ready_data(
+                            &supervisor,
+                            sockets.as_ref().map(|sockets| sockets.data.as_ref()),
+                            &mut data_buffer,
+                            Some((received_bytes, source_address)),
                         );
+                        if report.should_yield() {
+                            tokio::task::yield_now().await;
+                        }
                     }
                 }
                 discovery_snapshot = next_discovery_snapshot(
@@ -1548,7 +1620,7 @@ impl Supervisor {
         let Some(data) = self.data.clone() else {
             return;
         };
-        let (inbound_tx, inbound_rx) = mpsc::channel(PEER_INBOUND_DEPTH);
+        let (inbound_tx, inbound_rx) = mpsc::channel(TOKIO_PEER_INBOUND_DEPTH);
         let peer = SocketAddrV6::new(
             peer_address.ip_address,
             self.settings.data_port,
@@ -1715,14 +1787,26 @@ impl Supervisor {
         self.publish_status();
     }
 
-    fn route_inbound(&self, src: SocketAddr, bytes: &[u8]) {
+    fn route_inbound(&self, src: SocketAddr, bytes: &[u8]) -> InboundRoute {
         if bytes.is_empty() {
-            return;
+            return InboundRoute::Ignored;
         }
-        let SocketAddr::V6(v6) = src else { return };
+        let SocketAddr::V6(v6) = src else {
+            return InboundRoute::Ignored;
+        };
         let peer = ScopedPeer::from_socket_address(v6);
-        if let Some(member) = self.members.get(&peer) {
-            let _ = member.inbound.try_send(bytes.to_vec());
+        let Some(member) = self.members.get(&peer) else {
+            return InboundRoute::Ignored;
+        };
+        match member.inbound.try_reserve() {
+            Ok(permit) => {
+                permit.send(bytes.to_vec());
+                InboundRoute::Admitted {
+                    remaining_capacity: member.inbound.capacity(),
+                }
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Full(())) => InboundRoute::Backpressured,
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(())) => InboundRoute::Ignored,
         }
     }
 
@@ -2074,6 +2158,46 @@ async fn recv_maybe(socket: Option<&UdpSocket>, buf: &mut [u8]) -> Option<(usize
     }
 }
 
+fn drain_ready_data(
+    supervisor: &Supervisor,
+    socket: Option<&UdpSocket>,
+    buf: &mut [u8],
+    first: Option<(usize, SocketAddr)>,
+) -> DataDrainReport {
+    let mut report = DataDrainReport::empty(DataDrainStop::BudgetExhausted);
+    if let Some((received_bytes, source_address)) = first {
+        report.received = 1;
+        if !report.record_route(supervisor.route_inbound(source_address, &buf[..received_bytes])) {
+            return report;
+        }
+    }
+    let Some(socket) = socket else {
+        report.stop = DataDrainStop::SocketUnavailable;
+        return report;
+    };
+    while report.received < TOKIO_DATA_BURST_MAX {
+        match socket.try_recv_from(buf) {
+            Ok((received_bytes, source_address)) => {
+                report.received += 1;
+                if !report
+                    .record_route(supervisor.route_inbound(source_address, &buf[..received_bytes]))
+                {
+                    return report;
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                report.stop = DataDrainStop::SocketEmpty;
+                return report;
+            }
+            Err(_) => {
+                report.stop = DataDrainStop::SocketUnavailable;
+                return report;
+            }
+        }
+    }
+    report
+}
+
 async fn send_udp_peering_probes(
     unicast_discovery_socket: Option<&UdpSocket>,
     probes: std::vec::Vec<UdpPeeringProbe>,
@@ -2237,6 +2361,28 @@ mod tests {
 
     const TEST_DISCOVERY_CAPACITY: NonZeroU8 = NonZeroU8::new(8).unwrap();
     const TEST_FRAME_CAP: usize = 2_048;
+
+    fn data_report(
+        received: usize,
+        minimum_headroom: usize,
+        stop: DataDrainStop,
+    ) -> DataDrainReport {
+        DataDrainReport {
+            received,
+            minimum_headroom,
+            stop,
+        }
+    }
+
+    #[test]
+    fn bounded_data_drain_yields_only_under_peer_pressure() {
+        assert_eq!(TOKIO_DATA_BURST_MAX, 32);
+        assert_eq!(TOKIO_DATA_YIELD_HEADROOM, 64);
+        assert!(!data_report(16, 112, DataDrainStop::SocketEmpty).should_yield());
+        assert!(!data_report(32, 96, DataDrainStop::BudgetExhausted).should_yield());
+        assert!(data_report(32, 64, DataDrainStop::BudgetExhausted).should_yield());
+        assert!(data_report(1, usize::MAX, DataDrainStop::Backpressured).should_yield());
+    }
 
     fn nic(index: u32, link_local_tail: u16) -> Nic {
         Nic {
@@ -3016,6 +3162,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn peer_admission_reports_the_exact_tokio_channel_pressure_boundary() {
+        let (mut supervisor, _guard) = test_supervisor();
+        let peer = ScopedPeer {
+            ip_address: Ipv6Addr::LOCALHOST,
+            scope_id: 0,
+        };
+        supervisor.spawn_member(peer);
+        let source = SocketAddr::V6(SocketAddrV6::new(peer.ip_address, 9, 0, peer.scope_id));
+
+        for expected_remaining in (0..TOKIO_PEER_INBOUND_DEPTH).rev() {
+            assert_eq!(
+                supervisor.route_inbound(source, b"frame"),
+                InboundRoute::Admitted {
+                    remaining_capacity: expected_remaining,
+                }
+            );
+        }
+        assert_eq!(
+            supervisor.route_inbound(source, b"backpressured"),
+            InboundRoute::Backpressured
+        );
+    }
+
+    #[tokio::test]
     async fn udp_probes_use_one_shared_socket() {
         let receiver = UdpSocket::bind("[::1]:0").await.unwrap();
         let sender = UdpSocket::bind("[::1]:0").await.unwrap();
@@ -3254,7 +3424,7 @@ mod tests {
         );
         let shared_addr = shared.local_addr().expect("the shared address is known");
 
-        let (demux_tx, demux_rx) = mpsc::channel::<std::vec::Vec<u8>>(PEER_INBOUND_DEPTH);
+        let (demux_tx, demux_rx) = mpsc::channel::<std::vec::Vec<u8>>(TOKIO_PEER_INBOUND_DEPTH);
         let member = AutoWifiPeer::new(
             shared.clone(),
             peer_addr,

@@ -438,7 +438,9 @@ impl<S: StorageLayout> EngineState<S> {
         let mut iv = [0u8; ENCRYPTION_IV_LEN];
         fill_entropy(&mut iv);
         let mut buf = [0u8; BROADCAST_MTU];
-        if let Ok(dispatch) = self.write_owed_link_close(link_id, &iv, &mut buf) {
+        if let Ok(dispatch) =
+            self.write_owed_link_close(link_id, LinkClosedReason::Timeout, &iv, &mut buf, sink)
+        {
             if let Some(target) = dispatch.fire_on {
                 if interfaces.is_egress_eligible(target, Egress::Transmit) {
                     sink(EngineReaction::Directive(Directive::Send {
@@ -447,10 +449,6 @@ impl<S: StorageLayout> EngineState<S> {
                     }));
                 }
             }
-            sink(EngineReaction::Journaled(Journaled::LinkClosed {
-                link_id: *link_id,
-                reason: LinkClosedReason::Timeout,
-            }));
         }
     }
 }

@@ -1138,7 +1138,13 @@ mod loop_tests {
         );
         let mut buf = [0u8; BROADCAST_MTU];
         sender
-            .write_owed_link_close(&link_id(), &[0u8; 16], &mut buf)
+            .write_owed_link_close(
+                &link_id(),
+                crate::engine::LinkClosedReason::LocallyClosed,
+                &[0u8; 16],
+                &mut buf,
+                &mut |_| {},
+            )
             .unwrap();
         assert!(
             sender

@@ -31,6 +31,8 @@ use personal_rns::manifold::reconnect::ReconnectPolicy;
 use personal_rns::node_introspection::logical_interface_inventory;
 use personal_rns::routing::delivery::Delivery;
 use personal_rns::routing::links::channel::MessageType;
+use personal_rns::routing::links::resources::table::ApplyHashmapUpdateError;
+use personal_rns::routing::links::resources::ResourceFailureCause;
 use personal_rns::routing::request_handlers::RequestPolicy as EngineRequestPolicy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::request_endpoints::RespondToken;
@@ -2579,6 +2581,7 @@ fn send_link_failure(error: SendError<SendToLinkFailure>) -> CommandFailure {
         },
         SendError::Failed(SendToLinkFailure::Culled) => CommandFailure::PacketCulled,
         SendError::Failed(SendToLinkFailure::Timeout) => CommandFailure::DeliveryTimedOut,
+        SendError::Failed(SendToLinkFailure::LinkClosed) => CommandFailure::LinkClosed,
     }
 }
 
@@ -2596,7 +2599,32 @@ fn request_failure(error: SendError<SendRequestFailure>) -> CommandFailure {
         },
         SendError::Failed(SendRequestFailure::Culled) => CommandFailure::PacketCulled,
         SendError::Failed(SendRequestFailure::Timeout) => CommandFailure::DeliveryTimedOut,
+        SendError::Failed(SendRequestFailure::LinkClosed) => CommandFailure::LinkClosed,
         SendError::Failed(SendRequestFailure::ResponseTooLarge) => CommandFailure::ResponseTooLarge,
+        SendError::Failed(SendRequestFailure::ResponseTransferFailed(cause)) => match cause {
+            ResourceFailureCause::CancelledBySender => CommandFailure::ResponseCancelledBySender,
+            ResourceFailureCause::RefusedHashmapUpdate(refusal) => match refusal {
+                ApplyHashmapUpdateError::BeyondPartCount => {
+                    CommandFailure::ResponseHashmapBeyondPartCount
+                }
+                ApplyHashmapUpdateError::SkipsAhead => CommandFailure::ResponseHashmapSkipsAhead,
+                ApplyHashmapUpdateError::HashmapTooLong => CommandFailure::ResponseHashmapTooLong,
+                ApplyHashmapUpdateError::HashmapRagged => CommandFailure::ResponseHashmapRagged,
+            },
+            ResourceFailureCause::RetriesExhausted => CommandFailure::ResponseRetriesExhausted,
+            ResourceFailureCause::LinkVanished => CommandFailure::ResponseLinkVanished,
+            ResourceFailureCause::TransferUnopenable => CommandFailure::ResponseTransferUnopenable,
+            ResourceFailureCause::TransferCorrupt => CommandFailure::ResponseTransferCorrupt,
+            ResourceFailureCause::ProofUnsendable => CommandFailure::ResponseProofUnsendable,
+            ResourceFailureCause::DecompressionFailed => {
+                CommandFailure::ResponseDecompressionFailed
+            }
+            ResourceFailureCause::DecompressionTimedOut => {
+                CommandFailure::ResponseDecompressionTimedOut
+            }
+            ResourceFailureCause::OpenTimedOut => CommandFailure::ResponseOpenTimedOut,
+            ResourceFailureCause::MetadataOverrun => CommandFailure::ResponseMetadataOverrun,
+        },
         SendError::Failed(SendRequestFailure::ResourceCapacity) => {
             CommandFailure::ResourceTableFull
         }
@@ -2642,6 +2670,7 @@ fn resource_send_failure(error: ResourceSendError) -> CommandFailure {
         ResourceSendError::Rejected(SendResourceFailure::Timeout) => {
             CommandFailure::DeliveryTimedOut
         }
+        ResourceSendError::Rejected(SendResourceFailure::LinkClosed) => CommandFailure::LinkClosed,
         ResourceSendError::Rejected(SendResourceFailure::PredecessorFailed) => {
             CommandFailure::ResourcePredecessorFailed
         }
@@ -2677,6 +2706,7 @@ fn send_channel_failure(error: SendError<SendToChannelFailure>) -> CommandFailur
         SendError::Failed(SendToChannelFailure::WindowFull) => CommandFailure::ChannelWindowFull,
         SendError::Failed(SendToChannelFailure::Untrackable) => CommandFailure::ChannelUntrackable,
         SendError::Failed(SendToChannelFailure::Timeout) => CommandFailure::DeliveryTimedOut,
+        SendError::Failed(SendToChannelFailure::LinkClosed) => CommandFailure::LinkClosed,
     }
 }
 
@@ -2809,6 +2839,102 @@ fn update_persistence_snapshot(
 
 fn publish_message(sink: &dyn NativeEventSink, message: Message<'_>) -> bool {
     let event = match message {
+        Message::RemoteControlPairingAvailable(observation) => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlPairingAvailable",
+                format!("{observation:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlTargetPairingConfirmationRequired(attempt) => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlTargetPairingConfirmationRequired",
+                format!("{attempt:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlTargetPairingControllerCommitted { attempt_id } => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlTargetPairingControllerCommitted",
+                format!("{attempt_id:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlTargetPairingAuthorizationRequired { attempt_id, grant } => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlTargetPairingAuthorizationRequired",
+                format!("attempt_id={attempt_id:?}, grant={grant:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlControllerPairingConfirmationRequired(attempt) => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlControllerPairingConfirmationRequired",
+                format!("{attempt:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlControllerPairingPersistenceRequired(persistence) => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlControllerPairingPersistenceRequired",
+                format!("{persistence:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlControllerPairingExpired { aborted } => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlControllerPairingExpired",
+                format!("{aborted:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlControllerPairingLinkClosed { aborted } => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlControllerPairingLinkClosed",
+                format!("{aborted:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlTargetPairingExpired { aborted } => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlTargetPairingExpired",
+                format!("{aborted:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlTargetPairingLinkClosed { aborted } => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlTargetPairingLinkClosed",
+                format!("{aborted:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlTargetPairingCompletionRetentionExpired { attempt_id } => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlTargetPairingCompletionRetentionExpired",
+                format!("{attempt_id:?}"),
+            );
+            return true;
+        }
+        Message::RemoteControlTargetPairingCompletionLinkClosed { attempt_id } => {
+            publish_remote_control_diagnostic(
+                sink,
+                "RemoteControlTargetPairingCompletionLinkClosed",
+                format!("{attempt_id:?}"),
+            );
+            return true;
+        }
         Message::Delivered(Delivery::Single(delivery)) => {
             ApplicationEvent::SingleDelivery(SingleDelivery {
                 destination: host_destination(delivery.destination),
@@ -2927,6 +3053,13 @@ fn publish_message(sink: &dyn NativeEventSink, message: Message<'_>) -> bool {
     sink.publish_application(event)
 }
 
+fn publish_remote_control_diagnostic(sink: &dyn NativeEventSink, kind: &str, detail: String) {
+    sink.publish_diagnostic(DiagnosticEvent::BackendDiagnostic {
+        kind: kind.to_string(),
+        detail,
+    });
+}
+
 fn translate_diagnostic(diagnostic: Diagnostic<'_>) -> Option<DiagnosticEvent> {
     Some(match diagnostic {
         Diagnostic::PersistenceRestored {
@@ -2979,12 +3112,25 @@ fn translate_diagnostic(diagnostic: Diagnostic<'_>) -> Option<DiagnosticEvent> {
                 EngineLinkClosedReason::Timeout => LinkClosedReason::Timeout,
                 EngineLinkClosedReason::PeerClosed => LinkClosedReason::PeerClosed,
                 EngineLinkClosedReason::MalformedRtt => LinkClosedReason::MalformedRtt,
+                EngineLinkClosedReason::LocallyClosed => LinkClosedReason::LocallyClosed,
             },
         },
         Diagnostic::CommandSettled { id, settlement } => DiagnosticEvent::BackendDiagnostic {
             kind: "commandSettled".to_string(),
             detail: format!("{}:{settlement:?}", id.0),
         },
+        Diagnostic::RemoteControlPairingExpired { endpoint } => {
+            DiagnosticEvent::BackendDiagnostic {
+                kind: "RemoteControlPairingExpired".to_string(),
+                detail: format!("{endpoint:?}"),
+            }
+        }
+        Diagnostic::RemoteControlPairingExpiryFailed { endpoint, failure } => {
+            DiagnosticEvent::BackendDiagnostic {
+                kind: "RemoteControlPairingExpiryFailed".to_string(),
+                detail: format!("endpoint={endpoint:?}, failure={failure:?}"),
+            }
+        }
         Diagnostic::SelfRatchetRotated { destination } => DiagnosticEvent::SelfRatchetRotated {
             destination: host_destination(destination),
         },

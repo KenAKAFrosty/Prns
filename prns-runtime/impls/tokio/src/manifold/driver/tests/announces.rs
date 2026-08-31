@@ -60,7 +60,21 @@ async fn a_commanded_announce_fans_to_every_interface_and_settles() {
         | Journaled::ResourceAssembled { .. }
         | Journaled::PersistenceFlushed { .. }
         | Journaled::PersistenceFlushFailed { .. }
-        | Journaled::LinkInterfaceMismatch { .. } => {}
+        | Journaled::LinkInterfaceMismatch { .. }
+        | Journaled::RemoteControlPairingAvailabilityObserved(_)
+        | Journaled::RemoteControlPairingExpired { .. }
+        | Journaled::RemoteControlTargetPairingConfirmationRequired(_)
+        | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
+        | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
+        | Journaled::RemoteControlControllerPairingConfirmationRequired(_)
+        | Journaled::RemoteControlControllerPairingPersistenceRequired(_)
+        | Journaled::RemoteControlControllerPairingExpired { .. }
+        | Journaled::RemoteControlControllerPairingLinkClosed { .. }
+        | Journaled::RemoteControlTargetPairingExpired { .. }
+        | Journaled::RemoteControlTargetPairingLinkClosed { .. }
+        | Journaled::RemoteControlTargetPairingCompletionRetentionExpired { .. }
+        | Journaled::RemoteControlTargetPairingCompletionLinkClosed { .. }
+        | Journaled::RemoteControlPairingExpiryFailed { .. } => {}
     };
 
     tokio::spawn(run(

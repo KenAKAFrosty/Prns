@@ -11,6 +11,8 @@ description = "Public-facing docs site for the Personal Reticulum Suite, served 
 
 [features]
 default = []
+web = ["dioxus/web"]
+server = ["dioxus/server"]
 # Deterministic browser qualification only. This swaps the trust root, but never
 # bypasses Minisign or manifest validation.
 browser-test-fixture = []
@@ -26,7 +28,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Pinned to match the locally installed `dx` 0.7.5; bump dx and this together.
-dioxus = { version = "=0.7.5", features = ["router", "web"] }
+dioxus = { version = "=0.7.5", features = ["fullstack", "router"] }
 dioxus-i18n = "0.5"
 unic-langid = "0.9"
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }

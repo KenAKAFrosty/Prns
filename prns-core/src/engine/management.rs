@@ -6,6 +6,7 @@ use crate::routing::RemovedRoute;
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::wire::{DestinationHash, TransportId};
 
+use super::wake::RouteRemovalWakeScheduleDelta;
 use super::{EngineState, WakeSchedules};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,7 +28,7 @@ pub struct DropRouteEffect(DropRouteEffectState);
 enum DropRouteEffectState {
     Dropped {
         removed: RemovedRoute,
-        wake_schedules: WakeSchedules,
+        wake_schedule_delta: RouteRemovalWakeScheduleDelta,
     },
     NotFound,
 }
@@ -49,7 +50,10 @@ impl DropRouteEffect {
 
     pub fn wake_schedules(&self) -> WakeSchedules {
         match self.0 {
-            DropRouteEffectState::Dropped { wake_schedules, .. } => wake_schedules,
+            DropRouteEffectState::Dropped {
+                wake_schedule_delta,
+                ..
+            } => wake_schedule_delta.into_wake_schedules(),
             DropRouteEffectState::NotFound => WakeSchedules::UNCHANGED,
         }
     }
@@ -63,7 +67,7 @@ pub struct DropRoutesViaEffect(DropRoutesViaEffectState);
 enum DropRoutesViaEffectState {
     Dropped {
         dropped_routes: NonZeroUsize,
-        wake_schedules: WakeSchedules,
+        wake_schedule_delta: RouteRemovalWakeScheduleDelta,
     },
     NoRoutes,
 }
@@ -84,7 +88,10 @@ impl DropRoutesViaEffect {
 
     pub fn wake_schedules(&self) -> WakeSchedules {
         match self.0 {
-            DropRoutesViaEffectState::Dropped { wake_schedules, .. } => wake_schedules,
+            DropRoutesViaEffectState::Dropped {
+                wake_schedule_delta,
+                ..
+            } => wake_schedule_delta.into_wake_schedules(),
             DropRoutesViaEffectState::NoRoutes => WakeSchedules::UNCHANGED,
         }
     }
@@ -103,7 +110,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.dirty_interfaces.mark(removed.receiving_interface);
         DropRouteEffect(DropRouteEffectState::Dropped {
             removed,
-            wake_schedules: self.route_removal_wake_schedules(interfaces),
+            wake_schedule_delta: self.route_removal_wake_schedules(interfaces),
         })
     }
 
@@ -127,7 +134,7 @@ impl<S: StorageLayout> EngineState<S> {
         };
         DropRoutesViaEffect(DropRoutesViaEffectState::Dropped {
             dropped_routes,
-            wake_schedules: self.route_removal_wake_schedules(interfaces),
+            wake_schedule_delta: self.route_removal_wake_schedules(interfaces),
         })
     }
 }
@@ -324,9 +331,11 @@ mod tests {
     #[cfg(target_pointer_width = "64")]
     #[test]
     fn route_drop_outcome_saturates_counts_beyond_its_public_width() {
+        let engine = EngineState::<TestStorageLayout>::default();
         let effect = DropRoutesViaEffect(DropRoutesViaEffectState::Dropped {
             dropped_routes: NonZeroUsize::new(usize::try_from(u32::MAX).unwrap() + 1).unwrap(),
-            wake_schedules: WakeSchedules::UNCHANGED,
+            wake_schedule_delta: engine
+                .route_removal_wake_schedules(AttachedInterfaces::new(&interfaces())),
         });
 
         assert_eq!(

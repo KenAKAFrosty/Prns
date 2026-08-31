@@ -173,7 +173,13 @@ impl FrameSink for WasmFrame {
 }
 
 fn encode_packet(framing: WebSocketWireFraming, packet: &[u8]) -> Option<Vec<u8>> {
-    let mut encoded = vec![0; framing.message_cap()];
+    if packet.is_empty() || packet.len() > FRAME_CAP {
+        return None;
+    }
+    if framing == WebSocketWireFraming::RawPacket {
+        return Some(packet.to_vec());
+    }
+    let mut encoded = vec![0; framing.maximum_encoded_len(packet.len())];
     let encoded_len = framing.encode(packet, &mut encoded).ok()?;
     encoded.truncate(encoded_len);
     Some(encoded)

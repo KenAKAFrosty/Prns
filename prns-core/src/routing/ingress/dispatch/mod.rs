@@ -11,6 +11,7 @@ use super::outcome::{
 use super::upstream_delivery::UpstreamDeliveryOutcome;
 use crate::engine::{DeliveryProof, EngineState, InstantMillis};
 use crate::interfaces::{AttachedInterfaces, InterfaceCommonPolicy, InterfaceId, InterfaceKind};
+use crate::remote_control::RemoteControlPairingAvailabilityDestination;
 use crate::routing::announce::held::HoldOutcome;
 use crate::routing::announce::AnnounceArrival;
 use crate::routing::dedup::{PacketHashHistory, RememberPacketOutcome};
@@ -221,6 +222,23 @@ impl<S: StorageLayout> EngineState<S> {
                     }
                     if address == TUNNEL_SYNTHESIZE_DESTINATION {
                         return self.ingest_tunnel_synthesize(&data, source_interface, arrived_at);
+                    }
+                    if address
+                        == RemoteControlPairingAvailabilityDestination::canonical()
+                            .destination_hash()
+                    {
+                        return self.ingest_remote_control_pairing_availability(
+                            data,
+                            super::RemoteControlPairingAvailabilityArrival {
+                                received_hops,
+                                source_interface,
+                                arrived_at,
+                            },
+                            interfaces,
+                            on_removed,
+                            deferred,
+                            effects,
+                        );
                     }
                 }
 

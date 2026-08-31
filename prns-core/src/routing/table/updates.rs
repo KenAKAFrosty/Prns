@@ -42,6 +42,7 @@ where
                 responsiveness: RouteResponsiveness::Responsive,
                 receiving_interface: self.routes.receiving_interfaces()[i],
                 next_hop: self.routes.next_hops()[i],
+                retention: self.routes.retentions()[i],
             },
         );
         self.route_expiries.invalidate();
@@ -73,6 +74,7 @@ where
                 responsiveness: RouteResponsiveness::Unresponsive,
                 receiving_interface: self.routes.receiving_interfaces()[i],
                 next_hop: self.routes.next_hops()[i],
+                retention: self.routes.retentions()[i],
             },
         );
         true
@@ -95,6 +97,7 @@ where
                 responsiveness,
                 receiving_interface: self.routes.receiving_interfaces()[i],
                 next_hop: self.routes.next_hops()[i],
+                retention: self.routes.retentions()[i],
             },
         );
     }
@@ -112,6 +115,7 @@ where
                 responsiveness: self.routes.responsiveness()[i],
                 receiving_interface: self.routes.receiving_interfaces()[i],
                 next_hop: self.routes.next_hops()[i],
+                retention: self.routes.retentions()[i],
             },
         );
     }
@@ -129,6 +133,7 @@ where
                 responsiveness: self.routes.responsiveness()[i],
                 receiving_interface: self.routes.receiving_interfaces()[i],
                 next_hop: self.routes.next_hops()[i],
+                retention: self.routes.retentions()[i],
             },
         );
         self.route_expiries.invalidate();
@@ -153,6 +158,7 @@ where
                 responsiveness: self.routes.responsiveness()[i],
                 receiving_interface: self.routes.receiving_interfaces()[i],
                 next_hop: self.routes.next_hops()[i],
+                retention: self.routes.retentions()[i],
             },
         );
         let expiry = self.expiry_of_with_warmth(i, interfaces, warmth);

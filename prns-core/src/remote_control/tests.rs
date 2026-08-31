@@ -1,5 +1,6 @@
 use super::*;
 use crate::crypto::{Ed25519PublicKey, X25519PublicKey};
+use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{
     IdentityEncryptionPublicKey, IdentityPublicKeys, IdentitySigningPublicKey, Zeroizing,
     IDENTITY_SECRET_KEY_LEN,
@@ -115,13 +116,28 @@ fn identity_secret(fill: u8) -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
 
 #[test]
 fn controller_and_target_secret_brands_derive_their_public_identities() {
+    let controller_secret = identity_secret(0x31);
+    let controller_parts =
+        InMemoryNodeIdentity::from_secret_key_bytes(&controller_secret).into_parts();
+    let expected_controller = IdentityPublicKeys {
+        encryption: controller_parts.encryption_public,
+        signing: controller_parts.signing_public,
+    };
+    let target_secret = identity_secret(0x42);
+    let target_parts = InMemoryNodeIdentity::from_secret_key_bytes(&target_secret).into_parts();
+    let expected_target = IdentityPublicKeys {
+        encryption: target_parts.encryption_public,
+        signing: target_parts.signing_public,
+    };
     let secrets = RemoteControlNodeIdentitySecrets::new(
-        RemoteControlControllerIdentitySecret::from(identity_secret(0x31)),
-        RemoteControlTargetIdentitySecret::from(identity_secret(0x42)),
+        RemoteControlControllerIdentitySecret::from(controller_secret),
+        RemoteControlTargetIdentitySecret::from(target_secret),
     )
     .unwrap();
     let identities = secrets.identities();
 
+    assert_eq!(identities.controller().public_keys(), &expected_controller);
+    assert_eq!(identities.target().public_keys(), &expected_target);
     assert_ne!(
         identities.controller().identity_hash(),
         identities.target().identity_hash(),

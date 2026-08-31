@@ -1,8 +1,11 @@
 #![forbid(unsafe_code)]
 
 mod bluetooth_auto;
+mod command_settlement;
+mod event_projection;
 mod input;
 mod js_translation;
+mod packed_snapshot;
 mod parameters;
 mod runtime;
 mod usb_auto;
