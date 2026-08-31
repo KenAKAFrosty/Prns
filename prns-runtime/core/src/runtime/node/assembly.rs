@@ -8,7 +8,7 @@ use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::remote_control::{
     FixedRemoteControlControllerGrantTable, FixedRemoteControlTargetAccessTable,
     RemoteControlControllerGrantTable, RemoteControlEndpoint, RemoteControlNodeIdentities,
-    RemoteControlPairingAvailabilityDestination, RemoteControlRequest, RemoteControlRequestSet,
+    RemoteControlPairingAvailabilityDestination, RemoteControlRequestSet,
     RemoteControlSelfAnnouncement, RemoteControlService, RemoteControlTargetAccessTable,
     RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantError,
     SetRemoteControlControllerGrantOutcome, DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS,
@@ -24,6 +24,7 @@ use crate::storage::TablePushError;
 use crate::units::ByteLimit;
 use crate::wire::DestinationHash;
 
+use super::super::remote_control::REMOTE_CONTROL_REQUEST_PLAINTEXT_MAX;
 use super::super::request_endpoints::RequestEndpointSet;
 use super::super::{
     ForgetRemoteControlTargetServiceError, PrnsEvent, RemoteControlAuthorizationRestoreError,
@@ -402,7 +403,7 @@ where
         .map_err(ConfigureRemoteControlServiceError::RegisterTarget)?;
     if !engine.set_maximum_request_bytes(
         &destination,
-        ByteLimit::Maximum(RemoteControlRequest::MAX_ENCODED_LEN as u64),
+        ByteLimit::Maximum(REMOTE_CONTROL_REQUEST_PLAINTEXT_MAX as u64),
     ) {
         return Err(ConfigureRemoteControlServiceError::ConfigureRequestLimit);
     }
@@ -848,7 +849,7 @@ mod tests {
                     link_request_policy: LinkRequestPolicy::AcceptAll,
                     resource_strategy: ResourceStrategy::AcceptNone,
                     maximum_request_bytes: ByteLimit::Maximum(
-                        RemoteControlRequest::MAX_ENCODED_LEN as u64,
+                        REMOTE_CONTROL_REQUEST_PLAINTEXT_MAX as u64,
                     ),
                     ratchet_policy: RatchetPolicy::NoRatchets,
                 },

@@ -5,9 +5,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use personal_rns::engine::{
-    AdmitRemoteControlControllerPairingResponseOutcome, ApproveRemoteControlControllerPairing,
-    ApproveRemoteControlTargetPairing, BeginRemoteControlControllerPairing, EgressTarget,
-    OpenRemoteControlPairing, OpenRemoteControlPairingFailure, OpenRemoteControlPairingRejection,
+    AdmitRemoteControlControllerPairingResponseOutcome, AnnounceAppData, AnnounceNow,
+    AnnounceTarget, ApproveRemoteControlControllerPairing, ApproveRemoteControlTargetPairing,
+    BeginRemoteControlControllerPairing, EgressTarget, OpenRemoteControlPairing,
+    OpenRemoteControlPairingFailure, OpenRemoteControlPairingRejection,
     RemoteControlControllerPairingResponseEffect, RemoteControlPairingOpened,
     RemoteControlTargetPairingApproval,
 };
@@ -24,7 +25,8 @@ use personal_rns::remote_control::{
     RemoteControlPairingConfirmationCode, RemoteControlPairingContext,
     RemoteControlPairingEndpoint, RemoteControlPairingExpiresAfter,
     RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
-    RemoteControlTargetAccess, RemoteControlTargetIdentity,
+    RemoteControlTargetAccess, RemoteControlTargetIdentity, SetRemoteControlControllerGrantOutcome,
+    SetRemoteControlTargetAccessOutcome,
 };
 use personal_rns::runtime::RemoteControlPairingControlError;
 use personal_rns::units::{DurationMillis, InstantMillis};
@@ -33,6 +35,10 @@ const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(10);
 const PAIRING_WINDOW: DurationMillis = DurationMillis(60_000);
 const PAIRING_ATTEMPT_TIMEOUT: DurationMillis = DurationMillis(30_000);
 const PUBLIC_APP_DATA: &[u8] = b"integration target";
+const TARGET_NODE_CONTROLLER_SECRET_FILL: u8 = 0xA1;
+const TARGET_NODE_TARGET_SECRET_FILL: u8 = 0xA2;
+const CONTROLLER_NODE_CONTROLLER_SECRET_FILL: u8 = 0xB1;
+const CONTROLLER_NODE_TARGET_SECRET_FILL: u8 = 0xB2;
 static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 struct PairingAvailability {
@@ -51,12 +57,25 @@ struct PairingConfirmation {
     permissions: RemoteControlPairingPermissions,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum TwoNodeExchangeOutcome {
+    Completed,
+    TargetStopped,
+    ControllerStopped,
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
     let persistence = PairingPersistenceDirectories::new();
-    let target_identity_secrets = remote_control_identity_secrets(0xA1, 0xA2);
+    let target_identity_secrets = remote_control_identity_secrets(
+        TARGET_NODE_CONTROLLER_SECRET_FILL,
+        TARGET_NODE_TARGET_SECRET_FILL,
+    );
     let target_public_keys = *target_identity_secrets.identities().target().public_keys();
-    let controller_identity_secrets = remote_control_identity_secrets(0xB1, 0xB2);
+    let controller_identity_secrets = remote_control_identity_secrets(
+        CONTROLLER_NODE_CONTROLLER_SECRET_FILL,
+        CONTROLLER_NODE_TARGET_SECRET_FILL,
+    );
     let controller_identity = *controller_identity_secrets.identities().controller();
 
     let (target_confirmation_tx, mut target_confirmation_rx) =
@@ -271,19 +290,172 @@ async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
         );
     };
 
-    tokio::select! {
+    let outcome = tokio::select! {
         result = tokio::time::timeout(EXCHANGE_TIMEOUT, exchange) => {
             result.expect("pairing completes within the bounded test window");
+            TwoNodeExchangeOutcome::Completed
         }
         result = target.run() => {
             result.expect("the target node runs");
-            panic!("the target stopped before pairing completed");
+            TwoNodeExchangeOutcome::TargetStopped
         }
         result = controller.run() => {
             result.expect("the controller node runs");
-            panic!("the controller stopped before pairing completed");
+            TwoNodeExchangeOutcome::ControllerStopped
         }
-    }
+    };
+    assert_eq!(outcome, TwoNodeExchangeOutcome::Completed);
+
+    describe_through_restored_pairing(&persistence).await;
+}
+
+async fn describe_through_restored_pairing(persistence: &PairingPersistenceDirectories) {
+    let target_identity_secrets = remote_control_identity_secrets(
+        TARGET_NODE_CONTROLLER_SECRET_FILL,
+        TARGET_NODE_TARGET_SECRET_FILL,
+    );
+    let target_public_keys = *target_identity_secrets.identities().target().public_keys();
+    let target_endpoint = target_identity_secrets.identities().target().endpoint();
+    let (identified_controller_tx, mut identified_controller_rx) =
+        tokio::sync::mpsc::unbounded_channel();
+    let target = PrnsNode::new(PrnsNodeRecipe {
+        transport_identity: None,
+        remote_control: remote_control_service(target_identity_secrets),
+        pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+        app_state: (),
+        storage: GrowableHeap,
+        request_endpoints: request_endpoints![],
+        on_event: move |event, _state| match event {
+            PrnsEvent::Diagnostic(Diagnostic::PeerIdentified { identity, .. }) => {
+                let _ignored = identified_controller_tx.send(identity);
+            }
+            PrnsEvent::Message(_) | PrnsEvent::Diagnostic(_) => {}
+        },
+        interfaces: ManuallyAttached,
+        persistence: NodePersistence::custom_dir(&persistence.target)
+            .expect("the target persistence directory remains usable"),
+    });
+    let target_handle = target.handle();
+
+    let server = TcpServer::bind("127.0.0.1:0")
+        .await
+        .expect("the restarted target TCP server binds");
+    let server_address = server
+        .local_addr()
+        .expect("the restarted target TCP server has an address")
+        .to_string();
+    let _server = target_handle.supervise(server);
+
+    let controller_identity_secrets = remote_control_identity_secrets(
+        CONTROLLER_NODE_CONTROLLER_SECRET_FILL,
+        CONTROLLER_NODE_TARGET_SECRET_FILL,
+    );
+    let controller_identity = *controller_identity_secrets.identities().controller();
+    let (target_announce_tx, mut target_announce_rx) = tokio::sync::mpsc::unbounded_channel();
+    let controller = PrnsNode::new(PrnsNodeRecipe {
+        transport_identity: None,
+        remote_control: remote_control_service(controller_identity_secrets),
+        pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+        app_state: (),
+        storage: GrowableHeap,
+        request_endpoints: request_endpoints![],
+        on_event: move |event, _state| match event {
+            PrnsEvent::Diagnostic(Diagnostic::AnnounceHeard { destination, .. }) => {
+                let _ignored = target_announce_tx.send(destination);
+            }
+            PrnsEvent::Message(_) | PrnsEvent::Diagnostic(_) => {}
+        },
+        interfaces: move |node: &PrnsNodeHandle| {
+            node.attach(TcpClientInterface::new(server_address));
+        },
+        persistence: NodePersistence::custom_dir(&persistence.controller)
+            .expect("the controller persistence directory remains usable"),
+    });
+    let controller_handle = controller.handle();
+
+    let exchange = async {
+        wait_for_direct_connection(&target_handle, &controller_handle).await;
+        assert_eq!(
+            target_handle
+                .set_remote_control_controller_grant(
+                    RemoteControlControllerGrant::new(
+                        controller_identity,
+                        RemoteControlRequestSet::all(),
+                    )
+                    .expect("the complete request set is not empty"),
+                )
+                .await,
+            Ok(SetRemoteControlControllerGrantOutcome::Unchanged),
+        );
+        assert_eq!(
+            controller_handle
+                .set_remote_control_target_access(
+                    RemoteControlTargetAccess::new(
+                        RemoteControlTargetIdentity::new(target_public_keys),
+                        RemoteControlRequestSet::all(),
+                    )
+                    .expect("the complete request set is not empty"),
+                )
+                .await,
+            Ok(SetRemoteControlTargetAccessOutcome::Unchanged),
+        );
+        target_handle
+            .announce_now(AnnounceNow {
+                destination: target_endpoint.destination_hash(),
+                target: AnnounceTarget::AllInterfaces,
+                app_data: AnnounceAppData::Registered,
+            })
+            .await
+            .expect("the restarted target announces its stable RemoteControl endpoint");
+        assert_eq!(
+            target_announce_rx
+                .recv()
+                .await
+                .expect("the restarted controller hears the stable RemoteControl endpoint"),
+            target_endpoint.destination_hash(),
+        );
+
+        let link_id = controller_handle
+            .establish_link(target_endpoint.destination_hash())
+            .await
+            .expect("the restarted controller links to the stable RemoteControl endpoint");
+        controller_handle
+            .identify(link_id, controller_identity.identity_hash())
+            .await
+            .expect("the restarted controller identifies with its paired identity");
+        assert_eq!(
+            identified_controller_rx
+                .recv()
+                .await
+                .expect("the restarted target observes the paired controller identity"),
+            controller_identity.identity_hash(),
+        );
+        let (description, _rtt) = controller_handle
+            .remote_control(link_id)
+            .describe()
+            .await
+            .expect("the restored controller grant admits RemoteControl describe");
+        assert_eq!(
+            description.available_requests(),
+            &RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
+        );
+    };
+
+    let outcome = tokio::select! {
+        result = tokio::time::timeout(EXCHANGE_TIMEOUT, exchange) => {
+            result.expect("restored RemoteControl access works within the bounded test window");
+            TwoNodeExchangeOutcome::Completed
+        }
+        result = target.run() => {
+            result.expect("the restarted target node runs");
+            TwoNodeExchangeOutcome::TargetStopped
+        }
+        result = controller.run() => {
+            result.expect("the restarted controller node runs");
+            TwoNodeExchangeOutcome::ControllerStopped
+        }
+    };
+    assert_eq!(outcome, TwoNodeExchangeOutcome::Completed);
 }
 
 struct PairingPersistenceDirectories {

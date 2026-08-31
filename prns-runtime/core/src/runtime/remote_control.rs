@@ -10,6 +10,7 @@ use crate::remote_control::{
     RemoteControlResponseParseError, RemoteControlSelfAnnouncement,
     REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
 };
+use crate::routing::links::request::REQUEST_WIRE_OVERHEAD;
 use crate::units::ByteLimit;
 use crate::wire::DestinationHash;
 
@@ -18,6 +19,9 @@ use super::request_endpoints::{
     ResponseSink,
 };
 use super::{AnnounceNowError, PrnsNodeApi, SendError};
+
+pub(super) const REMOTE_CONTROL_REQUEST_PLAINTEXT_MAX: usize =
+    REQUEST_WIRE_OVERHEAD.saturating_add(RemoteControlRequest::MAX_ENCODED_LEN);
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum RemoteControlError {
