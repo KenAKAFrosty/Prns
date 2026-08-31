@@ -1,4 +1,5 @@
 mod embedded_persistence;
+mod entropy;
 mod interface_store;
 mod node_facade;
 mod remote_control_access;
@@ -13,6 +14,7 @@ pub use embedded_persistence::{
     EmbeddedPersistenceTarget, FixedRouteSnapshotKeys, RouteSnapshotKeyError, RouteSnapshotKeys,
 };
 pub(crate) use embedded_persistence::{ManifoldPersistence, NoManifoldPersistence};
+pub use entropy::{EntropyHandle, SharedRuntimeEntropy};
 pub use interface_store::{minimum_interface_store_capacity, EmbassyInterfaceStore};
 pub(crate) use interface_store::{InterfaceInspectionStore, NoInterfaceInspectionStore};
 pub use node_facade::Fleet as EmbassyFleet;

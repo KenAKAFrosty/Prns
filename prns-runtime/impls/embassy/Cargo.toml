@@ -45,6 +45,7 @@ prns-core = { version = "=0.3.7", path = "../../../prns-core", default-features 
 embedded-storage = "0.3"
 critical-section = { version = "1", features = ["std"] }
 embassy-time = { version = "0.5", default-features = false, features = ["std", "generic-queue-8"] }
+static_assertions = "1"
 
 [lints.clippy]
 dbg_macro = "deny"
