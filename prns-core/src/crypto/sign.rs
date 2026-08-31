@@ -60,6 +60,11 @@ impl Ed25519Verifier {
         })
     }
 
+    pub fn validate_public_key(public: &Ed25519PublicKey) -> Result<(), InvalidPublicKey> {
+        let _ = Self::new(public)?;
+        Ok(())
+    }
+
     pub fn public_key(&self) -> &Ed25519PublicKey {
         &self.public
     }

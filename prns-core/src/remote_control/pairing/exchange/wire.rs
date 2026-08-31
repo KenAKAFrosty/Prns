@@ -45,9 +45,7 @@ impl RemoteControlPairingRequest {
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Self, RemoteControlPairingMessageParseError> {
-        Self::parse_with_signing_public_key_validation(bytes, |public_key| {
-            Ed25519Verifier::new(public_key).map(|_verifier| ())
-        })
+        Self::parse_with_signing_public_key_validation(bytes, Ed25519Verifier::validate_public_key)
     }
 
     fn parse_with_signing_public_key_validation<F>(
@@ -139,9 +137,7 @@ impl RemoteControlPairingResponse {
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Self, RemoteControlPairingMessageParseError> {
-        Self::parse_with_signing_public_key_validation(bytes, |public_key| {
-            Ed25519Verifier::new(public_key).map(|_verifier| ())
-        })
+        Self::parse_with_signing_public_key_validation(bytes, Ed25519Verifier::validate_public_key)
     }
 
     fn parse_with_signing_public_key_validation<F>(
