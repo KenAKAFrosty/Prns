@@ -313,7 +313,10 @@ async fn describe_through_restored_pairing(persistence: &PairingPersistenceDirec
         TARGET_NODE_CONTROLLER_SECRET_FILL,
         TARGET_NODE_TARGET_SECRET_FILL,
     );
-    let target_public_keys = *target_identity_secrets.identities().target().public_keys();
+    let target_identity_hash = target_identity_secrets
+        .identities()
+        .target()
+        .identity_hash();
     let target_endpoint = target_identity_secrets.identities().target().endpoint();
     let (identified_controller_tx, mut identified_controller_rx) =
         tokio::sync::mpsc::unbounded_channel();
@@ -402,10 +405,16 @@ async fn describe_through_restored_pairing(persistence: &PairingPersistenceDirec
             target_endpoint.destination_hash(),
         );
 
+        let inventory = controller_handle
+            .remote_control_target_inventory()
+            .await
+            .expect("the restarted controller reads its persisted target inventory");
+        let [authorized_target] = inventory.targets() else {
+            panic!("the restarted controller has exactly one authorized target")
+        };
+        assert_eq!(authorized_target.identity_hash(), target_identity_hash);
         let remote_control = controller_handle
-            .connect_remote_control_target(
-                RemoteControlTargetIdentity::new(target_public_keys).identity_hash(),
-            )
+            .connect_remote_control_target(authorized_target.identity_hash())
             .await
             .expect("the restarted controller resolves, links, and identifies the paired target");
         assert_eq!(

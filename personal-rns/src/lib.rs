@@ -82,7 +82,8 @@ pub use prns_runtime::routing::ProofStrategy;
 pub use prns_runtime::runtime::{
     AnnounceNowError, ApproveRemoteControlControllerPairingControlError,
     ApproveRemoteControlControllerPairingControlFailure,
-    ApproveRemoteControlTargetPairingControlError, BeginRemoteControlControllerPairingControlError,
+    ApproveRemoteControlTargetPairingControlError, AuthorizedRemoteControlTarget,
+    BeginRemoteControlControllerPairingControlError,
     BeginRemoteControlControllerPairingControlFailure, CloseRemoteControlPairingControlError,
     CloseRemoteControlTargetOutcome, ConnectRemoteControlTargetError, Diagnostic,
     ForgetRemoteControlTargetControlError, ForgetRemoteControlTargetServiceError, ManuallyAttached,
@@ -93,6 +94,8 @@ pub use prns_runtime::runtime::{
     RemoteControlError, RemoteControlPairingControl, RemoteControlPairingControlError,
     RemoteControlTargetAccessControl, RemoteControlTargetConnection,
     RemoteControlTargetConnectionControl, RemoteControlTargetConnectionTransport,
+    RemoteControlTargetInventory, RemoteControlTargetInventoryControlError,
+    RemoteControlTargetInventoryError, RemoteControlTargetInventoryServiceError,
     RemoteControlTargetOperationError, ResolveRemoteControlTargetControlError,
     ResolveRemoteControlTargetServiceError, ResolvedRemoteControlTarget,
     RevokeRemoteControlControllerControlError, RevokeRemoteControlControllerServiceError,

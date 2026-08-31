@@ -72,10 +72,13 @@ pub use remote_control_pairing::{
     RemoteControlPairingControl,
 };
 pub use remote_control_target_accesses::{
-    ForgetRemoteControlTargetControlError, ForgetRemoteControlTargetServiceError,
-    RemoteControlTargetAccessControl, ResolveRemoteControlTargetControlError,
-    ResolveRemoteControlTargetServiceError, ResolvedRemoteControlTarget,
-    SetRemoteControlTargetAccessControlError, SetRemoteControlTargetAccessServiceError,
+    AuthorizedRemoteControlTarget, ForgetRemoteControlTargetControlError,
+    ForgetRemoteControlTargetServiceError, RemoteControlTargetAccessControl,
+    RemoteControlTargetInventory, RemoteControlTargetInventoryControlError,
+    RemoteControlTargetInventoryError, RemoteControlTargetInventoryServiceError,
+    ResolveRemoteControlTargetControlError, ResolveRemoteControlTargetServiceError,
+    ResolvedRemoteControlTarget, SetRemoteControlTargetAccessControlError,
+    SetRemoteControlTargetAccessServiceError,
 };
 pub use remote_control_target_connection::{
     CloseRemoteControlTargetOutcome, ConnectRemoteControlTargetError,

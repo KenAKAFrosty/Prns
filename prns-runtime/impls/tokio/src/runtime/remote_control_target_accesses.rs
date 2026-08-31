@@ -13,14 +13,20 @@ use super::node_facade::PrnsNodeHandle;
 use super::{
     AssembledRemoteControl, ForgetRemoteControlTargetControlError,
     ForgetRemoteControlTargetServiceError, RemoteControlTargetAccessControl,
-    ResolveRemoteControlTargetControlError, ResolveRemoteControlTargetServiceError,
-    ResolvedRemoteControlTarget, SetRemoteControlTargetAccessControlError,
-    SetRemoteControlTargetAccessServiceError,
+    RemoteControlTargetInventory, RemoteControlTargetInventoryControlError,
+    RemoteControlTargetInventoryServiceError, ResolveRemoteControlTargetControlError,
+    ResolveRemoteControlTargetServiceError, ResolvedRemoteControlTarget,
+    SetRemoteControlTargetAccessControlError, SetRemoteControlTargetAccessServiceError,
 };
 
 const REMOTE_CONTROL_TARGET_ACCESS_QUEUE_DEPTH: usize = 1;
 
 pub(super) enum RemoteControlTargetAccessCommand {
+    Inventory {
+        completion: oneshot::Sender<
+            Result<RemoteControlTargetInventory, RemoteControlTargetInventoryServiceError>,
+        >,
+    },
     ResolveTarget {
         target: IdentityHash,
         completion: oneshot::Sender<
@@ -118,6 +124,13 @@ impl RemoteControlTargetAccessReceiver {
 impl RemoteControlTargetAccessCommand {
     pub(super) fn apply(self, remote_control: &mut AssembledRemoteControl) {
         match self {
+            Self::Inventory { completion } => {
+                if completion.is_closed() {
+                    return;
+                }
+                let outcome = remote_control.target_inventory();
+                let _completion = completion.send(outcome);
+            }
             Self::ResolveTarget { target, completion } => {
                 if completion.is_closed() {
                     return;
@@ -188,6 +201,28 @@ impl PrnsNodeHandle {
 }
 
 impl RemoteControlTargetAccessControl for PrnsNodeHandle {
+    async fn remote_control_target_inventory(
+        &self,
+    ) -> Result<RemoteControlTargetInventory, RemoteControlTargetInventoryControlError> {
+        let (completion, settled) = oneshot::channel();
+        let _operation = match self
+            .remote_control_target_accesses
+            .submit(RemoteControlTargetAccessCommand::Inventory { completion })
+        {
+            Ok(operation) => operation,
+            Err(RemoteControlTargetAccessSubmissionError::Busy) => {
+                return Err(RemoteControlTargetInventoryControlError::Busy)
+            }
+            Err(RemoteControlTargetAccessSubmissionError::NodeStopped) => {
+                return Err(RemoteControlTargetInventoryControlError::NodeStopped)
+            }
+        };
+        match settled.await {
+            Ok(outcome) => outcome.map_err(Into::into),
+            Err(_) => Err(RemoteControlTargetInventoryControlError::NodeStopped),
+        }
+    }
+
     async fn resolve_remote_control_target(
         &self,
         target: IdentityHash,

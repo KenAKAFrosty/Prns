@@ -94,12 +94,15 @@ mod tests {
     };
     use crate::manifold::driver::HostCommand;
     use crate::remote_control::{
-        RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlTargetAccess,
-        RemoteControlTargetIdentity,
+        FixedRemoteControlTargetAccessTable, RemoteControlRequestKind, RemoteControlRequestSet,
+        RemoteControlTargetAccess, RemoteControlTargetAccessTable, RemoteControlTargetIdentity,
     };
     use crate::routing::links::LinkId;
     use crate::runtime::remote_control_target_accesses::RemoteControlTargetAccessCommand;
-    use crate::runtime::{RemoteControlTargetOperationError, ResolvedRemoteControlTarget};
+    use crate::runtime::{
+        RemoteControlTargetAccessControl, RemoteControlTargetInventory,
+        RemoteControlTargetOperationError, ResolvedRemoteControlTarget,
+    };
 
     use super::{ConnectRemoteControlTargetError, PrnsNodeHandle};
 
@@ -126,6 +129,41 @@ mod tests {
             identities.controller().identity_hash(),
             ResolvedRemoteControlTarget::from((identities.controller(), &access)),
         )
+    }
+
+    #[tokio::test]
+    async fn target_inventory_preserves_the_exact_runtime_settlement() {
+        let (commands, _command_rx) = mpsc::unbounded_channel();
+        let (handle, mut target_accesses) =
+            PrnsNodeHandle::over_with_remote_control_target_access_lane(commands);
+        let service = crate::runtime::node_facade::test_remote_control_service();
+        let identities = service
+            .configuration()
+            .unwrap()
+            .identity_secrets()
+            .identities();
+        let access = RemoteControlTargetAccess::new(
+            RemoteControlTargetIdentity::new(*identities.target().public_keys()),
+            RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
+        )
+        .unwrap();
+        let mut table = FixedRemoteControlTargetAccessTable::default();
+        assert!(table.set_target_access(access).is_ok());
+        let expected = RemoteControlTargetInventory::try_from(&table).unwrap();
+        let completion = RemoteControlTargetInventory::try_from(&table).unwrap();
+
+        let reading = handle.remote_control_target_inventory();
+        let driving = async move {
+            let Some(RemoteControlTargetAccessCommand::Inventory { completion: settle }) =
+                target_accesses.receive().await
+            else {
+                panic!("target inventory command")
+            };
+            assert!(settle.send(Ok(completion)).is_ok());
+        };
+        let (inventory, ()) = tokio::join!(reading, driving);
+
+        assert_eq!(inventory, Ok(expected));
     }
 
     #[tokio::test]

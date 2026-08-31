@@ -9,11 +9,11 @@ use crate::engine::{
     MAX_SEND_PLAIN_PACKET_PAYLOAD_LEN,
 };
 use crate::remote_control::{
-    RemoteControlPairingAttemptTimeout, RemoteControlPairingEndpoint,
-    RemoteControlPairingExpiresAfter, RemoteControlPairingInvitationCode,
-    RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
-    RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlTargetAccess,
-    RemoteControlTargetIdentity,
+    FixedRemoteControlTargetAccessTable, RemoteControlPairingAttemptTimeout,
+    RemoteControlPairingEndpoint, RemoteControlPairingExpiresAfter,
+    RemoteControlPairingInvitationCode, RemoteControlPairingPermissions,
+    RemoteControlPairingPublicAppDataBytes, RemoteControlRequestKind, RemoteControlRequestSet,
+    RemoteControlTargetAccess, RemoteControlTargetAccessTable, RemoteControlTargetIdentity,
 };
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
@@ -26,7 +26,7 @@ use crate::runtime::remote_control_target_accesses::{
 };
 use crate::runtime::{
     AnnounceNowError, RemoteControlControllerGrantControl, RemoteControlPairingControlError,
-    RemoteControlTargetAccessControl, ResolvedRemoteControlTarget,
+    RemoteControlTargetAccessControl, RemoteControlTargetInventory, ResolvedRemoteControlTarget,
     RevokeRemoteControlControllerControlError, SendError, SetRegisteredAnnounceAppDataError,
     SetRemoteControlControllerGrantControlError, SetRemoteControlControllerGrantServiceError,
 };
@@ -262,6 +262,41 @@ fn remote_control_target_resolution_preserves_the_exact_target_and_settlement() 
         ));
     }));
     assert_eq!(resolved, Ok(expected));
+}
+
+#[test]
+fn remote_control_target_inventory_preserves_the_exact_settlement() {
+    let commands = Channel::<CriticalSectionRawMutex, IssuedCommand, 1>::new();
+    let completions = Pool::<0>::new();
+    let handle = super::PrnsNodeHandle::new(commands.sender(), &completions);
+    let service = super::super::test_remote_control_service();
+    let identities = service
+        .configuration()
+        .unwrap()
+        .identity_secrets()
+        .identities();
+    let access = RemoteControlTargetAccess::new(
+        RemoteControlTargetIdentity::new(*identities.target().public_keys()),
+        RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
+    )
+    .unwrap();
+    let mut table = FixedRemoteControlTargetAccessTable::default();
+    assert!(table.set_target_access(access).is_ok());
+    let expected = RemoteControlTargetInventory::try_from(&table).unwrap();
+    let completion = RemoteControlTargetInventory::try_from(&table).unwrap();
+
+    let (inventory, ()) = block_on(join(handle.remote_control_target_inventory(), async {
+        let RemoteControlTargetAccessCommand::Inventory { id } =
+            handle.next_remote_control_target_access_command().await
+        else {
+            panic!("target inventory command")
+        };
+        assert!(handle.settle_remote_control_target_access(
+            id,
+            RemoteControlTargetAccessCompletion::Inventory(Ok(completion)),
+        ));
+    }));
+    assert_eq!(inventory, Ok(expected));
 }
 
 #[test]

@@ -1,7 +1,8 @@
 pub use crate::{
     request_endpoints, AnnounceNowError, ApproveRemoteControlControllerPairingControlError,
     ApproveRemoteControlControllerPairingControlFailure,
-    ApproveRemoteControlTargetPairingControlError, BeginRemoteControlControllerPairingControlError,
+    ApproveRemoteControlTargetPairingControlError, AuthorizedRemoteControlTarget,
+    BeginRemoteControlControllerPairingControlError,
     BeginRemoteControlControllerPairingControlFailure, CloseRemoteControlPairingControlError,
     CloseRemoteControlTargetOutcome, CommandId, ConnectRemoteControlTargetError, DestinationHash,
     Diagnostic, ForgetRemoteControlTargetControlError, ForgetRemoteControlTargetServiceError,
@@ -14,6 +15,8 @@ pub use crate::{
     RemoteControlPairingControl, RemoteControlPairingControlError,
     RemoteControlTargetAccessControl, RemoteControlTargetConnection,
     RemoteControlTargetConnectionControl, RemoteControlTargetConnectionTransport,
+    RemoteControlTargetInventory, RemoteControlTargetInventoryControlError,
+    RemoteControlTargetInventoryError, RemoteControlTargetInventoryServiceError,
     RemoteControlTargetOperationError, ResolveRemoteControlTargetControlError,
     ResolveRemoteControlTargetServiceError, ResolvedRemoteControlTarget, ResourceMemoryLimits,
     ResourceStrategy, RevokeRemoteControlControllerControlError,

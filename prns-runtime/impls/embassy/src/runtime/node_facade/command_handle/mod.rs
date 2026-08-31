@@ -53,6 +53,7 @@ use super::super::{
     RejectRemoteControlControllerPairingControlError, RejectRemoteControlTargetPairingControlError,
     RemoteControlControllerGrantControl, RemoteControlPairingControl,
     RemoteControlPairingControlError, RemoteControlTargetAccessControl,
+    RemoteControlTargetInventory, RemoteControlTargetInventoryControlError,
     ResolveRemoteControlTargetControlError, ResolvedRemoteControlTarget,
     RevokeRemoteControlControllerControlError, SendError, SetRegisteredAnnounceAppDataError,
     SetRemoteControlControllerGrantControlError, SetRemoteControlTargetAccessControlError,
@@ -1393,6 +1394,33 @@ impl<
     > RemoteControlTargetAccessControl
     for PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>
 {
+    async fn remote_control_target_inventory(
+        &self,
+    ) -> Result<RemoteControlTargetInventory, RemoteControlTargetInventoryControlError> {
+        let id = self.pool.mint();
+        let command = RemoteControlTargetAccessCommand::Inventory { id };
+        if !self.pool.remote_control_target_accesses.submit(command) {
+            return Err(RemoteControlTargetInventoryControlError::Busy);
+        }
+        let _guard = RemoteControlTargetAccessSlotGuard {
+            pool: self.pool,
+            id,
+        };
+        match self
+            .pool
+            .remote_control_target_accesses
+            .completion(id)
+            .await
+        {
+            RemoteControlTargetAccessCompletion::Inventory(result) => result.map_err(Into::into),
+            RemoteControlTargetAccessCompletion::Resolved(_)
+            | RemoteControlTargetAccessCompletion::AccessSet(_)
+            | RemoteControlTargetAccessCompletion::Forgotten(_) => {
+                Err(RemoteControlTargetInventoryControlError::NodeStopped)
+            }
+        }
+    }
+
     async fn resolve_remote_control_target(
         &self,
         target: IdentityHash,
@@ -1413,7 +1441,8 @@ impl<
             .await
         {
             RemoteControlTargetAccessCompletion::Resolved(result) => result.map_err(Into::into),
-            RemoteControlTargetAccessCompletion::AccessSet(_)
+            RemoteControlTargetAccessCompletion::Inventory(_)
+            | RemoteControlTargetAccessCompletion::AccessSet(_)
             | RemoteControlTargetAccessCompletion::Forgotten(_) => {
                 Err(ResolveRemoteControlTargetControlError::NodeStopped)
             }
@@ -1440,7 +1469,8 @@ impl<
             .await
         {
             RemoteControlTargetAccessCompletion::AccessSet(result) => result.map_err(Into::into),
-            RemoteControlTargetAccessCompletion::Resolved(_)
+            RemoteControlTargetAccessCompletion::Inventory(_)
+            | RemoteControlTargetAccessCompletion::Resolved(_)
             | RemoteControlTargetAccessCompletion::Forgotten(_) => {
                 Err(SetRemoteControlTargetAccessControlError::NodeStopped)
             }
@@ -1467,7 +1497,8 @@ impl<
             .await
         {
             RemoteControlTargetAccessCompletion::Forgotten(result) => result.map_err(Into::into),
-            RemoteControlTargetAccessCompletion::Resolved(_)
+            RemoteControlTargetAccessCompletion::Inventory(_)
+            | RemoteControlTargetAccessCompletion::Resolved(_)
             | RemoteControlTargetAccessCompletion::AccessSet(_) => {
                 Err(ForgetRemoteControlTargetControlError::NodeStopped)
             }

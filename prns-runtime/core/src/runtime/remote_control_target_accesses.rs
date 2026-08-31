@@ -1,9 +1,77 @@
 use crate::identity::IdentityHash;
 use crate::remote_control::{
-    ForgetRemoteControlTargetOutcome, RemoteControlControllerIdentity, RemoteControlEndpoint,
-    RemoteControlRequestSet, RemoteControlTargetAccess, RemoteControlTargetIdentity,
+    FixedRemoteControlTargetAccessTable, ForgetRemoteControlTargetOutcome,
+    RemoteControlControllerIdentity, RemoteControlEndpoint, RemoteControlRequestSet,
+    RemoteControlTargetAccess, RemoteControlTargetAccessTable, RemoteControlTargetIdentity,
     SetRemoteControlTargetAccessError, SetRemoteControlTargetAccessOutcome,
+    DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES,
 };
+use heapless::Vec;
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct AuthorizedRemoteControlTarget {
+    identity_hash: IdentityHash,
+}
+
+impl AuthorizedRemoteControlTarget {
+    #[must_use]
+    pub const fn identity_hash(&self) -> IdentityHash {
+        self.identity_hash
+    }
+}
+
+impl From<&RemoteControlTargetAccess> for AuthorizedRemoteControlTarget {
+    fn from(access: &RemoteControlTargetAccess) -> Self {
+        Self {
+            identity_hash: access.target().identity_hash(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlTargetInventoryError {
+    CapacityInvariantViolation,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct RemoteControlTargetInventory {
+    targets: Vec<AuthorizedRemoteControlTarget, DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES>,
+}
+
+impl RemoteControlTargetInventory {
+    #[must_use]
+    pub fn targets(&self) -> &[AuthorizedRemoteControlTarget] {
+        self.targets.as_slice()
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.targets.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.targets.is_empty()
+    }
+}
+
+impl TryFrom<&FixedRemoteControlTargetAccessTable<DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES>>
+    for RemoteControlTargetInventory
+{
+    type Error = RemoteControlTargetInventoryError;
+
+    fn try_from(
+        accesses: &FixedRemoteControlTargetAccessTable<DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES>,
+    ) -> Result<Self, Self::Error> {
+        let mut targets = Vec::new();
+        for access in accesses.accesses_in_identity_hash_order() {
+            targets
+                .push(access.into())
+                .map_err(|_| RemoteControlTargetInventoryError::CapacityInvariantViolation)?;
+        }
+        Ok(Self { targets })
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ResolvedRemoteControlTarget {
@@ -58,6 +126,21 @@ pub enum ResolveRemoteControlTargetServiceError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlTargetInventoryServiceError {
+    Unavailable,
+    Inventory(RemoteControlTargetInventoryError),
+    TransactionInProgress,
+}
+
+impl From<RemoteControlTargetInventoryError> for RemoteControlTargetInventoryServiceError {
+    fn from(error: RemoteControlTargetInventoryError) -> Self {
+        match error {
+            RemoteControlTargetInventoryError::CapacityInvariantViolation => Self::Inventory(error),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolveRemoteControlTargetControlError {
     NodeStopped,
     Busy,
@@ -73,6 +156,24 @@ impl From<ResolveRemoteControlTargetServiceError> for ResolveRemoteControlTarget
                 Self::TargetNotAuthorized
             }
             ResolveRemoteControlTargetServiceError::TransactionInProgress => Self::Busy,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlTargetInventoryControlError {
+    NodeStopped,
+    Busy,
+    Unavailable,
+    Inventory(RemoteControlTargetInventoryError),
+}
+
+impl From<RemoteControlTargetInventoryServiceError> for RemoteControlTargetInventoryControlError {
+    fn from(error: RemoteControlTargetInventoryServiceError) -> Self {
+        match error {
+            RemoteControlTargetInventoryServiceError::Unavailable => Self::Unavailable,
+            RemoteControlTargetInventoryServiceError::Inventory(error) => Self::Inventory(error),
+            RemoteControlTargetInventoryServiceError::TransactionInProgress => Self::Busy,
         }
     }
 }
@@ -133,6 +234,12 @@ impl From<ForgetRemoteControlTargetServiceError> for ForgetRemoteControlTargetCo
 }
 
 pub trait RemoteControlTargetAccessControl {
+    fn remote_control_target_inventory(
+        &self,
+    ) -> impl core::future::Future<
+        Output = Result<RemoteControlTargetInventory, RemoteControlTargetInventoryControlError>,
+    > + Send;
+
     fn resolve_remote_control_target(
         &self,
         target: IdentityHash,

@@ -28,7 +28,8 @@ use super::super::remote_control::REMOTE_CONTROL_REQUEST_PLAINTEXT_MAX;
 use super::super::request_endpoints::RequestEndpointSet;
 use super::super::{
     ForgetRemoteControlTargetServiceError, PrnsEvent, RemoteControlAuthorizationRestoreError,
-    RemoteControlAuthorizationRestoreOutcome, ResolveRemoteControlTargetServiceError,
+    RemoteControlAuthorizationRestoreOutcome, RemoteControlTargetInventory,
+    RemoteControlTargetInventoryServiceError, ResolveRemoteControlTargetServiceError,
     ResolvedRemoteControlTarget, RevokeRemoteControlControllerServiceError,
     SetRemoteControlControllerGrantServiceError, SetRemoteControlTargetAccessServiceError,
 };
@@ -222,6 +223,16 @@ impl AssembledRemoteControl {
             available.identities.controller(),
             access,
         )))
+    }
+
+    pub fn target_inventory(
+        &self,
+    ) -> Result<RemoteControlTargetInventory, RemoteControlTargetInventoryServiceError> {
+        let available = self
+            .available
+            .as_ref()
+            .ok_or(RemoteControlTargetInventoryServiceError::Unavailable)?;
+        RemoteControlTargetInventory::try_from(&available.target_accesses).map_err(Into::into)
     }
 
     pub fn forget_target(
@@ -939,6 +950,51 @@ mod tests {
         assert_eq!(
             unavailable.resolve_target(&target),
             Err(ResolveRemoteControlTargetServiceError::Unavailable),
+        );
+    }
+
+    #[test]
+    fn target_inventory_is_an_ordered_projection_of_authorized_targets() {
+        let mut engine = EngineState::<Storage>::default();
+        let mut remote_control =
+            configure_remote_control_service(&mut engine, remote_control_service()).unwrap();
+        assert!(remote_control.target_inventory().unwrap().is_empty());
+
+        let first = remote_control_target_access(0x21);
+        let second = RemoteControlTargetAccess::new(
+            remote_control_target(0x31),
+            RemoteControlRequestSet::all(),
+        )
+        .unwrap();
+        let first_projection = crate::runtime::AuthorizedRemoteControlTarget::from(&first);
+        let second_projection = crate::runtime::AuthorizedRemoteControlTarget::from(&second);
+        let expected = if first_projection.identity_hash().as_bytes()
+            < second_projection.identity_hash().as_bytes()
+        {
+            [first_projection, second_projection]
+        } else {
+            [second_projection, first_projection]
+        };
+
+        assert_eq!(
+            remote_control.set_target_access(second),
+            Ok(crate::remote_control::SetRemoteControlTargetAccessOutcome::Added),
+        );
+        assert_eq!(
+            remote_control.set_target_access(first),
+            Ok(crate::remote_control::SetRemoteControlTargetAccessOutcome::Added),
+        );
+        assert_eq!(
+            remote_control.target_inventory().unwrap().targets(),
+            expected.as_slice(),
+        );
+
+        let unavailable =
+            configure_remote_control_service(&mut engine, RemoteControlService::Unavailable)
+                .unwrap();
+        assert_eq!(
+            unavailable.target_inventory(),
+            Err(RemoteControlTargetInventoryServiceError::Unavailable),
         );
     }
 

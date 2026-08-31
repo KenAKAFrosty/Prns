@@ -194,6 +194,19 @@ pub(super) async fn run_router<
                 );
             }
             Either::Second(Either::First(Either::Second(
+                RemoteControlTargetAccessCommand::Inventory { id },
+            ))) => {
+                let outcome = if authorization_transaction.is_active() {
+                    Err(super::RemoteControlTargetInventoryServiceError::TransactionInProgress)
+                } else {
+                    remote_control.target_inventory()
+                };
+                let _settled = commands.settle_remote_control_target_access(
+                    id,
+                    RemoteControlTargetAccessCompletion::Inventory(outcome),
+                );
+            }
+            Either::Second(Either::First(Either::Second(
                 RemoteControlTargetAccessCommand::ResolveTarget { id, target },
             ))) => {
                 let outcome = if authorization_transaction.is_active() {
@@ -620,7 +633,8 @@ mod tests {
         use crate::remote_control::{RemoteControlControllerGrantTable, RemoteControlRequestKind};
         use crate::runtime::{
             RemoteControlControllerGrantControl, RemoteControlTargetAccessControl,
-            ResolveRemoteControlTargetControlError, SetRemoteControlControllerGrantControlError,
+            RemoteControlTargetInventoryControlError, ResolveRemoteControlTargetControlError,
+            SetRemoteControlControllerGrantControlError,
         };
 
         type M = CriticalSectionRawMutex;
@@ -643,7 +657,7 @@ mod tests {
             handle,
         );
         let exercise = async {
-            let (prepared, (app_mutation, target_resolution)) = join(
+            let (prepared, (app_mutation, (target_inventory, target_resolution))) = join(
                 handle.prepare_remote_control_pairing_authorization(
                     attempt_id,
                     super::super::remote_control_pairing_authorizations::RemoteControlPairingAuthorization::ControllerGrant(
@@ -652,9 +666,12 @@ mod tests {
                 ),
                 join(
                     handle.set_remote_control_controller_grant(app_grant),
-                    handle.resolve_remote_control_target(crate::identity::IdentityHash::new([
-                        0x78; 16
-                    ])),
+                    join(
+                        handle.remote_control_target_inventory(),
+                        handle.resolve_remote_control_target(crate::identity::IdentityHash::new([
+                            0x78; 16
+                        ])),
+                    ),
                 ),
             )
             .await;
@@ -662,6 +679,10 @@ mod tests {
             assert_eq!(
                 app_mutation,
                 Err(SetRemoteControlControllerGrantControlError::Busy),
+            );
+            assert_eq!(
+                target_inventory,
+                Err(RemoteControlTargetInventoryControlError::Busy),
             );
             assert_eq!(
                 target_resolution,

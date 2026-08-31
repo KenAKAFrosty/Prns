@@ -5,7 +5,8 @@ use crate::remote_control::{
     SetRemoteControlTargetAccessOutcome,
 };
 use crate::runtime::{
-    ForgetRemoteControlTargetServiceError, ResolveRemoteControlTargetServiceError,
+    ForgetRemoteControlTargetServiceError, RemoteControlTargetInventory,
+    RemoteControlTargetInventoryServiceError, ResolveRemoteControlTargetServiceError,
     ResolvedRemoteControlTarget, SetRemoteControlTargetAccessServiceError,
 };
 
@@ -14,6 +15,9 @@ use super::remote_control_authorization_exchange::{
 };
 
 pub(super) enum RemoteControlTargetAccessCommand {
+    Inventory {
+        id: CommandId,
+    },
     ResolveTarget {
         id: CommandId,
         target: IdentityHash,
@@ -29,6 +33,7 @@ pub(super) enum RemoteControlTargetAccessCommand {
 }
 
 pub(super) enum RemoteControlTargetAccessCompletion {
+    Inventory(Result<RemoteControlTargetInventory, RemoteControlTargetInventoryServiceError>),
     Resolved(Result<ResolvedRemoteControlTarget, ResolveRemoteControlTargetServiceError>),
     AccessSet(
         Result<SetRemoteControlTargetAccessOutcome, SetRemoteControlTargetAccessServiceError>,
@@ -45,7 +50,8 @@ pub(super) type RemoteControlTargetAccessExchange<M> = RemoteControlAuthorizatio
 impl RemoteControlAuthorizationCommand for RemoteControlTargetAccessCommand {
     fn id(&self) -> CommandId {
         match self {
-            Self::ResolveTarget { id, .. }
+            Self::Inventory { id }
+            | Self::ResolveTarget { id, .. }
             | Self::SetTargetAccess { id, .. }
             | Self::ForgetTarget { id, .. } => *id,
         }
