@@ -2,7 +2,7 @@ use super::journal_route_removal;
 use crate::engine::{EngineReaction, EngineState, Journaled, WakeSchedule, WakeSchedules};
 use crate::interfaces::AttachedInterfaces;
 use crate::remote_control::{
-    RemoteControlPairingAvailabilityObservation, RemoteControlPairingAvailabilityVerifyOwed,
+    RemoteControlPairingAvailabilityObservation, VerifiedRemoteControlPairingAvailability,
 };
 use crate::routing::ingress::{
     IngestEffects, IngestRemoteControlPairingAvailability, RemoteControlPairingAvailabilityArrival,
@@ -31,21 +31,21 @@ impl<S: StorageLayout> EngineState<S> {
 
     pub fn resume_remote_control_pairing_availability(
         &mut self,
-        owed: RemoteControlPairingAvailabilityVerifyOwed,
+        verified: VerifiedRemoteControlPairingAvailability,
         interfaces: AttachedInterfaces<'_>,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         let mut wake = WakeSchedules::UNCHANGED;
-        let Ok(availability) = owed.parse_verified() else {
+        let Ok(availability) = verified.parse_verified() else {
             return wake;
         };
         let mut effects = IngestEffects::default();
         let outcome = self.ingest_verified_remote_control_pairing_availability(
             availability,
             RemoteControlPairingAvailabilityArrival {
-                received_hops: owed.received_hops(),
-                source_interface: owed.source_interface(),
-                arrived_at: owed.observed_at(),
+                received_hops: verified.received_hops(),
+                source_interface: verified.source_interface(),
+                arrived_at: verified.observed_at(),
             },
             interfaces,
             &mut |removed| sink(EngineReaction::Journaled(journal_route_removal(removed))),

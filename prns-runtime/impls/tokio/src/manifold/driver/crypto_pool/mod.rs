@@ -270,10 +270,7 @@ pub(super) enum CryptoResult {
         owed: AnnounceVerifyOwed,
         valid: bool,
     },
-    RemoteControlPairingAvailabilityVerified {
-        owed: RemoteControlPairingAvailabilityVerifyOwed,
-        verification: RemoteControlPairingAvailabilityVerification,
-    },
+    RemoteControlPairingAvailabilityVerification(RemoteControlPairingAvailabilityVerification),
     StagedSealed {
         command_id: CommandId,
         link_id: LinkId,
@@ -615,8 +612,7 @@ fn run_crypto_job(job: CryptoJob) -> CryptoResult {
             CryptoResult::AnnounceVerified { owed, valid }
         }
         CryptoJob::VerifyRemoteControlPairingAvailability(owed) => {
-            let verification = owed.verify();
-            CryptoResult::RemoteControlPairingAvailabilityVerified { owed, verification }
+            CryptoResult::RemoteControlPairingAvailabilityVerification(owed.verify())
         }
     }
 }

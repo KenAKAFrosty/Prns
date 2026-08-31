@@ -330,20 +330,20 @@ where
                     CryptoCompletionEffect::NoWakeChange
                 }
             }
-            CryptoResult::RemoteControlPairingAvailabilityVerified { owed, verification } => {
+            CryptoResult::RemoteControlPairingAvailabilityVerification(verification) => {
                 match verification {
-                    RemoteControlPairingAvailabilityVerification::Valid => {
+                    RemoteControlPairingAvailabilityVerification::Verified(verified) => {
                         CryptoCompletionEffect::WakeSchedules(
                             engine.resume_remote_control_pairing_availability(
-                                owed,
+                                verified,
                                 topology.interfaces.view(),
                                 &mut reaction_sink!(),
                             ),
                         )
                     }
-                    RemoteControlPairingAvailabilityVerification::Invalid => {
+                    RemoteControlPairingAvailabilityVerification::Invalid(invalid) => {
                         if let Some(recorder) =
-                            topology.frame_accounting_recorder(owed.source_interface())
+                            topology.frame_accounting_recorder(invalid.source_interface())
                         {
                             recorder.record(FrameAccountingEvent::ProtocolViolation);
                         }

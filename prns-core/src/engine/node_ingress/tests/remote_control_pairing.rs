@@ -229,15 +229,17 @@ fn deferred_verification_owns_the_availability_and_preserves_arrival_provenance(
     let DeferredCrypto::RemoteControlPairingAvailabilityVerify(owed) = deferred else {
         panic!("pairing availability should owe its own verification");
     };
-    assert_eq!(
-        owed.verify(),
-        RemoteControlPairingAvailabilityVerification::Valid
-    );
     assert_eq!(owed.source_interface(), SOURCE);
+    let verified = match owed.verify() {
+        RemoteControlPairingAvailabilityVerification::Verified(verified) => verified,
+        RemoteControlPairingAvailabilityVerification::Invalid(_) => {
+            panic!("the signed pairing availability should verify")
+        }
+    };
 
     let mut observed = None;
     engine.resume_remote_control_pairing_availability(
-        owed,
+        verified,
         AttachedInterfaces::new(&interfaces),
         &mut |reaction| {
             if let EngineReaction::Journaled(Journaled::RemoteControlPairingAvailabilityObserved(
@@ -278,10 +280,14 @@ fn deferred_verification_names_a_structurally_valid_tampered_availability_as_inv
     let DeferredCrypto::RemoteControlPairingAvailabilityVerify(owed) = deferred else {
         panic!("pairing availability should owe its own verification");
     };
-    assert_eq!(
-        owed.verify(),
-        RemoteControlPairingAvailabilityVerification::Invalid,
-    );
+    match owed.verify() {
+        RemoteControlPairingAvailabilityVerification::Invalid(invalid) => {
+            assert_eq!(invalid.source_interface(), SOURCE)
+        }
+        RemoteControlPairingAvailabilityVerification::Verified(_) => {
+            panic!("the tampered pairing availability must not verify")
+        }
+    }
     assert_eq!(engine.route_count(), 0);
 }
 

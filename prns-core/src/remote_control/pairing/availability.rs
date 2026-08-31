@@ -360,10 +360,17 @@ pub struct RemoteControlPairingAvailabilityVerifyOwed {
     received_hops: u8,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VerifiedRemoteControlPairingAvailability {
+    owed: RemoteControlPairingAvailabilityVerifyOwed,
+}
+
+pub struct InvalidRemoteControlPairingAvailability {
+    owed: RemoteControlPairingAvailabilityVerifyOwed,
+}
+
 pub enum RemoteControlPairingAvailabilityVerification {
-    Valid,
-    Invalid,
+    Verified(VerifiedRemoteControlPairingAvailability),
+    Invalid(InvalidRemoteControlPairingAvailability),
 }
 
 impl RemoteControlPairingAvailabilityVerifyOwed {
@@ -388,33 +395,50 @@ impl RemoteControlPairingAvailabilityVerifyOwed {
     }
 
     #[must_use]
-    pub fn verify(&self) -> RemoteControlPairingAvailabilityVerification {
-        match RemoteControlPairingAvailability::parse_without_signature_verification(&self.payload)
-        {
-            Ok(availability) if availability.announce.signature_is_valid() => {
-                RemoteControlPairingAvailabilityVerification::Valid
-            }
-            Ok(_) | Err(_) => RemoteControlPairingAvailabilityVerification::Invalid,
+    pub fn verify(self) -> RemoteControlPairingAvailabilityVerification {
+        let signature_is_valid =
+            RemoteControlPairingAvailability::parse_without_signature_verification(&self.payload)
+                .is_ok_and(|availability| availability.announce.signature_is_valid());
+        if signature_is_valid {
+            RemoteControlPairingAvailabilityVerification::Verified(
+                VerifiedRemoteControlPairingAvailability { owed: self },
+            )
+        } else {
+            RemoteControlPairingAvailabilityVerification::Invalid(
+                InvalidRemoteControlPairingAvailability { owed: self },
+            )
         }
-    }
-
-    pub(crate) fn parse_verified(
-        &self,
-    ) -> Result<RemoteControlPairingAvailability<'_>, RemoteControlPairingAvailabilityParseError>
-    {
-        RemoteControlPairingAvailability::parse_without_signature_verification(&self.payload)
-    }
-
-    pub(crate) const fn observed_at(&self) -> InstantMillis {
-        self.observed_at
     }
 
     pub const fn source_interface(&self) -> InterfaceId {
         self.source_interface
     }
+}
+
+impl InvalidRemoteControlPairingAvailability {
+    pub const fn source_interface(&self) -> InterfaceId {
+        self.owed.source_interface
+    }
+}
+
+impl VerifiedRemoteControlPairingAvailability {
+    pub(crate) fn parse_verified(
+        &self,
+    ) -> Result<RemoteControlPairingAvailability<'_>, RemoteControlPairingAvailabilityParseError>
+    {
+        RemoteControlPairingAvailability::parse_without_signature_verification(&self.owed.payload)
+    }
+
+    pub(crate) const fn observed_at(&self) -> InstantMillis {
+        self.owed.observed_at
+    }
+
+    pub(crate) const fn source_interface(&self) -> InterfaceId {
+        self.owed.source_interface
+    }
 
     pub(crate) const fn received_hops(&self) -> u8 {
-        self.received_hops
+        self.owed.received_hops
     }
 }
 
