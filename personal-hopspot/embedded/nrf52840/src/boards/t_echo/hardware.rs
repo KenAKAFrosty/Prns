@@ -88,7 +88,7 @@ pub(crate) struct TechoBoard;
 
 impl TechoBoard {
     pub(crate) fn initialize_identities<R>(
-        bootstrap: impl FnOnce(&mut Nvmc<'static>, &mut Rng<'static, Blocking>) -> R,
+        bootstrap: impl FnOnce(&mut Nvmc<'static>, Rng<'static, Blocking>) -> R,
     ) -> (R, TechoEarlyHardware) {
         let mut nrf_config = config::Config::default();
         nrf_config.gpiote_interrupt_priority = Priority::P2;
@@ -97,8 +97,8 @@ impl TechoBoard {
 
         let identities = {
             let mut nvmc = Nvmc::new(peripherals.NVMC);
-            let mut rng = Rng::new_blocking(peripherals.RNG);
-            bootstrap(&mut nvmc, &mut rng)
+            let rng = Rng::new_blocking(peripherals.RNG);
+            bootstrap(&mut nvmc, rng)
         };
 
         let eink_rail = Output::new(peripherals.P0_12, Level::High, OutputDrive::Standard);

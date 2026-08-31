@@ -42,7 +42,10 @@ use super::bluetooth_auto::{
     L2capPacket, NrfBleBackend, Server, BLE_SHARED, BLE_SUPERVISOR_ID, HUB, MEMBERS, OUTBOUND_WAKE,
     POOL,
 };
-use super::entropy::{initialize_runtime_entropy, runtime_entropy, RUNTIME_ENTROPY_SEED_LEN};
+use super::entropy::{
+    install_softdevice_runtime_entropy, prepare_softdevice_runtime_entropy, runtime_entropy,
+    seed_from_hal,
+};
 use super::interface_cards::{build_cards, build_snapshots};
 use super::node::*;
 use hopspot::PresentedNoticeTimer;
@@ -98,28 +101,21 @@ async fn manifold_task(
 
 #[allow(clippy::too_many_lines)]
 pub async fn run(spawner: Spawner) -> ! {
-    let (
-        (node_bootstrap, remote_control_bootstrap, ble_bootstrap, runtime_entropy_seed),
-        early_hardware,
-    ) = Board::initialize_identities(|nvmc, rng| {
-        let mut fill_entropy = |bytes: &mut [u8]| rng.blocking_fill_bytes(bytes);
-        let node_bootstrap = board::bootstrap_node_identity(nvmc, &mut fill_entropy);
-        let remote_control_bootstrap = board::REMOTE_CONTROL_IDENTITY_FLASH
-            .load_or_generate(nvmc, &mut fill_entropy)
-            .expect("RemoteControl identity bootstrap failed");
-        let ble_bootstrap = board::bootstrap_ble_identity(nvmc, &mut fill_entropy);
-        let mut runtime_entropy_seed =
-            personal_rns::identity::Zeroizing::new([0u8; RUNTIME_ENTROPY_SEED_LEN]);
-        fill_entropy(&mut runtime_entropy_seed[..]);
-        (
-            node_bootstrap,
-            remote_control_bootstrap,
-            ble_bootstrap,
-            runtime_entropy_seed,
-        )
-    });
-    initialize_runtime_entropy(&runtime_entropy_seed);
-    drop(runtime_entropy_seed);
+    let ((node_bootstrap, remote_control_bootstrap, ble_bootstrap, entropy), early_hardware) =
+        Board::initialize_identities(|nvmc, rng| {
+            let mut entropy = seed_from_hal(rng);
+            let node_bootstrap = board::bootstrap_node_identity(nvmc, &mut entropy);
+            let remote_control_bootstrap = board::REMOTE_CONTROL_IDENTITY_FLASH
+                .load_or_generate(nvmc, &mut entropy)
+                .expect("RemoteControl identity bootstrap failed");
+            let ble_bootstrap = board::bootstrap_ble_identity(nvmc, &mut entropy);
+            (
+                node_bootstrap,
+                remote_control_bootstrap,
+                ble_bootstrap,
+                entropy,
+            )
+        });
     let identity_startup_notice =
         board::identity_startup_notice(node_bootstrap.persistence(), ble_bootstrap.persistence());
     let node_identity = node_bootstrap.into_identity();
@@ -162,12 +158,14 @@ pub async fn run(spawner: Spawner) -> ! {
     );
     let mut usb = builder.build();
 
+    let entropy = prepare_softdevice_runtime_entropy(entropy);
     let sd = Softdevice::enable(&softdevice_config());
     static SERVER: StaticCell<Server> = StaticCell::new();
     let server: &'static Server = SERVER.init(Server::new(sd).unwrap());
     static L2CAP: StaticCell<l2cap::L2cap<L2capPacket>> = StaticCell::new();
     let l2cap: &'static l2cap::L2cap<L2capPacket> = L2CAP.init(l2cap::L2cap::init(sd));
     let sd: &'static Softdevice = sd;
+    install_softdevice_runtime_entropy(entropy, sd);
     spawner.spawn(softdevice_task(sd, vbus).expect("softdevice task fits"));
     let shared_flash = super::learned_state::take_flash(sd);
     let mut lora_profile_store =

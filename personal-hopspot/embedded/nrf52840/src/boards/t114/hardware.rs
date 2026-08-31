@@ -68,7 +68,7 @@ pub(crate) struct T114Board;
 
 impl T114Board {
     pub(crate) async fn initialize<R>(
-        bootstrap: impl FnOnce(&mut Nvmc<'static>, &mut Rng<'static, Blocking>) -> R,
+        bootstrap: impl FnOnce(&mut Nvmc<'static>, Rng<'static, Blocking>) -> R,
     ) -> (R, T114Hardware) {
         let mut nrf_config = config::Config::default();
         nrf_config.hfclk_source = HfclkSource::ExternalXtal;
@@ -78,8 +78,8 @@ impl T114Board {
 
         let identity = {
             let mut nvmc = Nvmc::new(peripherals.NVMC);
-            let mut rng = Rng::new_blocking(peripherals.RNG);
-            bootstrap(&mut nvmc, &mut rng)
+            let rng = Rng::new_blocking(peripherals.RNG);
+            bootstrap(&mut nvmc, rng)
         };
 
         interrupt::USBD.set_priority(Priority::P2);

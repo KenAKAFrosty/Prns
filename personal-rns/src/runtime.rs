@@ -66,11 +66,11 @@ pub use prns_runtime_embassy::runtime::{
     minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
     EmbassyFleet, EmbassyInterfaceStore, EmbeddedCompactionPolicy, EmbeddedFlashPersistence,
     EmbeddedPersistenceDiagnostic, EmbeddedPersistenceFailure, EmbeddedPersistencePolicy,
-    EmbeddedPersistenceRestoreReport, EmbeddedPersistenceTarget, FixedRouteSnapshotKeys, Fleet,
-    InboundDeliveryError, InterfaceLane, LaneClaimError, ManifoldLaneSet, ManifoldWiring,
-    OutboundFrame, PrnsNode, PrnsNodeHandle, RemoteControlHandle, RequestResponseData,
-    RequestRoutingCapacity, RouteSnapshotKeyError, RouteSnapshotKeys, SharedNorFlash,
-    StaticManifoldLane, SupervisorLane,
+    EmbeddedPersistenceRestoreReport, EmbeddedPersistenceTarget, EntropyHandle,
+    FixedRouteSnapshotKeys, Fleet, InboundDeliveryError, InterfaceLane, LaneClaimError,
+    ManifoldLaneSet, ManifoldWiring, OutboundFrame, PrnsNode, PrnsNodeHandle, RemoteControlHandle,
+    RequestResponseData, RequestRoutingCapacity, RouteSnapshotKeyError, RouteSnapshotKeys,
+    SharedNorFlash, SharedRuntimeEntropy, StaticManifoldLane, SupervisorLane,
 };
 
 #[cfg(all(feature = "embassy-host", feature = "tokio-host"))]
@@ -78,9 +78,10 @@ pub use prns_runtime_embassy::runtime::{
     minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
     EmbassyFleet, EmbassyInterfaceStore, EmbeddedCompactionPolicy, EmbeddedFlashPersistence,
     EmbeddedPersistenceDiagnostic, EmbeddedPersistenceFailure, EmbeddedPersistencePolicy,
-    EmbeddedPersistenceRestoreReport, EmbeddedPersistenceTarget, FixedRouteSnapshotKeys,
-    InboundDeliveryError, InterfaceLane, LaneClaimError, ManifoldLaneSet, ManifoldWiring,
-    OutboundFrame, PrnsNode as EmbassyPrnsNode, PrnsNodeHandle as EmbassyPrnsNodeHandle,
-    RemoteControlHandle as EmbassyRemoteControlHandle, RequestResponseData, RouteSnapshotKeyError,
-    RouteSnapshotKeys, SharedNorFlash, StaticManifoldLane, SupervisorLane,
+    EmbeddedPersistenceRestoreReport, EmbeddedPersistenceTarget, EntropyHandle,
+    FixedRouteSnapshotKeys, InboundDeliveryError, InterfaceLane, LaneClaimError, ManifoldLaneSet,
+    ManifoldWiring, OutboundFrame, PrnsNode as EmbassyPrnsNode,
+    PrnsNodeHandle as EmbassyPrnsNodeHandle, RemoteControlHandle as EmbassyRemoteControlHandle,
+    RequestResponseData, RouteSnapshotKeyError, RouteSnapshotKeys, SharedNorFlash,
+    SharedRuntimeEntropy, StaticManifoldLane, SupervisorLane,
 };

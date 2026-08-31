@@ -98,6 +98,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
 dependencies = [
  "hybrid-array",
+ "zeroize",
 ]
 
 [[package]]
@@ -544,6 +545,7 @@ dependencies = [
  "block-buffer",
  "crypto-common 0.2.2",
  "ctutils",
+ "zeroize",
 ]
 
 [[package]]
@@ -1199,6 +1201,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9155a582abd142abc056962c29e3ce5ff2ad5469f4246b537ed42c5deba857da"
 dependencies = [
  "typenum",
+ "zeroize",
 ]
 
 [[package]]
@@ -1663,21 +1666,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "ppv-lite86"
-version = "0.2.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
-dependencies = [
- "zerocopy",
-]
-
-[[package]]
 name = "prns-core"
 version = "0.3.7"
 dependencies = [
  "aes",
  "cbc",
  "cfg-if",
+ "chacha20",
  "crc32fast",
  "ed25519-dalek",
  "embedded-storage",
@@ -1685,7 +1680,9 @@ dependencies = [
  "heapless 0.8.0",
  "hkdf",
  "hmac",
+ "hybrid-array",
  "prns-macros",
+ "rand_core 0.10.1",
  "roaring",
  "sha2",
  "x25519-dalek",
@@ -1776,16 +1773,13 @@ dependencies = [
 name = "prns-runtime-tokio"
 version = "0.3.7"
 dependencies = [
- "chacha20",
  "futures-util",
  "getrandom 0.2.17",
  "heapless 0.8.0",
  "prns-core",
  "prns-runtime",
- "rand_core 0.10.1",
  "rtrb",
  "tokio",
- "zeroize",
 ]
 
 [[package]]
@@ -1811,16 +1805,6 @@ name = "r-efi"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
-
-[[package]]
-name = "rand_chacha"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3022b5f1df60f26e1ffddd6c66e8aa15de382ae63b3a0c1bfc0e4d3e3f325cb"
-dependencies = [
- "ppv-lite86",
- "rand_core 0.9.5",
-]
 
 [[package]]
 name = "rand_core"
@@ -2203,7 +2187,6 @@ dependencies = [
  "personal-hopspot-core",
  "personal-rns",
  "prns-core",
- "rand_chacha",
  "static_cell",
 ]
 

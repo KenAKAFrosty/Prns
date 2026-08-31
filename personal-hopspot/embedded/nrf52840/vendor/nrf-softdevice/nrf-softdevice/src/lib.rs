@@ -164,7 +164,7 @@ pub use temperature::temperature_celsius;
 mod random;
 #[cfg(feature = "macros")]
 pub use nrf_softdevice_macro::*;
-pub use random::random_bytes;
+pub use random::{random_bytes, RandomError, SoftdeviceRandom};
 
 // Numbers of interrupts we care about are identical in all nRF52xxx.
 // We copypaste the enum here to avoid depending on the PAC, which avoids version conflicts.

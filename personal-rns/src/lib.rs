@@ -108,18 +108,19 @@ pub use prns_runtime_tokio::runtime::{
 pub use prns_runtime_embassy::runtime::{
     EmbeddedCompactionPolicy, EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic,
     EmbeddedPersistenceFailure, EmbeddedPersistencePolicy, EmbeddedPersistenceRestoreReport,
-    EmbeddedPersistenceTarget, FixedRouteSnapshotKeys, Fleet, PrnsNode, PrnsNodeHandle,
-    RemoteControlHandle, RequestResponseData, RouteSnapshotKeyError, RouteSnapshotKeys,
-    SharedNorFlash,
+    EmbeddedPersistenceTarget, EntropyHandle, FixedRouteSnapshotKeys, Fleet, PrnsNode,
+    PrnsNodeHandle, RemoteControlHandle, RequestResponseData, RouteSnapshotKeyError,
+    RouteSnapshotKeys, SharedNorFlash, SharedRuntimeEntropy,
 };
 
 #[cfg(all(feature = "embassy-host", feature = "tokio-host"))]
 pub use prns_runtime_embassy::runtime::{
     EmbeddedCompactionPolicy, EmbeddedFlashPersistence, EmbeddedPersistenceDiagnostic,
     EmbeddedPersistenceFailure, EmbeddedPersistencePolicy, EmbeddedPersistenceRestoreReport,
-    EmbeddedPersistenceTarget, FixedRouteSnapshotKeys, PrnsNode as EmbassyPrnsNode,
+    EmbeddedPersistenceTarget, EntropyHandle, FixedRouteSnapshotKeys, PrnsNode as EmbassyPrnsNode,
     PrnsNodeHandle as EmbassyPrnsNodeHandle, RemoteControlHandle as EmbassyRemoteControlHandle,
     RequestResponseData, RouteSnapshotKeyError, RouteSnapshotKeys, SharedNorFlash,
+    SharedRuntimeEntropy,
 };
 
 #[cfg(all(
