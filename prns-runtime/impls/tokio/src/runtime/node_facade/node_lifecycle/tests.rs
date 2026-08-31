@@ -1,6 +1,9 @@
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 
 use crate::engine::test_support::{
     fixed_secret_key, personal_node_destination, sealed_single_packet,
@@ -38,6 +41,31 @@ use super::{
 };
 
 static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+struct PollTrace {
+    label: u8,
+    polls: usize,
+    completes_on: Option<usize>,
+    wake_on_pending: bool,
+    trace: Arc<Mutex<Vec<u8>>>,
+}
+
+impl Future for PollTrace {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        self.trace.lock().unwrap().push(self.label);
+        self.polls += 1;
+        if self.completes_on == Some(self.polls) {
+            Poll::Ready(())
+        } else {
+            if self.wake_on_pending {
+                context.waker().wake_by_ref();
+            }
+            Poll::Pending
+        }
+    }
+}
 
 struct ProofLoopback {
     id: InterfaceId,
@@ -176,6 +204,55 @@ async fn node_task_panics_report_their_boundary() {
         },)
         .await,
         Err(NodeRunError::InterfaceDriverPanicked)
+    );
+}
+
+#[tokio::test]
+async fn executor_local_tasks_rotate_their_first_poll_without_skipping_a_child() {
+    let trace = Arc::new(Mutex::new(Vec::new()));
+    let task = |label, completes_on| PollTrace {
+        label,
+        polls: 0,
+        completes_on,
+        wake_on_pending: true,
+        trace: trace.clone(),
+    };
+
+    assert_eq!(
+        run_executor_local_node_tasks(task(b'M', None), task(b'R', None), task(b'I', Some(3)))
+            .await,
+        Ok(()),
+    );
+    assert_eq!(
+        *trace.lock().unwrap(),
+        [b'I', b'M', b'R', b'M', b'I', b'R', b'I'],
+    );
+}
+
+#[tokio::test]
+async fn executor_local_tasks_pair_the_hot_pipeline_without_repolling_dormant_requests() {
+    let trace = Arc::new(Mutex::new(Vec::new()));
+    let task = |label, completes_on, wake_on_pending| PollTrace {
+        label,
+        polls: 0,
+        completes_on,
+        wake_on_pending,
+        trace: trace.clone(),
+    };
+
+    assert_eq!(
+        run_executor_local_node_tasks(
+            task(b'M', Some(3), true),
+            task(b'R', None, false),
+            task(b'I', None, false),
+        )
+        .await,
+        Ok(()),
+    );
+    assert_eq!(
+        *trace.lock().unwrap(),
+        [b'I', b'M', b'R', b'M', b'I', b'I', b'M'],
+        "manifold and interface stay coupled while the dormant request runner is polled once",
     );
 }
 

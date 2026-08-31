@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::future::Future;
+use std::future::{poll_fn, Future};
 use std::marker::PhantomData;
 use std::panic::AssertUnwindSafe;
 use std::rc::Rc;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll, Wake, Waker};
 
+use futures_util::task::AtomicWaker;
 use futures_util::FutureExt;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
@@ -161,6 +163,45 @@ impl ExecutorThreadAnchor {
     }
 }
 
+struct RequestTaskWake {
+    ready: AtomicBool,
+    polling: AtomicBool,
+    parent: AtomicWaker,
+}
+
+impl RequestTaskWake {
+    fn new() -> Self {
+        Self {
+            ready: AtomicBool::new(true),
+            polling: AtomicBool::new(false),
+            parent: AtomicWaker::new(),
+        }
+    }
+
+    fn take_ready(&self) -> bool {
+        self.ready.swap(false, Ordering::AcqRel)
+    }
+
+    fn finish_poll(&self) {
+        self.polling.store(false, Ordering::Release);
+        if self.ready.load(Ordering::Acquire) {
+            self.parent.wake();
+        }
+    }
+}
+
+impl Wake for RequestTaskWake {
+    fn wake(self: Arc<Self>) {
+        self.wake_by_ref();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        if !self.ready.swap(true, Ordering::AcqRel) && !self.polling.load(Ordering::Acquire) {
+            self.parent.wake();
+        }
+    }
+}
+
 async fn run_executor_local_node_tasks(
     manifold: impl Future<Output = ()>,
     request_endpoints: impl Future<Output = ()>,
@@ -173,11 +214,57 @@ async fn run_executor_local_node_tasks(
     let request_endpoints = AssertUnwindSafe(request_endpoints).catch_unwind();
     let interface_driver = AssertUnwindSafe(interface_driver).catch_unwind();
     tokio::pin!(manifold, request_endpoints, interface_driver);
-    let result = tokio::select! {
-        result = &mut manifold => result.map_err(|_| NodeRunError::ManifoldPanicked),
-        result = &mut request_endpoints => result.map_err(|_| NodeRunError::RequestEndpointrPanicked),
-        result = &mut interface_driver => result.map_err(|_| NodeRunError::InterfaceDriverPanicked),
-    };
+    let request_wake = Arc::new(RequestTaskWake::new());
+    let request_waker = Waker::from(request_wake.clone());
+    // Interface I/O and manifold work form one latency-sensitive pipeline, so every executor turn
+    // advances both directly with Tokio's waker. The request runner is independent and commonly
+    // dormant; its tagged waker keeps unrelated hot-pipeline wakes from polling it.
+    let mut interface_first = true;
+    let result = poll_fn(|parent_context| {
+        request_wake.parent.register(parent_context.waker());
+        request_wake.polling.store(true, Ordering::Release);
+        let mut request_ready = request_wake.take_ready();
+
+        macro_rules! poll_child {
+            ($child:ident, $context:expr, $panic:expr) => {
+                if let Poll::Ready(result) = $child.as_mut().poll($context) {
+                    request_wake.polling.store(false, Ordering::Release);
+                    return Poll::Ready(result.map_err(|_| $panic));
+                }
+            };
+        }
+
+        if interface_first {
+            poll_child!(
+                interface_driver,
+                parent_context,
+                NodeRunError::InterfaceDriverPanicked
+            );
+            request_ready |= request_wake.take_ready();
+            poll_child!(manifold, parent_context, NodeRunError::ManifoldPanicked);
+        } else {
+            poll_child!(manifold, parent_context, NodeRunError::ManifoldPanicked);
+            request_ready |= request_wake.take_ready();
+            poll_child!(
+                interface_driver,
+                parent_context,
+                NodeRunError::InterfaceDriverPanicked
+            );
+        }
+        interface_first = !interface_first;
+        request_ready |= request_wake.take_ready();
+        if request_ready {
+            let mut request_context = Context::from_waker(&request_waker);
+            poll_child!(
+                request_endpoints,
+                &mut request_context,
+                NodeRunError::RequestEndpointrPanicked
+            );
+        }
+        request_wake.finish_poll();
+        Poll::Pending
+    })
+    .await;
     executor_thread.finish(result)
 }
 
