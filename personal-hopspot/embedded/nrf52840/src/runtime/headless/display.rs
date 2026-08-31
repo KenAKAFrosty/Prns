@@ -79,6 +79,11 @@ pub(super) async fn load_profile(
         hopspot::RadioProfileLoadNotice::Recovered => hopspot::UiNotice::ProfileRecovered,
         hopspot::RadioProfileLoadNotice::Reset => hopspot::UiNotice::ProfileReset,
     });
+    if let Some((bytes, len)) = store.load_ble_discovery_group().await {
+        if let Ok(name) = core::str::from_utf8(&bytes[..len as usize]) {
+            super::super::bluetooth_auto::install_discovery_group(name);
+        }
+    }
     LoadedProfile {
         store,
         profile: loaded.profile,
@@ -111,6 +116,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
             gnss: hopspot::GnssAvailability::Available,
             #[cfg(feature = "board-t114")]
             gnss: hopspot::GnssAvailability::Unavailable,
+            ble_group_editor: hopspot::BleGroupEditor::Available,
         });
         let mut activity = hopspot::CardActivityTracker::<{ MEMBERS + 4 }>::new();
         let mut battery_gauge = hopspot::BatteryGauge::lipo();
@@ -159,10 +165,14 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                 super::super::learned_state::persistence_state(),
                 now_ms,
             );
-            let mut details = hopspot::snapshots_to_interface_menu_details(
-                ui_state.selected_card(content.cards),
-                &snapshots,
-            );
+            let mut details = {
+                let group = super::super::bluetooth_auto::local_discovery_group();
+                hopspot::ble_interface_menu_details(
+                    Some(group.as_str()),
+                    ui_state.selected_card(content.cards),
+                    &snapshots,
+                )
+            };
             if ui_state
                 .selected_card(content.cards)
                 .is_some_and(|card| card.id() == BLE_SUPERVISOR_ID)
@@ -343,7 +353,7 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                                 async {
                                     LORA_CONTROL.apply(profile).await == LoRaApplyOutcome::Applied
                                 },
-                                || async { profile_store.save(profile).await.is_ok() },
+                                || async { profile_store.save(profile, None).await.is_ok() },
                             )
                             .await;
                             if result.applied() {
@@ -374,6 +384,31 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                         | hopspot::UiAction::SwapRadioMode
                         | hopspot::UiAction::OpenDocs
                         | hopspot::UiAction::CopySharedInstanceConfig => {}
+                        hopspot::UiAction::OpenBleGroupEditor => {
+                            let group = super::super::bluetooth_auto::local_discovery_group();
+                            ui_state.open_ble_group_editor(group.as_str());
+                        }
+                        hopspot::UiAction::SetBleDiscoveryGroup(name) => {
+                            let result = if !super::super::bluetooth_auto::set_discovery_group(
+                                name.as_str(),
+                            ) {
+                                hopspot::RadioProfileChangeResult::ApplyFailed
+                            } else if profile_store
+                                .save(working_lora_profile, Some(name.as_str().as_bytes()))
+                                .await
+                                .is_ok()
+                            {
+                                hopspot::RadioProfileChangeResult::Saved
+                            } else {
+                                hopspot::RadioProfileChangeResult::ProfileNotSaved
+                            };
+                            if result.applied() {
+                                BluetoothAutoStatus::new(&BLE_SHARED).reset_peers();
+                            }
+                            let notice = result.notice();
+                            ui_state.show_notice(notice);
+                            notice_until_ms = Some((now_ms + NOTICE_MS, notice));
+                        }
                     }
                 }
                 Either3::Second(()) | Either3::Third(()) => {}

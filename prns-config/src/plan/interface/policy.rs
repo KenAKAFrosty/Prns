@@ -188,7 +188,7 @@ fn interface_defaults(medium: &PlannedMedium) -> Result<InterfaceDefaults, PlanE
         PlannedMedium::I2p { .. } => Ok(i2p_core::DEFAULTS),
         PlannedMedium::Weave { .. } => Ok(weave_core::DEFAULTS),
         PlannedMedium::PrnsUsbAuto => Ok(usb_auto::HOST_DEFAULTS),
-        PlannedMedium::PrnsBluetoothAuto => Ok(bluetooth_contract::defaults_for_bitrate(
+        PlannedMedium::PrnsBluetoothAuto { .. } => Ok(bluetooth_contract::defaults_for_bitrate(
             bluetooth_contract::BLE_BITRATE_GUESS_BPS,
         )),
         PlannedMedium::PrnsWebSocketClient { .. } | PlannedMedium::PrnsWebSocketServer { .. } => {

@@ -22,6 +22,7 @@ fn ui_state() -> UiState {
         shared_instance_config_export:
             personal_hopspot_core::SharedInstanceConfigExport::Unavailable,
         gnss: personal_hopspot_core::GnssAvailability::Unavailable,
+        ble_group_editor: personal_hopspot_core::BleGroupEditor::Unavailable,
     })
 }
 
@@ -95,6 +96,8 @@ impl HopspotFace {
             | UiAction::OpenDocs
             | UiAction::SetLoRaProfile(_)
             | UiAction::ResetLoRaProfile
+            | UiAction::OpenBleGroupEditor
+            | UiAction::SetBleDiscoveryGroup(_)
             | UiAction::SwapRadioMode => {}
         }
         action

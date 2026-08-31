@@ -59,6 +59,7 @@ pub(super) fn prepare(
                 l2cap: None,
                 link_mtu: BLE_HW_MTU as u16,
             },
+            crate::runtime::bluetooth_auto::local_discovery_group_tag(),
             &BLE_SHARED,
         );
         let fleet = lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());

@@ -156,6 +156,9 @@ pub struct BluetoothAutoShared<const MEMBERS: usize> {
     id: InterfaceId,
     enabled: AtomicBool,
     enabled_changed: Signal<CriticalSectionRawMutex, bool>,
+    /// Bumped to force peer eviction (e.g. discovery-group change) without a radio cycle.
+    peers_epoch: AtomicU64,
+    peers_changed: Signal<CriticalSectionRawMutex, ()>,
     up: AtomicBool,
     failed: AtomicBool,
     fatal_failure_reason: CriticalSectionMutex<Cell<Option<&'static str>>>,
@@ -172,6 +175,8 @@ impl<const MEMBERS: usize> BluetoothAutoShared<MEMBERS> {
             id,
             enabled: AtomicBool::new(true),
             enabled_changed: Signal::new(),
+            peers_epoch: AtomicU64::new(0),
+            peers_changed: Signal::new(),
             up: AtomicBool::new(false),
             failed: AtomicBool::new(false),
             fatal_failure_reason: CriticalSectionMutex::new(Cell::new(None)),
@@ -302,6 +307,26 @@ impl<const MEMBERS: usize> BluetoothAutoStatus<MEMBERS> {
     pub fn toggle_enabled(&self) {
         let enabled = !self.shared.enabled.fetch_xor(true, Ordering::Relaxed);
         self.shared.enabled_changed.signal(enabled);
+    }
+
+    /// Evict settled peers and refresh the discovery group without cycling the radio.
+    pub fn reset_peers(&self) {
+        self.shared.peers_epoch.fetch_add(1, Ordering::Relaxed);
+        self.shared.peers_changed.signal(());
+    }
+
+    fn peers_epoch(&self) -> u64 {
+        self.shared.peers_epoch.load(Ordering::Relaxed)
+    }
+
+    async fn wait_for_peers_epoch(&self, seen: u64) -> u64 {
+        loop {
+            let current = self.peers_epoch();
+            if current != seen {
+                return current;
+            }
+            self.shared.peers_changed.wait().await;
+        }
     }
 
     fn update_enabled(&self, enabled: bool) {
@@ -531,6 +556,7 @@ enum SendState {
 
 enum SupervisorStep<L: BleLink> {
     Disabled,
+    PeersReset(u64),
     Handshake(HandshakeStep<L>),
     Backend(BleEvent<L>),
     Inbound(usize, Result<usize, <L::Source as BleSource>::Error>),
@@ -554,6 +580,7 @@ where
         identity: BleIdentity,
         endpoint: Endpoint,
         capabilities: LinkCapabilities,
+        group_tag: [u8; 4],
         shared: &'static BluetoothAutoShared<MEMBERS>,
     ) -> Self {
         Self {
@@ -562,6 +589,7 @@ where
                 identity,
                 endpoint,
                 capabilities,
+                group_tag,
             },
             status: BluetoothAutoStatus::new(shared),
             bitrate: contract::BLE_BITRATE_GUESS_BPS,
@@ -617,6 +645,7 @@ where
             &mut members,
         )
         .await;
+        let mut peers_epoch = status.peers_epoch();
 
         loop {
             if status.is_failed() {
@@ -647,6 +676,7 @@ where
                     &mut members,
                 )
                 .await;
+                peers_epoch = status.peers_epoch();
                 continue;
             }
             let step = next_step(
@@ -658,12 +688,40 @@ where
                 &mut inbufs,
                 &fleet,
                 outbound_first,
+                peers_epoch,
             )
             .await;
             outbound_first = !matches!(&step, SupervisorStep::Outbound);
             let now_ms = Instant::now().as_millis();
             match step {
                 SupervisorStep::Disabled => {}
+                SupervisorStep::PeersReset(epoch) => {
+                    peers_epoch = epoch;
+                    evict_settled_peers(
+                        &status,
+                        &mut fleet,
+                        &mut backend,
+                        &mut members,
+                        &mut handshakes,
+                        &mut pending,
+                    )
+                    .await;
+                    if let Some(group_tag) = backend.local_group_tag() {
+                        local.group_tag = group_tag;
+                    }
+                    manager = ConnectionPolicy::<MEMBERS, DIAL_TRACK>::new(local);
+                    manager.start(&mut |action| pending.push(action));
+                    apply_radio(
+                        &mut pending,
+                        &mut manager,
+                        &status,
+                        &mut fleet,
+                        &mut backend,
+                        &mut members,
+                    )
+                    .await;
+                    continue;
+                }
                 SupervisorStep::Handshake(HandshakeStep::Advanced) => {}
                 SupervisorStep::Handshake(HandshakeStep::Done(HandshakeDone {
                     address,
@@ -724,6 +782,9 @@ where
                     .await;
                 }
                 SupervisorStep::Backend(BleEvent::Inbound(link)) => {
+                    if let Some(group_tag) = backend.local_group_tag() {
+                        local.group_tag = group_tag;
+                    }
                     queue_handshake(
                         link,
                         Origin::Accepted,
@@ -735,6 +796,9 @@ where
                     .await;
                 }
                 SupervisorStep::Backend(BleEvent::LinkReady { link, origin, .. }) => {
+                    if let Some(group_tag) = backend.local_group_tag() {
+                        local.group_tag = group_tag;
+                    }
                     queue_handshake(
                         link,
                         origin,
@@ -817,41 +881,54 @@ async fn next_step<
     inbufs: &mut [[u8; contract::BLE_HW_MTU]; MEMBERS],
     fleet: &Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
     outbound_first: bool,
+    peers_epoch: u64,
 ) -> SupervisorStep<B::Link>
 where
     B: BleBackend<MEMBERS>,
 {
     if outbound_first {
-        return match select5(
-            status.wait_until_disabled(),
-            fleet.outbound_ready(),
-            advance_handshakes(handshakes, local),
-            backend.next_event(),
-            recv_any(members, inbufs),
+        return match select(
+            status.wait_for_peers_epoch(peers_epoch),
+            select5(
+                status.wait_until_disabled(),
+                fleet.outbound_ready(),
+                advance_handshakes(handshakes, local),
+                backend.next_event(),
+                recv_any(members, inbufs),
+            ),
         )
         .await
         {
-            Either5::First(()) => SupervisorStep::Disabled,
-            Either5::Second(()) => SupervisorStep::Outbound,
-            Either5::Third(step) => SupervisorStep::Handshake(step),
-            Either5::Fourth(event) => SupervisorStep::Backend(event),
-            Either5::Fifth((index, received)) => SupervisorStep::Inbound(index, received),
+            Either::First(epoch) => SupervisorStep::PeersReset(epoch),
+            Either::Second(Either5::First(())) => SupervisorStep::Disabled,
+            Either::Second(Either5::Second(())) => SupervisorStep::Outbound,
+            Either::Second(Either5::Third(step)) => SupervisorStep::Handshake(step),
+            Either::Second(Either5::Fourth(event)) => SupervisorStep::Backend(event),
+            Either::Second(Either5::Fifth((index, received))) => {
+                SupervisorStep::Inbound(index, received)
+            }
         };
     }
-    match select5(
-        status.wait_until_disabled(),
-        advance_handshakes(handshakes, local),
-        backend.next_event(),
-        recv_any(members, inbufs),
-        fleet.outbound_ready(),
+    match select(
+        status.wait_for_peers_epoch(peers_epoch),
+        select5(
+            status.wait_until_disabled(),
+            advance_handshakes(handshakes, local),
+            backend.next_event(),
+            recv_any(members, inbufs),
+            fleet.outbound_ready(),
+        ),
     )
     .await
     {
-        Either5::First(()) => SupervisorStep::Disabled,
-        Either5::Second(step) => SupervisorStep::Handshake(step),
-        Either5::Third(event) => SupervisorStep::Backend(event),
-        Either5::Fourth((index, received)) => SupervisorStep::Inbound(index, received),
-        Either5::Fifth(()) => SupervisorStep::Outbound,
+        Either::First(epoch) => SupervisorStep::PeersReset(epoch),
+        Either::Second(Either5::First(())) => SupervisorStep::Disabled,
+        Either::Second(Either5::Second(step)) => SupervisorStep::Handshake(step),
+        Either::Second(Either5::Third(event)) => SupervisorStep::Backend(event),
+        Either::Second(Either5::Fourth((index, received))) => {
+            SupervisorStep::Inbound(index, received)
+        }
+        Either::Second(Either5::Fifth(())) => SupervisorStep::Outbound,
     }
 }
 
@@ -870,6 +947,9 @@ async fn prepare_radio<B, const MEMBERS: usize>(
     match backend.local_capabilities(configured_capabilities).await {
         Ok(capabilities) => local.capabilities = capabilities,
         Err(_) => status.mark_failed(RADIO_CONTROL_REASON),
+    }
+    if let Some(group_tag) = backend.local_group_tag() {
+        local.group_tag = group_tag;
     }
 }
 
@@ -1164,6 +1244,43 @@ async fn apply_radio<
     }
 }
 
+async fn evict_settled_peers<
+    B,
+    M: RawMutex + 'static,
+    const FRAME: usize,
+    const NOTIFY: usize,
+    const LIFECYCLE: usize,
+    const MEMBERS: usize,
+>(
+    status: &BluetoothAutoStatus<MEMBERS>,
+    fleet: &mut Fleet<M, FRAME, NOTIFY, LIFECYCLE>,
+    backend: &mut B,
+    members: &mut [Option<Active<B::Link>>; MEMBERS],
+    handshakes: &mut [Option<PendingHandshake<B::Link>>; HANDSHAKE_LANES],
+    pending: &mut PendingActions<ACTION_CAP>,
+) where
+    B: BleBackend<MEMBERS>,
+{
+    backend.drop_all_links();
+    handshakes.fill_with(|| None);
+    pending.clear();
+    let mut changed = false;
+    for (slot, entry) in members.iter_mut().enumerate() {
+        if let Some(id) = entry.as_ref().map(|member| member.id) {
+            fleet.deregister_member(id).await;
+            let Some(member) = entry.take() else {
+                continue;
+            };
+            status.member(slot).retire();
+            backend.on_link_closed(member.address).await;
+            changed = true;
+        }
+    }
+    if changed {
+        status.republish_peer_count();
+    }
+}
+
 async fn disable_members<
     B,
     M: RawMutex + 'static,
@@ -1414,6 +1531,7 @@ async fn apply_settled<
                 slot,
                 address,
                 lane,
+                ..
             } => {
                 if let Some(mut link) = held.take() {
                     if !matches!(lane, L2capPlan::None) {
@@ -1574,6 +1692,7 @@ mod tests {
             identity: BleIdentity::new([identity; 16]),
             endpoint: Endpoint::Nrf52(Nrf52Host::Nrf52),
             capabilities: CAPS,
+            group_tag: contract::default_group_tag(),
         }
     }
 
@@ -1606,6 +1725,7 @@ mod tests {
             endpoint: Endpoint::Nrf52(Nrf52Host::Nrf52),
             capabilities: CAPS,
             peer_rssi: None,
+            group_tag: Some(contract::default_group_tag()),
         };
         let mut handshakes = [
             Some(PendingHandshake::new(
@@ -1699,6 +1819,18 @@ mod tests {
         assert_eq!(status.connection(), ConnectionState::Disabled);
         status.enable();
         assert_eq!(status.connection(), ConnectionState::Failed);
+    }
+
+    #[test]
+    fn reset_peers_advances_the_epoch_without_disabling_the_radio() {
+        static SHARED: BluetoothAutoShared<1> = BluetoothAutoShared::new(InterfaceId::new([11; 8]));
+        let status = BluetoothAutoStatus::new(&SHARED);
+        status.mark_up();
+        let before = status.peers_epoch();
+        status.reset_peers();
+        assert_ne!(status.peers_epoch(), before);
+        assert!(status.is_enabled());
+        assert!(!status.is_failed());
     }
 
     fn recovery_view<const MEMBERS: usize>(

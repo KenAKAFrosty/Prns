@@ -14358,11 +14358,11 @@
       "name": "personal-hopspot-android",
       "source": "personal-hopspot/mobile/android/rust",
       "unsafe": {
-        "blocks": 20,
+        "blocks": 21,
         "externs": 0,
         "functions": 0,
         "impls": 0,
-        "tokens": 20
+        "tokens": 21
       },
       "version": "0.1.0"
     },
@@ -14508,11 +14508,11 @@
       "name": "personal-hopspot-esp32",
       "source": "personal-hopspot/embedded/esp32",
       "unsafe": {
-        "blocks": 1012,
+        "blocks": 1013,
         "externs": 779,
         "functions": 123,
         "impls": 39,
-        "tokens": 2086
+        "tokens": 2087
       },
       "version": "0.1.0"
     },

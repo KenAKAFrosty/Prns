@@ -438,6 +438,22 @@ fn supported_access_point_states_offer_the_radio_swap_action() {
 }
 
 #[test]
+fn ble_interface_menu_is_power_and_back_only() {
+    let cards = test_cards::<1>(CardKind::Ble);
+    let content = test_content(&cards);
+    let mut state = test_ui_state();
+    state.handle_input(InputEvent::ShortPress, content);
+    state.handle_input(InputEvent::LongPress, content);
+    assert_eq!(state.interface_menu_selected_item(), Some(POWER_MENU_ITEM));
+    state.handle_input(InputEvent::ShortPress, content);
+    assert_eq!(state.interface_menu_selected_item(), Some(1));
+    assert_eq!(
+        state.handle_input(InputEvent::LongPress, content),
+        UiAction::None
+    );
+}
+
+#[test]
 fn non_lora_interface_menus_cycle_power_and_back_only() {
     let cards = test_cards::<1>(CardKind::Usb);
     let content = test_content(&cards);

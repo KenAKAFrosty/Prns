@@ -6,7 +6,9 @@ use std::time::Duration;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::Notify;
 
-use prns_core::interfaces::bluetooth_auto::{AdvertisingMode, RadioMode, ScanningMode};
+use prns_core::interfaces::bluetooth_auto::{
+    AdvertisingMode, RadioMode, ScanningMode, DEFAULT_GROUP_TAG, GROUP_TAG_LEN,
+};
 use prns_core::interfaces::bluetooth_auto::{BleAddress, BleIdentity, PeerProtocol};
 
 use super::outbound::{BoundedByteQueue, BoundedMessageQueue};
@@ -224,6 +226,7 @@ impl RadioState {
 pub(super) struct Shared {
     radio: Mutex<RadioState>,
     local_identity: Mutex<Option<[u8; 16]>>,
+    local_group_tag: Mutex<[u8; GROUP_TAG_LEN]>,
     pub(super) psm: Mutex<Option<u16>>,
     psm_ready: Notify,
     pub(super) links: Mutex<HashMap<u32, LinkRecord>>,
@@ -255,6 +258,7 @@ impl AndroidBleBridge {
             shared: Arc::new(Shared {
                 radio: Mutex::new(RadioState::default()),
                 local_identity: Mutex::new(None),
+                local_group_tag: Mutex::new(DEFAULT_GROUP_TAG),
                 psm: Mutex::new(None),
                 psm_ready: Notify::new(),
                 links: Mutex::new(HashMap::new()),
@@ -290,6 +294,38 @@ impl AndroidBleBridge {
         };
         out[..16].copy_from_slice(&identity);
         16
+    }
+
+    pub fn set_local_group_tag(&self, tag: [u8; GROUP_TAG_LEN]) {
+        let changed = if let Ok(mut slot) = self.shared.local_group_tag.lock() {
+            if *slot == tag {
+                false
+            } else {
+                *slot = tag;
+                true
+            }
+        } else {
+            false
+        };
+        if changed {
+            // The advertised manufacturer payload is snapshotted when advertising starts.
+            // Wake the radio pump so Kotlin rebuilds it without cycling the radio.
+            self.shared.work.wake();
+        }
+    }
+
+    pub fn local_group_tag(&self, out: &mut [u8]) -> usize {
+        if out.len() < GROUP_TAG_LEN {
+            return 0;
+        }
+        let tag = self
+            .shared
+            .local_group_tag
+            .lock()
+            .map(|slot| *slot)
+            .unwrap_or(DEFAULT_GROUP_TAG);
+        out[..GROUP_TAG_LEN].copy_from_slice(&tag);
+        GROUP_TAG_LEN
     }
 
     pub fn set_radio_mode(&self, mode: RadioMode) {
@@ -646,6 +682,33 @@ impl AndroidBleBridge {
             self.shared.work.wake();
         }
         complete
+    }
+
+    /// Close every active peer link without clearing the L2CAP PSM or radio mode.
+    pub fn close_all_peer_links(&self) {
+        if let Ok(mut requests) = self.shared.dial_requests.lock() {
+            requests.clear();
+        }
+        if let Ok(mut events) = self.shared.events.lock() {
+            events.clear();
+        }
+        let Ok(mut links) = self.shared.links.lock() else {
+            return;
+        };
+        let Ok(mut closes) = self.shared.close_requests.lock() else {
+            return;
+        };
+        let mut queued = false;
+        for (conn_id, link) in links.iter_mut() {
+            if matches!(link, LinkRecord::Active(_)) && closes.enqueue(*conn_id) {
+                queued |= link.request_close();
+            }
+        }
+        drop(closes);
+        drop(links);
+        if queued {
+            self.shared.work.wake();
+        }
     }
 
     pub fn next_close(&self) -> Option<u32> {

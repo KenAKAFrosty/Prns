@@ -62,6 +62,7 @@ pub enum PolicyAction {
         slot: usize,
         address: BleAddress,
         lane: L2capPlan,
+        peer_rssi: Option<i8>,
     },
     Evict {
         identity: BleIdentity,
@@ -304,6 +305,7 @@ impl<const MAX_PEERS: usize, const DIAL_TRACK: usize> ConnectionPolicy<MAX_PEERS
             slot,
             address,
             lane,
+            peer_rssi: established.peer_rssi,
         });
         self.reconcile(emit);
     }
@@ -459,7 +461,9 @@ pub fn defaults_for_bitrate(bitrate: BitrateBps) -> InterfaceDefaults {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interfaces::bluetooth_auto::{Endpoint, LinkCapabilities, Nrf52Host};
+    use crate::interfaces::bluetooth_auto::{
+        default_group_tag, Endpoint, LinkCapabilities, Nrf52Host,
+    };
 
     const CAPS: LinkCapabilities = LinkCapabilities {
         l2cap: None,
@@ -475,6 +479,7 @@ mod tests {
             identity: BleIdentity::new([identity; 16]),
             endpoint: endpoint(),
             capabilities: CAPS,
+            group_tag: default_group_tag(),
         }
     }
 
@@ -621,6 +626,7 @@ mod tests {
                     slot: 0,
                     address: addr(2),
                     lane: L2capPlan::None,
+                    peer_rssi: None,
                 },
                 PolicyAction::SetAdvertising(AdvertisingMode::Off),
                 PolicyAction::SetScanning(ScanningMode::Off),
@@ -705,6 +711,7 @@ mod tests {
             identity: BleIdentity::new([1; 16]),
             endpoint: Endpoint::Android(AndroidHost::Android),
             capabilities,
+            group_tag: default_group_tag(),
         });
         manager.start(&mut |_| {});
 
@@ -751,6 +758,7 @@ mod tests {
             identity: BleIdentity::new([1; 16]),
             endpoint: Endpoint::CoreBluetooth(AppleHost::MacOs),
             capabilities,
+            group_tag: default_group_tag(),
         });
         manager.start(&mut |_| {});
 
@@ -887,6 +895,7 @@ mod tests {
             identity: BleIdentity::new([1; 16]),
             endpoint: Endpoint::Esp32(Esp32Host::Esp32),
             capabilities: l2cap_caps,
+            group_tag: default_group_tag(),
         };
         let mut manager = ConnectionPolicy::<2, 8>::new(me);
         manager.start(&mut |_| {});

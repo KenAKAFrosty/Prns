@@ -8,6 +8,7 @@ use crate::interfaces::IfacSize;
 use crate::interfaces::{
     ConnectionState, InterfaceId, InterfaceMode, InterfaceSnapshot, TransferRates,
 };
+use crate::wire::DestinationHash;
 
 use super::message_pack::MessagePackEncoder;
 use super::wire_names::{interface, transport};
@@ -35,6 +36,9 @@ pub struct RnsInterfaceStatsEntry {
     name: Option<String>,
     snapshot: InterfaceSnapshot,
     access_code: Option<RnsInterfaceAccessCode>,
+    rssi: Option<i8>,
+    group_id: Option<String>,
+    fleet_peers: Vec<RnsInterfaceStatsEntry>,
 }
 
 impl RnsInterfaceStatsEntry {
@@ -47,15 +51,35 @@ impl RnsInterfaceStatsEntry {
             name,
             snapshot,
             access_code,
+            rssi: None,
+            group_id: None,
+            fleet_peers: Vec::new(),
         }
+    }
+
+    pub fn with_rssi(mut self, rssi: Option<i8>) -> Self {
+        self.rssi = rssi;
+        self
+    }
+
+    pub fn with_group_id(mut self, group_id: Option<String>) -> Self {
+        self.group_id = group_id;
+        self
+    }
+
+    pub fn with_fleet_peers(mut self, fleet_peers: Vec<RnsInterfaceStatsEntry>) -> Self {
+        self.fleet_peers = fleet_peers;
+        self
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RnsTransportStatus {
     transport_identity: IdentityHash,
     network_identity: Option<IdentityHash>,
     uptime: Duration,
+    probe_responder: Option<DestinationHash>,
+    software_version: Option<String>,
 }
 
 impl RnsTransportStatus {
@@ -68,7 +92,20 @@ impl RnsTransportStatus {
             transport_identity,
             network_identity,
             uptime,
+            probe_responder: None,
+            software_version: None,
         }
+    }
+
+    #[must_use]
+    pub const fn with_probe_responder(mut self, probe_responder: Option<DestinationHash>) -> Self {
+        self.probe_responder = probe_responder;
+        self
+    }
+
+    pub fn with_software_version(mut self, software_version: impl Into<String>) -> Self {
+        self.software_version = Some(software_version.into());
+        self
     }
 }
 
@@ -114,7 +151,19 @@ impl RnsInterfaceStats {
         &self,
         encoder: &mut MessagePackEncoder,
     ) -> Result<(), RnsManagementEncodeError> {
-        encoder.map(if self.transport.is_some() { 10 } else { 6 })?;
+        encoder.map(if self.transport.is_some() {
+            let mut fields = 10usize;
+            if self
+                .transport
+                .as_ref()
+                .is_some_and(|status| status.software_version.is_some())
+            {
+                fields = fields.saturating_add(1);
+            }
+            fields
+        } else {
+            6
+        })?;
         encoder.field(interface::INTERFACES)?;
         encoder.array(self.entries.len())?;
 
@@ -141,7 +190,7 @@ impl RnsInterfaceStats {
         encoder.field(interface::RESIDENT_SET_SIZE)?;
         encoder.nil();
 
-        if let Some(status) = self.transport {
+        if let Some(status) = &self.transport {
             encoder.field(transport::IDENTITY)?;
             encoder.binary(status.transport_identity.as_bytes())?;
             encoder.field(transport::NETWORK_IDENTITY)?;
@@ -152,7 +201,13 @@ impl RnsInterfaceStats {
             encoder.field(transport::UPTIME)?;
             encoder.float(status.uptime.as_secs_f64());
             encoder.field(transport::PROBE_RESPONDER)?;
-            encoder.nil();
+            match status.probe_responder {
+                Some(destination) => encoder.binary(destination.as_bytes())?,
+                None => encoder.nil(),
+            }
+            if let Some(software_version) = &status.software_version {
+                encoder.string_field(transport::SOFTWARE_VERSION, software_version)?;
+            }
         }
         Ok(())
     }
@@ -170,7 +225,17 @@ fn encode_interface_entry(
         rx_bps: 0,
         tx_bps: 0,
     });
-    encoder.map(14)?;
+    let mut fields = 14usize;
+    if entry.rssi.is_some() {
+        fields = fields.saturating_add(1);
+    }
+    if entry.group_id.is_some() {
+        fields = fields.saturating_add(1);
+    }
+    if !entry.fleet_peers.is_empty() {
+        fields = fields.saturating_add(1);
+    }
+    encoder.map(fields)?;
     encoder.string_field(interface::NAME, &name)?;
     encoder.string_field(interface::SHORT_NAME, &name)?;
     encoder.string_field(interface::TYPE, &interface_type(entry.snapshot.id))?;
@@ -206,6 +271,48 @@ fn encode_interface_entry(
     {
         Some(network_name) => encoder.string(network_name)?,
         None => encoder.nil(),
+    }
+    if let Some(rssi) = entry.rssi {
+        encoder.field(interface::RSSI)?;
+        encoder.signed(i64::from(rssi));
+    }
+    if let Some(group_id) = &entry.group_id {
+        encoder.string_field(interface::GROUP_ID, group_id)?;
+    }
+    if !entry.fleet_peers.is_empty() {
+        encoder.field(interface::FLEET_PEERS)?;
+        encoder.array(entry.fleet_peers.len())?;
+        for peer in &entry.fleet_peers {
+            encode_fleet_peer_entry(encoder, peer)?;
+        }
+    }
+    Ok(())
+}
+
+fn encode_fleet_peer_entry(
+    encoder: &mut MessagePackEncoder,
+    entry: &RnsInterfaceStatsEntry,
+) -> Result<(), RnsManagementEncodeError> {
+    let name = entry
+        .name
+        .clone()
+        .unwrap_or_else(|| interface_name(entry.snapshot.id));
+    let rates = entry.snapshot.transfer_rates.unwrap_or(TransferRates {
+        rx_bps: 0,
+        tx_bps: 0,
+    });
+    let fields = if entry.rssi.is_some() { 7usize } else { 6usize };
+    encoder.map(fields)?;
+    encoder.string_field(interface::NAME, &name)?;
+    encoder.field(interface::STATUS)?;
+    encoder.boolean(is_online(entry.snapshot.connection));
+    encoder.unsigned_field(interface::RECEIVE_BYTES, entry.snapshot.rx_bytes)?;
+    encoder.unsigned_field(interface::TRANSMIT_BYTES, entry.snapshot.tx_bytes)?;
+    encoder.unsigned_field(interface::RECEIVE_SPEED, u64::from(rates.rx_bps))?;
+    encoder.unsigned_field(interface::TRANSMIT_SPEED, u64::from(rates.tx_bps))?;
+    if let Some(rssi) = entry.rssi {
+        encoder.field(interface::RSSI)?;
+        encoder.signed(i64::from(rssi));
     }
     Ok(())
 }

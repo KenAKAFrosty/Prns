@@ -75,11 +75,11 @@ pub use radio_profile_store::{
 #[cfg(feature = "display")]
 pub use screen::{
     apply_and_persist_radio_profile, card_label, card_label_max_chars, tcp_card_label,
-    AccessPointState, BluetoothRecoveryMenuDetails, Card, CardActivityTracker, CardKind, CardLabel,
-    GnssAvailability, InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess,
-    PersistenceNotice, PresentedNoticeTimer, RadioProfileChangeResult, ScreenContent,
-    SharedInstanceConfigExport, UiAction, UiConfiguration, UiNotice, UiState, UserBlanking,
-    WifiNetworkStatus, WifiStationStatus,
+    AccessPointState, BleGroupEditor, BleGroupName, BluetoothRecoveryMenuDetails, Card,
+    CardActivityTracker, CardKind, CardLabel, GnssAvailability, InputEvent, InterfaceMenuDetails,
+    LoRaSpectrumMenuDetails, LocalDocsAccess, PersistenceNotice, PresentedNoticeTimer,
+    RadioProfileChangeResult, ScreenContent, SharedInstanceConfigExport, UiAction, UiConfiguration,
+    UiNotice, UiState, UserBlanking, WifiNetworkStatus, WifiStationStatus, DEFAULT_BLE_GROUP,
 };
 #[cfg(feature = "display")]
 pub use screen::{display, face_64x128};
@@ -200,7 +200,21 @@ pub fn snapshots_to_interface_menu_details(
     selected_card: Option<&Card>,
     snapshots: &[InterfaceSnapshot],
 ) -> InterfaceMenuDetails {
+    ble_interface_menu_details(None, selected_card, snapshots)
+}
+
+#[cfg(feature = "display")]
+pub fn ble_interface_menu_details(
+    group_id: Option<&str>,
+    selected_card: Option<&Card>,
+    snapshots: &[InterfaceSnapshot],
+) -> InterfaceMenuDetails {
     let mut details = InterfaceMenuDetails::empty();
+    if selected_card.is_some_and(|card| card.kind() == CardKind::Ble) {
+        if let Some(group_id) = group_id.filter(|group| !group.is_empty()) {
+            details.push_info("grp", group_id);
+        }
+    }
     let _ = push_snapshot_supervisor_peer_rows(&mut details, selected_card, snapshots);
     details
 }
@@ -322,6 +336,50 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].text(), "Peers 1");
         assert_eq!(rows[1].text(), "P abcd Live");
+    }
+
+    #[test]
+    fn ble_details_show_read_only_group_above_peers() {
+        let supervisor_id =
+            InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);
+        let member_id = InterfaceId::new([
+            InterfaceKind::BluetoothPeer as u8,
+            0xab,
+            0xcd,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ]);
+        let mut supervisor = snapshot(InterfaceKind::BluetoothAuto);
+        supervisor.id = supervisor_id;
+        let mut member = snapshot(InterfaceKind::BluetoothPeer);
+        member.id = member_id;
+        member.membership = Membership::FleetMember { supervisor_id };
+        let card = Card {
+            id: supervisor_id,
+            kind: CardKind::Ble,
+            label: card_label("BLE"),
+            connection: ConnectionState::Connected,
+            failure_reason: None,
+            tx_bytes: 0,
+            rx_bytes: 0,
+            links: 0,
+            peers: Some(1),
+            destinations: 0,
+            rate_bytes_per_sec: 0,
+            last_activity_secs: None,
+        };
+
+        let details =
+            ble_interface_menu_details(Some("mt-leg-a"), Some(&card), &[supervisor, member]);
+        let rows = details.as_slice();
+
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].text(), "grp mt-leg-a");
+        assert_eq!(rows[1].text(), "Peers 1");
+        assert_eq!(rows[2].text(), "P abcd Live");
     }
 
     #[test]

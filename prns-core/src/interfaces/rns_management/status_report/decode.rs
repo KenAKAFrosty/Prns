@@ -1,4 +1,5 @@
 use alloc::collections::BTreeSet;
+use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt;
@@ -11,8 +12,8 @@ use crate::interfaces::rns_management::wire_names::{interface, transport};
 use crate::wire::DestinationHash;
 
 use super::{
-    RnsInterfaceMode, RnsInterfaceStatsReport, RnsInterfaceStatusReport, RnsOptionalField,
-    RnsRemoteInterfaceStatsReport,
+    RnsFleetPeerReport, RnsInterfaceMode, RnsInterfaceStatsReport, RnsInterfaceStatusReport,
+    RnsOptionalField, RnsRemoteInterfaceStatsReport,
 };
 
 const MAXIMUM_DEPTH: usize = 8;
@@ -148,6 +149,7 @@ struct ReportBuilder {
     network_identity: RnsOptionalField<IdentityHash>,
     transport_uptime_seconds: RnsOptionalField<f64>,
     probe_responder: RnsOptionalField<DestinationHash>,
+    software_version: RnsOptionalField<String>,
 }
 
 impl ReportBuilder {
@@ -178,6 +180,7 @@ impl ReportBuilder {
             network_identity: self.network_identity,
             transport_uptime_seconds: self.transport_uptime_seconds,
             probe_responder: self.probe_responder,
+            software_version: self.software_version,
         })
     }
 }
@@ -237,6 +240,9 @@ struct InterfaceBuilder {
     endpoint_id: RnsOptionalField<String>,
     via_switch_id: RnsOptionalField<String>,
     blocked_ip_list: RnsOptionalField<Vec<String>>,
+    rssi: RnsOptionalField<i64>,
+    group_id: RnsOptionalField<String>,
+    fleet_peers: Vec<RnsFleetPeerReport>,
 }
 
 impl InterfaceBuilder {
@@ -299,6 +305,9 @@ impl InterfaceBuilder {
             endpoint_id: self.endpoint_id,
             via_switch_id: self.via_switch_id,
             blocked_ip_list: self.blocked_ip_list,
+            rssi: self.rssi,
+            group_id: self.group_id,
+            fleet_peers: self.fleet_peers,
         })
     }
 }
@@ -380,6 +389,9 @@ fn decode_report(
             }
             transport::PROBE_RESPONDER => {
                 report.probe_responder = read_optional_hash(reader, path, DestinationHash::new)?
+            }
+            transport::SOFTWARE_VERSION => {
+                report.software_version = read_optional_string(reader, path)?
             }
             _ => skip(reader)?,
         }
@@ -571,10 +583,99 @@ fn read_interface(
             interface::BLOCKED_IP_LIST => {
                 interface_report.blocked_ip_list = read_optional_string_array(reader, path)?
             }
+            interface::RSSI => interface_report.rssi = read_optional_i64(reader, path)?,
+            interface::GROUP_ID => interface_report.group_id = read_optional_string(reader, path)?,
+            interface::FLEET_PEERS => {
+                interface_report.fleet_peers = read_fleet_peers(reader, index)?
+            }
             _ => skip(reader)?,
         }
     }
     interface_report.finish(index)
+}
+
+fn read_fleet_peers(
+    reader: &mut MessagePackReader<'_>,
+    parent_index: usize,
+) -> Result<Vec<RnsFleetPeerReport>, RnsInterfaceStatsDecodeError> {
+    let marker = marker(reader)?;
+    let length = reader
+        .array_length(marker)
+        .map_err(|_| RnsInterfaceStatsDecodeError::InvalidMessagePack)?
+        .ok_or(RnsInterfaceStatsDecodeError::ExpectedInterfacesArray)?;
+    let mut peers = Vec::new();
+    peers
+        .try_reserve_exact(length)
+        .map_err(|_| RnsInterfaceStatsDecodeError::AllocationFailed { entries: length })?;
+    for peer_index in 0..length {
+        peers.push(read_fleet_peer(reader, parent_index, peer_index)?);
+    }
+    Ok(peers)
+}
+
+fn read_fleet_peer(
+    reader: &mut MessagePackReader<'_>,
+    parent_index: usize,
+    peer_index: usize,
+) -> Result<RnsFleetPeerReport, RnsInterfaceStatsDecodeError> {
+    let marker = marker(reader)?;
+    let length = reader
+        .map_length(marker)
+        .map_err(|_| RnsInterfaceStatsDecodeError::InvalidMessagePack)?
+        .ok_or(RnsInterfaceStatsDecodeError::ExpectedInterfaceMap {
+            index: parent_index,
+        })?;
+    let mut fields = BTreeSet::new();
+    let mut name = None;
+    let mut online = None;
+    let mut receive_bytes = None;
+    let mut transmit_bytes = None;
+    let mut receive_speed_bps = None;
+    let mut transmit_speed_bps = None;
+    let mut rssi = RnsOptionalField::Absent;
+    for _ in 0..length {
+        let key = read_key(reader, RnsStatsFieldScope::Interface(parent_index))?;
+        let path =
+            RnsStatsFieldPath::interface(parent_index, &format!("fleet_peers[{peer_index}].{key}"));
+        ensure_unique(&mut fields, path.clone())?;
+        match key.as_str() {
+            interface::NAME => name = Some(read_string(reader, path)?),
+            interface::STATUS => online = Some(read_bool(reader, path)?),
+            interface::RECEIVE_BYTES => receive_bytes = Some(read_u64(reader, path)?),
+            interface::TRANSMIT_BYTES => transmit_bytes = Some(read_u64(reader, path)?),
+            interface::RECEIVE_SPEED => receive_speed_bps = Some(read_number(reader, path)?),
+            interface::TRANSMIT_SPEED => transmit_speed_bps = Some(read_number(reader, path)?),
+            interface::RSSI => rssi = read_optional_i64(reader, path)?,
+            _ => skip(reader)?,
+        }
+    }
+    Ok(RnsFleetPeerReport {
+        name: required(
+            name,
+            RnsStatsFieldPath::interface(parent_index, interface::NAME),
+        )?,
+        online: required(
+            online,
+            RnsStatsFieldPath::interface(parent_index, interface::STATUS),
+        )?,
+        receive_bytes: required(
+            receive_bytes,
+            RnsStatsFieldPath::interface(parent_index, interface::RECEIVE_BYTES),
+        )?,
+        transmit_bytes: required(
+            transmit_bytes,
+            RnsStatsFieldPath::interface(parent_index, interface::TRANSMIT_BYTES),
+        )?,
+        receive_speed_bps: required(
+            receive_speed_bps,
+            RnsStatsFieldPath::interface(parent_index, interface::RECEIVE_SPEED),
+        )?,
+        transmit_speed_bps: required(
+            transmit_speed_bps,
+            RnsStatsFieldPath::interface(parent_index, interface::TRANSMIT_SPEED),
+        )?,
+        rssi,
+    })
 }
 
 fn required<T>(

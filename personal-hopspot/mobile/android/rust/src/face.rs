@@ -1,6 +1,6 @@
 use heapless::Vec as HVec;
 use personal_hopspot_core::{
-    expand_face_rgba, face_64x128, snapshots_to_cards, snapshots_to_interface_menu_details,
+    ble_interface_menu_details, expand_face_rgba, face_64x128, snapshots_to_cards,
     AccessPointState, Card, CardActivityTracker, InputEvent, PowerSnapshot, ScreenContent,
     UiAction, UiConfiguration, UiNotice, UiState, UserBlanking, MOBILE_RGBA_BYTES,
 };
@@ -21,6 +21,7 @@ fn ui_state() -> UiState {
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: personal_hopspot_core::SharedInstanceConfigExport::Available,
         gnss: personal_hopspot_core::GnssAvailability::Unavailable,
+        ble_group_editor: personal_hopspot_core::BleGroupEditor::Available,
     })
 }
 
@@ -95,6 +96,18 @@ impl HopspotFace {
             | UiAction::SetLoRaProfile(_)
             | UiAction::ResetLoRaProfile
             | UiAction::SwapRadioMode => {}
+            UiAction::OpenBleGroupEditor => {
+                let group = crate::engine::ble_discovery_group()
+                    .unwrap_or_else(|| personal_hopspot_core::DEFAULT_BLE_GROUP.to_string());
+                self.state.open_ble_group_editor(&group);
+            }
+            UiAction::SetBleDiscoveryGroup(name) => {
+                if crate::engine::set_ble_discovery_group(name.as_str()) {
+                    self.show_notice(UiNotice::Saved);
+                } else {
+                    self.show_notice(UiNotice::ApplyFailed);
+                }
+            }
         }
         action
     }
@@ -138,7 +151,9 @@ impl HopspotFace {
         if cards.is_empty() {
             face_64x128::splash(&mut self.framebuffer, face_64x128::SplashContent::Starting);
         } else {
-            let interface_menu_details = snapshots_to_interface_menu_details(
+            let group = crate::engine::ble_discovery_group();
+            let interface_menu_details = ble_interface_menu_details(
+                group.as_deref(),
                 self.state.selected_card(content.cards),
                 snapshots,
             );

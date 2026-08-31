@@ -1,5 +1,6 @@
 use super::advertisement::{
     AD_MANUFACTURER_SPECIFIC, EXPERIMENTAL_ROLE_PERIPHERAL_ONLY, EXPERIMENTAL_ROLE_VERSION,
+    EXPERIMENTAL_ROLE_VERSION_MIN,
 };
 use super::handshake::{CONTROL_CLOSE, CONTROL_HELLO};
 use super::*;
@@ -54,13 +55,15 @@ fn psm_admits_only_the_le_dynamic_range() {
 #[test]
 fn an_advertisement_carries_the_shared_reticulum_ble_service() {
     let mut buf = [0u8; MAX_ADVERTISEMENT_LEN];
-    let len = encode_advertisement(&mut buf, BleRoleCapabilities::DualRole).unwrap();
-    assert!(len <= MAX_ADVERTISEMENT_LEN);
+    let len =
+        encode_advertisement(&mut buf, BleRoleCapabilities::DualRole, default_group_tag()).unwrap();
+    assert_eq!(len, MAX_ADVERTISEMENT_LEN);
     assert!(contains_service(&buf[..len]));
     assert_eq!(
         columba_role_capabilities(&buf[..len]),
         Some(BleRoleCapabilities::DualRole)
     );
+    assert_eq!(advertisement_group_tag(&buf[..len]), default_group_tag());
     assert!(!contains_service(&[]));
     assert!(!contains_service(&[0x02, 0x01, 0x06]));
 }
@@ -68,12 +71,49 @@ fn an_advertisement_carries_the_shared_reticulum_ble_service() {
 #[test]
 fn a_peripheral_only_advertisement_exposes_its_columba_role_constraint() {
     let mut buf = [0u8; MAX_ADVERTISEMENT_LEN];
-    let len = encode_advertisement(&mut buf, BleRoleCapabilities::PeripheralOnly).unwrap();
+    let len = encode_advertisement(
+        &mut buf,
+        BleRoleCapabilities::PeripheralOnly,
+        default_group_tag(),
+    )
+    .unwrap();
 
     assert_eq!(
         columba_role_capabilities(&buf[..len]),
         Some(BleRoleCapabilities::PeripheralOnly)
     );
+}
+
+#[test]
+fn discovery_group_tags_partition_advertisements() {
+    let mut leg_a = [0u8; MAX_ADVERTISEMENT_LEN];
+    let mut leg_b = [0u8; MAX_ADVERTISEMENT_LEN];
+    let tag_a = group_tag(b"mt-leg-a");
+    let tag_b = group_tag(b"mt-leg-b");
+    let len_a = encode_advertisement(&mut leg_a, BleRoleCapabilities::DualRole, tag_a).unwrap();
+    let len_b = encode_advertisement(&mut leg_b, BleRoleCapabilities::DualRole, tag_b).unwrap();
+
+    assert!(discovery_groups_match(tag_a, &leg_a[..len_a]));
+    assert!(!discovery_groups_match(tag_a, &leg_b[..len_b]));
+    assert!(discovery_groups_match(tag_b, &leg_b[..len_b]));
+}
+
+#[test]
+fn legacy_v3_advertisements_map_to_the_default_discovery_group() {
+    let legacy = [
+        2,
+        0x01,
+        0x06,
+        5,
+        AD_MANUFACTURER_SPECIFIC,
+        0xff,
+        0xff,
+        EXPERIMENTAL_ROLE_VERSION_MIN,
+        0,
+    ];
+    assert_eq!(advertisement_group_tag(&legacy), default_group_tag());
+    assert!(discovery_groups_match(default_group_tag(), &legacy));
+    assert!(!discovery_groups_match(group_tag(b"mt-leg-a"), &legacy));
 }
 
 #[test]
@@ -640,11 +680,13 @@ fn a_dialer_and_listener_settle_exchanging_endpoints_and_caps() {
         identity: identity(1),
         endpoint: mac(),
         capabilities: caps(Some(0x00c0)),
+        group_tag: default_group_tag(),
     };
     let listener_local = LocalPeer {
         identity: identity(2),
         endpoint: android(),
         capabilities: caps(Some(0x0080)),
+        group_tag: default_group_tag(),
     };
     let (mut dialer, opening) = Handshake::begin(HandshakeRole::Dialer, dialer_local, Some(-40));
     let (mut listener, silent) =
@@ -690,6 +732,7 @@ fn a_self_connection_aborts_and_closes() {
         identity: identity(5),
         endpoint: mac(),
         capabilities: caps(Some(0x0090)),
+        group_tag: default_group_tag(),
     };
     let (mut listener, _) = Handshake::begin(HandshakeRole::Listener, local, None);
     let reaction = listener.absorb(Control::Hello {
@@ -697,6 +740,7 @@ fn a_self_connection_aborts_and_closes() {
         endpoint: mac(),
         capabilities: caps(Some(0x0090)),
         peer_rssi: None,
+        group_tag: Some(default_group_tag()),
     });
     assert_eq!(
         reaction.outcome,
@@ -743,6 +787,7 @@ fn a_hello_round_trips_through_the_control_codec() {
         endpoint: android(),
         capabilities: caps(Some(0x0081)),
         peer_rssi: Some(-63),
+        group_tag: Some(default_group_tag()),
     };
     let mut buf = [0u8; CONTROL_MAX_LEN];
     let len = hello.encode(&mut buf).unwrap();
@@ -765,6 +810,7 @@ fn every_endpoint_round_trips_through_the_greeting() {
             endpoint,
             capabilities: caps(None),
             peer_rssi: None,
+            group_tag: Some(default_group_tag()),
         };
         let mut buf = [0u8; CONTROL_MAX_LEN];
         let len = hello.encode(&mut buf).unwrap();
@@ -779,14 +825,17 @@ fn every_endpoint_round_trips_through_the_greeting() {
 
 #[test]
 fn a_greeting_without_the_trailing_rssi_byte_still_decodes() {
+    // Legacy wire (no group tag): dropping the final RSSI byte still yields a greeting.
     let hello = Control::Hello {
         identity: identity(7),
         endpoint: mac(),
         capabilities: caps(Some(0x0081)),
         peer_rssi: Some(-63),
+        group_tag: None,
     };
     let mut buf = [0u8; CONTROL_MAX_LEN];
     let len = hello.encode(&mut buf).unwrap();
+    assert_eq!(len, CONTROL_LEGACY_GREETING_LEN);
     let trimmed = Control::decode(&buf[..len - 1]).unwrap();
     assert_eq!(
         trimmed,
@@ -795,7 +844,70 @@ fn a_greeting_without_the_trailing_rssi_byte_still_decodes() {
             endpoint: mac(),
             capabilities: caps(Some(0x0081)),
             peer_rssi: None,
+            group_tag: None,
         }
+    );
+}
+
+#[test]
+fn a_legacy_hello_matches_the_default_discovery_group() {
+    let dialer_local = LocalPeer {
+        identity: identity(1),
+        endpoint: mac(),
+        capabilities: caps(Some(0x00c0)),
+        group_tag: default_group_tag(),
+    };
+    let listener_local = LocalPeer {
+        identity: identity(2),
+        endpoint: android(),
+        capabilities: caps(Some(0x0080)),
+        group_tag: default_group_tag(),
+    };
+    let (mut dialer, opening) = Handshake::begin(HandshakeRole::Dialer, dialer_local, None);
+    let (mut listener, _) = Handshake::begin(HandshakeRole::Listener, listener_local, None);
+    let legacy = Control::Hello {
+        identity: identity(1),
+        endpoint: mac(),
+        capabilities: caps(Some(0x00c0)),
+        peer_rssi: None,
+        group_tag: None,
+    };
+    let reaction = listener.absorb(legacy);
+    assert!(matches!(reaction.outcome, HandshakeOutcome::Settled(_)));
+    let welcome = reaction.reply.unwrap();
+    assert!(matches!(
+        dialer.absorb(welcome).outcome,
+        HandshakeOutcome::Settled(_)
+    ));
+    let _ = opening;
+}
+
+#[test]
+fn a_discovery_group_mismatch_aborts_handshake() {
+    let dialer_local = LocalPeer {
+        identity: identity(1),
+        endpoint: mac(),
+        capabilities: caps(Some(0x00c0)),
+        group_tag: group_tag(b"mt-leg-a"),
+    };
+    let listener_local = LocalPeer {
+        identity: identity(2),
+        endpoint: android(),
+        capabilities: caps(Some(0x0080)),
+        group_tag: group_tag(b"mt-leg-b"),
+    };
+    let (_, opening) = Handshake::begin(HandshakeRole::Dialer, dialer_local, None);
+    let (mut listener, _) = Handshake::begin(HandshakeRole::Listener, listener_local, None);
+    let reaction = listener.absorb(opening.unwrap());
+    assert_eq!(
+        reaction.outcome,
+        HandshakeOutcome::Aborted(CloseReason::Incompatible)
+    );
+    assert_eq!(
+        reaction.reply,
+        Some(Control::Close {
+            reason: CloseReason::Incompatible
+        })
     );
 }
 
@@ -809,6 +921,7 @@ fn a_gatt_only_welcome_round_trips_with_no_psm() {
             link_mtu: 23,
         },
         peer_rssi: None,
+        group_tag: Some(default_group_tag()),
     };
     let mut buf = [0u8; CONTROL_MAX_LEN];
     let len = welcome.encode(&mut buf).unwrap();
@@ -848,6 +961,7 @@ fn control_encode_refuses_a_short_buffer() {
         endpoint: mac(),
         capabilities: caps(Some(0x0090)),
         peer_rssi: None,
+        group_tag: Some(default_group_tag()),
     };
     let mut tiny = [0u8; 4];
     assert_eq!(hello.encode(&mut tiny), None);

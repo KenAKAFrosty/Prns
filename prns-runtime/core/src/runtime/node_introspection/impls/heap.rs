@@ -98,7 +98,7 @@ pub trait NodeIntrospection {
 }
 
 #[must_use]
-pub fn logical_interface_inventory<Label: Ord>(
+pub fn logical_interface_inventory<Label: Clone + Ord>(
     mut inventory: Vec<InterfaceInventoryEntry<Label>>,
 ) -> Vec<InterfaceInventoryEntry<Label>> {
     let logical_len = fold_logical_interface_inventory(&mut inventory).len();

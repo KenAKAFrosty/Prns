@@ -81,6 +81,9 @@ class BleLink(private val context: Context) {
     @Volatile
     private var advertisingWanted = false
 
+    /** Manufacturer group tag last given to `startAdvertising`; null when not advertising. */
+    private var advertisedGroupTag: ByteArray? = null
+
     @Volatile
     private var scanningWanted = false
 
@@ -89,6 +92,8 @@ class BleLink(private val context: Context) {
     private val inboundByAddr = ConcurrentHashMap<String, Int>()
     private val columbaSubscribedCentrals = ConcurrentHashMap<String, BluetoothDevice>()
     private val devices = ConcurrentHashMap<String, BluetoothDevice>()
+    /** Last scan-time discovery-group match for a peer address. Missing means not yet observed. */
+    private val peerDiscoveryAllowed = ConcurrentHashMap<String, Boolean>()
     private val workers = CopyOnWriteArraySet<Thread>()
     private val radioWorkers = CopyOnWriteArraySet<Thread>()
     private val linkWorkers = ConcurrentHashMap<Int, CopyOnWriteArraySet<Thread>>()
@@ -198,6 +203,24 @@ class BleLink(private val context: Context) {
                 return
             }
             val octets = parseMac(device.address) ?: return
+            val capabilities = result.scanRecord
+                ?.getManufacturerSpecificData(PRNS_ROLE_COMPANY_ID)
+            // Only cache when manufacturer data is present so truncated ads don't
+            // permanently mark a same-group peer as mismatched.
+            if (capabilities != null) {
+                val allowed = matchesLocalDiscoveryGroup(capabilities)
+                val previous = peerDiscoveryAllowed.put(device.address, allowed)
+                if (previous != allowed) {
+                    Log.i(
+                        TAG,
+                        "scan group ${device.address}: allowed=$allowed " +
+                            "mfg=${capabilities.joinToString("") { "%02x".format(it) }}",
+                    )
+                }
+                if (!allowed && previous != false) {
+                    tearDownLinksForAddress(device.address)
+                }
+            }
             if (!shouldDial(octets, result)) {
                 return
             }
@@ -225,6 +248,10 @@ class BleLink(private val context: Context) {
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 rememberDevice(device)
+                if (!inboundDiscoveryPermitted(device.address)) {
+                    Log.w(TAG, "rejecting inbound ${device.address}: discovery group not permitted")
+                    runCatching { gattServer?.cancelConnection(device) }
+                }
                 return
             }
             if (newState == BluetoothProfile.STATE_DISCONNECTED) {
@@ -352,7 +379,11 @@ class BleLink(private val context: Context) {
             var responseStatus = BluetoothGatt.GATT_SUCCESS
             if (descriptor.characteristic.uuid == COLUMBA_TX) {
                 if (subscribing) {
-                    if (columbaSubscribedCentrals.containsKey(device.address) ||
+                    if (!inboundDiscoveryPermitted(device.address)) {
+                        responseStatus = BluetoothGatt.GATT_FAILURE
+                        Log.w(TAG, "columba subscription reject ${device.address}: discovery group not permitted")
+                        runCatching { gattServer?.cancelConnection(device) }
+                    } else if (columbaSubscribedCentrals.containsKey(device.address) ||
                         columbaSubscribedCentrals.size < peerCapacity
                     ) {
                         columbaSubscribedCentrals[device.address] = device
@@ -369,7 +400,11 @@ class BleLink(private val context: Context) {
                 descriptor.characteristic.uuid == NATIVE_CONTROL &&
                 inboundByAddr[device.address] == null
             ) {
-                if (links.size >= peerCapacity) {
+                if (!inboundDiscoveryPermitted(device.address)) {
+                    responseStatus = BluetoothGatt.GATT_FAILURE
+                    Log.w(TAG, "listener reject ${device.address}: discovery group not permitted")
+                    runCatching { gattServer?.cancelConnection(device) }
+                } else if (links.size >= peerCapacity) {
                     responseStatus = ATT_INSUFFICIENT_RESOURCES
                 } else {
                     val connId = nextConnId.getAndIncrement()
@@ -418,6 +453,11 @@ class BleLink(private val context: Context) {
         val address = device.address
         val existingConnId = inboundByAddr[address]
         if (existingConnId == null) {
+            if (!inboundDiscoveryPermitted(address)) {
+                Log.w(TAG, "columba reject $address: discovery group not permitted")
+                runCatching { gattServer?.cancelConnection(device) }
+                return NativeBridge.BLE_INGRESS_CLOSED
+            }
             if (value.size != COLUMBA_IDENTITY_LEN) {
                 Log.w(TAG, "columba RX from $address before identity (${value.size}B), dropping")
                 return NativeBridge.BLE_INGRESS_CLOSED
@@ -572,14 +612,21 @@ class BleLink(private val context: Context) {
     private fun startRadioStatePump() {
         startWorker("radio-state") {
             var lastState = Int.MIN_VALUE
+            var lastGroupTag = ByteArray(0)
             var generation = NativeBridge.nativeBleWorkGeneration()
             while (running) {
                 val state = NativeBridge.nativeBleDesiredState()
+                val groupTag = localGroupTag()
                 val wantsRadio = (state and NativeBridge.BLE_RADIO_ENABLED) != 0
-                if (state != lastState || wantsRadio && !radioActive) {
+                val groupChanged = lastGroupTag.size == 4 && !lastGroupTag.contentEquals(groupTag)
+                if (state != lastState || groupChanged || wantsRadio && !radioActive) {
                     val wasActive = radioActive
+                    if (groupChanged) {
+                        peerDiscoveryAllowed.clear()
+                    }
                     applyDesiredRadioState(state)
                     lastState = state
+                    lastGroupTag = groupTag
                     if (!wasActive && radioActive) {
                         NativeBridge.nativeBleWakePumps()
                     }
@@ -1414,6 +1461,7 @@ class BleLink(private val context: Context) {
             return
         }
         inboundByAddr.remove(link.address, connId)
+        peerDiscoveryAllowed.remove(link.address)
         columbaSubscribedCentrals.remove(link.address)
         dialingAddrs.remove(link.address)
         connectedAddrs.remove(link.address)
@@ -1524,8 +1572,20 @@ class BleLink(private val context: Context) {
 
     @Synchronized
     private fun startAdvertise(adapter: BluetoothAdapter) {
-        if (!running || !radioActive || !advertisingWanted || advertiser != null) {
+        if (!running || !radioActive || !advertisingWanted) {
             return
+        }
+        val tag = localGroupTag()
+        if (advertiser != null) {
+            if (advertisedGroupTag?.contentEquals(tag) == true) {
+                return
+            }
+            Log.i(
+                TAG,
+                "restarting advertise for discovery group " +
+                    tag.joinToString("") { "%02x".format(it) },
+            )
+            stopAdvertise()
         }
         val advertiser = adapter.bluetoothLeAdvertiser ?: return
         val settings = AdvertiseSettings.Builder()
@@ -1538,12 +1598,20 @@ class BleLink(private val context: Context) {
             .addServiceUuid(ParcelUuid(PRNS_SERVICE))
             .addManufacturerData(
                 PRNS_ROLE_COMPANY_ID,
-                byteArrayOf(PRNS_ROLE_VERSION, PRNS_ROLE_DUAL_MODE),
+                byteArrayOf(
+                    PRNS_ROLE_VERSION,
+                    PRNS_ROLE_DUAL_MODE,
+                    tag[0],
+                    tag[1],
+                    tag[2],
+                    tag[3],
+                ),
             )
             .build()
         try {
             advertiser.startAdvertising(settings, data, advertiseCallback)
             this.advertiser = advertiser
+            advertisedGroupTag = tag
         } catch (e: SecurityException) {
             Log.w(TAG, "advertise permission denied: $e")
         }
@@ -1557,6 +1625,7 @@ class BleLink(private val context: Context) {
     private fun stopAdvertise() {
         runCatching { advertiser?.stopAdvertising(advertiseCallback) }
         advertiser = null
+        advertisedGroupTag = null
     }
 
     fun stop() {
@@ -1602,6 +1671,7 @@ class BleLink(private val context: Context) {
         columbaIdentityChar = null
         l2capServer = null
         devices.clear()
+        peerDiscoveryAllowed.clear()
         inboundByAddr.clear()
         columbaSubscribedCentrals.clear()
         dialingAddrs.clear()
@@ -1628,9 +1698,12 @@ class BleLink(private val context: Context) {
     private fun shouldDial(peerAddress: ByteArray, result: ScanResult): Boolean {
         val capabilities = result.scanRecord
             ?.getManufacturerSpecificData(PRNS_ROLE_COMPANY_ID)
+        if (!matchesLocalDiscoveryGroup(capabilities)) {
+            return false
+        }
         if (capabilities != null &&
             capabilities.size >= 2 &&
-            capabilities[0] >= PRNS_ROLE_VERSION &&
+            capabilities[0] >= PRNS_ROLE_VERSION_MIN &&
             capabilities[1].toInt() and PRNS_ROLE_PERIPHERAL_ONLY.toInt() != 0
         ) {
             return true
@@ -1647,6 +1720,58 @@ class BleLink(private val context: Context) {
             }
         }
         return false
+    }
+
+    private fun matchesLocalDiscoveryGroup(capabilities: ByteArray?): Boolean {
+        val local = localGroupTag()
+        // Missing or legacy (v3) manufacturer payloads map to the default reticulum group.
+        if (capabilities == null ||
+            capabilities.size < 2 ||
+            capabilities[0] < PRNS_ROLE_VERSION
+        ) {
+            return local.contentEquals(PRNS_DEFAULT_GROUP_TAG)
+        }
+        if (capabilities.size < 6) {
+            return local.contentEquals(PRNS_DEFAULT_GROUP_TAG)
+        }
+        return capabilities[2] == local[0] &&
+            capabilities[3] == local[1] &&
+            capabilities[4] == local[2] &&
+            capabilities[5] == local[3]
+    }
+
+    /**
+     * Inbound GATT admission:
+     * - known mismatch (`false`) → reject early
+     * - known match / unknown → allow; Hello/Welcome group tag is the authoritative gate
+     *
+     * Unknown must not reject on custom groups: the peer that dials first is often not in the
+     * scan cache yet (truncated ads / no manufacturer payload), which would deadlock same-group peering.
+     */
+    private fun inboundDiscoveryPermitted(address: String): Boolean {
+        return peerDiscoveryAllowed[address] != false
+    }
+
+    private fun tearDownLinksForAddress(address: String) {
+        val victims = links.filterValues { it.address == address }.keys.toList()
+        if (victims.isEmpty()) {
+            return
+        }
+        Log.w(TAG, "tearing down ${victims.size} link(s) for $address: discovery group mismatch")
+        for (connId in victims) {
+            closeLink(connId)
+        }
+    }
+
+    private fun localGroupTag(): ByteArray {
+        val buffer = ByteBuffer.allocateDirect(4)
+        val n = NativeBridge.nativeBleGroupTag(buffer)
+        if (n < 4) {
+            return PRNS_DEFAULT_GROUP_TAG
+        }
+        val tag = ByteArray(4)
+        buffer.get(tag)
+        return tag
     }
 
     private fun formatMac(octets: ByteArray): String =
@@ -1723,9 +1848,15 @@ class BleLink(private val context: Context) {
         private const val L2CAP_OPEN_RETRIES = 5
         private const val L2CAP_OPEN_RETRY_MS = 200L
         private const val PRNS_ROLE_COMPANY_ID = 0xFFFF
-        private const val PRNS_ROLE_VERSION: Byte = 0x03
+        /** Oldest manufacturer role payload we still accept while scanning. */
+        private const val PRNS_ROLE_VERSION_MIN: Byte = 0x03
+        /** Advertised manufacturer payload version that includes a discovery group tag. */
+        private const val PRNS_ROLE_VERSION: Byte = 0x04
         private const val PRNS_ROLE_DUAL_MODE: Byte = 0x00
         private const val PRNS_ROLE_PERIPHERAL_ONLY: Byte = 0x01
+        /** sha256("reticulum")[0..4] — must match prns-core DEFAULT_GROUP_TAG. */
+        private val PRNS_DEFAULT_GROUP_TAG =
+            byteArrayOf(0xEA.toByte(), 0xC4.toByte(), 0xD7.toByte(), 0x0B)
         private val HIDDEN_LOCAL_ADDRESS = byteArrayOf(2, 0, 0, 0, 0, 0)
         val PRNS_SERVICE: UUID = UUID.fromString("37145b00-442d-4a94-917f-8f42c5da28e3")
         val COLUMBA_TX: UUID = UUID.fromString("37145b00-442d-4a94-917f-8f42c5da28e4")

@@ -13,6 +13,7 @@ use personal_rns::interfaces::bluetooth_auto::{
     AndroidHost, Endpoint, LinkCapabilities, BLE_HW_MTU,
 };
 use personal_rns::interfaces::wifi_direct::GoIntent;
+use personal_rns::interfaces::InterfaceStatus;
 use personal_rns::runtime::{Diagnostic, ManuallyAttached, PrnsEvent, PrnsNode, PrnsNodeRecipe};
 use personal_rns::shared_instance::rns_rpc::{SharedInstanceCredentials, SharedInstanceRpcServer};
 use personal_rns::shared_instance::SharedInstanceServer;
@@ -87,6 +88,11 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
     }
     let ble_identity = ble_bootstrap.into_identity();
     platform.ble.set_local_identity(ble_identity);
+    let ble_group_id = super::load_ble_discovery_group(&storage_dir);
+    let ble_group_tag =
+        personal_rns::interfaces::bluetooth_auto::group_tag(ble_group_id.as_bytes());
+    platform.ble.set_local_group_tag(ble_group_tag);
+    super::install_ble_discovery_group(&storage_dir, ble_group_id.clone());
 
     let destinations = HopspotDestinationSet::new(
         node_identity.into_destination_secret(),
@@ -174,6 +180,7 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
     let wifi = AutoWifi::new().with_platform_discovery(service_discovery);
     let wifi_status = wifi.status();
     handle.supervise(wifi);
+    let _ = handle.set_interface_group_id(wifi_status.id(), "reticulum");
 
     let bluetooth = BluetoothAuto::<_, { AndroidBleBackend::MAX_PEERS }>::new(
         AndroidBleBackend::new(platform.ble),
@@ -183,9 +190,11 @@ async fn run_engine(input: WorkerInput) -> WorkerExit {
             l2cap: None,
             link_mtu: BLE_HW_MTU as u16,
         },
+        ble_group_tag,
     );
     let ble_status = bluetooth.status();
     handle.supervise(bluetooth);
+    let _ = handle.set_interface_group_id(ble_status.id(), ble_group_id);
 
     let wifi_direct = WifiDirectAuto::new(
         AndroidWifiDirectBackend::new(platform.wifi_direct),

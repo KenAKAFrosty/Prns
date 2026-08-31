@@ -60,7 +60,8 @@ const WINDOWS_MSOS_VENDOR_CODE: u8 = 0x20;
 const INTERFACE_CAPACITY: usize = selected::INTERFACE_CAPACITY;
 const LANE_COUNT: usize = selected::LANE_COUNT;
 const LANE_DEPTH: usize = 1;
-const LORA_TX_QUEUE_BYTES: usize = 1024;
+// 256 bytes below the T-Echo queue so T096 still clears the 68 KiB stack floor.
+const LORA_TX_QUEUE_BYTES: usize = 768;
 const LORA_OUTBOUND_DEPTH: usize = Storage::MAX_OUTGOING_RESOURCE_REACTION_FRAMES;
 #[cfg(any(
     feature = "board-t096",

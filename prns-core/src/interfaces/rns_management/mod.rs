@@ -31,7 +31,7 @@ pub use remote_request::{
     RnsRemoteStatusRequest,
 };
 pub use status_report::{
-    RnsInterfaceMode, RnsInterfaceStatsDecodeError, RnsInterfaceStatsReport,
+    RnsFleetPeerReport, RnsInterfaceMode, RnsInterfaceStatsDecodeError, RnsInterfaceStatsReport,
     RnsInterfaceStatusReport, RnsOptionalField, RnsRemoteInterfaceStatsReport, RnsStatsFieldPath,
     RnsStatsFieldScope,
 };

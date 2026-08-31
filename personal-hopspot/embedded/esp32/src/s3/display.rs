@@ -330,7 +330,9 @@ pub(super) fn build_interface_menu_details(
         }
         Some(screen::CardKind::Usb) => screen::usb_interface_menu_details(usb.connection()),
         Some(screen::CardKind::Ble) => {
-            screen::snapshots_to_interface_menu_details(selected_card, snapshots)
+            let group = crate::bluetooth_auto::local_discovery_group();
+            let group = Some(group.as_str());
+            screen::ble_interface_menu_details(group, selected_card, snapshots)
         }
         Some(screen::CardKind::Tcp) => {
             let mut details = screen::InterfaceMenuDetails::empty();

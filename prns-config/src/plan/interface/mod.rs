@@ -126,7 +126,7 @@ pub(super) fn plan_access(
         | PlannedMedium::Pipe { .. }
         | PlannedMedium::Rnode { .. }
         | PlannedMedium::RnodeMulti { .. }
-        | PlannedMedium::PrnsBluetoothAuto => IfacSize::NARROW,
+        | PlannedMedium::PrnsBluetoothAuto { .. } => IfacSize::NARROW,
     };
     let size = match interface.ifac_size_bits {
         Some(bits) if bits >= 8 => {

@@ -1,3 +1,4 @@
+pub(in crate::screen) mod ble_group;
 pub(in crate::screen) mod lora;
 
 use core::fmt::Write as _;
@@ -16,8 +17,8 @@ use crate::screen::model::{
     Card, CardKind, InterfaceMenuDetailKind, InterfaceMenuDetailRow, InterfaceMenuDetails,
 };
 use crate::screen::state::{
-    interface_menu_items, AccessPointState, SharedInstanceConfigExport, UiNotice, UiState,
-    POWER_MENU_ITEM, STATION_UPLINK_MENU_ITEM,
+    interface_menu_items, AccessPointState, BleGroupEditor, SharedInstanceConfigExport, UiNotice,
+    UiState, POWER_MENU_ITEM, STATION_UPLINK_MENU_ITEM,
 };
 
 use super::glyphs::{draw_global_icon, draw_interface_icon, draw_menu_cursor};
@@ -371,6 +372,7 @@ pub(in crate::screen) fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>
     card: &Card,
     selected_item: usize,
     shared_instance_config_export: SharedInstanceConfigExport,
+    ble_group_editor: BleGroupEditor,
     details: &InterfaceMenuDetails,
 ) {
     draw_interface_icon(
@@ -403,7 +405,7 @@ pub(in crate::screen) fn draw_interface_menu<D: DrawTarget<Color = BinaryColor>>
         Point::new(WIDTH - 1, MENU_DIVIDER_Y),
     );
 
-    let items = interface_menu_items(card.kind, shared_instance_config_export);
+    let items = interface_menu_items(card.kind, shared_instance_config_export, ble_group_editor);
     for (index, item) in items.iter().enumerate() {
         let label = if index == POWER_MENU_ITEM {
             if card.connection == ConnectionState::Disabled {

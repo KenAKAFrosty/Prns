@@ -482,7 +482,7 @@ async fn stand_up<'a>(
                 ))
             }
         }
-        PlannedMedium::PrnsBluetoothAuto => {
+        PlannedMedium::PrnsBluetoothAuto { .. } => {
             #[cfg(feature = "bluetooth-auto")]
             {
                 bluetooth_auto::stand_up(construction, context)
@@ -775,7 +775,18 @@ fn report_up<'a>(
     report: &mut impl FnMut(PlanOutcome<'a>),
 ) {
     let _ = handle.set_interface_name(id, interface.name.clone());
+    if let Some(group_id) = discovery_group_id(&interface.medium) {
+        let _ = handle.set_interface_group_id(id, group_id);
+    }
     report(PlanOutcome::Up { interface, id });
+}
+
+fn discovery_group_id(medium: &PlannedMedium) -> Option<String> {
+    match medium {
+        PlannedMedium::AutoWifi(plan) => Some(plan.group_id().as_str().to_string()),
+        PlannedMedium::PrnsBluetoothAuto { group_id } => Some(group_id.as_str().to_string()),
+        _ => None,
+    }
 }
 
 #[cfg(feature = "tracing")]
@@ -796,7 +807,7 @@ fn planned_medium_name(medium: &PlannedMedium) -> &'static str {
         PlannedMedium::I2p { .. } => "i2p",
         PlannedMedium::Weave { .. } => "weave",
         PlannedMedium::PrnsUsbAuto => "prns_usb_auto",
-        PlannedMedium::PrnsBluetoothAuto => "prns_bluetooth_auto",
+        PlannedMedium::PrnsBluetoothAuto { .. } => "prns_bluetooth_auto",
         PlannedMedium::PrnsWebSocketClient { .. } => "prns_websocket_client",
         PlannedMedium::PrnsWebSocketServer { .. } => "prns_websocket_server",
     }

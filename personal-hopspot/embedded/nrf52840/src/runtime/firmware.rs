@@ -180,6 +180,11 @@ pub async fn run(spawner: Spawner) -> ! {
             notice: Some(hopspot::RadioProfileLoadNotice::Reset),
         },
     };
+    if let Some((bytes, len)) = lora_profile_store.load_ble_discovery_group().await {
+        if let Ok(name) = core::str::from_utf8(&bytes[..len as usize]) {
+            super::bluetooth_auto::install_discovery_group(name);
+        }
+    }
     let profile_startup_notice = loaded_lora_profile.notice.map(|notice| match notice {
         hopspot::RadioProfileLoadNotice::Recovered => hopspot::UiNotice::ProfileRecovered,
         hopspot::RadioProfileLoadNotice::Reset => hopspot::UiNotice::ProfileReset,
@@ -320,6 +325,7 @@ pub async fn run(spawner: Spawner) -> ! {
                     l2cap: None,
                     link_mtu: BLE_HW_MTU as u16,
                 },
+                crate::runtime::bluetooth_auto::local_discovery_group_tag(),
                 &BLE_SHARED,
             );
             let fleet: Fleet<Mtx, BLE_HW_MTU, NOTIFY_CAP, LIFECYCLE_CAP> =
@@ -348,6 +354,7 @@ pub async fn run(spawner: Spawner) -> ! {
             access_point: hopspot::AccessPointState::Unsupported,
             shared_instance_config_export: hopspot::SharedInstanceConfigExport::Unavailable,
             gnss: hopspot::GnssAvailability::Unavailable,
+            ble_group_editor: hopspot::BleGroupEditor::Available,
         });
         let startup_notice = identity_startup_notice.or(profile_startup_notice);
         let mut pending_startup_notice = identity_startup_notice
@@ -419,10 +426,14 @@ pub async fn run(spawner: Spawner) -> ! {
                 refresh_urgency = hopspot::display::PresentationUrgency::Immediate;
             }
 
-            let mut interface_menu_details = hopspot::snapshots_to_interface_menu_details(
-                ui_state.selected_card(content.cards),
-                &snapshots,
-            );
+            let mut interface_menu_details = {
+                let group = super::bluetooth_auto::local_discovery_group();
+                hopspot::ble_interface_menu_details(
+                    Some(group.as_str()),
+                    ui_state.selected_card(content.cards),
+                    &snapshots,
+                )
+            };
             if ui_state
                 .selected_card(content.cards)
                 .is_some_and(|card| card.id() == BLE_SUPERVISOR_ID)
@@ -601,7 +612,9 @@ pub async fn run(spawner: Spawner) -> ! {
                                         LORA_CONTROL.apply(profile).await
                                             == LoRaApplyOutcome::Applied
                                     },
-                                    || async { lora_profile_store.save(profile).await.is_ok() },
+                                    || async {
+                                        lora_profile_store.save(profile, None).await.is_ok()
+                                    },
                                 )
                                 .await;
                                 if result.applied() {
@@ -639,6 +652,33 @@ pub async fn run(spawner: Spawner) -> ! {
                             hopspot::UiAction::BlankDisplay => {}
                             hopspot::UiAction::ToggleDisplayAutoOff => {}
                             hopspot::UiAction::CopySharedInstanceConfig => {}
+                            hopspot::UiAction::OpenBleGroupEditor => {
+                                let group = super::bluetooth_auto::local_discovery_group();
+                                ui_state.open_ble_group_editor(group.as_str());
+                            }
+                            hopspot::UiAction::SetBleDiscoveryGroup(name) => {
+                                let result =
+                                    if !super::bluetooth_auto::set_discovery_group(name.as_str()) {
+                                        hopspot::RadioProfileChangeResult::ApplyFailed
+                                    } else if lora_profile_store
+                                        .save(working_lora_profile, Some(name.as_str().as_bytes()))
+                                        .await
+                                        .is_ok()
+                                    {
+                                        hopspot::RadioProfileChangeResult::Saved
+                                    } else {
+                                        hopspot::RadioProfileChangeResult::ProfileNotSaved
+                                    };
+                                if result.applied() {
+                                    BluetoothAutoStatus::new(&BLE_SHARED).reset_peers();
+                                }
+                                show_notice(
+                                    &mut ui_state,
+                                    &mut notice_timer,
+                                    result.notice(),
+                                    NOTICE_DURATION,
+                                );
+                            }
                             hopspot::UiAction::ControlGnss(_) => {}
                             hopspot::UiAction::None => {}
                         }

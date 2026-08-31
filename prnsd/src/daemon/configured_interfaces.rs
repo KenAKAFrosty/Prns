@@ -299,7 +299,7 @@ fn classify(outcome: &PlanOutcome<'_>) -> StartupInterfaceReport {
             PlannedMedium::AutoWifi(_)
             | PlannedMedium::Udp { .. }
             | PlannedMedium::PrnsUsbAuto
-            | PlannedMedium::PrnsBluetoothAuto => report.online = 1,
+            | PlannedMedium::PrnsBluetoothAuto { .. } => report.online = 1,
             PlannedMedium::I2p {
                 peers,
                 reachability,
@@ -404,7 +404,7 @@ fn medium_name(medium: &PlannedMedium) -> &'static str {
         PlannedMedium::I2p { .. } => "i2p",
         PlannedMedium::Weave { .. } => "weave",
         PlannedMedium::PrnsUsbAuto => "prns_usb_auto",
-        PlannedMedium::PrnsBluetoothAuto => "prns_bluetooth_auto",
+        PlannedMedium::PrnsBluetoothAuto { .. } => "prns_bluetooth_auto",
         PlannedMedium::PrnsWebSocketClient { .. } => "prns_websocket_client",
         PlannedMedium::PrnsWebSocketServer { .. } => "prns_websocket_server",
     }

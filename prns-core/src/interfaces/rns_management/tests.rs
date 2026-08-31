@@ -91,6 +91,70 @@ fn interface_stats_preserve_live_counters_and_access_code_fields() {
 }
 
 #[test]
+fn interface_stats_encode_nested_fleet_peers_with_rssi() {
+    let supervisor = InterfaceId::from_channel_tag(InterfaceKind::BluetoothAuto, b"ble");
+    let peer = InterfaceId::from_channel_tag(InterfaceKind::BluetoothPeer, b"peer");
+    let stats = RnsInterfaceStats::new(vec![RnsInterfaceStatsEntry::new(
+        Some(String::from("Bluetooth Auto")),
+        InterfaceSnapshot {
+            id: supervisor,
+            mode: crate::interfaces::InterfaceMode::Full,
+            gravity: crate::interfaces::InterfaceGravity::ZERO,
+            connection: ConnectionState::Connected,
+            failure_reason: None,
+            rx_bytes: 100,
+            tx_bytes: 50,
+            transfer_rates: Some(TransferRates {
+                rx_bps: 10,
+                tx_bps: 5,
+            }),
+            destinations: 0,
+            links: 0,
+            transported_links: 0,
+            membership: Membership::Independent,
+        },
+        None,
+    )
+    .with_fleet_peers(vec![RnsInterfaceStatsEntry::new(
+        Some(String::from("ab12… @ AA:BB:CC:DD:EE:FF")),
+        InterfaceSnapshot {
+            id: peer,
+            mode: crate::interfaces::InterfaceMode::Full,
+            gravity: crate::interfaces::InterfaceGravity::ZERO,
+            connection: ConnectionState::Connected,
+            failure_reason: None,
+            rx_bytes: 40,
+            tx_bytes: 20,
+            transfer_rates: Some(TransferRates {
+                rx_bps: 4,
+                tx_bps: 2,
+            }),
+            destinations: 0,
+            links: 0,
+            transported_links: 0,
+            membership: Membership::FleetMember {
+                supervisor_id: supervisor,
+            },
+        },
+        None,
+    )
+    .with_rssi(Some(-61))])]);
+    let Ok(encoded) = stats.encode_message_pack() else {
+        panic!("interface stats must encode");
+    };
+    let report = RnsInterfaceStatsReport::decode_message_pack(&encoded)
+        .expect("encoded fleet peers must decode");
+    assert_eq!(report.interfaces.len(), 1);
+    assert_eq!(report.interfaces[0].fleet_peers.len(), 1);
+    let nested = &report.interfaces[0].fleet_peers[0];
+    assert_eq!(nested.name, "ab12… @ AA:BB:CC:DD:EE:FF");
+    assert!(nested.online);
+    assert_eq!(nested.receive_bytes, 40);
+    assert_eq!(nested.transmit_bytes, 20);
+    assert_eq!(nested.rssi, RnsOptionalField::Value(-61));
+}
+
+#[test]
 fn local_interface_fallback_names_match_stock_rnstatus_categories() {
     let server = InterfaceId::from_channel_tag(InterfaceKind::LocalServer, b"server");
     let client = InterfaceId::from_channel_tag(InterfaceKind::LocalClient, b"client");

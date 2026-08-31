@@ -24,6 +24,19 @@ impl BleBackend<{ AndroidBleBackend::MAX_PEERS }> for AndroidBleBackend {
     type Error = AndroidBleError;
     type Link = AndroidBleLink;
 
+    fn local_group_tag(&self) -> Option<[u8; 4]> {
+        let mut out = [0u8; 4];
+        if self.bridge.local_group_tag(&mut out) >= 4 {
+            Some(out)
+        } else {
+            None
+        }
+    }
+
+    fn drop_all_links(&mut self) {
+        self.bridge.close_all_peer_links();
+    }
+
     async fn set_radio_mode(&mut self, mode: RadioMode) -> Result<(), AndroidBleError> {
         self.bridge.set_radio_mode(mode);
         Ok(())

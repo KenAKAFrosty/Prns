@@ -1,3 +1,4 @@
+pub(in crate::screen) mod ble_group;
 pub(in crate::screen) mod lora;
 
 use core::future::Future;
@@ -9,6 +10,10 @@ use crate::PersistenceState;
 
 use super::limits::storage_limit_page_count;
 use super::model::{Card, CardKind, ScreenContent};
+use ble_group::{
+    ble_group_editor_hold, ble_group_editor_tap, choice_cursor_for, BleGroupHold, BleGroupScreen,
+};
+pub use ble_group::{BleGroupName, DEFAULT_BLE_GROUP};
 use lora::{lora_editor_hold, lora_editor_tap, region_index, LoRaHold, LoRaScreen};
 
 const INITIAL_VISIBLE_FOCUS_ITEMS: usize = 3;
@@ -57,10 +62,13 @@ pub(in crate::screen) const STATION_UPLINK_MENU_ITEM: usize = 1;
 const LORA_MENU_ITEMS: &[&str] = &["Power", "Tune", "Reset", "Back"];
 pub(in crate::screen) const LORA_TUNE_MENU_ITEM: usize = 1;
 pub(in crate::screen) const LORA_RESET_MENU_ITEM: usize = 2;
+const BLE_GROUP_MENU_ITEMS: &[&str] = &["Power", "Group", "Back"];
+pub(in crate::screen) const BLE_GROUP_MENU_ITEM: usize = 1;
 
 pub(in crate::screen) fn interface_menu_items(
     kind: CardKind,
     shared_instance_config_export: SharedInstanceConfigExport,
+    ble_group_editor: BleGroupEditor,
 ) -> &'static [&'static str] {
     match kind {
         CardKind::LoRa => LORA_MENU_ITEMS,
@@ -70,10 +78,11 @@ pub(in crate::screen) fn interface_menu_items(
         {
             SHARED_INSTANCE_MENU_ITEMS
         }
-        CardKind::Wifi
+        CardKind::Ble if ble_group_editor == BleGroupEditor::Available => BLE_GROUP_MENU_ITEMS,
+        CardKind::Ble
+        | CardKind::Wifi
         | CardKind::Peer
         | CardKind::Usb
-        | CardKind::Ble
         | CardKind::EspNow
         | CardKind::SharedInstance
         | CardKind::Tcp => POWER_ONLY_MENU_ITEMS,
@@ -102,6 +111,8 @@ pub enum UiAction {
     OpenLoRaEditor,
     SetLoRaProfile(RadioProfile),
     ResetLoRaProfile,
+    OpenBleGroupEditor,
+    SetBleDiscoveryGroup(BleGroupName),
     SwapRadioMode,
     OpenDocs,
     CopySharedInstanceConfig,
@@ -344,12 +355,19 @@ pub enum GnssAvailability {
     Available,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BleGroupEditor {
+    Unavailable,
+    Available,
+}
+
 pub struct UiConfiguration {
     pub storage_limits: DisplayedStorageLimits,
     pub user_blanking: UserBlanking,
     pub access_point: AccessPointState,
     pub shared_instance_config_export: SharedInstanceConfigExport,
     pub gnss: GnssAvailability,
+    pub ble_group_editor: BleGroupEditor,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -361,6 +379,7 @@ pub struct UiState {
     pub(in crate::screen) access_point: AccessPointState,
     pub(in crate::screen) shared_instance_config_export: SharedInstanceConfigExport,
     pub(in crate::screen) gnss: GnssAvailability,
+    pub(in crate::screen) ble_group_editor: BleGroupEditor,
     pub(in crate::screen) gnss_visible: bool,
     pub(in crate::screen) notice: Option<UiNotice>,
     pub(in crate::screen) storage_limits: DisplayedStorageLimits,
@@ -384,6 +403,10 @@ pub(in crate::screen) enum UiMode {
         screen: LoRaScreen,
         profile: RadioProfile,
     },
+    BleGroupEditor {
+        screen: BleGroupScreen,
+        name: BleGroupName,
+    },
     ConfirmRadioSwap {
         confirm: bool,
     },
@@ -399,6 +422,7 @@ impl UiState {
             access_point: configuration.access_point,
             shared_instance_config_export: configuration.shared_instance_config_export,
             gnss: configuration.gnss,
+            ble_group_editor: configuration.ble_group_editor,
             gnss_visible: false,
             notice: None,
             storage_limits: configuration.storage_limits,
@@ -455,6 +479,7 @@ impl UiState {
             | UiMode::Sleeping
             | UiMode::InterfaceMenu { .. }
             | UiMode::LoRaEditor { .. }
+            | UiMode::BleGroupEditor { .. }
             | UiMode::ConfirmRadioSwap { .. } => None,
         }
     }
@@ -467,6 +492,7 @@ impl UiState {
             | UiMode::LimitsPage { .. }
             | UiMode::Sleeping
             | UiMode::LoRaEditor { .. }
+            | UiMode::BleGroupEditor { .. }
             | UiMode::ConfirmRadioSwap { .. } => None,
         }
     }
@@ -477,6 +503,16 @@ impl UiState {
                 cursor: region_index(profile.region),
             },
             profile,
+        };
+    }
+
+    pub fn open_ble_group_editor(&mut self, current: &str) {
+        let name = BleGroupName::parse(current).unwrap_or_else(BleGroupName::reticulum);
+        self.mode = UiMode::BleGroupEditor {
+            screen: BleGroupScreen::Choice {
+                cursor: choice_cursor_for(name),
+            },
+            name,
         };
     }
 
@@ -545,6 +581,7 @@ impl UiState {
             | UiMode::LimitsPage { .. }
             | UiMode::Sleeping
             | UiMode::LoRaEditor { .. }
+            | UiMode::BleGroupEditor { .. }
             | UiMode::ConfirmRadioSwap { .. } => {}
             UiMode::InterfaceMenu { .. } if self.selected_card(content.cards).is_none() => {
                 self.mode = UiMode::Cards;
@@ -555,7 +592,13 @@ impl UiState {
             } => {
                 self.mode = UiMode::InterfaceMenu {
                     selected_item: selected_item.min(
-                        interface_menu_items(kind, self.shared_instance_config_export).len() - 1,
+                        interface_menu_items(
+                            kind,
+                            self.shared_instance_config_export,
+                            self.ble_group_editor,
+                        )
+                        .len()
+                            - 1,
                     ),
                     kind,
                 };
@@ -687,7 +730,12 @@ impl UiState {
             ) => {
                 self.mode = UiMode::InterfaceMenu {
                     selected_item: (selected_item + 1)
-                        % interface_menu_items(kind, self.shared_instance_config_export).len(),
+                        % interface_menu_items(
+                            kind,
+                            self.shared_instance_config_export,
+                            self.ble_group_editor,
+                        )
+                        .len(),
                     kind,
                 };
                 UiAction::None
@@ -714,6 +762,11 @@ impl UiState {
                     ) => UiAction::ToggleStationUplink,
                     (CardKind::LoRa, LORA_TUNE_MENU_ITEM) => UiAction::OpenLoRaEditor,
                     (CardKind::LoRa, LORA_RESET_MENU_ITEM) => UiAction::ResetLoRaProfile,
+                    (CardKind::Ble, BLE_GROUP_MENU_ITEM)
+                        if self.ble_group_editor == BleGroupEditor::Available =>
+                    {
+                        UiAction::OpenBleGroupEditor
+                    }
                     _ => UiAction::None,
                 }
             }
@@ -733,6 +786,27 @@ impl UiState {
                         UiAction::SetLoRaProfile(profile)
                     }
                     LoRaHold::Cancel => {
+                        self.mode = UiMode::Cards;
+                        UiAction::None
+                    }
+                }
+            }
+            (InputEvent::ShortPress, UiMode::BleGroupEditor { screen, name }) => {
+                let (screen, name) = ble_group_editor_tap(screen, name);
+                self.mode = UiMode::BleGroupEditor { screen, name };
+                UiAction::None
+            }
+            (InputEvent::LongPress, UiMode::BleGroupEditor { screen, name }) => {
+                match ble_group_editor_hold(screen, name) {
+                    BleGroupHold::Stay { screen, name } => {
+                        self.mode = UiMode::BleGroupEditor { screen, name };
+                        UiAction::None
+                    }
+                    BleGroupHold::Commit(name) => {
+                        self.mode = UiMode::Cards;
+                        UiAction::SetBleDiscoveryGroup(name)
+                    }
+                    BleGroupHold::Cancel => {
                         self.mode = UiMode::Cards;
                         UiAction::None
                     }

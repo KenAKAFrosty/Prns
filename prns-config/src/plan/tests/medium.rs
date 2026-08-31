@@ -66,7 +66,7 @@ fn prns_owned_host_interfaces_reach_typed_plans() {
     ));
     assert!(matches!(
         named(&plan, "BLE").medium,
-        PlannedMedium::PrnsBluetoothAuto
+        PlannedMedium::PrnsBluetoothAuto { .. }
     ));
     let PlannedMedium::PrnsWebSocketClient { target, framing } =
         &named(&plan, "WebSocket Client").medium
@@ -100,6 +100,23 @@ fn prns_owned_host_interfaces_reach_typed_plans() {
             BitrateBps::new(7_654_321).unwrap()
         );
     }
+}
+
+#[test]
+fn prns_bluetooth_auto_group_id_defaults_and_overrides() {
+    let defaulted = plan_of("[interfaces]\n[[BLE]]\ntype = PrnsBluetoothAuto\nenabled = Yes\n");
+    let PlannedMedium::PrnsBluetoothAuto { group_id } = &named(&defaulted, "BLE").medium else {
+        panic!("PrnsBluetoothAuto medium expected")
+    };
+    assert_eq!(group_id.as_str(), "reticulum");
+
+    let overridden = plan_of(
+        "[interfaces]\n[[BLE]]\ntype = PrnsBluetoothAuto\nenabled = Yes\ngroup_id = mt-leg-a\n",
+    );
+    let PlannedMedium::PrnsBluetoothAuto { group_id } = &named(&overridden, "BLE").medium else {
+        panic!("PrnsBluetoothAuto medium expected")
+    };
+    assert_eq!(group_id.as_str(), "mt-leg-a");
 }
 
 #[test]

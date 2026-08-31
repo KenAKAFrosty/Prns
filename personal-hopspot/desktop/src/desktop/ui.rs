@@ -44,6 +44,7 @@ fn ui_state() -> UiState {
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: screen::SharedInstanceConfigExport::Unavailable,
         gnss: screen::GnssAvailability::Unavailable,
+        ble_group_editor: screen::BleGroupEditor::Unavailable,
     })
 }
 
@@ -673,6 +674,7 @@ pub(super) fn run_window(handles: WindowHandles) {
             *notice_until = Some(Instant::now() + NOTICE_TIMEOUT);
             *working_lora_profile = DEFAULT_915_PROFILE;
         }
+        UiAction::OpenBleGroupEditor | UiAction::SetBleDiscoveryGroup(_) => {}
         UiAction::SwapRadioMode => {}
         UiAction::OpenDocs => {}
         UiAction::CopySharedInstanceConfig => {}

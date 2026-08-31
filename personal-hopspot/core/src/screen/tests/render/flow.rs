@@ -346,6 +346,7 @@ fn interface_menu_draws_detail_rows_below_actions() {
         &card,
         POWER_MENU_ITEM,
         SharedInstanceConfigExport::Unavailable,
+        BleGroupEditor::Unavailable,
         &details,
     );
 
@@ -387,6 +388,7 @@ fn failed_interface_menu_draws_failure_reason() {
         &card,
         POWER_MENU_ITEM,
         SharedInstanceConfigExport::Unavailable,
+        BleGroupEditor::Unavailable,
         &details,
     );
 

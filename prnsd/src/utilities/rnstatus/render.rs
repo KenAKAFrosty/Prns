@@ -133,6 +133,7 @@ fn render_interface(
         &status.autoconnect_source,
     );
     write_optional(output, "    Network   : ", "", &status.ifac_network_name);
+    write_optional(output, "    Group     : ", "", &status.group_id);
     let _ = writeln!(
         output,
         "    Status    : {}",
@@ -154,6 +155,34 @@ fn render_interface(
     render_access(output, status);
     render_announce_state(output, status, args, now);
     render_traffic(output, status);
+    render_fleet_peers(output, status);
+}
+
+fn render_fleet_peers(output: &mut String, status: &RnsInterfaceStatusReport) {
+    if status.fleet_peers.is_empty() {
+        return;
+    }
+    let count = status.fleet_peers.len();
+    let _ = writeln!(output, "    Peers     : {count} connected");
+    for peer in &status.fleet_peers {
+        let state = if peer.online { "Up" } else { "Down" };
+        let mut line = format!("      {}  {state}", peer.name);
+        if let Some(rssi) = peer.rssi.value() {
+            line.push_str(&format!("  rssi {rssi}"));
+        }
+        let _ = writeln!(output, "{line}");
+        let tx = format!(
+            "↑{}  {}",
+            pretty_size(peer.transmit_bytes as f64, "B"),
+            pretty_speed(peer.transmit_speed_bps)
+        );
+        let rx = format!(
+            "↓{}  {}",
+            pretty_size(peer.receive_bytes as f64, "B"),
+            pretty_speed(peer.receive_speed_bps)
+        );
+        let _ = writeln!(output, "        Traffic   : {tx}\n                    {rx}");
+    }
 }
 
 fn render_clients(output: &mut String, status: &RnsInterfaceStatusReport, clients: u64) {
@@ -507,13 +536,16 @@ fn render_footer(
             "\n Transport Instance <{}> running",
             hex(identity.as_bytes())
         );
+        if let Some(version) = report.software_version.value() {
+            let _ = writeln!(output, " Software           {version}");
+        }
         if let Some(identity) = report.network_identity.value() {
             let _ = writeln!(output, " Network Identity   <{}>", hex(identity.as_bytes()));
         }
         if let Some(destination) = report.probe_responder.value() {
             let _ = writeln!(
                 output,
-                " Probe responder at <{}> active",
+                " Probe destination <{}> (rnstransport.probe)",
                 hex(destination.as_bytes())
             );
         }
@@ -720,5 +752,84 @@ mod tests {
         assert_eq!(output, "    Gravity   : -7\n");
         assert_eq!(optional_i64(&RnsOptionalField::Value(-7)), -7);
         assert_eq!(optional_i64(&RnsOptionalField::Absent), 0);
+    }
+
+    #[test]
+    fn nested_fleet_peers_render_under_the_supervisor() {
+        let status = RnsInterfaceStatusReport {
+            name: String::from("Bluetooth Auto"),
+            short_name: RnsOptionalField::Absent,
+            interface_type: RnsOptionalField::Absent,
+            interface_hash: RnsOptionalField::Absent,
+            parent_name: RnsOptionalField::Absent,
+            parent_hash: RnsOptionalField::Absent,
+            online: true,
+            mode: personal_rns::interfaces::rns_management::RnsInterfaceMode::Full,
+            gravity: RnsOptionalField::Absent,
+            clients: RnsOptionalField::Absent,
+            receive_bytes: 100,
+            transmit_bytes: 50,
+            receive_speed_bps: 0.0,
+            transmit_speed_bps: 0.0,
+            bitrate_bps: RnsOptionalField::Absent,
+            peers: RnsOptionalField::Absent,
+            ifac_signature: RnsOptionalField::Absent,
+            ifac_size_bytes: RnsOptionalField::Absent,
+            ifac_network_name: RnsOptionalField::Absent,
+            group_id: RnsOptionalField::Value(String::from("reticulum")),
+            autoconnect_source: RnsOptionalField::Absent,
+            announce_queue: RnsOptionalField::Absent,
+            held_announces: RnsOptionalField::Absent,
+            incoming_announce_frequency: RnsOptionalField::Absent,
+            outgoing_announce_frequency: RnsOptionalField::Absent,
+            incoming_path_request_frequency: RnsOptionalField::Absent,
+            outgoing_path_request_frequency: RnsOptionalField::Absent,
+            announce_rate_target_seconds: RnsOptionalField::Absent,
+            announce_rate_penalty_seconds: RnsOptionalField::Absent,
+            announce_rate_grace: RnsOptionalField::Absent,
+            burst_active: RnsOptionalField::Absent,
+            burst_activated_at: RnsOptionalField::Absent,
+            path_request_burst_active: RnsOptionalField::Absent,
+            path_request_burst_activated_at: RnsOptionalField::Absent,
+            i2p_connectable: RnsOptionalField::Absent,
+            i2p_b32: RnsOptionalField::Absent,
+            i2p_tunnel_state: RnsOptionalField::Absent,
+            airtime_short_percent: RnsOptionalField::Absent,
+            airtime_long_percent: RnsOptionalField::Absent,
+            channel_load_short_percent: RnsOptionalField::Absent,
+            channel_load_long_percent: RnsOptionalField::Absent,
+            noise_floor_dbm: RnsOptionalField::Absent,
+            interference_dbm: RnsOptionalField::Absent,
+            interference_last_at: RnsOptionalField::Absent,
+            interference_last_dbm: RnsOptionalField::Absent,
+            cpu_load_percent: RnsOptionalField::Absent,
+            cpu_temperature_celsius: RnsOptionalField::Absent,
+            memory_load_percent: RnsOptionalField::Absent,
+            battery_percent: RnsOptionalField::Absent,
+            battery_state: RnsOptionalField::Absent,
+            switch_id: RnsOptionalField::Absent,
+            endpoint_id: RnsOptionalField::Absent,
+            via_switch_id: RnsOptionalField::Absent,
+            blocked_ip_list: RnsOptionalField::Absent,
+            rssi: RnsOptionalField::Absent,
+            fleet_peers: vec![
+                personal_rns::interfaces::rns_management::RnsFleetPeerReport {
+                    name: String::from("ab12… @ AA:BB:CC:DD:EE:FF"),
+                    online: true,
+                    receive_bytes: 40,
+                    transmit_bytes: 20,
+                    receive_speed_bps: 0.0,
+                    transmit_speed_bps: 0.0,
+                    rssi: RnsOptionalField::Value(-61),
+                },
+            ],
+        };
+        let mut output = String::new();
+        write_optional(&mut output, "    Group     : ", "", &status.group_id);
+        render_fleet_peers(&mut output, &status);
+        assert!(output.contains("Group     : reticulum"));
+        assert!(output.contains("Peers     : 1 connected"));
+        assert!(output.contains("ab12… @ AA:BB:CC:DD:EE:FF  Up  rssi -61"));
+        assert!(output.contains("Traffic"));
     }
 }

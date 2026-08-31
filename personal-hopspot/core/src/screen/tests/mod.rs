@@ -47,17 +47,17 @@ use super::state::lora::{
     LORA_REGION_CANCEL, PRESET_CHOICES,
 };
 use super::state::{
-    GlobalMenuItem, UiMode, ANNOUNCE_MENU_ITEM, BLANK_DISPLAY_MENU_ITEM,
+    GlobalMenuItem, UiMode, ANNOUNCE_MENU_ITEM, BLANK_DISPLAY_MENU_ITEM, BLE_GROUP_MENU_ITEM,
     DISPLAY_AUTO_OFF_MENU_ITEM, LORA_RESET_MENU_ITEM, LORA_TUNE_MENU_ITEM, POWER_MENU_ITEM,
     POWER_ONLY_MENU_ITEMS, RADIO_MENU_ITEM_NO_DISPLAY, SHARED_INSTANCE_CONFIG_MENU_ITEM,
     SLEEP_MENU_ITEM, STATION_UPLINK_MENU_ITEM, WIFI_MENU_ITEMS,
 };
 use super::{
     apply_and_persist_radio_profile, card_label, sort_cards_for_display, AccessPointState,
-    BluetoothRecoveryMenuDetails, Card, CardActivityTracker, CardKind, GnssAvailability,
-    InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess, PersistenceNotice,
-    RadioProfileChangeResult, ScreenContent, SharedInstanceConfigExport, UiAction, UiConfiguration,
-    UiNotice, UiState, UserBlanking,
+    BleGroupEditor, BluetoothRecoveryMenuDetails, Card, CardActivityTracker, CardKind,
+    GnssAvailability, InputEvent, InterfaceMenuDetails, LoRaSpectrumMenuDetails, LocalDocsAccess,
+    PersistenceNotice, RadioProfileChangeResult, ScreenContent, SharedInstanceConfigExport,
+    UiAction, UiConfiguration, UiNotice, UiState, UserBlanking,
 };
 
 const TEST_WIDTH: usize = WIDTH as usize;
@@ -186,6 +186,7 @@ fn test_ui_state() -> UiState {
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: SharedInstanceConfigExport::Unavailable,
         gnss: super::GnssAvailability::Unavailable,
+        ble_group_editor: super::BleGroupEditor::Unavailable,
     })
 }
 
@@ -196,6 +197,7 @@ fn test_ui_state_with_display_power() -> UiState {
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: SharedInstanceConfigExport::Unavailable,
         gnss: super::GnssAvailability::Unavailable,
+        ble_group_editor: super::BleGroupEditor::Unavailable,
     })
 }
 
@@ -206,6 +208,7 @@ fn test_ui_state_with_access_point(access_point: AccessPointState) -> UiState {
         access_point,
         shared_instance_config_export: SharedInstanceConfigExport::Unavailable,
         gnss: super::GnssAvailability::Unavailable,
+        ble_group_editor: super::BleGroupEditor::Unavailable,
     })
 }
 
@@ -216,6 +219,7 @@ fn test_ui_state_with_shared_instance_config() -> UiState {
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: SharedInstanceConfigExport::Available,
         gnss: super::GnssAvailability::Unavailable,
+        ble_group_editor: super::BleGroupEditor::Unavailable,
     })
 }
 
@@ -226,6 +230,7 @@ fn test_ui_state_with_gnss() -> UiState {
         access_point: AccessPointState::Unsupported,
         shared_instance_config_export: SharedInstanceConfigExport::Unavailable,
         gnss: GnssAvailability::Available,
+        ble_group_editor: BleGroupEditor::Unavailable,
     })
 }
 
@@ -244,6 +249,7 @@ fn has_on_pixel(
     false
 }
 
+mod ble_group;
 mod limits;
 mod lora;
 mod model;

@@ -45,6 +45,7 @@ pub fn bluetooth_dialer_hello(identity: Vec<u8>) -> Result<Vec<u8>, JsValue> {
         endpoint: local.endpoint,
         capabilities: local.capabilities,
         peer_rssi: None,
+        group_tag: Some(local.group_tag),
     })
 }
 
@@ -112,6 +113,7 @@ fn web_bluetooth_local(identity: Vec<u8>) -> Result<bluetooth_contract::LocalPee
             l2cap: None,
             link_mtu: bluetooth_contract::BLE_HW_MTU as u16,
         },
+        group_tag: bluetooth_contract::default_group_tag(),
     })
 }
 

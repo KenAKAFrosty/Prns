@@ -234,8 +234,10 @@ pub struct BleHub {
     pub(super) advertise: Signal<BridgeMutex, bool>,
     pub(super) scan_enabled: Signal<BridgeMutex, bool>,
     pub(super) radio_enabled: AtomicBool,
+    advertising_wanted: AtomicBool,
     discovery: DiscoveryState,
     pub(super) local_address: BlockingMutex<BridgeMutex, Cell<[u8; 6]>>,
+    discovery_group_tag: BlockingMutex<BridgeMutex, Cell<[u8; 4]>>,
     status: BluetoothAutoStatus<PEER_CAPACITY>,
 }
 
@@ -257,14 +259,28 @@ impl BleHub {
             advertise: Signal::new(),
             scan_enabled: Signal::new(),
             radio_enabled: AtomicBool::new(false),
+            advertising_wanted: AtomicBool::new(false),
             discovery: DiscoveryState::new(),
             local_address: BlockingMutex::new(Cell::new([0; 6])),
+            discovery_group_tag: BlockingMutex::new(Cell::new(DEFAULT_GROUP_TAG)),
             status,
         }
     }
 
     pub fn set_local_address(&self, local_address: [u8; 6]) {
         self.local_address.lock(|cell| cell.set(local_address));
+    }
+
+    pub fn set_discovery_group_tag(&self, group_tag: [u8; 4]) {
+        self.discovery_group_tag.lock(|cell| cell.set(group_tag));
+        if self.advertising_wanted.load(Ordering::Relaxed) {
+            // Wake the acceptor so it rebuilds manufacturer data without cycling the radio.
+            self.advertise.signal(true);
+        }
+    }
+
+    pub fn discovery_group_tag(&self) -> [u8; 4] {
+        self.discovery_group_tag.lock(|cell| cell.get())
     }
 
     pub(super) async fn acquire_radio(&self) -> RadioPermit<'_> {
@@ -381,7 +397,24 @@ impl BleBackend<PEER_CAPACITY> for EmbeddedBleBackend {
     type Error = Closed;
     type Link = EmbeddedBleLink;
 
+    fn local_group_tag(&self) -> Option<[u8; 4]> {
+        Some(self.hub.discovery_group_tag())
+    }
+
+    fn drop_all_links(&mut self) {
+        for (assign, slot) in self.hub.assign.iter().zip(self.hub.slots.iter()) {
+            assign.clear();
+            slot.shutdown.signal(());
+        }
+        for index in 0..PEER_CAPACITY {
+            self.hub.connection_slots.request_close(index);
+        }
+    }
+
     async fn set_advertising(&mut self, mode: AdvertisingMode) -> Result<(), Closed> {
+        self.hub
+            .advertising_wanted
+            .store(mode.is_on(), Ordering::Relaxed);
         self.hub.advertise.signal(mode.is_on());
         Ok(())
     }
@@ -395,6 +428,7 @@ impl BleBackend<PEER_CAPACITY> for EmbeddedBleBackend {
         let enabled = mode.is_on();
         self.hub.radio_enabled.store(enabled, Ordering::Relaxed);
         if !enabled {
+            self.hub.advertising_wanted.store(false, Ordering::Relaxed);
             self.hub.advertise.signal(false);
             self.hub.scan_enabled.signal(false);
             self.hub.dial_request.clear();
@@ -604,7 +638,10 @@ impl EventHandler for ScanFunnel {
                 peer_address,
                 capabilities,
             ) == ColumbaConnectionRole::Dial;
-            if contains_service(report.data) && should_dial {
+            if contains_service(report.data)
+                && discovery_groups_match(self.hub.discovery_group_tag(), report.data)
+                && should_dial
+            {
                 let address = report.addr.into_inner();
                 let outcome = self.hub.admit_sighting(address, Instant::now().as_millis());
                 if outcome == SightingAdmissionOutcome::Admit {

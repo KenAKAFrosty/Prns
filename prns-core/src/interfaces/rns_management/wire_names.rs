@@ -41,6 +41,9 @@ pub mod interface {
     pub const PARENT_HASH: &str = "parent_interface_hash";
     pub const BITRATE: &str = "bitrate";
     pub const PEERS: &str = "peers";
+    pub const FLEET_PEERS: &str = "fleet_peers";
+    pub const RSSI: &str = "rssi";
+    pub const GROUP_ID: &str = "group_id";
     pub const AUTOCONNECT_SOURCE: &str = "autoconnect_source";
     pub const ANNOUNCE_QUEUE: &str = "announce_queue";
     pub const HELD_ANNOUNCES: &str = "held_announces";
@@ -82,6 +85,7 @@ pub mod transport {
     pub const NETWORK_IDENTITY: &str = "network_id";
     pub const UPTIME: &str = "transport_uptime";
     pub const PROBE_RESPONDER: &str = "probe_responder";
+    pub const SOFTWARE_VERSION: &str = "software_version";
 }
 
 pub mod blackhole {

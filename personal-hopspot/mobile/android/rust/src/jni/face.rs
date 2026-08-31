@@ -8,8 +8,9 @@ use personal_hopspot_core::{
 };
 
 use crate::engine::{
-    ble_identity_hex, delivery_destination_hex, engine_state, last_failure, node_identity_hash_hex,
-    node_page_destination_hex, persistence_snapshot, rpc_key_hex, runtime_health,
+    ble_discovery_group, ble_identity_hex, cycle_ble_discovery_group, delivery_destination_hex,
+    engine_state, last_failure, node_identity_hash_hex, node_page_destination_hex,
+    persistence_snapshot, rpc_key_hex, runtime_health, set_ble_discovery_group,
     sideband_join_config, wifi_aware_failure_reason, wifi_direct_failure_reason,
 };
 use crate::face::HopspotFace;
@@ -379,6 +380,38 @@ pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleIdentityH
 ) -> jstring {
     ble_identity_hex()
         .and_then(|identity| env.new_string(identity).ok())
+        .map_or(core::ptr::null_mut(), JString::into_raw)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleDiscoveryGroup(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    ble_discovery_group()
+        .and_then(|group| env.new_string(group).ok())
+        .map_or(core::ptr::null_mut(), JString::into_raw)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleSetDiscoveryGroup(
+    mut env: JNIEnv,
+    _class: JClass,
+    group_id: JString,
+) -> jboolean {
+    let Ok(group) = env.get_string(&group_id) else {
+        return false.into();
+    };
+    set_ble_discovery_group(&group.to_string_lossy()).into()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_personal_hopspot_NativeBridge_nativeBleCycleDiscoveryGroup(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    cycle_ble_discovery_group()
+        .and_then(|group| env.new_string(group).ok())
         .map_or(core::ptr::null_mut(), JString::into_raw)
 }
 

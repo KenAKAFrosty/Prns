@@ -100,7 +100,7 @@ setup = "Install Rust with rustup so the nRF52840 target and llvm-tools-preview 
 
 [[task]]
 id = "build.hopspot.mesh-tower-v2"
-summary = "Build the headless Heltec MeshTower V2 firmware with S140 6.1.1 Bluetooth Auto and package its recovery-compatible developer UF2."
+summary = "Build the headless Heltec MeshTower V2 firmware with S140 6.1.1 Bluetooth Auto and package its recovery-compatible developer UF2. Set PRNS_BLE_DISCOVERY_GROUP=mt-leg-a|mt-leg-b for lab BLE islands."
 domain = "build"
 effect = "workspace-write"
 platforms = ["linux", "macos"]

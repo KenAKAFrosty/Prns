@@ -136,6 +136,20 @@ pub struct RnsInterfaceStatusReport {
     pub endpoint_id: RnsOptionalField<String>,
     pub via_switch_id: RnsOptionalField<String>,
     pub blocked_ip_list: RnsOptionalField<Vec<String>>,
+    pub rssi: RnsOptionalField<i64>,
+    pub group_id: RnsOptionalField<String>,
+    pub fleet_peers: Vec<RnsFleetPeerReport>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RnsFleetPeerReport {
+    pub name: String,
+    pub online: bool,
+    pub receive_bytes: u64,
+    pub transmit_bytes: u64,
+    pub receive_speed_bps: f64,
+    pub transmit_speed_bps: f64,
+    pub rssi: RnsOptionalField<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -150,6 +164,7 @@ pub struct RnsInterfaceStatsReport {
     pub network_identity: RnsOptionalField<IdentityHash>,
     pub transport_uptime_seconds: RnsOptionalField<f64>,
     pub probe_responder: RnsOptionalField<DestinationHash>,
+    pub software_version: RnsOptionalField<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

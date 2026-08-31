@@ -470,7 +470,7 @@ impl InterfaceSettingSpec {
                 "Requests stock RNS warning suppression; Prns intentionally does not apply this setting."
             }
             interface_key::GROUP_ID => {
-                "Selects the AutoInterface discovery group whose nearby members can find each other."
+                "Selects the discovery group whose nearby AutoInterface or PrnsBluetoothAuto members can find each other."
             }
             interface_key::DISCOVERY_SCOPE => {
                 "Sets how far AutoInterface multicast discovery packets may travel."
@@ -642,7 +642,11 @@ impl InterfaceSettingSpec {
             interface_key::RECURSIVE_PRS => Some("No"),
             interface_key::ANNOUNCES_FROM_INTERNAL => Some("Yes"),
             interface_key::ANNOUNCES_TO_INTERNAL => Some("No"),
-            interface_key::GROUP_ID if kind == InterfaceKind::Auto => Some("reticulum"),
+            interface_key::GROUP_ID
+                if matches!(kind, InterfaceKind::Auto | InterfaceKind::PrnsBluetoothAuto) =>
+            {
+                Some("reticulum")
+            }
             interface_key::DISCOVERY_SCOPE if kind == InterfaceKind::Auto => Some("link"),
             interface_key::DISCOVERY_PORT if kind == InterfaceKind::Auto => Some("29716"),
             interface_key::DATA_PORT if kind == InterfaceKind::Auto => Some("42671"),
@@ -1051,9 +1055,9 @@ impl InterfaceSettingSpec {
                 }
                 _ => None,
             },
-            interface_key::GROUP_ID => {
-                auto_plan(planned).map(|auto| auto.group_id().as_str().to_string())
-            }
+            interface_key::GROUP_ID => auto_plan(planned)
+                .map(|auto| auto.group_id().as_str().to_string())
+                .or_else(|| bluetooth_auto_group_id(planned).map(str::to_string)),
             interface_key::DISCOVERY_SCOPE => auto_plan(planned)
                 .map(|auto| format!("{:?}", auto.discovery_scope()).to_ascii_lowercase()),
             interface_key::DISCOVERY_PORT => {
@@ -1442,6 +1446,13 @@ fn discovery_advertisement(planned: &PlannedInterface) -> Option<&DiscoveryAdver
 fn auto_plan(planned: &PlannedInterface) -> Option<&crate::AutoInterfacePlan> {
     match &planned.medium {
         PlannedMedium::AutoWifi(auto) => Some(auto),
+        _ => None,
+    }
+}
+
+fn bluetooth_auto_group_id(planned: &PlannedInterface) -> Option<&str> {
+    match &planned.medium {
+        PlannedMedium::PrnsBluetoothAuto { group_id } => Some(group_id.as_str()),
         _ => None,
     }
 }

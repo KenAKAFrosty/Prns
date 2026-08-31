@@ -15,7 +15,7 @@ use personal_hopspot_core::{
 use personal_rns::bluetooth_auto::BluetoothAutoStatus;
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
 use personal_rns::identity::IdentityHash;
-use personal_rns::interfaces::bluetooth_auto::BleIdentity;
+use personal_rns::interfaces::bluetooth_auto::{group_tag, BleIdentity, GROUP_NAME};
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceSnapshot, InterfaceStatus};
 use personal_rns::manifold::tokio::TokioInterfaceStatus;
 use personal_rns::runtime::{PrnsNodeHandle, RuntimeHealth};
@@ -43,6 +43,18 @@ pub(super) const RPC_PORT: u16 = LOCAL_RNS_PORT + 1;
 pub(super) const ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
 pub(super) const NODE_ANNOUNCE_APP_DATA: &[u8] = b"personal-hopspot";
 pub(super) const WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(4);
+pub(super) const BLE_DISCOVERY_GROUP_STORAGE: &str = "ble_discovery_group";
+const BLE_DISCOVERY_GROUP_CYCLE: &[&str] = &["reticulum", "mt-leg-a", "mt-leg-b"];
+
+struct BleDiscoveryGroupState {
+    path: PathBuf,
+    group_id: String,
+}
+
+fn ble_discovery_group_state() -> &'static Mutex<Option<BleDiscoveryGroupState>> {
+    static STATE: OnceLock<Mutex<Option<BleDiscoveryGroupState>>> = OnceLock::new();
+    STATE.get_or_init(|| Mutex::new(None))
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct EnginePorts {
@@ -489,6 +501,95 @@ pub(crate) fn node_identity_hash_hex() -> Option<String> {
 
 pub(crate) fn ble_identity_hex() -> Option<String> {
     identity_snapshot().map(|identity| hex(identity.ble_identity.as_bytes()))
+}
+
+pub(crate) fn ble_discovery_group() -> Option<String> {
+    ble_discovery_group_state()
+        .lock()
+        .ok()?
+        .as_ref()
+        .map(|state| state.group_id.clone())
+}
+
+pub(crate) fn set_ble_discovery_group(group_id: &str) -> bool {
+    let group_id = group_id.trim();
+    if group_id.is_empty() || group_id.len() > 64 {
+        return false;
+    }
+    let Ok(mut slot) = ble_discovery_group_state().lock() else {
+        return false;
+    };
+    let Some(state) = slot.as_mut() else {
+        return false;
+    };
+    if std::fs::write(&state.path, group_id.as_bytes()).is_err() {
+        return false;
+    }
+    state.group_id = group_id.to_string();
+    let bridge = ble_bridge();
+    let tag = group_tag(group_id.as_bytes());
+    log::info!("BLE discovery group set to {group_id}");
+    bridge.set_local_group_tag(tag);
+    drop(slot);
+    {
+        let manager = lock_manager();
+        if let Some(resources) = manager
+            .process
+            .as_ref()
+            .and_then(|process| process.resources.as_ref())
+        {
+            let _ = resources
+                .handle
+                .set_interface_group_id(resources.ble_status.id(), group_id);
+        }
+    }
+    republish_ble_discovery_group();
+    true
+}
+
+pub(crate) fn cycle_ble_discovery_group() -> Option<String> {
+    let current = ble_discovery_group().unwrap_or_else(|| GROUP_NAME.to_string());
+    let next = BLE_DISCOVERY_GROUP_CYCLE
+        .iter()
+        .position(|candidate| *candidate == current.as_str())
+        .map(|index| BLE_DISCOVERY_GROUP_CYCLE[(index + 1) % BLE_DISCOVERY_GROUP_CYCLE.len()])
+        .unwrap_or(BLE_DISCOVERY_GROUP_CYCLE[0]);
+    if set_ble_discovery_group(next) {
+        Some(next.to_string())
+    } else {
+        None
+    }
+}
+
+fn republish_ble_discovery_group() {
+    let mut manager = lock_manager();
+    manager.reap_finished();
+    let Some(resources) = manager
+        .process
+        .as_ref()
+        .and_then(|process| process.resources.as_ref())
+    else {
+        return;
+    };
+    // Evict peers + refresh discovery group without cycling the radio. A disable/enable bounce
+    // races the Android radio pump (PSM cleared in Rust while Kotlin keeps the L2CAP server).
+    resources.ble_status.reset_peers();
+}
+
+pub(super) fn install_ble_discovery_group(storage_dir: &std::path::Path, group_id: String) {
+    let path = storage_dir.join(BLE_DISCOVERY_GROUP_STORAGE);
+    if let Ok(mut slot) = ble_discovery_group_state().lock() {
+        *slot = Some(BleDiscoveryGroupState { path, group_id });
+    }
+}
+
+pub(super) fn load_ble_discovery_group(storage_dir: &std::path::Path) -> String {
+    let path = storage_dir.join(BLE_DISCOVERY_GROUP_STORAGE);
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| GROUP_NAME.to_string())
 }
 
 pub(crate) fn delivery_destination_hex() -> Option<String> {

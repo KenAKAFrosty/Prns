@@ -1,6 +1,6 @@
 use personal_rns::interfaces::rns_management::wire_names::{interface, transport};
 use personal_rns::interfaces::rns_management::{
-    RnsInterfaceStatsReport, RnsInterfaceStatusReport, RnsOptionalField,
+    RnsFleetPeerReport, RnsInterfaceStatsReport, RnsInterfaceStatusReport, RnsOptionalField,
 };
 use serde_json::{Map, Value};
 
@@ -59,6 +59,11 @@ fn report_value(report: &RnsInterfaceStatsReport) -> Value {
         transport::PROBE_RESPONDER,
         &report.probe_responder,
         |value| Value::String(hex(value.as_bytes())),
+    );
+    insert_optional_string(
+        &mut fields,
+        transport::SOFTWARE_VERSION,
+        &report.software_version,
     );
     Value::Object(fields)
 }
@@ -121,6 +126,7 @@ fn interface_value(status: &RnsInterfaceStatusReport) -> Value {
         interface::IFAC_NETWORK_NAME,
         &status.ifac_network_name,
     );
+    insert_optional_string(&mut fields, interface::GROUP_ID, &status.group_id);
     insert_optional_string(
         &mut fields,
         interface::AUTOCONNECT_SOURCE,
@@ -260,6 +266,40 @@ fn interface_value(status: &RnsInterfaceStatusReport) -> Value {
         &status.blocked_ip_list,
         |values| Value::Array(values.iter().cloned().map(Value::String).collect()),
     );
+    insert_optional_i64(&mut fields, interface::RSSI, &status.rssi);
+    if !status.fleet_peers.is_empty() {
+        fields.insert(
+            String::from(interface::FLEET_PEERS),
+            Value::Array(status.fleet_peers.iter().map(fleet_peer_value).collect()),
+        );
+    }
+    Value::Object(fields)
+}
+
+fn fleet_peer_value(peer: &RnsFleetPeerReport) -> Value {
+    let mut fields = Map::new();
+    fields.insert(
+        String::from(interface::NAME),
+        Value::String(peer.name.clone()),
+    );
+    fields.insert(String::from(interface::STATUS), peer.online.into());
+    fields.insert(
+        String::from(interface::RECEIVE_BYTES),
+        peer.receive_bytes.into(),
+    );
+    fields.insert(
+        String::from(interface::TRANSMIT_BYTES),
+        peer.transmit_bytes.into(),
+    );
+    fields.insert(
+        String::from(interface::RECEIVE_SPEED),
+        number(peer.receive_speed_bps),
+    );
+    fields.insert(
+        String::from(interface::TRANSMIT_SPEED),
+        number(peer.transmit_speed_bps),
+    );
+    insert_optional_i64(&mut fields, interface::RSSI, &peer.rssi);
     Value::Object(fields)
 }
 
@@ -393,6 +433,9 @@ mod tests {
                 String::from("192.0.2.10"),
                 String::from("2001:db8::1"),
             ]),
+            rssi: RnsOptionalField::Absent,
+            group_id: RnsOptionalField::Absent,
+            fleet_peers: vec![],
         };
         let Value::Object(fields) = interface_value(&status) else {
             unreachable!();
