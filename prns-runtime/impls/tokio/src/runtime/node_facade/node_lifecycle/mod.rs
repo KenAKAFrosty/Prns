@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
+use std::marker::PhantomData;
 use std::panic::AssertUnwindSafe;
+use std::rc::Rc;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 
@@ -143,20 +145,40 @@ impl fmt::Display for NodeRunError {
 
 impl std::error::Error for NodeRunError {}
 
-async fn run_node_tasks(
+/// A zero-sized ownership marker that keeps the whole node execution unit on the executor thread
+/// which polls it. The engine lives inside `manifold`, while the interface and request futures are
+/// sibling children of the same outer future. Making that outer future deliberately `!Send` locks
+/// in their co-location without introducing a dedicated runtime, thread, queue, or wake boundary.
+struct ExecutorThreadAnchor(PhantomData<Rc<()>>);
+
+impl ExecutorThreadAnchor {
+    const fn new() -> Self {
+        Self(PhantomData)
+    }
+
+    fn finish<T>(self, result: T) -> T {
+        result
+    }
+}
+
+async fn run_executor_local_node_tasks(
     manifold: impl Future<Output = ()>,
     request_endpoints: impl Future<Output = ()>,
     interface_driver: impl Future<Output = ()>,
 ) -> Result<(), NodeRunError> {
+    // This marker is consumed after the await so the returned future remains `!Send` even if all
+    // of its child futures become `Send` in a future refactor.
+    let executor_thread = ExecutorThreadAnchor::new();
     let manifold = AssertUnwindSafe(manifold).catch_unwind();
     let request_endpoints = AssertUnwindSafe(request_endpoints).catch_unwind();
     let interface_driver = AssertUnwindSafe(interface_driver).catch_unwind();
     tokio::pin!(manifold, request_endpoints, interface_driver);
-    tokio::select! {
+    let result = tokio::select! {
         result = &mut manifold => result.map_err(|_| NodeRunError::ManifoldPanicked),
         result = &mut request_endpoints => result.map_err(|_| NodeRunError::RequestEndpointrPanicked),
         result = &mut interface_driver => result.map_err(|_| NodeRunError::InterfaceDriverPanicked),
-    }
+    };
+    executor_thread.finish(result)
 }
 
 fn persistence_restored_diagnostic(
@@ -453,7 +475,9 @@ where
     }
 
     /// A `Send + Clone` handle for other tasks or threads to drive the node while
-    /// [`run`](Self::run) or [`run_until`](Self::run_until) owns the loop.
+    /// [`run`](Self::run) or [`run_until`](Self::run_until) owns the executor-local loop. The run
+    /// future deliberately keeps its engine, manifold, interface driver, and request runner on one
+    /// executor thread; only this handle and explicit worker jobs cross thread boundaries.
     #[must_use]
     pub fn handle(&self) -> PrnsNodeHandle {
         self.handle.clone()
@@ -727,7 +751,7 @@ where
         };
         let driver_commands = handle.commands.clone();
         let driver_interfaces = handle.interfaces.clone();
-        let node_tasks = run_node_tasks(
+        let node_tasks = run_executor_local_node_tasks(
             manifold,
             run_router::<St, R>(
                 &state,

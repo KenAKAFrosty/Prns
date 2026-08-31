@@ -33,7 +33,7 @@ use super::super::super::request_endpoints::{
 };
 use super::super::test_remote_control_service;
 use super::{
-    notify_accepted_announce, persistence_restored_diagnostic, run_node_tasks,
+    notify_accepted_announce, persistence_restored_diagnostic, run_executor_local_node_tasks,
     AcceptedAnnounceObserver, NodeRunError, PrnsNode,
 };
 
@@ -153,7 +153,7 @@ fn record_persistence_event(
 #[tokio::test]
 async fn node_task_panics_report_their_boundary() {
     assert_eq!(
-        run_node_tasks(
+        run_executor_local_node_tasks(
             async { std::panic::panic_any("manifold") },
             std::future::pending(),
             std::future::pending(),
@@ -162,7 +162,7 @@ async fn node_task_panics_report_their_boundary() {
         Err(NodeRunError::ManifoldPanicked)
     );
     assert_eq!(
-        run_node_tasks(
+        run_executor_local_node_tasks(
             std::future::pending(),
             async { std::panic::panic_any("router") },
             std::future::pending(),
@@ -171,7 +171,7 @@ async fn node_task_panics_report_their_boundary() {
         Err(NodeRunError::RequestEndpointrPanicked)
     );
     assert_eq!(
-        run_node_tasks(std::future::pending(), std::future::pending(), async {
+        run_executor_local_node_tasks(std::future::pending(), std::future::pending(), async {
             std::panic::panic_any("driver")
         },)
         .await,
