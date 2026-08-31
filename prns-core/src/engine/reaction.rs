@@ -67,6 +67,7 @@ impl PersistenceFlushTarget {
     }
 }
 
+#[repr(C)]
 pub enum Journaled<'a> {
     /// RNS 1.4.2's announce-handler `received_announce` callback as data.
     AnnounceHeard {
