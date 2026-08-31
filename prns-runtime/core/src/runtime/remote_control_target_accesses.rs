@@ -1,7 +1,74 @@
+use crate::identity::IdentityHash;
 use crate::remote_control::{
-    ForgetRemoteControlTargetOutcome, RemoteControlTargetAccess, RemoteControlTargetIdentity,
+    ForgetRemoteControlTargetOutcome, RemoteControlControllerIdentity, RemoteControlEndpoint,
+    RemoteControlRequestSet, RemoteControlTargetAccess, RemoteControlTargetIdentity,
     SetRemoteControlTargetAccessError, SetRemoteControlTargetAccessOutcome,
 };
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct ResolvedRemoteControlTarget {
+    endpoint: RemoteControlEndpoint,
+    controller: RemoteControlControllerIdentity,
+    permitted_requests: RemoteControlRequestSet,
+}
+
+impl ResolvedRemoteControlTarget {
+    #[must_use]
+    pub const fn endpoint(&self) -> RemoteControlEndpoint {
+        self.endpoint
+    }
+
+    #[must_use]
+    pub const fn controller(&self) -> &RemoteControlControllerIdentity {
+        &self.controller
+    }
+
+    #[must_use]
+    pub const fn permitted_requests(&self) -> &RemoteControlRequestSet {
+        &self.permitted_requests
+    }
+}
+
+impl From<(&RemoteControlControllerIdentity, &RemoteControlTargetAccess)>
+    for ResolvedRemoteControlTarget
+{
+    fn from(
+        (controller, access): (&RemoteControlControllerIdentity, &RemoteControlTargetAccess),
+    ) -> Self {
+        Self {
+            endpoint: access.endpoint(),
+            controller: *controller,
+            permitted_requests: *access.permitted_requests(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolveRemoteControlTargetServiceError {
+    Unavailable,
+    TargetNotAuthorized,
+    TransactionInProgress,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolveRemoteControlTargetControlError {
+    NodeStopped,
+    Busy,
+    Unavailable,
+    TargetNotAuthorized,
+}
+
+impl From<ResolveRemoteControlTargetServiceError> for ResolveRemoteControlTargetControlError {
+    fn from(error: ResolveRemoteControlTargetServiceError) -> Self {
+        match error {
+            ResolveRemoteControlTargetServiceError::Unavailable => Self::Unavailable,
+            ResolveRemoteControlTargetServiceError::TargetNotAuthorized => {
+                Self::TargetNotAuthorized
+            }
+            ResolveRemoteControlTargetServiceError::TransactionInProgress => Self::Busy,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetRemoteControlTargetAccessServiceError {
@@ -59,6 +126,13 @@ impl From<ForgetRemoteControlTargetServiceError> for ForgetRemoteControlTargetCo
 }
 
 pub trait RemoteControlTargetAccessControl {
+    fn resolve_remote_control_target(
+        &self,
+        target: IdentityHash,
+    ) -> impl core::future::Future<
+        Output = Result<ResolvedRemoteControlTarget, ResolveRemoteControlTargetControlError>,
+    > + Send;
+
     fn set_remote_control_target_access(
         &self,
         access: RemoteControlTargetAccess,

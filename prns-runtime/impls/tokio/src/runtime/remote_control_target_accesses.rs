@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio::sync::{oneshot, Mutex, OwnedMutexGuard};
 
+use crate::identity::IdentityHash;
 use crate::remote_control::{
     ForgetRemoteControlTargetOutcome, RemoteControlTargetAccess, RemoteControlTargetIdentity,
     SetRemoteControlTargetAccessOutcome,
@@ -12,12 +13,20 @@ use super::node_facade::PrnsNodeHandle;
 use super::{
     AssembledRemoteControl, ForgetRemoteControlTargetControlError,
     ForgetRemoteControlTargetServiceError, RemoteControlTargetAccessControl,
-    SetRemoteControlTargetAccessControlError, SetRemoteControlTargetAccessServiceError,
+    ResolveRemoteControlTargetControlError, ResolveRemoteControlTargetServiceError,
+    ResolvedRemoteControlTarget, SetRemoteControlTargetAccessControlError,
+    SetRemoteControlTargetAccessServiceError,
 };
 
 const REMOTE_CONTROL_TARGET_ACCESS_QUEUE_DEPTH: usize = 1;
 
 pub(super) enum RemoteControlTargetAccessCommand {
+    ResolveTarget {
+        target: IdentityHash,
+        completion: oneshot::Sender<
+            Result<ResolvedRemoteControlTarget, ResolveRemoteControlTargetServiceError>,
+        >,
+    },
     SetTargetAccess {
         access: RemoteControlTargetAccess,
         completion: oneshot::Sender<
@@ -109,6 +118,13 @@ impl RemoteControlTargetAccessReceiver {
 impl RemoteControlTargetAccessCommand {
     pub(super) fn apply(self, remote_control: &mut AssembledRemoteControl) {
         match self {
+            Self::ResolveTarget { target, completion } => {
+                if completion.is_closed() {
+                    return;
+                }
+                let outcome = remote_control.resolve_target(&target);
+                let _completion = completion.send(outcome);
+            }
             Self::SetTargetAccess { access, completion } => {
                 if completion.is_closed() {
                     return;
@@ -172,6 +188,29 @@ impl PrnsNodeHandle {
 }
 
 impl RemoteControlTargetAccessControl for PrnsNodeHandle {
+    async fn resolve_remote_control_target(
+        &self,
+        target: IdentityHash,
+    ) -> Result<ResolvedRemoteControlTarget, ResolveRemoteControlTargetControlError> {
+        let (completion, settled) = oneshot::channel();
+        let _operation = match self
+            .remote_control_target_accesses
+            .submit(RemoteControlTargetAccessCommand::ResolveTarget { target, completion })
+        {
+            Ok(operation) => operation,
+            Err(RemoteControlTargetAccessSubmissionError::Busy) => {
+                return Err(ResolveRemoteControlTargetControlError::Busy)
+            }
+            Err(RemoteControlTargetAccessSubmissionError::NodeStopped) => {
+                return Err(ResolveRemoteControlTargetControlError::NodeStopped)
+            }
+        };
+        match settled.await {
+            Ok(outcome) => outcome.map_err(Into::into),
+            Err(_) => Err(ResolveRemoteControlTargetControlError::NodeStopped),
+        }
+    }
+
     async fn set_remote_control_target_access(
         &self,
         access: RemoteControlTargetAccess,

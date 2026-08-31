@@ -194,6 +194,19 @@ pub(super) async fn run_router<
                 );
             }
             Either::Second(Either::First(Either::Second(
+                RemoteControlTargetAccessCommand::ResolveTarget { id, target },
+            ))) => {
+                let outcome = if authorization_transaction.is_active() {
+                    Err(super::ResolveRemoteControlTargetServiceError::TransactionInProgress)
+                } else {
+                    remote_control.resolve_target(&target)
+                };
+                let _settled = commands.settle_remote_control_target_access(
+                    id,
+                    RemoteControlTargetAccessCompletion::Resolved(outcome),
+                );
+            }
+            Either::Second(Either::First(Either::Second(
                 RemoteControlTargetAccessCommand::SetTargetAccess { id, access },
             ))) => {
                 let outcome = if authorization_transaction.is_active() {
@@ -203,7 +216,7 @@ pub(super) async fn run_router<
                 };
                 let _settled = commands.settle_remote_control_target_access(
                     id,
-                    RemoteControlTargetAccessCompletion::TargetAccessSet(outcome),
+                    RemoteControlTargetAccessCompletion::AccessSet(outcome),
                 );
             }
             Either::Second(Either::First(Either::Second(
@@ -216,7 +229,7 @@ pub(super) async fn run_router<
                 };
                 let _settled = commands.settle_remote_control_target_access(
                     id,
-                    RemoteControlTargetAccessCompletion::TargetForgotten(outcome),
+                    RemoteControlTargetAccessCompletion::Forgotten(outcome),
                 );
             }
             Either::Second(Either::Second(request)) => {
@@ -606,7 +619,8 @@ mod tests {
     fn router_prioritizes_pairing_transactions_and_rejects_racing_app_mutations() {
         use crate::remote_control::{RemoteControlControllerGrantTable, RemoteControlRequestKind};
         use crate::runtime::{
-            RemoteControlControllerGrantControl, SetRemoteControlControllerGrantControlError,
+            RemoteControlControllerGrantControl, RemoteControlTargetAccessControl,
+            ResolveRemoteControlTargetControlError, SetRemoteControlControllerGrantControlError,
         };
 
         type M = CriticalSectionRawMutex;
@@ -629,20 +643,29 @@ mod tests {
             handle,
         );
         let exercise = async {
-            let (prepared, app_mutation) = join(
+            let (prepared, (app_mutation, target_resolution)) = join(
                 handle.prepare_remote_control_pairing_authorization(
                     attempt_id,
                     super::super::remote_control_pairing_authorizations::RemoteControlPairingAuthorization::ControllerGrant(
                         pairing_grant,
                     ),
                 ),
-                handle.set_remote_control_controller_grant(app_grant),
+                join(
+                    handle.set_remote_control_controller_grant(app_grant),
+                    handle.resolve_remote_control_target(crate::identity::IdentityHash::new([
+                        0x78; 16
+                    ])),
+                ),
             )
             .await;
             assert!(prepared.is_ok());
             assert_eq!(
                 app_mutation,
                 Err(SetRemoteControlControllerGrantControlError::Busy),
+            );
+            assert_eq!(
+                target_resolution,
+                Err(ResolveRemoteControlTargetControlError::Busy),
             );
             handle
                 .release_remote_control_pairing_authorization(attempt_id)

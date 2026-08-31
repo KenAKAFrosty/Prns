@@ -26,7 +26,6 @@ use personal_rns::remote_control::{
     RemoteControlPairingEndpoint, RemoteControlPairingExpiresAfter,
     RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
     RemoteControlTargetAccess, RemoteControlTargetIdentity, SetRemoteControlControllerGrantOutcome,
-    SetRemoteControlTargetAccessOutcome,
 };
 use personal_rns::runtime::RemoteControlPairingControlError;
 use personal_rns::units::{DurationMillis, InstantMillis};
@@ -387,17 +386,19 @@ async fn describe_through_restored_pairing(persistence: &PairingPersistenceDirec
                 .await,
             Ok(SetRemoteControlControllerGrantOutcome::Unchanged),
         );
+        let target_access = RemoteControlTargetAccess::new(
+            RemoteControlTargetIdentity::new(target_public_keys),
+            RemoteControlRequestSet::all(),
+        )
+        .expect("the complete request set is not empty");
+        let target_identity = target_access.target().identity_hash();
+        let resolved_target =
+            ResolvedRemoteControlTarget::from((&controller_identity, &target_access));
         assert_eq!(
             controller_handle
-                .set_remote_control_target_access(
-                    RemoteControlTargetAccess::new(
-                        RemoteControlTargetIdentity::new(target_public_keys),
-                        RemoteControlRequestSet::all(),
-                    )
-                    .expect("the complete request set is not empty"),
-                )
+                .resolve_remote_control_target(target_identity)
                 .await,
-            Ok(SetRemoteControlTargetAccessOutcome::Unchanged),
+            Ok(resolved_target),
         );
         target_handle
             .announce_now(AnnounceNow {

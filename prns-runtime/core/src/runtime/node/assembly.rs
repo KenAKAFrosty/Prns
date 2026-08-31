@@ -28,7 +28,8 @@ use super::super::remote_control::REMOTE_CONTROL_REQUEST_PLAINTEXT_MAX;
 use super::super::request_endpoints::RequestEndpointSet;
 use super::super::{
     ForgetRemoteControlTargetServiceError, PrnsEvent, RemoteControlAuthorizationRestoreError,
-    RemoteControlAuthorizationRestoreOutcome, RevokeRemoteControlControllerServiceError,
+    RemoteControlAuthorizationRestoreOutcome, ResolveRemoteControlTargetServiceError,
+    ResolvedRemoteControlTarget, RevokeRemoteControlControllerServiceError,
     SetRemoteControlControllerGrantServiceError, SetRemoteControlTargetAccessServiceError,
 };
 use super::recipe::{PreConfiguredDestination, PrnsNodeRecipe, ServeMyRequestEndpoints};
@@ -203,6 +204,24 @@ impl AssembledRemoteControl {
             .target_accesses
             .set_target_access(access)
             .map_err(Into::into)
+    }
+
+    pub fn resolve_target(
+        &self,
+        target: &crate::identity::IdentityHash,
+    ) -> Result<ResolvedRemoteControlTarget, ResolveRemoteControlTargetServiceError> {
+        let available = self
+            .available
+            .as_ref()
+            .ok_or(ResolveRemoteControlTargetServiceError::Unavailable)?;
+        let access = available
+            .target_accesses
+            .access_for(target)
+            .ok_or(ResolveRemoteControlTargetServiceError::TargetNotAuthorized)?;
+        Ok(ResolvedRemoteControlTarget::from((
+            available.identities.controller(),
+            access,
+        )))
     }
 
     pub fn forget_target(
@@ -889,6 +908,37 @@ mod tests {
             Err(RemoteControlAuthorizationRestoreError::CapacityExhausted),
         );
         assert_eq!(configured.target_accesses().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn target_resolution_projects_only_authoritative_operational_facts() {
+        let mut engine = EngineState::<Storage>::default();
+        let mut remote_control =
+            configure_remote_control_service(&mut engine, remote_control_service()).unwrap();
+        let access = remote_control_target_access(0x21);
+        let target = access.target().identity_hash();
+        let expected = ResolvedRemoteControlTarget::from((
+            remote_control.identities().unwrap().controller(),
+            &access,
+        ));
+
+        assert_eq!(
+            remote_control.resolve_target(&target),
+            Err(ResolveRemoteControlTargetServiceError::TargetNotAuthorized),
+        );
+        assert_eq!(
+            remote_control.set_target_access(access),
+            Ok(crate::remote_control::SetRemoteControlTargetAccessOutcome::Added),
+        );
+        assert_eq!(remote_control.resolve_target(&target), Ok(expected));
+
+        let unavailable =
+            configure_remote_control_service(&mut engine, RemoteControlService::Unavailable)
+                .unwrap();
+        assert_eq!(
+            unavailable.resolve_target(&target),
+            Err(ResolveRemoteControlTargetServiceError::Unavailable),
+        );
     }
 
     #[test]

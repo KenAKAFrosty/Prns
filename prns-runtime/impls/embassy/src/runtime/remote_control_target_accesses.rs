@@ -1,10 +1,12 @@
 use crate::engine::CommandId;
+use crate::identity::IdentityHash;
 use crate::remote_control::{
     ForgetRemoteControlTargetOutcome, RemoteControlTargetAccess, RemoteControlTargetIdentity,
     SetRemoteControlTargetAccessOutcome,
 };
 use crate::runtime::{
-    ForgetRemoteControlTargetServiceError, SetRemoteControlTargetAccessServiceError,
+    ForgetRemoteControlTargetServiceError, ResolveRemoteControlTargetServiceError,
+    ResolvedRemoteControlTarget, SetRemoteControlTargetAccessServiceError,
 };
 
 use super::remote_control_authorization_exchange::{
@@ -12,6 +14,10 @@ use super::remote_control_authorization_exchange::{
 };
 
 pub(super) enum RemoteControlTargetAccessCommand {
+    ResolveTarget {
+        id: CommandId,
+        target: IdentityHash,
+    },
     SetTargetAccess {
         id: CommandId,
         access: RemoteControlTargetAccess,
@@ -23,12 +29,11 @@ pub(super) enum RemoteControlTargetAccessCommand {
 }
 
 pub(super) enum RemoteControlTargetAccessCompletion {
-    TargetAccessSet(
+    Resolved(Result<ResolvedRemoteControlTarget, ResolveRemoteControlTargetServiceError>),
+    AccessSet(
         Result<SetRemoteControlTargetAccessOutcome, SetRemoteControlTargetAccessServiceError>,
     ),
-    TargetForgotten(
-        Result<ForgetRemoteControlTargetOutcome, ForgetRemoteControlTargetServiceError>,
-    ),
+    Forgotten(Result<ForgetRemoteControlTargetOutcome, ForgetRemoteControlTargetServiceError>),
 }
 
 pub(super) type RemoteControlTargetAccessExchange<M> = RemoteControlAuthorizationExchange<
@@ -40,7 +45,9 @@ pub(super) type RemoteControlTargetAccessExchange<M> = RemoteControlAuthorizatio
 impl RemoteControlAuthorizationCommand for RemoteControlTargetAccessCommand {
     fn id(&self) -> CommandId {
         match self {
-            Self::SetTargetAccess { id, .. } | Self::ForgetTarget { id, .. } => *id,
+            Self::ResolveTarget { id, .. }
+            | Self::SetTargetAccess { id, .. }
+            | Self::ForgetTarget { id, .. } => *id,
         }
     }
 }

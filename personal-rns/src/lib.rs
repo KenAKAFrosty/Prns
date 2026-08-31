@@ -91,11 +91,12 @@ pub use prns_runtime::runtime::{
     RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure,
     RemoteControlControllerGrantControl, RemoteControlDescribe, RemoteControlError,
     RemoteControlPairingControl, RemoteControlPairingControlError,
-    RemoteControlTargetAccessControl, RevokeRemoteControlControllerControlError,
-    RevokeRemoteControlControllerServiceError, RuntimeHealth, SendError,
-    SetRegisteredAnnounceAppDataError, SetRemoteControlControllerGrantControlError,
-    SetRemoteControlControllerGrantServiceError, SetRemoteControlTargetAccessControlError,
-    SetRemoteControlTargetAccessServiceError,
+    RemoteControlTargetAccessControl, ResolveRemoteControlTargetControlError,
+    ResolveRemoteControlTargetServiceError, ResolvedRemoteControlTarget,
+    RevokeRemoteControlControllerControlError, RevokeRemoteControlControllerServiceError,
+    RuntimeHealth, SendError, SetRegisteredAnnounceAppDataError,
+    SetRemoteControlControllerGrantControlError, SetRemoteControlControllerGrantServiceError,
+    SetRemoteControlTargetAccessControlError, SetRemoteControlTargetAccessServiceError,
 };
 pub use prns_runtime::wire::{DestinationHash, TransportId};
 

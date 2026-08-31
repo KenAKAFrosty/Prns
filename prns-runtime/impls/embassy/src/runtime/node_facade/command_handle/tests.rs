@@ -12,7 +12,8 @@ use crate::remote_control::{
     RemoteControlPairingAttemptTimeout, RemoteControlPairingEndpoint,
     RemoteControlPairingExpiresAfter, RemoteControlPairingInvitationCode,
     RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
-    RemoteControlRequestKind, RemoteControlRequestSet,
+    RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlTargetAccess,
+    RemoteControlTargetIdentity,
 };
 use crate::routing::links::request::RequestId;
 use crate::routing::links::LinkId;
@@ -20,8 +21,12 @@ use crate::routing::request_handlers::RequestPathHash;
 use crate::runtime::remote_control_controller_grants::{
     RemoteControlControllerGrantCommand, RemoteControlControllerGrantCompletion,
 };
+use crate::runtime::remote_control_target_accesses::{
+    RemoteControlTargetAccessCommand, RemoteControlTargetAccessCompletion,
+};
 use crate::runtime::{
     AnnounceNowError, RemoteControlControllerGrantControl, RemoteControlPairingControlError,
+    RemoteControlTargetAccessControl, ResolvedRemoteControlTarget,
     RevokeRemoteControlControllerControlError, SendError, SetRegisteredAnnounceAppDataError,
     SetRemoteControlControllerGrantControlError, SetRemoteControlControllerGrantServiceError,
 };
@@ -220,6 +225,43 @@ fn remote_control_controller_grants_preserves_exact_set_and_revoke_settlements()
         revoke,
         Ok(crate::remote_control::RevokeRemoteControlControllerOutcome::Revoked { grant }),
     );
+}
+
+#[test]
+fn remote_control_target_resolution_preserves_the_exact_target_and_settlement() {
+    let commands = Channel::<CriticalSectionRawMutex, IssuedCommand, 1>::new();
+    let completions = Pool::<0>::new();
+    let handle = super::PrnsNodeHandle::new(commands.sender(), &completions);
+    let service = super::super::test_remote_control_service();
+    let identities = service
+        .configuration()
+        .unwrap()
+        .identity_secrets()
+        .identities();
+    let target = identities.target().identity_hash();
+    let access = RemoteControlTargetAccess::new(
+        RemoteControlTargetIdentity::new(*identities.target().public_keys()),
+        RemoteControlRequestSet::only(RemoteControlRequestKind::Describe),
+    )
+    .unwrap();
+    let expected = ResolvedRemoteControlTarget::from((identities.controller(), &access));
+    let completion = ResolvedRemoteControlTarget::from((identities.controller(), &access));
+
+    let (resolved, ()) = block_on(join(handle.resolve_remote_control_target(target), async {
+        let RemoteControlTargetAccessCommand::ResolveTarget {
+            id,
+            target: submitted,
+        } = handle.next_remote_control_target_access_command().await
+        else {
+            panic!("resolve target command")
+        };
+        assert_eq!(submitted, target);
+        assert!(handle.settle_remote_control_target_access(
+            id,
+            RemoteControlTargetAccessCompletion::Resolved(Ok(completion)),
+        ));
+    }));
+    assert_eq!(resolved, Ok(expected));
 }
 
 #[test]

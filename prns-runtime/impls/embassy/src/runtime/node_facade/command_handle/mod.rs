@@ -18,6 +18,7 @@ use crate::engine::{
     SendSinglePacketFailure, SendSinglePacketPayload, SetRegisteredAnnounceAppData, Settleable,
     Settlement,
 };
+use crate::identity::IdentityHash;
 use crate::remote_control::{
     ForgetRemoteControlTargetOutcome, RemoteControlControllerGrant,
     RemoteControlControllerIdentity, RemoteControlTargetAccess, RemoteControlTargetIdentity,
@@ -52,6 +53,7 @@ use super::super::{
     RejectRemoteControlControllerPairingControlError, RejectRemoteControlTargetPairingControlError,
     RemoteControlControllerGrantControl, RemoteControlPairingControl,
     RemoteControlPairingControlError, RemoteControlTargetAccessControl,
+    ResolveRemoteControlTargetControlError, ResolvedRemoteControlTarget,
     RevokeRemoteControlControllerControlError, SendError, SetRegisteredAnnounceAppDataError,
     SetRemoteControlControllerGrantControlError, SetRemoteControlTargetAccessControlError,
 };
@@ -1352,6 +1354,33 @@ impl<
     > RemoteControlTargetAccessControl
     for PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>
 {
+    async fn resolve_remote_control_target(
+        &self,
+        target: IdentityHash,
+    ) -> Result<ResolvedRemoteControlTarget, ResolveRemoteControlTargetControlError> {
+        let id = self.pool.mint();
+        let command = RemoteControlTargetAccessCommand::ResolveTarget { id, target };
+        if !self.pool.remote_control_target_accesses.submit(command) {
+            return Err(ResolveRemoteControlTargetControlError::Busy);
+        }
+        let _guard = RemoteControlTargetAccessSlotGuard {
+            pool: self.pool,
+            id,
+        };
+        match self
+            .pool
+            .remote_control_target_accesses
+            .completion(id)
+            .await
+        {
+            RemoteControlTargetAccessCompletion::Resolved(result) => result.map_err(Into::into),
+            RemoteControlTargetAccessCompletion::AccessSet(_)
+            | RemoteControlTargetAccessCompletion::Forgotten(_) => {
+                Err(ResolveRemoteControlTargetControlError::NodeStopped)
+            }
+        }
+    }
+
     async fn set_remote_control_target_access(
         &self,
         access: RemoteControlTargetAccess,
@@ -1371,10 +1400,9 @@ impl<
             .completion(id)
             .await
         {
-            RemoteControlTargetAccessCompletion::TargetAccessSet(result) => {
-                result.map_err(Into::into)
-            }
-            RemoteControlTargetAccessCompletion::TargetForgotten(_) => {
+            RemoteControlTargetAccessCompletion::AccessSet(result) => result.map_err(Into::into),
+            RemoteControlTargetAccessCompletion::Resolved(_)
+            | RemoteControlTargetAccessCompletion::Forgotten(_) => {
                 Err(SetRemoteControlTargetAccessControlError::NodeStopped)
             }
         }
@@ -1399,10 +1427,9 @@ impl<
             .completion(id)
             .await
         {
-            RemoteControlTargetAccessCompletion::TargetForgotten(result) => {
-                result.map_err(Into::into)
-            }
-            RemoteControlTargetAccessCompletion::TargetAccessSet(_) => {
+            RemoteControlTargetAccessCompletion::Forgotten(result) => result.map_err(Into::into),
+            RemoteControlTargetAccessCompletion::Resolved(_)
+            | RemoteControlTargetAccessCompletion::AccessSet(_) => {
                 Err(ForgetRemoteControlTargetControlError::NodeStopped)
             }
         }

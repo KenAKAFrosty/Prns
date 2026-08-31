@@ -72,8 +72,9 @@ pub use remote_control_pairing::{
 };
 pub use remote_control_target_accesses::{
     ForgetRemoteControlTargetControlError, ForgetRemoteControlTargetServiceError,
-    RemoteControlTargetAccessControl, SetRemoteControlTargetAccessControlError,
-    SetRemoteControlTargetAccessServiceError,
+    RemoteControlTargetAccessControl, ResolveRemoteControlTargetControlError,
+    ResolveRemoteControlTargetServiceError, ResolvedRemoteControlTarget,
+    SetRemoteControlTargetAccessControlError, SetRemoteControlTargetAccessServiceError,
 };
 
 #[doc(hidden)]

@@ -11,12 +11,13 @@ pub use crate::{
     RejectRemoteControlTargetPairingControlError, RemoteControlAnnounceSelf,
     RemoteControlAnnounceSelfFailure, RemoteControlControllerGrantControl, RemoteControlDescribe,
     RemoteControlError, RemoteControlPairingControl, RemoteControlPairingControlError,
-    RemoteControlTargetAccessControl, ResourceMemoryLimits, ResourceStrategy,
-    RevokeRemoteControlControllerControlError, RevokeRemoteControlControllerServiceError,
-    RuntimeHealth, SendError, SetRegisteredAnnounceAppDataError,
-    SetRemoteControlControllerGrantControlError, SetRemoteControlControllerGrantServiceError,
-    SetRemoteControlTargetAccessControlError, SetRemoteControlTargetAccessServiceError, Zeroizing,
-    IDENTITY_SECRET_KEY_LEN,
+    RemoteControlTargetAccessControl, ResolveRemoteControlTargetControlError,
+    ResolveRemoteControlTargetServiceError, ResolvedRemoteControlTarget, ResourceMemoryLimits,
+    ResourceStrategy, RevokeRemoteControlControllerControlError,
+    RevokeRemoteControlControllerServiceError, RuntimeHealth, SendError,
+    SetRegisteredAnnounceAppDataError, SetRemoteControlControllerGrantControlError,
+    SetRemoteControlControllerGrantServiceError, SetRemoteControlTargetAccessControlError,
+    SetRemoteControlTargetAccessServiceError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
 };
 
 pub use crate::remote_control::{

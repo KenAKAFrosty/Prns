@@ -16,11 +16,13 @@ pub use prns_runtime::runtime::{
     RejectRemoteControlTargetPairingControlError, RemoteControlAnnounceSelf,
     RemoteControlAnnounceSelfFailure, RemoteControlControllerGrantControl, RemoteControlDescribe,
     RemoteControlError, RemoteControlPairingControl, RemoteControlPairingControlError,
-    RemoteControlTargetAccessControl, RevokeRemoteControlControllerControlError,
-    RevokeRemoteControlControllerServiceError, RoutingControl, RoutingControlError, RuntimeHealth,
-    SendError, ServeMyRequestEndpoints, SetRegisteredAnnounceAppDataError,
-    SetRemoteControlControllerGrantControlError, SetRemoteControlControllerGrantServiceError,
-    SetRemoteControlTargetAccessControlError, SetRemoteControlTargetAccessServiceError,
+    RemoteControlTargetAccessControl, ResolveRemoteControlTargetControlError,
+    ResolveRemoteControlTargetServiceError, ResolvedRemoteControlTarget,
+    RevokeRemoteControlControllerControlError, RevokeRemoteControlControllerServiceError,
+    RoutingControl, RoutingControlError, RuntimeHealth, SendError, ServeMyRequestEndpoints,
+    SetRegisteredAnnounceAppDataError, SetRemoteControlControllerGrantControlError,
+    SetRemoteControlControllerGrantServiceError, SetRemoteControlTargetAccessControlError,
+    SetRemoteControlTargetAccessServiceError,
 };
 
 #[cfg(feature = "alloc")]
