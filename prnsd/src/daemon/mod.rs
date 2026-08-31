@@ -399,12 +399,8 @@ pub(super) async fn run(
             transport: visible_identity_hash,
             network: network_identity_hash,
             probe_responder: plan.probe_responder.is_enabled().then(|| {
-                derive_single_destination_hash(
-                    &visible_identity_hash,
-                    "rnstransport",
-                    &["probe"],
-                )
-                .expect("rnstransport.probe is a valid destination name")
+                derive_single_destination_hash(&visible_identity_hash, "rnstransport", &["probe"])
+                    .expect("rnstransport.probe is a valid destination name")
             }),
         });
     let request_nnpages = nnpages.clone();
