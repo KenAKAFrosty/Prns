@@ -31,7 +31,7 @@ pub use blackhole::{
     UnblackholeIdentityOutcome,
 };
 pub use route_expiry::{LinearRouteExpiryIndex, RouteExpiryIndex, ROUTE_EXPIRY_QUANTUM_MS};
-pub use routes::{NextHop, RouteResponsiveness};
+pub use routes::{NextHop, RouteExpiresAfter, RouteResponsiveness, RouteRetention};
 pub use table::{
     AnnounceIdRing, DropCause, ExistingRoute, ForwardingRoute, PersistedRouteRow, RemovedRoute,
     RouteRemovalCause, RoutingTable, SeedRouteOutcome, StoredAnnounce, UpsertRouteOutcome,

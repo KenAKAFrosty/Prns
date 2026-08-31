@@ -7,7 +7,9 @@ use crate::routing::announce::stored::{
 };
 use crate::routing::announce::AnnounceArrival;
 use crate::routing::route_expiry::RouteExpiryIndex;
-use crate::routing::routes::{RouteEntry, RouteEvidenceId, RouteResponsiveness, RouteTable};
+use crate::routing::routes::{
+    RouteEntry, RouteEvidenceId, RouteResponsiveness, RouteRetention, RouteTable,
+};
 use crate::routing::warmth::RouteWarmth;
 use crate::storage::TablePushError;
 
@@ -62,6 +64,25 @@ where
         warmth: &dyn RouteWarmth,
         on_removed: &mut impl FnMut(RemovedRoute),
     ) -> UpsertRouteOutcome {
+        self.upsert_route_with_retention_and_warmth(
+            arrival,
+            replacement_evidence_id,
+            RouteRetention::Network,
+            interfaces,
+            warmth,
+            on_removed,
+        )
+    }
+
+    pub(crate) fn upsert_route_with_retention_and_warmth(
+        &mut self,
+        arrival: &AnnounceArrival<'_>,
+        replacement_evidence_id: RouteEvidenceId,
+        retention: RouteRetention,
+        interfaces: AttachedInterfaces<'_>,
+        warmth: &dyn RouteWarmth,
+        on_removed: &mut impl FnMut(RemovedRoute),
+    ) -> UpsertRouteOutcome {
         match self.index_of(&arrival.announce.destination) {
             None => {
                 if self.routes.len() >= self.destination_capacity() {
@@ -78,14 +99,20 @@ where
                 self.insert_new_route(
                     arrival,
                     replacement_evidence_id,
+                    retention,
                     interfaces,
                     warmth,
                     on_removed,
                 )
             }
-            Some(i) => {
-                self.refresh_existing_route(i, arrival, replacement_evidence_id, interfaces, warmth)
-            }
+            Some(i) => self.refresh_existing_route(
+                i,
+                arrival,
+                replacement_evidence_id,
+                retention,
+                interfaces,
+                warmth,
+            ),
         }
     }
 
@@ -114,6 +141,7 @@ where
         &mut self,
         arrival: &AnnounceArrival<'_>,
         evidence_id: RouteEvidenceId,
+        retention: RouteRetention,
         interfaces: AttachedInterfaces<'_>,
         warmth: &dyn RouteWarmth,
         on_removed: &mut impl FnMut(RemovedRoute),
@@ -150,6 +178,7 @@ where
             responsiveness: RouteResponsiveness::Unknown,
             receiving_interface,
             next_hop,
+            retention,
         };
         let announce_entry = AnnounceRecord {
             public_keys: announce.public_keys,
@@ -186,6 +215,7 @@ where
         i: usize,
         arrival: &AnnounceArrival<'_>,
         replacement_evidence_id: RouteEvidenceId,
+        retention: RouteRetention,
         interfaces: AttachedInterfaces<'_>,
         warmth: &dyn RouteWarmth,
     ) -> UpsertRouteOutcome {
@@ -220,6 +250,7 @@ where
                 responsiveness: RouteResponsiveness::Unknown,
                 receiving_interface,
                 next_hop,
+                retention,
             },
         );
         if path_changed {

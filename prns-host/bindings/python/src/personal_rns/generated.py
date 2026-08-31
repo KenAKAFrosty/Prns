@@ -233,6 +233,21 @@ class CommandFailureKind(IntEnum):
     CONNECT_FAILED = 39
     BACKEND_FAILED = 40
     RESPONSE_TOO_LARGE = 41
+    LINK_CLOSED = 42
+    RESPONSE_CANCELLED_BY_SENDER = 43
+    RESPONSE_HASHMAP_BEYOND_PART_COUNT = 44
+    RESPONSE_HASHMAP_SKIPS_AHEAD = 45
+    RESPONSE_HASHMAP_TOO_LONG = 46
+    RESPONSE_HASHMAP_RAGGED = 47
+    RESPONSE_RETRIES_EXHAUSTED = 48
+    RESPONSE_LINK_VANISHED = 49
+    RESPONSE_TRANSFER_UNOPENABLE = 50
+    RESPONSE_TRANSFER_CORRUPT = 51
+    RESPONSE_PROOF_UNSENDABLE = 52
+    RESPONSE_DECOMPRESSION_FAILED = 53
+    RESPONSE_DECOMPRESSION_TIMED_OUT = 54
+    RESPONSE_OPEN_TIMED_OUT = 55
+    RESPONSE_METADATA_OVERRUN = 56
 
 class DeliveryEvidenceKind(IntEnum):
     EXPLICIT_PROOF = 1
@@ -254,6 +269,7 @@ class LinkClosedReason(IntEnum):
     TIMEOUT = 1
     PEER_CLOSED = 2
     MALFORMED_RTT = 3
+    LOCALLY_CLOSED = 4
 
 class ApplicationEventKind(IntEnum):
     SINGLE_DELIVERY = 100
@@ -1076,6 +1092,66 @@ class CommandFailureResponseTooLarge:
     pass
 
 @dataclass(frozen=True, slots=True)
+class CommandFailureLinkClosed:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureResponseCancelledBySender:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureResponseHashmapBeyondPartCount:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureResponseHashmapSkipsAhead:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureResponseHashmapTooLong:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureResponseHashmapRagged:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureResponseRetriesExhausted:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureResponseLinkVanished:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureResponseTransferUnopenable:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureResponseTransferCorrupt:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureResponseProofUnsendable:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureResponseDecompressionFailed:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureResponseDecompressionTimedOut:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureResponseOpenTimedOut:
+    pass
+
+@dataclass(frozen=True, slots=True)
+class CommandFailureResponseMetadataOverrun:
+    pass
+
+@dataclass(frozen=True, slots=True)
 class ApplicationEventSingleDelivery:
     destination: DestinationHash
     source_interface: InterfaceId
@@ -1258,7 +1334,7 @@ ResourceStrategy: TypeAlias = ResourceStrategyRefuse | ResourceStrategyAccept
 DestinationConfig: TypeAlias = DestinationConfigPlain | DestinationConfigSingle
 HostCommand: TypeAlias = HostCommandAnnounce | HostCommandSendSinglePacket | HostCommandCloseLink | HostCommandAttachTcpServer | HostCommandAttachTcpClient | HostCommandAttachUdp | HostCommandDetachInterface | HostCommandEstablishLink | HostCommandRequestPath | HostCommandIdentify | HostCommandSendLinkPacket | HostCommandRequest | HostCommandRespond | HostCommandSendResource | HostCommandSetLinkResourceStrategy | HostCommandSetDestinationResourceStrategy | HostCommandSendChannelMessage | HostCommandAllowRequester | HostCommandAttachInterface
 CommandOutcome: TypeAlias = CommandOutcomeAnnounced | CommandOutcomePacketDelivered | CommandOutcomeLinkCloseQueued | CommandOutcomeInterfaceAttached | CommandOutcomeInterfaceDetached | CommandOutcomeLinkEstablished | CommandOutcomePathDiscovered | CommandOutcomeIdentified | CommandOutcomeResponseReceived | CommandOutcomeResponseSent | CommandOutcomeResourceSent | CommandOutcomeResourceStrategySet | CommandOutcomeRequesterAllowed
-CommandFailure: TypeAlias = CommandFailureNodeStopped | CommandFailureBusy | CommandFailurePayloadTooLarge | CommandFailureUnknownDestination | CommandFailureNotSingleDestination | CommandFailureAnnounceAppDataTooLong | CommandFailureUnknownInterface | CommandFailureNoRouteToDestination | CommandFailureNotDirectlyReachable | CommandFailurePacketCulled | CommandFailureDeliveryTimedOut | CommandFailureInvalidBitrate | CommandFailureBindFailed | CommandFailureWriteFailed | CommandFailureUnsupportedByBackend | CommandFailureUnknownLink | CommandFailureLinkNotActive | CommandFailureEntropyUnavailable | CommandFailureNotLinkInitiator | CommandFailureIdentityNotHeld | CommandFailureUnknownRequestHandler | CommandFailureRequestPolicyNotAllowList | CommandFailureRequestAllowListFull | CommandFailureLinkBusy | CommandFailureResourceTableFull | CommandFailureResourceMetadataTooLarge | CommandFailureResourceRejectedByPeer | CommandFailureResourceSequencingFailed | CommandFailureResourcePredecessorFailed | CommandFailureChannelWindowFull | CommandFailureChannelUntrackable | CommandFailureInvalidChannelMessageType | CommandFailureInvalidConfiguration | CommandFailureResourceUploadCancelled | CommandFailureResourceEarlyEof | CommandFailureResourceLengthOverrun | CommandFailurePermissionDenied | CommandFailureDeviceUnavailable | CommandFailureConnectFailed | CommandFailureBackendFailed | CommandFailureResponseTooLarge
+CommandFailure: TypeAlias = CommandFailureNodeStopped | CommandFailureBusy | CommandFailurePayloadTooLarge | CommandFailureUnknownDestination | CommandFailureNotSingleDestination | CommandFailureAnnounceAppDataTooLong | CommandFailureUnknownInterface | CommandFailureNoRouteToDestination | CommandFailureNotDirectlyReachable | CommandFailurePacketCulled | CommandFailureDeliveryTimedOut | CommandFailureInvalidBitrate | CommandFailureBindFailed | CommandFailureWriteFailed | CommandFailureUnsupportedByBackend | CommandFailureUnknownLink | CommandFailureLinkNotActive | CommandFailureEntropyUnavailable | CommandFailureNotLinkInitiator | CommandFailureIdentityNotHeld | CommandFailureUnknownRequestHandler | CommandFailureRequestPolicyNotAllowList | CommandFailureRequestAllowListFull | CommandFailureLinkBusy | CommandFailureResourceTableFull | CommandFailureResourceMetadataTooLarge | CommandFailureResourceRejectedByPeer | CommandFailureResourceSequencingFailed | CommandFailureResourcePredecessorFailed | CommandFailureChannelWindowFull | CommandFailureChannelUntrackable | CommandFailureInvalidChannelMessageType | CommandFailureInvalidConfiguration | CommandFailureResourceUploadCancelled | CommandFailureResourceEarlyEof | CommandFailureResourceLengthOverrun | CommandFailurePermissionDenied | CommandFailureDeviceUnavailable | CommandFailureConnectFailed | CommandFailureBackendFailed | CommandFailureResponseTooLarge | CommandFailureLinkClosed | CommandFailureResponseCancelledBySender | CommandFailureResponseHashmapBeyondPartCount | CommandFailureResponseHashmapSkipsAhead | CommandFailureResponseHashmapTooLong | CommandFailureResponseHashmapRagged | CommandFailureResponseRetriesExhausted | CommandFailureResponseLinkVanished | CommandFailureResponseTransferUnopenable | CommandFailureResponseTransferCorrupt | CommandFailureResponseProofUnsendable | CommandFailureResponseDecompressionFailed | CommandFailureResponseDecompressionTimedOut | CommandFailureResponseOpenTimedOut | CommandFailureResponseMetadataOverrun
 ApplicationEvent: TypeAlias = ApplicationEventSingleDelivery | ApplicationEventRequest | ApplicationEventResponse | ApplicationEventResponseSegment | ApplicationEventResourceAvailable | ApplicationEventResourceSegment | ApplicationEventResourceNeedsDecompression | ApplicationEventChannelMessage | ApplicationEventLinkDelivery
 DiagnosticEvent: TypeAlias = DiagnosticEventAnnounceHeard | DiagnosticEventLinkEstablished | DiagnosticEventPeerIdentified | DiagnosticEventLinkClosed | DiagnosticEventLinkInterfaceMismatch | DiagnosticEventResourceAssembled | DiagnosticEventResourceFailed | DiagnosticEventResourceSendProgress | DiagnosticEventSelfRatchetRotated | DiagnosticEventAnnounceHeldDropped | DiagnosticEventDelivered | DiagnosticEventRouteExpired | DiagnosticEventRouteEvicted | DiagnosticEventRouteInterfaceGone | DiagnosticEventRouteDropped | DiagnosticEventBackendDiagnostic | DiagnosticEventDiagnosticsDropped | DiagnosticEventPersistenceRestored | DiagnosticEventPersistenceFlushed | DiagnosticEventPersistenceFlushFailed
 

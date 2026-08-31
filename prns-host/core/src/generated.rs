@@ -1022,6 +1022,21 @@ pub enum CommandFailureKind {
     ConnectFailed = 39,
     BackendFailed = 40,
     ResponseTooLarge = 41,
+    LinkClosed = 42,
+    ResponseCancelledBySender = 43,
+    ResponseHashmapBeyondPartCount = 44,
+    ResponseHashmapSkipsAhead = 45,
+    ResponseHashmapTooLong = 46,
+    ResponseHashmapRagged = 47,
+    ResponseRetriesExhausted = 48,
+    ResponseLinkVanished = 49,
+    ResponseTransferUnopenable = 50,
+    ResponseTransferCorrupt = 51,
+    ResponseProofUnsendable = 52,
+    ResponseDecompressionFailed = 53,
+    ResponseDecompressionTimedOut = 54,
+    ResponseOpenTimedOut = 55,
+    ResponseMetadataOverrun = 56,
 }
 
 impl CommandFailureKind {
@@ -1069,6 +1084,21 @@ impl CommandFailureKind {
             Self::ConnectFailed => "ConnectFailed",
             Self::BackendFailed => "BackendFailed",
             Self::ResponseTooLarge => "ResponseTooLarge",
+            Self::LinkClosed => "LinkClosed",
+            Self::ResponseCancelledBySender => "ResponseCancelledBySender",
+            Self::ResponseHashmapBeyondPartCount => "ResponseHashmapBeyondPartCount",
+            Self::ResponseHashmapSkipsAhead => "ResponseHashmapSkipsAhead",
+            Self::ResponseHashmapTooLong => "ResponseHashmapTooLong",
+            Self::ResponseHashmapRagged => "ResponseHashmapRagged",
+            Self::ResponseRetriesExhausted => "ResponseRetriesExhausted",
+            Self::ResponseLinkVanished => "ResponseLinkVanished",
+            Self::ResponseTransferUnopenable => "ResponseTransferUnopenable",
+            Self::ResponseTransferCorrupt => "ResponseTransferCorrupt",
+            Self::ResponseProofUnsendable => "ResponseProofUnsendable",
+            Self::ResponseDecompressionFailed => "ResponseDecompressionFailed",
+            Self::ResponseDecompressionTimedOut => "ResponseDecompressionTimedOut",
+            Self::ResponseOpenTimedOut => "ResponseOpenTimedOut",
+            Self::ResponseMetadataOverrun => "ResponseMetadataOverrun",
         }
     }
 }
@@ -1119,6 +1149,21 @@ impl TryFrom<u32> for CommandFailureKind {
             39 => Ok(Self::ConnectFailed),
             40 => Ok(Self::BackendFailed),
             41 => Ok(Self::ResponseTooLarge),
+            42 => Ok(Self::LinkClosed),
+            43 => Ok(Self::ResponseCancelledBySender),
+            44 => Ok(Self::ResponseHashmapBeyondPartCount),
+            45 => Ok(Self::ResponseHashmapSkipsAhead),
+            46 => Ok(Self::ResponseHashmapTooLong),
+            47 => Ok(Self::ResponseHashmapRagged),
+            48 => Ok(Self::ResponseRetriesExhausted),
+            49 => Ok(Self::ResponseLinkVanished),
+            50 => Ok(Self::ResponseTransferUnopenable),
+            51 => Ok(Self::ResponseTransferCorrupt),
+            52 => Ok(Self::ResponseProofUnsendable),
+            53 => Ok(Self::ResponseDecompressionFailed),
+            54 => Ok(Self::ResponseDecompressionTimedOut),
+            55 => Ok(Self::ResponseOpenTimedOut),
+            56 => Ok(Self::ResponseMetadataOverrun),
             _ => Err(()),
         }
     }
@@ -1229,6 +1274,7 @@ pub enum LinkClosedReason {
     Timeout = 1,
     PeerClosed = 2,
     MalformedRtt = 3,
+    LocallyClosed = 4,
 }
 
 impl LinkClosedReason {
@@ -1238,6 +1284,7 @@ impl LinkClosedReason {
             Self::Timeout => "Timeout",
             Self::PeerClosed => "PeerClosed",
             Self::MalformedRtt => "MalformedRtt",
+            Self::LocallyClosed => "LocallyClosed",
         }
     }
 }
@@ -1250,6 +1297,7 @@ impl TryFrom<u32> for LinkClosedReason {
             1 => Ok(Self::Timeout),
             2 => Ok(Self::PeerClosed),
             3 => Ok(Self::MalformedRtt),
+            4 => Ok(Self::LocallyClosed),
             _ => Err(()),
         }
     }
@@ -1940,6 +1988,21 @@ mod tests {
             (CommandFailureKind::ConnectFailed, 39, "ConnectFailed"),
             (CommandFailureKind::BackendFailed, 40, "BackendFailed"),
             (CommandFailureKind::ResponseTooLarge, 41, "ResponseTooLarge"),
+            (CommandFailureKind::LinkClosed, 42, "LinkClosed"),
+            (CommandFailureKind::ResponseCancelledBySender, 43, "ResponseCancelledBySender"),
+            (CommandFailureKind::ResponseHashmapBeyondPartCount, 44, "ResponseHashmapBeyondPartCount"),
+            (CommandFailureKind::ResponseHashmapSkipsAhead, 45, "ResponseHashmapSkipsAhead"),
+            (CommandFailureKind::ResponseHashmapTooLong, 46, "ResponseHashmapTooLong"),
+            (CommandFailureKind::ResponseHashmapRagged, 47, "ResponseHashmapRagged"),
+            (CommandFailureKind::ResponseRetriesExhausted, 48, "ResponseRetriesExhausted"),
+            (CommandFailureKind::ResponseLinkVanished, 49, "ResponseLinkVanished"),
+            (CommandFailureKind::ResponseTransferUnopenable, 50, "ResponseTransferUnopenable"),
+            (CommandFailureKind::ResponseTransferCorrupt, 51, "ResponseTransferCorrupt"),
+            (CommandFailureKind::ResponseProofUnsendable, 52, "ResponseProofUnsendable"),
+            (CommandFailureKind::ResponseDecompressionFailed, 53, "ResponseDecompressionFailed"),
+            (CommandFailureKind::ResponseDecompressionTimedOut, 54, "ResponseDecompressionTimedOut"),
+            (CommandFailureKind::ResponseOpenTimedOut, 55, "ResponseOpenTimedOut"),
+            (CommandFailureKind::ResponseMetadataOverrun, 56, "ResponseMetadataOverrun"),
         ]);
     }
 
@@ -1981,6 +2044,7 @@ mod tests {
             (LinkClosedReason::Timeout, 1, "Timeout"),
             (LinkClosedReason::PeerClosed, 2, "PeerClosed"),
             (LinkClosedReason::MalformedRtt, 3, "MalformedRtt"),
+            (LinkClosedReason::LocallyClosed, 4, "LocallyClosed"),
         ]);
     }
 

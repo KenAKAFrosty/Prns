@@ -35,6 +35,9 @@ where
         WakeReason::HeldAnnounceRelease => {
             engine.fire_due_held_announces(now, interfaces, fill_entropy, on_reaction)
         }
+        WakeReason::RemoteControlPairing => {
+            engine.fire_due_remote_control_pairing(now, interfaces, fill_entropy, on_reaction)
+        }
     }
 }
 
@@ -96,6 +99,10 @@ pub fn merge_wake_schedules_delta<S: StorageLayout>(
         debug_assert_eq!(
             source_wake_schedules.held_announce_release, truth.held_announce_release,
             "the held-announce-release schedule drifted from a full recompute",
+        );
+        debug_assert_eq!(
+            source_wake_schedules.remote_control_pairing, truth.remote_control_pairing,
+            "the RemoteControl pairing schedule drifted from a full recompute",
         );
     }
     #[cfg(not(debug_assertions))]

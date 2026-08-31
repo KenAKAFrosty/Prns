@@ -30,7 +30,7 @@ pub fn PlatformsPage() -> Element {
             div { class: "flex flex-col gap-8",
                 for group in GROUPS.iter() {
                     div { key: "{group.label()}",
-                        p { class: "text-[0.7rem] font-bold tracking-[0.18em] uppercase text-mid",
+                        h2 { class: "text-[0.7rem] font-bold tracking-[0.18em] uppercase text-mid",
                             "{group.label()}"
                         }
                         div { class: "mt-3 flex flex-wrap gap-2",

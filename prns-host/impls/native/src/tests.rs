@@ -762,6 +762,77 @@ fn response_resource_capacity_uses_the_existing_table_full_outcome() {
 }
 
 #[test]
+fn every_response_transfer_failure_reaches_its_stable_host_outcome() {
+    let cases = [
+        (
+            ResourceFailureCause::CancelledBySender,
+            CommandFailure::ResponseCancelledBySender,
+        ),
+        (
+            ResourceFailureCause::RefusedHashmapUpdate(ApplyHashmapUpdateError::BeyondPartCount),
+            CommandFailure::ResponseHashmapBeyondPartCount,
+        ),
+        (
+            ResourceFailureCause::RefusedHashmapUpdate(ApplyHashmapUpdateError::SkipsAhead),
+            CommandFailure::ResponseHashmapSkipsAhead,
+        ),
+        (
+            ResourceFailureCause::RefusedHashmapUpdate(ApplyHashmapUpdateError::HashmapTooLong),
+            CommandFailure::ResponseHashmapTooLong,
+        ),
+        (
+            ResourceFailureCause::RefusedHashmapUpdate(ApplyHashmapUpdateError::HashmapRagged),
+            CommandFailure::ResponseHashmapRagged,
+        ),
+        (
+            ResourceFailureCause::RetriesExhausted,
+            CommandFailure::ResponseRetriesExhausted,
+        ),
+        (
+            ResourceFailureCause::LinkVanished,
+            CommandFailure::ResponseLinkVanished,
+        ),
+        (
+            ResourceFailureCause::TransferUnopenable,
+            CommandFailure::ResponseTransferUnopenable,
+        ),
+        (
+            ResourceFailureCause::TransferCorrupt,
+            CommandFailure::ResponseTransferCorrupt,
+        ),
+        (
+            ResourceFailureCause::ProofUnsendable,
+            CommandFailure::ResponseProofUnsendable,
+        ),
+        (
+            ResourceFailureCause::DecompressionFailed,
+            CommandFailure::ResponseDecompressionFailed,
+        ),
+        (
+            ResourceFailureCause::DecompressionTimedOut,
+            CommandFailure::ResponseDecompressionTimedOut,
+        ),
+        (
+            ResourceFailureCause::OpenTimedOut,
+            CommandFailure::ResponseOpenTimedOut,
+        ),
+        (
+            ResourceFailureCause::MetadataOverrun,
+            CommandFailure::ResponseMetadataOverrun,
+        ),
+    ];
+
+    for (cause, expected) in cases {
+        assert_eq!(
+            request_failure(SendError::Failed(
+                SendRequestFailure::ResponseTransferFailed(cause),
+            )),
+            expected,
+        );
+    }
+}
+
+#[test]
 fn request_byte_limits_stay_in_the_interoperable_integer_range() {
     assert!(is_optional_safe_uint(None));
     assert!(is_optional_safe_uint(Some(SAFE_UINT_MAX)));

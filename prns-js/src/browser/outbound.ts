@@ -8,7 +8,10 @@ import {
   record,
   stringField,
 } from "./decoding.js";
-import type { RuntimeInterfaceKind } from "./runtime_contract.js";
+import type {
+  RuntimeInterfaceKind,
+  RuntimeRejected,
+} from "./runtime_contract.js";
 import {
   PrnsValidationError,
   hopCount,
@@ -36,6 +39,24 @@ export type PrnsOutboundFrame = {
   target: OutboundTarget;
   hops?: HopCount;
   bytes: PacketFrame;
+};
+
+export type NonEmptyPrnsOutboundFrames = readonly [
+  PrnsOutboundFrame,
+  ...PrnsOutboundFrame[],
+];
+
+export type InterfaceOutboundOutcome =
+  | Tag<"Outbound", NonEmptyPrnsOutboundFrames>
+  | Tag<"InterfaceDetached">
+  | Tag<"OutboundQueueFull", { readonly capacity: number }>
+  | RuntimeRejected;
+
+export type InterfaceOutboundHost = {
+  nextOutboundFor(
+    interfaceId: InterfaceId,
+    maximumFrames?: number,
+  ): Promise<InterfaceOutboundOutcome>;
 };
 
 export function outboundTargets(

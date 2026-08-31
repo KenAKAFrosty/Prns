@@ -383,6 +383,7 @@ async fn initiate_link(
     let mut sent = 0u64;
     let mut delivered = 0u64;
     let mut timeouts = 0u64;
+    let mut link_closed = 0u64;
     let mut culled = 0u64;
     let mut rejected = 0u64;
     let mut write_failed = 0u64;
@@ -441,6 +442,10 @@ async fn initiate_link(
                     timeouts += 1;
                     false
                 }
+                Err(SendToLinkFailure::LinkClosed) => {
+                    link_closed += 1;
+                    false
+                }
                 Err(SendToLinkFailure::Rejected(reason)) => {
                     if rejected == 0 {
                         eprintln!("DIED mechanism=link rejection={reason:?}");
@@ -483,9 +488,10 @@ async fn initiate_link(
     let payload_bytes = sent_payload_bytes;
     let seconds = (elapsed_ms as f64 / 1000.0).max(f64::EPSILON);
     let attempted = sent + culled + rejected + write_failed;
+    let receipt_unproved = timeouts + link_closed;
     println!(
         "RESULT attempted={attempted} sent={sent} delivered={delivered} timeouts={timeouts} \
-         receipt_proved={delivered} receipt_unproved={timeouts} culled={culled} \
+         receipt_proved={delivered} receipt_unproved={receipt_unproved} link_closed={link_closed} culled={culled} \
          rejected={rejected} write_failed={write_failed} \
          payload_bytes={payload_bytes} elapsed_ms={elapsed_ms} \
          delivered_per_sec={:.1} goodput_bytes_per_sec={:.0} \

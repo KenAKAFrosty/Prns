@@ -90,6 +90,7 @@ pub enum SendToLinkFailure {
     WriteFailed(LinkDataError),
     Culled,
     Timeout,
+    LinkClosed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,7 +127,17 @@ impl Settleable for EstablishLink {
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
             | Settlement::SetRegisteredAnnounceAppData(_)
-            | Settlement::SendPlainPacket(_) => None,
+            | Settlement::SendPlainPacket(_)
+            | Settlement::OpenRemoteControlPairing(_)
+            | Settlement::CloseRemoteControlPairing(_)
+            | Settlement::ApproveRemoteControlTargetPairing(_)
+            | Settlement::RejectRemoteControlTargetPairing(_)
+            | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
+            | Settlement::BeginRemoteControlControllerPairing(_)
+            | Settlement::ApproveRemoteControlControllerPairing(_)
+            | Settlement::RejectRemoteControlControllerPairing(_)
+            | Settlement::RemoteControlControllerPairingRequest(_)
+            | Settlement::SettleRemoteControlControllerPairingPersistence(_) => None,
         }
     }
 }
@@ -159,7 +170,17 @@ impl Settleable for SendToLink {
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
             | Settlement::SetRegisteredAnnounceAppData(_)
-            | Settlement::SendPlainPacket(_) => None,
+            | Settlement::SendPlainPacket(_)
+            | Settlement::OpenRemoteControlPairing(_)
+            | Settlement::CloseRemoteControlPairing(_)
+            | Settlement::ApproveRemoteControlTargetPairing(_)
+            | Settlement::RejectRemoteControlTargetPairing(_)
+            | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
+            | Settlement::BeginRemoteControlControllerPairing(_)
+            | Settlement::ApproveRemoteControlControllerPairing(_)
+            | Settlement::RejectRemoteControlControllerPairing(_)
+            | Settlement::RemoteControlControllerPairingRequest(_)
+            | Settlement::SettleRemoteControlControllerPairingPersistence(_) => None,
         }
     }
 }
@@ -190,7 +211,17 @@ impl Settleable for Identify {
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
             | Settlement::SetRegisteredAnnounceAppData(_)
-            | Settlement::SendPlainPacket(_) => None,
+            | Settlement::SendPlainPacket(_)
+            | Settlement::OpenRemoteControlPairing(_)
+            | Settlement::CloseRemoteControlPairing(_)
+            | Settlement::ApproveRemoteControlTargetPairing(_)
+            | Settlement::RejectRemoteControlTargetPairing(_)
+            | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
+            | Settlement::BeginRemoteControlControllerPairing(_)
+            | Settlement::ApproveRemoteControlControllerPairing(_)
+            | Settlement::RejectRemoteControlControllerPairing(_)
+            | Settlement::RemoteControlControllerPairingRequest(_)
+            | Settlement::SettleRemoteControlControllerPairingPersistence(_) => None,
         }
     }
 }
@@ -221,7 +252,17 @@ impl Settleable for CloseLink {
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
             | Settlement::SetRegisteredAnnounceAppData(_)
-            | Settlement::SendPlainPacket(_) => None,
+            | Settlement::SendPlainPacket(_)
+            | Settlement::OpenRemoteControlPairing(_)
+            | Settlement::CloseRemoteControlPairing(_)
+            | Settlement::ApproveRemoteControlTargetPairing(_)
+            | Settlement::RejectRemoteControlTargetPairing(_)
+            | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
+            | Settlement::BeginRemoteControlControllerPairing(_)
+            | Settlement::ApproveRemoteControlControllerPairing(_)
+            | Settlement::RejectRemoteControlControllerPairing(_)
+            | Settlement::RemoteControlControllerPairingRequest(_)
+            | Settlement::SettleRemoteControlControllerPairingPersistence(_) => None,
         }
     }
 }

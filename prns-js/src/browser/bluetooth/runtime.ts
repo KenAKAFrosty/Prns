@@ -1,12 +1,8 @@
 import type { Tag } from "../../casework.js";
 import type { InterfaceId } from "../../contract.js";
+import type { AlreadyActive } from "../interface_contract.js";
+import type { InterfaceOutboundHost } from "../outbound.js";
 import type {
-  AlreadyActive,
-  InterfaceSessionFailure,
-} from "../interface_contract.js";
-import type { PrnsOutboundFrame } from "../outbound.js";
-import type {
-  BluetoothReassemblerBinding,
   EntropyFailure,
   RuntimeRejected,
   StableIdentityUnavailable,
@@ -39,16 +35,16 @@ type BluetoothIngestOutcome =
   | EntropyFailure
   | RuntimeRejected;
 
-type BluetoothOutboundOutcome =
-  | Tag<"Outbound", readonly PrnsOutboundFrame[]>
-  | Extract<InterfaceSessionFailure, Tag<"OutboundQueueFull", unknown>>
-  | RuntimeRejected;
+type BluetoothHostOutcome<Outcome> = Outcome | Promise<Outcome>;
 
-type BluetoothOutboundActivityOutcome =
-  | Tag<"RuntimeAdvanced">
-  | Tag<"InterfaceDetached">;
+export type BluetoothHostReassembler = {
+  absorb(
+    bytes: Uint8Array,
+  ): BluetoothHostOutcome<Uint8Array | undefined | RuntimeRejected>;
+  release?(): void;
+};
 
-export type BluetoothRuntimeHost = {
+export type BluetoothRuntimeHost = InterfaceOutboundHost & {
   bluetoothIdentityReadiness():
     | Tag<"Ready">
     | StableIdentityUnavailable<"bluetooth">;
@@ -61,14 +57,10 @@ export type BluetoothRuntimeHost = {
   bluetoothDialerHello(): Uint8Array;
   bluetoothDecodeControl(bytes: Uint8Array): unknown;
   bluetoothDataFragments(packet: PacketFrame): Uint8Array[];
-  createBluetoothReassembler(): BluetoothReassemblerBinding;
+  createBluetoothReassembler(): BluetoothHostReassembler;
   registerInterface(
     registration: BluetoothRuntimeRegistration,
-  ): BluetoothRegistrationOutcome;
-  deactivateInterface(id: InterfaceId): BluetoothDetachOutcome;
-  ingest(id: InterfaceId, bytes: PacketFrame): BluetoothIngestOutcome;
-  takeOutboundFor(id: InterfaceId): BluetoothOutboundOutcome;
-  waitForOutboundActivity(
-    id: InterfaceId,
-  ): Promise<BluetoothOutboundActivityOutcome>;
+  ): BluetoothHostOutcome<BluetoothRegistrationOutcome>;
+  deactivateInterface(id: InterfaceId): BluetoothHostOutcome<BluetoothDetachOutcome>;
+  ingest(id: InterfaceId, bytes: PacketFrame): BluetoothHostOutcome<BluetoothIngestOutcome>;
 };
