@@ -959,6 +959,11 @@ impl PrnsRuntime {
 
     #[wasm_bindgen(js_name = enableProtocolWebCrypto)]
     pub fn enable_protocol_web_crypto(&mut self) {
+        self.enable_protocol_crypto_offload();
+    }
+
+    #[wasm_bindgen(js_name = enableProtocolCryptoOffload)]
+    pub fn enable_protocol_crypto_offload(&mut self) {
         self.protocol_crypto_enabled = true;
     }
 

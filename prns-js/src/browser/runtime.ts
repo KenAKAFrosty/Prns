@@ -150,11 +150,12 @@ export class RuntimeHost {
     ) {
       this.#runtime.enableResourceWebCrypto();
     }
-    if (
-      cryptoExecutor !== undefined &&
-      this.#runtime.enableProtocolWebCrypto !== undefined
-    ) {
-      this.#runtime.enableProtocolWebCrypto();
+    if (cryptoExecutor !== undefined) {
+      if (this.#runtime.enableProtocolCryptoOffload !== undefined) {
+        this.#runtime.enableProtocolCryptoOffload();
+      } else if (this.#runtime.enableProtocolWebCrypto !== undefined) {
+        this.#runtime.enableProtocolWebCrypto();
+      }
     }
   }
 

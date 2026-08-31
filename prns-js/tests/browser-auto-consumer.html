@@ -14,6 +14,85 @@
         persistentBrowser,
         prnsView,
       } from "/prns-js/dist/browser/index.js";
+      import {
+        BrowserCryptoExecutor,
+      } from "/prns-js/dist/browser/crypto_pool.js";
+
+      async function parallelCryptoOutcome() {
+        const executor = new BrowserCryptoExecutor(2, {
+          workers: 4,
+          moduleUrl: new URL("/prns-js/wasm/prns_wasm.js", location.href).href,
+        });
+        const publicKey = bytesFromHex(
+          "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        );
+        const message = new TextEncoder().encode("sign-this");
+        const signature = bytesFromHex(
+          "ee646fb3251af01efbe35f4b03905b3ec2b90ea4acd9a51a46cb795f76575b4a" +
+            "36e2893c356db8b2135417f6001a99ecd81de04dde2f2b3428fd4f8ea46e1107",
+        );
+        const peerPublicKey = bytesFromHex(
+          "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b14",
+        );
+        const expectedShared = bytesFromHex(
+          "1fdc192faa0212a9aae7bb4f41b580227fd5ad3e5d777faae230dfe973f3e805",
+        );
+        let primitiveOutcome = "Verified";
+        try {
+          const [valid, invalid, linked] = await Promise.all([
+            executor.verifyEd25519(publicKey, message, signature),
+            executor.verifyEd25519(
+              publicKey,
+              Uint8Array.of(...message, 0),
+              signature,
+            ),
+            executor.verifyLinkProof(
+              publicKey,
+              message,
+              signature,
+              new Uint8Array(32).fill(0x22),
+              peerPublicKey,
+            ),
+          ]);
+          const burst = await Promise.all(
+            Array.from(
+              { length: 64 },
+              () => executor.verifyEd25519(publicKey, message, signature),
+            ),
+          );
+          if (
+            valid.tag !== "Valid" ||
+            invalid.tag !== "Invalid" ||
+            linked.tag !== "Verified" ||
+            !equalBytes(linked.data.sharedSecret, expectedShared) ||
+            burst.some((outcome) => outcome.tag !== "Valid")
+          ) {
+            primitiveOutcome = `Failed:${valid.tag}:${invalid.tag}:${linked.tag}`;
+          }
+        } catch (error) {
+          primitiveOutcome = `Failed:${error instanceof Error ? error.message : error}`;
+        } finally {
+          executor.close();
+        }
+        if (primitiveOutcome !== "Verified") {
+          return primitiveOutcome;
+        }
+        try {
+          const created = await Prns.create({
+            crypto: Tag("ParallelWorkers"),
+            wasmModuleUrl: new URL("/prns-js/wasm/prns_wasm.js", location.href),
+          });
+          if (created.tag !== "Ready") {
+            return `Failed:Create:${created.tag}`;
+          }
+          const stopped = await created.data.stop();
+          return stopped.tag === "Stopped"
+            ? "Verified"
+            : `Failed:Stop:${stopped.tag}`;
+        } catch (error) {
+          return `Failed:${error instanceof Error ? error.message : error}`;
+        }
+      }
 
       async function compressionWorkerOutcome(workerUrl, moduleUrl) {
         const compressionWorker = new Worker(workerUrl, { type: "module" });
@@ -568,6 +647,13 @@
           left.every((byte, index) => byte === right[index]);
       }
 
+      function bytesFromHex(value) {
+        return Uint8Array.from(
+          { length: value.length / 2 },
+          (_, index) => Number.parseInt(value.slice(index * 2, index * 2 + 2), 16),
+        );
+      }
+
       const [packagedCompression, docsCompression] = await Promise.all([
         compressionWorkerOutcome(
           "/prns-js/dist/browser/resource_compression_worker.js",
@@ -587,11 +673,13 @@
       const bluetoothContract = await bluetoothContractOutcome();
       const bluetoothSession = await bluetoothSessionOutcome();
       const bluetoothWorker = await bluetoothWorkerOutcome();
+      const parallelCrypto = await parallelCryptoOutcome();
       document.body.dataset.routePersistence = routePersistence;
       document.body.dataset.webSocketFraming = webSocketFraming;
       document.body.dataset.bluetoothContract = bluetoothContract;
       document.body.dataset.bluetoothSession = bluetoothSession;
       document.body.dataset.bluetoothWorker = bluetoothWorker;
+      document.body.dataset.parallelCrypto = parallelCrypto;
       document.body.dataset.compression =
         compression ? "Compressed" : "Failed";
       document.body.dataset.compressionDetail = compressionDetail;
@@ -805,6 +893,7 @@
           bluetoothContract === "Shared" &&
           bluetoothSession === "Bridged" &&
           bluetoothWorker === "Bridged" &&
+          parallelCrypto === "Verified" &&
           projectionReactive &&
           admission === "RuntimeRejected:worker-admission" &&
           autoWifiAdmission === "Retained" &&
@@ -833,6 +922,7 @@
           bluetoothContract: document.body.dataset.bluetoothContract,
           bluetoothSession: document.body.dataset.bluetoothSession,
           bluetoothWorker: document.body.dataset.bluetoothWorker,
+          parallelCrypto: document.body.dataset.parallelCrypto,
           projection: document.body.dataset.projection,
           admission: document.body.dataset.admission,
           autoWifiAdmission: document.body.dataset.autoWifiAdmission,

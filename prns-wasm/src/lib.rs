@@ -8,6 +8,7 @@ mod js_translation;
 mod outbound_batch;
 mod packed_snapshot;
 mod parameters;
+mod portable_crypto;
 mod protocol_crypto;
 mod runtime;
 mod usb_auto;
@@ -23,6 +24,7 @@ pub use parameters::{
     identity_secret_key_length, interface_id_length, product_version, websocket_bitrate_bps,
     websocket_frame_cap, websocket_hardware_mtu,
 };
+pub use portable_crypto::{portable_ed25519_verify, portable_link_proof_verify};
 pub use runtime::PrnsRuntime;
 pub use usb_auto::{
     usb_auto_data_frame, usb_auto_host_bitrate_bps, usb_auto_host_hardware_mtu,

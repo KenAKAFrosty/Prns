@@ -1776,6 +1776,13 @@ async function prepareWorker(
       ...(options.wasmModuleUrl === undefined
         ? {}
         : { wasmModuleUrl: options.wasmModuleUrl.href }),
+      ...(options.portableWasmModuleUrl === undefined && options.wasmModuleUrl === undefined
+        ? {}
+        : {
+            portableWasmModuleUrl: (
+              options.portableWasmModuleUrl ?? options.wasmModuleUrl
+            )!.href,
+          }),
       ...(autoWifiSelectionSeed.tag === "Loaded"
         ? { autoWifiSelectionSeed: autoWifiSelectionSeed.data }
         : {}),

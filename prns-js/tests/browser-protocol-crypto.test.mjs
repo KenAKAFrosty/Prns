@@ -9,6 +9,8 @@ import {
   verifyPrnsWebCryptoCompatibility,
 } from "../dist/browser/protocol_crypto.js";
 import { parseProtocolCryptoJob } from "../dist/browser/protocol_crypto_runtime.js";
+import { PortableCryptoWorkerPool } from "../dist/browser/portable_crypto_pool.js";
+import { BrowserCryptoExecutor } from "../dist/browser/crypto_pool.js";
 
 const ed25519Secret = new Uint8Array(32).fill(0x11);
 const ed25519Public = bytesFromHex(
@@ -163,6 +165,40 @@ test("protocol crypto runtime jobs preserve their exact operation shapes", () =>
     }),
     /secretScalar must be exactly 32 bytes/,
   );
+});
+
+test("portable crypto pool bounds worker ownership and reports unavailable hosts", async () => {
+  assert.throws(
+    () => new PortableCryptoWorkerPool(0),
+    /portable crypto workers must be between/,
+  );
+  assert.throws(
+    () => new PortableCryptoWorkerPool(17),
+    /portable crypto workers must be between/,
+  );
+  const unavailable = new PortableCryptoWorkerPool(4);
+  assert.deepEqual(await unavailable.ready(), {
+    tag: "Unavailable",
+    data: undefined,
+  });
+  unavailable.close();
+});
+
+test("parallel crypto preserves link secrets when portable workers are unavailable", async () => {
+  const executor = new BrowserCryptoExecutor(2, { workers: 4 });
+  const secretScalar = new Uint8Array(32).fill(0x22);
+  assert.deepEqual(
+    await executor.verifyLinkProof(
+      ed25519Public,
+      ed25519Message,
+      ed25519Signature,
+      secretScalar,
+      x25519Peer,
+    ),
+    { tag: "Unavailable", data: undefined },
+  );
+  assert.deepEqual(secretScalar, new Uint8Array(32).fill(0x22));
+  executor.close();
 });
 
 function bytesFromHex(value) {

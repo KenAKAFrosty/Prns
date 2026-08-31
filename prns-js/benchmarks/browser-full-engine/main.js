@@ -11,7 +11,7 @@ import {
   verifyPrnsWebCryptoCompatibility,
 } from "/prns-js/dist/browser/protocol_crypto.js";
 
-const REPETITIONS = 1;
+const REPETITIONS = 3;
 const RESOURCE_REPETITIONS = 3;
 const PAYLOAD_BYTES = 64;
 const RESOURCE_SIZES = [1, 2, 4].map((mebibytes) => mebibytes * 1_024 * 1_024);
@@ -54,8 +54,22 @@ async function run() {
     webCryptoTarget,
     Tag("WebCrypto"),
   );
-  const configurations = [portableWasm, webCrypto];
-  const targets = [portableTarget, webCryptoTarget];
+  const parallelCrypto = Tag("ParallelWorkers");
+  await progress("target-parallel-workers");
+  const parallelTarget = await prepareTarget(
+    session.webSocketUrl,
+    "ParallelWorkers",
+    parallelCrypto,
+  );
+  await progress("parallel-workers");
+  const parallelWorkers = await prepare(
+    "ParallelWorkers",
+    session.webSocketUrl,
+    parallelTarget,
+    parallelCrypto,
+  );
+  const configurations = [portableWasm, webCrypto, parallelWorkers];
+  const targets = [portableTarget, webCryptoTarget, parallelTarget];
   const payloads = Array.from(
     { length: Math.max(...workloads.map((workload) => workload.commands)) },
     (_, index) => payload(index),
@@ -82,9 +96,7 @@ async function run() {
       await resourceRun(configuration, 64 * 1_024);
     }
     for (let repetition = 0; repetition < REPETITIONS; repetition += 1) {
-      const order = repetition % 2 === 0
-        ? configurations
-        : [...configurations].reverse();
+      const order = rotated(configurations, repetition);
       for (const workload of workloads) {
         for (const configuration of order) {
           await progress(`${repetition}-${workload.name}-${configuration.execution}`);
@@ -109,9 +121,7 @@ async function run() {
       }
     }
     for (let repetition = 0; repetition < RESOURCE_REPETITIONS; repetition += 1) {
-      const order = repetition % 2 === 0
-        ? configurations
-        : [...configurations].reverse();
+      const order = rotated(configurations, repetition);
       for (const size of RESOURCE_SIZES) {
         for (const configuration of order) {
           await progress(`${repetition}-resource-${size}-${configuration.execution}`);
@@ -250,11 +260,11 @@ async function prepare(execution, webSocketUrl, target, crypto) {
   };
 }
 
-async function prepareTarget(webSocketUrl, lane) {
+async function prepareTarget(webSocketUrl, lane, crypto = Tag(lane)) {
   const created = await Prns.create({
     execution: "DedicatedWorker",
     networkExecution: "EngineWorker",
-    crypto: Tag(lane),
+    crypto,
     wasmModuleUrl: new URL("/prns-js/wasm/prns_wasm.js", location.href),
   });
   requireTag(created, "Ready", "target startup");
@@ -1284,6 +1294,11 @@ async function measure(operation) {
 function median(values) {
   const ordered = [...values].sort((left, right) => left - right);
   return ordered[Math.floor(ordered.length / 2)];
+}
+
+function rotated(values, offset) {
+  const pivot = offset % values.length;
+  return [...values.slice(pivot), ...values.slice(0, pivot)];
 }
 
 function medianColumns(rows) {

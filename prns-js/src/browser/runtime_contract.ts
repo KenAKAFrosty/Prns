@@ -182,6 +182,7 @@ export type PrnsRuntimeBinding = {
   }): void;
   enableResourceWebCrypto?(): void;
   enableProtocolWebCrypto?(): void;
+  enableProtocolCryptoOffload?(): void;
   takeProtocolCryptoJob?(): unknown | undefined;
   completeProtocolAnnounceValid?(
     id: number,

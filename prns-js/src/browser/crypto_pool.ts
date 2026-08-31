@@ -19,6 +19,7 @@ import type {
   SignatureVerification,
   WebCryptoPrimitiveCompatibility,
 } from "./protocol_crypto.js";
+import { PortableCryptoWorkerPool } from "./portable_crypto_pool.js";
 
 type OwnedBytes = Uint8Array<ArrayBuffer>;
 
@@ -213,13 +214,31 @@ const CRYPTO_WORKER_START_TIMEOUT_MILLIS = 5_000;
 
 export class BrowserCryptoExecutor {
   readonly #pool: WebCryptoWorkerPool;
+  readonly #portablePool: PortableCryptoWorkerPool | undefined;
   readonly #sealer = new WebCryptoResourceSealer();
   readonly #opener = new WebCryptoResourceOpener();
   readonly #digester = new WebCryptoResourceDigester();
   #closed = false;
 
-  constructor(workers: number) {
-    this.#pool = new WebCryptoWorkerPool(workers);
+  constructor(
+    webCryptoWorkers: number,
+    portableWasm?: {
+      readonly workers: number;
+      readonly moduleUrl?: string;
+    },
+  ) {
+    const pool = new WebCryptoWorkerPool(webCryptoWorkers);
+    let portablePool: PortableCryptoWorkerPool | undefined;
+    try {
+      portablePool = portableWasm === undefined
+        ? undefined
+        : new PortableCryptoWorkerPool(portableWasm.workers, portableWasm.moduleUrl);
+    } catch (error) {
+      pool.close();
+      throw error;
+    }
+    this.#pool = pool;
+    this.#portablePool = portablePool;
   }
 
   async seal(job: ResourceSealCryptoJob): Promise<ResourceCryptoSealOutcome> {
@@ -265,7 +284,7 @@ export class BrowserCryptoExecutor {
     });
   }
 
-  verifyEd25519(
+  async verifyEd25519(
     publicKey: Uint8Array,
     message: Uint8Array,
     signature: Uint8Array,
@@ -273,10 +292,21 @@ export class BrowserCryptoExecutor {
     if (this.#closed) {
       return Promise.resolve(closedCryptoExecutor());
     }
-    return this.#pool.donateEd25519Verify(publicKey, message, signature);
+    const portablePool = this.#portablePool;
+    if (portablePool === undefined) {
+      return this.#pool.donateEd25519Verify(publicKey, message, signature);
+    }
+    const outcome = await portablePool.verifyEd25519(publicKey, message, signature);
+    return match(outcome, {
+      Valid: () => Tag("Valid"),
+      Invalid: () => Tag("Invalid"),
+      Busy: () => this.#pool.donateEd25519Verify(publicKey, message, signature),
+      Unavailable: () => this.#pool.donateEd25519Verify(publicKey, message, signature),
+      Failed: (data) => Tag("Failed", data),
+    });
   }
 
-  verifyLinkProof(
+  async verifyLinkProof(
     publicKey: Uint8Array,
     message: Uint8Array,
     signature: Uint8Array,
@@ -286,18 +316,48 @@ export class BrowserCryptoExecutor {
     if (this.#closed) {
       return Promise.resolve(closedCryptoExecutor());
     }
-    return this.#pool.donateLinkProofVerify(
+    const portablePool = this.#portablePool;
+    if (portablePool === undefined) {
+      return this.#pool.donateLinkProofVerify(
+        publicKey,
+        message,
+        signature,
+        secretScalar,
+        peerPublicKey,
+      );
+    }
+    const outcome = await portablePool.verifyLinkProof(
       publicKey,
       message,
       signature,
       secretScalar,
       peerPublicKey,
     );
+    return match(outcome, {
+      Verified: (data) => Tag("Verified", data),
+      Invalid: () => Tag("Invalid"),
+      Busy: () => this.#pool.donateLinkProofVerify(
+        publicKey,
+        message,
+        signature,
+        secretScalar,
+        peerPublicKey,
+      ),
+      Unavailable: () => this.#pool.donateLinkProofVerify(
+        publicKey,
+        message,
+        signature,
+        secretScalar,
+        peerPublicKey,
+      ),
+      Failed: (data) => Tag("Failed", data),
+    });
   }
 
   close(): void {
     this.#closed = true;
     this.#pool.close();
+    this.#portablePool?.close();
   }
 
   async #sealInline(job: ResourceSealCryptoJob): Promise<ResourceCryptoSealOutcome> {

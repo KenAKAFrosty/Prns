@@ -123,6 +123,18 @@ export declare function compressResourceCandidate(options: {
   readonly payload: Uint8Array;
   readonly packedMetadata?: Uint8Array;
 }): Uint8Array | undefined;
+export declare function portableEd25519Verify(
+  publicKey: Uint8Array,
+  message: Uint8Array,
+  signature: Uint8Array,
+): boolean;
+export declare function portableLinkProofVerify(
+  publicKey: Uint8Array,
+  message: Uint8Array,
+  signature: Uint8Array,
+  secretScalar: Uint8Array,
+  peerPublicKey: Uint8Array,
+): Uint8Array | undefined;
 export declare function websocketBitrateBps(): number;
 export declare function websocketFrameCap(): number;
 export declare function websocketHardwareMtu(): number;

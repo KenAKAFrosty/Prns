@@ -552,6 +552,7 @@ type PendingCommand =
   | Tag<"ResourceSegment">;
 
 const WEB_CRYPTO_WORKERS = 2;
+const PORTABLE_WASM_CRYPTO_WORKERS = 4;
 
 type CryptoExecutionOptions =
   | {
@@ -565,6 +566,7 @@ type CryptoExecutionOptions =
 
 type CommonPrnsOptions = CryptoExecutionOptions & {
   resourceCompressionModuleUrl?: URL;
+  portableWasmModuleUrl?: URL;
   identityStore?: IdentityStore;
   bleIdentityStore?: StableIdentityStore;
   persistenceStore?: BrowserPersistenceStore;
@@ -641,6 +643,7 @@ export class Prns {
     limits: HostLimits,
     resourceCompressionModuleUrl: URL,
     crypto: CryptoExecution,
+    portableWasmModuleUrl: URL | undefined,
     persistenceStore: BrowserPersistenceStore | undefined,
     persistenceRestored: boolean,
     restorationReport: BrowserPersistenceRestoreReport | undefined,
@@ -658,6 +661,13 @@ export class Prns {
     this.#cryptoExecutor = match(crypto, {
       PortableWasm: () => undefined,
       WebCrypto: () => new BrowserCryptoExecutor(WEB_CRYPTO_WORKERS),
+      ParallelWorkers: () =>
+        new BrowserCryptoExecutor(WEB_CRYPTO_WORKERS, {
+          workers: PORTABLE_WASM_CRYPTO_WORKERS,
+          ...(portableWasmModuleUrl === undefined
+            ? {}
+            : { moduleUrl: portableWasmModuleUrl.href }),
+        }),
     });
     this.#persistenceStore = persistenceStore;
     this.#persistenceRestored = persistenceRestored;
@@ -880,6 +890,7 @@ export class Prns {
           options.resourceCompressionModuleUrl ??
             bundledWasmModuleUrl(),
           options.crypto ?? options.resourceCrypto ?? Tag("PortableWasm"),
+          options.portableWasmModuleUrl,
           persistenceStore,
           persistedState !== undefined,
           restorationReport,

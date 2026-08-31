@@ -69,6 +69,7 @@ export type WorkerInitialization = {
   readonly resourceCompressionModuleUrl?: string;
   readonly crypto: CryptoExecution;
   readonly wasmModuleUrl?: string;
+  readonly portableWasmModuleUrl?: string;
   readonly autoWifiSelectionSeed?: Uint8Array;
   readonly networkExecution: "EngineWorker" | "NetworkWorker";
 };
