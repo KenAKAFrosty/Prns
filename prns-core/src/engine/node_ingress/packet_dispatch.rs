@@ -254,6 +254,7 @@ impl<S: StorageLayout> EngineState<S> {
                         interfaces,
                         should_prove: &mut *should_prove,
                         deferred_sign: &mut *deferred_sign,
+                        deferred: deferred.as_deref_mut(),
                         sink: &mut *sink,
                     },
                 );

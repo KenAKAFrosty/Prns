@@ -55,6 +55,7 @@ impl<S: StorageLayout> EngineState<S> {
                 interfaces,
                 should_prove: &mut *should_prove,
                 deferred_sign: &mut *deferred_sign,
+                deferred: None,
                 sink: &mut *sink,
             },
         );
@@ -93,6 +94,7 @@ impl<S: StorageLayout> EngineState<S> {
                 interfaces,
                 should_prove: &mut *should_prove,
                 deferred_sign: &mut *deferred_sign,
+                deferred: None,
                 sink: &mut *sink,
             },
         );

@@ -1,8 +1,11 @@
-use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis, Journaled};
+use crate::engine::{
+    DeferredCrypto, Directive, EngineReaction, EngineState, InstantMillis, Journaled,
+};
 use crate::interfaces::{AttachedInterfaces, Egress, InterfaceId};
 use crate::routing::delivery::Delivery;
 use crate::routing::proof::{
-    DeferredProofSign, LinkProofOwed, ProofObligation, ProofOwed, ProofRequest, LINK_PROOF_WIRE_LEN,
+    DeferredLinkReceiptSign, DeferredProofSign, LinkProofOwed, ProofObligation, ProofOwed,
+    ProofRequest, LINK_PROOF_WIRE_LEN,
 };
 use crate::storage::StorageLayout;
 
@@ -14,6 +17,7 @@ where
     pub(super) interfaces: AttachedInterfaces<'a>,
     pub(super) should_prove: &'a mut P,
     pub(super) deferred_sign: &'a mut Option<DeferredProofSign>,
+    pub(super) deferred: Option<&'a mut DeferredCrypto>,
     pub(super) sink: &'a mut K,
 }
 
@@ -90,13 +94,28 @@ impl<S: StorageLayout> EngineState<S> {
             }
             ResolvedProof::OverLink(owed) => {
                 if io.interfaces.is_egress_eligible(source, Egress::Transmit) {
-                    let mut proof = [0u8; LINK_PROOF_WIRE_LEN];
-                    if let Ok(written) = self.write_link_proof(&owed, &mut proof) {
-                        self.links.note_outbound(&owed.link_id, now);
-                        (io.sink)(EngineReaction::Directive(Directive::Send {
-                            target: source,
-                            bytes: &proof[..written],
-                        }));
+                    if let Some(deferred) = io.deferred.as_deref_mut() {
+                        if let Some(signing_secret) = self
+                            .held_identities
+                            .get(&owed.identity)
+                            .map(|held| held.signing_secret_clone())
+                        {
+                            *deferred = DeferredCrypto::LinkReceiptSign(DeferredLinkReceiptSign {
+                                target: source,
+                                link_id: owed.link_id,
+                                packet_hash: owed.packet_hash,
+                                signing_secret,
+                            });
+                        }
+                    } else {
+                        let mut proof = [0u8; LINK_PROOF_WIRE_LEN];
+                        if let Ok(written) = self.write_link_proof(&owed, &mut proof) {
+                            self.links.note_outbound(&owed.link_id, now);
+                            (io.sink)(EngineReaction::Directive(Directive::Send {
+                                target: source,
+                                bytes: &proof[..written],
+                            }));
+                        }
                     }
                 }
             }

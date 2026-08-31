@@ -2,8 +2,8 @@ mod model;
 mod wire;
 
 pub use model::{
-    DeferredProof, DeferredProofSign, LinkProofOwed, ProofIngest, ProofObligation, ProofOwed,
-    ProofRequest, WriteChannelAckError, WriteProofError,
+    DeferredLinkReceiptSign, DeferredProof, DeferredProofSign, LinkProofOwed, ProofIngest,
+    ProofObligation, ProofOwed, ProofRequest, WriteChannelAckError, WriteProofError,
 };
 pub use wire::{
     write_explicit_proof_wire_packet, write_implicit_proof_wire_packet,

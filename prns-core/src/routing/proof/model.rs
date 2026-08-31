@@ -39,6 +39,13 @@ pub struct DeferredProofSign {
     pub signing_secret: Ed25519SecretKey,
 }
 
+pub struct DeferredLinkReceiptSign {
+    pub target: InterfaceId,
+    pub link_id: LinkId,
+    pub packet_hash: PacketHash,
+    pub signing_secret: Ed25519SecretKey,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProofOwed {
     pub packet_hash: PacketHash,

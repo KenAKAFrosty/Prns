@@ -26,7 +26,7 @@ use crate::routing::links::resources::{
 };
 use crate::routing::links::LinkId;
 use crate::routing::path_requests::seen::PathRequestIdBytes;
-use crate::routing::proof::{ProofIngest, ProofObligation};
+use crate::routing::proof::{DeferredLinkReceiptSign, ProofIngest, ProofObligation};
 use crate::routing::request_handlers::RequestPathHash;
 use crate::units::RttMillis;
 use crate::wire::{DestinationHash, WirePacketHeader};
@@ -80,6 +80,7 @@ pub enum DeferredCrypto {
     RatchetDecrypt(RatchetDecryptOwed),
     LinkProofVerify(LinkProofVerifyOwed),
     LinkProofSign(LinkProofSignOwed),
+    LinkReceiptSign(DeferredLinkReceiptSign),
     AnnounceVerify(AnnounceVerifyOwed),
     RemoteControlPairingAvailabilityVerify(RemoteControlPairingAvailabilityVerifyOwed),
 }

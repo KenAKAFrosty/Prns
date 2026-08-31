@@ -138,6 +138,7 @@ pub use crate::routing::path_requests::pending::{
 pub use crate::routing::path_requests::request_path::PathRequestWriteOutcome;
 pub use crate::routing::path_requests::seen::PathRequestIdBytes;
 pub use crate::routing::proof::{
-    DeferredProofSign, ProofIngest, ProofObligation, ProofOwed, ProofRequest, WriteProofError,
+    DeferredLinkReceiptSign, DeferredProofSign, ProofIngest, ProofObligation, ProofOwed,
+    ProofRequest, WriteProofError,
 };
 pub use crate::units::InstantMillis;

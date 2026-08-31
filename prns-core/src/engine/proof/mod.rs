@@ -64,6 +64,20 @@ impl<S: StorageLayout> EngineState<S> {
             .map_err(WriteProofError::Serialize)
     }
 
+    /// Commits a signature produced by deferred host crypto and records the resulting LINK egress.
+    pub fn complete_link_receipt_sign(
+        &mut self,
+        link_id: &LinkId,
+        packet_hash: &PacketHash,
+        signature: &Ed25519Signature,
+        now: InstantMillis,
+        buf: &mut [u8],
+    ) -> Result<usize, WireError> {
+        let written = write_link_proof_wire_packet(link_id, packet_hash, signature, buf)?;
+        self.links.note_outbound(link_id, now);
+        Ok(written)
+    }
+
     /// RNS 1.4.2 `Link.receive`'s CHANNEL branch: `packet.prove()` whenever a channel is open, on either side.
     pub fn write_channel_ack(
         &self,
