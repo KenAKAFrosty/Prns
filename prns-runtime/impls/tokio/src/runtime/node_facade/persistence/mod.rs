@@ -14,7 +14,7 @@ use crate::identity::vault::IdentityVault;
 use crate::identity::Zeroizing;
 use crate::interfaces::AttachedInterfaces;
 use crate::manifold::driver::{
-    HostCommand, PersistedStateSnapshot, SelfRatchetSnapshot, SelfRatchetsSnapshot, TokioHost,
+    HostCommand, PersistedStateSnapshot, SelfRatchetSnapshot, SelfRatchetsSnapshot,
 };
 use crate::manifold::Host;
 use crate::persistence::{
@@ -161,7 +161,7 @@ where
     /// Must precede [`seed_routes_from_store`](Self::seed_routes_from_store) so restored rows sit in this boot's past.
     #[must_use]
     pub fn with_timeline_origin(mut self, origin: InstantMillis) -> Self {
-        self.host = TokioHost::start_at(origin);
+        self.host.set_timeline_origin(origin);
         self
     }
 

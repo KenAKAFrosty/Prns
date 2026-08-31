@@ -14,8 +14,8 @@ pub mod tokio {
         HostResourceMetadata, HostResourcePayload, HostResourcePayloadError, ManifoldWiring,
         PoolWorkers, ProvideDecompressedHostCommand, RequestAnyHostCommand, ResourceInbound,
         RespondAnyHostCommand, SendResourceHostCommand, SendResourceSegmentHostCommand,
-        StreamInbound, TokioGrantConsumer, TokioGrantProducer, TokioHost, TokioInterfaceSeam,
-        TokioInterfaceStatus,
+        StreamInbound, TokioClock, TokioGrantConsumer, TokioGrantProducer, TokioHost,
+        TokioInterfaceSeam, TokioInterfaceStatus,
     };
 }
 

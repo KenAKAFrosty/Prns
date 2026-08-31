@@ -97,7 +97,7 @@ async fn cadence_reuses_the_validated_stamp_and_sends_one_publication_at_a_time(
     let (app_data_tx, mut app_data_rx) = tokio::sync::mpsc::unbounded_channel();
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
     let task = tokio::spawn(publisher.run_with(
-        TokioHost::new(),
+        TokioClock::new(),
         |_| async { Ok::<_, ()>(advertisement()) },
         move |app_data| {
             let app_data_tx = app_data_tx.clone();
@@ -198,7 +198,7 @@ async fn network_encrypted_publication_uses_fresh_host_entropy_and_is_decryptabl
     let task_cancellation = cancellation.clone();
     let (app_data_tx, mut app_data_rx) = tokio::sync::mpsc::unbounded_channel();
     let task = tokio::spawn(publisher.run_with(
-        TokioHost::new(),
+        TokioClock::new(),
         |_| async { Ok::<_, ()>(advertisement()) },
         move |app_data| {
             let app_data_tx = app_data_tx.clone();

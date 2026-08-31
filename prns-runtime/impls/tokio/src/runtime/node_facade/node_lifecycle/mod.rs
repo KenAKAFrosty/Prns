@@ -24,7 +24,7 @@ use crate::interfaces::InterfaceId;
 use crate::manifold::compression;
 use crate::manifold::driver::{
     self as manifold_driver, CryptoPoolConfig, Egress, HostCommand, ProvideDecompressedHostCommand,
-    TokioHost,
+    TokioClock, TokioHost,
 };
 use crate::remote_control::{RemoteControlEndpoint, RemoteControlNodeIdentities};
 use crate::routing::announce::AnnounceObservation;
@@ -557,8 +557,8 @@ where
     }
 
     #[must_use]
-    pub fn clock(&self) -> TokioHost {
-        self.host.clone()
+    pub fn clock(&self) -> TokioClock {
+        self.host.clock()
     }
 
     /// Override how this node runs its asymmetric crypto. Defaults to `CryptoPoolConfig::host_default` (pooled on capable hosts, inline on mobile).

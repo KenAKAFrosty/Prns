@@ -9,7 +9,7 @@ use personal_rns::identity::in_memory::InMemoryNodeIdentity;
 use personal_rns::identity::{IdentitySigner, RemoteIdentity, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interface_discovery::{discovery_destination_hash, APP_ASPECTS, APP_NAME};
 use personal_rns::interfaces::{InterfaceId, InterfaceOriginKind};
-use personal_rns::manifold::tokio::TokioHost;
+use personal_rns::manifold::tokio::TokioClock;
 use personal_rns::routing::links::resources::ResourceStrategy;
 use personal_rns::routing::{LinkRequestPolicy, ProofStrategy};
 use personal_rns::runtime::{PreConfiguredDestination, PrnsNodeHandle};
@@ -87,7 +87,7 @@ impl PreparedDiscoveryPublisher {
     pub(crate) fn spawn(
         self,
         handle: PrnsNodeHandle,
-        clock: TokioHost,
+        clock: TokioClock,
         constructed: Vec<AttachedConfiguredInterface>,
     ) -> Result<Option<RunningTokioInterfaceDiscoveryPublisher>, DiscoveryPublisherStartError> {
         let sources = self.publication_sources(constructed)?;

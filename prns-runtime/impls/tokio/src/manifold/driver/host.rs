@@ -1,9 +1,7 @@
 use std::{cell::RefCell, time::Duration};
 
-use chacha20::ChaCha20Rng;
-use rand_core::{Rng, SeedableRng};
+use prns_core::entropy::{EntropySource, RuntimeEntropy};
 use tokio::time::Instant;
-use zeroize::Zeroize;
 
 use crate::engine::InstantMillis;
 use crate::manifold::Host;
@@ -54,76 +52,99 @@ impl ManifoldClock {
     }
 }
 
-pub struct TokioHost {
+/// Cloneable Tokio-backed logical time without access to runtime randomness.
+#[derive(Clone)]
+pub struct TokioClock {
     base: Instant,
     logical_start: InstantMillis,
-    entropy: Option<ReseedingCsprng>,
 }
 
-const CSPRNG_SEED_LEN: usize = 32;
-// Periodic OS reseeding bounds the amount of output exposed by any one state.
-const CSPRNG_RESEED_BYTES: usize = 64 * 1_024;
+impl TokioClock {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::start_at(InstantMillis(0))
+    }
 
-/// Random stream seeded from the operating system CSPRNG.
-///
-/// The manifold keeps one stream on its host; cloneable runtime handles use one
-/// per thread. Neither route shares mutable generator state between threads.
-/// The `chacha20` zeroize feature erases old state on reseed and drop.
-struct ReseedingCsprng {
-    rng: ChaCha20Rng,
-    generated: usize,
-    process_id: u32,
-}
-
-impl ReseedingCsprng {
-    fn seeded() -> Self {
-        let mut seed = [0u8; CSPRNG_SEED_LEN];
-        fill_os_entropy(&mut seed);
-        let rng = ChaCha20Rng::from_seed(seed);
-        seed.zeroize();
+    #[must_use]
+    pub fn start_at(logical_start: InstantMillis) -> Self {
         Self {
-            rng,
-            generated: 0,
-            process_id: std::process::id(),
+            base: Instant::now(),
+            logical_start,
         }
     }
 
-    fn fill(&mut self, mut output: &mut [u8]) {
-        let process_id = std::process::id();
-        while !output.is_empty() {
-            // A fork must never let parent and child continue the same stream.
-            if self.process_id != process_id || self.generated == CSPRNG_RESEED_BYTES {
-                *self = Self::seeded();
+    #[must_use]
+    pub fn now(&self) -> InstantMillis {
+        let elapsed = u64::try_from(self.base.elapsed().as_millis()).unwrap_or(u64::MAX);
+        InstantMillis(self.logical_start.0.saturating_add(elapsed))
+    }
+
+    pub async fn sleep_until(&self, deadline: InstantMillis) {
+        loop {
+            let remaining = deadline.0.saturating_sub(self.now().0);
+            if remaining == 0 {
+                return;
             }
-            let take = output
-                .len()
-                .min(CSPRNG_RESEED_BYTES.saturating_sub(self.generated));
-            let (filled, remainder) = output.split_at_mut(take);
-            self.rng.fill_bytes(filled);
-            self.generated += take;
-            output = remainder;
+            tokio::time::sleep(Duration::from_millis(remaining.min(MAX_TIMER_ARM_MILLIS))).await;
+        }
+    }
+
+    fn with_entropy(self, entropy: TokioRuntimeEntropy) -> TokioHost {
+        TokioHost {
+            clock: self,
+            entropy,
         }
     }
 }
 
-#[allow(clippy::expect_used)]
-fn fill_os_entropy(bytes: &mut [u8]) {
-    getrandom::getrandom(bytes).expect("OS CSPRNG must provide runtime entropy");
+impl Default for TokioClock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Tokio-backed host services for one manifold.
+///
+/// A child created by a raw Unix `fork` must execute a fresh program image before using Prns.
+/// Continuing within the inherited process is unsupported because it can duplicate cryptographic
+/// random-generator state. Ordinary spawn-and-execute process creation remains supported.
+///
+/// The entropy-owning host deliberately cannot be cloned. Use [`Self::clock`] when another task
+/// needs a cloneable logical-time view.
+///
+/// ```compile_fail
+/// use prns_runtime_tokio::manifold::driver::TokioHost;
+///
+/// let host = TokioHost::new();
+/// let duplicated = host.clone();
+/// ```
+pub struct TokioHost {
+    clock: TokioClock,
+    entropy: TokioRuntimeEntropy,
+}
+
+struct OsEntropySource;
+type TokioRuntimeEntropy = RuntimeEntropy<OsEntropySource>;
+
+impl EntropySource for OsEntropySource {
+    type Error = getrandom::Error;
+
+    fn try_fill_entropy(&mut self, output: &mut [u8]) -> Result<(), Self::Error> {
+        getrandom::getrandom(output)
+    }
+}
+
+#[expect(
+    clippy::expect_used,
+    reason = "a host without a functioning OS CSPRNG must not emit runtime randomness"
+)]
+fn seeded_runtime_entropy() -> TokioRuntimeEntropy {
+    RuntimeEntropy::try_new(OsEntropySource)
+        .expect("OS CSPRNG must provide the initial runtime seed")
 }
 
 std::thread_local! {
-    static THREAD_CSPRNG: RefCell<Option<ReseedingCsprng>> = const { RefCell::new(None) };
-}
-
-impl Clone for TokioHost {
-    fn clone(&self) -> Self {
-        Self {
-            base: self.base,
-            logical_start: self.logical_start,
-            // A clock clone lazily seeds its own stream; generator state is never duplicated.
-            entropy: None,
-        }
-    }
+    static THREAD_ENTROPY: RefCell<Option<TokioRuntimeEntropy>> = const { RefCell::new(None) };
 }
 
 #[derive(Clone, Copy)]
@@ -134,11 +155,11 @@ impl TokioEntropy {
         if bytes.is_empty() {
             return;
         }
-        THREAD_CSPRNG.with(|stream| {
+        THREAD_ENTROPY.with(|stream| {
             stream
                 .borrow_mut()
-                .get_or_insert_with(ReseedingCsprng::seeded)
-                .fill(bytes);
+                .get_or_insert_with(seeded_runtime_entropy)
+                .fill_random(bytes);
         });
     }
 }
@@ -152,11 +173,16 @@ impl TokioHost {
     /// Mirrors `EmbassyTimebase::start_at`: the logical timeline resumes from `logical_start` instead of zero, so persisted timestamps stay in this boot's past.
     #[must_use]
     pub fn start_at(logical_start: InstantMillis) -> Self {
-        Self {
-            base: Instant::now(),
-            logical_start,
-            entropy: None,
-        }
+        TokioClock::start_at(logical_start).with_entropy(seeded_runtime_entropy())
+    }
+
+    #[must_use]
+    pub fn clock(&self) -> TokioClock {
+        self.clock.clone()
+    }
+
+    pub(crate) fn set_timeline_origin(&mut self, logical_start: InstantMillis) {
+        self.clock = TokioClock::start_at(logical_start);
     }
 }
 
@@ -168,33 +194,53 @@ impl Default for TokioHost {
 
 impl Host for TokioHost {
     fn now(&self) -> InstantMillis {
-        let elapsed = u64::try_from(self.base.elapsed().as_millis()).unwrap_or(u64::MAX);
-        InstantMillis(self.logical_start.0.saturating_add(elapsed))
+        self.clock.now()
     }
 
     async fn sleep_until(&self, deadline: InstantMillis) {
-        loop {
-            let remaining = deadline.0.saturating_sub(self.now().0);
-            if remaining == 0 {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(remaining.min(MAX_TIMER_ARM_MILLIS))).await;
-        }
+        self.clock.sleep_until(deadline).await;
     }
 
     fn fill_entropy(&mut self, bytes: &mut [u8]) {
-        if bytes.is_empty() {
-            return;
-        }
-        self.entropy
-            .get_or_insert_with(ReseedingCsprng::seeded)
-            .fill(bytes);
+        self.entropy.fill_random(bytes);
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        cell::Cell,
+        rc::Rc,
+        sync::{Arc, Barrier},
+    };
+
     use super::*;
+
+    const CORE_RESEED_INTERVAL_BYTES: usize = 64 * 1_024;
+    struct TestEntropySource {
+        calls: Rc<Cell<usize>>,
+    }
+
+    impl EntropySource for TestEntropySource {
+        type Error = core::convert::Infallible;
+
+        fn try_fill_entropy(&mut self, output: &mut [u8]) -> Result<(), Self::Error> {
+            let call = self.calls.get() + 1;
+            self.calls.set(call);
+            output.fill(u8::try_from(call).unwrap_or(u8::MAX));
+            Ok(())
+        }
+    }
+
+    fn test_runtime_entropy() -> (RuntimeEntropy<TestEntropySource>, Rc<Cell<usize>>) {
+        let calls = Rc::new(Cell::new(0));
+        let source = TestEntropySource {
+            calls: Rc::clone(&calls),
+        };
+        let entropy =
+            RuntimeEntropy::try_new(source).expect("the scripted initial entropy fill succeeds");
+        (entropy, calls)
+    }
 
     #[tokio::test(start_paused = true)]
     async fn manifold_clock_carries_time_until_the_next_step() {
@@ -244,55 +290,72 @@ mod tests {
     }
 
     #[test]
-    fn cloning_a_host_never_clones_its_random_stream() {
-        let mut host = TokioHost::new();
-        host.fill_entropy(&mut [0u8; 1]);
-        assert!(host.entropy.is_some());
+    fn clock_views_clone_without_cloning_the_host() {
+        let host = TokioHost::start_at(InstantMillis(17));
+        let clock = host.clock();
+        let cloned = clock.clone();
 
-        assert!(host.clone().entropy.is_none());
+        assert_eq!(clock.logical_start, cloned.logical_start);
+        assert_eq!(clock.base, cloned.base);
     }
 
     #[test]
-    fn empty_entropy_requests_do_not_seed_a_host() {
+    fn a_host_always_owns_healthy_runtime_entropy() {
         let mut host = TokioHost::new();
         host.fill_entropy(&mut []);
 
-        assert!(host.entropy.is_none());
+        assert_eq!(
+            host.entropy.reseed_health(),
+            prns_core::entropy::ReseedHealth::Healthy
+        );
     }
 
     #[test]
-    fn thread_entropy_seeds_lazily_and_ignores_empty_requests() {
+    fn thread_entropy_is_isolated_seeds_lazily_and_ignores_empty_requests() {
+        let first_seeded = Arc::new(Barrier::new(2));
+        let release_first = Arc::new(Barrier::new(2));
+        let first_thread = std::thread::spawn({
+            let first_seeded = Arc::clone(&first_seeded);
+            let release_first = Arc::clone(&release_first);
+            move || {
+                THREAD_ENTROPY.with(|stream| assert!(stream.borrow().is_none()));
+                TokioEntropy.fill(&mut [0u8; 1]);
+                THREAD_ENTROPY.with(|stream| assert!(stream.borrow().is_some()));
+                first_seeded.wait();
+                release_first.wait();
+            }
+        });
+
+        first_seeded.wait();
         std::thread::spawn(|| {
-            THREAD_CSPRNG.with(|stream| assert!(stream.borrow().is_none()));
+            THREAD_ENTROPY.with(|stream| assert!(stream.borrow().is_none()));
             TokioEntropy.fill(&mut []);
-            THREAD_CSPRNG.with(|stream| assert!(stream.borrow().is_none()));
+            THREAD_ENTROPY.with(|stream| assert!(stream.borrow().is_none()));
 
             TokioEntropy.fill(&mut [0u8; 1]);
-            THREAD_CSPRNG.with(|stream| assert!(stream.borrow().is_some()));
+            THREAD_ENTROPY.with(|stream| assert!(stream.borrow().is_some()));
         })
         .join()
-        .expect("entropy test thread completes");
+        .expect("second entropy test thread completes");
+        release_first.wait();
+        first_thread
+            .join()
+            .expect("first entropy test thread completes");
     }
 
     #[test]
-    fn host_random_stream_reseeds_at_its_byte_limit() {
-        let mut stream = ReseedingCsprng::seeded();
-        let mut first_epoch = vec![0u8; CSPRNG_RESEED_BYTES];
-        stream.fill(&mut first_epoch);
-        assert_eq!(stream.generated, CSPRNG_RESEED_BYTES);
+    fn core_runtime_entropy_reseeds_at_its_byte_limit() {
+        let (mut entropy, calls) = test_runtime_entropy();
+        let mut first_window = vec![0u8; CORE_RESEED_INTERVAL_BYTES];
 
-        stream.fill(&mut [0u8; 17]);
-        assert_eq!(stream.generated, 17);
-        assert_eq!(stream.process_id, std::process::id());
-    }
+        entropy.fill_random(&mut first_window);
+        assert_eq!(calls.get(), 1);
 
-    #[test]
-    fn host_random_stream_reseeds_after_a_process_change() {
-        let mut stream = ReseedingCsprng::seeded();
-        stream.process_id = stream.process_id.wrapping_add(1);
-
-        stream.fill(&mut [0u8; 17]);
-        assert_eq!(stream.generated, 17);
-        assert_eq!(stream.process_id, std::process::id());
+        entropy.fill_random(&mut [0u8; 17]);
+        assert_eq!(calls.get(), 2);
+        assert_eq!(
+            entropy.reseed_health(),
+            prns_core::entropy::ReseedHealth::Healthy
+        );
     }
 }

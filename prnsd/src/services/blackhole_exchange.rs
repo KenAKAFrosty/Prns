@@ -6,8 +6,7 @@ use personal_rns::engine::RatchetPolicy;
 use personal_rns::engine::{EstablishLinkFailure, SendRequestFailure};
 use personal_rns::identity::{IdentityHash, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interfaces::rns_management::{RnsBlackholeDecodeError, RnsBlackholeTable};
-use personal_rns::manifold::tokio::TokioHost;
-use personal_rns::manifold::Host;
+use personal_rns::manifold::tokio::TokioClock;
 use personal_rns::node_introspection::NodeIntrospection;
 use personal_rns::routing::announce::{derive_single_destination_hash, ExpandNameError};
 use personal_rns::routing::links::resources::ResourceStrategy;
@@ -129,7 +128,7 @@ impl BlackholeUpdateTask {
 
 pub fn spawn_updater(
     handle: PrnsNodeHandle,
-    clock: TokioHost,
+    clock: TokioClock,
     files: RnsBlackholeFiles,
     plan: &BlackholeExchangePlan,
 ) -> Option<BlackholeUpdateTask> {
@@ -200,7 +199,7 @@ fn destination_for(source: IdentityHash) -> Result<DestinationHash, ExpandNameEr
 
 async fn update_source(
     handle: &PrnsNodeHandle,
-    clock: &TokioHost,
+    clock: &TokioClock,
     files: &RnsBlackholeFiles,
     source: IdentityHash,
     destination: DestinationHash,

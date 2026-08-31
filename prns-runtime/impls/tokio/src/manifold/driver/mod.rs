@@ -34,7 +34,7 @@ pub use super::grant_lane::{
 pub use crypto_pool::{CryptoPoolConfig, PoolWorkers};
 pub use egress::Egress;
 pub(crate) use host::TokioEntropy;
-pub use host::TokioHost;
+pub use host::{TokioClock, TokioHost};
 pub use host_protocol::{
     AddInterfaceCommand, HostCommand, HostResourceMetadata, HostResourcePayload,
     HostResourcePayloadError, ProvideDecompressedHostCommand, RequestAnyHostCommand,
