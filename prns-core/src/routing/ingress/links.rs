@@ -1,6 +1,9 @@
 use super::classification::DataPacket;
 use super::forward::PacketToForward;
-use super::outcome::{DeferredCrypto, IgnoreReason, IngestPacketOutcome, LinkRttOwed};
+use super::outcome::{
+    DeferredCrypto, DeferredCryptoKind, DeferredCryptoSelection, IgnoreReason, IngestPacketOutcome,
+    LinkRttOwed,
+};
 use crate::crypto::X25519PublicKey;
 use crate::engine::{
     DeliveryEvidence, EngineState, InstantMillis, LinkClosedReason, PacketReceiptDelivered,
@@ -470,6 +473,7 @@ impl<S: StorageLayout> EngineState<S> {
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
         deferred: Option<&mut DeferredCrypto>,
+        selection: DeferredCryptoSelection,
     ) -> IngestPacketOutcome<'p> {
         let Some(LinkPhase::Pending {
             destination: link_destination,
@@ -495,7 +499,9 @@ impl<S: StorageLayout> EngineState<S> {
         let requested_at = *requested_at;
         let command_id = *command_id;
         let mode = *mode;
-        if let Some(deferred) = deferred {
+        if let Some(deferred) =
+            deferred.filter(|_| selection.includes(DeferredCryptoKind::LinkProofVerify))
+        {
             let Ok(parsed) = link_proof_parse(&link_id, payload, &responder_signing) else {
                 return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
             };

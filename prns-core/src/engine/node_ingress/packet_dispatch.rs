@@ -10,9 +10,9 @@ use crate::engine::remote_control_pairing::{
 use crate::engine::settlement::settle;
 use crate::engine::LinkClosedReason;
 use crate::engine::{
-    DeferredCrypto, Directive, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis,
-    Journaled, LinkEstablished, PathResponseWriteOutcome, ProofIngest, ProtocolViolationKind,
-    RemoteControlControllerPairingRequestFailureCause,
+    DeferredCrypto, DeferredCryptoSelection, Directive, EngineReaction, EngineState,
+    IngestPacketOutcome, InstantMillis, Journaled, LinkEstablished, PathResponseWriteOutcome,
+    ProofIngest, ProtocolViolationKind, RemoteControlControllerPairingRequestFailureCause,
     RemoteControlControllerPairingResponseArrival, RemoteControlControllerPairingResponseReceived,
     SendRequestFailure, SendRequestIntent, Settlement, WakeSchedule, WakeSchedules,
 };
@@ -165,6 +165,30 @@ impl<S: StorageLayout> EngineState<S> {
         )
     }
 
+    pub fn ingest_packet_into_deferring_selected<F, P, A, K>(
+        &mut self,
+        packet: InboundPacket<'_>,
+        io: IngestIo<'_, F, P, A, K>,
+        deferred_sign: &mut Option<DeferredProofSign>,
+        deferred: &mut DeferredCrypto,
+        selection: DeferredCryptoSelection,
+    ) -> WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+        P: FnMut(&ProofRequest) -> bool,
+        A: FnMut(&ResourceOffer) -> bool,
+        K: FnMut(EngineReaction<'_>),
+    {
+        self.ingest_classified_into_deferring_report_selected(
+            ClassifiedInboundPacket::classify(packet),
+            io,
+            deferred_sign,
+            Some(deferred),
+            selection,
+        )
+        .wake_schedules
+    }
+
     pub fn ingest_classified_into_deferring<F, P, A, K>(
         &mut self,
         packet: ClassifiedInboundPacket<'_>,
@@ -187,7 +211,30 @@ impl<S: StorageLayout> EngineState<S> {
         packet: ClassifiedInboundPacket<'_>,
         io: IngestIo<'_, F, P, A, K>,
         deferred_sign: &mut Option<DeferredProofSign>,
+        deferred: Option<&mut DeferredCrypto>,
+    ) -> IngestPacketReport
+    where
+        F: FnMut(&mut [u8]),
+        P: FnMut(&ProofRequest) -> bool,
+        A: FnMut(&ResourceOffer) -> bool,
+        K: FnMut(EngineReaction<'_>),
+    {
+        self.ingest_classified_into_deferring_report_selected(
+            packet,
+            io,
+            deferred_sign,
+            deferred,
+            DeferredCryptoSelection::ALL,
+        )
+    }
+
+    fn ingest_classified_into_deferring_report_selected<F, P, A, K>(
+        &mut self,
+        packet: ClassifiedInboundPacket<'_>,
+        io: IngestIo<'_, F, P, A, K>,
+        deferred_sign: &mut Option<DeferredProofSign>,
         mut deferred: Option<&mut DeferredCrypto>,
+        selection: DeferredCryptoSelection,
     ) -> IngestPacketReport
     where
         F: FnMut(&mut [u8]),
@@ -212,6 +259,7 @@ impl<S: StorageLayout> EngineState<S> {
             interfaces,
             &mut |removed| sink(EngineReaction::Journaled(journal_route_removal(removed))),
             deferred.as_deref_mut(),
+            selection,
             &mut effects,
         );
 
@@ -762,7 +810,9 @@ impl<S: StorageLayout> EngineState<S> {
                 if interfaces.is_egress_eligible(source, Egress::Transmit) {
                     let mut secret_bytes = [0u8; X25519SecretKey::LEN];
                     fill_entropy(&mut secret_bytes);
-                    if let Some(deferred) = deferred {
+                    if let Some(deferred) = deferred.filter(|_| {
+                        selection.includes(crate::engine::DeferredCryptoKind::LinkProofSign)
+                    }) {
                         if let Some(held) = self.held_identities.get(&accepted.identity) {
                             let signing_secret = held.signing_secret_clone();
                             let responder_signing = held.signing_public_key();

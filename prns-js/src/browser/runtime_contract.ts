@@ -181,6 +181,26 @@ export type PrnsRuntimeBinding = {
     readonly entropy: EntropyBytes;
   }): void;
   enableResourceWebCrypto?(): void;
+  enableProtocolWebCrypto?(): void;
+  takeProtocolCryptoJob?(): unknown | undefined;
+  completeProtocolAnnounceValid?(
+    id: number,
+    nowMs: InstantMillis,
+    entropy: EntropyBytes,
+  ): void;
+  completeProtocolAnnounceInvalid?(id: number): void;
+  completeProtocolLinkProofValid?(
+    id: number,
+    sharedSecret: Uint8Array,
+    nowMs: InstantMillis,
+    entropy: EntropyBytes,
+  ): void;
+  completeProtocolLinkProofInvalid?(id: number): void;
+  completeProtocolCryptoInline?(
+    id: number,
+    nowMs: InstantMillis,
+    entropy: EntropyBytes,
+  ): void;
   takeResourceOpenJob?(): unknown | undefined;
   completeResourceOpen?(options: {
     readonly linkId: LinkId;

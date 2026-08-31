@@ -74,14 +74,114 @@ test("runtime ingress retains the object binding as a compatibility fallback", (
   }]);
 });
 
-function runtimeHost(runtime) {
+test("protocol crypto worker unavailability resumes the retained WASM operation inline", async () => {
+  const calls = [];
+  let taken = false;
+  const runtime = protocolRuntime({
+    takeProtocolCryptoJob() {
+      if (taken) {
+        return undefined;
+      }
+      taken = true;
+      return {
+        tag: "AnnounceVerify",
+        data: {
+          id: 7,
+          publicKey: new Uint8Array(32),
+          message: Uint8Array.of(1, 2, 3),
+          signature: new Uint8Array(64),
+        },
+      };
+    },
+    completeProtocolCryptoInline(...values) {
+      calls.push(values);
+    },
+  });
+  const executor = {
+    verifyEd25519: async () => Tag("Unavailable"),
+  };
+  const host = runtimeHost(runtime, executor);
+  const id = interfaceId(Uint8Array.of(23, 1, 2, 3, 4, 5, 6, 7));
+
+  assert.deepEqual(host.ingest(id, packetFrame(Uint8Array.of(0x21))), Tag("Accepted"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(calls, [[
+    7,
+    42,
+    Uint8Array.from({ length: 128 }, () => 0x31),
+  ]]);
+});
+
+test("protocol link proof settlement lands the worker-derived shared secret", async () => {
+  const calls = [];
+  let taken = false;
+  const runtime = protocolRuntime({
+    takeProtocolCryptoJob() {
+      if (taken) {
+        return undefined;
+      }
+      taken = true;
+      return {
+        tag: "LinkProofVerify",
+        data: {
+          id: 9,
+          publicKey: new Uint8Array(32),
+          message: Uint8Array.of(1, 2, 3),
+          signature: new Uint8Array(64),
+          secretScalar: new Uint8Array(32),
+          peerPublicKey: new Uint8Array(32),
+        },
+      };
+    },
+    completeProtocolLinkProofValid(...values) {
+      calls.push(values);
+    },
+  });
+  const sharedSecret = new Uint8Array(32).fill(0x44);
+  const executor = {
+    verifyLinkProof: async () => Tag("Verified", { sharedSecret }),
+  };
+  const host = runtimeHost(runtime, executor);
+  const id = interfaceId(Uint8Array.of(23, 1, 2, 3, 4, 5, 6, 7));
+
+  assert.deepEqual(host.ingest(id, packetFrame(Uint8Array.of(0x21))), Tag("Accepted"));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(calls, [[
+    9,
+    sharedSecret,
+    42,
+    Uint8Array.from({ length: 128 }, () => 0x31),
+  ]]);
+});
+
+function protocolRuntime(overrides) {
+  return {
+    ingestDirect() {},
+    enableResourceWebCrypto() {},
+    enableProtocolWebCrypto() {},
+    takeResourceOpenJob() {},
+    completeResourceOpen() {},
+    completeResourceOpenDigests() {},
+    rejectResourceOpen() {},
+    retryResourceOpen() {},
+    takeProtocolCryptoJob() {},
+    completeProtocolAnnounceValid() {},
+    completeProtocolAnnounceInvalid() {},
+    completeProtocolLinkProofValid() {},
+    completeProtocolLinkProofInvalid() {},
+    completeProtocolCryptoInline() {},
+    ...overrides,
+  };
+}
+
+function runtimeHost(runtime, cryptoExecutor) {
   return new RuntimeHost(
     {},
     runtime,
     (length) => Tag("Filled", Uint8Array.from({ length }, () => 0x31)),
     () => 42,
     Tag("Available", new Uint8Array(16)),
-    Tag("PortableWasm"),
+    cryptoExecutor,
     () => undefined,
   );
 }

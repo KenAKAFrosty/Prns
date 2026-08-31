@@ -2,8 +2,10 @@ use core::convert::TryFrom;
 
 use js_sys::{Array, Object};
 use personal_rns::crypto::ratchets::SeedSelfRatchetsOutcome;
+use personal_rns::crypto::{ed25519_sign, x25519_diffie_hellman, X25519SharedSecret};
 use personal_rns::engine::{
     AllowRequester, AnnounceAppData, AnnounceNow, AnnounceTarget, CloseLink, CommandId,
+    DeferredCrypto, DeferredCryptoKind, DeferredCryptoSelection, DeferredProofSign,
     DestinationIdentitySeedOutcome, Directive, EngineReaction, EngineState, EstablishLink,
     FanTarget, Identify, InstantMillis, IssuedCommand, Journaled, PathRequestId, PrnsCommand,
     RatchetPolicy, RequestPath, RequestResponseTimeout, Respond, RespondData, RespondPayload,
@@ -17,13 +19,15 @@ use personal_rns::interfaces::{
     InterfaceMode, RecursivePathRequestPolicy,
 };
 use personal_rns::routing::links::channel::MessageType;
+use personal_rns::routing::links::handshake::link_proof_signature_valid;
 use personal_rns::routing::links::request::RequestId;
+use personal_rns::routing::links::resources::streamed_open::ResourceOpenLane;
 use personal_rns::routing::links::resources::{
     ResourceBody, ResourceCorrelation, ResourceMetadata, ResourceSend, ResourceSendPlan,
     ResourceSendPlanError, ResourceStrategy, MAX_EFFICIENT_SIZE,
 };
-use personal_rns::routing::links::resources::streamed_open::ResourceOpenLane;
 use personal_rns::routing::links::LinkId;
+use personal_rns::routing::proof::EXPLICIT_PROOF_WIRE_LEN;
 use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use personal_rns::routing::routes::NextHop;
 use personal_rns::routing::tunnel::SeedTunnelOutcome;
@@ -55,6 +59,10 @@ use crate::js_translation::{
 };
 use crate::outbound_batch::encode as encode_outbound_batch;
 use crate::parameters::{bitrate_bps_u32, BROWSER_PERSISTENCE_VERSION};
+use crate::protocol_crypto::{
+    ProtocolCryptoJob, ProtocolCryptoKind, ProtocolCryptoOperation, ProtocolCryptoQueue,
+    ProtocolCryptoSettlementError,
+};
 
 #[derive(Clone, Copy)]
 enum NodeResponse {
@@ -68,8 +76,48 @@ enum NodeResponse {
     SourceChecksum,
 }
 
+struct NodePagePaths {
+    index: RequestPathHash,
+    quickstart: RequestPathHash,
+    coming_from_rns: RequestPathHash,
+    source_page: RequestPathHash,
+    #[cfg(feature = "source-archive")]
+    source_archive: RequestPathHash,
+    #[cfg(feature = "source-archive")]
+    source_checksum: RequestPathHash,
+}
+
+impl NodePagePaths {
+    fn response_for(&self, path: RequestPathHash) -> Option<NodeResponse> {
+        if path == self.index {
+            return Some(NodeResponse::Index);
+        }
+        if path == self.quickstart {
+            return Some(NodeResponse::Quickstart);
+        }
+        if path == self.coming_from_rns {
+            return Some(NodeResponse::ComingFromRns);
+        }
+        if path == self.source_page {
+            return Some(NodeResponse::SourcePage);
+        }
+        #[cfg(feature = "source-archive")]
+        if path == self.source_archive {
+            return Some(NodeResponse::SourceArchive);
+        }
+        #[cfg(feature = "source-archive")]
+        if path == self.source_checksum {
+            return Some(NodeResponse::SourceChecksum);
+        }
+        None
+    }
+}
+
 const MAX_PERSISTED_STATE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_PERSISTED_RATCHETS: usize = 4_096;
+const BROWSER_PROTOCOL_CRYPTO_SELECTION: DeferredCryptoSelection = DeferredCryptoSelection::NONE
+    .including(DeferredCryptoKind::AnnounceVerify)
+    .including(DeferredCryptoKind::LinkProofVerify);
 #[derive(Clone)]
 pub(crate) struct OutboundFrame {
     pub(crate) target: OutboundTarget,
@@ -106,6 +154,8 @@ pub struct PrnsRuntime {
     host: CooperativeHost<()>,
     pending_ratchets: Vec<(personal_rns::wire::DestinationHash, Vec<u8>)>,
     persistence_restored: bool,
+    protocol_crypto_enabled: bool,
+    protocol_crypto: ProtocolCryptoQueue,
 }
 
 #[wasm_bindgen]
@@ -137,6 +187,8 @@ impl PrnsRuntime {
             host: CooperativeHost::new(PrnsLimits::balanced()),
             pending_ratchets: Vec::new(),
             persistence_restored: false,
+            protocol_crypto_enabled: false,
+            protocol_crypto: ProtocolCryptoQueue::new(),
         })
     }
 
@@ -905,6 +957,134 @@ impl PrnsRuntime {
         self.engine.resource_open_lane = ResourceOpenLane::ExternalWhole;
     }
 
+    #[wasm_bindgen(js_name = enableProtocolWebCrypto)]
+    pub fn enable_protocol_web_crypto(&mut self) {
+        self.protocol_crypto_enabled = true;
+    }
+
+    #[wasm_bindgen(js_name = takeProtocolCryptoJob)]
+    pub fn take_protocol_crypto_job(&mut self) -> JsValue {
+        let Some(job) = self.protocol_crypto.take() else {
+            return JsValue::UNDEFINED;
+        };
+        let tagged = Object::new();
+        let data = Object::new();
+        match job {
+            ProtocolCryptoJob::AnnounceVerify {
+                id,
+                public_key,
+                message,
+                signature,
+            } => {
+                set_str(&tagged, "tag", "AnnounceVerify");
+                set_u32(&data, "id", id);
+                set_bytes(&data, "publicKey", &public_key);
+                set_bytes(&data, "message", &message);
+                set_bytes(&data, "signature", &signature);
+            }
+            ProtocolCryptoJob::LinkProofVerify {
+                id,
+                public_key,
+                message,
+                signature,
+                secret_scalar,
+                peer_public_key,
+            } => {
+                set_str(&tagged, "tag", "LinkProofVerify");
+                set_u32(&data, "id", id);
+                set_bytes(&data, "publicKey", &public_key);
+                set_bytes(&data, "message", &message);
+                set_bytes(&data, "signature", &signature);
+                set_bytes(&data, "secretScalar", &secret_scalar[..]);
+                set_bytes(&data, "peerPublicKey", &peer_public_key);
+            }
+        }
+        set_value(&tagged, "data", data.into());
+        tagged.into()
+    }
+
+    #[wasm_bindgen(js_name = completeProtocolAnnounceValid)]
+    pub fn complete_protocol_announce_valid(
+        &mut self,
+        id: u32,
+        now_ms: f64,
+        entropy: Vec<u8>,
+    ) -> Result<(), JsValue> {
+        let now_ms = u64_from_number(now_ms, "nowMs")?;
+        let entropy = self.command_context_values(now_ms, entropy)?;
+        let operation = self
+            .protocol_crypto
+            .settle(id, ProtocolCryptoKind::AnnounceVerify)
+            .map_err(protocol_crypto_settlement_error)?;
+        let ProtocolCryptoOperation::AnnounceVerify { owed, .. } = operation else {
+            return Err(JsValue::from_str("protocol crypto operation changed kind"));
+        };
+        self.resume_protocol_announce(owed, entropy);
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = completeProtocolAnnounceInvalid)]
+    pub fn complete_protocol_announce_invalid(&mut self, id: u32) -> Result<(), JsValue> {
+        self.protocol_crypto
+            .settle(id, ProtocolCryptoKind::AnnounceVerify)
+            .map_err(protocol_crypto_settlement_error)?;
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = completeProtocolLinkProofValid)]
+    pub fn complete_protocol_link_proof_valid(
+        &mut self,
+        id: u32,
+        shared_secret: Vec<u8>,
+        now_ms: f64,
+        entropy: Vec<u8>,
+    ) -> Result<(), JsValue> {
+        let shared_secret: [u8; X25519SharedSecret::LEN] = shared_secret
+            .try_into()
+            .map_err(|_| JsValue::from_str("sharedSecret must be exactly 32 bytes"))?;
+        let now_ms = u64_from_number(now_ms, "nowMs")?;
+        let entropy = self.command_context_values(now_ms, entropy)?;
+        let operation = self
+            .protocol_crypto
+            .settle(id, ProtocolCryptoKind::LinkProofVerify)
+            .map_err(protocol_crypto_settlement_error)?;
+        let ProtocolCryptoOperation::LinkProofVerify(owed) = operation else {
+            return Err(JsValue::from_str("protocol crypto operation changed kind"));
+        };
+        self.resume_protocol_link_proof(
+            owed,
+            X25519SharedSecret::from_external_diffie_hellman(shared_secret),
+            now_ms,
+            entropy,
+        );
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = completeProtocolLinkProofInvalid)]
+    pub fn complete_protocol_link_proof_invalid(&mut self, id: u32) -> Result<(), JsValue> {
+        self.protocol_crypto
+            .settle(id, ProtocolCryptoKind::LinkProofVerify)
+            .map_err(protocol_crypto_settlement_error)?;
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = completeProtocolCryptoInline)]
+    pub fn complete_protocol_crypto_inline(
+        &mut self,
+        id: u32,
+        now_ms: f64,
+        entropy: Vec<u8>,
+    ) -> Result<(), JsValue> {
+        let now_ms = u64_from_number(now_ms, "nowMs")?;
+        let entropy = self.command_context_values(now_ms, entropy)?;
+        let operation = self
+            .protocol_crypto
+            .settle_any(id)
+            .map_err(protocol_crypto_settlement_error)?;
+        self.finish_protocol_crypto_inline(operation, now_ms, entropy);
+        Ok(())
+    }
+
     #[wasm_bindgen(js_name = takeResourceOpenJob)]
     pub fn take_resource_open_job(&mut self) -> JsValue {
         let Some(view) = self.engine.external_open_job_view() else {
@@ -1145,75 +1325,125 @@ impl PrnsRuntime {
         let interfaces_snapshot = self.interfaces.clone();
         let mut reactions = Vec::new();
         let node_page = self.node_page;
-        let index_path = RequestPathHash::of(personal_hopspot_core::node_pages::INDEX_PATH);
-        let quickstart_path =
-            RequestPathHash::of(personal_hopspot_core::node_pages::QUICKSTART_PATH);
-        let coming_from_rns_path =
-            RequestPathHash::of(personal_hopspot_core::node_pages::COMING_FROM_RNS_PATH);
-        let source_page_path =
-            RequestPathHash::of(personal_hopspot_core::node_pages::SOURCE_PAGE_PATH);
-        #[cfg(feature = "source-archive")]
-        let source_path =
-            RequestPathHash::of(personal_hopspot_core::node_pages::SOURCE_ARCHIVE_PATH);
-        #[cfg(feature = "source-archive")]
-        let checksum_path =
-            RequestPathHash::of(personal_hopspot_core::node_pages::SOURCE_CHECKSUM_PATH);
+        let node_page_paths = NodePagePaths {
+            index: RequestPathHash::of(personal_hopspot_core::node_pages::INDEX_PATH),
+            quickstart: RequestPathHash::of(personal_hopspot_core::node_pages::QUICKSTART_PATH),
+            coming_from_rns: RequestPathHash::of(
+                personal_hopspot_core::node_pages::COMING_FROM_RNS_PATH,
+            ),
+            source_page: RequestPathHash::of(personal_hopspot_core::node_pages::SOURCE_PAGE_PATH),
+            #[cfg(feature = "source-archive")]
+            source_archive: RequestPathHash::of(
+                personal_hopspot_core::node_pages::SOURCE_ARCHIVE_PATH,
+            ),
+            #[cfg(feature = "source-archive")]
+            source_checksum: RequestPathHash::of(
+                personal_hopspot_core::node_pages::SOURCE_CHECKSUM_PATH,
+            ),
+        };
         let mut page_requests: Vec<(LinkId, RequestId, NodeResponse)> = Vec::new();
-        self.engine.ingest_packet_into(
-            packet,
-            personal_rns::engine::IngestIo {
-                interfaces: personal_rns::interfaces::AttachedInterfaces::new(&interfaces_snapshot),
-                now: InstantMillis(now_ms),
-                fill_entropy: &mut |out| entropy.fill(out),
-                should_prove: &mut should_prove,
-                should_accept_resource: &mut should_accept_resource,
-                sink: &mut |reaction| {
-                    if let EngineReaction::Journaled(Journaled::RequestReceived {
-                        link_id,
-                        request_id,
-                        path_hash,
-                        ..
-                    }) = &reaction
-                    {
-                        if node_page && *path_hash == index_path {
-                            page_requests.push((*link_id, *request_id, NodeResponse::Index));
-                        }
-                        if node_page && *path_hash == quickstart_path {
-                            page_requests.push((*link_id, *request_id, NodeResponse::Quickstart));
-                        }
-                        if node_page && *path_hash == coming_from_rns_path {
-                            page_requests.push((
-                                *link_id,
-                                *request_id,
-                                NodeResponse::ComingFromRns,
-                            ));
-                        }
-                        if node_page && *path_hash == source_page_path {
-                            page_requests.push((*link_id, *request_id, NodeResponse::SourcePage));
-                        }
-                        #[cfg(feature = "source-archive")]
-                        if node_page && *path_hash == source_path {
-                            page_requests.push((
-                                *link_id,
-                                *request_id,
-                                NodeResponse::SourceArchive,
-                            ));
-                        }
-                        #[cfg(feature = "source-archive")]
-                        if node_page && *path_hash == checksum_path {
-                            page_requests.push((
-                                *link_id,
-                                *request_id,
-                                NodeResponse::SourceChecksum,
-                            ));
-                        }
-                    }
-                    reactions.push(capture_reaction(reaction));
+        let mut deferred_sign: Option<DeferredProofSign> = None;
+        let mut deferred_crypto = DeferredCrypto::Empty;
+        if self.protocol_crypto_enabled && self.protocol_crypto.has_capacity() {
+            self.engine.ingest_packet_into_deferring_selected(
+                packet,
+                personal_rns::engine::IngestIo {
+                    interfaces: personal_rns::interfaces::AttachedInterfaces::new(
+                        &interfaces_snapshot,
+                    ),
+                    now: InstantMillis(now_ms),
+                    fill_entropy: &mut |out| entropy.fill(out),
+                    should_prove: &mut should_prove,
+                    should_accept_resource: &mut should_accept_resource,
+                    sink: &mut |reaction| {
+                        capture_node_page_request(
+                            &reaction,
+                            node_page,
+                            &node_page_paths,
+                            &mut page_requests,
+                        );
+                        reactions.push(capture_reaction(reaction));
+                    },
                 },
-            },
-        );
+                &mut deferred_sign,
+                &mut deferred_crypto,
+                BROWSER_PROTOCOL_CRYPTO_SELECTION,
+            );
+        } else {
+            self.engine.ingest_packet_into(
+                packet,
+                personal_rns::engine::IngestIo {
+                    interfaces: personal_rns::interfaces::AttachedInterfaces::new(
+                        &interfaces_snapshot,
+                    ),
+                    now: InstantMillis(now_ms),
+                    fill_entropy: &mut |out| entropy.fill(out),
+                    should_prove: &mut should_prove,
+                    should_accept_resource: &mut should_accept_resource,
+                    sink: &mut |reaction| {
+                        capture_node_page_request(
+                            &reaction,
+                            node_page,
+                            &node_page_paths,
+                            &mut page_requests,
+                        );
+                        reactions.push(capture_reaction(reaction));
+                    },
+                },
+            );
+        }
+        if let Some(deferred) = deferred_sign {
+            let signature = ed25519_sign(&deferred.signing_secret, deferred.packet_hash.as_bytes());
+            let mut proof = [0u8; EXPLICIT_PROOF_WIRE_LEN];
+            if let Ok(written) =
+                self.engine
+                    .write_signed_proof(&deferred.packet_hash, &signature, &mut proof)
+            {
+                reactions.push(capture_reaction(EngineReaction::Directive(
+                    Directive::Send {
+                        target: deferred.target,
+                        bytes: &proof[..written],
+                    },
+                )));
+            }
+        }
         self.bump_revision();
         self.apply_captured(reactions);
+        match deferred_crypto {
+            DeferredCrypto::Empty => {}
+            DeferredCrypto::AnnounceVerify(owed) => match ProtocolCryptoOperation::announce(owed) {
+                Ok(operation) => {
+                    if let Err(operation) = self.protocol_crypto.admit(operation) {
+                        self.finish_protocol_crypto_inline_with_entropy(
+                            operation,
+                            now_ms,
+                            &mut entropy,
+                        );
+                    }
+                }
+                Err(owed) => {
+                    self.finish_protocol_announce_inline_with_entropy(owed, &mut entropy);
+                }
+            },
+            DeferredCrypto::LinkProofVerify(owed) => {
+                let operation = ProtocolCryptoOperation::link_proof(owed);
+                if let Err(operation) = self.protocol_crypto.admit(operation) {
+                    self.finish_protocol_crypto_inline_with_entropy(
+                        operation,
+                        now_ms,
+                        &mut entropy,
+                    );
+                }
+            }
+            DeferredCrypto::Decrypt(_)
+            | DeferredCrypto::RatchetDecrypt(_)
+            | DeferredCrypto::LinkProofSign(_)
+            | DeferredCrypto::RemoteControlPairingAvailabilityVerify(_) => {
+                return Err(JsValue::from_str(
+                    "browser protocol crypto selection yielded an unsupported operation",
+                ));
+            }
+        }
         for (link_id, request_id, response) in page_requests {
             let id = self.mint_command_id();
             let mut respond_reactions = Vec::new();
@@ -1615,6 +1845,116 @@ impl PrnsRuntime {
         }
     }
 
+    fn resume_protocol_announce(
+        &mut self,
+        owed: personal_rns::engine::AnnounceVerifyOwed,
+        entropy: Vec<u8>,
+    ) {
+        let mut entropy = EntropyCursor::new(entropy);
+        self.resume_protocol_announce_with_entropy(owed, &mut entropy);
+    }
+
+    fn resume_protocol_announce_with_entropy(
+        &mut self,
+        owed: personal_rns::engine::AnnounceVerifyOwed,
+        entropy: &mut EntropyCursor,
+    ) {
+        let interfaces = self.interfaces.clone();
+        let mut reactions = Vec::new();
+        self.engine.resume_announce(
+            owed,
+            personal_rns::interfaces::AttachedInterfaces::new(&interfaces),
+            &mut |out| entropy.fill(out),
+            &mut |reaction| reactions.push(capture_reaction(reaction)),
+        );
+        self.bump_revision();
+        self.apply_captured(reactions);
+    }
+
+    fn resume_protocol_link_proof(
+        &mut self,
+        owed: personal_rns::routing::links::handshake::LinkProofVerifyOwed,
+        shared: X25519SharedSecret,
+        now_ms: u64,
+        entropy: Vec<u8>,
+    ) {
+        let mut entropy = EntropyCursor::new(entropy);
+        self.resume_protocol_link_proof_with_entropy(owed, shared, now_ms, &mut entropy);
+    }
+
+    fn resume_protocol_link_proof_with_entropy(
+        &mut self,
+        owed: personal_rns::routing::links::handshake::LinkProofVerifyOwed,
+        shared: X25519SharedSecret,
+        now_ms: u64,
+        entropy: &mut EntropyCursor,
+    ) {
+        let interfaces = self.interfaces.clone();
+        let mut reactions = Vec::new();
+        self.engine.resume_link_proof(
+            owed,
+            shared,
+            personal_rns::interfaces::AttachedInterfaces::new(&interfaces),
+            InstantMillis(now_ms),
+            &mut |out| entropy.fill(out),
+            &mut |reaction| reactions.push(capture_reaction(reaction)),
+        );
+        self.bump_revision();
+        self.apply_captured(reactions);
+    }
+
+    fn finish_protocol_crypto_inline(
+        &mut self,
+        operation: ProtocolCryptoOperation,
+        now_ms: u64,
+        entropy: Vec<u8>,
+    ) {
+        let mut entropy = EntropyCursor::new(entropy);
+        self.finish_protocol_crypto_inline_with_entropy(operation, now_ms, &mut entropy);
+    }
+
+    fn finish_protocol_crypto_inline_with_entropy(
+        &mut self,
+        operation: ProtocolCryptoOperation,
+        now_ms: u64,
+        entropy: &mut EntropyCursor,
+    ) {
+        match operation {
+            ProtocolCryptoOperation::AnnounceVerify { owed, .. } => {
+                if personal_rns::routing::announce::Announce::from_wire_unverified(
+                    &owed.header,
+                    &owed.payload,
+                )
+                .is_ok_and(|announce| announce.signature_is_valid())
+                {
+                    self.resume_protocol_announce_with_entropy(owed, entropy);
+                }
+            }
+            ProtocolCryptoOperation::LinkProofVerify(owed) => {
+                if link_proof_signature_valid(&owed) {
+                    let shared =
+                        x25519_diffie_hellman(&owed.initiator_secret, &owed.responder_encryption);
+                    self.resume_protocol_link_proof_with_entropy(owed, shared, now_ms, entropy);
+                }
+            }
+        }
+    }
+
+    fn finish_protocol_announce_inline_with_entropy(
+        &mut self,
+        owed: personal_rns::engine::AnnounceVerifyOwed,
+        entropy: &mut EntropyCursor,
+    ) {
+        if personal_rns::routing::announce::Announce::from_wire_unverified(
+            &owed.header,
+            &owed.payload,
+        )
+        .is_ok_and(|announce| announce.signature_is_valid())
+        {
+            self.resume_protocol_announce_with_entropy(owed, entropy);
+        }
+    }
+
     fn command_context(&mut self, options: &JsValue) -> Result<(u64, Vec<u8>), JsValue> {
         let now_ms = required_u64(options, "nowMs")?;
         self.command_context_values(now_ms, required_bytes(options, "entropy")?)
@@ -1774,6 +2114,16 @@ fn account_persisted_bytes(total: &mut usize, additional: usize) -> Result<(), J
     Ok(())
 }
 
+fn protocol_crypto_settlement_error(error: ProtocolCryptoSettlementError) -> JsValue {
+    JsValue::from_str(match error {
+        ProtocolCryptoSettlementError::UnknownJob => "protocol crypto job is unknown",
+        ProtocolCryptoSettlementError::OperationMismatch => {
+            "protocol crypto completion does not match its operation"
+        }
+        ProtocolCryptoSettlementError::JobNotRunning => "protocol crypto job is not running",
+    })
+}
+
 fn validate_route_snapshot(bytes: &[u8]) -> Result<(), JsValue> {
     let rows = personal_rns::persistence::read_routing_table_snapshot(bytes)
         .map_err(|error| persisted_state_error("routing table", error))?;
@@ -1833,6 +2183,29 @@ impl EntropyCursor {
         if copied < out.len() {
             out[copied..].fill(0);
         }
+    }
+}
+
+fn capture_node_page_request(
+    reaction: &EngineReaction<'_>,
+    node_page: bool,
+    paths: &NodePagePaths,
+    requests: &mut Vec<(LinkId, RequestId, NodeResponse)>,
+) {
+    if !node_page {
+        return;
+    }
+    let EngineReaction::Journaled(Journaled::RequestReceived {
+        link_id,
+        request_id,
+        path_hash,
+        ..
+    }) = reaction
+    else {
+        return;
+    };
+    if let Some(response) = paths.response_for(*path_hash) {
+        requests.push((*link_id, *request_id, response));
     }
 }
 

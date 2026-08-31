@@ -5,8 +5,8 @@ use super::classification::{DataPacket, Ingress};
 use super::forward::{ForwardingArrival, PacketToForward};
 use super::links::{LinkRequestArrival, RelayOutcome};
 use super::outcome::{
-    DeferredCrypto, IgnoreReason, IngestEffects, IngestPacketOutcome,
-    NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS,
+    DeferredCrypto, DeferredCryptoKind, DeferredCryptoSelection, IgnoreReason, IngestEffects,
+    IngestPacketOutcome, NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS,
 };
 use super::upstream_delivery::UpstreamDeliveryOutcome;
 use crate::engine::{DeliveryProof, EngineState, InstantMillis};
@@ -74,6 +74,7 @@ impl<S: StorageLayout> EngineState<S> {
             interfaces,
             on_removed,
             deferred,
+            DeferredCryptoSelection::ALL,
             &mut IngestEffects::default(),
         )
     }
@@ -85,6 +86,7 @@ impl<S: StorageLayout> EngineState<S> {
         interfaces: AttachedInterfaces<'_>,
         on_removed: &mut impl FnMut(RemovedRoute),
         deferred: Option<&mut DeferredCrypto>,
+        selection: DeferredCryptoSelection,
         effects: &mut IngestEffects<'p>,
     ) -> IngestPacketOutcome<'p> {
         self.ingested_packet_count = self.ingested_packet_count.saturating_add(1);
@@ -154,7 +156,9 @@ impl<S: StorageLayout> EngineState<S> {
                     return IngestPacketOutcome::Announce(held);
                 }
 
-                if let Some(deferred) = deferred {
+                if let Some(deferred) =
+                    deferred.filter(|_| selection.includes(DeferredCryptoKind::AnnounceVerify))
+                {
                     let mut owned = HeaplessVec::new();
                     if owned.extend_from_slice(payload).is_err() {
                         return IngestPacketOutcome::Ignored(IgnoreReason::CapacityExhausted);
@@ -237,6 +241,7 @@ impl<S: StorageLayout> EngineState<S> {
                             interfaces,
                             on_removed,
                             deferred,
+                            selection,
                             effects,
                         );
                     }
@@ -305,6 +310,7 @@ impl<S: StorageLayout> EngineState<S> {
                     source_interface,
                     arrived_at,
                     deferred,
+                    selection,
                 ) {
                     UpstreamDeliveryOutcome::Delivered(delivery, proof) => {
                         IngestPacketOutcome::Delivery { delivery, proof }
@@ -337,6 +343,7 @@ impl<S: StorageLayout> EngineState<S> {
                         source_interface,
                         arrived_at,
                         deferred,
+                        selection,
                     );
                 }
                 if context == WireContext::ResourceProof {

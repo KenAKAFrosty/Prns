@@ -1,6 +1,7 @@
 import { Tag } from "../casework.js";
+import type { CryptoExecution } from "./crypto_execution.js";
 
-export type ResourceCryptoExecution = Tag<"PortableWasm"> | Tag<"WebCrypto">;
+export type ResourceCryptoExecution = CryptoExecution;
 
 type OwnedBytes = Uint8Array<ArrayBuffer>;
 

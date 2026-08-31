@@ -45,7 +45,9 @@ import {
 import type {
   ResourceOpenJob,
 } from "./resource_crypto.js";
-import type { BrowserResourceCryptoExecutor } from "./resource_crypto_pool.js";
+import type { BrowserCryptoExecutor } from "./crypto_pool.js";
+import { parseProtocolCryptoJob } from "./protocol_crypto_runtime.js";
+import type { ProtocolCryptoJob } from "./protocol_crypto_runtime.js";
 import type {
   BleIdentityAvailability,
   BluetoothReassemblerBinding,
@@ -108,7 +110,7 @@ export class RuntimeHost {
   readonly #now: () => InstantMillis;
   readonly #bleIdentityAvailability: BleIdentityAvailability;
   readonly #onRuntimeActivity: () => void;
-  #resourceCryptoExecutor: BrowserResourceCryptoExecutor | undefined;
+  #cryptoExecutor: BrowserCryptoExecutor | undefined;
   #activeInterfaces = new Map<
     InterfaceKey,
     {
@@ -132,7 +134,7 @@ export class RuntimeHost {
     entropy: EntropySource,
     now: () => InstantMillis,
     bleIdentityAvailability: BleIdentityAvailability,
-    resourceCryptoExecutor: BrowserResourceCryptoExecutor | undefined,
+    cryptoExecutor: BrowserCryptoExecutor | undefined,
     onRuntimeActivity: () => void,
   ) {
     this.#wasm = wasm;
@@ -140,13 +142,19 @@ export class RuntimeHost {
     this.#entropy = entropy;
     this.#now = now;
     this.#bleIdentityAvailability = bleIdentityAvailability;
-    this.#resourceCryptoExecutor = resourceCryptoExecutor;
+    this.#cryptoExecutor = cryptoExecutor;
     this.#onRuntimeActivity = onRuntimeActivity;
     if (
-      resourceCryptoExecutor !== undefined &&
+      cryptoExecutor !== undefined &&
       this.#runtime.enableResourceWebCrypto !== undefined
     ) {
       this.#runtime.enableResourceWebCrypto();
+    }
+    if (
+      cryptoExecutor !== undefined &&
+      this.#runtime.enableProtocolWebCrypto !== undefined
+    ) {
+      this.#runtime.enableProtocolWebCrypto();
     }
   }
 
@@ -282,6 +290,7 @@ export class RuntimeHost {
         active.rxBytes = saturatingAdd(active.rxBytes, bytes.length);
       }
       this.#drainResourceOpenJobs();
+      this.#drainProtocolCryptoJobs();
       this.notifyRuntimeActivity();
       return Tag("Accepted");
     } catch (error) {
@@ -291,7 +300,7 @@ export class RuntimeHost {
 
   #drainResourceOpenJobs(): void {
     if (
-      this.#resourceCryptoExecutor === undefined ||
+      this.#cryptoExecutor === undefined ||
       this.#runtime.takeResourceOpenJob === undefined ||
       this.#runtime.completeResourceOpen === undefined ||
       this.#runtime.rejectResourceOpen === undefined ||
@@ -309,13 +318,13 @@ export class RuntimeHost {
   }
 
   async #settleResourceOpen(job: ResourceOpenJob): Promise<void> {
-    const executor = this.#resourceCryptoExecutor;
+    const executor = this.#cryptoExecutor;
     if (executor === undefined) {
       return;
     }
     try {
       const outcome = await executor.open(job);
-      if (this.#resourceCryptoExecutor !== executor) {
+      if (this.#cryptoExecutor !== executor) {
         return;
       }
       await match(outcome, {
@@ -329,7 +338,7 @@ export class RuntimeHost {
               plaintext,
               job.hashPlan.data.salt,
             );
-            if (this.#resourceCryptoExecutor !== executor) {
+            if (this.#cryptoExecutor !== executor) {
               return;
             }
             if (digestOutcome.tag !== "Digested") {
@@ -368,7 +377,7 @@ export class RuntimeHost {
         },
       });
     } catch {
-      if (this.#resourceCryptoExecutor !== executor) {
+      if (this.#cryptoExecutor !== executor) {
         return;
       }
       this.#runtime.retryResourceOpen!({
@@ -381,8 +390,119 @@ export class RuntimeHost {
     this.#drainResourceOpenJobs();
   }
 
-  stopResourceCrypto(): void {
-    this.#resourceCryptoExecutor = undefined;
+  #drainProtocolCryptoJobs(): void {
+    if (
+      this.#cryptoExecutor === undefined ||
+      this.#runtime.takeProtocolCryptoJob === undefined ||
+      this.#runtime.completeProtocolAnnounceValid === undefined ||
+      this.#runtime.completeProtocolAnnounceInvalid === undefined ||
+      this.#runtime.completeProtocolLinkProofValid === undefined ||
+      this.#runtime.completeProtocolLinkProofInvalid === undefined ||
+      this.#runtime.completeProtocolCryptoInline === undefined
+    ) {
+      return;
+    }
+    while (true) {
+      const job = parseProtocolCryptoJob(this.#runtime.takeProtocolCryptoJob());
+      if (job === undefined) {
+        return;
+      }
+      void this.#settleProtocolCrypto(job);
+    }
+  }
+
+  async #settleProtocolCrypto(job: ProtocolCryptoJob): Promise<void> {
+    const executor = this.#cryptoExecutor;
+    if (executor === undefined) {
+      return;
+    }
+    try {
+      await match(job, {
+        AnnounceVerify: async ({ id, publicKey, message, signature }) => {
+          const outcome = await executor.verifyEd25519(publicKey, message, signature);
+          if (this.#cryptoExecutor !== executor) {
+            return;
+          }
+          await match(outcome, {
+            Valid: () => {
+              const entropy = this.#protocolCompletionEntropy();
+              this.#runtime.completeProtocolAnnounceValid!(id, this.#now(), entropy);
+            },
+            Invalid: () => this.#runtime.completeProtocolAnnounceInvalid!(id),
+            Busy: () => this.#completeProtocolCryptoInline(id),
+            Unavailable: () => this.#completeProtocolCryptoInline(id),
+            Failed: () => this.#completeProtocolCryptoInline(id),
+          });
+        },
+        LinkProofVerify: async ({
+          id,
+          publicKey,
+          message,
+          signature,
+          secretScalar,
+          peerPublicKey,
+        }) => {
+          const outcome = await executor.verifyLinkProof(
+            publicKey,
+            message,
+            signature,
+            secretScalar,
+            peerPublicKey,
+          );
+          if (this.#cryptoExecutor !== executor) {
+            return;
+          }
+          await match(outcome, {
+            Verified: ({ sharedSecret }) => {
+              const entropy = this.#protocolCompletionEntropy();
+              this.#runtime.completeProtocolLinkProofValid!(
+                id,
+                sharedSecret,
+                this.#now(),
+                entropy,
+              );
+            },
+            Invalid: () => this.#runtime.completeProtocolLinkProofInvalid!(id),
+            Busy: () => this.#completeProtocolCryptoInline(id),
+            Unavailable: () => this.#completeProtocolCryptoInline(id),
+            Failed: () => this.#completeProtocolCryptoInline(id),
+          });
+        },
+      });
+    } catch {
+      if (this.#cryptoExecutor === executor) {
+        this.#rejectProtocolCrypto(job);
+      }
+    }
+    if (this.#cryptoExecutor !== executor) {
+      return;
+    }
+    this.notifyRuntimeActivity();
+    this.#drainProtocolCryptoJobs();
+  }
+
+  #completeProtocolCryptoInline(id: number): void {
+    const entropy = this.#protocolCompletionEntropy();
+    this.#runtime.completeProtocolCryptoInline!(id, this.#now(), entropy);
+  }
+
+  #protocolCompletionEntropy(): Extract<EntropyOutcome, { readonly tag: "Filled" }>["data"] {
+    const entropy = this.entropy();
+    if (entropy.tag !== "Filled") {
+      throw new TypeError("protocol crypto completion entropy is unavailable");
+    }
+    return entropy.data;
+  }
+
+  #rejectProtocolCrypto(job: ProtocolCryptoJob): void {
+    match(job, {
+      AnnounceVerify: ({ id }) => this.#runtime.completeProtocolAnnounceInvalid!(id),
+      LinkProofVerify: ({ id }) => this.#runtime.completeProtocolLinkProofInvalid!(id),
+    });
+  }
+
+  stopCrypto(): void {
+    this.#cryptoExecutor = undefined;
   }
 
   drainOutbound(): RuntimeOutboundDrainOutcome {

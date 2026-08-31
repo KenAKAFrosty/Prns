@@ -3,6 +3,13 @@ import {
   Tag,
   prnsView,
 } from "/prns-js/dist/browser/index.js";
+import {
+  WebCryptoEd25519Signer,
+  WebCryptoEd25519Verifier,
+  WebCryptoHkdfSha256Deriver,
+  WebCryptoX25519Deriver,
+  verifyPrnsWebCryptoCompatibility,
+} from "/prns-js/dist/browser/protocol_crypto.js";
 
 const REPETITIONS = 1;
 const RESOURCE_REPETITIONS = 3;
@@ -162,12 +169,12 @@ async function run() {
   }
 }
 
-async function prepare(execution, webSocketUrl, target, resourceCrypto) {
+async function prepare(execution, webSocketUrl, target, crypto) {
   const started = performance.now();
   const created = await Prns.create({
     execution: "DedicatedWorker",
     networkExecution: "NetworkWorker",
-    resourceCrypto,
+    crypto,
     wasmModuleUrl: new URL("/prns-js/wasm/prns_wasm.js", location.href),
   });
   const startupMillis = performance.now() - started;
@@ -247,7 +254,7 @@ async function prepareTarget(webSocketUrl, lane) {
   const created = await Prns.create({
     execution: "DedicatedWorker",
     networkExecution: "EngineWorker",
-    resourceCrypto: Tag(lane),
+    crypto: Tag(lane),
     wasmModuleUrl: new URL("/prns-js/wasm/prns_wasm.js", location.href),
   });
   requireTag(created, "Ready", "target startup");
@@ -790,7 +797,8 @@ async function platformCeilings(webSocketUrl) {
   const webSocket = await webSocketRelayCeiling(webSocketUrl);
   const wasmCrypto = await wasmCryptoCeiling();
   const webCrypto = await webCryptoCeiling();
-  return { worker, webSocket, wasmCrypto, webCrypto };
+  const protocolCrypto = await protocolCryptoCeiling();
+  return { worker, webSocket, wasmCrypto, webCrypto, protocolCrypto };
 }
 
 async function webCryptoCeiling() {
@@ -811,6 +819,7 @@ async function webCryptoCeiling() {
   const iv = new Uint8Array(16).fill(0x3c);
   const wasm = await import("/prns-js/wasm/prns_wasm.js");
   await wasm.default();
+  const protocolMatchesWasm = await verifyProtocolCryptoInterop(wasm);
   const vectorPayload = new Uint8Array(4_093).fill(0xa5);
   const vectorCipher = new Uint8Array(await crypto.subtle.encrypt(
     { name: "AES-CBC", iv },
@@ -865,7 +874,159 @@ async function webCryptoCeiling() {
       ),
     });
   }
-  return { tokenMatchesWasm: true, results };
+  return { tokenMatchesWasm: true, protocolMatchesWasm, results };
+}
+
+async function verifyProtocolCryptoInterop(wasm) {
+  const compatibility = await verifyPrnsWebCryptoCompatibility();
+  for (const capability of Object.values(compatibility)) {
+    if (capability.tag !== "Compatible") {
+      throw new Error(`Web Crypto protocol primitive is unavailable: ${capability.data.detail}`);
+    }
+  }
+  const signature = await new WebCryptoEd25519Signer().sign(
+    new Uint8Array(32).fill(0x11),
+    new TextEncoder().encode("sign-this"),
+  );
+  verifyResourcePayload(signature, wasm.profileEd25519Vector(), "Web Crypto Ed25519 vector");
+  const shared = await new WebCryptoX25519Deriver().derive(
+    new Uint8Array(32).fill(0x22),
+    bytesFromHex("7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b14"),
+  );
+  verifyResourcePayload(shared, wasm.profileX25519Vector(), "Web Crypto X25519 vector");
+  const keyMaterial = await new WebCryptoHkdfSha256Deriver().derive({
+    inputKeyMaterial: new Uint8Array(32).fill(0x42),
+    salt: new Uint8Array(16).fill(0x01),
+    info: new TextEncoder().encode("context"),
+    outputBytes: 64,
+  });
+  verifyResourcePayload(
+    keyMaterial,
+    wasm.profileHkdfSha256Vector(),
+    "Web Crypto HKDF-SHA256 vector",
+  );
+  return {
+    ed25519: true,
+    x25519: true,
+    hkdfSha256: true,
+    compatibility,
+  };
+}
+
+function bytesFromHex(value) {
+  return Uint8Array.from(
+    { length: value.length / 2 },
+    (_, index) => Number.parseInt(value.slice(index * 2, index * 2 + 2), 16),
+  );
+}
+
+async function protocolCryptoCeiling() {
+  const wasm = await import("/prns-js/wasm/prns_wasm.js");
+  await wasm.default();
+  const iterations = 512;
+  const ed25519Signer = new WebCryptoEd25519Signer();
+  const ed25519Verifier = new WebCryptoEd25519Verifier();
+  const x25519Deriver = new WebCryptoX25519Deriver();
+  const hkdfSha256Deriver = new WebCryptoHkdfSha256Deriver();
+  const ed25519Public = bytesFromHex(
+    "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+  );
+  const ed25519Signature = wasm.profileEd25519Vector();
+  const message = new TextEncoder().encode("sign-this");
+  const peerPublicKey = bytesFromHex(
+    "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b14",
+  );
+  const operations = [
+    {
+      name: "Ed25519Sign",
+      wasm: () => wasm.profileEd25519Sign(iterations),
+      webCrypto: () => ed25519Signer.sign(new Uint8Array(32).fill(0x11), message),
+    },
+    {
+      name: "Ed25519Verify",
+      wasm: () => wasm.profileEd25519Verify(iterations),
+      webCrypto: async () => {
+        const verification = await ed25519Verifier.verify(
+          ed25519Public,
+          message,
+          ed25519Signature,
+        );
+        if (verification.tag !== "Valid") {
+          throw new Error("Web Crypto Ed25519 performance verification failed");
+        }
+      },
+    },
+    {
+      name: "X25519",
+      wasm: () => wasm.profileX25519(iterations),
+      webCrypto: () => x25519Deriver.derive(
+        new Uint8Array(32).fill(0x22),
+        peerPublicKey,
+      ),
+    },
+    {
+      name: "HkdfSha256",
+      wasm: () => wasm.profileHkdfSha256(iterations),
+      webCrypto: () => hkdfSha256Deriver.derive({
+        inputKeyMaterial: new Uint8Array(32).fill(0x42),
+        salt: new Uint8Array(16).fill(0x01),
+        info: new TextEncoder().encode("context"),
+        outputBytes: 32,
+      }),
+    },
+  ];
+  const results = [];
+  for (const operation of operations) {
+    await operation.webCrypto();
+    operation.wasm();
+    const wasmSamples = [];
+    const webCryptoSamples = [];
+    for (let repetition = 0; repetition < 3; repetition += 1) {
+      if (repetition % 2 === 0) {
+        wasmSamples.push(measureSynchronousOperations(operation.wasm));
+        webCryptoSamples.push(await measureAsynchronousOperations(
+          operation.webCrypto,
+          iterations,
+        ));
+      } else {
+        webCryptoSamples.push(await measureAsynchronousOperations(
+          operation.webCrypto,
+          iterations,
+        ));
+        wasmSamples.push(measureSynchronousOperations(operation.wasm));
+      }
+    }
+    const wasmMillis = median(wasmSamples);
+    const webCryptoMillis = median(webCryptoSamples);
+    results.push({
+      operation: operation.name,
+      iterations,
+      portableWasm: {
+        elapsedMillis: wasmMillis,
+        operationsPerSecond: iterations / (wasmMillis / 1_000),
+      },
+      webCrypto: {
+        elapsedMillis: webCryptoMillis,
+        operationsPerSecond: iterations / (webCryptoMillis / 1_000),
+        speedupOverPortableWasm: wasmMillis / webCryptoMillis,
+      },
+    });
+  }
+  return results;
+}
+
+function measureSynchronousOperations(operation) {
+  const started = performance.now();
+  operation();
+  return performance.now() - started;
+}
+
+async function measureAsynchronousOperations(operation, iterations) {
+  const started = performance.now();
+  for (let iteration = 0; iteration < iterations; iteration += 1) {
+    await operation();
+  }
+  return performance.now() - started;
 }
 
 async function measureWebCryptoThroughput(operation, bytes, iterations) {

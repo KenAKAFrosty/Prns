@@ -5,8 +5,14 @@ import {
   WebCryptoResourceSealer,
 } from "../../dist/browser/resource_crypto.js";
 import {
-  WebCryptoResourceWorkerPool,
-} from "../../dist/browser/resource_crypto_pool.js";
+  WebCryptoWorkerPool,
+} from "../../dist/browser/crypto_pool.js";
+import {
+  WebCryptoEd25519Signer,
+  WebCryptoEd25519Verifier,
+  WebCryptoHkdfSha256Deriver,
+  WebCryptoX25519Deriver,
+} from "../../dist/browser/protocol_crypto.js";
 
 const MEBIBYTE = 1_024 * 1_024;
 const SAMPLE_REPETITIONS = 5;
@@ -32,12 +38,14 @@ self.addEventListener("message", ({ data }) => {
 
 async function run() {
   const inline = new InlineResourceCrypto();
-  const oneWorker = new WebCryptoResourceWorkerPool(1);
-  const twoWorkers = new WebCryptoResourceWorkerPool(2);
+  const oneWorker = new WebCryptoWorkerPool(1);
+  const twoWorkers = new WebCryptoWorkerPool(2);
+  const fourWorkers = new WebCryptoWorkerPool(4);
   try {
-    const [oneReady, twoReady] = await Promise.all([
+    const [oneReady, twoReady, fourReady] = await Promise.all([
       oneWorker.ready(),
       twoWorkers.ready(),
+      fourWorkers.ready(),
     ]);
     if (oneReady.tag !== "Ready" || oneReady.data.workers !== 1) {
       throw new Error("one-worker crypto pool did not start exactly one Worker");
@@ -45,18 +53,24 @@ async function run() {
     if (twoReady.tag !== "Ready" || twoReady.data.workers !== 2) {
       throw new Error("two-worker crypto pool did not start exactly two Workers");
     }
+    if (fourReady.tag !== "Ready" || fourReady.data.workers !== 4) {
+      throw new Error("four-worker crypto pool did not start exactly four Workers");
+    }
+    const protocolCrypto = await exerciseProtocolCrypto(twoWorkers, twoReady.data.compatibility);
+    const protocolPerformance = await measureProtocolCrypto(twoWorkers);
     const boundedAdmission = await exerciseBoundedAdmission(oneWorker);
     const configurations = [
       { name: "Inline", executor: inline },
       { name: "OneWorker", executor: new PoolResourceCrypto(oneWorker) },
       { name: "TwoWorkers", executor: new PoolResourceCrypto(twoWorkers) },
+      { name: "FourWorkers", executor: new PoolResourceCrypto(fourWorkers) },
     ];
     for (const configuration of configurations) {
       await exercise(configuration.executor, 64 * 1_024, 2, 2, 0);
     }
     const results = [];
     for (const scenario of scenarios) {
-      for (const lanes of [1, 2]) {
+      for (const lanes of [1, 2, 4]) {
         const samples = new Map(
           configurations.map(({ name }) => [name, []]),
         );
@@ -118,14 +132,338 @@ async function run() {
       workerReadiness: {
         one: oneReady.data.workers,
         two: twoReady.data.workers,
+        four: fourReady.data.workers,
       },
       boundedAdmission,
+      protocolCrypto,
+      protocolPerformance,
       results,
     };
   } finally {
     oneWorker.close();
     twoWorkers.close();
+    fourWorkers.close();
   }
+}
+
+async function exerciseProtocolCrypto(pool, compatibility) {
+  for (const capability of Object.values(compatibility)) {
+    if (capability.tag !== "Compatible") {
+      throw new Error(`browser protocol crypto is unavailable: ${capability.data.detail}`);
+    }
+  }
+  const message = new TextEncoder().encode("sign-this");
+  const expectedSignature = bytesFromHex(
+    "ee646fb3251af01efbe35f4b03905b3ec2b90ea4acd9a51a46cb795f76575b4a" +
+    "36e2893c356db8b2135417f6001a99ecd81de04dde2f2b3428fd4f8ea46e1107",
+  );
+  const signingSecret = new Uint8Array(32).fill(0x11);
+  const signed = await pool.donateEd25519Sign(signingSecret, message);
+  if (signed.tag !== "Signed") {
+    throw new Error(`Ed25519 sign returned ${signed.tag}`);
+  }
+  requireEqualBytes(signed.data.signature, expectedSignature, "Ed25519 signature");
+  if (signingSecret.byteLength !== 0) {
+    throw new Error("Ed25519 signing secret ownership was not transferred");
+  }
+  const publicKey = bytesFromHex(
+    "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+  );
+  const verified = await pool.donateEd25519Verify(
+    publicKey,
+    new TextEncoder().encode("sign-this"),
+    expectedSignature,
+  );
+  if (verified.tag !== "Valid") {
+    throw new Error(`Ed25519 golden signature returned ${verified.tag}`);
+  }
+  const refused = await pool.donateEd25519Verify(
+    bytesFromHex("d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"),
+    new TextEncoder().encode("sign-thus"),
+    bytesFromHex(
+      "ee646fb3251af01efbe35f4b03905b3ec2b90ea4acd9a51a46cb795f76575b4a" +
+      "36e2893c356db8b2135417f6001a99ecd81de04dde2f2b3428fd4f8ea46e1107",
+    ),
+  );
+  if (refused.tag !== "Invalid") {
+    throw new Error(`Ed25519 altered message returned ${refused.tag}`);
+  }
+  const x25519Secret = new Uint8Array(32).fill(0x22);
+  const derived = await pool.donateX25519Derive(
+    x25519Secret,
+    bytesFromHex("7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b14"),
+  );
+  if (derived.tag !== "Derived") {
+    throw new Error(`X25519 derive returned ${derived.tag}`);
+  }
+  requireEqualBytes(
+    derived.data.sharedSecret,
+    bytesFromHex("1fdc192faa0212a9aae7bb4f41b580227fd5ad3e5d777faae230dfe973f3e805"),
+    "X25519 shared secret",
+  );
+  if (x25519Secret.byteLength !== 0) {
+    throw new Error("X25519 secret ownership was not transferred");
+  }
+  const linkProofSecret = new Uint8Array(32).fill(0x22);
+  const linkProof = await pool.donateLinkProofVerify(
+    bytesFromHex("d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"),
+    new TextEncoder().encode("sign-this"),
+    bytesFromHex(
+      "ee646fb3251af01efbe35f4b03905b3ec2b90ea4acd9a51a46cb795f76575b4a" +
+      "36e2893c356db8b2135417f6001a99ecd81de04dde2f2b3428fd4f8ea46e1107",
+    ),
+    linkProofSecret,
+    bytesFromHex("7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b14"),
+  );
+  if (linkProof.tag !== "Verified") {
+    throw new Error(`link-proof composite returned ${linkProof.tag}`);
+  }
+  requireEqualBytes(
+    linkProof.data.sharedSecret,
+    bytesFromHex("1fdc192faa0212a9aae7bb4f41b580227fd5ad3e5d777faae230dfe973f3e805"),
+    "link-proof shared secret",
+  );
+  if (linkProofSecret.byteLength !== 0) {
+    throw new Error("link-proof secret ownership was not transferred");
+  }
+  const invalidLinkProofSecret = new Uint8Array(32).fill(0x22);
+  const invalidLinkProof = await pool.donateLinkProofVerify(
+    bytesFromHex("d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"),
+    new TextEncoder().encode("sign-thus"),
+    bytesFromHex(
+      "ee646fb3251af01efbe35f4b03905b3ec2b90ea4acd9a51a46cb795f76575b4a" +
+      "36e2893c356db8b2135417f6001a99ecd81de04dde2f2b3428fd4f8ea46e1107",
+    ),
+    invalidLinkProofSecret,
+    bytesFromHex("7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b14"),
+  );
+  if (invalidLinkProof.tag !== "Invalid") {
+    throw new Error(`altered link-proof composite returned ${invalidLinkProof.tag}`);
+  }
+  if (invalidLinkProofSecret.byteLength !== 0) {
+    throw new Error("invalid link-proof secret ownership was not transferred");
+  }
+  const hkdf = await pool.donateHkdfSha256({
+    inputKeyMaterial: new Uint8Array(32).fill(0x42),
+    salt: new Uint8Array(16).fill(0x01),
+    info: new TextEncoder().encode("context"),
+    outputBytes: 64,
+  });
+  if (hkdf.tag !== "Derived") {
+    throw new Error(`HKDF-SHA256 derive returned ${hkdf.tag}`);
+  }
+  requireEqualBytes(
+    hkdf.data.keyMaterial,
+    bytesFromHex(
+      "d3a68f6569700c188c5a7c2bcd22c37e9757d022658f06b59753f7c079dcdb3a" +
+      "82958b17892dbd30978719b5ba66787152ad0a0c7aeb4df49bce91d36c8915dd",
+    ),
+    "HKDF-SHA256 output",
+  );
+  return {
+    compatibility,
+    ed25519Sign: true,
+    ed25519Verify: true,
+    ed25519RejectsAlteredMessage: true,
+    x25519: true,
+    linkProofVerifyThenDerive: true,
+    linkProofRejectsBeforeDerive: true,
+    hkdfSha256: true,
+    donatedSecretOwnership: true,
+  };
+}
+
+async function measureProtocolCrypto(pool) {
+  const configurations = [
+    { name: "Inline", executor: new InlineProtocolCrypto() },
+    { name: "TwoWorkers", executor: new PoolProtocolCrypto(pool) },
+  ];
+  const operations = ["Ed25519Sign", "Ed25519Verify", "X25519", "HkdfSha256"];
+  const operationCount = 128;
+  const results = [];
+  for (const operation of operations) {
+    for (const configuration of configurations) {
+      await exerciseProtocolOperation(configuration.executor, operation, 4, 2);
+    }
+    for (const lanes of [1, 2]) {
+      const samples = new Map(configurations.map(({ name }) => [name, []]));
+      for (let repetition = 0; repetition < SAMPLE_REPETITIONS; repetition += 1) {
+        let expectedChecksum;
+        for (let offset = 0; offset < configurations.length; offset += 1) {
+          const configuration = configurations[(offset + repetition) % configurations.length];
+          const measured = await measureProtocolConfiguration(
+            configuration.executor,
+            operation,
+            operationCount,
+            lanes,
+          );
+          if (expectedChecksum === undefined) {
+            expectedChecksum = measured.checksum;
+          } else if (expectedChecksum !== measured.checksum) {
+            throw new Error(`${operation} configurations produced different checksums`);
+          }
+          samples.get(configuration.name).push(measured);
+        }
+      }
+      const inlineMillis = median(
+        samples.get("Inline").map(({ elapsedMillis }) => elapsedMillis),
+      );
+      for (const configuration of configurations) {
+        const configurationSamples = samples.get(configuration.name);
+        const elapsedMillis = median(
+          configurationSamples.map((sample) => sample.elapsedMillis),
+        );
+        results.push({
+          operation,
+          configuration: configuration.name,
+          operations: operationCount,
+          lanes,
+          elapsedMillis,
+          operationsPerSecond: operationCount / (elapsedMillis / 1_000),
+          speedupOverInline: inlineMillis / elapsedMillis,
+          medianCoordinatorP95Millis: median(
+            configurationSamples.map((sample) => sample.coordinatorLatency.p95Millis),
+          ),
+          worstCoordinatorLatencyMillis: Math.max(
+            ...configurationSamples.map((sample) => sample.coordinatorLatency.maximumMillis),
+          ),
+          checksum: configurationSamples[0].checksum,
+        });
+      }
+    }
+  }
+  return results;
+}
+
+async function measureProtocolConfiguration(executor, operation, operations, lanes) {
+  if (latencyProbe === undefined) {
+    throw new Error("coordinator latency probe was not initialized");
+  }
+  await yieldTask();
+  await latencyProbe.start();
+  const started = performance.now();
+  const checksum = await exerciseProtocolOperation(executor, operation, operations, lanes);
+  const elapsedMillis = performance.now() - started;
+  const coordinatorLatency = await latencyProbe.stop();
+  return { elapsedMillis, coordinatorLatency, checksum };
+}
+
+async function exerciseProtocolOperation(executor, operation, operations, lanes) {
+  const work = Array.from({ length: lanes }, () => []);
+  for (let index = 0; index < operations; index += 1) {
+    work[index % lanes].push(index);
+  }
+  const checksums = await Promise.all(work.map(async (lane) => {
+    let checksum = 0;
+    for (const index of lane) {
+      checksum = (checksum + await executor.perform(operation, index)) >>> 0;
+    }
+    return checksum;
+  }));
+  return checksums.reduce((sum, checksum) => (sum + checksum) >>> 0, 0);
+}
+
+class InlineProtocolCrypto {
+  #signer = new WebCryptoEd25519Signer();
+  #verifier = new WebCryptoEd25519Verifier();
+  #x25519 = new WebCryptoX25519Deriver();
+  #hkdf = new WebCryptoHkdfSha256Deriver();
+
+  async perform(operation) {
+    if (operation === "Ed25519Sign") {
+      const signature = await this.#signer.sign(
+        new Uint8Array(32).fill(0x11),
+        new TextEncoder().encode("sign-this"),
+      );
+      return signature[0] + signature[signature.length - 1];
+    }
+    if (operation === "Ed25519Verify") {
+      const verification = await this.#verifier.verify(
+        bytesFromHex("d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"),
+        new TextEncoder().encode("sign-this"),
+        protocolSignature(),
+      );
+      if (verification.tag !== "Valid") {
+        throw new Error(`inline Ed25519 verification returned ${verification.tag}`);
+      }
+      return 1;
+    }
+    if (operation === "X25519") {
+      const shared = await this.#x25519.derive(
+        new Uint8Array(32).fill(0x22),
+        bytesFromHex("7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b14"),
+      );
+      return shared[0] + shared[shared.length - 1];
+    }
+    const keyMaterial = await this.#hkdf.derive(protocolHkdfJob());
+    return keyMaterial[0] + keyMaterial[keyMaterial.length - 1];
+  }
+}
+
+class PoolProtocolCrypto {
+  #pool;
+
+  constructor(pool) {
+    this.#pool = pool;
+  }
+
+  async perform(operation) {
+    if (operation === "Ed25519Sign") {
+      const settlement = await this.#pool.donateEd25519Sign(
+        new Uint8Array(32).fill(0x11),
+        new TextEncoder().encode("sign-this"),
+      );
+      if (settlement.tag !== "Signed") {
+        throw new Error(`pooled Ed25519 sign returned ${settlement.tag}`);
+      }
+      const signature = settlement.data.signature;
+      return signature[0] + signature[signature.length - 1];
+    }
+    if (operation === "Ed25519Verify") {
+      const settlement = await this.#pool.donateEd25519Verify(
+        bytesFromHex("d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"),
+        new TextEncoder().encode("sign-this"),
+        protocolSignature(),
+      );
+      if (settlement.tag !== "Valid") {
+        throw new Error(`pooled Ed25519 verification returned ${settlement.tag}`);
+      }
+      return 1;
+    }
+    if (operation === "X25519") {
+      const settlement = await this.#pool.donateX25519Derive(
+        new Uint8Array(32).fill(0x22),
+        bytesFromHex("7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b14"),
+      );
+      if (settlement.tag !== "Derived") {
+        throw new Error(`pooled X25519 derive returned ${settlement.tag}`);
+      }
+      const shared = settlement.data.sharedSecret;
+      return shared[0] + shared[shared.length - 1];
+    }
+    const settlement = await this.#pool.donateHkdfSha256(protocolHkdfJob());
+    if (settlement.tag !== "Derived") {
+      throw new Error(`pooled HKDF-SHA256 returned ${settlement.tag}`);
+    }
+    const keyMaterial = settlement.data.keyMaterial;
+    return keyMaterial[0] + keyMaterial[keyMaterial.length - 1];
+  }
+}
+
+function protocolSignature() {
+  return bytesFromHex(
+    "ee646fb3251af01efbe35f4b03905b3ec2b90ea4acd9a51a46cb795f76575b4a" +
+    "36e2893c356db8b2135417f6001a99ecd81de04dde2f2b3428fd4f8ea46e1107",
+  );
+}
+
+function protocolHkdfJob() {
+  return {
+    inputKeyMaterial: new Uint8Array(32).fill(0x42),
+    salt: new Uint8Array(16).fill(0x01),
+    info: new TextEncoder().encode("context"),
+    outputBytes: 32,
+  };
 }
 
 async function exerciseBoundedAdmission(pool) {
@@ -300,6 +638,22 @@ function openedChecksum(opened, digests, transaction) {
     digests.hash[0] +
     digests.proof[0]
   ) >>> 0;
+}
+
+function bytesFromHex(value) {
+  return Uint8Array.from(
+    { length: value.length / 2 },
+    (_, index) => Number.parseInt(value.slice(index * 2, index * 2 + 2), 16),
+  );
+}
+
+function requireEqualBytes(actual, expected, name) {
+  if (
+    actual.length !== expected.length ||
+    !actual.every((byte, index) => byte === expected[index])
+  ) {
+    throw new Error(`${name} did not match its Prns vector`);
+  }
 }
 
 function median(values) {

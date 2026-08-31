@@ -11,9 +11,9 @@ import {
   resourceDigestExecution,
 } from "../dist/browser/resource_crypto.js";
 import {
-  BrowserResourceCryptoExecutor,
-  WebCryptoResourceWorkerPool,
-} from "../dist/browser/resource_crypto_pool.js";
+  BrowserCryptoExecutor,
+  WebCryptoWorkerPool,
+} from "../dist/browser/crypto_pool.js";
 
 function sealJob() {
   return {
@@ -114,7 +114,7 @@ test("resource digest execution keeps small isolated work local and offloads ove
 });
 
 test("resource crypto executor preserves behavior when Workers are unavailable", async () => {
-  const executor = new BrowserResourceCryptoExecutor(2);
+  const executor = new BrowserCryptoExecutor(2);
   const job = sealJob();
   const sealed = await executor.seal(job);
   assert.equal(sealed.tag, "Sealed");
@@ -133,14 +133,14 @@ test("resource crypto executor preserves behavior when Workers are unavailable",
   executor.close();
   assert.deepEqual(await executor.seal(job), {
     tag: "Failed",
-    data: { detail: "resource crypto executor is closed" },
+    data: { detail: "crypto executor is closed" },
   });
 });
 
 test("resource crypto pool rejects invalid worker counts", async () => {
-  assert.throws(() => new WebCryptoResourceWorkerPool(0), /crypto workers must be between/);
-  assert.throws(() => new WebCryptoResourceWorkerPool(17), /crypto workers must be between/);
-  const unavailable = new WebCryptoResourceWorkerPool(1);
+  assert.throws(() => new WebCryptoWorkerPool(0), /crypto workers must be between/);
+  assert.throws(() => new WebCryptoWorkerPool(17), /crypto workers must be between/);
+  const unavailable = new WebCryptoWorkerPool(1);
   assert.deepEqual(await unavailable.ready(), { tag: "Unavailable", data: undefined });
   unavailable.close();
 });

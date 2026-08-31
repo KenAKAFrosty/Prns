@@ -369,7 +369,7 @@ impl<'a> Announce<'a> {
     }
 
     /// Mirrors RNS `Destination.announce`'s `signed_data`.
-    fn write_signed_material(&self, buf: &mut [u8]) -> Result<usize, BufferTooShort> {
+    pub fn write_signed_material(&self, buf: &mut [u8]) -> Result<usize, BufferTooShort> {
         let total = TRUNCATED_HASH_BYTE_LEN + self.wire_bytes() - SIGNATURE_BYTE_LEN;
         if buf.len() < total {
             return Err(BufferTooShort);

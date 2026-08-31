@@ -16,8 +16,8 @@ pub use forward::PacketToForward;
 pub use links::ForwardedLinkRequestBody;
 pub(crate) use outcome::{AcceptedAnnounceEffect, IngestEffects};
 pub use outcome::{
-    DeferredCrypto, IgnoreReason, IngestPacketOutcome, LinkRttOwed, ProtocolViolationKind,
-    NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS,
+    DeferredCrypto, DeferredCryptoKind, DeferredCryptoSelection, IgnoreReason, IngestPacketOutcome,
+    LinkRttOwed, ProtocolViolationKind, NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS,
 };
 pub(crate) use remote_control_pairing::{
     IngestRemoteControlPairingAvailability, RemoteControlPairingAvailabilityArrival,

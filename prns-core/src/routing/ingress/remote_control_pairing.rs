@@ -1,6 +1,9 @@
 use super::announce::DirectAnnounceIngest;
 use super::classification::DataPacket;
-use super::outcome::{DeferredCrypto, IgnoreReason, IngestEffects, IngestPacketOutcome};
+use super::outcome::{
+    DeferredCrypto, DeferredCryptoKind, DeferredCryptoSelection, IgnoreReason, IngestEffects,
+    IngestPacketOutcome,
+};
 use crate::engine::{EngineState, InstantMillis};
 use crate::interfaces::{AttachedInterfaces, InterfaceId};
 use crate::remote_control::{
@@ -34,6 +37,7 @@ impl<S: StorageLayout> EngineState<S> {
         interfaces: AttachedInterfaces<'_>,
         on_removed: &mut impl FnMut(RemovedRoute),
         deferred: Option<&mut DeferredCrypto>,
+        selection: DeferredCryptoSelection,
         effects: &mut IngestEffects<'p>,
     ) -> IngestPacketOutcome<'p> {
         let RemoteControlPairingAvailabilityArrival {
@@ -60,7 +64,9 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored(IgnoreReason::UnhandledContext);
         }
 
-        if let Some(deferred) = deferred {
+        if let Some(deferred) = deferred.filter(|_| {
+            selection.includes(DeferredCryptoKind::RemoteControlPairingAvailabilityVerify)
+        }) {
             if let Err(error) =
                 RemoteControlPairingAvailability::parse_without_signature_verification(data.payload)
             {

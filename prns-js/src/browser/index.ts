@@ -150,8 +150,13 @@ import {
   parseResourceSealBegin,
   resourceDigestExecution,
 } from "./resource_crypto.js";
-import type { ResourceCryptoExecution, ResourceSealJob } from "./resource_crypto.js";
-import { BrowserResourceCryptoExecutor } from "./resource_crypto_pool.js";
+import type {
+  ResourceCryptoExecution,
+  ResourceSealJob,
+} from "./resource_crypto.js";
+import type { CryptoExecution } from "./crypto_execution.js";
+import { BrowserCryptoExecutor } from "./crypto_pool.js";
+export type { CryptoExecution } from "./crypto_execution.js";
 export type { ResourceCryptoExecution } from "./resource_crypto.js";
 import { parseCommandSettlementBatch } from "./command_settlement_batch.js";
 import { describeInterfaceSessionFailure } from "./session.js";
@@ -546,11 +551,20 @@ type PendingCommand =
   | Tag<"HostCommand", { readonly command: HostCommand }>
   | Tag<"ResourceSegment">;
 
-const WEB_CRYPTO_RESOURCE_WORKERS = 2;
+const WEB_CRYPTO_WORKERS = 2;
 
-type CommonPrnsOptions = {
+type CryptoExecutionOptions =
+  | {
+      crypto?: CryptoExecution;
+      resourceCrypto?: never;
+    }
+  | {
+      crypto?: never;
+      resourceCrypto?: ResourceCryptoExecution;
+    };
+
+type CommonPrnsOptions = CryptoExecutionOptions & {
   resourceCompressionModuleUrl?: URL;
-  resourceCrypto?: ResourceCryptoExecution;
   identityStore?: IdentityStore;
   bleIdentityStore?: StableIdentityStore;
   persistenceStore?: BrowserPersistenceStore;
@@ -587,7 +601,7 @@ export class Prns {
   #startedAtMillis: number;
   #limits: HostLimits;
   #resourceCompressionModuleUrl: string;
-  #resourceCryptoExecutor: BrowserResourceCryptoExecutor | undefined;
+  #cryptoExecutor: BrowserCryptoExecutor | undefined;
   #resourceSealTurns = new Map<string, Promise<void>>();
   #events: BoundedAsyncLane<PrnsApplicationEvent>;
   #diagnostics: BoundedAsyncLane<PrnsDiagnosticEvent>;
@@ -626,7 +640,7 @@ export class Prns {
     bleIdentityAvailability: BleIdentityAvailability,
     limits: HostLimits,
     resourceCompressionModuleUrl: URL,
-    resourceCrypto: ResourceCryptoExecution,
+    crypto: CryptoExecution,
     persistenceStore: BrowserPersistenceStore | undefined,
     persistenceRestored: boolean,
     restorationReport: BrowserPersistenceRestoreReport | undefined,
@@ -641,9 +655,9 @@ export class Prns {
     this.#limits = limits;
     this.#resourceCompressionModuleUrl =
       resourceCompressionModuleUrl.href;
-    this.#resourceCryptoExecutor = match(resourceCrypto, {
+    this.#cryptoExecutor = match(crypto, {
       PortableWasm: () => undefined,
-      WebCrypto: () => new BrowserResourceCryptoExecutor(WEB_CRYPTO_RESOURCE_WORKERS),
+      WebCrypto: () => new BrowserCryptoExecutor(WEB_CRYPTO_WORKERS),
     });
     this.#persistenceStore = persistenceStore;
     this.#persistenceRestored = persistenceRestored;
@@ -672,7 +686,7 @@ export class Prns {
       entropy,
       now,
       bleIdentityAvailability,
-      this.#resourceCryptoExecutor,
+      this.#cryptoExecutor,
       () => {
         this.#pumpEvents();
         this.#scheduleProjectionRefresh();
@@ -865,7 +879,7 @@ export class Prns {
           limits,
           options.resourceCompressionModuleUrl ??
             bundledWasmModuleUrl(),
-          options.resourceCrypto ?? Tag("PortableWasm"),
+          options.crypto ?? options.resourceCrypto ?? Tag("PortableWasm"),
           persistenceStore,
           persistedState !== undefined,
           restorationReport,
@@ -1430,9 +1444,9 @@ export class Prns {
     }
     this.#pendingCommands.clear();
     this.#responseParts.clear();
-    this.#host.stopResourceCrypto();
-    this.#resourceCryptoExecutor?.close();
-    this.#resourceCryptoExecutor = undefined;
+    this.#host.stopCrypto();
+    this.#cryptoExecutor?.close();
+    this.#cryptoExecutor = undefined;
     const sessions = [...this.#attachedInterfaces.values()];
     for (const reassembler of this.#pageBluetoothReassemblers.values()) {
       reassembler.release?.();
@@ -1621,7 +1635,7 @@ export class Prns {
     input: RuntimeResourceSegmentIssueInput,
   ): Promise<CommandSettlement> {
     if (
-      this.#resourceCryptoExecutor !== undefined &&
+      this.#cryptoExecutor !== undefined &&
       this.#runtime.sendResourceSegmentWebCrypto !== undefined &&
       this.#runtime.completeResourceSegmentSeal !== undefined &&
       this.#runtime.retryResourceSegmentSeal !== undefined
@@ -1683,14 +1697,14 @@ export class Prns {
       });
       this.#host.notifyRuntimeActivity();
       if (begun.tag === "Seal") {
-        const executor = this.#resourceCryptoExecutor;
+        const executor = this.#cryptoExecutor;
         try {
           if (executor === undefined) {
             throw new TypeError("resource crypto executor is unavailable");
           }
           const sealedOutcome = await executor.seal(begun.data);
           if (
-            this.#resourceCryptoExecutor !== executor ||
+            this.#cryptoExecutor !== executor ||
             this.#lifecycle.tag !== "Running"
           ) {
             return settlement;
@@ -1716,7 +1730,7 @@ export class Prns {
               const salt = begun.data.salts.subarray(offset, offset + 4);
               const digestOutcome = await executor.digest(plaintext, salt);
               if (
-                this.#resourceCryptoExecutor !== executor ||
+                this.#cryptoExecutor !== executor ||
                 this.#lifecycle.tag !== "Running"
               ) {
                 return settlement;
@@ -1766,7 +1780,7 @@ export class Prns {
           }
         } catch {
           if (
-            this.#resourceCryptoExecutor === executor &&
+            this.#cryptoExecutor === executor &&
             this.#lifecycle.tag === "Running"
           ) {
             this.#runtime.retryResourceSegmentSeal!({

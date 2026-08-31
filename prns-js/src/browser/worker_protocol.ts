@@ -48,7 +48,7 @@ import type {
   UsbAutoRuntimeHost,
 } from "./usb_auto/runtime.js";
 import type { BleIdentity, IdentitySecretKey } from "./values.js";
-import type { ResourceCryptoExecution } from "./resource_crypto.js";
+import type { CryptoExecution } from "./crypto_execution.js";
 import type {
   WebSocketRuntimeRegistration,
   WebSocketConnectOptions,
@@ -67,7 +67,7 @@ export type WorkerInitialization = {
   readonly persistenceEnabled: boolean;
   readonly limits: PrnsLimits;
   readonly resourceCompressionModuleUrl?: string;
-  readonly resourceCrypto: ResourceCryptoExecution;
+  readonly crypto: CryptoExecution;
   readonly wasmModuleUrl?: string;
   readonly autoWifiSelectionSeed?: Uint8Array;
   readonly networkExecution: "EngineWorker" | "NetworkWorker";

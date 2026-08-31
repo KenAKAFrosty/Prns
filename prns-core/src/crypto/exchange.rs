@@ -28,9 +28,19 @@ impl X25519SecretKey {
     pub(crate) fn secret_bytes(&self) -> &[u8; 32] {
         &self.0
     }
+
+    pub fn with_scalar_bytes<R>(&self, use_bytes: impl FnOnce(&[u8; 32]) -> R) -> R {
+        use_bytes(&self.0)
+    }
 }
 
 impl X25519SharedSecret {
+    pub const LEN: usize = 32;
+
+    pub const fn from_external_diffie_hellman(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
     pub const fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }

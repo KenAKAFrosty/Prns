@@ -85,6 +85,33 @@ pub enum DeferredCrypto {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum DeferredCryptoKind {
+    Decrypt,
+    RatchetDecrypt,
+    LinkProofVerify,
+    LinkProofSign,
+    AnnounceVerify,
+    RemoteControlPairingAvailabilityVerify,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeferredCryptoSelection(u64);
+
+impl DeferredCryptoSelection {
+    pub const NONE: Self = Self(0);
+    pub const ALL: Self = Self(u64::MAX);
+
+    pub const fn including(self, kind: DeferredCryptoKind) -> Self {
+        Self(self.0 | 1 << kind as u8)
+    }
+
+    pub(crate) const fn includes(self, kind: DeferredCryptoKind) -> bool {
+        self.0 & (1 << kind as u8) != 0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkRttOwed {
     pub link_id: LinkId,
     pub received_hops: u8,
@@ -416,5 +443,18 @@ mod tests {
             reason: LinkClosedReason::Timeout,
         };
         assert_eq!(ProtocolViolationKind::of_outcome(&timeout), None);
+    }
+
+    #[test]
+    fn deferred_crypto_selection_names_each_admitted_operation() {
+        let selection = DeferredCryptoSelection::NONE
+            .including(DeferredCryptoKind::AnnounceVerify)
+            .including(DeferredCryptoKind::LinkProofVerify);
+        assert!(selection.includes(DeferredCryptoKind::AnnounceVerify));
+        assert!(selection.includes(DeferredCryptoKind::LinkProofVerify));
+        assert!(!selection.includes(DeferredCryptoKind::Decrypt));
+        assert!(!selection.includes(DeferredCryptoKind::RatchetDecrypt));
+        assert!(!selection.includes(DeferredCryptoKind::LinkProofSign));
+        assert!(!selection.includes(DeferredCryptoKind::RemoteControlPairingAvailabilityVerify,));
     }
 }

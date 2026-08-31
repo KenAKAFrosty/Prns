@@ -405,7 +405,7 @@ async function startEngine(
       bleIdentityStore,
       ...(persistenceStore === undefined ? {} : { persistenceStore }),
       limits: initialization.limits,
-      resourceCrypto: initialization.resourceCrypto,
+      crypto: initialization.crypto,
       ...(initialization.resourceCompressionModuleUrl === undefined
         ? {}
         : {

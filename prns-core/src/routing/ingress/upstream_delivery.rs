@@ -1,5 +1,5 @@
 use super::classification::DataPacket;
-use super::outcome::DeferredCrypto;
+use super::outcome::{DeferredCrypto, DeferredCryptoKind, DeferredCryptoSelection};
 use crate::crypto::ratchets::RatchetPolicy;
 use crate::crypto::{sealed_len, token_open_in_place, X25519PublicKey, X25519SecretKey};
 use crate::engine::{EngineState, InstantMillis, MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN};
@@ -65,6 +65,7 @@ impl<S: StorageLayout> EngineState<S> {
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
         deferred: Option<&mut DeferredCrypto>,
+        selection: DeferredCryptoSelection,
     ) -> UpstreamDeliveryOutcome<'p> {
         let destination = DestinationHash::from_address(data.header.address);
         match data.header.destination_type {
@@ -104,10 +105,14 @@ impl<S: StorageLayout> EngineState<S> {
 
                 let ratchet_secrets = self.self_ratchets.secrets_newest_first(&destination);
 
-                if let Some(deferred) = deferred {
+                if let Some(deferred) = deferred.filter(|_| {
+                    selection.includes(DeferredCryptoKind::Decrypt)
+                        || selection.includes(DeferredCryptoKind::RatchetDecrypt)
+                }) {
                     if data.payload.len() > ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN {
                         if ratchet_secrets.is_empty()
                             && identity_key_fallback == IdentityKeyFallback::Permitted
+                            && selection.includes(DeferredCryptoKind::Decrypt)
                         {
                             let (ephemeral, token_bytes) =
                                 data.payload.split_at(ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN);
@@ -132,6 +137,7 @@ impl<S: StorageLayout> EngineState<S> {
                             }
                         } else if !ratchet_secrets.is_empty()
                             && ratchet_secrets.len() <= MAX_POOLED_RATCHETS
+                            && selection.includes(DeferredCryptoKind::RatchetDecrypt)
                         {
                             let mut secrets = HeaplessVec::new();
                             let mut token = HeaplessVec::new();
