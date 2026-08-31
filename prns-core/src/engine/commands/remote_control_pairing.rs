@@ -1,6 +1,5 @@
 use crate::identity::held::HoldIdentityError;
 use crate::remote_control::{
-    ApproveRemoteControlTargetPairingOutcome, RejectRemoteControlTargetPairingOutcome,
     RemoteControlControllerGrant, RemoteControlPairingAttemptId,
     RemoteControlPairingAttemptTimeout, RemoteControlPairingAvailabilityWriteError,
     RemoteControlPairingCompletionSigningError, RemoteControlPairingEndpoint,
@@ -184,6 +183,7 @@ pub enum RemoteControlTargetPairingApproval {
 pub enum ApproveRemoteControlTargetPairingFailure {
     Expired {
         expired: RemoteControlTargetPairingAborted,
+        retired_link: LinkId,
     },
     NoActiveAttempt,
     AttemptMismatch {
@@ -201,47 +201,8 @@ pub enum ApproveRemoteControlTargetPairingFailure {
     },
     CompletionRetentionExpired {
         attempt_id: RemoteControlPairingAttemptId,
+        retired_link: LinkId,
     },
-}
-
-impl RemoteControlTargetPairingApproval {
-    pub(crate) const fn from_transition(
-        outcome: ApproveRemoteControlTargetPairingOutcome,
-    ) -> Result<Self, ApproveRemoteControlTargetPairingFailure> {
-        match outcome {
-            ApproveRemoteControlTargetPairingOutcome::AwaitingControllerCommit { attempt_id } => {
-                Ok(Self::AwaitingControllerCommit { attempt_id })
-            }
-            ApproveRemoteControlTargetPairingOutcome::AuthorizationOwed { attempt_id, grant } => {
-                Ok(Self::AuthorizationOwed { attempt_id, grant })
-            }
-            ApproveRemoteControlTargetPairingOutcome::Expired { expired } => {
-                Err(ApproveRemoteControlTargetPairingFailure::Expired { expired })
-            }
-            ApproveRemoteControlTargetPairingOutcome::NoActiveAttempt => {
-                Err(ApproveRemoteControlTargetPairingFailure::NoActiveAttempt)
-            }
-            ApproveRemoteControlTargetPairingOutcome::AttemptMismatch { requested, active } => {
-                Err(ApproveRemoteControlTargetPairingFailure::AttemptMismatch { requested, active })
-            }
-            ApproveRemoteControlTargetPairingOutcome::OfferPendingDispatch { attempt_id } => {
-                Err(ApproveRemoteControlTargetPairingFailure::OfferPendingDispatch { attempt_id })
-            }
-            ApproveRemoteControlTargetPairingOutcome::AlreadyApproved { attempt_id } => {
-                Err(ApproveRemoteControlTargetPairingFailure::AlreadyApproved { attempt_id })
-            }
-            ApproveRemoteControlTargetPairingOutcome::FinalizationInProgress { attempt_id } => {
-                Err(ApproveRemoteControlTargetPairingFailure::FinalizationInProgress { attempt_id })
-            }
-            ApproveRemoteControlTargetPairingOutcome::CompletionRetentionExpired { attempt_id } => {
-                Err(
-                    ApproveRemoteControlTargetPairingFailure::CompletionRetentionExpired {
-                        attempt_id,
-                    },
-                )
-            }
-        }
-    }
 }
 
 impl Settleable for ApproveRemoteControlTargetPairing {
@@ -295,12 +256,14 @@ pub struct RejectRemoteControlTargetPairing {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoteControlTargetPairingRejection {
     pub aborted: RemoteControlTargetPairingAborted,
+    pub retired_link: LinkId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RejectRemoteControlTargetPairingFailure {
     Expired {
         expired: RemoteControlTargetPairingAborted,
+        retired_link: LinkId,
     },
     NoActiveAttempt,
     AttemptMismatch {
@@ -318,42 +281,8 @@ pub enum RejectRemoteControlTargetPairingFailure {
     },
     CompletionRetentionExpired {
         attempt_id: RemoteControlPairingAttemptId,
+        retired_link: LinkId,
     },
-}
-
-impl RemoteControlTargetPairingRejection {
-    pub(crate) const fn from_transition(
-        outcome: RejectRemoteControlTargetPairingOutcome,
-    ) -> Result<Self, RejectRemoteControlTargetPairingFailure> {
-        match outcome {
-            RejectRemoteControlTargetPairingOutcome::Rejected { aborted } => Ok(Self { aborted }),
-            RejectRemoteControlTargetPairingOutcome::Expired { expired } => {
-                Err(RejectRemoteControlTargetPairingFailure::Expired { expired })
-            }
-            RejectRemoteControlTargetPairingOutcome::NoActiveAttempt => {
-                Err(RejectRemoteControlTargetPairingFailure::NoActiveAttempt)
-            }
-            RejectRemoteControlTargetPairingOutcome::AttemptMismatch { requested, active } => {
-                Err(RejectRemoteControlTargetPairingFailure::AttemptMismatch { requested, active })
-            }
-            RejectRemoteControlTargetPairingOutcome::OfferPendingDispatch { attempt_id } => {
-                Err(RejectRemoteControlTargetPairingFailure::OfferPendingDispatch { attempt_id })
-            }
-            RejectRemoteControlTargetPairingOutcome::AlreadyApproved { attempt_id } => {
-                Err(RejectRemoteControlTargetPairingFailure::AlreadyApproved { attempt_id })
-            }
-            RejectRemoteControlTargetPairingOutcome::FinalizationInProgress { attempt_id } => {
-                Err(RejectRemoteControlTargetPairingFailure::FinalizationInProgress { attempt_id })
-            }
-            RejectRemoteControlTargetPairingOutcome::CompletionRetentionExpired { attempt_id } => {
-                Err(
-                    RejectRemoteControlTargetPairingFailure::CompletionRetentionExpired {
-                        attempt_id,
-                    },
-                )
-            }
-        }
-    }
 }
 
 impl Settleable for RejectRemoteControlTargetPairing {
@@ -445,6 +374,7 @@ pub enum SettleRemoteControlTargetPairingAuthorizationFailure {
     },
     CompletionRetentionExpired {
         attempt_id: RemoteControlPairingAttemptId,
+        retired_link: LinkId,
     },
     CompletionDispatchFailed {
         attempt_id: RemoteControlPairingAttemptId,

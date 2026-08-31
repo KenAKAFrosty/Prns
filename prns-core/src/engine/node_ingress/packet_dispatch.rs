@@ -480,6 +480,10 @@ impl<S: StorageLayout> EngineState<S> {
                     RemoteControlPairingRequestIngressOutcome::Pairing(_pairing_outcome) => {
                         wake_schedule_changes.remote_control_pairing =
                             self.remote_control_pairing_wake();
+                        wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+                        wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
+                        wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                        wake_schedule_changes.channel_timeouts = self.channel_timeouts_wake();
                     }
                     RemoteControlPairingRequestIngressOutcome::ForwardToApplication => {
                         sink(EngineReaction::Journaled(Journaled::RequestReceived {

@@ -916,7 +916,12 @@ fn persisted_authorization_retains_one_exact_replayable_completion_until_its_dea
     );
     assert_eq!(
         state.expire(ATTEMPT_EXPIRES_AT),
-        ExpireRemoteControlTargetPairingOutcome::CompletionRetentionExpired { attempt_id },
+        ExpireRemoteControlTargetPairingOutcome::CompletionRetentionExpired {
+            expired: RemoteControlTargetPairingCompletionRetentionExpired::new(
+                attempt_id,
+                fixture.context(),
+            ),
+        },
     );
     assert_eq!(state.view(), RemoteControlTargetPairingView::Idle);
 }
