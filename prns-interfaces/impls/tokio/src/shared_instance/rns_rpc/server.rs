@@ -454,12 +454,8 @@ where
         &blackholes,
         blackhole_source,
         Some(
-            RnsTransportStatus::new(
-                transport_identity,
-                network_identity,
-                started_at.elapsed(),
-            )
-            .with_probe_responder(probe_responder),
+            RnsTransportStatus::new(transport_identity, network_identity, started_at.elapsed())
+                .with_probe_responder(probe_responder),
         ),
     )
     .await
