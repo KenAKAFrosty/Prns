@@ -1,4 +1,5 @@
 use crate::engine::{EngineReaction, EngineState, Journaled};
+use crate::interfaces::AttachedInterfaces;
 use crate::remote_control::{
     FailRemoteControlControllerPairingRequestOutcome,
     ReceiveRemoteControlControllerPairingCompletedOutcome,
@@ -61,36 +62,60 @@ pub enum AdmitRemoteControlControllerPairingResponseOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteControlControllerPairingResponseEffect {
     Advanced,
+    Expired { retired_link: LinkId },
     NotAdvanced(FailRemoteControlControllerPairingRequestOutcome),
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    pub(crate) fn remote_control_controller_pairing_response_effect(
+    pub(crate) fn admit_remote_control_controller_pairing_response_into<F>(
         &mut self,
-        link_id: LinkId,
-        admission: AdmitRemoteControlControllerPairingResponseOutcome,
-    ) -> RemoteControlControllerPairingResponseEffect {
-        match admission {
+        arrival: RemoteControlControllerPairingResponseArrival<'_>,
+        received_at: InstantMillis,
+        interfaces: AttachedInterfaces<'_>,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> (
+        AdmitRemoteControlControllerPairingResponseOutcome,
+        RemoteControlControllerPairingResponseEffect,
+    )
+    where
+        F: FnMut(&mut [u8]),
+    {
+        let link_id = arrival.link_id();
+        let admission =
+            self.admit_remote_control_controller_pairing_response(arrival, received_at, sink);
+        let effect = match admission {
             AdmitRemoteControlControllerPairingResponseOutcome::Offer(
                 ReceiveRemoteControlControllerPairingOfferOutcome::ConfirmationRequired { .. },
             )
             | AdmitRemoteControlControllerPairingResponseOutcome::Completed(
                 ReceiveRemoteControlControllerPairingCompletedOutcome::PersistenceOwed { .. },
             ) => RemoteControlControllerPairingResponseEffect::Advanced,
+            AdmitRemoteControlControllerPairingResponseOutcome::Offer(
+                ReceiveRemoteControlControllerPairingOfferOutcome::Expired { expired },
+            )
+            | AdmitRemoteControlControllerPairingResponseOutcome::Completed(
+                ReceiveRemoteControlControllerPairingCompletedOutcome::Expired { expired },
+            ) => RemoteControlControllerPairingResponseEffect::Expired {
+                retired_link: self.retire_remote_control_pairing_exchange_link(
+                    expired.context(),
+                    interfaces,
+                    fill_entropy,
+                    sink,
+                ),
+            },
             AdmitRemoteControlControllerPairingResponseOutcome::NoActivePairing
             | AdmitRemoteControlControllerPairingResponseOutcome::UnrelatedLink { .. }
             | AdmitRemoteControlControllerPairingResponseOutcome::MalformedEnvelope(_)
             | AdmitRemoteControlControllerPairingResponseOutcome::MalformedResponse(_)
             | AdmitRemoteControlControllerPairingResponseOutcome::Offer(
-                ReceiveRemoteControlControllerPairingOfferOutcome::Expired { .. }
-                | ReceiveRemoteControlControllerPairingOfferOutcome::Rejected { .. }
+                ReceiveRemoteControlControllerPairingOfferOutcome::Rejected { .. }
                 | ReceiveRemoteControlControllerPairingOfferOutcome::NoActiveAttempt
                 | ReceiveRemoteControlControllerPairingOfferOutcome::Unexpected { .. }
                 | ReceiveRemoteControlControllerPairingOfferOutcome::PairingUnavailable { .. },
             )
             | AdmitRemoteControlControllerPairingResponseOutcome::Completed(
-                ReceiveRemoteControlControllerPairingCompletedOutcome::Expired { .. }
-                | ReceiveRemoteControlControllerPairingCompletedOutcome::Rejected { .. }
+                ReceiveRemoteControlControllerPairingCompletedOutcome::Rejected { .. }
                 | ReceiveRemoteControlControllerPairingCompletedOutcome::NoActiveAttempt
                 | ReceiveRemoteControlControllerPairingCompletedOutcome::OfferNotReceived
                 | ReceiveRemoteControlControllerPairingCompletedOutcome::ApprovalRequired { .. }
@@ -102,7 +127,8 @@ impl<S: StorageLayout> EngineState<S> {
                         .request_failed(link_id),
                 )
             }
-        }
+        };
+        (admission, effect)
     }
 
     pub fn admit_remote_control_controller_pairing_response(
@@ -401,9 +427,11 @@ mod tests {
         let (offer, _transcript, _target_signer) = prepared_offer(&begin);
         let packed = packed_response(offer);
 
-        let unrelated = engine.admit_remote_control_controller_pairing_response(
+        let (unrelated, effect) = engine.admit_remote_control_controller_pairing_response_into(
             RemoteControlControllerPairingResponseArrival::new(UNRELATED_LINK_ID, &packed),
             OFFERED_AT,
+            AttachedInterfaces::new(&[]),
+            &mut |_| panic!("unrelated response needs no entropy"),
             &mut |_| panic!("unrelated response must be silent"),
         );
         assert_eq!(
@@ -414,7 +442,7 @@ mod tests {
             },
         );
         assert_eq!(
-            engine.remote_control_controller_pairing_response_effect(UNRELATED_LINK_ID, unrelated,),
+            effect,
             RemoteControlControllerPairingResponseEffect::NotAdvanced(
                 FailRemoteControlControllerPairingRequestOutcome::UnrelatedLink,
             ),
@@ -530,7 +558,7 @@ mod tests {
     }
 
     #[test]
-    fn an_offer_at_the_pairing_deadline_journals_the_exact_expiry() {
+    fn an_offer_at_the_pairing_deadline_journals_expiry_and_retires_its_link() {
         let mut engine = EngineState::<TestStorageLayout>::default();
         let begin = begin(&mut engine);
         let (offer, _transcript, _target_signer) = prepared_offer(&begin);
@@ -540,14 +568,22 @@ mod tests {
         };
         let mut journaled = None;
 
-        let outcome = engine.admit_remote_control_controller_pairing_response(
+        let (outcome, effect) = engine.admit_remote_control_controller_pairing_response_into(
             RemoteControlControllerPairingResponseArrival::new(LINK_ID, &offer),
             PAIRING_EXPIRES_AT,
+            AttachedInterfaces::new(&[]),
+            &mut |_| panic!("an absent expired link needs no entropy"),
             &mut |reaction| match reaction {
                 EngineReaction::Journaled(Journaled::RemoteControlControllerPairingExpired {
                     aborted,
                 }) => journaled = Some(aborted),
                 EngineReaction::Journaled(_) | EngineReaction::Directive(_) => {}
+            },
+        );
+        assert_eq!(
+            effect,
+            RemoteControlControllerPairingResponseEffect::Expired {
+                retired_link: LINK_ID,
             },
         );
 

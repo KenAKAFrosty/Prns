@@ -2,17 +2,19 @@ use crate::crypto::ratchets::RatchetPolicy;
 use crate::engine::node_egress::fan_frame;
 use crate::engine::{
     CloseRemoteControlPairingFailure, CloseRemoteControlPairingOutcome, CommandId, CommandOutcome,
-    Directive, EgressTarget, EngineReaction, FanTarget, OpenRemoteControlPairing,
+    Directive, EgressTarget, EngineReaction, FanTarget, LinkClosedReason, OpenRemoteControlPairing,
     OpenRemoteControlPairingFailure, OpenRemoteControlPairingRejection, RemoteControlPairingOpened,
     RemoteControlTargetPairingAuthorizationPersistence, RemoteControlTargetPairingFinalization,
     Respond, RespondData, RespondPayload, RetireDestinationOutcome, SendPlainPacket,
     SendPlainPacketPayload, SettleRemoteControlTargetPairingAuthorization,
-    SettleRemoteControlTargetPairingAuthorizationFailure,
+    SettleRemoteControlTargetPairingAuthorizationFailure, WriteLinkCloseError,
 };
 use crate::identity::held::ReleaseHeldIdentityOutcome;
 use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::vault::IdentitySecretKey;
-use crate::identity::{IdentityHash, IdentitySigner, Zeroizing, IDENTITY_SECRET_KEY_LEN};
+use crate::identity::{
+    IdentityHash, IdentitySigner, Zeroizing, ENCRYPTION_IV_LEN, IDENTITY_SECRET_KEY_LEN,
+};
 use crate::interfaces::{AttachedInterfaces, InterfaceId};
 use crate::remote_control::{
     BeginRemoteControlTargetPairingOutcome,
@@ -42,6 +44,7 @@ use crate::routing::links::request::{
     PackBinaryError, PackedBinaryParseError, RequestId, MAX_PACKED_BINARY_HEADER_LEN,
     REQUEST_WIRE_OVERHEAD,
 };
+use crate::routing::links::table::LinkPhase;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
 use crate::routing::{LinkRequestPolicy, ProofStrategy};
@@ -167,6 +170,50 @@ pub(crate) enum RemoteControlPairingBridgeInvariantViolation {
 }
 
 impl<S: StorageLayout> crate::engine::EngineState<S> {
+    pub(crate) fn retire_remote_control_pairing_exchange_link<F>(
+        &mut self,
+        context: crate::remote_control::RemoteControlPairingContext,
+        interfaces: AttachedInterfaces<'_>,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> LinkId
+    where
+        F: FnMut(&mut [u8]),
+    {
+        let link_id = context.link_id();
+        match self.links.phase_for(&link_id) {
+            None => return link_id,
+            Some(LinkPhase::Pending { .. }) => {
+                self.retire_link(&link_id, LinkClosedReason::LocallyClosed, sink);
+                return link_id;
+            }
+            Some(LinkPhase::Handshake { .. } | LinkPhase::Active { .. }) => {}
+        }
+        let mut iv = [0u8; ENCRYPTION_IV_LEN];
+        fill_entropy(&mut iv);
+        let mut buf = [0u8; BROADCAST_MTU];
+        match self.write_owed_link_close(
+            &link_id,
+            LinkClosedReason::LocallyClosed,
+            &iv,
+            &mut buf,
+            sink,
+        ) {
+            Ok(dispatch) => {
+                if let Some(fire_on) = dispatch.fire_on {
+                    fan_frame(
+                        interfaces,
+                        FanTarget::Only(fire_on),
+                        &buf[..dispatch.wire_bytes],
+                        sink,
+                    );
+                }
+            }
+            Err(WriteLinkCloseError::NoSuchLink | WriteLinkCloseError::Serialize) => {}
+        }
+        link_id
+    }
+
     pub fn configure_remote_control_pairing(
         &mut self,
         target_identity: crate::identity::IdentityHash,
@@ -970,11 +1017,22 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
     where
         F: FnMut(&mut [u8]),
     {
+        let mut wake_schedule_changes = crate::engine::WakeSchedules::UNCHANGED;
         match self.remote_control_controller_pairing.expire(now) {
             ExpireRemoteControlControllerPairingOutcome::Expired { aborted } => {
                 sink(EngineReaction::Journaled(
                     crate::engine::Journaled::RemoteControlControllerPairingExpired { aborted },
                 ));
+                self.retire_remote_control_pairing_exchange_link(
+                    aborted.context(),
+                    interfaces,
+                    fill_entropy,
+                    sink,
+                );
+                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+                wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
+                wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                wake_schedule_changes.channel_timeouts = self.channel_timeouts_wake();
             }
             ExpireRemoteControlControllerPairingOutcome::NotDue { .. }
             | ExpireRemoteControlControllerPairingOutcome::NoActiveAttempt
@@ -1004,10 +1062,8 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
             RemoteControlPairingView::Unavailable
             | RemoteControlPairingView::Closed
             | RemoteControlPairingView::Open(_) => {
-                return crate::engine::WakeSchedules {
-                    remote_control_pairing: self.remote_control_pairing_wake(),
-                    ..crate::engine::WakeSchedules::UNCHANGED
-                }
+                wake_schedule_changes.remote_control_pairing = self.remote_control_pairing_wake();
+                return wake_schedule_changes;
             }
         };
         match self.close_remote_control_pairing_into(interfaces, fill_entropy, sink) {
@@ -1026,10 +1082,12 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
                 ));
             }
         }
-        crate::engine::WakeSchedules {
-            remote_control_pairing: self.remote_control_pairing_wake(),
-            ..crate::engine::WakeSchedules::UNCHANGED
-        }
+        wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+        wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
+        wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+        wake_schedule_changes.channel_timeouts = self.channel_timeouts_wake();
+        wake_schedule_changes.remote_control_pairing = self.remote_control_pairing_wake();
+        wake_schedule_changes
     }
 }
 
@@ -1056,7 +1114,7 @@ mod tests {
         RemoteControlControllerIdentity, RemoteControlControllerPairingAborted,
         RemoteControlPairingAttemptTimeout, RemoteControlPairingBegin, RemoteControlPairingContext,
         RemoteControlPairingEndpoint, RemoteControlPairingExpiresAfter,
-        RemoteControlPairingIdentity, RemoteControlPairingInvitationCode,
+        RemoteControlPairingInvitationCode,
         RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
         RemoteControlPairingTranscript, RemoteControlRequestKind, RemoteControlRequestSet,
         RemoteControlTargetPairingResponder, RemoteControlTargetPairingView,
@@ -1422,10 +1480,9 @@ mod tests {
 
     #[test]
     fn controller_pairing_deadline_is_engine_owned_woken_and_journaled() {
-        let mut engine = crate::engine::EngineState::<TestStorageLayout>::default();
         let controller = controller_identity();
-        let endpoint = RemoteControlPairingIdentity::new(stable_target_identity()).endpoint();
-        let link_id = LinkId::new([0x91; 16]);
+        let (mut engine, interfaces, endpoint, link_id, _, _) =
+            open_pairing_link(controller.identity_hash());
         let context = RemoteControlPairingContext::new(endpoint, link_id);
         let expires_at = InstantMillis(5_000);
         assert_eq!(
@@ -1454,11 +1511,10 @@ mod tests {
             crate::engine::WakeSchedule::At(expires_at),
         );
 
-        let no_interfaces: [InterfaceDescriptor; 0] = [];
         let mut early_reactions = 0usize;
         let early = engine.fire_due_remote_control_pairing(
             InstantMillis(4_999),
-            AttachedInterfaces::new(&no_interfaces),
+            AttachedInterfaces::new(&interfaces),
             &mut |_| panic!("controller expiry needs no entropy"),
             &mut |_| early_reactions += 1,
         );
@@ -1469,17 +1525,19 @@ mod tests {
         );
 
         let mut expired = None;
+        let mut closed = None;
         let due = engine.fire_due_remote_control_pairing(
             expires_at,
-            AttachedInterfaces::new(&no_interfaces),
-            &mut |_| panic!("controller expiry needs no entropy"),
-            &mut |reaction| {
-                if let EngineReaction::Journaled(
-                    Journaled::RemoteControlControllerPairingExpired { aborted },
-                ) = reaction
-                {
-                    expired = Some(aborted);
+            AttachedInterfaces::new(&interfaces),
+            &mut |bytes| bytes.fill(0xE7),
+            &mut |reaction| match reaction {
+                EngineReaction::Journaled(Journaled::RemoteControlControllerPairingExpired {
+                    aborted,
+                }) => expired = Some(aborted),
+                EngineReaction::Journaled(Journaled::LinkClosed { link_id, reason }) => {
+                    closed = Some((link_id, reason))
                 }
+                EngineReaction::Journaled(_) | EngineReaction::Directive(_) => {}
             },
         );
         assert_eq!(
@@ -1491,8 +1549,13 @@ mod tests {
             RemoteControlControllerPairingView::Idle,
         );
         assert_eq!(
+            closed,
+            Some((link_id, crate::engine::LinkClosedReason::LocallyClosed)),
+        );
+        assert!(engine.links.phase_for(&link_id).is_none());
+        assert_eq!(
             due.remote_control_pairing,
-            crate::engine::WakeSchedule::Idle,
+            engine.remote_control_pairing_wake(),
         );
     }
 

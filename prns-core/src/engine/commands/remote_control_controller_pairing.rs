@@ -1,11 +1,9 @@
 use heapless::Vec as HeaplessVec;
 
-use crate::engine::node_egress::fan_frame;
 use crate::engine::{
-    AdmitRemoteControlControllerPairingResponseOutcome, EngineReaction, EngineState, FanTarget,
-    LinkClosedReason, RemoteControlControllerPairingResponseEffect, WriteLinkCloseError,
+    AdmitRemoteControlControllerPairingResponseOutcome, EngineReaction, EngineState,
+    RemoteControlControllerPairingResponseEffect,
 };
-use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::AttachedInterfaces;
 use crate::remote_control::{
     ApproveRemoteControlControllerPairingOutcome, BeginRemoteControlControllerPairingOutcome,
@@ -21,12 +19,10 @@ use crate::remote_control::{
 use crate::routing::links::request::{
     write_packed_binary_header, PackBinaryError, SendRequestView, MAX_PACKED_BINARY_HEADER_LEN,
 };
-use crate::routing::links::table::LinkPhase;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::storage::StorageLayout;
 use crate::units::{ByteLimit, InstantMillis};
-use crate::wire::BROADCAST_MTU;
 
 use super::{
     PacketReceiptDelivered, PrnsCommand, RequestResponseTimeout, SendRequestFailure, Settleable,
@@ -303,6 +299,7 @@ impl Settleable for RemoteControlControllerPairingRequest {
 pub enum ApproveRemoteControlControllerPairingFailure {
     Expired {
         expired: RemoteControlControllerPairingAborted,
+        retired_link: LinkId,
     },
     NoActiveAttempt,
     OfferNotReceived,
@@ -369,12 +366,14 @@ pub struct RejectRemoteControlControllerPairing {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RemoteControlControllerPairingRejection {
     pub aborted: RemoteControlControllerPairingAborted,
+    pub retired_link: LinkId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RejectRemoteControlControllerPairingFailure {
     Expired {
         expired: RemoteControlControllerPairingAborted,
+        retired_link: LinkId,
     },
     NoActiveAttempt,
     OfferNotReceived,
@@ -568,11 +567,16 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    pub(in crate::engine) fn execute_approve_remote_control_controller_pairing(
+    pub(in crate::engine) fn approve_remote_control_controller_pairing_into<F>(
         &mut self,
         command: ApproveRemoteControlControllerPairing,
         now: InstantMillis,
+        interfaces: AttachedInterfaces<'_>,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> Result<RemoteControlControllerPairingApproval, ApproveRemoteControlControllerPairingFailure>
+    where
+        F: FnMut(&mut [u8]),
     {
         match self
             .remote_control_controller_pairing
@@ -603,7 +607,20 @@ impl<S: StorageLayout> EngineState<S> {
                 }
             },
             ApproveRemoteControlControllerPairingOutcome::Expired { expired } => {
-                Err(ApproveRemoteControlControllerPairingFailure::Expired { expired })
+                sink(EngineReaction::Journaled(
+                    crate::engine::Journaled::RemoteControlControllerPairingExpired {
+                        aborted: expired,
+                    },
+                ));
+                Err(ApproveRemoteControlControllerPairingFailure::Expired {
+                    retired_link: self.retire_remote_control_pairing_exchange_link(
+                        expired.context(),
+                        interfaces,
+                        fill_entropy,
+                        sink,
+                    ),
+                    expired,
+                })
             }
             ApproveRemoteControlControllerPairingOutcome::NoActiveAttempt => {
                 Err(ApproveRemoteControlControllerPairingFailure::NoActiveAttempt)
@@ -629,21 +646,47 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    pub(in crate::engine) fn execute_reject_remote_control_controller_pairing(
+    pub(in crate::engine) fn reject_remote_control_controller_pairing_into<F>(
         &mut self,
         command: RejectRemoteControlControllerPairing,
         now: InstantMillis,
+        interfaces: AttachedInterfaces<'_>,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> Result<RemoteControlControllerPairingRejection, RejectRemoteControlControllerPairingFailure>
+    where
+        F: FnMut(&mut [u8]),
     {
         match self
             .remote_control_controller_pairing
             .reject(command.attempt_id, now)
         {
             RejectRemoteControlControllerPairingOutcome::Rejected { aborted } => {
-                Ok(RemoteControlControllerPairingRejection { aborted })
+                Ok(RemoteControlControllerPairingRejection {
+                    retired_link: self.retire_remote_control_pairing_exchange_link(
+                        aborted.context(),
+                        interfaces,
+                        fill_entropy,
+                        sink,
+                    ),
+                    aborted,
+                })
             }
             RejectRemoteControlControllerPairingOutcome::Expired { expired } => {
-                Err(RejectRemoteControlControllerPairingFailure::Expired { expired })
+                sink(EngineReaction::Journaled(
+                    crate::engine::Journaled::RemoteControlControllerPairingExpired {
+                        aborted: expired,
+                    },
+                ));
+                Err(RejectRemoteControlControllerPairingFailure::Expired {
+                    retired_link: self.retire_remote_control_pairing_exchange_link(
+                        expired.context(),
+                        interfaces,
+                        fill_entropy,
+                        sink,
+                    ),
+                    expired,
+                })
             }
             RejectRemoteControlControllerPairingOutcome::NoActiveAttempt => {
                 Err(RejectRemoteControlControllerPairingFailure::NoActiveAttempt)
@@ -698,8 +741,8 @@ impl<S: StorageLayout> EngineState<S> {
                         access,
                     } => Ok(RemoteControlControllerPairingFinalization::Completed {
                         attempt_id,
-                        retired_link: self.retire_remote_control_controller_pairing_link(
-                            context.link_id(),
+                        retired_link: self.retire_remote_control_pairing_exchange_link(
+                            context,
                             interfaces,
                             fill_entropy,
                             sink,
@@ -734,8 +777,8 @@ impl<S: StorageLayout> EngineState<S> {
                     } => Ok(
                         RemoteControlControllerPairingFinalization::PersistenceFailureRecorded {
                             attempt_id,
-                            retired_link: self.retire_remote_control_controller_pairing_link(
-                                context.link_id(),
+                            retired_link: self.retire_remote_control_pairing_exchange_link(
+                                context,
                                 interfaces,
                                 fill_entropy,
                                 sink,
@@ -761,49 +804,6 @@ impl<S: StorageLayout> EngineState<S> {
             }
         }
     }
-
-    fn retire_remote_control_controller_pairing_link<F>(
-        &mut self,
-        link_id: LinkId,
-        interfaces: AttachedInterfaces<'_>,
-        fill_entropy: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
-    ) -> LinkId
-    where
-        F: FnMut(&mut [u8]),
-    {
-        match self.links.phase_for(&link_id) {
-            None => return link_id,
-            Some(LinkPhase::Pending { .. }) => {
-                self.retire_link(&link_id, LinkClosedReason::LocallyClosed, sink);
-                return link_id;
-            }
-            Some(LinkPhase::Handshake { .. } | LinkPhase::Active { .. }) => {}
-        }
-        let mut iv = [0u8; ENCRYPTION_IV_LEN];
-        fill_entropy(&mut iv);
-        let mut buf = [0u8; BROADCAST_MTU];
-        match self.write_owed_link_close(
-            &link_id,
-            LinkClosedReason::LocallyClosed,
-            &iv,
-            &mut buf,
-            sink,
-        ) {
-            Ok(dispatch) => {
-                if let Some(fire_on) = dispatch.fire_on {
-                    fan_frame(
-                        interfaces,
-                        FanTarget::Only(fire_on),
-                        &buf[..dispatch.wire_bytes],
-                        sink,
-                    );
-                }
-            }
-            Err(WriteLinkCloseError::NoSuchLink | WriteLinkCloseError::Serialize) => {}
-        }
-        link_id
-    }
 }
 
 #[cfg(test)]
@@ -814,8 +814,8 @@ mod tests {
     use crate::engine::test_support::{filled_frame, routable_descriptor, TestStorageLayout};
     use crate::engine::{
         CommandId, DeliveryEvidence, Directive, EngineReaction, EngineState, IngestIo,
-        IssuedCommand, Journaled, PacketReceiptDelivered, SendRequest, SendRequestData,
-        SendRequestIntent, WakeSchedule, WakeSchedules,
+        IssuedCommand, Journaled, LinkClosedReason, PacketReceiptDelivered, SendRequest,
+        SendRequestData, SendRequestIntent, WakeSchedule, WakeSchedules,
     };
     use crate::identity::in_memory::InMemoryNodeIdentity;
     use crate::identity::vault::IdentitySecretKey;
@@ -1391,8 +1391,39 @@ mod tests {
     }
 
     #[test]
-    fn rejection_aborts_only_the_confirmed_attempt_without_network_debt() {
-        let mut engine = EngineState::<TestStorageLayout>::default();
+    fn approval_at_the_attempt_deadline_retires_the_expired_link() {
+        let mut engine = engine_with_active_link();
+        let (attempt_id, _) = awaiting_confirmation(&mut engine);
+
+        let (settlement, schedules) = execute(
+            &mut engine,
+            ApproveRemoteControlControllerPairing { attempt_id }.into_command(),
+            ATTEMPT_EXPIRES_AT,
+        );
+
+        assert_eq!(
+            settlement,
+            Settlement::ApproveRemoteControlControllerPairing(Err(
+                ApproveRemoteControlControllerPairingFailure::Expired {
+                    expired: RemoteControlControllerPairingAborted::AwaitingApproval {
+                        attempt_id,
+                        context: context(),
+                    },
+                    retired_link: link_id(),
+                },
+            )),
+        );
+        assert!(engine.links.phase_for(&link_id()).is_none());
+        assert_eq!(
+            engine.remote_control_controller_pairing.view(),
+            RemoteControlControllerPairingView::Idle,
+        );
+        assert_eq!(schedules.remote_control_pairing, WakeSchedule::Idle);
+    }
+
+    #[test]
+    fn rejection_retires_only_the_confirmed_attempt_link() {
+        let mut engine = engine_with_active_link();
         let (attempt_id, _) = awaiting_confirmation(&mut engine);
         let (settlement, schedules) = execute(
             &mut engine,
@@ -1409,9 +1440,42 @@ mod tests {
                         attempt_id,
                         context: context(),
                     },
+                    retired_link: link_id(),
                 },
             )),
         );
+        assert_eq!(
+            engine.remote_control_controller_pairing.view(),
+            RemoteControlControllerPairingView::Idle,
+        );
+        assert!(engine.links.phase_for(&link_id()).is_none());
+        assert_eq!(schedules.remote_control_pairing, WakeSchedule::Idle);
+    }
+
+    #[test]
+    fn rejection_at_the_attempt_deadline_retires_the_expired_link() {
+        let mut engine = engine_with_active_link();
+        let (attempt_id, _) = awaiting_confirmation(&mut engine);
+
+        let (settlement, schedules) = execute(
+            &mut engine,
+            RejectRemoteControlControllerPairing { attempt_id }.into_command(),
+            ATTEMPT_EXPIRES_AT,
+        );
+
+        assert_eq!(
+            settlement,
+            Settlement::RejectRemoteControlControllerPairing(Err(
+                RejectRemoteControlControllerPairingFailure::Expired {
+                    expired: RemoteControlControllerPairingAborted::AwaitingApproval {
+                        attempt_id,
+                        context: context(),
+                    },
+                    retired_link: link_id(),
+                },
+            )),
+        );
+        assert!(engine.links.phase_for(&link_id()).is_none());
         assert_eq!(
             engine.remote_control_controller_pairing.view(),
             RemoteControlControllerPairingView::Idle,

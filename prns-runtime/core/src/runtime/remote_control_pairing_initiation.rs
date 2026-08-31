@@ -61,6 +61,9 @@ pub enum InitiateRemoteControlControllerPairingError {
         response: RemoteControlControllerPairingResponseReceived,
         cleanup: RemoteControlPairingLinkCleanupOutcome,
     },
+    ResponseExpired {
+        response: RemoteControlControllerPairingResponseReceived,
+    },
 }
 
 pub trait RemoteControlControllerPairingInitiationControl:
@@ -90,6 +93,11 @@ pub trait RemoteControlControllerPairingInitiationControl:
             match result {
                 Ok(received) => match received.effect {
                     RemoteControlControllerPairingResponseEffect::Advanced => Ok(received),
+                    RemoteControlControllerPairingResponseEffect::Expired { .. } => Err(
+                        InitiateRemoteControlControllerPairingError::ResponseExpired {
+                            response: received,
+                        },
+                    ),
                     RemoteControlControllerPairingResponseEffect::NotAdvanced(_) => Err(
                         InitiateRemoteControlControllerPairingError::ResponseNotAdvanced {
                             response: received,
@@ -341,6 +349,12 @@ mod tests {
         ))
     }
 
+    fn expired_received() -> RemoteControlControllerPairingResponseReceived {
+        received(RemoteControlControllerPairingResponseEffect::Expired {
+            retired_link: LINK_ID,
+        })
+    }
+
     #[test]
     fn successful_initiation_establishes_then_begins_without_closing() {
         let harness = Harness::new(
@@ -386,6 +400,28 @@ mod tests {
                 Invocation::EstablishLink(endpoint().destination_hash()),
                 Invocation::Begin(expected_begin()),
                 Invocation::CloseLink(LINK_ID),
+            ],
+        );
+    }
+
+    #[test]
+    fn expired_response_reports_the_engine_retirement_without_closing_again() {
+        let response = expired_received();
+        let harness = Harness::new(
+            Ok(LINK_ID),
+            Ok(response),
+            RemoteControlPairingLinkCleanupOutcome::NotQueued,
+        );
+
+        assert_eq!(
+            block_on(harness.initiate_remote_control_controller_pairing(initiate())),
+            Err(InitiateRemoteControlControllerPairingError::ResponseExpired { response }),
+        );
+        assert_eq!(
+            harness.invocations().as_slice(),
+            [
+                Invocation::EstablishLink(endpoint().destination_hash()),
+                Invocation::Begin(expected_begin()),
             ],
         );
     }

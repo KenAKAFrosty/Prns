@@ -514,13 +514,14 @@ impl<S: StorageLayout> EngineState<S> {
                         Settlement::SendRequest(Ok(delivered))
                     }
                     SendRequestIntent::RemoteControlControllerPairing => {
-                        let admission = self.admit_remote_control_controller_pairing_response(
-                            RemoteControlControllerPairingResponseArrival::new(link_id, data),
-                            now,
-                            sink,
-                        );
-                        let effect = self
-                            .remote_control_controller_pairing_response_effect(link_id, admission);
+                        let (admission, effect) = self
+                            .admit_remote_control_controller_pairing_response_into(
+                                RemoteControlControllerPairingResponseArrival::new(link_id, data),
+                                now,
+                                interfaces,
+                                fill_entropy,
+                                sink,
+                            );
                         Settlement::RemoteControlControllerPairingRequest(Ok(
                             RemoteControlControllerPairingResponseReceived {
                                 delivered,
@@ -534,6 +535,8 @@ impl<S: StorageLayout> EngineState<S> {
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
                 if intent == SendRequestIntent::RemoteControlControllerPairing {
+                    wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
+                    wake_schedule_changes.channel_timeouts = self.channel_timeouts_wake();
                     wake_schedule_changes.remote_control_pairing =
                         self.remote_control_pairing_wake();
                 }
