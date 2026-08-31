@@ -20,8 +20,9 @@ use crate::routing::links::resources::advertisement::{
 };
 use crate::routing::links::resources::assembly::StaticResponseContinuation;
 use crate::routing::links::resources::build_outgoing::{
-    build_outgoing_resource_enveloped, outgoing_resource_buffer_shape, seal_staged_resource,
-    winning_candidate, BuildOutgoingResourceError, SealedStagedResource, STAGED_STREAM_OFFSET,
+    build_outgoing_resource, build_outgoing_resource_enveloped, outgoing_resource_buffer_shape,
+    seal_staged_resource, winning_candidate, BuildOutgoingResourceError, BuildRegions,
+    BuiltResource, SealedStagedResource, STAGED_STREAM_OFFSET,
 };
 use crate::routing::links::resources::control::{
     parse_cancel_plaintext, parse_part_request_plaintext, parse_proof_plaintext,
@@ -29,13 +30,15 @@ use crate::routing::links::resources::control::{
 };
 use crate::routing::links::resources::serve_outgoing::{plan_hashmap_update, serve_part_indices};
 use crate::routing::links::resources::table::{
-    OutgoingResourceStatus, PartSendOutcome, TrackLane, TrackOutgoingResourceError, TrackedCommand,
+    DeferredResourceBuildTicket, LandDeferredResourceBuild, OutgoingResourceStatus,
+    PartSendOutcome, TrackLane, TrackOutgoingResourceError, TrackedCommand,
 };
 use crate::routing::links::resources::{
-    resource_sdu, ResourceBody, ResourceCorrelation, ResourceHash, ResourceMetadata,
-    ResourcePartRequest, ResourceSegment, ResourceSend, HASHMAP_MAX_LEN, MAP_HASH_LEN,
-    MAX_ADVERTISEMENT_RETRIES, PART_REQUEST_MAX_RETRIES, PER_RETRY_DELAY_MS, PROCESSING_GRACE_MS,
-    PROOF_TIMEOUT_FACTOR, RESOURCE_HASH_LEN, RESOURCE_NONCE_LEN, SENDER_GRACE_MS,
+    resource_sdu, ResourceBody, ResourceBufferShape, ResourceCorrelation, ResourceHash,
+    ResourceMetadata, ResourcePartRequest, ResourceSegment, ResourceSend, HASHMAP_MAX_LEN,
+    MAP_HASH_LEN, MAX_ADVERTISEMENT_RETRIES, PART_REQUEST_MAX_RETRIES, PER_RETRY_DELAY_MS,
+    PROCESSING_GRACE_MS, PROOF_TIMEOUT_FACTOR, RESOURCE_HASH_LEN, RESOURCE_NONCE_LEN,
+    SENDER_GRACE_MS,
 };
 use crate::routing::links::table::{ActiveLinkLookup, LinkPhase};
 use crate::routing::links::LinkId;
@@ -67,10 +70,71 @@ pub struct StagedSealJobView<'a> {
     pub plaintext: &'a [u8],
 }
 
+/// Everything an owning host crypto job needs after the engine has validated and reserved a
+/// whole-resource send. Payload ownership remains in the runtime; this carries only core state.
+pub struct DeferredResourceBuild {
+    ticket: DeferredResourceBuildTicket,
+    key: crate::routing::links::LinkKey,
+    sdu: usize,
+    shape: ResourceBufferShape,
+}
+
+impl DeferredResourceBuild {
+    pub fn ticket(&self) -> DeferredResourceBuildTicket {
+        self.ticket
+    }
+
+    pub fn shape(&self) -> ResourceBufferShape {
+        self.shape
+    }
+
+    /// Execute only the pure resource transform frozen by engine preparation. The host supplies
+    /// owned payload storage, entropy, and output regions, but cannot replace the chosen key, SDU,
+    /// reservation identity, or protocol algorithm.
+    pub fn execute(
+        &self,
+        body: &ResourceBody<'_>,
+        seal_iv: &[u8; 16],
+        fresh_nonce: impl FnMut() -> [u8; RESOURCE_NONCE_LEN],
+        regions: BuildRegions<'_>,
+    ) -> Result<BuiltResource, BuildOutgoingResourceError> {
+        build_outgoing_resource(body, &self.key, seal_iv, fresh_nonce, self.sdu, regions)
+    }
+}
+
+/// A worker's finished whole-resource build. The output buffers are borrowed only for the landing
+/// call and are ignored if the reservation disappeared while crypto was running.
+pub struct OffloadedResourceBuild<'a> {
+    pub ticket: DeferredResourceBuildTicket,
+    pub transfer: &'a [u8],
+    pub names: &'a [u8],
+    pub request_data: &'a [u8],
+    pub outcome: Result<
+        crate::routing::links::resources::build_outgoing::BuiltResource,
+        BuildOutgoingResourceError,
+    >,
+}
+
 /// How a landed segment is addressed for its post-landing patch: a built row by its hash, but a raw row only by index because its hash column is still the placeholder.
 enum RowLanding {
     Built(ResourceHash),
     Raw(usize),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ValidatedResourceSend {
+    uncompressed_data_bytes: u64,
+    sdu: usize,
+    lane: TrackLane,
+}
+
+fn tracked_resource_failure(error: TrackOutgoingResourceError) -> SendResourceFailure {
+    let rejection = match error {
+        TrackOutgoingResourceError::TableFull => SendResourceRejection::TableFull,
+        TrackOutgoingResourceError::LinkBusy => SendResourceRejection::LinkBusy,
+        TrackOutgoingResourceError::Build(build) => SendResourceRejection::Build(build),
+    };
+    SendResourceFailure::Rejected(rejection)
 }
 
 pub(crate) enum ResourceProofClassification {
@@ -122,6 +186,245 @@ impl<S: StorageLayout> EngineState<S> {
             fill_random,
             sink,
         )
+    }
+
+    /// Validate and reserve a single-segment resource without performing its bulk crypto. Pooled
+    /// hosts use this as the first half of an owning continuation; inline callers retain
+    /// [`ingest_send_resource_segment_into`](Self::ingest_send_resource_segment_into).
+    pub fn prepare_send_resource_deferred(
+        &mut self,
+        send: &ResourceSend<'_>,
+        segment: ResourceSegment,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> Option<DeferredResourceBuild> {
+        let &ResourceSend { id, link_id, .. } = send;
+        let correlation = send.correlation;
+        let settle = |sink: &mut dyn FnMut(EngineReaction<'_>), failure| {
+            sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                id,
+                settlement: resource_settlement(correlation, Err(failure)),
+            }));
+        };
+        if segment.index != 1 || segment.total_segments != 1 {
+            settle(sink, SendResourceFailure::Sequencing);
+            return None;
+        }
+        let validated = match self.validate_outgoing_resource_send(send, segment) {
+            Ok(validated) => validated,
+            Err(failure) => {
+                settle(sink, failure);
+                return None;
+            }
+        };
+        debug_assert_eq!(validated.lane, TrackLane::Live);
+        let ActiveLinkLookup::Active(link) = self.links.active_view(&link_id) else {
+            unreachable!("resource validation observed this link active without mutating it")
+        };
+        let key = link.key.cloned();
+        let shape = match outgoing_resource_buffer_shape(0, &send.body, validated.sdu) {
+            Ok(shape) => shape,
+            Err(error) => {
+                settle(
+                    sink,
+                    SendResourceFailure::Rejected(SendResourceRejection::Build(error)),
+                );
+                return None;
+            }
+        };
+        let ticket = match self.outgoing_resources.reserve_deferred_build(
+            TrackedCommand {
+                link_id,
+                sdu: validated.sdu,
+                command_id: id,
+                correlation,
+                segment,
+            },
+            shape,
+            validated.uncompressed_data_bytes,
+        ) {
+            Ok(ticket) => ticket,
+            Err(error) => {
+                settle(sink, tracked_resource_failure(error));
+                return None;
+            }
+        };
+        Some(DeferredResourceBuild {
+            ticket,
+            key,
+            sdu: validated.sdu,
+            shape,
+        })
+    }
+
+    /// Validate every engine-owned policy and protocol precondition shared by inline and owning
+    /// resource builds. Runtimes can choose where the pure build runs, but cannot bypass this gate.
+    fn validate_outgoing_resource_send(
+        &self,
+        send: &ResourceSend<'_>,
+        segment: ResourceSegment,
+    ) -> Result<ValidatedResourceSend, SendResourceFailure> {
+        let ResourceSegment {
+            index,
+            total_segments,
+            total_data_bytes,
+        } = segment;
+        if index == 0 || total_segments == 0 || index > total_segments {
+            return Err(SendResourceFailure::Sequencing);
+        }
+        let uncompressed_data_bytes = u64::try_from(send.body.metadata.block_len())
+            .ok()
+            .and_then(|metadata_len| total_data_bytes.checked_add(metadata_len))
+            .ok_or(SendResourceFailure::Rejected(SendResourceRejection::Build(
+                BuildOutgoingResourceError::DataTooLarge,
+            )))?;
+        let metadata_placement_valid = match send.body.metadata {
+            ResourceMetadata::None => true,
+            ResourceMetadata::Packed(_) => index == 1,
+            ResourceMetadata::SentInFirstSegment { .. } => index > 1,
+        };
+        if !metadata_placement_valid {
+            return Err(SendResourceFailure::Rejected(
+                SendResourceRejection::MetadataMisplaced,
+            ));
+        }
+        if index > 1
+            && self
+                .outgoing_assemblies
+                .original_hash(&send.link_id)
+                .is_none()
+        {
+            return Err(SendResourceFailure::PredecessorFailed);
+        }
+        let mtu = match self.links.active_view(&send.link_id) {
+            ActiveLinkLookup::Active(link) => link.mtu,
+            ActiveLinkLookup::Inactive => {
+                return Err(SendResourceFailure::Rejected(
+                    SendResourceRejection::LinkNotActive,
+                ))
+            }
+            ActiveLinkLookup::Absent => {
+                return Err(SendResourceFailure::Rejected(
+                    SendResourceRejection::NoSuchLink,
+                ))
+            }
+        };
+        let lane = self
+            .outgoing_resources
+            .lane_for(&send.link_id, &segment)
+            .map_err(tracked_resource_failure)?;
+        Ok(ValidatedResourceSend {
+            uncompressed_data_bytes,
+            sdu: resource_sdu(mtu),
+            lane,
+        })
+    }
+
+    /// Land and advertise a completed owning resource build. A stale completion is a no-op; a
+    /// live failure settles exactly the command whose reservation the worker held.
+    pub fn apply_offloaded_resource_build<F>(
+        &mut self,
+        verdict: OffloadedResourceBuild<'_>,
+        now: InstantMillis,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> crate::engine::WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+    {
+        let OffloadedResourceBuild {
+            ticket,
+            transfer,
+            names,
+            request_data,
+            outcome,
+        } = verdict;
+        let hash = match self
+            .outgoing_resources
+            .land_deferred_build(ticket, transfer, names, outcome)
+        {
+            LandDeferredResourceBuild::Stale => {
+                return crate::engine::WakeSchedules::UNCHANGED;
+            }
+            LandDeferredResourceBuild::Failed(error) => {
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id: ticket.command_id,
+                    settlement: resource_settlement(
+                        ticket.correlation,
+                        Err(SendResourceFailure::Rejected(SendResourceRejection::Build(
+                            error,
+                        ))),
+                    ),
+                }));
+                return crate::engine::WakeSchedules::UNCHANGED;
+            }
+            LandDeferredResourceBuild::Built(hash) => hash,
+        };
+        let Some(index) = self.outgoing_resources.lookup(&ticket.link_id, &hash) else {
+            return crate::engine::WakeSchedules::UNCHANGED;
+        };
+        let state = *self.outgoing_resources.state(index);
+        let ActiveLinkLookup::Active(link) = self.links.active_view(&ticket.link_id) else {
+            self.outgoing_resources.remove(&ticket.link_id, &hash);
+            sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                id: ticket.command_id,
+                settlement: resource_settlement(
+                    ticket.correlation,
+                    Err(SendResourceFailure::WriteFailed),
+                ),
+            }));
+            return crate::engine::WakeSchedules::UNCHANGED;
+        };
+        let key = link.key;
+        let mtu = link.mtu;
+        let fire_on = link.attached_interface;
+        let rtt_millis = link.rtt.millis();
+        let mut adv_iv = [0u8; 16];
+        fill_entropy(&mut adv_iv);
+        let mut wake = crate::engine::WakeSchedules::UNCHANGED;
+        match emit_resource_advertisement(
+            &self.outgoing_resources,
+            &ticket.link_id,
+            &hash,
+            &AdvertisementLane { key, mtu, fire_on },
+            &adv_iv,
+            sink,
+        ) {
+            AdvertisementWriteOutcome::Wrote => {
+                self.links.note_outbound(&ticket.link_id, now);
+                wake.link_deadlines = self.link_deadlines_wake();
+                self.outgoing_resources.state_mut(index).retries_left = MAX_ADVERTISEMENT_RETRIES;
+                self.outgoing_resources
+                    .set_timeout_at(index, Some(advertised_deadline(now, rtt_millis)));
+                if let ResourceCorrelation::Request {
+                    response_timeout,
+                    maximum_response_bytes,
+                    ..
+                } = state.correlation
+                {
+                    self.book_request_resource_receipt(
+                        state.command_id,
+                        &ticket.link_id,
+                        request_data,
+                        response_timeout,
+                        maximum_response_bytes,
+                        now,
+                    );
+                    wake.receipt_timeouts = self.receipt_timeouts_wake();
+                }
+            }
+            AdvertisementWriteOutcome::DidNotWrite => {
+                self.outgoing_resources.remove(&ticket.link_id, &hash);
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id: ticket.command_id,
+                    settlement: resource_settlement(
+                        ticket.correlation,
+                        Err(SendResourceFailure::WriteFailed),
+                    ),
+                }));
+            }
+        }
+        wake.resource_deadlines = self.resource_deadlines_wake();
+        wake
     }
 
     pub fn ingest_send_static_response_into<F>(
@@ -380,7 +683,7 @@ impl<S: StorageLayout> EngineState<S> {
         let ResourceSegment {
             index: segment_index,
             total_segments,
-            total_data_bytes,
+            ..
         } = segment;
         let data = body.data;
         let mut wake_schedule_changes = crate::engine::WakeSchedules::UNCHANGED;
@@ -390,40 +693,13 @@ impl<S: StorageLayout> EngineState<S> {
                 settlement: resource_settlement(correlation, Err(failure)),
             }));
         };
-        if segment_index == 0 || total_segments == 0 || segment_index > total_segments {
-            settle(sink, SendResourceFailure::Sequencing);
-            return wake_schedule_changes;
-        }
-        let Some(uncompressed_data_bytes) = u64::try_from(body.metadata.block_len())
-            .ok()
-            .and_then(|metadata_len| total_data_bytes.checked_add(metadata_len))
-        else {
-            settle(
-                sink,
-                SendResourceFailure::Rejected(SendResourceRejection::Build(
-                    BuildOutgoingResourceError::DataTooLarge,
-                )),
-            );
-            return wake_schedule_changes;
+        let validated = match self.validate_outgoing_resource_send(send, segment) {
+            Ok(validated) => validated,
+            Err(failure) => {
+                settle(sink, failure);
+                return wake_schedule_changes;
+            }
         };
-        let metadata_placement_valid = match body.metadata {
-            ResourceMetadata::None => true,
-            ResourceMetadata::Packed(_) => segment_index == 1,
-            ResourceMetadata::SentInFirstSegment { .. } => segment_index > 1,
-        };
-        if !metadata_placement_valid {
-            settle(
-                sink,
-                SendResourceFailure::Rejected(SendResourceRejection::MetadataMisplaced),
-            );
-            return wake_schedule_changes;
-        }
-        let chain_is_dead =
-            segment_index > 1 && self.outgoing_assemblies.original_hash(&link_id).is_none();
-        if chain_is_dead {
-            settle(sink, SendResourceFailure::PredecessorFailed);
-            return wake_schedule_changes;
-        }
         let (key, mtu, fire_on, rtt_millis) = match self.links.active_view(&link_id) {
             ActiveLinkLookup::Active(link) => (
                 link.key,
@@ -431,39 +707,18 @@ impl<S: StorageLayout> EngineState<S> {
                 link.attached_interface,
                 link.rtt.millis(),
             ),
-            ActiveLinkLookup::Inactive => {
-                settle(
-                    sink,
-                    SendResourceFailure::Rejected(SendResourceRejection::LinkNotActive),
-                );
-                return wake_schedule_changes;
-            }
-            ActiveLinkLookup::Absent => {
-                settle(
-                    sink,
-                    SendResourceFailure::Rejected(SendResourceRejection::NoSuchLink),
-                );
-                return wake_schedule_changes;
+            ActiveLinkLookup::Inactive | ActiveLinkLookup::Absent => {
+                unreachable!("resource validation observed this link active without mutating it")
             }
         };
 
-        let sdu = resource_sdu(mtu);
+        let sdu = validated.sdu;
+        let uncompressed_data_bytes = validated.uncompressed_data_bytes;
         let reject = |sink: &mut dyn FnMut(EngineReaction<'_>),
                       error: TrackOutgoingResourceError| {
-            let rejection = match error {
-                TrackOutgoingResourceError::TableFull => SendResourceRejection::TableFull,
-                TrackOutgoingResourceError::LinkBusy => SendResourceRejection::LinkBusy,
-                TrackOutgoingResourceError::Build(build) => SendResourceRejection::Build(build),
-            };
-            settle(sink, SendResourceFailure::Rejected(rejection));
+            settle(sink, tracked_resource_failure(error));
         };
-        let lane = match self.outgoing_resources.lane_for(&link_id, &segment) {
-            Ok(lane) => lane,
-            Err(error) => {
-                reject(sink, error);
-                return wake_schedule_changes;
-            }
-        };
+        let lane = validated.lane;
 
         let command = TrackedCommand {
             link_id,
@@ -617,7 +872,7 @@ impl<S: StorageLayout> EngineState<S> {
         let advertised = self
             .outgoing_resources
             .lookup(&link_id, &parsed.hash)
-            .is_some_and(|index| !self.outgoing_resources.state(index).status.is_staged());
+            .is_some_and(|index| !self.outgoing_resources.state(index).status.is_off_wire());
         if !advertised {
             return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         }
@@ -648,7 +903,7 @@ impl<S: StorageLayout> EngineState<S> {
             return Resolved(IngestPacketOutcome::Ignored(IgnoreReason::Superseded));
         };
         let state = self.outgoing_resources.state(index);
-        if state.status.is_staged() {
+        if state.status.is_off_wire() {
             return Resolved(IngestPacketOutcome::Ignored(IgnoreReason::Superseded));
         }
         if proof != state.expected_proof {
@@ -702,7 +957,7 @@ impl<S: StorageLayout> EngineState<S> {
         let Some(index) = self.outgoing_resources.lookup(&link_id, &hash) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         };
-        if self.outgoing_resources.state(index).status.is_staged() {
+        if self.outgoing_resources.state(index).status.is_off_wire() {
             return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         }
         let state = self.outgoing_resources.state(index);
@@ -1238,6 +1493,7 @@ impl<S: StorageLayout> EngineState<S> {
         let fire_on = link.attached_interface;
         let rtt_millis = link.rtt.millis();
         match state.status {
+            OutgoingResourceStatus::Building => {}
             OutgoingResourceStatus::Staged
             | OutgoingResourceStatus::StagedSealing
             | OutgoingResourceStatus::StagedSealed => {
@@ -1426,7 +1682,9 @@ mod tests {
     use crate::engine::InstantMillis;
     use crate::interfaces::AttachedInterfaces;
     use crate::interfaces::InterfaceId;
-    use crate::routing::links::resources::build_outgoing::BuildOutgoingResourceError;
+    use crate::routing::links::resources::build_outgoing::{
+        BuildOutgoingResourceError, BuildRegions,
+    };
     use crate::routing::links::resources::table::OutgoingResourceStatus;
     use crate::routing::links::resources::{ResourceBody, ResourceCorrelation, ResourceMetadata};
     use crate::routing::links::table::InitiatedLink;
@@ -1691,6 +1949,76 @@ mod tests {
             advertisement.hashmap,
             engine.outgoing_resources.names_flat(index),
         );
+    }
+
+    #[test]
+    fn an_owning_build_continuation_is_wire_identical_to_the_inline_path() {
+        let plaintext = case1_plaintext();
+        let candidate = bytes_from_hex(CASE1_BZ2);
+        let mut inline_engine = sender_with_active_link();
+        let inline = send(&mut inline_engine, 7, &plaintext, Some(&candidate));
+
+        let mut deferred_engine = sender_with_active_link();
+        let resource = ResourceSend {
+            id: CommandId(7),
+            link_id: link_id(),
+            body: ResourceBody {
+                data: &plaintext,
+                compressed_candidate: Some(&candidate),
+                metadata: ResourceMetadata::None,
+            },
+            correlation: ResourceCorrelation::Unsolicited,
+        };
+        let owed = deferred_engine
+            .prepare_send_resource_deferred(
+                &resource,
+                ResourceSegment::whole(plaintext.len() as u64),
+                &mut |_| panic!("a valid preparation must not react before its verdict"),
+            )
+            .expect("the worker is owed a pure build");
+        let shape = owed.shape();
+        let ticket = owed.ticket();
+        let mut transfer = std::vec![0u8; shape.transfer_bytes()];
+        let mut names = std::vec![0u8; shape.part_count() * MAP_HASH_LEN];
+        let outcome = owed.execute(
+            &resource.body,
+            &[0xA5; 16],
+            || [0xA5; RESOURCE_NONCE_LEN],
+            BuildRegions {
+                transfer: &mut transfer,
+                hashmap: &mut names,
+            },
+        );
+        let mut deferred = SendCapture {
+            frames: std::vec::Vec::new(),
+            settlements: std::vec::Vec::new(),
+        };
+        deferred_engine.apply_offloaded_resource_build(
+            OffloadedResourceBuild {
+                ticket,
+                transfer: &transfer,
+                names: &names,
+                request_data: &plaintext,
+                outcome,
+            },
+            InstantMillis(1_500),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
+                    if let Some(frame) = filled_frame(fill) {
+                        deferred.frames.push((target, frame));
+                    }
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    deferred.settlements.push((id, settlement));
+                }
+                _ => {}
+            },
+        );
+
+        assert!(inline.settlements.is_empty());
+        assert!(deferred.settlements.is_empty());
+        assert_eq!(deferred.frames, inline.frames);
     }
 
     #[test]

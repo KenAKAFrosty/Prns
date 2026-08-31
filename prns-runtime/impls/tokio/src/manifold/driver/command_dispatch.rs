@@ -19,7 +19,7 @@ use crate::runtime::{
 use crate::storage::StorageLayout;
 use prns_runtime::runtime::persistence_snapshots;
 
-use super::crypto_pool::{CryptoJob, CryptoPool};
+use super::crypto_pool::{CryptoJob, CryptoPool, ResourceBuildJob};
 use super::egress::{clear_announce_queues, route_reaction, WireScratch};
 use super::host_protocol::{HostCommand, HostResourcePayload, RequestAnyHostCommand};
 use super::interface_topology::InterfaceTopology;
@@ -142,6 +142,49 @@ where
                 CommandEffect::UNCHANGED
             }};
         }
+        macro_rules! defer_whole_resource {
+            ($pool:expr, $send:expr, $segment:expr) => {{
+                let correlation = $send.request_id.map_or(
+                    ResourceCorrelation::Unsolicited,
+                    ResourceCorrelation::Response,
+                );
+                let prepared = engine.prepare_send_resource_deferred(
+                    &ResourceSend {
+                        id: $send.id,
+                        link_id: $send.link_id,
+                        body: ResourceBody {
+                            data: $send.data.as_slice(),
+                            compressed_candidate: $send
+                                .compressed_candidate
+                                .as_ref()
+                                .map(HostResourcePayload::as_slice),
+                            metadata: $send.metadata.as_engine(),
+                        },
+                        correlation,
+                    },
+                    $segment,
+                    &mut reaction_sink!(),
+                );
+                if let Some(owed) = prepared {
+                    let mut seal_iv = [0u8; 16];
+                    host.fill_random(&mut seal_iv);
+                    let mut nonces = [[0u8; crate::routing::links::resources::RESOURCE_NONCE_LEN];
+                        crate::routing::links::resources::build_outgoing::SALT_REROLL_CAP + 1];
+                    for nonce in &mut nonces {
+                        host.fill_random(nonce);
+                    }
+                    $pool.submit(CryptoJob::BuildResource(Box::new(ResourceBuildJob {
+                        owed,
+                        data: $send.data,
+                        compressed_candidate: $send.compressed_candidate,
+                        metadata: $send.metadata,
+                        seal_iv,
+                        nonces,
+                    })));
+                }
+                CommandEffect::UNCHANGED
+            }};
+        }
 
         match command {
             HostCommand::Engine(issued) => {
@@ -222,33 +265,13 @@ where
                     )),
                 }
             }
-            HostCommand::SendResource(send) => CommandEffect::Delta(
-                engine.ingest_send_resource_into(
-                    &ResourceSend {
-                        id: send.id,
-                        link_id: send.link_id,
-                        body: ResourceBody {
-                            data: send.data.as_slice(),
-                            compressed_candidate: send
-                                .compressed_candidate
-                                .as_ref()
-                                .map(HostResourcePayload::as_slice),
-                            metadata: send.metadata.as_engine(),
-                        },
-                        correlation: send.request_id.map_or(
-                            ResourceCorrelation::Unsolicited,
-                            ResourceCorrelation::Response,
-                        ),
-                    },
-                    now,
-                    &mut |entropy| host.fill_random(entropy),
-                    &mut reaction_sink!(),
-                ),
-            ),
-            HostCommand::SendResourceSegment(send) => {
-                journal.register_completion(send.id, send.completion);
-                CommandEffect::Delta(
-                    engine.ingest_send_resource_segment_into(
+            HostCommand::SendResource(send) => match crypto_pool {
+                Some(pool) => {
+                    let segment = ResourceSegment::whole(send.data.len() as u64);
+                    defer_whole_resource!(pool, send, segment)
+                }
+                _ => CommandEffect::Delta(
+                    engine.ingest_send_resource_into(
                         &ResourceSend {
                             id: send.id,
                             link_id: send.link_id,
@@ -265,16 +288,53 @@ where
                                 ResourceCorrelation::Response,
                             ),
                         },
-                        ResourceSegment {
-                            index: send.segment_index,
-                            total_segments: send.total_segments,
-                            total_data_bytes: send.total_data_bytes,
-                        },
                         now,
                         &mut |entropy| host.fill_random(entropy),
                         &mut reaction_sink!(),
                     ),
-                )
+                ),
+            },
+            HostCommand::SendResourceSegment(send) => {
+                journal.register_completion(send.id, send.completion);
+                if let Some(pool) =
+                    crypto_pool.filter(|_| send.segment_index == 1 && send.total_segments == 1)
+                {
+                    let segment = ResourceSegment {
+                        index: send.segment_index,
+                        total_segments: send.total_segments,
+                        total_data_bytes: send.total_data_bytes,
+                    };
+                    defer_whole_resource!(pool, send, segment)
+                } else {
+                    CommandEffect::Delta(
+                        engine.ingest_send_resource_segment_into(
+                            &ResourceSend {
+                                id: send.id,
+                                link_id: send.link_id,
+                                body: ResourceBody {
+                                    data: send.data.as_slice(),
+                                    compressed_candidate: send
+                                        .compressed_candidate
+                                        .as_ref()
+                                        .map(HostResourcePayload::as_slice),
+                                    metadata: send.metadata.as_engine(),
+                                },
+                                correlation: send.request_id.map_or(
+                                    ResourceCorrelation::Unsolicited,
+                                    ResourceCorrelation::Response,
+                                ),
+                            },
+                            ResourceSegment {
+                                index: send.segment_index,
+                                total_segments: send.total_segments,
+                                total_data_bytes: send.total_data_bytes,
+                            },
+                            now,
+                            &mut |entropy| host.fill_random(entropy),
+                            &mut reaction_sink!(),
+                        ),
+                    )
+                }
             }
             HostCommand::RespondAny(mut respond) => {
                 if let Some(completion) = respond.completion.take() {

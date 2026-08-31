@@ -33,6 +33,9 @@ impl ResourceRowState for u8 {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutgoingResourceStatus {
+    /// A host reserved this row while an owning crypto job builds its transfer and hashmap
+    /// buffers. Nothing in this state is visible on the wire.
+    Building,
     /// A raw continuation stream parked at its sealed offset, deferring the seal until the segment ahead finishes serving during the receiver-busy window.
     Staged,
     /// The deferred seal is running on a crypto-pool worker; the verdict lands as [`StagedSealed`](Self::StagedSealed).
@@ -45,12 +48,17 @@ pub enum OutgoingResourceStatus {
 }
 
 impl OutgoingResourceStatus {
-    /// Off the wire in every staged form: nothing staged serves parts, accepts proofs, or hears cancels.
+    /// A continuation parked behind the live row, in any phase of its deferred seal.
     pub fn is_staged(self) -> bool {
         matches!(
             self,
             Self::Staged | Self::StagedSealing | Self::StagedSealed
         )
+    }
+
+    /// Not yet visible to the peer: these rows cannot serve parts, accept proofs, or hear cancels.
+    pub fn is_off_wire(self) -> bool {
+        self == Self::Building || self.is_staged()
     }
 }
 
@@ -69,6 +77,24 @@ pub struct TrackedCommand {
     pub command_id: CommandId,
     pub correlation: ResourceCorrelation,
     pub segment: ResourceSegment,
+}
+
+/// Stable identity for an owning resource-build job. A completion lands only while the same
+/// reservation generation still owns a `Building` row, so teardown, cancellation, and even
+/// eventual command-ID reuse make it harmlessly stale.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeferredResourceBuildTicket {
+    pub link_id: LinkId,
+    pub command_id: CommandId,
+    pub correlation: ResourceCorrelation,
+    generation: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LandDeferredResourceBuild {
+    Stale,
+    Built(ResourceHash),
+    Failed(BuildOutgoingResourceError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,6 +126,9 @@ pub struct OutgoingResourceState {
     pub retries_left: u8,
     pub command_id: CommandId,
     pub correlation: ResourceCorrelation,
+    /// Non-zero only while an owning build continuation holds this row. This prevents a late
+    /// completion from landing in a replacement row even if its public command identity is reused.
+    deferred_build_generation: u64,
 }
 
 // The vacant-slot value for fixed-capacity tables to initialize with, never a live resource's state; a successful [track](OutgoingResources::track) writes every field.
@@ -124,6 +153,7 @@ impl Default for OutgoingResourceState {
             retries_left: 0,
             command_id: CommandId(0),
             correlation: ResourceCorrelation::Unsolicited,
+            deferred_build_generation: 0,
         }
     }
 }
@@ -339,6 +369,7 @@ pub enum RemoveOutcome {
 pub struct OutgoingResources<C: ResourceTable<OutgoingResourceState>> {
     table: C,
     earliest_timeout: Option<InstantMillis>,
+    next_deferred_build_generation: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -444,6 +475,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                     retries_left: 0,
                     command_id,
                     correlation,
+                    deferred_build_generation: 0,
                 };
                 self.refresh_earliest_timeout();
                 Ok(built.hash)
@@ -461,6 +493,126 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                 Err(TrackOutgoingResourceError::Build(error))
             }
         }
+    }
+
+    /// Reserve the engine row before an owning worker starts a live resource build. The row's
+    /// ordinary bulk buffers also reserve the exact configured memory budget; worker scratch is
+    /// transient and lands here only if this ticket still owns the row.
+    pub fn reserve_deferred_build(
+        &mut self,
+        command: TrackedCommand,
+        shape: ResourceBufferShape,
+        uncompressed_data_bytes: u64,
+    ) -> Result<DeferredResourceBuildTicket, TrackOutgoingResourceError> {
+        let TrackedCommand {
+            link_id,
+            sdu,
+            command_id,
+            correlation,
+            segment,
+        } = command;
+        self.next_deferred_build_generation = self.next_deferred_build_generation.wrapping_add(1);
+        if self.next_deferred_build_generation == 0 {
+            self.next_deferred_build_generation = 1;
+        }
+        let generation = self.next_deferred_build_generation;
+        self.table
+            .push(
+                link_id,
+                ResourceHash::new([0; 32]),
+                OutgoingResourceState {
+                    sealed_transfer_bytes: shape.transfer_bytes(),
+                    uncompressed_data_bytes,
+                    segment_index: segment.index,
+                    total_segments: segment.total_segments,
+                    sdu,
+                    part_count: shape.part_count(),
+                    status: OutgoingResourceStatus::Building,
+                    command_id,
+                    correlation,
+                    deferred_build_generation: generation,
+                    ..OutgoingResourceState::default()
+                },
+                shape,
+            )
+            .map_err(track_push_error)?;
+        self.refresh_earliest_timeout();
+        Ok(DeferredResourceBuildTicket {
+            link_id,
+            command_id,
+            correlation,
+            generation,
+        })
+    }
+
+    /// Land an owning worker's buffers without trusting a completion that outlived its row.
+    pub fn land_deferred_build(
+        &mut self,
+        ticket: DeferredResourceBuildTicket,
+        transfer: &[u8],
+        names: &[u8],
+        outcome: Result<BuiltResource, BuildOutgoingResourceError>,
+    ) -> LandDeferredResourceBuild {
+        let Some(index) = (0..self.table.len()).find(|&index| {
+            let state = &self.table.states()[index];
+            &self.table.link_ids()[index] == &ticket.link_id
+                && state.command_id == ticket.command_id
+                && state.deferred_build_generation == ticket.generation
+                && state.status == OutgoingResourceStatus::Building
+        }) else {
+            return LandDeferredResourceBuild::Stale;
+        };
+        let built = match outcome {
+            Ok(built) => built,
+            Err(error) => {
+                self.table.swap_remove(index);
+                self.refresh_earliest_timeout();
+                return LandDeferredResourceBuild::Failed(error);
+            }
+        };
+        let reserved = self.table.states()[index];
+        let expected_transfer_bytes = reserved.sealed_transfer_bytes;
+        let expected_part_count = reserved.part_count;
+        let valid = built.sealed_transfer_bytes == expected_transfer_bytes
+            && built.part_count == expected_part_count
+            && transfer.len() == expected_transfer_bytes
+            && names.len() == expected_part_count.saturating_mul(MAP_HASH_LEN);
+        if !valid {
+            self.table.swap_remove(index);
+            self.refresh_earliest_timeout();
+            return LandDeferredResourceBuild::Failed(
+                BuildOutgoingResourceError::BufferShapeMismatch,
+            );
+        }
+        let buffers = self.table.buffers_mut(index);
+        buffers.transfer[..expected_transfer_bytes].copy_from_slice(transfer);
+        buffers.part_names[..expected_part_count]
+            .as_flattened_mut()
+            .copy_from_slice(names);
+        self.table.set_hash(index, built.hash);
+        *self.table.state_mut(index) = OutgoingResourceState {
+            salt_nonce: built.salt_nonce,
+            expected_proof: built.expected_proof,
+            sealed_transfer_bytes: built.sealed_transfer_bytes,
+            staged_plaintext_bytes: 0,
+            uncompressed_data_bytes: reserved.uncompressed_data_bytes,
+            segment_index: reserved.segment_index,
+            total_segments: reserved.total_segments,
+            original_hash: built.hash,
+            compression: built.compression,
+            has_metadata: built.has_metadata,
+            part_count: built.part_count,
+            sdu: reserved.sdu,
+            scope_start: 0,
+            sent_part_count: 0,
+            status: OutgoingResourceStatus::Advertised,
+            retries_left: 0,
+            command_id: reserved.command_id,
+            correlation: reserved.correlation,
+            deferred_build_generation: 0,
+        };
+        self.refresh_earliest_timeout();
+        LandDeferredResourceBuild::Built(built.hash)
     }
 
     /// The uncompressed-continuation path parks the raw stream at its sealed offset and defers the whole seal to [`seal_regions_mut`](Self::seal_regions_mut) time. It returns the landed row's index because the placeholder hash can never name it.
@@ -1237,6 +1389,22 @@ mod tests {
         track_segment(outgoing, link, hash_byte, ResourceSegment::whole(930))
     }
 
+    fn reserve_build(outgoing: &mut TestOutgoing, command_id: u64) -> DeferredResourceBuildTicket {
+        outgoing
+            .reserve_deferred_build(
+                TrackedCommand {
+                    link_id: link_id(1),
+                    sdu: 464,
+                    command_id: CommandId(command_id),
+                    correlation: ResourceCorrelation::Unsolicited,
+                    segment: ResourceSegment::whole(930),
+                },
+                shape(928, 464),
+                930,
+            )
+            .unwrap()
+    }
+
     fn offer<'a>(hash_byte: u8, initial_names: &'a [u8]) -> AcceptedResource<'a> {
         AcceptedResource {
             hash: hash(hash_byte),
@@ -1269,6 +1437,73 @@ mod tests {
         assert_eq!(state.sdu, 464);
         assert_eq!(state.status, OutgoingResourceStatus::Advertised);
         assert_eq!(state.command_id, CommandId(7));
+    }
+
+    #[test]
+    fn a_deferred_build_lands_only_its_reserved_shape_and_generation() {
+        let mut outgoing = TestOutgoing::default();
+        let first = reserve_build(&mut outgoing, 7);
+        assert_eq!(outgoing.state(0).status, OutgoingResourceStatus::Building);
+
+        assert_eq!(
+            outgoing.remove(&link_id(1), &ResourceHash::new([0; 32])),
+            RemoveOutcome::Removed
+        );
+        let replacement = reserve_build(&mut outgoing, 7);
+        let transfer = [0xAB; 928];
+        let names = [0xCD; 2 * MAP_HASH_LEN];
+
+        assert_eq!(
+            outgoing.land_deferred_build(first, &transfer, &names, Ok(fabricated(0xAB, 928, 2)),),
+            LandDeferredResourceBuild::Stale,
+            "an old completion must not land in a replacement row with the same command ID",
+        );
+        assert_eq!(outgoing.state(0).status, OutgoingResourceStatus::Building);
+        assert_eq!(
+            outgoing.land_deferred_build(
+                replacement,
+                &transfer,
+                &names,
+                Ok(fabricated(0xAB, 928, 2)),
+            ),
+            LandDeferredResourceBuild::Built(hash(0xAB)),
+        );
+
+        let index = outgoing.lookup(&link_id(1), &hash(0xAB)).unwrap();
+        assert_eq!(outgoing.sealed_transfer(index), &transfer);
+        assert_eq!(outgoing.names_flat(index), &names);
+        assert_eq!(
+            outgoing.state(index).status,
+            OutgoingResourceStatus::Advertised
+        );
+    }
+
+    #[test]
+    fn a_failed_or_misshapen_deferred_build_releases_its_reservation() {
+        let mut outgoing = TestOutgoing::default();
+        let failed = reserve_build(&mut outgoing, 7);
+        assert_eq!(
+            outgoing.land_deferred_build(
+                failed,
+                &[],
+                &[],
+                Err(BuildOutgoingResourceError::SaltRerollsExhausted),
+            ),
+            LandDeferredResourceBuild::Failed(BuildOutgoingResourceError::SaltRerollsExhausted),
+        );
+        assert!(outgoing.is_empty());
+
+        let misshapen = reserve_build(&mut outgoing, 8);
+        assert_eq!(
+            outgoing.land_deferred_build(
+                misshapen,
+                &[0; 927],
+                &[0; 2 * MAP_HASH_LEN],
+                Ok(fabricated(0xAB, 928, 2)),
+            ),
+            LandDeferredResourceBuild::Failed(BuildOutgoingResourceError::BufferShapeMismatch),
+        );
+        assert!(outgoing.is_empty());
     }
 
     #[test]

@@ -7,7 +7,7 @@ use crate::interfaces::FrameAccountingEvent;
 use crate::manifold::Host;
 use crate::routing::links::resources::build_outgoing::SALT_REROLL_CAP;
 use crate::routing::links::resources::receive::offload::OffloadedOpenSpan;
-use crate::routing::links::resources::send::OffloadedStagedSeal;
+use crate::routing::links::resources::send::{OffloadedResourceBuild, OffloadedStagedSeal};
 use crate::routing::links::resources::{MAP_HASH_LEN, RESOURCE_NONCE_LEN};
 use crate::routing::proof::{EXPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN};
 use crate::storage::StorageLayout;
@@ -310,6 +310,24 @@ where
                 shared,
                 signature,
                 topology.interfaces.view(),
+                &mut reaction_sink!(),
+            )),
+            CryptoResult::ResourceBuilt {
+                ticket,
+                request_data,
+                transfer,
+                names,
+                outcome,
+            } => CryptoCompletionEffect::WakeSchedules(engine.apply_offloaded_resource_build(
+                OffloadedResourceBuild {
+                    ticket,
+                    transfer: &transfer,
+                    names: &names,
+                    request_data: request_data.as_slice(),
+                    outcome,
+                },
+                now,
+                &mut |entropy| host.fill_random(entropy),
                 &mut reaction_sink!(),
             )),
             CryptoResult::StagedSealed {

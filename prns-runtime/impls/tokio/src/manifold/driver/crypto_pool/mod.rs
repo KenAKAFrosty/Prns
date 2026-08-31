@@ -27,16 +27,19 @@ use crate::routing::links::handshake::{
     link_proof_signature_valid, link_proof_signed_data, LinkProofSignOwed, LinkProofVerifyOwed,
 };
 use crate::routing::links::resources::build_outgoing::{
-    seal_staged_resource, BuildOutgoingResourceError, BuildRegions, SealedStagedResource,
-    SALT_REROLL_CAP,
+    seal_staged_resource, BuildOutgoingResourceError, BuildRegions, BuiltResource,
+    SealedStagedResource, SALT_REROLL_CAP,
 };
+use crate::routing::links::resources::send::DeferredResourceBuild;
 use crate::routing::links::resources::streamed_open::StreamedOpen;
 use crate::routing::links::resources::{
-    sealed_transfer_bytes, ResourceHash, MAP_HASH_LEN, RESOURCE_NONCE_LEN,
+    sealed_transfer_bytes, ResourceBody, ResourceHash, MAP_HASH_LEN, RESOURCE_NONCE_LEN,
 };
 use crate::routing::links::{LinkId, LinkKey};
 #[cfg(feature = "runtime-metrics")]
 use crate::runtime::CryptoMetricsSnapshot;
+
+use super::host_protocol::{HostResourceMetadata, HostResourcePayload};
 
 /// How the host runtime runs the engine's asymmetric crypto. `Pooled` offloads verify/seal/sign/decrypt to worker threads and keeps the manifold hot; `Inline` runs them on the manifold thread (the embedded shape, and the mobile default).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -211,6 +214,15 @@ pub(super) struct StagedSealJob {
     pub(super) salts: [[u8; RESOURCE_NONCE_LEN]; SALT_REROLL_CAP],
 }
 
+pub(super) struct ResourceBuildJob {
+    pub(super) owed: DeferredResourceBuild,
+    pub(super) data: HostResourcePayload,
+    pub(super) compressed_candidate: Option<HostResourcePayload>,
+    pub(super) metadata: HostResourceMetadata,
+    pub(super) seal_iv: [u8; 16],
+    pub(super) nonces: [[u8; RESOURCE_NONCE_LEN]; SALT_REROLL_CAP + 1],
+}
+
 pub(super) struct OpenSpanJob {
     pub(super) link_id: LinkId,
     pub(super) hash: ResourceHash,
@@ -222,6 +234,7 @@ pub(super) struct OpenSpanJob {
 #[allow(clippy::large_enum_variant)]
 pub(super) enum CryptoJob {
     Verify(EngineVerifyJob),
+    BuildResource(Box<ResourceBuildJob>),
     SealStaged(Box<StagedSealJob>),
     OpenSpan(Box<OpenSpanJob>),
     SealScalars(EncryptOwed),
@@ -246,13 +259,15 @@ const BULK_BYTES_PER_WORK_UNIT: usize = 8 * 1024;
 
 impl CryptoJob {
     fn owes_packet_verdict(&self) -> bool {
-        !matches!(self, Self::SealStaged(_))
+        !matches!(self, Self::BuildResource(_) | Self::SealStaged(_))
     }
 
     fn scheduling_class(&self) -> CryptoJobClass {
         match self {
             Self::Verify(_) => CryptoJobClass::Verify,
-            Self::SealStaged(_) | Self::OpenSpan(_) => CryptoJobClass::Bulk,
+            Self::BuildResource(_) | Self::SealStaged(_) | Self::OpenSpan(_) => {
+                CryptoJobClass::Bulk
+            }
             Self::SealScalars(_)
             | Self::Sign(_)
             | Self::Decrypt(_)
@@ -270,6 +285,7 @@ impl CryptoJob {
     /// equivalent to a receipt verification merely because both occupy one ring slot.
     fn estimated_work(&self) -> usize {
         match self {
+            Self::BuildResource(job) => 1 + job.data.len().div_ceil(BULK_BYTES_PER_WORK_UNIT),
             Self::SealStaged(job) => 1 + job.plaintext.len().div_ceil(BULK_BYTES_PER_WORK_UNIT),
             Self::OpenSpan(job) => 1 + job.bytes.len().div_ceil(BULK_BYTES_PER_WORK_UNIT),
             Self::VerifyLinkProof(_) | Self::SignLinkProof(_) => 3,
@@ -345,6 +361,13 @@ pub(super) enum CryptoResult {
         owed: RemoteControlPairingAvailabilityVerifyOwed,
         verification: RemoteControlPairingAvailabilityVerification,
     },
+    ResourceBuilt {
+        ticket: crate::routing::links::resources::table::DeferredResourceBuildTicket,
+        request_data: HostResourcePayload,
+        transfer: Vec<u8>,
+        names: Vec<u8>,
+        outcome: Result<BuiltResource, BuildOutgoingResourceError>,
+    },
     StagedSealed {
         link_id: LinkId,
         stream_nonce: [u8; RESOURCE_NONCE_LEN],
@@ -364,7 +387,7 @@ pub(super) enum CryptoResult {
 
 impl CryptoResult {
     pub(super) fn settles_packet_verdict(&self) -> bool {
-        !matches!(self, Self::StagedSealed { .. })
+        !matches!(self, Self::ResourceBuilt { .. } | Self::StagedSealed { .. })
     }
 }
 
@@ -873,6 +896,43 @@ type WorkerVerifierCache = [Option<Ed25519Verifier>; WORKER_VERIFIER_CACHE_DEPTH
 
 fn run_crypto_job(job: CryptoJob, verifier_cache: &mut WorkerVerifierCache) -> CryptoResult {
     match job {
+        CryptoJob::BuildResource(job) => {
+            let ResourceBuildJob {
+                owed,
+                data,
+                compressed_candidate,
+                metadata,
+                seal_iv,
+                nonces,
+            } = *job;
+            let shape = owed.shape();
+            let ticket = owed.ticket();
+            let mut transfer = vec![0u8; shape.transfer_bytes()];
+            let mut names = vec![0u8; shape.part_count() * MAP_HASH_LEN];
+            let mut fresh_nonces = nonces.into_iter();
+            let outcome = owed.execute(
+                &ResourceBody {
+                    data: data.as_slice(),
+                    compressed_candidate: compressed_candidate
+                        .as_ref()
+                        .map(HostResourcePayload::as_slice),
+                    metadata: metadata.as_engine(),
+                },
+                &seal_iv,
+                || fresh_nonces.next().unwrap_or_default(),
+                BuildRegions {
+                    transfer: &mut transfer,
+                    hashmap: &mut names,
+                },
+            );
+            CryptoResult::ResourceBuilt {
+                ticket,
+                request_data: data,
+                transfer,
+                names,
+                outcome,
+            }
+        }
         CryptoJob::SealStaged(job) => {
             let StagedSealJob {
                 link_id,
