@@ -3,6 +3,7 @@ mod command_execution;
 mod commands;
 mod deadlines;
 mod destination_identity;
+mod destination_retirement;
 mod introspection;
 mod management;
 mod node_egress;
@@ -10,6 +11,8 @@ mod node_ingress;
 mod proof;
 mod reaction;
 mod registration;
+mod remote_control;
+mod remote_control_pairing;
 mod route_evidence;
 mod settlement;
 mod state;
@@ -65,7 +68,8 @@ pub use crate::routing::RouteRemovalCause;
 pub use crate::wire::WireError as EgressSerializeError;
 pub use command_execution::CommandTiming;
 pub use commands::*;
-pub use introspection::{AnnounceRateState, RouteSnapshot};
+pub use destination_retirement::RetireDestinationOutcome;
+pub use introspection::{ActiveLinkSnapshot, AnnounceRateState, RouteSnapshot};
 pub use node_egress::ReemitAnnounce;
 pub use node_ingress::{IngestIo, IngestPacketReport};
 pub use proof::ResolvedReceiptSettlement;
@@ -75,8 +79,20 @@ pub use reaction::{
 };
 pub use registration::{
     PersistedRoutePreflightError, PersistedRouteSignaturePending, PersistedRouteVerificationError,
-    RouteSeedOutcome, SetTransportIdentityError, VerifiedPersistedRoute,
+    RouteSeedOutcome, SetTransportIdentityError, UnregisterDestinationOutcome,
+    VerifiedPersistedRoute,
 };
+pub(crate) use remote_control::RemoteControlControllerIdentityConfiguration;
+pub use remote_control::{
+    AdmitRemoteControlControllerPairingResponseOutcome, ConfigureRemoteControlIdentitiesError,
+    RemoteControlControllerPairingResponseArrival,
+    RemoteControlControllerPairingResponseBridgeInvariantViolation,
+    RemoteControlControllerPairingResponseEffect,
+};
+pub use remote_control_pairing::{
+    ConfigureRemoteControlPairingError, RemoteControlPairingResponseDispatchFailure,
+};
+pub(crate) use settlement::settle;
 pub use state::{
     EngineProtocolPolicy, EngineState, LinkMtuDiscovery, LocalHopCountOverride,
     LocalOriginHopCount, ProofForm, RecursivePathRequestDefault,

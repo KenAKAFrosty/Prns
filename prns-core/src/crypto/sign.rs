@@ -49,19 +49,32 @@ impl Ed25519SecretKey {
 pub struct Ed25519Verifier {
     public: Ed25519PublicKey,
     key: VerifyingKey,
+    #[cfg(feature = "ed25519-batch")]
+    weak: bool,
 }
 
 impl Ed25519Verifier {
     pub fn new(public: &Ed25519PublicKey) -> Result<Self, InvalidPublicKey> {
         let key = VerifyingKey::from_bytes(&public.0).map_err(|_| InvalidPublicKey)?;
+        #[cfg(feature = "ed25519-batch")]
+        let weak = key.is_weak();
         Ok(Self {
             public: *public,
             key,
+            #[cfg(feature = "ed25519-batch")]
+            weak,
         })
     }
 
     pub fn public_key(&self) -> &Ed25519PublicKey {
         &self.public
+    }
+
+    /// Weak keys retain the historical single-verification behavior and must not enter dalek's
+    /// probabilistic batch equation, whose acceptance behavior differs for low-order points.
+    #[cfg(feature = "ed25519-batch")]
+    pub fn is_weak(&self) -> bool {
+        self.weak
     }
 
     pub fn verify(
@@ -74,6 +87,32 @@ impl Ed25519Verifier {
             .verify(message, &signature)
             .map_err(|_| InvalidSignature)
     }
+}
+
+#[cfg(feature = "ed25519-batch")]
+pub fn ed25519_verify_batch(
+    messages: &[&[u8]],
+    signatures: &[Ed25519Signature],
+    verifiers: &[&Ed25519Verifier],
+) -> Result<(), InvalidSignature> {
+    use alloc::vec::Vec;
+
+    if messages.len() != signatures.len()
+        || messages.len() != verifiers.len()
+        || verifiers.iter().any(|verifier| verifier.is_weak())
+    {
+        return Err(InvalidSignature);
+    }
+    let signatures: Vec<_> = signatures
+        .iter()
+        .map(|signature| Signature::from_bytes(&signature.0))
+        .collect();
+    let verifying_keys: Vec<_> = verifiers
+        .iter()
+        .map(|verifier| verifier.key.clone())
+        .collect();
+    ed25519_dalek::verify_batch(messages, &signatures, &verifying_keys)
+        .map_err(|_| InvalidSignature)
 }
 
 pub fn ed25519_verify(

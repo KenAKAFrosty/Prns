@@ -79,5 +79,6 @@ impl Interface for LoopbackInterface {
 mod announces;
 mod interfaces;
 mod links;
+mod remote_control_pairing;
 mod routes;
 mod transport;

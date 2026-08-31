@@ -291,6 +291,7 @@ impl OwnedEvent {
                     prns_host::LinkClosedReason::Timeout => "timeout",
                     prns_host::LinkClosedReason::PeerClosed => "peerClosed",
                     prns_host::LinkClosedReason::MalformedRtt => "malformedRtt",
+                    prns_host::LinkClosedReason::LocallyClosed => "locallyClosed",
                 },
             },
             prns_host::DiagnosticEvent::LinkInterfaceMismatch {

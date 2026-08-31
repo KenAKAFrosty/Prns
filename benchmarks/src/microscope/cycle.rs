@@ -70,7 +70,10 @@ impl Cycle {
             NOW,
             &mut |bytes| cycle.responder_entropy.fill(bytes),
             &mut |reaction| {
-                if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
+                if let EngineReaction::Directive(
+                    Directive::Send { bytes, .. } | Directive::SendAnnounce { bytes, .. },
+                ) = reaction
+                {
                     announce.extend_from_slice(bytes);
                 }
             },
@@ -211,5 +214,15 @@ impl Cycle {
             },
         );
         assert!(settled, "proof verified and the receipt settled");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Cycle;
+
+    #[test]
+    fn construction_learns_the_destination_from_the_announce_directive() {
+        let _ = Cycle::new();
     }
 }

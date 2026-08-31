@@ -364,6 +364,16 @@ export class MockRuntimeBase implements PrnsRuntimeBinding {
     return unexpectedRuntimeCall("ingest");
   }
 
+  drainEventBatch(): ReturnType<PrnsRuntimeBinding["drainEventBatch"]> {
+    return new Uint8Array([
+      80, 82, 78, 69,
+      1, 0,
+      0, 0,
+      1, 0, 0, 0,
+      0, 0, 0, 0,
+    ]);
+  }
+
   drainEvents(): ReturnType<PrnsRuntimeBinding["drainEvents"]> {
     return unexpectedRuntimeCall("drainEvents");
   }

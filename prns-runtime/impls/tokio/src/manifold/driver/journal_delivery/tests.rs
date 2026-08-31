@@ -19,10 +19,9 @@ fn settle_fires_the_awaited_completion_and_suppresses_the_event() {
     let (completion, mut settled) = oneshot::channel();
     delivery.register_completion(CommandId(7), completion);
 
-    let settlement = Settlement::SendSinglePacket(Ok(delivered(9)));
     let forwarded = delivery.route(Journaled::CommandSettled {
         id: CommandId(7),
-        settlement: settlement.clone(),
+        settlement: Settlement::SendSinglePacket(Ok(delivered(9))),
     });
 
     assert!(
@@ -33,7 +32,7 @@ fn settle_fires_the_awaited_completion_and_suppresses_the_event() {
         settled
             .try_recv()
             .expect("the awaiter received its settlement"),
-        settlement
+        Settlement::SendSinglePacket(Ok(delivered(9)))
     );
     assert!(
         delivery.completions.is_empty(),

@@ -435,6 +435,7 @@ async function validatePresentations(): Promise<void> {
 
 async function readyPrns(): Promise<Prns> {
   const outcome = await Prns.create({
+    execution: "MainThread",
     wasm: wasmModule(),
     identityStore: {
       load: async () =>

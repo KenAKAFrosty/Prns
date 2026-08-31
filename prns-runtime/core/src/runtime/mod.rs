@@ -29,9 +29,11 @@ cfg_if::cfg_if! {
 
 pub use crate::engine::BlackholeSeedReport;
 pub use command::{
-    AnnounceNowError, ClearAnnounceQueuesOutcome, DestinationIdentityRetentionControl,
-    DestinationIdentityRetentionControlError, DropRouteOutcome, DropRoutesViaOutcome, PrnsNodeApi,
-    RoutingControl, RoutingControlError, SendError, SetRegisteredAnnounceAppDataError,
+    AnnounceNowError, ClearAnnounceQueuesOutcome, CloseRemoteControlPairingControlError,
+    DestinationIdentityRetentionControl, DestinationIdentityRetentionControlError,
+    DropRouteOutcome, DropRoutesViaOutcome, OpenRemoteControlPairingControlError, PrnsNodeApi,
+    RemoteControlPairingControlError, RoutingControl, RoutingControlError, SendError,
+    SetRegisteredAnnounceAppDataError,
 };
 pub use event::{Diagnostic, Message, PrnsEvent};
 pub use health::RuntimeHealth;

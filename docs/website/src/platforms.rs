@@ -317,13 +317,16 @@ pub const IN_PROGRESS_BOARD_TARGETS: &[BoardTarget] = &[BoardTarget {
     flash_target: None,
 }];
 
-pub fn board_target_by_slug(slug: &str) -> Option<&'static BoardTarget> {
+pub fn all_board_targets() -> impl Iterator<Item = &'static BoardTarget> {
     SHIPPING_BOARD_TARGETS
         .iter()
         .chain(QUALIFICATION_BOARD_TARGETS.iter())
         .chain(IN_PROGRESS_BOARD_TARGETS.iter())
         .chain(UPCOMING_BOARD_TARGETS.iter())
-        .find(|board| board.slug == slug)
+}
+
+pub fn board_target_by_slug(slug: &str) -> Option<&'static BoardTarget> {
+    all_board_targets().find(|board| board.slug == slug)
 }
 
 pub const PLATFORMS: &[Platform] = &[

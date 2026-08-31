@@ -29,6 +29,7 @@ path = "src/lib.rs"
 default = ["std", "std-sync-host"]
 # `zeroize/alloc` rides our own `alloc` gate so `Zeroize for Vec<u8>` is present by declaration rather than incidental dependency feature unification. The host identity vault's keyring backend zeroizes the secret bytes the OS store hands back.
 alloc = ["zeroize/alloc"]
+ed25519-batch = ["alloc", "ed25519-dalek/batch"]
 signed-artifact = ["alloc", "dep:rmp"]
 rnx = ["alloc", "dep:rmp"]
 i2p = ["alloc", "dep:base64", "dep:data-encoding"]
@@ -68,8 +69,8 @@ hmac = { version = "0.13", default-features = false }
 hkdf = { version = "0.13", default-features = false }
 aes = { version = "0.8", default-features = false }
 cbc = { version = "0.1", default-features = false, features = ["block-padding"] }
-ed25519-dalek = { version = "2", default-features = false, features = ["zeroize", "fast"] }
-x25519-dalek = { version = "2", default-features = false, features = ["precomputed-tables", "static_secrets"] }
+ed25519-dalek = { version = "3", default-features = false, features = ["zeroize", "fast"] }
+x25519-dalek = { version = "3", default-features = false, features = ["precomputed-tables", "static_secrets"] }
 zeroize = { version = "1", default-features = false, features = ["derive"] }
 base64 = { version = "0.22", optional = true, default-features = false, features = ["alloc"] }
 data-encoding = { version = "2", optional = true, default-features = false, features = ["alloc"] }
