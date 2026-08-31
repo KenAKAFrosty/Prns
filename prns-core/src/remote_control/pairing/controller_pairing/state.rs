@@ -411,7 +411,11 @@ impl RemoteControlControllerPairingState {
                         active: attempt_id,
                     };
                 }
-                PersistRemoteControlControllerPairingOutcome::Completed { attempt_id, access }
+                PersistRemoteControlControllerPairingOutcome::Completed {
+                    attempt_id,
+                    context,
+                    access,
+                }
             }
             phase @ (RemoteControlControllerPairingPhase::Idle
             | RemoteControlControllerPairingPhase::AwaitingOffer { .. }
@@ -445,7 +449,11 @@ impl RemoteControlControllerPairingState {
                         active: attempt_id,
                     };
                 }
-                FailRemoteControlControllerPairingPersistenceOutcome::Failed { attempt_id, access }
+                FailRemoteControlControllerPairingPersistenceOutcome::Failed {
+                    attempt_id,
+                    context,
+                    access,
+                }
             }
             phase @ (RemoteControlControllerPairingPhase::Idle
             | RemoteControlControllerPairingPhase::AwaitingOffer { .. }

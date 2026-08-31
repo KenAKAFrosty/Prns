@@ -862,7 +862,10 @@ impl<S: StorageLayout> EngineState<S> {
             }
             IngestPacketOutcome::LinkClosedByPeer { link_id } => {
                 self.retire_link(&link_id, LinkClosedReason::PeerClosed, sink);
+                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                wake_schedule_changes.channel_timeouts = self.channel_timeouts_wake();
+                wake_schedule_changes.remote_control_pairing = self.remote_control_pairing_wake();
             }
             IngestPacketOutcome::OwesLinkClose { link_id, reason } => {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
@@ -879,6 +882,10 @@ impl<S: StorageLayout> EngineState<S> {
                         }));
                     }
                 }
+                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+                wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                wake_schedule_changes.channel_timeouts = self.channel_timeouts_wake();
+                wake_schedule_changes.remote_control_pairing = self.remote_control_pairing_wake();
             }
             IngestPacketOutcome::LinkInterfaceMismatch {
                 link_id,

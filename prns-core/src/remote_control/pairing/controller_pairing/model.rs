@@ -354,6 +354,7 @@ pub enum ReceiveRemoteControlControllerPairingCompletedOutcome {
 pub enum PersistRemoteControlControllerPairingOutcome {
     Completed {
         attempt_id: RemoteControlPairingAttemptId,
+        context: RemoteControlPairingContext,
         access: RemoteControlTargetAccess,
     },
     NoPersistenceOwed,
@@ -367,6 +368,7 @@ pub enum PersistRemoteControlControllerPairingOutcome {
 pub enum FailRemoteControlControllerPairingPersistenceOutcome {
     Failed {
         attempt_id: RemoteControlPairingAttemptId,
+        context: RemoteControlPairingContext,
         access: RemoteControlTargetAccess,
     },
     NoPersistenceOwed,

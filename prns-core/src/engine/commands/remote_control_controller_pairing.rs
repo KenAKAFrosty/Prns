@@ -1,9 +1,12 @@
 use heapless::Vec as HeaplessVec;
 
+use crate::engine::node_egress::fan_frame;
 use crate::engine::{
-    AdmitRemoteControlControllerPairingResponseOutcome, EngineState,
-    RemoteControlControllerPairingResponseEffect,
+    AdmitRemoteControlControllerPairingResponseOutcome, EngineReaction, EngineState, FanTarget,
+    LinkClosedReason, RemoteControlControllerPairingResponseEffect, WriteLinkCloseError,
 };
+use crate::identity::ENCRYPTION_IV_LEN;
+use crate::interfaces::AttachedInterfaces;
 use crate::remote_control::{
     ApproveRemoteControlControllerPairingOutcome, BeginRemoteControlControllerPairingOutcome,
     FailRemoteControlControllerPairingPersistenceOutcome,
@@ -18,9 +21,12 @@ use crate::remote_control::{
 use crate::routing::links::request::{
     write_packed_binary_header, PackBinaryError, SendRequestView, MAX_PACKED_BINARY_HEADER_LEN,
 };
+use crate::routing::links::table::LinkPhase;
+use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::storage::StorageLayout;
 use crate::units::{ByteLimit, InstantMillis};
+use crate::wire::BROADCAST_MTU;
 
 use super::{
     PacketReceiptDelivered, PrnsCommand, RequestResponseTimeout, SendRequestFailure, Settleable,
@@ -442,10 +448,12 @@ pub struct SettleRemoteControlControllerPairingPersistence {
 pub enum RemoteControlControllerPairingFinalization {
     Completed {
         attempt_id: RemoteControlPairingAttemptId,
+        retired_link: LinkId,
         access: RemoteControlTargetAccess,
     },
     PersistenceFailureRecorded {
         attempt_id: RemoteControlPairingAttemptId,
+        retired_link: LinkId,
         access: RemoteControlTargetAccess,
     },
 }
@@ -664,13 +672,19 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    pub(in crate::engine) fn execute_settle_remote_control_controller_pairing_persistence(
+    pub(in crate::engine) fn settle_remote_control_controller_pairing_persistence_into<F>(
         &mut self,
         command: SettleRemoteControlControllerPairingPersistence,
+        interfaces: AttachedInterfaces<'_>,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> Result<
         RemoteControlControllerPairingFinalization,
         SettleRemoteControlControllerPairingPersistenceFailure,
-    > {
+    >
+    where
+        F: FnMut(&mut [u8]),
+    {
         let attempt_id = command.attempt_id;
         match command.persistence {
             RemoteControlControllerPairingPersistence::Persisted => {
@@ -680,9 +694,16 @@ impl<S: StorageLayout> EngineState<S> {
                 {
                     PersistRemoteControlControllerPairingOutcome::Completed {
                         attempt_id,
+                        context,
                         access,
                     } => Ok(RemoteControlControllerPairingFinalization::Completed {
                         attempt_id,
+                        retired_link: self.retire_remote_control_controller_pairing_link(
+                            context.link_id(),
+                            interfaces,
+                            fill_entropy,
+                            sink,
+                        ),
                         access,
                     }),
                     PersistRemoteControlControllerPairingOutcome::NoPersistenceOwed => Err(
@@ -708,10 +729,17 @@ impl<S: StorageLayout> EngineState<S> {
                 {
                     FailRemoteControlControllerPairingPersistenceOutcome::Failed {
                         attempt_id,
+                        context,
                         access,
                     } => Ok(
                         RemoteControlControllerPairingFinalization::PersistenceFailureRecorded {
                             attempt_id,
+                            retired_link: self.retire_remote_control_controller_pairing_link(
+                                context.link_id(),
+                                interfaces,
+                                fill_entropy,
+                                sink,
+                            ),
                             access,
                         },
                     ),
@@ -732,6 +760,49 @@ impl<S: StorageLayout> EngineState<S> {
                 }
             }
         }
+    }
+
+    fn retire_remote_control_controller_pairing_link<F>(
+        &mut self,
+        link_id: LinkId,
+        interfaces: AttachedInterfaces<'_>,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> LinkId
+    where
+        F: FnMut(&mut [u8]),
+    {
+        match self.links.phase_for(&link_id) {
+            None => return link_id,
+            Some(LinkPhase::Pending { .. }) => {
+                self.retire_link(&link_id, LinkClosedReason::LocallyClosed, sink);
+                return link_id;
+            }
+            Some(LinkPhase::Handshake { .. } | LinkPhase::Active { .. }) => {}
+        }
+        let mut iv = [0u8; ENCRYPTION_IV_LEN];
+        fill_entropy(&mut iv);
+        let mut buf = [0u8; BROADCAST_MTU];
+        match self.write_owed_link_close(
+            &link_id,
+            LinkClosedReason::LocallyClosed,
+            &iv,
+            &mut buf,
+            sink,
+        ) {
+            Ok(dispatch) => {
+                if let Some(fire_on) = dispatch.fire_on {
+                    fan_frame(
+                        interfaces,
+                        FanTarget::Only(fire_on),
+                        &buf[..dispatch.wire_bytes],
+                        sink,
+                    );
+                }
+            }
+            Err(WriteLinkCloseError::NoSuchLink | WriteLinkCloseError::Serialize) => {}
+        }
+        link_id
     }
 }
 
@@ -862,9 +933,9 @@ mod tests {
                 id: CommandId(0xC1),
                 command,
             },
-            AttachedInterfaces::new(&[]),
+            AttachedInterfaces::new(&[routable_descriptor(lane())]),
             now,
-            &mut |_| panic!("controller pairing commands need no entropy"),
+            &mut |bytes| bytes.fill(0xA5),
             &mut |reaction| match reaction {
                 EngineReaction::Journaled(Journaled::CommandSettled {
                     id: CommandId(0xC1),
@@ -1350,7 +1421,7 @@ mod tests {
 
     #[test]
     fn persisted_controller_access_completes_once_with_the_exact_access() {
-        let mut engine = EngineState::<TestStorageLayout>::default();
+        let mut engine = engine_with_active_link();
         let (attempt_id, target_identity, permitted_requests) = awaiting_persistence(&mut engine);
         let command = SettleRemoteControlControllerPairingPersistence {
             attempt_id,
@@ -1362,6 +1433,7 @@ mod tests {
         let Settlement::SettleRemoteControlControllerPairingPersistence(Ok(
             RemoteControlControllerPairingFinalization::Completed {
                 attempt_id: completed,
+                retired_link,
                 access,
             },
         )) = settlement
@@ -1369,6 +1441,8 @@ mod tests {
             panic!("persistence settled")
         };
         assert_eq!(completed, attempt_id);
+        assert_eq!(retired_link, link_id());
+        assert!(engine.links.phase_for(&link_id()).is_none());
         assert_eq!(access.target().identity_hash(), target_identity);
         assert_eq!(access.permitted_requests(), &permitted_requests);
         assert_eq!(
@@ -1395,7 +1469,7 @@ mod tests {
 
     #[test]
     fn failed_controller_access_persistence_aborts_with_the_exact_access() {
-        let mut engine = EngineState::<TestStorageLayout>::default();
+        let mut engine = engine_with_active_link();
         let (attempt_id, target_identity, permitted_requests) = awaiting_persistence(&mut engine);
 
         let (settlement, schedules) = execute(
@@ -1410,6 +1484,7 @@ mod tests {
         let Settlement::SettleRemoteControlControllerPairingPersistence(Ok(
             RemoteControlControllerPairingFinalization::PersistenceFailureRecorded {
                 attempt_id: failed,
+                retired_link,
                 access,
             },
         )) = settlement
@@ -1417,8 +1492,63 @@ mod tests {
             panic!("persistence failure settled")
         };
         assert_eq!(failed, attempt_id);
+        assert_eq!(retired_link, link_id());
+        assert!(engine.links.phase_for(&link_id()).is_none());
         assert_eq!(access.target().identity_hash(), target_identity);
         assert_eq!(access.permitted_requests(), &permitted_requests);
+        assert_eq!(
+            engine.remote_control_controller_pairing.view(),
+            RemoteControlControllerPairingView::Idle,
+        );
+        assert_eq!(schedules.remote_control_pairing, WakeSchedule::Idle);
+    }
+
+    #[test]
+    fn controller_persistence_finishes_after_the_peer_already_retired_the_pairing_link() {
+        let mut engine = engine_with_active_link();
+        let (attempt_id, _, _) = awaiting_persistence(&mut engine);
+        engine.retire_link(&link_id(), LinkClosedReason::PeerClosed, &mut |_| {});
+        assert!(engine.links.phase_for(&link_id()).is_none());
+        assert!(matches!(
+            engine.remote_control_controller_pairing.view(),
+            RemoteControlControllerPairingView::Persisting(persistence)
+                if persistence.attempt_id() == attempt_id
+        ));
+
+        let mut settlement = None;
+        let schedules = engine.ingest_command_into(
+            IssuedCommand {
+                id: CommandId(0xC1),
+                command: SettleRemoteControlControllerPairingPersistence {
+                    attempt_id,
+                    persistence: RemoteControlControllerPairingPersistence::Persisted,
+                }
+                .into_command(),
+            },
+            AttachedInterfaces::new(&[]),
+            InstantMillis(4_000),
+            &mut |_| panic!("an absent pairing link needs no entropy"),
+            &mut |reaction| {
+                if let EngineReaction::Journaled(Journaled::CommandSettled {
+                    id: CommandId(0xC1),
+                    settlement: settled,
+                }) = reaction
+                {
+                    settlement = Some(settled);
+                }
+            },
+        );
+
+        assert!(matches!(
+            settlement,
+            Some(Settlement::SettleRemoteControlControllerPairingPersistence(Ok(
+                RemoteControlControllerPairingFinalization::Completed {
+                    attempt_id: completed,
+                    retired_link,
+                    ..
+                },
+            ))) if completed == attempt_id && retired_link == link_id()
+        ));
         assert_eq!(
             engine.remote_control_controller_pairing.view(),
             RemoteControlControllerPairingView::Idle,

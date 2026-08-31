@@ -7,9 +7,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use personal_rns::engine::{
     AdmitRemoteControlControllerPairingResponseOutcome, AnnounceAppData, AnnounceNow,
     AnnounceTarget, EgressTarget, OpenRemoteControlPairing, OpenRemoteControlPairingFailure,
-    OpenRemoteControlPairingRejection,
-    RemoteControlControllerPairingResponseEffect, RemoteControlPairingOpened,
-    RemoteControlTargetPairingApproval,
+    OpenRemoteControlPairingRejection, RemoteControlControllerPairingResponseEffect,
+    RemoteControlPairingOpened, RemoteControlTargetPairingApproval,
 };
 use personal_rns::identity::vault::IdentitySecretKey;
 use personal_rns::persistence::{
@@ -20,9 +19,9 @@ use personal_rns::prelude::*;
 use personal_rns::remote_control::{
     ReceiveRemoteControlControllerPairingCompletedOutcome, RemoteControlControllerGrant,
     RemoteControlPairingAttemptTimeout, RemoteControlPairingEndpoint,
-    RemoteControlPairingExpiresAfter,
-    RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
-    RemoteControlTargetAccess, RemoteControlTargetIdentity, SetRemoteControlControllerGrantOutcome,
+    RemoteControlPairingExpiresAfter, RemoteControlPairingPermissions,
+    RemoteControlPairingPublicAppDataBytes, RemoteControlTargetAccess, RemoteControlTargetIdentity,
+    SetRemoteControlControllerGrantOutcome,
 };
 use personal_rns::runtime::RemoteControlPairingControlError;
 use personal_rns::units::{DurationMillis, InstantMillis};
@@ -67,6 +66,8 @@ async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
     let (target_confirmation_tx, mut target_confirmation_rx) =
         tokio::sync::mpsc::unbounded_channel();
     let (target_persisted_tx, mut target_persisted_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (target_completion_link_closed_tx, mut target_completion_link_closed_rx) =
+        tokio::sync::mpsc::unbounded_channel();
     let target = PrnsNode::new(PrnsNodeRecipe {
         transport_identity: None,
         remote_control: remote_control_service(target_identity_secrets),
@@ -84,6 +85,11 @@ async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
                 attempt_id,
             }) => {
                 let _ignored = target_persisted_tx.send(attempt_id);
+            }
+            PrnsEvent::Message(Message::RemoteControlTargetPairingCompletionLinkClosed {
+                attempt_id,
+            }) => {
+                let _ignored = target_completion_link_closed_tx.send(attempt_id);
             }
             PrnsEvent::Message(_) | PrnsEvent::Diagnostic(_) => {}
         },
@@ -233,6 +239,13 @@ async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
                 .recv()
                 .await
                 .expect("the controller authorization persistence completes"),
+            attempt_id,
+        );
+        assert_eq!(
+            target_completion_link_closed_rx
+                .recv()
+                .await
+                .expect("the controller retires the completed pairing link"),
             attempt_id,
         );
 

@@ -550,8 +550,11 @@ impl<S: StorageLayout> EngineState<S> {
                 id,
                 settle_persistence,
             } => {
-                let result = self.execute_settle_remote_control_controller_pairing_persistence(
+                let result = self.settle_remote_control_controller_pairing_persistence_into(
                     settle_persistence,
+                    interfaces,
+                    fill_entropy,
+                    sink,
                 );
                 if let Ok(RemoteControlControllerPairingFinalization::Completed {
                     attempt_id,
@@ -570,6 +573,10 @@ impl<S: StorageLayout> EngineState<S> {
                     Settlement::SettleRemoteControlControllerPairingPersistence(result),
                 );
                 wake_schedule_changes.remote_control_pairing = self.remote_control_pairing_wake();
+                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+                wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
+                wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                wake_schedule_changes.channel_timeouts = self.channel_timeouts_wake();
             }
             CommandOutcome::OwesPathRequest { id, request } => {
                 let mut buf = [0u8; BROADCAST_MTU];
