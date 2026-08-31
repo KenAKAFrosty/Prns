@@ -32,8 +32,7 @@ use personal_rns::identity::IdentitySigner;
 use personal_rns::interfaces::ConnectionState;
 use personal_rns::node_introspection::logical_interface_inventory;
 use personal_rns::remote_control::{
-    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
-    RemoteControlService,
+    RemoteControlInitialAccess, RemoteControlSelfAnnouncement, RemoteControlService,
 };
 use personal_rns::routing::announce::ExpandNameError;
 use personal_rns::runtime::{
@@ -333,7 +332,6 @@ pub(super) async fn run(
             .map_err(DaemonRunError::RemoteControlSelfAnnouncementUnavailable)?;
     let remote_control = RemoteControlService::new(
         remote_control_identity_secrets,
-        RemoteControlPublicAppData::empty(),
         RemoteControlInitialAccess::Nobody,
         RemoteControlSelfAnnouncement::Destination(self_announcement_destination),
     );

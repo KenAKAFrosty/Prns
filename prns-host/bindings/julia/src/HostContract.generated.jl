@@ -250,6 +250,21 @@ end
     CommandFailureKindConnectFailed = 39
     CommandFailureKindBackendFailed = 40
     CommandFailureKindResponseTooLarge = 41
+    CommandFailureKindLinkClosed = 42
+    CommandFailureKindResponseCancelledBySender = 43
+    CommandFailureKindResponseHashmapBeyondPartCount = 44
+    CommandFailureKindResponseHashmapSkipsAhead = 45
+    CommandFailureKindResponseHashmapTooLong = 46
+    CommandFailureKindResponseHashmapRagged = 47
+    CommandFailureKindResponseRetriesExhausted = 48
+    CommandFailureKindResponseLinkVanished = 49
+    CommandFailureKindResponseTransferUnopenable = 50
+    CommandFailureKindResponseTransferCorrupt = 51
+    CommandFailureKindResponseProofUnsendable = 52
+    CommandFailureKindResponseDecompressionFailed = 53
+    CommandFailureKindResponseDecompressionTimedOut = 54
+    CommandFailureKindResponseOpenTimedOut = 55
+    CommandFailureKindResponseMetadataOverrun = 56
 end
 
 @enum DeliveryEvidenceKind::UInt32 begin
@@ -275,6 +290,7 @@ end
     LinkClosedReasonTimeout = 1
     LinkClosedReasonPeerClosed = 2
     LinkClosedReasonMalformedRtt = 3
+    LinkClosedReasonLocallyClosed = 4
 end
 
 @enum ApplicationEventKind::UInt32 begin
@@ -1055,6 +1071,51 @@ struct CommandFailureBackendFailed <: CommandFailure
 end
 
 struct CommandFailureResponseTooLarge <: CommandFailure
+end
+
+struct CommandFailureLinkClosed <: CommandFailure
+end
+
+struct CommandFailureResponseCancelledBySender <: CommandFailure
+end
+
+struct CommandFailureResponseHashmapBeyondPartCount <: CommandFailure
+end
+
+struct CommandFailureResponseHashmapSkipsAhead <: CommandFailure
+end
+
+struct CommandFailureResponseHashmapTooLong <: CommandFailure
+end
+
+struct CommandFailureResponseHashmapRagged <: CommandFailure
+end
+
+struct CommandFailureResponseRetriesExhausted <: CommandFailure
+end
+
+struct CommandFailureResponseLinkVanished <: CommandFailure
+end
+
+struct CommandFailureResponseTransferUnopenable <: CommandFailure
+end
+
+struct CommandFailureResponseTransferCorrupt <: CommandFailure
+end
+
+struct CommandFailureResponseProofUnsendable <: CommandFailure
+end
+
+struct CommandFailureResponseDecompressionFailed <: CommandFailure
+end
+
+struct CommandFailureResponseDecompressionTimedOut <: CommandFailure
+end
+
+struct CommandFailureResponseOpenTimedOut <: CommandFailure
+end
+
+struct CommandFailureResponseMetadataOverrun <: CommandFailure
 end
 
 struct ApplicationEventSingleDelivery <: ApplicationEvent

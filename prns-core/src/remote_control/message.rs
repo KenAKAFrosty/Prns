@@ -251,6 +251,10 @@ impl RemoteControlRequestSet {
         self.len == 0
     }
 
+    pub(crate) const fn wire_count(&self) -> u8 {
+        self.len
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = RemoteControlRequestKind> + '_ {
         RemoteControlRequestKind::ALL
             .into_iter()

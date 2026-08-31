@@ -219,13 +219,17 @@ PRNS_BUILD_VERSION="$version" \
 PRNS_BUILD_COMMIT="$commit" \
 PRNS_BUILD_CHANNEL="$channel" \
 PRNS_API_DOCS_STAGED=1 \
-dx build --platform web --debug-symbols false --release --locked
+dx build --web --ssg --force-sequential true --debug-symbols false --release --locked
 
 hosted_dist="$dioxus_dist"
 test -f "$hosted_dist/index.html"
+PRNS_BUILD_VERSION="$version" \
+PRNS_BUILD_COMMIT="$commit" \
+PRNS_BUILD_CHANNEL="$channel" \
+PRNS_API_DOCS_STAGED=1 \
+cargo run --locked --bin finalize_ssg -- "$hosted_dist"
 mkdir -p "$candidate/website/assets/flasher"
 cp -R "$hosted_dist/." "$candidate/website/"
-cp "$candidate/website/index.html" "$candidate/website/404.html"
 npm --prefix "$root/prns-wasm" ci --ignore-scripts --no-audit --no-fund
 bash "$root/tools/build/stage-wasm-docs-browser-playground.sh" \
     "$candidate/website/browser-node-playground-console"

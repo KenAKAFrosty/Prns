@@ -119,7 +119,8 @@ export type InterfaceSessionStatus =
 
 export type InterfaceCloseOutcome =
   | Tag<"Closed">
-  | Extract<InterfaceSessionFailure, Tag<"CloseFailed", unknown>>;
+  | Extract<InterfaceSessionFailure, Tag<"CloseFailed", unknown>>
+  | RuntimeRejected;
 
 export type InterfaceSession = {
   readonly name: InterfaceName;

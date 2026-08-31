@@ -4,7 +4,12 @@ use crate::wire::DestinationHash;
 use super::RemoteControlTargetIdentity;
 
 pub const REMOTE_CONTROL_APPLICATION_NAME: &str = "reticulum";
-pub const REMOTE_CONTROL_APPLICATION_ASPECTS: &[&str] = &["remote", "control"];
+pub(crate) const REMOTE_CONTROL_NAMESPACE_ASPECT: &str = "remote";
+pub(crate) const REMOTE_CONTROL_SERVICE_ASPECT: &str = "control";
+pub const REMOTE_CONTROL_APPLICATION_ASPECTS: &[&str] = &[
+    REMOTE_CONTROL_NAMESPACE_ASPECT,
+    REMOTE_CONTROL_SERVICE_ASPECT,
+];
 
 /// Pre-computed and saved here statically to avoid unnecessary hashing at runtime for what is a stable hash on these well-known app name & aspects
 const REMOTE_CONTROL_DOTTED_NAME_HASH: DottedNameHash =
@@ -49,9 +54,11 @@ impl RemoteControlTargetIdentity {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::identity::IdentityHash;
+    use crate::crypto::{Ed25519PublicKey, X25519PublicKey};
+    use crate::identity::{
+        IdentityEncryptionPublicKey, IdentityPublicKeys, IdentitySigningPublicKey,
+    };
     use crate::routing::announce::expand_name;
-    use crate::wire::TRUNCATED_HASH_BYTE_LEN;
 
     #[test]
     fn pinned_remote_control_dotted_name_hash_matches_sha256_of_the_canonical_name() {
@@ -66,14 +73,18 @@ mod tests {
 
     #[test]
     fn target_identity_derives_its_remote_control_endpoint() {
-        let target_identity =
-            RemoteControlTargetIdentity::new(IdentityHash::new([0x41; TRUNCATED_HASH_BYTE_LEN]));
+        let target_identity = RemoteControlTargetIdentity::new(IdentityPublicKeys {
+            encryption: IdentityEncryptionPublicKey::new(X25519PublicKey(
+                [0x41; X25519PublicKey::LEN],
+            )),
+            signing: IdentitySigningPublicKey::new(Ed25519PublicKey([0x42; Ed25519PublicKey::LEN])),
+        });
 
         assert_eq!(
             target_identity.endpoint().destination_hash(),
             DestinationHash::new([
-                0x89, 0x9c, 0x44, 0x9b, 0x33, 0x48, 0x1f, 0x14, 0x5a, 0xc6, 0x20, 0x5e, 0x46, 0x32,
-                0x6c, 0xe1,
+                0xb3, 0x6f, 0x62, 0x54, 0x71, 0x3a, 0xf4, 0x56, 0x2e, 0x66, 0x42, 0xb3, 0x90, 0x20,
+                0xf5, 0xb0,
             ]),
         );
     }

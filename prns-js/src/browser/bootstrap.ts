@@ -169,7 +169,13 @@ export async function loadBundledWasm(): Promise<
   | Tag<"Loaded", PrnsWasmModule>
   | Tag<"WasmLoadFailed", { readonly detail: string }>
 > {
-  const moduleUrl = bundledWasmModuleUrl();
+  return loadWasmModule(bundledWasmModuleUrl());
+}
+
+export async function loadWasmModule(moduleUrl: URL): Promise<
+  | Tag<"Loaded", PrnsWasmModule>
+  | Tag<"WasmLoadFailed", { readonly detail: string }>
+> {
   try {
     const imported: unknown = await import(moduleUrl.href);
     const module = record(imported, "bundled WebAssembly module");

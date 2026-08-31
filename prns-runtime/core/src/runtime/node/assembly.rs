@@ -6,10 +6,10 @@ use crate::engine::RatchetPolicy;
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::remote_control::{
-    FixedRemoteControlAccessTable, RemoteControlAccessTable, RemoteControlAnnouncementData,
-    RemoteControlAnnouncementDataWriteError, RemoteControlEndpoint, RemoteControlNodeIdentities,
-    RemoteControlRequest, RemoteControlRequestSet, RemoteControlSelfAnnouncement,
-    RemoteControlService, RevokeRemoteControlControllerError, RevokeRemoteControlControllerOutcome,
+    FixedRemoteControlAccessTable, RemoteControlAccessTable, RemoteControlEndpoint,
+    RemoteControlNodeIdentities, RemoteControlPairingAvailabilityDestination, RemoteControlRequest,
+    RemoteControlRequestSet, RemoteControlSelfAnnouncement, RemoteControlService,
+    RevokeRemoteControlControllerError, RevokeRemoteControlControllerOutcome,
     SetRemoteControlControllerGrantError, SetRemoteControlControllerGrantOutcome,
     DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS, REMOTE_CONTROL_APPLICATION_ASPECTS,
     REMOTE_CONTROL_APPLICATION_NAME, REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
@@ -51,6 +51,7 @@ struct AvailableRemoteControl {
     access: FixedRemoteControlAccessTable<DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS>,
     available_requests: RemoteControlRequestSet,
     self_announcement: RemoteControlSelfAnnouncement,
+    pairing_availability_destination: RemoteControlPairingAvailabilityDestination,
 }
 
 impl AssembledRemoteControl {
@@ -110,6 +111,16 @@ impl AssembledRemoteControl {
     }
 
     #[must_use]
+    pub const fn pairing_availability_destination(
+        &self,
+    ) -> Option<RemoteControlPairingAvailabilityDestination> {
+        match &self.available {
+            Some(available) => Some(available.pairing_availability_destination),
+            None => None,
+        }
+    }
+
+    #[must_use]
     pub fn request_configuration(
         &self,
         destination: DestinationHash,
@@ -158,12 +169,12 @@ impl AssembledRemoteControl {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigureRemoteControlServiceError {
-    HoldIdentity(HoldIdentityError),
-    EncodeAnnouncementData(RemoteControlAnnouncementDataWriteError),
+    ConfigureIdentities(crate::engine::ConfigureRemoteControlIdentitiesError),
     RegisterTarget(RegisterDestinationError),
     ConfigureRequestLimit,
     RegisterRequestEndpoint(TablePushError),
     BuildAccess(TablePushError),
+    ConfigurePairing(crate::engine::ConfigureRemoteControlPairingError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -247,21 +258,17 @@ where
         return Ok(AssembledRemoteControl { available: None });
     };
     let available_requests = configuration.available_requests();
-    let (identity_secrets, default_public_app_data, initial_access, self_announcement) =
-        configuration.into_parts();
+    let (identity_secrets, initial_access, self_announcement) = configuration.into_parts();
     let identities = engine
         .configure_remote_control_identities(identity_secrets)
-        .map_err(ConfigureRemoteControlServiceError::HoldIdentity)?;
+        .map_err(ConfigureRemoteControlServiceError::ConfigureIdentities)?;
     let target_endpoint = identities.target().endpoint();
-    let announcement_data = RemoteControlAnnouncementData::new(default_public_app_data)
-        .encode()
-        .map_err(ConfigureRemoteControlServiceError::EncodeAnnouncementData)?;
     let destination = engine
         .register_single_destination(
             &identities.target().identity_hash(),
             REMOTE_CONTROL_APPLICATION_NAME,
             REMOTE_CONTROL_APPLICATION_ASPECTS,
-            announcement_data.as_slice(),
+            b"",
             ProofStrategy::ProveAll,
             LinkRequestPolicy::AcceptAll,
             RatchetPolicy::NoRatchets,
@@ -287,6 +294,9 @@ where
             .upsert(*grant)
             .map_err(ConfigureRemoteControlServiceError::BuildAccess)?;
     }
+    let pairing_availability_destination = engine
+        .configure_remote_control_pairing(identities.target().identity_hash())
+        .map_err(ConfigureRemoteControlServiceError::ConfigurePairing)?;
     Ok(AssembledRemoteControl {
         available: Some(AvailableRemoteControl {
             identities,
@@ -295,6 +305,7 @@ where
             access,
             available_requests,
             self_announcement,
+            pairing_availability_destination,
         }),
     })
 }
@@ -492,9 +503,9 @@ mod tests {
     use crate::remote_control::{
         RemoteControlControllerGrant, RemoteControlControllerGrants,
         RemoteControlControllerIdentity, RemoteControlControllerIdentitySecret,
-        RemoteControlInitialAccess, RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData,
-        RemoteControlRequestKind, RemoteControlRequestSet, RemoteControlStorageRequirements,
-        RemoteControlTargetIdentitySecret,
+        RemoteControlInitialAccess, RemoteControlNodeIdentitySecrets, RemoteControlRequestKind,
+        RemoteControlRequestSet, RemoteControlStorageRequirements,
+        RemoteControlTargetIdentitySecret, REMOTE_CONTROL_NODE_IDENTITY_COUNT,
     };
     use crate::routing::request_handlers::RequestPathHash;
     use crate::runtime::request_endpoints::{Decline, RequestContext, RequestEndpointPolicy};
@@ -551,7 +562,6 @@ mod tests {
     fn remote_control_service() -> RemoteControlService<'static> {
         RemoteControlService::new(
             remote_control_identity_secrets(0x71, 0x72),
-            RemoteControlPublicAppData::try_from(b"".as_slice()).unwrap(),
             RemoteControlInitialAccess::Nobody,
             RemoteControlSelfAnnouncement::Unavailable,
         )
@@ -648,7 +658,6 @@ mod tests {
         );
         let service = RemoteControlService::new(
             identity_secrets,
-            RemoteControlPublicAppData::try_from(b"node".as_slice()).unwrap(),
             initial_access,
             RemoteControlSelfAnnouncement::Destination(DestinationHash::new([0x61; 16])),
         );
@@ -656,11 +665,22 @@ mod tests {
         let configured = configure_remote_control_service(&mut engine, service).unwrap();
         let target_endpoint = configured.target_endpoint().unwrap();
         let target_destination = target_endpoint.destination_hash();
+        let pairing_availability_destination =
+            RemoteControlPairingAvailabilityDestination::canonical();
 
         assert_eq!(configured.identities(), Some(&expected_identities));
         assert_eq!(configured.access().unwrap().grants(), grants.as_slice());
+        assert_eq!(
+            configured.pairing_availability_destination(),
+            Some(pairing_availability_destination),
+        );
+        assert_eq!(
+            engine.remote_control_pairing_view(),
+            crate::remote_control::RemoteControlPairingView::Closed,
+        );
         assert_eq!(engine.transport_id(), None);
         assert_eq!(engine.held_identity_hashes().len(), 2);
+        assert_eq!(engine.upstream_app_destinations().count(), 2);
         assert_eq!(
             engine
                 .upstream_app_destinations()
@@ -679,6 +699,15 @@ mod tests {
                 },
             ),
         );
+        assert_eq!(
+            engine
+                .upstream_app_destinations()
+                .find(|registered| {
+                    registered.destination == pairing_availability_destination.destination_hash()
+                })
+                .map(|registered| registered.kind),
+            Some(crate::routing::upstream_app_destinations::UpstreamAppDestinationKind::Plain),
+        );
     }
 
     #[test]
@@ -691,12 +720,15 @@ mod tests {
         assert!(configured.is_available());
         assert!(configured.request_endpoint_id().is_some());
         assert_eq!(
-            engine.held_identity_hashes().len(),
-            requirements.held_identities()
-        );
-        assert_eq!(
-            engine.upstream_app_destinations().count(),
-            requirements.upstream_app_destinations(),
+            (
+                <RemoteControlOnlyStorage as crate::storage::StorageLayout>::LIMITS.held_identities,
+                <RemoteControlOnlyStorage as crate::storage::StorageLayout>::LIMITS
+                    .upstream_app_destinations,
+            ),
+            (
+                crate::storage::StorageCapacity::Fixed(requirements.held_identities()),
+                crate::storage::StorageCapacity::Fixed(requirements.upstream_app_destinations()),
+            ),
         );
         assert_eq!(requirements.request_handlers(), 1);
     }
@@ -713,6 +745,11 @@ mod tests {
         assert_eq!(remote_control.identities(), None);
         assert_eq!(remote_control.target_endpoint(), None);
         assert_eq!(remote_control.request_endpoint_id(), None);
+        assert_eq!(remote_control.pairing_availability_destination(), None);
+        assert_eq!(
+            engine.remote_control_pairing_view(),
+            crate::remote_control::RemoteControlPairingView::Unavailable,
+        );
         assert_eq!(
             remote_control.available_requests(),
             RemoteControlRequestSet::empty()
@@ -790,12 +827,9 @@ mod tests {
         assert!(node.engine.network_transport_enabled());
         assert_eq!(
             node.engine.held_identity_hashes().len(),
-            RemoteControlStorageRequirements::AVAILABLE.held_identities() + 1,
+            REMOTE_CONTROL_NODE_IDENTITY_COUNT.saturating_add(1),
         );
-        assert_eq!(
-            node.engine.upstream_app_destinations().count(),
-            RemoteControlStorageRequirements::AVAILABLE.upstream_app_destinations() + 1,
-        );
+        assert_eq!(node.engine.upstream_app_destinations().count(), 3);
     }
 
     #[test]

@@ -1,8 +1,8 @@
 use super::*;
 use crate::engine::test_support::*;
 use crate::engine::{
-    CommandId, IngestIo, PathRequestId, PathRequestWriteOutcome, RequestPath, RouteRemovalCause,
-    WakeSchedule, PATH_REQUEST_TIMEOUT_MS,
+    CommandId, IngestIo, Journaled, PathRequestId, PathRequestWriteOutcome, RequestPath,
+    RouteRemovalCause, WakeSchedule, PATH_REQUEST_TIMEOUT_MS,
 };
 use crate::interfaces::InterfaceDescriptor;
 use crate::interfaces::{InboundPacket, InterfaceId, InterfaceMode};

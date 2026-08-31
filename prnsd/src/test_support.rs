@@ -1,8 +1,8 @@
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::remote_control::{
     RemoteControlControllerIdentitySecret, RemoteControlInitialAccess,
-    RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
-    RemoteControlService, RemoteControlTargetIdentitySecret,
+    RemoteControlNodeIdentitySecrets, RemoteControlSelfAnnouncement, RemoteControlService,
+    RemoteControlTargetIdentitySecret,
 };
 
 const CONTROLLER_SECRET_BYTE: u8 = 0x43;
@@ -20,7 +20,6 @@ pub(crate) fn remote_control_service() -> RemoteControlService<'static> {
     .expect("test controller and target identities must remain distinct");
     RemoteControlService::new(
         identity_secrets,
-        RemoteControlPublicAppData::empty(),
         RemoteControlInitialAccess::Nobody,
         RemoteControlSelfAnnouncement::Unavailable,
     )

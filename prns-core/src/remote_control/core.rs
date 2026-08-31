@@ -3,8 +3,10 @@ use crate::identity::vault::IdentitySecretKey;
 use crate::identity::{IdentityHash, IdentityPublicKeys, IDENTITY_SECRET_KEY_LEN};
 use crate::storage::TablePushError;
 
+use super::pairing::RemoteControlPairingPermissions;
 use super::{RemoteControlRequestKind, RemoteControlRequestSet};
 
+pub const REMOTE_CONTROL_NODE_IDENTITY_COUNT: usize = 2;
 pub struct RemoteControlStorageRequirements {
     held_identities: usize,
     upstream_app_destinations: usize,
@@ -13,8 +15,8 @@ pub struct RemoteControlStorageRequirements {
 
 impl RemoteControlStorageRequirements {
     pub const AVAILABLE: Self = Self {
-        held_identities: 2,
-        upstream_app_destinations: 1,
+        held_identities: 3,
+        upstream_app_destinations: 3,
         request_handlers: 1,
     };
 
@@ -36,6 +38,8 @@ impl RemoteControlStorageRequirements {
 
 pub const REMOTE_CONTROL_REQUIRED_HELD_IDENTITY_CAPACITY: usize =
     RemoteControlStorageRequirements::AVAILABLE.held_identities();
+pub const REMOTE_CONTROL_REQUIRED_UPSTREAM_APP_DESTINATION_CAPACITY: usize =
+    RemoteControlStorageRequirements::AVAILABLE.upstream_app_destinations();
 
 pub struct RemoteControlControllerIdentitySecret {
     parts: IdentityParts,
@@ -163,7 +167,10 @@ impl RemoteControlNodeIdentitySecrets {
                 encryption: self.controller.parts.encryption_public,
                 signing: self.controller.parts.signing_public,
             }),
-            target: RemoteControlTargetIdentity::new(self.target.parts.hash),
+            target: RemoteControlTargetIdentity::new(IdentityPublicKeys {
+                encryption: self.target.parts.encryption_public,
+                signing: self.target.parts.signing_public,
+            }),
         }
     }
 
@@ -258,20 +265,103 @@ impl RemoteControlControllerGrant {
     }
 }
 
+impl
+    From<(
+        &RemoteControlControllerIdentity,
+        &RemoteControlPairingPermissions,
+    )> for RemoteControlControllerGrant
+{
+    fn from(
+        (controller, permissions): (
+            &RemoteControlControllerIdentity,
+            &RemoteControlPairingPermissions,
+        ),
+    ) -> Self {
+        Self {
+            controller: *controller,
+            permitted_requests: *permissions.permitted_requests(),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct RemoteControlTargetIdentity {
-    identity_hash: IdentityHash,
+    public_keys: IdentityPublicKeys,
 }
 
 impl RemoteControlTargetIdentity {
     #[must_use]
-    pub const fn new(identity_hash: IdentityHash) -> Self {
-        Self { identity_hash }
+    pub const fn new(public_keys: IdentityPublicKeys) -> Self {
+        Self { public_keys }
     }
 
     #[must_use]
-    pub const fn identity_hash(&self) -> IdentityHash {
-        self.identity_hash
+    pub const fn public_keys(&self) -> &IdentityPublicKeys {
+        &self.public_keys
+    }
+
+    #[must_use]
+    pub fn identity_hash(&self) -> IdentityHash {
+        self.public_keys.identity_hash()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteControlTargetAccessError {
+    NoPermittedRequests,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct RemoteControlTargetAccess {
+    target: RemoteControlTargetIdentity,
+    permitted_requests: RemoteControlRequestSet,
+}
+
+impl RemoteControlTargetAccess {
+    pub fn new(
+        target: RemoteControlTargetIdentity,
+        permitted_requests: RemoteControlRequestSet,
+    ) -> Result<Self, RemoteControlTargetAccessError> {
+        if permitted_requests.is_empty() {
+            return Err(RemoteControlTargetAccessError::NoPermittedRequests);
+        }
+        Ok(Self {
+            target,
+            permitted_requests,
+        })
+    }
+
+    #[must_use]
+    pub const fn target(&self) -> &RemoteControlTargetIdentity {
+        &self.target
+    }
+
+    #[must_use]
+    pub fn endpoint(&self) -> super::RemoteControlEndpoint {
+        self.target.endpoint()
+    }
+
+    #[must_use]
+    pub const fn permitted_requests(&self) -> &RemoteControlRequestSet {
+        &self.permitted_requests
+    }
+
+    #[must_use]
+    pub fn permits(&self, request: RemoteControlRequestKind) -> bool {
+        self.permitted_requests.supports(request)
+    }
+}
+
+impl From<(RemoteControlTargetIdentity, RemoteControlPairingPermissions)>
+    for RemoteControlTargetAccess
+{
+    fn from(
+        (target, permissions): (RemoteControlTargetIdentity, RemoteControlPairingPermissions),
+    ) -> Self {
+        Self {
+            target,
+            permitted_requests: permissions.into_permitted_requests(),
+        }
     }
 }
 
