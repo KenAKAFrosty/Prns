@@ -9,7 +9,9 @@ import android.util.Log
 import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.InetAddress
+import java.net.NetworkInterface
 import java.nio.charset.StandardCharsets
+import java.util.Collections
 import java.util.LinkedHashMap
 import java.util.LinkedHashSet
 
@@ -303,27 +305,45 @@ class WifiAutoLink(context: Context) {
             }
 
             override fun onServiceFound(service: NsdServiceInfo) {
-                when (admitService(sessionId, serviceContract, service)) {
+                when (val admission = admitService(sessionId, serviceContract, service)) {
                     ServiceAdmission.Admitted,
                     ServiceAdmission.Updated,
-                    -> pumpResolver()
+                    -> {
+                        Log.i(
+                            TAG,
+                            "service found (${admission.name}) ${service.serviceName} " +
+                                serviceContract.serviceType,
+                        )
+                        pumpResolver()
+                    }
                     ServiceAdmission.AtCapacity -> Log.w(
                         TAG,
                         "service discovery capacity reached; ignored ${service.serviceName}",
                     )
-                    ServiceAdmission.OwnService,
-                    ServiceAdmission.StaleSession,
-                    -> Unit
+                    ServiceAdmission.OwnService -> Log.i(
+                        TAG,
+                        "service found (own) ${service.serviceName} ${serviceContract.serviceType}",
+                    )
+                    ServiceAdmission.StaleSession -> Log.d(
+                        TAG,
+                        "service found (stale) ${service.serviceName}",
+                    )
                 }
             }
 
             override fun onServiceLost(service: NsdServiceInfo) {
                 val serviceKey = ServiceKey(serviceContract, service.serviceName)
                 when (forgetService(sessionId, serviceKey)) {
-                    ServiceRemoval.Removed -> NativeBridge.nativeWifiLost(
-                        serviceKey.contract.serviceType,
-                        serviceKey.instanceName,
-                    )
+                    ServiceRemoval.Removed -> {
+                        Log.i(
+                            TAG,
+                            "service lost ${serviceKey.instanceName} ${serviceKey.contract.serviceType}",
+                        )
+                        NativeBridge.nativeWifiLost(
+                            serviceKey.contract.serviceType,
+                            serviceKey.instanceName,
+                        )
+                    }
                     ServiceRemoval.NotPresent,
                     ServiceRemoval.StaleSession,
                     -> Unit
@@ -422,13 +442,18 @@ class WifiAutoLink(context: Context) {
                 ResolutionWork.None -> return
                 is ResolutionWork.Resolve -> {
                     try {
+                        Log.i(
+                            TAG,
+                            "resolving ${work.serviceKey.instanceName} " +
+                                work.serviceKey.contract.serviceType,
+                        )
                         work.manager.resolveService(
                             work.service,
                             resolutionListener(work.sessionId, work.serviceKey),
                         )
                         return
                     } catch (failure: RuntimeException) {
-                        Log.d(TAG, "could not resolve ${work.serviceKey.instanceName}", failure)
+                        Log.w(TAG, "could not resolve ${work.serviceKey.instanceName}", failure)
                         completeResolution(work.sessionId, work.serviceKey)
                     }
                 }
@@ -476,7 +501,11 @@ class WifiAutoLink(context: Context) {
             }
 
             override fun onResolveFailed(service: NsdServiceInfo, errorCode: Int) {
-                Log.d(TAG, "service resolve failed code=$errorCode")
+                Log.w(
+                    TAG,
+                    "service resolve failed ${serviceKey.instanceName} " +
+                        "${serviceKey.contract.serviceType} code=$errorCode",
+                )
                 completeResolution(sessionId, serviceKey)
                 pumpResolver()
             }
@@ -509,11 +538,7 @@ class WifiAutoLink(context: Context) {
             return@synchronized ResolvedServicePublicationOutcome.StaleSession
         }
         val version = serviceVersion(service)
-        val candidates = serviceAddresses(service)
-            .asSequence()
-            .mapNotNull(::resolvedCandidate)
-            .take(resolvedCandidateInputCapacity)
-            .toList()
+        val candidates = resolvedCandidates(service)
         val publication = ResolvedServicePublicationOutcome.fromBridge(
             NativeBridge.nativeWifiResolved(
                 serviceKey.contract.serviceType,
@@ -525,13 +550,28 @@ class WifiAutoLink(context: Context) {
             ),
         )
         when (publication) {
-            ResolvedServicePublicationOutcome.Visible -> resolvedServices.add(serviceKey)
+            ResolvedServicePublicationOutcome.Visible -> {
+                resolvedServices.add(serviceKey)
+                Log.i(
+                    TAG,
+                    "resolved ${serviceKey.instanceName} ${serviceKey.contract.serviceType} " +
+                        "candidates=${candidates.size} scopes=${candidates.map { it.scopeId }}",
+                )
+            }
             ResolvedServicePublicationOutcome.Rejected,
             ResolvedServicePublicationOutcome.AtCapacity,
             ResolvedServicePublicationOutcome.Unavailable,
             ResolvedServicePublicationOutcome.Unrecognized,
             ResolvedServicePublicationOutcome.StaleSession,
-            -> resolvedServices.remove(serviceKey)
+            -> {
+                resolvedServices.remove(serviceKey)
+                Log.w(
+                    TAG,
+                    "resolve rejected (${publication.name}) ${serviceKey.instanceName} " +
+                        "${serviceKey.contract.serviceType} candidates=${candidates.size} " +
+                        "scopes=${candidates.map { it.scopeId }}",
+                )
+            }
         }
         publication
     }
@@ -565,12 +605,89 @@ class WifiAutoLink(context: Context) {
         }
     }
 
-    private fun resolvedCandidate(address: InetAddress): ResolvedCandidate? =
-        when (address) {
-            is Inet4Address -> ResolvedCandidate(address.address, 0)
-            is Inet6Address -> ResolvedCandidate(address.address, address.scopeId)
-            else -> null
+    /**
+     * Build resolve candidates for Rust. UDP peering requires scoped IPv6 link-local
+     * endpoints; NsdManager often returns `fe80::` with [Inet6Address.scopeId] == 0
+     * (same class of bug the tokio/macOS mDNS path fills from local NIC ifindexes).
+     */
+    private fun resolvedCandidates(service: NsdServiceInfo): List<ResolvedCandidate> {
+        val fallbackScopes = fallbackLinkLocalScopeIds()
+        val candidates = ArrayList<ResolvedCandidate>(resolvedCandidateInputCapacity)
+        for (address in serviceAddresses(service)) {
+            when (address) {
+                is Inet4Address -> {
+                    candidates.add(ResolvedCandidate(address.address, 0))
+                }
+                is Inet6Address -> {
+                    if (address.isLinkLocalAddress) {
+                        val reportedScope = address.scopeId
+                        val scopes = if (reportedScope != 0) {
+                            listOf(reportedScope)
+                        } else {
+                            fallbackScopes
+                        }
+                        if (reportedScope == 0) {
+                            if (scopes.isEmpty()) {
+                                Log.w(
+                                    TAG,
+                                    "mDNS link-local missing scope and no local Wi-Fi ifindex; dropping",
+                                )
+                            } else {
+                                Log.i(
+                                    TAG,
+                                    "mDNS link-local missing scope; using ifindex ${scopes.joinToString()}",
+                                )
+                            }
+                        }
+                        for (scopeId in scopes) {
+                            if (scopeId == 0) {
+                                continue
+                            }
+                            candidates.add(ResolvedCandidate(address.address, scopeId))
+                            if (candidates.size >= resolvedCandidateInputCapacity) {
+                                return candidates
+                            }
+                        }
+                    } else {
+                        candidates.add(ResolvedCandidate(address.address, 0))
+                    }
+                }
+                else -> Unit
+            }
+            if (candidates.size >= resolvedCandidateInputCapacity) {
+                break
+            }
         }
+        return candidates
+    }
+
+    /** Local AutoWifi NIC ifindexes used when a resolved AAAA omits IPv6 scope. */
+    private fun fallbackLinkLocalScopeIds(): List<Int> {
+        val scopes = LinkedHashSet<Int>()
+        try {
+            NetworkInterface.getByName("wlan0")
+                ?.takeIf { nif -> nif.isUp && !nif.isLoopback && nif.index > 0 }
+                ?.let { scopes.add(it.index) }
+        } catch (_: Exception) {
+            // Best-effort; continue with a broader scan.
+        }
+        try {
+            for (nif in Collections.list(NetworkInterface.getNetworkInterfaces())) {
+                if (!nif.isUp || nif.isLoopback || nif.index <= 0) {
+                    continue
+                }
+                val hasLinkLocal = Collections.list(nif.inetAddresses).any { address ->
+                    address is Inet6Address && address.isLinkLocalAddress
+                }
+                if (hasLinkLocal) {
+                    scopes.add(nif.index)
+                }
+            }
+        } catch (_: Exception) {
+            // Best-effort; empty means LL candidates without scope are dropped.
+        }
+        return scopes.toList()
+    }
 
     @Suppress("DEPRECATION")
     private fun serviceAddresses(service: NsdServiceInfo): List<InetAddress> =

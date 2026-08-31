@@ -1,4 +1,4 @@
-use ::core::net::Ipv6Addr;
+use ::core::net::{Ipv4Addr, Ipv6Addr};
 use ::core::ops::Deref;
 
 use heapless::Vec;
@@ -8,15 +8,19 @@ use prns_core::interfaces::wifi_auto as contract;
 pub(super) const MDNS_PORT: u16 = 5353;
 pub(super) const MDNS_HOP_LIMIT: u8 = 255;
 pub(super) const MDNS_IPV6_GROUP: Ipv6Addr = Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x00fb);
+/// IPv4 mDNS group — preferred on APs that isolate IPv6 link-local multicast.
+pub(super) const MDNS_IPV4_GROUP: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
 pub(super) const DNS_CLASS_IN: u16 = 1;
 pub(super) const DNS_CACHE_FLUSH_CLASS_IN: u16 = 0x8001;
+pub(super) const DNS_TYPE_A: u16 = 1;
 pub(super) const DNS_TYPE_AAAA: u16 = 28;
 pub(super) const DNS_TYPE_ANY: u16 = 255;
 pub(super) const DNS_TYPE_PTR: u16 = 12;
 pub(super) const DNS_TYPE_SRV: u16 = 33;
 pub(super) const DNS_TYPE_TXT: u16 = 16;
 const DNS_RESPONSE_FLAGS: u16 = 0x8400;
-pub(super) const DNS_RECORD_COUNT: u16 = 4;
+/// PTR + SRV + TXT + AAAA; optional A adds one more.
+pub(super) const DNS_CORE_RECORD_COUNT: u16 = 4;
 const DNS_NAME_CAPACITY: usize = 96;
 const DNS_POINTER_HOP_LIMIT: u8 = 8;
 const INSTANCE_LABEL_BYTES: usize = contract::EPHEMERAL_DISCOVERY_INSTANCE_PREFIX.len()
@@ -116,14 +120,16 @@ impl DiscoveryInstance {
 pub(super) fn build_publication_packet(
     output: &mut [u8],
     instance: &DiscoveryInstance,
-    address: Ipv6Addr,
+    ipv6: Ipv6Addr,
+    ipv4: Option<Ipv4Addr>,
     ttl_seconds: u32,
 ) -> Result<usize, PacketBuildError> {
+    let answer_count = DNS_CORE_RECORD_COUNT + u16::from(ipv4.is_some());
     let mut writer = PacketWriter::new(output);
     writer.write_u16(0)?;
     writer.write_u16(DNS_RESPONSE_FLAGS)?;
     writer.write_u16(0)?;
-    writer.write_u16(DNS_RECORD_COUNT)?;
+    writer.write_u16(answer_count)?;
     writer.write_u16(0)?;
     writer.write_u16(0)?;
 
@@ -170,8 +176,17 @@ pub(super) fn build_publication_packet(
         DNS_TYPE_AAAA,
         DNS_CACHE_FLUSH_CLASS_IN,
         ttl_seconds,
-        |writer| writer.write_bytes(&address.octets()),
+        |writer| writer.write_bytes(&ipv6.octets()),
     )?;
+    if let Some(ipv4) = ipv4 {
+        writer.write_record(
+            &host_labels,
+            DNS_TYPE_A,
+            DNS_CACHE_FLUSH_CLASS_IN,
+            ttl_seconds,
+            |writer| writer.write_bytes(&ipv4.octets()),
+        )?;
+    }
     Ok(writer.len())
 }
 
@@ -209,7 +224,7 @@ pub(super) fn query_relevance(packet: &[u8], instance: &DiscoveryInstance) -> Qu
         let instance_query = name_matches(&name, &instance.service_labels())
             && matches!(question_type, DNS_TYPE_SRV | DNS_TYPE_TXT | DNS_TYPE_ANY);
         let host_query = name_matches(&name, &instance.host_labels())
-            && matches!(question_type, DNS_TYPE_AAAA | DNS_TYPE_ANY);
+            && matches!(question_type, DNS_TYPE_A | DNS_TYPE_AAAA | DNS_TYPE_ANY);
         if service_query || instance_query || host_query {
             return QueryRelevance::Relevant;
         }
@@ -583,12 +598,13 @@ mod tests {
             &mut packet,
             &instance,
             LINK_LOCAL,
+            None,
             super::super::PUBLICATION_TTL_SECONDS,
         )
         .expect("the fixed publication capacity fits the complete record set");
 
         assert!(length <= super::super::UDP_SERVICE_DISCOVERY_PACKET_BYTES);
-        assert_eq!(read_u16(&packet[..length], 6), Some(DNS_RECORD_COUNT));
+        assert_eq!(read_u16(&packet[..length], 6), Some(DNS_CORE_RECORD_COUNT));
         assert!(packet[..length]
             .windows(2)
             .any(|window| window == contract::UNICAST_DISCOVERY_PORT.to_be_bytes()));
@@ -602,13 +618,38 @@ mod tests {
     }
 
     #[test]
+    fn publication_includes_optional_ipv4_a_record() {
+        let instance = DiscoveryInstance::from_random_bytes(INSTANCE_RANDOM);
+        let ipv4 = Ipv4Addr::new(192, 168, 1, 127);
+        let mut packet = [0u8; super::super::UDP_SERVICE_DISCOVERY_PACKET_BYTES];
+        let length = build_publication_packet(
+            &mut packet,
+            &instance,
+            LINK_LOCAL,
+            Some(ipv4),
+            super::super::PUBLICATION_TTL_SECONDS,
+        )
+        .expect("A + AAAA publication fits");
+        assert_eq!(
+            read_u16(&packet[..length], 6),
+            Some(DNS_CORE_RECORD_COUNT + 1)
+        );
+        assert!(packet[..length]
+            .windows(ipv4.octets().len())
+            .any(|window| window == ipv4.octets()));
+        assert!(packet[..length]
+            .windows(LINK_LOCAL.octets().len())
+            .any(|window| window == LINK_LOCAL.octets()));
+    }
+
+    #[test]
     fn goodbye_uses_zero_ttl_for_every_record() {
         let instance = DiscoveryInstance::from_random_bytes(INSTANCE_RANDOM);
         let mut packet = [0u8; super::super::UDP_SERVICE_DISCOVERY_PACKET_BYTES];
-        let length = build_publication_packet(&mut packet, &instance, LINK_LOCAL, 0)
+        let length = build_publication_packet(&mut packet, &instance, LINK_LOCAL, None, 0)
             .expect("the fixed publication capacity fits the goodbye record set");
         let mut cursor = 12;
-        for _ in 0..DNS_RECORD_COUNT {
+        for _ in 0..DNS_CORE_RECORD_COUNT {
             let (_, next) = decode_name(&packet[..length], cursor).expect("record name is valid");
             cursor = next + 4;
             assert_eq!(packet.get(cursor..cursor + 4), Some(&[0, 0, 0, 0][..]));
@@ -639,6 +680,7 @@ mod tests {
             &mut response,
             &instance,
             LINK_LOCAL,
+            None,
             super::super::PUBLICATION_TTL_SECONDS,
         )
         .expect("publication fits");
