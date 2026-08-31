@@ -1,7 +1,7 @@
 //! RNS 1.4.2 `Resource(data, link)` plus `Resource.advertise`.
 
 use crate::crypto::Sha256PrefixState;
-use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis, Journaled};
+use crate::engine::{CommandId, Directive, EngineReaction, EngineState, InstantMillis, Journaled};
 use crate::engine::{RespondFailure, SendResourceFailure, SendResourceRejection, Settlement};
 use crate::interfaces::InterfaceId;
 use crate::rncp::write_file_metadata;
@@ -54,6 +54,7 @@ const STATIC_FILE_METADATA_BYTES: usize = 6 + 2 + u8::MAX as usize;
 
 /// A pool worker's finished seal, exactly as it returns: the identity that finds the row, the bytes that land on it, and the outcome that gates them.
 pub struct OffloadedStagedSeal<'a> {
+    pub command_id: CommandId,
     pub link_id: LinkId,
     pub stream_nonce: [u8; RESOURCE_NONCE_LEN],
     pub nonce_prefixed_bytes: usize,
@@ -64,6 +65,7 @@ pub struct OffloadedStagedSeal<'a> {
 
 /// What a crypto-pool seal job copies before the row parks as `StagedSealing`.
 pub struct StagedSealJobView<'a> {
+    pub command_id: CommandId,
     pub key: &'a crate::routing::links::LinkKey,
     pub sdu: usize,
     pub total_segments: u64,
@@ -479,12 +481,6 @@ impl<S: StorageLayout> EngineState<S> {
             );
             return wake_schedule_changes;
         }
-        let chain_is_dead =
-            segment_index > 1 && self.outgoing_assemblies.original_hash(&link_id).is_none();
-        if chain_is_dead {
-            settle(sink, SendResourceFailure::PredecessorFailed);
-            return wake_schedule_changes;
-        }
         let (key, mtu, fire_on, rtt_millis) = match self.links.active_view(&link_id) {
             ActiveLinkLookup::Active(link) => (
                 link.key,
@@ -525,6 +521,13 @@ impl<S: StorageLayout> EngineState<S> {
                 return wake_schedule_changes;
             }
         };
+        if segment_index > 1
+            && lane == TrackLane::Live
+            && self.outgoing_assemblies.original_hash(&link_id).is_none()
+        {
+            settle(sink, SendResourceFailure::PredecessorFailed);
+            return wake_schedule_changes;
+        }
 
         let command = TrackedCommand {
             link_id,
@@ -979,6 +982,19 @@ impl<S: StorageLayout> EngineState<S> {
         if state.status != OutgoingResourceStatus::Staged {
             return;
         }
+        self.seal_staged_index(index, link_id, fill_entropy, sink);
+    }
+
+    fn seal_staged_index<F>(
+        &mut self,
+        index: usize,
+        link_id: &LinkId,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) where
+        F: FnMut(&mut [u8]),
+    {
+        let state = self.outgoing_resources.state(index);
         let nonce_prefixed_bytes = state.staged_plaintext_bytes;
         let sdu = state.sdu;
         let ActiveLinkLookup::Active(link) = self.links.active_view(link_id) else {
@@ -1044,15 +1060,15 @@ impl<S: StorageLayout> EngineState<S> {
 
     /// The owed seal's worker inputs, borrowed for the manifold to copy into a crypto-pool job; [`mark_staged_sealing`](Self::mark_staged_sealing) then parks the row until the verdict.
     pub fn staged_seal_job_view(&self, link_id: &LinkId) -> Option<StagedSealJobView<'_>> {
-        let index = self.outgoing_resources.staged_index(link_id)?;
+        let index = self
+            .outgoing_resources
+            .next_unsealed_staged_index(link_id)?;
         let state = self.outgoing_resources.state(index);
-        if state.status != OutgoingResourceStatus::Staged {
-            return None;
-        }
         let ActiveLinkLookup::Active(link) = self.links.active_view(link_id) else {
             return None;
         };
         Some(StagedSealJobView {
+            command_id: state.command_id,
             key: link.key,
             sdu: state.sdu,
             total_segments: state.total_segments,
@@ -1062,27 +1078,42 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     pub fn mark_staged_sealing(&mut self, link_id: &LinkId) {
-        let Some(index) = self.outgoing_resources.staged_index(link_id) else {
+        let Some(index) = self.outgoing_resources.next_unsealed_staged_index(link_id) else {
             return;
         };
-        let state = self.outgoing_resources.state_mut(index);
-        if state.status == OutgoingResourceStatus::Staged {
-            state.status = OutgoingResourceStatus::StagedSealing;
-        }
+        self.outgoing_resources.state_mut(index).status = OutgoingResourceStatus::StagedSealing;
     }
 
-    pub fn requeue_staged_seal(&mut self, link_id: &LinkId) {
-        let Some(index) = self.outgoing_resources.staged_index(link_id) else {
+    pub fn retry_external_staged_seal<F>(
+        &mut self,
+        command_id: CommandId,
+        link_id: &LinkId,
+        stream_nonce: [u8; RESOURCE_NONCE_LEN],
+        nonce_prefixed_bytes: usize,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) where
+        F: FnMut(&mut [u8]),
+    {
+        let matching = (0..self.outgoing_resources.len()).find(|&index| {
+            let state = self.outgoing_resources.state(index);
+            self.outgoing_resources.link_at(index) == link_id
+                && state.command_id == command_id
+                && state.status == OutgoingResourceStatus::StagedSealing
+                && state.staged_plaintext_bytes == nonce_prefixed_bytes
+                && self.outgoing_resources.staged_plaintext(index)[16..16 + RESOURCE_NONCE_LEN]
+                    == stream_nonce
+        });
+        let Some(index) = matching else {
             return;
         };
-        let state = self.outgoing_resources.state_mut(index);
-        if state.status == OutgoingResourceStatus::StagedSealing {
-            state.status = OutgoingResourceStatus::Staged;
-        }
+        self.outgoing_resources.state_mut(index).status = OutgoingResourceStatus::Staged;
+        self.seal_staged_index(index, link_id, fill_entropy, sink);
     }
 
     pub fn apply_external_staged_seal(
         &mut self,
+        command_id: CommandId,
         link_id: LinkId,
         stream_nonce: [u8; RESOURCE_NONCE_LEN],
         nonce_prefixed_bytes: usize,
@@ -1093,6 +1124,7 @@ impl<S: StorageLayout> EngineState<S> {
         let matching = (0..self.outgoing_resources.len()).find(|&index| {
             let state = self.outgoing_resources.state(index);
             self.outgoing_resources.link_at(index) == &link_id
+                && state.command_id == command_id
                 && state.status == OutgoingResourceStatus::StagedSealing
                 && state.staged_plaintext_bytes == nonce_prefixed_bytes
                 && self.outgoing_resources.staged_plaintext(index)[16..16 + RESOURCE_NONCE_LEN]
@@ -1135,6 +1167,7 @@ impl<S: StorageLayout> EngineState<S> {
 
     pub fn apply_external_staged_seal_digests(
         &mut self,
+        command_id: CommandId,
         link_id: LinkId,
         stream_nonce: [u8; RESOURCE_NONCE_LEN],
         nonce_prefixed_bytes: usize,
@@ -1146,6 +1179,7 @@ impl<S: StorageLayout> EngineState<S> {
         let matching = (0..self.outgoing_resources.len()).find(|&index| {
             let state = self.outgoing_resources.state(index);
             self.outgoing_resources.link_at(index) == &link_id
+                && state.command_id == command_id
                 && state.status == OutgoingResourceStatus::StagedSealing
                 && state.staged_plaintext_bytes == nonce_prefixed_bytes
                 && self.outgoing_resources.staged_plaintext(index)[16..16 + RESOURCE_NONCE_LEN]
@@ -1202,6 +1236,7 @@ impl<S: StorageLayout> EngineState<S> {
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) {
         let OffloadedStagedSeal {
+            command_id,
             link_id,
             stream_nonce,
             nonce_prefixed_bytes,
@@ -1212,6 +1247,7 @@ impl<S: StorageLayout> EngineState<S> {
         let matching = (0..self.outgoing_resources.len()).find(|&index| {
             let state = self.outgoing_resources.state(index);
             self.outgoing_resources.link_at(index) == &link_id
+                && state.command_id == command_id
                 && state.status == OutgoingResourceStatus::StagedSealing
                 && state.staged_plaintext_bytes == nonce_prefixed_bytes
                 && self.outgoing_resources.staged_plaintext(index)[16..16 + RESOURCE_NONCE_LEN]
@@ -1274,11 +1310,20 @@ impl<S: StorageLayout> EngineState<S> {
         }
         let hash = *self.outgoing_resources.hash_at(index);
         let state = self.outgoing_resources.state(index);
-        if state.segment_index == 1
-            && state.total_segments > 1
+        let segment_index = state.segment_index;
+        let total_segments = state.total_segments;
+        if segment_index == 1
+            && total_segments > 1
             && self.outgoing_assemblies.original_hash(link_id).is_none()
         {
             self.outgoing_assemblies.begin(*link_id, hash);
+        }
+        if segment_index > 1 {
+            let Some(original_hash) = self.outgoing_assemblies.original_hash(link_id) else {
+                self.fail_staged_continuation(link_id, sink);
+                return;
+            };
+            self.outgoing_resources.state_mut(index).original_hash = original_hash;
         }
         let ActiveLinkLookup::Active(link) = self.links.active_view(link_id) else {
             self.fail_staged_continuation(link_id, sink);
@@ -2047,6 +2092,7 @@ mod tests {
         let salts = [[0xD2; RESOURCE_NONCE_LEN]; SALT_REROLL_CAP];
         engine.mark_staged_sealing(&link_id());
         engine.apply_external_staged_seal(
+            CommandId(31),
             link_id(),
             [0xEE; RESOURCE_NONCE_LEN],
             nonce_prefixed_bytes,
@@ -2063,6 +2109,7 @@ mod tests {
         );
 
         engine.apply_external_staged_seal(
+            CommandId(31),
             link_id(),
             stream_nonce,
             nonce_prefixed_bytes,
@@ -2103,6 +2150,170 @@ mod tests {
         assert_eq!(&opened[RESOURCE_NONCE_LEN..], expected);
         assert_eq!(advertisement.original_hash, advertisement.hash);
         assert!(advertisement.flags.has_metadata);
+    }
+
+    #[test]
+    fn external_continuation_seals_overlap_retry_exactly_and_promote_in_order() {
+        let mut engine = heap_sender_with_active_link();
+        let first_data = [0x31; 700];
+        let second_data = [0x32; 700];
+        let segment = |index| ResourceSegment {
+            index,
+            total_segments: 2,
+            total_data_bytes: (first_data.len() + second_data.len()) as u64,
+        };
+
+        let first = send_segment_external_with_metadata(
+            &mut engine,
+            41,
+            &first_data,
+            segment(1),
+            ResourceMetadata::None,
+        );
+        assert!(first.frames.is_empty());
+        assert!(first.settlements.is_empty());
+        let first_job = engine.staged_seal_job_view(&link_id()).unwrap();
+        let first_bytes = first_job.nonce_prefixed_bytes;
+        let first_nonce: [u8; RESOURCE_NONCE_LEN] = first_job.plaintext
+            [16..16 + RESOURCE_NONCE_LEN]
+            .try_into()
+            .unwrap();
+        engine.mark_staged_sealing(&link_id());
+
+        let second = send_segment_external_with_metadata(
+            &mut engine,
+            42,
+            &second_data,
+            segment(2),
+            ResourceMetadata::None,
+        );
+        assert!(second.frames.is_empty());
+        assert!(second.settlements.is_empty());
+        let second_job = engine.staged_seal_job_view(&link_id()).unwrap();
+        let second_bytes = second_job.nonce_prefixed_bytes;
+        let second_nonce: [u8; RESOURCE_NONCE_LEN] = second_job.plaintext
+            [16..16 + RESOURCE_NONCE_LEN]
+            .try_into()
+            .unwrap();
+        assert_eq!(first_bytes, second_bytes);
+        assert_eq!(first_nonce, second_nonce);
+        engine.mark_staged_sealing(&link_id());
+
+        let mut states = (0..engine.outgoing_resources.len())
+            .map(|index| *engine.outgoing_resources.state(index))
+            .collect::<std::vec::Vec<_>>();
+        states.sort_by_key(|state| state.segment_index);
+        assert_eq!(
+            states
+                .iter()
+                .map(|state| state.status)
+                .collect::<std::vec::Vec<_>>(),
+            std::vec![
+                OutgoingResourceStatus::StagedSealing,
+                OutgoingResourceStatus::StagedSealing,
+            ],
+        );
+
+        engine.retry_external_staged_seal(
+            CommandId(42),
+            &link_id(),
+            second_nonce,
+            second_bytes,
+            &mut |bytes: &mut [u8]| bytes.fill(0xB4),
+            &mut |_| {},
+        );
+        let mut states = (0..engine.outgoing_resources.len())
+            .map(|index| *engine.outgoing_resources.state(index))
+            .collect::<std::vec::Vec<_>>();
+        states.sort_by_key(|state| state.segment_index);
+        assert_eq!(
+            states
+                .iter()
+                .map(|state| state.status)
+                .collect::<std::vec::Vec<_>>(),
+            std::vec![
+                OutgoingResourceStatus::StagedSealing,
+                OutgoingResourceStatus::StagedSealed,
+            ],
+        );
+
+        let mut premature_frames = std::vec::Vec::new();
+        engine.promote_staged_resource(
+            &link_id(),
+            InstantMillis(1_600),
+            &mut |bytes: &mut [u8]| bytes.fill(0xB5),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    if let Some(frame) = filled_frame(fill) {
+                        premature_frames.push(frame);
+                    }
+                }
+            },
+        );
+        assert!(premature_frames.is_empty());
+
+        engine.retry_external_staged_seal(
+            CommandId(41),
+            &link_id(),
+            first_nonce,
+            first_bytes,
+            &mut |bytes: &mut [u8]| bytes.fill(0xB6),
+            &mut |_| {},
+        );
+        let mut promoted_frames = std::vec::Vec::new();
+        engine.promote_staged_resource(
+            &link_id(),
+            InstantMillis(1_700),
+            &mut |bytes: &mut [u8]| bytes.fill(0xB7),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    if let Some(frame) = filled_frame(fill) {
+                        promoted_frames.push(frame);
+                    }
+                }
+            },
+        );
+        assert_eq!(promoted_frames.len(), 1);
+        let mut states = (0..engine.outgoing_resources.len())
+            .map(|index| *engine.outgoing_resources.state(index))
+            .collect::<std::vec::Vec<_>>();
+        states.sort_by_key(|state| state.segment_index);
+        assert_eq!(
+            states
+                .iter()
+                .map(|state| state.status)
+                .collect::<std::vec::Vec<_>>(),
+            std::vec![
+                OutgoingResourceStatus::Advertised,
+                OutgoingResourceStatus::StagedSealed,
+            ],
+        );
+
+        let first_hash = advertised_hash(&promoted_frames[0]);
+        let first_index = engine
+            .outgoing_resources
+            .lookup(&link_id(), &first_hash)
+            .unwrap();
+        let names = engine.outgoing_resources.names_flat(first_index).to_vec();
+        feed(
+            &mut engine,
+            &request_frame(&first_hash, None, &names),
+            1_800,
+        );
+        let proof = engine.outgoing_resources.state(first_index).expected_proof;
+        let proven = feed(&mut engine, &proof_frame(&first_hash, &proof), 1_900);
+        assert!(matches!(
+            proven.settlements.as_slice(),
+            [(CommandId(41), Settlement::SendResource(Ok(())))]
+        ));
+        assert_eq!(proven.frames.len(), 1);
+        let (_, payload) = WirePacketHeader::parse(&proven.frames[0].1).unwrap();
+        let mut opened_advertisement = payload.to_vec();
+        let advertisement = ResourceAdvertisement::parse(
+            link_key().open_in_place(&mut opened_advertisement).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(advertisement.original_hash, first_hash);
     }
 
     #[test]
@@ -3163,9 +3374,14 @@ mod tests {
         feed(&mut engine, &request_frame(&live, None, &names), 2_000);
         assert_eq!(engine.owed_staged_seal_link(), Some(link_id()));
 
-        let (job_sdu, job_len, job_plaintext) = {
+        let (job_id, job_sdu, job_len, job_plaintext) = {
             let view = engine.staged_seal_job_view(&link_id()).unwrap();
-            (view.sdu, view.nonce_prefixed_bytes, view.plaintext.to_vec())
+            (
+                view.command_id,
+                view.sdu,
+                view.nonce_prefixed_bytes,
+                view.plaintext.to_vec(),
+            )
         };
         engine.mark_staged_sealing(&link_id());
         assert_eq!(
@@ -3218,6 +3434,7 @@ mod tests {
         let stale_nonce = [0xEE; RESOURCE_NONCE_LEN];
         engine.apply_offloaded_staged_seal(
             OffloadedStagedSeal {
+                command_id: job_id,
                 link_id: link_id(),
                 stream_nonce: stale_nonce,
                 nonce_prefixed_bytes: job_len,
@@ -3237,6 +3454,7 @@ mod tests {
 
         engine.apply_offloaded_staged_seal(
             OffloadedStagedSeal {
+                command_id: job_id,
                 link_id: link_id(),
                 stream_nonce,
                 nonce_prefixed_bytes: job_len,

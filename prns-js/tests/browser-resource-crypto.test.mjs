@@ -9,6 +9,7 @@ import {
   parseResourceOpenJob,
   parseResourceSealBegin,
   resourceDigestExecution,
+  resourceOpenDigestExecution,
 } from "../dist/browser/resource_crypto.js";
 import {
   BrowserCryptoExecutor,
@@ -99,6 +100,7 @@ test("Web Crypto resource digests match independent SHA-256 hash and proof bytes
 });
 
 test("resource digest execution keeps small isolated work local and offloads overlap", () => {
+  const tokenOverheadBytes = 48;
   assert.deepEqual(resourceDigestExecution(512 * 1_024 + 4, 2), {
     tag: "PortableWasm",
     data: undefined,
@@ -108,6 +110,14 @@ test("resource digest execution keeps small isolated work local and offloads ove
     data: undefined,
   });
   assert.deepEqual(resourceDigestExecution(512 * 1_024 + 4, 3), {
+    tag: "WebCrypto",
+    data: undefined,
+  });
+  assert.deepEqual(resourceOpenDigestExecution(512 * 1_024 + tokenOverheadBytes, 2), {
+    tag: "PortableWasm",
+    data: undefined,
+  });
+  assert.deepEqual(resourceOpenDigestExecution(512 * 1_024 + tokenOverheadBytes, 3), {
     tag: "WebCrypto",
     data: undefined,
   });
@@ -123,6 +133,11 @@ test("resource crypto executor preserves behavior when Workers are unavailable",
     Uint8Array.of(9, 8, 7, 6),
   );
   assert.equal(digested.tag, "Digested");
+  const sealedAndDigested = await executor.sealAndDigest(
+    job,
+    Uint8Array.of(9, 8, 7, 6),
+  );
+  assert.equal(sealedAndDigested.tag, "SealedAndDigested");
   const opened = await executor.open({
     linkId: job.linkId,
     signingKey: job.signingKey,
@@ -130,6 +145,23 @@ test("resource crypto executor preserves behavior when Workers are unavailable",
     sealed: sealed.data.sealed,
   });
   assert.deepEqual(opened, { tag: "Opened", data: job.plaintext });
+  const openedAndDigested = await executor.openAndDigest(
+    {
+      linkId: job.linkId,
+      signingKey: job.signingKey,
+      encryptionKey: job.encryptionKey,
+      sealed: sealedAndDigested.data.sealed,
+    },
+    Uint8Array.of(9, 8, 7, 6),
+  );
+  assert.deepEqual(openedAndDigested, {
+    tag: "OpenedAndDigested",
+    data: {
+      plaintext: job.plaintext,
+      hash: sealedAndDigested.data.hash,
+      proof: sealedAndDigested.data.proof,
+    },
+  });
   executor.close();
   assert.deepEqual(await executor.seal(job), {
     tag: "Failed",

@@ -604,7 +604,6 @@ export class Prns {
   #limits: HostLimits;
   #resourceCompressionModuleUrl: string;
   #cryptoExecutor: BrowserCryptoExecutor | undefined;
-  #resourceSealTurns = new Map<string, Promise<void>>();
   #events: BoundedAsyncLane<PrnsApplicationEvent>;
   #diagnostics: BoundedAsyncLane<PrnsDiagnosticEvent>;
   #pendingCommands = new Map<
@@ -1668,148 +1667,152 @@ export class Prns {
   async #issueWebCryptoResourceSegment(
     input: RuntimeResourceSegmentIssueInput,
   ): Promise<CommandSettlement> {
-    const turnKey = byteKey(input.linkId);
-    const previous = this.#resourceSealTurns.get(turnKey) ?? Promise.resolve();
-    let releaseTurn = (): void => undefined;
-    const turn = new Promise<void>((resolve) => {
-      releaseTurn = resolve;
-    });
-    this.#resourceSealTurns.set(turnKey, turn);
-    await previous;
+    if (this.#lifecycle.tag !== "Running") {
+      return commandFailed(Tag("NodeStopped"));
+    }
+    if (this.#pendingCommands.size >= this.#limits.pendingCommands) {
+      return commandFailed(Tag("Busy"));
+    }
+    const entropy = this.#entropyBytes();
+    if (entropy.tag !== "Filled") {
+      return commandFailed(Tag("EntropyUnavailable"));
+    }
+    let begun;
     try {
-      if (this.#lifecycle.tag !== "Running") {
-        return commandFailed(Tag("NodeStopped"));
-      }
-      if (this.#pendingCommands.size >= this.#limits.pendingCommands) {
-        return commandFailed(Tag("Busy"));
-      }
-      const entropy = this.#entropyBytes();
-      if (entropy.tag !== "Filled") {
-        return commandFailed(Tag("EntropyUnavailable"));
-      }
-      let begun;
-      try {
-        begun = parseResourceSealBegin(
-          this.#runtime.sendResourceSegmentWebCrypto!({
-            ...input,
-            nowMs: this.#now(),
-            entropy: entropy.data,
-          }),
-        );
-      } catch (error) {
-        return commandFailed(browserCommandFailure("send-resource", error));
-      }
-      const id = commandId(begun.data.commandId);
-      const settlement = new Promise<CommandSettlement>((settle) => {
-        this.#pendingCommands.set(id, {
-          pending: Tag("ResourceSegment"),
-          settle,
-        });
+      begun = parseResourceSealBegin(
+        this.#runtime.sendResourceSegmentWebCrypto!({
+          ...input,
+          nowMs: this.#now(),
+          entropy: entropy.data,
+        }),
+      );
+    } catch (error) {
+      return commandFailed(browserCommandFailure("send-resource", error));
+    }
+    const id = commandId(begun.data.commandId);
+    const settlement = new Promise<CommandSettlement>((settle) => {
+      this.#pendingCommands.set(id, {
+        pending: Tag("ResourceSegment"),
+        settle,
       });
-      this.#host.notifyRuntimeActivity();
-      if (begun.tag === "Seal") {
-        const executor = this.#cryptoExecutor;
-        try {
-          if (executor === undefined) {
-            throw new TypeError("resource crypto executor is unavailable");
-          }
-          const sealedOutcome = await executor.seal(begun.data);
-          if (
-            this.#cryptoExecutor !== executor ||
-            this.#lifecycle.tag !== "Running"
-          ) {
-            return settlement;
-          }
-          if (sealedOutcome.tag !== "Sealed") {
-            throw new TypeError(
-              sealedOutcome.tag === "Busy"
-                ? "resource crypto pool is busy"
-                : sealedOutcome.data.detail,
-            );
-          }
-          const sealed = sealedOutcome.data.sealed;
-          let plaintext = sealedOutcome.data.plaintext;
-          if (
-            this.#runtime.completeResourceSegmentSealDigests !== undefined &&
-            resourceDigestExecution(
-              begun.data.noncePrefixedBytes,
-              begun.data.totalSegments,
-            ).tag === "WebCrypto"
-          ) {
-            let landed = false;
-            for (let offset = 0; offset < begun.data.salts.length; offset += 4) {
-              const salt = begun.data.salts.subarray(offset, offset + 4);
-              const digestOutcome = await executor.digest(plaintext, salt);
-              if (
-                this.#cryptoExecutor !== executor ||
-                this.#lifecycle.tag !== "Running"
-              ) {
-                return settlement;
-              }
-              if (digestOutcome.tag !== "Digested") {
-                throw new TypeError(
-                  digestOutcome.tag === "Busy"
-                    ? "resource crypto pool is busy"
-                    : digestOutcome.data.detail,
-                );
-              }
-              plaintext = digestOutcome.data.plaintext;
-              const landing = parseResourceDigestLanding(
-                this.#runtime.completeResourceSegmentSealDigests({
-                  linkId: linkId(begun.data.linkId),
-                  streamNonce: begun.data.streamNonce,
-                  noncePrefixedBytes: begun.data.noncePrefixedBytes,
-                  sealed,
-                  salt,
-                  hash: digestOutcome.data.hash,
-                  proof: digestOutcome.data.proof,
-                  promotionEntropy: begun.data.promotionEntropy,
-                  nowMs: this.#now(),
-                }),
+    });
+    this.#host.notifyRuntimeActivity();
+    if (begun.tag !== "Seal") {
+      return settlement;
+    }
+    const executor = this.#cryptoExecutor;
+    try {
+      if (executor === undefined) {
+        throw new TypeError("resource crypto executor is unavailable");
+      }
+      const offloadDigests =
+        this.#runtime.completeResourceSegmentSealDigests !== undefined &&
+        resourceDigestExecution(
+          begun.data.noncePrefixedBytes,
+          begun.data.totalSegments,
+        ).tag === "WebCrypto";
+      const outcome = offloadDigests
+        ? await executor.sealAndDigest(
+            begun.data,
+            begun.data.salts.subarray(0, 4),
+          )
+        : await executor.seal(begun.data);
+      if (
+        this.#cryptoExecutor !== executor ||
+        this.#lifecycle.tag !== "Running"
+      ) {
+        return settlement;
+      }
+      if (outcome.tag === "Busy") {
+        throw new TypeError("resource crypto pool is busy");
+      }
+      if (outcome.tag === "Failed") {
+        throw new TypeError(outcome.data.detail);
+      }
+      if (outcome.tag === "Sealed") {
+        this.#runtime.completeResourceSegmentSeal!({
+          commandId: begun.data.commandId,
+          linkId: linkId(begun.data.linkId),
+          streamNonce: begun.data.streamNonce,
+          noncePrefixedBytes: begun.data.noncePrefixedBytes,
+          sealed: outcome.data.sealed,
+          salts: begun.data.salts,
+          promotionEntropy: begun.data.promotionEntropy,
+          nowMs: this.#now(),
+        });
+      } else {
+        let plaintext = outcome.data.plaintext;
+        let digests = {
+          hash: outcome.data.hash,
+          proof: outcome.data.proof,
+        };
+        let landed = false;
+        for (let offset = 0; offset < begun.data.salts.length; offset += 4) {
+          const salt = begun.data.salts.subarray(offset, offset + 4);
+          if (offset !== 0) {
+            const digestOutcome = await executor.digest(plaintext, salt);
+            if (
+              this.#cryptoExecutor !== executor ||
+              this.#lifecycle.tag !== "Running"
+            ) {
+              return settlement;
+            }
+            if (digestOutcome.tag !== "Digested") {
+              throw new TypeError(
+                digestOutcome.tag === "Busy"
+                  ? "resource crypto pool is busy"
+                  : digestOutcome.data.detail,
               );
-              if (landing.tag === "Applied" || landing.tag === "Stale") {
-                landed = true;
-                break;
-              }
-              if (landing.tag === "Invalid") {
-                throw new TypeError("resource digest landing was invalid");
-              }
             }
-            if (!landed) {
-              throw new TypeError("resource digest salts exhausted");
-            }
-          } else {
-            this.#runtime.completeResourceSegmentSeal!({
+            plaintext = digestOutcome.data.plaintext;
+            digests = {
+              hash: digestOutcome.data.hash,
+              proof: digestOutcome.data.proof,
+            };
+          }
+          const landing = parseResourceDigestLanding(
+            this.#runtime.completeResourceSegmentSealDigests!({
+              commandId: begun.data.commandId,
               linkId: linkId(begun.data.linkId),
               streamNonce: begun.data.streamNonce,
               noncePrefixedBytes: begun.data.noncePrefixedBytes,
-              sealed,
-              salts: begun.data.salts,
+              sealed: outcome.data.sealed,
+              salt,
+              hash: digests.hash,
+              proof: digests.proof,
               promotionEntropy: begun.data.promotionEntropy,
               nowMs: this.#now(),
-            });
+            }),
+          );
+          if (landing.tag === "Applied" || landing.tag === "Stale") {
+            landed = true;
+            break;
           }
-        } catch {
-          if (
-            this.#cryptoExecutor === executor &&
-            this.#lifecycle.tag === "Running"
-          ) {
-            this.#runtime.retryResourceSegmentSeal!({
-              linkId: linkId(begun.data.linkId),
-              nowMs: this.#now(),
-              entropy: entropyBytes(resourceSealFallbackEntropy(begun.data)),
-            });
+          if (landing.tag === "Invalid") {
+            throw new TypeError("resource digest landing was invalid");
           }
         }
-        this.#host.notifyRuntimeActivity();
+        if (!landed) {
+          throw new TypeError("resource digest salts exhausted");
+        }
       }
-      return settlement;
-    } finally {
-      releaseTurn();
-      if (this.#resourceSealTurns.get(turnKey) === turn) {
-        this.#resourceSealTurns.delete(turnKey);
+    } catch {
+      if (
+        this.#cryptoExecutor === executor &&
+        this.#lifecycle.tag === "Running"
+      ) {
+        this.#runtime.retryResourceSegmentSeal!({
+          commandId: begun.data.commandId,
+          linkId: linkId(begun.data.linkId),
+          streamNonce: begun.data.streamNonce,
+          noncePrefixedBytes: begun.data.noncePrefixedBytes,
+          nowMs: this.#now(),
+          entropy: entropyBytes(resourceSealFallbackEntropy(begun.data)),
+        });
       }
     }
+    this.#host.notifyRuntimeActivity();
+    return settlement;
   }
 
   #issuePendingCommand(

@@ -71,6 +71,13 @@ type ImportedResourceKeys = {
 
 const RESOURCE_KEY_CACHE_CAPACITY = 64;
 const RESOURCE_NONCE_BYTES = 4;
+const RESOURCE_SEAL_IV_BYTES = 16;
+const RESOURCE_AUTH_TAG_BYTES = 32;
+const RESOURCE_CIPHER_BLOCK_BYTES = 16;
+const RESOURCE_TOKEN_OVERHEAD_BYTES =
+  RESOURCE_SEAL_IV_BYTES + RESOURCE_AUTH_TAG_BYTES;
+const RESOURCE_MINIMUM_TOKEN_BYTES =
+  RESOURCE_TOKEN_OVERHEAD_BYTES + RESOURCE_CIPHER_BLOCK_BYTES;
 const WEB_CRYPTO_RESOURCE_DIGEST_MIN_BYTES = 768 * 1_024;
 
 export function resourceDigestExecution(
@@ -81,6 +88,19 @@ export function resourceDigestExecution(
   return streamByteLength >= WEB_CRYPTO_RESOURCE_DIGEST_MIN_BYTES || totalSegments >= 3
     ? Tag("WebCrypto")
     : Tag("PortableWasm");
+}
+
+export function resourceOpenDigestExecution(
+  sealedTokenByteLength: number,
+  totalSegments: number,
+): ResourceDigestExecution {
+  return resourceDigestExecution(
+    Math.max(
+      RESOURCE_NONCE_BYTES,
+      sealedTokenByteLength - RESOURCE_TOKEN_OVERHEAD_BYTES,
+    ),
+    totalSegments,
+  );
 }
 
 export class WebCryptoResourceDigester {
@@ -118,15 +138,17 @@ export class WebCryptoResourceSealer {
       keys.encryption,
       job.plaintext,
     ));
-    const token = new Uint8Array(16 + encrypted.length + 32);
+    const token = new Uint8Array(
+      RESOURCE_SEAL_IV_BYTES + encrypted.length + RESOURCE_AUTH_TAG_BYTES,
+    );
     token.set(job.sealIv);
-    token.set(encrypted, 16);
+    token.set(encrypted, RESOURCE_SEAL_IV_BYTES);
     const tag = new Uint8Array(await crypto.subtle.sign(
       "HMAC",
       keys.signing,
-      token.subarray(0, token.length - 32),
+      token.subarray(0, token.length - RESOURCE_AUTH_TAG_BYTES),
     ));
-    token.set(tag, token.length - 32);
+    token.set(tag, token.length - RESOURCE_AUTH_TAG_BYTES);
     return token as OwnedBytes;
   }
 
@@ -161,21 +183,31 @@ export class WebCryptoResourceOpener {
   readonly #keys = new Map<string, Promise<ImportedResourceKeys>>();
 
   async open(job: ResourceOpenCryptoJob): Promise<ResourceOpenOutcome> {
-    if (job.sealed.length < 64 || (job.sealed.length - 48) % 16 !== 0) {
+    if (
+      job.sealed.length < RESOURCE_MINIMUM_TOKEN_BYTES ||
+      (job.sealed.length - RESOURCE_TOKEN_OVERHEAD_BYTES) %
+          RESOURCE_CIPHER_BLOCK_BYTES !== 0
+    ) {
       return Tag("Refused");
     }
     const keys = await this.#keysFor(job);
-    const signed = job.sealed.subarray(0, job.sealed.length - 32);
-    const tag = job.sealed.subarray(job.sealed.length - 32);
+    const signed = job.sealed.subarray(
+      0,
+      job.sealed.length - RESOURCE_AUTH_TAG_BYTES,
+    );
+    const tag = job.sealed.subarray(job.sealed.length - RESOURCE_AUTH_TAG_BYTES);
     const authentic = await crypto.subtle.verify("HMAC", keys.signing, tag, signed);
     if (!authentic) {
       return Tag("Refused");
     }
     try {
       const plaintext = new Uint8Array(await crypto.subtle.decrypt(
-        { name: "AES-CBC", iv: job.sealed.subarray(0, 16) },
+        { name: "AES-CBC", iv: job.sealed.subarray(0, RESOURCE_SEAL_IV_BYTES) },
         keys.encryption,
-        job.sealed.subarray(16, job.sealed.length - 32),
+        job.sealed.subarray(
+          RESOURCE_SEAL_IV_BYTES,
+          job.sealed.length - RESOURCE_AUTH_TAG_BYTES,
+        ),
       ));
       return Tag("Opened", plaintext);
     } catch {

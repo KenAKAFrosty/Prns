@@ -60,14 +60,44 @@
               () => executor.verifyEd25519(publicKey, message, signature),
             ),
           );
+          const resourceJob = {
+            linkId: new Uint8Array(16).fill(0x51),
+            plaintext: Uint8Array.from({ length: 1028 }, (_, index) => index),
+            signingKey: new Uint8Array(32).fill(0x52),
+            encryptionKey: new Uint8Array(32).fill(0x53),
+            sealIv: new Uint8Array(16).fill(0x54),
+          };
+          const salt = Uint8Array.of(5, 6, 7, 8);
+          const expectedPlaintext = resourceJob.plaintext.slice();
+          const receiverSigningKey = resourceJob.signingKey.slice();
+          const receiverEncryptionKey = resourceJob.encryptionKey.slice();
+          const sealedAndDigested = await executor.sealAndDigest(resourceJob, salt);
+          const openedAndDigested = sealedAndDigested.tag === "SealedAndDigested"
+            ? await executor.openAndDigest(
+                {
+                  linkId: resourceJob.linkId,
+                  signingKey: receiverSigningKey,
+                  encryptionKey: receiverEncryptionKey,
+                  sealed: sealedAndDigested.data.sealed,
+                },
+                salt,
+              )
+            : sealedAndDigested;
           if (
             valid.tag !== "Valid" ||
             invalid.tag !== "Invalid" ||
             linked.tag !== "Verified" ||
             !equalBytes(linked.data.sharedSecret, expectedShared) ||
-            burst.some((outcome) => outcome.tag !== "Valid")
+            burst.some((outcome) => outcome.tag !== "Valid") ||
+            sealedAndDigested.tag !== "SealedAndDigested" ||
+            openedAndDigested.tag !== "OpenedAndDigested" ||
+            !equalBytes(openedAndDigested.data.plaintext, expectedPlaintext) ||
+            !equalBytes(openedAndDigested.data.hash, sealedAndDigested.data.hash) ||
+            !equalBytes(openedAndDigested.data.proof, sealedAndDigested.data.proof)
           ) {
-            primitiveOutcome = `Failed:${valid.tag}:${invalid.tag}:${linked.tag}`;
+            primitiveOutcome =
+              `Failed:${valid.tag}:${invalid.tag}:${linked.tag}:` +
+              `${sealedAndDigested.tag}:${openedAndDigested.tag}`;
           }
         } catch (error) {
           primitiveOutcome = `Failed:${error instanceof Error ? error.message : error}`;

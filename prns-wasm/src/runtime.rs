@@ -50,8 +50,8 @@ use crate::input::{
     array_to_strings, destination_hash_from_vec, identity_hash_from_vec, interface_id_from_vec,
     link_id_from_vec, optional_array, optional_bool, optional_bytes, optional_i64, optional_string,
     optional_u32, optional_u64, parse_interface_kind, parse_interface_mode, request_id_from_vec,
-    request_path_hash_from_vec, required_array, required_bool, required_bytes, required_string,
-    required_u64, secret_key_from_vec, u64_from_number,
+    request_path_hash_from_vec, required_array, required_bigint_u64, required_bool, required_bytes,
+    required_string, required_u64, secret_key_from_vec, u64_from_number,
 };
 use crate::js_translation::{
     command_settled_to_js, interface_kind_name, outbound_to_js, set_bigint, set_bytes, set_str,
@@ -795,8 +795,8 @@ impl PrnsRuntime {
         let encryption_key = *view.encryption_key_material();
         let mut seal_iv = [0u8; 16];
         entropy.fill(&mut seal_iv);
-        let mut salts = [[0u8; 4];
-            personal_rns::routing::links::resources::build_outgoing::SALT_REROLL_CAP];
+        let mut salts =
+            [[0u8; 4]; personal_rns::routing::links::resources::build_outgoing::SALT_REROLL_CAP];
         for salt in &mut salts {
             entropy.fill(salt);
         }
@@ -806,7 +806,7 @@ impl PrnsRuntime {
         let outcome = Object::new();
         let job = Object::new();
         set_str(&outcome, "tag", "Seal");
-        set_bigint(&job, "commandId", id.0);
+        set_bigint(&job, "commandId", view.command_id.0);
         set_bytes(&job, "linkId", link_id.as_bytes());
         set_bytes(&job, "streamNonce", &stream_nonce);
         set_usize(&job, "noncePrefixedBytes", nonce_prefixed_bytes);
@@ -824,15 +824,14 @@ impl PrnsRuntime {
 
     #[wasm_bindgen(js_name = completeResourceSegmentSeal)]
     pub fn complete_resource_segment_seal(&mut self, options: JsValue) -> Result<(), JsValue> {
+        let command_id = CommandId(required_bigint_u64(&options, "commandId")?);
         let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
         let stream_nonce: [u8; 4] = required_bytes(&options, "streamNonce")?
             .try_into()
             .map_err(|_| JsValue::from_str("streamNonce must be exactly 4 bytes"))?;
-        let nonce_prefixed_bytes = usize::try_from(required_u64(
-            &options,
-            "noncePrefixedBytes",
-        )?)
-        .map_err(|_| JsValue::from_str("noncePrefixedBytes is too large"))?;
+        let nonce_prefixed_bytes =
+            usize::try_from(required_u64(&options, "noncePrefixedBytes")?)
+                .map_err(|_| JsValue::from_str("noncePrefixedBytes is too large"))?;
         let sealed = required_bytes(&options, "sealed")?;
         let flat_salts = required_bytes(&options, "salts")?;
         let salts: [[u8; 4];
@@ -849,6 +848,7 @@ impl PrnsRuntime {
         let mut entropy = EntropyCursor::new(promotion_entropy.to_vec());
         let mut reactions = Vec::new();
         self.engine.apply_external_staged_seal(
+            command_id,
             link_id,
             stream_nonce,
             nonce_prefixed_bytes,
@@ -871,15 +871,14 @@ impl PrnsRuntime {
         &mut self,
         options: JsValue,
     ) -> Result<JsValue, JsValue> {
+        let command_id = CommandId(required_bigint_u64(&options, "commandId")?);
         let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
         let stream_nonce: [u8; 4] = required_bytes(&options, "streamNonce")?
             .try_into()
             .map_err(|_| JsValue::from_str("streamNonce must be exactly 4 bytes"))?;
-        let nonce_prefixed_bytes = usize::try_from(required_u64(
-            &options,
-            "noncePrefixedBytes",
-        )?)
-        .map_err(|_| JsValue::from_str("noncePrefixedBytes is too large"))?;
+        let nonce_prefixed_bytes =
+            usize::try_from(required_u64(&options, "noncePrefixedBytes")?)
+                .map_err(|_| JsValue::from_str("noncePrefixedBytes is too large"))?;
         let sealed = required_bytes(&options, "sealed")?;
         let salt: [u8; 4] = required_bytes(&options, "salt")?
             .try_into()
@@ -895,6 +894,7 @@ impl PrnsRuntime {
             .try_into()
             .map_err(|_| JsValue::from_str("promotionEntropy must be exactly 16 bytes"))?;
         let outcome = self.engine.apply_external_staged_seal_digests(
+            command_id,
             link_id,
             stream_nonce,
             nonce_prefixed_bytes,
@@ -932,13 +932,22 @@ impl PrnsRuntime {
 
     #[wasm_bindgen(js_name = retryResourceSegmentSeal)]
     pub fn retry_resource_segment_seal(&mut self, options: JsValue) -> Result<(), JsValue> {
+        let command_id = CommandId(required_bigint_u64(&options, "commandId")?);
         let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let stream_nonce: [u8; 4] = required_bytes(&options, "streamNonce")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("streamNonce must be exactly 4 bytes"))?;
+        let nonce_prefixed_bytes =
+            usize::try_from(required_u64(&options, "noncePrefixedBytes")?)
+                .map_err(|_| JsValue::from_str("noncePrefixedBytes is too large"))?;
         let (now_ms, entropy) = self.command_context(&options)?;
         let mut entropy = EntropyCursor::new(entropy);
         let mut reactions = Vec::new();
-        self.engine.requeue_staged_seal(&link_id);
-        self.engine.seal_staged_continuation(
+        self.engine.retry_external_staged_seal(
+            command_id,
             &link_id,
+            stream_nonce,
+            nonce_prefixed_bytes,
             &mut |out| entropy.fill(out),
             &mut |reaction| reactions.push(capture_reaction(reaction)),
         );

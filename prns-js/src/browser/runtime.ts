@@ -40,7 +40,7 @@ import type {
 import type { WebSocketRuntimeRegistration } from "./websocket/index.js";
 import {
   parseResourceOpenJob,
-  resourceDigestExecution,
+  resourceOpenDigestExecution,
 } from "./resource_crypto.js";
 import type {
   ResourceOpenJob,
@@ -324,41 +324,53 @@ export class RuntimeHost {
       return;
     }
     try {
+      if (
+        this.#runtime.completeResourceOpenDigests !== undefined &&
+        job.hashPlan.tag === "OpenedStream" &&
+        resourceOpenDigestExecution(
+          job.sealed.length,
+          job.totalSegments,
+        ).tag === "WebCrypto"
+      ) {
+        const outcome = await executor.openAndDigest(
+          job,
+          job.hashPlan.data.salt,
+        );
+        if (this.#cryptoExecutor !== executor) {
+          return;
+        }
+        await match(outcome, {
+          OpenedAndDigested: ({ plaintext, hash, proof }) => {
+            this.#runtime.completeResourceOpenDigests!({
+              linkId: linkId(job.linkId),
+              hash: job.hash,
+              calculatedHash: hash,
+              proof,
+              plaintext,
+              nowMs: this.#now(),
+            });
+          },
+          Refused: () => this.#runtime.rejectResourceOpen!({
+            linkId: linkId(job.linkId),
+            hash: job.hash,
+          }),
+          Busy: () => {
+            throw new TypeError("resource crypto pool is busy");
+          },
+          Failed: ({ detail }) => {
+            throw new TypeError(detail);
+          },
+        });
+        this.notifyRuntimeActivity();
+        this.#drainResourceOpenJobs();
+        return;
+      }
       const outcome = await executor.open(job);
       if (this.#cryptoExecutor !== executor) {
         return;
       }
       await match(outcome, {
-        Opened: async (plaintext) => {
-          if (
-            this.#runtime.completeResourceOpenDigests !== undefined &&
-            job.hashPlan.tag === "OpenedStream" &&
-            resourceDigestExecution(plaintext.length, job.totalSegments).tag === "WebCrypto"
-          ) {
-            const digestOutcome = await executor.digest(
-              plaintext,
-              job.hashPlan.data.salt,
-            );
-            if (this.#cryptoExecutor !== executor) {
-              return;
-            }
-            if (digestOutcome.tag !== "Digested") {
-              throw new TypeError(
-                digestOutcome.tag === "Busy"
-                  ? "resource crypto pool is busy"
-                  : digestOutcome.data.detail,
-              );
-            }
-            this.#runtime.completeResourceOpenDigests({
-              linkId: linkId(job.linkId),
-              hash: job.hash,
-              calculatedHash: digestOutcome.data.hash,
-              proof: digestOutcome.data.proof,
-              plaintext: digestOutcome.data.plaintext,
-              nowMs: this.#now(),
-            });
-            return;
-          }
+        Opened: (plaintext) => {
           this.#runtime.completeResourceOpen!({
             linkId: linkId(job.linkId),
             hash: job.hash,

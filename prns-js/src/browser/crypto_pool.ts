@@ -45,6 +45,30 @@ export type ResourceCryptoOpenSettlement =
   | Tagged<"Refused">
   | CryptoPoolFailure;
 
+export type ResourceCryptoSealAndDigestSettlement =
+  | Tagged<
+      "SealedAndDigested",
+      {
+        readonly sealed: OwnedBytes;
+        readonly plaintext: OwnedBytes;
+        readonly hash: OwnedBytes;
+        readonly proof: OwnedBytes;
+      }
+    >
+  | CryptoPoolFailure;
+
+export type ResourceCryptoOpenAndDigestSettlement =
+  | Tagged<
+      "OpenedAndDigested",
+      {
+        readonly plaintext: OwnedBytes;
+        readonly hash: OwnedBytes;
+        readonly proof: OwnedBytes;
+      }
+    >
+  | Tagged<"Refused">
+  | CryptoPoolFailure;
+
 export type ResourceCryptoDigestSettlement =
   | Tagged<
       "Digested",
@@ -97,6 +121,16 @@ export type ResourceCryptoOpenOutcome = Extract<
   { readonly tag: "Opened" | "Refused" | "Busy" | "Failed" }
 >;
 
+export type ResourceCryptoSealAndDigestOutcome = Extract<
+  ResourceCryptoSealAndDigestSettlement,
+  { readonly tag: "SealedAndDigested" | "Busy" | "Failed" }
+>;
+
+export type ResourceCryptoOpenAndDigestOutcome = Extract<
+  ResourceCryptoOpenAndDigestSettlement,
+  { readonly tag: "OpenedAndDigested" | "Refused" | "Busy" | "Failed" }
+>;
+
 export type ResourceCryptoDigestOutcome = Extract<
   ResourceCryptoDigestSettlement,
   { readonly tag: "Digested" | "Busy" | "Failed" }
@@ -105,6 +139,8 @@ export type ResourceCryptoDigestOutcome = Extract<
 type CryptoSettlement =
   | ResourceCryptoSealSettlement
   | ResourceCryptoOpenSettlement
+  | ResourceCryptoSealAndDigestSettlement
+  | ResourceCryptoOpenAndDigestSettlement
   | ResourceCryptoDigestSettlement
   | Ed25519SignSettlement
   | Ed25519VerifySettlement
@@ -128,6 +164,26 @@ type QueuedJob =
       {
         readonly id: number;
         readonly request: Extract<CryptoWorkerRequest, { readonly tag: "Open" }>;
+        readonly transfer: Transferable[];
+        readonly bytes: number;
+        readonly settle: (settlement: CryptoSettlement) => void;
+      }
+    >
+  | Tagged<
+      "SealAndDigest",
+      {
+        readonly id: number;
+        readonly request: Extract<CryptoWorkerRequest, { readonly tag: "SealAndDigest" }>;
+        readonly transfer: Transferable[];
+        readonly bytes: number;
+        readonly settle: (settlement: CryptoSettlement) => void;
+      }
+    >
+  | Tagged<
+      "OpenAndDigest",
+      {
+        readonly id: number;
+        readonly request: Extract<CryptoWorkerRequest, { readonly tag: "OpenAndDigest" }>;
         readonly transfer: Transferable[];
         readonly bytes: number;
         readonly settle: (settlement: CryptoSettlement) => void;
@@ -268,6 +324,43 @@ export class BrowserCryptoExecutor {
     });
   }
 
+  async sealAndDigest(
+    job: ResourceSealCryptoJob,
+    salt: Uint8Array,
+  ): Promise<ResourceCryptoSealAndDigestOutcome> {
+    if (this.#closed) {
+      return closedCryptoExecutor();
+    }
+    const outcome = await this.#pool.donateSealAndDigest(job, salt);
+    return match(outcome, {
+      SealedAndDigested: (data) => Tag("SealedAndDigested", data),
+      Busy: () => Tag("Busy"),
+      Unavailable: () => this.#closed
+        ? closedCryptoExecutor()
+        : this.#sealAndDigestInline(job, salt),
+      Failed: (data) => Tag("Failed", data),
+    });
+  }
+
+  async openAndDigest(
+    job: ResourceOpenCryptoJob,
+    salt: Uint8Array,
+  ): Promise<ResourceCryptoOpenAndDigestOutcome> {
+    if (this.#closed) {
+      return closedCryptoExecutor();
+    }
+    const outcome = await this.#pool.donateOpenAndDigest(job, salt);
+    return match(outcome, {
+      OpenedAndDigested: (data) => Tag("OpenedAndDigested", data),
+      Refused: () => Tag("Refused"),
+      Busy: () => Tag("Busy"),
+      Unavailable: () => this.#closed
+        ? closedCryptoExecutor()
+        : this.#openAndDigestInline(job, salt),
+      Failed: (data) => Tag("Failed", data),
+    });
+  }
+
   async digest(
     plaintext: Uint8Array,
     salt: Uint8Array,
@@ -377,6 +470,41 @@ export class BrowserCryptoExecutor {
     }
   }
 
+  async #sealAndDigestInline(
+    job: ResourceSealCryptoJob,
+    salt: Uint8Array,
+  ): Promise<ResourceCryptoSealAndDigestOutcome> {
+    try {
+      const [sealed, digests] = await Promise.all([
+        this.#sealer.seal(job),
+        this.#digester.digest(job.plaintext, salt),
+      ]);
+      return Tag("SealedAndDigested", {
+        sealed,
+        plaintext: job.plaintext,
+        ...digests,
+      });
+    } catch (error) {
+      return cryptoFailed(error);
+    }
+  }
+
+  async #openAndDigestInline(
+    job: ResourceOpenCryptoJob,
+    salt: Uint8Array,
+  ): Promise<ResourceCryptoOpenAndDigestOutcome> {
+    try {
+      const opened = await this.#opener.open(job);
+      if (opened.tag === "Refused") {
+        return Tag("Refused");
+      }
+      const digests = await this.#digester.digest(opened.data, salt);
+      return Tag("OpenedAndDigested", { plaintext: opened.data, ...digests });
+    } catch (error) {
+      return cryptoFailed(error);
+    }
+  }
+
   async #digestInline(
     plaintext: Uint8Array,
     salt: Uint8Array,
@@ -471,6 +599,71 @@ export class WebCryptoWorkerPool {
       request,
       transfer: uniqueTransfers([sealed, signingKey, encryptionKey]),
       bytes: sealed.byteLength + signingKey.byteLength + encryptionKey.byteLength,
+      settle: () => undefined,
+    }));
+  }
+
+  donateSealAndDigest(
+    job: ResourceSealCryptoJob,
+    saltBytes: Uint8Array,
+  ): Promise<ResourceCryptoSealAndDigestSettlement> {
+    const plaintext = transferableBytes(job.plaintext);
+    const signingKey = transferableBytes(job.signingKey);
+    const encryptionKey = transferableBytes(job.encryptionKey);
+    const salt = transferableBytes(saltBytes);
+    const id = this.#takeId();
+    const request = Tag("SealAndDigest", {
+      id,
+      job: {
+        linkId: job.linkId,
+        plaintext,
+        signingKey,
+        encryptionKey,
+        sealIv: job.sealIv,
+      },
+      salt,
+    });
+    return this.#submit(Tag("SealAndDigest", {
+      id,
+      request,
+      transfer: uniqueTransfers([plaintext, signingKey, encryptionKey]),
+      bytes:
+        plaintext.byteLength +
+        signingKey.byteLength +
+        encryptionKey.byteLength +
+        salt.byteLength,
+      settle: () => undefined,
+    }));
+  }
+
+  donateOpenAndDigest(
+    job: ResourceOpenCryptoJob,
+    saltBytes: Uint8Array,
+  ): Promise<ResourceCryptoOpenAndDigestSettlement> {
+    const sealed = transferableBytes(job.sealed);
+    const signingKey = transferableBytes(job.signingKey);
+    const encryptionKey = transferableBytes(job.encryptionKey);
+    const salt = transferableBytes(saltBytes);
+    const id = this.#takeId();
+    const request = Tag("OpenAndDigest", {
+      id,
+      job: {
+        linkId: job.linkId,
+        sealed,
+        signingKey,
+        encryptionKey,
+      },
+      salt,
+    });
+    return this.#submit(Tag("OpenAndDigest", {
+      id,
+      request,
+      transfer: uniqueTransfers([sealed, signingKey, encryptionKey]),
+      bytes:
+        sealed.byteLength +
+        signingKey.byteLength +
+        encryptionKey.byteLength +
+        salt.byteLength,
       settle: () => undefined,
     }));
   }
@@ -636,6 +829,8 @@ export class WebCryptoWorkerPool {
 
   #submit(job: Extract<QueuedJob, { readonly tag: "Seal" }>): Promise<ResourceCryptoSealSettlement>;
   #submit(job: Extract<QueuedJob, { readonly tag: "Open" }>): Promise<ResourceCryptoOpenSettlement>;
+  #submit(job: Extract<QueuedJob, { readonly tag: "SealAndDigest" }>): Promise<ResourceCryptoSealAndDigestSettlement>;
+  #submit(job: Extract<QueuedJob, { readonly tag: "OpenAndDigest" }>): Promise<ResourceCryptoOpenAndDigestSettlement>;
   #submit(job: Extract<QueuedJob, { readonly tag: "Digest" }>): Promise<ResourceCryptoDigestSettlement>;
   #submit(job: Extract<QueuedJob, { readonly tag: "Ed25519Sign" }>): Promise<Ed25519SignSettlement>;
   #submit(job: Extract<QueuedJob, { readonly tag: "Ed25519Verify" }>): Promise<Ed25519VerifySettlement>;
@@ -657,6 +852,8 @@ export class WebCryptoWorkerPool {
       const admitted = match(job, {
         Seal: (queued) => Tag("Seal", { ...queued, settle }),
         Open: (queued) => Tag("Open", { ...queued, settle }),
+        SealAndDigest: (queued) => Tag("SealAndDigest", { ...queued, settle }),
+        OpenAndDigest: (queued) => Tag("OpenAndDigest", { ...queued, settle }),
         Digest: (queued) => Tag("Digest", { ...queued, settle }),
         Ed25519Sign: (queued) => Tag("Ed25519Sign", { ...queued, settle }),
         Ed25519Verify: (queued) => Tag("Ed25519Verify", { ...queued, settle }),
@@ -740,6 +937,24 @@ export class WebCryptoWorkerPool {
       },
       Refused: ({ id }) => {
         this.#complete(slot, id, "Open", Tag("Refused"));
+      },
+      SealedAndDigested: (response) => {
+        this.#complete(slot, response.id, "SealAndDigest", Tag("SealedAndDigested", {
+          sealed: new Uint8Array(response.sealed),
+          plaintext: new Uint8Array(response.plaintext),
+          hash: new Uint8Array(response.hash),
+          proof: new Uint8Array(response.proof),
+        }));
+      },
+      OpenedAndDigested: (response) => {
+        this.#complete(slot, response.id, "OpenAndDigest", Tag("OpenedAndDigested", {
+          plaintext: new Uint8Array(response.plaintext),
+          hash: new Uint8Array(response.hash),
+          proof: new Uint8Array(response.proof),
+        }));
+      },
+      OpenAndDigestRefused: ({ id }) => {
+        this.#complete(slot, id, "OpenAndDigest", Tag("Refused"));
       },
       Digested: (response) => {
         this.#complete(slot, response.id, "Digest", Tag("Digested", {
@@ -928,7 +1143,13 @@ export class WebCryptoWorkerPool {
 }
 
 function workerSupports(slot: WorkerSlot, job: QueuedJob["tag"]): boolean {
-  if (job === "Seal" || job === "Open" || job === "Digest") {
+  if (
+    job === "Seal" ||
+    job === "Open" ||
+    job === "SealAndDigest" ||
+    job === "OpenAndDigest" ||
+    job === "Digest"
+  ) {
     return true;
   }
   const compatibility = slot.compatibility;
@@ -1010,6 +1231,9 @@ function isWorkerResponse(raw: unknown): raw is CryptoWorkerResponse {
     response.tag !== "Sealed" &&
     response.tag !== "Opened" &&
     response.tag !== "Refused" &&
+    response.tag !== "SealedAndDigested" &&
+    response.tag !== "OpenedAndDigested" &&
+    response.tag !== "OpenAndDigestRefused" &&
     response.tag !== "Digested" &&
     response.tag !== "Ed25519Signed" &&
     response.tag !== "Ed25519Valid" &&
@@ -1041,6 +1265,20 @@ function isWorkerResponse(raw: unknown): raw is CryptoWorkerResponse {
       sealed instanceof ArrayBuffer && plaintext instanceof ArrayBuffer,
     Opened: ({ plaintext }) => plaintext instanceof ArrayBuffer,
     Refused: () => true,
+    SealedAndDigested: ({ sealed, plaintext, hash, proof }) =>
+      sealed instanceof ArrayBuffer &&
+      plaintext instanceof ArrayBuffer &&
+      hash instanceof ArrayBuffer &&
+      hash.byteLength === 32 &&
+      proof instanceof ArrayBuffer &&
+      proof.byteLength === 32,
+    OpenedAndDigested: ({ plaintext, hash, proof }) =>
+      plaintext instanceof ArrayBuffer &&
+      hash instanceof ArrayBuffer &&
+      hash.byteLength === 32 &&
+      proof instanceof ArrayBuffer &&
+      proof.byteLength === 32,
+    OpenAndDigestRefused: () => true,
     Digested: ({ plaintext, hash, proof }) =>
       plaintext instanceof ArrayBuffer &&
       hash instanceof ArrayBuffer &&

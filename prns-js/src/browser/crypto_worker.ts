@@ -71,6 +71,50 @@ async function perform(request: CryptoWorkerRequest): Promise<void> {
             );
           },
           Refused: () => {
+            scope.postMessage(Tag("OpenAndDigestRefused", { id }), []);
+          },
+        });
+      } catch (error) {
+        failed(id, error);
+      }
+    },
+    SealAndDigest: async ({ id, job, salt }) => {
+      try {
+        const [sealed, digests] = await Promise.all([
+          sealer.seal(job),
+          digester.digest(job.plaintext, salt),
+        ]);
+        scope.postMessage(
+          Tag("SealedAndDigested", {
+            id,
+            sealed: sealed.buffer,
+            plaintext: job.plaintext.buffer,
+            hash: digests.hash.buffer,
+            proof: digests.proof.buffer,
+          }),
+          [sealed.buffer, job.plaintext.buffer, digests.hash.buffer, digests.proof.buffer],
+        );
+      } catch (error) {
+        failed(id, error);
+      }
+    },
+    OpenAndDigest: async ({ id, job, salt }) => {
+      try {
+        const outcome = await opener.open(job);
+        await match(outcome, {
+          Opened: async (plaintext) => {
+            const digests = await digester.digest(plaintext, salt);
+            scope.postMessage(
+              Tag("OpenedAndDigested", {
+                id,
+                plaintext: plaintext.buffer,
+                hash: digests.hash.buffer,
+                proof: digests.proof.buffer,
+              }),
+              [plaintext.buffer, digests.hash.buffer, digests.proof.buffer],
+            );
+          },
+          Refused: () => {
             scope.postMessage(Tag("Refused", { id }), []);
           },
         });

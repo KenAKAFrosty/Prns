@@ -25,6 +25,22 @@ export type CryptoWorkerRequest =
       }
     >
   | Tag<
+      "SealAndDigest",
+      {
+        readonly id: number;
+        readonly job: ResourceSealCryptoJob;
+        readonly salt: OwnedBytes;
+      }
+    >
+  | Tag<
+      "OpenAndDigest",
+      {
+        readonly id: number;
+        readonly job: ResourceOpenCryptoJob;
+        readonly salt: OwnedBytes;
+      }
+    >
+  | Tag<
       "Digest",
       {
         readonly id: number;
@@ -97,6 +113,26 @@ export type CryptoWorkerResponse =
       }
     >
   | Tag<"Refused", { readonly id: number }>
+  | Tag<"OpenAndDigestRefused", { readonly id: number }>
+  | Tag<
+      "SealedAndDigested",
+      {
+        readonly id: number;
+        readonly sealed: ArrayBuffer;
+        readonly plaintext: ArrayBuffer;
+        readonly hash: ArrayBuffer;
+        readonly proof: ArrayBuffer;
+      }
+    >
+  | Tag<
+      "OpenedAndDigested",
+      {
+        readonly id: number;
+        readonly plaintext: ArrayBuffer;
+        readonly hash: ArrayBuffer;
+        readonly proof: ArrayBuffer;
+      }
+    >
   | Tag<
       "Digested",
       {

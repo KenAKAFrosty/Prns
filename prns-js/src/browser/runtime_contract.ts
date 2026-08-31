@@ -156,6 +156,7 @@ export type PrnsRuntimeBinding = {
   sendResourceSegment(options: RuntimeResourceSegmentInput): bigint;
   sendResourceSegmentWebCrypto?(options: RuntimeResourceSegmentInput): unknown;
   completeResourceSegmentSeal?(options: {
+    readonly commandId: bigint;
     readonly linkId: LinkId;
     readonly streamNonce: Uint8Array;
     readonly noncePrefixedBytes: number;
@@ -165,6 +166,7 @@ export type PrnsRuntimeBinding = {
     readonly nowMs: InstantMillis;
   }): void;
   completeResourceSegmentSealDigests?(options: {
+    readonly commandId: bigint;
     readonly linkId: LinkId;
     readonly streamNonce: Uint8Array;
     readonly noncePrefixedBytes: number;
@@ -176,7 +178,10 @@ export type PrnsRuntimeBinding = {
     readonly nowMs: InstantMillis;
   }): unknown;
   retryResourceSegmentSeal?(options: {
+    readonly commandId: bigint;
     readonly linkId: LinkId;
+    readonly streamNonce: Uint8Array;
+    readonly noncePrefixedBytes: number;
     readonly nowMs: InstantMillis;
     readonly entropy: EntropyBytes;
   }): void;

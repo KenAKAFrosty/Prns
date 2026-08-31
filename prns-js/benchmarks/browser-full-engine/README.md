@@ -41,3 +41,11 @@ protocol verification work. For 2 MiB Resources, `ParallelWorkers` settled at
 equal at 31.5 and 31.8 MiB/s. Those results establish end-to-end correctness and
 the expected startup trade, while leaving throughput claims scoped to this host
 and workload.
+
+A same-host follow-up removed per-link browser seal serialization and fused the
+common seal-plus-digest and open-plus-digest Worker jobs. The two-segment 1 MiB
+case remained effectively neutral at 21.7 MiB/s versus 21.6 MiB/s before. The
+three-segment 2 MiB case measured 24.4–27.2 MiB/s across two post-change runs,
+up from 18.2 MiB/s, and the five-segment 4 MiB case measured 33.1–34.4 MiB/s,
+up from 30.3 MiB/s. Platform crypto throughput varied materially between runs,
+so these are scoped end-to-end findings rather than primitive-speed claims.
