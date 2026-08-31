@@ -737,6 +737,12 @@ impl CryptoPool {
         self.state.ready_results.load(Ordering::Acquire) > 0
     }
 
+    pub(super) fn disarm_completion_wait(&self) {
+        self.state
+            .completion_wake_armed
+            .store(false, Ordering::Release);
+    }
+
     /// Returns true when a completion is already durable; otherwise arms the single Tokio wake
     /// and closes the producer race with a second readiness observation before the caller waits.
     pub(super) fn prepare_completion_wait(&self) -> bool {

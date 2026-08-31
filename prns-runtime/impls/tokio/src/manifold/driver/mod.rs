@@ -196,6 +196,9 @@ async fn run_inner<S, H, J, P, A>(
     }
     const MAX_INBOUND_BATCH: usize = 64;
     const MAX_COMMAND_BATCH: usize = 64;
+    // Keep the single-owner manifold hot while work remains durable, but regularly return control
+    // to the sibling interface and request futures that replenish its SPSC lanes.
+    const HOT_TURNS_BEFORE_YIELD: usize = 16;
     let crypto_completion_wake = Arc::new(tokio::sync::Notify::new());
     let crypto_pool = crypto_pool_config
         .resolved_worker_count()
@@ -210,6 +213,8 @@ async fn run_inner<S, H, J, P, A>(
     let pacer_timer = tokio::time::sleep_until(clock.immediate_deadline());
     tokio::pin!(pacer_timer);
     let mut pacer_armed: Option<InstantMillis> = None;
+    let mut pending_command = None;
+    let mut hot_turns = 0usize;
     loop {
         match soonest_pacer_release(&topology.pacers) {
             None => pacer_armed = None,
@@ -233,53 +238,21 @@ async fn run_inner<S, H, J, P, A>(
                 armed = Some((at, reason));
             }
         }
-        // `Notify` is only the hole-punch into Tokio. Ring ownership and this durable count carry
-        // the actual completion, so select cancellation or permit coalescing cannot strand work.
-        let crypto_completions_ready = crypto_pool
-            .as_ref()
-            .is_some_and(CryptoPool::prepare_completion_wait);
-        tokio::select! {
-            arrived = notify.recv() => {
-                let Some(source) = arrived else { return };
-                let now = clock.observe_step(&host);
-                inbound.mark_ready(source);
-                inbound.collect_ready(&mut notify);
-                inbound.process(InboundContext {
-                    engine: &mut engine,
-                    host: &mut host,
-                    topology: &mut topology,
-                    wire_scratch: &mut wire_scratch,
-                    journal: &mut journal,
-                    crypto_pool: crypto_pool.as_ref(),
-                    packet_phy_store: store.as_ref(),
-                    wake_schedules: &mut wake_schedules,
-                    should_prove: &mut should_prove,
-                    should_accept_resource: &mut should_accept_resource,
-                    max_frames_per_lane: MAX_INBOUND_BATCH,
-                    now,
-                });
-            }
-            _ = tokio::task::yield_now(), if inbound.has_ready_lanes() => {
-                let now = clock.observe_step(&host);
-                inbound.collect_ready(&mut notify);
-                inbound.process(InboundContext {
-                    engine: &mut engine,
-                    host: &mut host,
-                    topology: &mut topology,
-                    wire_scratch: &mut wire_scratch,
-                    journal: &mut journal,
-                    crypto_pool: crypto_pool.as_ref(),
-                    packet_phy_store: store.as_ref(),
-                    wake_schedules: &mut wake_schedules,
-                    should_prove: &mut should_prove,
-                    should_accept_resource: &mut should_accept_resource,
-                    max_frames_per_lane: MAX_INBOUND_BATCH,
-                    now,
-                });
-            }
-            _ = tokio::task::yield_now(), if !inbound.has_ready_lanes() && engine.owed_staged_seal_link().is_some() => {
-                let now = clock.observe_step(&host);
-                CryptoDispatch {
+        // Announcements carry only lane identity. Pull every already-durable notification without
+        // registering a Tokio waiter; the SPSC lane remains the source of truth for frame data.
+        inbound.collect_ready(&mut notify);
+        if pending_command.is_none() {
+            pending_command = commands.try_recv().ok();
+        }
+
+        let mut progressed = false;
+        if let Some(pool) = crypto_pool.as_ref().filter(|pool| pool.has_completion()) {
+            pool.disarm_completion_wait();
+            let mut next = pool.pop_completion();
+            let now = clock.observe_step(&host);
+            let mut seal_buf = [0u8; crate::wire::BROADCAST_MTU];
+            while let Some(result) = next {
+                let effect = CryptoDispatch {
                     engine: &mut engine,
                     host: &mut host,
                     topology: &mut topology,
@@ -287,13 +260,70 @@ async fn run_inner<S, H, J, P, A>(
                     journal: &mut journal,
                     crypto_pool: crypto_pool.as_ref(),
                 }
-                .dispatch_staged_seal(now);
+                .complete(result, now, &mut seal_buf, &mut should_prove);
+                match effect {
+                    CryptoCompletionEffect::NoWakeChange => {}
+                    CryptoCompletionEffect::WakeSchedules(delta) => {
+                        merge_wake_schedules_delta(
+                            &mut wake_schedules,
+                            delta,
+                            &engine,
+                            topology.view(),
+                        );
+                    }
+                    CryptoCompletionEffect::OpenSpanAdvanced(delta) => {
+                        merge_wake_schedules_delta(
+                            &mut wake_schedules,
+                            delta,
+                            &engine,
+                            topology.view(),
+                        );
+                        dispatch_open_spans(&mut engine, crypto_pool.as_ref());
+                    }
+                }
+                next = pool.pop_completion();
             }
-            issued = commands.recv() => {
-                let Some(mut issued) = issued else { return };
-                let now = clock.observe_step(&host);
-                let mut command_budget = MAX_COMMAND_BATCH;
-                loop {
+            dispatch_open_spans(&mut engine, crypto_pool.as_ref());
+            progressed = true;
+        }
+
+        if inbound.has_ready_lanes() {
+            let now = clock.observe_step(&host);
+            inbound.process(InboundContext {
+                engine: &mut engine,
+                host: &mut host,
+                topology: &mut topology,
+                wire_scratch: &mut wire_scratch,
+                journal: &mut journal,
+                crypto_pool: crypto_pool.as_ref(),
+                packet_phy_store: store.as_ref(),
+                wake_schedules: &mut wake_schedules,
+                should_prove: &mut should_prove,
+                should_accept_resource: &mut should_accept_resource,
+                max_frames_per_lane: MAX_INBOUND_BATCH,
+                now,
+            });
+            progressed = true;
+        }
+
+        if !inbound.has_ready_lanes() && engine.owed_staged_seal_link().is_some() {
+            let now = clock.observe_step(&host);
+            CryptoDispatch {
+                engine: &mut engine,
+                host: &mut host,
+                topology: &mut topology,
+                wire_scratch: &mut wire_scratch,
+                journal: &mut journal,
+                crypto_pool: crypto_pool.as_ref(),
+            }
+            .dispatch_staged_seal(now);
+            progressed = true;
+        }
+
+        if let Some(mut issued) = pending_command.take() {
+            let now = clock.observe_step(&host);
+            let mut command_budget = MAX_COMMAND_BATCH;
+            loop {
                 let effect = CommandDispatch {
                     engine: &mut engine,
                     host: &mut host,
@@ -328,78 +358,53 @@ async fn run_inner<S, H, J, P, A>(
                     Ok(next) => issued = next,
                     Err(_) => break,
                 }
-                }
             }
-            () = &mut due_timer, if armed.is_some() => {
-                if let Some((deadline, reason)) = armed.take() {
-                    let now = clock.observe_step(&host);
-                    if deadline <= now {
-                        let wake_schedules_delta = fire_due_reason(
-                            &mut engine,
-                            reason,
-                            now,
-                            topology.interfaces.view(),
-                            &mut |bytes| host.fill_entropy(bytes),
-                            &mut |reaction| route_reaction(reaction, &mut topology.egress, &topology.ifacs, &mut topology.pacers, &mut wire_scratch, now, &mut journaled_sink!()),
-                        );
-                        merge_wake_schedules_delta(&mut wake_schedules, wake_schedules_delta, &engine, topology.view());
-                    }
-                }
-            }
-            () = &mut pacer_timer, if pacer_armed.is_some() => {
-                pacer_armed = None;
-                let now = clock.observe_step(&host);
-                flush_due_pacers(&mut topology.pacers, now, &mut topology.egress, &topology.ifacs);
-            }
-            _ = async {
-                if crypto_completions_ready {
-                    tokio::task::yield_now().await;
-                } else {
-                    crypto_completion_wake.notified().await;
-                }
-            }, if crypto_pool.is_some() => {
-                let Some(pool) = crypto_pool.as_ref() else {
-                    continue;
-                };
-                let mut next = pool.pop_completion();
-                let now = clock.observe_step(&host);
-                let mut seal_buf = [0u8; crate::wire::BROADCAST_MTU];
-                while let Some(result) = next {
-                    let effect = CryptoDispatch {
-                        engine: &mut engine,
-                        host: &mut host,
-                        topology: &mut topology,
-                        wire_scratch: &mut wire_scratch,
-                        journal: &mut journal,
-                        crypto_pool: crypto_pool.as_ref(),
-                    }
-                    .complete(result, now, &mut seal_buf, &mut should_prove);
-                    match effect {
-                        CryptoCompletionEffect::NoWakeChange => {}
-                        CryptoCompletionEffect::WakeSchedules(delta) => {
-                            merge_wake_schedules_delta(
-                                &mut wake_schedules,
-                                delta,
-                                &engine,
-                                topology.view(),
-                            );
-                        }
-                        CryptoCompletionEffect::OpenSpanAdvanced(delta) => {
-                            merge_wake_schedules_delta(
-                                &mut wake_schedules,
-                                delta,
-                                &engine,
-                                topology.view(),
-                            );
-                            dispatch_open_spans(&mut engine, crypto_pool.as_ref());
-                        }
-                    }
-                    next = pool.pop_completion();
-                }
-                dispatch_open_spans(&mut engine, crypto_pool.as_ref());
-            }
-            _ = tokio::task::yield_now(), if crypto_pool.as_ref().is_some_and(CryptoPool::take_packet_verdict_hot_turn) => {}
+            progressed = true;
         }
+
+        if armed.is_some_and(|(deadline, _)| deadline <= clock.now()) {
+            if let Some((_, reason)) = armed.take() {
+                let now = clock.observe_step(&host);
+                let wake_schedules_delta = fire_due_reason(
+                    &mut engine,
+                    reason,
+                    now,
+                    topology.interfaces.view(),
+                    &mut |bytes| host.fill_entropy(bytes),
+                    &mut |reaction| {
+                        route_reaction(
+                            reaction,
+                            &mut topology.egress,
+                            &topology.ifacs,
+                            &mut topology.pacers,
+                            &mut wire_scratch,
+                            now,
+                            &mut journaled_sink!(),
+                        )
+                    },
+                );
+                merge_wake_schedules_delta(
+                    &mut wake_schedules,
+                    wake_schedules_delta,
+                    &engine,
+                    topology.view(),
+                );
+                progressed = true;
+            }
+        }
+
+        if pacer_armed.is_some_and(|deadline| deadline <= clock.now()) {
+            pacer_armed = None;
+            let now = clock.observe_step(&host);
+            flush_due_pacers(
+                &mut topology.pacers,
+                now,
+                &mut topology.egress,
+                &topology.ifacs,
+            );
+            progressed = true;
+        }
+
         if let Some(store) = &store {
             let mut dirty_interfaces = engine.take_dirty_interfaces();
             let mut changed = false;
@@ -414,6 +419,54 @@ async fn run_inner<S, H, J, P, A>(
             if changed {
                 store.bump();
             }
+        }
+
+        if progressed {
+            hot_turns += 1;
+            if hot_turns >= HOT_TURNS_BEFORE_YIELD {
+                hot_turns = 0;
+                tokio::task::yield_now().await;
+            }
+            continue;
+        }
+
+        hot_turns = 0;
+        if crypto_pool
+            .as_ref()
+            .is_some_and(CryptoPool::take_packet_verdict_hot_turn)
+        {
+            tokio::task::yield_now().await;
+            continue;
+        }
+
+        // `Notify` is only the cold hole-punch into Tokio. Ring ownership and this durable count
+        // carry the actual completion, so permit coalescing cannot strand work. Arming happens only
+        // after every synchronously observable source has reported cold.
+        if crypto_pool
+            .as_ref()
+            .is_some_and(CryptoPool::prepare_completion_wait)
+        {
+            continue;
+        }
+
+        tokio::select! {
+            arrived = notify.recv() => {
+                let Some(source) = arrived else { return };
+                inbound.mark_ready(source);
+            }
+            issued = commands.recv() => {
+                let Some(issued) = issued else { return };
+                pending_command = Some(issued);
+            }
+            () = &mut due_timer, if armed.is_some() => {
+                armed = None;
+                clock.observe_step(&host);
+            }
+            () = &mut pacer_timer, if pacer_armed.is_some() => {
+                pacer_armed = None;
+                clock.observe_step(&host);
+            }
+            () = crypto_completion_wake.notified(), if crypto_pool.is_some() => {}
         }
     }
 }
