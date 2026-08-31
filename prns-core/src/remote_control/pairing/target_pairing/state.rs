@@ -217,8 +217,10 @@ impl RemoteControlTargetPairingState {
             } => {
                 let active = attempt.attempt_id();
                 if failed == active {
+                    let context = attempt.view().context();
                     return FailRemoteControlTargetPairingOfferDispatchOutcome::Aborted {
                         attempt_id: active,
+                        context,
                     };
                 }
                 self.phase = RemoteControlTargetPairingPhase::Active {
@@ -580,6 +582,7 @@ impl RemoteControlTargetPairingState {
                 if now >= attempt.window.expires_at() {
                     return PersistRemoteControlTargetPairingAuthorizationOutcome::AuthorizationPersistedAfterDeadline {
                         attempt_id: active,
+                        context: attempt.view().context(),
                         grant: attempt.grant(),
                     };
                 }
@@ -655,6 +658,7 @@ impl RemoteControlTargetPairingState {
                 }
                 FailRemoteControlTargetPairingAuthorizationOutcome::Aborted {
                     attempt_id: active,
+                    context: attempt.view().context(),
                     responder,
                 }
             }

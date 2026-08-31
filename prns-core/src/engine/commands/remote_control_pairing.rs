@@ -347,10 +347,12 @@ pub enum RemoteControlTargetPairingFinalization {
     },
     AuthorizationRollbackRequired {
         attempt_id: RemoteControlPairingAttemptId,
+        retired_link: LinkId,
         grant: RemoteControlControllerGrant,
     },
     AuthorizationFailureRecorded {
         attempt_id: RemoteControlPairingAttemptId,
+        retired_link: LinkId,
         responder: RemoteControlTargetPairingResponder,
     },
 }

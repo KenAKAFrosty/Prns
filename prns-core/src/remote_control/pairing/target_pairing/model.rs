@@ -363,6 +363,7 @@ pub enum DispatchRemoteControlTargetPairingOfferOutcome<'a> {
 pub enum FailRemoteControlTargetPairingOfferDispatchOutcome {
     Aborted {
         attempt_id: RemoteControlPairingAttemptId,
+        context: RemoteControlPairingContext,
     },
     AttemptMismatch {
         failed: RemoteControlPairingAttemptId,
@@ -499,6 +500,7 @@ pub enum PersistRemoteControlTargetPairingAuthorizationOutcome {
     },
     AuthorizationPersistedAfterDeadline {
         attempt_id: RemoteControlPairingAttemptId,
+        context: RemoteControlPairingContext,
         grant: RemoteControlControllerGrant,
     },
     CompletionRetentionExpired {
@@ -515,6 +517,7 @@ pub enum PersistRemoteControlTargetPairingAuthorizationOutcome {
 pub enum FailRemoteControlTargetPairingAuthorizationOutcome {
     Aborted {
         attempt_id: RemoteControlPairingAttemptId,
+        context: RemoteControlPairingContext,
         responder: RemoteControlTargetPairingResponder,
     },
     NoAuthorizationOwed,
