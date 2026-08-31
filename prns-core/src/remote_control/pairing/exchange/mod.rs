@@ -110,7 +110,3 @@ pub enum RemoteControlPairingIdentityRole {
 
 #[cfg(test)]
 mod tests;
-
-#[cfg_attr(mutants, mutants::skip)]
-#[cfg(kani)]
-mod kani_proofs;

@@ -6,10 +6,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use personal_rns::engine::{
     AdmitRemoteControlControllerPairingResponseOutcome, AnnounceAppData, AnnounceNow,
-    AnnounceTarget, EgressTarget, LinkClosedReason, OpenRemoteControlPairing,
-    OpenRemoteControlPairingFailure, OpenRemoteControlPairingRejection,
+    AnnounceTarget, ApproveRemoteControlControllerPairingFailure, EgressTarget, LinkClosedReason,
+    OpenRemoteControlPairing, OpenRemoteControlPairingFailure, OpenRemoteControlPairingRejection,
     RemoteControlControllerPairingResponseEffect, RemoteControlPairingOpened,
-    RemoteControlTargetPairingApproval,
+    RemoteControlTargetPairingApproval, RemoteControlTargetPairingRejection,
 };
 use personal_rns::identity::vault::IdentitySecretKey;
 use personal_rns::persistence::{
@@ -19,12 +19,15 @@ use personal_rns::persistence::{
 use personal_rns::prelude::*;
 use personal_rns::remote_control::{
     ReceiveRemoteControlControllerPairingCompletedOutcome, RemoteControlControllerGrant,
-    RemoteControlPairingAttemptTimeout, RemoteControlPairingEndpoint,
-    RemoteControlPairingExpiresAfter, RemoteControlPairingPermissions,
-    RemoteControlPairingPublicAppDataBytes, RemoteControlTargetAccess, RemoteControlTargetIdentity,
-    SetRemoteControlControllerGrantOutcome,
+    RemoteControlControllerPairingAborted, RemoteControlPairingAttemptTimeout,
+    RemoteControlPairingEndpoint, RemoteControlPairingExpiresAfter,
+    RemoteControlPairingPermissions, RemoteControlPairingPublicAppDataBytes,
+    RemoteControlTargetAccess, RemoteControlTargetIdentity, RemoteControlTargetPairingAborted,
+    RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantOutcome,
 };
-use personal_rns::runtime::RemoteControlPairingControlError;
+use personal_rns::runtime::{
+    ApproveRemoteControlControllerPairingControlFailure, RemoteControlPairingControlError,
+};
 use personal_rns::units::{DurationMillis, InstantMillis};
 
 const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -313,6 +316,249 @@ async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
     describe_through_restored_pairing(&persistence).await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn target_rejection_retires_the_exchange_without_authorizing_either_node() {
+    let persistence = PairingPersistenceDirectories::new();
+    let target_identity_secrets = remote_control_identity_secrets(
+        TARGET_NODE_CONTROLLER_SECRET_FILL,
+        TARGET_NODE_TARGET_SECRET_FILL,
+    );
+    let controller_identity_secrets = remote_control_identity_secrets(
+        CONTROLLER_NODE_CONTROLLER_SECRET_FILL,
+        CONTROLLER_NODE_TARGET_SECRET_FILL,
+    );
+    let controller_identity = *controller_identity_secrets.identities().controller();
+
+    let (target_confirmation_tx, mut target_confirmation_rx) =
+        tokio::sync::mpsc::unbounded_channel();
+    let (target_persisted_tx, mut target_persisted_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (target_link_closed_tx, mut target_link_closed_rx) = tokio::sync::mpsc::unbounded_channel();
+    let target = PrnsNode::new(PrnsNodeRecipe {
+        transport_identity: None,
+        remote_control: remote_control_service(target_identity_secrets),
+        pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+        app_state: (),
+        storage: GrowableHeap,
+        request_endpoints: request_endpoints![],
+        on_event: move |event, _state| match event {
+            PrnsEvent::Message(Message::RemoteControlTargetPairingConfirmationRequired(
+                pairing,
+            )) => {
+                let _ignored = target_confirmation_tx.send(pairing);
+            }
+            PrnsEvent::Message(Message::RemoteControlTargetPairingAuthorizationPersisted {
+                attempt_id,
+            }) => {
+                let _ignored = target_persisted_tx.send(attempt_id);
+            }
+            PrnsEvent::Diagnostic(Diagnostic::LinkClosed { link_id, reason }) => {
+                let _ignored = target_link_closed_tx.send((link_id, reason));
+            }
+            PrnsEvent::Message(_) | PrnsEvent::Diagnostic(_) => {}
+        },
+        interfaces: ManuallyAttached,
+        persistence: NodePersistence::custom_dir(&persistence.target)
+            .expect("the target persistence directory is usable"),
+    });
+    let target_handle = target.handle();
+
+    let server = TcpServer::bind("127.0.0.1:0")
+        .await
+        .expect("the target TCP server binds");
+    let server_address = server
+        .local_addr()
+        .expect("the target TCP server has an address")
+        .to_string();
+    let _server = target_handle.supervise(server);
+
+    let (availability_tx, mut availability_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (controller_confirmation_tx, mut controller_confirmation_rx) =
+        tokio::sync::mpsc::unbounded_channel();
+    let (controller_persisted_tx, mut controller_persisted_rx) =
+        tokio::sync::mpsc::unbounded_channel();
+    let (controller_pairing_link_closed_tx, mut controller_pairing_link_closed_rx) =
+        tokio::sync::mpsc::unbounded_channel();
+    let (controller_link_closed_tx, mut controller_link_closed_rx) =
+        tokio::sync::mpsc::unbounded_channel();
+    let controller = PrnsNode::new(PrnsNodeRecipe {
+        transport_identity: None,
+        remote_control: remote_control_service(controller_identity_secrets),
+        pre_configured_destinations: [] as [PreConfiguredDestination<'static>; 0],
+        app_state: (),
+        storage: GrowableHeap,
+        request_endpoints: request_endpoints![],
+        on_event: move |event, _state| match event {
+            PrnsEvent::Message(Message::RemoteControlPairingAvailable(pairing)) => {
+                let _ignored = availability_tx.send(PairingAvailability {
+                    endpoint: pairing.endpoint(),
+                    expires_at: pairing.expires_at(),
+                    public_app_data: pairing.public_app_data().as_bytes().to_vec(),
+                });
+            }
+            PrnsEvent::Message(Message::RemoteControlControllerPairingConfirmationRequired(
+                pairing,
+            )) => {
+                let _ignored = controller_confirmation_tx.send(pairing);
+            }
+            PrnsEvent::Message(Message::RemoteControlControllerPairingAuthorizationPersisted {
+                attempt_id,
+            }) => {
+                let _ignored = controller_persisted_tx.send(attempt_id);
+            }
+            PrnsEvent::Message(Message::RemoteControlControllerPairingLinkClosed { aborted }) => {
+                let _ignored = controller_pairing_link_closed_tx.send(aborted);
+            }
+            PrnsEvent::Diagnostic(Diagnostic::LinkClosed { link_id, reason }) => {
+                let _ignored = controller_link_closed_tx.send((link_id, reason));
+            }
+            PrnsEvent::Message(_) | PrnsEvent::Diagnostic(_) => {}
+        },
+        interfaces: move |node: &PrnsNodeHandle| {
+            node.attach(TcpClientInterface::new(server_address));
+        },
+        persistence: NodePersistence::custom_dir(&persistence.controller)
+            .expect("the controller persistence directory is usable"),
+    });
+    let controller_handle = controller.handle();
+
+    let exchange = async {
+        wait_for_direct_connection(&target_handle, &controller_handle).await;
+        let opened = open_pairing_when_attached(
+            &target_handle,
+            OpenRemoteControlPairing {
+                target: EgressTarget::AllInterfaces,
+                expires_after: RemoteControlPairingExpiresAfter::try_from(PAIRING_WINDOW)
+                    .expect("the pairing window is valid"),
+                attempt_timeout: RemoteControlPairingAttemptTimeout::try_from(
+                    PAIRING_ATTEMPT_TIMEOUT,
+                )
+                .expect("the pairing attempt timeout is valid"),
+                permissions: RemoteControlPairingPermissions::try_from(
+                    RemoteControlRequestSet::all(),
+                )
+                .expect("the request set is not empty"),
+                public_app_data: RemoteControlPairingPublicAppDataBytes::try_from(PUBLIC_APP_DATA)
+                    .expect("the public app data fits"),
+            },
+        )
+        .await
+        .expect("the target opens pairing once its interface is attached");
+        let availability = availability_rx
+            .recv()
+            .await
+            .expect("the controller observes pairing availability");
+        let _offered = controller_handle
+            .initiate_remote_control_controller_pairing(InitiateRemoteControlControllerPairing {
+                endpoint: availability.endpoint,
+                invitation_code: opened.invitation_code,
+                expires_at: availability.expires_at,
+            })
+            .await
+            .expect("the target returns a valid pairing offer");
+        let target_confirmation = target_confirmation_rx
+            .recv()
+            .await
+            .expect("the target asks for confirmation");
+        let controller_confirmation = controller_confirmation_rx
+            .recv()
+            .await
+            .expect("the controller asks for confirmation");
+        assert_eq!(
+            controller_confirmation.confirmation(),
+            target_confirmation.confirmation(),
+        );
+
+        let confirmation = controller_confirmation.confirmation();
+        let attempt_id = confirmation.attempt_id();
+        let context = confirmation.context();
+        let rejected = target_handle
+            .reject_remote_control_target_pairing(target_confirmation.rejection())
+            .await
+            .expect("the target rejects the exact pairing attempt");
+        assert_eq!(
+            rejected,
+            RemoteControlTargetPairingRejection {
+                aborted: RemoteControlTargetPairingAborted::AwaitingBoth {
+                    attempt_id,
+                    context,
+                },
+                retired_link: context.link_id(),
+            },
+        );
+        assert_eq!(
+            target_link_closed_rx
+                .recv()
+                .await
+                .expect("the target retires the rejected pairing link"),
+            (context.link_id(), LinkClosedReason::LocallyClosed),
+        );
+        assert_eq!(
+            controller_pairing_link_closed_rx
+                .recv()
+                .await
+                .expect("the controller aborts the rejected pairing attempt"),
+            RemoteControlControllerPairingAborted::AwaitingApproval {
+                attempt_id,
+                context,
+            },
+        );
+        assert_eq!(
+            controller_link_closed_rx
+                .recv()
+                .await
+                .expect("the controller observes the rejected pairing link closure"),
+            (context.link_id(), LinkClosedReason::PeerClosed),
+        );
+        assert_eq!(target_handle.link_count().await, 0);
+        assert_eq!(controller_handle.link_count().await, 0);
+        assert_eq!(
+            controller_handle
+                .approve_remote_control_controller_pairing(controller_confirmation.approval())
+                .await,
+            Err(RemoteControlPairingControlError::Failed(
+                ApproveRemoteControlControllerPairingControlFailure::Approve(
+                    ApproveRemoteControlControllerPairingFailure::NoActiveAttempt,
+                ),
+            )),
+        );
+        assert_eq!(
+            target_handle
+                .revoke_remote_control_controller(controller_identity)
+                .await,
+            Ok(RevokeRemoteControlControllerOutcome::NotFound),
+        );
+        assert!(controller_handle
+            .remote_control_target_inventory()
+            .await
+            .expect("the controller reads its target inventory")
+            .is_empty());
+        assert_eq!(
+            target_persisted_rx.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty),
+        );
+        assert_eq!(
+            controller_persisted_rx.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty),
+        );
+    };
+
+    let outcome = tokio::select! {
+        result = tokio::time::timeout(EXCHANGE_TIMEOUT, exchange) => {
+            result.expect("rejection completes within the bounded test window");
+            TwoNodeExchangeOutcome::Completed
+        }
+        result = target.run() => {
+            result.expect("the target node runs");
+            TwoNodeExchangeOutcome::TargetStopped
+        }
+        result = controller.run() => {
+            result.expect("the controller node runs");
+            TwoNodeExchangeOutcome::ControllerStopped
+        }
+    };
+    assert_eq!(outcome, TwoNodeExchangeOutcome::Completed);
+}
+
 async fn describe_through_restored_pairing(persistence: &PairingPersistenceDirectories) {
     let target_identity_secrets = remote_control_identity_secrets(
         TARGET_NODE_CONTROLLER_SECRET_FILL,
@@ -414,9 +660,11 @@ async fn describe_through_restored_pairing(persistence: &PairingPersistenceDirec
             .remote_control_target_inventory()
             .await
             .expect("the restarted controller reads its persisted target inventory");
-        let [authorized_target] = inventory.targets() else {
-            panic!("the restarted controller has exactly one authorized target")
-        };
+        assert_eq!(inventory.targets().len(), 1);
+        let authorized_target = inventory
+            .targets()
+            .first()
+            .expect("the restarted controller has exactly one authorized target");
         assert_eq!(authorized_target.identity_hash(), target_identity_hash);
         let remote_control = controller_handle
             .connect_remote_control_target(authorized_target.identity_hash())

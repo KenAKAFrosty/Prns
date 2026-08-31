@@ -1,4 +1,4 @@
-use crate::crypto::{Ed25519Signature, Ed25519Verifier};
+use crate::crypto::{Ed25519Signature, Ed25519Verifier, InvalidPublicKey};
 use crate::identity::{IdentityPublicKeys, PublicIdentityMaterial};
 use crate::remote_control::{
     RemoteControlControllerIdentity, RemoteControlRequestKind, RemoteControlRequestSet,
@@ -45,6 +45,18 @@ impl RemoteControlPairingRequest {
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Self, RemoteControlPairingMessageParseError> {
+        Self::parse_with_signing_public_key_validation(bytes, |public_key| {
+            Ed25519Verifier::new(public_key).map(|_verifier| ())
+        })
+    }
+
+    fn parse_with_signing_public_key_validation<F>(
+        bytes: &[u8],
+        mut validate_signing_public_key: F,
+    ) -> Result<Self, RemoteControlPairingMessageParseError>
+    where
+        F: FnMut(&crate::crypto::Ed25519PublicKey) -> Result<(), InvalidPublicKey>,
+    {
         if bytes.len() > Self::MAX_ENCODED_LEN {
             return Err(RemoteControlPairingMessageParseError::TooLong {
                 actual: bytes.len(),
@@ -58,6 +70,7 @@ impl RemoteControlPairingRequest {
                 let public_keys = read_identity_public_keys(
                     &mut reader,
                     RemoteControlPairingIdentityRole::Controller,
+                    &mut validate_signing_public_key,
                 )?;
                 let invitation_proof =
                     RemoteControlPairingInvitationProof::from_wire(*reader.take()?);
@@ -126,6 +139,18 @@ impl RemoteControlPairingResponse {
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Self, RemoteControlPairingMessageParseError> {
+        Self::parse_with_signing_public_key_validation(bytes, |public_key| {
+            Ed25519Verifier::new(public_key).map(|_verifier| ())
+        })
+    }
+
+    fn parse_with_signing_public_key_validation<F>(
+        bytes: &[u8],
+        mut validate_signing_public_key: F,
+    ) -> Result<Self, RemoteControlPairingMessageParseError>
+    where
+        F: FnMut(&crate::crypto::Ed25519PublicKey) -> Result<(), InvalidPublicKey>,
+    {
         if bytes.len() > Self::MAX_ENCODED_LEN {
             return Err(RemoteControlPairingMessageParseError::TooLong {
                 actual: bytes.len(),
@@ -139,6 +164,7 @@ impl RemoteControlPairingResponse {
                 let target = RemoteControlTargetIdentity::new(read_identity_public_keys(
                     &mut reader,
                     RemoteControlPairingIdentityRole::Target,
+                    &mut validate_signing_public_key,
                 )?);
                 let permissions = read_permissions(&mut reader)?;
                 let attempt_timeout = read_attempt_timeout(&mut reader)?;
@@ -248,13 +274,17 @@ fn write_header(
     writer.write(&[kind.wire_value()])
 }
 
-fn read_identity_public_keys(
+fn read_identity_public_keys<F>(
     reader: &mut PairingWireReader<'_>,
     role: RemoteControlPairingIdentityRole,
-) -> Result<IdentityPublicKeys, RemoteControlPairingMessageParseError> {
+    validate_signing_public_key: &mut F,
+) -> Result<IdentityPublicKeys, RemoteControlPairingMessageParseError>
+where
+    F: FnMut(&crate::crypto::Ed25519PublicKey) -> Result<(), InvalidPublicKey>,
+{
     let material = PublicIdentityMaterial::from_bytes(*reader.take()?);
     let public_keys = material.public_keys();
-    Ed25519Verifier::new(public_keys.signing.as_ed25519())
+    validate_signing_public_key(public_keys.signing.as_ed25519())
         .map_err(|_| RemoteControlPairingMessageParseError::InvalidSigningPublicKey { role })?;
     Ok(public_keys)
 }
@@ -376,5 +406,35 @@ const fn maximum(left: usize, right: usize) -> usize {
         left
     } else {
         right
+    }
+}
+
+#[cfg_attr(mutants, mutants::skip)]
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn pairing_request_wire_structure_parse_terminates_for_every_bounded_shape() {
+        let bytes: [u8; RemoteControlPairingRequest::MAX_ENCODED_LEN + 1] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= bytes.len());
+        let _result = RemoteControlPairingRequest::parse_with_signing_public_key_validation(
+            &bytes[..len],
+            |_public_key| Ok(()),
+        );
+    }
+
+    #[kani::proof]
+    #[kani::unwind(8)]
+    fn pairing_response_wire_structure_parse_terminates_for_every_bounded_shape() {
+        let bytes: [u8; RemoteControlPairingResponse::MAX_ENCODED_LEN + 1] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= bytes.len());
+        let _result = RemoteControlPairingResponse::parse_with_signing_public_key_validation(
+            &bytes[..len],
+            |_public_key| Ok(()),
+        );
     }
 }
