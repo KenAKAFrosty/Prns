@@ -12,7 +12,9 @@ use embassy_nrf::{bind_interrupts, config, peripherals, usb};
 use embassy_time::{Delay, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use personal_rns::lora::LoRaInterface;
-use personal_rns::radios::sx126x::{BoardConfig, ExternalPowerAmplifier, FrontendControl, Sx126x, TcxoVoltage};
+use personal_rns::radios::sx126x::{
+    BoardConfig, ExternalPowerAmplifier, FrontendControl, Sx126x, TcxoVoltage,
+};
 use static_cell::StaticCell;
 
 use crate::boards::status_led::StatusLed;

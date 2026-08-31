@@ -31,12 +31,12 @@ use personal_rns::usb_auto::{
 };
 
 use crate::boards::selected as board;
+#[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
+use board::MAX_TX_POWER_DBM;
 use board::{
     Board, Hardware, LoraInterface, Storage, ANNOUNCE_APP_DATA, NODE_ANNOUNCE_APP_DATA,
     USB_INTERFACE_ID, USB_MANUFACTURER, USB_PRODUCT, USB_SERIAL_NUMBER,
 };
-#[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
-use board::MAX_TX_POWER_DBM;
 
 use super::entropy::{initialize_runtime_entropy, runtime_entropy, RUNTIME_ENTROPY_SEED_LEN};
 

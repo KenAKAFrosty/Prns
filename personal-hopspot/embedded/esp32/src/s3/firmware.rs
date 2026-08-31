@@ -107,10 +107,8 @@ where
                 RUN_CORE_STACK_BYTES / 1024
             );
             // SAFETY: leaked allocation is never moved; fat-pointer coerce to dyn Future for await.
-            let run: Pin<&'static mut dyn Future<Output = ()>> =
-                unsafe { Pin::new_unchecked(run) };
-            spawner
-                .spawn(run_core_task(run).expect("run_core task fits"));
+            let run: Pin<&'static mut dyn Future<Output = ()>> = unsafe { Pin::new_unchecked(run) };
+            spawner.spawn(run_core_task(run).expect("run_core task fits"));
         });
 }
 
@@ -137,15 +135,18 @@ fn start_run_core_executor<B: Esp32S3Board + 'static>(
     ));
 
     // Stack in the global PSRAM window — keeps the ~156 KiB Internal freelist for Wi-Fi/BLE.
-    let stack_layout = Layout::from_size_align(RUN_CORE_STACK_BYTES, 16)
-        .expect("run-core stack layout");
+    let stack_layout =
+        Layout::from_size_align(RUN_CORE_STACK_BYTES, 16).expect("run-core stack layout");
     let stack_ptr = esp_alloc::ExternalMemory
         .allocate(stack_layout)
         .expect("run-core PSRAM stack");
     // SAFETY: exclusive ExternalMemory allocation leaked for the device lifetime; alignment matches
     // `spawn_task_with_stack` requirements.
     let stack: &'static mut [MaybeUninit<u8>] = unsafe {
-        core::slice::from_raw_parts_mut(stack_ptr.as_ptr().cast::<MaybeUninit<u8>>(), RUN_CORE_STACK_BYTES)
+        core::slice::from_raw_parts_mut(
+            stack_ptr.as_ptr().cast::<MaybeUninit<u8>>(),
+            RUN_CORE_STACK_BYTES,
+        )
     };
 
     // SAFETY: header/args/stack are leaked external allocations; the worker runs for the device lifetime.
@@ -163,8 +164,7 @@ fn start_run_core_executor<B: Esp32S3Board + 'static>(
 
 pub(crate) async fn run<B: Esp32S3Board + 'static>(
     #[cfg_attr(feature = "heltec-v4-r8-boot", allow(unused_variables))] spawner: Spawner,
-)
-where
+) where
     B::Display: 'static,
     <B::Display as S3BoardDisplay>::Runtime: 'static,
     B::Battery: 'static,
@@ -187,8 +187,11 @@ where
     }
     #[cfg(not(feature = "heltec-v4-r8-boot"))]
     {
-        allocator_api2::boxed::Box::pin_in(run_core::<B>(spawner, bringup), esp_alloc::ExternalMemory)
-            .await;
+        allocator_api2::boxed::Box::pin_in(
+            run_core::<B>(spawner, bringup),
+            esp_alloc::ExternalMemory,
+        )
+        .await;
     }
 }
 
@@ -260,7 +263,10 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let mut lora_profile_store =
         screen::RadioProfileStore::new(shared_flash, B::FLASH_LAYOUT.radio_profile_pages);
     #[cfg(feature = "lora")]
-    let loaded_lora_profile = match lora_profile_store.load(boot_lora_profile(B::MAX_TX_POWER_DBM)).await {
+    let loaded_lora_profile = match lora_profile_store
+        .load(boot_lora_profile(B::MAX_TX_POWER_DBM))
+        .await
+    {
         Ok(loaded) => screen::LoadedRadioProfile {
             profile: loaded.profile.with_tx_power_at_most(B::MAX_TX_POWER_DBM),
             follows_default: loaded.follows_default,
@@ -1071,7 +1077,9 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                 screen::UiAction::ResetLoRaProfile => {
                                     let result = screen::apply_and_persist_radio_profile(
                                         async {
-                                            LORA_CONTROL.apply(boot_lora_profile(B::MAX_TX_POWER_DBM)).await
+                                            LORA_CONTROL
+                                                .apply(boot_lora_profile(B::MAX_TX_POWER_DBM))
+                                                .await
                                                 == LoRaApplyOutcome::Applied
                                         },
                                         || async {
@@ -1088,7 +1096,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                                     )
                                     .await;
                                     if result.applied() {
-                                        working_lora_profile = boot_lora_profile(B::MAX_TX_POWER_DBM);
+                                        working_lora_profile =
+                                            boot_lora_profile(B::MAX_TX_POWER_DBM);
                                     }
                                     let notice = result.notice();
                                     show_notice(

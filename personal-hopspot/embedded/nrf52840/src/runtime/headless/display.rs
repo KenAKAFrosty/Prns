@@ -10,7 +10,7 @@ use embassy_nrf::gpio::Input;
 use embassy_time::{Duration, Timer};
 use personal_hopspot_core as hopspot;
 use personal_rns::engine::{AnnounceAppData, AnnounceNow, AnnounceTarget, PrnsCommand};
-use personal_rns::interfaces::lora::{RadioProfile, boot_lora_profile};
+use personal_rns::interfaces::lora::{boot_lora_profile, RadioProfile};
 use personal_rns::interfaces::{
     InterfaceGravity, InterfaceId, InterfaceMode, InterfaceSnapshot, InterfaceStatus, Membership,
 };
@@ -357,7 +357,9 @@ pub(super) fn face(input: FaceInput) -> impl Future {
                         hopspot::UiAction::ResetLoRaProfile => {
                             let result = hopspot::apply_and_persist_radio_profile(
                                 async {
-                                    LORA_CONTROL.apply(boot_lora_profile(MAX_TX_POWER_DBM)).await
+                                    LORA_CONTROL
+                                        .apply(boot_lora_profile(MAX_TX_POWER_DBM))
+                                        .await
                                         == LoRaApplyOutcome::Applied
                                 },
                                 || async { profile_store.reset().await.is_ok() },
