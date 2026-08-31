@@ -30,7 +30,7 @@ use crate::routing::links::resources::build_outgoing::{
     seal_staged_resource, BuildOutgoingResourceError, BuildRegions, BuiltResource,
     SealedStagedResource, SALT_REROLL_CAP,
 };
-use crate::routing::links::resources::send::DeferredResourceBuild;
+use crate::routing::links::resources::send::ResourceBuildPlan;
 use crate::routing::links::resources::streamed_open::StreamedOpen;
 use crate::routing::links::resources::{
     sealed_transfer_bytes, ResourceBody, ResourceHash, MAP_HASH_LEN, RESOURCE_NONCE_LEN,
@@ -215,7 +215,7 @@ pub(super) struct StagedSealJob {
 }
 
 pub(super) struct ResourceBuildJob {
-    pub(super) owed: DeferredResourceBuild,
+    pub(super) plan: ResourceBuildPlan,
     pub(super) data: HostResourcePayload,
     pub(super) compressed_candidate: Option<HostResourcePayload>,
     pub(super) metadata: HostResourceMetadata,
@@ -362,7 +362,7 @@ pub(super) enum CryptoResult {
         verification: RemoteControlPairingAvailabilityVerification,
     },
     ResourceBuilt {
-        ticket: crate::routing::links::resources::table::DeferredResourceBuildTicket,
+        reservation: crate::routing::links::resources::table::ResourceBuildReservation,
         request_data: HostResourcePayload,
         transfer: Vec<u8>,
         names: Vec<u8>,
@@ -896,43 +896,7 @@ type WorkerVerifierCache = [Option<Ed25519Verifier>; WORKER_VERIFIER_CACHE_DEPTH
 
 fn run_crypto_job(job: CryptoJob, verifier_cache: &mut WorkerVerifierCache) -> CryptoResult {
     match job {
-        CryptoJob::BuildResource(job) => {
-            let ResourceBuildJob {
-                owed,
-                data,
-                compressed_candidate,
-                metadata,
-                seal_iv,
-                nonces,
-            } = *job;
-            let shape = owed.shape();
-            let ticket = owed.ticket();
-            let mut transfer = vec![0u8; shape.transfer_bytes()];
-            let mut names = vec![0u8; shape.part_count() * MAP_HASH_LEN];
-            let mut fresh_nonces = nonces.into_iter();
-            let outcome = owed.execute(
-                &ResourceBody {
-                    data: data.as_slice(),
-                    compressed_candidate: compressed_candidate
-                        .as_ref()
-                        .map(HostResourcePayload::as_slice),
-                    metadata: metadata.as_engine(),
-                },
-                &seal_iv,
-                || fresh_nonces.next().unwrap_or_default(),
-                BuildRegions {
-                    transfer: &mut transfer,
-                    hashmap: &mut names,
-                },
-            );
-            CryptoResult::ResourceBuilt {
-                ticket,
-                request_data: data,
-                transfer,
-                names,
-                outcome,
-            }
-        }
+        CryptoJob::BuildResource(job) => run_resource_build_job(*job),
         CryptoJob::SealStaged(job) => {
             let StagedSealJob {
                 link_id,
@@ -1075,6 +1039,44 @@ fn run_crypto_job(job: CryptoJob, verifier_cache: &mut WorkerVerifierCache) -> C
             let verification = owed.verify();
             CryptoResult::RemoteControlPairingAvailabilityVerified { owed, verification }
         }
+    }
+}
+
+pub(super) fn run_resource_build_job(job: ResourceBuildJob) -> CryptoResult {
+    let ResourceBuildJob {
+        plan,
+        data,
+        compressed_candidate,
+        metadata,
+        seal_iv,
+        nonces,
+    } = job;
+    let shape = plan.shape();
+    let reservation = plan.reservation();
+    let mut transfer = vec![0u8; shape.transfer_bytes()];
+    let mut names = vec![0u8; shape.part_count() * MAP_HASH_LEN];
+    let mut fresh_nonces = nonces.into_iter();
+    let outcome = plan.execute(
+        &ResourceBody {
+            data: data.as_slice(),
+            compressed_candidate: compressed_candidate
+                .as_ref()
+                .map(HostResourcePayload::as_slice),
+            metadata: metadata.as_engine(),
+        },
+        &seal_iv,
+        || fresh_nonces.next().unwrap_or_default(),
+        BuildRegions {
+            transfer: &mut transfer,
+            hashmap: &mut names,
+        },
+    );
+    CryptoResult::ResourceBuilt {
+        reservation,
+        request_data: data,
+        transfer,
+        names,
+        outcome,
     }
 }
 

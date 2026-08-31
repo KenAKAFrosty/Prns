@@ -3,9 +3,7 @@ use crate::routing::links::resources::table::{
     ResourceBuffers, ResourceRowState, ResourceTable, ResourceTableAdmission,
     ResourceTablePushError,
 };
-use crate::routing::links::resources::{
-    max_part_count, ResourceBufferShape, ResourceHash, MAP_HASH_LEN,
-};
+use crate::routing::links::resources::{max_part_count, ResourceBufferShape, MAP_HASH_LEN};
 use crate::routing::links::LinkId;
 
 /// Inline table for a no_std target: every byte the slots can hold lives in the struct, sized where the storage recipe is assembled. `MAX_PARTS` must cover `TRANSFER_BYTES` at the broadcast-MTU sdu; the constructor proves it at compile time.
@@ -18,7 +16,7 @@ pub struct FixedResourceTable<
 > {
     len: usize,
     link_ids: [LinkId; SLOTS],
-    hashes: [ResourceHash; SLOTS],
+    identities: [State::Identity; SLOTS],
     timeout_ats: [Option<InstantMillis>; SLOTS],
     states: [State; SLOTS],
     transfers: [[u8; TRANSFER_BYTES]; SLOTS],
@@ -44,7 +42,7 @@ impl<
         Self {
             len: 0,
             link_ids: [LinkId::new([0u8; 16]); SLOTS],
-            hashes: [ResourceHash::new([0u8; 32]); SLOTS],
+            identities: [State::vacant_identity(); SLOTS],
             timeout_ats: [None; SLOTS],
             states: core::array::from_fn(|_| State::default()),
             transfers: [[0u8; TRANSFER_BYTES]; SLOTS],
@@ -78,8 +76,8 @@ impl<
     fn link_ids(&self) -> &[LinkId] {
         &self.link_ids[..self.len]
     }
-    fn hashes(&self) -> &[ResourceHash] {
-        &self.hashes[..self.len]
+    fn identities(&self) -> &[State::Identity] {
+        &self.identities[..self.len]
     }
     fn timeout_ats(&self) -> &[Option<InstantMillis>] {
         &self.timeout_ats[..self.len]
@@ -88,8 +86,8 @@ impl<
         &self.states[..self.len]
     }
 
-    fn set_hash(&mut self, index: usize, hash: ResourceHash) {
-        self.hashes[index] = hash;
+    fn set_identity(&mut self, index: usize, identity: State::Identity) {
+        self.identities[index] = identity;
     }
     fn set_timeout_at(&mut self, index: usize, timeout_at: Option<InstantMillis>) {
         self.timeout_ats[index] = timeout_at;
@@ -137,7 +135,7 @@ impl<
     fn push(
         &mut self,
         link_id: LinkId,
-        hash: ResourceHash,
+        identity: State::Identity,
         state: State,
         shape: ResourceBufferShape,
     ) -> Result<usize, ResourceTablePushError> {
@@ -152,7 +150,7 @@ impl<
         }
         let index = self.len;
         self.link_ids[index] = link_id;
-        self.hashes[index] = hash;
+        self.identities[index] = identity;
         self.timeout_ats[index] = None;
         self.states[index] = state;
         self.part_flags[index] = [false; MAX_PARTS];
@@ -163,7 +161,7 @@ impl<
     fn swap_remove(&mut self, index: usize) {
         let last = self.len - 1;
         self.link_ids.swap(index, last);
-        self.hashes.swap(index, last);
+        self.identities.swap(index, last);
         self.timeout_ats.swap(index, last);
         self.states.swap(index, last);
         self.transfers.swap(index, last);
@@ -179,6 +177,7 @@ impl<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::routing::links::resources::ResourceHash;
 
     type Table = FixedResourceTable<u8, 2, 1024, 3>;
 

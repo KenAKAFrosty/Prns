@@ -74,8 +74,8 @@ pub use node_egress::ReemitAnnounce;
 pub use node_ingress::{IngestIo, IngestPacketReport};
 pub use proof::ResolvedReceiptSettlement;
 pub use reaction::{
-    Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason, PersistenceFlushCause,
-    PersistenceFlushTarget,
+    Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason, NoOwedWork, OwedWork,
+    PersistenceFlushCause, PersistenceFlushTarget,
 };
 pub use registration::{
     PersistedRoutePreflightError, PersistedRouteSignaturePending, PersistedRouteVerificationError,

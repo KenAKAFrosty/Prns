@@ -9,6 +9,7 @@ use crate::routing::announce::{AnnounceObservation, AnnounceRateAccounting};
 use crate::routing::delivery::Delivery;
 use crate::routing::links::channel::MessageType;
 use crate::routing::links::request::RequestId;
+use crate::routing::links::resources::send::ResourceBuildOwed;
 use crate::routing::links::resources::{ResourceFailureCause, ResourceHash};
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
@@ -18,12 +19,26 @@ use crate::wire::DestinationHash;
 
 // repr(C) on this enum, Journaled, and Directive: they cross the dual-core channel; see the layout note on [`PrnsCommand`].
 #[repr(C)]
-pub enum EngineReaction<'a> {
+pub enum EngineReaction<'a, Work = NoOwedWork> {
     /// A notice that something has just happened within the engine.
     Journaled(Journaled<'a>),
 
     /// An order for something that must now happen outside the engine.
-    Directive(Directive<'a>),
+    Directive(Directive<'a, Work>),
+}
+
+/// The work channel of an engine entry point that cannot request external fulfillment.
+/// Its uninhabited shape lets runtimes route those reactions without an impossible fallback.
+pub enum NoOwedWork {}
+
+/// Work the engine has fully authorized but asks its surrounding manifold to fulfill.
+///
+/// The enum names protocol work, never a scheduling decision. A runtime may fulfill a variant
+/// inline, move it into a worker job, or use a platform accelerator without changing the engine
+/// transition that requested it.
+#[repr(C)]
+pub enum OwedWork<'a> {
+    ResourceBuild(ResourceBuildOwed<'a>),
 }
 
 #[repr(C)]
@@ -291,7 +306,9 @@ pub enum FanTarget {
 
 /// An order for something that must now happen outside the engine.
 #[repr(C)]
-pub enum Directive<'a> {
+pub enum Directive<'a, Work = NoOwedWork> {
+    Fulfill(Work),
+
     Send {
         target: InterfaceId,
         bytes: &'a [u8],

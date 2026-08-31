@@ -8,7 +8,7 @@ use crate::routing::links::resources::table::{
 };
 use crate::routing::links::resources::{
     checked_resource_buffer_bytes, max_part_count, sealed_transfer_bytes, ResourceBufferShape,
-    ResourceHash, DEFAULT_RESOURCE_MEMORY_BYTES, MAP_HASH_LEN, MAX_EFFICIENT_SIZE,
+    DEFAULT_RESOURCE_MEMORY_BYTES, MAP_HASH_LEN, MAX_EFFICIENT_SIZE,
 };
 use crate::routing::links::LinkId;
 
@@ -22,7 +22,7 @@ pub const DEFAULT_MAX_RESOURCES: usize = 4_096;
 #[derive(Debug)]
 pub struct HeapResourceTable<State: ResourceRowState> {
     link_ids: Vec<LinkId>,
-    hashes: Vec<ResourceHash>,
+    identities: Vec<State::Identity>,
     timeout_ats: Vec<Option<InstantMillis>>,
     states: Vec<State>,
     transfers: Vec<Vec<u8>>,
@@ -40,7 +40,7 @@ impl<State: ResourceRowState> Default for HeapResourceTable<State> {
     fn default() -> Self {
         Self {
             link_ids: Vec::new(),
-            hashes: Vec::new(),
+            identities: Vec::new(),
             timeout_ats: Vec::new(),
             states: Vec::new(),
             transfers: Vec::new(),
@@ -89,8 +89,8 @@ impl<State: ResourceRowState + Default> ResourceTable<State> for HeapResourceTab
     fn link_ids(&self) -> &[LinkId] {
         &self.link_ids
     }
-    fn hashes(&self) -> &[ResourceHash] {
-        &self.hashes
+    fn identities(&self) -> &[State::Identity] {
+        &self.identities
     }
     fn timeout_ats(&self) -> &[Option<InstantMillis>] {
         &self.timeout_ats
@@ -99,8 +99,8 @@ impl<State: ResourceRowState + Default> ResourceTable<State> for HeapResourceTab
         &self.states
     }
 
-    fn set_hash(&mut self, index: usize, hash: ResourceHash) {
-        self.hashes[index] = hash;
+    fn set_identity(&mut self, index: usize, identity: State::Identity) {
+        self.identities[index] = identity;
     }
     fn set_timeout_at(&mut self, index: usize, timeout_at: Option<InstantMillis>) {
         self.timeout_ats[index] = timeout_at;
@@ -153,7 +153,7 @@ impl<State: ResourceRowState + Default> ResourceTable<State> for HeapResourceTab
     fn push(
         &mut self,
         link_id: LinkId,
-        hash: ResourceHash,
+        identity: State::Identity,
         state: State,
         shape: ResourceBufferShape,
     ) -> Result<usize, ResourceTablePushError> {
@@ -171,7 +171,7 @@ impl<State: ResourceRowState + Default> ResourceTable<State> for HeapResourceTab
             return Err(ResourceTablePushError::MemoryLimit);
         }
         self.link_ids.push(link_id);
-        self.hashes.push(hash);
+        self.identities.push(identity);
         self.timeout_ats.push(None);
         self.states.push(state);
         self.transfers.push(vec![0u8; shape.transfer_bytes()]);
@@ -192,7 +192,7 @@ impl<State: ResourceRowState + Default> ResourceTable<State> for HeapResourceTab
             unreachable!("stored Resource buffers were validated on insertion")
         };
         self.link_ids.swap_remove(index);
-        self.hashes.swap_remove(index);
+        self.identities.swap_remove(index);
         self.timeout_ats.swap_remove(index);
         self.states.swap_remove(index);
         self.streamed_opens.swap_remove(index);
@@ -206,6 +206,7 @@ impl<State: ResourceRowState + Default> ResourceTable<State> for HeapResourceTab
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::routing::links::resources::ResourceHash;
 
     fn shape(transfer_bytes: usize, sdu: usize) -> ResourceBufferShape {
         ResourceBufferShape::try_for_transfer(transfer_bytes, sdu).unwrap()

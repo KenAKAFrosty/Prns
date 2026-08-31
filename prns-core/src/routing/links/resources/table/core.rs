@@ -12,23 +12,52 @@ use crate::routing::links::resources::{
     PART_TIMEOUT_FACTOR, RESOURCE_NONCE_LEN, WINDOW_MAX_SLOW, WINDOW_MIN, WINDOW_START,
 };
 use crate::routing::links::LinkId;
+use core::num::NonZeroU64;
 
 /// Splits a row's state by storage class: the `Copy` bookkeeping struct implements this, naming the non-`Copy` working state its table stores in a parallel column beside it. The incoming side tracks its streamed open's [`OpenProgress`] there; the outgoing side parks nothing.
 pub trait ResourceRowState {
     type StreamedOpenSlot: Default + core::fmt::Debug;
+    type Identity: Copy + core::fmt::Debug;
+
+    fn vacant_identity() -> Self::Identity;
 }
 
 impl ResourceRowState for OutgoingResourceState {
     type StreamedOpenSlot = ();
+    type Identity = OutgoingResourceIdentity;
+
+    fn vacant_identity() -> Self::Identity {
+        OutgoingResourceIdentity::Staged
+    }
 }
 
 impl ResourceRowState for IncomingResourceState {
     type StreamedOpenSlot = OpenProgress;
+    type Identity = ResourceHash;
+
+    fn vacant_identity() -> Self::Identity {
+        ResourceHash::new([0; 32])
+    }
 }
 
 #[cfg(test)]
 impl ResourceRowState for u8 {
     type StreamedOpenSlot = ();
+    type Identity = ResourceHash;
+
+    fn vacant_identity() -> Self::Identity {
+        ResourceHash::new([0; 32])
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceBuildGeneration(NonZeroU64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutgoingResourceIdentity {
+    Building(ResourceBuildGeneration),
+    Staged,
+    Ready(ResourceHash),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,15 +112,15 @@ pub struct TrackedCommand {
 /// reservation generation still owns a `Building` row, so teardown, cancellation, and even
 /// eventual command-ID reuse make it harmlessly stale.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DeferredResourceBuildTicket {
+pub struct ResourceBuildReservation {
     pub link_id: LinkId,
     pub command_id: CommandId,
     pub correlation: ResourceCorrelation,
-    generation: u64,
+    generation: ResourceBuildGeneration,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LandDeferredResourceBuild {
+pub enum ResourceBuildLanding {
     Stale,
     Built(ResourceHash),
     Failed(BuildOutgoingResourceError),
@@ -126,9 +155,6 @@ pub struct OutgoingResourceState {
     pub retries_left: u8,
     pub command_id: CommandId,
     pub correlation: ResourceCorrelation,
-    /// Non-zero only while an owning build continuation holds this row. This prevents a late
-    /// completion from landing in a replacement row even if its public command identity is reused.
-    deferred_build_generation: u64,
 }
 
 // The vacant-slot value for fixed-capacity tables to initialize with, never a live resource's state; a successful [track](OutgoingResources::track) writes every field.
@@ -153,7 +179,6 @@ impl Default for OutgoingResourceState {
             retries_left: 0,
             command_id: CommandId(0),
             correlation: ResourceCorrelation::Unsolicited,
-            deferred_build_generation: 0,
         }
     }
 }
@@ -291,11 +316,11 @@ pub trait ResourceTable<State: ResourceRowState> {
     }
 
     fn link_ids(&self) -> &[LinkId];
-    fn hashes(&self) -> &[ResourceHash];
+    fn identities(&self) -> &[State::Identity];
     fn timeout_ats(&self) -> &[Option<InstantMillis>];
     fn states(&self) -> &[State];
 
-    fn set_hash(&mut self, index: usize, hash: ResourceHash);
+    fn set_identity(&mut self, index: usize, identity: State::Identity);
     fn set_timeout_at(&mut self, index: usize, timeout_at: Option<InstantMillis>);
     fn state_mut(&mut self, index: usize) -> &mut State;
 
@@ -317,7 +342,7 @@ pub trait ResourceTable<State: ResourceRowState> {
     fn push(
         &mut self,
         link_id: LinkId,
-        hash: ResourceHash,
+        identity: State::Identity,
         state: State,
         shape: ResourceBufferShape,
     ) -> Result<usize, ResourceTablePushError>;
@@ -369,7 +394,7 @@ pub enum RemoveOutcome {
 pub struct OutgoingResources<C: ResourceTable<OutgoingResourceState>> {
     table: C,
     earliest_timeout: Option<InstantMillis>,
-    next_deferred_build_generation: u64,
+    next_build_generation: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -379,6 +404,15 @@ pub struct LinkOwnedOutgoingResource {
 }
 
 impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
+    fn take_build_generation(&mut self) -> ResourceBuildGeneration {
+        loop {
+            self.next_build_generation = self.next_build_generation.wrapping_add(1);
+            if let Some(generation) = NonZeroU64::new(self.next_build_generation) {
+                return ResourceBuildGeneration(generation);
+            }
+        }
+    }
+
     /// One resource per link at a time, matching RNS 1.4.2 `Link.ready_for_new_resource`.
     ///
     /// Intentional deviation from reference: the next continuation segment may land beside the link's one occupied row and remain off the wire until the segment ahead proves. Its preparation therefore overlaps the wire instead of following it.
@@ -432,11 +466,12 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         } = command;
         let expected_transfer_bytes = shape.transfer_bytes();
         let expected_part_count = shape.part_count();
+        let generation = self.take_build_generation();
         let index = self
             .table
             .push(
                 link_id,
-                ResourceHash::new([0; 32]),
+                OutgoingResourceIdentity::Building(generation),
                 OutgoingResourceState::default(),
                 shape,
             )
@@ -452,7 +487,8 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                 if built.sealed_transfer_bytes == expected_transfer_bytes
                     && built.part_count == expected_part_count =>
             {
-                self.table.set_hash(index, built.hash);
+                self.table
+                    .set_identity(index, OutgoingResourceIdentity::Ready(built.hash));
                 *self.table.state_mut(index) = OutgoingResourceState {
                     salt_nonce: built.salt_nonce,
                     expected_proof: built.expected_proof,
@@ -475,7 +511,6 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                     retries_left: 0,
                     command_id,
                     correlation,
-                    deferred_build_generation: 0,
                 };
                 self.refresh_earliest_timeout();
                 Ok(built.hash)
@@ -503,7 +538,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         command: TrackedCommand,
         shape: ResourceBufferShape,
         uncompressed_data_bytes: u64,
-    ) -> Result<DeferredResourceBuildTicket, TrackOutgoingResourceError> {
+    ) -> Result<ResourceBuildReservation, TrackOutgoingResourceError> {
         let TrackedCommand {
             link_id,
             sdu,
@@ -511,15 +546,11 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
             correlation,
             segment,
         } = command;
-        self.next_deferred_build_generation = self.next_deferred_build_generation.wrapping_add(1);
-        if self.next_deferred_build_generation == 0 {
-            self.next_deferred_build_generation = 1;
-        }
-        let generation = self.next_deferred_build_generation;
+        let generation = self.take_build_generation();
         self.table
             .push(
                 link_id,
-                ResourceHash::new([0; 32]),
+                OutgoingResourceIdentity::Building(generation),
                 OutgoingResourceState {
                     sealed_transfer_bytes: shape.transfer_bytes(),
                     uncompressed_data_bytes,
@@ -530,14 +561,13 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                     status: OutgoingResourceStatus::Building,
                     command_id,
                     correlation,
-                    deferred_build_generation: generation,
                     ..OutgoingResourceState::default()
                 },
                 shape,
             )
             .map_err(track_push_error)?;
         self.refresh_earliest_timeout();
-        Ok(DeferredResourceBuildTicket {
+        Ok(ResourceBuildReservation {
             link_id,
             command_id,
             correlation,
@@ -548,26 +578,20 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
     /// Land an owning worker's buffers without trusting a completion that outlived its row.
     pub fn land_deferred_build(
         &mut self,
-        ticket: DeferredResourceBuildTicket,
+        ticket: ResourceBuildReservation,
         transfer: &[u8],
         names: &[u8],
         outcome: Result<BuiltResource, BuildOutgoingResourceError>,
-    ) -> LandDeferredResourceBuild {
-        let Some(index) = (0..self.table.len()).find(|&index| {
-            let state = &self.table.states()[index];
-            &self.table.link_ids()[index] == &ticket.link_id
-                && state.command_id == ticket.command_id
-                && state.deferred_build_generation == ticket.generation
-                && state.status == OutgoingResourceStatus::Building
-        }) else {
-            return LandDeferredResourceBuild::Stale;
+    ) -> ResourceBuildLanding {
+        let Some(index) = self.deferred_build_index(ticket) else {
+            return ResourceBuildLanding::Stale;
         };
         let built = match outcome {
             Ok(built) => built,
             Err(error) => {
                 self.table.swap_remove(index);
                 self.refresh_earliest_timeout();
-                return LandDeferredResourceBuild::Failed(error);
+                return ResourceBuildLanding::Failed(error);
             }
         };
         let reserved = self.table.states()[index];
@@ -580,16 +604,79 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         if !valid {
             self.table.swap_remove(index);
             self.refresh_earliest_timeout();
-            return LandDeferredResourceBuild::Failed(
-                BuildOutgoingResourceError::BufferShapeMismatch,
-            );
+            return ResourceBuildLanding::Failed(BuildOutgoingResourceError::BufferShapeMismatch);
         }
         let buffers = self.table.buffers_mut(index);
         buffers.transfer[..expected_transfer_bytes].copy_from_slice(transfer);
         buffers.part_names[..expected_part_count]
             .as_flattened_mut()
             .copy_from_slice(names);
-        self.table.set_hash(index, built.hash);
+        self.finish_deferred_build(index, built)
+    }
+
+    /// Lend the exact row regions reserved for an inline fulfillment. A stale reservation never
+    /// exposes replacement-row storage.
+    pub fn deferred_build_regions_mut(
+        &mut self,
+        reservation: ResourceBuildReservation,
+    ) -> Option<BuildRegions<'_>> {
+        let index = self.deferred_build_index(reservation)?;
+        let expected_transfer_bytes = self.table.states()[index].sealed_transfer_bytes;
+        let expected_part_count = self.table.states()[index].part_count;
+        let buffers = self.table.buffers_mut(index);
+        Some(BuildRegions {
+            transfer: &mut buffers.transfer[..expected_transfer_bytes],
+            hashmap: buffers.part_names[..expected_part_count].as_flattened_mut(),
+        })
+    }
+
+    /// Finalize a build that wrote directly into its reserved row regions.
+    pub fn land_inline_build(
+        &mut self,
+        reservation: ResourceBuildReservation,
+        outcome: Result<BuiltResource, BuildOutgoingResourceError>,
+    ) -> ResourceBuildLanding {
+        let Some(index) = self.deferred_build_index(reservation) else {
+            return ResourceBuildLanding::Stale;
+        };
+        let built = match outcome {
+            Ok(built) => built,
+            Err(error) => {
+                self.table.swap_remove(index);
+                self.refresh_earliest_timeout();
+                return ResourceBuildLanding::Failed(error);
+            }
+        };
+        let reserved = self.table.states()[index];
+        if built.sealed_transfer_bytes != reserved.sealed_transfer_bytes
+            || built.part_count != reserved.part_count
+        {
+            self.table.swap_remove(index);
+            self.refresh_earliest_timeout();
+            return ResourceBuildLanding::Failed(BuildOutgoingResourceError::BufferShapeMismatch);
+        }
+        self.finish_deferred_build(index, built)
+    }
+
+    fn deferred_build_index(&self, reservation: ResourceBuildReservation) -> Option<usize> {
+        (0..self.table.len()).find(|&index| {
+            let state = &self.table.states()[index];
+            self.table.link_ids()[index] == reservation.link_id
+                && state.command_id == reservation.command_id
+                && self.table.identities()[index]
+                    == OutgoingResourceIdentity::Building(reservation.generation)
+                && state.status == OutgoingResourceStatus::Building
+        })
+    }
+
+    fn finish_deferred_build(
+        &mut self,
+        index: usize,
+        built: BuiltResource,
+    ) -> ResourceBuildLanding {
+        let reserved = self.table.states()[index];
+        self.table
+            .set_identity(index, OutgoingResourceIdentity::Ready(built.hash));
         *self.table.state_mut(index) = OutgoingResourceState {
             salt_nonce: built.salt_nonce,
             expected_proof: built.expected_proof,
@@ -609,10 +696,9 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
             retries_left: 0,
             command_id: reserved.command_id,
             correlation: reserved.correlation,
-            deferred_build_generation: 0,
         };
         self.refresh_earliest_timeout();
-        LandDeferredResourceBuild::Built(built.hash)
+        ResourceBuildLanding::Built(built.hash)
     }
 
     /// The uncompressed-continuation path parks the raw stream at its sealed offset and defers the whole seal to [`seal_regions_mut`](Self::seal_regions_mut) time. It returns the landed row's index because the placeholder hash can never name it.
@@ -659,7 +745,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
             .table
             .push(
                 link_id,
-                ResourceHash::new([0; 32]),
+                OutgoingResourceIdentity::Staged,
                 OutgoingResourceState::default(),
                 shape,
             )
@@ -715,9 +801,10 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         self.table
             .link_ids()
             .iter()
-            .zip(self.table.hashes())
-            .position(|(candidate_link, candidate_hash)| {
-                candidate_link == link_id && candidate_hash == hash
+            .zip(self.table.identities())
+            .position(|(candidate_link, identity)| {
+                candidate_link == link_id
+                    && matches!(identity, OutgoingResourceIdentity::Ready(candidate) if candidate == hash)
             })
     }
 
@@ -730,7 +817,8 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
     }
 
     pub fn set_hash(&mut self, index: usize, hash: ResourceHash) {
-        self.table.set_hash(index, hash);
+        self.table
+            .set_identity(index, OutgoingResourceIdentity::Ready(hash));
     }
 
     /// A raw staged row's whole worker input: the reserved IV span, the stream nonce, and the parked stream.
@@ -753,8 +841,11 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         &self.table.link_ids()[index]
     }
 
-    pub fn hash_at(&self, index: usize) -> &ResourceHash {
-        &self.table.hashes()[index]
+    pub fn hash_at(&self, index: usize) -> Option<&ResourceHash> {
+        match &self.table.identities()[index] {
+            OutgoingResourceIdentity::Ready(hash) => Some(hash),
+            OutgoingResourceIdentity::Building(_) | OutgoingResourceIdentity::Staged => None,
+        }
     }
 
     /// The distinction RNS 1.4.2 draws between `part.send()` (counted toward `sent_parts`) and `part.resend()` (not counted).
@@ -780,6 +871,12 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
             }
             None => RemoveOutcome::NotTracked,
         }
+    }
+
+    /// Remove an off-wire row whose typed identity deliberately has no wire hash yet.
+    pub fn remove_at(&mut self, index: usize) {
+        self.table.swap_remove(index);
+        self.refresh_earliest_timeout();
     }
 
     pub fn pop_for_link(&mut self, link_id: &LinkId) -> Option<LinkOwnedOutgoingResource> {
@@ -1176,7 +1273,7 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
         self.table
             .link_ids()
             .iter()
-            .zip(self.table.hashes())
+            .zip(self.table.identities())
             .position(|(candidate_link, candidate_hash)| {
                 candidate_link == link_id && candidate_hash == hash
             })
@@ -1186,7 +1283,7 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
         self.table
             .link_ids()
             .iter()
-            .zip(self.table.hashes())
+            .zip(self.table.identities())
             .find_map(|(candidate, hash)| (candidate == link_id).then_some(*hash))
     }
 
@@ -1228,7 +1325,7 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
     }
 
     pub fn hash_at(&self, index: usize) -> &ResourceHash {
-        &self.table.hashes()[index]
+        &self.table.identities()[index]
     }
 
     pub fn received_flags(&self, index: usize) -> &[bool] {
@@ -1389,7 +1486,7 @@ mod tests {
         track_segment(outgoing, link, hash_byte, ResourceSegment::whole(930))
     }
 
-    fn reserve_build(outgoing: &mut TestOutgoing, command_id: u64) -> DeferredResourceBuildTicket {
+    fn reserve_build(outgoing: &mut TestOutgoing, command_id: u64) -> ResourceBuildReservation {
         outgoing
             .reserve_deferred_build(
                 TrackedCommand {
@@ -1446,8 +1543,12 @@ mod tests {
         assert_eq!(outgoing.state(0).status, OutgoingResourceStatus::Building);
 
         assert_eq!(
-            outgoing.remove(&link_id(1), &ResourceHash::new([0; 32])),
-            RemoveOutcome::Removed
+            outgoing.pop_for_link(&link_id(1)),
+            Some(LinkOwnedOutgoingResource {
+                command_id: CommandId(7),
+                correlation: ResourceCorrelation::Unsolicited,
+            }),
+            "link teardown removes a building row without inventing a wire hash",
         );
         let replacement = reserve_build(&mut outgoing, 7);
         let transfer = [0xAB; 928];
@@ -1455,7 +1556,7 @@ mod tests {
 
         assert_eq!(
             outgoing.land_deferred_build(first, &transfer, &names, Ok(fabricated(0xAB, 928, 2)),),
-            LandDeferredResourceBuild::Stale,
+            ResourceBuildLanding::Stale,
             "an old completion must not land in a replacement row with the same command ID",
         );
         assert_eq!(outgoing.state(0).status, OutgoingResourceStatus::Building);
@@ -1466,7 +1567,7 @@ mod tests {
                 &names,
                 Ok(fabricated(0xAB, 928, 2)),
             ),
-            LandDeferredResourceBuild::Built(hash(0xAB)),
+            ResourceBuildLanding::Built(hash(0xAB)),
         );
 
         let index = outgoing.lookup(&link_id(1), &hash(0xAB)).unwrap();
@@ -1476,6 +1577,34 @@ mod tests {
             outgoing.state(index).status,
             OutgoingResourceStatus::Advertised
         );
+        assert_eq!(
+            outgoing.land_deferred_build(
+                replacement,
+                &transfer,
+                &names,
+                Ok(fabricated(0xAB, 928, 2)),
+            ),
+            ResourceBuildLanding::Stale,
+            "a duplicate completion cannot land after the row became ready",
+        );
+    }
+
+    #[test]
+    fn a_completion_after_link_close_is_stale() {
+        let mut outgoing = TestOutgoing::default();
+        let reservation = reserve_build(&mut outgoing, 7);
+        assert!(outgoing.pop_for_link(&link_id(1)).is_some());
+
+        assert_eq!(
+            outgoing.land_deferred_build(
+                reservation,
+                &[0xAB; 928],
+                &[0xCD; 2 * MAP_HASH_LEN],
+                Ok(fabricated(0xAB, 928, 2)),
+            ),
+            ResourceBuildLanding::Stale,
+        );
+        assert!(outgoing.is_empty());
     }
 
     #[test]
@@ -1489,7 +1618,7 @@ mod tests {
                 &[],
                 Err(BuildOutgoingResourceError::SaltRerollsExhausted),
             ),
-            LandDeferredResourceBuild::Failed(BuildOutgoingResourceError::SaltRerollsExhausted),
+            ResourceBuildLanding::Failed(BuildOutgoingResourceError::SaltRerollsExhausted),
         );
         assert!(outgoing.is_empty());
 
@@ -1501,7 +1630,7 @@ mod tests {
                 &[0; 2 * MAP_HASH_LEN],
                 Ok(fabricated(0xAB, 928, 2)),
             ),
-            LandDeferredResourceBuild::Failed(BuildOutgoingResourceError::BufferShapeMismatch),
+            ResourceBuildLanding::Failed(BuildOutgoingResourceError::BufferShapeMismatch),
         );
         assert!(outgoing.is_empty());
     }

@@ -1,6 +1,6 @@
 #[cfg(feature = "runtime-metrics")]
 use crate::engine::AnnounceOrigin;
-use crate::engine::{EngineReaction, FanTarget, InstantMillis, Journaled};
+use crate::engine::{EngineReaction, FanTarget, InstantMillis, Journaled, NoOwedWork};
 use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{ConnectionView, InterfaceDescriptor, InterfaceId, InterfaceKind};
 use crate::manifold::announce_pacer::{
@@ -372,7 +372,7 @@ impl WireScratch {
     }
 }
 
-pub(super) fn route_reaction<A: FnMut(Journaled<'_>)>(
+pub(super) fn route_reaction<A>(
     reaction: EngineReaction<'_>,
     egress: &mut Egress,
     ifacs: &[InterfaceIfac],
@@ -380,7 +380,34 @@ pub(super) fn route_reaction<A: FnMut(Journaled<'_>)>(
     scratch: &mut WireScratch,
     now: InstantMillis,
     app: &mut A,
-) {
+) where
+    A: FnMut(Journaled<'_>),
+{
+    route_reaction_with_work(
+        reaction,
+        egress,
+        ifacs,
+        pacers,
+        scratch,
+        now,
+        app,
+        &mut |work: NoOwedWork| match work {},
+    );
+}
+
+pub(super) fn route_reaction_with_work<A, Work, W>(
+    reaction: EngineReaction<'_, Work>,
+    egress: &mut Egress,
+    ifacs: &[InterfaceIfac],
+    pacers: &mut [InterfacePacer],
+    scratch: &mut WireScratch,
+    now: InstantMillis,
+    app: &mut A,
+    fulfill: &mut W,
+) where
+    A: FnMut(Journaled<'_>),
+    W: FnMut(Work),
+{
     let mut directive_egress = TokioDirectiveEgress {
         egress,
         ifacs,
@@ -388,7 +415,7 @@ pub(super) fn route_reaction<A: FnMut(Journaled<'_>)>(
         scratch,
         now,
     };
-    route_engine_reaction(reaction, &mut directive_egress, app);
+    route_engine_reaction(reaction, &mut directive_egress, app, fulfill);
 }
 
 struct TokioDirectiveEgress<'a> {

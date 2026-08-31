@@ -1,6 +1,6 @@
 //! RNS 1.4.2 `Resource(data, link)` plus `Resource.advertise`.
 
-use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis, Journaled};
+use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis, Journaled, OwedWork};
 use crate::engine::{RespondFailure, SendResourceFailure, SendResourceRejection, Settlement};
 use crate::interfaces::InterfaceId;
 use crate::rncp::write_file_metadata;
@@ -30,8 +30,8 @@ use crate::routing::links::resources::control::{
 };
 use crate::routing::links::resources::serve_outgoing::{plan_hashmap_update, serve_part_indices};
 use crate::routing::links::resources::table::{
-    DeferredResourceBuildTicket, LandDeferredResourceBuild, OutgoingResourceStatus,
-    PartSendOutcome, TrackLane, TrackOutgoingResourceError, TrackedCommand,
+    OutgoingResourceStatus, PartSendOutcome, ResourceBuildLanding, ResourceBuildReservation,
+    TrackLane, TrackOutgoingResourceError, TrackedCommand,
 };
 use crate::routing::links::resources::{
     resource_sdu, ResourceBody, ResourceBufferShape, ResourceCorrelation, ResourceHash,
@@ -70,18 +70,21 @@ pub struct StagedSealJobView<'a> {
     pub plaintext: &'a [u8],
 }
 
-/// Everything an owning host crypto job needs after the engine has validated and reserved a
-/// whole-resource send. Payload ownership remains in the runtime; this carries only core state.
-pub struct DeferredResourceBuild {
-    ticket: DeferredResourceBuildTicket,
+/// The engine-owned plan a runtime moves into an asynchronous resource-build job.
+///
+/// Large payload storage is deliberately absent: [`ResourceBuildOwed`] lends that storage only
+/// while the engine reaction is being routed, and the runtime moves its own backing grant into the
+/// job after the engine call releases the borrow.
+pub struct ResourceBuildPlan {
+    reservation: ResourceBuildReservation,
     key: crate::routing::links::LinkKey,
     sdu: usize,
     shape: ResourceBufferShape,
 }
 
-impl DeferredResourceBuild {
-    pub fn ticket(&self) -> DeferredResourceBuildTicket {
-        self.ticket
+impl ResourceBuildPlan {
+    pub fn reservation(&self) -> ResourceBuildReservation {
+        self.reservation
     }
 
     pub fn shape(&self) -> ResourceBufferShape {
@@ -102,10 +105,51 @@ impl DeferredResourceBuild {
     }
 }
 
+/// A core directive requesting the pure whole-resource transform.
+///
+/// The payload is a borrowed view of storage still owned by the manifold. An inline runtime can
+/// fulfill it directly; a threaded runtime consumes [`Self::into_plan`] and moves the manifold's
+/// backing payload grant into its own `ResourceBuildJob`.
+pub struct ResourceBuildOwed<'a> {
+    plan: ResourceBuildPlan,
+    body: ResourceBody<'a>,
+}
+
+impl ResourceBuildOwed<'_> {
+    #[must_use]
+    pub fn reservation(&self) -> ResourceBuildReservation {
+        self.plan.reservation()
+    }
+
+    #[must_use]
+    pub fn body(&self) -> ResourceBody<'_> {
+        self.body
+    }
+
+    #[must_use]
+    pub fn shape(&self) -> ResourceBufferShape {
+        self.plan.shape()
+    }
+
+    #[must_use]
+    pub fn into_plan(self) -> ResourceBuildPlan {
+        self.plan
+    }
+
+    pub fn execute(
+        &self,
+        seal_iv: &[u8; 16],
+        fresh_nonce: impl FnMut() -> [u8; RESOURCE_NONCE_LEN],
+        regions: BuildRegions<'_>,
+    ) -> Result<BuiltResource, BuildOutgoingResourceError> {
+        self.plan.execute(&self.body, seal_iv, fresh_nonce, regions)
+    }
+}
+
 /// A worker's finished whole-resource build. The output buffers are borrowed only for the landing
 /// call and are ignored if the reservation disappeared while crypto was running.
-pub struct OffloadedResourceBuild<'a> {
-    pub ticket: DeferredResourceBuildTicket,
+pub struct ResourceBuildCompleted<'a> {
+    pub reservation: ResourceBuildReservation,
     pub transfer: &'a [u8],
     pub names: &'a [u8],
     pub request_data: &'a [u8],
@@ -113,6 +157,20 @@ pub struct OffloadedResourceBuild<'a> {
         crate::routing::links::resources::build_outgoing::BuiltResource,
         BuildOutgoingResourceError,
     >,
+}
+
+/// The pure build verdict produced against a row's already-reserved inline regions. The runtime
+/// submits this as a later resume input; it never recursively re-enters the engine from the
+/// directive sink.
+pub struct InlineResourceBuildCompleted<'a> {
+    reservation: ResourceBuildReservation,
+    request_data: &'a [u8],
+    outcome: InlineResourceBuildOutcome,
+}
+
+enum InlineResourceBuildOutcome {
+    ReservationStale,
+    Built(Result<BuiltResource, BuildOutgoingResourceError>),
 }
 
 /// How a landed segment is addressed for its post-landing patch: a built row by its hash, but a raw row only by index because its hash column is still the placeholder.
@@ -191,15 +249,28 @@ impl<S: StorageLayout> EngineState<S> {
     /// Validate and reserve a single-segment resource without performing its bulk crypto. Pooled
     /// hosts use this as the first half of an owning continuation; inline callers retain
     /// [`ingest_send_resource_segment_into`](Self::ingest_send_resource_segment_into).
-    pub fn prepare_send_resource_deferred(
+    pub fn request_resource_build<'a>(
         &mut self,
-        send: &ResourceSend<'_>,
+        send: &ResourceSend<'a>,
         segment: ResourceSegment,
-        sink: &mut impl FnMut(EngineReaction<'_>),
-    ) -> Option<DeferredResourceBuild> {
+        sink: &mut impl FnMut(EngineReaction<'a, OwedWork<'a>>),
+    ) {
+        if let Some(owed) = self.prepare_resource_build(send, segment, sink) {
+            sink(EngineReaction::Directive(Directive::Fulfill(
+                OwedWork::ResourceBuild(owed),
+            )));
+        }
+    }
+
+    fn prepare_resource_build<'a>(
+        &mut self,
+        send: &ResourceSend<'a>,
+        segment: ResourceSegment,
+        sink: &mut impl FnMut(EngineReaction<'a, OwedWork<'a>>),
+    ) -> Option<ResourceBuildOwed<'a>> {
         let &ResourceSend { id, link_id, .. } = send;
         let correlation = send.correlation;
-        let settle = |sink: &mut dyn FnMut(EngineReaction<'_>), failure| {
+        let settle = |sink: &mut dyn FnMut(EngineReaction<'a, OwedWork<'a>>), failure| {
             sink(EngineReaction::Journaled(Journaled::CommandSettled {
                 id,
                 settlement: resource_settlement(correlation, Err(failure)),
@@ -217,10 +288,13 @@ impl<S: StorageLayout> EngineState<S> {
             }
         };
         debug_assert_eq!(validated.lane, TrackLane::Live);
-        let ActiveLinkLookup::Active(link) = self.links.active_view(&link_id) else {
-            unreachable!("resource validation observed this link active without mutating it")
+        let key = match self.links.active_view(&link_id) {
+            ActiveLinkLookup::Active(link) => link.key.cloned(),
+            ActiveLinkLookup::Inactive | ActiveLinkLookup::Absent => {
+                settle(sink, SendResourceFailure::WriteFailed);
+                return None;
+            }
         };
-        let key = link.key.cloned();
         let shape = match outgoing_resource_buffer_shape(0, &send.body, validated.sdu) {
             Ok(shape) => shape,
             Err(error) => {
@@ -248,11 +322,14 @@ impl<S: StorageLayout> EngineState<S> {
                 return None;
             }
         };
-        Some(DeferredResourceBuild {
-            ticket,
-            key,
-            sdu: validated.sdu,
-            shape,
+        Some(ResourceBuildOwed {
+            plan: ResourceBuildPlan {
+                reservation: ticket,
+                key,
+                sdu: validated.sdu,
+                shape,
+            },
+            body: send.body,
         })
     }
 
@@ -319,11 +396,50 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
-    /// Land and advertise a completed owning resource build. A stale completion is a no-op; a
-    /// live failure settles exactly the command whose reservation the worker held.
-    pub fn apply_offloaded_resource_build<F>(
+    /// Execute one resource directive in the row storage already reserved by core. Embassy uses
+    /// this after the step that emitted the directive has returned.
+    pub fn execute_resource_build_inline<'a, F>(
         &mut self,
-        verdict: OffloadedResourceBuild<'_>,
+        owed: ResourceBuildOwed<'a>,
+        fill_entropy: &mut F,
+    ) -> InlineResourceBuildCompleted<'a>
+    where
+        F: FnMut(&mut [u8]),
+    {
+        let ResourceBuildOwed { plan, body } = owed;
+        let reservation = plan.reservation();
+        let mut seal_iv = [0u8; 16];
+        fill_entropy(&mut seal_iv);
+        let mut nonces = [[0u8; RESOURCE_NONCE_LEN];
+            crate::routing::links::resources::build_outgoing::SALT_REROLL_CAP + 1];
+        for nonce in &mut nonces {
+            fill_entropy(nonce);
+        }
+        let outcome = match self
+            .outgoing_resources
+            .deferred_build_regions_mut(reservation)
+        {
+            Some(regions) => {
+                let mut fresh_nonces = nonces.into_iter();
+                InlineResourceBuildOutcome::Built(plan.execute(
+                    &body,
+                    &seal_iv,
+                    || fresh_nonces.next().unwrap_or_default(),
+                    regions,
+                ))
+            }
+            None => InlineResourceBuildOutcome::ReservationStale,
+        };
+        InlineResourceBuildCompleted {
+            reservation,
+            request_data: body.data,
+            outcome,
+        }
+    }
+
+    pub fn resume_inline_resource_build<F>(
+        &mut self,
+        completed: InlineResourceBuildCompleted<'_>,
         now: InstantMillis,
         fill_entropy: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
@@ -331,25 +447,80 @@ impl<S: StorageLayout> EngineState<S> {
     where
         F: FnMut(&mut [u8]),
     {
-        let OffloadedResourceBuild {
-            ticket,
+        let InlineResourceBuildCompleted {
+            reservation,
+            request_data,
+            outcome,
+        } = completed;
+        let landing = match outcome {
+            InlineResourceBuildOutcome::ReservationStale => ResourceBuildLanding::Stale,
+            InlineResourceBuildOutcome::Built(outcome) => self
+                .outgoing_resources
+                .land_inline_build(reservation, outcome),
+        };
+        self.resume_landed_resource_build(
+            reservation,
+            request_data,
+            landing,
+            now,
+            fill_entropy,
+            sink,
+        )
+    }
+
+    /// Land and advertise a completed owning resource build. A stale completion is a no-op; a
+    /// live failure settles exactly the command whose reservation the worker held.
+    pub fn resume_resource_build<F>(
+        &mut self,
+        completed: ResourceBuildCompleted<'_>,
+        now: InstantMillis,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> crate::engine::WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+    {
+        let ResourceBuildCompleted {
+            reservation,
             transfer,
             names,
             request_data,
             outcome,
-        } = verdict;
-        let hash = match self
-            .outgoing_resources
-            .land_deferred_build(ticket, transfer, names, outcome)
-        {
-            LandDeferredResourceBuild::Stale => {
+        } = completed;
+        let landing =
+            self.outgoing_resources
+                .land_deferred_build(reservation, transfer, names, outcome);
+        self.resume_landed_resource_build(
+            reservation,
+            request_data,
+            landing,
+            now,
+            fill_entropy,
+            sink,
+        )
+    }
+
+    fn resume_landed_resource_build<F>(
+        &mut self,
+        reservation: ResourceBuildReservation,
+        request_data: &[u8],
+        landing: ResourceBuildLanding,
+        now: InstantMillis,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> crate::engine::WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+    {
+        let hash = match landing {
+            ResourceBuildLanding::Stale => {
                 return crate::engine::WakeSchedules::UNCHANGED;
             }
-            LandDeferredResourceBuild::Failed(error) => {
+            ResourceBuildLanding::Failed(error) => {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                    id: ticket.command_id,
+                    id: reservation.command_id,
                     settlement: resource_settlement(
-                        ticket.correlation,
+                        reservation.correlation,
                         Err(SendResourceFailure::Rejected(SendResourceRejection::Build(
                             error,
                         ))),
@@ -357,18 +528,18 @@ impl<S: StorageLayout> EngineState<S> {
                 }));
                 return crate::engine::WakeSchedules::UNCHANGED;
             }
-            LandDeferredResourceBuild::Built(hash) => hash,
+            ResourceBuildLanding::Built(hash) => hash,
         };
-        let Some(index) = self.outgoing_resources.lookup(&ticket.link_id, &hash) else {
+        let Some(index) = self.outgoing_resources.lookup(&reservation.link_id, &hash) else {
             return crate::engine::WakeSchedules::UNCHANGED;
         };
         let state = *self.outgoing_resources.state(index);
-        let ActiveLinkLookup::Active(link) = self.links.active_view(&ticket.link_id) else {
-            self.outgoing_resources.remove(&ticket.link_id, &hash);
+        let ActiveLinkLookup::Active(link) = self.links.active_view(&reservation.link_id) else {
+            self.outgoing_resources.remove(&reservation.link_id, &hash);
             sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                id: ticket.command_id,
+                id: reservation.command_id,
                 settlement: resource_settlement(
-                    ticket.correlation,
+                    reservation.correlation,
                     Err(SendResourceFailure::WriteFailed),
                 ),
             }));
@@ -383,14 +554,14 @@ impl<S: StorageLayout> EngineState<S> {
         let mut wake = crate::engine::WakeSchedules::UNCHANGED;
         match emit_resource_advertisement(
             &self.outgoing_resources,
-            &ticket.link_id,
+            &reservation.link_id,
             &hash,
             &AdvertisementLane { key, mtu, fire_on },
             &adv_iv,
             sink,
         ) {
             AdvertisementWriteOutcome::Wrote => {
-                self.links.note_outbound(&ticket.link_id, now);
+                self.links.note_outbound(&reservation.link_id, now);
                 wake.link_deadlines = self.link_deadlines_wake();
                 self.outgoing_resources.state_mut(index).retries_left = MAX_ADVERTISEMENT_RETRIES;
                 self.outgoing_resources
@@ -403,7 +574,7 @@ impl<S: StorageLayout> EngineState<S> {
                 {
                     self.book_request_resource_receipt(
                         state.command_id,
-                        &ticket.link_id,
+                        &reservation.link_id,
                         request_data,
                         response_timeout,
                         maximum_response_bytes,
@@ -413,11 +584,11 @@ impl<S: StorageLayout> EngineState<S> {
                 }
             }
             AdvertisementWriteOutcome::DidNotWrite => {
-                self.outgoing_resources.remove(&ticket.link_id, &hash);
+                self.outgoing_resources.remove(&reservation.link_id, &hash);
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                    id: ticket.command_id,
+                    id: reservation.command_id,
                     settlement: resource_settlement(
-                        ticket.correlation,
+                        reservation.correlation,
                         Err(SendResourceFailure::WriteFailed),
                     ),
                 }));
@@ -1179,7 +1350,7 @@ impl<S: StorageLayout> EngineState<S> {
         );
         match sealed {
             Ok(sealed) => self.record_staged_seal(index, &sealed),
-            Err(error) => self.fail_staged_seal(index, link_id, error, sink),
+            Err(error) => self.fail_staged_seal(index, error, sink),
         }
     }
 
@@ -1197,15 +1368,13 @@ impl<S: StorageLayout> EngineState<S> {
     fn fail_staged_seal(
         &mut self,
         index: usize,
-        link_id: &LinkId,
         error: BuildOutgoingResourceError,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) {
         let state = self.outgoing_resources.state(index);
         let id = state.command_id;
         let correlation = state.correlation;
-        let hash = *self.outgoing_resources.hash_at(index);
-        self.outgoing_resources.remove(link_id, &hash);
+        self.outgoing_resources.remove_at(index);
         sink(EngineReaction::Journaled(Journaled::CommandSettled {
             id,
             settlement: resource_settlement(
@@ -1278,7 +1447,6 @@ impl<S: StorageLayout> EngineState<S> {
                 {
                     self.fail_staged_seal(
                         index,
-                        &link_id,
                         BuildOutgoingResourceError::HashmapBufferTooShort,
                         sink,
                     );
@@ -1288,7 +1456,7 @@ impl<S: StorageLayout> EngineState<S> {
                 regions.hashmap[..names.len()].copy_from_slice(names);
                 self.record_staged_seal(index, &sealed);
             }
-            Err(error) => self.fail_staged_seal(index, &link_id, error, sink),
+            Err(error) => self.fail_staged_seal(index, error, sink),
         }
     }
 
@@ -1322,7 +1490,20 @@ impl<S: StorageLayout> EngineState<S> {
         if self.outgoing_resources.state(index).status != OutgoingResourceStatus::StagedSealed {
             return;
         }
-        let hash = *self.outgoing_resources.hash_at(index);
+        let Some(&hash) = self.outgoing_resources.hash_at(index) else {
+            while let Some(staged) = self.outgoing_resources.staged_index(link_id) {
+                let state = *self.outgoing_resources.state(staged);
+                self.outgoing_resources.remove_at(staged);
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id: state.command_id,
+                    settlement: resource_settlement(
+                        state.correlation,
+                        Err(SendResourceFailure::PredecessorFailed),
+                    ),
+                }));
+            }
+            return;
+        };
         let ActiveLinkLookup::Active(link) = self.links.active_view(link_id) else {
             self.fail_staged_continuation(link_id, sink);
             return;
@@ -1375,8 +1556,7 @@ impl<S: StorageLayout> EngineState<S> {
             let state = self.outgoing_resources.state(index);
             let id = state.command_id;
             let correlation = state.correlation;
-            let hash = *self.outgoing_resources.hash_at(index);
-            self.outgoing_resources.remove(link_id, &hash);
+            self.outgoing_resources.remove_at(index);
             sink(EngineReaction::Journaled(Journaled::CommandSettled {
                 id,
                 settlement: resource_settlement(
@@ -1474,9 +1654,11 @@ impl<S: StorageLayout> EngineState<S> {
     ) where
         F: FnMut(&mut [u8]),
     {
-        let link_id = *self.outgoing_resources.link_at(index);
-        let hash = *self.outgoing_resources.hash_at(index);
         let state = *self.outgoing_resources.state(index);
+        let link_id = *self.outgoing_resources.link_at(index);
+        let Some(&hash) = self.outgoing_resources.hash_at(index) else {
+            return;
+        };
         let ActiveLinkLookup::Active(link) = self.links.active_view(&link_id) else {
             self.cancel_outgoing_resource(
                 &link_id,
@@ -1969,19 +2151,27 @@ mod tests {
             },
             correlation: ResourceCorrelation::Unsolicited,
         };
-        let owed = deferred_engine
-            .prepare_send_resource_deferred(
-                &resource,
-                ResourceSegment::whole(plaintext.len() as u64),
-                &mut |_| panic!("a valid preparation must not react before its verdict"),
-            )
-            .expect("the worker is owed a pure build");
+        let mut emitted = None;
+        deferred_engine.request_resource_build(
+            &resource,
+            ResourceSegment::whole(plaintext.len() as u64),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Fulfill(OwedWork::ResourceBuild(
+                    owed,
+                ))) = reaction
+                {
+                    emitted = Some(owed);
+                } else {
+                    panic!("a valid request emits only its typed build directive");
+                }
+            },
+        );
+        let owed = emitted.expect("the worker is owed a pure build");
         let shape = owed.shape();
-        let ticket = owed.ticket();
+        let reservation = owed.reservation();
         let mut transfer = std::vec![0u8; shape.transfer_bytes()];
         let mut names = std::vec![0u8; shape.part_count() * MAP_HASH_LEN];
         let outcome = owed.execute(
-            &resource.body,
             &[0xA5; 16],
             || [0xA5; RESOURCE_NONCE_LEN],
             BuildRegions {
@@ -1993,9 +2183,9 @@ mod tests {
             frames: std::vec::Vec::new(),
             settlements: std::vec::Vec::new(),
         };
-        deferred_engine.apply_offloaded_resource_build(
-            OffloadedResourceBuild {
-                ticket,
+        deferred_engine.resume_resource_build(
+            ResourceBuildCompleted {
+                reservation,
                 transfer: &transfer,
                 names: &names,
                 request_data: &plaintext,
@@ -2019,6 +2209,49 @@ mod tests {
         assert!(inline.settlements.is_empty());
         assert!(deferred.settlements.is_empty());
         assert_eq!(deferred.frames, inline.frames);
+
+        let mut embassy_engine = sender_with_active_link();
+        let mut emitted = None;
+        embassy_engine.request_resource_build(
+            &resource,
+            ResourceSegment::whole(plaintext.len() as u64),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Fulfill(OwedWork::ResourceBuild(
+                    owed,
+                ))) = reaction
+                {
+                    emitted = Some(owed);
+                } else {
+                    panic!("a valid request emits only its typed build directive");
+                }
+            },
+        );
+        let completed = embassy_engine.execute_resource_build_inline(
+            emitted.expect("Embassy is owed the same pure build"),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+        );
+        let mut embassy = SendCapture {
+            frames: std::vec::Vec::new(),
+            settlements: std::vec::Vec::new(),
+        };
+        embassy_engine.resume_inline_resource_build(
+            completed,
+            InstantMillis(1_500),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
+                    if let Some(frame) = filled_frame(fill) {
+                        embassy.frames.push((target, frame));
+                    }
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    embassy.settlements.push((id, settlement));
+                }
+                _ => {}
+            },
+        );
+        assert_eq!(embassy.settlements, inline.settlements);
+        assert_eq!(embassy.frames, inline.frames);
     }
 
     #[test]
@@ -2979,9 +3212,8 @@ mod tests {
             "the raw stream waits nonce-prefixed at its sealed offset",
         );
         assert_eq!(state.part_count, 0, "nothing is named before the seal");
-        assert_eq!(
-            engine.outgoing_resources.hash_at(staged),
-            &ResourceHash::new([0; 32]),
+        assert!(
+            engine.outgoing_resources.hash_at(staged).is_none(),
             "the hash cannot exist before the seal",
         );
     }
@@ -3037,9 +3269,8 @@ mod tests {
             crate::routing::links::resources::sealed_transfer_bytes(38 * 40),
         );
         assert_eq!(state.part_count, 4);
-        assert_ne!(
-            engine.outgoing_resources.hash_at(staged),
-            &ResourceHash::new([0; 32]),
+        assert!(
+            engine.outgoing_resources.hash_at(staged).is_some(),
             "the seal names the transfer",
         );
         assert_eq!(
@@ -3054,7 +3285,7 @@ mod tests {
         let live = staged_pair(&mut engine);
         serve_live_parts(&mut engine, &live);
         let staged = engine.outgoing_resources.staged_index(&link_id()).unwrap();
-        let staged_hash = *engine.outgoing_resources.hash_at(staged);
+        let staged_hash = *engine.outgoing_resources.hash_at(staged).unwrap();
         let index = engine.outgoing_resources.lookup(&link_id(), &live).unwrap();
         let proof = engine.outgoing_resources.state(index).expected_proof;
 
@@ -3099,7 +3330,7 @@ mod tests {
         let live = staged_pair(&mut engine);
         serve_live_parts(&mut engine, &live);
         let staged = engine.outgoing_resources.staged_index(&link_id()).unwrap();
-        let staged_hash = *engine.outgoing_resources.hash_at(staged);
+        let staged_hash = *engine.outgoing_resources.hash_at(staged).unwrap();
         let names = engine.outgoing_resources.names_flat(staged).to_vec();
         let proof = engine.outgoing_resources.state(staged).expected_proof;
 

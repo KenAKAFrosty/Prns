@@ -1004,7 +1004,7 @@ mod loop_tests {
     fn a_single_shot_send_stays_one_unsplit_segment() {
         let mut sender = engine_with_active_link();
         let frame = advertise_from(&mut sender, &four_part_payload(), None);
-        let own = *sender.outgoing_resources.hash_at(0);
+        let own = *sender.outgoing_resources.hash_at(0).unwrap();
         let state = sender.outgoing_resources.state(0);
         assert_eq!(state.segment_index, 1);
         assert_eq!(state.total_segments, 1);
@@ -1040,7 +1040,7 @@ mod loop_tests {
             total,
             1_500,
         );
-        let own = *sender.outgoing_resources.hash_at(0);
+        let own = *sender.outgoing_resources.hash_at(0).unwrap();
         let state = sender.outgoing_resources.state(0);
         assert_eq!(state.segment_index, 1);
         assert_eq!(state.total_segments, 3);
@@ -1097,7 +1097,7 @@ mod loop_tests {
             total,
             4_000,
         );
-        let own = *sender.outgoing_resources.hash_at(0);
+        let own = *sender.outgoing_resources.hash_at(0).unwrap();
         let state = sender.outgoing_resources.state(0);
         assert_eq!(
             state.original_hash, original,

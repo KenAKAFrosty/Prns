@@ -27,6 +27,7 @@ mod interface_status;
 mod interface_topology;
 mod journal_delivery;
 mod local_command_lane;
+mod owed_work;
 
 pub use super::grant_lane::{
     tokio_grant_lane, HeapFrameSlot, TokioGrantConsumer, TokioGrantProducer,
@@ -52,12 +53,13 @@ pub use prns_runtime::runtime::{
 
 use command_dispatch::{CommandDispatch, CommandEffect};
 use crypto_dispatch::{dispatch_open_spans, CryptoCompletionEffect, CryptoDispatch};
-use crypto_pool::CryptoPool;
+use crypto_pool::{CryptoCompletion, CryptoPool};
 use egress::{flush_due_pacers, route_reaction, soonest_pacer_release, WireScratch};
 use host::ManifoldClock;
 use inbound_dispatch::{InboundContext, InboundDispatch};
 use interface_topology::InterfaceTopology;
 use journal_delivery::JournalDispatch;
+use owed_work::PendingOwedWork;
 
 trait CommandLane {
     fn enabled(&self) -> bool;
@@ -264,6 +266,8 @@ async fn run_inner<S, H, J, P, A, C>(
     let mut wire_scratch = WireScratch::new(frame_capacity);
     let mut inbound = InboundDispatch::new(frame_capacity);
     let mut journal = JournalDispatch::new(on_journaled);
+    let mut owed_work = PendingOwedWork::new();
+    let mut inline_crypto_completions = std::vec::Vec::new();
     macro_rules! journaled_sink {
         () => {
             |journaled| journal.route(journaled)
@@ -414,6 +418,7 @@ async fn run_inner<S, H, J, P, A, C>(
                     wire_scratch: &mut wire_scratch,
                     journal: &mut journal,
                     crypto_pool: crypto_pool.as_ref(),
+                    owed_work: &mut owed_work,
                 }
                 .dispatch(issued, now);
                 match effect {
@@ -490,6 +495,52 @@ async fn run_inner<S, H, J, P, A, C>(
                 &mut topology.egress,
                 &topology.ifacs,
             );
+            progressed = true;
+        }
+
+        if owed_work.dispatch(
+            &mut host,
+            crypto_pool.as_ref(),
+            &mut inline_crypto_completions,
+        ) {
+            progressed = true;
+        }
+        if !inline_crypto_completions.is_empty() {
+            let now = clock.observe_step(&host);
+            let mut seal_buf = [0u8; crate::wire::BROADCAST_MTU];
+            for result in inline_crypto_completions.drain(..) {
+                let effect = CryptoDispatch {
+                    engine: &mut engine,
+                    host: &mut host,
+                    topology: &mut topology,
+                    wire_scratch: &mut wire_scratch,
+                    journal: &mut journal,
+                    crypto_pool: crypto_pool.as_ref(),
+                }
+                .complete(
+                    CryptoCompletion {
+                        worker: 0,
+                        result,
+                        work: 0,
+                    },
+                    now,
+                    &mut seal_buf,
+                    &mut should_prove,
+                );
+                match effect {
+                    CryptoCompletionEffect::NoWakeChange => {}
+                    CryptoCompletionEffect::WakeSchedules(delta)
+                    | CryptoCompletionEffect::OpenSpanAdvanced(delta) => {
+                        merge_wake_schedules_delta(
+                            &mut wake_schedules,
+                            delta,
+                            &engine,
+                            topology.view(),
+                        );
+                    }
+                }
+            }
+            dispatch_open_spans(&mut engine, crypto_pool.as_ref());
             progressed = true;
         }
 

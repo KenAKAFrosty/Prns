@@ -68,12 +68,14 @@ pub trait DirectiveEgress {
     }
 }
 
-pub fn route_reaction(
-    reaction: EngineReaction<'_>,
+pub fn route_reaction<Work>(
+    reaction: EngineReaction<'_, Work>,
     egress: &mut impl DirectiveEgress,
     app: &mut impl FnMut(Journaled<'_>),
+    fulfill: &mut impl FnMut(Work),
 ) {
     match reaction {
+        EngineReaction::Directive(Directive::Fulfill(work)) => fulfill(work),
         EngineReaction::Directive(Directive::Send { target, bytes }) => {
             egress.send(target, bytes);
         }
@@ -198,6 +200,7 @@ mod tests {
                 on_send: &mut on_send,
             }),
             &mut egress,
+            &mut |_| {},
             &mut |_| {},
         );
 

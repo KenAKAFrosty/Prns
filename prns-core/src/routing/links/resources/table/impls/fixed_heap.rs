@@ -38,7 +38,7 @@ pub struct FixedHeapResourceTable<
 > {
     len: usize,
     link_ids: [LinkId; SLOTS],
-    hashes: [ResourceHash; SLOTS],
+    identities: [State::Identity; SLOTS],
     timeout_ats: [Option<InstantMillis>; SLOTS],
     states: [State; SLOTS],
     transfers: Box<[Box<[u8], A>], A>,
@@ -65,7 +65,7 @@ impl<
         Self {
             len: 0,
             link_ids: [LinkId::new([0u8; 16]); SLOTS],
-            hashes: [ResourceHash::new([0u8; 32]); SLOTS],
+            identities: [State::vacant_identity(); SLOTS],
             timeout_ats: [None; SLOTS],
             states: core::array::from_fn(|_| State::default()),
             transfers: flat_slots::<A>(TRANSFER_BYTES, SLOTS),
@@ -100,8 +100,8 @@ impl<
     fn link_ids(&self) -> &[LinkId] {
         &self.link_ids[..self.len]
     }
-    fn hashes(&self) -> &[ResourceHash] {
-        &self.hashes[..self.len]
+    fn identities(&self) -> &[State::Identity] {
+        &self.identities[..self.len]
     }
     fn timeout_ats(&self) -> &[Option<InstantMillis>] {
         &self.timeout_ats[..self.len]
@@ -110,8 +110,8 @@ impl<
         &self.states[..self.len]
     }
 
-    fn set_hash(&mut self, index: usize, hash: ResourceHash) {
-        self.hashes[index] = hash;
+    fn set_identity(&mut self, index: usize, identity: State::Identity) {
+        self.identities[index] = identity;
     }
     fn set_timeout_at(&mut self, index: usize, timeout_at: Option<InstantMillis>) {
         self.timeout_ats[index] = timeout_at;
@@ -162,7 +162,7 @@ impl<
     fn push(
         &mut self,
         link_id: LinkId,
-        hash: ResourceHash,
+        identity: State::Identity,
         state: State,
         shape: ResourceBufferShape,
     ) -> Result<usize, ResourceTablePushError> {
@@ -177,7 +177,7 @@ impl<
         }
         let index = self.len;
         self.link_ids[index] = link_id;
-        self.hashes[index] = hash;
+        self.identities[index] = identity;
         self.timeout_ats[index] = None;
         self.states[index] = state;
         self.part_flags[index] = [false; MAX_PARTS];
@@ -188,7 +188,7 @@ impl<
     fn swap_remove(&mut self, index: usize) {
         let last = self.len - 1;
         self.link_ids.swap(index, last);
-        self.hashes.swap(index, last);
+        self.identities.swap(index, last);
         self.timeout_ats.swap(index, last);
         self.states.swap(index, last);
         self.transfers.swap(index, last);
@@ -231,13 +231,13 @@ mod tests {
 
         let i = table.push(link(1), hash(0xA1), 7, shape()).unwrap();
         assert_eq!(table.active_buffer_bytes(), 1024 + 3 * 5);
-        table.set_hash(i, hash(0xB2));
+        table.set_identity(i, hash(0xB2));
         let buffers = table.buffers_mut(i);
         buffers.transfer[..4].copy_from_slice(&[1, 2, 3, 4]);
         buffers.part_flags[0] = true;
 
         assert_eq!(table.len(), 1);
-        assert_eq!(table.hashes(), &[hash(0xB2)]);
+        assert_eq!(table.identities(), &[hash(0xB2)]);
         assert_eq!(&table.transfer(i)[..4], &[1, 2, 3, 4]);
         assert!(table.part_flags(i)[0]);
         assert_eq!(table.states(), &[7]);
