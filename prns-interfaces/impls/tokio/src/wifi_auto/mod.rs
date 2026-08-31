@@ -1739,7 +1739,9 @@ impl Supervisor {
         {
             return UdpPeeringProbePreparation::PeerAlreadyKnown;
         }
-        crate::diagnostic_log::debug!("wifi-auto: UDP probing discovered service {discovery_endpoint}");
+        crate::diagnostic_log::debug!(
+            "wifi-auto: UDP probing discovered service {discovery_endpoint}"
+        );
         UdpPeeringProbePreparation::Ready(UdpPeeringProbe {
             target,
             peering_token: *auto_interface_protocol.our_peering_token().as_bytes(),

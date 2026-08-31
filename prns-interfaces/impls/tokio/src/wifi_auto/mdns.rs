@@ -345,7 +345,9 @@ fn collect_eligible_ip_addresses(
     Ok(eligible_ip_addresses)
 }
 
-fn local_link_local_scope_ids(auto_wifi_device_policy: &AutoWifiDevicePolicy) -> std::vec::Vec<u32> {
+fn local_link_local_scope_ids(
+    auto_wifi_device_policy: &AutoWifiDevicePolicy,
+) -> std::vec::Vec<u32> {
     super::link_local_nics(auto_wifi_device_policy)
         .into_iter()
         .map(|network_interface| network_interface.index)
@@ -1139,9 +1141,7 @@ mod tests {
         assert_eq!(service_advertisement.endpoints().len(), 1);
         assert_eq!(
             service_advertisement.endpoints()[0].socket_addr(),
-            "[fe80::12bd:a3ff:fe9d:f90c%14]:29717"
-                .parse()
-                .unwrap()
+            "[fe80::12bd:a3ff:fe9d:f90c%14]:29717".parse().unwrap()
         );
     }
 

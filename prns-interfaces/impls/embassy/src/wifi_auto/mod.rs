@@ -786,9 +786,7 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
     ) {
         if let Ok((len, meta)) = received {
             if let IpAddress::Ipv6(src) = meta.endpoint.addr {
-                crate::diagnostic_log::info!(
-                    "wifi-auto: unicast discovery from {src} len={len}"
-                );
+                crate::diagnostic_log::info!("wifi-auto: unicast discovery from {src} len={len}");
                 let peering_token_reply = ingest_beacon(
                     &mut self.brain,
                     &mut state.peers,
@@ -973,12 +971,8 @@ impl<'a, const MEMBERS: usize> AutoWifi<'a, MEMBERS> {
             // discover us via announce+probe, so they never appear in discovered_targets.
             // Without unicast refresh, and with IPv6 multicast beacons blocked on many APs,
             // those peers time out after PEERING_TIMEOUT_MS.
-            send_unicast_peer_refresh(
-                &self.primary.unicast_discovery,
-                &self.brain,
-                self.status,
-            )
-            .await;
+            send_unicast_peer_refresh(&self.primary.unicast_discovery, &self.brain, self.status)
+                .await;
         }
         BeaconMaintenanceOutcome::Completed
     }

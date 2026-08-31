@@ -219,7 +219,8 @@ impl<'a, const TARGETS: usize> UdpServiceDiscovery<'a, TARGETS> {
 
     async fn serve(&mut self, instance: &DiscoveryInstance) {
         let mut packet = [0u8; UDP_SERVICE_DISCOVERY_PACKET_BYTES];
-        let Some(packet_len) = self.encode_publication(&mut packet, instance, PUBLICATION_TTL_SECONDS)
+        let Some(packet_len) =
+            self.encode_publication(&mut packet, instance, PUBLICATION_TTL_SECONDS)
         else {
             return;
         };
