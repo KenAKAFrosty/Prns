@@ -235,7 +235,9 @@ async fn run_inner<S, H, J, P, A>(
         }
         // `Notify` is only the hole-punch into Tokio. Ring ownership and this durable count carry
         // the actual completion, so select cancellation or permit coalescing cannot strand work.
-        let crypto_completions_ready = crypto_pool.as_ref().is_some_and(CryptoPool::has_completion);
+        let crypto_completions_ready = crypto_pool
+            .as_ref()
+            .is_some_and(CryptoPool::prepare_completion_wait);
         tokio::select! {
             arrived = notify.recv() => {
                 let Some(source) = arrived else { return };

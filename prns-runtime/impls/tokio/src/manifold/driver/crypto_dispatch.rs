@@ -9,7 +9,7 @@ use crate::routing::links::resources::build_outgoing::SALT_REROLL_CAP;
 use crate::routing::links::resources::receive::offload::OffloadedOpenSpan;
 use crate::routing::links::resources::send::OffloadedStagedSeal;
 use crate::routing::links::resources::{MAP_HASH_LEN, RESOURCE_NONCE_LEN};
-use crate::routing::proof::EXPLICIT_PROOF_WIRE_LEN;
+use crate::routing::proof::{EXPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN};
 use crate::storage::StorageLayout;
 
 use super::crypto_pool::{
@@ -202,6 +202,35 @@ where
                 let mut proof = [0u8; EXPLICIT_PROOF_WIRE_LEN];
                 if let Ok(written) = engine.write_signed_proof(&packet_hash, &signature, &mut proof)
                 {
+                    route_reaction(
+                        EngineReaction::Directive(Directive::Send {
+                            target,
+                            bytes: &proof[..written],
+                        }),
+                        &mut topology.egress,
+                        &topology.ifacs,
+                        &mut topology.pacers,
+                        wire_scratch,
+                        now,
+                        &mut journaled_sink!(),
+                    );
+                }
+                CryptoCompletionEffect::NoWakeChange
+            }
+            CryptoResult::LinkReceiptSigned {
+                target,
+                link_id,
+                packet_hash,
+                signature,
+            } => {
+                let mut proof = [0u8; LINK_PROOF_WIRE_LEN];
+                if let Ok(written) = engine.complete_link_receipt_sign(
+                    &link_id,
+                    &packet_hash,
+                    &signature,
+                    now,
+                    &mut proof,
+                ) {
                     route_reaction(
                         EngineReaction::Directive(Directive::Send {
                             target,

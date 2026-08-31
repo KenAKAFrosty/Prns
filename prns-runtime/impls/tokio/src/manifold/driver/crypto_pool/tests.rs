@@ -122,6 +122,7 @@ async fn completion_wake_carries_no_payload_and_result_moves_through_worker_ring
     let signature = ed25519_sign(&secret, packet_hash.as_bytes());
     let completion_wake = Arc::new(Notify::new());
     let pool = CryptoPool::spawn(1, completion_wake.clone()).expect("worker spawns");
+    assert!(!pool.prepare_completion_wait());
 
     pool.submit(CryptoJob::Verify(EngineVerifyJob {
         packet_hash,
@@ -150,6 +151,185 @@ async fn completion_wake_carries_no_payload_and_result_moves_through_worker_ring
     pool.record_completed(completion.worker, completion.work);
     pool.packet_verdict_settled();
     assert!(!pool.has_completion());
+}
+
+#[tokio::test]
+async fn link_receipt_signing_moves_metadata_and_signature_through_the_worker_ring() {
+    use crate::crypto::{ed25519_public_key, ed25519_verify, Ed25519SecretKey};
+    use crate::engine::DeferredLinkReceiptSign;
+
+    let secret = Ed25519SecretKey::new([0x61; 32]);
+    let public = ed25519_public_key(&secret);
+    let target = InterfaceId::new([0x72; 8]);
+    let link_id = LinkId::new([0x83; 16]);
+    let packet_hash = PacketHash::new([0x94; 32]);
+    let completion_wake = Arc::new(Notify::new());
+    let pool = CryptoPool::spawn(1, completion_wake.clone()).expect("worker spawns");
+    assert!(!pool.prepare_completion_wait());
+
+    let mut receipts = vec![DeferredLinkReceiptSign {
+        target,
+        link_id,
+        packet_hash,
+        signing_secret: secret,
+    }];
+    pool.submit_link_receipts(&mut receipts);
+    assert!(receipts.is_empty());
+
+    tokio::time::timeout(Duration::from_secs(1), completion_wake.notified())
+        .await
+        .expect("worker signals LINK receipt completion");
+    let completion = pool
+        .pop_completion()
+        .expect("LINK receipt result moves back");
+    let CryptoResult::LinkReceiptSigned {
+        target: completed_target,
+        link_id: completed_link,
+        packet_hash: completed_hash,
+        signature,
+    } = completion.result
+    else {
+        panic!("the LINK receipt job must return its typed result");
+    };
+    assert_eq!(completed_target, target);
+    assert_eq!(completed_link, link_id);
+    assert_eq!(completed_hash, packet_hash);
+    ed25519_verify(&public, packet_hash.as_bytes(), &signature)
+        .expect("worker returns the exact valid receipt signature");
+    pool.record_completed(completion.worker, completion.work);
+    pool.packet_verdict_settled();
+}
+
+#[tokio::test]
+async fn already_ready_link_receipts_move_as_one_worker_batch() {
+    use crate::crypto::{ed25519_public_key, ed25519_verify, Ed25519SecretKey};
+    use crate::engine::DeferredLinkReceiptSign;
+
+    let secret_bytes = [0xa5; 32];
+    let public = ed25519_public_key(&Ed25519SecretKey::new(secret_bytes));
+    let target = InterfaceId::new([0xb6; 8]);
+    let link_id = LinkId::new([0xc7; 16]);
+    let mut receipts = (0u8..4)
+        .map(|index| DeferredLinkReceiptSign {
+            target,
+            link_id,
+            packet_hash: PacketHash::new([index; 32]),
+            signing_secret: Ed25519SecretKey::new(secret_bytes),
+        })
+        .collect::<Vec<_>>();
+    let completion_wake = Arc::new(Notify::new());
+    let pool = CryptoPool::spawn(1, completion_wake.clone()).expect("worker spawns");
+    assert!(!pool.prepare_completion_wait());
+
+    pool.submit_link_receipts(&mut receipts);
+    assert!(receipts.is_empty());
+    assert_eq!(pool.packet_verdicts_owed.get(), 4);
+
+    tokio::time::timeout(Duration::from_secs(1), completion_wake.notified())
+        .await
+        .expect("the already-ready receipt batch completes without a fill wait");
+    for index in 0u8..4 {
+        let completion = pool
+            .pop_completion()
+            .expect("the bulk-published result ring contains every receipt");
+        let CryptoResult::LinkReceiptSigned {
+            target: completed_target,
+            link_id: completed_link,
+            packet_hash,
+            signature,
+        } = completion.result
+        else {
+            panic!("the LINK receipt batch must return typed results");
+        };
+        assert_eq!(completed_target, target);
+        assert_eq!(completed_link, link_id);
+        assert_eq!(packet_hash, PacketHash::new([index; 32]));
+        ed25519_verify(&public, packet_hash.as_bytes(), &signature)
+            .expect("every batched receipt keeps its exact signature semantics");
+        pool.record_completed(completion.worker, completion.work);
+        pool.packet_verdict_settled();
+    }
+    assert!(!pool.has_completion());
+}
+
+#[test]
+fn same_link_receipt_backlog_routes_in_load_balanced_pairs() {
+    use crate::crypto::Ed25519SecretKey;
+    use crate::engine::DeferredLinkReceiptSign;
+
+    let target = InterfaceId::new([0xd8; 8]);
+    let link_id = LinkId::new([0xe9; 16]);
+    let mut receipts = (0u8..5)
+        .map(|index| DeferredLinkReceiptSign {
+            target,
+            link_id,
+            packet_hash: PacketHash::new([index; 32]),
+            signing_secret: Ed25519SecretKey::new([0xfa; 32]),
+        })
+        .collect::<Vec<_>>();
+    let pool = CryptoPool::spawn(4, Arc::new(Notify::new())).expect("workers spawn");
+
+    pool.submit_link_receipts(&mut receipts);
+
+    assert!(receipts.is_empty());
+    assert_eq!(
+        pool.workers
+            .iter()
+            .map(|worker| worker.outstanding_jobs.get())
+            .collect::<Vec<_>>(),
+        vec![2, 2, 1, 0],
+        "same-key work forms pairs without pinning the whole burst to one worker"
+    );
+}
+
+#[test]
+fn completion_wait_arm_closes_ready_before_and_after_arm_races() {
+    let pool = CryptoPool::spawn(1, Arc::new(Notify::new())).expect("worker spawns");
+
+    assert!(!pool.prepare_completion_wait());
+    assert!(
+        pool.state.completion_wake_armed.load(Ordering::Acquire),
+        "an empty pool arms its one Tokio hole-punch"
+    );
+
+    pool.state.ready_results.store(1, Ordering::Release);
+    assert!(pool.prepare_completion_wait());
+    assert!(
+        !pool.state.completion_wake_armed.load(Ordering::Acquire),
+        "durable readiness disarms a redundant notification"
+    );
+    pool.state.ready_results.store(0, Ordering::Release);
+}
+
+#[test]
+fn parked_worker_arm_is_cleared_by_submission_without_losing_the_job() {
+    use crate::crypto::Ed25519SecretKey;
+    use crate::engine::DeferredProofSign;
+
+    let pool = CryptoPool::spawn(1, Arc::new(Notify::new())).expect("worker spawns");
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while !pool.workers[0].wake_armed.load(Ordering::Acquire) {
+        assert!(std::time::Instant::now() < deadline, "worker arms its park");
+        std::thread::yield_now();
+    }
+
+    pool.submit(CryptoJob::Sign(DeferredProofSign {
+        target: InterfaceId::new([0x21; 8]),
+        packet_hash: PacketHash::new([0x32; 32]),
+        signing_secret: Ed25519SecretKey::new([0x43; 32]),
+    }));
+    let completion = loop {
+        if let Some(completion) = pool.pop_completion() {
+            break completion;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "submitted job completes"
+        );
+        std::thread::yield_now();
+    };
+    pool.record_completed(completion.worker, completion.work);
+    pool.packet_verdict_settled();
 }
 
 #[test]

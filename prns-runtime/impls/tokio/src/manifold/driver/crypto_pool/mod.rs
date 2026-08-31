@@ -12,8 +12,8 @@ use crate::crypto::{
     Ed25519Signature, Ed25519Verifier, X25519PublicKey, X25519SharedSecret,
 };
 use crate::engine::{
-    AnnounceVerifyOwed, CommandId, DecryptOwed, DeferredProofSign, EncryptOwed, InstantMillis,
-    RatchetDecryptOwed, Settlement,
+    AnnounceVerifyOwed, CommandId, DecryptOwed, DeferredLinkReceiptSign, DeferredProofSign,
+    EncryptOwed, InstantMillis, RatchetDecryptOwed, Settlement,
 };
 use crate::identity::{decrypt_token_in_place_with_ratchets, IdentitySigningPublicKey, OpenedBy};
 use crate::interfaces::InterfaceId;
@@ -230,6 +230,7 @@ pub(super) enum CryptoJob {
     DecryptWithRatchets(Box<RatchetDecryptOwed>),
     VerifyLinkProof(LinkProofVerifyOwed),
     SignLinkProof(LinkProofSignOwed),
+    SignLinkReceipt(DeferredLinkReceiptSign),
     VerifyAnnounce(AnnounceVerifyOwed),
     VerifyRemoteControlPairingAvailability(RemoteControlPairingAvailabilityVerifyOwed),
 }
@@ -258,6 +259,7 @@ impl CryptoJob {
             | Self::DecryptWithRatchets(_)
             | Self::VerifyLinkProof(_)
             | Self::SignLinkProof(_)
+            | Self::SignLinkReceipt(_)
             | Self::VerifyAnnounce(_)
             | Self::VerifyRemoteControlPairingAvailability(_) => CryptoJobClass::Latency,
         }
@@ -274,6 +276,7 @@ impl CryptoJob {
             Self::SealScalars(_) | Self::Decrypt(_) | Self::DecryptWithRatchets(_) => 2,
             Self::Verify(_)
             | Self::Sign(_)
+            | Self::SignLinkReceipt(_)
             | Self::VerifyAnnounce(_)
             | Self::VerifyRemoteControlPairingAvailability(_) => 1,
         }
@@ -307,6 +310,12 @@ pub(super) enum CryptoResult {
     },
     Signed {
         target: InterfaceId,
+        packet_hash: PacketHash,
+        signature: Ed25519Signature,
+    },
+    LinkReceiptSigned {
+        target: InterfaceId,
+        link_id: LinkId,
         packet_hash: PacketHash,
         signature: Ed25519Signature,
     },
@@ -370,6 +379,9 @@ struct CryptoPoolState {
     /// Durable readiness behind the coalescing `Notify`: a cancelled manifold wait can lose its
     /// place in Tokio's waiter queue, but it cannot lose this count or strand a result ring.
     ready_results: AtomicUsize,
+    /// Armed only while the manifold can actually sleep waiting for a completion. Workers keep
+    /// payloads in their SPSC rings and enter Tokio's wake path only on this state transition.
+    completion_wake_armed: AtomicBool,
     backpressure_depth: usize,
     shutdown: AtomicBool,
 }
@@ -379,6 +391,9 @@ struct CryptoWorker {
     job_producer: RefCell<Option<Producer<ScheduledCryptoJob>>>,
     /// The worker owns this ring's producer and the manifold owns this consumer.
     result_consumer: RefCell<Option<Consumer<ScheduledCryptoResult>>>,
+    /// Set only across the worker's final empty-ring observation and park. Active workers observe
+    /// their SPSC ring directly, so a submit does not pay an unconditional kernel wake.
+    wake_armed: Arc<AtomicBool>,
     handle: Option<std::thread::JoinHandle<()>>,
     outstanding_jobs: Cell<usize>,
     outstanding_work: Cell<usize>,
@@ -415,6 +430,7 @@ impl CryptoPool {
         let state = Arc::new(CryptoPoolState {
             queued_jobs: AtomicUsize::new(0),
             ready_results: AtomicUsize::new(0),
+            completion_wake_armed: AtomicBool::new(false),
             backpressure_depth: crypto_backpressure_depth(workers),
             shutdown: AtomicBool::new(false),
         });
@@ -425,6 +441,8 @@ impl CryptoPool {
                 RingBuffer::new(CRYPTO_WORKER_RESULT_RING_DEPTH);
             let worker_state = state.clone();
             let worker_completion_wake = completion_wake.clone();
+            let wake_armed = Arc::new(AtomicBool::new(false));
+            let worker_wake_armed = wake_armed.clone();
             match std::thread::Builder::new()
                 .name(format!("prns-crypto-{worker}"))
                 .spawn(move || {
@@ -433,11 +451,13 @@ impl CryptoPool {
                         job_consumer,
                         result_producer,
                         &worker_completion_wake,
+                        &worker_wake_armed,
                     );
                 }) {
                 Ok(handle) => worker_slots.push(CryptoWorker {
                     job_producer: RefCell::new(Some(job_producer)),
                     result_consumer: RefCell::new(Some(result_consumer)),
+                    wake_armed,
                     handle: Some(handle),
                     outstanding_jobs: Cell::new(0),
                     outstanding_work: Cell::new(0),
@@ -488,45 +508,10 @@ impl CryptoPool {
             .queued_jobs
             .fetch_add(1, Ordering::Release)
             .saturating_add(1);
-        let mut pending = Some(ScheduledCryptoJob { job, class, work });
-        let worker = loop {
-            let mut worker = selected_worker;
-            for _ in 0..self.workers.len() {
-                let Some(job) = pending.take() else {
-                    unreachable!("a crypto job is either pending or was pushed");
-                };
-                let pushed = match self.workers[worker].job_producer.borrow_mut().as_mut() {
-                    Some(producer) => producer.push(job),
-                    None => Err(PushError::Full(job)),
-                };
-                match pushed {
-                    Ok(()) => break,
-                    Err(PushError::Full(job)) => pending = Some(job),
-                }
-                worker += 1;
-                if worker == self.workers.len() {
-                    worker = 0;
-                }
-            }
-            if pending.is_none() {
-                break worker;
-            }
-            std::thread::yield_now();
-        };
-        let slot = &self.workers[worker];
-        slot.outstanding_jobs
-            .set(slot.outstanding_jobs.get().saturating_add(1));
-        slot.outstanding_work
-            .set(slot.outstanding_work.get().saturating_add(work));
-        if slot.tail_class.get() == Some(class) {
-            slot.tail_run.set(slot.tail_run.get().saturating_add(1));
-        } else {
-            slot.tail_class.set(Some(class));
-            slot.tail_run.set(1);
-        }
-        if let Some(handle) = &self.workers[worker].handle {
-            handle.thread().unpark();
-        }
+        let worker =
+            self.push_scheduled_job(selected_worker, ScheduledCryptoJob { job, class, work });
+        self.record_submitted_to_worker(worker, class, work);
+        self.wake_worker_if_armed(worker);
         if owes_packet_verdict {
             if self.packet_verdicts_owed.get() == 0 {
                 self.packet_verdict_hot_turns.set(0);
@@ -543,6 +528,124 @@ impl CryptoPool {
         }
         #[cfg(not(feature = "runtime-metrics"))]
         let _ = queue_depth;
+    }
+
+    /// Submit only the LINK receipt signs already exposed by the current inbound pass. The caller
+    /// never waits to fill this batch: one receipt takes this same path and is woken immediately.
+    /// Publishing every ring entry before waking its selected worker lets real ingress backlog be
+    /// claimed as one worker chunk instead of paying one park/unpark and one ring-head publication
+    /// per packet.
+    pub(super) fn submit_link_receipts(&self, receipts: &mut Vec<DeferredLinkReceiptSign>) {
+        let count = receipts.len();
+        if count == 0 {
+            return;
+        }
+
+        let queue_depth = self
+            .state
+            .queued_jobs
+            .fetch_add(count, Ordering::Release)
+            .saturating_add(count);
+        let class = CryptoJobClass::Latency;
+        let work = 1;
+        let mut touched_workers: HeaplessVec<usize, MAX_CRYPTO_QUEUE_DEPTH> = HeaplessVec::new();
+        let mut pair_affinity: Option<(LinkId, usize)> = None;
+        for receipt in receipts.drain(..) {
+            let link_id = receipt.link_id;
+            let paired = pair_affinity.filter(|(paired_link, _)| *paired_link == link_id);
+            let selected_worker = paired.map_or_else(
+                || self.worker_for(class, work),
+                |(_, paired_worker)| paired_worker,
+            );
+            let worker = self.push_scheduled_job(
+                selected_worker,
+                ScheduledCryptoJob {
+                    job: CryptoJob::SignLinkReceipt(receipt),
+                    class,
+                    work,
+                },
+            );
+            self.record_submitted_to_worker(worker, class, work);
+            pair_affinity = if paired.is_some() {
+                None
+            } else {
+                Some((link_id, worker))
+            };
+            if !touched_workers.contains(&worker) {
+                let _ = touched_workers.push(worker);
+            }
+        }
+
+        // The manifold is the sole producer for every job ring. Delaying only these wake syscalls
+        // until all already-ready work is visible cannot delay a cold worker beyond this submit;
+        // a worker that is already active may consume the entries concurrently without a wake.
+        for worker in touched_workers {
+            self.wake_worker_if_armed(worker);
+        }
+
+        if self.packet_verdicts_owed.get() == 0 {
+            self.packet_verdict_hot_turns.set(0);
+        }
+        self.packet_verdicts_owed
+            .set(self.packet_verdicts_owed.get().saturating_add(count));
+        #[cfg(feature = "runtime-metrics")]
+        {
+            self.submitted_jobs
+                .set(self.submitted_jobs.get().saturating_add(count as u64));
+            self.maximum_queue_depth
+                .set(self.maximum_queue_depth.get().max(queue_depth));
+        }
+        #[cfg(not(feature = "runtime-metrics"))]
+        let _ = queue_depth;
+    }
+
+    fn push_scheduled_job(&self, selected_worker: usize, scheduled: ScheduledCryptoJob) -> usize {
+        let mut pending = Some(scheduled);
+        loop {
+            let mut worker = selected_worker;
+            for _ in 0..self.workers.len() {
+                let Some(job) = pending.take() else {
+                    unreachable!("a crypto job is either pending or was pushed");
+                };
+                let pushed = match self.workers[worker].job_producer.borrow_mut().as_mut() {
+                    Some(producer) => producer.push(job),
+                    None => Err(PushError::Full(job)),
+                };
+                match pushed {
+                    Ok(()) => return worker,
+                    Err(PushError::Full(job)) => pending = Some(job),
+                }
+                worker += 1;
+                if worker == self.workers.len() {
+                    worker = 0;
+                }
+            }
+            std::thread::yield_now();
+        }
+    }
+
+    fn record_submitted_to_worker(&self, worker: usize, class: CryptoJobClass, work: usize) {
+        let slot = &self.workers[worker];
+        slot.outstanding_jobs
+            .set(slot.outstanding_jobs.get().saturating_add(1));
+        slot.outstanding_work
+            .set(slot.outstanding_work.get().saturating_add(work));
+        if slot.tail_class.get() == Some(class) {
+            slot.tail_run.set(slot.tail_run.get().saturating_add(1));
+        } else {
+            slot.tail_class.set(Some(class));
+            slot.tail_run.set(1);
+        }
+    }
+
+    fn wake_worker_if_armed(&self, worker: usize) {
+        let slot = &self.workers[worker];
+        if slot.wake_armed.load(Ordering::Acquire) && slot.wake_armed.swap(false, Ordering::AcqRel)
+        {
+            if let Some(handle) = &slot.handle {
+                handle.thread().unpark();
+            }
+        }
     }
 
     fn worker_for(&self, class: CryptoJobClass, work: usize) -> usize {
@@ -632,6 +735,28 @@ impl CryptoPool {
 
     pub(super) fn has_completion(&self) -> bool {
         self.state.ready_results.load(Ordering::Acquire) > 0
+    }
+
+    /// Returns true when a completion is already durable; otherwise arms the single Tokio wake
+    /// and closes the producer race with a second readiness observation before the caller waits.
+    pub(super) fn prepare_completion_wait(&self) -> bool {
+        if self.has_completion() {
+            self.state
+                .completion_wake_armed
+                .store(false, Ordering::Release);
+            return true;
+        }
+        self.state
+            .completion_wake_armed
+            .store(true, Ordering::Release);
+        if self.has_completion() {
+            self.state
+                .completion_wake_armed
+                .store(false, Ordering::Release);
+            true
+        } else {
+            false
+        }
     }
 
     pub(super) fn has_queue_capacity(&self, additional: usize) -> bool {
@@ -823,6 +948,15 @@ fn run_crypto_job(job: CryptoJob, verifier_cache: &mut WorkerVerifierCache) -> C
                 signature,
             }
         }
+        CryptoJob::SignLinkReceipt(job) => {
+            let signature = ed25519_sign(&job.signing_secret, job.packet_hash.as_bytes());
+            CryptoResult::LinkReceiptSigned {
+                target: job.target,
+                link_id: job.link_id,
+                packet_hash: job.packet_hash,
+                signature,
+            }
+        }
         CryptoJob::Decrypt(owed) => {
             let shared = x25519_diffie_hellman(&owed.encryption_secret, &owed.ephemeral_public);
             CryptoResult::Decrypted { owed, shared }
@@ -910,6 +1044,7 @@ fn crypto_worker(
     mut jobs: Consumer<ScheduledCryptoJob>,
     mut results: Producer<ScheduledCryptoResult>,
     completion_wake: &Notify,
+    wake_armed: &AtomicBool,
 ) {
     let mut verifier_cache = core::array::from_fn(|_| None);
     let mut batch_failure_cooldown = 0usize;
@@ -919,7 +1054,14 @@ fn crypto_worker(
         }
         let available = jobs.slots().min(CRYPTO_WORKER_BATCH_DEPTH);
         if available == 0 {
-            std::thread::park();
+            // Arm before the second ring observation so a concurrent producer either sees the
+            // arm and wakes us or leaves a job that prevents the park. `Thread::unpark` permits
+            // cover the final interval between that observation and entering the kernel.
+            wake_armed.store(true, Ordering::Release);
+            if jobs.slots() == 0 && !state.shutdown.load(Ordering::Acquire) {
+                std::thread::park();
+            }
+            wake_armed.store(false, Ordering::Release);
             continue;
         }
         let Ok(chunk) = jobs.read_chunk(available) else {
@@ -993,6 +1135,41 @@ fn crypto_worker(
                         return;
                     }
                 }
+                CryptoJob::SignLinkReceipt(job) => {
+                    let mut receipt_jobs = HeaplessVec::new();
+                    if receipt_jobs
+                        .push(ScheduledCryptoJob {
+                            job: CryptoJob::SignLinkReceipt(job),
+                            class,
+                            work,
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                    while matches!(
+                        jobs.peek(),
+                        Some(ScheduledCryptoJob {
+                            job: CryptoJob::SignLinkReceipt(_),
+                            ..
+                        })
+                    ) {
+                        let Some(job) = jobs.next() else {
+                            unreachable!("a peeked LINK receipt job remains available");
+                        };
+                        if receipt_jobs.push(job).is_err() {
+                            return;
+                        }
+                    }
+                    if !run_and_publish_link_receipt_jobs(
+                        receipt_jobs,
+                        state,
+                        &mut results,
+                        completion_wake,
+                    ) {
+                        return;
+                    }
+                }
                 job => {
                     if !run_and_publish_crypto_job(
                         ScheduledCryptoJob { job, class, work },
@@ -1007,6 +1184,36 @@ fn crypto_worker(
             }
         }
     }
+}
+
+fn run_and_publish_link_receipt_jobs(
+    jobs: HeaplessVec<ScheduledCryptoJob, CRYPTO_WORKER_BATCH_DEPTH>,
+    state: &CryptoPoolState,
+    results: &mut Producer<ScheduledCryptoResult>,
+    completion_wake: &Notify,
+) -> bool {
+    let mut completed = HeaplessVec::<ScheduledCryptoResult, CRYPTO_WORKER_BATCH_DEPTH>::new();
+    for ScheduledCryptoJob { job, work, .. } in jobs {
+        let CryptoJob::SignLinkReceipt(job) = job else {
+            unreachable!("the LINK receipt batch contains only LINK receipt jobs");
+        };
+        let signature = ed25519_sign(&job.signing_secret, job.packet_hash.as_bytes());
+        if completed
+            .push(ScheduledCryptoResult {
+                result: CryptoResult::LinkReceiptSigned {
+                    target: job.target,
+                    link_id: job.link_id,
+                    packet_hash: job.packet_hash,
+                    signature,
+                },
+                work,
+            })
+            .is_err()
+        {
+            return false;
+        }
+    }
+    publish_crypto_results(completed, state, results, completion_wake)
 }
 
 struct ScheduledVerifyJob {
@@ -1127,15 +1334,52 @@ fn publish_crypto_result(
         };
         match results.push(result) {
             Ok(()) => {
-                completion_wake.notify_one();
+                notify_completion_if_armed(state, completion_wake);
                 return true;
             }
             Err(PushError::Full(result)) => {
                 pending = Some(result);
-                completion_wake.notify_one();
+                notify_completion_if_armed(state, completion_wake);
                 std::thread::yield_now();
             }
         }
+    }
+}
+
+fn publish_crypto_results(
+    pending: HeaplessVec<ScheduledCryptoResult, CRYPTO_WORKER_BATCH_DEPTH>,
+    state: &CryptoPoolState,
+    results: &mut Producer<ScheduledCryptoResult>,
+    completion_wake: &Notify,
+) -> bool {
+    let count = pending.len();
+    if count == 0 {
+        return true;
+    }
+    state.ready_results.fetch_add(count, Ordering::Release);
+    loop {
+        if state.shutdown.load(Ordering::Acquire) {
+            state.ready_results.fetch_sub(count, Ordering::Release);
+            return false;
+        }
+        if results.slots() < count {
+            notify_completion_if_armed(state, completion_wake);
+            std::thread::yield_now();
+            continue;
+        }
+        let Ok(chunk) = results.write_chunk_uninit(count) else {
+            continue;
+        };
+        let written = chunk.fill_from_iter(pending);
+        debug_assert_eq!(written, count);
+        notify_completion_if_armed(state, completion_wake);
+        return true;
+    }
+}
+
+fn notify_completion_if_armed(state: &CryptoPoolState, completion_wake: &Notify) {
+    if state.completion_wake_armed.swap(false, Ordering::AcqRel) {
+        completion_wake.notify_one();
     }
 }
 

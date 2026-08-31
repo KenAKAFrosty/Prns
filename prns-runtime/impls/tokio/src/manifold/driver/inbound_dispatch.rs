@@ -1,8 +1,10 @@
 use tokio::sync::mpsc::UnboundedReceiver;
 
+use crate::crypto::ed25519_sign;
 use crate::engine::{
-    ClassifiedInboundPacket, DeferredCrypto, EngineState, IngestIo, InstantMillis, Journaled,
-    ProofIngest, ProofRequest, Settlement, WakeSchedules,
+    ClassifiedInboundPacket, DeferredCrypto, DeferredLinkReceiptSign, Directive, EngineReaction,
+    EngineState, IngestIo, InstantMillis, Journaled, ProofIngest, ProofRequest, Settlement,
+    WakeSchedules,
 };
 use crate::interfaces::{
     FrameAccountingEvent, IfacUnmaskError, InboundPacket, InterfaceId, PacketPhyStats,
@@ -11,6 +13,7 @@ use crate::manifold::kernel::merge_wake_schedules_delta;
 use crate::manifold::Host;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::resources::ResourceOffer;
+use crate::routing::proof::LINK_PROOF_WIRE_LEN;
 use crate::runtime::InterfaceStore;
 use crate::storage::StorageLayout;
 use crate::wire::DestinationHash;
@@ -24,13 +27,24 @@ use super::journal_delivery::JournalDispatch;
 pub(super) struct InboundDispatch {
     ready_lanes: std::vec::Vec<InterfaceId>,
     unmask_scratch: std::boxed::Box<[u8]>,
+    link_receipt_signs: std::vec::Vec<DeferredLinkReceiptSign>,
+    inline_link_receipt_signs: std::vec::Vec<DeferredLinkReceiptSign>,
 }
+
+// The minimum sixteen-job admission depth exposes at most fifteen receipt signs while retaining
+// room for the next packet's possible second crypto job. Split that common backlog across the
+// manifold (seven immediate proofs) and the pool (up to eight jobs). Seven remains a fixed latency
+// bound on larger hosts; their additional backlog goes to their larger pool instead of blocking
+// the manifold. Neither side waits for work, and a lone receipt stays entirely inline.
+const INLINE_LINK_RECEIPT_TRANCHE: usize = 7;
 
 impl InboundDispatch {
     pub(super) fn new(frame_capacity: usize) -> Self {
         Self {
             ready_lanes: std::vec::Vec::new(),
             unmask_scratch: std::vec![0u8; frame_capacity].into_boxed_slice(),
+            link_receipt_signs: std::vec::Vec::new(),
+            inline_link_receipt_signs: std::vec::Vec::new(),
         }
     }
 
@@ -81,6 +95,8 @@ impl InboundDispatch {
         let Self {
             ready_lanes,
             unmask_scratch,
+            link_receipt_signs,
+            inline_link_receipt_signs,
         } = self;
         macro_rules! journaled_sink {
             () => {
@@ -104,6 +120,8 @@ impl InboundDispatch {
         }
 
         for &source in ready_lanes.iter() {
+            debug_assert!(link_receipt_signs.is_empty());
+            debug_assert!(inline_link_receipt_signs.is_empty());
             let frame_accounting = topology.frame_accounting_recorder(source);
             let Some((_, lane)) = topology
                 .inbound_lanes
@@ -114,7 +132,9 @@ impl InboundDispatch {
             };
             lane.acknowledge();
             for _ in 0..max_frames_per_lane {
-                if crypto_pool.is_some_and(|pool| !pool.has_queue_capacity(2)) {
+                if crypto_pool.is_some_and(|pool| {
+                    !pool.has_queue_capacity(link_receipt_signs.len().saturating_add(2))
+                }) {
                     break;
                 }
                 let Some(slot) = lane.try_peek() else {
@@ -225,6 +245,9 @@ impl InboundDispatch {
                             DeferredCrypto::LinkProofSign(owed) => {
                                 pool.submit(CryptoJob::SignLinkProof(owed));
                             }
+                            DeferredCrypto::LinkReceiptSign(owed) => {
+                                link_receipt_signs.push(owed);
+                            }
                             DeferredCrypto::AnnounceVerify(owed) => {
                                 pool.submit(CryptoJob::VerifyAnnounce(owed));
                             }
@@ -265,6 +288,39 @@ impl InboundDispatch {
                     topology.interfaces.view(),
                 );
                 dispatch_open_spans(engine, crypto_pool);
+            }
+            if let Some(pool) = crypto_pool {
+                for _ in 0..INLINE_LINK_RECEIPT_TRANCHE {
+                    let Some(receipt) = link_receipt_signs.pop() else {
+                        break;
+                    };
+                    inline_link_receipt_signs.push(receipt);
+                }
+                pool.submit_link_receipts(link_receipt_signs);
+                for owed in inline_link_receipt_signs.drain(..) {
+                    let signature = ed25519_sign(&owed.signing_secret, owed.packet_hash.as_bytes());
+                    let mut proof = [0u8; LINK_PROOF_WIRE_LEN];
+                    if let Ok(written) = engine.complete_link_receipt_sign(
+                        &owed.link_id,
+                        &owed.packet_hash,
+                        &signature,
+                        now,
+                        &mut proof,
+                    ) {
+                        route_reaction(
+                            EngineReaction::Directive(Directive::Send {
+                                target: owed.target,
+                                bytes: &proof[..written],
+                            }),
+                            &mut topology.egress,
+                            &topology.ifacs,
+                            &mut topology.pacers,
+                            wire_scratch,
+                            now,
+                            &mut journaled_sink!(),
+                        );
+                    }
+                }
             }
         }
         ready_lanes.retain(|source| {
