@@ -192,7 +192,10 @@ export class BrowserWebSocketSession implements WebSocketSession {
     if (decoded.tag !== "Decoded") {
       return decoded;
     }
-    if (this.framing === "RawPacket") {
+    if (
+      this.framing === "RawPacket" ||
+      this.#codec.canPassRawInbound?.() === true
+    ) {
       if (decoded.data.length === 0) {
         return Tag("Handled");
       }
@@ -209,8 +212,8 @@ export class BrowserWebSocketSession implements WebSocketSession {
     if (this.#closed) {
       return Tag("Handled");
     }
+    const pending = batch.resolvedOutbound?.slice();
     const ingress = this.#submitIngress(batch.packets);
-    const pending = batch.resolvedOutbound;
     if (pending !== undefined) {
       const ingested = await ingress;
       if (ingested.tag !== "Handled") {
@@ -413,7 +416,10 @@ export class BrowserWebSocketSession implements WebSocketSession {
         maximum: this.#frameCap,
       });
     }
-    if (this.framing === "RawPacket") {
+    if (
+      this.framing === "RawPacket" ||
+      this.#codec.canPassRawOutbound?.() === true
+    ) {
       return this.#writeEncodedFrame(frame);
     }
     let encoded: Uint8Array | undefined;

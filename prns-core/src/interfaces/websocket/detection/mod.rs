@@ -324,6 +324,33 @@ mod allocated {
         }
 
         #[must_use]
+        pub const fn can_pass_raw_outbound(&self) -> bool {
+            match &self.state {
+                SessionFramingState::Detecting {
+                    outbound: DetectingOutbound::ProvisionalRaw,
+                    ..
+                } => true,
+                SessionFramingState::Ready(decoder) => {
+                    matches!(decoder.framing(), WebSocketWireFraming::RawPacket)
+                }
+                SessionFramingState::Detecting {
+                    outbound: DetectingOutbound::AwaitingEvidence(_),
+                    ..
+                } => false,
+            }
+        }
+
+        #[must_use]
+        pub const fn can_pass_raw_inbound(&self) -> bool {
+            match &self.state {
+                SessionFramingState::Ready(decoder) => {
+                    matches!(decoder.framing(), WebSocketWireFraming::RawPacket)
+                }
+                SessionFramingState::Detecting { .. } => false,
+            }
+        }
+
+        #[must_use]
         pub const fn has_pending_outbound(&self) -> bool {
             self.raw_fallback_is_armed()
         }

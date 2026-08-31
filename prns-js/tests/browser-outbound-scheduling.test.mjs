@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { Tag } from "personal-rns/browser";
+import { receiveByteTransfer } from "../dist/browser/byte_transfer.js";
 import { RuntimeHost } from "../dist/browser/runtime.js";
 import { BrowserUsbAutoSession } from "../dist/browser/usb_auto/session.js";
 import { BrowserWebSocketSession } from "../dist/browser/websocket/session.js";
@@ -163,6 +164,35 @@ test("WebSocket framing evidence wakes outbound before the fallback deadline", a
   assert.equal((await session.close()).tag, "Closed");
 });
 
+test("resolved automatic raw framing bypasses the WebSocket codec", async () => {
+  const host = new DeferredIngressHost([
+    { bytes: new Uint8Array([0x51, 0x52]) },
+  ]);
+  const socket = new FakeSocket();
+  const codec = new AutomaticRawCodec();
+  const session = new BrowserWebSocketSession(
+    host,
+    socket,
+    new Uint8Array([1, 0, 0, 0, 0, 0, 0, 0]),
+    "ws://localhost:42721/prns",
+    16_384,
+    "Auto",
+    codec,
+    () => undefined,
+  );
+  session.start();
+  socket.receive(new Uint8Array([0x61, 0x62]));
+
+  await waitUntil(() => socket.outbound.length === 1 && host.ingress.length === 1);
+  assert.deepEqual(socket.outbound, [[0x51, 0x52]]);
+  assert.deepEqual(host.ingress[0].bytes, [0x61, 0x62]);
+  assert.equal(codec.decodeCalls, 0);
+  assert.equal(codec.stageOutboundCalls, 0);
+
+  host.accept(0);
+  assert.equal((await session.close()).tag, "Closed");
+});
+
 test("runtime outbound waits without polling and wakes with a non-empty batch", async () => {
   const runtime = new FakeRuntime();
   const host = runtimeHost(runtime);
@@ -228,6 +258,34 @@ test("bounded outbound reads preserve queued frames without another wake", async
   assert.equal(second.tag, "Outbound");
   assert.deepEqual([...first.data[0].bytes], [0x31]);
   assert.deepEqual([...second.data[0].bytes], [0x32]);
+});
+
+test("network outbound donates exclusive buffers and copies shared buffers", async () => {
+  const runtime = new FakeRuntime();
+  const host = runtimeHost(runtime);
+  const first = register(host, 1);
+  const second = register(host, 2);
+  const shared = Uint8Array.from([0x41, 0x42]);
+  runtime.queue(
+    rawFrameFor(first, shared.subarray(0, 1)),
+    rawFrameFor(second, shared.subarray(1, 2)),
+  );
+
+  const firstOutcome = await host.nextTransferredOutboundFor(first);
+  assert.equal(firstOutcome.tag, "TransferredOutbound");
+  assert.notEqual(firstOutcome.data.buffers[0], shared.buffer);
+  assert.deepEqual(
+    receiveByteTransfer(firstOutcome.data).map((bytes) => [...bytes]),
+    [[0x41]],
+  );
+
+  const secondOutcome = await host.nextTransferredOutboundFor(second);
+  assert.equal(secondOutcome.tag, "TransferredOutbound");
+  assert.equal(secondOutcome.data.buffers[0], shared.buffer);
+  assert.deepEqual(
+    receiveByteTransfer(secondOutcome.data).map((bytes) => [...bytes]),
+    [[0x42]],
+  );
 });
 
 test("an invalid outbound batch limit is rejected instead of waiting forever", async () => {
@@ -475,6 +533,16 @@ class IngressCodec extends FixedCodec {
   }
 }
 
+class AutomaticRawCodec extends FixedCodec {
+  canPassRawOutbound() {
+    return true;
+  }
+
+  canPassRawInbound() {
+    return true;
+  }
+}
+
 class FakeSocket {
   bufferedAmount = 0;
   outbound = [];
@@ -545,6 +613,14 @@ function frameFor(interfaceId, bytes) {
     type: "frame",
     target: { type: "interface", interfaceId },
     bytes: new Uint8Array(bytes),
+  };
+}
+
+function rawFrameFor(interfaceId, bytes) {
+  return {
+    type: "frame",
+    target: { type: "interface", interfaceId },
+    bytes,
   };
 }
 

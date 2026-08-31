@@ -204,6 +204,7 @@ import type {
 } from "./worker_protocol.js";
 import {
   registerWorkerCapabilityDispatcher,
+  registerWorkerNetworkOutboundDispatcher,
   registerWorkerSnapshotCapturer,
   workerEngineHooks,
 } from "./worker_engine_bridge.js";
@@ -703,6 +704,11 @@ export class Prns {
     );
     registerWorkerCapabilityDispatcher(this, (call) =>
       this.#dispatchPageCapability(call),
+    );
+    registerWorkerNetworkOutboundDispatcher(
+      this,
+      (interfaceId, maximumFrames) =>
+        this.#host.nextTransferredOutboundFor(interfaceId, maximumFrames),
     );
     registerWorkerSnapshotCapturer(this, () => this.#captureWorkerSnapshot());
     this.interfaces = new PrnsInterfaces(this.#host, autoWifiSelectionSeed);

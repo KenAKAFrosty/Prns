@@ -49,3 +49,32 @@ three-segment 2 MiB case measured 24.4–27.2 MiB/s across two post-change runs,
 up from 18.2 MiB/s, and the five-segment 4 MiB case measured 33.1–34.4 MiB/s,
 up from 30.3 MiB/s. Platform crypto throughput varied materially between runs,
 so these are scoped end-to-end findings rather than primitive-speed claims.
+
+A subsequent network-worker pass replaced the extra task-scheduled ingress
+flush with an end-of-microtask flush and transferred independently owned frame
+buffers directly across the engine/network boundary. An isolated Chrome
+measurement put the former copy-and-transfer seam at 0.7, 1.1, and 2.4 ms for
+1, 2, and 4 MiB, while the donated-buffer seam remained about 0.1 ms at every
+size. Three untraced Chrome 151 full-engine runs then measured the 4 MiB
+`ParallelWorkers` path at 35.2, 35.6, and 39.8 MiB/s. Their 35.6 MiB/s median
+was 3.5% above the 34.4 MiB/s median of the three immediately preceding runs.
+The improvement is intentionally modest: this removes size-proportional host
+copy work, while cryptography and the protocol's advertisement/request/proof
+cadence remain the larger end-to-end costs.
+
+Once automatic WebSocket framing has resolved to raw packets, the framing
+state now authorizes direct inbound and outbound passthrough. The steady-state
+raw path therefore avoids copying each packet into the network worker's WASM
+codec and copying its identical result back out. Three further untraced Chrome
+151 runs measured the 4 MiB `ParallelWorkers` path at 41.3, 42.6, and 43.5
+MiB/s. Their 42.6 MiB/s median is 19.6% above the donated-buffer intermediate
+median and 23.7% above the original 34.4 MiB/s median.
+
+A temporary duplex relay timeline also separated protocol cadence from host
+scheduling. Across the measured 4 MiB `ParallelWorkers` repetitions, the next
+segment advertisement followed its predecessor's proof by 0.5–1.3 ms. The
+remaining 10.9–14.7 ms interval for each full-size segment preceded the proof,
+while the receiver opened, hashed, validated, and assembled the data. The
+continuation pipeline is therefore already releasing advertisements promptly;
+the receiver's cryptographic work, not a transport polling or task-scheduling
+bubble, owns the remaining inter-segment gap.

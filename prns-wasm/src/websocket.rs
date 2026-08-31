@@ -47,6 +47,16 @@ impl WebSocketFramingCodec {
         self.session.can_stage_multiple_outbound()
     }
 
+    #[wasm_bindgen(js_name = canPassRawOutbound)]
+    pub fn can_pass_raw_outbound(&self) -> bool {
+        self.session.can_pass_raw_outbound()
+    }
+
+    #[wasm_bindgen(js_name = canPassRawInbound)]
+    pub fn can_pass_raw_inbound(&self) -> bool {
+        self.session.can_pass_raw_inbound()
+    }
+
     #[wasm_bindgen(js_name = rawFallbackIsArmed)]
     pub fn raw_fallback_is_armed(&self) -> bool {
         self.session.raw_fallback_is_armed()

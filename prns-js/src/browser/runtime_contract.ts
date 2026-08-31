@@ -279,6 +279,8 @@ export type WebSocketFramingCodecBinding = {
   messageCap(): number;
   canReadOutbound(): boolean;
   canStageMultipleOutbound(): boolean;
+  canPassRawOutbound?(): boolean;
+  canPassRawInbound?(): boolean;
   rawFallbackIsArmed(): boolean;
   isDetecting(): boolean;
   rawFallbackDelayMillis(): number;

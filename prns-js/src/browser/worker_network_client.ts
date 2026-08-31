@@ -1,19 +1,23 @@
 import { Tag, match_into } from "../casework.js";
+import { interfaceId } from "../contract.js";
 import type {
   InterfaceSessionStatus,
 } from "./interface_contract.js";
 import { describeHostError } from "./host_errors.js";
-import { dispatchWorkerCapability } from "./worker_engine_bridge.js";
+import {
+  dispatchWorkerCapability,
+  dispatchWorkerNetworkOutbound,
+} from "./worker_engine_bridge.js";
 import type { Prns } from "./index.js";
 import {
-  packOutboundFrames,
-  unpackIngressItems,
+  receiveIngressTransfer,
 } from "./worker_network_protocol.js";
 import type {
   EngineNetworkMessage,
+  IngressFailure,
   NetworkEngineMessage,
   NetworkWorkerStartMessage,
-  PackedIngressFailure,
+  TransferredIngressBatch,
 } from "./worker_network_protocol.js";
 import type {
   WebSocketConnectOptions,
@@ -192,8 +196,8 @@ export class WorkerNetworkClient {
         HostCall: ({ id, call }) => {
           void this.#performHostCall(id, call);
         },
-        IngressBatch: ({ id, buffer }) => {
-          void this.#performIngressBatch(id, buffer);
+        IngressBatch: ({ id, batch }) => {
+          void this.#performIngressBatch(id, batch);
         },
         ProtocolFailed: ({ detail }) => {
           this.#fail(detail);
@@ -210,21 +214,21 @@ export class WorkerNetworkClient {
   ): Promise<void> {
     try {
       if (call.tag === "NextOutbound") {
-        const outcome = await dispatchWorkerCapability(this.#engine, call);
-        if (outcome.tag === "Outbound") {
-          const buffer = packOutboundFrames(outcome.data);
-          const response: EngineNetworkMessage = Tag("HostSettlement", {
-            id,
-            outcome: Tag("PackedOutbound", { buffer }),
-          });
-          this.#port.postMessage(response, [buffer]);
-          return;
-        }
+        const outcome = await dispatchWorkerNetworkOutbound(
+          this.#engine,
+          interfaceId(call.data.interfaceId),
+          call.data.maximumFrames,
+        );
         const response: EngineNetworkMessage = Tag("HostSettlement", {
           id,
           outcome,
         });
-        this.#port.postMessage(response);
+        this.#port.postMessage(
+          response,
+          outcome.tag === "TransferredOutbound"
+            ? [...outcome.data.buffers]
+            : [],
+        );
         return;
       }
       const outcome = await dispatchWorkerCapability(this.#engine, call);
@@ -238,9 +242,12 @@ export class WorkerNetworkClient {
     }
   }
 
-  async #performIngressBatch(id: number, buffer: ArrayBuffer): Promise<void> {
+  async #performIngressBatch(
+    id: number,
+    batch: TransferredIngressBatch,
+  ): Promise<void> {
     try {
-      const items = unpackIngressItems(buffer);
+      const items = receiveIngressTransfer(batch);
       const outcomes = await Promise.all(
         items.map(({ interfaceId, bytes }) =>
           dispatchWorkerCapability(
@@ -249,7 +256,7 @@ export class WorkerNetworkClient {
           )
         ),
       );
-      const failures: PackedIngressFailure[] = [];
+      const failures: IngressFailure[] = [];
       for (let index = 0; index < outcomes.length; index += 1) {
         const outcome = outcomes[index];
         if (outcome !== undefined && outcome.tag !== "Accepted") {

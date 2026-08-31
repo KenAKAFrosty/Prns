@@ -1,6 +1,7 @@
 import { Tag, match_into } from "../casework.js";
 import { interfaceId } from "../contract.js";
 import type { InterfaceId } from "../contract.js";
+import type { TransferredByteBatch } from "./byte_transfer.js";
 import {
   bytesField,
   field,
@@ -52,6 +53,10 @@ export type InterfaceOutboundOutcome =
   | Tag<"InterfaceDetached">
   | Tag<"OutboundQueueFull", { readonly capacity: number }>
   | RuntimeRejected;
+
+export type TransferredInterfaceOutboundOutcome =
+  | Tag<"TransferredOutbound", TransferredByteBatch>
+  | Exclude<InterfaceOutboundOutcome, Tag<"Outbound", unknown>>;
 
 export type InterfaceOutboundHost = {
   nextOutboundFor(

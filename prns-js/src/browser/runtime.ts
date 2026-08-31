@@ -21,7 +21,9 @@ import type {
   InterfaceOutboundOutcome,
   NonEmptyPrnsOutboundFrames,
   PrnsOutboundFrame,
+  TransferredInterfaceOutboundOutcome,
 } from "./outbound.js";
+import { prepareByteTransfer } from "./byte_transfer.js";
 import {
   MIN_ENTROPY_BYTES,
   PrnsValidationError,
@@ -93,6 +95,10 @@ type OutboundTakeOutcome =
   | Tag<"Outbound", readonly PrnsOutboundFrame[]>
   | Tag<"OutboundQueueFull", { readonly capacity: number }>
   | RuntimeRejected;
+type OutboundUnavailable = Exclude<
+  InterfaceOutboundOutcome,
+  Tag<"Outbound", unknown>
+>;
 type RuntimeOutboundDrainOutcome =
   | Tag<"Drained", readonly PrnsOutboundFrame[]>
   | RuntimeRejected;
@@ -536,6 +542,35 @@ export class RuntimeHost {
     interfaceId: InterfaceId,
     maximumFrames = Number.MAX_SAFE_INTEGER,
   ): Promise<InterfaceOutboundOutcome> {
+    return this.#nextOutboundFor(
+      interfaceId,
+      maximumFrames,
+      (frames) => Tag("Outbound", frames),
+    );
+  }
+
+  async nextTransferredOutboundFor(
+    interfaceId: InterfaceId,
+    maximumFrames = Number.MAX_SAFE_INTEGER,
+  ): Promise<TransferredInterfaceOutboundOutcome> {
+    return this.#nextOutboundFor(
+      interfaceId,
+      maximumFrames,
+      (frames) => Tag(
+        "TransferredOutbound",
+        prepareByteTransfer(
+          frames.map((frame) => frame.bytes),
+          this.#retainedOutboundBuffers(),
+        ),
+      ),
+    );
+  }
+
+  async #nextOutboundFor<Ready>(
+    interfaceId: InterfaceId,
+    maximumFrames: number,
+    ready: (frames: NonEmptyPrnsOutboundFrames) => Ready,
+  ): Promise<Ready | OutboundUnavailable> {
     const key = interfaceKey(interfaceId);
     while (this.#activeInterfaces.has(key)) {
       const outbound = this.#takeOutboundFor(interfaceId, maximumFrames);
@@ -543,10 +578,7 @@ export class RuntimeHost {
         return outbound;
       }
       if (outbound.data.length > 0) {
-        return Tag(
-          "Outbound",
-          outbound.data as NonEmptyPrnsOutboundFrames,
-        );
+        return ready(outbound.data as NonEmptyPrnsOutboundFrames);
       }
       const wake = await this.#waitForOutbound(key);
       if (wake.tag === "InterfaceDetached") {
@@ -619,6 +651,16 @@ export class RuntimeHost {
       waiters.add(resolve);
       this.#outboundWaiters.set(key, waiters);
     });
+  }
+
+  #retainedOutboundBuffers(): ReadonlySet<ArrayBufferLike> {
+    const retained = new Set<ArrayBufferLike>();
+    for (const queue of this.#outboundQueues.values()) {
+      for (const frame of queue) {
+        retained.add(frame.bytes.buffer);
+      }
+    }
+    return retained;
   }
 
   notifyRuntimeActivity(): void {
