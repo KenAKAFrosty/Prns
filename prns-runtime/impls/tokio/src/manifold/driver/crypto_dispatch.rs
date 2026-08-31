@@ -68,6 +68,7 @@ where
                     host.fill_entropy(salt);
                 }
                 let job = StagedSealJob {
+                    command_id: view.command_id,
                     link_id,
                     key: view.key.cloned(),
                     sdu: view.sdu,
@@ -279,6 +280,7 @@ where
                 &mut reaction_sink!(),
             )),
             CryptoResult::StagedSealed {
+                command_id,
                 link_id,
                 stream_nonce,
                 nonce_prefixed_bytes,
@@ -290,6 +292,7 @@ where
                 let names_len = outcome.map_or(0, |sealed| sealed.part_count * MAP_HASH_LEN);
                 engine.apply_offloaded_staged_seal(
                     OffloadedStagedSeal {
+                        command_id,
                         link_id,
                         stream_nonce,
                         nonce_prefixed_bytes,

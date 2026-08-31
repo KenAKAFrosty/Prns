@@ -190,6 +190,7 @@ pub(super) struct EngineVerifyJob {
 }
 
 pub(super) struct StagedSealJob {
+    pub(super) command_id: CommandId,
     pub(super) link_id: LinkId,
     pub(super) key: LinkKey,
     pub(super) sdu: usize,
@@ -274,6 +275,7 @@ pub(super) enum CryptoResult {
         verification: RemoteControlPairingAvailabilityVerification,
     },
     StagedSealed {
+        command_id: CommandId,
         link_id: LinkId,
         stream_nonce: [u8; RESOURCE_NONCE_LEN],
         nonce_prefixed_bytes: usize,
@@ -477,6 +479,7 @@ fn run_crypto_job(job: CryptoJob) -> CryptoResult {
     match job {
         CryptoJob::SealStaged(job) => {
             let StagedSealJob {
+                command_id,
                 link_id,
                 key,
                 sdu,
@@ -504,6 +507,7 @@ fn run_crypto_job(job: CryptoJob) -> CryptoResult {
                 },
             );
             CryptoResult::StagedSealed {
+                command_id,
                 link_id,
                 stream_nonce,
                 nonce_prefixed_bytes,
