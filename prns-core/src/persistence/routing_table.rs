@@ -367,6 +367,7 @@ fn parse_row(bytes: &[u8]) -> Option<(PersistedRouteRow<'_>, &[u8])> {
             responsiveness,
             receiving_interface: InterfaceId::new(*receiving_interface),
             next_hop,
+            retention: crate::routing::RouteRetention::Network,
         },
         public_keys: IdentityPublicKeys {
             encryption: IdentityEncryptionPublicKey::new(X25519PublicKey(*encryption)),
@@ -408,6 +409,7 @@ mod tests {
                 responsiveness: RouteResponsiveness::Responsive,
                 receiving_interface: InterfaceId::new([seed; INTERFACE_ID_LEN]),
                 next_hop: NextHop::Via(TransportId::new([seed.wrapping_add(1); 16])),
+                retention: crate::routing::RouteRetention::Network,
             },
             public_keys: IdentityPublicKeys {
                 encryption: IdentityEncryptionPublicKey::new(X25519PublicKey([seed; 32])),

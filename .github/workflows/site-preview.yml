@@ -74,15 +74,16 @@ jobs:
           npm run build:flasher
           git -C "$GITHUB_WORKSPACE" diff --exit-code -- docs/website/public/assets/tailwind.css
           PRNS_BUILD_VERSION="$(cat "$GITHUB_WORKSPACE/VERSION")" \
-          dx build --platform web --debug-symbols false --release --locked
+          dx build --web --ssg --force-sequential true --debug-symbols false --release --locked
       - name: Assemble the preview site
         run: |
           dist=target/site-preview/website
           hosted=docs/website/target/dx/reticulum-site/release/web/public
           test -f "$hosted/index.html"
+          PRNS_BUILD_VERSION="$(cat VERSION)" \
+          cargo run --locked --manifest-path docs/website/Cargo.toml --bin finalize_ssg -- "$hosted"
           mkdir -p "$dist/assets/flasher"
           cp -R "$hosted/." "$dist/"
-          cp "$dist/index.html" "$dist/404.html"
           cp "$PRNS_SOURCE_ARCHIVE" "$dist/source.zip"
           cp "$PRNS_SOURCE_ARCHIVE.sha256" "$dist/source.zip.sha256"
           cp docs/website/target/hosted-assets/prns-flash.js "$dist/assets/flasher/prns-flash.js"

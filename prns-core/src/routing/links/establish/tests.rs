@@ -20,7 +20,9 @@ use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::routing::RouteResponsiveness;
 use crate::storage::TestFixedStorage;
 use crate::units::RttMillis;
-use crate::wire::{DestinationHash, PropagationType, TransportId, WirePacketHeader};
+use crate::wire::{
+    wire_hop_count_is_valid, DestinationHash, PropagationType, TransportId, WirePacketHeader,
+};
 
 impl EstablishLinkWriteOutcome {
     #[track_caller]
@@ -43,8 +45,19 @@ fn arrival() -> InterfaceId {
     InterfaceId::new([0xA1; 8])
 }
 
+fn other_arrival() -> InterfaceId {
+    InterfaceId::new([0xA2; 8])
+}
+
 fn arrival_interfaces() -> [InterfaceDescriptor; 1] {
     [routable_descriptor(arrival())]
+}
+
+fn both_arrival_interfaces() -> [InterfaceDescriptor; 2] {
+    [
+        routable_descriptor(arrival()),
+        routable_descriptor(other_arrival()),
+    ]
 }
 
 fn vector_establish_entropy() -> EstablishLinkEntropy {
@@ -825,6 +838,188 @@ fn an_accept_none_destination_announces_but_refuses_the_link_request() {
         "the destination is registered and held, yet answers no link request",
     );
     assert!(responder.links.is_empty());
+}
+
+#[test]
+fn an_accept_direct_destination_admits_only_canonical_zero_hop_link_requests() {
+    let mut initiator = neighbor_with_a_route();
+    let mut direct = [0u8; BROADCAST_MTU];
+    let dispatch = initiator
+        .write_commanded_link_request(
+            CommandId(7),
+            &establish(),
+            InstantMillis(1_000),
+            vector_establish_entropy(),
+            AttachedInterfaces::new(&arrival_interfaces()),
+            &mut direct,
+        )
+        .dispatched();
+    let direct = direct[..dispatch.wire_bytes].to_vec();
+    let (canonical, payload) = WirePacketHeader::parse(&direct).unwrap();
+    assert_eq!(canonical.hops, 0);
+    assert_eq!(canonical.propagation, PropagationType::Broadcast);
+    assert_eq!(canonical.transport_id, None);
+
+    let direct_only_responder = || {
+        let mut responder = EngineState::<TestStorageLayout>::new(fixed_secret_key());
+        let identity = responder.held_identity_hashes()[0];
+        responder
+            .register_single_destination(
+                &identity,
+                "personal",
+                &["node"],
+                b"hello-personal",
+                ProofStrategy::ProveNone,
+                LinkRequestPolicy::AcceptDirect,
+                crate::engine::RatchetPolicy::NoRatchets,
+            )
+            .unwrap();
+        responder
+    };
+    let rewrite = |header: WirePacketHeader| {
+        let mut wire = std::vec![0u8; BROADCAST_MTU];
+        let header_len = header.write(&mut wire).unwrap();
+        wire[header_len..header_len + payload.len()].copy_from_slice(payload);
+        wire.truncate(header_len + payload.len());
+        wire
+    };
+    fn ingest<'a>(
+        responder: &mut EngineState<TestStorageLayout>,
+        wire: &'a mut [u8],
+    ) -> IngestPacketOutcome<'a> {
+        responder.ingest_packet_with(
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface: arrival(),
+                bytes: wire,
+            },
+            &mut |_| {},
+            AttachedInterfaces::new(&arrival_interfaces()),
+            &mut |_| {},
+            None,
+        )
+    }
+
+    let mut responder = direct_only_responder();
+    let mut canonical_wire = direct.clone();
+    assert!(matches!(
+        ingest(&mut responder, &mut canonical_wire),
+        IngestPacketOutcome::OwesLinkProof(_),
+    ));
+
+    for hops in 1..=u8::MAX {
+        let mut responder = direct_only_responder();
+        let mut routed = rewrite(WirePacketHeader { hops, ..canonical });
+        let expected = if wire_hop_count_is_valid(hops) {
+            IgnoreReason::LinkRequestsRefused
+        } else {
+            IgnoreReason::Malformed
+        };
+        assert_eq!(
+            ingest(&mut responder, &mut routed),
+            IngestPacketOutcome::Ignored(expected),
+        );
+        let mut canonical_wire = direct.clone();
+        assert!(matches!(
+            ingest(&mut responder, &mut canonical_wire),
+            IngestPacketOutcome::OwesLinkProof(_),
+        ));
+    }
+
+    for rejected_header in [
+        WirePacketHeader {
+            propagation: PropagationType::Transport,
+            ..canonical
+        },
+        WirePacketHeader {
+            propagation: PropagationType::Transport,
+            transport_id: Some(RESPONDER_TRANSPORT_ID),
+            ..canonical
+        },
+        WirePacketHeader {
+            transport_id: Some(RESPONDER_TRANSPORT_ID),
+            ..canonical
+        },
+    ] {
+        let mut responder = direct_only_responder();
+        pin_transport_id(&mut responder, RESPONDER_TRANSPORT_ID);
+        let mut rejected = rewrite(rejected_header);
+        assert_eq!(
+            ingest(&mut responder, &mut rejected),
+            IngestPacketOutcome::Ignored(IgnoreReason::LinkRequestsRefused),
+        );
+        let mut canonical_wire = direct.clone();
+        assert!(matches!(
+            ingest(&mut responder, &mut canonical_wire),
+            IngestPacketOutcome::OwesLinkProof(_),
+        ));
+    }
+}
+
+#[test]
+fn an_interface_scoped_direct_destination_refuses_other_direct_interfaces() {
+    let mut initiator = neighbor_with_a_route();
+    let mut wire = [0u8; BROADCAST_MTU];
+    let dispatch = initiator
+        .write_commanded_link_request(
+            CommandId(7),
+            &establish(),
+            InstantMillis(1_000),
+            vector_establish_entropy(),
+            AttachedInterfaces::new(&arrival_interfaces()),
+            &mut wire,
+        )
+        .dispatched();
+    let wire = &wire[..dispatch.wire_bytes];
+
+    let mut responder = EngineState::<TestStorageLayout>::new(fixed_secret_key());
+    let identity = responder.held_identity_hashes()[0];
+    responder
+        .register_single_destination(
+            &identity,
+            "personal",
+            &["node"],
+            b"hello-personal",
+            ProofStrategy::ProveNone,
+            LinkRequestPolicy::AcceptDirectFrom {
+                interface: arrival(),
+            },
+            crate::engine::RatchetPolicy::NoRatchets,
+        )
+        .unwrap();
+
+    let mut wrong_interface_wire = wire.to_vec();
+    assert_eq!(
+        responder.ingest_packet_with(
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface: other_arrival(),
+                bytes: &mut wrong_interface_wire,
+            },
+            &mut |_| {},
+            AttachedInterfaces::new(&both_arrival_interfaces()),
+            &mut |_| {},
+            None,
+        ),
+        IngestPacketOutcome::Ignored(IgnoreReason::LinkRequestsRefused),
+    );
+    assert!(responder.links.is_empty());
+
+    let mut selected_interface_wire = wire.to_vec();
+    assert!(matches!(
+        responder.ingest_packet_with(
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface: arrival(),
+                bytes: &mut selected_interface_wire,
+            },
+            &mut |_| {},
+            AttachedInterfaces::new(&both_arrival_interfaces()),
+            &mut |_| {},
+            None,
+        ),
+        IngestPacketOutcome::OwesLinkProof(_),
+    ));
 }
 
 #[test]
@@ -3747,6 +3942,7 @@ fn a_close_link_command_settles_and_closes_the_peer() {
 
     let mut sent = std::vec::Vec::new();
     let mut settled = std::vec::Vec::new();
+    let mut closed = std::vec::Vec::new();
     let _ = initiator.ingest_command_into(
         IssuedCommand {
             id: CommandId(12),
@@ -3767,6 +3963,9 @@ fn a_close_link_command_settles_and_closes_the_peer() {
             EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
                 settled.push((id, settlement));
             }
+            EngineReaction::Journaled(Journaled::LinkClosed { link_id, reason }) => {
+                closed.push((link_id, reason));
+            }
             _ => {}
         },
     );
@@ -3775,6 +3974,7 @@ fn a_close_link_command_settles_and_closes_the_peer() {
         std::vec![(CommandId(12), Settlement::CloseLink(Ok(())))],
     );
     assert_eq!(sent.len(), 1);
+    assert_eq!(closed, [(link_id, LinkClosedReason::LocallyClosed)]);
     assert!(initiator.links.is_empty());
 
     let mut tampered = sent[0].clone();

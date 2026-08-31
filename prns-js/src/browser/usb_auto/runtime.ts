@@ -1,15 +1,11 @@
 import type { Tag } from "../../casework.js";
 import type { InterfaceId } from "../../contract.js";
 import type { BrowserUsbDeviceFilter } from "../host_apis.js";
-import type {
-  AlreadyActive,
-  InterfaceSessionFailure,
-} from "../interface_contract.js";
-import type { PrnsOutboundFrame } from "../outbound.js";
+import type { AlreadyActive } from "../interface_contract.js";
+import type { InterfaceOutboundHost } from "../outbound.js";
 import type {
   EntropyFailure,
   RuntimeRejected,
-  UsbAutoDecoderBinding,
 } from "../runtime_contract.js";
 import type {
   BitrateBps,
@@ -38,12 +34,14 @@ type UsbAutoIngestOutcome =
   | EntropyFailure
   | RuntimeRejected;
 
-type UsbAutoOutboundOutcome =
-  | Tag<"Outbound", readonly PrnsOutboundFrame[]>
-  | Extract<InterfaceSessionFailure, Tag<"OutboundQueueFull", unknown>>
-  | RuntimeRejected;
+type UsbAutoHostOutcome<Outcome> = Outcome | Promise<Outcome>;
 
-export type UsbAutoRuntimeHost = {
+export type UsbAutoHostDecoder = {
+  feed(chunk: Uint8Array): UsbAutoHostOutcome<unknown[] | RuntimeRejected>;
+  release?(): void;
+};
+
+export type UsbAutoRuntimeHost = InterfaceOutboundHost & {
   runtimeReadiness(): Tag<"Ready"> | RuntimeRejected;
   defaultUsbAutoFilters(): readonly BrowserUsbDeviceFilter[];
   usbAutoHostBitrateBps(): BitrateBps;
@@ -52,11 +50,10 @@ export type UsbAutoRuntimeHost = {
   usbAutoHostHelloFrame(): Uint8Array;
   usbAutoHostHelloAckFrame(nodeTag: Uint8Array): Uint8Array;
   usbAutoDataFrame(packet: PacketFrame): Uint8Array;
-  createUsbAutoDecoder(): UsbAutoDecoderBinding;
+  createUsbAutoDecoder(): UsbAutoHostDecoder;
   registerInterface(
     registration: UsbAutoRuntimeRegistration,
-  ): UsbAutoRegistrationOutcome;
-  deactivateInterface(id: InterfaceId): UsbAutoDetachOutcome;
-  ingest(id: InterfaceId, bytes: PacketFrame): UsbAutoIngestOutcome;
-  takeOutboundFor(id: InterfaceId): UsbAutoOutboundOutcome;
+  ): UsbAutoHostOutcome<UsbAutoRegistrationOutcome>;
+  deactivateInterface(id: InterfaceId): UsbAutoHostOutcome<UsbAutoDetachOutcome>;
+  ingest(id: InterfaceId, bytes: PacketFrame): UsbAutoHostOutcome<UsbAutoIngestOutcome>;
 };

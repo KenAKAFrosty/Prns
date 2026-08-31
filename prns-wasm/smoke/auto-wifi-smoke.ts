@@ -342,6 +342,7 @@ function validateCatalogBoundaries(): void {
 
 async function readyPrns(): Promise<Prns> {
   const outcome = await Prns.create({
+    execution: "MainThread",
     wasm: wasmModule(),
     identityStore: {
       load: async () => Tag("Loaded", identitySecretKey(new Uint8Array(IDENTITY_LENGTH).fill(7), IDENTITY_LENGTH)),

@@ -7,7 +7,7 @@ use crate::routing::announce::{
     AnnounceId, DottedNameHash, IdentityPublicKeys, RatchetKey, ANNOUNCE_ID_WIRE_LEN,
 };
 use crate::routing::route_expiry::RouteExpiryIndex;
-use crate::routing::routes::{RouteEntry, RouteEvidenceId, RouteTable};
+use crate::routing::routes::{RouteEntry, RouteEvidenceId, RouteRetention, RouteTable};
 use crate::storage::TablePushError;
 use crate::wire::DestinationHash;
 
@@ -81,17 +81,29 @@ where
     I: RouteExpiryIndex,
 {
     pub fn persisted_rows(&self) -> impl Iterator<Item = PersistedRouteRow<'_>> + '_ {
-        (0..self.routes.len()).map(move |i| self.persisted_row_at(i))
+        (0..self.routes.len())
+            .filter(|&i| self.routes.retentions()[i] == RouteRetention::Network)
+            .map(move |i| self.persisted_row_at(i))
     }
 
     pub fn persisted_destinations(&self) -> impl Iterator<Item = DestinationHash> + '_ {
-        self.routes.destinations().iter().copied()
+        self.routes
+            .destinations()
+            .iter()
+            .copied()
+            .zip(self.routes.retentions().iter().copied())
+            .filter_map(|(destination, retention)| match retention {
+                RouteRetention::Network => Some(destination),
+                RouteRetention::Ephemeral { .. } => None,
+            })
     }
 
     pub fn persisted_row(&self, destination: &DestinationHash) -> Option<PersistedRouteRow<'_>> {
-        self.routes
-            .index_of(destination)
-            .map(|index| self.persisted_row_at(index))
+        let index = self.routes.index_of(destination)?;
+        match self.routes.retentions()[index] {
+            RouteRetention::Network => Some(self.persisted_row_at(index)),
+            RouteRetention::Ephemeral { .. } => None,
+        }
     }
 
     fn persisted_row_at(&self, i: usize) -> PersistedRouteRow<'_> {
@@ -123,7 +135,11 @@ where
         let Ok(handle) = self.announce_app_data.insert(row.app_data) else {
             return SeedRouteOutcome::AppDataArenaFull;
         };
-        let routes_slot = match self.routes.push(row.destination, evidence_id, row.entry) {
+        let entry = RouteEntry {
+            retention: RouteRetention::Network,
+            ..row.entry
+        };
+        let routes_slot = match self.routes.push(row.destination, evidence_id, entry) {
             Ok(i) => i,
             Err(TablePushError::TableFull) => {
                 self.announce_app_data.free(handle);

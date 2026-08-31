@@ -252,7 +252,7 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// The one exit every dead incoming transfer leaves through: the slot retires (window and rate bequeathed to the link), the failure event carries the cause, and a response transfer's claimed request settles with it.
-    pub(super) fn fail_incoming_resource(
+    pub(crate) fn fail_incoming_resource(
         &mut self,
         link_id: &LinkId,
         hash: &ResourceHash,
@@ -269,7 +269,7 @@ impl<S: StorageLayout> EngineState<S> {
         if let Some(command_id) = settled_request {
             sink(EngineReaction::Journaled(Journaled::CommandSettled {
                 id: command_id,
-                settlement: Settlement::SendRequest(Err(SendRequestFailure::Timeout)),
+                settlement: Settlement::SendRequest(Err(SendRequestFailure::from(cause))),
             }));
         }
         ConcludeResourceOutcome::Failed(cause)
@@ -470,7 +470,7 @@ impl<S: StorageLayout> EngineState<S> {
             if let Some(proven) = self.receipts.settle_by_request_id(request_id) {
                 sink(EngineReaction::Journaled(Journaled::CommandSettled {
                     id: proven.command_id,
-                    settlement: Settlement::SendRequest(Err(SendRequestFailure::Timeout)),
+                    settlement: Settlement::SendRequest(Err(SendRequestFailure::from(cause))),
                 }));
             }
         }
@@ -1858,7 +1858,9 @@ mod seam_tests {
             settled[0],
             (
                 CommandId(42),
-                Settlement::SendRequest(Err(SendRequestFailure::Timeout)),
+                Settlement::SendRequest(Err(SendRequestFailure::ResponseTransferFailed(
+                    ResourceFailureCause::RetriesExhausted,
+                ))),
             ),
         ));
         assert!(!requester.receipts.has_pending_request(request_id));

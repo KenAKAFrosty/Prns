@@ -1,6 +1,5 @@
 use crate::crypto::{Ed25519Signature, Ed25519Verifier};
-use crate::engine::CommandId;
-use crate::engine::InstantMillis;
+use crate::engine::{CommandId, InstantMillis, SendRequestIntent};
 use crate::identity::IdentitySigningPublicKey;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::request::RequestId;
@@ -17,17 +16,76 @@ pub enum ReceiptKind {
     },
     SendToLink(LinkId),
     SendRequest {
-        maximum_response_bytes: ByteLimit,
+        link_id: LinkId,
+        response: RequestReceiptPolicy,
     },
 }
 
 const _: () = {
-    assert!(core::mem::size_of::<ReceiptKind>() == 24);
+    assert!(core::mem::size_of::<ReceiptKind>() == 32);
 };
 
 impl ReceiptKind {
     const fn is_request(self) -> bool {
         matches!(self, Self::SendRequest { .. })
+    }
+
+    pub(crate) const fn request(
+        link_id: LinkId,
+        maximum_response_bytes: ByteLimit,
+        intent: SendRequestIntent,
+    ) -> Self {
+        Self::SendRequest {
+            link_id,
+            response: RequestReceiptPolicy::new(maximum_response_bytes, intent),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestReceiptPolicy {
+    ApplicationUnlimited,
+    ApplicationMaximum(u64),
+    RemoteControlControllerPairingUnlimited,
+    RemoteControlControllerPairingMaximum(u64),
+}
+
+impl RequestReceiptPolicy {
+    pub(crate) const fn new(limit: ByteLimit, intent: SendRequestIntent) -> Self {
+        match (intent, limit) {
+            (SendRequestIntent::Application, ByteLimit::Unlimited) => Self::ApplicationUnlimited,
+            (SendRequestIntent::Application, ByteLimit::Maximum(maximum)) => {
+                Self::ApplicationMaximum(maximum)
+            }
+            (SendRequestIntent::RemoteControlControllerPairing, ByteLimit::Unlimited) => {
+                Self::RemoteControlControllerPairingUnlimited
+            }
+            (SendRequestIntent::RemoteControlControllerPairing, ByteLimit::Maximum(maximum)) => {
+                Self::RemoteControlControllerPairingMaximum(maximum)
+            }
+        }
+    }
+
+    pub const fn intent(self) -> SendRequestIntent {
+        match self {
+            Self::ApplicationUnlimited | Self::ApplicationMaximum(_) => {
+                SendRequestIntent::Application
+            }
+            Self::RemoteControlControllerPairingUnlimited
+            | Self::RemoteControlControllerPairingMaximum(_) => {
+                SendRequestIntent::RemoteControlControllerPairing
+            }
+        }
+    }
+
+    pub const fn maximum_response_bytes(self) -> ByteLimit {
+        match self {
+            Self::ApplicationUnlimited | Self::RemoteControlControllerPairingUnlimited => {
+                ByteLimit::Unlimited
+            }
+            Self::ApplicationMaximum(maximum)
+            | Self::RemoteControlControllerPairingMaximum(maximum) => ByteLimit::Maximum(maximum),
+        }
     }
 }
 
@@ -45,6 +103,13 @@ pub struct OutstandingReceipt {
 pub struct ProvenReceipt {
     pub command_id: CommandId,
     pub kind: ReceiptKind,
+    pub sent_at: InstantMillis,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProvenRequestReceipt {
+    pub command_id: CommandId,
+    pub intent: SendRequestIntent,
     pub sent_at: InstantMillis,
 }
 
@@ -74,6 +139,18 @@ pub struct ExpiredReceipt {
 pub struct CulledReceipt {
     pub command_id: CommandId,
     pub kind: ReceiptKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkOwnedReceiptKind {
+    SendToLink,
+    SendRequest(SendRequestIntent),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinkOwnedReceipt {
+    pub command_id: CommandId,
+    pub kind: LinkOwnedReceiptKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -171,6 +248,35 @@ impl<C: ReceiptTable> Receipts<C> {
         self.table.remove(index);
         self.refresh_earliest_timeout();
         Some(expired)
+    }
+
+    pub fn pop_for_link(&mut self, link_id: &LinkId) -> Option<LinkOwnedReceipt> {
+        let (index, kind) = self
+            .table
+            .kinds()
+            .iter()
+            .enumerate()
+            .find_map(|(index, kind)| match kind {
+                ReceiptKind::SendToLink(candidate) if candidate == link_id => {
+                    Some((index, LinkOwnedReceiptKind::SendToLink))
+                }
+                ReceiptKind::SendRequest {
+                    link_id: candidate,
+                    response,
+                } if candidate == link_id => {
+                    Some((index, LinkOwnedReceiptKind::SendRequest(response.intent())))
+                }
+                ReceiptKind::SendSinglePacket { .. }
+                | ReceiptKind::SendToLink(_)
+                | ReceiptKind::SendRequest { .. } => None,
+            })?;
+        let receipt = LinkOwnedReceipt {
+            command_id: *self.table.command_ids().get(index)?,
+            kind,
+        };
+        self.table.remove(index);
+        self.refresh_earliest_timeout();
+        Some(receipt)
     }
 
     /// RNS 1.4.2 explicit proof: match the row by full packet hash, then verify. A failed signature leaves the row outstanding (reference parity; the timeout still owns it).
@@ -297,11 +403,15 @@ impl<C: ReceiptTable> Receipts<C> {
     }
 
     /// A response names its request by the truncated hash of the request packet; the session key authenticated it, so no signature gates this.
-    pub fn settle_by_request_id(&mut self, request_id: RequestId) -> Option<ProvenReceipt> {
+    pub fn settle_by_request_id(&mut self, request_id: RequestId) -> Option<ProvenRequestReceipt> {
         let index = self.request_row_index(request_id)?;
-        let proven = ProvenReceipt {
+        let intent = match *self.table.kinds().get(index)? {
+            ReceiptKind::SendRequest { response, .. } => response.intent(),
+            ReceiptKind::SendSinglePacket { .. } | ReceiptKind::SendToLink(_) => return None,
+        };
+        let proven = ProvenRequestReceipt {
             command_id: *self.table.command_ids().get(index)?,
-            kind: *self.table.kinds().get(index)?,
+            intent,
             sent_at: *self.table.sent_ats().get(index)?,
         };
         self.table.remove(index);
@@ -323,9 +433,15 @@ impl<C: ReceiptTable> Receipts<C> {
     pub fn pending_request_response_limit(&self, request_id: RequestId) -> Option<ByteLimit> {
         let index = self.request_row_index(request_id)?;
         match self.table.kinds().get(index)? {
-            ReceiptKind::SendRequest {
-                maximum_response_bytes,
-            } => Some(*maximum_response_bytes),
+            ReceiptKind::SendRequest { response, .. } => Some(response.maximum_response_bytes()),
+            ReceiptKind::SendSinglePacket { .. } | ReceiptKind::SendToLink(_) => None,
+        }
+    }
+
+    pub fn pending_request_intent(&self, request_id: RequestId) -> Option<SendRequestIntent> {
+        let index = self.request_row_index(request_id)?;
+        match self.table.kinds().get(index)? {
+            ReceiptKind::SendRequest { response, .. } => Some(response.intent()),
             ReceiptKind::SendSinglePacket { .. } | ReceiptKind::SendToLink(_) => None,
         }
     }
@@ -698,7 +814,8 @@ mod tests {
             packet_hash,
             command_id: CommandId(4),
             kind: ReceiptKind::SendRequest {
-                maximum_response_bytes: ByteLimit::Unlimited,
+                link_id: LinkId::new([0x2A; 16]),
+                response: RequestReceiptPolicy::ApplicationUnlimited,
             },
             peer_signing_key: key,
             sent_at: InstantMillis(100),
@@ -723,6 +840,54 @@ mod tests {
                 .map(|receipt| receipt.command_id),
             Some(CommandId(4)),
         );
+    }
+
+    #[test]
+    fn link_retirement_reclaims_even_a_request_claimed_by_a_resource() {
+        let (_, key) = signer(0x41);
+        let link_id = LinkId::new([0x42; 16]);
+        let packet_hash = PacketHash::new([0x43; 32]);
+        let request_id = RequestId::of_packet(&packet_hash);
+        let mut receipts = TestReceipts::default();
+        receipts.track(OutstandingReceipt {
+            packet_hash,
+            command_id: CommandId(43),
+            kind: ReceiptKind::SendRequest {
+                link_id,
+                response: RequestReceiptPolicy::ApplicationUnlimited,
+            },
+            peer_signing_key: key,
+            sent_at: InstantMillis(100),
+            timeout_at: InstantMillis(7_000),
+        });
+        receipts.track(OutstandingReceipt {
+            packet_hash: PacketHash::new([0x44; 32]),
+            command_id: CommandId(44),
+            kind: ReceiptKind::SendToLink(link_id),
+            peer_signing_key: key,
+            sent_at: InstantMillis(200),
+            timeout_at: InstantMillis(8_000),
+        });
+        receipts.track(outstanding(0x45, 45, key, 300, 9_000));
+        receipts.claim_request_for_transfer(request_id);
+
+        assert_eq!(
+            receipts.pop_for_link(&link_id),
+            Some(LinkOwnedReceipt {
+                command_id: CommandId(43),
+                kind: LinkOwnedReceiptKind::SendRequest(SendRequestIntent::Application),
+            }),
+        );
+        assert_eq!(
+            receipts.pop_for_link(&link_id),
+            Some(LinkOwnedReceipt {
+                command_id: CommandId(44),
+                kind: LinkOwnedReceiptKind::SendToLink,
+            }),
+        );
+        assert_eq!(receipts.pop_for_link(&link_id), None);
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts.earliest_timeout_at(), Some(InstantMillis(9_000)));
     }
 
     #[test]

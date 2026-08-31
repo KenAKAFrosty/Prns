@@ -133,6 +133,18 @@ impl<S: StorageLayout> EngineState<S> {
             else {
                 return IngestPacketOutcome::Ignored(IgnoreReason::UnmatchedResponse);
             };
+            if self.receipts.pending_request_intent(id)
+                == Some(crate::engine::SendRequestIntent::RemoteControlControllerPairing)
+            {
+                let Some(settled_request) = self.receipts.settle_by_request_id(id) else {
+                    return IngestPacketOutcome::Ignored(IgnoreReason::UnmatchedResponse);
+                };
+                return IngestPacketOutcome::PairingResponseResourceUnsupported {
+                    link_id,
+                    hash: advertisement.hash,
+                    settled_request: settled_request.command_id,
+                };
+            }
             if !maximum_response_bytes.allows(advertisement.data_bytes) {
                 let settled_request = self
                     .receipts
@@ -515,7 +527,9 @@ mod tests {
             packet_hash,
             command_id: CommandId(42),
             kind: ReceiptKind::SendRequest {
-                maximum_response_bytes: crate::units::ByteLimit::Unlimited,
+                link_id: link_id(),
+                response:
+                    crate::routing::delivery::receipts::RequestReceiptPolicy::ApplicationUnlimited,
             },
             peer_signing_key: IdentitySigningPublicKey::new(Ed25519PublicKey([0x99; 32])),
             sent_at: InstantMillis(1_800),
@@ -1730,7 +1744,13 @@ mod tests {
 
         let mut close = [0u8; BROADCAST_MTU];
         receiver
-            .write_owed_link_close(&link_id(), &test_entropy_bytes::<16>(0x91), &mut close)
+            .write_owed_link_close(
+                &link_id(),
+                crate::engine::LinkClosedReason::LocallyClosed,
+                &test_entropy_bytes::<16>(0x91),
+                &mut close,
+                &mut |_| {},
+            )
             .unwrap();
         assert!(receiver.pending_resource_offers.is_empty());
     }

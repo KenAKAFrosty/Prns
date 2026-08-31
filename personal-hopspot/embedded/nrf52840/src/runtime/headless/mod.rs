@@ -17,8 +17,7 @@ use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpe
 use personal_rns::manifold::embassy::{EmbassyHost, EmbassyInterfaceStatus, InterfaceLifecycle};
 use personal_rns::manifold::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use personal_rns::remote_control::{
-    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
-    RemoteControlService,
+    RemoteControlInitialAccess, RemoteControlSelfAnnouncement, RemoteControlService,
 };
 use personal_rns::runtime::{
     minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
@@ -305,7 +304,6 @@ pub async fn run(spawner: Spawner) -> ! {
     let self_announcement = RemoteControlSelfAnnouncement::Destination(node_page_destination);
     let remote_control = RemoteControlService::new(
         remote_control_identity_secrets,
-        RemoteControlPublicAppData::empty(),
         RemoteControlInitialAccess::Nobody,
         self_announcement,
     );

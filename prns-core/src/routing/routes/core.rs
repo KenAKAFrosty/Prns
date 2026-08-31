@@ -4,6 +4,7 @@ use crate::engine::InstantMillis;
 use crate::interfaces::InterfaceId;
 use crate::lemire_index::buckets_for_two_thirds_load;
 use crate::storage::TablePushError;
+use crate::units::DurationMillis;
 use crate::wire::{DestinationHash, TransportId};
 
 pub const fn route_index_buckets(destinations: usize) -> usize {
@@ -74,6 +75,53 @@ pub enum RouteResponsiveness {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct RouteExpiresAfter(NonZeroU32);
+
+impl RouteExpiresAfter {
+    pub(crate) const fn from_nonzero_millis(millis: NonZeroU32) -> Self {
+        Self(millis)
+    }
+
+    #[must_use]
+    pub const fn duration(self) -> DurationMillis {
+        DurationMillis(self.0.get() as u64)
+    }
+
+    const fn deadline_from(self, learned_at: InstantMillis) -> InstantMillis {
+        learned_at.saturating_add(self.duration())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteRetention {
+    Network,
+    Ephemeral { expires_after: RouteExpiresAfter },
+}
+
+impl RouteRetention {
+    pub(crate) const fn constrain_expiry(
+        self,
+        learned_at: InstantMillis,
+        network_expiry: InstantMillis,
+    ) -> InstantMillis {
+        match self {
+            Self::Network => network_expiry,
+            Self::Ephemeral { expires_after } => {
+                let expires_at = expires_after.deadline_from(learned_at);
+                InstantMillis(if expires_at.0 < network_expiry.0 {
+                    expires_at.0
+                } else {
+                    network_expiry.0
+                })
+            }
+        }
+    }
+}
+
+const _: () = assert!(core::mem::size_of::<RouteRetention>() == 4);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RouteEntry {
     pub hops: u8,
     pub learned_at: InstantMillis,
@@ -81,6 +129,7 @@ pub struct RouteEntry {
     pub responsiveness: RouteResponsiveness,
     pub receiving_interface: InterfaceId,
     pub next_hop: NextHop,
+    pub retention: RouteRetention,
 }
 
 pub trait RouteTable {
@@ -124,6 +173,7 @@ pub trait RouteTable {
                     responsiveness: self.responsiveness()[row],
                     receiving_interface: current,
                     next_hop: self.next_hops()[row],
+                    retention: self.retentions()[row],
                 },
             );
             moved += 1;
@@ -138,6 +188,7 @@ pub trait RouteTable {
     fn responsiveness(&self) -> &[RouteResponsiveness];
     fn receiving_interfaces(&self) -> &[InterfaceId];
     fn next_hops(&self) -> &[NextHop];
+    fn retentions(&self) -> &[RouteRetention];
     fn evidence_ids(&self) -> &[RouteEvidenceId];
 
     fn set_row(&mut self, i: usize, row: RouteEntry);

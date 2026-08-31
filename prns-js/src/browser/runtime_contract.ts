@@ -53,7 +53,9 @@ export type RuntimeOperation =
   | "ingest"
   | "drain-events"
   | "drain-outbound"
-  | "snapshot";
+  | "snapshot"
+  | "projection-snapshot"
+  | "worker-admission";
 
 export type RuntimeRejected = Tag<
   "RuntimeRejected",
@@ -156,6 +158,8 @@ export type PrnsRuntimeBinding = {
   allowRequester(options: RuntimeAllowRequesterOptions): bigint;
   closeLink(options: RuntimeCloseLinkOptions): bigint;
   ingest(options: RuntimeIngestOptions): void;
+  drainEventBatch(): Uint8Array;
+  drainCommandSettlementBatch?(): Uint8Array;
   drainEvents(): unknown[];
   drainOutbound(): unknown[];
   persistedState(options: { readonly nowMs: InstantMillis }): unknown;
@@ -163,6 +167,14 @@ export type PrnsRuntimeBinding = {
     options: BrowserPersistedState & { readonly nowMs: InstantMillis },
   ): unknown;
   snapshot(): unknown;
+  snapshotPacked?(): Uint8Array;
+  projectionSnapshot(request: RuntimeProjectionSnapshotRequest): unknown;
+};
+
+export type RuntimeProjectionSnapshotRequest = {
+  readonly interfaces: boolean;
+  readonly routes: boolean;
+  readonly links: boolean;
 };
 
 export type UsbAutoDecoderBinding = {

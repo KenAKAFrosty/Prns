@@ -569,6 +569,21 @@ def ts_string_union(name, values):
     return lines
 
 
+def ts_numeric_inventory(name, values):
+    inventory = f"{screaming(name)}_CODES"
+    lines = [f"export const {inventory} = Object.freeze({{"]
+    for value in values:
+        lines.append(f'  {value["name"]}: {value["value"]},')
+    lines.extend(
+        [
+            "} as const);",
+            "",
+            f"export type {name}Code = (typeof {inventory})[keyof typeof {inventory}];",
+        ]
+    )
+    return lines
+
+
 def ts_output(schema):
     fixed = schema["fixedBytes"]
     lines = [
@@ -678,6 +693,16 @@ def ts_output(schema):
     )
     for enum in additional_ts_enums:
         lines.extend([*ts_string_union(enum["name"], enum["values"]), ""])
+    for name in (
+        "ApplicationEventKind",
+        "DiagnosticEventKind",
+        "EventField",
+        "CommandOutcomeKind",
+        "CommandFailureKind",
+        "DeliveryEvidenceKind",
+    ):
+        enum = next(item for item in schema["enums"] if item["name"] == name)
+        lines.extend([*ts_numeric_inventory(enum["name"], enum["values"]), ""])
     for record in schema.get("records", []):
         lines.extend(ts_record(record))
     lines.extend(

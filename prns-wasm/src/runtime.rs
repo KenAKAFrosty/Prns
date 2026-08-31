@@ -30,13 +30,17 @@ use personal_rns::routing::upstream_app_destinations::{LinkRequestPolicy, ProofS
 use personal_rns::routing::warmth::Departure;
 use personal_rns::storage::GrowableHeap;
 use personal_rns::units::{ByteLimit, DurationMillis};
-use prns_host::PrnsLimits;
+use prns_host::{EventBatchProjection, EventProjection, PrnsLimits};
 use prns_host_cooperative::{CooperativeHost, Entropy, MonotonicMillis};
 use prns_runtime::runtime::persistence_snapshots::{
     snapshot_persisted_state, snapshot_self_ratchets,
 };
 use wasm_bindgen::prelude::*;
 
+use crate::command_settlement::{
+    encode_batch as encode_command_settlement_batch, CapturedCommandSettlement,
+};
+use crate::event_projection::{capture_journaled, CapturedJournal};
 use crate::input::{
     array_to_strings, destination_hash_from_vec, identity_hash_from_vec, interface_id_from_vec,
     link_id_from_vec, optional_array, optional_bool, optional_bytes, optional_i64, optional_string,
@@ -45,8 +49,8 @@ use crate::input::{
     required_u64, secret_key_from_vec,
 };
 use crate::js_translation::{
-    interface_kind_name, journaled_to_js, outbound_to_js, set_bigint, set_bytes, set_str, set_u32,
-    set_u64, set_usize, set_value,
+    command_settled_to_js, interface_kind_name, outbound_to_js, set_bigint, set_bytes, set_str,
+    set_u32, set_u64, set_usize, set_value,
 };
 use crate::parameters::{bitrate_bps_u32, BROWSER_PERSISTENCE_VERSION};
 
@@ -85,7 +89,8 @@ pub(crate) enum OutboundTarget {
 pub struct PrnsRuntime {
     engine: EngineState<GrowableHeap>,
     interfaces: Vec<InterfaceDescriptor>,
-    events: Vec<JsValue>,
+    events: Vec<EventProjection>,
+    control_events: Vec<CapturedCommandSettlement>,
     outbound: Vec<OutboundFrame>,
     next_command_id: u64,
     revision: u64,
@@ -116,6 +121,7 @@ impl PrnsRuntime {
             engine: EngineState::new(secret),
             interfaces: Vec::new(),
             events: Vec::new(),
+            control_events: Vec::new(),
             outbound: Vec::new(),
             next_command_id: 0,
             revision: 0,
@@ -837,10 +843,27 @@ impl PrnsRuntime {
     #[wasm_bindgen(js_name = drainEvents)]
     pub fn drain_events(&mut self) -> Array {
         let drained = Array::new();
-        for event in self.events.drain(..) {
-            drained.push(&event);
+        for event in self.control_events.drain(..) {
+            drained.push(&command_settled_to_js(event));
         }
         drained
+    }
+
+    #[wasm_bindgen(js_name = drainCommandSettlementBatch)]
+    pub fn drain_command_settlement_batch(&mut self) -> Result<Vec<u8>, JsValue> {
+        let batch = encode_command_settlement_batch(&self.control_events).map_err(|error| {
+            JsValue::from_str(&format!("command settlement batch failed: {error:?}"))
+        })?;
+        self.control_events.clear();
+        Ok(batch)
+    }
+
+    #[wasm_bindgen(js_name = drainEventBatch)]
+    pub fn drain_event_batch(&mut self) -> Result<Vec<u8>, JsValue> {
+        let batch = EventBatchProjection::from_records(core::mem::take(&mut self.events));
+        batch.encode().map_err(|error| {
+            JsValue::from_str(&format!("event batch projection failed: {error:?}"))
+        })
     }
 
     #[wasm_bindgen(js_name = drainOutbound)]
@@ -1066,6 +1089,75 @@ impl PrnsRuntime {
         );
         object.into()
     }
+
+    #[wasm_bindgen(js_name = snapshotPacked)]
+    pub fn snapshot_packed(&self) -> Vec<u8> {
+        crate::packed_snapshot::encode(&self.engine, &self.interfaces, self.revision)
+    }
+
+    #[wasm_bindgen(js_name = projectionSnapshot)]
+    pub fn projection_snapshot(&self, request: JsValue) -> Result<JsValue, JsValue> {
+        let include_interfaces = required_bool(&request, "interfaces")?;
+        let include_routes = required_bool(&request, "routes")?;
+        let include_links = required_bool(&request, "links")?;
+        let object = Object::new();
+        set_bigint(&object, "revision", self.revision);
+        if include_interfaces {
+            let interfaces = Array::new();
+            for interface in &self.interfaces {
+                let row = Object::new();
+                set_bytes(&row, "id", interface.id.as_bytes());
+                set_str(&row, "kind", interface_kind_name(interface.id.kind()));
+                set_usize(&row, "routes", self.engine.route_count_via(interface.id));
+                set_usize(&row, "links", self.engine.link_count_via(interface.id));
+                set_usize(
+                    &row,
+                    "transportedLinks",
+                    self.engine.transported_link_count_via(interface.id),
+                );
+                interfaces.push(&row);
+            }
+            set_value(&object, "interfaces", interfaces.into());
+        }
+        if include_routes {
+            let routes = Array::new();
+            self.engine.visit_route_snapshots(
+                personal_rns::interfaces::AttachedInterfaces::new(&self.interfaces),
+                |route| {
+                    let row = Object::new();
+                    set_bytes(&row, "destination", route.destination.as_bytes());
+                    set_u32(&row, "hops", u32::from(route.hops));
+                    if let NextHop::Via(identity) = route.via {
+                        set_bytes(&row, "viaIdentity", identity.as_bytes());
+                    }
+                    set_bytes(&row, "interfaceId", route.interface.as_bytes());
+                    set_u64(&row, "learnedAtMillis", route.learned_at.0);
+                    set_u64(
+                        &row,
+                        "lastRouteActivityAtMillis",
+                        route.last_route_activity_at.0,
+                    );
+                    set_u64(&row, "expiresAtMillis", route.expires_at.0);
+                    routes.push(&row);
+                },
+            );
+            set_value(&object, "routes", routes.into());
+        }
+        if include_links {
+            let links = Array::new();
+            self.engine.visit_active_link_snapshots(|link| {
+                let row = Object::new();
+                set_bytes(&row, "linkId", link.link_id.as_bytes());
+                set_u64(&row, "rttMillis", link.rtt.millis());
+                if let Some(identity) = link.remote_identity {
+                    set_bytes(&row, "peerIdentity", identity.as_bytes());
+                }
+                links.push(&row);
+            });
+            set_value(&object, "links", links.into());
+        }
+        Ok(object.into())
+    }
 }
 
 impl PrnsRuntime {
@@ -1142,6 +1234,7 @@ impl PrnsRuntime {
         for reaction in reactions {
             match reaction {
                 CapturedReaction::Event(event) => self.events.push(event),
+                CapturedReaction::Control(event) => self.control_events.push(event),
                 CapturedReaction::Outbound(frame) => self.outbound.push(frame),
             }
         }
@@ -1279,7 +1372,8 @@ fn resource_strategy(options: &JsValue) -> Result<ResourceStrategy, JsValue> {
 }
 
 enum CapturedReaction {
-    Event(JsValue),
+    Event(EventProjection),
+    Control(CapturedCommandSettlement),
     Outbound(OutboundFrame),
 }
 
@@ -1308,7 +1402,10 @@ impl EntropyCursor {
 
 fn capture_reaction(reaction: EngineReaction<'_>) -> CapturedReaction {
     match reaction {
-        EngineReaction::Journaled(journaled) => CapturedReaction::Event(journaled_to_js(journaled)),
+        EngineReaction::Journaled(journaled) => match capture_journaled(journaled) {
+            CapturedJournal::Event(event) => CapturedReaction::Event(event),
+            CapturedJournal::Control(event) => CapturedReaction::Control(event),
+        },
         EngineReaction::Directive(directive) => {
             CapturedReaction::Outbound(directive_to_frame(directive))
         }
