@@ -84,14 +84,16 @@ pub use prns_runtime::runtime::{
     ApproveRemoteControlControllerPairingControlFailure,
     ApproveRemoteControlTargetPairingControlError, BeginRemoteControlControllerPairingControlError,
     BeginRemoteControlControllerPairingControlFailure, CloseRemoteControlPairingControlError,
-    Diagnostic, ForgetRemoteControlTargetControlError, ForgetRemoteControlTargetServiceError,
-    ManuallyAttached, Message, NoPersistence, OpenRemoteControlPairingControlError,
-    PreConfiguredDestination, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe,
-    RejectRemoteControlControllerPairingControlError, RejectRemoteControlTargetPairingControlError,
-    RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure,
-    RemoteControlControllerGrantControl, RemoteControlDescribe, RemoteControlError,
-    RemoteControlPairingControl, RemoteControlPairingControlError,
-    RemoteControlTargetAccessControl, ResolveRemoteControlTargetControlError,
+    CloseRemoteControlTargetOutcome, ConnectRemoteControlTargetError, Diagnostic,
+    ForgetRemoteControlTargetControlError, ForgetRemoteControlTargetServiceError, ManuallyAttached,
+    Message, NoPersistence, OpenRemoteControlPairingControlError, PreConfiguredDestination,
+    PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, RejectRemoteControlControllerPairingControlError,
+    RejectRemoteControlTargetPairingControlError, RemoteControlAnnounceSelf,
+    RemoteControlAnnounceSelfFailure, RemoteControlControllerGrantControl, RemoteControlDescribe,
+    RemoteControlError, RemoteControlPairingControl, RemoteControlPairingControlError,
+    RemoteControlTargetAccessControl, RemoteControlTargetConnection,
+    RemoteControlTargetConnectionControl, RemoteControlTargetConnectionTransport,
+    RemoteControlTargetOperationError, ResolveRemoteControlTargetControlError,
     ResolveRemoteControlTargetServiceError, ResolvedRemoteControlTarget,
     RevokeRemoteControlControllerControlError, RevokeRemoteControlControllerServiceError,
     RuntimeHealth, SendError, SetRegisteredAnnounceAppDataError,
@@ -113,7 +115,7 @@ pub use prns_runtime_tokio::runtime::{
     load_or_create_identity_secret, try_generate_identity_secret, AttachIntent, Attachable,
     AttachedInterface, AttachedSupervisor, Fleet, IdentitySecretFileError, LocalIdentityFileError,
     OsEntropyError, PrnsNode, PrnsNodeHandle, RemoteControlFileIdentityBootstrapError,
-    RemoteControlHandle, RemoteControlIdentityDirectory,
+    RemoteControlHandle, RemoteControlIdentityDirectory, RemoteControlTargetHandle,
 };
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
@@ -124,7 +126,8 @@ pub use prns_runtime_embassy::runtime::{
     EmbeddedRemoteControlPairingPersistenceFailure,
     EmbeddedRemoteControlPairingPersistenceOperation, FixedRouteSnapshotKeys, Fleet, PrnsNode,
     PrnsNodeHandle, RemoteControlHandle, RemoteControlPairingAuthorizationTransactionFailure,
-    RequestResponseData, RouteSnapshotKeyError, RouteSnapshotKeys, SharedNorFlash,
+    RemoteControlTargetHandle, RequestResponseData, RouteSnapshotKeyError, RouteSnapshotKeys,
+    SharedNorFlash,
 };
 
 #[cfg(all(feature = "embassy-host", feature = "tokio-host"))]
@@ -136,7 +139,8 @@ pub use prns_runtime_embassy::runtime::{
     EmbeddedRemoteControlPairingPersistenceOperation, FixedRouteSnapshotKeys,
     PrnsNode as EmbassyPrnsNode, PrnsNodeHandle as EmbassyPrnsNodeHandle,
     RemoteControlHandle as EmbassyRemoteControlHandle,
-    RemoteControlPairingAuthorizationTransactionFailure, RequestResponseData,
+    RemoteControlPairingAuthorizationTransactionFailure,
+    RemoteControlTargetHandle as EmbassyRemoteControlTargetHandle, RequestResponseData,
     RouteSnapshotKeyError, RouteSnapshotKeys, SharedNorFlash,
 };
 

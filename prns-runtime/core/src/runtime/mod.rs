@@ -10,6 +10,7 @@ mod remote_control_authorizations;
 mod remote_control_controller_grants;
 mod remote_control_pairing;
 mod remote_control_target_accesses;
+mod remote_control_target_connection;
 pub mod request_endpoints;
 #[cfg(feature = "rns-management")]
 pub mod rns_management;
@@ -75,6 +76,11 @@ pub use remote_control_target_accesses::{
     RemoteControlTargetAccessControl, ResolveRemoteControlTargetControlError,
     ResolveRemoteControlTargetServiceError, ResolvedRemoteControlTarget,
     SetRemoteControlTargetAccessControlError, SetRemoteControlTargetAccessServiceError,
+};
+pub use remote_control_target_connection::{
+    CloseRemoteControlTargetOutcome, ConnectRemoteControlTargetError,
+    RemoteControlTargetConnection, RemoteControlTargetConnectionControl,
+    RemoteControlTargetConnectionTransport, RemoteControlTargetOperationError,
 };
 
 #[doc(hidden)]

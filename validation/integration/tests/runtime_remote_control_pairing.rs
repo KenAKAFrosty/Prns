@@ -386,20 +386,6 @@ async fn describe_through_restored_pairing(persistence: &PairingPersistenceDirec
                 .await,
             Ok(SetRemoteControlControllerGrantOutcome::Unchanged),
         );
-        let target_access = RemoteControlTargetAccess::new(
-            RemoteControlTargetIdentity::new(target_public_keys),
-            RemoteControlRequestSet::all(),
-        )
-        .expect("the complete request set is not empty");
-        let target_identity = target_access.target().identity_hash();
-        let resolved_target =
-            ResolvedRemoteControlTarget::from((&controller_identity, &target_access));
-        assert_eq!(
-            controller_handle
-                .resolve_remote_control_target(target_identity)
-                .await,
-            Ok(resolved_target),
-        );
         target_handle
             .announce_now(AnnounceNow {
                 destination: target_endpoint.destination_hash(),
@@ -416,14 +402,12 @@ async fn describe_through_restored_pairing(persistence: &PairingPersistenceDirec
             target_endpoint.destination_hash(),
         );
 
-        let link_id = controller_handle
-            .establish_link(target_endpoint.destination_hash())
+        let remote_control = controller_handle
+            .connect_remote_control_target(
+                RemoteControlTargetIdentity::new(target_public_keys).identity_hash(),
+            )
             .await
-            .expect("the restarted controller links to the stable RemoteControl endpoint");
-        controller_handle
-            .identify(link_id, controller_identity.identity_hash())
-            .await
-            .expect("the restarted controller identifies with its paired identity");
+            .expect("the restarted controller resolves, links, and identifies the paired target");
         assert_eq!(
             identified_controller_rx
                 .recv()
@@ -431,8 +415,7 @@ async fn describe_through_restored_pairing(persistence: &PairingPersistenceDirec
                 .expect("the restarted target observes the paired controller identity"),
             controller_identity.identity_hash(),
         );
-        let (description, _rtt) = controller_handle
-            .remote_control(link_id)
+        let (description, _rtt) = remote_control
             .describe()
             .await
             .expect("the restored controller grant admits RemoteControl describe");

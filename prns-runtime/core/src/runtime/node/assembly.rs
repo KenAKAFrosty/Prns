@@ -921,6 +921,7 @@ mod tests {
             remote_control.identities().unwrap().controller(),
             &access,
         ));
+        assert_eq!(expected.target(), target);
 
         assert_eq!(
             remote_control.resolve_target(&target),

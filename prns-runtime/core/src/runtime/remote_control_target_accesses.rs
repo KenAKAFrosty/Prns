@@ -7,12 +7,18 @@ use crate::remote_control::{
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ResolvedRemoteControlTarget {
+    target: IdentityHash,
     endpoint: RemoteControlEndpoint,
     controller: RemoteControlControllerIdentity,
     permitted_requests: RemoteControlRequestSet,
 }
 
 impl ResolvedRemoteControlTarget {
+    #[must_use]
+    pub const fn target(&self) -> IdentityHash {
+        self.target
+    }
+
     #[must_use]
     pub const fn endpoint(&self) -> RemoteControlEndpoint {
         self.endpoint
@@ -36,6 +42,7 @@ impl From<(&RemoteControlControllerIdentity, &RemoteControlTargetAccess)>
         (controller, access): (&RemoteControlControllerIdentity, &RemoteControlTargetAccess),
     ) -> Self {
         Self {
+            target: access.target().identity_hash(),
             endpoint: access.endpoint(),
             controller: *controller,
             permitted_requests: *access.permitted_requests(),

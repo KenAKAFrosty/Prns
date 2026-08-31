@@ -3,15 +3,18 @@ pub use crate::{
     ApproveRemoteControlControllerPairingControlFailure,
     ApproveRemoteControlTargetPairingControlError, BeginRemoteControlControllerPairingControlError,
     BeginRemoteControlControllerPairingControlFailure, CloseRemoteControlPairingControlError,
-    CommandId, DestinationHash, Diagnostic, ForgetRemoteControlTargetControlError,
-    ForgetRemoteControlTargetServiceError, InterfaceStatus, ManuallyAttached, Message,
-    NoPersistence, OpenRemoteControlPairingControlError, PacketReceiptDelivered,
-    PreConfiguredDestination, PrnsCommand, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, ProofStrategy,
-    RatchetPolicy, RejectRemoteControlControllerPairingControlError,
-    RejectRemoteControlTargetPairingControlError, RemoteControlAnnounceSelf,
-    RemoteControlAnnounceSelfFailure, RemoteControlControllerGrantControl, RemoteControlDescribe,
-    RemoteControlError, RemoteControlPairingControl, RemoteControlPairingControlError,
-    RemoteControlTargetAccessControl, ResolveRemoteControlTargetControlError,
+    CloseRemoteControlTargetOutcome, CommandId, ConnectRemoteControlTargetError, DestinationHash,
+    Diagnostic, ForgetRemoteControlTargetControlError, ForgetRemoteControlTargetServiceError,
+    InterfaceStatus, ManuallyAttached, Message, NoPersistence,
+    OpenRemoteControlPairingControlError, PacketReceiptDelivered, PreConfiguredDestination,
+    PrnsCommand, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, ProofStrategy, RatchetPolicy,
+    RejectRemoteControlControllerPairingControlError, RejectRemoteControlTargetPairingControlError,
+    RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure,
+    RemoteControlControllerGrantControl, RemoteControlDescribe, RemoteControlError,
+    RemoteControlPairingControl, RemoteControlPairingControlError,
+    RemoteControlTargetAccessControl, RemoteControlTargetConnection,
+    RemoteControlTargetConnectionControl, RemoteControlTargetConnectionTransport,
+    RemoteControlTargetOperationError, ResolveRemoteControlTargetControlError,
     ResolveRemoteControlTargetServiceError, ResolvedRemoteControlTarget, ResourceMemoryLimits,
     ResourceStrategy, RevokeRemoteControlControllerControlError,
     RevokeRemoteControlControllerServiceError, RuntimeHealth, SendError,
@@ -72,7 +75,7 @@ pub use crate::Esp32S3;
 pub use crate::{
     fill_os_entropy, try_generate_identity_secret, AttachIntent, Attachable, AttachedInterface,
     AttachedSupervisor, Fleet, PrnsNode, PrnsNodeHandle, RemoteControlFileIdentityBootstrapError,
-    RemoteControlHandle, RemoteControlIdentityDirectory,
+    RemoteControlHandle, RemoteControlIdentityDirectory, RemoteControlTargetHandle,
 };
 
 #[cfg(feature = "tokio-host")]
@@ -83,10 +86,13 @@ pub use crate::runtime::{
 };
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
-pub use crate::{Fleet, PrnsNode, PrnsNodeHandle, RemoteControlHandle};
+pub use crate::{Fleet, PrnsNode, PrnsNodeHandle, RemoteControlHandle, RemoteControlTargetHandle};
 
 #[cfg(all(feature = "embassy-host", feature = "tokio-host"))]
-pub use crate::{EmbassyPrnsNode, EmbassyPrnsNodeHandle, EmbassyRemoteControlHandle};
+pub use crate::{
+    EmbassyPrnsNode, EmbassyPrnsNodeHandle, EmbassyRemoteControlHandle,
+    EmbassyRemoteControlTargetHandle,
+};
 
 #[cfg(all(feature = "ax25", feature = "tokio-host"))]
 pub use crate::ax25_kiss::Ax25KissInterface;

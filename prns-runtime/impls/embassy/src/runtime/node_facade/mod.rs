@@ -11,7 +11,7 @@ pub use manifold_lanes::{
     StaticManifoldLane, SupervisorLane,
 };
 pub use node_lifecycle::{ManifoldWiring, PrnsNode, RequestRoutingCapacity};
-pub use remote_control::RemoteControlHandle;
+pub use remote_control::{RemoteControlHandle, RemoteControlTargetHandle};
 
 #[cfg(test)]
 pub(crate) fn test_remote_control_service(

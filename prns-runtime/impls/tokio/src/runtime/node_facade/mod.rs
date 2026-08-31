@@ -43,9 +43,11 @@ use super::remote_control_controller_grants::RemoteControlControllerGrantSender;
 use super::remote_control_controller_grants::{
     remote_control_controller_grant_lane, RemoteControlControllerGrantReceiver,
 };
-#[cfg(test)]
-use super::remote_control_target_accesses::remote_control_target_access_lane;
 use super::remote_control_target_accesses::RemoteControlTargetAccessSender;
+#[cfg(test)]
+use super::remote_control_target_accesses::{
+    remote_control_target_access_lane, RemoteControlTargetAccessReceiver,
+};
 use super::request_endpoints::RespondToken;
 use super::{InterfaceStore, SendError};
 pub use byte_stream::{ByteStreamReader, ByteStreamWriter, StreamId};
@@ -67,7 +69,7 @@ pub use persistence::{
     PreparedFlush, RatchetSeedReport, RegionFlush, RemoteControlAuthorizationSeedReport,
     RouteSeedProgress, RouteSeedReport, SaveOnLearn, SaveOnLearnWiring, TunnelSeedReport,
 };
-pub use remote_control::RemoteControlHandle;
+pub use remote_control::{RemoteControlHandle, RemoteControlTargetHandle};
 pub use request_response::{RequestOptions, ResponseSendError};
 pub use resource_admission::{ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor};
 pub use resource_transfer::{
@@ -172,18 +174,40 @@ impl std::error::Error for RuntimeRequestHandlerError {}
 impl PrnsNodeHandle {
     #[cfg(test)]
     pub(crate) fn over(commands: UnboundedSender<HostCommand>) -> Self {
-        Self::over_with_remote_control_controller_grant_lane(commands).0
+        Self::over_with_remote_control_authorization_lanes(commands).0
     }
 
     #[cfg(test)]
     pub(super) fn over_with_remote_control_controller_grant_lane(
         commands: UnboundedSender<HostCommand>,
     ) -> (Self, RemoteControlControllerGrantReceiver) {
+        let (handle, controller_grants, _target_accesses) =
+            Self::over_with_remote_control_authorization_lanes(commands);
+        (handle, controller_grants)
+    }
+
+    #[cfg(test)]
+    pub(super) fn over_with_remote_control_target_access_lane(
+        commands: UnboundedSender<HostCommand>,
+    ) -> (Self, RemoteControlTargetAccessReceiver) {
+        let (handle, _controller_grants, target_accesses) =
+            Self::over_with_remote_control_authorization_lanes(commands);
+        (handle, target_accesses)
+    }
+
+    #[cfg(test)]
+    fn over_with_remote_control_authorization_lanes(
+        commands: UnboundedSender<HostCommand>,
+    ) -> (
+        Self,
+        RemoteControlControllerGrantReceiver,
+        RemoteControlTargetAccessReceiver,
+    ) {
         let (notify_tx, _notify_rx) = tokio::sync::mpsc::unbounded_channel();
         let (iface_build, _iface_build_rx) = tokio::sync::mpsc::unbounded_channel();
         let (remote_control_controller_grants, remote_control_controller_grants_rx) =
             remote_control_controller_grant_lane();
-        let (remote_control_target_accesses, _remote_control_target_accesses_rx) =
+        let (remote_control_target_accesses, remote_control_target_accesses_rx) =
             remote_control_target_access_lane();
         (
             Self {
@@ -201,6 +225,7 @@ impl PrnsNodeHandle {
                 remote_control_target_accesses,
             },
             remote_control_controller_grants_rx,
+            remote_control_target_accesses_rx,
         )
     }
 

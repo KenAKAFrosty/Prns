@@ -28,8 +28,8 @@ pub use node_facade::Fleet as EmbassyFleet;
 pub use node_facade::{
     minimum_manifold_notification_capacity, CompletionPool, Fleet, InboundDeliveryError,
     InterfaceLane, LaneClaimError, ManifoldLaneSet, ManifoldWiring, OutboundFrame, PrnsNode,
-    PrnsNodeHandle, RemoteControlHandle, RequestResponseData, RequestRoutingCapacity,
-    StaticManifoldLane, SupervisorLane,
+    PrnsNodeHandle, RemoteControlHandle, RemoteControlTargetHandle, RequestResponseData,
+    RequestRoutingCapacity, StaticManifoldLane, SupervisorLane,
 };
 pub use remote_control_pairing_authorizations::RemoteControlPairingAuthorizationTransactionFailure;
 pub use remote_control_pairing_persistence::{

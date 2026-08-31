@@ -9,14 +9,14 @@ use portable_atomic::{AtomicU64, Ordering};
 use crate::engine::{
     ApproveRemoteControlControllerPairing, ApproveRemoteControlTargetPairing,
     BeginRemoteControlControllerPairing, CloseLink, CloseRemoteControlPairing,
-    CloseRemoteControlPairingOutcome, CommandId, EgressTarget, IssuedCommand, Journaled,
-    OpenRemoteControlPairing, PacketReceiptDelivered, PrnsCommand,
-    RejectRemoteControlControllerPairing, RejectRemoteControlTargetPairing,
-    RemoteControlPairingOpened, RequestResponseTimeout, Respond, RespondData, RespondPayload,
-    SendGroup, SendGroupFailure, SendGroupPayload, SendPlainPacket, SendPlainPacketFailure,
-    SendPlainPacketPayload, SendRequest, SendRequestData, SendRequestFailure, SendSinglePacket,
-    SendSinglePacketFailure, SendSinglePacketPayload, SetRegisteredAnnounceAppData, Settleable,
-    Settlement,
+    CloseRemoteControlPairingOutcome, CommandId, EgressTarget, EstablishLink, EstablishLinkFailure,
+    Identify, IdentifyFailure, IssuedCommand, Journaled, OpenRemoteControlPairing,
+    PacketReceiptDelivered, PrnsCommand, RejectRemoteControlControllerPairing,
+    RejectRemoteControlTargetPairing, RemoteControlPairingOpened, RequestResponseTimeout, Respond,
+    RespondData, RespondPayload, SendGroup, SendGroupFailure, SendGroupPayload, SendPlainPacket,
+    SendPlainPacketFailure, SendPlainPacketPayload, SendRequest, SendRequestData,
+    SendRequestFailure, SendSinglePacket, SendSinglePacketFailure, SendSinglePacketPayload,
+    SetRegisteredAnnounceAppData, Settleable, Settlement,
 };
 use crate::identity::IdentityHash;
 use crate::remote_control::{
@@ -457,6 +457,45 @@ impl<
         let id = self.pool.mint();
         self.commands.try_send(IssuedCommand { id, command }).ok()?;
         Some(id)
+    }
+
+    async fn settle_command<C>(&self, command: C) -> Result<C::Success, SendError<C::Failure>>
+    where
+        C: Settleable,
+    {
+        let id = self.pool.mint();
+        let slot = self.pool.claim_settlement(id).ok_or(SendError::Busy)?;
+        let _guard = SlotGuard {
+            pool: self.pool,
+            slot,
+            id,
+        };
+        self.commands
+            .try_send(IssuedCommand {
+                id,
+                command: command.into_command(),
+            })
+            .map_err(|_| SendError::NodeStopped)?;
+        C::from_settlement(self.pool.parked(slot).await)
+            .ok_or(SendError::NodeStopped)?
+            .map_err(SendError::Failed)
+    }
+
+    pub async fn establish_link(
+        &self,
+        destination: DestinationHash,
+    ) -> Result<LinkId, SendError<EstablishLinkFailure>> {
+        self.settle_command(EstablishLink { destination })
+            .await
+            .map(|established| established.link_id)
+    }
+
+    pub async fn identify(
+        &self,
+        link_id: LinkId,
+        identity: IdentityHash,
+    ) -> Result<(), SendError<IdentifyFailure>> {
+        self.settle_command(Identify { link_id, identity }).await
     }
 
     pub async fn send_single_packet(
