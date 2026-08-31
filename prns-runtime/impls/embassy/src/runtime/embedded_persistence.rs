@@ -406,7 +406,6 @@ where
             | Journaled::LinkInterfaceMismatch { .. }
             | Journaled::ResourceReceived { .. }
             | Journaled::ResourceFailed { .. }
-            | Journaled::ResourceNeedsDecompression { .. }
             | Journaled::ResourceSegmentReceived { .. }
             | Journaled::ResourceAssembled { .. }
             | Journaled::RemoteControlPairingAvailabilityObserved(_)

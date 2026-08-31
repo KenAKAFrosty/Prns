@@ -1,6 +1,7 @@
 mod egress;
 mod fixed_topology;
 mod host;
+mod inline_work;
 mod interface_seam;
 mod interface_status;
 mod packet_phy;

@@ -135,7 +135,6 @@ fn an_ifac_frame_crosses_the_seam_and_leaves_masked_through_the_peer() {
         | Journaled::LinkClosed { .. }
         | Journaled::ResourceReceived { .. }
         | Journaled::ResourceFailed { .. }
-        | Journaled::ResourceNeedsDecompression { .. }
         | Journaled::ResourceSegmentReceived { .. }
         | Journaled::ResourceAssembled { .. }
         | Journaled::LinkInterfaceMismatch { .. }

@@ -21,6 +21,9 @@ use super::egress::{
     flush_due_pacers, ifac_for, route_reaction, soonest_pacer_release, EmbassyEgress,
     InterfacePacer, MAX_PACED_INTERFACES,
 };
+use super::inline_work::{
+    fulfill_owed_work_inline, route_and_capture_owed_work, InlineOwedWorkQueue,
+};
 use super::interface_status::account_protocol_violation;
 use super::packet_phy::retain_packet_phy;
 use super::EmbassyInterfaceStatus;
@@ -205,6 +208,7 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
                             bytes,
                         });
                         retain_packet_phy(store, &packet, packet_phy);
+                        let mut owed_work = InlineOwedWorkQueue::new();
                         let report = engine.ingest_classified_into_report(
                             packet,
                             IngestIo {
@@ -214,16 +218,30 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
                                 should_prove: &mut should_prove,
                                 should_accept_resource: &mut should_accept_resource,
                                 sink: &mut |reaction| {
-                                    route_reaction(
+                                    route_and_capture_owed_work(
                                         reaction,
                                         &mut egress,
                                         ifacs,
                                         &mut pacers,
                                         now,
                                         &mut on_journaled,
+                                        &mut owed_work,
                                     )
                                 },
                             },
+                        );
+                        let completion_delta = fulfill_owed_work_inline(
+                            owed_work,
+                            &mut engine,
+                            &mut host,
+                            interfaces,
+                            &mut egress,
+                            ifacs,
+                            &mut pacers,
+                            frame_accounting_statuses,
+                            now,
+                            &mut should_prove,
+                            &mut on_journaled,
                         );
                         account_protocol_violation(
                             frame_accounting_statuses,
@@ -231,9 +249,11 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
                             report.protocol_violation,
                         );
                         lane.release();
+                        let mut step_delta = report.wake_schedules;
+                        step_delta.merge(completion_delta);
                         merge_wake_schedules_delta(
                             &mut wake_schedules,
-                            report.wake_schedules,
+                            step_delta,
                             &engine,
                             interfaces,
                         );

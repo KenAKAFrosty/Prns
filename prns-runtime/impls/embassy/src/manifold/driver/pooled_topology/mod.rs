@@ -25,6 +25,9 @@ use super::egress::{
     flush_due_pacers, ifac_for, route_reaction, soonest_pacer_release, InterfacePacer,
     ManifoldEgress, PooledEgress,
 };
+use super::inline_work::{
+    fulfill_owed_work_inline, route_and_capture_owed_work, InlineOwedWorkQueue,
+};
 use super::interface_status::account_protocol_violation;
 use super::packet_phy::retain_packet_phy;
 use super::EmbassyInterfaceStatus;
@@ -205,6 +208,7 @@ pub(crate) async fn run_pooled<
                             bytes,
                         });
                         retain_packet_phy(store, &packet, packet_phy);
+                        let mut owed_work = InlineOwedWorkQueue::new();
                         let report = engine.ingest_classified_into_report(
                             packet,
                             IngestIo {
@@ -214,7 +218,7 @@ pub(crate) async fn run_pooled<
                                 should_prove: &mut should_prove,
                                 should_accept_resource: &mut should_accept_resource,
                                 sink: &mut |reaction| {
-                                    route_reaction(
+                                    route_and_capture_owed_work(
                                         reaction,
                                         &mut *egress,
                                         ifacs,
@@ -224,8 +228,25 @@ pub(crate) async fn run_pooled<
                                             persistence.observe(&journaled, now);
                                             on_journaled(journaled);
                                         },
+                                        &mut owed_work,
                                     )
                                 },
+                            },
+                        );
+                        let completion_delta = fulfill_owed_work_inline(
+                            owed_work,
+                            &mut *engine,
+                            &mut *host,
+                            AttachedInterfaces::new(&*descriptors),
+                            &mut *egress,
+                            ifacs,
+                            &mut pacers,
+                            frame_accounting_statuses,
+                            now,
+                            &mut should_prove,
+                            &mut |journaled| {
+                                persistence.observe(&journaled, now);
+                                on_journaled(journaled);
                             },
                         );
                         account_protocol_violation(
@@ -234,9 +255,11 @@ pub(crate) async fn run_pooled<
                             report.protocol_violation,
                         );
                         lane.release();
+                        let mut step_delta = report.wake_schedules;
+                        step_delta.merge(completion_delta);
                         merge_wake_schedules_delta(
                             &mut wake_schedules,
-                            report.wake_schedules,
+                            step_delta,
                             &*engine,
                             AttachedInterfaces::new(&*descriptors),
                         );

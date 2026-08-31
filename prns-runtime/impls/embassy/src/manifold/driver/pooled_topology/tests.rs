@@ -159,7 +159,6 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
         | Journaled::LinkClosed { .. }
         | Journaled::ResourceReceived { .. }
         | Journaled::ResourceFailed { .. }
-        | Journaled::ResourceNeedsDecompression { .. }
         | Journaled::ResourceSegmentReceived { .. }
         | Journaled::ResourceAssembled { .. }
         | Journaled::LinkInterfaceMismatch { .. }
@@ -300,7 +299,6 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
         | Journaled::LinkClosed { .. }
         | Journaled::ResourceReceived { .. }
         | Journaled::ResourceFailed { .. }
-        | Journaled::ResourceNeedsDecompression { .. }
         | Journaled::ResourceSegmentReceived { .. }
         | Journaled::ResourceAssembled { .. }
         | Journaled::LinkInterfaceMismatch { .. }
