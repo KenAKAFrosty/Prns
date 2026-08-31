@@ -50,10 +50,11 @@ use super::super::{
 };
 use super::interface_lifecycle::{drive_interfaces, DriverMsg};
 use super::resource_transfer::resource_segment_decompression_bound;
-use super::{persistence, AttachIntent, PrnsNodeHandle};
+use super::{persistence, AttachIntent, PrnsNodeHandle, PrnsNodeLocalHandle};
 
 const INFLATE_QUEUE_PER_WORKER: usize = 4;
 const MAX_INFLATE_PARALLELISM: usize = 8;
+const LOCAL_COMMAND_DEPTH: usize = 128;
 
 fn inflate_parallelism() -> usize {
     std::thread::available_parallelism()
@@ -81,10 +82,12 @@ fn notify_accepted_announce(
 /// clones to drive it from other tasks or threads while either method owns the loop.
 pub struct PrnsNode<St, R, F, S: StorageLayout> {
     handle: PrnsNodeHandle,
+    local_commands: Option<manifold_driver::LocalCommandProducer>,
     pub(super) host: TokioHost,
     pub(super) node: AssembledNode<St, R, F, S>,
     notify_rx: UnboundedReceiver<InterfaceId>,
     command_rx: UnboundedReceiver<HostCommand>,
+    local_command_rx: manifold_driver::LocalCommandConsumer,
     remote_control_access_rx: RemoteControlAccessReceiver,
     iface_build_rx: UnboundedReceiver<DriverMsg>,
     accepted_announce_observer: Option<AcceptedAnnounceObserver>,
@@ -418,6 +421,8 @@ where
     {
         let (notify_tx, notify_rx) = mpsc::unbounded_channel();
         let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let (local_commands, local_command_rx) =
+            manifold_driver::local_command_lane(LOCAL_COMMAND_DEPTH);
         let (iface_build_tx, iface_build_rx) = mpsc::unbounded_channel();
         let (remote_control_access, remote_control_access_rx) = remote_control_access_lane();
 
@@ -440,6 +445,7 @@ where
         interfaces.attach(&handle);
 
         PrnsNode {
+            local_commands: Some(local_commands),
             handle,
             host: TokioHost::start_at(
                 node_persistence
@@ -450,6 +456,7 @@ where
             node,
             notify_rx,
             command_rx,
+            local_command_rx,
             remote_control_access_rx,
             iface_build_rx,
             accepted_announce_observer: None,
@@ -570,6 +577,22 @@ where
         self.handle.clone()
     }
 
+    /// Takes the node's one executor-local command producer.
+    ///
+    /// The returned handle must remain in the same task as [`run`](Self::run) or
+    /// [`run_until`](Self::run_until). A node exposes exactly one so the lane remains SPSC.
+    pub fn take_local_handle(&mut self) -> Option<PrnsNodeLocalHandle> {
+        self.local_commands
+            .take()
+            .map(|commands| PrnsNodeLocalHandle {
+                commands: std::cell::RefCell::new(commands),
+                ids: self.handle.ids.clone(),
+                next_id: std::cell::Cell::new(0),
+                end_id: std::cell::Cell::new(0),
+                local: std::marker::PhantomData,
+            })
+    }
+
     #[must_use]
     pub const fn remote_control_identities(&self) -> Option<&RemoteControlNodeIdentities> {
         self.node.remote_control.identities()
@@ -683,10 +706,12 @@ where
         };
         let PrnsNode {
             handle,
+            local_commands: _,
             host,
             node,
             notify_rx,
             command_rx,
+            local_command_rx,
             mut remote_control_access_rx,
             iface_build_rx,
             mut accepted_announce_observer,
@@ -733,7 +758,7 @@ where
                 super::super::tracing_events::emit(&event);
                 on_event(event, &state);
             }
-            manifold_driver::run_with_store_and_deciders(
+            manifold_driver::run_executor_local_with_store_and_deciders(
                 engine,
                 host,
                 manifold_driver::ManifoldWiring {
@@ -744,6 +769,7 @@ where
                     commands: command_rx,
                     egress,
                 },
+                local_command_rx,
                 |journaled| {
                     if let Journaled::LinkClosed { link_id, .. } = &journaled {
                         admission_cleanup.remove(*link_id);

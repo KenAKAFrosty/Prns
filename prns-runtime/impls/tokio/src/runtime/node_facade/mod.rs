@@ -8,9 +8,12 @@ mod request_response;
 mod resource_admission;
 mod resource_transfer;
 
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::future::Future;
+use std::marker::PhantomData;
 use std::pin::Pin;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -31,7 +34,7 @@ use crate::engine::{
 };
 use crate::identity::IdentityHash;
 use crate::interfaces::InterfaceId;
-use crate::manifold::driver::HostCommand;
+use crate::manifold::driver::{HostCommand, LocalCommandProducer};
 use crate::routing::links::channel::MessageType;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::{RequestPathHash, RequestPolicy};
@@ -125,6 +128,48 @@ pub struct PrnsNodeHandle {
     entropy: crate::manifold::driver::TokioEntropy,
     timing_oracle: Arc<Mutex<Option<Arc<dyn BitrateTimingOracle>>>>,
     pub(super) remote_control_access: RemoteControlAccessSender,
+}
+
+/// A single-owner command handle for a future polled beside its node on the same executor task.
+///
+/// Unlike [`PrnsNodeHandle`], this handle is deliberately neither `Clone` nor `Send`: preserving
+/// one producer and one consumer lets commands move into the manifold without Tokio's shared MPSC
+/// bookkeeping. Its bounded ring reports saturation as `None` from [`issue`](Self::issue). Use
+/// [`PrnsNode::take_local_handle`] before starting the node, and retain the regular handle for
+/// producers that may cross task or thread boundaries.
+pub struct PrnsNodeLocalHandle {
+    commands: RefCell<LocalCommandProducer>,
+    ids: Arc<AtomicU64>,
+    next_id: Cell<u64>,
+    end_id: Cell<u64>,
+    local: PhantomData<Rc<()>>,
+}
+
+impl PrnsNodeLocalHandle {
+    fn mint(&self) -> CommandId {
+        const ID_BLOCK: u64 = 1_024;
+        let mut next = self.next_id.get();
+        if next == self.end_id.get() {
+            next = self.ids.fetch_add(ID_BLOCK, Ordering::Relaxed);
+            self.end_id.set(next.wrapping_add(ID_BLOCK));
+        }
+        self.next_id.set(next.wrapping_add(1));
+        CommandId(next)
+    }
+
+    pub fn issue(&self, command: PrnsCommand) -> Option<CommandId> {
+        let id = self.mint();
+        self.commands
+            .borrow_mut()
+            .send(HostCommand::Engine(IssuedCommand { id, command }))
+            .ok()?;
+        Some(id)
+    }
+
+    pub fn close_link(&self, link_id: LinkId) -> bool {
+        self.issue(PrnsCommand::CloseLink(CloseLink { link_id }))
+            .is_some()
+    }
 }
 
 /// An optional shared-instance timing source. Directly attached nodes do not need one;

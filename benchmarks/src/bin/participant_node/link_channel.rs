@@ -72,9 +72,11 @@ pub(super) async fn run_runtime_endpoint(
     };
 
     if role == "responder" {
-        let (node, bound) =
+        let (mut node, bound) =
             build_responder_node(single, (), request_endpoints![], on_event, manifest, addr).await;
-        let commands = node.handle();
+        let commands = node
+            .take_local_handle()
+            .expect("the endpoint owns its executor-local command lane");
         println!("READY role=responder addr={bound}");
         let firehose = async {
             await_startup_go().await;
@@ -107,8 +109,10 @@ pub(super) async fn run_runtime_endpoint(
             () = firehose => {}
         }
     } else if role == "initiator" {
-        let node = build_initiator_node(single, on_event, manifest, addr).await;
-        let commands = node.handle();
+        let mut node = build_initiator_node(single, on_event, manifest, addr).await;
+        let commands = node
+            .take_local_handle()
+            .expect("the endpoint owns its executor-local command lane");
         println!("READY role=initiator");
         let firehose = async {
             if manifest.name == ScenarioId::LinkMessageThroughput {
@@ -133,7 +137,7 @@ async fn respond(
     destination: DestinationHash,
     announce_every: Duration,
     duration: Duration,
-    commands: &PrnsNodeHandle,
+    commands: &PrnsNodeLocalHandle,
     mut events: mpsc::Receiver<Event>,
     delivery_counters: Arc<DeliveryCounters>,
 ) {
@@ -177,7 +181,7 @@ async fn respond(
 async fn initiate(
     profile: &Profile,
     duration: Duration,
-    commands: &PrnsNodeHandle,
+    commands: &PrnsNodeLocalHandle,
     mut events: mpsc::Receiver<Event>,
 ) {
     let destination = loop {
@@ -285,7 +289,7 @@ async fn respond_link(
     duration: Duration,
     drain: Duration,
     expected_links: usize,
-    commands: &PrnsNodeHandle,
+    commands: &PrnsNodeLocalHandle,
     mut events: mpsc::Receiver<Event>,
     delivery_counters: Arc<DeliveryCounters>,
 ) {
@@ -343,7 +347,7 @@ async fn respond_link(
 async fn initiate_link(
     profile: &Profile,
     duration: Duration,
-    commands: &PrnsNodeHandle,
+    commands: &PrnsNodeLocalHandle,
     mut events: mpsc::Receiver<Event>,
 ) {
     let destination = loop {

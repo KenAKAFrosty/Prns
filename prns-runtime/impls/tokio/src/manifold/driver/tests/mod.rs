@@ -82,3 +82,50 @@ mod links;
 mod remote_control_pairing;
 mod routes;
 mod transport;
+
+#[test]
+fn local_command_bursts_make_bounded_room_for_shared_producers() {
+    use crate::engine::{CloseLink, CommandId, PrnsCommand};
+    use crate::routing::links::LinkId;
+    use crate::wire::TRUNCATED_HASH_BYTE_LEN;
+
+    let command = |id| {
+        HostCommand::Engine(IssuedCommand {
+            id: CommandId(id),
+            command: PrnsCommand::CloseLink(CloseLink {
+                link_id: LinkId::new([id as u8; TRUNCATED_HASH_BYTE_LEN]),
+            }),
+        })
+    };
+    let id = |command| {
+        let HostCommand::Engine(issued) = command else {
+            panic!("test command")
+        };
+        issued.id
+    };
+    let (mut local_tx, mut local_rx) = local_command_lane(4);
+    let (shared_tx, mut shared_rx) = mpsc::unbounded_channel();
+    assert!(local_tx.send(command(1)).is_ok());
+    assert!(local_tx.send(command(2)).is_ok());
+    assert!(local_tx.send(command(3)).is_ok());
+    assert!(shared_tx.send(command(99)).is_ok());
+    let mut local_streak = 0;
+
+    assert_eq!(
+        id(next_command(&mut local_rx, &mut shared_rx, &mut local_streak, 2).unwrap()),
+        CommandId(1)
+    );
+    assert_eq!(
+        id(next_command(&mut local_rx, &mut shared_rx, &mut local_streak, 2).unwrap()),
+        CommandId(2)
+    );
+    assert_eq!(
+        id(next_command(&mut local_rx, &mut shared_rx, &mut local_streak, 2).unwrap()),
+        CommandId(99),
+        "the shared producer runs after one bounded local burst"
+    );
+    assert_eq!(
+        id(next_command(&mut local_rx, &mut shared_rx, &mut local_streak, 2).unwrap()),
+        CommandId(3)
+    );
+}

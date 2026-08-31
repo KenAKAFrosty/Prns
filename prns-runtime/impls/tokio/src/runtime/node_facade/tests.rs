@@ -2,6 +2,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver};
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -28,7 +29,7 @@ use crate::storage::TablePushError;
 use crate::units::{DurationMillis, InstantMillis};
 use crate::wire::DestinationHash;
 
-use super::{BitrateTimingOracle, PrnsNodeHandle};
+use super::{BitrateTimingOracle, PrnsNodeHandle, PrnsNodeLocalHandle};
 
 const PEER: DestinationHash = DestinationHash::new([0xAB; 16]);
 
@@ -44,6 +45,24 @@ fn delivered(ms: u64) -> PacketReceiptDelivered {
 fn handle() -> (PrnsNodeHandle, UnboundedReceiver<HostCommand>) {
     let (commands, command_rx) = mpsc::unbounded_channel();
     (PrnsNodeHandle::over(commands), command_rx)
+}
+
+#[test]
+fn local_command_ids_reserve_disjoint_ranges_from_shared_producers() {
+    let (commands, _command_rx) = crate::manifold::driver::local_command_lane(4);
+    let ids = Arc::new(AtomicU64::new(0));
+    let local = PrnsNodeLocalHandle {
+        commands: std::cell::RefCell::new(commands),
+        ids: ids.clone(),
+        next_id: std::cell::Cell::new(0),
+        end_id: std::cell::Cell::new(0),
+        local: std::marker::PhantomData,
+    };
+
+    assert_eq!(local.mint(), crate::engine::CommandId(0));
+    assert_eq!(local.mint(), crate::engine::CommandId(1));
+    assert_eq!(ids.fetch_add(1, Ordering::Relaxed), 1_024);
+    assert_eq!(local.mint(), crate::engine::CommandId(2));
 }
 
 fn open_pairing() -> OpenRemoteControlPairing {

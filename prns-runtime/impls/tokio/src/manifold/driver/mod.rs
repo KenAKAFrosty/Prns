@@ -1,4 +1,6 @@
+use std::future::poll_fn;
 use std::sync::Arc;
+use std::task::Poll;
 
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -24,6 +26,7 @@ mod interface_seam;
 mod interface_status;
 mod interface_topology;
 mod journal_delivery;
+mod local_command_lane;
 
 pub use super::grant_lane::{
     tokio_grant_lane, HeapFrameSlot, TokioGrantConsumer, TokioGrantProducer,
@@ -40,6 +43,9 @@ pub use host_protocol::{
 };
 pub use interface_seam::TokioInterfaceSeam;
 pub use interface_status::TokioInterfaceStatus;
+pub(crate) use local_command_lane::{
+    local_command_lane, LocalCommandConsumer, LocalCommandProducer,
+};
 pub use prns_runtime::runtime::{
     PersistedStateSnapshot, SelfRatchetSnapshot, SelfRatchetsSnapshot,
 };
@@ -52,6 +58,42 @@ use host::ManifoldClock;
 use inbound_dispatch::{InboundContext, InboundDispatch};
 use interface_topology::InterfaceTopology;
 use journal_delivery::JournalDispatch;
+
+trait CommandLane {
+    fn enabled(&self) -> bool;
+    fn try_recv(&mut self) -> Option<HostCommand>;
+    fn poll_recv(&mut self, context: &mut std::task::Context<'_>) -> Poll<Option<HostCommand>>;
+}
+
+struct NoLocalCommands;
+
+impl CommandLane for NoLocalCommands {
+    fn enabled(&self) -> bool {
+        false
+    }
+
+    fn try_recv(&mut self) -> Option<HostCommand> {
+        None
+    }
+
+    fn poll_recv(&mut self, _context: &mut std::task::Context<'_>) -> Poll<Option<HostCommand>> {
+        Poll::Pending
+    }
+}
+
+impl CommandLane for LocalCommandConsumer {
+    fn enabled(&self) -> bool {
+        true
+    }
+
+    fn try_recv(&mut self) -> Option<HostCommand> {
+        LocalCommandConsumer::try_recv(self)
+    }
+
+    fn poll_recv(&mut self, context: &mut std::task::Context<'_>) -> Poll<Option<HostCommand>> {
+        LocalCommandConsumer::poll_recv(self, context)
+    }
+}
 
 /// Everything the manifold is wired to for one run: the interface topology snapshot, per-interface IFAC state, the wake and command channels, the inbound grant lanes, and the egress fan-out.
 pub struct ManifoldWiring {
@@ -99,6 +141,7 @@ pub async fn run_with_deciders<S, H, J, P, A>(
         on_journaled,
         deciders,
         None,
+        NoLocalCommands,
         CryptoPoolConfig::host_default(),
     )
     .await
@@ -150,18 +193,49 @@ pub async fn run_with_store_and_deciders<S, H, J, P, A>(
         on_journaled,
         deciders,
         Some(store),
+        NoLocalCommands,
         crypto_pool_config,
     )
     .await
 }
 
-async fn run_inner<S, H, J, P, A>(
+pub(crate) async fn run_executor_local_with_store_and_deciders<S, H, J, P, A>(
+    engine: EngineState<S>,
+    host: H,
+    wiring: ManifoldWiring,
+    local_commands: LocalCommandConsumer,
+    on_journaled: J,
+    store: InterfaceStore,
+    crypto_pool_config: CryptoPoolConfig,
+    deciders: AppDeciders<P, A>,
+) where
+    S: StorageLayout,
+    H: Host,
+    J: FnMut(Journaled<'_>),
+    P: FnMut(&ProofRequest) -> bool,
+    A: FnMut(&ResourceOffer) -> bool,
+{
+    run_inner(
+        engine,
+        host,
+        wiring,
+        on_journaled,
+        deciders,
+        Some(store),
+        local_commands,
+        crypto_pool_config,
+    )
+    .await
+}
+
+async fn run_inner<S, H, J, P, A, C>(
     mut engine: EngineState<S>,
     mut host: H,
     wiring: ManifoldWiring,
     on_journaled: J,
     deciders: AppDeciders<P, A>,
     store: Option<InterfaceStore>,
+    mut local_commands: C,
     crypto_pool_config: CryptoPoolConfig,
 ) where
     S: StorageLayout,
@@ -169,6 +243,7 @@ async fn run_inner<S, H, J, P, A>(
     J: FnMut(Journaled<'_>),
     P: FnMut(&ProofRequest) -> bool,
     A: FnMut(&ResourceOffer) -> bool,
+    C: CommandLane,
 {
     let AppDeciders {
         mut should_prove,
@@ -196,6 +271,7 @@ async fn run_inner<S, H, J, P, A>(
     }
     const MAX_INBOUND_BATCH: usize = 64;
     const MAX_COMMAND_BATCH: usize = 64;
+    const LOCAL_COMMAND_BURST: usize = 32;
     // Keep the single-owner manifold hot while work remains durable, but regularly return control
     // to the sibling interface and request futures that replenish its SPSC lanes.
     const HOT_TURNS_BEFORE_YIELD: usize = 16;
@@ -214,6 +290,8 @@ async fn run_inner<S, H, J, P, A>(
     tokio::pin!(pacer_timer);
     let mut pacer_armed: Option<InstantMillis> = None;
     let mut pending_command = None;
+    let mut local_command_streak = 0usize;
+    let mut local_commands_enabled = local_commands.enabled();
     let mut hot_turns = 0usize;
     loop {
         match soonest_pacer_release(&topology.pacers) {
@@ -242,7 +320,12 @@ async fn run_inner<S, H, J, P, A>(
         // registering a Tokio waiter; the SPSC lane remains the source of truth for frame data.
         inbound.collect_ready(&mut notify);
         if pending_command.is_none() {
-            pending_command = commands.try_recv().ok();
+            pending_command = next_command(
+                &mut local_commands,
+                &mut commands,
+                &mut local_command_streak,
+                LOCAL_COMMAND_BURST,
+            );
         }
 
         let mut progressed = false;
@@ -354,9 +437,14 @@ async fn run_inner<S, H, J, P, A>(
                 if command_budget == 0 {
                     break;
                 }
-                match commands.try_recv() {
-                    Ok(next) => issued = next,
-                    Err(_) => break,
+                match next_command(
+                    &mut local_commands,
+                    &mut commands,
+                    &mut local_command_streak,
+                    LOCAL_COMMAND_BURST,
+                ) {
+                    Some(next) => issued = next,
+                    None => break,
                 }
             }
             progressed = true;
@@ -450,6 +538,16 @@ async fn run_inner<S, H, J, P, A>(
         }
 
         tokio::select! {
+            local_issued = poll_fn(|context| local_commands.poll_recv(context)),
+                if local_commands_enabled => {
+                match local_issued {
+                    Some(issued) => {
+                        local_command_streak = local_command_streak.saturating_add(1);
+                        pending_command = Some(issued);
+                    }
+                    None => local_commands_enabled = false,
+                }
+            }
             arrived = notify.recv() => {
                 let Some(source) = arrived else { return };
                 inbound.mark_ready(source);
@@ -469,6 +567,26 @@ async fn run_inner<S, H, J, P, A>(
             () = crypto_completion_wake.notified(), if crypto_pool.is_some() => {}
         }
     }
+}
+
+fn next_command<C: CommandLane>(
+    local: &mut C,
+    shared: &mut UnboundedReceiver<HostCommand>,
+    local_streak: &mut usize,
+    local_burst: usize,
+) -> Option<HostCommand> {
+    if *local_streak >= local_burst {
+        *local_streak = 0;
+        if let Ok(command) = shared.try_recv() {
+            return Some(command);
+        }
+    }
+    if let Some(command) = local.try_recv() {
+        *local_streak += 1;
+        return Some(command);
+    }
+    *local_streak = 0;
+    shared.try_recv().ok()
 }
 
 #[cfg(test)]
