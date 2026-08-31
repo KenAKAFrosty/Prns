@@ -1029,6 +1029,7 @@ mod tests {
         assert_eq!(
             environments,
             BTreeMap::from([
+                (OsStr::new("CARGO_TARGET_DIR"), None),
                 (OsStr::new("RUSTFLAGS"), None),
                 (OsStr::new("RUSTUP_TOOLCHAIN"), None),
             ])
