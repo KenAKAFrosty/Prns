@@ -138,7 +138,21 @@ fn an_ifac_frame_crosses_the_seam_and_leaves_masked_through_the_peer() {
         | Journaled::ResourceNeedsDecompression { .. }
         | Journaled::ResourceSegmentReceived { .. }
         | Journaled::ResourceAssembled { .. }
-        | Journaled::LinkInterfaceMismatch { .. } => {}
+        | Journaled::LinkInterfaceMismatch { .. }
+        | Journaled::RemoteControlPairingAvailabilityObserved(_)
+        | Journaled::RemoteControlPairingExpired { .. }
+        | Journaled::RemoteControlTargetPairingConfirmationRequired(_)
+        | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
+        | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
+        | Journaled::RemoteControlControllerPairingConfirmationRequired(_)
+        | Journaled::RemoteControlControllerPairingPersistenceRequired(_)
+        | Journaled::RemoteControlControllerPairingExpired { .. }
+        | Journaled::RemoteControlControllerPairingLinkClosed { .. }
+        | Journaled::RemoteControlTargetPairingExpired { .. }
+        | Journaled::RemoteControlTargetPairingLinkClosed { .. }
+        | Journaled::RemoteControlTargetPairingCompletionRetentionExpired { .. }
+        | Journaled::RemoteControlTargetPairingCompletionLinkClosed { .. }
+        | Journaled::RemoteControlPairingExpiryFailed { .. } => {}
     };
 
     let outcome = block_on(async {

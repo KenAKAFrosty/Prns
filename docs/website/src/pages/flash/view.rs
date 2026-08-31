@@ -609,7 +609,7 @@ pub(super) fn GuidedFlasher(target: &'static BoardTarget) -> Element {
 
                 div { class: "flash-plan-panel mt-5",
                     div { class: "flash-plan-panel__head",
-                        h3 { class: "font-semibold text-paper", "Review and verify" }
+                        h2 { class: "font-semibold text-paper", "Review and verify" }
                         span { class: bridge::status_class(phase()), "{bridge::phase_label(phase())}" }
                     }
                     ol { class: "flash-step-list mt-4",
@@ -884,7 +884,7 @@ fn PreparationInstructions(
         section {
             class: "flash-preparation mt-5",
             "aria-labelledby": "flash-preparation-title",
-            h3 { id: "flash-preparation-title", class: "font-semibold text-paper", "Prepare the board" }
+            h2 { id: "flash-preparation-title", class: "font-semibold text-paper", "Prepare the board" }
             p { class: "mt-2 text-sm leading-relaxed text-soft", "{guide.lead}" }
             ol { class: "flash-preparation__steps mt-3",
                 for (index, step) in guide.steps.iter().enumerate() {

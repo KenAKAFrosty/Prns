@@ -1,7 +1,6 @@
 use super::*;
 use personal_rns::remote_control::{
-    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
-    RemoteControlService,
+    RemoteControlInitialAccess, RemoteControlSelfAnnouncement, RemoteControlService,
 };
 
 pub async fn run(spawner: Spawner) {
@@ -67,7 +66,6 @@ pub async fn run(spawner: Spawner) {
         remote_control_bootstrap.into_parts();
     let remote_control = RemoteControlService::new(
         remote_control_identity_secrets,
-        RemoteControlPublicAppData::empty(),
         RemoteControlInitialAccess::Nobody,
         RemoteControlSelfAnnouncement::Destination(node_page_destination),
     );

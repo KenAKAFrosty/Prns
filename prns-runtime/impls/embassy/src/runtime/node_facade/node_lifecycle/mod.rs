@@ -27,7 +27,6 @@ use super::super::{
     ManuallyAttached, NoInterfaceInspectionStore, NoManifoldPersistence, PreConfiguredDestination,
     PrnsEvent, PrnsNodeRecipe, RouteSnapshotKeys,
 };
-use super::command_handle::JournalRoute;
 use super::command_handle::PrnsNodeHandle;
 use prns_runtime::runtime::placement::assemble_node_in_place;
 use prns_runtime::runtime::{assemble_node, AssembledNode, NoPersistence};
@@ -517,13 +516,12 @@ where
                 lifecycle,
             },
             |journaled| {
-                if let JournalRoute::Awaiter = handle.route_journaled(&journaled) {
-                    return;
-                }
-                if let Some(request) = RunnerRequest::copy_from(&journaled) {
-                    let _ = request_sender.try_send(request);
-                }
-                on_event(PrnsEvent::from(journaled), &state);
+                handle.route_journaled(journaled, |journaled| {
+                    if let Some(request) = RunnerRequest::copy_from(&journaled) {
+                        let _ = request_sender.try_send(request);
+                    }
+                    on_event(PrnsEvent::from(journaled), &state);
+                });
             },
             crate::manifold::AppDeciders {
                 should_prove,
@@ -774,13 +772,12 @@ where
                 lifecycle: *lifecycle,
             },
             |journaled| {
-                if let JournalRoute::Awaiter = handle.route_journaled(&journaled) {
-                    return;
-                }
-                if let Some(request) = RunnerRequest::copy_from(&journaled) {
-                    let _ = request_sender.try_send(request);
-                }
-                on_event(PrnsEvent::from(journaled), state);
+                handle.route_journaled(journaled, |journaled| {
+                    if let Some(request) = RunnerRequest::copy_from(&journaled) {
+                        let _ = request_sender.try_send(request);
+                    }
+                    on_event(PrnsEvent::from(journaled), state);
+                });
             },
             crate::manifold::AppDeciders {
                 should_prove,

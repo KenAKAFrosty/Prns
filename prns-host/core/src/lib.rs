@@ -8,6 +8,7 @@ mod command;
 mod config;
 mod contract;
 mod delivery;
+mod event_projection;
 mod events;
 mod generated;
 mod inspection;
@@ -34,6 +35,11 @@ pub use contract::{
     verify_host_contract, HostContract, HostContractMismatch, HOST_CONTRACT, HOST_CONTRACT_ABI,
 };
 pub use delivery::{EventDelivery, EventDeliveryAdmission, EventDeliveryQueue};
+pub use event_projection::{
+    EventBatchProjection, EventBatchProjectionError, EventProjection,
+    EventProjectionConstructionError, EventProjectionExtensionField, EventProjectionField,
+    EventProjectionFieldId, EventProjectionKind, EventProjectionValue,
+};
 pub use events::{
     ApplicationEvent, ChannelMessage, DiagnosticBatch, DiagnosticEvent, LinkDelivery,
     RequestAvailable, ResourceNeedsDecompression, ResourceSegmentAvailable, ResponseAvailable,

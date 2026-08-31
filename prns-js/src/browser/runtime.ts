@@ -9,11 +9,17 @@ import type {
 import { byteKey } from "./bytes.js";
 import { describeHostError } from "./host_errors.js";
 import type { BrowserUsbDeviceFilter } from "./host_apis.js";
+import type { BluetoothHostReassembler } from "./bluetooth/runtime.js";
+import type { UsbAutoHostDecoder } from "./usb_auto/runtime.js";
 import {
   outboundTargets,
   parseOutboundFrame,
 } from "./outbound.js";
-import type { PrnsOutboundFrame } from "./outbound.js";
+import type {
+  InterfaceOutboundOutcome,
+  NonEmptyPrnsOutboundFrames,
+  PrnsOutboundFrame,
+} from "./outbound.js";
 import {
   MIN_ENTROPY_BYTES,
   PrnsValidationError,
@@ -78,10 +84,10 @@ type OutboundTakeOutcome =
 type RuntimeOutboundDrainOutcome =
   | Tag<"Drained", readonly PrnsOutboundFrame[]>
   | RuntimeRejected;
-type OutboundActivityOutcome =
+type OutboundWaitOutcome =
   | Tag<"RuntimeAdvanced">
   | Tag<"InterfaceDetached">;
-type OutboundActivityWaiter = (outcome: OutboundActivityOutcome) => void;
+type OutboundWaiter = (outcome: OutboundWaitOutcome) => void;
 
 const INTERFACE_OUTBOUND_QUEUE_DEPTH = 64;
 
@@ -107,7 +113,7 @@ export class RuntimeHost {
   #activeRegistrationKeys = new Set<string>();
   #outboundQueues = new Map<string, PrnsOutboundFrame[]>();
   #overflowedOutbound = new Set<string>();
-  #outboundActivityWaiters = new Map<string, Set<OutboundActivityWaiter>>();
+  #outboundWaiters = new Map<string, Set<OutboundWaiter>>();
 
   constructor(
     wasm: PrnsWasmModule,
@@ -176,6 +182,7 @@ export class RuntimeHost {
       txBytes: 0,
     });
     this.#outboundQueues.set(key, []);
+    this.#onRuntimeActivity();
     return Tag("Registered", id);
   }
 
@@ -183,7 +190,7 @@ export class RuntimeHost {
     const key = byteKey(id);
     const active = this.#activeInterfaces.get(key);
     if (!active) {
-      this.#resolveOutboundActivity(key, Tag("InterfaceDetached"));
+      this.#resolveOutboundWaiters(key, Tag("InterfaceDetached"));
       return Tag("Detached");
     }
     try {
@@ -204,14 +211,16 @@ export class RuntimeHost {
     this.#activeRegistrationKeys.delete(active.registrationKey);
     this.#outboundQueues.delete(key);
     this.#overflowedOutbound.delete(key);
-    this.#resolveOutboundActivity(key, Tag("InterfaceDetached"));
+    this.#resolveOutboundWaiters(key, Tag("InterfaceDetached"));
+    this.#onRuntimeActivity();
     return Tag("Detached");
   }
 
   setContractKind(id: InterfaceId, kind: InterfaceKind): void {
     const active = this.#activeInterfaces.get(byteKey(id));
-    if (active !== undefined) {
+    if (active !== undefined && active.contractKind !== kind) {
       active.contractKind = kind;
+      this.#onRuntimeActivity();
     }
   }
 
@@ -263,10 +272,40 @@ export class RuntimeHost {
     }
   }
 
-  takeOutboundFor(
+  async nextOutboundFor(
+    interfaceId: InterfaceId,
+    maximumFrames = Number.MAX_SAFE_INTEGER,
+  ): Promise<InterfaceOutboundOutcome> {
+    const interfaceKey = byteKey(interfaceId);
+    while (this.#activeInterfaces.has(interfaceKey)) {
+      const outbound = this.#takeOutboundFor(interfaceId, maximumFrames);
+      if (outbound.tag !== "Outbound") {
+        return outbound;
+      }
+      if (outbound.data.length > 0) {
+        return Tag(
+          "Outbound",
+          outbound.data as NonEmptyPrnsOutboundFrames,
+        );
+      }
+      const wake = await this.#waitForOutbound(interfaceKey);
+      if (wake.tag === "InterfaceDetached") {
+        return wake;
+      }
+    }
+    return Tag("InterfaceDetached");
+  }
+
+  #takeOutboundFor(
     interfaceId: InterfaceId,
     maximumFrames = Number.MAX_SAFE_INTEGER,
   ): OutboundTakeOutcome {
+    let frameLimit: number;
+    try {
+      frameLimit = positiveInteger(maximumFrames, "maximum outbound frames");
+    } catch (error) {
+      return runtimeRejected("drain-outbound", error);
+    }
     const interfaceKey = byteKey(interfaceId);
     const direct: PrnsOutboundFrame[] = [];
     const drained = this.drainOutbound();
@@ -283,8 +322,10 @@ export class RuntimeHost {
           const queue = this.#outboundQueues.get(key);
           if (queue && queue.length < INTERFACE_OUTBOUND_QUEUE_DEPTH) {
             queue.push(frame);
+            this.#resolveOutboundWaiters(key, Tag("RuntimeAdvanced"));
           } else if (queue) {
             this.#overflowedOutbound.add(key);
+            this.#resolveOutboundWaiters(key, Tag("RuntimeAdvanced"));
           }
         }
       }
@@ -297,8 +338,8 @@ export class RuntimeHost {
     }
     const queued = this.#outboundQueues.get(interfaceKey) ?? [];
     const available = queued.concat(direct);
-    const outbound = available.slice(0, maximumFrames);
-    this.#outboundQueues.set(interfaceKey, available.slice(maximumFrames));
+    const outbound = available.slice(0, frameLimit);
+    this.#outboundQueues.set(interfaceKey, available.slice(frameLimit));
     const active = this.#activeInterfaces.get(interfaceKey);
     if (active !== undefined) {
       active.txBytes = outbound.reduce(
@@ -309,46 +350,59 @@ export class RuntimeHost {
     return Tag("Outbound", outbound);
   }
 
-  waitForOutboundActivity(id: InterfaceId): Promise<OutboundActivityOutcome> {
-    const key = byteKey(id);
+  #waitForOutbound(key: string): Promise<OutboundWaitOutcome> {
     if (!this.#activeInterfaces.has(key)) {
       return Promise.resolve(Tag("InterfaceDetached"));
     }
     return new Promise((resolve) => {
-      const waiters = this.#outboundActivityWaiters.get(key) ?? new Set();
+      const waiters = this.#outboundWaiters.get(key) ?? new Set();
       waiters.add(resolve);
-      this.#outboundActivityWaiters.set(key, waiters);
+      this.#outboundWaiters.set(key, waiters);
     });
   }
 
   notifyRuntimeActivity(): void {
-    const keys = [...this.#outboundActivityWaiters.keys()];
+    const keys = [...this.#outboundWaiters.keys()];
     for (const key of keys) {
-      this.#resolveOutboundActivity(key, Tag("RuntimeAdvanced"));
+      this.#resolveOutboundWaiters(key, Tag("RuntimeAdvanced"));
     }
     this.#onRuntimeActivity();
   }
 
-  #resolveOutboundActivity(
+  #resolveOutboundWaiters(
     key: string,
-    outcome: OutboundActivityOutcome,
+    outcome: OutboundWaitOutcome,
   ): void {
-    const waiters = this.#outboundActivityWaiters.get(key);
+    const waiters = this.#outboundWaiters.get(key);
     if (waiters === undefined) {
       return;
     }
-    this.#outboundActivityWaiters.delete(key);
+    this.#outboundWaiters.delete(key);
     for (const resolve of waiters) {
       resolve(outcome);
     }
   }
 
-  createUsbAutoDecoder(): UsbAutoDecoderBinding {
-    return new this.#wasm.UsbAutoDecoder();
+  createUsbAutoDecoder(): UsbAutoHostDecoder {
+    const decoder = new this.#wasm.UsbAutoDecoder();
+    return {
+      feed: (chunk) => decoder.feed(chunk),
+      release: () => {
+        (decoder as UsbAutoDecoderBinding & { free?: () => void }).free?.();
+      },
+    };
   }
 
-  createBluetoothReassembler(): BluetoothReassemblerBinding {
-    return new this.#wasm.BluetoothReassembler();
+  createBluetoothReassembler(): BluetoothHostReassembler {
+    const reassembler = new this.#wasm.BluetoothReassembler();
+    return {
+      absorb: (bytes) => reassembler.absorb(bytes),
+      release: () => {
+        (
+          reassembler as BluetoothReassemblerBinding & { free?: () => void }
+        ).free?.();
+      },
+    };
   }
 
   createWebSocketFramingCodec(
@@ -443,13 +497,16 @@ export class RuntimeHost {
     return this.runtimeReadiness();
   }
 
-  autoWifiRegister(id: Uint8Array): InterfaceRegistrationOutcome<"auto-wifi"> {
+  autoWifiRegister(
+    id: Uint8Array,
+    bitrate: BitrateBps,
+  ): InterfaceRegistrationOutcome<"auto-wifi"> {
     try {
       return this.registerInterface({
         interfaceName: "auto-wifi",
         kind: "auto-wifi",
         channelTag: channelTag(id),
-        bitrateBps: this.websocketBitrateBps(),
+        bitrateBps: bitrate,
         hardwareMtu: this.websocketHardwareMtu(),
       });
     } catch (error) {
@@ -467,10 +524,6 @@ export class RuntimeHost {
     } catch (error) {
       return runtimeRejected("ingest", error);
     }
-  }
-
-  autoWifiTakeOutbound(id: InterfaceId): OutboundTakeOutcome {
-    return this.takeOutboundFor(id);
   }
 
   autoWifiBitrateBps(): BitrateBps {

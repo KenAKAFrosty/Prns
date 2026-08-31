@@ -3,6 +3,7 @@ use heapless::Vec as HeaplessVec;
 use crate::identity::IdentityHash;
 use crate::routing::links::data::link_mdu;
 use crate::routing::links::request::{RequestId, REQUEST_WIRE_OVERHEAD, RESPONSE_WIRE_OVERHEAD};
+use crate::routing::links::resources::ResourceFailureCause;
 use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::units::{ByteLimit, DurationMillis};
@@ -19,6 +20,9 @@ pub type SendRequestData = HeaplessVec<u8, MAX_SEND_REQUEST_DATA_LEN>;
 pub enum RequestResponseTimeout {
     #[default]
     LinkDefault,
+    LinkDefaultAtMost {
+        maximum: DurationMillis,
+    },
     Exact(DurationMillis),
 }
 
@@ -33,6 +37,12 @@ pub struct SendRequest {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendRequestIntent {
+    Application,
+    RemoteControlControllerPairing,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendRequestRejection {
     NoSuchLink,
     LinkNotActive,
@@ -44,10 +54,18 @@ pub enum SendRequestFailure {
     WriteFailed,
     Culled,
     Timeout,
+    LinkClosed,
     ResponseTooLarge,
+    ResponseTransferFailed(ResourceFailureCause),
     /// A valid Resource response could not be admitted within the receiver's
     /// bounded memory and pending-offer limits.
     ResourceCapacity,
+}
+
+impl From<ResourceFailureCause> for SendRequestFailure {
+    fn from(cause: ResourceFailureCause) -> Self {
+        Self::ResponseTransferFailed(cause)
+    }
 }
 
 pub const MAX_RESPOND_DATA_LEN: usize =
@@ -135,7 +153,17 @@ impl Settleable for SendRequest {
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
             | Settlement::SetRegisteredAnnounceAppData(_)
-            | Settlement::SendPlainPacket(_) => None,
+            | Settlement::SendPlainPacket(_)
+            | Settlement::OpenRemoteControlPairing(_)
+            | Settlement::CloseRemoteControlPairing(_)
+            | Settlement::ApproveRemoteControlTargetPairing(_)
+            | Settlement::RejectRemoteControlTargetPairing(_)
+            | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
+            | Settlement::BeginRemoteControlControllerPairing(_)
+            | Settlement::ApproveRemoteControlControllerPairing(_)
+            | Settlement::RejectRemoteControlControllerPairing(_)
+            | Settlement::RemoteControlControllerPairingRequest(_)
+            | Settlement::SettleRemoteControlControllerPairingPersistence(_) => None,
         }
     }
 }
@@ -166,7 +194,17 @@ impl Settleable for Respond {
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
             | Settlement::SetRegisteredAnnounceAppData(_)
-            | Settlement::SendPlainPacket(_) => None,
+            | Settlement::SendPlainPacket(_)
+            | Settlement::OpenRemoteControlPairing(_)
+            | Settlement::CloseRemoteControlPairing(_)
+            | Settlement::ApproveRemoteControlTargetPairing(_)
+            | Settlement::RejectRemoteControlTargetPairing(_)
+            | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
+            | Settlement::BeginRemoteControlControllerPairing(_)
+            | Settlement::ApproveRemoteControlControllerPairing(_)
+            | Settlement::RejectRemoteControlControllerPairing(_)
+            | Settlement::RemoteControlControllerPairingRequest(_)
+            | Settlement::SettleRemoteControlControllerPairingPersistence(_) => None,
         }
     }
 }
@@ -197,7 +235,50 @@ impl Settleable for AllowRequester {
             | Settlement::SetResourceStrategy(_)
             | Settlement::SendToChannel(_)
             | Settlement::SetRegisteredAnnounceAppData(_)
-            | Settlement::SendPlainPacket(_) => None,
+            | Settlement::SendPlainPacket(_)
+            | Settlement::OpenRemoteControlPairing(_)
+            | Settlement::CloseRemoteControlPairing(_)
+            | Settlement::ApproveRemoteControlTargetPairing(_)
+            | Settlement::RejectRemoteControlTargetPairing(_)
+            | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
+            | Settlement::BeginRemoteControlControllerPairing(_)
+            | Settlement::ApproveRemoteControlControllerPairing(_)
+            | Settlement::RejectRemoteControlControllerPairing(_)
+            | Settlement::RemoteControlControllerPairingRequest(_)
+            | Settlement::SettleRemoteControlControllerPairingPersistence(_) => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::routing::links::resources::table::ApplyHashmapUpdateError;
+
+    #[test]
+    fn every_response_transfer_failure_is_preserved_by_the_request_failure() {
+        let causes = [
+            ResourceFailureCause::CancelledBySender,
+            ResourceFailureCause::RefusedHashmapUpdate(ApplyHashmapUpdateError::BeyondPartCount),
+            ResourceFailureCause::RefusedHashmapUpdate(ApplyHashmapUpdateError::SkipsAhead),
+            ResourceFailureCause::RefusedHashmapUpdate(ApplyHashmapUpdateError::HashmapTooLong),
+            ResourceFailureCause::RefusedHashmapUpdate(ApplyHashmapUpdateError::HashmapRagged),
+            ResourceFailureCause::RetriesExhausted,
+            ResourceFailureCause::LinkVanished,
+            ResourceFailureCause::TransferUnopenable,
+            ResourceFailureCause::TransferCorrupt,
+            ResourceFailureCause::ProofUnsendable,
+            ResourceFailureCause::DecompressionFailed,
+            ResourceFailureCause::DecompressionTimedOut,
+            ResourceFailureCause::OpenTimedOut,
+            ResourceFailureCause::MetadataOverrun,
+        ];
+
+        for cause in causes {
+            assert_eq!(
+                SendRequestFailure::from(cause),
+                SendRequestFailure::ResponseTransferFailed(cause),
+            );
         }
     }
 }

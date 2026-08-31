@@ -410,6 +410,22 @@ impl<C: LinkTable> Links<C> {
             .count()
     }
 
+    pub(crate) fn visit_active_links(
+        &self,
+        mut visit: impl FnMut(LinkId, RttMillis, Option<IdentityHash>),
+    ) {
+        for (link_id, phase) in self.table.link_ids().iter().zip(self.table.phases()) {
+            if let LinkPhase::Active {
+                rtt,
+                remote_identity,
+                ..
+            } = phase
+            {
+                visit(*link_id, *rtt, *remote_identity);
+            }
+        }
+    }
+
     pub fn phase_for(&self, link_id: &LinkId) -> Option<&LinkPhase> {
         let index = self.index_of(link_id)?;
         self.table.phases().get(index)
@@ -997,6 +1013,42 @@ mod tests {
             links.earliest_timeout_at(),
             Some(InstantMillis(2_000 + 51_428)),
             "activation arms the initiator's keepalive deadline from its rtt",
+        );
+    }
+
+    #[test]
+    fn active_link_introspection_projects_only_authoritative_active_rows() {
+        let mut links = TestLinks::default();
+        links.track_initiated(initiated(1, 5_000)).unwrap();
+        links
+            .activate_initiated(
+                &link_id(1),
+                key(1, 9),
+                &LinkActivation {
+                    received_hops: 1,
+                    rtt: RttMillis::new(250),
+                    mtu: 500,
+                    attached_interface: iface(0xEE),
+                    peer_signing: Ed25519PublicKey([0x99; 32]),
+                },
+                InstantMillis(2_000),
+            )
+            .unwrap();
+        links.note_identified(&link_id(1), IdentityHash::new([0xA7; 16]));
+        links.track_initiated(initiated(2, 5_000)).unwrap();
+        let mut snapshots = std::vec::Vec::new();
+
+        links.visit_active_links(|link_id, rtt, remote_identity| {
+            snapshots.push((link_id, rtt, remote_identity));
+        });
+
+        assert_eq!(
+            snapshots,
+            std::vec![(
+                link_id(1),
+                RttMillis::new(250),
+                Some(IdentityHash::new([0xA7; 16])),
+            )]
         );
     }
 

@@ -10,7 +10,6 @@ use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome
 use crate::routing::delivery::send_single::DEFAULT_PER_HOP_TIMEOUT_MS;
 use crate::routing::delivery::{Delivery, LinkDelivery};
 use crate::routing::links::channel::parse_envelope;
-use crate::routing::links::channel::table::ChannelTable;
 use crate::routing::links::handshake::{
     link_proof_from, link_proof_parse, link_request_from, link_rtt_from, signalling_bytes_from,
     AcceptedLinkRequest, LinkProofVerifyOwed, LinkRequest, LinkRttError, LINK_PROOF_BODY_LEN,
@@ -795,6 +794,7 @@ impl<S: StorageLayout> EngineState<S> {
             self.links.note_inbound(&link_id, arrived_at);
             return IngestPacketOutcome::ResponseTooLarge {
                 id: proven.command_id,
+                intent: proven.intent,
                 link_id,
                 request_id,
             };
@@ -805,6 +805,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.links.note_inbound(&link_id, arrived_at);
         IngestPacketOutcome::ResponseSettled {
             id: proven.command_id,
+            intent: proven.intent,
             delivered: PacketReceiptDelivered {
                 rtt: RttMillis::measured_between(proven.sent_at, arrived_at),
                 evidence: DeliveryEvidence::Response,
@@ -851,13 +852,8 @@ impl<S: StorageLayout> EngineState<S> {
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'static> {
         let link_id = LinkId::from_address(data.header.address);
-        let (key, attached_interface) = match self.links.phase_for(&link_id) {
-            Some(LinkPhase::Active {
-                key,
-                attached_interface,
-                ..
-            }) => (key, Some(*attached_interface)),
-            Some(LinkPhase::Handshake { key, .. }) => (key, None),
+        let key = match self.links.phase_for(&link_id) {
+            Some(LinkPhase::Active { key, .. } | LinkPhase::Handshake { key, .. }) => key,
             Some(LinkPhase::Pending { .. }) | None => {
                 return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch)
             }
@@ -869,15 +865,6 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
         }
         self.links.note_inbound(&link_id, arrived_at);
-        self.reconcile_pending_link_route_evidence();
-        self.links.remove(&link_id);
-        self.channels.close(&link_id);
-        self.pending_resource_offers.remove_link(&link_id);
-        self.incoming_assemblies.clear(&link_id);
-        self.outgoing_assemblies.clear(&link_id);
-        if let Some(interface) = attached_interface {
-            self.mark_interface_dirty(interface);
-        }
         IngestPacketOutcome::LinkClosedByPeer { link_id }
     }
 
@@ -899,16 +886,30 @@ impl<S: StorageLayout> EngineState<S> {
         else {
             return self.ingest_transported_link_request(header, &request, arrival);
         };
-        if let Some(transport_id) = header.transport_id {
-            if self.transport_id() != Some(transport_id) {
-                return IngestPacketOutcome::Ignored(IgnoreReason::OtherInstance);
-            }
-        }
         match registered.link_request_policy {
             LinkRequestPolicy::AcceptNone => {
                 return IngestPacketOutcome::Ignored(IgnoreReason::LinkRequestsRefused)
             }
-            LinkRequestPolicy::AcceptAll => {}
+            LinkRequestPolicy::AcceptDirect | LinkRequestPolicy::AcceptDirectFrom { .. }
+                if header.hops != 0
+                    || header.propagation != PropagationType::Broadcast
+                    || header.transport_id.is_some() =>
+            {
+                return IngestPacketOutcome::Ignored(IgnoreReason::LinkRequestsRefused)
+            }
+            LinkRequestPolicy::AcceptDirectFrom { interface }
+                if arrival.source_interface != interface =>
+            {
+                return IngestPacketOutcome::Ignored(IgnoreReason::LinkRequestsRefused)
+            }
+            LinkRequestPolicy::AcceptAll
+            | LinkRequestPolicy::AcceptDirect
+            | LinkRequestPolicy::AcceptDirectFrom { .. } => {}
+        }
+        if let Some(transport_id) = header.transport_id {
+            if self.transport_id() != Some(transport_id) {
+                return IngestPacketOutcome::Ignored(IgnoreReason::OtherInstance);
+            }
         }
         if self.held_identities.get(&registered.identity).is_none() {
             return IngestPacketOutcome::Ignored(IgnoreReason::UnknownIdentity);

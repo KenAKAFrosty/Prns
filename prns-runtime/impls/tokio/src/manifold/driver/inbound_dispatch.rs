@@ -228,6 +228,11 @@ impl InboundDispatch {
                             DeferredCrypto::AnnounceVerify(owed) => {
                                 pool.submit(CryptoJob::VerifyAnnounce(owed));
                             }
+                            DeferredCrypto::RemoteControlPairingAvailabilityVerify(owed) => {
+                                pool.submit(CryptoJob::VerifyRemoteControlPairingAvailability(
+                                    owed,
+                                ));
+                            }
                         }
                         report
                     }

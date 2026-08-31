@@ -283,6 +283,21 @@ public enum CommandFailureKind : uint
     ConnectFailed = 39,
     BackendFailed = 40,
     ResponseTooLarge = 41,
+    LinkClosed = 42,
+    ResponseCancelledBySender = 43,
+    ResponseHashmapBeyondPartCount = 44,
+    ResponseHashmapSkipsAhead = 45,
+    ResponseHashmapTooLong = 46,
+    ResponseHashmapRagged = 47,
+    ResponseRetriesExhausted = 48,
+    ResponseLinkVanished = 49,
+    ResponseTransferUnopenable = 50,
+    ResponseTransferCorrupt = 51,
+    ResponseProofUnsendable = 52,
+    ResponseDecompressionFailed = 53,
+    ResponseDecompressionTimedOut = 54,
+    ResponseOpenTimedOut = 55,
+    ResponseMetadataOverrun = 56,
 }
 
 public enum DeliveryEvidenceKind : uint
@@ -312,6 +327,7 @@ public enum LinkClosedReason : uint
     Timeout = 1,
     PeerClosed = 2,
     MalformedRtt = 3,
+    LocallyClosed = 4,
 }
 
 public enum ApplicationEventKind : uint
@@ -1352,6 +1368,21 @@ public abstract record CommandFailure
         string Detail
     ) : CommandFailure;
     public sealed record ResponseTooLarge() : CommandFailure;
+    public sealed record LinkClosed() : CommandFailure;
+    public sealed record ResponseCancelledBySender() : CommandFailure;
+    public sealed record ResponseHashmapBeyondPartCount() : CommandFailure;
+    public sealed record ResponseHashmapSkipsAhead() : CommandFailure;
+    public sealed record ResponseHashmapTooLong() : CommandFailure;
+    public sealed record ResponseHashmapRagged() : CommandFailure;
+    public sealed record ResponseRetriesExhausted() : CommandFailure;
+    public sealed record ResponseLinkVanished() : CommandFailure;
+    public sealed record ResponseTransferUnopenable() : CommandFailure;
+    public sealed record ResponseTransferCorrupt() : CommandFailure;
+    public sealed record ResponseProofUnsendable() : CommandFailure;
+    public sealed record ResponseDecompressionFailed() : CommandFailure;
+    public sealed record ResponseDecompressionTimedOut() : CommandFailure;
+    public sealed record ResponseOpenTimedOut() : CommandFailure;
+    public sealed record ResponseMetadataOverrun() : CommandFailure;
 
     public TResult Match<TResult>(
         Func<CommandFailure.NodeStopped, TResult> nodeStopped,
@@ -1394,7 +1425,22 @@ public abstract record CommandFailure
         Func<CommandFailure.DeviceUnavailable, TResult> deviceUnavailable,
         Func<CommandFailure.ConnectFailed, TResult> connectFailed,
         Func<CommandFailure.BackendFailed, TResult> backendFailed,
-        Func<CommandFailure.ResponseTooLarge, TResult> responseTooLarge
+        Func<CommandFailure.ResponseTooLarge, TResult> responseTooLarge,
+        Func<CommandFailure.LinkClosed, TResult> linkClosed,
+        Func<CommandFailure.ResponseCancelledBySender, TResult> responseCancelledBySender,
+        Func<CommandFailure.ResponseHashmapBeyondPartCount, TResult> responseHashmapBeyondPartCount,
+        Func<CommandFailure.ResponseHashmapSkipsAhead, TResult> responseHashmapSkipsAhead,
+        Func<CommandFailure.ResponseHashmapTooLong, TResult> responseHashmapTooLong,
+        Func<CommandFailure.ResponseHashmapRagged, TResult> responseHashmapRagged,
+        Func<CommandFailure.ResponseRetriesExhausted, TResult> responseRetriesExhausted,
+        Func<CommandFailure.ResponseLinkVanished, TResult> responseLinkVanished,
+        Func<CommandFailure.ResponseTransferUnopenable, TResult> responseTransferUnopenable,
+        Func<CommandFailure.ResponseTransferCorrupt, TResult> responseTransferCorrupt,
+        Func<CommandFailure.ResponseProofUnsendable, TResult> responseProofUnsendable,
+        Func<CommandFailure.ResponseDecompressionFailed, TResult> responseDecompressionFailed,
+        Func<CommandFailure.ResponseDecompressionTimedOut, TResult> responseDecompressionTimedOut,
+        Func<CommandFailure.ResponseOpenTimedOut, TResult> responseOpenTimedOut,
+        Func<CommandFailure.ResponseMetadataOverrun, TResult> responseMetadataOverrun
     ) =>
         this switch
         {
@@ -1439,6 +1485,21 @@ public abstract record CommandFailure
             ConnectFailed value => connectFailed(value),
             BackendFailed value => backendFailed(value),
             ResponseTooLarge value => responseTooLarge(value),
+            LinkClosed value => linkClosed(value),
+            ResponseCancelledBySender value => responseCancelledBySender(value),
+            ResponseHashmapBeyondPartCount value => responseHashmapBeyondPartCount(value),
+            ResponseHashmapSkipsAhead value => responseHashmapSkipsAhead(value),
+            ResponseHashmapTooLong value => responseHashmapTooLong(value),
+            ResponseHashmapRagged value => responseHashmapRagged(value),
+            ResponseRetriesExhausted value => responseRetriesExhausted(value),
+            ResponseLinkVanished value => responseLinkVanished(value),
+            ResponseTransferUnopenable value => responseTransferUnopenable(value),
+            ResponseTransferCorrupt value => responseTransferCorrupt(value),
+            ResponseProofUnsendable value => responseProofUnsendable(value),
+            ResponseDecompressionFailed value => responseDecompressionFailed(value),
+            ResponseDecompressionTimedOut value => responseDecompressionTimedOut(value),
+            ResponseOpenTimedOut value => responseOpenTimedOut(value),
+            ResponseMetadataOverrun value => responseMetadataOverrun(value),
             _ => throw new InvalidOperationException("Unknown contract case."),
         };
 }

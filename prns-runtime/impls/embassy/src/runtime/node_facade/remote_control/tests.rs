@@ -73,7 +73,7 @@ fn announce_self_uses_the_bounded_embassy_request_lane() {
                 data: response.as_slice(),
             };
             assert!(matches!(
-                handle.route_journaled(&response_event),
+                handle.route_journaled(response_event, |_| {}),
                 JournalRoute::Awaiter,
             ));
             let settled = Journaled::CommandSettled {
@@ -84,7 +84,7 @@ fn announce_self_uses_the_bounded_embassy_request_lane() {
                 })),
             };
             assert!(matches!(
-                handle.route_journaled(&settled),
+                handle.route_journaled(settled, |_| {}),
                 JournalRoute::Awaiter,
             ));
         },
@@ -132,7 +132,7 @@ fn describe_uses_the_bounded_embassy_request_lane() {
             data: response.as_slice(),
         };
         assert!(matches!(
-            handle.route_journaled(&response_event),
+            handle.route_journaled(response_event, |_| {}),
             JournalRoute::Awaiter,
         ));
         let settled = Journaled::CommandSettled {
@@ -143,7 +143,7 @@ fn describe_uses_the_bounded_embassy_request_lane() {
             })),
         };
         assert!(matches!(
-            handle.route_journaled(&settled),
+            handle.route_journaled(settled, |_| {}),
             JournalRoute::Awaiter,
         ));
     }));
