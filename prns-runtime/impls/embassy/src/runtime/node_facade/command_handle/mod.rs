@@ -51,13 +51,13 @@ use super::super::{
     BeginRemoteControlControllerPairingControlFailure, CloseRemoteControlPairingControlError,
     ForgetRemoteControlTargetControlError, OpenRemoteControlPairingControlError, PrnsNodeApi,
     RejectRemoteControlControllerPairingControlError, RejectRemoteControlTargetPairingControlError,
-    RemoteControlControllerGrantControl, RemoteControlPairingControl,
-    RemoteControlPairingControlError, RemoteControlPairingLinkCleanupOutcome,
-    RemoteControlTargetAccessControl, RemoteControlTargetInventory,
-    RemoteControlTargetInventoryControlError, ResolveRemoteControlTargetControlError,
-    ResolvedRemoteControlTarget, RevokeRemoteControlControllerControlError, SendError,
-    SetRegisteredAnnounceAppDataError, SetRemoteControlControllerGrantControlError,
-    SetRemoteControlTargetAccessControlError,
+    RemoteControlControllerGrantControl, RemoteControlControllerPairingInitiationTransport,
+    RemoteControlPairingControl, RemoteControlPairingControlError,
+    RemoteControlPairingLinkCleanupOutcome, RemoteControlTargetAccessControl,
+    RemoteControlTargetInventory, RemoteControlTargetInventoryControlError,
+    ResolveRemoteControlTargetControlError, ResolvedRemoteControlTarget,
+    RevokeRemoteControlControllerControlError, SendError, SetRegisteredAnnounceAppDataError,
+    SetRemoteControlControllerGrantControlError, SetRemoteControlTargetAccessControlError,
 };
 
 const NO_AWAITER: u64 = u64::MAX;
@@ -1399,6 +1399,33 @@ impl<
         RejectRemoteControlTargetPairingControlError,
     > {
         self.settle_pairing_command(reject).await
+    }
+}
+
+impl<
+        M: RawMutex + Sync,
+        const COMMANDS: usize,
+        const COMPLETIONS: usize,
+        const REQUEST_COMPLETIONS: usize,
+        const RESPONSE_BYTES: usize,
+    > RemoteControlControllerPairingInitiationTransport
+    for PrnsNodeHandle<'_, M, COMMANDS, COMPLETIONS, REQUEST_COMPLETIONS, RESPONSE_BYTES>
+{
+    async fn establish_remote_control_pairing_link(
+        &self,
+        destination: DestinationHash,
+    ) -> Result<LinkId, SendError<EstablishLinkFailure>> {
+        self.establish_link(destination).await
+    }
+
+    fn close_remote_control_pairing_link(
+        &self,
+        link_id: LinkId,
+    ) -> RemoteControlPairingLinkCleanupOutcome {
+        match self.close_link(link_id) {
+            true => RemoteControlPairingLinkCleanupOutcome::Queued,
+            false => RemoteControlPairingLinkCleanupOutcome::NotQueued,
+        }
     }
 }
 

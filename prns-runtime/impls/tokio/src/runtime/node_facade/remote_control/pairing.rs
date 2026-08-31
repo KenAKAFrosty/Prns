@@ -1,17 +1,19 @@
 use crate::engine::{
     ApproveRemoteControlControllerPairing, ApproveRemoteControlTargetPairing,
-    BeginRemoteControlControllerPairing, RejectRemoteControlControllerPairing,
-    RejectRemoteControlTargetPairing, Settleable,
+    BeginRemoteControlControllerPairing, EstablishLinkFailure,
+    RejectRemoteControlControllerPairing, RejectRemoteControlTargetPairing, Settleable,
 };
+use crate::routing::links::LinkId;
 use crate::runtime::{
     ApproveRemoteControlControllerPairingControlError,
     ApproveRemoteControlControllerPairingControlFailure,
     ApproveRemoteControlTargetPairingControlError, BeginRemoteControlControllerPairingControlError,
     BeginRemoteControlControllerPairingControlFailure,
     RejectRemoteControlControllerPairingControlError, RejectRemoteControlTargetPairingControlError,
-    RemoteControlPairingControl, RemoteControlPairingControlError,
-    RemoteControlPairingLinkCleanupOutcome,
+    RemoteControlControllerPairingInitiationTransport, RemoteControlPairingControl,
+    RemoteControlPairingControlError, RemoteControlPairingLinkCleanupOutcome, SendError,
 };
+use crate::wire::DestinationHash;
 
 use super::super::PrnsNodeHandle;
 
@@ -112,6 +114,25 @@ impl RemoteControlPairingControl for PrnsNodeHandle {
         RejectRemoteControlTargetPairingControlError,
     > {
         settle_pairing_command(self, reject).await
+    }
+}
+
+impl RemoteControlControllerPairingInitiationTransport for PrnsNodeHandle {
+    async fn establish_remote_control_pairing_link(
+        &self,
+        destination: DestinationHash,
+    ) -> Result<LinkId, SendError<EstablishLinkFailure>> {
+        self.establish_link(destination).await
+    }
+
+    fn close_remote_control_pairing_link(
+        &self,
+        link_id: LinkId,
+    ) -> RemoteControlPairingLinkCleanupOutcome {
+        match self.close_link(link_id) {
+            true => RemoteControlPairingLinkCleanupOutcome::Queued,
+            false => RemoteControlPairingLinkCleanupOutcome::NotQueued,
+        }
     }
 }
 

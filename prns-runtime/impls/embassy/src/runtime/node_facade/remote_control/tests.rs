@@ -14,9 +14,11 @@ use crate::routing::links::LinkId;
 use crate::runtime::request_endpoints::RequestEndpointId;
 use crate::runtime::{
     configure_remote_control_service, BeginRemoteControlControllerPairingControlFailure,
-    RemoteControlAnnounceSelf, RemoteControlDescribe, RemoteControlPairingControl,
-    RemoteControlPairingControlError, RemoteControlPairingLinkCleanupOutcome,
-    RemoteControlTargetOperationError, ResolvedRemoteControlTarget, SendError,
+    InitiateRemoteControlControllerPairing, InitiateRemoteControlControllerPairingError,
+    RemoteControlAnnounceSelf, RemoteControlControllerPairingInitiationControl,
+    RemoteControlDescribe, RemoteControlPairingControl, RemoteControlPairingControlError,
+    RemoteControlPairingLinkCleanupOutcome, RemoteControlTargetOperationError,
+    ResolvedRemoteControlTarget, SendError,
 };
 use crate::storage::GrowableHeap;
 use crate::units::{InstantMillis, RttMillis};
@@ -118,6 +120,111 @@ fn settle_pairing_begin(
         },
     );
     settlement.unwrap()
+}
+
+#[test]
+fn controller_pairing_initiation_establishes_the_observed_endpoint_before_beginning() {
+    let commands = Channel::<M, IssuedCommand, 1>::new();
+    let completions = CompletionPool::<M, 1>::new();
+    let handle = PrnsNodeHandle::new(commands.sender(), &completions);
+    let (mut engine, controller) = controller_pairing_engine();
+    let begin = controller_pairing_begin();
+    let endpoint = begin.context.endpoint();
+    let destination = endpoint.destination_hash();
+
+    let (result, ()) = block_on(join(
+        handle.initiate_remote_control_controller_pairing(InitiateRemoteControlControllerPairing {
+            endpoint,
+            invitation_code: begin.invitation_code,
+            expires_at: begin.pairing_expires_at,
+        }),
+        async {
+            let issued = commands.receiver().receive().await;
+            assert_eq!(
+                issued.command,
+                PrnsCommand::EstablishLink(EstablishLink { destination }),
+            );
+            assert!(matches!(
+                handle.route_journaled(
+                    Journaled::CommandSettled {
+                        id: issued.id,
+                        settlement: Settlement::EstablishLink(Ok(LinkEstablished {
+                            link_id: CONTROLLER_PAIRING_LINK_ID,
+                            rtt_millis: 17,
+                        })),
+                    },
+                    |_| {},
+                ),
+                JournalRoute::Awaiter,
+            ));
+
+            let issued = commands.receiver().receive().await;
+            assert!(matches!(
+                issued.command,
+                PrnsCommand::BeginRemoteControlControllerPairing(_),
+            ));
+            assert!(matches!(
+                handle.route_journaled(
+                    Journaled::CommandSettled {
+                        id: issued.id,
+                        settlement: settle_pairing_begin(&mut engine, issued),
+                    },
+                    |_| {},
+                ),
+                JournalRoute::Awaiter,
+            ));
+
+            let issued = commands.receiver().receive().await;
+            assert_eq!(
+                issued.command,
+                PrnsCommand::Identify(Identify {
+                    link_id: CONTROLLER_PAIRING_LINK_ID,
+                    identity: controller,
+                }),
+            );
+            assert!(matches!(
+                handle.route_journaled(
+                    Journaled::CommandSettled {
+                        id: issued.id,
+                        settlement: Settlement::Identify(Ok(())),
+                    },
+                    |_| {},
+                ),
+                JournalRoute::Awaiter,
+            ));
+
+            let issued = commands.receiver().receive().await;
+            assert!(matches!(
+                issued.command,
+                PrnsCommand::RemoteControlControllerPairingRequest(_),
+            ));
+            assert!(matches!(
+                handle.route_journaled(
+                    Journaled::CommandSettled {
+                        id: issued.id,
+                        settlement: Settlement::Identify(Ok(())),
+                    },
+                    |_| {},
+                ),
+                JournalRoute::Awaiter,
+            ));
+
+            let issued = commands.receiver().receive().await;
+            assert_eq!(
+                issued.command,
+                PrnsCommand::CloseLink(CloseLink {
+                    link_id: CONTROLLER_PAIRING_LINK_ID,
+                }),
+            );
+        },
+    ));
+
+    assert_eq!(
+        result,
+        Err(InitiateRemoteControlControllerPairingError::NodeStopped {
+            cleanup: RemoteControlPairingLinkCleanupOutcome::Queued,
+        }),
+    );
 }
 
 #[test]

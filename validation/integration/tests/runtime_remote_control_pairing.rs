@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use personal_rns::engine::{
     AdmitRemoteControlControllerPairingResponseOutcome, AnnounceAppData, AnnounceNow,
     AnnounceTarget, ApproveRemoteControlControllerPairing, ApproveRemoteControlTargetPairing,
-    BeginRemoteControlControllerPairing, EgressTarget, OpenRemoteControlPairing,
-    OpenRemoteControlPairingFailure, OpenRemoteControlPairingRejection,
+    EgressTarget, OpenRemoteControlPairing, OpenRemoteControlPairingFailure,
+    OpenRemoteControlPairingRejection,
     RemoteControlControllerPairingResponseEffect, RemoteControlPairingOpened,
     RemoteControlTargetPairingApproval,
 };
@@ -200,16 +200,11 @@ async fn direct_pairing_persists_matching_authorizations_on_both_nodes() {
         assert_eq!(availability.endpoint, opened.endpoint);
         assert_eq!(availability.public_app_data, PUBLIC_APP_DATA);
 
-        let link_id = controller_handle
-            .establish_link(availability.endpoint.destination_hash())
-            .await
-            .expect("the controller links to the ephemeral pairing endpoint");
-
         let _offered = controller_handle
-            .begin_remote_control_controller_pairing(BeginRemoteControlControllerPairing {
-                context: RemoteControlPairingContext::new(availability.endpoint, link_id),
+            .initiate_remote_control_controller_pairing(InitiateRemoteControlControllerPairing {
+                endpoint: availability.endpoint,
                 invitation_code: opened.invitation_code,
-                pairing_expires_at: availability.expires_at,
+                expires_at: availability.expires_at,
             })
             .await
             .expect("the target returns a valid pairing offer");
