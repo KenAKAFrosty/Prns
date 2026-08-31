@@ -84,7 +84,19 @@ async function run() {
       gatewayTwo,
       gatewayFour,
     );
-    const portableWasmWorkers = await measurePortableWasmWorkers(latencyProbe);
+    const mixedResourceExecutor = new PoolResourceCrypto(twoWorkers);
+    const portableWasmWorkers = await measurePortableWasmWorkers(latencyProbe, {
+      resourceBytes: 4 * MEBIBYTE,
+      jobs: 4,
+      lanes: 2,
+      perform: (seed) => exercise(
+        mixedResourceExecutor,
+        4 * MEBIBYTE,
+        4,
+        2,
+        seed,
+      ),
+    });
     const boundedAdmission = await exerciseBoundedAdmission(oneWorker);
     const configurations = [
       { name: "Inline", executor: inline },

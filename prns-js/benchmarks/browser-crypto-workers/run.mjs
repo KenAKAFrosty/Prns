@@ -137,6 +137,7 @@ function summarize(result) {
         speedupOverInline,
         medianCoordinatorP95Millis,
       })),
+    mixedRoles: result.portableWasmWorkers.mixedRoleScaling,
     resources: result.results
       .filter(({ lanes }) => lanes === 4)
       .map(({

@@ -10,7 +10,7 @@ const SAMPLE_REPETITIONS = 5;
 const BATCHED_OPERATIONS = 4_096;
 const SINGLE_OPERATIONS = 512;
 
-export async function measurePortableWasmWorkers(latencyProbe) {
+export async function measurePortableWasmWorkers(latencyProbe, resourceWorkload) {
   const inlineStarted = performance.now();
   await initPortableWasm();
   const inlineStartupMillis = performance.now() - inlineStarted;
@@ -112,17 +112,150 @@ export async function measurePortableWasmWorkers(latencyProbe) {
         }
       }
     }
+    const mixedRoleScaling = await measureMixedRoleScaling(
+      latencyProbe,
+      configurations.filter(({ workers: count }) => count >= 2),
+      resourceWorkload,
+    );
     return {
       inlineStartupMillis,
       workerStartupMillis,
       startedWorkers: workers.length,
       results,
+      mixedRoleScaling,
     };
   } finally {
     for (const worker of workers) {
       worker.close();
     }
   }
+}
+
+async function measureMixedRoleScaling(
+  latencyProbe,
+  configurations,
+  resourceWorkload,
+) {
+  const operations = BATCHED_OPERATIONS;
+  await resourceWorkload.perform(0);
+  const results = [];
+  for (const operation of ["Ed25519Sign", "X25519"]) {
+    for (const configuration of configurations) {
+      await configuration.perform("Batched", operation, 32);
+    }
+    const samples = new Map(configurations.map(({ name }) => [name, []]));
+    for (let repetition = 0; repetition < SAMPLE_REPETITIONS; repetition += 1) {
+      let expectedWasmChecksum;
+      let expectedResourceChecksum;
+      for (let offset = 0; offset < configurations.length; offset += 1) {
+        const configuration = configurations[
+          (offset + repetition) % configurations.length
+        ];
+        const measured = await measureMixedConfiguration(
+          latencyProbe,
+          configuration,
+          operation,
+          operations,
+          resourceWorkload,
+          repetition,
+        );
+        if (expectedWasmChecksum === undefined) {
+          expectedWasmChecksum = measured.wasm.checksum;
+          expectedResourceChecksum = measured.resource.checksum;
+        } else if (
+          measured.wasm.checksum !== expectedWasmChecksum ||
+          measured.resource.checksum !== expectedResourceChecksum
+        ) {
+          throw new Error(`${operation} mixed-role configurations produced different checksums`);
+        }
+        samples.get(configuration.name).push(measured);
+      }
+    }
+    const twoWorkerSamples = samples.get("TwoWorkers");
+    const twoWorkerCombinedMillis = median(
+      twoWorkerSamples.map(({ combinedElapsedMillis }) => combinedElapsedMillis),
+    );
+    const twoWorkerWasmMillis = median(
+      twoWorkerSamples.map(({ wasm }) => wasm.elapsedMillis),
+    );
+    for (const configuration of configurations) {
+      const configurationSamples = samples.get(configuration.name);
+      const combinedElapsedMillis = median(
+        configurationSamples.map((sample) => sample.combinedElapsedMillis),
+      );
+      const wasmElapsedMillis = median(
+        configurationSamples.map(({ wasm }) => wasm.elapsedMillis),
+      );
+      const resourceElapsedMillis = median(
+        configurationSamples.map(({ resource }) => resource.elapsedMillis),
+      );
+      results.push({
+        operation,
+        webCryptoWorkers: 2,
+        wasmWorkers: configuration.workers,
+        operations,
+        resourceBytes: resourceWorkload.resourceBytes,
+        resourceJobs: resourceWorkload.jobs,
+        combinedElapsedMillis,
+        combinedSpeedupOverTwoWasmWorkers:
+          twoWorkerCombinedMillis / combinedElapsedMillis,
+        wasmElapsedMillis,
+        wasmOperationsPerSecond: operations / (wasmElapsedMillis / 1_000),
+        wasmSpeedupOverTwoWorkers: twoWorkerWasmMillis / wasmElapsedMillis,
+        resourceElapsedMillis,
+        resourceMebibytesPerSecond:
+          resourceWorkload.resourceBytes * resourceWorkload.jobs /
+          (resourceElapsedMillis / 1_000) /
+          (1_024 * 1_024),
+        medianCoordinatorP95Millis: median(
+          configurationSamples.map((sample) => sample.coordinatorLatency.p95Millis),
+        ),
+        worstCoordinatorLatencyMillis: Math.max(
+          ...configurationSamples.map((sample) => sample.coordinatorLatency.maximumMillis),
+        ),
+      });
+    }
+  }
+  return {
+    webCryptoWorkers: 2,
+    resourceBytes: resourceWorkload.resourceBytes,
+    resourceJobs: resourceWorkload.jobs,
+    resourceLanes: resourceWorkload.lanes,
+    operations,
+    results,
+  };
+}
+
+async function measureMixedConfiguration(
+  latencyProbe,
+  configuration,
+  operation,
+  operations,
+  resourceWorkload,
+  repetition,
+) {
+  await yieldTask();
+  await latencyProbe.start();
+  const started = performance.now();
+  const wasmWork = () => timed(() =>
+    configuration.perform("Batched", operation, operations)
+  );
+  const resourceWork = () => timed(() => resourceWorkload.perform(repetition));
+  const [wasm, resource] = (repetition + configuration.workers) % 2 === 0
+    ? await Promise.all([wasmWork(), resourceWork()])
+    : await Promise.all([resourceWork(), wasmWork()]).then(([resource, wasm]) => [wasm, resource]);
+  const combinedElapsedMillis = performance.now() - started;
+  const coordinatorLatency = await latencyProbe.stop();
+  return { combinedElapsedMillis, wasm, resource, coordinatorLatency };
+}
+
+async function timed(work) {
+  const started = performance.now();
+  const checksum = await work();
+  return {
+    elapsedMillis: performance.now() - started,
+    checksum,
+  };
 }
 
 async function measureConfiguration(
