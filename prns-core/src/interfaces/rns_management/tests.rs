@@ -5,8 +5,8 @@ use crate::interfaces::IfacSize;
 use crate::interfaces::{
     ConnectionState, InterfaceId, InterfaceKind, InterfaceSnapshot, Membership, TransferRates,
 };
-use crate::routing::NextHop;
 use crate::routing::{BlackholeExpiry, BlackholedIdentity};
+use crate::routing::{NextHop, RouteRetention};
 use crate::units::InstantMillis;
 use crate::wire::DestinationHash;
 use core::time::Duration;
@@ -109,6 +109,7 @@ fn path_rate_and_blackhole_tables_keep_stock_shapes() {
         last_route_activity_at: InstantMillis(1_500),
         expires_at: InstantMillis(2_000),
         interface: InterfaceId::from_channel_tag(InterfaceKind::TcpClient, b"route"),
+        retention: RouteRetention::Network,
     };
     let Ok(path_bytes) = RnsPathTable::new(vec![route]).encode_message_pack() else {
         panic!("path table must encode");
