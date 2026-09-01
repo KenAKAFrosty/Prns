@@ -63,10 +63,9 @@ use prns_host::{
     LinkClosedReason, LinkDelivery, LinkId, PacketHash, PersistenceConfig, PersistenceFlushCause,
     PersistenceFlushTarget, PersistenceSnapshot, RequestAvailable, RequestHandlerConfig, RequestId,
     RequestPathHash, RequestPolicy, ResourceAvailable, ResourceCompression, ResourceHash,
-    ResourceNeedsDecompression, ResourceSegmentAvailable, ResourceStrategy, ResourceStreamId,
-    ResponseAvailable, ResponseSegmentAvailable, ResponseTimeout, RouteSnapshot,
-    RuntimeHealthSnapshot, SingleDelivery, WebSocketFramingSelection, SAFE_INT_MAX, SAFE_INT_MIN,
-    SAFE_UINT_MAX,
+    ResourceSegmentAvailable, ResourceStrategy, ResourceStreamId, ResponseAvailable,
+    ResponseSegmentAvailable, ResponseTimeout, RouteSnapshot, RuntimeHealthSnapshot,
+    SingleDelivery, WebSocketFramingSelection, SAFE_INT_MAX, SAFE_INT_MIN, SAFE_UINT_MAX,
 };
 use tokio::io::{AsyncRead, ReadBuf};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -3016,17 +3015,6 @@ fn publish_message(sink: &dyn NativeEventSink, message: Message<'_>) -> bool {
                 data.to_vec(),
             );
         }
-        Message::ResourceNeedsDecompression {
-            link_id,
-            hash,
-            stream,
-            uncompressed_data_bytes,
-        } => ApplicationEvent::ResourceNeedsDecompression(ResourceNeedsDecompression {
-            link_id: host_link(link_id),
-            hash: host_resource_hash(hash),
-            stream: stream.to_vec(),
-            uncompressed_data_bytes,
-        }),
         Message::ResourceSegment {
             link_id,
             original_hash,

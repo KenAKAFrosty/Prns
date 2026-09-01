@@ -206,11 +206,7 @@ pub async fn run_server() -> Result<(), ServerFailure> {
             PrnsEvent::Diagnostic(Diagnostic::LinkEstablished(established)) => {
                 let _ = link_tx.send(established.link_id);
             }
-            PrnsEvent::Message(
-                Message::Resource { .. }
-                | Message::ResourceNeedsDecompression { .. }
-                | Message::ResourceSegment { .. },
-            ) => {
+            PrnsEvent::Message(Message::Resource { .. } | Message::ResourceSegment { .. }) => {
                 let _ = state
                     .completed
                     .send(Err(ServerFailure::UnexpectedPublication));

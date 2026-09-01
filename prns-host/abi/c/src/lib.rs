@@ -3075,6 +3075,7 @@ pub unsafe extern "C" fn prns_event_release(event: *mut PrnsEvent) {
     }
 }
 
+#[allow(deprecated)]
 fn application_kind(event: &ApplicationEvent) -> u32 {
     match event {
         ApplicationEvent::SingleDelivery(_) => AbiApplicationEventKind::SingleDelivery as u32,
@@ -3150,6 +3151,7 @@ pub unsafe extern "C" fn prns_event_kind(event: *const PrnsEvent) -> u32 {
     }
 }
 
+#[allow(deprecated)]
 fn event_bytes(event: &PrnsEvent, field: AbiEventField) -> Option<&[u8]> {
     match (&event.value, field) {
         (
@@ -3470,6 +3472,7 @@ fn persistence_target(target: PersistenceFlushTarget) -> u64 {
     }
 }
 
+#[allow(deprecated)]
 fn event_u64(event: &PrnsEvent, field: AbiEventField) -> Option<u64> {
     match (&event.value, field) {
         (

@@ -40,6 +40,7 @@ pub use event_projection::{
     EventProjectionConstructionError, EventProjectionExtensionField, EventProjectionField,
     EventProjectionFieldId, EventProjectionKind, EventProjectionValue,
 };
+#[allow(deprecated)]
 pub use events::{
     ApplicationEvent, ChannelMessage, DiagnosticBatch, DiagnosticEvent, LinkDelivery,
     RequestAvailable, ResourceNeedsDecompression, ResourceSegmentAvailable, ResponseAvailable,

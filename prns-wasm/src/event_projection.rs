@@ -303,20 +303,6 @@ pub(crate) fn capture_journaled(journaled: Journaled<'_>) -> CapturedJournal {
                 text(EventField::Cause, &format!("{cause:?}")),
             ],
         )),
-        Journaled::ResourceNeedsDecompression {
-            link_id,
-            hash,
-            stream,
-            uncompressed_data_bytes,
-        } => CapturedJournal::Event(project(
-            ApplicationEventKind::ResourceNeedsDecompression,
-            [
-                bytes(EventField::LinkId, link_id.as_bytes()),
-                bytes(EventField::Hash, hash.as_bytes()),
-                bytes(EventField::Stream, stream),
-                u64(EventField::UncompressedDataBytes, uncompressed_data_bytes),
-            ],
-        )),
         Journaled::ResourceSegmentReceived {
             link_id,
             original_hash,

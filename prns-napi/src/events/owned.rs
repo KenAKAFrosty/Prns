@@ -199,6 +199,7 @@ impl EventDelivery for OwnedEvent {
 }
 
 impl OwnedEvent {
+    #[allow(deprecated)]
     pub fn capture_host_application(event: prns_host::ApplicationEvent) -> Option<Self> {
         match event {
             prns_host::ApplicationEvent::SingleDelivery(event) => Some(Self::SingleDelivery {
