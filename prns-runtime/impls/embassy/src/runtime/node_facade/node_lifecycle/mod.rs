@@ -231,18 +231,62 @@ where
     where
         D: IntoIterator<Item = PreConfiguredDestination<'d>>,
     {
-        let (node, NoPersistence) = Self::init_static_with_persistence(cell, recipe, wiring, host);
+        let (node, NoPersistence) =
+            Self::init_in_place_with_persistence(cell.uninit(), recipe, wiring, host);
         node
+    }
+
+    pub fn init_in_place<'d, D>(
+        slot: &'static mut MaybeUninit<Self>,
+        recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S>,
+        wiring: ManifoldWiring<
+            M,
+            LANE_COUNT,
+            NOTIFY,
+            COMMANDS,
+            LIFECYCLE,
+            COMPLETIONS,
+            REQUEST_COMPLETIONS,
+            RESPONSE_BYTES,
+        >,
+        host: H,
+    ) -> &'static mut Self
+    where
+        D: IntoIterator<Item = PreConfiguredDestination<'d>>,
+    {
+        let (node, NoPersistence) =
+            Self::init_in_place_with_persistence(slot, recipe, wiring, host);
+        node
+    }
+
+    pub fn init_static_with_persistence<'d, D, P>(
+        cell: &'static StaticCell<Self>,
+        recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S, P>,
+        wiring: ManifoldWiring<
+            M,
+            LANE_COUNT,
+            NOTIFY,
+            COMMANDS,
+            LIFECYCLE,
+            COMPLETIONS,
+            REQUEST_COMPLETIONS,
+            RESPONSE_BYTES,
+        >,
+        host: H,
+    ) -> (&'static mut Self, P)
+    where
+        D: IntoIterator<Item = PreConfiguredDestination<'d>>,
+    {
+        Self::init_in_place_with_persistence(cell.uninit(), recipe, wiring, host)
     }
 
     #[expect(
         unsafe_code,
         clippy::undocumented_unsafe_blocks,
-        clippy::mut_from_ref,
         reason = "every PrnsNode field is initialized before the slot is exposed"
     )]
-    pub fn init_static_with_persistence<'d, D, P>(
-        cell: &'static StaticCell<Self>,
+    pub fn init_in_place_with_persistence<'d, D, P>(
+        slot: &'static mut MaybeUninit<Self>,
         recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S, P>,
         wiring: ManifoldWiring<
             M,
@@ -265,7 +309,6 @@ where
                 "PrnsNode INTERFACE_CAPACITY must cover every manifold lane"
             );
         }
-        let slot = cell.uninit();
         let ManifoldWiring {
             inbound,
             frame_accounting_statuses,
