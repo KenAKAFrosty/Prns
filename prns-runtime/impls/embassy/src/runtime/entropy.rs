@@ -90,6 +90,12 @@ where
         EntropyHandle { shared: self }
     }
 
+    /// Requests fresh platform entropy for an explicit runtime transition.
+    pub fn try_reseed(&self) -> Result<(), S::Error> {
+        self.entropy
+            .lock(|entropy| entropy.borrow_mut().try_reseed())
+    }
+
     fn fill_random(&self, output: &mut [u8]) {
         self.entropy
             .lock(|entropy| entropy.borrow_mut().fill_random(output));
@@ -229,6 +235,19 @@ mod tests {
         assert_eq!(calls.load(Ordering::Relaxed), 1);
 
         second_handle.fill_random(&mut [0_u8; 1]);
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn shared_runtime_can_request_an_explicit_reseed() {
+        let (source, calls) = ConstantSource::new(0x57);
+        let shared = Box::leak(Box::new(
+            TestShared::try_new(source).expect("constant source seeds the shared runtime"),
+        ));
+        shared
+            .try_reseed()
+            .expect("constant source provides the explicit reseed");
+
         assert_eq!(calls.load(Ordering::Relaxed), 2);
     }
 

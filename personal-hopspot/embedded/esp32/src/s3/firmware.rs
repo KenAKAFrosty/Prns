@@ -70,7 +70,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                 ble: ble_bootstrap,
                 destination_hashes,
             },
-        entropy: _runtime_entropy,
+        entropy: runtime_entropy,
     } = hardware.runtime_bootstrap;
     let mut battery_source = battery;
     let gnss = hardware.gnss;
@@ -194,6 +194,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let (wifi, tcp_stack, esp_now) = build_wifi(
         &spawner,
         wifi_hardware,
+        runtime_entropy,
         mac_octets,
         &wifi_config,
         radio_mode == RadioMode::AccessPoint,
@@ -350,7 +351,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         LIFECYCLE.receiver(),
         handle,
     );
-    let host = EmbassyHost::new_with_timebase(timebase, hardware_entropy as fn(&mut [u8]));
+    let host = EmbassyHost::new_with_timebase(timebase, fill_random as fn(&mut [u8]));
 
     let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
     boot_stage(BootPhase::CoreOneStartBegin);
@@ -378,19 +379,19 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     boot_stage(BootPhase::CoreOneStartReady);
 
     let (usb_rx, usb_tx) = UsbSerialJtag::new(usb_device).into_async().split();
-    let usb_seam = usb_lane.into_seam(NOTIFY.sender(), hardware_entropy);
+    let usb_seam = usb_lane.into_seam(NOTIFY.sender(), fill_random);
     spawner.spawn(usb_device_task(usb_rx, usb_tx, usb_seam, usb_status).expect("usb task fits"));
 
     #[cfg(feature = "lora")]
-    let lora_seam = lora_lane.into_seam(NOTIFY.sender(), hardware_entropy);
+    let lora_seam = lora_lane.into_seam(NOTIFY.sender(), fill_random);
 
     let espnow = espnow.zip(espnow_lane).map(|(interface, lane)| {
-        let seam = lane.into_seam(NOTIFY.sender(), hardware_entropy);
+        let seam = lane.into_seam(NOTIFY.sender(), fill_random);
         (interface, seam)
     });
 
     let tcp = tcp_built.zip(tcp_lane).map(|((tcp, _, _), lane)| {
-        let seam = lane.into_seam(NOTIFY.sender(), hardware_entropy);
+        let seam = lane.into_seam(NOTIFY.sender(), fill_random);
         (tcp, seam)
     });
 
@@ -1000,6 +1001,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                     .with_max_activities(BLE_CONTROLLER_ACTIVITY_CAPACITY),
             )
             .expect("ble connector");
+            super::entropy::reseed_after_radio_start();
             boot_stage(BootPhase::BluetoothReady);
             if let Some((identity, fleet)) = ble {
                 let run = crate::storage::allocate_psram(crate::bluetooth_auto::run(

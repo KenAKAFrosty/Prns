@@ -13,7 +13,6 @@ use esp_hal::gpio::Input;
 #[cfg(feature = "lora")]
 use esp_hal::gpio::Output;
 use esp_hal::peripherals::USB_DEVICE;
-use esp_hal::rng::Rng;
 use esp_hal::rom::spiflash::esp_rom_spiflash_read;
 #[cfg(feature = "lora")]
 use esp_hal::spi::master::Spi;
@@ -125,7 +124,7 @@ pub(crate) use board::LoraRadio;
 pub(crate) use board::{
     BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware, S3ManifoldHardware,
 };
-pub(crate) use entropy::{bootstrap_s3_runtime, S3RuntimeBootstrap, S3RuntimeEntropy};
+pub(crate) use entropy::{bootstrap_s3_runtime, fill_random, S3RuntimeBootstrap, S3RuntimeEntropy};
 pub(crate) use gnss::{GnssProvider, GnssShared, NoGnss};
 
 esp_app_desc!();
@@ -317,10 +316,6 @@ static WIFI_STATION_JOINED: AtomicBool = AtomicBool::new(false);
 static WIFI_STATION_DATA_PATH_DEGRADED: AtomicBool = AtomicBool::new(false);
 static WIFI_DRIVER_RESTART_REQUESTED: AtomicBool = AtomicBool::new(false);
 static CORE_ONE_HEARTBEAT: AtomicU64 = AtomicU64::new(0);
-
-fn hardware_entropy(bytes: &mut [u8]) {
-    Rng::new().read(bytes);
-}
 
 fn ignore_events(_event: PrnsEvent<'_>, _state: &()) {}
 
