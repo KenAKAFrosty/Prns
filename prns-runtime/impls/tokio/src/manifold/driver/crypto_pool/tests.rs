@@ -166,7 +166,7 @@ async fn completion_wake_carries_no_payload_and_result_moves_through_worker_ring
     let completion = pool
         .pop_completion()
         .expect("result moved into its SPSC ring");
-    assert_eq!(completion.worker, 0);
+    assert_eq!(completion.worker, Some(0));
     assert!(matches!(
         completion.result,
         CryptoResult::ReceiptProofVerified {
@@ -174,7 +174,7 @@ async fn completion_wake_carries_no_payload_and_result_moves_through_worker_ring
             verification: ReceiptProofVerification::Valid,
         } if owed.claim.command_id() == CommandId(7)
     ));
-    pool.record_completed(completion.worker, completion.work);
+    pool.record_completed(completion.worker.expect("pool completion"), completion.work);
     pool.packet_verdict_settled();
     assert!(!pool.has_completion());
 }
@@ -216,7 +216,7 @@ async fn link_receipt_signing_moves_metadata_and_signature_through_the_worker_ri
     assert_eq!(completed.packet_hash, packet_hash);
     ed25519_verify(&public, packet_hash.as_bytes(), &completed.signature)
         .expect("worker returns the exact valid receipt signature");
-    pool.record_completed(completion.worker, completion.work);
+    pool.record_completed(completion.worker.expect("pool completion"), completion.work);
     pool.packet_verdict_settled();
 }
 
@@ -264,7 +264,7 @@ async fn already_ready_link_receipts_move_as_one_worker_batch() {
             &completed.signature,
         )
         .expect("every batched receipt keeps its exact signature semantics");
-        pool.record_completed(completion.worker, completion.work);
+        pool.record_completed(completion.worker.expect("pool completion"), completion.work);
         pool.packet_verdict_settled();
     }
     assert!(!pool.has_completion());
@@ -346,7 +346,7 @@ fn parked_worker_arm_is_cleared_by_submission_without_losing_the_job() {
         );
         std::thread::yield_now();
     };
-    pool.record_completed(completion.worker, completion.work);
+    pool.record_completed(completion.worker.expect("pool completion"), completion.work);
     pool.packet_verdict_settled();
 }
 
@@ -381,7 +381,7 @@ fn command_sized_burst_backpressures_without_dropping_jobs_or_results() {
                     ..
                 }
             ));
-            pool.record_completed(completion.worker, completion.work);
+            pool.record_completed(completion.worker.expect("pool completion"), completion.work);
             pool.packet_verdict_settled();
             completed += 1;
         } else {
@@ -436,7 +436,7 @@ fn batch_rejection_falls_back_to_exact_per_job_verdicts() {
                     ReceiptProofVerification::Valid
                 }
             );
-            pool.record_completed(completion.worker, completion.work);
+            pool.record_completed(completion.worker.expect("pool completion"), completion.work);
             pool.packet_verdict_settled();
             completed += 1;
         } else {

@@ -228,6 +228,11 @@ pub(super) struct ResourceDecompressionJob {
     pub(super) uncompressed_data_bytes: u64,
 }
 
+pub(super) enum OpenedSpanResult {
+    InPlace { byte_len: usize },
+    Owned(Vec<u8>),
+}
+
 #[allow(clippy::large_enum_variant)]
 pub(super) enum CryptoJob {
     VerifyReceiptProof(ReceiptProofVerifyOwed),
@@ -389,7 +394,7 @@ pub(super) enum CryptoResult {
         hash: ResourceHash,
         span_start: usize,
         state: StreamedOpen,
-        bytes: Vec<u8>,
+        opened: OpenedSpanResult,
     },
 }
 
@@ -400,7 +405,7 @@ impl CryptoResult {
 }
 
 pub(super) struct CryptoCompletion {
-    pub(super) worker: usize,
+    pub(super) worker: Option<usize>,
     pub(super) result: CryptoResult,
     pub(super) work: usize,
 }
@@ -748,7 +753,7 @@ impl CryptoPool {
                         worker + 1
                     });
                 return Some(CryptoCompletion {
-                    worker,
+                    worker: Some(worker),
                     result: scheduled.result,
                     work: scheduled.work,
                 });
@@ -972,7 +977,7 @@ fn run_crypto_job(job: CryptoJob, verifier_cache: &mut WorkerVerifierCache) -> C
                 hash,
                 span_start,
                 state,
-                bytes,
+                opened: OpenedSpanResult::Owned(bytes),
             }
         }
         CryptoJob::VerifyReceiptProof(owed) => {

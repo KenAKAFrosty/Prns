@@ -10,7 +10,6 @@ use crate::interfaces::{InterfaceDescriptor, InterfaceId};
 use crate::manifold::wake_schedule::{fire_due_reason, merge_wake_schedules_delta};
 use crate::manifold::AppDeciders;
 use crate::manifold::Host;
-use crate::routing::links::resources::streamed_open::ResourceOpenLane;
 use crate::routing::links::resources::ResourceOffer;
 use crate::runtime::InterfaceStore;
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
@@ -52,7 +51,7 @@ pub use prns_runtime::runtime::{
 };
 
 use command_dispatch::{CommandDispatch, CommandEffect};
-use crypto_dispatch::{dispatch_open_spans, CryptoCompletionEffect, CryptoDispatch};
+use crypto_dispatch::{CryptoCompletionEffect, CryptoDispatch};
 use crypto_pool::{CryptoCompletion, CryptoPool};
 use egress::{flush_due_pacers, route_reaction, soonest_pacer_release, WireScratch};
 use host::ManifoldClock;
@@ -283,9 +282,6 @@ async fn run_inner<S, H, J, P, A, C>(
     let crypto_pool = crypto_pool_config
         .resolved_worker_count()
         .and_then(|workers| CryptoPool::spawn(workers.get(), crypto_completion_wake.clone()));
-    if crypto_pool.is_some() {
-        engine.resource_open_lane = ResourceOpenLane::PoolWhenContended;
-    }
     let mut clock = ManifoldClock::new(&host);
     let due_timer = tokio::time::sleep_until(clock.immediate_deadline());
     tokio::pin!(due_timer);
@@ -366,12 +362,10 @@ async fn run_inner<S, H, J, P, A, C>(
                             &engine,
                             topology.view(),
                         );
-                        dispatch_open_spans(&mut engine, crypto_pool.as_ref());
                     }
                 }
                 next = pool.pop_completion();
             }
-            dispatch_open_spans(&mut engine, crypto_pool.as_ref());
             progressed = true;
         }
 
@@ -523,7 +517,7 @@ async fn run_inner<S, H, J, P, A, C>(
                 }
                 .complete(
                     CryptoCompletion {
-                        worker: 0,
+                        worker: None,
                         result,
                         work: 0,
                     },
@@ -544,7 +538,6 @@ async fn run_inner<S, H, J, P, A, C>(
                     }
                 }
             }
-            dispatch_open_spans(&mut engine, crypto_pool.as_ref());
             progressed = true;
         }
 

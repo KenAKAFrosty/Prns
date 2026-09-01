@@ -13,6 +13,7 @@ use crate::routing::links::channel::MessageType;
 use crate::routing::links::handshake::{LinkProofSignOwed, LinkProofVerifyOwed};
 use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::send::ResourceBuildOwed;
+use crate::routing::links::resources::streamed_open::StreamedOpen;
 use crate::routing::links::resources::{ResourceFailureCause, ResourceHash};
 use crate::routing::links::LinkId;
 use crate::routing::proof::{LinkReceiptSignOwed, ProofSignOwed, ReceiptProofVerifyOwed};
@@ -64,6 +65,7 @@ impl<'a, Work> EngineReaction<'a, Work> {
 pub enum OwedWork<'a> {
     Crypto(CryptoOwed),
     ResourceBuild(ResourceBuildOwed<'a>),
+    ResourceOpen(ResourceOpenOwed<'a>),
     ResourceDecompression(ResourceDecompressionOwed<'a>),
 }
 
@@ -91,6 +93,57 @@ impl<'a> From<CryptoOwed> for OwedWork<'a> {
     fn from(owed: CryptoOwed) -> Self {
         Self::Crypto(owed)
     }
+}
+
+/// One contiguous ciphertext span whose authenticated streamed open can run outside the engine.
+///
+/// The state is moved out of its incoming-resource row while the mutable span remains borrowed
+/// from that row. A worker runtime copies the span into its owning job envelope while this value
+/// is live; an inline runtime may chew the borrowed span directly and return an in-place
+/// completion. `other_transfers_in_flight` describes available overlap, not a scheduling order.
+#[repr(C)]
+pub struct ResourceOpenOwed<'a> {
+    pub link_id: LinkId,
+    pub hash: ResourceHash,
+    pub span_start: usize,
+    pub state: StreamedOpen,
+    pub bytes: &'a mut [u8],
+    pub other_transfers_in_flight: bool,
+}
+
+impl ResourceOpenOwed<'_> {
+    /// Fulfill this open against the engine-owned span without recursively re-entering the
+    /// engine. The returned completion owns everything needed for a later `resume_resource_open`.
+    pub fn fulfill_inline(mut self) -> ResourceOpenCompleted<'static> {
+        let byte_len = self.bytes.len();
+        self.state.chew_span(self.bytes);
+        ResourceOpenCompleted {
+            link_id: self.link_id,
+            hash: self.hash,
+            span_start: self.span_start,
+            state: self.state,
+            opened: OpenedResourceSpan::InPlace { byte_len },
+        }
+    }
+}
+
+/// Where a fulfilled resource-open span now lives.
+#[repr(C)]
+pub enum OpenedResourceSpan<'a> {
+    /// An inline runtime chewed the mutable span borrowed by [`ResourceOpenOwed`] in place.
+    InPlace { byte_len: usize },
+    /// A worker chewed an owning copy which must be landed over the row's ciphertext.
+    Returned(&'a [u8]),
+}
+
+/// A runtime's completed resource-open span, submitted as a later engine input.
+#[repr(C)]
+pub struct ResourceOpenCompleted<'a> {
+    pub link_id: LinkId,
+    pub hash: ResourceHash,
+    pub span_start: usize,
+    pub state: StreamedOpen,
+    pub opened: OpenedResourceSpan<'a>,
 }
 
 /// A compressed resource stream the engine has authenticated and asks its runtime to inflate.

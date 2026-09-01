@@ -17,7 +17,6 @@ use crate::routing::links::resources::ResourceOffer;
 use crate::runtime::InterfaceStore;
 use crate::storage::StorageLayout;
 
-use super::crypto_dispatch::dispatch_open_spans;
 use super::crypto_pool::CryptoPool;
 use super::egress::{
     ifac_for, route_reaction, route_reaction_with_work, Egress, InterfacePacer, WireScratch,
@@ -34,6 +33,7 @@ fn route_ingress_reaction<J>(
     wire_scratch: &mut WireScratch,
     journal: &mut JournalDispatch<J>,
     owed_work: &mut PendingOwedWork,
+    crypto_pool: Option<&CryptoPool>,
     link_receipt_signs: &mut std::vec::Vec<LinkReceiptSignOwed>,
     now: InstantMillis,
 ) where
@@ -52,9 +52,12 @@ fn route_ingress_reaction<J>(
                 link_receipt_signs.push(owed);
             }
             OwedWork::Crypto(owed) => owed_work.push_crypto(owed),
-            OwedWork::ResourceBuild(owed) => owed_work.push(OwedWork::ResourceBuild(owed)),
+            OwedWork::ResourceBuild(owed) => {
+                owed_work.push(OwedWork::ResourceBuild(owed), crypto_pool);
+            }
+            OwedWork::ResourceOpen(owed) => owed_work.push_resource_open(owed, crypto_pool),
             OwedWork::ResourceDecompression(owed) => {
-                owed_work.push(OwedWork::ResourceDecompression(owed));
+                owed_work.push(OwedWork::ResourceDecompression(owed), crypto_pool);
             }
         },
     );
@@ -214,6 +217,7 @@ impl InboundDispatch {
                                 wire_scratch,
                                 journal,
                                 owed_work,
+                                crypto_pool,
                                 link_receipt_signs,
                                 now,
                             );
@@ -236,7 +240,6 @@ impl InboundDispatch {
                     engine,
                     topology.interfaces.view(),
                 );
-                dispatch_open_spans(engine, crypto_pool);
             }
             {
                 let inline_receipts = if crypto_pool.is_some() {

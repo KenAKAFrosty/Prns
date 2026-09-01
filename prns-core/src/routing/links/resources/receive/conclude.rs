@@ -802,6 +802,70 @@ mod seam_tests {
         b"reticulum resources ride the link ".repeat(40)
     }
 
+    struct InflateOwed {
+        hash: ResourceHash,
+        stream: std::vec::Vec<u8>,
+        uncompressed_data_bytes: u64,
+    }
+
+    fn capture_inflate_reaction(
+        reaction: EngineReaction<'_, OwedWork<'_>>,
+        ready_opens: &mut std::collections::VecDeque<crate::engine::ResourceOpenCompleted<'static>>,
+        inflate: &mut Option<InflateOwed>,
+    ) {
+        match reaction {
+            EngineReaction::Directive(Directive::Fulfill(OwedWork::ResourceOpen(owed))) => {
+                ready_opens.push_back(owed.fulfill_inline());
+            }
+            EngineReaction::Directive(Directive::Fulfill(OwedWork::ResourceDecompression(
+                owed,
+            ))) => {
+                *inflate = Some(InflateOwed {
+                    hash: owed.hash,
+                    stream: owed.stream.to_vec(),
+                    uncompressed_data_bytes: owed.uncompressed_data_bytes,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    fn ingest_to_inflate<S: StorageLayout>(
+        engine: &mut EngineState<S>,
+        frame: &[u8],
+        at: u64,
+    ) -> Option<InflateOwed> {
+        let mut ready_opens = std::collections::VecDeque::new();
+        let mut inflate = None;
+        let mut raw = frame.to_vec();
+        engine.ingest_packet_into(
+            crate::interfaces::InboundPacket {
+                arrived_at: InstantMillis(at),
+                source_interface: lane(),
+                bytes: &mut raw,
+            },
+            IngestIo {
+                interfaces: AttachedInterfaces::new(&[
+                    crate::engine::test_support::routable_descriptor(lane()),
+                ]),
+                now: InstantMillis(at),
+                fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+                should_prove: &mut |_: &crate::engine::ProofRequest| false,
+                should_accept_resource:
+                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
+                sink: &mut |reaction| {
+                    capture_inflate_reaction(reaction, &mut ready_opens, &mut inflate);
+                },
+            },
+        );
+        while let Some(completed) = ready_opens.pop_front() {
+            engine.resume_resource_open(completed, InstantMillis(at), &mut |reaction| {
+                capture_inflate_reaction(reaction, &mut ready_opens, &mut inflate);
+            });
+        }
+        inflate
+    }
+
     #[test]
     fn response_resources_strip_only_a_matching_valid_stock_envelope() {
         use crate::routing::links::request::write_response_plaintext;
@@ -904,38 +968,9 @@ mod seam_tests {
         let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
         assert_eq!(serve.frames.len(), 1, "the compressed stream is one part");
 
-        let mut needs = None;
-        let mut raw = serve.frames[0].1.clone();
-        receiver.ingest_packet_into(
-            crate::interfaces::InboundPacket {
-                arrived_at: InstantMillis(2_200),
-                source_interface: lane(),
-                bytes: &mut raw,
-            },
-            IngestIo {
-                interfaces: AttachedInterfaces::new(&[
-                    crate::engine::test_support::routable_descriptor(lane()),
-                ]),
-                now: InstantMillis(2_200),
-                fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
-                should_prove: &mut |_: &crate::engine::ProofRequest| false,
-                should_accept_resource:
-                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
-                sink: &mut |reaction| {
-                    if let EngineReaction::Directive(Directive::Fulfill(
-                        OwedWork::ResourceDecompression(owed),
-                    )) = reaction
-                    {
-                        needs = Some((
-                            owed.hash,
-                            owed.stream.to_vec(),
-                            owed.uncompressed_data_bytes,
-                        ));
-                    }
-                },
-            },
-        );
-        let (hash, stream, advertised_len) = needs.expect("the seam asks the host to inflate");
+        let owed = ingest_to_inflate(&mut receiver, &serve.frames[0].1, 2_200)
+            .expect("the seam asks the host to inflate");
+        let (hash, stream, advertised_len) = (owed.hash, owed.stream, owed.uncompressed_data_bytes);
         assert_eq!(
             stream,
             bytes_from_hex(CASE1_BZ2),
@@ -1019,38 +1054,9 @@ mod seam_tests {
 
         let pull = feed(&mut receiver, &advertisement.unwrap(), 2_000);
         let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
-        let mut needs = None;
-        let mut raw = serve.frames[0].1.clone();
-        receiver.ingest_packet_into(
-            crate::interfaces::InboundPacket {
-                arrived_at: InstantMillis(2_200),
-                source_interface: lane(),
-                bytes: &mut raw,
-            },
-            IngestIo {
-                interfaces: AttachedInterfaces::new(&[
-                    crate::engine::test_support::routable_descriptor(lane()),
-                ]),
-                now: InstantMillis(2_200),
-                fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
-                should_prove: &mut |_: &crate::engine::ProofRequest| false,
-                should_accept_resource:
-                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
-                sink: &mut |reaction| {
-                    if let EngineReaction::Directive(Directive::Fulfill(
-                        OwedWork::ResourceDecompression(owed),
-                    )) = reaction
-                    {
-                        needs = Some((
-                            owed.hash,
-                            owed.stream.to_vec(),
-                            owed.uncompressed_data_bytes,
-                        ));
-                    }
-                },
-            },
-        );
-        let (hash, stream, advertised_len) = needs.expect("the seam asks the host to inflate");
+        let owed = ingest_to_inflate(&mut receiver, &serve.frames[0].1, 2_200)
+            .expect("the seam asks the host to inflate");
+        let (hash, stream, advertised_len) = (owed.hash, owed.stream, owed.uncompressed_data_bytes);
         assert_eq!(
             stream, candidate,
             "the host receives the bz2 of the whole composite",
@@ -1293,34 +1299,9 @@ mod seam_tests {
             "a compressed response to a pending request bypasses the strategy like the reference",
         );
         let serve = feed(&mut responder, &pull.frames[0].1, 2_100);
-        let mut needs = None;
-        let mut raw = serve.frames[0].1.clone();
-        requester.ingest_packet_into(
-            crate::interfaces::InboundPacket {
-                arrived_at: InstantMillis(2_200),
-                source_interface: lane(),
-                bytes: &mut raw,
-            },
-            IngestIo {
-                interfaces: AttachedInterfaces::new(&[
-                    crate::engine::test_support::routable_descriptor(lane()),
-                ]),
-                now: InstantMillis(2_200),
-                fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
-                should_prove: &mut |_: &crate::engine::ProofRequest| false,
-                should_accept_resource:
-                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
-                sink: &mut |reaction| {
-                    if let EngineReaction::Directive(Directive::Fulfill(
-                        OwedWork::ResourceDecompression(owed),
-                    )) = reaction
-                    {
-                        needs = Some((owed.hash, owed.stream.to_vec()));
-                    }
-                },
-            },
-        );
-        let (hash, stream) = needs.expect("the compressed response reaches the inflate seam");
+        let owed = ingest_to_inflate(&mut requester, &serve.frames[0].1, 2_200)
+            .expect("the compressed response reaches the inflate seam");
+        let (hash, stream) = (owed.hash, owed.stream);
         assert_eq!(stream, candidate);
 
         let mut proof_frames = 0usize;
@@ -1414,34 +1395,9 @@ mod seam_tests {
             "a compressed request resource is accepted, like the reference's unconditional Resource.accept",
         );
         let serve = feed(&mut requester, &pull.frames[0].1, 2_100);
-        let mut needs = None;
-        let mut raw = serve.frames[0].1.clone();
-        responder.ingest_packet_into(
-            crate::interfaces::InboundPacket {
-                arrived_at: InstantMillis(2_200),
-                source_interface: lane(),
-                bytes: &mut raw,
-            },
-            IngestIo {
-                interfaces: AttachedInterfaces::new(&[
-                    crate::engine::test_support::routable_descriptor(lane()),
-                ]),
-                now: InstantMillis(2_200),
-                fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
-                should_prove: &mut |_: &crate::engine::ProofRequest| false,
-                should_accept_resource:
-                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
-                sink: &mut |reaction| {
-                    if let EngineReaction::Directive(Directive::Fulfill(
-                        OwedWork::ResourceDecompression(owed),
-                    )) = reaction
-                    {
-                        needs = Some(owed.hash);
-                    }
-                },
-            },
-        );
-        let hash = needs.expect("the compressed request reaches the inflate seam");
+        let hash = ingest_to_inflate(&mut responder, &serve.frames[0].1, 2_200)
+            .expect("the compressed request reaches the inflate seam")
+            .hash;
 
         let mut requests = std::vec::Vec::new();
         responder.resume_resource_decompression(
@@ -1507,34 +1463,9 @@ mod seam_tests {
         let serve = feed(sender, &pull.frames[0].1, at + 200);
         assert_eq!(serve.frames.len(), 1, "a tiny candidate is one part");
 
-        let mut needs = None;
-        let mut raw = serve.frames[0].1.clone();
-        receiver.ingest_packet_into(
-            crate::interfaces::InboundPacket {
-                arrived_at: InstantMillis(at + 300),
-                source_interface: lane(),
-                bytes: &mut raw,
-            },
-            IngestIo {
-                interfaces: AttachedInterfaces::new(&[
-                    crate::engine::test_support::routable_descriptor(lane()),
-                ]),
-                now: InstantMillis(at + 300),
-                fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
-                should_prove: &mut |_: &crate::engine::ProofRequest| false,
-                should_accept_resource:
-                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
-                sink: &mut |reaction| {
-                    if let EngineReaction::Directive(Directive::Fulfill(
-                        OwedWork::ResourceDecompression(owed),
-                    )) = reaction
-                    {
-                        needs = Some((owed.hash, owed.stream.to_vec()));
-                    }
-                },
-            },
-        );
-        let (hash, stream) = needs.expect("the compressed segment reaches the inflate seam");
+        let owed = ingest_to_inflate(receiver, &serve.frames[0].1, at + 300)
+            .expect("the compressed segment reaches the inflate seam");
+        let (hash, stream) = (owed.hash, owed.stream);
         assert_eq!(stream, candidate);
 
         let mut segments = std::vec::Vec::new();
@@ -1955,8 +1886,6 @@ mod seam_tests {
 
     #[test]
     fn a_compressed_split_response_inflates_per_segment_and_settles() {
-        use crate::engine::IngestIo;
-        use crate::interfaces::AttachedInterfaces;
         use crate::routing::links::resources::ResourceSegment;
 
         let mut requester = engine_with_active_link();
@@ -1997,34 +1926,9 @@ mod seam_tests {
             let pull = feed(&mut requester, &advertisement, at + 100);
             let serve = feed(&mut responder, &pull.frames[0].1, at + 200);
 
-            let mut needs = None;
-            let mut raw = serve.frames[0].1.clone();
-            requester.ingest_packet_into(
-                crate::interfaces::InboundPacket {
-                    arrived_at: InstantMillis(at + 300),
-                    source_interface: lane(),
-                    bytes: &mut raw,
-                },
-                IngestIo {
-                    interfaces: AttachedInterfaces::new(&[
-                        crate::engine::test_support::routable_descriptor(lane()),
-                    ]),
-                    now: InstantMillis(at + 300),
-                    fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
-                    should_prove: &mut |_: &crate::engine::ProofRequest| false,
-                    should_accept_resource:
-                        &mut |_: &crate::routing::links::resources::ResourceOffer| false,
-                    sink: &mut |reaction| {
-                        if let EngineReaction::Directive(Directive::Fulfill(
-                            OwedWork::ResourceDecompression(owed),
-                        )) = reaction
-                        {
-                            needs = Some(owed.hash);
-                        }
-                    },
-                },
-            );
-            let hash = needs.expect("the compressed response segment reaches the inflate seam");
+            let hash = ingest_to_inflate(&mut requester, &serve.frames[0].1, at + 300)
+                .expect("the compressed response segment reaches the inflate seam")
+                .hash;
 
             let mut response_segments = std::vec::Vec::new();
             let mut settled = std::vec::Vec::new();

@@ -108,20 +108,6 @@ pub enum OpenProgress {
     },
 }
 
-/// Who runs the chew — the runtime declares its capability once at construction.
-/// `Inline` chews on the engine thread under each part arrival (the only choice without a
-/// crypto pool); `PoolWhenContended` leaves spans parked for the runtime to walk through
-/// [`owed_open_span`](crate::engine::EngineState::owed_open_span) and a worker's verdict,
-/// but only while another open is live — a lone chew is one serial chain the pool cannot
-/// overlap with anything, so its round trips buy nothing and the engine keeps it inline.
-/// Either way the conclusion's catch-up keeps every row correct if no one chews.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ResourceOpenLane {
-    #[default]
-    Inline,
-    PoolWhenContended,
-}
-
 /// A concluded transfer's nonce-stripped stream, carrying the verify midstate when one streamed in.
 pub struct OpenedStream<'t> {
     pub stream: &'t [u8],

@@ -2,7 +2,7 @@ use crate::crypto::{ed25519_sign, ed25519_verify, x25519_diffie_hellman, x25519_
 use crate::engine::{
     CryptoOwed, EncryptCompleted, EngineReaction, EngineState, InstantMillis, Journaled,
     LinkReceiptSignCompleted, OwedWork, ProofRequest, ProofSignCompleted, ReceiptProofVerification,
-    ResourceDecompressionCompleted, WakeSchedules,
+    ResourceDecompressionCompleted, ResourceOpenCompleted, WakeSchedules,
 };
 use crate::identity::decrypt_token_in_place_with_ratchets;
 use crate::interfaces::{AttachedInterfaces, InterfaceId, InterfaceIfac, InterfaceStatus};
@@ -29,6 +29,7 @@ pub(super) enum InlineReadyWork {
     ResourceBuildUnsupported {
         reservation: ResourceBuildReservation,
     },
+    ResourceOpen(ResourceOpenCompleted<'static>),
     ResourceDecompressionUnsupported {
         link_id: LinkId,
         hash: ResourceHash,
@@ -57,6 +58,7 @@ pub(super) fn route_and_capture_owed_work(
             OwedWork::ResourceBuild(owed) => InlineReadyWork::ResourceBuildUnsupported {
                 reservation: owed.reservation(),
             },
+            OwedWork::ResourceOpen(owed) => InlineReadyWork::ResourceOpen(owed.fulfill_inline()),
             OwedWork::ResourceDecompression(owed) => {
                 InlineReadyWork::ResourceDecompressionUnsupported {
                     link_id: owed.link_id,
@@ -315,6 +317,21 @@ where
                         route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
                     },
                 ));
+            }
+            InlineReadyWork::ResourceOpen(completed) => {
+                wake.compose(
+                    engine.resume_resource_open(completed, now, &mut |reaction| {
+                        route_and_capture_owed_work(
+                            reaction,
+                            egress,
+                            ifacs,
+                            pacers,
+                            now,
+                            on_journaled,
+                            &mut pending,
+                        );
+                    }),
+                );
             }
             InlineReadyWork::ResourceDecompressionUnsupported { link_id, hash } => {
                 // The no-alloc Embassy runtime does not carry a bzip2 implementation. An empty

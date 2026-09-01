@@ -1,11 +1,11 @@
-use crate::engine::{CryptoOwed, OwedWork};
+use crate::engine::{CryptoOwed, OpenedResourceSpan, OwedWork, ResourceOpenOwed};
 use crate::manifold::Host;
 use crate::routing::links::resources::send::ResourceBuildPlan;
 use crate::routing::links::resources::ResourceMetadata;
 
 use super::crypto_pool::{
-    run_crypto_job_inline, CryptoJob, CryptoPool, CryptoResult, ResourceBuildJob,
-    ResourceDecompressionJob,
+    run_crypto_job_inline, CryptoJob, CryptoPool, CryptoResult, OpenSpanJob, OpenedSpanResult,
+    ResourceBuildJob, ResourceDecompressionJob,
 };
 use super::host_protocol::{HostResourceMetadata, HostResourcePayload};
 
@@ -16,8 +16,11 @@ struct PendingResourceBuild {
     metadata: HostResourceMetadata,
 }
 
+// Keeping completed inline work by value avoids adding an allocation to the zero-copy open path.
+#[allow(clippy::large_enum_variant)]
 enum PendingJob {
     Ready(CryptoJob),
+    Completed(CryptoResult),
     ResourceBuild(PendingResourceBuild),
 }
 
@@ -42,7 +45,7 @@ impl PendingOwedWork {
         self.jobs.len()
     }
 
-    pub(super) fn push(&mut self, work: OwedWork<'_>) {
+    pub(super) fn push(&mut self, work: OwedWork<'_>, pool: Option<&CryptoPool>) {
         match work {
             OwedWork::Crypto(owed) => self.push_crypto(owed),
             OwedWork::ResourceBuild(owed) => {
@@ -63,6 +66,7 @@ impl PendingOwedWork {
                 let plan = owed.into_plan();
                 self.push_resource_build(plan, data, compressed_candidate, metadata);
             }
+            OwedWork::ResourceOpen(owed) => self.push_resource_open(owed, pool),
             OwedWork::ResourceDecompression(owed) => {
                 self.jobs
                     .push(PendingJob::Ready(CryptoJob::DecompressResource(Box::new(
@@ -74,6 +78,49 @@ impl PendingOwedWork {
                         },
                     ))));
             }
+        }
+    }
+
+    pub(super) fn push_resource_open(
+        &mut self,
+        owed: ResourceOpenOwed<'_>,
+        pool: Option<&CryptoPool>,
+    ) {
+        let offload =
+            owed.other_transfers_in_flight && pool.is_some_and(|pool| pool.has_queue_capacity(1));
+        if offload {
+            let ResourceOpenOwed {
+                link_id,
+                hash,
+                span_start,
+                state,
+                bytes,
+                other_transfers_in_flight: _,
+            } = owed;
+            self.jobs
+                .push(PendingJob::Ready(CryptoJob::OpenSpan(Box::new(
+                    OpenSpanJob {
+                        link_id,
+                        hash,
+                        span_start,
+                        state,
+                        bytes: bytes.to_vec(),
+                    },
+                ))));
+        } else {
+            let completed = owed.fulfill_inline();
+            let opened = match completed.opened {
+                OpenedResourceSpan::InPlace { byte_len } => OpenedSpanResult::InPlace { byte_len },
+                OpenedResourceSpan::Returned(bytes) => OpenedSpanResult::Owned(bytes.to_vec()),
+            };
+            self.jobs
+                .push(PendingJob::Completed(CryptoResult::SpanOpened {
+                    link_id: completed.link_id,
+                    hash: completed.hash,
+                    span_start: completed.span_start,
+                    state: completed.state,
+                    opened,
+                }));
         }
     }
 
@@ -110,6 +157,10 @@ impl PendingOwedWork {
         for pending in self.jobs.drain(..) {
             let job = match pending {
                 PendingJob::Ready(job) => job,
+                PendingJob::Completed(result) => {
+                    inline.push(result);
+                    continue;
+                }
                 PendingJob::ResourceBuild(pending) => {
                     let mut seal_iv = [0u8; 16];
                     host.fill_random(&mut seal_iv);

@@ -5,7 +5,7 @@ use personal_rns::crypto::{
 use personal_rns::engine::{
     CryptoOwed, Directive, EncryptCompleted, EngineReaction, EngineState, IngestIo, InstantMillis,
     LinkReceiptSignCompleted, NoOwedWork, OwedWork, ProofSignCompleted, ReceiptProofVerification,
-    ResourceDecompressionCompleted,
+    ResourceDecompressionCompleted, ResourceOpenCompleted,
 };
 use personal_rns::identity::{decrypt_token_in_place_with_ratchets, OpenedToken};
 use personal_rns::interfaces::{AttachedInterfaces, InboundPacket};
@@ -27,6 +27,7 @@ enum ReadyWork {
     ResourceBuildUnsupported {
         reservation: ResourceBuildReservation,
     },
+    ResourceOpen(ResourceOpenCompleted<'static>),
     ResourceDecompressionUnsupported {
         link_id: LinkId,
         hash: ResourceHash,
@@ -49,6 +50,7 @@ fn route_or_capture_work(
                 OwedWork::ResourceBuild(owed) => ReadyWork::ResourceBuildUnsupported {
                     reservation: owed.reservation(),
                 },
+                OwedWork::ResourceOpen(owed) => ReadyWork::ResourceOpen(owed.fulfill_inline()),
                 OwedWork::ResourceDecompression(owed) => {
                     ReadyWork::ResourceDecompressionUnsupported {
                         link_id: owed.link_id,
@@ -261,6 +263,11 @@ pub(super) fn feed_packet_inline(
                         capture.absorb(reaction, scratch)
                     },
                 );
+            }
+            ReadyWork::ResourceOpen(completed) => {
+                engine.resume_resource_open(completed, now, &mut |reaction| {
+                    route_or_capture_work(reaction, capture, scratch, &mut ready)
+                });
             }
             ReadyWork::ResourceDecompressionUnsupported { link_id, hash } => {
                 engine.resume_resource_decompression(

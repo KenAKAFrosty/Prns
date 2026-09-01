@@ -76,8 +76,9 @@ pub(crate) use node_ingress::drive_packet_to_quiescence;
 pub use node_ingress::{IngestIo, IngestPacketReport};
 pub use reaction::{
     CryptoOwed, Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason, NoOwedWork,
-    OwedWork, PersistenceFlushCause, PersistenceFlushTarget, ResourceDecompressionCompleted,
-    ResourceDecompressionOwed,
+    OpenedResourceSpan, OwedWork, PersistenceFlushCause, PersistenceFlushTarget,
+    ResourceDecompressionCompleted, ResourceDecompressionOwed, ResourceOpenCompleted,
+    ResourceOpenOwed,
 };
 pub use registration::{
     PersistedRoutePreflightError, PersistedRouteSignaturePending, PersistedRouteVerificationError,

@@ -1,18 +1,17 @@
 use crate::engine::{
-    EngineReaction, EngineState, InstantMillis, Journaled, OwedWork, ProofRequest,
-    ResourceDecompressionCompleted, WakeSchedules,
+    EngineReaction, EngineState, InstantMillis, Journaled, OpenedResourceSpan, OwedWork,
+    ProofRequest, ResourceDecompressionCompleted, ResourceOpenCompleted, WakeSchedules,
 };
 use crate::identity::OpenedToken;
 use crate::interfaces::{FrameAccountingEvent, InterfaceIfac};
 use crate::manifold::Host;
 use crate::routing::links::resources::build_outgoing::SALT_REROLL_CAP;
-use crate::routing::links::resources::receive::offload::OffloadedOpenSpan;
 use crate::routing::links::resources::send::{OffloadedStagedSeal, ResourceBuildCompleted};
 use crate::routing::links::resources::{MAP_HASH_LEN, RESOURCE_NONCE_LEN};
 use crate::storage::StorageLayout;
 
 use super::crypto_pool::{
-    CryptoCompletion, CryptoJob, CryptoPool, CryptoResult, OpenSpanJob, StagedSealJob,
+    CryptoCompletion, CryptoJob, CryptoPool, CryptoResult, OpenedSpanResult, StagedSealJob,
 };
 use super::egress::{
     route_reaction, route_reaction_with_work, Egress, InterfacePacer, WireScratch,
@@ -30,6 +29,7 @@ fn route_completion_reaction<J>(
     wire_scratch: &mut WireScratch,
     journal: &mut JournalDispatch<J>,
     owed_work: &mut PendingOwedWork,
+    crypto_pool: Option<&CryptoPool>,
     now: InstantMillis,
 ) where
     J: for<'a> FnMut(Journaled<'a>),
@@ -42,7 +42,7 @@ fn route_completion_reaction<J>(
         wire_scratch,
         now,
         &mut |journaled| journal.route(journaled),
-        &mut |work| owed_work.push(work),
+        &mut |work| owed_work.push(work, crypto_pool),
     );
 }
 
@@ -175,7 +175,7 @@ where
             result,
             work,
         } = completion;
-        if let Some(pool) = crypto_pool {
+        if let (Some(pool), Some(worker)) = (crypto_pool, worker) {
             pool.record_completed(worker, work);
             if result.settles_packet_verdict() {
                 pool.packet_verdict_settled();
@@ -260,6 +260,7 @@ where
                             wire_scratch,
                             journal,
                             owed_work,
+                            crypto_pool,
                             now,
                         )
                     },
@@ -285,6 +286,7 @@ where
                                 wire_scratch,
                                 journal,
                                 owed_work,
+                                crypto_pool,
                                 now,
                             )
                         },
@@ -391,6 +393,7 @@ where
                         wire_scratch,
                         journal,
                         owed_work,
+                        crypto_pool,
                         now,
                     )
                 },
@@ -423,6 +426,7 @@ where
                             wire_scratch,
                             journal,
                             owed_work,
+                            crypto_pool,
                             now,
                         )
                     },
@@ -440,6 +444,7 @@ where
                             wire_scratch,
                             journal,
                             owed_work,
+                            crypto_pool,
                             now,
                         )
                     },
@@ -512,58 +517,38 @@ where
                 hash,
                 span_start,
                 state,
-                bytes,
-            } => CryptoCompletionEffect::OpenSpanAdvanced(engine.apply_opened_span(
-                OffloadedOpenSpan {
-                    link_id,
-                    hash,
-                    span_start,
-                    state,
-                    bytes: &bytes,
-                },
-                now,
-                &mut |reaction| {
-                    route_completion_reaction(
-                        reaction,
-                        &mut topology.egress,
-                        &topology.ifacs,
-                        &mut topology.pacers,
-                        wire_scratch,
-                        journal,
-                        owed_work,
-                        now,
-                    )
-                },
-            )),
+                opened,
+            } => {
+                let opened = match &opened {
+                    OpenedSpanResult::InPlace { byte_len } => OpenedResourceSpan::InPlace {
+                        byte_len: *byte_len,
+                    },
+                    OpenedSpanResult::Owned(bytes) => OpenedResourceSpan::Returned(bytes),
+                };
+                CryptoCompletionEffect::OpenSpanAdvanced(engine.resume_resource_open(
+                    ResourceOpenCompleted {
+                        link_id,
+                        hash,
+                        span_start,
+                        state,
+                        opened,
+                    },
+                    now,
+                    &mut |reaction| {
+                        route_completion_reaction(
+                            reaction,
+                            &mut topology.egress,
+                            &topology.ifacs,
+                            &mut topology.pacers,
+                            wire_scratch,
+                            journal,
+                            owed_work,
+                            crypto_pool,
+                            now,
+                        )
+                    },
+                ))
+            }
         }
-    }
-}
-
-pub(super) fn dispatch_open_spans<S: StorageLayout>(
-    engine: &mut EngineState<S>,
-    crypto_pool: Option<&CryptoPool>,
-) {
-    let Some(pool) = crypto_pool else {
-        return;
-    };
-    while let Some((link_id, hash)) = engine.owed_open_span() {
-        if !pool.has_queue_capacity(1) {
-            break;
-        }
-        let Some(view) = engine.open_span_job_view(&link_id, &hash) else {
-            break;
-        };
-        let span_start = view.span_start;
-        let bytes = view.bytes.to_vec();
-        let Some(state) = engine.begin_open_chew(&link_id, &hash) else {
-            break;
-        };
-        pool.submit(CryptoJob::OpenSpan(Box::new(OpenSpanJob {
-            link_id,
-            hash,
-            span_start,
-            state,
-            bytes,
-        })));
     }
 }

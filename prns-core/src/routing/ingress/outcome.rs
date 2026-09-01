@@ -250,7 +250,10 @@ pub enum IngestPacketOutcome<'p> {
         link_id: LinkId,
         hash: ResourceHash,
     },
-    ResourceDeadlineAdvanced,
+    ResourceDeadlineAdvanced {
+        link_id: LinkId,
+        hash: ResourceHash,
+    },
     IncomingResourceFailed {
         link_id: LinkId,
         hash: ResourceHash,

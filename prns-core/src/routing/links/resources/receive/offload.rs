@@ -1,130 +1,86 @@
-//! The receive-side pool seam, mirror of the staged seal's ([`send`](super::super::send)):
-//! [`owed_open_span`](EngineState::owed_open_span) names a row whose parked streamed open
-//! trails the frontier, [`open_span_job_view`](EngineState::open_span_job_view) +
-//! [`begin_open_chew`](EngineState::begin_open_chew) hand a worker its span and state, and
-//! [`apply_opened_span`](EngineState::apply_opened_span) lands the verdict — re-parking the
-//! state, or concluding a transfer that finished arriving while the worker chewed.
+//! The receive-side streamed-open continuation. Core emits a typed [`ResourceOpenOwed`] directive
+//! containing the exact mutable span and its owned crypto midstate. A runtime may chew that borrow
+//! inline or materialize an owning worker job, then returns [`ResourceOpenCompleted`] through
+//! [`EngineState::resume_resource_open`].
 
-use crate::engine::{EngineReaction, EngineState, InstantMillis, WakeSchedules};
-use crate::routing::links::resources::streamed_open::{OpenProgress, StreamedOpen};
+use crate::engine::{
+    Directive, EngineReaction, EngineState, InstantMillis, OpenedResourceSpan, OwedWork,
+    ResourceOpenCompleted, ResourceOpenOwed, WakeSchedules,
+};
+use crate::routing::links::resources::streamed_open::OpenProgress;
 use crate::routing::links::resources::table::IncomingResourceStatus;
 use crate::routing::links::resources::ResourceHash;
 use crate::routing::links::LinkId;
 use crate::storage::StorageLayout;
 
-/// What a pool chew job copies before [`begin_open_chew`](EngineState::begin_open_chew) parks
-/// the row as `Chewing`: the row's identity and the next contiguous ciphertext span.
-pub struct OpenSpanJobView<'a> {
-    pub link_id: LinkId,
-    pub hash: ResourceHash,
-    pub span_start: usize,
-    pub bytes: &'a [u8],
-}
-
-/// A worker's finished chew, exactly as it returns: the identity that finds the row, the
-/// state that re-parks on it, and the decrypted bytes that land back over their ciphertext.
-pub struct OffloadedOpenSpan<'a> {
-    pub link_id: LinkId,
-    pub hash: ResourceHash,
-    pub span_start: usize,
-    pub state: StreamedOpen,
-    pub bytes: &'a [u8],
-}
-
 impl<S: StorageLayout> EngineState<S> {
-    /// The next incoming row whose parked open trails its frontier — one chew is dispatchable
-    /// per row at a time (the spans chain through the state), and a row already `Chewing`
-    /// waits for its verdict.
-    pub fn owed_open_span(&self) -> Option<(LinkId, ResourceHash)> {
-        (0..self.incoming_resources.len()).find_map(|index| {
-            let state = self.incoming_resources.state(index);
-            if state.status == IncomingResourceStatus::AwaitingDecompression {
-                return None;
-            }
-            let (_, slot) = self.incoming_resources.transfer_and_streamed_open(index);
-            let OpenProgress::Parked(open) = slot else {
-                return None;
-            };
-            (!open.pending_span(state.contiguous_byte_len()).is_empty()).then(|| {
-                (
-                    *self.incoming_resources.link_at(index),
-                    *self.incoming_resources.hash_at(index),
-                )
-            })
-        })
-    }
-
-    /// The owed chew's worker inputs, borrowed for the runtime to copy into a pool job;
-    /// [`begin_open_chew`](Self::begin_open_chew) then moves the state out to ride with them.
-    pub fn open_span_job_view(
-        &self,
-        link_id: &LinkId,
-        hash: &ResourceHash,
-    ) -> Option<OpenSpanJobView<'_>> {
-        let index = self.incoming_resources.lookup(link_id, hash)?;
-        let contiguous = self.incoming_resources.state(index).contiguous_byte_len();
-        let (transfer, slot) = self.incoming_resources.transfer_and_streamed_open(index);
-        let OpenProgress::Parked(open) = slot else {
-            return None;
-        };
-        let span = open.pending_span(contiguous);
-        if span.is_empty() {
-            return None;
-        }
-        Some(OpenSpanJobView {
-            link_id: *link_id,
-            hash: *hash,
-            span_start: span.start,
-            bytes: &transfer[span],
-        })
-    }
-
-    /// Move the parked state out for the worker, leaving the dispatched span behind as the
-    /// verdict's identity check.
-    pub fn begin_open_chew(
+    /// Emit the next contiguous open for this row, moving its midstate into the directive and
+    /// marking the exact borrowed span as in flight in one transition.
+    pub(crate) fn emit_resource_open(
         &mut self,
         link_id: &LinkId,
         hash: &ResourceHash,
-    ) -> Option<StreamedOpen> {
-        let index = self.incoming_resources.lookup(link_id, hash)?;
+        sink: &mut impl FnMut(EngineReaction<'_, OwedWork<'_>>),
+    ) {
+        let Some(index) = self.incoming_resources.lookup(link_id, hash) else {
+            return;
+        };
+        if self.incoming_resources.state(index).status
+            == IncomingResourceStatus::AwaitingDecompression
+        {
+            return;
+        }
+        let other_transfers_in_flight = self.incoming_resources.len() > 1;
         let contiguous = self.incoming_resources.state(index).contiguous_byte_len();
-        let (_, slot) = self
+        let (transfer, slot) = self
             .incoming_resources
             .transfer_and_streamed_open_mut(index);
+        if !matches!(slot, OpenProgress::Parked(_)) {
+            return;
+        }
         let OpenProgress::Parked(open) = core::mem::take(slot) else {
-            return None;
+            return;
         };
         let span = open.pending_span(contiguous);
         if span.is_empty() {
             *slot = OpenProgress::Parked(open);
-            return None;
+            return;
         }
-        *slot = OpenProgress::Chewing { dispatched: span };
-        Some(open)
+        let span_start = span.start;
+        *slot = OpenProgress::Chewing {
+            dispatched: span.clone(),
+        };
+        sink(EngineReaction::Directive(Directive::Fulfill(
+            OwedWork::ResourceOpen(ResourceOpenOwed {
+                link_id: *link_id,
+                hash: *hash,
+                span_start,
+                state: open,
+                bytes: &mut transfer[span],
+                other_transfers_in_flight,
+            }),
+        )));
     }
 
-    /// A worker's span verdict, landing only on the row still marked with exactly this span —
-    /// one for a row that died or was replaced mid-chew drops silently. The impossible near-miss
-    /// (a replacement row that dispatched the identical span within one pool round trip) still
-    /// cannot deliver wrong bytes: the returned state's MAC midstate would refuse the mismatched
-    /// transfer at its conclusion.
+    /// Land a fulfilled open only on the row still marked with exactly this span. A completion
+    /// for a retired, replaced, or differently advanced row is stale and has no effect.
     ///
     /// A transfer that finished arriving while the worker chewed parked as `AwaitingOpen`; its
     /// verdict concludes it here, chewing any small remainder inline — the proof is gated on it
     /// and the engine thread has nothing else to run first.
-    pub fn apply_opened_span(
+    pub fn resume_resource_open(
         &mut self,
-        verdict: OffloadedOpenSpan<'_>,
+        completed: ResourceOpenCompleted<'_>,
         now: InstantMillis,
-        sink: &mut impl FnMut(EngineReaction<'_, crate::engine::OwedWork<'_>>),
+        sink: &mut impl FnMut(EngineReaction<'_, OwedWork<'_>>),
     ) -> WakeSchedules {
-        let OffloadedOpenSpan {
+        let ResourceOpenCompleted {
             link_id,
             hash,
             span_start,
             state,
-            bytes,
-        } = verdict;
+            opened,
+        } = completed;
         let mut wake_schedule_changes = WakeSchedules::UNCHANGED;
         let Some(index) = self.incoming_resources.lookup(&link_id, &hash) else {
             return wake_schedule_changes;
@@ -133,19 +89,30 @@ impl<S: StorageLayout> EngineState<S> {
             let (transfer, slot) = self
                 .incoming_resources
                 .transfer_and_streamed_open_mut(index);
-            let expected = span_start..span_start + bytes.len();
+            let byte_len = match &opened {
+                OpenedResourceSpan::InPlace { byte_len } => *byte_len,
+                OpenedResourceSpan::Returned(bytes) => bytes.len(),
+            };
+            let Some(span_end) = span_start.checked_add(byte_len) else {
+                return wake_schedule_changes;
+            };
+            let expected = span_start..span_end;
             let OpenProgress::Chewing { dispatched } = slot else {
                 return wake_schedule_changes;
             };
             if *dispatched != expected {
                 return wake_schedule_changes;
             }
-            transfer[expected].copy_from_slice(bytes);
+            if let OpenedResourceSpan::Returned(bytes) = opened {
+                transfer[expected].copy_from_slice(bytes);
+            }
             *slot = OpenProgress::Parked(state);
         }
         if self.incoming_resources.state(index).status == IncomingResourceStatus::AwaitingOpen {
             self.conclude_resource(&link_id, &hash, now, sink);
             wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+        } else {
+            self.emit_resource_open(&link_id, &hash, sink);
         }
         wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
         wake_schedule_changes
@@ -155,10 +122,14 @@ impl<S: StorageLayout> EngineState<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::test_support::filled_frame;
-    use crate::engine::{CommandId, Directive, Journaled, Settlement};
+    use crate::engine::test_support::{filled_frame, routable_descriptor};
+    use crate::engine::{
+        CommandId, Directive, IngestIo, Journaled, OpenedResourceSpan, ResourceOpenCompleted,
+        Settlement,
+    };
+    use crate::interfaces::{AttachedInterfaces, InboundPacket};
     use crate::routing::links::resources::receive::tests_support::*;
-    use crate::routing::links::resources::streamed_open::ResourceOpenLane;
+    use crate::routing::links::resources::streamed_open::StreamedOpen;
     use crate::routing::links::resources::table::IncomingResourceStatus;
     use crate::routing::links::resources::{
         ResourceBody, ResourceFailureCause, ResourceMetadata, ResourceSend, OPEN_VERDICT_GRACE_MS,
@@ -195,31 +166,89 @@ mod tests {
         advertisement.expect("the sender advertises")
     }
 
-    fn decoy_payload() -> std::vec::Vec<u8> {
-        b"a second live open keeps the pool lane contended! ".repeat(31)
+    struct OwnedOpenJob {
+        link_id: LinkId,
+        hash: ResourceHash,
+        span_start: usize,
+        state: StreamedOpen,
+        bytes: std::vec::Vec<u8>,
+        other_transfers_in_flight: bool,
     }
 
-    /// Stand up the contention [`ResourceOpenLane::PoolWhenContended`] gates on: a second
-    /// incoming transfer (its own sender, same link) with a begun open and parts still owed.
-    /// The returned frames are its remaining parts — feeding them retires the decoy.
-    fn park_a_decoy_open(
+    fn feed_deferring_open(
         receiver: &mut EngineState<crate::engine::test_support::TestStorageLayout>,
-    ) -> std::vec::Vec<(crate::interfaces::InterfaceId, std::vec::Vec<u8>)> {
-        let mut decoy_sender = engine_with_active_link();
-        let advertisement = advertise(&mut decoy_sender, &decoy_payload(), 1_000);
+        frame: &[u8],
+        at: u64,
+    ) -> std::vec::Vec<OwnedOpenJob> {
+        let mut jobs = std::vec::Vec::new();
+        let mut raw = frame.to_vec();
+        receiver.ingest_packet_into(
+            InboundPacket {
+                arrived_at: InstantMillis(at),
+                source_interface: lane(),
+                bytes: &mut raw,
+            },
+            IngestIo {
+                interfaces: AttachedInterfaces::new(&[routable_descriptor(lane())]),
+                now: InstantMillis(at),
+                fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+                should_prove: &mut |_| false,
+                should_accept_resource: &mut |_| false,
+                sink: &mut |reaction| {
+                    if let EngineReaction::Directive(Directive::Fulfill(OwedWork::ResourceOpen(
+                        owed,
+                    ))) = reaction
+                    {
+                        jobs.push(OwnedOpenJob {
+                            link_id: owed.link_id,
+                            hash: owed.hash,
+                            span_start: owed.span_start,
+                            state: owed.state,
+                            bytes: owed.bytes.to_vec(),
+                            other_transfers_in_flight: owed.other_transfers_in_flight,
+                        });
+                    }
+                },
+            },
+        );
+        jobs
+    }
+
+    fn park_incomplete_transfer(
+        receiver: &mut EngineState<crate::engine::test_support::TestStorageLayout>,
+    ) {
+        let mut sender = engine_with_active_link();
+        let data = b"a second live resource supplies real overlap ".repeat(40);
+        let advertisement = advertise(&mut sender, &data, 1_000);
         let pull = feed(receiver, &advertisement, 1_100);
-        let serve = feed(&mut decoy_sender, &pull.frames[0].1, 1_200);
+        let serve = feed(&mut sender, &pull.frames[0].1, 1_200);
         feed(receiver, &serve.frames[0].1, 1_300);
-        serve.frames[1..].to_vec()
+        assert!(!receiver.incoming_resources.is_empty());
     }
 
     #[test]
-    fn a_transfer_completing_mid_chew_parks_and_the_verdict_concludes_it() {
+    fn owed_work_reports_real_overlap_without_prescribing_a_lane() {
         let mut sender = engine_with_active_link();
         let mut receiver = engine_with_active_link();
-        receiver.resource_open_lane = ResourceOpenLane::PoolWhenContended;
         accept_everything(&mut receiver);
-        park_a_decoy_open(&mut receiver);
+        park_incomplete_transfer(&mut receiver);
+        let data = four_part_payload();
+
+        let advertisement = advertise(&mut sender, &data, 1_500);
+        let pull = feed(&mut receiver, &advertisement, 2_000);
+        let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
+        let job = feed_deferring_open(&mut receiver, &serve.frames[0].1, 2_200)
+            .pop()
+            .expect("the new row owes its first open span");
+
+        assert!(job.other_transfers_in_flight);
+    }
+
+    #[test]
+    fn a_transfer_completing_while_work_is_owed_parks_until_resume() {
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
         let data = four_part_payload();
 
         let advertisement = advertise(&mut sender, &data, 1_500);
@@ -227,73 +256,53 @@ mod tests {
         let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
         assert_eq!(serve.frames.len(), 4);
 
-        assert!(
-            receiver.owed_open_span().is_none(),
-            "nothing is owed before a part lands",
-        );
-        let first = feed(&mut receiver, &serve.frames[0].1, 2_200);
-        assert!(first.received.is_empty());
-        let (link_id, hash) = receiver
-            .owed_open_span()
-            .expect("the first placed part leaves its span parked for the pool");
-
-        let view = receiver.open_span_job_view(&link_id, &hash).unwrap();
-        let span_start = view.span_start;
-        let mut bytes = view.bytes.to_vec();
-        let mut state = receiver.begin_open_chew(&link_id, &hash).unwrap();
-        assert!(
-            receiver.owed_open_span().is_none(),
-            "a chewing row waits for its verdict before the next span",
-        );
+        let mut jobs = feed_deferring_open(&mut receiver, &serve.frames[0].1, 2_200);
+        assert_eq!(jobs.len(), 1, "the packet step emits one typed open");
+        let mut job = jobs.pop().unwrap();
+        assert!(!job.other_transfers_in_flight);
 
         for (arrived, (_, part)) in serve.frames[1..].iter().enumerate() {
-            let capture = feed(&mut receiver, part, 2_300 + arrived as u64);
-            assert!(
-                capture.received.is_empty(),
-                "no delivery before the verdict"
-            );
+            assert!(feed_deferring_open(&mut receiver, part, 2_300 + arrived as u64).is_empty());
         }
-        let index = receiver.incoming_resources.lookup(&link_id, &hash).unwrap();
+        let index = receiver
+            .incoming_resources
+            .lookup(&job.link_id, &job.hash)
+            .unwrap();
         assert_eq!(
             receiver.incoming_resources.state(index).status,
             IncomingResourceStatus::AwaitingOpen,
-            "a transfer completing mid-chew parks for the pool",
+            "completion waits for the explicitly owed work",
         );
 
-        state.chew_span(&mut bytes);
+        job.state.chew_span(&mut job.bytes);
         let mut frames = std::vec::Vec::new();
         let mut received = std::vec::Vec::new();
-        receiver.apply_opened_span(
-            OffloadedOpenSpan {
-                link_id,
-                hash,
-                span_start,
-                state,
-                bytes: &bytes,
+        receiver.resume_resource_open(
+            ResourceOpenCompleted {
+                link_id: job.link_id,
+                hash: job.hash,
+                span_start: job.span_start,
+                state: job.state,
+                opened: OpenedResourceSpan::Returned(&job.bytes),
             },
-            crate::engine::InstantMillis(2_400),
+            InstantMillis(2_400),
             &mut |reaction| match reaction {
-                crate::engine::EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
+                EngineReaction::Directive(Directive::EmitFrame { fill, .. }) => {
                     if let Some(frame) = filled_frame(fill) {
                         frames.push(frame);
                     }
                 }
-                crate::engine::EngineReaction::Journaled(Journaled::ResourceReceived {
-                    data,
-                    ..
-                }) => received.push(data.to_vec()),
+                EngineReaction::Journaled(Journaled::ResourceReceived { data, .. }) => {
+                    received.push(data.to_vec());
+                }
                 _ => {}
             },
         );
-        assert_eq!(
-            received,
-            [data],
-            "the verdict concludes the parked transfer"
-        );
+        assert_eq!(received, [data]);
         assert_eq!(frames.len(), 1, "the proof rides back");
         assert!(receiver
             .incoming_resources
-            .lookup(&link_id, &hash)
+            .lookup(&job.link_id, &job.hash)
             .is_none());
 
         let settled = feed(&mut sender, &frames[0], 3_000);
@@ -304,39 +313,36 @@ mod tests {
     }
 
     #[test]
-    fn a_verdict_for_a_dead_or_mismatched_row_drops_silently() {
+    fn a_wrong_shape_completion_is_stale_and_leaves_the_real_work_owed() {
         let mut sender = engine_with_active_link();
         let mut receiver = engine_with_active_link();
-        receiver.resource_open_lane = ResourceOpenLane::PoolWhenContended;
         accept_everything(&mut receiver);
-        park_a_decoy_open(&mut receiver);
         let data = four_part_payload();
 
         let advertisement = advertise(&mut sender, &data, 1_500);
         let pull = feed(&mut receiver, &advertisement, 2_000);
         let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
-        feed(&mut receiver, &serve.frames[0].1, 2_200);
+        let mut job = feed_deferring_open(&mut receiver, &serve.frames[0].1, 2_200)
+            .pop()
+            .unwrap();
+        job.state.chew_span(&mut job.bytes);
 
-        let (link_id, hash) = receiver.owed_open_span().unwrap();
-        let view = receiver.open_span_job_view(&link_id, &hash).unwrap();
-        let span_start = view.span_start;
-        let mut bytes = view.bytes.to_vec();
-        let mut state = receiver.begin_open_chew(&link_id, &hash).unwrap();
-        state.chew_span(&mut bytes);
-
-        let wrong_span = receiver.apply_opened_span(
-            OffloadedOpenSpan {
-                link_id,
-                hash,
-                span_start: span_start + 16,
-                state,
-                bytes: &bytes[16..],
+        let wrong_span = receiver.resume_resource_open(
+            ResourceOpenCompleted {
+                link_id: job.link_id,
+                hash: job.hash,
+                span_start: job.span_start + 16,
+                state: job.state,
+                opened: OpenedResourceSpan::Returned(&job.bytes[16..]),
             },
-            crate::engine::InstantMillis(2_250),
+            InstantMillis(2_250),
             &mut |_| panic!("a mismatched span touches nothing"),
         );
-        assert_eq!(wrong_span, crate::engine::WakeSchedules::UNCHANGED);
-        let index = receiver.incoming_resources.lookup(&link_id, &hash).unwrap();
+        assert_eq!(wrong_span, WakeSchedules::UNCHANGED);
+        let index = receiver
+            .incoming_resources
+            .lookup(&job.link_id, &job.hash)
+            .unwrap();
         assert!(
             matches!(
                 receiver
@@ -350,27 +356,53 @@ mod tests {
     }
 
     #[test]
-    fn a_pool_that_never_answers_fails_the_parked_transfer_at_its_grace_deadline() {
-        use crate::engine::WakeSchedule;
+    fn a_completion_for_a_retired_row_is_a_no_op() {
         let mut sender = engine_with_active_link();
         let mut receiver = engine_with_active_link();
-        receiver.resource_open_lane = ResourceOpenLane::PoolWhenContended;
         accept_everything(&mut receiver);
-        let decoy_parts = park_a_decoy_open(&mut receiver);
         let data = four_part_payload();
 
         let advertisement = advertise(&mut sender, &data, 1_500);
         let pull = feed(&mut receiver, &advertisement, 2_000);
         let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
-        feed(&mut receiver, &serve.frames[0].1, 2_200);
-        let (link_id, hash) = receiver.owed_open_span().unwrap();
-        receiver.begin_open_chew(&link_id, &hash).unwrap();
+        let mut job = feed_deferring_open(&mut receiver, &serve.frames[0].1, 2_200)
+            .pop()
+            .unwrap();
+        job.state.chew_span(&mut job.bytes);
+        receiver.retire_incoming_resource(&job.link_id, &job.hash);
 
-        for (arrived, (_, part)) in decoy_parts.iter().enumerate() {
-            feed(&mut receiver, part, 2_210 + arrived as u64);
-        }
+        let wake = receiver.resume_resource_open(
+            ResourceOpenCompleted {
+                link_id: job.link_id,
+                hash: job.hash,
+                span_start: job.span_start,
+                state: job.state,
+                opened: OpenedResourceSpan::Returned(&job.bytes),
+            },
+            InstantMillis(2_250),
+            &mut |_| panic!("stale work emits nothing"),
+        );
+
+        assert_eq!(wake, WakeSchedules::UNCHANGED);
+    }
+
+    #[test]
+    fn work_that_never_completes_fails_at_the_open_grace_deadline() {
+        use crate::engine::WakeSchedule;
+        let mut sender = engine_with_active_link();
+        let mut receiver = engine_with_active_link();
+        accept_everything(&mut receiver);
+        let data = four_part_payload();
+
+        let advertisement = advertise(&mut sender, &data, 1_500);
+        let pull = feed(&mut receiver, &advertisement, 2_000);
+        let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
+        assert_eq!(
+            feed_deferring_open(&mut receiver, &serve.frames[0].1, 2_200).len(),
+            1,
+        );
         for (arrived, (_, part)) in serve.frames[1..].iter().enumerate() {
-            feed(&mut receiver, part, 2_300 + arrived as u64);
+            assert!(feed_deferring_open(&mut receiver, part, 2_300 + arrived as u64).is_empty());
         }
         assert_eq!(
             receiver.resource_deadlines_wake(),
@@ -397,12 +429,10 @@ mod tests {
     }
 
     #[test]
-    fn a_contended_pool_no_one_walks_still_delivers_at_the_conclusion() {
+    fn inline_fulfillment_uses_the_same_resume_boundary() {
         let mut sender = engine_with_active_link();
         let mut receiver = engine_with_active_link();
-        receiver.resource_open_lane = ResourceOpenLane::PoolWhenContended;
         accept_everything(&mut receiver);
-        park_a_decoy_open(&mut receiver);
         let data = four_part_payload();
 
         let advertisement = advertise(&mut sender, &data, 1_500);
@@ -415,76 +445,11 @@ mod tests {
                 conclusion = Some(capture);
             }
         }
-        let conclusion = conclusion.expect("the conclusion's catch-up chews the whole backlog");
+        let conclusion = conclusion.expect("the inline test runtime resumes every typed open");
         assert_eq!(conclusion.received[0].1, data);
-        let (link_id, hash) = (link_id(), conclusion.received[0].0);
         assert!(receiver
             .incoming_resources
-            .lookup(&link_id, &hash)
+            .lookup(&link_id(), &conclusion.received[0].0)
             .is_none());
-    }
-
-    #[test]
-    fn a_lone_transfer_on_the_pool_lane_chews_inline() {
-        let mut sender = engine_with_active_link();
-        let mut receiver = engine_with_active_link();
-        receiver.resource_open_lane = ResourceOpenLane::PoolWhenContended;
-        accept_everything(&mut receiver);
-        let data = four_part_payload();
-
-        let advertisement = advertise(&mut sender, &data, 1_500);
-        let pull = feed(&mut receiver, &advertisement, 2_000);
-        let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
-        let mut conclusion = None;
-        for (arrived, (_, part)) in serve.frames.iter().enumerate() {
-            let capture = feed(&mut receiver, part, 2_200 + arrived as u64);
-            assert!(
-                receiver.owed_open_span().is_none(),
-                "a lone open never parks a span for the pool",
-            );
-            if !capture.received.is_empty() {
-                conclusion = Some(capture);
-            }
-        }
-        assert_eq!(conclusion.expect("delivered inline").received[0].1, data);
-        assert!(receiver.incoming_resources.is_empty());
-    }
-
-    #[test]
-    fn the_last_contender_standing_returns_to_the_inline_chew() {
-        let mut sender = engine_with_active_link();
-        let mut receiver = engine_with_active_link();
-        receiver.resource_open_lane = ResourceOpenLane::PoolWhenContended;
-        accept_everything(&mut receiver);
-        let decoy_parts = park_a_decoy_open(&mut receiver);
-        let data = four_part_payload();
-
-        let advertisement = advertise(&mut sender, &data, 1_500);
-        let pull = feed(&mut receiver, &advertisement, 2_000);
-        let serve = feed(&mut sender, &pull.frames[0].1, 2_100);
-        feed(&mut receiver, &serve.frames[0].1, 2_200);
-        assert!(
-            receiver.owed_open_span().is_some(),
-            "a contended open parks its spans for the pool",
-        );
-
-        for (arrived, (_, part)) in decoy_parts.iter().enumerate() {
-            feed(&mut receiver, part, 2_210 + arrived as u64);
-        }
-        feed(&mut receiver, &serve.frames[1].1, 2_300);
-        assert!(
-            receiver.owed_open_span().is_none(),
-            "the survivor's next advance catches the backlog up inline",
-        );
-
-        let mut conclusion = None;
-        for (arrived, (_, part)) in serve.frames[2..].iter().enumerate() {
-            let capture = feed(&mut receiver, part, 2_400 + arrived as u64);
-            if !capture.received.is_empty() {
-                conclusion = Some(capture);
-            }
-        }
-        assert_eq!(conclusion.expect("delivered inline").received[0].1, data);
-        assert!(receiver.incoming_resources.is_empty());
     }
 }

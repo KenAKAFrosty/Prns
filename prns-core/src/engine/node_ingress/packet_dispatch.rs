@@ -472,6 +472,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             IngestPacketOutcome::OwesResourcePull { link_id, hash } => {
                 self.emit_resource_pull(&link_id, &hash, now, fill_random, sink);
+                self.emit_resource_open(&link_id, &hash, sink);
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
@@ -587,11 +588,15 @@ impl<S: StorageLayout> EngineState<S> {
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::OwesResourceAssembly { link_id, hash } => {
+                // Mark the final ready span in flight before conclusion observes the row. That
+                // makes a complete transfer park as AwaitingOpen until its typed completion.
+                self.emit_resource_open(&link_id, &hash, sink);
                 self.conclude_resource(&link_id, &hash, now, sink);
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
-            IngestPacketOutcome::ResourceDeadlineAdvanced => {
+            IngestPacketOutcome::ResourceDeadlineAdvanced { link_id, hash } => {
+                self.emit_resource_open(&link_id, &hash, sink);
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::IncomingResourceFailed {

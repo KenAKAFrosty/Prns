@@ -8,9 +8,7 @@ use crate::routing::links::data::{link_data_frame_ceiling, LINK_MDU};
 use crate::routing::links::resources::advertisement::parse_hashmap_update_plaintext;
 use crate::routing::links::resources::assemble_incoming::match_part_in_window;
 use crate::routing::links::resources::control::write_part_request_plaintext;
-use crate::routing::links::resources::streamed_open::{
-    OpenProgress, ResourceOpenLane, StreamedOpen,
-};
+use crate::routing::links::resources::streamed_open::{OpenProgress, StreamedOpen};
 use crate::routing::links::resources::table::IncomingResourceState;
 use crate::routing::links::resources::table::{IncomingResourceStatus, PlacePartOutcome};
 use crate::routing::links::resources::{
@@ -218,11 +216,13 @@ impl<S: StorageLayout> EngineState<S> {
             absorb_completed_round(self.incoming_resources.state_mut(index), arrived_at);
             return IngestPacketOutcome::OwesResourcePull { link_id, hash };
         }
-        IngestPacketOutcome::ResourceDeadlineAdvanced
+        IngestPacketOutcome::ResourceDeadlineAdvanced { link_id, hash }
     }
 
-    /// Walk the [`StreamedOpen`] up to the consecutive frontier the placement just extended — or, when the chew is the pool's, only make sure it has begun: the runtime walks the chews through [`owed_open_span`](EngineState::owed_open_span) and its pool's verdicts.
-    /// An intentional deviation in timing only: RNS 1.4.2 opens the joined transfer whole at assembly, we spread the same work under the part arrivals it was waiting on.
+    /// Begin the [`StreamedOpen`] once enough of the prefix has landed. The engine wrapper emits
+    /// its pending span as typed owed work after this parser transition returns.
+    /// An intentional deviation in timing only: RNS 1.4.2 opens the joined transfer whole at
+    /// assembly, while runtimes spread the same work under the part arrivals it was waiting on.
     fn advance_streamed_open(&mut self, index: usize) {
         let state = *self.incoming_resources.state(index);
         let Some(height) = state.consecutive_completed else {
@@ -231,10 +231,6 @@ impl<S: StorageLayout> EngineState<S> {
         let link_id = *self.incoming_resources.link_at(index);
         let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
             return;
-        };
-        let chews_here = match self.resource_open_lane {
-            ResourceOpenLane::Inline => true,
-            ResourceOpenLane::PoolWhenContended => !self.receiving_concurrently(),
         };
         let contiguous_byte_len = ((height + 1) * state.sdu).min(state.sealed_transfer_bytes);
         let (transfer, slot) = self
@@ -248,20 +244,6 @@ impl<S: StorageLayout> EngineState<S> {
                 *slot = OpenProgress::Parked(open);
             }
         }
-        if chews_here {
-            if let OpenProgress::Parked(open) = slot {
-                open.advance(transfer, contiguous_byte_len);
-            }
-        }
-    }
-
-    /// The contention signal for [`ResourceOpenLane::PoolWhenContended`]: a second incoming
-    /// transfer is in flight, so a worker's chew can overlap the manifold's ingest of the others.
-    /// Row existence is the signal, deliberately not slot state: a fast wire lands a whole
-    /// segment in one ingest burst, so concurrent transfers' begun-open phases serialize with
-    /// the sweeps and rarely coexist even while the transfers themselves do.
-    fn receiving_concurrently(&self) -> bool {
-        self.incoming_resources.len() > 1
     }
 
     /// RNS 1.4.2's `Resource.hashmap_update_packet` with an intentional deviation: A segment that misfits the register cancels the transfer, where the reference would crash its link thread.

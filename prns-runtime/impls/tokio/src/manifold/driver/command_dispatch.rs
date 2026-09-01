@@ -185,8 +185,12 @@ where
                             &mut |work| match work {
                                 OwedWork::ResourceBuild(owed) => plan = Some(owed.into_plan()),
                                 OwedWork::Crypto(owed) => owed_work.push_crypto(owed),
+                                OwedWork::ResourceOpen(owed) => {
+                                    owed_work.push_resource_open(owed, crypto_pool);
+                                }
                                 OwedWork::ResourceDecompression(owed) => {
-                                    owed_work.push(OwedWork::ResourceDecompression(owed));
+                                    owed_work
+                                        .push(OwedWork::ResourceDecompression(owed), crypto_pool);
                                 }
                             },
                         )
