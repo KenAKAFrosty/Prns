@@ -6,9 +6,10 @@ use std::collections::VecDeque;
 
 use crate::crypto::{ed25519_sign, ed25519_verify, x25519_diffie_hellman, x25519_keys_for_seal};
 use crate::engine::{
-    ChannelAckSignCompleted, CryptoOwed, Directive, EncryptCompleted, EngineReaction, EngineState,
-    IngestIo, LinkReceiptSignCompleted, OwedWork, ProofSignCompleted, ReceiptProofVerification,
-    WakeSchedules,
+    ChannelAckSignCompleted, ChannelAckVerification, CryptoOwed, Directive, EncryptCompleted,
+    EngineReaction, EngineState, IdentifySignCompleted, IngestIo, LinkIdentityVerification,
+    LinkReceiptSignCompleted, OwedWork, ProofSignCompleted, ReceiptProofVerification,
+    TunnelSynthesizeSignCompleted, TunnelSynthesizeVerification, WakeSchedules,
 };
 use crate::identity::decrypt_token_in_place_with_ratchets;
 use crate::interfaces::InboundPacket;
@@ -73,6 +74,51 @@ where
                         sink(reaction.map_work(|never| match never {}))
                     }),
                 );
+            }
+            CryptoOwed::ChannelAckVerify(owed) => {
+                let verification = if ed25519_verify(
+                    &owed.signing_key,
+                    owed.packet_hash.as_bytes(),
+                    &owed.signature,
+                )
+                .is_ok()
+                {
+                    ChannelAckVerification::Valid
+                } else {
+                    ChannelAckVerification::Invalid
+                };
+                wake.compose(engine.resume_channel_ack_verify(
+                    owed,
+                    verification,
+                    &mut |reaction| sink(reaction.map_work(|never| match never {})),
+                ));
+            }
+            CryptoOwed::LinkIdentityVerify(owed) => {
+                let verification = if ed25519_verify(
+                    &owed.signing_key,
+                    &owed.signed_data,
+                    &owed.signature,
+                )
+                .is_ok()
+                {
+                    LinkIdentityVerification::Valid
+                } else {
+                    LinkIdentityVerification::Invalid
+                };
+                engine.resume_link_identity_verify(owed, verification, &mut |reaction| {
+                    sink(reaction.map_work(|never| match never {}))
+                });
+            }
+            CryptoOwed::TunnelSynthesizeVerify(owed) => {
+                let verification =
+                    if ed25519_verify(&owed.signing_key, &owed.signed_region, &owed.signature)
+                        .is_ok()
+                    {
+                        TunnelSynthesizeVerification::Valid
+                    } else {
+                        TunnelSynthesizeVerification::Invalid
+                    };
+                wake.compose(engine.resume_tunnel_synthesize_verify(owed, verification));
             }
             CryptoOwed::Encrypt(owed) => {
                 let (ephemeral_public, shared) =
@@ -200,6 +246,33 @@ where
                         sink(reaction.map_work(|never| match never {}));
                     },
                 );
+            }
+            CryptoOwed::IdentifySign(owed) => {
+                let signature = ed25519_sign(&owed.signing_secret, &owed.signed_data);
+                wake.compose(engine.resume_identify_sign(
+                    IdentifySignCompleted { owed, signature },
+                    now,
+                    &mut |reaction| sink(reaction.map_work(|never| match never {})),
+                ));
+            }
+            CryptoOwed::TunnelSynthesizeSign(owed) => {
+                let signature = ed25519_sign(&owed.signing_secret, &owed.signed_region);
+                let _ = engine.resume_tunnel_synthesize_sign(
+                    TunnelSynthesizeSignCompleted { owed, signature },
+                    &mut |reaction| sink(reaction.map_work(|never| match never {})),
+                );
+            }
+            CryptoOwed::EstablishLink(owed) => {
+                wake.compose(engine.resume_establish_link(
+                    owed.fulfill(),
+                    interfaces,
+                    &mut |reaction| sink(reaction.map_work(|never| match never {})),
+                ));
+            }
+            CryptoOwed::AnnounceSign(owed) => {
+                engine.resume_announce_sign(owed.fulfill(), interfaces, &mut |reaction| {
+                    sink(reaction.map_work(|never| match never {}))
+                });
             }
             CryptoOwed::AnnounceVerify(owed) => {
                 if Announce::from_wire_unverified(&owed.header, &owed.payload)

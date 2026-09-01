@@ -397,7 +397,8 @@ mod tests {
             let rotations_before = rotation_count;
             let mut buf = [0u8; BROADCAST_MTU];
             let n = write_path_request_wire_packet(local, None, &id, &mut buf).unwrap();
-            state.ingest_packet_into(
+            crate::engine::drive_packet_to_quiescence(
+                &mut state,
                 InboundPacket {
                     arrived_at: now,
                     source_interface: source,

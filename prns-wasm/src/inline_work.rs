@@ -10,9 +10,11 @@ use personal_rns::crypto::{
     ed25519_sign, ed25519_verify, x25519_diffie_hellman, x25519_keys_for_seal,
 };
 use personal_rns::engine::{
-    ChannelAckSignCompleted, CryptoOwed, Directive, EncryptCompleted, EngineReaction, EngineState,
-    InstantMillis, LinkReceiptSignCompleted, NoOwedWork, OwedWork, ProofSignCompleted,
+    ChannelAckSignCompleted, ChannelAckVerification, CryptoOwed, Directive, EncryptCompleted,
+    EngineReaction, EngineState, IdentifySignCompleted, InstantMillis, LinkIdentityVerification,
+    LinkReceiptSignCompleted, NoOwedWork, OwedWork, ProofSignCompleted,
     ReceiptProofVerification, ResourceDecompressionCompleted, ResourceOpenCompleted,
+    TunnelSynthesizeSignCompleted, TunnelSynthesizeVerification,
 };
 use personal_rns::identity::{decrypt_token_in_place_with_ratchets, OpenedToken};
 use personal_rns::interfaces::AttachedInterfaces;
@@ -102,6 +104,48 @@ pub(crate) fn fulfill_ready_work(
                         ReceiptProofVerification::Invalid
                     };
                     engine.resume_receipt_proof(owed, verification, sink);
+                }
+                CryptoOwed::ChannelAckVerify(owed) => {
+                    let verification = if ed25519_verify(
+                        &owed.signing_key,
+                        owed.packet_hash.as_bytes(),
+                        &owed.signature,
+                    )
+                    .is_ok()
+                    {
+                        ChannelAckVerification::Valid
+                    } else {
+                        ChannelAckVerification::Invalid
+                    };
+                    engine.resume_channel_ack_verify(owed, verification, sink);
+                }
+                CryptoOwed::LinkIdentityVerify(owed) => {
+                    let verification = if ed25519_verify(
+                        &owed.signing_key,
+                        &owed.signed_data,
+                        &owed.signature,
+                    )
+                    .is_ok()
+                    {
+                        LinkIdentityVerification::Valid
+                    } else {
+                        LinkIdentityVerification::Invalid
+                    };
+                    engine.resume_link_identity_verify(owed, verification, sink);
+                }
+                CryptoOwed::TunnelSynthesizeVerify(owed) => {
+                    let verification = if ed25519_verify(
+                        &owed.signing_key,
+                        &owed.signed_region,
+                        &owed.signature,
+                    )
+                    .is_ok()
+                    {
+                        TunnelSynthesizeVerification::Valid
+                    } else {
+                        TunnelSynthesizeVerification::Invalid
+                    };
+                    engine.resume_tunnel_synthesize_verify(owed, verification);
                 }
                 CryptoOwed::Encrypt(owed) => {
                     let (ephemeral_public, shared) =
@@ -218,6 +262,27 @@ pub(crate) fn fulfill_ready_work(
                         now,
                         sink,
                     );
+                }
+                CryptoOwed::IdentifySign(owed) => {
+                    let signature = ed25519_sign(&owed.signing_secret, &owed.signed_data);
+                    engine.resume_identify_sign(
+                        IdentifySignCompleted { owed, signature },
+                        now,
+                        sink,
+                    );
+                }
+                CryptoOwed::TunnelSynthesizeSign(owed) => {
+                    let signature = ed25519_sign(&owed.signing_secret, &owed.signed_region);
+                    let _ = engine.resume_tunnel_synthesize_sign(
+                        TunnelSynthesizeSignCompleted { owed, signature },
+                        sink,
+                    );
+                }
+                CryptoOwed::EstablishLink(owed) => {
+                    engine.resume_establish_link(owed.fulfill(), interfaces, sink);
+                }
+                CryptoOwed::AnnounceSign(owed) => {
+                    engine.resume_announce_sign(owed.fulfill(), interfaces, sink);
                 }
                 CryptoOwed::AnnounceVerify(owed) => {
                     if Announce::from_wire_unverified(&owed.header, &owed.payload)

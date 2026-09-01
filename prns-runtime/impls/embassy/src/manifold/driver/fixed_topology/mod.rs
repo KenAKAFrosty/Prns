@@ -262,22 +262,37 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
             }
             Either4::Second(issued) => {
                 let now = host.now();
-                let delta = engine.ingest_command_into(
+                let mut owed_work = InlineOwedWorkQueue::new();
+                let mut delta = engine.ingest_command_into_with_work(
                     issued,
                     interfaces,
                     now,
                     &mut |entropy| host.fill_random(entropy),
                     &mut |reaction| {
-                        route_reaction(
+                        route_and_capture_owed_work(
                             reaction,
                             &mut egress,
                             ifacs,
                             &mut pacers,
                             now,
                             &mut on_journaled,
+                            &mut owed_work,
                         )
                     },
                 );
+                delta.merge(fulfill_owed_work_inline(
+                    owed_work,
+                    &mut engine,
+                    &mut host,
+                    interfaces,
+                    &mut egress,
+                    ifacs,
+                    &mut pacers,
+                    frame_accounting_statuses,
+                    now,
+                    &mut should_prove,
+                    &mut on_journaled,
+                ));
                 merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces);
             }
             Either4::Third(reason) => {

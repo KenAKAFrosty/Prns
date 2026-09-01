@@ -285,6 +285,26 @@ impl InboundDispatch {
                                 );
                             });
                         }
+                        LinkSignCompleted::Identify(completed) => {
+                            let changed =
+                                engine.resume_identify_sign(completed, now, &mut |reaction| {
+                                    route_reaction(
+                                        reaction,
+                                        &mut topology.egress,
+                                        &topology.ifacs,
+                                        &mut topology.pacers,
+                                        wire_scratch,
+                                        now,
+                                        &mut |journaled| journal.route(journaled),
+                                    );
+                                });
+                            merge_wake_schedules_delta(
+                                wake_schedules,
+                                changed,
+                                engine,
+                                topology.interfaces.view(),
+                            );
+                        }
                     }
                 }
             }

@@ -18,9 +18,7 @@ use crate::routing::dedup::{PacketHashHistory, RememberPacketOutcome};
 use crate::routing::links::resources::send::ResourceProofClassification;
 use crate::routing::links::LinkId;
 use crate::routing::path_requests::PATH_REQUEST_DESTINATION;
-use crate::routing::tunnel::{
-    parse_synthesize_payload, TunnelTransition, TUNNEL_SYNTHESIZE_DESTINATION, TUNNEL_TIMEOUT_MS,
-};
+use crate::routing::tunnel::{prepare_synthesize_verify, TUNNEL_SYNTHESIZE_DESTINATION};
 use crate::storage::StorageLayout;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
@@ -419,14 +417,13 @@ impl<S: StorageLayout> EngineState<S> {
                         fire_on: reverse.received_interface,
                     });
                 }
-                if let Some((id, delivered)) = self.settle_channel_ack(
+                if let Some(owed) = self.prepare_channel_ack_verify(
                     &link_id,
                     payload,
                     DeliveryProof::Explicit(packet_hash),
                     arrived_at,
                 ) {
-                    self.links.note_inbound(&link_id, arrived_at);
-                    return IngestPacketOutcome::ChannelReceiptDelivered { id, delivered };
+                    return IngestPacketOutcome::OwesChannelAckVerify(owed);
                 }
                 match self.prepare_receipt_proof_verify(
                     payload,
@@ -468,24 +465,10 @@ impl<S: StorageLayout> EngineState<S> {
         source_interface: InterfaceId,
         now: InstantMillis,
     ) -> IngestPacketOutcome<'p> {
-        let Some(verified) = parse_synthesize_payload(data.payload) else {
+        let Some(owed) = prepare_synthesize_verify(data.payload, source_interface, now) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
-        let expires = InstantMillis(now.0.saturating_add(TUNNEL_TIMEOUT_MS));
-        match self
-            .tunnels
-            .observe_synthesize(verified.tunnel_id, source_interface, expires)
-        {
-            TunnelTransition::Established | TunnelTransition::Refreshed => {}
-            TunnelTransition::Reappeared { previous_interface } => {
-                self.routing_table
-                    .repoint_routes(previous_interface, source_interface, now);
-                self.mark_interface_dirty(previous_interface);
-                self.mark_interface_dirty(source_interface);
-            }
-        }
-        self.routing_table.invalidate_route_expiries();
-        IngestPacketOutcome::TunnelObserved { expires }
+        IngestPacketOutcome::OwesTunnelSynthesizeVerify(owed)
     }
 }
 

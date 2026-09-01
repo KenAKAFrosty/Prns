@@ -1,8 +1,10 @@
 use crate::crypto::{ed25519_sign, ed25519_verify, x25519_diffie_hellman, x25519_keys_for_seal};
 use crate::engine::{
-    ChannelAckSignCompleted, CryptoOwed, EncryptCompleted, EngineReaction, EngineState,
-    InstantMillis, Journaled, LinkReceiptSignCompleted, OwedWork, ProofRequest, ProofSignCompleted,
-    ReceiptProofVerification, ResourceDecompressionCompleted, ResourceOpenCompleted, WakeSchedules,
+    ChannelAckSignCompleted, ChannelAckVerification, CryptoOwed, EncryptCompleted, EngineReaction,
+    EngineState, IdentifySignCompleted, InstantMillis, Journaled, LinkIdentityVerification,
+    LinkReceiptSignCompleted, OwedWork, ProofRequest, ProofSignCompleted, ReceiptProofVerification,
+    ResourceDecompressionCompleted, ResourceOpenCompleted, TunnelSynthesizeSignCompleted,
+    TunnelSynthesizeVerification, WakeSchedules,
 };
 use crate::identity::decrypt_token_in_place_with_ratchets;
 use crate::interfaces::{AttachedInterfaces, InterfaceId, InterfaceIfac, InterfaceStatus};
@@ -122,6 +124,50 @@ where
                             route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
                         },
                     ));
+                }
+                CryptoOwed::ChannelAckVerify(owed) => {
+                    let verification = if ed25519_verify(
+                        &owed.signing_key,
+                        owed.packet_hash.as_bytes(),
+                        &owed.signature,
+                    )
+                    .is_ok()
+                    {
+                        ChannelAckVerification::Valid
+                    } else {
+                        ChannelAckVerification::Invalid
+                    };
+                    wake.compose(engine.resume_channel_ack_verify(
+                        owed,
+                        verification,
+                        &mut |reaction| {
+                            route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
+                        },
+                    ));
+                }
+                CryptoOwed::LinkIdentityVerify(owed) => {
+                    let verification =
+                        if ed25519_verify(&owed.signing_key, &owed.signed_data, &owed.signature)
+                            .is_ok()
+                        {
+                            LinkIdentityVerification::Valid
+                        } else {
+                            LinkIdentityVerification::Invalid
+                        };
+                    engine.resume_link_identity_verify(owed, verification, &mut |reaction| {
+                        route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
+                    });
+                }
+                CryptoOwed::TunnelSynthesizeVerify(owed) => {
+                    let verification =
+                        if ed25519_verify(&owed.signing_key, &owed.signed_region, &owed.signature)
+                            .is_ok()
+                        {
+                            TunnelSynthesizeVerification::Valid
+                        } else {
+                            TunnelSynthesizeVerification::Invalid
+                        };
+                    wake.compose(engine.resume_tunnel_synthesize_verify(owed, verification));
                 }
                 CryptoOwed::Encrypt(owed) => {
                     let (ephemeral_public, shared) =
@@ -285,6 +331,39 @@ where
                             route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
                         },
                     );
+                }
+                CryptoOwed::IdentifySign(owed) => {
+                    let signature = ed25519_sign(&owed.signing_secret, &owed.signed_data);
+                    wake.compose(engine.resume_identify_sign(
+                        IdentifySignCompleted { owed, signature },
+                        now,
+                        &mut |reaction| {
+                            route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
+                        },
+                    ));
+                }
+                CryptoOwed::TunnelSynthesizeSign(owed) => {
+                    let signature = ed25519_sign(&owed.signing_secret, &owed.signed_region);
+                    let _ = engine.resume_tunnel_synthesize_sign(
+                        TunnelSynthesizeSignCompleted { owed, signature },
+                        &mut |reaction| {
+                            route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
+                        },
+                    );
+                }
+                CryptoOwed::EstablishLink(owed) => {
+                    wake.compose(engine.resume_establish_link(
+                        owed.fulfill(),
+                        interfaces,
+                        &mut |reaction| {
+                            route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
+                        },
+                    ));
+                }
+                CryptoOwed::AnnounceSign(owed) => {
+                    engine.resume_announce_sign(owed.fulfill(), interfaces, &mut |reaction| {
+                        route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
+                    });
                 }
                 CryptoOwed::AnnounceVerify(owed) => {
                     let valid = Announce::from_wire_unverified(&owed.header, &owed.payload)

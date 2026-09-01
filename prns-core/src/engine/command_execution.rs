@@ -4,17 +4,18 @@ use crate::engine::settlement::settle;
 #[cfg(feature = "runtime-metrics")]
 use crate::engine::AnnounceCommandOutcome;
 use crate::engine::{
-    AllowRequesterFailure, AnnounceNowFailure, AnnounceTarget, AnnounceWriteFailure,
-    ApproveRemoteControlControllerPairingFailure, CloseLinkFailure, CommandOutcome,
-    CommandedAnnounceWriteOutcome, Directive, EgressTarget, EncryptCompleted, EngineReaction,
-    EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome, FanTarget, FinishEncryptOutcome,
-    IdentifyFailure, IdentifyRejection, InstantMillis, IssuedCommand, Journaled,
-    PathRequestWriteOutcome, RejectRemoteControlControllerPairingFailure,
-    RemoteControlTargetPairingApproval, RemoteControlTargetPairingRejection, RequestPathFailure,
-    RespondFailure, RespondRejection, SendGroupEntropy, SendGroupFailure, SendPlainPacketFailure,
-    SendRequestFailure, SendRequestRejection, SendSinglePacketEntropy, SendSinglePacketFailure,
-    SendSinglePacketWriteError, SendSinglePacketWriteOutcome, SendToChannelFailure,
-    SendToChannelRejection, SendToLinkFailure, SendToLinkRejection,
+    AllowRequesterFailure, AnnounceNowFailure, AnnounceSignCompleted, AnnounceSignPurpose,
+    AnnounceTarget, AnnounceWriteFailure, ApproveRemoteControlControllerPairingFailure,
+    CloseLinkFailure, CommandOutcome, CommandedAnnounceWriteOutcome, CryptoOwed, Directive,
+    EgressTarget, EncryptCompleted, EngineReaction, EngineState, EstablishLinkFailure,
+    EstablishLinkWriteOutcome, FanTarget, FinishEncryptOutcome, IdentifyFailure, IdentifyRejection,
+    InstantMillis, IssuedCommand, Journaled, OwedWork, PathRequestWriteOutcome, PrnsCommand,
+    RejectRemoteControlControllerPairingFailure, RemoteControlTargetPairingApproval,
+    RemoteControlTargetPairingRejection, RequestPathFailure, RespondFailure, RespondRejection,
+    SendGroupEntropy, SendGroupFailure, SendPlainPacketFailure, SendRequestFailure,
+    SendRequestRejection, SendSinglePacketEntropy, SendSinglePacketFailure,
+    SendSinglePacketPreparation, SendSinglePacketWriteError, SendSinglePacketWriteOutcome,
+    SendToChannelFailure, SendToChannelRejection, SendToLinkFailure, SendToLinkRejection,
     SetRegisteredAnnounceAppDataFailure, SetResourceStrategyFailure, Settlement, WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
@@ -27,7 +28,7 @@ use crate::routing::delivery::receipts::ReceiptKind;
 use crate::routing::links::channel::send::SendToChannelWriteError;
 use crate::routing::links::channel::CHANNEL_ENVELOPE_HEADER_LEN;
 use crate::routing::links::data::{link_data_frame_ceiling, LinkDataError, SendToLinkWriteError};
-use crate::routing::links::establish::EstablishLinkEntropy;
+use crate::routing::links::establish::{EstablishLinkCompleted, EstablishLinkEntropy};
 use crate::routing::links::identify::IdentifyWriteError;
 use crate::routing::links::request::{
     response_data_wire_len, LinkRequestWriteError, SendRequestView, REQUEST_WIRE_OVERHEAD,
@@ -147,6 +148,265 @@ impl<S: StorageLayout> EngineState<S> {
             wake_schedule_changes.remote_control_pairing = self.remote_control_pairing_wake();
         }
         wake_schedule_changes
+    }
+
+    /// Execute a command while returning any externally fulfillable work through the engine's
+    /// unified reaction channel. Runtime policy—not the command—is responsible for choosing
+    /// inline or worker fulfillment.
+    pub fn ingest_command_into_with_work<F>(
+        &mut self,
+        issued: IssuedCommand,
+        interfaces: AttachedInterfaces<'_>,
+        now: InstantMillis,
+        fill_random: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_, OwedWork<'_>>),
+    ) -> WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+    {
+        self.ingest_command_into_with_timing_and_work(
+            issued,
+            interfaces,
+            now,
+            CommandTiming::default(),
+            fill_random,
+            sink,
+        )
+    }
+
+    pub fn ingest_command_into_with_timing_and_work<F>(
+        &mut self,
+        issued: IssuedCommand,
+        interfaces: AttachedInterfaces<'_>,
+        now: InstantMillis,
+        timing: CommandTiming,
+        fill_random: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_, OwedWork<'_>>),
+    ) -> WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+    {
+        let IssuedCommand { id, command } = issued;
+        let command = match command {
+            PrnsCommand::AnnounceNow(announce) => {
+                return match self.prepare_commanded_announce_sign(id, &announce, now, fill_random) {
+                    Ok(owed) => {
+                        sink(EngineReaction::Directive(Directive::Fulfill(
+                            OwedWork::Crypto(CryptoOwed::AnnounceSign(owed)),
+                        )));
+                        WakeSchedules::UNCHANGED
+                    }
+                    Err(failure) => {
+                        #[cfg(feature = "runtime-metrics")]
+                        match failure {
+                            AnnounceWriteFailure::Rejected(_) => {
+                                self.record_announce_command(AnnounceCommandOutcome::Rejected)
+                            }
+                            AnnounceWriteFailure::Errored(_) => {
+                                self.record_announce_command(AnnounceCommandOutcome::WriteFailed)
+                            }
+                        }
+                        settle(
+                            sink,
+                            id,
+                            Settlement::AnnounceNow(Err(AnnounceNowFailure::WriteFailed(failure))),
+                        );
+                        WakeSchedules::UNCHANGED
+                    }
+                };
+            }
+            PrnsCommand::SendSinglePacket(send) => {
+                let mut entropy_bytes = [0u8; SendSinglePacketEntropy::LEN];
+                fill_random(&mut entropy_bytes);
+                return match self.prepare_send_single_packet_with_timing(
+                    id,
+                    send,
+                    now,
+                    SendSinglePacketEntropy::new(entropy_bytes),
+                    FirstHopTiming {
+                        interfaces,
+                        shared_instance_floor_ms: timing.first_hop_timeout_floor_ms,
+                    },
+                ) {
+                    SendSinglePacketPreparation::Owed(owed) => {
+                        sink(EngineReaction::Directive(Directive::Fulfill(
+                            OwedWork::Crypto(CryptoOwed::Encrypt(owed)),
+                        )));
+                        WakeSchedules::UNCHANGED
+                    }
+                    SendSinglePacketPreparation::Rejected { id, rejection } => {
+                        settle(
+                            sink,
+                            id,
+                            Settlement::SendSinglePacket(Err(SendSinglePacketFailure::Rejected(
+                                rejection,
+                            ))),
+                        );
+                        WakeSchedules::UNCHANGED
+                    }
+                    SendSinglePacketPreparation::RouteVanished { id } => {
+                        settle(
+                            sink,
+                            id,
+                            Settlement::SendSinglePacket(Err(
+                                SendSinglePacketFailure::WriteFailed(
+                                    SendSinglePacketWriteError::RouteVanished,
+                                ),
+                            )),
+                        );
+                        WakeSchedules::UNCHANGED
+                    }
+                };
+            }
+            PrnsCommand::Identify(identify) => {
+                let mut iv = [0u8; ENCRYPTION_IV_LEN];
+                fill_random(&mut iv);
+                return match self.prepare_identify_sign(id, identify, iv) {
+                    Ok(owed) => {
+                        sink(EngineReaction::Directive(Directive::Fulfill(
+                            OwedWork::Crypto(CryptoOwed::IdentifySign(owed)),
+                        )));
+                        WakeSchedules::UNCHANGED
+                    }
+                    Err(rejection) => {
+                        settle(
+                            sink,
+                            id,
+                            Settlement::Identify(Err(IdentifyFailure::Rejected(rejection))),
+                        );
+                        WakeSchedules::UNCHANGED
+                    }
+                };
+            }
+            PrnsCommand::EstablishLink(establish) => {
+                let mut entropy_bytes = [0u8; EstablishLinkEntropy::LEN];
+                fill_random(&mut entropy_bytes);
+                return match self.prepare_establish_link(
+                    id,
+                    establish,
+                    now,
+                    timing.first_hop_timeout_floor_ms,
+                    EstablishLinkEntropy::new(entropy_bytes),
+                ) {
+                    Ok(owed) => {
+                        sink(EngineReaction::Directive(Directive::Fulfill(
+                            OwedWork::Crypto(CryptoOwed::EstablishLink(owed)),
+                        )));
+                        WakeSchedules::UNCHANGED
+                    }
+                    Err(rejection) => {
+                        settle(
+                            sink,
+                            id,
+                            Settlement::EstablishLink(Err(EstablishLinkFailure::Rejected(
+                                rejection,
+                            ))),
+                        );
+                        WakeSchedules::UNCHANGED
+                    }
+                };
+            }
+            command => command,
+        };
+
+        self.ingest_command_into_with_timing(
+            IssuedCommand { id, command },
+            interfaces,
+            now,
+            timing,
+            fill_random,
+            &mut |reaction| sink(reaction.map_work(|never| match never {})),
+        )
+    }
+
+    pub fn resume_establish_link(
+        &mut self,
+        completed: EstablishLinkCompleted,
+        interfaces: AttachedInterfaces<'_>,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> WakeSchedules {
+        let command_id = completed.command_id;
+        let timing = FirstHopTiming {
+            interfaces,
+            shared_instance_floor_ms: completed.first_hop_timeout_floor_ms,
+        };
+        let mut frame = [0u8; BROADCAST_MTU];
+        match self.write_commanded_link_request_from_parts(completed, timing, &mut frame) {
+            EstablishLinkWriteOutcome::Written(dispatch) => {
+                fan_frame(
+                    interfaces,
+                    FanTarget::Only(dispatch.fire_on),
+                    &frame[..dispatch.wire_bytes],
+                    sink,
+                );
+            }
+            EstablishLinkWriteOutcome::Rejected { rejection } => {
+                settle(
+                    sink,
+                    command_id,
+                    Settlement::EstablishLink(Err(EstablishLinkFailure::WriteFailed(rejection))),
+                );
+            }
+        }
+        WakeSchedules {
+            link_deadlines: self.link_deadlines_wake(),
+            ..WakeSchedules::UNCHANGED
+        }
+    }
+
+    pub fn resume_announce_sign(
+        &mut self,
+        completed: AnnounceSignCompleted,
+        interfaces: AttachedInterfaces<'_>,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        let purpose = completed.owed.purpose;
+        let mut frame = [0u8; BROADCAST_MTU];
+        match self.finish_announce_sign(completed, &mut frame) {
+            Ok(dispatch) => {
+                match dispatch.purpose {
+                    AnnounceSignPurpose::Command { command_id, target } => {
+                        #[cfg(feature = "runtime-metrics")]
+                        self.record_announce_command(AnnounceCommandOutcome::Succeeded);
+                        let fanout = match target {
+                            AnnounceTarget::AllInterfaces => FanTarget::All,
+                            AnnounceTarget::Interface(interface) => FanTarget::Only(interface),
+                        };
+                        fan_announce(interfaces, fanout, &frame[..dispatch.wire_bytes], sink);
+                        settle(sink, command_id, Settlement::AnnounceNow(Ok(())));
+                    }
+                    AnnounceSignPurpose::PathResponse { target } => {
+                        sink(EngineReaction::Directive(Directive::Send {
+                            target,
+                            bytes: &frame[..dispatch.wire_bytes],
+                        }));
+                    }
+                }
+                if dispatch.ratchet_rotation == RatchetRotation::Minted {
+                    sink(EngineReaction::Journaled(Journaled::SelfRatchetRotated {
+                        destination: dispatch.destination,
+                    }));
+                }
+            }
+            Err(failure) => {
+                if let AnnounceSignPurpose::Command { command_id, .. } = purpose {
+                    #[cfg(feature = "runtime-metrics")]
+                    match failure {
+                        AnnounceWriteFailure::Rejected(_) => {
+                            self.record_announce_command(AnnounceCommandOutcome::Rejected)
+                        }
+                        AnnounceWriteFailure::Errored(_) => {
+                            self.record_announce_command(AnnounceCommandOutcome::WriteFailed)
+                        }
+                    }
+                    settle(
+                        sink,
+                        command_id,
+                        Settlement::AnnounceNow(Err(AnnounceNowFailure::WriteFailed(failure))),
+                    );
+                }
+            }
+        }
     }
 
     pub fn ingest_command_into<F>(

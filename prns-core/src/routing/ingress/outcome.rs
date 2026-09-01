@@ -15,8 +15,10 @@ use crate::routing::announce::schedule::ScheduleRejection;
 use crate::routing::announce::{AnnounceObservation, AnnounceRateAccounting};
 use crate::routing::dedup::PacketHash;
 use crate::routing::delivery::Delivery;
+use crate::routing::links::channel::send::ChannelAckVerifyOwed;
 use crate::routing::links::channel::{ChannelSequence, MessageType};
 use crate::routing::links::handshake::{AcceptedLinkRequest, LinkProofVerifyOwed, LinkRttError};
+use crate::routing::links::identify::LinkIdentityVerifyOwed;
 use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::table::AcceptedResource;
 use crate::routing::links::resources::{
@@ -26,6 +28,7 @@ use crate::routing::links::LinkId;
 use crate::routing::path_requests::seen::PathRequestIdBytes;
 use crate::routing::proof::{ProofObligation, ReceiptProofVerifyOwed};
 use crate::routing::request_handlers::RequestPathHash;
+use crate::routing::tunnel::TunnelSynthesizeVerifyOwed;
 use crate::units::RttMillis;
 use crate::wire::{DestinationHash, WirePacketHeader};
 
@@ -140,10 +143,9 @@ pub enum IngestPacketOutcome<'p> {
     OwesAnnounceVerify(AnnounceVerifyOwed),
     OwesRemoteControlPairingAvailabilityVerify(RemoteControlPairingAvailabilityVerifyOwed),
     OwesReceiptProofVerify(ReceiptProofVerifyOwed),
-    ChannelReceiptDelivered {
-        id: CommandId,
-        delivered: PacketReceiptDelivered,
-    },
+    OwesChannelAckVerify(ChannelAckVerifyOwed),
+    OwesLinkIdentityVerify(LinkIdentityVerifyOwed),
+    OwesTunnelSynthesizeVerify(TunnelSynthesizeVerifyOwed),
     ReceiptProofIgnored,
     Forward(PacketToForward<'p>),
     AnswerPathRequest {
@@ -172,10 +174,6 @@ pub enum IngestPacketOutcome<'p> {
     RelayPathRequestToLocalClients {
         destination: DestinationHash,
         id: PathRequestIdBytes,
-    },
-    PeerIdentified {
-        link_id: LinkId,
-        identity: IdentityHash,
     },
     RequestReceived {
         destination: DestinationHash,
@@ -291,9 +289,6 @@ pub enum IngestPacketOutcome<'p> {
         link_id: LinkId,
         attached_interface: InterfaceId,
         arrived_on: InterfaceId,
-    },
-    TunnelObserved {
-        expires: InstantMillis,
     },
     Ignored(IgnoreReason),
 }

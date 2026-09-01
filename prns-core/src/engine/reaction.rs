@@ -1,16 +1,21 @@
 #[cfg(feature = "runtime-metrics")]
 use super::metrics::AnnounceOrigin;
+use crate::engine::tunnel::TunnelSynthesizeSignOwed;
 use crate::engine::InstantMillis;
 use crate::engine::{CommandId, LinkEstablished, Settlement};
 use crate::identity::IdentityHash;
 use crate::interfaces::{InterfaceId, InterfaceKind};
+use crate::routing::announce::emit::AnnounceSignOwed;
 use crate::routing::announce::held::HeldDropCause;
 use crate::routing::announce::{AnnounceObservation, AnnounceRateAccounting};
 use crate::routing::delivery::send_single::EncryptOwed;
 use crate::routing::delivery::Delivery;
 use crate::routing::ingress::{AnnounceVerifyOwed, DecryptOwed, RatchetDecryptOwed};
+use crate::routing::links::channel::send::ChannelAckVerifyOwed;
 use crate::routing::links::channel::MessageType;
+use crate::routing::links::establish::EstablishLinkOwed;
 use crate::routing::links::handshake::{LinkProofSignOwed, LinkProofVerifyOwed};
+use crate::routing::links::identify::{IdentifySignOwed, LinkIdentityVerifyOwed};
 use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::send::ResourceBuildOwed;
 use crate::routing::links::resources::streamed_open::StreamedOpen;
@@ -19,6 +24,7 @@ use crate::routing::links::LinkId;
 use crate::routing::proof::ChannelAckSignOwed;
 use crate::routing::proof::{LinkReceiptSignOwed, ProofSignOwed, ReceiptProofVerifyOwed};
 use crate::routing::request_handlers::RequestPathHash;
+use crate::routing::tunnel::TunnelSynthesizeVerifyOwed;
 use crate::routing::RouteRemovalCause;
 use crate::units::RttMillis;
 use crate::wire::DestinationHash;
@@ -77,6 +83,13 @@ pub enum OwedWork<'a> {
 #[allow(clippy::large_enum_variant)]
 pub enum CryptoOwed {
     ReceiptProofVerify(ReceiptProofVerifyOwed),
+    ChannelAckVerify(ChannelAckVerifyOwed),
+    LinkIdentityVerify(LinkIdentityVerifyOwed),
+    TunnelSynthesizeVerify(TunnelSynthesizeVerifyOwed),
+    IdentifySign(IdentifySignOwed),
+    TunnelSynthesizeSign(TunnelSynthesizeSignOwed),
+    EstablishLink(EstablishLinkOwed),
+    AnnounceSign(AnnounceSignOwed),
     Encrypt(EncryptOwed),
     Decrypt(DecryptOwed),
     RatchetDecrypt(RatchetDecryptOwed),

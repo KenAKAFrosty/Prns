@@ -153,12 +153,14 @@ async fn completion_wake_carries_no_payload_and_result_moves_through_worker_ring
     let pool = CryptoPool::spawn(1, completion_wake.clone()).expect("worker spawns");
     assert!(!pool.prepare_completion_wait());
 
-    pool.submit(CryptoJob::VerifyReceiptProof(receipt_proof_verify_owed(
-        CommandId(7),
-        packet_hash,
-        signing_key,
-        signature,
-    )));
+    pool.submit(CryptoJob::VerifySignature(
+        SignatureVerifyJob::ReceiptProof(receipt_proof_verify_owed(
+            CommandId(7),
+            packet_hash,
+            signing_key,
+            signature,
+        )),
+    ));
 
     tokio::time::timeout(Duration::from_secs(1), completion_wake.notified())
         .await
@@ -407,12 +409,14 @@ fn command_sized_burst_backpressures_without_dropping_jobs_or_results() {
     let pool = CryptoPool::spawn(1, Arc::new(Notify::new())).expect("worker spawns");
 
     for id in 0..JOBS {
-        pool.submit(CryptoJob::VerifyReceiptProof(receipt_proof_verify_owed(
-            CommandId(id as u64),
-            packet_hash,
-            signing_key,
-            signature,
-        )));
+        pool.submit(CryptoJob::VerifySignature(
+            SignatureVerifyJob::ReceiptProof(receipt_proof_verify_owed(
+                CommandId(id as u64),
+                packet_hash,
+                signing_key,
+                signature,
+            )),
+        ));
     }
 
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
@@ -457,12 +461,14 @@ fn batch_rejection_falls_back_to_exact_per_job_verdicts() {
         if id == INVALID_JOB {
             signature.0[0] ^= 1;
         }
-        pool.submit(CryptoJob::VerifyReceiptProof(receipt_proof_verify_owed(
-            CommandId(id as u64),
-            packet_hash,
-            signing_key,
-            signature,
-        )));
+        pool.submit(CryptoJob::VerifySignature(
+            SignatureVerifyJob::ReceiptProof(receipt_proof_verify_owed(
+                CommandId(id as u64),
+                packet_hash,
+                signing_key,
+                signature,
+            )),
+        ));
     }
 
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
@@ -502,12 +508,12 @@ fn weak_keys_never_enter_batch_verification() {
     for id in 0..2 {
         assert!(jobs
             .push(ScheduledVerifyJob {
-                owed: receipt_proof_verify_owed(
+                job: SignatureVerifyJob::ReceiptProof(receipt_proof_verify_owed(
                     CommandId(id),
                     PacketHash::new([0x91; 32]),
                     signing_key,
                     Ed25519Signature([0u8; Ed25519Signature::LEN]),
-                ),
+                )),
                 work: 1,
             })
             .is_ok());

@@ -1173,14 +1173,29 @@ impl PrnsRuntime {
     ) {
         let mut entropy = EntropyCursor::new(entropy);
         let interfaces_snapshot = self.interfaces.clone();
-        let mut reactions = Vec::new();
-        self.engine.ingest_command_into(
+        let interfaces = personal_rns::interfaces::AttachedInterfaces::new(&interfaces_snapshot);
+        let mut capture = IngestReactionCapture::new(self.node_page);
+        self.engine.ingest_command_into_with_work(
             IssuedCommand { id, command },
-            personal_rns::interfaces::AttachedInterfaces::new(&interfaces_snapshot),
+            interfaces,
             InstantMillis(now_ms),
             &mut |out| entropy.fill(out),
-            &mut |reaction| reactions.push(capture_reaction(reaction)),
+            &mut |reaction| capture.route(reaction),
         );
+        {
+            let IngestReactionCapture { routed, ready } = &mut capture;
+            fulfill_ready_work(
+                ready,
+                &mut self.engine,
+                interfaces,
+                InstantMillis(now_ms),
+                &mut |out| entropy.fill(out),
+                &mut |_| true,
+                &mut |reaction| routed.route_completed(reaction),
+            );
+        }
+        let (reactions, page_requests) = capture.into_parts();
+        debug_assert!(page_requests.is_empty());
         self.bump_revision();
         self.apply_captured(reactions);
     }

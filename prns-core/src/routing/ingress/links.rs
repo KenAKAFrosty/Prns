@@ -18,7 +18,7 @@ use crate::routing::links::handshake::{
     AcceptedLinkRequest, LinkProofVerifyOwed, LinkRequest, LinkRttError, LINK_PROOF_BODY_LEN,
     LINK_REQUEST_KEYS_LEN, SIGNALLED_LINK_PROOF_LEN, SIGNALLED_LINK_REQUEST_LEN,
 };
-use crate::routing::links::identify::peer_identity_from;
+use crate::routing::links::identify::prepare_peer_identity_verify;
 use crate::routing::links::maintenance::{KEEPALIVE_ECHO, KEEPALIVE_REQUEST};
 use crate::routing::links::request::{
     parse_request_plaintext, parse_response_plaintext, RequestId,
@@ -704,12 +704,10 @@ impl<S: StorageLayout> EngineState<S> {
         let Ok(plaintext) = key.open_in_place(data.payload) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::DecryptFailed);
         };
-        let Some(identity) = peer_identity_from(&link_id, plaintext) else {
+        let Some(owed) = prepare_peer_identity_verify(&link_id, plaintext, arrived_at) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
         };
-        self.links.note_identified(&link_id, identity);
-        self.links.note_inbound(&link_id, arrived_at);
-        IngestPacketOutcome::PeerIdentified { link_id, identity }
+        IngestPacketOutcome::OwesLinkIdentityVerify(owed)
     }
 
     pub(super) fn ingest_request_over_link<'p>(

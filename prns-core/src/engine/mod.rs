@@ -100,15 +100,18 @@ pub use state::{
     EngineProtocolPolicy, EngineState, LinkMtuDiscovery, LocalHopCountOverride,
     LocalOriginHopCount, ProofForm, RecursivePathRequestDefault,
 };
-pub use tunnel::WriteTunnelSynthesizeError;
+pub use tunnel::{
+    TunnelSynthesizeSignCompleted, TunnelSynthesizeSignOwed, WriteTunnelSynthesizeError,
+};
 pub use wake::{NextWake, WakeReason, WakeSchedule, WakeSchedules};
 
 pub use crate::routing::warmth::{Departure, DEPARTED_INTERFACE_GRACE_MS};
 
 pub use crate::crypto::ratchets::{RatchetEntropy, RatchetPolicy};
 pub use crate::routing::announce::emit::{
-    AnnounceAppDataBytes, AnnounceRejection, AnnounceWriteError, AnnounceWriteFailure,
-    CommandedAnnounceWriteOutcome, PathResponseWriteOutcome,
+    AnnounceAppDataBytes, AnnounceRejection, AnnounceSignCompleted, AnnounceSignOwed,
+    AnnounceSignPurpose, AnnounceWriteError, AnnounceWriteFailure, CommandedAnnounceWriteOutcome,
+    OriginatedAnnounceDispatch, PathResponseWriteOutcome,
 };
 pub use crate::routing::announce::held::HeldDropCause;
 pub use crate::routing::announce::AnnounceObservation;
@@ -124,12 +127,17 @@ pub use crate::routing::ingress::{
     DecryptOwed, IgnoreReason, IngestPacketOutcome, Ingress, LinkRttOwed, PacketToForward,
     ProtocolViolationKind, RatchetDecryptOwed, RebroadcastDecision,
 };
+pub use crate::routing::links::channel::send::{ChannelAckVerification, ChannelAckVerifyOwed};
 pub use crate::routing::links::data::{
     link_mdu, LinkDataError, SendToLinkDispatch, SendToLinkWriteError, LINK_MDU,
 };
 pub use crate::routing::links::establish::{
-    EstablishLinkEntropy, EstablishLinkWriteOutcome, LinkRequestDispatch,
-    WriteEstablishLinkRejection, WriteLinkProofError, WriteLinkRttError, LINK_KEEPALIVE_MS,
+    EstablishLinkCompleted, EstablishLinkEntropy, EstablishLinkOwed, EstablishLinkWriteOutcome,
+    LinkRequestDispatch, WriteEstablishLinkRejection, WriteLinkProofError, WriteLinkRttError,
+    LINK_KEEPALIVE_MS,
+};
+pub use crate::routing::links::identify::{
+    IdentifySignCompleted, IdentifySignOwed, LinkIdentityVerification, LinkIdentityVerifyOwed,
 };
 pub use crate::routing::links::maintenance::{
     keepalive_ms_from, stale_ms_from, write_keepalive, write_link_close, LinkCloseDispatch,
@@ -145,4 +153,5 @@ pub use crate::routing::proof::{
     ProofObligation, ProofOwed, ProofRequest, ProofSignCompleted, ProofSignOwed, ReceiptProofClaim,
     ReceiptProofVerification, ReceiptProofVerifyOwed, ResumeChannelAckSignOutcome,
 };
+pub use crate::routing::tunnel::{TunnelSynthesizeVerification, TunnelSynthesizeVerifyOwed};
 pub use crate::units::InstantMillis;

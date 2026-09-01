@@ -268,13 +268,14 @@ pub(crate) async fn run_pooled<
             }
             Either6::Second(issued) => {
                 let now = host.now();
-                let delta = engine.ingest_command_into(
+                let mut owed_work = InlineOwedWorkQueue::new();
+                let mut delta = engine.ingest_command_into_with_work(
                     issued,
                     AttachedInterfaces::new(&*descriptors),
                     now,
                     &mut |entropy| host.fill_random(entropy),
                     &mut |reaction| {
-                        route_reaction(
+                        route_and_capture_owed_work(
                             reaction,
                             &mut *egress,
                             ifacs,
@@ -284,9 +285,26 @@ pub(crate) async fn run_pooled<
                                 persistence.observe(&journaled, now);
                                 on_journaled(journaled);
                             },
+                            &mut owed_work,
                         )
                     },
                 );
+                delta.merge(fulfill_owed_work_inline(
+                    owed_work,
+                    &mut *engine,
+                    &mut *host,
+                    AttachedInterfaces::new(&*descriptors),
+                    &mut *egress,
+                    ifacs,
+                    &mut pacers,
+                    frame_accounting_statuses,
+                    now,
+                    &mut should_prove,
+                    &mut |journaled| {
+                        persistence.observe(&journaled, now);
+                        on_journaled(journaled);
+                    },
+                ));
                 merge_wake_schedules_delta(
                     &mut wake_schedules,
                     delta,

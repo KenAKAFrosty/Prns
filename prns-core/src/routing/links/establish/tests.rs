@@ -160,6 +160,51 @@ fn a_commanded_link_request_frames_tracks_and_arms_the_lane() {
 }
 
 #[test]
+fn continued_link_key_derivation_is_byte_identical_to_the_inline_writer() {
+    let mut inline = neighbor_with_a_route();
+    let mut continued = neighbor_with_a_route();
+    let interfaces = arrival_interfaces();
+    let mut inline_wire = [0u8; BROADCAST_MTU];
+    let mut continued_wire = [0u8; BROADCAST_MTU];
+    let inline_dispatch = inline
+        .write_commanded_link_request(
+            CommandId(31),
+            &establish(),
+            InstantMillis(2_000),
+            vector_establish_entropy(),
+            AttachedInterfaces::new(&interfaces),
+            &mut inline_wire,
+        )
+        .dispatched();
+    let completed = continued
+        .prepare_establish_link(
+            CommandId(31),
+            establish(),
+            InstantMillis(2_000),
+            None,
+            vector_establish_entropy(),
+        )
+        .unwrap()
+        .fulfill();
+    let continued_dispatch = continued
+        .write_commanded_link_request_from_parts(
+            completed,
+            FirstHopTiming {
+                interfaces: AttachedInterfaces::new(&interfaces),
+                shared_instance_floor_ms: None,
+            },
+            &mut continued_wire,
+        )
+        .dispatched();
+
+    assert_eq!(continued_dispatch, inline_dispatch);
+    assert_eq!(
+        continued_wire[..continued_dispatch.wire_bytes],
+        inline_wire[..inline_dispatch.wire_bytes],
+    );
+}
+
+#[test]
 fn link_establishment_uses_the_selected_egress_bitrate() {
     let mut state = neighbor_with_a_route();
     let mut selected = routable_descriptor(arrival());

@@ -1,7 +1,6 @@
 use super::delivery::DeliveryIo;
 use super::relay::{RelayAudience, RelayPathRequest};
 
-use crate::crypto::ratchets::RatchetRotation;
 use crate::crypto::X25519SecretKey;
 use crate::engine::remote_control_pairing::{
     RemoteControlPairingRequestIngress, RemoteControlPairingRequestIngressOutcome,
@@ -10,7 +9,7 @@ use crate::engine::settlement::settle;
 use crate::engine::LinkClosedReason;
 use crate::engine::{
     CryptoOwed, Directive, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis,
-    Journaled, LinkEstablished, OwedWork, PathResponseWriteOutcome, ProtocolViolationKind,
+    Journaled, LinkEstablished, OwedWork, ProtocolViolationKind,
     RemoteControlControllerPairingRequestFailureCause,
     RemoteControlControllerPairingResponseArrival, RemoteControlControllerPairingResponseReceived,
     SendRequestFailure, SendRequestIntent, Settlement, WakeSchedule, WakeSchedules,
@@ -185,9 +184,20 @@ impl<S: StorageLayout> EngineState<S> {
                     OwedWork::Crypto(CryptoOwed::ReceiptProofVerify(owed)),
                 )));
             }
-            IngestPacketOutcome::ChannelReceiptDelivered { id, delivered } => {
-                settle(sink, id, Settlement::SendToChannel(Ok(delivered)));
-                wake_schedule_changes.channel_timeouts = self.channel_timeouts_wake();
+            IngestPacketOutcome::OwesChannelAckVerify(owed) => {
+                sink(EngineReaction::Directive(Directive::Fulfill(
+                    OwedWork::Crypto(CryptoOwed::ChannelAckVerify(owed)),
+                )));
+            }
+            IngestPacketOutcome::OwesLinkIdentityVerify(owed) => {
+                sink(EngineReaction::Directive(Directive::Fulfill(
+                    OwedWork::Crypto(CryptoOwed::LinkIdentityVerify(owed)),
+                )));
+            }
+            IngestPacketOutcome::OwesTunnelSynthesizeVerify(owed) => {
+                sink(EngineReaction::Directive(Directive::Fulfill(
+                    OwedWork::Crypto(CryptoOwed::TunnelSynthesizeVerify(owed)),
+                )));
             }
             IngestPacketOutcome::ReceiptProofIgnored => {}
             IngestPacketOutcome::TransportedLinkRequest {
@@ -220,25 +230,15 @@ impl<S: StorageLayout> EngineState<S> {
             }
             IngestPacketOutcome::AnswerPathRequest { destination } => {
                 if interfaces.is_egress_eligible(source, Egress::Transmit) {
-                    let mut response = [0u8; BROADCAST_MTU];
-                    if let PathResponseWriteOutcome::Written {
-                        wire_bytes,
-                        ratchet_rotation,
-                    } = self.write_path_response_for_upstream(
+                    if let Ok(owed) = self.prepare_path_response_announce_sign(
                         &destination,
+                        source,
                         now,
                         &mut *fill_random,
-                        &mut response,
                     ) {
-                        sink(EngineReaction::Directive(Directive::Send {
-                            target: source,
-                            bytes: &response[..wire_bytes],
-                        }));
-                        if ratchet_rotation == RatchetRotation::Minted {
-                            sink(EngineReaction::Journaled(Journaled::SelfRatchetRotated {
-                                destination,
-                            }));
-                        }
+                        sink(EngineReaction::Directive(Directive::Fulfill(
+                            OwedWork::Crypto(CryptoOwed::AnnounceSign(owed)),
+                        )));
                     }
                 }
             }
@@ -664,12 +664,6 @@ impl<S: StorageLayout> EngineState<S> {
                 }
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
-            IngestPacketOutcome::PeerIdentified { link_id, identity } => {
-                sink(EngineReaction::Journaled(Journaled::PeerIdentified {
-                    link_id,
-                    identity,
-                }));
-            }
             IngestPacketOutcome::LinkActivated {
                 link_id,
                 rtt_millis,
@@ -752,9 +746,6 @@ impl<S: StorageLayout> EngineState<S> {
                         arrived_on,
                     },
                 ));
-            }
-            IngestPacketOutcome::TunnelObserved { expires } => {
-                wake_schedule_changes.expired_routes = WakeSchedule::AtMost(expires);
             }
             IngestPacketOutcome::Ignored(_reason) => {
                 #[cfg(feature = "runtime-metrics")]

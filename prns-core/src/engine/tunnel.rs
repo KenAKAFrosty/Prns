@@ -1,10 +1,12 @@
-use crate::crypto::sha256;
-use crate::engine::EngineState;
+use crate::crypto::{sha256, Ed25519SecretKey, Ed25519Signature};
+use crate::engine::{Directive, EngineReaction, EngineState, WakeSchedule, WakeSchedules};
 use crate::identity::{IdentityHash, IdentitySigner};
 use crate::interfaces::InterfaceId;
 use crate::routing::tunnel::{
     assemble_synthesize_payload, synthesize_signed_region, write_synthesize_wire_packet,
-    PersistedTunnelRow, SeedTunnelOutcome, RANDOM_HASH_LEN,
+    PersistedTunnelRow, SeedTunnelOutcome, TunnelSynthesizeVerification,
+    TunnelSynthesizeVerifyOwed, TunnelTransition, PUBLIC_KEY_LEN, RANDOM_HASH_LEN,
+    SIGNED_REGION_LEN, TUNNEL_TIMEOUT_MS,
 };
 use crate::storage::StorageLayout;
 use crate::wire::WireError;
@@ -14,6 +16,23 @@ pub enum WriteTunnelSynthesizeError {
     NoTransportId,
     TransportIdentityVanished,
     BufferTooShort,
+}
+
+/// A tunnel synthesis whose policy inputs are complete and whose signature may be produced by
+/// the surrounding runtime.
+#[repr(C)]
+pub struct TunnelSynthesizeSignOwed {
+    pub interface: InterfaceId,
+    pub transport_identity: IdentityHash,
+    pub public_key: [u8; PUBLIC_KEY_LEN],
+    pub signed_region: [u8; SIGNED_REGION_LEN],
+    pub signing_secret: Ed25519SecretKey,
+}
+
+#[repr(C)]
+pub struct TunnelSynthesizeSignCompleted {
+    pub owed: TunnelSynthesizeSignOwed,
+    pub signature: Ed25519Signature,
 }
 
 impl<S: StorageLayout> EngineState<S> {
@@ -41,29 +60,129 @@ impl<S: StorageLayout> EngineState<S> {
             .then(|| self.transport_id())
             .flatten()
             .ok_or(WriteTunnelSynthesizeError::NoTransportId)?;
+        let transport_identity = IdentityHash::new(*transport_id.as_bytes());
         let signer = self
             .held_identities
-            .get(&IdentityHash::new(*transport_id.as_bytes()))
+            .get(&transport_identity)
             .ok_or(WriteTunnelSynthesizeError::TransportIdentityVanished)?;
-
         let public_key = signer.public_key_bytes();
-        let interface_hash = sha256(interface.as_bytes());
-        let region = synthesize_signed_region(&public_key, &interface_hash, random_hash);
-        let signature = signer.sign(&region);
-        let payload = assemble_synthesize_payload(&region, &signature);
-        write_synthesize_wire_packet(&payload, buf)
-            .map_err(|WireError::BufferTooShort| WriteTunnelSynthesizeError::BufferTooShort)
+        let signed_region =
+            synthesize_signed_region(&public_key, &sha256(interface.as_bytes()), random_hash);
+        write_tunnel_synthesize_from_signature(&signed_region, &signer.sign(&signed_region), buf)
     }
+
+    pub fn prepare_tunnel_synthesize_sign(
+        &self,
+        interface: InterfaceId,
+        random_hash: [u8; RANDOM_HASH_LEN],
+    ) -> Result<TunnelSynthesizeSignOwed, WriteTunnelSynthesizeError> {
+        let transport_id = self
+            .network_transport_enabled()
+            .then(|| self.transport_id())
+            .flatten()
+            .ok_or(WriteTunnelSynthesizeError::NoTransportId)?;
+        let transport_identity = IdentityHash::new(*transport_id.as_bytes());
+        let signer = self
+            .held_identities
+            .get(&transport_identity)
+            .ok_or(WriteTunnelSynthesizeError::TransportIdentityVanished)?;
+        let public_key = signer.public_key_bytes();
+        Ok(TunnelSynthesizeSignOwed {
+            interface,
+            transport_identity,
+            public_key,
+            signed_region: synthesize_signed_region(
+                &public_key,
+                &sha256(interface.as_bytes()),
+                &random_hash,
+            ),
+            signing_secret: signer.signing_secret_clone(),
+        })
+    }
+
+    pub fn resume_tunnel_synthesize_sign(
+        &self,
+        completed: TunnelSynthesizeSignCompleted,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> Result<(), WriteTunnelSynthesizeError> {
+        let TunnelSynthesizeSignCompleted { owed, signature } = completed;
+        let transport_id = self
+            .network_transport_enabled()
+            .then(|| self.transport_id())
+            .flatten()
+            .ok_or(WriteTunnelSynthesizeError::NoTransportId)?;
+        if IdentityHash::new(*transport_id.as_bytes()) != owed.transport_identity {
+            return Err(WriteTunnelSynthesizeError::TransportIdentityVanished);
+        }
+        let signer = self
+            .held_identities
+            .get(&owed.transport_identity)
+            .ok_or(WriteTunnelSynthesizeError::TransportIdentityVanished)?;
+        if signer.public_key_bytes() != owed.public_key {
+            return Err(WriteTunnelSynthesizeError::TransportIdentityVanished);
+        }
+        let mut frame = [0u8; crate::wire::BROADCAST_MTU];
+        let wire_bytes =
+            write_tunnel_synthesize_from_signature(&owed.signed_region, &signature, &mut frame)?;
+        sink(EngineReaction::Directive(Directive::Send {
+            target: owed.interface,
+            bytes: &frame[..wire_bytes],
+        }));
+        Ok(())
+    }
+
+    /// Applies a verified tunnel synthesis after the runtime completes its signature check.
+    pub fn resume_tunnel_synthesize_verify(
+        &mut self,
+        owed: TunnelSynthesizeVerifyOwed,
+        verification: TunnelSynthesizeVerification,
+    ) -> WakeSchedules {
+        if verification == TunnelSynthesizeVerification::Invalid {
+            return WakeSchedules::UNCHANGED;
+        }
+        let expires =
+            crate::engine::InstantMillis(owed.arrived_at.0.saturating_add(TUNNEL_TIMEOUT_MS));
+        match self
+            .tunnels
+            .observe_synthesize(owed.tunnel_id, owed.source_interface, expires)
+        {
+            TunnelTransition::Established | TunnelTransition::Refreshed => {}
+            TunnelTransition::Reappeared { previous_interface } => {
+                self.routing_table.repoint_routes(
+                    previous_interface,
+                    owed.source_interface,
+                    owed.arrived_at,
+                );
+                self.mark_interface_dirty(previous_interface);
+                self.mark_interface_dirty(owed.source_interface);
+            }
+        }
+        self.routing_table.invalidate_route_expiries();
+        WakeSchedules {
+            expired_routes: WakeSchedule::AtMost(expires),
+            ..WakeSchedules::UNCHANGED
+        }
+    }
+}
+
+fn write_tunnel_synthesize_from_signature(
+    signed_region: &[u8; SIGNED_REGION_LEN],
+    signature: &Ed25519Signature,
+    buf: &mut [u8],
+) -> Result<usize, WriteTunnelSynthesizeError> {
+    let payload = assemble_synthesize_payload(signed_region, signature);
+    write_synthesize_wire_packet(&payload, buf)
+        .map_err(|WireError::BufferTooShort| WriteTunnelSynthesizeError::BufferTooShort)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::WriteTunnelSynthesizeError;
+    use super::{TunnelSynthesizeSignCompleted, WriteTunnelSynthesizeError};
     use crate::crypto::sha256;
     use crate::engine::test_support::{
         fixed_secret_key, pin_transport_id, TestStorageLayout, TEST_TRANSPORT_ID,
     };
-    use crate::engine::EngineState;
+    use crate::engine::{Directive, EngineReaction, EngineState};
     use crate::interfaces::InterfaceId;
     use crate::routing::tunnel::{
         parse_synthesize_payload, INTERFACE_HASH_LEN, RANDOM_HASH_LEN, SYNTHESIZE_PAYLOAD_LEN,
@@ -89,6 +208,43 @@ mod tests {
         let mut interface_hash = [0u8; INTERFACE_HASH_LEN];
         interface_hash.copy_from_slice(&sha256(interface.as_bytes()));
         assert_eq!(verified.interface_hash, interface_hash);
+    }
+
+    #[test]
+    fn continued_tunnel_signing_is_byte_identical_to_the_inline_writer() {
+        let mut inline = EngineState::<TestStorageLayout>::default();
+        let inline_held = inline.hold_identity(fixed_secret_key()).unwrap();
+        inline.set_transport_identity(&inline_held).unwrap();
+        let mut continued = EngineState::<TestStorageLayout>::default();
+        let continued_held = continued.hold_identity(fixed_secret_key()).unwrap();
+        continued.set_transport_identity(&continued_held).unwrap();
+        let interface = InterfaceId::new([0xD2; 8]);
+        let random = [0x39; RANDOM_HASH_LEN];
+        let mut inline_wire = [0u8; 256];
+        let inline_bytes = inline
+            .write_tunnel_synthesize(interface, &random, &mut inline_wire)
+            .unwrap();
+        let completed = continued
+            .prepare_tunnel_synthesize_sign(interface, random)
+            .unwrap();
+        let signature =
+            crate::crypto::ed25519_sign(&completed.signing_secret, &completed.signed_region);
+        let mut continued_wire = std::vec::Vec::new();
+        continued
+            .resume_tunnel_synthesize_sign(
+                TunnelSynthesizeSignCompleted {
+                    owed: completed,
+                    signature,
+                },
+                &mut |reaction| {
+                    if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
+                        continued_wire.extend_from_slice(bytes);
+                    }
+                },
+            )
+            .unwrap();
+
+        assert_eq!(continued_wire, inline_wire[..inline_bytes]);
     }
 
     #[test]
@@ -143,6 +299,39 @@ mod tests {
         buf
     }
 
+    fn ingest_tunnel(
+        state: &mut EngineState<TestStorageLayout>,
+        frame: &mut [u8],
+        source: InterfaceId,
+        now: crate::engine::InstantMillis,
+        interfaces: crate::interfaces::AttachedInterfaces<'_>,
+    ) {
+        let crate::engine::IngestPacketOutcome::OwesTunnelSynthesizeVerify(owed) = state
+            .ingest_for_test(
+                crate::interfaces::InboundPacket {
+                    arrived_at: now,
+                    source_interface: source,
+                    bytes: frame,
+                },
+                interfaces,
+            )
+        else {
+            panic!("tunnel synthesis should request signature verification");
+        };
+        let verification = if crate::crypto::ed25519_verify(
+            &owed.signing_key,
+            &owed.signed_region,
+            &owed.signature,
+        )
+        .is_ok()
+        {
+            crate::engine::TunnelSynthesizeVerification::Valid
+        } else {
+            crate::engine::TunnelSynthesizeVerification::Invalid
+        };
+        state.resume_tunnel_synthesize_verify(owed, verification);
+    }
+
     #[test]
     fn a_seeded_tunnel_repoints_seeded_routes_when_its_peer_reappears() {
         use crate::engine::test_support::{
@@ -171,12 +360,11 @@ mod tests {
             AttachedInterfaces::new(&first_view),
         );
         let mut synth = synthesize_wire(0xAB);
-        let _ = before_reboot.ingest_for_test(
-            InboundPacket {
-                arrived_at: InstantMillis(2_000),
-                source_interface: first_conn,
-                bytes: &mut synth,
-            },
+        ingest_tunnel(
+            &mut before_reboot,
+            &mut synth,
+            first_conn,
+            InstantMillis(2_000),
             AttachedInterfaces::new(&first_view),
         );
 
@@ -202,12 +390,11 @@ mod tests {
         let second_conn = InterfaceId::new([0xC2; 8]);
         let second_view = [routable_descriptor(second_conn)];
         let mut synth_again = synthesize_wire(0xAB);
-        let _ = rebooted.ingest_for_test(
-            InboundPacket {
-                arrived_at: InstantMillis(3_000),
-                source_interface: second_conn,
-                bytes: &mut synth_again,
-            },
+        ingest_tunnel(
+            &mut rebooted,
+            &mut synth_again,
+            second_conn,
+            InstantMillis(3_000),
             AttachedInterfaces::new(&second_view),
         );
         assert_eq!(

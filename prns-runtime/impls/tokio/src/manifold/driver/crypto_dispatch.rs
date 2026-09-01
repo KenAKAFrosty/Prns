@@ -199,6 +199,42 @@ where
                     },
                 ))
             }
+            CryptoResult::ChannelAckVerified { owed, verification } => {
+                CryptoCompletionEffect::WakeSchedules(engine.resume_channel_ack_verify(
+                    owed,
+                    verification,
+                    &mut |reaction| {
+                        route_completed_reaction_without_work(
+                            reaction,
+                            &mut topology.egress,
+                            &topology.ifacs,
+                            &mut topology.pacers,
+                            wire_scratch,
+                            journal,
+                            now,
+                        )
+                    },
+                ))
+            }
+            CryptoResult::LinkIdentityVerified { owed, verification } => {
+                engine.resume_link_identity_verify(owed, verification, &mut |reaction| {
+                    route_completed_reaction_without_work(
+                        reaction,
+                        &mut topology.egress,
+                        &topology.ifacs,
+                        &mut topology.pacers,
+                        wire_scratch,
+                        journal,
+                        now,
+                    )
+                });
+                CryptoCompletionEffect::NoWakeChange
+            }
+            CryptoResult::TunnelSynthesizeVerified { owed, verification } => {
+                CryptoCompletionEffect::WakeSchedules(
+                    engine.resume_tunnel_synthesize_verify(owed, verification),
+                )
+            }
             CryptoResult::Encrypted(completed) => {
                 CryptoCompletionEffect::WakeSchedules(engine.resume_encrypt(
                     completed,
@@ -257,6 +293,68 @@ where
                         now,
                     )
                 });
+                CryptoCompletionEffect::NoWakeChange
+            }
+            CryptoResult::IdentifySigned(completed) => CryptoCompletionEffect::WakeSchedules(
+                engine.resume_identify_sign(completed, now, &mut |reaction| {
+                    route_completed_reaction_without_work(
+                        reaction,
+                        &mut topology.egress,
+                        &topology.ifacs,
+                        &mut topology.pacers,
+                        wire_scratch,
+                        journal,
+                        now,
+                    )
+                }),
+            ),
+            CryptoResult::TunnelSynthesizeSigned(completed) => {
+                let _ = engine.resume_tunnel_synthesize_sign(completed, &mut |reaction| {
+                    route_completed_reaction_without_work(
+                        reaction,
+                        &mut topology.egress,
+                        &topology.ifacs,
+                        &mut topology.pacers,
+                        wire_scratch,
+                        journal,
+                        now,
+                    )
+                });
+                CryptoCompletionEffect::NoWakeChange
+            }
+            CryptoResult::LinkEstablished(completed) => {
+                CryptoCompletionEffect::WakeSchedules(engine.resume_establish_link(
+                    completed,
+                    topology.interfaces.view(),
+                    &mut |reaction| {
+                        route_completed_reaction_without_work(
+                            reaction,
+                            &mut topology.egress,
+                            &topology.ifacs,
+                            &mut topology.pacers,
+                            wire_scratch,
+                            journal,
+                            now,
+                        )
+                    },
+                ))
+            }
+            CryptoResult::AnnounceSigned(completed) => {
+                engine.resume_announce_sign(
+                    completed,
+                    topology.interfaces.view(),
+                    &mut |reaction| {
+                        route_completed_reaction_without_work(
+                            reaction,
+                            &mut topology.egress,
+                            &topology.ifacs,
+                            &mut topology.pacers,
+                            wire_scratch,
+                            journal,
+                            now,
+                        )
+                    },
+                );
                 CryptoCompletionEffect::NoWakeChange
             }
             CryptoResult::Decrypted { owed, shared } => {
