@@ -2,15 +2,10 @@ use core::convert::Infallible;
 #[cfg(target_arch = "xtensa")]
 use core::{cell::UnsafeCell, ffi::c_void, mem::MaybeUninit};
 
-#[cfg(target_arch = "riscv32")]
-use esp_hal::rng::Rng;
 #[cfg(target_arch = "xtensa")]
 use personal_hopspot_core::HopspotS3FlashLayout;
 #[cfg(target_arch = "xtensa")]
 use personal_hopspot_core::UiNotice;
-#[cfg(target_arch = "riscv32")]
-use personal_hopspot_core::{bootstrap_flash_ble_identity, bootstrap_flash_node_identity};
-#[cfg(target_arch = "xtensa")]
 use personal_hopspot_core::{
     bootstrap_flash_ble_identity_with_runtime_entropy,
     bootstrap_flash_node_identity_with_runtime_entropy,
@@ -30,7 +25,6 @@ use personal_rns::remote_control::{
 };
 #[cfg(target_arch = "xtensa")]
 use portable_atomic::{AtomicU8, Ordering};
-#[cfg(target_arch = "xtensa")]
 use prns_core::entropy::{EntropySource, RuntimeEntropy};
 
 use crate::flash::{EspRomFlash, EspRomFlashError};
@@ -65,22 +59,7 @@ impl RemoteControlIdentityFlash {
         }
     }
 
-    #[cfg(target_arch = "riscv32")]
-    pub(crate) fn load_or_generate(
-        self,
-    ) -> Result<RemoteControlNodeIdentityBootstrap, RemoteControlIdentityBootstrapError> {
-        let mut vault = FlashVault::<_, REMOTE_CONTROL_IDENTITY_VAULT_SLOTS>::new(
-            EspRomFlash::new(self.flash_capacity),
-            self.offset,
-        );
-        RemoteControlNodeIdentityBootstrap::load_or_generate(&mut vault, |bytes| {
-            hardware_entropy(bytes);
-            Ok(())
-        })
-    }
-
-    #[cfg(target_arch = "xtensa")]
-    fn load_or_generate_with_runtime_entropy<S: EntropySource>(
+    pub(crate) fn load_or_generate_with_runtime_entropy<S: EntropySource>(
         self,
         entropy: &mut RuntimeEntropy<S>,
     ) -> Result<RemoteControlNodeIdentityBootstrap, RemoteControlIdentityBootstrapError> {
@@ -291,9 +270,8 @@ pub fn startup_notice(
     }
 }
 
-#[cfg(target_arch = "xtensa")]
-fn bootstrap_node_identity(
-    entropy: &mut S3RuntimeEntropy,
+pub(crate) fn bootstrap_node_identity<S: EntropySource>(
+    entropy: &mut RuntimeEntropy<S>,
 ) -> IdentityBootstrap<HopspotNodeIdentity, Error> {
     let mut vault = FlashVault::<_, VAULT_SLOTS>::new(
         EspRomFlash::new(IDENTITY_FLASH_END),
@@ -302,34 +280,12 @@ fn bootstrap_node_identity(
     bootstrap_flash_node_identity_with_runtime_entropy(&mut vault, entropy)
 }
 
-#[cfg(target_arch = "xtensa")]
-fn bootstrap_ble_identity(entropy: &mut S3RuntimeEntropy) -> IdentityBootstrap<BleIdentity, Error> {
+pub(crate) fn bootstrap_ble_identity<S: EntropySource>(
+    entropy: &mut RuntimeEntropy<S>,
+) -> IdentityBootstrap<BleIdentity, Error> {
     let mut vault = FlashVault::<_, VAULT_SLOTS>::new(
         EspRomFlash::new(IDENTITY_FLASH_END),
         BLE_IDENTITY_FLASH_OFFSET,
     );
     bootstrap_flash_ble_identity_with_runtime_entropy(&mut vault, entropy)
-}
-
-#[cfg(target_arch = "riscv32")]
-pub fn bootstrap_node_identity() -> IdentityBootstrap<HopspotNodeIdentity, Error> {
-    let mut vault = FlashVault::<_, VAULT_SLOTS>::new(
-        EspRomFlash::new(IDENTITY_FLASH_END),
-        NODE_IDENTITY_FLASH_OFFSET,
-    );
-    bootstrap_flash_node_identity(&mut vault, &mut hardware_entropy)
-}
-
-#[cfg(target_arch = "riscv32")]
-pub fn bootstrap_ble_identity() -> IdentityBootstrap<BleIdentity, Error> {
-    let mut vault = FlashVault::<_, VAULT_SLOTS>::new(
-        EspRomFlash::new(IDENTITY_FLASH_END),
-        BLE_IDENTITY_FLASH_OFFSET,
-    );
-    bootstrap_flash_ble_identity(&mut vault, &mut hardware_entropy)
-}
-
-#[cfg(target_arch = "riscv32")]
-fn hardware_entropy(bytes: &mut [u8]) {
-    Rng::new().read(bytes);
 }

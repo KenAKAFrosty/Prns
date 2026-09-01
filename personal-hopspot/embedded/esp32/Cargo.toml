@@ -95,6 +95,7 @@ embassy-futures = { version = "0.1", default-features = false }
 # Seeed XIAO ESP32-C6 (riscv32, single-core, no PSRAM)
 [target.'cfg(target_arch = "riscv32")'.dependencies]
 personal-rns = { path = "../../../personal-rns", default-features = false, features = ["embassy-host", "flash", "log"] }
+prns-core = { path = "../../../prns-core", default-features = false }
 prns-interfaces-embassy = { path = "../../../prns-interfaces/impls/embassy", optional = true, default-features = false, features = ["bluetooth-auto-trouble"] }
 esp-hal = { version = "1.1", features = ["esp32c6", "unstable"] }
 esp-rtos = { version = "0.3.0", features = ["esp32c6", "embassy"] }

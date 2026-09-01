@@ -17,12 +17,14 @@ pub async fn run(spawner: Spawner) {
         _rtc,
     } = XiaoEsp32C6::bringup();
 
-    let node_bootstrap = crate::identity::bootstrap_node_identity();
+    let mut runtime_entropy = super::entropy::seed_runtime_entropy(&identity_entropy)
+        .expect("the enabled C6 boot TRNG fills the initial seed");
+    let node_bootstrap = crate::identity::bootstrap_node_identity(&mut runtime_entropy);
     crate::identity::log_persistence("node", node_bootstrap.persistence());
     let remote_control_bootstrap = crate::identity::C6_REMOTE_CONTROL_IDENTITY_FLASH
-        .load_or_generate()
+        .load_or_generate_with_runtime_entropy(&mut runtime_entropy)
         .expect("RemoteControl identity bootstrap failed");
-    let ble_bootstrap = crate::identity::bootstrap_ble_identity();
+    let ble_bootstrap = crate::identity::bootstrap_ble_identity(&mut runtime_entropy);
     crate::identity::log_persistence("Bluetooth", ble_bootstrap.persistence());
     drop(identity_entropy);
 

@@ -1,4 +1,5 @@
 mod board;
+mod entropy;
 
 use esp_backtrace as _;
 use esp_bootloader_esp_idf::esp_app_desc;
