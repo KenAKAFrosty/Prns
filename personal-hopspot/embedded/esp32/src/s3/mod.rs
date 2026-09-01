@@ -1,5 +1,6 @@
 mod board;
 pub mod boards;
+mod entropy;
 mod gnss;
 
 use alloc::string::{String, ToString};
@@ -124,6 +125,7 @@ pub(crate) use board::LoraRadio;
 pub(crate) use board::{
     BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware, S3ManifoldHardware,
 };
+pub(crate) use entropy::{bootstrap_s3_runtime, S3RuntimeBootstrap, S3RuntimeEntropy};
 pub(crate) use gnss::{GnssProvider, GnssShared, NoGnss};
 
 esp_app_desc!();

@@ -62,6 +62,16 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         battery,
         button,
     } = hardware.face;
+    let S3RuntimeBootstrap {
+        identities:
+            crate::identity::S3IdentityBootstraps {
+                node: node_bootstrap,
+                remote_control: remote_control_bootstrap,
+                ble: ble_bootstrap,
+                destination_hashes,
+            },
+        entropy: _runtime_entropy,
+    } = hardware.runtime_bootstrap;
     let mut battery_source = battery;
     let gnss = hardware.gnss;
     let S3InterfaceHardware {
@@ -173,11 +183,6 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         Err(_) => panic!("the built-in LoRa profile and regional policy must be valid"),
     };
 
-    // Reconstruct identities before radio bring-up, on a temporary RTOS task stack. Curve25519's
-    // stack high-water mark is too large for the guarded core-0 main stack, and doing the work here
-    // also keeps it out of the live Wi-Fi/BLE scheduling window.
-    let (node_bootstrap, remote_control_bootstrap, ble_bootstrap, destination_hashes) =
-        crate::identity::bootstrap_s3_identities(B::FLASH_LAYOUT.into()).await;
     let remote_control_bootstrap =
         remote_control_bootstrap.expect("RemoteControl identity bootstrap failed");
     crate::identity::log_persistence("node", node_bootstrap.persistence());

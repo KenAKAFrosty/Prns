@@ -326,9 +326,11 @@ impl Esp32S3Board for TBeamSupremeBoard {
     type Gnss = TBeamSupremeGnss;
 
     async fn bringup(
-        p: esp_hal::peripherals::Peripherals,
+        mut p: esp_hal::peripherals::Peripherals,
     ) -> S3BoardHardware<Self::Display, Self::Battery, Self::Gnss> {
         let (sw_int1, timebase, rtc) = s3::boot_common!(p, Self::BOOT_BANNER);
+        let runtime_bootstrap =
+            s3::bootstrap_s3_runtime(&mut p.RNG, &mut p.ADC1, Self::FLASH_LAYOUT).await;
 
         s3::boot_stage(s3::BootPhase::DisplayHardwareBegin);
         // AXP2101 PMU first (I2C1 on SDA 42 / SCL 41): the LoRa + OLED rails boot OFF, so nothing else
@@ -443,6 +445,7 @@ impl Esp32S3Board for TBeamSupremeBoard {
         );
 
         S3BoardHardware {
+            runtime_bootstrap,
             face: BoardFace {
                 display: if oled_ok {
                     ImmediateBoardDisplay::initialized(display)

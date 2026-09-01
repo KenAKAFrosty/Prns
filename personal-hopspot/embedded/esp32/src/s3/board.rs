@@ -31,6 +31,7 @@ pub(crate) struct S3ManifoldHardware {
 }
 
 pub(crate) struct S3BoardHardware<D, B, G> {
+    pub(crate) runtime_bootstrap: S3RuntimeBootstrap,
     pub(crate) face: BoardFace<D, B>,
     pub(crate) gnss: G,
     pub(crate) interface_hardware: S3InterfaceHardware,
