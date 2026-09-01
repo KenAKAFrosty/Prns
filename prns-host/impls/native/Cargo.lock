@@ -1909,6 +1909,7 @@ dependencies = [
 name = "prns-runtime-embassy"
 version = "0.3.7"
 dependencies = [
+ "critical-section",
  "embassy-futures",
  "embassy-sync",
  "embassy-time",
