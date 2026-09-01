@@ -71,6 +71,14 @@ pub enum RemoteControlNodeIdentitySecretsError {
     ControllerAndTargetAreSameIdentity,
 }
 
+impl core::fmt::Display for RemoteControlNodeIdentitySecretsError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("controller and target resolve to the same identity")
+    }
+}
+
+impl core::error::Error for RemoteControlNodeIdentitySecretsError {}
+
 pub struct RemoteControlNodeIdentitySecrets {
     controller: RemoteControlControllerIdentitySecret,
     target: RemoteControlTargetIdentitySecret,

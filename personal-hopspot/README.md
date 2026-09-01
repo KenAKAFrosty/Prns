@@ -117,6 +117,10 @@ signed release. Qualification receipts and their remaining limits live under
 
 ## Embedded flash-layout upgrade
 
+The [runtime entropy guide](../docs/runtime-entropy.md) documents board bring-up,
+reseed sources, and the 0.4.0 full-erase remediation for ESP32-S3 identities
+created on the affected 0.3.7 through 0.3.7-hotfix.4 first-boot path.
+
 LoRa-capable firmware persists the selected radio profile in a dedicated two-page store. Reset records a durable choice to follow the firmware default, while an explicitly saved profile remains fixed across updates. Sparse firmware updates preserve the profile store; a full-chip erase clears it.
 
 Every embedded Hopspot board target journals learned routes and retained self-ratchet history. Route writes are batched to conserve flash and battery, while critical ratchet state receives the shorter durability window. T114 uses the established T096 journal map, and MeshTower V2 reserves its own six-page journal below the existing profile and identity pages. Their first persistence-capable update starts with empty learned state; later reboots and sparse firmware updates restore it. A full-chip erase clears it.
