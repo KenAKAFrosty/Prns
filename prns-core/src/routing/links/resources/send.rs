@@ -197,6 +197,9 @@ fn tracked_resource_failure(error: TrackOutgoingResourceError) -> SendResourceFa
     SendResourceFailure::Rejected(rejection)
 }
 
+// `Resolved` can carry an owned crypto continuation. Keep that state inline so resource proof
+// classification remains available to no-alloc runtimes.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum ResourceProofClassification {
     Resolved(IngestPacketOutcome<'static>),
     NotALocalLink,

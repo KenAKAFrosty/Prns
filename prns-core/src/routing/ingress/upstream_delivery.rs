@@ -52,6 +52,9 @@ pub struct RatchetDecryptOwed {
     pub token: HeaplessVec<u8, MAX_RATCHET_DECRYPT_PAYLOAD_LEN>,
 }
 
+// The owned ratchet continuation is deliberately movable out of the no-alloc engine. Boxing it
+// here would make a pure protocol classification allocate.
+#[allow(clippy::large_enum_variant)]
 pub(super) enum UpstreamDeliveryOutcome<'p> {
     Delivered(Delivery<'p>, ProofObligation),
     OwesDecrypt(DecryptOwed),

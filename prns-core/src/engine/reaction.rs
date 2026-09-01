@@ -23,6 +23,9 @@ use crate::wire::DestinationHash;
 
 // repr(C) on this enum, Journaled, and Directive: they cross the dual-core channel; see the layout note on [`PrnsCommand`].
 #[repr(C)]
+// Reactions cross no-alloc runtimes by value. Boxing the journal would add an allocation to every
+// engine step and is unavailable on the embedded core this representation serves.
+#[allow(clippy::large_enum_variant)]
 pub enum EngineReaction<'a, Work = NoOwedWork> {
     /// A notice that something has just happened within the engine.
     Journaled(Journaled<'a>),
@@ -55,6 +58,9 @@ impl<'a, Work> EngineReaction<'a, Work> {
 /// inline, move it into a worker job, or use a platform accelerator without changing the engine
 /// transition that requested it.
 #[repr(C)]
+// Owed work owns continuation material so runtimes can move it without copying packet payloads.
+// Indirection belongs in a runtime's job envelope, never in the no-alloc engine contract.
+#[allow(clippy::large_enum_variant)]
 pub enum OwedWork<'a> {
     Crypto(CryptoOwed),
     ResourceBuild(ResourceBuildOwed<'a>),

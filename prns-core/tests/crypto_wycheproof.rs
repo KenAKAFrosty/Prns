@@ -1,3 +1,6 @@
+// A malformed pinned corpus is a broken test artifact, not a recoverable production condition.
+#![allow(clippy::expect_used, clippy::panic)]
+
 use prns_core::crypto::{
     x25519_diffie_hellman, Ed25519PublicKey, Ed25519Signature, Ed25519Verifier, X25519PublicKey,
     X25519SecretKey,

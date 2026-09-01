@@ -956,7 +956,7 @@ mod seam_tests {
         receiver.resume_resource_decompression(
             ResourceDecompressionCompleted {
                 link_id: link_id(),
-                hash: hash,
+                hash,
                 plaintext: &plaintext,
             },
             InstantMillis(2_400),
@@ -1066,7 +1066,7 @@ mod seam_tests {
         receiver.resume_resource_decompression(
             ResourceDecompressionCompleted {
                 link_id: link_id(),
-                hash: hash,
+                hash,
                 plaintext: &composite,
             },
             InstantMillis(2_400),
@@ -1177,7 +1177,7 @@ mod seam_tests {
         receiver.resume_resource_decompression(
             ResourceDecompressionCompleted {
                 link_id: link_id(),
-                hash: hash,
+                hash,
                 plaintext: &corrupted,
             },
             InstantMillis(2_400),
@@ -1196,7 +1196,7 @@ mod seam_tests {
         receiver.resume_resource_decompression(
             ResourceDecompressionCompleted {
                 link_id: link_id(),
-                hash: hash,
+                hash,
                 plaintext: &plaintext,
             },
             InstantMillis(2_500),
@@ -1329,7 +1329,7 @@ mod seam_tests {
         requester.resume_resource_decompression(
             ResourceDecompressionCompleted {
                 link_id: link_id(),
-                hash: hash,
+                hash,
                 plaintext: &response,
             },
             InstantMillis(2_400),
@@ -1447,7 +1447,7 @@ mod seam_tests {
         responder.resume_resource_decompression(
             ResourceDecompressionCompleted {
                 link_id: link_id(),
-                hash: hash,
+                hash,
                 plaintext: &packed_request,
             },
             InstantMillis(2_400),
@@ -1543,7 +1543,7 @@ mod seam_tests {
         receiver.resume_resource_decompression(
             ResourceDecompressionCompleted {
                 link_id: link_id(),
-                hash: hash,
+                hash,
                 plaintext: data,
             },
             InstantMillis(at + 400),
@@ -2032,7 +2032,7 @@ mod seam_tests {
             requester.resume_resource_decompression(
                 ResourceDecompressionCompleted {
                     link_id: link_id(),
-                    hash: hash,
+                    hash,
                     plaintext: data,
                 },
                 InstantMillis(at + 400),
