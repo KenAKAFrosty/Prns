@@ -193,14 +193,14 @@ async fn link_receipt_signing_moves_metadata_and_signature_through_the_worker_ri
     let pool = CryptoPool::spawn(1, completion_wake.clone()).expect("worker spawns");
     assert!(!pool.prepare_completion_wait());
 
-    let mut receipts = vec![LinkReceiptSignOwed {
+    let mut signs = vec![LinkSignJob::Receipt(LinkReceiptSignOwed {
         target,
         link_id,
         packet_hash,
         signing_secret: secret,
-    }];
-    pool.submit_link_receipts(&mut receipts);
-    assert!(receipts.is_empty());
+    })];
+    pool.submit_link_signs(&mut signs);
+    assert!(signs.is_empty());
 
     tokio::time::timeout(Duration::from_secs(1), completion_wake.notified())
         .await
@@ -221,6 +221,47 @@ async fn link_receipt_signing_moves_metadata_and_signature_through_the_worker_ri
 }
 
 #[tokio::test]
+async fn channel_ack_signing_moves_metadata_and_signature_through_the_worker_ring() {
+    use crate::crypto::{ed25519_public_key, ed25519_verify, Ed25519SecretKey};
+    use crate::engine::ChannelAckSignOwed;
+
+    let secret = Ed25519SecretKey::new([0x62; 32]);
+    let public = ed25519_public_key(&secret);
+    let target = InterfaceId::new([0x73; 8]);
+    let link_id = LinkId::new([0x84; 16]);
+    let packet_hash = PacketHash::new([0x95; 32]);
+    let completion_wake = Arc::new(Notify::new());
+    let pool = CryptoPool::spawn(1, completion_wake.clone()).expect("worker spawns");
+    assert!(!pool.prepare_completion_wait());
+
+    let mut signs = vec![LinkSignJob::ChannelAck(ChannelAckSignOwed {
+        target,
+        link_id,
+        packet_hash,
+        signing_secret: secret,
+    })];
+    pool.submit_link_signs(&mut signs);
+    assert!(signs.is_empty());
+
+    tokio::time::timeout(Duration::from_secs(1), completion_wake.notified())
+        .await
+        .expect("worker signals channel ACK completion");
+    let completion = pool
+        .pop_completion()
+        .expect("channel ACK result moves back");
+    let CryptoResult::ChannelAckSigned(completed) = completion.result else {
+        panic!("the channel ACK job must return its typed result");
+    };
+    assert_eq!(completed.target, target);
+    assert_eq!(completed.link_id, link_id);
+    assert_eq!(completed.packet_hash, packet_hash);
+    ed25519_verify(&public, packet_hash.as_bytes(), &completed.signature)
+        .expect("worker returns the exact valid ACK signature");
+    pool.record_completed(completion.worker.expect("pool completion"), completion.work);
+    pool.packet_verdict_settled();
+}
+
+#[tokio::test]
 async fn already_ready_link_receipts_move_as_one_worker_batch() {
     use crate::crypto::{ed25519_public_key, ed25519_verify, Ed25519SecretKey};
     use crate::engine::LinkReceiptSignOwed;
@@ -229,20 +270,22 @@ async fn already_ready_link_receipts_move_as_one_worker_batch() {
     let public = ed25519_public_key(&Ed25519SecretKey::new(secret_bytes));
     let target = InterfaceId::new([0xb6; 8]);
     let link_id = LinkId::new([0xc7; 16]);
-    let mut receipts = (0u8..4)
-        .map(|index| LinkReceiptSignOwed {
-            target,
-            link_id,
-            packet_hash: PacketHash::new([index; 32]),
-            signing_secret: Ed25519SecretKey::new(secret_bytes),
+    let mut signs = (0u8..4)
+        .map(|index| {
+            LinkSignJob::Receipt(LinkReceiptSignOwed {
+                target,
+                link_id,
+                packet_hash: PacketHash::new([index; 32]),
+                signing_secret: Ed25519SecretKey::new(secret_bytes),
+            })
         })
         .collect::<Vec<_>>();
     let completion_wake = Arc::new(Notify::new());
     let pool = CryptoPool::spawn(1, completion_wake.clone()).expect("worker spawns");
     assert!(!pool.prepare_completion_wait());
 
-    pool.submit_link_receipts(&mut receipts);
-    assert!(receipts.is_empty());
+    pool.submit_link_signs(&mut signs);
+    assert!(signs.is_empty());
     assert_eq!(pool.packet_verdicts_owed.get(), 4);
 
     tokio::time::timeout(Duration::from_secs(1), completion_wake.notified())
@@ -277,19 +320,21 @@ fn same_link_receipt_backlog_routes_in_load_balanced_pairs() {
 
     let target = InterfaceId::new([0xd8; 8]);
     let link_id = LinkId::new([0xe9; 16]);
-    let mut receipts = (0u8..5)
-        .map(|index| LinkReceiptSignOwed {
-            target,
-            link_id,
-            packet_hash: PacketHash::new([index; 32]),
-            signing_secret: Ed25519SecretKey::new([0xfa; 32]),
+    let mut signs = (0u8..5)
+        .map(|index| {
+            LinkSignJob::Receipt(LinkReceiptSignOwed {
+                target,
+                link_id,
+                packet_hash: PacketHash::new([index; 32]),
+                signing_secret: Ed25519SecretKey::new([0xfa; 32]),
+            })
         })
         .collect::<Vec<_>>();
     let pool = CryptoPool::spawn(4, Arc::new(Notify::new())).expect("workers spawn");
 
-    pool.submit_link_receipts(&mut receipts);
+    pool.submit_link_signs(&mut signs);
 
-    assert!(receipts.is_empty());
+    assert!(signs.is_empty());
     assert_eq!(
         pool.workers
             .iter()

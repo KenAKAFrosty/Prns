@@ -141,8 +141,8 @@ pub use crate::routing::path_requests::pending::{
 pub use crate::routing::path_requests::request_path::PathRequestWriteOutcome;
 pub use crate::routing::path_requests::seen::PathRequestIdBytes;
 pub use crate::routing::proof::{
-    LinkReceiptSignCompleted, LinkReceiptSignOwed, ProofObligation, ProofOwed, ProofRequest,
-    ProofSignCompleted, ProofSignOwed, ReceiptProofClaim, ReceiptProofVerification,
-    ReceiptProofVerifyOwed,
+    ChannelAckSignCompleted, ChannelAckSignOwed, LinkReceiptSignCompleted, LinkReceiptSignOwed,
+    ProofObligation, ProofOwed, ProofRequest, ProofSignCompleted, ProofSignOwed, ReceiptProofClaim,
+    ReceiptProofVerification, ReceiptProofVerifyOwed, ResumeChannelAckSignOutcome,
 };
 pub use crate::units::InstantMillis;

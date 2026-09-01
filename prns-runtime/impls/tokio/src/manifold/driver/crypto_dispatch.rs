@@ -245,6 +245,20 @@ where
                 });
                 CryptoCompletionEffect::NoWakeChange
             }
+            CryptoResult::ChannelAckSigned(completed) => {
+                engine.resume_channel_ack_sign(completed, now, &mut |reaction| {
+                    route_completed_reaction_without_work(
+                        reaction,
+                        &mut topology.egress,
+                        &topology.ifacs,
+                        &mut topology.pacers,
+                        wire_scratch,
+                        journal,
+                        now,
+                    )
+                });
+                CryptoCompletionEffect::NoWakeChange
+            }
             CryptoResult::Decrypted { owed, shared } => {
                 engine.resume_decrypt(
                     owed,

@@ -16,6 +16,7 @@ use crate::routing::links::resources::send::ResourceBuildOwed;
 use crate::routing::links::resources::streamed_open::StreamedOpen;
 use crate::routing::links::resources::{ResourceFailureCause, ResourceHash};
 use crate::routing::links::LinkId;
+use crate::routing::proof::ChannelAckSignOwed;
 use crate::routing::proof::{LinkReceiptSignOwed, ProofSignOwed, ReceiptProofVerifyOwed};
 use crate::routing::request_handlers::RequestPathHash;
 use crate::routing::RouteRemovalCause;
@@ -83,6 +84,7 @@ pub enum CryptoOwed {
     LinkProofSign(LinkProofSignOwed),
     ProofSign(ProofSignOwed),
     LinkReceiptSign(LinkReceiptSignOwed),
+    ChannelAckSign(ChannelAckSignOwed),
     AnnounceVerify(AnnounceVerifyOwed),
     RemoteControlPairingAvailabilityVerify(
         crate::remote_control::RemoteControlPairingAvailabilityVerifyOwed,

@@ -1,8 +1,8 @@
 use crate::crypto::{ed25519_sign, ed25519_verify, x25519_diffie_hellman, x25519_keys_for_seal};
 use crate::engine::{
-    CryptoOwed, EncryptCompleted, EngineReaction, EngineState, InstantMillis, Journaled,
-    LinkReceiptSignCompleted, OwedWork, ProofRequest, ProofSignCompleted, ReceiptProofVerification,
-    ResourceDecompressionCompleted, ResourceOpenCompleted, WakeSchedules,
+    ChannelAckSignCompleted, CryptoOwed, EncryptCompleted, EngineReaction, EngineState,
+    InstantMillis, Journaled, LinkReceiptSignCompleted, OwedWork, ProofRequest, ProofSignCompleted,
+    ReceiptProofVerification, ResourceDecompressionCompleted, ResourceOpenCompleted, WakeSchedules,
 };
 use crate::identity::decrypt_token_in_place_with_ratchets;
 use crate::interfaces::{AttachedInterfaces, InterfaceId, InterfaceIfac, InterfaceStatus};
@@ -24,6 +24,9 @@ use super::interface_status::EmbassyInterfaceStatus;
 
 const MAX_OWED_WORK_PER_TICK: usize = 2;
 
+// Embassy has no allocator to box continuation payloads, and the two-entry queue is short-lived.
+// Keeping work by value also preserves move-only secrets and zero-copy resource-open state.
+#[allow(clippy::large_enum_variant)]
 pub(super) enum InlineReadyWork {
     Crypto(CryptoOwed),
     ResourceBuildUnsupported {
@@ -257,6 +260,21 @@ where
                     let signature = ed25519_sign(&owed.signing_secret, owed.packet_hash.as_bytes());
                     engine.resume_link_receipt_sign(
                         LinkReceiptSignCompleted {
+                            target: owed.target,
+                            link_id: owed.link_id,
+                            packet_hash: owed.packet_hash,
+                            signature,
+                        },
+                        now,
+                        &mut |reaction| {
+                            route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
+                        },
+                    );
+                }
+                CryptoOwed::ChannelAckSign(owed) => {
+                    let signature = ed25519_sign(&owed.signing_secret, owed.packet_hash.as_bytes());
+                    engine.resume_channel_ack_sign(
+                        ChannelAckSignCompleted {
                             target: owed.target,
                             link_id: owed.link_id,
                             packet_hash: owed.packet_hash,

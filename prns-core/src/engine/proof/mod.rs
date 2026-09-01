@@ -1,18 +1,18 @@
-use crate::crypto::{ed25519_sign, Ed25519Signature};
+use crate::crypto::Ed25519Signature;
 use crate::engine::{
     DeliveryEvidence, DeliveryProof, EngineState, InstantMillis, PacketReceiptDelivered, ProofForm,
     Settlement, WakeSchedules,
 };
 use crate::engine::{EngineReaction, Journaled};
-use crate::identity::IdentitySigner;
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::delivery::receipts::ReceiptKind;
 use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::LinkId;
 use crate::routing::proof::{
     write_explicit_proof_wire_packet, write_implicit_proof_wire_packet,
-    write_link_proof_wire_packet, LinkReceiptSignCompleted, ProofSignCompleted, ReceiptProofClaim,
-    ReceiptProofVerification, ReceiptProofVerifyOwed, WriteChannelAckError,
+    write_link_proof_wire_packet, ChannelAckSignCompleted, ChannelAckSignOwed,
+    ChannelAckSignUnavailable, LinkReceiptSignCompleted, ProofSignCompleted, ReceiptProofClaim,
+    ReceiptProofVerification, ReceiptProofVerifyOwed, ResumeChannelAckSignOutcome,
     EXPLICIT_PROOF_PAYLOAD_LEN, EXPLICIT_PROOF_WIRE_LEN, IMPLICIT_PROOF_PAYLOAD_LEN,
     LINK_PROOF_WIRE_LEN,
 };
@@ -75,28 +75,61 @@ impl<S: StorageLayout> EngineState<S> {
         }));
     }
 
-    /// RNS 1.4.2 `Link.receive`'s CHANNEL branch: `packet.prove()` whenever a channel is open, on either side.
-    pub fn write_channel_ack(
+    /// Materialize RNS 1.4.2 `Link.receive`'s CHANNEL proof after protocol policy has authorized it.
+    pub(crate) fn prepare_channel_ack_sign(
         &self,
+        target: crate::interfaces::InterfaceId,
         link_id: &LinkId,
         packet_hash: &PacketHash,
-        buf: &mut [u8],
-    ) -> Result<usize, WriteChannelAckError> {
+    ) -> Result<ChannelAckSignOwed, ChannelAckSignUnavailable> {
         let Some(LinkPhase::Active { role, .. }) = self.links.phase_for(link_id) else {
-            return Err(WriteChannelAckError::LinkNotActive);
+            return Err(ChannelAckSignUnavailable::LinkNotActive);
         };
-        let signature = match role {
+        let signing_secret = match role {
             LinkRole::Responder { identity, .. } => self
                 .held_identities
                 .get(identity)
-                .ok_or(WriteChannelAckError::IdentityNotHeld)?
-                .sign(packet_hash.as_bytes()),
-            LinkRole::Initiator { link_signing } => {
-                ed25519_sign(link_signing, packet_hash.as_bytes())
-            }
+                .ok_or(ChannelAckSignUnavailable::IdentityNotHeld)?
+                .signing_secret_clone(),
+            LinkRole::Initiator { link_signing } => link_signing.cloned(),
         };
-        write_link_proof_wire_packet(link_id, packet_hash, &signature, buf)
-            .map_err(WriteChannelAckError::Serialize)
+        Ok(ChannelAckSignOwed {
+            target,
+            link_id: *link_id,
+            packet_hash: *packet_hash,
+            signing_secret,
+        })
+    }
+
+    /// Resume channel ACK emission after a runtime fulfills [`crate::engine::CryptoOwed::ChannelAckSign`].
+    pub fn resume_channel_ack_sign(
+        &mut self,
+        completed: ChannelAckSignCompleted,
+        now: InstantMillis,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> ResumeChannelAckSignOutcome {
+        if !matches!(
+            self.links.phase_for(&completed.link_id),
+            Some(LinkPhase::Active { .. })
+        ) {
+            return ResumeChannelAckSignOutcome::LinkNoLongerActive;
+        }
+        let mut proof = [0u8; LINK_PROOF_WIRE_LEN];
+        let written = match write_link_proof_wire_packet(
+            &completed.link_id,
+            &completed.packet_hash,
+            &completed.signature,
+            &mut proof,
+        ) {
+            Ok(written) => written,
+            Err(error) => return ResumeChannelAckSignOutcome::Serialize(error),
+        };
+        self.links.note_outbound(&completed.link_id, now);
+        sink(EngineReaction::Directive(crate::engine::Directive::Send {
+            target: completed.target,
+            bytes: &proof[..written],
+        }));
+        ResumeChannelAckSignOutcome::Sent
     }
 
     pub(crate) fn prepare_receipt_proof_verify(

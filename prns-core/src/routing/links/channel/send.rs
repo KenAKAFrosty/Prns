@@ -471,7 +471,10 @@ mod tests {
         filled_frame, fixed_secret_key, transporting_interfaces, TestStorageLayout,
     };
     use crate::engine::IngestIo;
-    use crate::engine::{Directive, EngineReaction, Journaled, PacketReceiptDelivered};
+    use crate::engine::{
+        ChannelAckSignCompleted, CryptoOwed, Directive, EngineReaction, Journaled, OwedWork,
+        PacketReceiptDelivered,
+    };
     use crate::engine::{IssuedCommand, PrnsCommand, SendToChannel, Settlement};
     use crate::identity::{in_memory::InMemoryNodeIdentity, IdentitySigner};
     use crate::interfaces::{InboundPacket, InterfaceId};
@@ -624,6 +627,7 @@ mod tests {
         on_settled: &mut dyn FnMut(CommandId, Settlement),
     ) {
         let mut raw = frame.to_vec();
+        let mut ack_sign = None;
         engine.ingest_packet_into(
             InboundPacket {
                 arrived_at: InstantMillis(now),
@@ -644,6 +648,9 @@ mod tests {
                         ..
                     }) => on_message(message_type, data),
                     EngineReaction::Directive(Directive::Send { bytes, .. }) => on_send(bytes),
+                    EngineReaction::Directive(Directive::Fulfill(OwedWork::Crypto(
+                        CryptoOwed::ChannelAckSign(owed),
+                    ))) => ack_sign = Some(owed),
                     EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
                         on_settled(id, settlement)
                     }
@@ -651,6 +658,24 @@ mod tests {
                 },
             },
         );
+        if let Some(owed) = ack_sign {
+            let signature =
+                crate::crypto::ed25519_sign(&owed.signing_secret, owed.packet_hash.as_bytes());
+            engine.resume_channel_ack_sign(
+                ChannelAckSignCompleted {
+                    target: owed.target,
+                    link_id: owed.link_id,
+                    packet_hash: owed.packet_hash,
+                    signature,
+                },
+                InstantMillis(now),
+                &mut |reaction| {
+                    if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
+                        on_send(bytes);
+                    }
+                },
+            );
+        }
     }
 
     #[test]

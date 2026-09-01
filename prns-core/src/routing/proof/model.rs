@@ -71,6 +71,15 @@ pub struct LinkReceiptSignOwed {
     pub signing_secret: Ed25519SecretKey,
 }
 
+/// A channel delivery ACK whose signature the engine asks its runtime to produce.
+#[repr(C)]
+pub struct ChannelAckSignOwed {
+    pub target: InterfaceId,
+    pub link_id: LinkId,
+    pub packet_hash: PacketHash,
+    pub signing_secret: Ed25519SecretKey,
+}
+
 /// A runtime-produced delivery-proof signature submitted for engine serialization and routing.
 #[repr(C)]
 pub struct ProofSignCompleted {
@@ -82,6 +91,15 @@ pub struct ProofSignCompleted {
 /// A runtime-produced LINK receipt signature submitted for engine state transition and routing.
 #[repr(C)]
 pub struct LinkReceiptSignCompleted {
+    pub target: InterfaceId,
+    pub link_id: LinkId,
+    pub packet_hash: PacketHash,
+    pub signature: Ed25519Signature,
+}
+
+/// A runtime-produced channel ACK signature submitted for engine serialization and routing.
+#[repr(C)]
+pub struct ChannelAckSignCompleted {
     pub target: InterfaceId,
     pub link_id: LinkId,
     pub packet_hash: PacketHash,
@@ -127,8 +145,14 @@ impl ProofObligation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WriteChannelAckError {
+pub(crate) enum ChannelAckSignUnavailable {
     LinkNotActive,
     IdentityNotHeld,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumeChannelAckSignOutcome {
+    Sent,
+    LinkNoLongerActive,
     Serialize(WireError),
 }

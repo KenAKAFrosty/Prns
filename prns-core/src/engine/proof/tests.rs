@@ -17,6 +17,34 @@ use crate::routing::upstream_app_destinations::LinkRequestPolicy;
 use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::wire::{WirePacketHeader, BROADCAST_MTU, HEADER_MIN_LEN};
 
+fn fulfill_channel_ack(
+    state: &mut EngineState<TestStorageLayout>,
+    link_id: &crate::routing::links::LinkId,
+    packet_hash: &PacketHash,
+) -> std::vec::Vec<u8> {
+    let owed = state
+        .prepare_channel_ack_sign(InterfaceId::new([0xEE; 8]), link_id, packet_hash)
+        .expect("an active link owes its channel ACK signature");
+    let signature = crate::crypto::ed25519_sign(&owed.signing_secret, owed.packet_hash.as_bytes());
+    let mut wire = std::vec::Vec::new();
+    let outcome = state.resume_channel_ack_sign(
+        ChannelAckSignCompleted {
+            target: owed.target,
+            link_id: owed.link_id,
+            packet_hash: owed.packet_hash,
+            signature,
+        },
+        InstantMillis(2_000),
+        &mut |reaction| {
+            if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
+                wire.extend_from_slice(bytes);
+            }
+        },
+    );
+    assert_eq!(outcome, ResumeChannelAckSignOutcome::Sent);
+    wire
+}
+
 #[test]
 fn write_proof_is_byte_identical_to_the_rns_1_4_2_implicit_proof() {
     let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
@@ -285,11 +313,8 @@ fn an_initiator_channel_ack_is_signed_by_the_link_key() {
         .unwrap();
 
     let packet_hash = PacketHash::new([0xAB; 32]);
-    let mut buf = [0u8; BROADCAST_MTU];
-    let written = state
-        .write_channel_ack(&link_id, &packet_hash, &mut buf)
-        .unwrap();
-    assert_eq!(written, LINK_PROOF_WIRE_LEN);
+    let buf = fulfill_channel_ack(&mut state, &link_id, &packet_hash);
+    assert_eq!(buf.len(), LINK_PROOF_WIRE_LEN);
     assert_eq!(
         &buf[HEADER_MIN_LEN..HEADER_MIN_LEN + PACKET_HASH_LEN],
         packet_hash.as_bytes(),
@@ -348,11 +373,8 @@ fn a_responder_channel_ack_is_signed_by_the_held_identity() {
         .unwrap();
 
     let packet_hash = PacketHash::new([0xCD; 32]);
-    let mut buf = [0u8; BROADCAST_MTU];
-    let written = state
-        .write_channel_ack(&link_id, &packet_hash, &mut buf)
-        .unwrap();
-    assert_eq!(written, LINK_PROOF_WIRE_LEN);
+    let buf = fulfill_channel_ack(&mut state, &link_id, &packet_hash);
+    assert_eq!(buf.len(), LINK_PROOF_WIRE_LEN);
     let signature = Ed25519Signature(
         buf[HEADER_MIN_LEN + PACKET_HASH_LEN..LINK_PROOF_WIRE_LEN]
             .try_into()
@@ -363,17 +385,38 @@ fn a_responder_channel_ack_is_signed_by_the_held_identity() {
 }
 
 #[test]
-fn a_channel_ack_for_an_inactive_link_reports_it() {
+fn an_inactive_link_does_not_owe_a_channel_ack_signature() {
     use crate::routing::links::LinkId;
 
     let state = EngineState::<TestStorageLayout>::default();
-    let mut buf = [0u8; BROADCAST_MTU];
-    assert_eq!(
-        state.write_channel_ack(
+    assert!(matches!(
+        state.prepare_channel_ack_sign(
+            InterfaceId::new([0xEE; 8]),
             &LinkId::new([0x01; 16]),
             &PacketHash::new([0u8; 32]),
-            &mut buf
         ),
-        Err(WriteChannelAckError::LinkNotActive),
+        Err(ChannelAckSignUnavailable::LinkNotActive),
+    ));
+}
+
+#[test]
+fn a_channel_ack_completion_for_a_retired_link_emits_nothing() {
+    use crate::crypto::Ed25519Signature;
+    use crate::routing::links::LinkId;
+
+    let mut state = EngineState::<TestStorageLayout>::default();
+    let mut emitted = false;
+    let outcome = state.resume_channel_ack_sign(
+        ChannelAckSignCompleted {
+            target: InterfaceId::new([0xEE; 8]),
+            link_id: LinkId::new([0x01; 16]),
+            packet_hash: PacketHash::new([0x02; 32]),
+            signature: Ed25519Signature([0x03; 64]),
+        },
+        InstantMillis(2_000),
+        &mut |_| emitted = true,
     );
+
+    assert_eq!(outcome, ResumeChannelAckSignOutcome::LinkNoLongerActive);
+    assert!(!emitted);
 }

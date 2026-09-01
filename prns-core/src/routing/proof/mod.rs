@@ -1,10 +1,12 @@
 mod model;
 mod wire;
 
+pub(crate) use model::ChannelAckSignUnavailable;
 pub use model::{
-    LinkProofOwed, LinkReceiptSignCompleted, LinkReceiptSignOwed, ProofObligation, ProofOwed,
-    ProofRequest, ProofSignCompleted, ProofSignOwed, ReceiptProofClaim, ReceiptProofVerification,
-    ReceiptProofVerifyOwed, WriteChannelAckError,
+    ChannelAckSignCompleted, ChannelAckSignOwed, LinkProofOwed, LinkReceiptSignCompleted,
+    LinkReceiptSignOwed, ProofObligation, ProofOwed, ProofRequest, ProofSignCompleted,
+    ProofSignOwed, ReceiptProofClaim, ReceiptProofVerification, ReceiptProofVerifyOwed,
+    ResumeChannelAckSignOutcome,
 };
 pub use wire::{
     write_explicit_proof_wire_packet, write_implicit_proof_wire_packet,

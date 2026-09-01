@@ -25,7 +25,7 @@ use crate::routing::links::handshake::{negotiated_link_mtu, LinkProofSignOwed};
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_ECHO};
 use crate::routing::links::resources::receive::gate::AcceptedResourceAdmission;
 use crate::routing::links::resources::ResourceOffer;
-use crate::routing::proof::{ProofRequest, LINK_PROOF_WIRE_LEN};
+use crate::routing::proof::ProofRequest;
 use crate::storage::StorageLayout;
 use crate::wire::{BROADCAST_MTU, HEADER_MAX_LEN};
 
@@ -455,14 +455,11 @@ impl<S: StorageLayout> EngineState<S> {
                     },
                 );
                 if outcome.owes_proof() && interfaces.is_egress_eligible(source, Egress::Transmit) {
-                    let mut proof = [0u8; LINK_PROOF_WIRE_LEN];
-                    if let Ok(written) = self.write_channel_ack(&link_id, &packet_hash, &mut proof)
+                    if let Ok(owed) = self.prepare_channel_ack_sign(source, &link_id, &packet_hash)
                     {
-                        self.links.note_outbound(&link_id, now);
-                        sink(EngineReaction::Directive(Directive::Send {
-                            target: source,
-                            bytes: &proof[..written],
-                        }));
+                        sink(EngineReaction::Directive(Directive::Fulfill(
+                            CryptoOwed::ChannelAckSign(owed).into(),
+                        )));
                     }
                 }
             }

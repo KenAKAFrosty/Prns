@@ -1,10 +1,8 @@
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::crypto::ed25519_sign;
 use crate::engine::{
     ClassifiedInboundPacket, CryptoOwed, EngineReaction, EngineState, IngestIo, InstantMillis,
-    Journaled, LinkReceiptSignCompleted, LinkReceiptSignOwed, OwedWork, ProofRequest,
-    WakeSchedules,
+    Journaled, OwedWork, ProofRequest, WakeSchedules,
 };
 use crate::interfaces::{
     FrameAccountingEvent, IfacUnmaskError, InboundPacket, InterfaceId, InterfaceIfac,
@@ -17,7 +15,7 @@ use crate::routing::links::resources::ResourceOffer;
 use crate::runtime::InterfaceStore;
 use crate::storage::StorageLayout;
 
-use super::crypto_pool::CryptoPool;
+use super::crypto_pool::{run_link_sign_job, CryptoPool, LinkSignCompleted, LinkSignJob};
 use super::egress::{
     ifac_for, route_reaction, route_reaction_with_work, Egress, InterfacePacer, WireScratch,
 };
@@ -34,7 +32,7 @@ fn route_ingress_reaction<J>(
     journal: &mut JournalDispatch<J>,
     owed_work: &mut PendingOwedWork,
     crypto_pool: Option<&CryptoPool>,
-    link_receipt_signs: &mut std::vec::Vec<LinkReceiptSignOwed>,
+    link_signs: &mut std::vec::Vec<LinkSignJob>,
     now: InstantMillis,
 ) where
     J: for<'a> FnMut(Journaled<'a>),
@@ -49,7 +47,10 @@ fn route_ingress_reaction<J>(
         &mut |journaled| journal.route(journaled),
         &mut |work| match work {
             OwedWork::Crypto(CryptoOwed::LinkReceiptSign(owed)) => {
-                link_receipt_signs.push(owed);
+                link_signs.push(LinkSignJob::Receipt(owed));
+            }
+            OwedWork::Crypto(CryptoOwed::ChannelAckSign(owed)) => {
+                link_signs.push(LinkSignJob::ChannelAck(owed));
             }
             OwedWork::Crypto(owed) => owed_work.push_crypto(owed),
             OwedWork::ResourceBuild(owed) => {
@@ -66,24 +67,24 @@ fn route_ingress_reaction<J>(
 pub(super) struct InboundDispatch {
     ready_lanes: std::vec::Vec<InterfaceId>,
     unmask_scratch: std::boxed::Box<[u8]>,
-    link_receipt_signs: std::vec::Vec<LinkReceiptSignOwed>,
-    inline_link_receipt_signs: std::vec::Vec<LinkReceiptSignOwed>,
+    link_signs: std::vec::Vec<LinkSignJob>,
+    inline_link_signs: std::vec::Vec<LinkSignJob>,
 }
 
-// The minimum sixteen-job admission depth exposes at most fifteen receipt signs while retaining
+// The minimum sixteen-job admission depth exposes at most fifteen link signs while retaining
 // room for the next packet's possible second crypto job. Split that common backlog across the
 // manifold (seven immediate proofs) and the pool (up to eight jobs). Seven remains a fixed latency
 // bound on larger hosts; their additional backlog goes to their larger pool instead of blocking
-// the manifold. Neither side waits for work, and a lone receipt stays entirely inline.
-const INLINE_LINK_RECEIPT_TRANCHE: usize = 7;
+// the manifold. Neither side waits for work, and a lone signature stays entirely inline.
+const INLINE_LINK_SIGN_TRANCHE: usize = 7;
 
 impl InboundDispatch {
     pub(super) fn new(frame_capacity: usize) -> Self {
         Self {
             ready_lanes: std::vec::Vec::new(),
             unmask_scratch: std::vec![0u8; frame_capacity].into_boxed_slice(),
-            link_receipt_signs: std::vec::Vec::new(),
-            inline_link_receipt_signs: std::vec::Vec::new(),
+            link_signs: std::vec::Vec::new(),
+            inline_link_signs: std::vec::Vec::new(),
         }
     }
 
@@ -135,12 +136,12 @@ impl InboundDispatch {
         let Self {
             ready_lanes,
             unmask_scratch,
-            link_receipt_signs,
-            inline_link_receipt_signs,
+            link_signs,
+            inline_link_signs,
         } = self;
         for &source in ready_lanes.iter() {
-            debug_assert!(link_receipt_signs.is_empty());
-            debug_assert!(inline_link_receipt_signs.is_empty());
+            debug_assert!(link_signs.is_empty());
+            debug_assert!(inline_link_signs.is_empty());
             let frame_accounting = topology.frame_accounting_recorder(source);
             let Some((_, lane)) = topology
                 .inbound_lanes
@@ -155,7 +156,7 @@ impl InboundDispatch {
                     !pool.has_queue_capacity(
                         owed_work
                             .len()
-                            .saturating_add(link_receipt_signs.len())
+                            .saturating_add(link_signs.len())
                             .saturating_add(2),
                     )
                 }) {
@@ -218,7 +219,7 @@ impl InboundDispatch {
                                 journal,
                                 owed_work,
                                 crypto_pool,
-                                link_receipt_signs,
+                                link_signs,
                                 now,
                             );
                         },
@@ -242,42 +243,49 @@ impl InboundDispatch {
                 );
             }
             {
-                let inline_receipts = if crypto_pool.is_some() {
-                    INLINE_LINK_RECEIPT_TRANCHE
+                let inline_signs = if crypto_pool.is_some() {
+                    INLINE_LINK_SIGN_TRANCHE
                 } else {
                     usize::MAX
                 };
-                for _ in 0..inline_receipts {
-                    let Some(receipt) = link_receipt_signs.pop() else {
+                for _ in 0..inline_signs {
+                    let Some(sign) = link_signs.pop() else {
                         break;
                     };
-                    inline_link_receipt_signs.push(receipt);
+                    inline_link_signs.push(sign);
                 }
                 if let Some(pool) = crypto_pool {
-                    pool.submit_link_receipts(link_receipt_signs);
+                    pool.submit_link_signs(link_signs);
                 }
-                for owed in inline_link_receipt_signs.drain(..) {
-                    let signature = ed25519_sign(&owed.signing_secret, owed.packet_hash.as_bytes());
-                    engine.resume_link_receipt_sign(
-                        LinkReceiptSignCompleted {
-                            target: owed.target,
-                            link_id: owed.link_id,
-                            packet_hash: owed.packet_hash,
-                            signature,
-                        },
-                        now,
-                        &mut |reaction| {
-                            route_reaction(
-                                reaction,
-                                &mut topology.egress,
-                                &topology.ifacs,
-                                &mut topology.pacers,
-                                wire_scratch,
-                                now,
-                                &mut |journaled| journal.route(journaled),
-                            );
-                        },
-                    );
+                for job in inline_link_signs.drain(..) {
+                    match run_link_sign_job(job) {
+                        LinkSignCompleted::ChannelAck(completed) => {
+                            engine.resume_channel_ack_sign(completed, now, &mut |reaction| {
+                                route_reaction(
+                                    reaction,
+                                    &mut topology.egress,
+                                    &topology.ifacs,
+                                    &mut topology.pacers,
+                                    wire_scratch,
+                                    now,
+                                    &mut |journaled| journal.route(journaled),
+                                );
+                            });
+                        }
+                        LinkSignCompleted::Receipt(completed) => {
+                            engine.resume_link_receipt_sign(completed, now, &mut |reaction| {
+                                route_reaction(
+                                    reaction,
+                                    &mut topology.egress,
+                                    &topology.ifacs,
+                                    &mut topology.pacers,
+                                    wire_scratch,
+                                    now,
+                                    &mut |journaled| journal.route(journaled),
+                                );
+                            });
+                        }
+                    }
                 }
             }
         }

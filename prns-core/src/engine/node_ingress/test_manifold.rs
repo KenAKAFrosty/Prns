@@ -6,8 +6,8 @@ use std::collections::VecDeque;
 
 use crate::crypto::{ed25519_sign, ed25519_verify, x25519_diffie_hellman, x25519_keys_for_seal};
 use crate::engine::{
-    CryptoOwed, Directive, EncryptCompleted, EngineReaction, EngineState, IngestIo,
-    LinkReceiptSignCompleted, OwedWork, ProofSignCompleted, ReceiptProofVerification,
+    ChannelAckSignCompleted, CryptoOwed, Directive, EncryptCompleted, EngineReaction, EngineState,
+    IngestIo, LinkReceiptSignCompleted, OwedWork, ProofSignCompleted, ReceiptProofVerification,
     WakeSchedules,
 };
 use crate::identity::decrypt_token_in_place_with_ratchets;
@@ -175,6 +175,21 @@ where
                 let signature = ed25519_sign(&owed.signing_secret, owed.packet_hash.as_bytes());
                 engine.resume_link_receipt_sign(
                     LinkReceiptSignCompleted {
+                        target: owed.target,
+                        link_id: owed.link_id,
+                        packet_hash: owed.packet_hash,
+                        signature,
+                    },
+                    now,
+                    &mut |reaction| {
+                        sink(reaction.map_work(|never| match never {}));
+                    },
+                );
+            }
+            CryptoOwed::ChannelAckSign(owed) => {
+                let signature = ed25519_sign(&owed.signing_secret, owed.packet_hash.as_bytes());
+                engine.resume_channel_ack_sign(
+                    ChannelAckSignCompleted {
                         target: owed.target,
                         link_id: owed.link_id,
                         packet_hash: owed.packet_hash,
