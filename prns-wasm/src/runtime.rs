@@ -5,10 +5,11 @@ use personal_rns::crypto::ratchets::SeedSelfRatchetsOutcome;
 use personal_rns::engine::{
     AllowRequester, AnnounceAppData, AnnounceNow, AnnounceTarget, CloseLink, CommandId,
     DestinationIdentitySeedOutcome, Directive, EngineReaction, EngineState, EstablishLink,
-    FanTarget, Identify, InstantMillis, IssuedCommand, Journaled, PathRequestId, PrnsCommand,
-    RatchetPolicy, RequestPath, RequestResponseTimeout, Respond, RespondData, RespondPayload,
-    RouteSeedOutcome, SendRequest, SendRequestData, SendSinglePacket, SendSinglePacketPayload,
-    SendToChannel, SendToChannelBody, SendToLink, SendToLinkPayload, SetResourceStrategy,
+    FanTarget, Identify, InstantMillis, IssuedCommand, Journaled, NoOwedWork, OwedWork,
+    PathRequestId, PrnsCommand, RatchetPolicy, RequestPath, RequestResponseTimeout, Respond,
+    RespondData, RespondPayload, RouteSeedOutcome, SendRequest, SendRequestData, SendSinglePacket,
+    SendSinglePacketPayload, SendToChannel, SendToChannelBody, SendToLink, SendToLinkPayload,
+    SetResourceStrategy,
 };
 use personal_rns::interfaces::bluetooth_auto as bluetooth_contract;
 use personal_rns::interfaces::{
@@ -40,7 +41,8 @@ use wasm_bindgen::prelude::*;
 use crate::command_settlement::{
     encode_batch as encode_command_settlement_batch, CapturedCommandSettlement,
 };
-use crate::event_projection::{capture_journaled, CapturedJournal};
+use crate::event_projection::{capture_journaled as project_journaled, CapturedJournal};
+use crate::inline_work::{fulfill_ready_work, InlineReadyWorkQueue};
 use crate::input::{
     array_to_strings, destination_hash_from_vec, identity_hash_from_vec, interface_id_from_vec,
     link_id_from_vec, optional_array, optional_bool, optional_bytes, optional_i64, optional_string,
@@ -724,75 +726,32 @@ impl PrnsRuntime {
         let mut should_accept_resource =
             |_offer: &personal_rns::routing::links::resources::ResourceOffer| false;
         let interfaces_snapshot = self.interfaces.clone();
-        let mut reactions = Vec::new();
-        let node_page = self.node_page;
-        let index_path = RequestPathHash::of(personal_hopspot_core::node_pages::INDEX_PATH);
-        let quickstart_path =
-            RequestPathHash::of(personal_hopspot_core::node_pages::QUICKSTART_PATH);
-        let coming_from_rns_path =
-            RequestPathHash::of(personal_hopspot_core::node_pages::COMING_FROM_RNS_PATH);
-        let source_page_path =
-            RequestPathHash::of(personal_hopspot_core::node_pages::SOURCE_PAGE_PATH);
-        #[cfg(feature = "source-archive")]
-        let source_path =
-            RequestPathHash::of(personal_hopspot_core::node_pages::SOURCE_ARCHIVE_PATH);
-        #[cfg(feature = "source-archive")]
-        let checksum_path =
-            RequestPathHash::of(personal_hopspot_core::node_pages::SOURCE_CHECKSUM_PATH);
-        let mut page_requests: Vec<(LinkId, RequestId, NodeResponse)> = Vec::new();
+        let interfaces = personal_rns::interfaces::AttachedInterfaces::new(&interfaces_snapshot);
+        let mut capture = IngestReactionCapture::new(self.node_page);
         self.engine.ingest_packet_into(
             packet,
             personal_rns::engine::IngestIo {
-                interfaces: personal_rns::interfaces::AttachedInterfaces::new(&interfaces_snapshot),
+                interfaces,
                 now: InstantMillis(now_ms),
                 fill_random: &mut |out| entropy.fill(out),
                 should_prove: &mut should_prove,
                 should_accept_resource: &mut should_accept_resource,
-                sink: &mut |reaction| {
-                    if let EngineReaction::Journaled(Journaled::RequestReceived {
-                        link_id,
-                        request_id,
-                        path_hash,
-                        ..
-                    }) = &reaction
-                    {
-                        if node_page && *path_hash == index_path {
-                            page_requests.push((*link_id, *request_id, NodeResponse::Index));
-                        }
-                        if node_page && *path_hash == quickstart_path {
-                            page_requests.push((*link_id, *request_id, NodeResponse::Quickstart));
-                        }
-                        if node_page && *path_hash == coming_from_rns_path {
-                            page_requests.push((
-                                *link_id,
-                                *request_id,
-                                NodeResponse::ComingFromRns,
-                            ));
-                        }
-                        if node_page && *path_hash == source_page_path {
-                            page_requests.push((*link_id, *request_id, NodeResponse::SourcePage));
-                        }
-                        #[cfg(feature = "source-archive")]
-                        if node_page && *path_hash == source_path {
-                            page_requests.push((
-                                *link_id,
-                                *request_id,
-                                NodeResponse::SourceArchive,
-                            ));
-                        }
-                        #[cfg(feature = "source-archive")]
-                        if node_page && *path_hash == checksum_path {
-                            page_requests.push((
-                                *link_id,
-                                *request_id,
-                                NodeResponse::SourceChecksum,
-                            ));
-                        }
-                    }
-                    reactions.push(capture_reaction(reaction));
-                },
+                sink: &mut |reaction| capture.route(reaction),
             },
         );
+        {
+            let IngestReactionCapture { routed, ready } = &mut capture;
+            fulfill_ready_work(
+                ready,
+                &mut self.engine,
+                interfaces,
+                InstantMillis(now_ms),
+                &mut |out| entropy.fill(out),
+                &mut should_prove,
+                &mut |reaction| routed.route_completed(reaction),
+            );
+        }
+        let (reactions, page_requests) = capture.into_parts();
         self.bump_revision();
         self.apply_captured(reactions);
         for (link_id, request_id, response) in page_requests {
@@ -1377,6 +1336,132 @@ enum CapturedReaction {
     Outbound(OutboundFrame),
 }
 
+/// Browser-side bow-tie state for one packet step.
+///
+/// Work is captured while the engine owns its input borrows. The browser manifold fulfills the
+/// resulting owned envelope only after that call returns, then routes each resumed reaction back
+/// through this same object. This keeps request-page discovery correct even when decryption is the
+/// continuation that reveals the request.
+struct IngestReactionCapture {
+    routed: IngestRoutedReactions,
+    ready: InlineReadyWorkQueue,
+}
+
+struct IngestRoutedReactions {
+    reactions: Vec<CapturedReaction>,
+    page_requests: Vec<(LinkId, RequestId, NodeResponse)>,
+    node_page: bool,
+}
+
+impl IngestReactionCapture {
+    fn new(node_page: bool) -> Self {
+        Self {
+            routed: IngestRoutedReactions {
+                reactions: Vec::new(),
+                page_requests: Vec::new(),
+                node_page,
+            },
+            ready: InlineReadyWorkQueue::new(),
+        }
+    }
+
+    fn route(&mut self, reaction: EngineReaction<'_, OwedWork<'_>>) {
+        match reaction {
+            EngineReaction::Journaled(journaled) => self.routed.capture_journaled(journaled),
+            EngineReaction::Directive(directive) => match capture_directive(directive) {
+                Ok(frame) => self
+                    .routed
+                    .reactions
+                    .push(CapturedReaction::Outbound(frame)),
+                Err(work) => self.ready.capture(work),
+            },
+        }
+    }
+
+    fn into_parts(
+        self,
+    ) -> (
+        Vec<CapturedReaction>,
+        Vec<(LinkId, RequestId, NodeResponse)>,
+    ) {
+        (self.routed.reactions, self.routed.page_requests)
+    }
+}
+
+impl IngestRoutedReactions {
+    fn route_completed(&mut self, reaction: EngineReaction<'_, NoOwedWork>) {
+        match reaction {
+            EngineReaction::Journaled(journaled) => self.capture_journaled(journaled),
+            EngineReaction::Directive(directive) => match capture_directive(directive) {
+                Ok(frame) => self.reactions.push(CapturedReaction::Outbound(frame)),
+                Err(never) => match never {},
+            },
+        }
+    }
+
+    fn capture_journaled(&mut self, journaled: Journaled<'_>) {
+        if self.node_page {
+            if let Journaled::RequestReceived {
+                link_id,
+                request_id,
+                path_hash,
+                ..
+            } = &journaled
+            {
+                let response = if *path_hash
+                    == RequestPathHash::of(personal_hopspot_core::node_pages::INDEX_PATH)
+                {
+                    Some(NodeResponse::Index)
+                } else if *path_hash
+                    == RequestPathHash::of(personal_hopspot_core::node_pages::QUICKSTART_PATH)
+                {
+                    Some(NodeResponse::Quickstart)
+                } else if *path_hash
+                    == RequestPathHash::of(personal_hopspot_core::node_pages::COMING_FROM_RNS_PATH)
+                {
+                    Some(NodeResponse::ComingFromRns)
+                } else if *path_hash
+                    == RequestPathHash::of(personal_hopspot_core::node_pages::SOURCE_PAGE_PATH)
+                {
+                    Some(NodeResponse::SourcePage)
+                } else {
+                    #[cfg(feature = "source-archive")]
+                    {
+                        if *path_hash
+                            == RequestPathHash::of(
+                                personal_hopspot_core::node_pages::SOURCE_ARCHIVE_PATH,
+                            )
+                        {
+                            Some(NodeResponse::SourceArchive)
+                        } else if *path_hash
+                            == RequestPathHash::of(
+                                personal_hopspot_core::node_pages::SOURCE_CHECKSUM_PATH,
+                            )
+                        {
+                            Some(NodeResponse::SourceChecksum)
+                        } else {
+                            None
+                        }
+                    }
+                    #[cfg(not(feature = "source-archive"))]
+                    {
+                        None
+                    }
+                };
+                if let Some(response) = response {
+                    self.page_requests.push((*link_id, *request_id, response));
+                }
+            }
+        }
+
+        let captured = match project_journaled(journaled) {
+            CapturedJournal::Event(event) => CapturedReaction::Event(event),
+            CapturedJournal::Control(event) => CapturedReaction::Control(event),
+        };
+        self.reactions.push(captured);
+    }
+}
+
 struct EntropyCursor {
     bytes: Vec<u8>,
     offset: usize,
@@ -1402,68 +1487,70 @@ impl EntropyCursor {
 
 fn capture_reaction(reaction: EngineReaction<'_>) -> CapturedReaction {
     match reaction {
-        EngineReaction::Journaled(journaled) => match capture_journaled(journaled) {
+        EngineReaction::Journaled(journaled) => match project_journaled(journaled) {
             CapturedJournal::Event(event) => CapturedReaction::Event(event),
             CapturedJournal::Control(event) => CapturedReaction::Control(event),
         },
-        EngineReaction::Directive(directive) => {
-            CapturedReaction::Outbound(directive_to_frame(directive))
-        }
+        EngineReaction::Directive(directive) => match capture_directive(directive) {
+            Ok(frame) => CapturedReaction::Outbound(frame),
+            Err(never) => match never {},
+        },
     }
 }
 
-fn directive_to_frame(directive: Directive<'_>) -> OutboundFrame {
+fn capture_directive<Work>(directive: Directive<'_, Work>) -> Result<OutboundFrame, Work> {
     match directive {
-        Directive::Send { target, bytes } => OutboundFrame {
+        Directive::Fulfill(work) => Err(work),
+        Directive::Send { target, bytes } => Ok(OutboundFrame {
             target: OutboundTarget::Interface(target),
             bytes: bytes.to_vec(),
             announce: false,
             hops: None,
-        },
+        }),
         Directive::SendIfOnline {
             target,
             bytes,
             on_send,
         } => {
             on_send();
-            OutboundFrame {
+            Ok(OutboundFrame {
                 target: OutboundTarget::Interface(target),
                 bytes: bytes.to_vec(),
                 announce: false,
                 hops: None,
-            }
+            })
         }
         Directive::SendAnnounce {
             target,
             bytes,
             hops,
-        } => OutboundFrame {
+        } => Ok(OutboundFrame {
             target: OutboundTarget::Interface(target),
             bytes: bytes.to_vec(),
             announce: true,
             hops: Some(hops),
-        },
+        }),
         Directive::SendToFleet {
             supervisor,
             fan,
             bytes,
-        } => OutboundFrame {
+        } => Ok(OutboundFrame {
             target: OutboundTarget::Broadcast { supervisor, fan },
             bytes: bytes.to_vec(),
             announce: false,
             hops: None,
-        },
+        }),
         Directive::SendAnnounceToFleet {
             supervisor,
             fan,
             bytes,
             hops,
-        } => OutboundFrame {
+        } => Ok(OutboundFrame {
             target: OutboundTarget::Broadcast { supervisor, fan },
             bytes: bytes.to_vec(),
             announce: true,
             hops: Some(hops),
-        },
+        }),
         Directive::EmitFrame {
             target,
             size_hint,
@@ -1472,12 +1559,12 @@ fn directive_to_frame(directive: Directive<'_>) -> OutboundFrame {
             let mut bytes = vec![0u8; size_hint];
             let len = fill(&mut bytes).unwrap_or(0);
             bytes.truncate(len);
-            OutboundFrame {
+            Ok(OutboundFrame {
                 target: OutboundTarget::Interface(target),
                 bytes,
                 announce: false,
                 hops: None,
-            }
+            })
         }
     }
 }

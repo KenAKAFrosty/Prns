@@ -3,6 +3,7 @@
 mod bluetooth_auto;
 mod command_settlement;
 mod event_projection;
+mod inline_work;
 mod input;
 mod js_translation;
 mod packed_snapshot;
