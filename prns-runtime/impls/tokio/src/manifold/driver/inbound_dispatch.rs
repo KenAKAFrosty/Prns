@@ -10,7 +10,7 @@ use crate::interfaces::{
     FrameAccountingEvent, IfacUnmaskError, InboundPacket, InterfaceId, InterfaceIfac,
     PacketPhyStats,
 };
-use crate::manifold::kernel::merge_wake_schedules_delta;
+use crate::manifold::wake_schedule::merge_wake_schedules_delta;
 use crate::manifold::Host;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::resources::ResourceOffer;

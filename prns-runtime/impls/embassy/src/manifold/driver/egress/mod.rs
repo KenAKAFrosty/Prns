@@ -8,7 +8,7 @@ use crate::manifold::announce_pacer::{
 };
 use crate::manifold::grant::{FrameTarget, LaneWriteOutcome, ManifoldLaneWriter};
 use crate::manifold::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
-use crate::manifold::kernel::{
+use crate::manifold::reaction_routing::{
     route_reaction as route_engine_reaction, AnnounceDirective, DirectiveEgress,
 };
 

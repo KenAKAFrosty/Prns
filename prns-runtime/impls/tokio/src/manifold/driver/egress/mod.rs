@@ -9,7 +9,7 @@ use crate::manifold::announce_pacer::{
 #[cfg(feature = "runtime-metrics")]
 use crate::manifold::announce_pacer::{PacerEntry, PacerEvent, PacerOffer};
 use crate::manifold::interface_seam::MAX_WIRE_FRAME_LEN;
-use crate::manifold::kernel::{
+use crate::manifold::reaction_routing::{
     route_reaction as route_engine_reaction, AnnounceDirective, DirectiveEgress,
 };
 #[cfg(feature = "runtime-metrics")]

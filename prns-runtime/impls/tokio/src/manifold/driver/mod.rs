@@ -7,7 +7,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use crate::engine::{EngineState, InstantMillis, Journaled, NextWake, ProofRequest, WakeReason};
 use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{InterfaceDescriptor, InterfaceId};
-use crate::manifold::kernel::{fire_due_reason, merge_wake_schedules_delta};
+use crate::manifold::wake_schedule::{fire_due_reason, merge_wake_schedules_delta};
 use crate::manifold::AppDeciders;
 use crate::manifold::Host;
 use crate::routing::links::resources::streamed_open::ResourceOpenLane;

@@ -14,8 +14,8 @@ use crate::interfaces::{
 };
 use crate::manifold::grant::{FrameTarget, ManifoldLaneReader};
 use crate::manifold::interface_seam::{EMBEDDED_MAX_LINK_MTU, EMBEDDED_MAX_WIRE_FRAME_LEN};
-use crate::manifold::kernel::{fire_due_reason, merge_wake_schedules_delta};
 use crate::manifold::timers::{wait_for_due_reason, wait_for_pacer};
+use crate::manifold::wake_schedule::{fire_due_reason, merge_wake_schedules_delta};
 use crate::manifold::{AppDeciders, Host};
 use crate::routing::links::resources::ResourceOffer;
 use crate::runtime::{InterfaceInspectionStore, ManifoldPersistence};

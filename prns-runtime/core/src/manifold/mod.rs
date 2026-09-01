@@ -12,10 +12,11 @@ pub mod announce_pacer;
 pub mod duty_gate;
 pub mod grant;
 pub mod interface_seam;
-pub mod kernel;
+pub mod reaction_routing;
 pub mod reconnect;
 pub mod throughput;
 pub mod timers;
+pub mod wake_schedule;
 
 pub(crate) mod window_ring;
 
