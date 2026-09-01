@@ -30,8 +30,6 @@ use crate::wire::DestinationHash;
 use embassy_futures::{block_on, join::join};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
-use portable_atomic::Ordering;
-
 type Pool<const COMPLETIONS: usize> = CompletionPool<CriticalSectionRawMutex, COMPLETIONS>;
 const PEER: DestinationHash = DestinationHash::new([0xAB; 16]);
 
@@ -82,7 +80,7 @@ fn the_pool_mints_a_distinct_id_each_time() {
 #[test]
 fn the_pool_never_mints_the_free_slot_sentinel() {
     let pool: Pool<1> = CompletionPool::new();
-    pool.next_id.store(NO_AWAITER, Ordering::Relaxed);
+    pool.next_id.store_relaxed(NO_AWAITER);
     assert_eq!(pool.mint(), CommandId(0));
 }
 

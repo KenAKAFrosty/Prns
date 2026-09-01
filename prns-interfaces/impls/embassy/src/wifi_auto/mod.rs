@@ -16,12 +16,13 @@ use embassy_sync::signal::Signal;
 use embassy_sync::watch::Watch;
 use embassy_time::{with_timeout, Duration, Instant, Ticker};
 use heapless::Vec;
-use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
+use portable_atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 
 use prns_core::interfaces::wifi_auto as contract;
 use prns_core::interfaces::{
     BitrateBps, ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus, MacAddress,
 };
+use prns_runtime::atomic::AtomicU64;
 use prns_runtime::runtime::{EmbassyFleet as Fleet, OutboundFrame};
 
 use fanout::{dispatch_fanout, send_beacon, target_includes, FanoutPlan, UdpFanoutSender};
@@ -277,19 +278,17 @@ impl WifiMemberStatus {
         self.id.lock(|cell| cell.set(id));
         self.connection
             .store(ConnectionState::Connected.as_u8(), Ordering::Relaxed);
-        self.session_rx_start
-            .store(self.rx.load(Ordering::Relaxed), Ordering::Relaxed);
-        self.session_tx_start
-            .store(self.tx.load(Ordering::Relaxed), Ordering::Relaxed);
+        self.session_rx_start.store_relaxed(self.rx.load_relaxed());
+        self.session_tx_start.store_relaxed(self.tx.load_relaxed());
         self.active.store(true, Ordering::Relaxed);
     }
 
     fn add_rx(&self, bytes: u64) {
-        self.rx.fetch_add(bytes, Ordering::Relaxed);
+        self.rx.fetch_add_relaxed(bytes);
     }
 
     fn add_tx(&self, bytes: u64) {
-        self.tx.fetch_add(bytes, Ordering::Relaxed);
+        self.tx.fetch_add_relaxed(bytes);
     }
 }
 
@@ -304,14 +303,14 @@ impl InterfaceStatus for WifiMemberStatus {
 
     fn rx_bytes(&self) -> u64 {
         self.rx
-            .load(Ordering::Relaxed)
-            .saturating_sub(self.session_rx_start.load(Ordering::Relaxed))
+            .load_relaxed()
+            .saturating_sub(self.session_rx_start.load_relaxed())
     }
 
     fn tx_bytes(&self) -> u64 {
         self.tx
-            .load(Ordering::Relaxed)
-            .saturating_sub(self.session_tx_start.load(Ordering::Relaxed))
+            .load_relaxed()
+            .saturating_sub(self.session_tx_start.load_relaxed())
     }
 }
 
@@ -533,9 +532,7 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
     }
 
     fn record_peer_heard(&self, now_ms: u64) {
-        self.shared
-            .last_peer_heard_ms
-            .store(now_ms.max(1), Ordering::Relaxed);
+        self.shared.last_peer_heard_ms.store_relaxed(now_ms.max(1));
     }
 
     /// Returns how long the active peer fleet has been silent.
@@ -543,7 +540,7 @@ impl<const MEMBERS: usize> AutoWifiStatus<MEMBERS> {
         if self.peer_count() == 0 {
             return None;
         }
-        let last_heard_ms = self.shared.last_peer_heard_ms.load(Ordering::Relaxed);
+        let last_heard_ms = self.shared.last_peer_heard_ms.load_relaxed();
         (last_heard_ms != 0).then(|| now_ms.saturating_sub(last_heard_ms))
     }
 }
@@ -567,7 +564,7 @@ impl<const MEMBERS: usize> InterfaceStatus for AutoWifiStatus<MEMBERS> {
         self.shared
             .members
             .iter()
-            .map(|member| member.rx.load(Ordering::Relaxed))
+            .map(|member| member.rx.load_relaxed())
             .sum()
     }
 
@@ -575,7 +572,7 @@ impl<const MEMBERS: usize> InterfaceStatus for AutoWifiStatus<MEMBERS> {
         self.shared
             .members
             .iter()
-            .map(|member| member.tx.load(Ordering::Relaxed))
+            .map(|member| member.tx.load_relaxed())
             .sum()
     }
 }

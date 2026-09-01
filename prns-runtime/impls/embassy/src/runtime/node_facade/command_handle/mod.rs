@@ -1,11 +1,6 @@
 use core::cell::RefCell;
 
-use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
-use embassy_sync::channel::Sender;
-use embassy_sync::signal::Signal;
-use portable_atomic::{AtomicU64, Ordering};
-
+use crate::atomic::AtomicU64;
 use crate::engine::{
     CloseLink, CloseRemoteControlPairing, CloseRemoteControlPairingOutcome, CommandId,
     EgressTarget, IssuedCommand, Journaled, OpenRemoteControlPairing, PacketReceiptDelivered,
@@ -23,6 +18,10 @@ use crate::routing::links::LinkId;
 use crate::routing::request_handlers::RequestPathHash;
 use crate::units::{ByteLimit, RttMillis};
 use crate::wire::DestinationHash;
+use embassy_sync::blocking_mutex::raw::RawMutex;
+use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
+use embassy_sync::channel::Sender;
+use embassy_sync::signal::Signal;
 
 use super::super::remote_control_access::{
     RemoteControlAccessCommand, RemoteControlAccessCompletion, RemoteControlAccessExchange,
@@ -121,7 +120,7 @@ impl<
 
     fn mint(&self) -> CommandId {
         loop {
-            let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+            let id = self.next_id.fetch_add_relaxed(1);
             if id != NO_AWAITER {
                 return CommandId(id);
             }

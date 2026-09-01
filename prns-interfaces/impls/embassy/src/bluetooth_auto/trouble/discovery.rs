@@ -35,7 +35,8 @@ pub(super) enum DiscoveryRole {
 
 cfg_if! {
     if #[cfg(not(target_arch = "riscv32"))] {
-        use portable_atomic::{AtomicU64, AtomicU8};
+        use portable_atomic::AtomicU8;
+        use prns_runtime::atomic::AtomicU64;
 
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
         enum DiscoveryDecision {
@@ -213,7 +214,7 @@ cfg_if! {
 
     pub(super) fn note_link_activity(&self) {
         self.last_activity_ms
-            .store(Instant::now().as_millis(), Ordering::Release);
+            .store_release(Instant::now().as_millis());
         self.advertise_activity.signal(());
         self.scan_activity.signal(());
     }
@@ -237,8 +238,8 @@ cfg_if! {
             let decision = discovery_decision(
                 self.live_links.load(Ordering::Acquire),
                 self.busy_operations.load(Ordering::Acquire),
-                self.last_activity_ms.load(Ordering::Acquire),
-                self.last_discovery_end_ms.load(Ordering::Acquire),
+                self.last_activity_ms.load_acquire(),
+                self.last_discovery_end_ms.load_acquire(),
                 now_ms,
             );
             match decision {
@@ -269,7 +270,7 @@ cfg_if! {
     pub(super) fn finish_turn(&self, window: DiscoveryWindow) {
         if window == DiscoveryWindow::Background {
             self.last_discovery_end_ms
-                .store(Instant::now().as_millis(), Ordering::Release);
+                .store_release(Instant::now().as_millis());
         }
     }
         }

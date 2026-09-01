@@ -6,7 +6,7 @@ use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
 use embassy_sync::blocking_mutex::CriticalSectionMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{with_deadline, with_timeout, Duration, Instant};
-use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
+use portable_atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 
 use prns_core::engine::FanTarget;
 use prns_core::interfaces::bluetooth_auto::{
@@ -24,6 +24,7 @@ use prns_core::interfaces::bluetooth_auto::{
 use prns_core::interfaces::{
     BitrateBps, ConnectionState, InterfaceId, InterfaceKind, InterfaceStatus,
 };
+use prns_runtime::atomic::AtomicU64;
 use prns_runtime::manifold::grant::FrameTarget;
 use prns_runtime::runtime::{EmbassyFleet as Fleet, OutboundFrame};
 
@@ -114,8 +115,8 @@ impl BluetoothMemberStatus {
         self.id.lock(|cell| cell.set(id));
         self.connection
             .store(ConnectionState::Connected.as_u8(), Ordering::Relaxed);
-        self.rx.store(0, Ordering::Relaxed);
-        self.tx.store(0, Ordering::Relaxed);
+        self.rx.store_relaxed(0);
+        self.tx.store_relaxed(0);
         self.active.store(true, Ordering::Relaxed);
     }
 
@@ -126,11 +127,11 @@ impl BluetoothMemberStatus {
     }
 
     fn add_rx(&self, bytes: u64) {
-        self.rx.fetch_add(bytes, Ordering::Relaxed);
+        self.rx.fetch_add_relaxed(bytes);
     }
 
     fn add_tx(&self, bytes: u64) {
-        self.tx.fetch_add(bytes, Ordering::Relaxed);
+        self.tx.fetch_add_relaxed(bytes);
     }
 }
 
@@ -144,11 +145,11 @@ impl InterfaceStatus for BluetoothMemberStatus {
     }
 
     fn rx_bytes(&self) -> u64 {
-        self.rx.load(Ordering::Relaxed)
+        self.rx.load_relaxed()
     }
 
     fn tx_bytes(&self) -> u64 {
-        self.tx.load(Ordering::Relaxed)
+        self.tx.load_relaxed()
     }
 }
 
@@ -388,7 +389,7 @@ impl<const MEMBERS: usize> InterfaceStatus for BluetoothAutoStatus<MEMBERS> {
         self.shared
             .members
             .iter()
-            .map(|member| member.rx.load(Ordering::Relaxed))
+            .map(|member| member.rx.load_relaxed())
             .sum()
     }
 
@@ -396,7 +397,7 @@ impl<const MEMBERS: usize> InterfaceStatus for BluetoothAutoStatus<MEMBERS> {
         self.shared
             .members
             .iter()
-            .map(|member| member.tx.load(Ordering::Relaxed))
+            .map(|member| member.tx.load_relaxed())
             .sum()
     }
 
