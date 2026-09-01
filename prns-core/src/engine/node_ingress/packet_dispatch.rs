@@ -407,9 +407,12 @@ impl<S: StorageLayout> EngineState<S> {
                 settle(sink, id, settlement);
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
-                if intent == SendRequestIntent::RemoteControlControllerPairing {
-                    wake_schedule_changes.remote_control_pairing =
-                        self.remote_control_pairing_wake();
+                match intent {
+                    SendRequestIntent::Application => {}
+                    SendRequestIntent::RemoteControlControllerPairing => {
+                        wake_schedule_changes.remote_control_pairing =
+                            self.remote_control_pairing_wake();
+                    }
                 }
             }
             IngestPacketOutcome::ResponseTooLarge {
@@ -426,9 +429,12 @@ impl<S: StorageLayout> EngineState<S> {
                 settle(sink, id, settlement);
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
-                if intent == SendRequestIntent::RemoteControlControllerPairing {
-                    wake_schedule_changes.remote_control_pairing =
-                        self.remote_control_pairing_wake();
+                match intent {
+                    SendRequestIntent::Application => {}
+                    SendRequestIntent::RemoteControlControllerPairing => {
+                        wake_schedule_changes.remote_control_pairing =
+                            self.remote_control_pairing_wake();
+                    }
                 }
             }
             IngestPacketOutcome::ChannelDataReceived {

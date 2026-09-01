@@ -503,3 +503,35 @@ impl<'a, Work> Directive<'a, Work> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{PersistenceFlushCause, PersistenceFlushTarget};
+
+    #[test]
+    fn persistence_names_cover_the_wire_stable_vocabulary() {
+        assert_eq!(
+            [
+                PersistenceFlushCause::Startup.name(),
+                PersistenceFlushCause::Interval.name(),
+                PersistenceFlushCause::RouteChange.name(),
+                PersistenceFlushCause::RatchetRotation.name(),
+                PersistenceFlushCause::Shutdown.name(),
+            ],
+            [
+                "startup",
+                "interval",
+                "route_change",
+                "ratchet_rotation",
+                "shutdown",
+            ],
+        );
+        assert_eq!(
+            [
+                PersistenceFlushTarget::RoutingState.name(),
+                PersistenceFlushTarget::Ratchets.name(),
+            ],
+            ["routing_state", "ratchets"],
+        );
+    }
+}
