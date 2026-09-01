@@ -281,19 +281,6 @@ impl<S: StorageLayout> EngineState<S> {
         segment: ResourceSegment,
         sink: &mut impl FnMut(EngineReaction<'a, OwedWork<'a>>),
     ) {
-        if let Some(owed) = self.prepare_resource_build(send, segment, sink) {
-            sink(EngineReaction::Directive(Directive::Fulfill(
-                OwedWork::ResourceBuild(owed),
-            )));
-        }
-    }
-
-    fn prepare_resource_build<'a>(
-        &mut self,
-        send: &ResourceSend<'a>,
-        segment: ResourceSegment,
-        sink: &mut impl FnMut(EngineReaction<'a, OwedWork<'a>>),
-    ) -> Option<ResourceBuildOwed<'a>> {
         let &ResourceSend { id, link_id, .. } = send;
         let correlation = send.correlation;
         let settle = |sink: &mut dyn FnMut(EngineReaction<'a, OwedWork<'a>>), failure| {
@@ -304,13 +291,13 @@ impl<S: StorageLayout> EngineState<S> {
         };
         if segment.index != 1 || segment.total_segments != 1 {
             settle(sink, SendResourceFailure::Sequencing);
-            return None;
+            return;
         }
         let validated = match self.validate_outgoing_resource_send(send, segment) {
             Ok(validated) => validated,
             Err(failure) => {
                 settle(sink, failure);
-                return None;
+                return;
             }
         };
         debug_assert_eq!(validated.lane, TrackLane::Live);
@@ -318,7 +305,7 @@ impl<S: StorageLayout> EngineState<S> {
             ActiveLinkLookup::Active(link) => link.key.cloned(),
             ActiveLinkLookup::Inactive | ActiveLinkLookup::Absent => {
                 settle(sink, SendResourceFailure::WriteFailed);
-                return None;
+                return;
             }
         };
         let shape = match outgoing_resource_buffer_shape(0, &send.body, validated.sdu) {
@@ -328,7 +315,7 @@ impl<S: StorageLayout> EngineState<S> {
                     sink,
                     SendResourceFailure::Rejected(SendResourceRejection::Build(error)),
                 );
-                return None;
+                return;
             }
         };
         let ticket = match self.outgoing_resources.reserve_deferred_build(
@@ -345,10 +332,10 @@ impl<S: StorageLayout> EngineState<S> {
             Ok(ticket) => ticket,
             Err(error) => {
                 settle(sink, tracked_resource_failure(error));
-                return None;
+                return;
             }
         };
-        Some(ResourceBuildOwed {
+        let owed = ResourceBuildOwed {
             plan: ResourceBuildPlan {
                 reservation: ticket,
                 key,
@@ -356,7 +343,10 @@ impl<S: StorageLayout> EngineState<S> {
                 shape,
             },
             body: send.body,
-        })
+        };
+        sink(EngineReaction::Directive(Directive::Fulfill(
+            OwedWork::ResourceBuild(owed),
+        )));
     }
 
     /// Validate every engine-owned policy and protocol precondition shared by inline and owning
