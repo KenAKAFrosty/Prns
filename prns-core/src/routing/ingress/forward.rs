@@ -526,7 +526,7 @@ mod tests {
         );
         assert_eq!(
             out,
-            IngestPacketOutcome::Proof(crate::engine::ProofIngest::Ignored),
+            IngestPacketOutcome::ReceiptProofIgnored,
             "reverse rows pop on use: the second copy finds no path home",
         );
     }

@@ -1,6 +1,6 @@
 use crate::engine::{
     Directive, EngineReaction, EngineState, InstantMillis, Journaled, OwedWork, ProofRequest,
-    ResolvedReceiptSettlement, ResourceDecompressionCompleted, WakeSchedules,
+    ResourceDecompressionCompleted, WakeSchedules,
 };
 use crate::identity::OpenedToken;
 use crate::interfaces::{FrameAccountingEvent, InterfaceIfac};
@@ -183,33 +183,22 @@ where
             }
         }
         match result {
-            CryptoResult::Verified {
-                id,
-                packet_hash,
-                settlement,
-                arrived_at,
-                valid,
-            } => {
-                if !valid {
-                    return CryptoCompletionEffect::NoWakeChange;
-                }
-                match engine.settle_resolved_receipt_proof(id, &packet_hash, arrived_at) {
-                    ResolvedReceiptSettlement::Settled => {
-                        route_reaction(
-                            EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }),
+            CryptoResult::ReceiptProofVerified { owed, verification } => {
+                CryptoCompletionEffect::WakeSchedules(engine.resume_receipt_proof(
+                    owed,
+                    verification,
+                    &mut |reaction| {
+                        route_completed_reaction_without_work(
+                            reaction,
                             &mut topology.egress,
                             &topology.ifacs,
                             &mut topology.pacers,
                             wire_scratch,
+                            journal,
                             now,
-                            &mut |journaled| journal.route(journaled),
-                        );
-                        settled_receipt_effect(engine)
-                    }
-                    ResolvedReceiptSettlement::NoMatchingReceipt => {
-                        CryptoCompletionEffect::NoWakeChange
-                    }
-                }
+                        )
+                    },
+                ))
             }
             CryptoResult::Sealed {
                 owed,
@@ -581,13 +570,6 @@ where
     }
 }
 
-fn settled_receipt_effect<S: StorageLayout>(engine: &EngineState<S>) -> CryptoCompletionEffect {
-    CryptoCompletionEffect::WakeSchedules(WakeSchedules {
-        receipt_timeouts: engine.receipt_timeouts_wake(),
-        ..WakeSchedules::UNCHANGED
-    })
-}
-
 pub(super) fn dispatch_open_spans<S: StorageLayout>(
     engine: &mut EngineState<S>,
     crypto_pool: Option<&CryptoPool>,
@@ -614,22 +596,5 @@ pub(super) fn dispatch_open_spans<S: StorageLayout>(
             state,
             bytes,
         })));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::engine::WakeSchedule;
-    use crate::storage::GrowableHeap;
-
-    #[test]
-    fn verified_receipt_settlement_recomputes_its_timeout_wake() {
-        let engine = EngineState::<GrowableHeap>::default();
-        let CryptoCompletionEffect::WakeSchedules(delta) = settled_receipt_effect(&engine) else {
-            panic!("verified receipt settlement must publish a wake delta");
-        };
-        assert_eq!(delta.receipt_timeouts, WakeSchedule::Idle);
-        assert_eq!(delta.scheduled_announces, WakeSchedule::Unchanged);
     }
 }

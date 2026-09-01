@@ -7,30 +7,51 @@ use crate::routing::links::LinkId;
 use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::wire::{DestinationHash, WireError};
 
+/// The command a valid receipt proof will settle.
+///
+/// Receipt proofs cannot settle requests: responses own that lifecycle. Keeping only the two
+/// proof-settled command kinds here lets [`ReceiptProofVerifyOwed`] carry an exhaustive resume
+/// decision instead of a generic settlement assembled by the runtime.
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProofIngest {
-    SendSinglePacketDelivered {
+pub enum ReceiptProofClaim {
+    SendSinglePacket {
         id: CommandId,
         delivered: PacketReceiptDelivered,
     },
-    SendToLinkDelivered {
+    SendToLink {
         id: CommandId,
         delivered: PacketReceiptDelivered,
     },
-    SendToChannelDelivered {
-        id: CommandId,
-        delivered: PacketReceiptDelivered,
-    },
-    Ignored,
 }
 
+impl ReceiptProofClaim {
+    #[must_use]
+    pub const fn command_id(self) -> CommandId {
+        match self {
+            Self::SendSinglePacket { id, .. } | Self::SendToLink { id, .. } => id,
+        }
+    }
+}
+
+/// An outstanding receipt proof whose signature must be verified before the engine may settle
+/// its command or credit its route/link evidence.
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DeferredProof {
-    pub ingest: ProofIngest,
+pub struct ReceiptProofVerifyOwed {
+    pub claim: ReceiptProofClaim,
     pub packet_hash: PacketHash,
     pub signing_key: IdentitySigningPublicKey,
     pub signature: Ed25519Signature,
     pub arrived_at: InstantMillis,
+}
+
+/// The runtime's verdict for one [`ReceiptProofVerifyOwed`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReceiptProofVerification {
+    Valid,
+    Invalid,
 }
 
 pub struct DeferredProofSign {

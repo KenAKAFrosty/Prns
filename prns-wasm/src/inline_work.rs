@@ -6,10 +6,12 @@
 
 use std::collections::VecDeque;
 
-use personal_rns::crypto::{ed25519_sign, x25519_diffie_hellman, x25519_keys_for_seal};
+use personal_rns::crypto::{
+    ed25519_sign, ed25519_verify, x25519_diffie_hellman, x25519_keys_for_seal,
+};
 use personal_rns::engine::{
     CryptoOwed, Directive, EngineReaction, EngineState, InstantMillis, NoOwedWork, OwedWork,
-    ResourceDecompressionCompleted,
+    ReceiptProofVerification, ResourceDecompressionCompleted,
 };
 use personal_rns::identity::{decrypt_token_in_place_with_ratchets, OpenedToken};
 use personal_rns::interfaces::AttachedInterfaces;
@@ -84,6 +86,20 @@ pub(crate) fn fulfill_ready_work(
     while let Some(work) = ready.work.pop_front() {
         match work {
             InlineReadyWork::Crypto(crypto) => match crypto {
+                CryptoOwed::ReceiptProofVerify(owed) => {
+                    let verification = if ed25519_verify(
+                        owed.signing_key.as_ed25519(),
+                        owed.packet_hash.as_bytes(),
+                        &owed.signature,
+                    )
+                    .is_ok()
+                    {
+                        ReceiptProofVerification::Valid
+                    } else {
+                        ReceiptProofVerification::Invalid
+                    };
+                    engine.resume_receipt_proof(owed, verification, sink);
+                }
                 CryptoOwed::Encrypt(owed) => {
                     let (ephemeral_public, shared) =
                         x25519_keys_for_seal(&owed.ephemeral_secret, &owed.dh_target);

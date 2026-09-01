@@ -72,7 +72,6 @@ pub use destination_retirement::RetireDestinationOutcome;
 pub use introspection::{ActiveLinkSnapshot, AnnounceRateState, RouteSnapshot};
 pub use node_egress::ReemitAnnounce;
 pub use node_ingress::{IngestIo, IngestPacketReport};
-pub use proof::ResolvedReceiptSettlement;
 pub use reaction::{
     CryptoOwed, Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason, NoOwedWork,
     OwedWork, PersistenceFlushCause, PersistenceFlushTarget, ResourceDecompressionCompleted,
@@ -139,7 +138,7 @@ pub use crate::routing::path_requests::pending::{
 pub use crate::routing::path_requests::request_path::PathRequestWriteOutcome;
 pub use crate::routing::path_requests::seen::PathRequestIdBytes;
 pub use crate::routing::proof::{
-    DeferredLinkReceiptSign, DeferredProofSign, ProofIngest, ProofObligation, ProofOwed,
-    ProofRequest, WriteProofError,
+    DeferredLinkReceiptSign, DeferredProofSign, ProofObligation, ProofOwed, ProofRequest,
+    ReceiptProofClaim, ReceiptProofVerification, ReceiptProofVerifyOwed, WriteProofError,
 };
 pub use crate::units::InstantMillis;

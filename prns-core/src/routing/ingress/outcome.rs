@@ -24,7 +24,7 @@ use crate::routing::links::resources::{
 };
 use crate::routing::links::LinkId;
 use crate::routing::path_requests::seen::PathRequestIdBytes;
-use crate::routing::proof::{ProofIngest, ProofObligation};
+use crate::routing::proof::{ProofObligation, ReceiptProofVerifyOwed};
 use crate::routing::request_handlers::RequestPathHash;
 use crate::units::RttMillis;
 use crate::wire::{DestinationHash, WirePacketHeader};
@@ -139,7 +139,12 @@ pub enum IngestPacketOutcome<'p> {
     OwesRatchetDecrypt(RatchetDecryptOwed),
     OwesAnnounceVerify(AnnounceVerifyOwed),
     OwesRemoteControlPairingAvailabilityVerify(RemoteControlPairingAvailabilityVerifyOwed),
-    Proof(ProofIngest),
+    OwesReceiptProofVerify(ReceiptProofVerifyOwed),
+    ChannelReceiptDelivered {
+        id: CommandId,
+        delivered: PacketReceiptDelivered,
+    },
+    ReceiptProofIgnored,
     Forward(PacketToForward<'p>),
     AnswerPathRequest {
         destination: DestinationHash,

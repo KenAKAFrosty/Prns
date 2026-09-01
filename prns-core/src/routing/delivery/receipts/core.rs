@@ -123,7 +123,7 @@ pub enum ReceiptDeadline {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DeferredVerify {
+pub struct ReceiptProofCandidate {
     pub proven: ProvenReceipt,
     pub packet_hash: PacketHash,
     pub signing_key: IdentitySigningPublicKey,
@@ -325,10 +325,10 @@ impl<C: ReceiptTable> Receipts<C> {
     }
 
     /// Read, not removed: the row stays outstanding until the pool's verdict settles it through [`Self::settle_resolved`].
-    pub fn resolve_explicit_for_deferred_verify(
-        &mut self,
+    pub fn resolve_explicit_for_verification(
+        &self,
         proof_hash: &PacketHash,
-    ) -> Option<DeferredVerify> {
+    ) -> Option<ReceiptProofCandidate> {
         let index = (0..self.table.len()).find(|index| {
             self.table
                 .kinds()
@@ -336,14 +336,14 @@ impl<C: ReceiptTable> Receipts<C> {
                 .is_some_and(|kind| !kind.is_request())
                 && self.table.packet_hashes().get(*index) == Some(proof_hash)
         })?;
-        self.read_for_deferred_verify(index)
+        self.read_proof_candidate(index)
     }
 
     /// An implicit proof is addressed to its packet hash's [`PacketHash::proof_destination`], which names the exact receipt deterministically. The row is left outstanding until a valid verdict settles it: a forged signature can neither settle nor evict it, and the timeout still owns it.
     pub fn resolve_proof_by_destination(
-        &mut self,
+        &self,
         proof_destination: &DestinationHash,
-    ) -> Option<DeferredVerify> {
+    ) -> Option<ReceiptProofCandidate> {
         let index = (0..self.table.len()).find(|index| {
             self.table
                 .kinds()
@@ -357,10 +357,10 @@ impl<C: ReceiptTable> Receipts<C> {
                     .as_ref()
                     == Some(proof_destination)
         })?;
-        self.read_for_deferred_verify(index)
+        self.read_proof_candidate(index)
     }
 
-    fn read_for_deferred_verify(&self, index: usize) -> Option<DeferredVerify> {
+    fn read_proof_candidate(&self, index: usize) -> Option<ReceiptProofCandidate> {
         let proven = ProvenReceipt {
             command_id: *self.table.command_ids().get(index)?,
             kind: *self.table.kinds().get(index)?,
@@ -368,7 +368,7 @@ impl<C: ReceiptTable> Receipts<C> {
         };
         let packet_hash = *self.table.packet_hashes().get(index)?;
         let signing_key = *self.table.signing_keys().get(index)?;
-        Some(DeferredVerify {
+        Some(ReceiptProofCandidate {
             proven,
             packet_hash,
             signing_key,

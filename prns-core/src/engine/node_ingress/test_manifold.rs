@@ -2,9 +2,10 @@
 
 use std::collections::VecDeque;
 
-use crate::crypto::{ed25519_sign, x25519_diffie_hellman, x25519_keys_for_seal};
+use crate::crypto::{ed25519_sign, ed25519_verify, x25519_diffie_hellman, x25519_keys_for_seal};
 use crate::engine::{
-    CryptoOwed, Directive, EngineReaction, EngineState, IngestIo, OwedWork, WakeSchedules,
+    CryptoOwed, Directive, EngineReaction, EngineState, IngestIo, OwedWork,
+    ReceiptProofVerification, WakeSchedules,
 };
 use crate::identity::decrypt_token_in_place_with_ratchets;
 use crate::interfaces::InboundPacket;
@@ -56,6 +57,24 @@ impl<S: StorageLayout> EngineState<S> {
 
         while let Some(work) = ready.pop_front() {
             match work {
+                CryptoOwed::ReceiptProofVerify(owed) => {
+                    let verification = if ed25519_verify(
+                        owed.signing_key.as_ed25519(),
+                        owed.packet_hash.as_bytes(),
+                        &owed.signature,
+                    )
+                    .is_ok()
+                    {
+                        ReceiptProofVerification::Valid
+                    } else {
+                        ReceiptProofVerification::Invalid
+                    };
+                    wake.compose(
+                        self.resume_receipt_proof(owed, verification, &mut |reaction| {
+                            sink(reaction.map_work(|never| match never {}))
+                        }),
+                    );
+                }
                 CryptoOwed::Encrypt(owed) => {
                     let (ephemeral_public, shared) =
                         x25519_keys_for_seal(&owed.ephemeral_secret, &owed.dh_target);

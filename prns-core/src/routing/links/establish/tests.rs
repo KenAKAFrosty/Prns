@@ -2067,7 +2067,7 @@ fn a_prove_all_responder_proves_link_data_the_reference_way() {
 #[test]
 fn a_deferred_link_proof_updates_inbound_only_after_verification() {
     use crate::crypto::Ed25519Verifier;
-    use crate::routing::proof::ProofIngest;
+    use crate::engine::{ReceiptProofClaim, ReceiptProofVerification};
     use crate::wire::WirePacketHeader;
 
     let mut initiator = neighbor_with_a_route();
@@ -2095,7 +2095,7 @@ fn a_deferred_link_proof_updates_inbound_only_after_verification() {
     let proof = &answers[0];
     let (header, payload) = WirePacketHeader::parse(proof).unwrap();
     let deferred = initiator
-        .settle_receipt_proof_deferred(
+        .prepare_receipt_proof_verify(
             payload,
             &DestinationHash::from_address(header.address),
             PacketHash::of_wire_packet(proof).unwrap(),
@@ -2122,13 +2122,11 @@ fn a_deferred_link_proof_updates_inbound_only_after_verification() {
         .unwrap()
         .verify(deferred.packet_hash.as_bytes(), &deferred.signature)
         .is_ok(),);
-    let ProofIngest::SendToLinkDelivered { id, .. } = deferred.ingest else {
+    let ReceiptProofClaim::SendToLink { id, .. } = deferred.claim else {
         panic!("the deferred proof belongs to the Link send");
     };
-    assert_eq!(
-        initiator.settle_resolved_receipt_proof(id, &deferred.packet_hash, deferred.arrived_at,),
-        crate::engine::ResolvedReceiptSettlement::Settled,
-    );
+    assert_eq!(id, CommandId(9));
+    initiator.resume_receipt_proof(deferred, ReceiptProofVerification::Valid, &mut |_| {});
 
     let Some(LinkPhase::Active { last_inbound, .. }) = initiator.links.phase_for(&link_id) else {
         panic!("the proven link remains active");

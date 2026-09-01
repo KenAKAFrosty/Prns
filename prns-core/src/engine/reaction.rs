@@ -15,7 +15,7 @@ use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::send::ResourceBuildOwed;
 use crate::routing::links::resources::{ResourceFailureCause, ResourceHash};
 use crate::routing::links::LinkId;
-use crate::routing::proof::{DeferredLinkReceiptSign, DeferredProofSign};
+use crate::routing::proof::{DeferredLinkReceiptSign, DeferredProofSign, ReceiptProofVerifyOwed};
 use crate::routing::request_handlers::RequestPathHash;
 use crate::routing::RouteRemovalCause;
 use crate::units::RttMillis;
@@ -73,6 +73,7 @@ pub enum OwedWork<'a> {
 #[repr(C)]
 #[allow(clippy::large_enum_variant)]
 pub enum CryptoOwed {
+    ReceiptProofVerify(ReceiptProofVerifyOwed),
     Encrypt(EncryptOwed),
     Decrypt(DecryptOwed),
     RatchetDecrypt(RatchetDecryptOwed),

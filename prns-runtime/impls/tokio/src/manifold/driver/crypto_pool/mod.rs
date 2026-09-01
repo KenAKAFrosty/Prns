@@ -12,10 +12,10 @@ use crate::crypto::{
     Ed25519Signature, Ed25519Verifier, X25519PublicKey, X25519SharedSecret,
 };
 use crate::engine::{
-    AnnounceVerifyOwed, CommandId, CryptoOwed, DecryptOwed, DeferredLinkReceiptSign,
-    DeferredProofSign, EncryptOwed, InstantMillis, RatchetDecryptOwed, Settlement,
+    AnnounceVerifyOwed, CryptoOwed, DecryptOwed, DeferredLinkReceiptSign, DeferredProofSign,
+    EncryptOwed, RatchetDecryptOwed, ReceiptProofVerification, ReceiptProofVerifyOwed,
 };
-use crate::identity::{decrypt_token_in_place_with_ratchets, IdentitySigningPublicKey, OpenedBy};
+use crate::identity::{decrypt_token_in_place_with_ratchets, OpenedBy};
 use crate::interfaces::InterfaceId;
 use crate::remote_control::{
     RemoteControlPairingAvailabilityVerification, RemoteControlPairingAvailabilityVerifyOwed,
@@ -195,15 +195,6 @@ fn macos_sysctl_usize(name: &str) -> Option<usize> {
     String::from_utf8(output.stdout).ok()?.trim().parse().ok()
 }
 
-pub(super) struct EngineVerifyJob {
-    pub(super) packet_hash: PacketHash,
-    pub(super) signing_key: IdentitySigningPublicKey,
-    pub(super) signature: Ed25519Signature,
-    pub(super) id: CommandId,
-    pub(super) settlement: Settlement,
-    pub(super) arrived_at: InstantMillis,
-}
-
 pub(super) struct StagedSealJob {
     pub(super) link_id: LinkId,
     pub(super) key: LinkKey,
@@ -240,7 +231,7 @@ pub(super) struct ResourceDecompressionJob {
 
 #[allow(clippy::large_enum_variant)]
 pub(super) enum CryptoJob {
-    Verify(EngineVerifyJob),
+    VerifyReceiptProof(ReceiptProofVerifyOwed),
     BuildResource(Box<ResourceBuildJob>),
     DecompressResource(Box<ResourceDecompressionJob>),
     SealStaged(Box<StagedSealJob>),
@@ -268,6 +259,7 @@ const BULK_BYTES_PER_WORK_UNIT: usize = 8 * 1024;
 impl CryptoJob {
     pub(super) fn from_owed(owed: CryptoOwed) -> Self {
         match owed {
+            CryptoOwed::ReceiptProofVerify(owed) => Self::VerifyReceiptProof(owed),
             CryptoOwed::Encrypt(owed) => Self::SealScalars(owed),
             CryptoOwed::Decrypt(owed) => Self::Decrypt(owed),
             CryptoOwed::RatchetDecrypt(owed) => Self::DecryptWithRatchets(Box::new(owed)),
@@ -288,7 +280,7 @@ impl CryptoJob {
 
     fn scheduling_class(&self) -> CryptoJobClass {
         match self {
-            Self::Verify(_) => CryptoJobClass::Verify,
+            Self::VerifyReceiptProof(_) => CryptoJobClass::Verify,
             Self::BuildResource(_)
             | Self::DecompressResource(_)
             | Self::SealStaged(_)
@@ -318,7 +310,7 @@ impl CryptoJob {
             Self::OpenSpan(job) => 1 + job.bytes.len().div_ceil(BULK_BYTES_PER_WORK_UNIT),
             Self::VerifyLinkProof(_) | Self::SignLinkProof(_) => 3,
             Self::SealScalars(_) | Self::Decrypt(_) | Self::DecryptWithRatchets(_) => 2,
-            Self::Verify(_)
+            Self::VerifyReceiptProof(_)
             | Self::Sign(_)
             | Self::SignLinkReceipt(_)
             | Self::VerifyAnnounce(_)
@@ -340,12 +332,9 @@ struct ScheduledCryptoResult {
 
 #[allow(clippy::large_enum_variant)]
 pub(super) enum CryptoResult {
-    Verified {
-        id: CommandId,
-        packet_hash: PacketHash,
-        settlement: Settlement,
-        arrived_at: InstantMillis,
-        valid: bool,
+    ReceiptProofVerified {
+        owed: ReceiptProofVerifyOwed,
+        verification: ReceiptProofVerification,
     },
     Sealed {
         owed: EncryptOwed,
@@ -1003,15 +992,18 @@ fn run_crypto_job(job: CryptoJob, verifier_cache: &mut WorkerVerifierCache) -> C
                 bytes,
             }
         }
-        CryptoJob::Verify(job) => {
-            let valid = cached_verifier(verifier_cache, job.signing_key.as_ed25519()).is_some_and(
-                |verifier| {
+        CryptoJob::VerifyReceiptProof(owed) => {
+            let verification = if cached_verifier(verifier_cache, owed.signing_key.as_ed25519())
+                .is_some_and(|verifier| {
                     verifier
-                        .verify(job.packet_hash.as_bytes(), &job.signature)
+                        .verify(owed.packet_hash.as_bytes(), &owed.signature)
                         .is_ok()
-                },
-            );
-            verified_result(job, valid)
+                }) {
+                ReceiptProofVerification::Valid
+            } else {
+                ReceiptProofVerification::Invalid
+            };
+            receipt_proof_verified(owed, verification)
         }
         CryptoJob::SealScalars(owed) => {
             let (ephemeral_public, shared) =
@@ -1137,14 +1129,11 @@ pub(super) fn run_resource_build_job(job: ResourceBuildJob) -> CryptoResult {
     }
 }
 
-fn verified_result(job: EngineVerifyJob, valid: bool) -> CryptoResult {
-    CryptoResult::Verified {
-        id: job.id,
-        packet_hash: job.packet_hash,
-        settlement: job.settlement,
-        arrived_at: job.arrived_at,
-        valid,
-    }
+fn receipt_proof_verified(
+    owed: ReceiptProofVerifyOwed,
+    verification: ReceiptProofVerification,
+) -> CryptoResult {
+    CryptoResult::ReceiptProofVerified { owed, verification }
 }
 
 fn cached_verifier<'a>(
@@ -1197,17 +1186,17 @@ fn crypto_worker(
         while let Some(scheduled) = jobs.next() {
             let ScheduledCryptoJob { job, class, work } = scheduled;
             match job {
-                CryptoJob::Verify(job) => {
+                CryptoJob::VerifyReceiptProof(owed) => {
                     if !matches!(
                         jobs.peek(),
                         Some(ScheduledCryptoJob {
-                            job: CryptoJob::Verify(_),
+                            job: CryptoJob::VerifyReceiptProof(_),
                             ..
                         })
                     ) {
                         if !run_and_publish_crypto_job(
                             ScheduledCryptoJob {
-                                job: CryptoJob::Verify(job),
+                                job: CryptoJob::VerifyReceiptProof(owed),
                                 class,
                                 work,
                             },
@@ -1222,28 +1211,20 @@ fn crypto_worker(
                     }
                     let mut verification_jobs = HeaplessVec::new();
                     if verification_jobs
-                        .push(ScheduledVerifyJob { job, work })
+                        .push(ScheduledVerifyJob { owed, work })
                         .is_err()
                     {
                         return;
                     }
-                    while matches!(
-                        jobs.peek(),
-                        Some(ScheduledCryptoJob {
-                            job: CryptoJob::Verify(_),
-                            ..
-                        })
-                    ) {
-                        let Some(ScheduledCryptoJob {
-                            job: CryptoJob::Verify(job),
-                            work,
-                            ..
-                        }) = jobs.next()
-                        else {
-                            unreachable!("a peeked verification job remains a verification job");
-                        };
+                    while let Some(ScheduledCryptoJob {
+                        job: CryptoJob::VerifyReceiptProof(owed),
+                        work,
+                        ..
+                    }) = jobs.next_if(|scheduled| {
+                        matches!(scheduled.job, CryptoJob::VerifyReceiptProof(_))
+                    }) {
                         if verification_jobs
-                            .push(ScheduledVerifyJob { job, work })
+                            .push(ScheduledVerifyJob { owed, work })
                             .is_err()
                         {
                             return;
@@ -1342,7 +1323,7 @@ fn run_and_publish_link_receipt_jobs(
 }
 
 struct ScheduledVerifyJob {
-    job: EngineVerifyJob,
+    owed: ReceiptProofVerifyOwed,
     work: usize,
 }
 
@@ -1369,17 +1350,22 @@ fn run_and_publish_verification_jobs(
     };
 
     for scheduled in jobs {
-        let ScheduledVerifyJob { job, work } = scheduled;
+        let ScheduledVerifyJob { owed, work } = scheduled;
         let valid = batch_valid
-            || cached_verifier(verifier_cache, job.signing_key.as_ed25519()).is_some_and(
+            || cached_verifier(verifier_cache, owed.signing_key.as_ed25519()).is_some_and(
                 |verifier| {
                     verifier
-                        .verify(job.packet_hash.as_bytes(), &job.signature)
+                        .verify(owed.packet_hash.as_bytes(), &owed.signature)
                         .is_ok()
                 },
             );
+        let verification = if valid {
+            ReceiptProofVerification::Valid
+        } else {
+            ReceiptProofVerification::Invalid
+        };
         if !publish_crypto_result(
-            verified_result(job, valid),
+            receipt_proof_verified(owed, verification),
             work,
             state,
             results,
@@ -1397,8 +1383,8 @@ fn verify_job_batch(
     jobs: &[ScheduledVerifyJob],
     verifier_cache: &mut WorkerVerifierCache,
 ) -> Option<bool> {
-    for ScheduledVerifyJob { job, .. } in jobs {
-        cached_verifier(verifier_cache, job.signing_key.as_ed25519())?;
+    for ScheduledVerifyJob { owed, .. } in jobs {
+        cached_verifier(verifier_cache, owed.signing_key.as_ed25519())?;
     }
 
     let mut messages: HeaplessVec<&[u8], CRYPTO_WORKER_BATCH_DEPTH> = HeaplessVec::new();
@@ -1406,8 +1392,8 @@ fn verify_job_batch(
         HeaplessVec::new();
     let mut verifiers: HeaplessVec<&Ed25519Verifier, CRYPTO_WORKER_BATCH_DEPTH> =
         HeaplessVec::new();
-    for ScheduledVerifyJob { job, .. } in jobs {
-        let public = job.signing_key.as_ed25519();
+    for ScheduledVerifyJob { owed, .. } in jobs {
+        let public = owed.signing_key.as_ed25519();
         let verifier = verifier_cache
             .iter()
             .flatten()
@@ -1415,8 +1401,8 @@ fn verify_job_batch(
         if verifier.is_weak() {
             return None;
         }
-        if messages.push(job.packet_hash.as_bytes()).is_err()
-            || signatures.push(job.signature).is_err()
+        if messages.push(owed.packet_hash.as_bytes()).is_err()
+            || signatures.push(owed.signature).is_err()
             || verifiers.push(verifier).is_err()
         {
             return None;

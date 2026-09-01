@@ -10,8 +10,8 @@ use crate::engine::settlement::settle;
 use crate::engine::LinkClosedReason;
 use crate::engine::{
     CryptoOwed, Directive, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis,
-    Journaled, LinkEstablished, OwedWork, PathResponseWriteOutcome, ProofIngest,
-    ProtocolViolationKind, RemoteControlControllerPairingRequestFailureCause,
+    Journaled, LinkEstablished, OwedWork, PathResponseWriteOutcome, ProtocolViolationKind,
+    RemoteControlControllerPairingRequestFailureCause,
     RemoteControlControllerPairingResponseArrival, RemoteControlControllerPairingResponseReceived,
     SendRequestFailure, SendRequestIntent, Settlement, WakeSchedule, WakeSchedules,
 };
@@ -180,22 +180,16 @@ impl<S: StorageLayout> EngineState<S> {
                     OwedWork::Crypto(CryptoOwed::RemoteControlPairingAvailabilityVerify(owed)),
                 )));
             }
-            IngestPacketOutcome::Proof(ProofIngest::SendSinglePacketDelivered {
-                id,
-                delivered,
-            }) => {
-                settle(sink, id, Settlement::SendSinglePacket(Ok(delivered)));
-                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+            IngestPacketOutcome::OwesReceiptProofVerify(owed) => {
+                sink(EngineReaction::Directive(Directive::Fulfill(
+                    OwedWork::Crypto(CryptoOwed::ReceiptProofVerify(owed)),
+                )));
             }
-            IngestPacketOutcome::Proof(ProofIngest::SendToLinkDelivered { id, delivered }) => {
-                settle(sink, id, Settlement::SendToLink(Ok(delivered)));
-                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
-            }
-            IngestPacketOutcome::Proof(ProofIngest::SendToChannelDelivered { id, delivered }) => {
+            IngestPacketOutcome::ChannelReceiptDelivered { id, delivered } => {
                 settle(sink, id, Settlement::SendToChannel(Ok(delivered)));
                 wake_schedule_changes.channel_timeouts = self.channel_timeouts_wake();
             }
-            IngestPacketOutcome::Proof(ProofIngest::Ignored) => {}
+            IngestPacketOutcome::ReceiptProofIgnored => {}
             IngestPacketOutcome::TransportedLinkRequest {
                 header,
                 body,

@@ -1,8 +1,9 @@
 use crate::crypto::{ed25519_sign, Ed25519Signature};
 use crate::engine::{
-    CommandId, DeliveryEvidence, DeliveryProof, EngineState, InstantMillis, PacketReceiptDelivered,
-    ProofForm,
+    DeliveryEvidence, DeliveryProof, EngineState, InstantMillis, PacketReceiptDelivered, ProofForm,
+    Settlement, WakeSchedules,
 };
+use crate::engine::{EngineReaction, Journaled};
 use crate::identity::IdentitySigner;
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::delivery::receipts::ReceiptKind;
@@ -10,20 +11,13 @@ use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::LinkId;
 use crate::routing::proof::{
     write_explicit_proof_wire_packet, write_implicit_proof_wire_packet,
-    write_link_proof_wire_packet, DeferredProof, LinkProofOwed, ProofIngest, ProofOwed,
-    WriteChannelAckError, WriteProofError, EXPLICIT_PROOF_PAYLOAD_LEN, IMPLICIT_PROOF_PAYLOAD_LEN,
+    write_link_proof_wire_packet, LinkProofOwed, ProofOwed, ReceiptProofClaim,
+    ReceiptProofVerification, ReceiptProofVerifyOwed, WriteChannelAckError, WriteProofError,
+    EXPLICIT_PROOF_PAYLOAD_LEN, IMPLICIT_PROOF_PAYLOAD_LEN,
 };
 use crate::storage::StorageLayout;
 use crate::units::RttMillis;
 use crate::wire::{DestinationHash, WireError};
-
-/// Result of committing a proof after deferred signature verification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[must_use]
-pub enum ResolvedReceiptSettlement {
-    Settled,
-    NoMatchingReceipt,
-}
 
 impl<S: StorageLayout> EngineState<S> {
     /// Best-effort by RNS 1.4.2 parity: an unwritable proof is dropped; the sender's timeout-and-resend is the designed recovery, so nothing here is retried.
@@ -102,72 +96,13 @@ impl<S: StorageLayout> EngineState<S> {
             .map_err(WriteChannelAckError::Serialize)
     }
 
-    /// RNS 1.4.2 `PacketReceipt.validate_proof`, both forms. Settlement removes the receipt, so a replayed proof finds nothing; exactly-once is structural.
-    pub fn settle_receipt_proof(
-        &mut self,
-        payload: &[u8],
-        proof_packet_hash: PacketHash,
-        arrived_at: InstantMillis,
-    ) -> ProofIngest {
-        let (proven, proof) = match payload.len() {
-            EXPLICIT_PROOF_PAYLOAD_LEN => {
-                let (named_hash, signature) = payload.split_at(PACKET_HASH_LEN);
-                let (Ok(named_hash), Ok(signature)) = (named_hash.try_into(), signature.try_into())
-                else {
-                    return ProofIngest::Ignored;
-                };
-                (
-                    self.receipts.settle_by_explicit_proof(
-                        &PacketHash::new(named_hash),
-                        &Ed25519Signature(signature),
-                    ),
-                    DeliveryProof::Explicit(proof_packet_hash),
-                )
-            }
-            IMPLICIT_PROOF_PAYLOAD_LEN => {
-                let Ok(signature) = payload.try_into() else {
-                    return ProofIngest::Ignored;
-                };
-                (
-                    self.receipts
-                        .settle_by_implicit_proof(&Ed25519Signature(signature)),
-                    DeliveryProof::Implicit(proof_packet_hash),
-                )
-            }
-            _ => return ProofIngest::Ignored,
-        };
-        match proven {
-            Some(receipt) => {
-                self.apply_proven_receipt_evidence(receipt.kind, arrived_at);
-                let delivered = PacketReceiptDelivered {
-                    rtt: RttMillis::measured_between(receipt.sent_at, arrived_at),
-                    evidence: DeliveryEvidence::Proof(proof),
-                };
-                match receipt.kind {
-                    ReceiptKind::SendSinglePacket { .. } => {
-                        ProofIngest::SendSinglePacketDelivered {
-                            id: receipt.command_id,
-                            delivered,
-                        }
-                    }
-                    ReceiptKind::SendToLink(_) => ProofIngest::SendToLinkDelivered {
-                        id: receipt.command_id,
-                        delivered,
-                    },
-                    ReceiptKind::SendRequest { .. } => ProofIngest::Ignored,
-                }
-            }
-            None => ProofIngest::Ignored,
-        }
-    }
-
-    pub fn settle_receipt_proof_deferred(
+    pub(crate) fn prepare_receipt_proof_verify(
         &mut self,
         payload: &[u8],
         proof_destination: &DestinationHash,
         proof_packet_hash: PacketHash,
         arrived_at: InstantMillis,
-    ) -> Option<DeferredProof> {
+    ) -> Option<ReceiptProofVerifyOwed> {
         let (resolved, signature, proof) = match payload.len() {
             EXPLICIT_PROOF_PAYLOAD_LEN => {
                 let (named_hash, signature) = payload.split_at(PACKET_HASH_LEN);
@@ -178,7 +113,7 @@ impl<S: StorageLayout> EngineState<S> {
                 let signature = Ed25519Signature(signature);
                 (
                     self.receipts
-                        .resolve_explicit_for_deferred_verify(&PacketHash::new(named_hash)),
+                        .resolve_explicit_for_verification(&PacketHash::new(named_hash)),
                     signature,
                     DeliveryProof::Explicit(proof_packet_hash),
                 )
@@ -202,19 +137,19 @@ impl<S: StorageLayout> EngineState<S> {
             rtt: RttMillis::measured_between(resolved.proven.sent_at, arrived_at),
             evidence: DeliveryEvidence::Proof(proof),
         };
-        let ingest = match resolved.proven.kind {
-            ReceiptKind::SendSinglePacket { .. } => ProofIngest::SendSinglePacketDelivered {
+        let claim = match resolved.proven.kind {
+            ReceiptKind::SendSinglePacket { .. } => ReceiptProofClaim::SendSinglePacket {
                 id: resolved.proven.command_id,
                 delivered,
             },
-            ReceiptKind::SendToLink(_) => ProofIngest::SendToLinkDelivered {
+            ReceiptKind::SendToLink(_) => ReceiptProofClaim::SendToLink {
                 id: resolved.proven.command_id,
                 delivered,
             },
             ReceiptKind::SendRequest { .. } => return None,
         };
-        Some(DeferredProof {
-            ingest,
+        Some(ReceiptProofVerifyOwed {
+            claim,
             packet_hash: resolved.packet_hash,
             signing_key: resolved.signing_key,
             signature,
@@ -222,19 +157,39 @@ impl<S: StorageLayout> EngineState<S> {
         })
     }
 
-    /// Commits a deferred proof only while the exact receipt is still authoritative. The route or
-    /// Link effect happens here, after verification, and uses the packet's original arrival time.
-    pub fn settle_resolved_receipt_proof(
+    /// Applies a runtime's signature verdict only while the exact receipt resolved before the
+    /// worker hop is still authoritative. Invalid, duplicate, timed-out, culled, and replaced
+    /// candidates leave engine state untouched.
+    pub fn resume_receipt_proof(
         &mut self,
-        command_id: CommandId,
-        packet_hash: &PacketHash,
-        arrived_at: InstantMillis,
-    ) -> ResolvedReceiptSettlement {
-        let Some(receipt) = self.receipts.settle_resolved(command_id, packet_hash) else {
-            return ResolvedReceiptSettlement::NoMatchingReceipt;
+        owed: ReceiptProofVerifyOwed,
+        verification: ReceiptProofVerification,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> WakeSchedules {
+        if verification == ReceiptProofVerification::Invalid {
+            return WakeSchedules::UNCHANGED;
+        }
+        let id = owed.claim.command_id();
+        let Some(receipt) = self.receipts.settle_resolved(id, &owed.packet_hash) else {
+            return WakeSchedules::UNCHANGED;
         };
-        self.apply_proven_receipt_evidence(receipt.kind, arrived_at);
-        ResolvedReceiptSettlement::Settled
+        self.apply_proven_receipt_evidence(receipt.kind, owed.arrived_at);
+        let settlement = match owed.claim {
+            ReceiptProofClaim::SendSinglePacket { delivered, .. } => {
+                Settlement::SendSinglePacket(Ok(delivered))
+            }
+            ReceiptProofClaim::SendToLink { delivered, .. } => {
+                Settlement::SendToLink(Ok(delivered))
+            }
+        };
+        sink(EngineReaction::Journaled(Journaled::CommandSettled {
+            id,
+            settlement,
+        }));
+        WakeSchedules {
+            receipt_timeouts: self.receipt_timeouts_wake(),
+            ..WakeSchedules::UNCHANGED
+        }
     }
 
     fn apply_proven_receipt_evidence(&mut self, kind: ReceiptKind, arrived_at: InstantMillis) {

@@ -3,8 +3,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use crate::crypto::ed25519_sign;
 use crate::engine::{
     ClassifiedInboundPacket, CryptoOwed, DeferredLinkReceiptSign, Directive, EngineReaction,
-    EngineState, IngestIo, InstantMillis, Journaled, OwedWork, ProofIngest, ProofRequest,
-    Settlement, WakeSchedules,
+    EngineState, IngestIo, InstantMillis, Journaled, OwedWork, ProofRequest, WakeSchedules,
 };
 use crate::interfaces::{
     FrameAccountingEvent, IfacUnmaskError, InboundPacket, InterfaceId, InterfaceIfac,
@@ -17,10 +16,9 @@ use crate::routing::links::resources::ResourceOffer;
 use crate::routing::proof::LINK_PROOF_WIRE_LEN;
 use crate::runtime::InterfaceStore;
 use crate::storage::StorageLayout;
-use crate::wire::DestinationHash;
 
 use super::crypto_dispatch::dispatch_open_spans;
-use super::crypto_pool::{CryptoJob, CryptoPool, EngineVerifyJob};
+use super::crypto_pool::CryptoPool;
 use super::egress::{
     ifac_for, route_reaction, route_reaction_with_work, Egress, InterfacePacer, WireScratch,
 };
@@ -198,41 +196,6 @@ impl InboundDispatch {
                 let packet_hash = packet.packet_hash();
                 if let Some(packet_hash) = packet_hash {
                     retain_packet_phy(packet_phy_store, packet_hash, packet_phy);
-                }
-                if let Some(pool) = crypto_pool {
-                    if let (Some(proof_packet_hash), Some((address, payload))) =
-                        (packet_hash, packet.proof())
-                    {
-                        if let Some(deferred) = engine.settle_receipt_proof_deferred(
-                            payload,
-                            &DestinationHash::from_address(address),
-                            proof_packet_hash,
-                            now,
-                        ) {
-                            let settlement = match deferred.ingest {
-                                ProofIngest::SendSinglePacketDelivered { id, delivered } => {
-                                    Some((id, Settlement::SendSinglePacket(Ok(delivered))))
-                                }
-                                ProofIngest::SendToLinkDelivered { id, delivered } => {
-                                    Some((id, Settlement::SendToLink(Ok(delivered))))
-                                }
-                                ProofIngest::SendToChannelDelivered { .. }
-                                | ProofIngest::Ignored => None,
-                            };
-                            if let Some((id, settlement)) = settlement {
-                                pool.submit(CryptoJob::Verify(EngineVerifyJob {
-                                    packet_hash: deferred.packet_hash,
-                                    signing_key: deferred.signing_key,
-                                    signature: deferred.signature,
-                                    id,
-                                    settlement,
-                                    arrived_at: deferred.arrived_at,
-                                }));
-                            }
-                            lane.release();
-                            continue;
-                        }
-                    }
                 }
                 let ingest_report = engine.ingest_classified_into_report(
                     packet,

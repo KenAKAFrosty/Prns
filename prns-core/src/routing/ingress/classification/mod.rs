@@ -84,20 +84,6 @@ impl<'a> ClassifiedInboundPacket<'a> {
     }
 
     #[must_use]
-    pub fn proof(&self) -> Option<(WireAddress, &[u8])> {
-        match &self.ingress {
-            Ingress::Proof {
-                address, payload, ..
-            } => Some((*address, *payload)),
-            Ingress::Announce { .. }
-            | Ingress::Data { .. }
-            | Ingress::LinkRequest { .. }
-            | Ingress::Malformed
-            | Ingress::IfacRefused => None,
-        }
-    }
-
-    #[must_use]
     pub fn is_malformed(&self) -> bool {
         matches!(self.ingress, Ingress::Malformed)
     }

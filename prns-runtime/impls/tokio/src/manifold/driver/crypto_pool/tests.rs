@@ -1,6 +1,33 @@
 use super::*;
 use std::time::Duration;
 
+use crate::engine::{
+    CommandId, DeliveryEvidence, DeliveryProof, PacketReceiptDelivered, ReceiptProofClaim,
+};
+use crate::identity::IdentitySigningPublicKey;
+use crate::units::{InstantMillis, RttMillis};
+
+fn receipt_proof_verify_owed(
+    id: CommandId,
+    packet_hash: PacketHash,
+    signing_key: IdentitySigningPublicKey,
+    signature: Ed25519Signature,
+) -> ReceiptProofVerifyOwed {
+    ReceiptProofVerifyOwed {
+        claim: ReceiptProofClaim::SendSinglePacket {
+            id,
+            delivered: PacketReceiptDelivered {
+                rtt: RttMillis::new(0),
+                evidence: DeliveryEvidence::Proof(DeliveryProof::Implicit(packet_hash)),
+            },
+        },
+        packet_hash,
+        signing_key,
+        signature,
+        arrived_at: InstantMillis(0),
+    }
+}
+
 #[test]
 fn packet_verdict_hotness_is_outstanding_or_a_bounded_activity_budget() {
     let pool = CryptoPool::spawn(1, Arc::new(Notify::new())).expect("worker spawns");
@@ -124,14 +151,12 @@ async fn completion_wake_carries_no_payload_and_result_moves_through_worker_ring
     let pool = CryptoPool::spawn(1, completion_wake.clone()).expect("worker spawns");
     assert!(!pool.prepare_completion_wait());
 
-    pool.submit(CryptoJob::Verify(EngineVerifyJob {
+    pool.submit(CryptoJob::VerifyReceiptProof(receipt_proof_verify_owed(
+        CommandId(7),
         packet_hash,
         signing_key,
         signature,
-        id: CommandId(7),
-        settlement: Settlement::AnnounceNow(Ok(())),
-        arrived_at: InstantMillis(0),
-    }));
+    )));
 
     tokio::time::timeout(Duration::from_secs(1), completion_wake.notified())
         .await
@@ -142,11 +167,10 @@ async fn completion_wake_carries_no_payload_and_result_moves_through_worker_ring
     assert_eq!(completion.worker, 0);
     assert!(matches!(
         completion.result,
-        CryptoResult::Verified {
-            id: CommandId(7),
-            valid: true,
-            ..
-        }
+        CryptoResult::ReceiptProofVerified {
+            owed,
+            verification: ReceiptProofVerification::Valid,
+        } if owed.claim.command_id() == CommandId(7)
     ));
     pool.record_completed(completion.worker, completion.work);
     pool.packet_verdict_settled();
@@ -344,14 +368,12 @@ fn command_sized_burst_backpressures_without_dropping_jobs_or_results() {
     let pool = CryptoPool::spawn(1, Arc::new(Notify::new())).expect("worker spawns");
 
     for id in 0..JOBS {
-        pool.submit(CryptoJob::Verify(EngineVerifyJob {
+        pool.submit(CryptoJob::VerifyReceiptProof(receipt_proof_verify_owed(
+            CommandId(id as u64),
             packet_hash,
             signing_key,
             signature,
-            id: CommandId(id as u64),
-            settlement: Settlement::AnnounceNow(Ok(())),
-            arrived_at: InstantMillis(0),
-        }));
+        )));
     }
 
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
@@ -360,7 +382,10 @@ fn command_sized_burst_backpressures_without_dropping_jobs_or_results() {
         if let Some(completion) = pool.pop_completion() {
             assert!(matches!(
                 completion.result,
-                CryptoResult::Verified { valid: true, .. }
+                CryptoResult::ReceiptProofVerified {
+                    verification: ReceiptProofVerification::Valid,
+                    ..
+                }
             ));
             pool.record_completed(completion.worker, completion.work);
             pool.packet_verdict_settled();
@@ -393,24 +418,30 @@ fn batch_rejection_falls_back_to_exact_per_job_verdicts() {
         if id == INVALID_JOB {
             signature.0[0] ^= 1;
         }
-        pool.submit(CryptoJob::Verify(EngineVerifyJob {
+        pool.submit(CryptoJob::VerifyReceiptProof(receipt_proof_verify_owed(
+            CommandId(id as u64),
             packet_hash,
             signing_key,
             signature,
-            id: CommandId(id as u64),
-            settlement: Settlement::AnnounceNow(Ok(())),
-            arrived_at: InstantMillis(0),
-        }));
+        )));
     }
 
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
     let mut completed = 0usize;
     while completed < JOBS {
         if let Some(completion) = pool.pop_completion() {
-            let CryptoResult::Verified { id, valid, .. } = completion.result else {
-                unreachable!("the test submits only verification jobs");
+            let CryptoResult::ReceiptProofVerified { owed, verification } = completion.result
+            else {
+                panic!("the test submits only receipt-proof verification jobs");
             };
-            assert_eq!(valid, id != CommandId(INVALID_JOB as u64));
+            assert_eq!(
+                verification,
+                if owed.claim.command_id() == CommandId(INVALID_JOB as u64) {
+                    ReceiptProofVerification::Invalid
+                } else {
+                    ReceiptProofVerification::Valid
+                }
+            );
             pool.record_completed(completion.worker, completion.work);
             pool.packet_verdict_settled();
             completed += 1;
@@ -432,14 +463,12 @@ fn weak_keys_never_enter_batch_verification() {
     for id in 0..2 {
         assert!(jobs
             .push(ScheduledVerifyJob {
-                job: EngineVerifyJob {
-                    packet_hash: PacketHash::new([0x91; 32]),
+                owed: receipt_proof_verify_owed(
+                    CommandId(id),
+                    PacketHash::new([0x91; 32]),
                     signing_key,
-                    signature: Ed25519Signature([0u8; Ed25519Signature::LEN]),
-                    id: CommandId(id),
-                    settlement: Settlement::AnnounceNow(Ok(())),
-                    arrived_at: InstantMillis(0),
-                },
+                    Ed25519Signature([0u8; Ed25519Signature::LEN]),
+                ),
                 work: 1,
             })
             .is_ok());

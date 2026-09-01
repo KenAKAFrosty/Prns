@@ -1,7 +1,7 @@
-use crate::crypto::{ed25519_sign, x25519_diffie_hellman, x25519_keys_for_seal};
+use crate::crypto::{ed25519_sign, ed25519_verify, x25519_diffie_hellman, x25519_keys_for_seal};
 use crate::engine::{
     CryptoOwed, Directive, EngineReaction, EngineState, InstantMillis, Journaled, OwedWork,
-    ProofRequest, ResourceDecompressionCompleted, WakeSchedules,
+    ProofRequest, ReceiptProofVerification, ResourceDecompressionCompleted, WakeSchedules,
 };
 use crate::identity::decrypt_token_in_place_with_ratchets;
 use crate::interfaces::{AttachedInterfaces, InterfaceId, InterfaceIfac, InterfaceStatus};
@@ -98,6 +98,26 @@ where
     while let Some(work) = pending.pop_front() {
         match work {
             InlineReadyWork::Crypto(crypto) => match crypto {
+                CryptoOwed::ReceiptProofVerify(owed) => {
+                    let verification = if ed25519_verify(
+                        owed.signing_key.as_ed25519(),
+                        owed.packet_hash.as_bytes(),
+                        &owed.signature,
+                    )
+                    .is_ok()
+                    {
+                        ReceiptProofVerification::Valid
+                    } else {
+                        ReceiptProofVerification::Invalid
+                    };
+                    wake.compose(engine.resume_receipt_proof(
+                        owed,
+                        verification,
+                        &mut |reaction| {
+                            route_reaction(reaction, egress, ifacs, pacers, now, on_journaled);
+                        },
+                    ));
+                }
                 CryptoOwed::Encrypt(owed) => {
                     let (ephemeral_public, shared) =
                         x25519_keys_for_seal(&owed.ephemeral_secret, &owed.dh_target);

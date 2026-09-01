@@ -767,20 +767,61 @@ mod tests {
         bytes
     }
 
-    fn resolve_deferred_proof(
+    fn prepare_receipt_proof_verify(
         state: &mut EngineState<TestStorageLayout>,
         proof: &[u8],
         arrived_at: InstantMillis,
-    ) -> crate::routing::proof::DeferredProof {
+    ) -> crate::engine::ReceiptProofVerifyOwed {
         let (header, payload) = WirePacketHeader::parse(proof).unwrap();
         state
-            .settle_receipt_proof_deferred(
+            .prepare_receipt_proof_verify(
                 payload,
                 &DestinationHash::from_address(header.address),
                 PacketHash::of_wire_packet(proof).unwrap(),
                 arrived_at,
             )
             .expect("the proof resolves its outstanding receipt")
+    }
+
+    fn ingest_receipt_proof_verify(
+        state: &mut EngineState<TestStorageLayout>,
+        proof: &mut [u8],
+        arrived_at: InstantMillis,
+    ) -> crate::engine::ReceiptProofVerifyOwed {
+        match state.ingest_packet_with(
+            InboundPacket {
+                arrived_at,
+                source_interface: arrival(),
+                bytes: proof,
+            },
+            AttachedInterfaces::new(&transporting_interfaces()),
+        ) {
+            IngestPacketOutcome::OwesReceiptProofVerify(owed) => owed,
+            other => panic!("receipt proof should request verification, got {other:?}"),
+        }
+    }
+
+    fn receipt_proof_verification(
+        owed: &crate::engine::ReceiptProofVerifyOwed,
+    ) -> crate::engine::ReceiptProofVerification {
+        if crate::crypto::ed25519_verify(
+            owed.signing_key.as_ed25519(),
+            owed.packet_hash.as_bytes(),
+            &owed.signature,
+        )
+        .is_ok()
+        {
+            crate::engine::ReceiptProofVerification::Valid
+        } else {
+            crate::engine::ReceiptProofVerification::Invalid
+        }
+    }
+
+    fn resume_receipt_proof(
+        state: &mut EngineState<TestStorageLayout>,
+        owed: crate::engine::ReceiptProofVerifyOwed,
+    ) {
+        state.resume_receipt_proof(owed, receipt_proof_verification(&owed), &mut |_| {});
     }
 
     #[test]
@@ -1168,7 +1209,9 @@ mod tests {
 
     #[test]
     fn a_python_minted_proof_settles_the_tracked_send_with_its_rtt() {
-        use crate::engine::{DeliveryEvidence, DeliveryProof, PacketReceiptDelivered, ProofIngest};
+        use crate::engine::{
+            DeliveryEvidence, DeliveryProof, PacketReceiptDelivered, ReceiptProofClaim,
+        };
 
         let (mut state, wire) = unratcheted_neighbor_with_a_tracked_send(b"proof-parity", 1_000);
         assert_eq!(wire, bytes_from_hex(RNS_1_4_2_SEALED_FOR_PROOF));
@@ -1178,23 +1221,18 @@ mod tests {
 
         let mut proof = bytes_from_hex(RNS_1_4_2_IMPLICIT_PROOF);
         let proof_packet_hash = PacketHash::of_wire_packet(&proof).unwrap();
+        let owed = ingest_receipt_proof_verify(&mut state, &mut proof, InstantMillis(1_250));
         assert_eq!(
-            state.ingest_packet_with(
-                InboundPacket {
-                    arrived_at: InstantMillis(1_250),
-                    source_interface: arrival(),
-                    bytes: &mut proof,
-                },
-                AttachedInterfaces::new(&transporting_interfaces()),
-            ),
-            IngestPacketOutcome::Proof(ProofIngest::SendSinglePacketDelivered {
+            owed.claim,
+            ReceiptProofClaim::SendSinglePacket {
                 id: CommandId(7),
                 delivered: PacketReceiptDelivered {
                     rtt: crate::units::RttMillis::new(250),
                     evidence: DeliveryEvidence::Proof(DeliveryProof::Implicit(proof_packet_hash)),
                 },
-            }),
+            },
         );
+        resume_receipt_proof(&mut state, owed);
         assert_eq!(state.receipts.len(), 0);
         let row = state.routing_table.path_row(&peer_destination()).unwrap();
         assert_eq!(row.last_route_activity_at, InstantMillis(1_250));
@@ -1214,7 +1252,7 @@ mod tests {
                 },
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
-            IngestPacketOutcome::Proof(ProofIngest::Ignored),
+            IngestPacketOutcome::ReceiptProofIgnored,
             "settlement removed the receipt, so a replayed proof finds nothing",
         );
         let row = state.routing_table.path_row(&peer_destination()).unwrap();
@@ -1223,10 +1261,8 @@ mod tests {
     }
 
     #[test]
-    fn deferred_proof_evidence_waits_for_verification_and_uses_arrival_time() {
+    fn receipt_proof_evidence_waits_for_verification_and_uses_arrival_time() {
         use crate::crypto::{ed25519_sign, Ed25519SecretKey, Ed25519Verifier};
-        use crate::engine::ProofIngest;
-
         let (mut state, wire) = unratcheted_neighbor_with_a_tracked_send(b"proof-parity", 1_000);
         let proven = PacketHash::of_wire_packet(&wire).unwrap();
         state
@@ -1235,7 +1271,7 @@ mod tests {
 
         let forged_signature = ed25519_sign(&Ed25519SecretKey::new([0x99; 32]), proven.as_bytes());
         let forged_packet = proof_packet(&forged_signature.0, &proven);
-        let forged = resolve_deferred_proof(&mut state, &forged_packet, InstantMillis(1_200));
+        let forged = prepare_receipt_proof_verify(&mut state, &forged_packet, InstantMillis(1_200));
         assert!(
             Ed25519Verifier::new(forged.signing_key.as_ed25519())
                 .unwrap()
@@ -1249,22 +1285,23 @@ mod tests {
         assert_eq!(row.responsiveness, RouteResponsiveness::Unresponsive);
 
         let proof = bytes_from_hex(RNS_1_4_2_IMPLICIT_PROOF);
-        let verified = resolve_deferred_proof(&mut state, &proof, InstantMillis(1_250));
+        let verified = prepare_receipt_proof_verify(&mut state, &proof, InstantMillis(1_250));
         assert!(Ed25519Verifier::new(verified.signing_key.as_ed25519())
             .unwrap()
             .verify(verified.packet_hash.as_bytes(), &verified.signature)
             .is_ok(),);
-        let ProofIngest::SendSinglePacketDelivered { id, .. } = verified.ingest else {
-            panic!("the deferred proof belongs to the ordinary send");
+        let crate::engine::ReceiptProofClaim::SendSinglePacket { .. } = verified.claim else {
+            panic!("the proof candidate belongs to the ordinary send");
         };
 
         let row = state.routing_table.path_row(&peer_destination()).unwrap();
         assert_eq!(row.last_route_activity_at, InstantMillis(0));
         assert_eq!(row.responsiveness, RouteResponsiveness::Unresponsive);
         assert_eq!(state.receipts.len(), 1, "resolve is read-only");
-        assert_eq!(
-            state.settle_resolved_receipt_proof(id, &verified.packet_hash, verified.arrived_at,),
-            crate::engine::ResolvedReceiptSettlement::Settled,
+        state.resume_receipt_proof(
+            verified,
+            crate::engine::ReceiptProofVerification::Valid,
+            &mut |_| {},
         );
 
         let row = state.routing_table.path_row(&peer_destination()).unwrap();
@@ -1275,11 +1312,17 @@ mod tests {
         );
         assert_eq!(row.responsiveness, RouteResponsiveness::Responsive);
         assert!(state.receipts.is_empty());
+        let mut duplicate_reactions = 0;
         assert_eq!(
-            state.settle_resolved_receipt_proof(id, &verified.packet_hash, InstantMillis(1_300),),
-            crate::engine::ResolvedReceiptSettlement::NoMatchingReceipt,
-            "a duplicate worker result names why it cannot settle again",
+            state.resume_receipt_proof(
+                verified,
+                crate::engine::ReceiptProofVerification::Valid,
+                &mut |_| duplicate_reactions += 1,
+            ),
+            crate::engine::WakeSchedules::UNCHANGED,
+            "a stale duplicate completion has no engine effect",
         );
+        assert_eq!(duplicate_reactions, 0);
     }
 
     #[test]
@@ -1309,20 +1352,9 @@ mod tests {
         );
 
         let mut proof = bytes_from_hex(RNS_1_4_2_IMPLICIT_PROOF);
-        assert!(matches!(
-            state.ingest_packet_with(
-                InboundPacket {
-                    arrived_at: InstantMillis(1_250),
-                    source_interface: arrival(),
-                    bytes: &mut proof,
-                },
-                AttachedInterfaces::new(&transporting_interfaces()),
-            ),
-            IngestPacketOutcome::Proof(crate::engine::ProofIngest::SendSinglePacketDelivered {
-                id: CommandId(7),
-                ..
-            }),
-        ));
+        let owed = ingest_receipt_proof_verify(&mut state, &mut proof, InstantMillis(1_250));
+        assert_eq!(owed.claim.command_id(), CommandId(7));
+        resume_receipt_proof(&mut state, owed);
         let row = state.routing_table.path_row(&peer_destination()).unwrap();
         assert_eq!(row.last_route_activity_at, InstantMillis(0));
         assert_eq!(row.responsiveness, RouteResponsiveness::Unresponsive);
@@ -1331,7 +1363,9 @@ mod tests {
     #[test]
     fn an_explicit_proof_settles_the_send_too() {
         use crate::crypto::{ed25519_sign, Ed25519SecretKey};
-        use crate::engine::{DeliveryEvidence, DeliveryProof, PacketReceiptDelivered, ProofIngest};
+        use crate::engine::{
+            DeliveryEvidence, DeliveryProof, PacketReceiptDelivered, ReceiptProofClaim,
+        };
         use crate::routing::proof::EXPLICIT_PROOF_PAYLOAD_LEN;
 
         let (mut state, wire) = unratcheted_neighbor_with_a_tracked_send(b"explicitly", 2_000);
@@ -1344,29 +1378,26 @@ mod tests {
         let mut packet = proof_packet(&payload, &proven);
         let proof_packet_hash = PacketHash::of_wire_packet(&packet).unwrap();
 
+        let owed = ingest_receipt_proof_verify(&mut state, &mut packet, InstantMillis(2_500));
         assert_eq!(
-            state.ingest_packet_with(
-                InboundPacket {
-                    arrived_at: InstantMillis(2_500),
-                    source_interface: arrival(),
-                    bytes: &mut packet,
-                },
-                AttachedInterfaces::new(&transporting_interfaces()),
-            ),
-            IngestPacketOutcome::Proof(ProofIngest::SendSinglePacketDelivered {
+            owed.claim,
+            ReceiptProofClaim::SendSinglePacket {
                 id: CommandId(7),
                 delivered: PacketReceiptDelivered {
                     rtt: crate::units::RttMillis::new(500),
                     evidence: DeliveryEvidence::Proof(DeliveryProof::Explicit(proof_packet_hash)),
                 },
-            }),
+            },
         );
+        resume_receipt_proof(&mut state, owed);
         assert_eq!(state.receipts.len(), 0);
     }
 
     #[test]
     fn a_valid_proof_cannot_credit_a_replacement_route() {
-        use crate::engine::{DeliveryEvidence, DeliveryProof, PacketReceiptDelivered, ProofIngest};
+        use crate::engine::{
+            DeliveryEvidence, DeliveryProof, PacketReceiptDelivered, ReceiptProofClaim,
+        };
 
         let (mut state, _) = unratcheted_neighbor_with_a_tracked_send(b"proof-parity", 1_000);
         let original = state
@@ -1389,23 +1420,18 @@ mod tests {
 
         let mut proof = bytes_from_hex(RNS_1_4_2_IMPLICIT_PROOF);
         let proof_packet_hash = PacketHash::of_wire_packet(&proof).unwrap();
+        let owed = ingest_receipt_proof_verify(&mut state, &mut proof, InstantMillis(1_250));
         assert_eq!(
-            state.ingest_packet_with(
-                InboundPacket {
-                    arrived_at: InstantMillis(1_250),
-                    source_interface: arrival(),
-                    bytes: &mut proof,
-                },
-                AttachedInterfaces::new(&transporting_interfaces()),
-            ),
-            IngestPacketOutcome::Proof(ProofIngest::SendSinglePacketDelivered {
+            owed.claim,
+            ReceiptProofClaim::SendSinglePacket {
                 id: CommandId(7),
                 delivered: PacketReceiptDelivered {
                     rtt: crate::units::RttMillis::new(250),
                     evidence: DeliveryEvidence::Proof(DeliveryProof::Implicit(proof_packet_hash)),
                 },
-            }),
+            },
         );
+        resume_receipt_proof(&mut state, owed);
         let row = state.routing_table.path_row(&peer_destination()).unwrap();
         assert_eq!(row.last_route_activity_at, InstantMillis(0));
         assert_eq!(row.responsiveness, RouteResponsiveness::Unresponsive);
@@ -1414,8 +1440,6 @@ mod tests {
     #[test]
     fn a_forged_proof_leaves_the_send_outstanding() {
         use crate::crypto::{ed25519_sign, Ed25519SecretKey};
-        use crate::engine::ProofIngest;
-
         let (mut state, wire) = unratcheted_neighbor_with_a_tracked_send(b"unforgeable", 1_000);
         state
             .routing_table
@@ -1424,17 +1448,12 @@ mod tests {
         let forged = ed25519_sign(&Ed25519SecretKey::new([0x99; 32]), proven.as_bytes());
         let mut packet = proof_packet(&forged.0, &proven);
 
+        let owed = ingest_receipt_proof_verify(&mut state, &mut packet, InstantMillis(1_250));
         assert_eq!(
-            state.ingest_packet_with(
-                InboundPacket {
-                    arrived_at: InstantMillis(1_250),
-                    source_interface: arrival(),
-                    bytes: &mut packet,
-                },
-                AttachedInterfaces::new(&transporting_interfaces()),
-            ),
-            IngestPacketOutcome::Proof(ProofIngest::Ignored),
+            receipt_proof_verification(&owed),
+            crate::engine::ReceiptProofVerification::Invalid,
         );
+        resume_receipt_proof(&mut state, owed);
         assert_eq!(state.receipts.len(), 1, "the timeout still owns the send");
         let row = state.routing_table.path_row(&peer_destination()).unwrap();
         assert_eq!(row.last_route_activity_at, InstantMillis(0));
@@ -1443,8 +1462,6 @@ mod tests {
 
     #[test]
     fn an_alien_length_proof_payload_is_ignored() {
-        use crate::engine::ProofIngest;
-
         let mut state = hearer();
         let mut packet = proof_packet(&[0u8; 65], &PacketHash::new([0xAA; 32]));
         assert_eq!(
@@ -1456,7 +1473,7 @@ mod tests {
                 },
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
-            IngestPacketOutcome::Proof(ProofIngest::Ignored),
+            IngestPacketOutcome::ReceiptProofIgnored,
         );
     }
 

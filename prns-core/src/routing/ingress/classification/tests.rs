@@ -77,19 +77,6 @@ fn rejected_packets_never_expose_a_canonical_hash() {
 }
 
 #[test]
-fn classified_proof_exposes_its_parsed_fast_path_view() {
-    let mut bytes = header_bytes(PacketType::Proof);
-    let expected_address = WirePacketHeader::parse(&bytes).unwrap().0.address;
-    let classified = ClassifiedInboundPacket::classify(InboundPacket {
-        arrived_at: InstantMillis(9),
-        source_interface: iface(0x02),
-        bytes: &mut bytes,
-    });
-
-    assert_eq!(classified.proof(), Some((expected_address, &[][..])));
-}
-
-#[test]
 fn recognized_non_announce_packets_classify_from_the_header() {
     for packet_type in [PacketType::Data, PacketType::LinkRequest, PacketType::Proof] {
         let mut bytes = header_bytes(packet_type);
