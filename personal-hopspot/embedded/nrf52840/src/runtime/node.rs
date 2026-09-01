@@ -54,7 +54,7 @@ pub(super) type Node = PrnsNode<
     personal_hopspot_core::node_pages::NodePageRoutes,
     for<'a> fn(PrnsEvent<'a>, &()),
     EngineStorageType,
-    EmbassyHost<fn(&mut [u8])>,
+    EmbassyHost<Mtx, super::entropy::NrfEntropySource>,
     Mtx,
     LANE_COUNT,
     INTERFACE_CAPACITY,

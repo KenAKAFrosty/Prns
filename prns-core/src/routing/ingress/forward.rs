@@ -166,7 +166,7 @@ mod tests {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&interfaces),
                 now: InstantMillis(1_000),
-                fill_entropy: &mut |_| {},
+                fill_random: &mut |_| {},
                 should_prove: &mut |_| false,
                 should_accept_resource:
                     &mut |_: &crate::routing::links::resources::ResourceOffer| false,

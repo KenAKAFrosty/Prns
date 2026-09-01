@@ -36,25 +36,14 @@ pub fn bootstrap_flash_node_identity_with_runtime_entropy<
     bootstrap_flash_node_identity_inner(vault, &mut |output| entropy.fill_random(output))
 }
 
-#[deprecated(
-    since = "0.4.0",
-    note = "use bootstrap_flash_node_identity_with_runtime_entropy"
-)]
-pub fn bootstrap_flash_node_identity<F: NorFlash, const SLOTS: usize>(
-    vault: &mut FlashVault<F, SLOTS>,
-    fill_entropy: &mut impl FnMut(&mut [u8]),
-) -> IdentityBootstrap<HopspotNodeIdentity, FlashIdentityError<F::Error>> {
-    bootstrap_flash_node_identity_inner(vault, fill_entropy)
-}
-
 fn bootstrap_flash_node_identity_inner<F: NorFlash, const SLOTS: usize>(
     vault: &mut FlashVault<F, SLOTS>,
-    fill_entropy: &mut impl FnMut(&mut [u8]),
+    fill_random: &mut impl FnMut(&mut [u8]),
 ) -> IdentityBootstrap<HopspotNodeIdentity, FlashIdentityError<F::Error>> {
     let label = match storage_label(NODE_IDENTITY_STORAGE) {
         Ok(label) => label,
         Err(error) => {
-            return IdentityBootstrap::ephemeral(generate_node_identity(fill_entropy), error);
+            return IdentityBootstrap::ephemeral(generate_node_identity(fill_random), error);
         }
     };
     match vault.load(&label) {
@@ -63,29 +52,23 @@ fn bootstrap_flash_node_identity_inner<F: NorFlash, const SLOTS: usize>(
             Ok(Some(_)) => recover_node_identity(
                 vault,
                 &label,
-                fill_entropy,
+                fill_random,
                 FlashIdentityError::WrongRecordKind,
             ),
-            Ok(None) => create_node_identity(vault, &label, fill_entropy),
-            Err(error) if recoverable(&error) => recover_node_identity(
-                vault,
-                &label,
-                fill_entropy,
-                FlashIdentityError::Vault(error),
-            ),
+            Ok(None) => create_node_identity(vault, &label, fill_random),
+            Err(error) if recoverable(&error) => {
+                recover_node_identity(vault, &label, fill_random, FlashIdentityError::Vault(error))
+            }
             Err(error) => IdentityBootstrap::ephemeral(
-                generate_node_identity(fill_entropy),
+                generate_node_identity(fill_random),
                 FlashIdentityError::Vault(error),
             ),
         },
-        Err(error) if recoverable(&error) => recover_node_identity(
-            vault,
-            &label,
-            fill_entropy,
-            FlashIdentityError::Vault(error),
-        ),
+        Err(error) if recoverable(&error) => {
+            recover_node_identity(vault, &label, fill_random, FlashIdentityError::Vault(error))
+        }
         Err(error) => IdentityBootstrap::ephemeral(
-            generate_node_identity(fill_entropy),
+            generate_node_identity(fill_random),
             FlashIdentityError::Vault(error),
         ),
     }
@@ -102,43 +85,29 @@ pub fn bootstrap_flash_ble_identity_with_runtime_entropy<
     bootstrap_flash_ble_identity_inner(vault, &mut |output| entropy.fill_random(output))
 }
 
-#[deprecated(
-    since = "0.4.0",
-    note = "use bootstrap_flash_ble_identity_with_runtime_entropy"
-)]
-pub fn bootstrap_flash_ble_identity<F: NorFlash, const SLOTS: usize>(
-    vault: &mut FlashVault<F, SLOTS>,
-    fill_entropy: &mut impl FnMut(&mut [u8]),
-) -> IdentityBootstrap<BleIdentity, FlashIdentityError<F::Error>> {
-    bootstrap_flash_ble_identity_inner(vault, fill_entropy)
-}
-
 fn bootstrap_flash_ble_identity_inner<F: NorFlash, const SLOTS: usize>(
     vault: &mut FlashVault<F, SLOTS>,
-    fill_entropy: &mut impl FnMut(&mut [u8]),
+    fill_random: &mut impl FnMut(&mut [u8]),
 ) -> IdentityBootstrap<BleIdentity, FlashIdentityError<F::Error>> {
     let label = match storage_label(BLE_IDENTITY_STORAGE) {
         Ok(label) => label,
         Err(error) => {
-            return IdentityBootstrap::ephemeral(generate_ble_identity(fill_entropy), error);
+            return IdentityBootstrap::ephemeral(generate_ble_identity(fill_random), error);
         }
     };
     match vault.load(&label) {
         Ok(Some(_)) => recover_ble_identity(
             vault,
             &label,
-            fill_entropy,
+            fill_random,
             FlashIdentityError::WrongRecordKind,
         ),
-        Ok(None) => load_ble_blob(vault, &label, fill_entropy),
-        Err(error) if recoverable(&error) => recover_ble_identity(
-            vault,
-            &label,
-            fill_entropy,
-            FlashIdentityError::Vault(error),
-        ),
+        Ok(None) => load_ble_blob(vault, &label, fill_random),
+        Err(error) if recoverable(&error) => {
+            recover_ble_identity(vault, &label, fill_random, FlashIdentityError::Vault(error))
+        }
         Err(error) => IdentityBootstrap::ephemeral(
-            generate_ble_identity(fill_entropy),
+            generate_ble_identity(fill_random),
             FlashIdentityError::Vault(error),
         ),
     }
@@ -147,14 +116,14 @@ fn bootstrap_flash_ble_identity_inner<F: NorFlash, const SLOTS: usize>(
 fn load_ble_blob<F: NorFlash, const SLOTS: usize>(
     vault: &mut FlashVault<F, SLOTS>,
     label: &IdentityLabel,
-    fill_entropy: &mut impl FnMut(&mut [u8]),
+    fill_random: &mut impl FnMut(&mut [u8]),
 ) -> IdentityBootstrap<BleIdentity, FlashIdentityError<F::Error>> {
     match vault.stored_blob_len(label) {
-        Ok(None) => create_ble_identity(vault, label, fill_entropy),
+        Ok(None) => create_ble_identity(vault, label, fill_random),
         Ok(Some(len)) if len != PERSISTED_BLE_IDENTITY_LEN => recover_ble_identity(
             vault,
             label,
-            fill_entropy,
+            fill_random,
             FlashIdentityError::BleRecordLength(len),
         ),
         Ok(Some(_)) => {
@@ -165,39 +134,39 @@ fn load_ble_blob<F: NorFlash, const SLOTS: usize>(
                     Ok(None) => recover_ble_identity(
                         vault,
                         label,
-                        fill_entropy,
+                        fill_random,
                         FlashIdentityError::EmptyBleRecord,
                     ),
                     Err(error) => recover_ble_identity(
                         vault,
                         label,
-                        fill_entropy,
+                        fill_random,
                         FlashIdentityError::InvalidBleRecord(error),
                     ),
                 },
                 Ok(None) => recover_ble_identity(
                     vault,
                     label,
-                    fill_entropy,
+                    fill_random,
                     FlashIdentityError::WrongRecordKind,
                 ),
                 Err(error) if recoverable(&error) => recover_ble_identity(
                     vault,
                     label,
-                    fill_entropy,
+                    fill_random,
                     FlashIdentityError::Vault(error),
                 ),
                 Err(error) => IdentityBootstrap::ephemeral(
-                    generate_ble_identity(fill_entropy),
+                    generate_ble_identity(fill_random),
                     FlashIdentityError::Vault(error),
                 ),
             }
         }
         Err(error) if recoverable(&error) => {
-            recover_ble_identity(vault, label, fill_entropy, FlashIdentityError::Vault(error))
+            recover_ble_identity(vault, label, fill_random, FlashIdentityError::Vault(error))
         }
         Err(error) => IdentityBootstrap::ephemeral(
-            generate_ble_identity(fill_entropy),
+            generate_ble_identity(fill_random),
             FlashIdentityError::Vault(error),
         ),
     }
@@ -206,19 +175,19 @@ fn load_ble_blob<F: NorFlash, const SLOTS: usize>(
 fn create_node_identity<F: NorFlash, const SLOTS: usize>(
     vault: &mut FlashVault<F, SLOTS>,
     label: &IdentityLabel,
-    fill_entropy: &mut impl FnMut(&mut [u8]),
+    fill_random: &mut impl FnMut(&mut [u8]),
 ) -> IdentityBootstrap<HopspotNodeIdentity, FlashIdentityError<F::Error>> {
-    let identity = generate_node_identity(fill_entropy);
+    let identity = generate_node_identity(fill_random);
     match vault.store(label, identity.secret()) {
         Ok(()) => match verify_node_identity(vault, label, &identity) {
             Ok(()) => IdentityBootstrap::created(identity),
             Err(error) if recovery_allowed(&error) => {
-                recover_node_identity(vault, label, fill_entropy, error)
+                recover_node_identity(vault, label, fill_random, error)
             }
             Err(error) => IdentityBootstrap::ephemeral(identity, error),
         },
         Err(error) if recoverable(&error) => {
-            recover_node_identity(vault, label, fill_entropy, FlashIdentityError::Vault(error))
+            recover_node_identity(vault, label, fill_random, FlashIdentityError::Vault(error))
         }
         Err(error) => IdentityBootstrap::ephemeral(identity, FlashIdentityError::Vault(error)),
     }
@@ -227,16 +196,16 @@ fn create_node_identity<F: NorFlash, const SLOTS: usize>(
 fn recover_node_identity<F: NorFlash, const SLOTS: usize>(
     vault: &mut FlashVault<F, SLOTS>,
     label: &IdentityLabel,
-    fill_entropy: &mut impl FnMut(&mut [u8]),
+    fill_random: &mut impl FnMut(&mut [u8]),
     cause: FlashIdentityError<F::Error>,
 ) -> IdentityBootstrap<HopspotNodeIdentity, FlashIdentityError<F::Error>> {
     if let Err(error) = vault.erase_all() {
         return IdentityBootstrap::ephemeral(
-            generate_node_identity(fill_entropy),
+            generate_node_identity(fill_random),
             FlashIdentityError::Vault(error),
         );
     }
-    let identity = generate_node_identity(fill_entropy);
+    let identity = generate_node_identity(fill_random);
     match vault.store(label, identity.secret()) {
         Ok(()) => match verify_node_identity(vault, label, &identity) {
             Ok(()) => IdentityBootstrap::recovered(identity, cause),
@@ -249,20 +218,20 @@ fn recover_node_identity<F: NorFlash, const SLOTS: usize>(
 fn create_ble_identity<F: NorFlash, const SLOTS: usize>(
     vault: &mut FlashVault<F, SLOTS>,
     label: &IdentityLabel,
-    fill_entropy: &mut impl FnMut(&mut [u8]),
+    fill_random: &mut impl FnMut(&mut [u8]),
 ) -> IdentityBootstrap<BleIdentity, FlashIdentityError<F::Error>> {
-    let identity = generate_ble_identity(fill_entropy);
+    let identity = generate_ble_identity(fill_random);
     let record = Zeroizing::new(encode_persisted_ble_identity(identity));
     match vault.store_blob(label, &record[..]) {
         Ok(()) => match verify_ble_identity(vault, label, identity) {
             Ok(()) => IdentityBootstrap::created(identity),
             Err(error) if recovery_allowed(&error) => {
-                recover_ble_identity(vault, label, fill_entropy, error)
+                recover_ble_identity(vault, label, fill_random, error)
             }
             Err(error) => IdentityBootstrap::ephemeral(identity, error),
         },
         Err(error) if recoverable(&error) => {
-            recover_ble_identity(vault, label, fill_entropy, FlashIdentityError::Vault(error))
+            recover_ble_identity(vault, label, fill_random, FlashIdentityError::Vault(error))
         }
         Err(error) => IdentityBootstrap::ephemeral(identity, FlashIdentityError::Vault(error)),
     }
@@ -271,16 +240,16 @@ fn create_ble_identity<F: NorFlash, const SLOTS: usize>(
 fn recover_ble_identity<F: NorFlash, const SLOTS: usize>(
     vault: &mut FlashVault<F, SLOTS>,
     label: &IdentityLabel,
-    fill_entropy: &mut impl FnMut(&mut [u8]),
+    fill_random: &mut impl FnMut(&mut [u8]),
     cause: FlashIdentityError<F::Error>,
 ) -> IdentityBootstrap<BleIdentity, FlashIdentityError<F::Error>> {
     if let Err(error) = vault.erase_all() {
         return IdentityBootstrap::ephemeral(
-            generate_ble_identity(fill_entropy),
+            generate_ble_identity(fill_random),
             FlashIdentityError::Vault(error),
         );
     }
-    let identity = generate_ble_identity(fill_entropy);
+    let identity = generate_ble_identity(fill_random);
     let record = Zeroizing::new(encode_persisted_ble_identity(identity));
     match vault.store_blob(label, &record[..]) {
         Ok(()) => match verify_ble_identity(vault, label, identity) {
@@ -348,15 +317,15 @@ fn verify_ble_identity<F: NorFlash, const SLOTS: usize>(
     }
 }
 
-fn generate_node_identity(fill_entropy: &mut impl FnMut(&mut [u8])) -> HopspotNodeIdentity {
+fn generate_node_identity(fill_random: &mut impl FnMut(&mut [u8])) -> HopspotNodeIdentity {
     let mut secret = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
-    fill_entropy(&mut secret[..]);
+    fill_random(&mut secret[..]);
     HopspotNodeIdentity::new(secret)
 }
 
-fn generate_ble_identity(fill_entropy: &mut impl FnMut(&mut [u8])) -> BleIdentity {
+fn generate_ble_identity(fill_random: &mut impl FnMut(&mut [u8])) -> BleIdentity {
     let mut bytes = [0u8; BLE_IDENTITY_LEN];
-    fill_entropy(&mut bytes);
+    fill_random(&mut bytes);
     BleIdentity::new(bytes)
 }
 

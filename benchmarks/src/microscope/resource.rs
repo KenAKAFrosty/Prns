@@ -219,7 +219,7 @@ impl ResourceCycle {
             IngestIo {
                 interfaces: AttachedInterfaces::new(interfaces),
                 now,
-                fill_entropy: &mut |bytes| initiator_entropy.fill(bytes),
+                fill_random: &mut |bytes| initiator_entropy.fill(bytes),
                 should_prove: &mut |_| true,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| capture.absorb(reaction, scratch),
@@ -247,7 +247,7 @@ impl ResourceCycle {
             IngestIo {
                 interfaces: AttachedInterfaces::new(interfaces),
                 now,
-                fill_entropy: &mut |bytes| responder_entropy.fill(bytes),
+                fill_random: &mut |bytes| responder_entropy.fill(bytes),
                 should_prove: &mut |_| true,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| capture.absorb(reaction, scratch),

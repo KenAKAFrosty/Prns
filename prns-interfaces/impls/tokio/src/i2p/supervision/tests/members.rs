@@ -25,7 +25,7 @@ struct MockSeam {
 }
 
 impl InterfaceSeam for MockSeam {
-    fn fill_entropy(&mut self, bytes: &mut [u8]) {
+    fn fill_random(&mut self, bytes: &mut [u8]) {
         bytes.fill(0);
     }
 

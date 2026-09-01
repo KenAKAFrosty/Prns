@@ -31,7 +31,7 @@ impl<S: StorageLayout> EngineState<S> {
         link_id: &LinkId,
         hash: &ResourceHash,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> EmitResourcePullOutcome
     where
@@ -95,7 +95,7 @@ impl<S: StorageLayout> EngineState<S> {
         let fire_on = *attached_interface;
         let rtt_millis = rtt.millis();
         let mut iv = [0u8; 16];
-        fill_entropy(&mut iv);
+        fill_random(&mut iv);
         let mut request_wire_len = 0u64;
         {
             let mut fill = |slot: &mut [u8]| -> Option<usize> {
@@ -1323,7 +1323,7 @@ mod loop_tests {
                     crate::engine::test_support::routable_descriptor(lane()),
                 ]),
                 now: InstantMillis(2_200),
-                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+                fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
                 should_accept_resource:
                     &mut |_: &crate::routing::links::resources::ResourceOffer| false,

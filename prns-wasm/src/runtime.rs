@@ -745,7 +745,7 @@ impl PrnsRuntime {
             personal_rns::engine::IngestIo {
                 interfaces: personal_rns::interfaces::AttachedInterfaces::new(&interfaces_snapshot),
                 now: InstantMillis(now_ms),
-                fill_entropy: &mut |out| entropy.fill(out),
+                fill_random: &mut |out| entropy.fill(out),
                 should_prove: &mut should_prove,
                 should_accept_resource: &mut should_accept_resource,
                 sink: &mut |reaction| {

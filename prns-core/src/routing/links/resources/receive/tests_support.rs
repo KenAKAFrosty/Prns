@@ -244,7 +244,7 @@ fn feed_inner<S: StorageLayout>(
         IngestIo {
             interfaces: AttachedInterfaces::new(&[routable_descriptor(source_interface)]),
             now: InstantMillis(at),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource,
             sink: &mut |reaction| match reaction {

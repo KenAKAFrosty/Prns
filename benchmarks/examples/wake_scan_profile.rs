@@ -90,7 +90,7 @@ fn initiator_with_route(announce: &[u8]) -> EngineState<GrowableHeap> {
         IngestIo {
             interfaces: AttachedInterfaces::new(&interfaces()),
             now: InstantMillis(1_000),
-            fill_entropy: &mut |bytes| entropy.fill(bytes),
+            fill_random: &mut |bytes| entropy.fill(bytes),
             should_prove: &mut |_| true,
             should_accept_resource: &mut |_| false,
             sink: &mut |reaction| {

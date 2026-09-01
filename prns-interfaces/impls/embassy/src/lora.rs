@@ -404,7 +404,7 @@ fn choose_backoff_entropy<Seam: InterfaceSeam>(
 ) -> ChannelAccessAction {
     let mut entropy = [0u8; 2];
     loop {
-        seam.fill_entropy(&mut entropy);
+        seam.fill_random(&mut entropy);
         if access.choose_backoff(u16::from_le_bytes(entropy)) {
             return access.after_entropy();
         }
@@ -1475,7 +1475,7 @@ mod tests {
     }
 
     impl InterfaceSeam for RecordingInboundSeam {
-        fn fill_entropy(&mut self, bytes: &mut [u8]) {
+        fn fill_random(&mut self, bytes: &mut [u8]) {
             bytes.fill(0);
         }
 

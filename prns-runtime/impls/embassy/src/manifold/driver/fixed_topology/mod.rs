@@ -210,7 +210,7 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
                             IngestIo {
                                 interfaces,
                                 now,
-                                fill_entropy: &mut |entropy| host.fill_entropy(entropy),
+                                fill_random: &mut |entropy| host.fill_random(entropy),
                                 should_prove: &mut should_prove,
                                 should_accept_resource: &mut should_accept_resource,
                                 sink: &mut |reaction| {
@@ -246,7 +246,7 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
                     issued,
                     interfaces,
                     now,
-                    &mut |entropy| host.fill_entropy(entropy),
+                    &mut |entropy| host.fill_random(entropy),
                     &mut |reaction| {
                         route_reaction(
                             reaction,
@@ -267,7 +267,7 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
                     reason,
                     now,
                     interfaces,
-                    &mut |bytes| host.fill_entropy(bytes),
+                    &mut |bytes| host.fill_random(bytes),
                     &mut |reaction| {
                         route_reaction(
                             reaction,

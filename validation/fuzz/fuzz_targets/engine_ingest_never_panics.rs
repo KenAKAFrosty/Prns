@@ -54,7 +54,7 @@ fn ingest_frame(
         IngestIo {
             interfaces: AttachedInterfaces::new(descriptors),
             now: InstantMillis(now),
-            fill_entropy: &mut |buf: &mut [u8]| {
+            fill_random: &mut |buf: &mut [u8]| {
                 for byte in buf.iter_mut() {
                     *byte = *entropy_byte;
                     *entropy_byte = entropy_byte.wrapping_add(1);

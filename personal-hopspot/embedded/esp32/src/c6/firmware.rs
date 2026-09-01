@@ -17,14 +17,14 @@ pub async fn run(spawner: Spawner) {
         _rtc,
     } = XiaoEsp32C6::bringup();
 
-    let mut runtime_entropy = super::entropy::seed_runtime_entropy(&identity_entropy)
+    let mut boot_entropy = super::entropy::seed_runtime_entropy(&identity_entropy)
         .expect("the enabled C6 boot TRNG fills the initial seed");
-    let node_bootstrap = crate::identity::bootstrap_node_identity(&mut runtime_entropy);
+    let node_bootstrap = crate::identity::bootstrap_node_identity(&mut boot_entropy);
     crate::identity::log_persistence("node", node_bootstrap.persistence());
     let remote_control_bootstrap = crate::identity::C6_REMOTE_CONTROL_IDENTITY_FLASH
-        .load_or_generate_with_runtime_entropy(&mut runtime_entropy)
+        .load_or_generate_with_runtime_entropy(&mut boot_entropy)
         .expect("RemoteControl identity bootstrap failed");
-    let ble_bootstrap = crate::identity::bootstrap_ble_identity(&mut runtime_entropy);
+    let ble_bootstrap = crate::identity::bootstrap_ble_identity(&mut boot_entropy);
     crate::identity::log_persistence("Bluetooth", ble_bootstrap.persistence());
     drop(identity_entropy);
 
@@ -35,7 +35,7 @@ pub async fn run(spawner: Spawner) {
             .with_rx_ba_win(3);
         let (controller, interfaces) =
             esp_radio::wifi::new(wifi, wifi_config).expect("wifi controller");
-        super::entropy::install(runtime_entropy);
+        super::entropy::install(boot_entropy);
         let esp_now_radio = interfaces.esp_now;
         let espnow_status: &'static EmbassyInterfaceStatus = mk_static!(
             EmbassyInterfaceStatus,
@@ -52,6 +52,7 @@ pub async fn run(spawner: Spawner) {
         );
         (controller, espnow, espnow_status)
     };
+    let entropy = runtime_entropy();
 
     let node_identity = node_bootstrap.into_identity();
     let transport_secret = node_identity.transport_secret();
@@ -102,11 +103,11 @@ pub async fn run(spawner: Spawner) {
         handle,
     );
 
-    let usb_seam = usb_lane.into_seam(NOTIFY.sender(), fill_random);
+    let usb_seam = usb_lane.into_seam(NOTIFY.sender(), entropy);
     spawner.spawn(usb_device_task(usb_rx, usb_tx, usb_seam).expect("usb device task fits"));
 
     #[cfg(feature = "esp-now")]
-    let espnow_seam = espnow_lane.into_seam(NOTIFY.sender(), fill_random);
+    let espnow_seam = espnow_lane.into_seam(NOTIFY.sender(), entropy);
 
     #[cfg(feature = "bluetooth-auto")]
     let ble = ble_identity
@@ -115,7 +116,7 @@ pub async fn run(spawner: Spawner) {
             let fleet: C6BleFleet = lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
             (identity, fleet)
         });
-    let host = EmbassyHost::new_with_timebase(timebase, fill_random as fn(&mut [u8]));
+    let host = EmbassyHost::new_with_timebase(timebase, entropy);
     let recipe = PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
         remote_control,

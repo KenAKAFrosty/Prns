@@ -36,7 +36,7 @@ fn an_accepted_announce_journals_the_identity_app_data_and_path_provenance() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&interfaces),
             now: arrived_at,
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_| false,
             should_accept_resource: &mut |_| false,
             sink: &mut |reaction| {

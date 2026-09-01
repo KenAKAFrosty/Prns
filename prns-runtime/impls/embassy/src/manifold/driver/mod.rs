@@ -7,7 +7,7 @@ mod packet_phy;
 mod pooled_topology;
 
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 
 #[cfg(any(test, feature = "std"))]
 pub use super::grant_lane::leaked_grant_lane;

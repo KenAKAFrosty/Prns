@@ -15,6 +15,9 @@ use embassy_net::{IpAddress, Stack};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::watch::Receiver;
 use embassy_time::{with_timeout, Duration, Instant, Ticker, Timer};
+use prns_core::entropy::EntropySource;
+use prns_core::interfaces::wifi_auto as contract;
+use prns_runtime::runtime::EntropyHandle;
 
 pub const EMBEDDED_SERVICE_DISCOVERY_CAPACITY: u8 = 1;
 pub const UDP_SERVICE_DISCOVERY_SOCKET_COUNT: u8 = 1;
@@ -85,25 +88,27 @@ impl<const TARGETS: usize> Default for UdpServiceDiscoveryStorage<TARGETS> {
     }
 }
 
-pub struct UdpServiceDiscovery<'a, const TARGETS: usize> {
+pub struct UdpServiceDiscovery<'a, S: EntropySource + 'static, const TARGETS: usize> {
     socket: UdpSocket<'a>,
     stack: Stack<'a>,
     address: Ipv6Addr,
     participation: DiscoveryParticipationReceiver,
     status: AutoWifiStatus<TARGETS>,
     storage: &'a mut UdpServiceDiscoveryStorage<TARGETS>,
-    fill_random: fn(&mut [u8]),
+    entropy: EntropyHandle<CriticalSectionRawMutex, S>,
     query_cursor: super::RoundRobinCursor,
 }
 
-impl<'a, const TARGETS: usize> UdpServiceDiscovery<'a, TARGETS> {
+impl<'a, S: EntropySource + Send + 'static, const TARGETS: usize>
+    UdpServiceDiscovery<'a, S, TARGETS>
+{
     pub fn new(
         socket: UdpSocket<'a>,
         stack: Stack<'a>,
         address: Ipv6Addr,
         status: AutoWifiStatus<TARGETS>,
         storage: &'a mut UdpServiceDiscoveryStorage<TARGETS>,
-        fill_random: fn(&mut [u8]),
+        entropy: EntropyHandle<CriticalSectionRawMutex, S>,
     ) -> Result<Self, UdpServiceDiscoveryConstructionError> {
         validate_publication_address(address)?;
         let participation = status.discovery_participation_receiver()?;
@@ -114,7 +119,7 @@ impl<'a, const TARGETS: usize> UdpServiceDiscovery<'a, TARGETS> {
             participation,
             status,
             storage,
-            fill_random,
+            entropy,
             query_cursor: super::RoundRobinCursor::new(),
         })
     }
@@ -133,7 +138,9 @@ impl<'a, const TARGETS: usize> UdpServiceDiscovery<'a, TARGETS> {
                 Either::Second(_) => continue,
             }
 
-            let instance = DiscoveryInstance::fresh(self.fill_random);
+            let mut random = [0; contract::EPHEMERAL_DISCOVERY_INSTANCE_RANDOM_BYTES];
+            self.entropy.fill_random(&mut random);
+            let instance = DiscoveryInstance::fresh(random);
             match self.activate().await {
                 PublicationActivation::Active => {
                     self.serve(&instance).await;

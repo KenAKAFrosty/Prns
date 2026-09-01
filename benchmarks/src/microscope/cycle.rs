@@ -90,7 +90,7 @@ impl Cycle {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&cycle.interfaces),
                 now: NOW,
-                fill_entropy: &mut |bytes| cycle.initiator_entropy.fill(bytes),
+                fill_random: &mut |bytes| cycle.initiator_entropy.fill(bytes),
                 should_prove: &mut |_| true,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| {
@@ -158,7 +158,7 @@ impl Cycle {
             IngestIo {
                 interfaces: AttachedInterfaces::new(interfaces),
                 now: NOW,
-                fill_entropy: &mut |bytes| responder_entropy.fill(bytes),
+                fill_random: &mut |bytes| responder_entropy.fill(bytes),
                 should_prove: &mut |_| true,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| match reaction {
@@ -199,7 +199,7 @@ impl Cycle {
             IngestIo {
                 interfaces: AttachedInterfaces::new(interfaces),
                 now: NOW,
-                fill_entropy: &mut |bytes| initiator_entropy.fill(bytes),
+                fill_random: &mut |bytes| initiator_entropy.fill(bytes),
                 should_prove: &mut |_| true,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| {

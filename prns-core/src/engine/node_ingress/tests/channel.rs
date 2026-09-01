@@ -123,7 +123,7 @@ fn feed(state: &mut EngineState<TestStorageLayout>, frame: &[u8], now: u64) -> F
         IngestIo {
             interfaces: AttachedInterfaces::new(&transporting_interfaces()),
             now: InstantMillis(now),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -254,7 +254,7 @@ fn a_channel_message_on_a_receive_only_interface_is_not_acked() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&[descriptor]),
             now: InstantMillis(2_000),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_| false,
             should_accept_resource: &mut |_| false,
             sink: &mut |reaction| match reaction {

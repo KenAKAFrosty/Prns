@@ -80,7 +80,7 @@ fn a_keepalive_echo_records_inbound_without_postponing_the_silent_outbound_arm()
         IngestIo {
             interfaces: AttachedInterfaces::new(&[routable_descriptor(lane)]),
             now: InstantMillis(2_000),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
             should_prove: &mut |_| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -141,7 +141,7 @@ fn authenticated_link_data_is_route_evidence() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&[routable_descriptor(lane)]),
             now: InstantMillis(2_000),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_| false,
             should_accept_resource: &mut |_| false,
             sink: &mut |_| {},
@@ -212,7 +212,7 @@ fn pooled_link_delivery_defers_receipt_signing_and_completion_preserves_the_wire
         IngestIo {
             interfaces: AttachedInterfaces::new(&[routable_descriptor(lane)]),
             now: InstantMillis(2_000),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_| true,
             should_accept_resource: &mut |_| false,
             sink: &mut |reaction| {

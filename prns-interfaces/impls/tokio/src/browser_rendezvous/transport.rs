@@ -106,7 +106,7 @@ impl Interface for BrowserRendezvousClient {
                 }
                 reconnect.record_connection_lifetime(connected_at.elapsed());
             }
-            let delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
+            let delay = reconnect.next_delay(|bytes| seam.fill_random(bytes));
             tokio::time::sleep(delay).await;
         }
     }

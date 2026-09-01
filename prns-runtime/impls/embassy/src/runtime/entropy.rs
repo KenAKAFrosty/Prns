@@ -39,6 +39,8 @@ where
     S: EntropySource + Send + 'static,
 {
     /// Fills `output` from the authoritative stream without exposing its generator or source.
+    // Keep the mutex and reseed path single-copy across const-generic interface seams.
+    #[inline(never)]
     pub fn fill_random(self, output: &mut [u8]) {
         if output.is_empty() {
             return;

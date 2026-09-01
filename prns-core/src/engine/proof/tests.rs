@@ -142,7 +142,7 @@ fn prove_if_proof_directive(
         IngestIo {
             interfaces: AttachedInterfaces::new(&transporting_interfaces()),
             now: InstantMillis(1_000),
-            fill_entropy: &mut |bytes| bytes.fill(0),
+            fill_random: &mut |bytes| bytes.fill(0),
             should_prove: &mut |request| {
                 seen = request.plaintext.to_vec();
                 decide(request)
@@ -194,7 +194,7 @@ fn delivery_is_journaled_before_the_prove_if_decision_and_proof_egress() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&transporting_interfaces()),
             now: InstantMillis(1_000),
-            fill_entropy: &mut |bytes| bytes.fill(0),
+            fill_random: &mut |bytes| bytes.fill(0),
             should_prove: &mut |_| {
                 steps.borrow_mut().push(Step::Decided);
                 true

@@ -78,7 +78,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         owed: AnnounceVerifyOwed,
         interfaces: AttachedInterfaces<'_>,
-        fill_entropy: &mut impl FnMut(&mut [u8]),
+        fill_random: &mut impl FnMut(&mut [u8]),
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         let mut wake = WakeSchedules::UNCHANGED;
@@ -102,7 +102,7 @@ impl<S: StorageLayout> EngineState<S> {
         let ingest = self.ingest_announce(
             identity_hash,
             &arrival,
-            fill_entropy,
+            fill_random,
             interfaces,
             &mut |removed| sink(EngineReaction::Journaled(journal_route_removal(removed))),
             &mut effects,

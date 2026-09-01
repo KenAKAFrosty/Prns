@@ -6,6 +6,7 @@ use embassy_sync::signal::Signal;
 use embassy_sync::zerocopy_channel;
 use heapless::Vec as HeaplessVec;
 use portable_atomic::{AtomicBool, AtomicU32, Ordering};
+use prns_core::entropy::EntropySource;
 use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::engine::IssuedCommand;
@@ -22,6 +23,7 @@ use crate::manifold::interface_seam::EMBEDDED_MAX_LINK_MTU;
 use super::command_handle::PrnsNodeHandle;
 use super::interface_lifecycle::{Fleet, FleetWire};
 use super::node_lifecycle::ManifoldWiring;
+use crate::runtime::EntropyHandle;
 
 #[must_use]
 pub const fn minimum_manifold_notification_capacity(lane_count: usize, lane_depth: usize) -> usize {
@@ -512,12 +514,15 @@ pub struct InterfaceLane<M: RawMutex + 'static, const FRAME: usize> {
 }
 
 impl<M: RawMutex + 'static, const FRAME: usize> InterfaceLane<M, FRAME> {
-    pub fn into_seam<const NOTIFY: usize>(
+    pub fn into_seam<S: EntropySource + Send + 'static, const NOTIFY: usize>(
         self,
         notify: Sender<'static, M, InterfaceId, NOTIFY>,
-        fill_entropy: fn(&mut [u8]),
-    ) -> EmbassyInterfaceSeam<'static, M, NOTIFY, FRAME> {
-        EmbassyInterfaceSeam::new(self.id, self.inbound, notify, self.outbound, fill_entropy)
+        entropy: EntropyHandle<M, S>,
+    ) -> EmbassyInterfaceSeam<'static, M, S, NOTIFY, FRAME>
+    where
+        M: Sync,
+    {
+        EmbassyInterfaceSeam::new(self.id, self.inbound, notify, self.outbound, entropy)
     }
 }
 

@@ -40,7 +40,7 @@ where
 {
     pub interfaces: AttachedInterfaces<'a>,
     pub now: InstantMillis,
-    pub fill_entropy: &'a mut FillEntropy,
+    pub fill_random: &'a mut FillEntropy,
     pub should_prove: &'a mut OnProofRequest,
     pub should_accept_resource: &'a mut OnResourceOffer,
     pub sink: &'a mut Sink,
@@ -110,7 +110,7 @@ impl<S: StorageLayout> EngineState<S> {
         let IngestIo {
             interfaces,
             now,
-            fill_entropy,
+            fill_random,
             should_prove,
             should_accept_resource,
             sink,
@@ -121,7 +121,7 @@ impl<S: StorageLayout> EngineState<S> {
             IngestIo {
                 interfaces,
                 now,
-                fill_entropy: &mut *fill_entropy,
+                fill_random: &mut *fill_random,
                 should_prove: &mut *should_prove,
                 should_accept_resource: &mut *should_accept_resource,
                 sink: &mut *sink,
@@ -198,7 +198,7 @@ impl<S: StorageLayout> EngineState<S> {
         let IngestIo {
             interfaces,
             now,
-            fill_entropy,
+            fill_random,
             should_prove,
             should_accept_resource,
             sink,
@@ -208,7 +208,7 @@ impl<S: StorageLayout> EngineState<S> {
         let mut effects = IngestEffects::default();
         let outcome = self.ingest_classified_with_effects(
             ingress,
-            &mut *fill_entropy,
+            &mut *fill_random,
             interfaces,
             &mut |removed| sink(EngineReaction::Journaled(journal_route_removal(removed))),
             deferred.as_deref_mut(),
@@ -316,7 +316,7 @@ impl<S: StorageLayout> EngineState<S> {
                     } = self.write_path_response_for_upstream(
                         &destination,
                         now,
-                        &mut *fill_entropy,
+                        &mut *fill_random,
                         &mut response,
                     ) {
                         sink(EngineReaction::Directive(Directive::Send {
@@ -403,7 +403,7 @@ impl<S: StorageLayout> EngineState<S> {
                 wake_schedule_changes.path_request_timeouts = self.path_request_timeouts_wake();
             }
             IngestPacketOutcome::OwesLinkRtt(owed) => {
-                self.process_owes_link_rtt(owed, source, interfaces, now, fill_entropy, sink);
+                self.process_owes_link_rtt(owed, source, interfaces, now, fill_random, sink);
             }
             IngestPacketOutcome::OwesLinkProofVerify => {}
             IngestPacketOutcome::RequestReceived {
@@ -427,7 +427,7 @@ impl<S: StorageLayout> EngineState<S> {
                     },
                     interfaces,
                     now,
-                    fill_entropy,
+                    fill_random,
                     sink,
                 ) {
                     RemoteControlPairingRequestIngressOutcome::Pairing(_pairing_outcome) => {
@@ -546,11 +546,11 @@ impl<S: StorageLayout> EngineState<S> {
                 }
             }
             IngestPacketOutcome::OwesResourceParts(request) => {
-                self.serve_resource_request(&request, source, now, fill_entropy, sink);
+                self.serve_resource_request(&request, source, now, fill_random, sink);
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::OwesResourcePull { link_id, hash } => {
-                self.emit_resource_pull(&link_id, &hash, now, fill_entropy, sink);
+                self.emit_resource_pull(&link_id, &hash, now, fill_random, sink);
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
@@ -588,7 +588,7 @@ impl<S: StorageLayout> EngineState<S> {
                         now,
                     ) {
                         IngestPacketOutcome::OwesResourcePull { link_id, hash } => {
-                            self.emit_resource_pull(&link_id, &hash, now, fill_entropy, sink);
+                            self.emit_resource_pull(&link_id, &hash, now, fill_random, sink);
                         }
                         IngestPacketOutcome::ResourceAdmissionPending => {}
                         IngestPacketOutcome::ResourceCapacityRejected {
@@ -596,7 +596,7 @@ impl<S: StorageLayout> EngineState<S> {
                             hash,
                             settled_request,
                         } => {
-                            self.reject_offered_resource(&link_id, &hash, now, fill_entropy, sink);
+                            self.reject_offered_resource(&link_id, &hash, now, fill_random, sink);
                             if let Some(id) = settled_request {
                                 settle(
                                     sink,
@@ -613,7 +613,7 @@ impl<S: StorageLayout> EngineState<S> {
                     wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
                     wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
                 } else {
-                    self.reject_offered_resource(&link_id, &accepted.hash, now, fill_entropy, sink);
+                    self.reject_offered_resource(&link_id, &accepted.hash, now, fill_random, sink);
                 }
             }
             IngestPacketOutcome::ResourceTooLarge {
@@ -621,7 +621,7 @@ impl<S: StorageLayout> EngineState<S> {
                 hash,
                 settled_request,
             } => {
-                self.reject_offered_resource(&link_id, &hash, now, fill_entropy, sink);
+                self.reject_offered_resource(&link_id, &hash, now, fill_random, sink);
                 if let Some(id) = settled_request {
                     settle(
                         sink,
@@ -637,7 +637,7 @@ impl<S: StorageLayout> EngineState<S> {
                 hash,
                 settled_request,
             } => {
-                self.reject_offered_resource(&link_id, &hash, now, fill_entropy, sink);
+                self.reject_offered_resource(&link_id, &hash, now, fill_random, sink);
                 let settlement = self.failed_remote_control_controller_pairing_request_settlement(
                     link_id,
                     RemoteControlControllerPairingRequestFailureCause::ResourceResponseUnsupported,
@@ -655,7 +655,7 @@ impl<S: StorageLayout> EngineState<S> {
                 hash,
                 settled_request,
             } => {
-                self.reject_offered_resource(&link_id, &hash, now, fill_entropy, sink);
+                self.reject_offered_resource(&link_id, &hash, now, fill_random, sink);
                 if let Some(id) = settled_request {
                     settle(
                         sink,
@@ -726,7 +726,7 @@ impl<S: StorageLayout> EngineState<S> {
                     wake_schedule_changes.merge(self.continue_static_response_into(
                         &link_id,
                         now,
-                        fill_entropy,
+                        fill_random,
                         sink,
                     ));
                 } else {
@@ -738,7 +738,7 @@ impl<S: StorageLayout> EngineState<S> {
                             Ok(()),
                         ),
                     );
-                    self.promote_staged_resource(&link_id, now, fill_entropy, sink);
+                    self.promote_staged_resource(&link_id, now, fill_random, sink);
                 }
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
@@ -762,7 +762,7 @@ impl<S: StorageLayout> EngineState<S> {
             IngestPacketOutcome::OwesLinkProof(accepted) => {
                 if interfaces.is_egress_eligible(source, Egress::Transmit) {
                     let mut secret_bytes = [0u8; X25519SecretKey::LEN];
-                    fill_entropy(&mut secret_bytes);
+                    fill_random(&mut secret_bytes);
                     if let Some(deferred) = deferred {
                         if let Some(held) = self.held_identities.get(&accepted.identity) {
                             let signing_secret = held.signing_secret_clone();
@@ -817,7 +817,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             IngestPacketOutcome::OwesLinkClose { link_id, reason } => {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
-                fill_entropy(&mut iv);
+                fill_random(&mut iv);
                 let mut buf = [0u8; BROADCAST_MTU];
                 if let Ok(dispatch) =
                     self.write_owed_link_close(&link_id, reason, &iv, &mut buf, sink)

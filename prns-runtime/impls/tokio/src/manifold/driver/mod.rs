@@ -458,7 +458,7 @@ async fn run_inner<S, H, J, P, A, C>(
                     reason,
                     now,
                     topology.interfaces.view(),
-                    &mut |bytes| host.fill_entropy(bytes),
+                    &mut |bytes| host.fill_random(bytes),
                     &mut |reaction| {
                         route_reaction(
                             reaction,

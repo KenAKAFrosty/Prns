@@ -1,7 +1,7 @@
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::once_lock::OnceLock;
 use esp_hal::rng::{Trng, TrngError, TrngSource};
-use personal_rns::runtime::SharedRuntimeEntropy;
+use personal_rns::runtime::{EntropyHandle, SharedRuntimeEntropy};
 use prns_core::entropy::{EntropySource, RuntimeEntropy};
 use static_cell::StaticCell;
 
@@ -18,6 +18,7 @@ impl EntropySource for C6EntropySource {
 }
 
 pub(super) type C6RuntimeEntropy = RuntimeEntropy<C6EntropySource>;
+pub(super) type C6EntropyHandle = EntropyHandle<CriticalSectionRawMutex, C6EntropySource>;
 type SharedEntropy = SharedRuntimeEntropy<CriticalSectionRawMutex, C6EntropySource>;
 
 static SHARED_ENTROPY: StaticCell<SharedEntropy> = StaticCell::new();
@@ -46,12 +47,11 @@ pub(super) fn install(mut entropy: C6RuntimeEntropy) {
     clippy::expect_used,
     reason = "runtime entropy is installed before any engine or interface consumer starts"
 )]
-pub(super) fn fill_random(output: &mut [u8]) {
+pub(super) fn runtime_entropy() -> C6EntropyHandle {
     ENTROPY_SERVICE
         .try_get()
         .expect("runtime entropy is installed before PRNS consumers")
         .handle()
-        .fill_random(output);
 }
 
 #[expect(

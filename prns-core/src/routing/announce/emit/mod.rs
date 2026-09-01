@@ -112,7 +112,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         commanded: &AnnounceNow,
         now: InstantMillis,
-        fill_entropy: &mut impl FnMut(&mut [u8]),
+        fill_random: &mut impl FnMut(&mut [u8]),
         buf: &mut [u8],
     ) -> CommandedAnnounceWriteOutcome {
         use CommandedAnnounceWriteOutcome::{Failed, Rejected, Written};
@@ -121,7 +121,7 @@ impl<S: StorageLayout> EngineState<S> {
             &commanded.destination,
             &commanded.app_data,
             now,
-            fill_entropy,
+            fill_random,
             AnnounceContext::Announcement,
             buf,
         ) {
@@ -140,7 +140,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         destination: &DestinationHash,
         now: InstantMillis,
-        fill_entropy: &mut impl FnMut(&mut [u8]),
+        fill_random: &mut impl FnMut(&mut [u8]),
         buf: &mut [u8],
     ) -> PathResponseWriteOutcome {
         use PathResponseWriteOutcome::{Failed, NotUpstream, Written};
@@ -149,7 +149,7 @@ impl<S: StorageLayout> EngineState<S> {
             destination,
             &AnnounceAppData::Registered,
             now,
-            fill_entropy,
+            fill_random,
             AnnounceContext::PathResponse,
             buf,
         ) {
@@ -167,7 +167,7 @@ impl<S: StorageLayout> EngineState<S> {
         destination: &DestinationHash,
         app_data: &AnnounceAppData,
         now: InstantMillis,
-        fill_entropy: &mut impl FnMut(&mut [u8]),
+        fill_random: &mut impl FnMut(&mut [u8]),
         context: AnnounceContext,
         buf: &mut [u8],
     ) -> Result<(usize, RatchetRotation), AnnounceWriteFailure> {
@@ -185,11 +185,11 @@ impl<S: StorageLayout> EngineState<S> {
 
         let ratchet_rotation = self
             .self_ratchets
-            .rotate_if_due(destination, now, fill_entropy);
+            .rotate_if_due(destination, now, fill_random);
         let ratchet = self.self_ratchets.newest_ratchet_key(destination);
 
         let mut announce_entropy_bytes = [0u8; AnnounceEntropy::LEN];
-        fill_entropy(&mut announce_entropy_bytes);
+        fill_random(&mut announce_entropy_bytes);
         let wire_bytes = frame_announce(
             &identity,
             &AnnounceContent {

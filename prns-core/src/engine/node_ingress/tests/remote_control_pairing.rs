@@ -99,7 +99,7 @@ fn a_verified_zero_hop_availability_installs_one_direct_route_and_one_typed_obse
         IngestIo {
             interfaces: AttachedInterfaces::new(&interfaces),
             now: OBSERVED_AT,
-            fill_entropy: &mut |_| {},
+            fill_random: &mut |_| {},
             should_prove: &mut |_| false,
             should_accept_resource: &mut |_| false,
             sink: &mut |reaction| {
@@ -185,7 +185,7 @@ fn a_verified_zero_hop_availability_installs_one_direct_route_and_one_typed_obse
         IngestIo {
             interfaces: AttachedInterfaces::new(&interfaces),
             now: InstantMillis(9_000),
-            fill_entropy: &mut |_| {},
+            fill_random: &mut |_| {},
             should_prove: &mut |_| false,
             should_accept_resource: &mut |_| false,
             sink: &mut |reaction| {
@@ -320,7 +320,7 @@ fn direct_pairing_availability_does_not_settle_network_path_discovery() {
         IngestIo {
             interfaces: attached,
             now: OBSERVED_AT,
-            fill_entropy: &mut |_| {},
+            fill_random: &mut |_| {},
             should_prove: &mut |_| false,
             should_accept_resource: &mut |_| false,
             sink: &mut |_| {},
@@ -352,7 +352,7 @@ fn pairing_route_activity_cannot_extend_the_advertised_deadline_or_enter_persist
         IngestIo {
             interfaces: attached,
             now: OBSERVED_AT,
-            fill_entropy: &mut |_| {},
+            fill_random: &mut |_| {},
             should_prove: &mut |_| false,
             should_accept_resource: &mut |_| false,
             sink: &mut |reaction| {

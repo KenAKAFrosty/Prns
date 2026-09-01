@@ -164,7 +164,7 @@ fn an_ifac_frame_crosses_the_seam_and_leaves_masked_through_the_peer() {
 
         let manifold = run(
             engine,
-            EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0)),
+            EmbassyHost::new(crate::manifold::driver::test_support::entropy_handle()),
             ManifoldWiring {
                 interfaces: AttachedInterfaces::new(&interfaces),
                 ifacs: &ifacs,
@@ -182,7 +182,7 @@ fn an_ifac_frame_crosses_the_seam_and_leaves_masked_through_the_peer() {
             source_in_tx,
             notify.sender(),
             source_out_rx,
-            |bytes| bytes.fill(0),
+            crate::manifold::driver::test_support::entropy_handle(),
         );
         let source_iface = EmbassyLoopbackInterface {
             descriptor: descriptor(source),
@@ -191,10 +191,13 @@ fn an_ifac_frame_crosses_the_seam_and_leaves_masked_through_the_peer() {
         };
         let source_run = source_iface.run(source_seam);
 
-        let peer_seam =
-            EmbassyInterfaceSeam::new(peer, peer_in_tx, notify.sender(), peer_out_rx, |bytes| {
-                bytes.fill(0)
-            });
+        let peer_seam = EmbassyInterfaceSeam::new(
+            peer,
+            peer_in_tx,
+            notify.sender(),
+            peer_out_rx,
+            crate::manifold::driver::test_support::entropy_handle(),
+        );
         let peer_iface = EmbassyLoopbackInterface {
             descriptor: descriptor(peer),
             wire_in: peer_wire_in_rx,

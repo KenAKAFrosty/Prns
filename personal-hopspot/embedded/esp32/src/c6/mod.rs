@@ -56,7 +56,7 @@ use personal_rns::manifold::interface_seam::Interface;
 esp_app_desc!();
 
 use board::{C6Hardware, XiaoEsp32C6, ANNOUNCE_APP_DATA, NODE_ANNOUNCE_APP_DATA, USB_INTERFACE_ID};
-use entropy::fill_random;
+use entropy::{runtime_entropy, C6EntropySource};
 
 const USB_LANE: usize = 1;
 const ESPNOW_LANE: usize = cfg!(feature = "esp-now") as usize;
@@ -94,7 +94,8 @@ const BLE_SUPERVISOR_ID: InterfaceId =
     InterfaceId::new([InterfaceKind::BluetoothAuto as u8, 0, 0, 0, 0, 0, 0, 0]);
 
 type Mtx = CriticalSectionRawMutex;
-type UsbSeam = EmbassyInterfaceSeam<'static, Mtx, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
+type UsbSeam =
+    EmbassyInterfaceSeam<'static, Mtx, C6EntropySource, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
 type InterfaceStore = EmbassyInterfaceStore<
     Mtx,
     INTERFACE_STORE_CAP,
@@ -108,7 +109,7 @@ type Node = PrnsNode<
     personal_hopspot_core::node_pages::NodePageRoutes,
     for<'a> fn(PrnsEvent<'a>, &()),
     EngineStorageType,
-    EmbassyHost<fn(&mut [u8])>,
+    EmbassyHost<Mtx, C6EntropySource>,
     Mtx,
     LANE_COUNT,
     INTERFACE_CAPACITY,

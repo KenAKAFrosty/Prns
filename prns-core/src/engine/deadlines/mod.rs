@@ -229,7 +229,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         now: InstantMillis,
         interfaces: AttachedInterfaces<'_>,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules
     where
@@ -237,8 +237,8 @@ impl<S: StorageLayout> EngineState<S> {
     {
         self.reconcile_pending_link_route_evidence();
         self.expire_unestablished_links(now, sink);
-        self.cull_overdue_transported_links(now, interfaces, fill_entropy, sink);
-        self.close_stale_links(now, interfaces, fill_entropy, sink);
+        self.cull_overdue_transported_links(now, interfaces, fill_random, sink);
+        self.close_stale_links(now, interfaces, fill_random, sink);
         self.send_due_keepalives(now, interfaces, sink);
         WakeSchedules {
             link_deadlines: self.link_deadlines_wake(),
@@ -275,7 +275,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         now: InstantMillis,
         interfaces: AttachedInterfaces<'_>,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
         F: FnMut(&mut [u8]),
@@ -317,7 +317,7 @@ impl<S: StorageLayout> EngineState<S> {
                     Some(_) => continue,
                 };
             let mut id = [0u8; TRUNCATED_HASH_BYTE_LEN];
-            fill_entropy(&mut id);
+            fill_random(&mut id);
             let mut request = [0u8; BROADCAST_MTU];
             if let Ok(wire_bytes) =
                 write_path_request_wire_packet(overdue.destination, transport_id, &id, &mut request)
@@ -338,14 +338,14 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         now: InstantMillis,
         interfaces: AttachedInterfaces<'_>,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
         F: FnMut(&mut [u8]),
     {
         while let Some(link_id) = self.links.pop_stale(now) {
             let mut iv = [0u8; ENCRYPTION_IV_LEN];
-            fill_entropy(&mut iv);
+            fill_random(&mut iv);
             let mut buf = [0u8; BROADCAST_MTU];
             if let Ok(dispatch) =
                 self.write_owed_link_close(&link_id, LinkClosedReason::Timeout, &iv, &mut buf, sink)

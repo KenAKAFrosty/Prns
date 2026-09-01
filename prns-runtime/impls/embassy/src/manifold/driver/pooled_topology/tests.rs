@@ -67,7 +67,7 @@ fn continuously_due_persistence_yields_to_sibling_tasks() {
 
     block_on(async {
         let mut engine = EngineState::<GrowableHeap>::default();
-        let mut host = EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0));
+        let mut host = EmbassyHost::new(crate::manifold::driver::test_support::entropy_handle());
         let notify: Channel<CriticalSectionRawMutex, InterfaceId, 1> = Channel::new();
         let commands: Channel<CriticalSectionRawMutex, IssuedCommand, 1> = Channel::new();
         let lifecycle: Channel<CriticalSectionRawMutex, InterfaceLifecycle, 1> = Channel::new();
@@ -184,7 +184,7 @@ fn a_pooled_ifac_slot_added_at_runtime_opens_inbound_then_frees_on_remove() {
         source,
         std::boxed::Box::leak(std::boxed::Box::new(source_out_tx)),
     );
-    let mut host = EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0));
+    let mut host = EmbassyHost::new(crate::manifold::driver::test_support::entropy_handle());
     let count = block_on(async {
         let mut descriptors: HeaplessVec<InterfaceDescriptor, 1> = HeaplessVec::new();
         let mut ifacs: HeaplessVec<InterfaceIfac, 1> = HeaplessVec::new();
@@ -325,7 +325,7 @@ fn a_pooled_slot_retagged_at_runtime_carries_traffic_under_the_new_id() {
         old_id,
         std::boxed::Box::leak(std::boxed::Box::new(source_out_tx)),
     );
-    let mut host = EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0));
+    let mut host = EmbassyHost::new(crate::manifold::driver::test_support::entropy_handle());
     let count = block_on(async {
         let mut descriptors: HeaplessVec<InterfaceDescriptor, 1> = HeaplessVec::new();
         let mut ifacs: HeaplessVec<InterfaceIfac, 1> = HeaplessVec::new();

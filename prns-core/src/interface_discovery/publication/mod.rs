@@ -87,7 +87,7 @@ pub fn prepare_discovery_publication<E>(
     advertisement: &DiscoveryAdvertisement,
     stamp_cost: StampCost,
     security: DiscoveryPublicationSecurity,
-    fill_entropy: impl FnMut(&mut [u8; STAMP_SIZE]) -> Result<(), E>,
+    fill_random: impl FnMut(&mut [u8; STAMP_SIZE]) -> Result<(), E>,
     cancelled: impl FnMut() -> bool,
 ) -> DiscoveryPublicationPreparation<E> {
     prepare_discovery_publication_with_stamp_cache(
@@ -95,7 +95,7 @@ pub fn prepare_discovery_publication<E>(
         stamp_cost,
         security,
         |_| None,
-        fill_entropy,
+        fill_random,
         cancelled,
     )
 }
@@ -105,7 +105,7 @@ pub fn prepare_discovery_publication_with_stamp_cache<E>(
     stamp_cost: StampCost,
     security: DiscoveryPublicationSecurity,
     cached_stamp: impl FnOnce(&AdvertisementHash) -> Option<[u8; STAMP_SIZE]>,
-    fill_entropy: impl FnMut(&mut [u8; STAMP_SIZE]) -> Result<(), E>,
+    fill_random: impl FnMut(&mut [u8; STAMP_SIZE]) -> Result<(), E>,
     cancelled: impl FnMut() -> bool,
 ) -> DiscoveryPublicationPreparation<E> {
     if let Some(value) = super::advertisement::invalid_reachable_on(advertisement) {
@@ -141,7 +141,7 @@ pub fn prepare_discovery_publication_with_stamp_cache<E>(
             });
         }
     }
-    match generate_stamp(&advertisement_hash, stamp_cost, fill_entropy, cancelled) {
+    match generate_stamp(&advertisement_hash, stamp_cost, fill_random, cancelled) {
         StampGeneration::Generated(generated_stamp) => {
             DiscoveryPublicationPreparation::Prepared(PreparedDiscoveryAdvertisement {
                 packed_advertisement,

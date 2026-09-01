@@ -127,7 +127,7 @@ const _: () =
 pub(in crate::s3) fn build_wifi(
     spawner: &Spawner,
     wifi: esp_hal::peripherals::WIFI<'static>,
-    runtime_entropy: S3RuntimeEntropy,
+    boot_entropy: S3RuntimeEntropy,
     mac: [u8; 6],
     config: &HopspotWifiConfig,
     ap_enabled: bool,
@@ -145,10 +145,10 @@ pub(in crate::s3) fn build_wifi(
         .with_static_tx_buf_num(WIFI_STATIC_TX_BUFFERS)
         .with_dynamic_tx_buf_num(WIFI_DYNAMIC_TX_BUFFERS);
     let Ok((mut controller, interfaces)) = esp_radio::wifi::new(wifi, wifi_config) else {
-        super::super::entropy::install(runtime_entropy);
+        super::super::entropy::install(boot_entropy);
         return (None, None, None);
     };
-    super::super::entropy::install(runtime_entropy);
+    super::super::entropy::install(boot_entropy);
     log::info!(
         "wifi: rx profile static={} dynamic={} ba={} queue={} tx_queue={} tx_static={} tx_dynamic={}",
         WIFI_STATIC_RX_BUFFERS,
@@ -187,7 +187,7 @@ pub(in crate::s3) fn build_wifi(
             crate::storage::allocate_psram(StackResources::<STATION_STACK_SOCKET_CAPACITY>::new());
         let seed = {
             let mut bytes = [0u8; 8];
-            fill_random(&mut bytes);
+            runtime_entropy().fill_random(&mut bytes);
             u64::from_le_bytes(bytes)
         };
         let (stack, runner) = embassy_net::new(interfaces.station, net_config, resources, seed);
@@ -288,7 +288,7 @@ fn start_udp_service_discovery(
     let socket = udp_service_discovery_socket(stack);
     let storage = crate::storage::allocate_psram(UdpServiceDiscoveryStorage::<MEMBERS>::new());
     let service_discovery =
-        match UdpServiceDiscovery::new(socket, stack, address, status, storage, fill_random) {
+        match UdpServiceDiscovery::new(socket, stack, address, status, storage, runtime_entropy()) {
             Ok(service_discovery) => service_discovery,
             Err(error) => {
                 log::error!("wifi-auto: UDP DNS-SD construction failed: {error:?}");
@@ -343,7 +343,9 @@ async fn tcp_rendezvous_task(server: TcpRendezvousServer<'static>) -> ! {
 }
 
 #[embassy_executor::task]
-async fn udp_service_discovery_task(service_discovery: UdpServiceDiscovery<'static, MEMBERS>) -> ! {
+async fn udp_service_discovery_task(
+    service_discovery: UdpServiceDiscovery<'static, S3EntropySource, MEMBERS>,
+) -> ! {
     service_discovery.run().await
 }
 

@@ -109,7 +109,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         send: &ResourceSend<'_>,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> crate::engine::WakeSchedules
     where
@@ -119,7 +119,7 @@ impl<S: StorageLayout> EngineState<S> {
             send,
             ResourceSegment::whole(send.body.data.len() as u64),
             now,
-            fill_entropy,
+            fill_random,
             sink,
         )
     }
@@ -129,7 +129,7 @@ impl<S: StorageLayout> EngineState<S> {
         id: crate::engine::CommandId,
         respond: &crate::engine::Respond,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> crate::engine::WakeSchedules
     where
@@ -246,7 +246,7 @@ impl<S: StorageLayout> EngineState<S> {
             },
             &envelope[..envelope_len],
             now,
-            fill_entropy,
+            fill_random,
             sink,
         );
         if total_segments > 1 {
@@ -276,7 +276,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         link_id: &LinkId,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> crate::engine::WakeSchedules
     where
@@ -325,7 +325,7 @@ impl<S: StorageLayout> EngineState<S> {
                 total_data_bytes: continuation.total_data_bytes,
             },
             now,
-            fill_entropy,
+            fill_random,
             sink,
         );
         continuation.next_offset = end;
@@ -350,13 +350,13 @@ impl<S: StorageLayout> EngineState<S> {
         send: &ResourceSend<'_>,
         segment: ResourceSegment,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> crate::engine::WakeSchedules
     where
         F: FnMut(&mut [u8]),
     {
-        self.ingest_send_resource_segment_enveloped(send, segment, &[], now, fill_entropy, sink)
+        self.ingest_send_resource_segment_enveloped(send, segment, &[], now, fill_random, sink)
     }
 
     fn ingest_send_resource_segment_enveloped<F>(
@@ -365,7 +365,7 @@ impl<S: StorageLayout> EngineState<S> {
         segment: ResourceSegment,
         envelope: &[u8],
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> crate::engine::WakeSchedules
     where
@@ -476,7 +476,7 @@ impl<S: StorageLayout> EngineState<S> {
             && winning_candidate(body.compressed_candidate, envelope.len() + data.len()).is_none();
         let tracked = if raw_stages {
             let mut stream_nonce = [0u8; RESOURCE_NONCE_LEN];
-            fill_entropy(&mut stream_nonce);
+            fill_random(&mut stream_nonce);
             self.outgoing_resources
                 .stage_raw(
                     command,
@@ -499,7 +499,7 @@ impl<S: StorageLayout> EngineState<S> {
                 }
             };
             let mut seal_iv = [0u8; 16];
-            fill_entropy(&mut seal_iv);
+            fill_random(&mut seal_iv);
             self.outgoing_resources
                 .track_built(command, lane, shape, |regions| {
                     build_outgoing_resource_enveloped(
@@ -509,7 +509,7 @@ impl<S: StorageLayout> EngineState<S> {
                         &seal_iv,
                         || {
                             let mut nonce = [0u8; RESOURCE_NONCE_LEN];
-                            fill_entropy(&mut nonce);
+                            fill_random(&mut nonce);
                             nonce
                         },
                         sdu,
@@ -551,7 +551,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
 
         let mut adv_iv = [0u8; 16];
-        fill_entropy(&mut adv_iv);
+        fill_random(&mut adv_iv);
         match emit_resource_advertisement(
             &self.outgoing_resources,
             &link_id,
@@ -726,7 +726,7 @@ impl<S: StorageLayout> EngineState<S> {
         request: &ResourcePartRequest<'_>,
         fire_on: InterfaceId,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
         F: FnMut(&mut [u8]),
@@ -800,7 +800,7 @@ impl<S: StorageLayout> EngineState<S> {
                 Ok(plan) => {
                     self.outgoing_resources.state_mut(index).scope_start = plan.scope_start;
                     let mut iv = [0u8; 16];
-                    fill_entropy(&mut iv);
+                    fill_random(&mut iv);
                     let outgoing = &self.outgoing_resources;
                     let mut wrote = false;
                     {
@@ -845,7 +845,7 @@ impl<S: StorageLayout> EngineState<S> {
                         hash,
                         SendResourceFailure::Sequencing,
                         now,
-                        fill_entropy,
+                        fill_random,
                         sink,
                     );
                     return;
@@ -890,7 +890,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn seal_staged_continuation<F>(
         &mut self,
         link_id: &LinkId,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
         F: FnMut(&mut [u8]),
@@ -909,13 +909,13 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let key = link.key;
         let mut seal_iv = [0u8; 16];
-        fill_entropy(&mut seal_iv);
+        fill_random(&mut seal_iv);
         let sealed = seal_staged_resource(
             key,
             &seal_iv,
             || {
                 let mut salt = [0u8; RESOURCE_NONCE_LEN];
-                fill_entropy(&mut salt);
+                fill_random(&mut salt);
                 salt
             },
             sdu,
@@ -1043,7 +1043,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         link_id: &LinkId,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
         F: FnMut(&mut [u8]),
@@ -1059,7 +1059,7 @@ impl<S: StorageLayout> EngineState<S> {
             return;
         };
         if self.outgoing_resources.state(index).status == OutgoingResourceStatus::Staged {
-            self.seal_staged_continuation(link_id, fill_entropy, sink);
+            self.seal_staged_continuation(link_id, fill_random, sink);
         }
         let Some(index) = self.outgoing_resources.staged_index(link_id) else {
             return;
@@ -1078,7 +1078,7 @@ impl<S: StorageLayout> EngineState<S> {
         let rtt_millis = link.rtt.millis();
         self.outgoing_resources.state_mut(index).status = OutgoingResourceStatus::Advertised;
         let mut adv_iv = [0u8; 16];
-        fill_entropy(&mut adv_iv);
+        fill_random(&mut adv_iv);
         match emit_resource_advertisement(
             &self.outgoing_resources,
             link_id,
@@ -1139,7 +1139,7 @@ impl<S: StorageLayout> EngineState<S> {
         hash: &ResourceHash,
         failure: SendResourceFailure,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
         F: FnMut(&mut [u8]),
@@ -1157,7 +1157,7 @@ impl<S: StorageLayout> EngineState<S> {
             let mtu = link.mtu;
             let fire_on = link.attached_interface;
             let mut cancel_iv = [0u8; 16];
-            fill_entropy(&mut cancel_iv);
+            fill_random(&mut cancel_iv);
             let mut cancel_plaintext = [0u8; RESOURCE_HASH_LEN];
             if write_cancel_plaintext(hash, &mut cancel_plaintext).is_ok() {
                 let mut wrote = false;
@@ -1200,13 +1200,13 @@ impl<S: StorageLayout> EngineState<S> {
     pub(crate) fn fire_due_outgoing_resources<F>(
         &mut self,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
         F: FnMut(&mut [u8]),
     {
         while let Some(index) = self.outgoing_resources.due_index(now) {
-            self.retry_or_cancel_outgoing_resource(index, now, fill_entropy, sink);
+            self.retry_or_cancel_outgoing_resource(index, now, fill_random, sink);
         }
     }
 
@@ -1214,7 +1214,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         index: usize,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
         F: FnMut(&mut [u8]),
@@ -1228,7 +1228,7 @@ impl<S: StorageLayout> EngineState<S> {
                 &hash,
                 SendResourceFailure::Timeout,
                 now,
-                fill_entropy,
+                fill_random,
                 sink,
             );
             return;
@@ -1250,13 +1250,13 @@ impl<S: StorageLayout> EngineState<S> {
                         &hash,
                         SendResourceFailure::Timeout,
                         now,
-                        fill_entropy,
+                        fill_random,
                         sink,
                     );
                     return;
                 }
                 let mut adv_iv = [0u8; 16];
-                fill_entropy(&mut adv_iv);
+                fill_random(&mut adv_iv);
                 if matches!(
                     emit_resource_advertisement(
                         &self.outgoing_resources,
@@ -1281,7 +1281,7 @@ impl<S: StorageLayout> EngineState<S> {
                     &hash,
                     SendResourceFailure::Timeout,
                     now,
-                    fill_entropy,
+                    fill_random,
                     sink,
                 );
             }
@@ -1292,7 +1292,7 @@ impl<S: StorageLayout> EngineState<S> {
                         &hash,
                         SendResourceFailure::Timeout,
                         now,
-                        fill_entropy,
+                        fill_random,
                         sink,
                     );
                     return;
@@ -2249,7 +2249,7 @@ mod tests {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&[routable_descriptor(lane())]),
                 now: InstantMillis(at),
-                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+                fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
                 should_accept_resource:
                     &mut |_: &crate::routing::links::resources::ResourceOffer| false,

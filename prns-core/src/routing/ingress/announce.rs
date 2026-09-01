@@ -107,7 +107,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         arrival: &AnnounceArrival<'_>,
         interfaces: AttachedInterfaces<'_>,
-        fill_entropy: &mut impl FnMut(&mut [u8]),
+        fill_random: &mut impl FnMut(&mut [u8]),
     ) -> RebroadcastScheduleOutcome {
         let destination = arrival.announce.destination;
         let from_local_client =
@@ -190,7 +190,7 @@ impl<S: StorageLayout> EngineState<S> {
             Some((DestinationAnnounceVerdict::Allowed, rate_accounting)) => rate_accounting,
             None => AnnounceRateAccounting::NotApplied,
         };
-        let offset = jitter_offset(fill_entropy, DEFAULT_REBROADCAST_JITTER_WINDOW_MS);
+        let offset = jitter_offset(fill_random, DEFAULT_REBROADCAST_JITTER_WINDOW_MS);
         let schedule = self.scheduled_announces.schedule(
             destination,
             InstantMillis(arrival.arrived_at.0.saturating_add(offset)),
@@ -207,7 +207,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         identity_hash: IdentityHash,
         arrival: &AnnounceArrival<'a>,
-        fill_entropy: &mut impl FnMut(&mut [u8]),
+        fill_random: &mut impl FnMut(&mut [u8]),
         interfaces: AttachedInterfaces<'_>,
         on_removed: &mut impl FnMut(RemovedRoute),
         effects: &mut IngestEffects<'a>,
@@ -221,7 +221,7 @@ impl<S: StorageLayout> EngineState<S> {
             AnnounceRouteScope::Network,
         ) {
             DirectAnnounceIngest::Accepted => {
-                let rebroadcast = self.schedule_rebroadcast(arrival, interfaces, fill_entropy);
+                let rebroadcast = self.schedule_rebroadcast(arrival, interfaces, fill_random);
                 effects.accepted_announce = Some(AcceptedAnnounceEffect {
                     observation: crate::routing::announce::AnnounceObservation::from_arrival(
                         identity_hash,
@@ -562,7 +562,7 @@ mod tests {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&interfaces),
                 now: InstantMillis(1_000),
-                fill_entropy: &mut |_| {},
+                fill_random: &mut |_| {},
                 should_prove: &mut |_| false,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| {
@@ -1324,7 +1324,7 @@ mod tests {
                 IngestIo {
                     interfaces,
                     now: arrived_at,
-                    fill_entropy: &mut |_| {},
+                    fill_random: &mut |_| {},
                     should_prove: &mut |_| false,
                     should_accept_resource: &mut |_| false,
                     sink: &mut |_| {},
@@ -1362,7 +1362,7 @@ mod tests {
             IngestIo {
                 interfaces,
                 now: arrived_at,
-                fill_entropy: &mut |_| {},
+                fill_random: &mut |_| {},
                 should_prove: &mut |_| false,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| {
@@ -1403,7 +1403,7 @@ mod tests {
             IngestIo {
                 interfaces,
                 now: arrived_at,
-                fill_entropy: &mut |_| {},
+                fill_random: &mut |_| {},
                 should_prove: &mut |_| false,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |_| {},

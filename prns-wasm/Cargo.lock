@@ -20,6 +20,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
 dependencies = [
  "hybrid-array",
+ "zeroize",
 ]
 
 [[package]]
@@ -66,6 +67,18 @@ name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
+
+[[package]]
+name = "chacha20"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65c35e4b699c7e15ccbe7ee35c005e4fc0a278d22238a2857e6ce2dadeda1b06"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.0",
+ "rand_core",
+ "zeroize",
+]
 
 [[package]]
 name = "cipher"
@@ -174,6 +187,7 @@ dependencies = [
  "block-buffer",
  "crypto-common 0.2.2",
  "ctutils",
+ "zeroize",
 ]
 
 [[package]]
@@ -297,6 +311,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "818356c5132c1fede50f837ca96afbe78ff42413047f4abb886217845e1b6c8c"
 dependencies = [
  "typenum",
+ "zeroize",
 ]
 
 [[package]]
@@ -373,6 +388,7 @@ dependencies = [
  "aes",
  "cbc",
  "cfg-if",
+ "chacha20",
  "crc32fast",
  "ed25519-dalek",
  "embedded-storage",
@@ -380,7 +396,9 @@ dependencies = [
  "heapless",
  "hkdf",
  "hmac",
+ "hybrid-array",
  "prns-macros",
+ "rand_core",
  "roaring",
  "sha2",
  "x25519-dalek",

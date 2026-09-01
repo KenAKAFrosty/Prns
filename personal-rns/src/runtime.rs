@@ -38,7 +38,7 @@ pub use prns_runtime_tokio::runtime::node_introspection;
 
 #[cfg(feature = "tokio-host")]
 pub use prns_runtime_tokio::runtime::{
-    boot_timeline_origin, fill_os_entropy, generate_identity_secret, load_or_create_ble_identity,
+    boot_timeline_origin, generate_identity_secret, load_or_create_ble_identity,
     load_or_create_browser_rendezvous_id, load_or_create_browser_selection_seed,
     load_or_create_identity_secret, try_generate_identity_secret, wall_clock_timeline_origin,
     AttachIntent, Attachable, AttachedInterface, AttachedSupervisor, ByteStreamReader,
@@ -46,16 +46,16 @@ pub use prns_runtime_tokio::runtime::{
     DetachedFleet, Fleet, FlushError, FlushFailurePolicy, FlushMark, FlushReport,
     IdentitySecretFileError, InterfaceAttachmentMetadata, InterfaceStore, InterfaceSupervisor,
     LocalIdentityFileError, NodePersistence, NodeRunError, NonRoutingIdentityError, OsEntropyError,
-    PersistenceEvent, PersistenceFlushStatus, PersistenceIntent, PersistenceRestoreReport,
-    PersistenceTrigger, PersistenceWorker, PoolWorkers, PrepareFlushError, PreparedFlush,
-    PreparedResourceReceiver, PrnsNode, PrnsNodeHandle, PrnsNodeLocalHandle, RatchetSeedReport,
-    RegionFlush, RegisterRequestEndpointError, RemoteControlFileIdentityBootstrapError,
-    RemoteControlHandle, RemoteControlIdentityDirectory, RequestOptions, RequestPathError,
-    ResourceAdmissionPeer, ResourceOfferAdmission, ResourceOfferMonitor, ResourceProgress,
-    ResourceReceipt, ResourceReceiveError, ResourceSendError, ResponseSendError, RouteSeedProgress,
-    RouteSeedReport, RuntimeRequestHandlerError, SaveOnLearn, SaveOnLearnWiring,
-    SegmentCompression, SharedInstanceIdentityError, StreamId, Subscription, TunnelSeedReport,
-    AUTO_COMPRESS_MAX_LEN,
+    OsRuntimeEntropy, PersistenceEvent, PersistenceFlushStatus, PersistenceIntent,
+    PersistenceRestoreReport, PersistenceTrigger, PersistenceWorker, PoolWorkers,
+    PrepareFlushError, PreparedFlush, PreparedResourceReceiver, PrnsNode, PrnsNodeHandle,
+    PrnsNodeLocalHandle, RatchetSeedReport, RegionFlush, RegisterRequestEndpointError,
+    RemoteControlFileIdentityBootstrapError, RemoteControlHandle, RemoteControlIdentityDirectory,
+    RequestOptions, RequestPathError, ResourceAdmissionPeer, ResourceOfferAdmission,
+    ResourceOfferMonitor, ResourceProgress, ResourceReceipt, ResourceReceiveError,
+    ResourceSendError, ResponseSendError, RouteSeedProgress, RouteSeedReport,
+    RuntimeRequestHandlerError, SaveOnLearn, SaveOnLearnWiring, SegmentCompression,
+    SharedInstanceIdentityError, StreamId, Subscription, TunnelSeedReport, AUTO_COMPRESS_MAX_LEN,
 };
 
 #[cfg(all(feature = "rnx", feature = "tokio-host"))]

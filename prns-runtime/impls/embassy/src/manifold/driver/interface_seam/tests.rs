@@ -22,10 +22,13 @@ fn packet_phy_crosses_the_embassy_ingress_seam_with_its_frame() {
         snr: Some(crate::interfaces::SnrQuarterDb::new(-9)),
         quality: crate::interfaces::SignalQualityTenthsPercent::new(875),
     };
-    let mut seam =
-        EmbassyInterfaceSeam::new(interface, inbound, notify.sender(), outbound, |bytes| {
-            bytes.fill(0)
-        });
+    let mut seam = EmbassyInterfaceSeam::new(
+        interface,
+        inbound,
+        notify.sender(),
+        outbound,
+        crate::manifold::driver::test_support::entropy_handle(),
+    );
 
     block_on(seam.next_inbound_with_phy(b"observed", packet_phy));
 
@@ -58,10 +61,13 @@ fn accepted_outbound_custody_releases_lane_storage_before_completion() {
     let (inbound, _manifold_inbound) = leaked_grant_lane::<FRAME>(1);
     let (mut manifold_outbound, outbound) = leaked_grant_lane::<FRAME>(1);
     let notify = Channel::<CriticalSectionRawMutex, InterfaceId, 1>::new();
-    let mut seam =
-        EmbassyInterfaceSeam::new(interface, inbound, notify.sender(), outbound, |bytes| {
-            bytes.fill(0)
-        });
+    let mut seam = EmbassyInterfaceSeam::new(
+        interface,
+        inbound,
+        notify.sender(),
+        outbound,
+        crate::manifold::driver::test_support::entropy_handle(),
+    );
 
     manifold_outbound
         .try_grant()

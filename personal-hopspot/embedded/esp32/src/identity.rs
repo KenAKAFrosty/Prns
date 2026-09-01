@@ -1,4 +1,3 @@
-use core::convert::Infallible;
 #[cfg(target_arch = "xtensa")]
 use core::{cell::UnsafeCell, ffi::c_void, mem::MaybeUninit};
 
@@ -44,7 +43,7 @@ const _: () = assert!(NODE_IDENTITY_FLASH_OFFSET + FLASH_SECTOR_LEN == IDENTITY_
 
 pub(crate) type Error = FlashIdentityError<EspRomFlashError>;
 pub(crate) type RemoteControlIdentityBootstrapError =
-    RemoteControlNodeIdentityBootstrapError<FlashVaultError<EspRomFlashError>, Infallible>;
+    RemoteControlNodeIdentityBootstrapError<FlashVaultError<EspRomFlashError>>;
 
 pub(crate) struct RemoteControlIdentityFlash {
     flash_capacity: usize,

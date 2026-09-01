@@ -222,7 +222,7 @@ impl Interface for TcpClient<'_> {
                         "tcp-client [configured]: resolution failed target={target:?}"
                     );
                     status.set_connection(ConnectionState::Disconnected);
-                    let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
+                    let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_random(bytes));
                     crate::diagnostic_log::info!(
                         "tcp-client [configured]: target={target:?} retry_delay_ms={}",
                         reconnect_delay.as_millis()
@@ -240,7 +240,7 @@ impl Interface for TcpClient<'_> {
                         TcpClientExitCause::Timeout
                     );
                     status.set_connection(ConnectionState::Disconnected);
-                    let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
+                    let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_random(bytes));
                     crate::diagnostic_log::info!(
                         "tcp-client [configured]: target={target:?} retry_delay_ms={}",
                         reconnect_delay.as_millis()
@@ -323,7 +323,7 @@ impl Interface for TcpClient<'_> {
             // Skip reconnect delay after disable so status changes immediately.
             if status.is_enabled() {
                 status.set_connection(ConnectionState::Disconnected);
-                let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
+                let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_random(bytes));
                 crate::diagnostic_log::info!(
                     "tcp-client [configured]: target={target:?} retry_delay_ms={}",
                     reconnect_delay.as_millis()

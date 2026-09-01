@@ -49,13 +49,13 @@ impl<S: StorageLayout> EngineState<S> {
     pub(crate) fn ingest_packet_with<'p>(
         &mut self,
         packet: crate::interfaces::InboundPacket<'p>,
-        fill_entropy: &mut impl FnMut(&mut [u8]),
+        fill_random: &mut impl FnMut(&mut [u8]),
         interfaces: AttachedInterfaces<'_>,
         on_removed: &mut impl FnMut(RemovedRoute),
         deferred: Option<&mut DeferredCrypto>,
     ) -> IngestPacketOutcome<'p> {
         let (_, ingress) = ClassifiedInboundPacket::classify(packet).into_parts();
-        self.ingest_classified_with(ingress, fill_entropy, interfaces, on_removed, deferred)
+        self.ingest_classified_with(ingress, fill_random, interfaces, on_removed, deferred)
     }
 
     #[cfg(test)]
@@ -63,14 +63,14 @@ impl<S: StorageLayout> EngineState<S> {
     pub(crate) fn ingest_classified_with<'p>(
         &mut self,
         ingress: Ingress<'p>,
-        fill_entropy: &mut impl FnMut(&mut [u8]),
+        fill_random: &mut impl FnMut(&mut [u8]),
         interfaces: AttachedInterfaces<'_>,
         on_removed: &mut impl FnMut(RemovedRoute),
         deferred: Option<&mut DeferredCrypto>,
     ) -> IngestPacketOutcome<'p> {
         self.ingest_classified_with_effects(
             ingress,
-            fill_entropy,
+            fill_random,
             interfaces,
             on_removed,
             deferred,
@@ -81,7 +81,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub(crate) fn ingest_classified_with_effects<'p>(
         &mut self,
         ingress: Ingress<'p>,
-        fill_entropy: &mut impl FnMut(&mut [u8]),
+        fill_random: &mut impl FnMut(&mut [u8]),
         interfaces: AttachedInterfaces<'_>,
         on_removed: &mut impl FnMut(RemovedRoute),
         deferred: Option<&mut DeferredCrypto>,
@@ -187,7 +187,7 @@ impl<S: StorageLayout> EngineState<S> {
                 IngestPacketOutcome::Announce(self.ingest_announce(
                     identity_hash,
                     &arrival,
-                    &mut *fill_entropy,
+                    &mut *fill_random,
                     interfaces,
                     on_removed,
                     effects,

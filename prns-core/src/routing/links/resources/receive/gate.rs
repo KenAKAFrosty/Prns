@@ -421,7 +421,7 @@ impl<S: StorageLayout> EngineState<S> {
         link_id: &LinkId,
         hash: &ResourceHash,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
         F: FnMut(&mut [u8]),
@@ -433,7 +433,7 @@ impl<S: StorageLayout> EngineState<S> {
         let mtu = link.mtu;
         let fire_on = link.attached_interface;
         let mut reject_iv = [0u8; 16];
-        fill_entropy(&mut reject_iv);
+        fill_random(&mut reject_iv);
         let mut reject_plaintext = [0u8; RESOURCE_HASH_LEN];
         if write_cancel_plaintext(hash, &mut reject_plaintext).is_ok() {
             let mut wrote = false;

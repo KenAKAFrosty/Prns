@@ -1081,7 +1081,7 @@ mod tests {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&interfaces),
                 now: OFFERED_AT,
-                fill_entropy: &mut |_| {},
+                fill_random: &mut |_| {},
                 should_prove: &mut |_| false,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| match reaction {

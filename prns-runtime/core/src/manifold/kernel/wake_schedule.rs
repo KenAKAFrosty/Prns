@@ -7,7 +7,7 @@ pub fn fire_due_reason<S, F>(
     reason: WakeReason,
     now: InstantMillis,
     interfaces: AttachedInterfaces<'_>,
-    fill_entropy: &mut F,
+    fill_random: &mut F,
     on_reaction: &mut impl FnMut(EngineReaction<'_>),
 ) -> WakeSchedules
 where
@@ -24,19 +24,19 @@ where
         WakeReason::ExpiredDestinationIdentities => engine.cull_expired_destination_identities(now),
         WakeReason::ExpiredBlackholes => engine.cull_expired_blackholes(now),
         WakeReason::LinkDeadlines => {
-            engine.fire_due_link_deadlines(now, interfaces, fill_entropy, on_reaction)
+            engine.fire_due_link_deadlines(now, interfaces, fill_random, on_reaction)
         }
         WakeReason::ResourceDeadlines => {
-            engine.fire_due_resource_deadlines(now, fill_entropy, on_reaction)
+            engine.fire_due_resource_deadlines(now, fill_random, on_reaction)
         }
         WakeReason::ChannelTimeouts => {
-            engine.fire_due_channel_timeouts(now, interfaces, fill_entropy, on_reaction)
+            engine.fire_due_channel_timeouts(now, interfaces, fill_random, on_reaction)
         }
         WakeReason::HeldAnnounceRelease => {
-            engine.fire_due_held_announces(now, interfaces, fill_entropy, on_reaction)
+            engine.fire_due_held_announces(now, interfaces, fill_random, on_reaction)
         }
         WakeReason::RemoteControlPairing => {
-            engine.fire_due_remote_control_pairing(now, interfaces, fill_entropy, on_reaction)
+            engine.fire_due_remote_control_pairing(now, interfaces, fill_random, on_reaction)
         }
     }
 }

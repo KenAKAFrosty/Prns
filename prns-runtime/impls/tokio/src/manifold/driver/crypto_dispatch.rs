@@ -64,10 +64,10 @@ where
                     return;
                 };
                 let mut seal_iv = [0u8; 16];
-                host.fill_entropy(&mut seal_iv);
+                host.fill_random(&mut seal_iv);
                 let mut salts = [[0u8; RESOURCE_NONCE_LEN]; SALT_REROLL_CAP];
                 for salt in &mut salts {
-                    host.fill_entropy(salt);
+                    host.fill_random(salt);
                 }
                 let job = StagedSealJob {
                     link_id,
@@ -84,7 +84,7 @@ where
             None => {
                 engine.seal_staged_continuation(
                     &link_id,
-                    &mut |entropy| host.fill_entropy(entropy),
+                    &mut |entropy| host.fill_random(entropy),
                     &mut |reaction| {
                         route_reaction(
                             reaction,
@@ -287,7 +287,7 @@ where
                     shared,
                     topology.interfaces.view(),
                     now,
-                    &mut |entropy| host.fill_entropy(entropy),
+                    &mut |entropy| host.fill_random(entropy),
                     &mut reaction_sink!(),
                 )),
                 None => {
@@ -336,7 +336,7 @@ where
                 engine.promote_staged_resource(
                     &link_id,
                     now,
-                    &mut |entropy| host.fill_entropy(entropy),
+                    &mut |entropy| host.fill_random(entropy),
                     &mut reaction_sink!(),
                 );
                 CryptoCompletionEffect::WakeSchedules(WakeSchedules {
@@ -349,7 +349,7 @@ where
                     CryptoCompletionEffect::WakeSchedules(engine.resume_announce(
                         owed,
                         topology.interfaces.view(),
-                        &mut |entropy| host.fill_entropy(entropy),
+                        &mut |entropy| host.fill_random(entropy),
                         &mut reaction_sink!(),
                     ))
                 } else {

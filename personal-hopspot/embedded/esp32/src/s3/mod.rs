@@ -124,7 +124,9 @@ pub(crate) use board::LoraRadio;
 pub(crate) use board::{
     BoardFace, Esp32S3Board, S3BoardHardware, S3InterfaceHardware, S3ManifoldHardware,
 };
-pub(crate) use entropy::{bootstrap_s3_runtime, fill_random, S3RuntimeBootstrap, S3RuntimeEntropy};
+pub(crate) use entropy::{
+    bootstrap_s3_runtime, runtime_entropy, S3EntropySource, S3RuntimeBootstrap, S3RuntimeEntropy,
+};
 pub(crate) use gnss::{GnssProvider, GnssShared, NoGnss};
 
 esp_app_desc!();
@@ -217,14 +219,17 @@ const BUTTON_DEBOUNCE: Duration = Duration::from_millis(25);
 
 type Mtx = CriticalSectionRawMutex;
 type Handle = PrnsNodeHandle<'static, Mtx, COMMANDS_CAP, COMPLETIONS_CAP>;
-type UsbSeam = EmbassyInterfaceSeam<'static, Mtx, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
+type UsbSeam =
+    EmbassyInterfaceSeam<'static, Mtx, S3EntropySource, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
 #[cfg(feature = "lora")]
 type S3LoraInterface = LoRaInterface<'static, LoraRadio>;
 #[cfg(feature = "lora")]
-type S3LoraSeam = EmbassyInterfaceSeam<'static, Mtx, NOTIFY_CAP, LORA_MAX_PAYLOAD>;
+type S3LoraSeam = EmbassyInterfaceSeam<'static, Mtx, S3EntropySource, NOTIFY_CAP, LORA_MAX_PAYLOAD>;
 type S3EspNowInterface = EspNowInterface<'static, EspNowAdapter>;
-type S3EspNowSeam = EmbassyInterfaceSeam<'static, Mtx, NOTIFY_CAP, ESP_NOW_V2_AIR_MTU>;
-type S3TcpSeam = EmbassyInterfaceSeam<'static, Mtx, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
+type S3EspNowSeam =
+    EmbassyInterfaceSeam<'static, Mtx, S3EntropySource, NOTIFY_CAP, ESP_NOW_V2_AIR_MTU>;
+type S3TcpSeam =
+    EmbassyInterfaceSeam<'static, Mtx, S3EntropySource, NOTIFY_CAP, EMBEDDED_MAX_WIRE_FRAME_LEN>;
 type S3WifiFleet = Fleet<Mtx, { wifi_auto_contract::HARDWARE_MTU }, NOTIFY_CAP, LIFECYCLE_CAP>;
 type S3BleFleet = Fleet<Mtx, BLE_HW_MTU, NOTIFY_CAP, LIFECYCLE_CAP>;
 type InterfaceStore = EmbassyInterfaceStore<
@@ -233,14 +238,13 @@ type InterfaceStore = EmbassyInterfaceStore<
     PACKET_PHY_RETENTION_CAPACITY,
     PACKET_PHY_INDEX_BUCKETS,
 >;
-/// The fully-spelled node type, so it can ride to core 1 as a concrete `#[task]` argument — which
-/// is why `on_event` is a fn pointer and the host's entropy is a fn pointer, not closures.
+/// The fully-spelled node type, so it can ride to core 1 as a concrete `#[task]` argument.
 type S3Node = PrnsNode<
     (),
     screen::node_pages::NodePageRoutes,
     for<'a> fn(PrnsEvent<'a>, &()),
     EngineStorageType,
-    EmbassyHost<fn(&mut [u8])>,
+    EmbassyHost<Mtx, S3EntropySource>,
     Mtx,
     LANE_COUNT,
     INTERFACE_CAPACITY,

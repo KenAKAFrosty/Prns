@@ -208,7 +208,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
         ingress: RemoteControlPairingRequestIngress<'_>,
         interfaces: AttachedInterfaces<'_>,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> RemoteControlPairingRequestIngressOutcome
     where
@@ -298,7 +298,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
                         RemoteControlPairingResponse::Completed(completed),
                         interfaces,
                         now,
-                        fill_entropy,
+                        fill_random,
                         sink,
                     ) {
                         Ok(()) => RemoteControlPairingRequestOutcome::CommitCompletionDispatched {
@@ -406,7 +406,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
             RemoteControlPairingResponse::Offer(offer),
             interfaces,
             now,
-            fill_entropy,
+            fill_random,
             sink,
         ) {
             let reducer = self
@@ -480,7 +480,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
         response: RemoteControlPairingResponse,
         interfaces: AttachedInterfaces<'_>,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> Result<(), RemoteControlPairingResponseDispatchFailure>
     where
@@ -514,7 +514,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
             payload: RespondPayload::Packed(data),
         };
         let mut iv = [0u8; crate::identity::ENCRYPTION_IV_LEN];
-        fill_entropy(&mut iv);
+        fill_random(&mut iv);
         let mut frame = [0u8; BROADCAST_MTU];
         let dispatch = self
             .write_commanded_respond(&respond, &iv, &mut frame)
@@ -539,7 +539,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
         settlement: SettleRemoteControlTargetPairingAuthorization,
         interfaces: AttachedInterfaces<'_>,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> Result<
         RemoteControlTargetPairingFinalization,
@@ -684,7 +684,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
                     RemoteControlPairingResponse::Completed(completed),
                     interfaces,
                     now,
-                    fill_entropy,
+                    fill_random,
                     sink,
                 )
                 .map_err(|failure| {
@@ -760,7 +760,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
         open: OpenRemoteControlPairing,
         interfaces: AttachedInterfaces<'_>,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> Result<RemoteControlPairingOpened, OpenRemoteControlPairingFailure>
     where
@@ -772,17 +772,17 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
                 OpenRemoteControlPairingRejection::DeadlineOverflow,
             )
         })?;
-        let (identity_secret, signer) = self.mint_pairing_identity(fill_entropy)?;
+        let (identity_secret, signer) = self.mint_pairing_identity(fill_random)?;
         let identity_hash = signer.identity_hash();
         let identity = RemoteControlPairingIdentity::new(identity_hash);
         let endpoint = identity.endpoint();
         let mut invitation_entropy = [0u8; RemoteControlPairingInvitationCode::ENTROPY_LEN];
-        fill_entropy(&mut invitation_entropy);
+        fill_random(&mut invitation_entropy);
         let invitation_code = RemoteControlPairingInvitationCode::from_entropy(invitation_entropy);
         let invitation_verifier = invitation_code.verifier();
 
         let mut announce_entropy = [0u8; AnnounceEntropy::LEN];
-        fill_entropy(&mut announce_entropy);
+        fill_random(&mut announce_entropy);
         let announce_id = AnnounceId::mint(AnnounceEntropy::new(announce_entropy), now);
         let mut availability = [0u8; BROADCAST_MDU];
         let availability_len = RemoteControlPairingAvailability::write_signed(
@@ -890,7 +890,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
     pub(crate) fn close_remote_control_pairing_into<F>(
         &mut self,
         interfaces: AttachedInterfaces<'_>,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> Result<CloseRemoteControlPairingOutcome, CloseRemoteControlPairingFailure>
     where
@@ -908,8 +908,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
             }
         };
 
-        match self.retire_destination(&endpoint.destination_hash(), interfaces, fill_entropy, sink)
-        {
+        match self.retire_destination(&endpoint.destination_hash(), interfaces, fill_random, sink) {
             RetireDestinationOutcome::Retired { .. } => {}
             RetireDestinationOutcome::RetirementIncomplete {
                 first_remaining_link,
@@ -944,14 +943,14 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
 
     fn mint_pairing_identity<F>(
         &self,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
     ) -> Result<(IdentitySecretKey, InMemoryNodeIdentity), OpenRemoteControlPairingFailure>
     where
         F: FnMut(&mut [u8]),
     {
         for _ in 0..PAIRING_IDENTITY_MINT_ATTEMPTS {
             let mut secret = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
-            fill_entropy(&mut secret[..]);
+            fill_random(&mut secret[..]);
             let signer = InMemoryNodeIdentity::from_secret_key_bytes(&secret);
             if !self.held_identities.contains(&signer.identity_hash()) {
                 return Ok((secret, signer));
@@ -964,7 +963,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
         &mut self,
         now: InstantMillis,
         interfaces: AttachedInterfaces<'_>,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> crate::engine::WakeSchedules
     where
@@ -1010,7 +1009,7 @@ impl<S: StorageLayout> crate::engine::EngineState<S> {
                 }
             }
         };
-        match self.close_remote_control_pairing_into(interfaces, fill_entropy, sink) {
+        match self.close_remote_control_pairing_into(interfaces, fill_random, sink) {
             Ok(CloseRemoteControlPairingOutcome::Closed { .. }) => {
                 sink(EngineReaction::Journaled(
                     crate::engine::Journaled::RemoteControlPairingExpired { endpoint },
@@ -1690,7 +1689,7 @@ mod tests {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&interfaces),
                 now: InstantMillis(2_000),
-                fill_entropy: &mut |bytes| bytes.fill(0xD7),
+                fill_random: &mut |bytes| bytes.fill(0xD7),
                 should_prove: &mut |_| false,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| match reaction {
@@ -1815,7 +1814,7 @@ mod tests {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&interfaces),
                 now: InstantMillis(2_000),
-                fill_entropy: &mut |bytes| bytes.fill(0xE2),
+                fill_random: &mut |bytes| bytes.fill(0xE2),
                 should_prove: &mut |_| false,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |_| mismatch_reactions += 1,
@@ -1840,7 +1839,7 @@ mod tests {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&interfaces),
                 now: InstantMillis(2_000),
-                fill_entropy: &mut |bytes| bytes.fill(0xE3),
+                fill_random: &mut |bytes| bytes.fill(0xE3),
                 should_prove: &mut |_| false,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |_| malformed_reactions += 1,
@@ -1880,7 +1879,7 @@ mod tests {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&interfaces),
                 now: InstantMillis(2_100),
-                fill_entropy: &mut |bytes| bytes.fill(0xE4),
+                fill_random: &mut |bytes| bytes.fill(0xE4),
                 should_prove: &mut |_| false,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |_| commit_reactions += 1,
@@ -1919,7 +1918,7 @@ mod tests {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&interfaces),
                 now: InstantMillis(2_000),
-                fill_entropy: &mut |bytes| bytes.fill(0xE4),
+                fill_random: &mut |bytes| bytes.fill(0xE4),
                 should_prove: &mut |_| false,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |_| reactions += 1,
@@ -3311,7 +3310,7 @@ mod tests {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&interfaces),
                 now: InstantMillis(2_000),
-                fill_entropy: &mut |bytes| bytes.fill(0xE5),
+                fill_random: &mut |bytes| bytes.fill(0xE5),
                 should_prove: &mut |_| false,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |_| {},

@@ -712,7 +712,7 @@ fn a_full_responder_link_table_withholds_the_proof_and_preserves_its_row() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(4_000),
-            fill_entropy: &mut |bytes| bytes.fill(0x83),
+            fill_random: &mut |bytes| bytes.fill(0x83),
             should_prove: &mut |_| false,
             should_accept_resource: &mut |_| false,
             sink: &mut |reaction| {
@@ -1084,7 +1084,7 @@ fn the_two_ends_agree_on_the_session_key_through_the_proof() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_000),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0x99),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0x99),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -1187,7 +1187,7 @@ fn deferred_link_proof_sign_and_verify_resume_the_handshake() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(1_100),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0x99),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0x99),
             should_prove: &mut |_| false,
             should_accept_resource: &mut |_| false,
             sink: &mut |_| {},
@@ -1238,7 +1238,7 @@ fn deferred_link_proof_sign_and_verify_resume_the_handshake() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(1_250),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             should_prove: &mut |_| false,
             should_accept_resource: &mut |_| false,
             sink: &mut |_| {},
@@ -1347,7 +1347,7 @@ fn reactions_of_on(
         IngestIo {
             interfaces,
             now: InstantMillis(arrived_at),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -1790,7 +1790,7 @@ fn an_authenticated_but_malformed_lrrtt_tears_the_link_down() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(1_600),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xB6),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xB6),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -1895,7 +1895,7 @@ fn link_data_crosses_the_active_link_and_journals_the_delivery() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_100),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xD2),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xD2),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -1926,7 +1926,7 @@ fn link_data_crosses_the_active_link_and_journals_the_delivery() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_200),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xD3),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xD3),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -2332,7 +2332,7 @@ fn the_app_decider_gates_the_prove_if_link_proof() {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&arrival_interfaces()),
                 now: InstantMillis(arrived_at),
-                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xD2),
+                fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xD2),
                 should_prove: &mut |request: &ProofRequest| {
                     requests.push((request.destination, request.plaintext.to_vec()));
                     agree
@@ -2820,7 +2820,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
             IngestIo {
                 interfaces,
                 now: InstantMillis(now),
-                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
+                fill_random: &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
                 should_accept_resource:
                     &mut |_: &crate::routing::links::resources::ResourceOffer| false,
@@ -3293,7 +3293,7 @@ fn an_identified_request_policy_passes_packets_only_after_the_peer_identifies() 
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_100),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -3330,7 +3330,7 @@ fn an_identified_request_policy_passes_packets_only_after_the_peer_identifies() 
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_300),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -3369,7 +3369,7 @@ fn an_identified_request_policy_passes_packets_only_after_the_peer_identifies() 
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_500),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -3435,7 +3435,7 @@ fn an_identified_request_policy_passes_packets_only_after_the_peer_identifies() 
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_700),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -3558,7 +3558,7 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_100),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -3589,7 +3589,7 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_200),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -3616,7 +3616,7 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_300),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -3817,7 +3817,7 @@ fn a_quiet_link_keepalives_then_goes_stale_and_closes() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(52_690),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xE8),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xE8),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -3851,7 +3851,7 @@ fn a_quiet_link_keepalives_then_goes_stale_and_closes() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(104_118),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xE8),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xE8),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -3882,7 +3882,7 @@ fn a_quiet_link_keepalives_then_goes_stale_and_closes() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(104_128),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xE9),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xE9),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -3991,7 +3991,7 @@ fn a_close_link_command_settles_and_closes_the_peer() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_100),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xEB),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xEB),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -4021,7 +4021,7 @@ fn a_close_link_command_settles_and_closes_the_peer() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_200),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xEC),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xEC),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -4080,7 +4080,7 @@ fn a_valid_peer_close_commits_final_route_evidence_before_removal() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_200),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_| false,
             should_accept_resource: &mut |_| false,
             sink: &mut |_| {},

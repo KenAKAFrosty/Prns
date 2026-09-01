@@ -109,6 +109,20 @@ pub enum IdentityOrigin {
     Generated,
 }
 
+/// Loads an identity or generates it from an initialized runtime random stream.
+///
+/// Arbitrary callbacks cannot cross this bootstrap boundary.
+///
+/// ```compile_fail
+/// use prns_core::identity::vault::{
+///     load_or_generate_with_runtime_entropy, IdentityLabel, IdentityVault,
+/// };
+///
+/// fn bootstrap<V: IdentityVault>(vault: &mut V, label: &IdentityLabel) {
+///     let mut callback = |output: &mut [u8]| output.fill(0x42);
+///     let _ = load_or_generate_with_runtime_entropy(vault, label, &mut callback);
+/// }
+/// ```
 pub fn load_or_generate_with_runtime_entropy<V, S>(
     vault: &mut V,
     label: &IdentityLabel,
@@ -119,15 +133,6 @@ where
     S: EntropySource,
 {
     load_or_generate_inner(vault, label, |output| entropy.fill_random(output))
-}
-
-#[deprecated(since = "0.4.0", note = "use load_or_generate_with_runtime_entropy")]
-pub fn load_or_generate<V: IdentityVault>(
-    vault: &mut V,
-    label: &IdentityLabel,
-    fill_entropy: impl FnMut(&mut [u8]),
-) -> Result<(IdentitySecretKey, IdentityOrigin), V::Error> {
-    load_or_generate_inner(vault, label, fill_entropy)
 }
 
 fn load_or_generate_inner<V: IdentityVault>(

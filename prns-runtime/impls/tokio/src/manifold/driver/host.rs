@@ -1,10 +1,10 @@
 use std::{cell::RefCell, time::Duration};
 
-use prns_core::entropy::{EntropySource, RuntimeEntropy};
 use tokio::time::Instant;
 
 use crate::engine::InstantMillis;
 use crate::manifold::Host;
+use crate::runtime::OsRuntimeEntropy;
 
 const MAX_TIMER_ARM_MILLIS: u64 = 24 * 60 * 60 * 1_000;
 
@@ -89,7 +89,7 @@ impl TokioClock {
         }
     }
 
-    fn with_entropy(self, entropy: TokioRuntimeEntropy) -> TokioHost {
+    fn with_entropy(self, entropy: OsRuntimeEntropy) -> TokioHost {
         TokioHost {
             clock: self,
             entropy,
@@ -120,31 +120,19 @@ impl Default for TokioClock {
 /// ```
 pub struct TokioHost {
     clock: TokioClock,
-    entropy: TokioRuntimeEntropy,
-}
-
-struct OsEntropySource;
-type TokioRuntimeEntropy = RuntimeEntropy<OsEntropySource>;
-
-impl EntropySource for OsEntropySource {
-    type Error = getrandom::Error;
-
-    fn try_fill_entropy(&mut self, output: &mut [u8]) -> Result<(), Self::Error> {
-        getrandom::getrandom(output)
-    }
+    entropy: OsRuntimeEntropy,
 }
 
 #[expect(
     clippy::expect_used,
     reason = "a host without a functioning OS CSPRNG must not emit runtime randomness"
 )]
-fn seeded_runtime_entropy() -> TokioRuntimeEntropy {
-    RuntimeEntropy::try_new(OsEntropySource)
-        .expect("OS CSPRNG must provide the initial runtime seed")
+fn seeded_runtime_entropy() -> OsRuntimeEntropy {
+    OsRuntimeEntropy::try_new().expect("OS CSPRNG must provide the initial runtime seed")
 }
 
 std::thread_local! {
-    static THREAD_ENTROPY: RefCell<Option<TokioRuntimeEntropy>> = const { RefCell::new(None) };
+    static THREAD_ENTROPY: RefCell<Option<OsRuntimeEntropy>> = const { RefCell::new(None) };
 }
 
 #[derive(Clone, Copy)]
@@ -201,7 +189,7 @@ impl Host for TokioHost {
         self.clock.sleep_until(deadline).await;
     }
 
-    fn fill_entropy(&mut self, bytes: &mut [u8]) {
+    fn fill_random(&mut self, bytes: &mut [u8]) {
         self.entropy.fill_random(bytes);
     }
 }
@@ -213,6 +201,8 @@ mod tests {
         rc::Rc,
         sync::{Arc, Barrier},
     };
+
+    use prns_core::entropy::{EntropySource, RuntimeEntropy};
 
     use super::*;
 
@@ -302,7 +292,7 @@ mod tests {
     #[test]
     fn a_host_always_owns_healthy_runtime_entropy() {
         let mut host = TokioHost::new();
-        host.fill_entropy(&mut []);
+        host.fill_random(&mut []);
 
         assert_eq!(
             host.entropy.reseed_health(),

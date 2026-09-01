@@ -45,11 +45,12 @@ use personal_rns::tcp::{TcpClientInterface, TcpServer};
 use personal_rns::udp::UdpInterface;
 use personal_rns::units::{ByteLimit, DurationMillis, RttMillis};
 use personal_rns::{
-    attach_plan_with_context, fill_os_entropy, load_or_create_ble_identity,
+    attach_plan_with_context, load_or_create_ble_identity,
     load_or_create_identity_secret, request_endpoints, try_generate_identity_secret,
     AttachedInterface, AttachedSupervisor, IdentitySecretFileError, LocalIdentityFileError,
-    ManuallyAttached, PlanAttachments, PlanFailure, PlanOutcome, PlanRuntimeContext,
-    PreConfiguredDestination, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe, RatchetPolicy,
+    ManuallyAttached, OsRuntimeEntropy, PlanAttachments, PlanFailure, PlanOutcome,
+    PlanRuntimeContext, PreConfiguredDestination, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
+    RatchetPolicy,
     ResourceStrategy as EngineResourceStrategy, SendError, Zeroizing, IDENTITY_SECRET_KEY_LEN,
 };
 use prns_host::{
@@ -947,8 +948,9 @@ fn plan_runtime_context(
         }
         None => {
             let mut bytes = [0u8; 16];
-            fill_os_entropy(&mut bytes)
-                .map_err(|_| NativeStartError::Identity(IdentityStartError::EntropyUnavailable))?;
+            OsRuntimeEntropy::try_new()
+                .map_err(|_| NativeStartError::Identity(IdentityStartError::EntropyUnavailable))?
+                .fill_random(&mut bytes);
             Ok(PlanRuntimeContext::default().with_ble_identity(BleIdentity::new(bytes)))
         }
     }

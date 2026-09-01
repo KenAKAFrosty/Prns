@@ -499,6 +499,7 @@ mod tests {
     };
     use prns_runtime::manifold::driver::{leaked_grant_lane, EmbassyInterfaceSeam};
     use prns_runtime::manifold::grant::{GrantConsumer, GrantProducer};
+    use prns_runtime::runtime::{EntropyHandle, SharedRuntimeEntropy};
 
     use ::core::cell::{Cell, RefCell};
     use ::core::convert::Infallible;
@@ -516,6 +517,25 @@ mod tests {
 
     const DEVICE_SLOT: usize = prns_core::interfaces::usb_auto::DEVICE_USB_HW_MTU + IFAC_MAX_SIZE;
 
+    struct TestEntropySource;
+
+    impl prns_core::entropy::EntropySource for TestEntropySource {
+        type Error = Infallible;
+
+        fn try_fill_entropy(&mut self, output: &mut [u8]) -> Result<(), Self::Error> {
+            output.fill(0x41);
+            Ok(())
+        }
+    }
+
+    fn entropy_handle() -> EntropyHandle<CriticalSectionRawMutex, TestEntropySource> {
+        Box::leak(Box::new(
+            SharedRuntimeEntropy::try_new(TestEntropySource)
+                .expect("the deterministic test source always seeds"),
+        ))
+        .handle()
+    }
+
     struct MockStream<'a> {
         buf: &'a RefCell<VecDeque<u8>>,
     }
@@ -530,8 +550,8 @@ mod tests {
             self.inner.interface_origin()
         }
 
-        fn fill_entropy(&mut self, bytes: &mut [u8]) {
-            self.inner.fill_entropy(bytes);
+        fn fill_random(&mut self, bytes: &mut [u8]) {
+            self.inner.fill_random(bytes);
         }
 
         async fn inbound_sink(&mut self) -> &mut dyn FrameSink {
@@ -750,10 +770,13 @@ mod tests {
                 status: &status,
                 host_present: || true,
             });
-            let inner =
-                EmbassyInterfaceSeam::new(device_id(), in_tx, notify.sender(), out_rx, |bytes| {
-                    bytes.fill(0)
-                });
+            let inner = EmbassyInterfaceSeam::new(
+                device_id(),
+                in_tx,
+                notify.sender(),
+                out_rx,
+                entropy_handle(),
+            );
             let seam = RecordingSeam {
                 inner,
                 dispositions: &dispositions,
@@ -849,10 +872,13 @@ mod tests {
                 status: &status,
                 host_present: || true,
             });
-            let inner =
-                EmbassyInterfaceSeam::new(device_id(), in_tx, notify.sender(), out_rx, |bytes| {
-                    bytes.fill(0)
-                });
+            let inner = EmbassyInterfaceSeam::new(
+                device_id(),
+                in_tx,
+                notify.sender(),
+                out_rx,
+                entropy_handle(),
+            );
             let seam = RecordingSeam {
                 inner,
                 dispositions: &dispositions,
@@ -1144,10 +1170,13 @@ mod tests {
                 status: &status,
                 host_present: || true,
             });
-            let seam =
-                EmbassyInterfaceSeam::new(device_id(), in_tx, notify.sender(), out_rx, |bytes| {
-                    bytes.fill(0)
-                });
+            let seam = EmbassyInterfaceSeam::new(
+                device_id(),
+                in_tx,
+                notify.sender(),
+                out_rx,
+                entropy_handle(),
+            );
             match select(
                 device.run(seam),
                 with_timeout(Duration::from_millis(20), notify.receive()),
@@ -1199,10 +1228,13 @@ mod tests {
                 status: &status,
                 host_present: || true,
             });
-            let seam =
-                EmbassyInterfaceSeam::new(device_id(), in_tx, notify.sender(), out_rx, |bytes| {
-                    bytes.fill(0)
-                });
+            let seam = EmbassyInterfaceSeam::new(
+                device_id(),
+                in_tx,
+                notify.sender(),
+                out_rx,
+                entropy_handle(),
+            );
             match select(device.run(seam), Timer::after(Duration::from_millis(20))).await {
                 Either::Second(()) => {}
                 Either::First(()) => unreachable!("the device loop never returns"),

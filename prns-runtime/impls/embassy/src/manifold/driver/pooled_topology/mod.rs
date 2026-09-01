@@ -210,7 +210,7 @@ pub(crate) async fn run_pooled<
                             IngestIo {
                                 interfaces: AttachedInterfaces::new(&*descriptors),
                                 now,
-                                fill_entropy: &mut |entropy| host.fill_entropy(entropy),
+                                fill_random: &mut |entropy| host.fill_random(entropy),
                                 should_prove: &mut should_prove,
                                 should_accept_resource: &mut should_accept_resource,
                                 sink: &mut |reaction| {
@@ -249,7 +249,7 @@ pub(crate) async fn run_pooled<
                     issued,
                     AttachedInterfaces::new(&*descriptors),
                     now,
-                    &mut |entropy| host.fill_entropy(entropy),
+                    &mut |entropy| host.fill_random(entropy),
                     &mut |reaction| {
                         route_reaction(
                             reaction,
@@ -278,7 +278,7 @@ pub(crate) async fn run_pooled<
                     reason,
                     now,
                     AttachedInterfaces::new(&*descriptors),
-                    &mut |bytes| host.fill_entropy(bytes),
+                    &mut |bytes| host.fill_random(bytes),
                     &mut |reaction| {
                         route_reaction(
                             reaction,

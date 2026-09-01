@@ -238,7 +238,7 @@ impl PrnsNodeHandle {
         )
     }
 
-    pub fn fill_entropy(&self, bytes: &mut [u8]) {
+    pub fn fill_random(&self, bytes: &mut [u8]) {
         self.entropy.fill(bytes);
     }
 

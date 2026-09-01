@@ -30,7 +30,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         destination: &DestinationHash,
         interfaces: AttachedInterfaces<'_>,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> RetireDestinationOutcome
     where
@@ -56,7 +56,7 @@ impl<S: StorageLayout> EngineState<S> {
             );
             if active {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
-                fill_entropy(&mut iv);
+                fill_random(&mut iv);
                 let mut buf = [0u8; BROADCAST_MTU];
                 match self.write_owed_link_close(
                     &link_id,

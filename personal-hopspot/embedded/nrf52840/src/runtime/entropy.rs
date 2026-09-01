@@ -53,7 +53,7 @@ impl EntropySource for NrfEntropySource {
 }
 
 type SharedEntropy = SharedRuntimeEntropy<CriticalSectionRawMutex, NrfEntropySource>;
-type RuntimeEntropyHandle = EntropyHandle<CriticalSectionRawMutex, NrfEntropySource>;
+pub(super) type RuntimeEntropyHandle = EntropyHandle<CriticalSectionRawMutex, NrfEntropySource>;
 
 static SHARED_ENTROPY: StaticCell<SharedEntropy> = StaticCell::new();
 static ENTROPY_HANDLE: OnceLock<RuntimeEntropyHandle> = OnceLock::new();
@@ -102,9 +102,8 @@ pub(super) fn install_softdevice_runtime_entropy(
     clippy::expect_used,
     reason = "runtime entropy is installed before any engine or interface consumer starts"
 )]
-pub(super) fn runtime_entropy(output: &mut [u8]) {
-    ENTROPY_HANDLE
+pub(super) fn runtime_entropy() -> RuntimeEntropyHandle {
+    *ENTROPY_HANDLE
         .try_get()
         .expect("runtime entropy is installed before the PRNS engine")
-        .fill_random(output);
 }

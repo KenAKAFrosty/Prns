@@ -114,7 +114,7 @@ type Node = PrnsNode<
     hopspot::node_pages::NodePageRoutes,
     for<'a> fn(PrnsEvent<'a>, &()),
     Storage,
-    EmbassyHost<fn(&mut [u8])>,
+    EmbassyHost<Mtx, super::entropy::NrfEntropySource>,
     Mtx,
     LANE_COUNT,
     INTERFACE_CAPACITY,
@@ -390,7 +390,8 @@ pub async fn run(spawner: Spawner) -> ! {
         LIFECYCLE.receiver(),
         handle,
     );
-    let host = EmbassyHost::new(runtime_entropy as fn(&mut [u8]));
+    let entropy = runtime_entropy();
+    let host = EmbassyHost::new(entropy);
     static NODE: StaticCell<Node> = StaticCell::new();
     let recipe = PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
@@ -415,8 +416,8 @@ pub async fn run(spawner: Spawner) -> ! {
     let persistence = PERSISTENCE.init(persistence);
     spawner.spawn(manifold_task(node, persistence).expect("manifold task fits"));
 
-    let lora_seam = lora_lane.into_seam(NOTIFY.sender(), runtime_entropy);
-    let usb_seam = usb_lane.into_seam(NOTIFY.sender(), runtime_entropy);
+    let lora_seam = lora_lane.into_seam(NOTIFY.sender(), entropy);
+    let usb_seam = usb_lane.into_seam(NOTIFY.sender(), entropy);
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",

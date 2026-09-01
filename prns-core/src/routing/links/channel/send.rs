@@ -248,7 +248,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         now: InstantMillis,
         interfaces: AttachedInterfaces<'_>,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules
     where
@@ -266,7 +266,7 @@ impl<S: StorageLayout> EngineState<S> {
                     settle_channel_timeout(id, sink);
                 }
                 DueSendVerdict::Exhausted => {
-                    self.teardown_channel_link(&link_id, interfaces, fill_entropy, sink);
+                    self.teardown_channel_link(&link_id, interfaces, fill_random, sink);
                 }
                 DueSendVerdict::Retry { rtt, fire_on } => {
                     self.retry_outstanding_send(
@@ -423,7 +423,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         link_id: &LinkId,
         interfaces: AttachedInterfaces<'_>,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
         F: FnMut(&mut [u8]),
@@ -436,7 +436,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
         }
         let mut iv = [0u8; ENCRYPTION_IV_LEN];
-        fill_entropy(&mut iv);
+        fill_random(&mut iv);
         let mut buf = [0u8; BROADCAST_MTU];
         if let Ok(dispatch) =
             self.write_owed_link_close(link_id, LinkClosedReason::Timeout, &iv, &mut buf, sink)
@@ -633,7 +633,7 @@ mod tests {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&transporting_interfaces()),
                 now: InstantMillis(now),
-                fill_entropy: &mut |slot: &mut [u8]| slot.fill(0),
+                fill_random: &mut |slot: &mut [u8]| slot.fill(0),
                 should_prove: &mut |_| false,
                 should_accept_resource:
                     &mut |_: &crate::routing::links::resources::ResourceOffer| false,

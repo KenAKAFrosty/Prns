@@ -16,17 +16,16 @@ pub use crate::remote_control::{
     RemoteControlControllerIdentitySecret, RemoteControlDescription, RemoteControlDescriptionError,
     RemoteControlEndpoint, RemoteControlInitialAccess, RemoteControlMessageWriteError,
     RemoteControlNodeIdentities, RemoteControlNodeIdentityBootstrap,
-    RemoteControlNodeIdentityBootstrapError, RemoteControlNodeIdentityGenerationError,
-    RemoteControlNodeIdentityOrigins, RemoteControlNodeIdentitySecrets,
-    RemoteControlNodeIdentitySecretsError, RemoteControlProtocolError,
-    RemoteControlProtocolErrorKind, RemoteControlProtocolVersion, RemoteControlRequest,
-    RemoteControlRequestKind, RemoteControlRequestParseError, RemoteControlRequestSet,
-    RemoteControlResponse, RemoteControlResponseKind, RemoteControlResponseParseError,
-    RemoteControlSelfAnnouncement, RemoteControlService, RemoteControlTargetIdentity,
-    RemoteControlTargetIdentitySecret, RevokeRemoteControlControllerError,
-    RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantError,
-    SetRemoteControlControllerGrantOutcome, REMOTE_CONTROL_IDENTITY_VAULT_SLOTS,
-    REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
+    RemoteControlNodeIdentityBootstrapError, RemoteControlNodeIdentityOrigins,
+    RemoteControlNodeIdentitySecrets, RemoteControlNodeIdentitySecretsError,
+    RemoteControlProtocolError, RemoteControlProtocolErrorKind, RemoteControlProtocolVersion,
+    RemoteControlRequest, RemoteControlRequestKind, RemoteControlRequestParseError,
+    RemoteControlRequestSet, RemoteControlResponse, RemoteControlResponseKind,
+    RemoteControlResponseParseError, RemoteControlSelfAnnouncement, RemoteControlService,
+    RemoteControlTargetIdentity, RemoteControlTargetIdentitySecret,
+    RevokeRemoteControlControllerError, RevokeRemoteControlControllerOutcome,
+    SetRemoteControlControllerGrantError, SetRemoteControlControllerGrantOutcome,
+    REMOTE_CONTROL_IDENTITY_VAULT_SLOTS, REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
 };
 
 #[cfg(feature = "alloc")]
@@ -53,8 +52,8 @@ pub use crate::Esp32S3;
 
 #[cfg(feature = "tokio-host")]
 pub use crate::{
-    fill_os_entropy, try_generate_identity_secret, AttachIntent, Attachable, AttachedInterface,
-    AttachedSupervisor, Fleet, PrnsNode, PrnsNodeHandle, RemoteControlFileIdentityBootstrapError,
+    try_generate_identity_secret, AttachIntent, Attachable, AttachedInterface, AttachedSupervisor,
+    Fleet, OsRuntimeEntropy, PrnsNode, PrnsNodeHandle, RemoteControlFileIdentityBootstrapError,
     RemoteControlHandle, RemoteControlIdentityDirectory,
 };
 

@@ -798,7 +798,7 @@ fn an_ignored_echo_that_cancels_a_rebroadcast_reports_the_emptied_lane() {
                 IngestIo {
                     interfaces: AttachedInterfaces::new(&transporting_interfaces()),
                     now: InstantMillis(now),
-                    fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+                    fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
                     should_prove: &mut |_| false,
                     should_accept_resource:
                         &mut |_: &crate::routing::links::resources::ResourceOffer| false,

@@ -220,7 +220,7 @@ impl InboundDispatch {
                             IngestIo {
                                 interfaces: topology.interfaces.view(),
                                 now,
-                                fill_entropy: &mut |entropy| host.fill_entropy(entropy),
+                                fill_random: &mut |entropy| host.fill_random(entropy),
                                 should_prove,
                                 should_accept_resource,
                                 sink: &mut reaction_sink!(),
@@ -264,7 +264,7 @@ impl InboundDispatch {
                         IngestIo {
                             interfaces: topology.interfaces.view(),
                             now,
-                            fill_entropy: &mut |entropy| host.fill_entropy(entropy),
+                            fill_random: &mut |entropy| host.fill_random(entropy),
                             should_prove,
                             should_accept_resource,
                             sink: &mut reaction_sink!(),

@@ -96,12 +96,12 @@ pub use prns_runtime::storage::Esp32S3;
 
 #[cfg(feature = "tokio-host")]
 pub use prns_runtime_tokio::runtime::{
-    fill_os_entropy, generate_identity_secret, load_or_create_ble_identity,
-    load_or_create_browser_rendezvous_id, load_or_create_browser_selection_seed,
-    load_or_create_identity_secret, try_generate_identity_secret, AttachIntent, Attachable,
-    AttachedInterface, AttachedSupervisor, Fleet, IdentitySecretFileError, LocalIdentityFileError,
-    OsEntropyError, PrnsNode, PrnsNodeHandle, RemoteControlFileIdentityBootstrapError,
-    RemoteControlHandle, RemoteControlIdentityDirectory,
+    generate_identity_secret, load_or_create_ble_identity, load_or_create_browser_rendezvous_id,
+    load_or_create_browser_selection_seed, load_or_create_identity_secret,
+    try_generate_identity_secret, AttachIntent, Attachable, AttachedInterface, AttachedSupervisor,
+    Fleet, IdentitySecretFileError, LocalIdentityFileError, OsEntropyError, OsRuntimeEntropy,
+    PrnsNode, PrnsNodeHandle, RemoteControlFileIdentityBootstrapError, RemoteControlHandle,
+    RemoteControlIdentityDirectory,
 };
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]

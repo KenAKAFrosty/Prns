@@ -153,6 +153,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
 dependencies = [
  "hybrid-array",
+ "zeroize",
 ]
 
 [[package]]
@@ -561,6 +562,7 @@ dependencies = [
  "block-buffer 0.12.1",
  "crypto-common 0.2.2",
  "ctutils",
+ "zeroize",
 ]
 
 [[package]]
@@ -995,6 +997,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9155a582abd142abc056962c29e3ce5ff2ad5469f4246b537ed42c5deba857da"
 dependencies = [
  "typenum",
+ "zeroize",
 ]
 
 [[package]]
@@ -1450,6 +1453,7 @@ dependencies = [
  "allocator-api2",
  "cbc",
  "cfg-if",
+ "chacha20",
  "crc32fast",
  "ed25519-dalek",
  "embedded-storage",
@@ -1457,7 +1461,9 @@ dependencies = [
  "heapless 0.8.0",
  "hkdf",
  "hmac",
+ "hybrid-array",
  "prns-macros",
+ "rand_core",
  "rayon",
  "roaring",
  "sha2 0.11.0",
@@ -1526,16 +1532,13 @@ dependencies = [
 name = "prns-runtime-tokio"
 version = "0.3.7"
 dependencies = [
- "chacha20",
  "futures-util",
  "getrandom 0.2.17",
  "heapless 0.8.0",
  "prns-core",
  "prns-runtime",
- "rand_core",
  "rtrb",
  "tokio",
- "zeroize",
 ]
 
 [[package]]

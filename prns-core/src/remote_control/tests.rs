@@ -187,48 +187,6 @@ fn generated_node_identity_secrets_fill_both_roles_once() {
 }
 
 #[test]
-#[allow(deprecated)]
-fn node_identity_secret_generation_preserves_each_failure_phase() {
-    #[derive(Debug, PartialEq, Eq)]
-    enum EntropyFailure {
-        Refused,
-    }
-
-    assert!(matches!(
-        RemoteControlNodeIdentitySecrets::generate(|_bytes| Err(EntropyFailure::Refused)),
-        Err(RemoteControlNodeIdentityGenerationError::ControllerEntropy(
-            EntropyFailure::Refused
-        ))
-    ));
-
-    let mut calls = 0;
-    assert!(matches!(
-        RemoteControlNodeIdentitySecrets::generate(|bytes| {
-            calls += 1;
-            if calls == 1 {
-                bytes.fill(0x41);
-                Ok(())
-            } else {
-                Err(EntropyFailure::Refused)
-            }
-        }),
-        Err(RemoteControlNodeIdentityGenerationError::TargetEntropy(
-            EntropyFailure::Refused
-        ))
-    ));
-
-    assert!(matches!(
-        RemoteControlNodeIdentitySecrets::generate(|bytes| {
-            bytes.fill(0x52);
-            Ok::<_, ::core::convert::Infallible>(())
-        }),
-        Err(RemoteControlNodeIdentityGenerationError::InvalidPair(
-            RemoteControlNodeIdentitySecretsError::ControllerAndTargetAreSameIdentity
-        ))
-    ));
-}
-
-#[test]
 fn protocol_discriminants_are_stable_typed_values() {
     assert_eq!(
         RemoteControlProtocolVersion::ALL,

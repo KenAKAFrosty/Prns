@@ -3,7 +3,7 @@ use embassy_sync::once_lock::OnceLock;
 use esp_hal::peripherals::{ADC1, RNG};
 use esp_hal::rng::{Trng, TrngError, TrngSource};
 use personal_hopspot_core::HopspotS3FlashLayout;
-use personal_rns::runtime::SharedRuntimeEntropy;
+use personal_rns::runtime::{EntropyHandle, SharedRuntimeEntropy};
 use prns_core::entropy::{EntropySource, RuntimeEntropy};
 use static_cell::StaticCell;
 
@@ -20,6 +20,7 @@ impl EntropySource for S3EntropySource {
 }
 
 pub(crate) type S3RuntimeEntropy = RuntimeEntropy<S3EntropySource>;
+pub(crate) type S3EntropyHandle = EntropyHandle<CriticalSectionRawMutex, S3EntropySource>;
 type SharedEntropy = SharedRuntimeEntropy<CriticalSectionRawMutex, S3EntropySource>;
 
 static SHARED_ENTROPY: StaticCell<SharedEntropy> = StaticCell::new();
@@ -66,12 +67,11 @@ pub(crate) fn install(mut entropy: S3RuntimeEntropy) {
     clippy::expect_used,
     reason = "runtime entropy is installed before any engine or interface consumer starts"
 )]
-pub(crate) fn fill_random(output: &mut [u8]) {
+pub(crate) fn runtime_entropy() -> S3EntropyHandle {
     ENTROPY_SERVICE
         .try_get()
         .expect("runtime entropy is installed before PRNS consumers")
         .handle()
-        .fill_random(output);
 }
 
 #[expect(

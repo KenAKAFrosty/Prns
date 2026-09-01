@@ -65,7 +65,7 @@ impl<S: StorageLayout> EngineState<S> {
         request: SendRequestView<'_>,
         intent: crate::engine::SendRequestIntent,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules
     where
@@ -74,7 +74,7 @@ impl<S: StorageLayout> EngineState<S> {
         let mut wake_schedule_changes = WakeSchedules::UNCHANGED;
         let link_id = request.link_id();
         let mut iv = [0u8; ENCRYPTION_IV_LEN];
-        fill_entropy(&mut iv);
+        fill_random(&mut iv);
         match self.active_link_interface(&link_id) {
             None => {
                 let settlement = self.failed_send_request_settlement(
@@ -155,7 +155,7 @@ impl<S: StorageLayout> EngineState<S> {
         issued: IssuedCommand,
         interfaces: AttachedInterfaces<'_>,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules
     where
@@ -166,7 +166,7 @@ impl<S: StorageLayout> EngineState<S> {
             interfaces,
             now,
             CommandTiming::default(),
-            fill_entropy,
+            fill_random,
             sink,
         )
     }
@@ -177,7 +177,7 @@ impl<S: StorageLayout> EngineState<S> {
         interfaces: AttachedInterfaces<'_>,
         now: InstantMillis,
         timing: CommandTiming,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules
     where
@@ -190,7 +190,7 @@ impl<S: StorageLayout> EngineState<S> {
                 let settlement = match self.write_commanded_announce(
                     &announce,
                     now,
-                    &mut *fill_entropy,
+                    &mut *fill_random,
                     &mut buf,
                 ) {
                     CommandedAnnounceWriteOutcome::Written {
@@ -252,7 +252,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             CommandOutcome::OwesSendSinglePacket { id, send } => {
                 let mut entropy_bytes = [0u8; SendSinglePacketEntropy::LEN];
-                fill_entropy(&mut entropy_bytes);
+                fill_random(&mut entropy_bytes);
                 let entropy = SendSinglePacketEntropy::new(entropy_bytes);
 
                 let mut buf = [0u8; BROADCAST_MTU];
@@ -317,7 +317,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             CommandOutcome::OwesSendGroup { id, send } => {
                 let mut entropy_bytes = [0u8; SendGroupEntropy::LEN];
-                fill_entropy(&mut entropy_bytes);
+                fill_random(&mut entropy_bytes);
                 let entropy = SendGroupEntropy::new(entropy_bytes);
 
                 let mut buf = [0u8; BROADCAST_MTU];
@@ -362,13 +362,8 @@ impl<S: StorageLayout> EngineState<S> {
                 );
             }
             CommandOutcome::OwesOpenRemoteControlPairing { id, open } => {
-                let result = self.open_remote_control_pairing_into(
-                    open,
-                    interfaces,
-                    now,
-                    fill_entropy,
-                    sink,
-                );
+                let result =
+                    self.open_remote_control_pairing_into(open, interfaces, now, fill_random, sink);
                 if result.is_ok() {
                     wake_schedule_changes.remote_control_pairing =
                         self.remote_control_pairing_wake();
@@ -385,7 +380,7 @@ impl<S: StorageLayout> EngineState<S> {
                 );
             }
             CommandOutcome::OwesCloseRemoteControlPairing { id } => {
-                let result = self.close_remote_control_pairing_into(interfaces, fill_entropy, sink);
+                let result = self.close_remote_control_pairing_into(interfaces, fill_random, sink);
                 if result.is_ok() {
                     wake_schedule_changes.remote_control_pairing =
                         self.remote_control_pairing_wake();
@@ -484,7 +479,7 @@ impl<S: StorageLayout> EngineState<S> {
                     settle_authorization,
                     interfaces,
                     now,
-                    fill_entropy,
+                    fill_random,
                     sink,
                 );
                 settle(
@@ -581,7 +576,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             CommandOutcome::OwesLinkRequest { id, establish } => {
                 let mut entropy_bytes = [0u8; EstablishLinkEntropy::LEN];
-                fill_entropy(&mut entropy_bytes);
+                fill_random(&mut entropy_bytes);
                 let entropy = EstablishLinkEntropy::new(entropy_bytes);
 
                 let mut buf = [0u8; BROADCAST_MTU];
@@ -618,7 +613,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             CommandOutcome::OwesSendToLink { id, send } => {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
-                fill_entropy(&mut iv);
+                fill_random(&mut iv);
                 match self.active_link_interface(&send.link_id) {
                     None => {
                         settle(
@@ -702,7 +697,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             CommandOutcome::OwesSendToChannel { id, send } => {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
-                fill_entropy(&mut iv);
+                fill_random(&mut iv);
                 match self.active_link_interface(&send.link_id) {
                     None => {
                         settle(
@@ -760,7 +755,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             CommandOutcome::OwesIdentify { id, identify } => {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
-                fill_entropy(&mut iv);
+                fill_random(&mut iv);
                 let mut buf = [0u8; BROADCAST_MTU];
                 let settlement = match self.write_commanded_identify(&identify, &iv, &mut buf) {
                     Ok(dispatch) => {
@@ -792,7 +787,7 @@ impl<S: StorageLayout> EngineState<S> {
                     (&request).into(),
                     crate::engine::SendRequestIntent::Application,
                     now,
-                    fill_entropy,
+                    fill_random,
                     sink,
                 ));
             }
@@ -809,7 +804,7 @@ impl<S: StorageLayout> EngineState<S> {
                     request.send_request(),
                     crate::engine::SendRequestIntent::RemoteControlControllerPairing,
                     now,
-                    fill_entropy,
+                    fill_random,
                     sink,
                 ));
             }
@@ -834,7 +829,7 @@ impl<S: StorageLayout> EngineState<S> {
                     crate::engine::RespondPayload::StaticFile { .. } => 0,
                 };
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
-                fill_entropy(&mut iv);
+                fill_random(&mut iv);
                 let settlement = match self.active_link_interface(&respond.link_id) {
                     None => Settlement::Respond(Err(RespondFailure::Rejected(
                         RespondRejection::NoSuchLink,
@@ -880,7 +875,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             CommandOutcome::OwesResourceResponse { id, respond } => {
                 wake_schedule_changes =
-                    self.ingest_send_static_response_into(id, &respond, now, fill_entropy, sink);
+                    self.ingest_send_static_response_into(id, &respond, now, fill_random, sink);
             }
             CommandOutcome::RespondRejected { id, rejection } => {
                 settle(
@@ -898,7 +893,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             CommandOutcome::OwesLinkClose { id, close } => {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
-                fill_entropy(&mut iv);
+                fill_random(&mut iv);
                 let mut buf = [0u8; BROADCAST_MTU];
                 let settlement = match self.write_owed_link_close(
                     &close.link_id,

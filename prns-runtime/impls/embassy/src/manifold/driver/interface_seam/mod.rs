@@ -1,22 +1,48 @@
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Sender;
+use prns_core::entropy::EntropySource;
 
 use crate::interfaces::{FrameSink, InterfaceId, PacketPhyStats};
 use crate::manifold::grant::{FrameTarget, GrantConsumer, GrantProducer};
 use crate::manifold::interface_seam::{InterfaceSeam, OutboundDisposition};
+use crate::runtime::EntropyHandle;
 
 use super::{EmbassyGrantConsumer, EmbassyGrantProducer};
 
-pub struct EmbassyInterfaceSeam<'a, M: RawMutex, const NOTIFY: usize, const FRAME: usize> {
+/// The Embassy engine seam accepts only a handle to the authoritative runtime stream.
+///
+/// ```compile_fail
+/// use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+/// use prns_runtime_embassy::manifold::driver::EmbassyInterfaceSeam;
+///
+/// let callback = |output: &mut [u8]| output.fill(0x42);
+/// let _ = EmbassyInterfaceSeam::<CriticalSectionRawMutex, _, 1, 512>::new(
+///     panic!(),
+///     panic!(),
+///     panic!(),
+///     panic!(),
+///     callback,
+/// );
+/// ```
+pub struct EmbassyInterfaceSeam<
+    'a,
+    M: RawMutex + 'static,
+    S: EntropySource + 'static,
+    const NOTIFY: usize,
+    const FRAME: usize,
+> {
     id: InterfaceId,
     inbound: EmbassyGrantProducer<'a, M, FRAME>,
     notify: Sender<'a, M, InterfaceId, NOTIFY>,
     outbound: EmbassyGrantConsumer<'a, M, FRAME>,
-    fill_entropy: fn(&mut [u8]),
+    entropy: EntropyHandle<M, S>,
 }
 
-impl<'a, M: RawMutex, const NOTIFY: usize, const FRAME: usize>
-    EmbassyInterfaceSeam<'a, M, NOTIFY, FRAME>
+impl<'a, M, S, const NOTIFY: usize, const FRAME: usize>
+    EmbassyInterfaceSeam<'a, M, S, NOTIFY, FRAME>
+where
+    M: RawMutex + Sync + 'static,
+    S: EntropySource + Send + 'static,
 {
     #[must_use]
     pub fn new(
@@ -24,23 +50,26 @@ impl<'a, M: RawMutex, const NOTIFY: usize, const FRAME: usize>
         inbound: EmbassyGrantProducer<'a, M, FRAME>,
         notify: Sender<'a, M, InterfaceId, NOTIFY>,
         outbound: EmbassyGrantConsumer<'a, M, FRAME>,
-        fill_entropy: fn(&mut [u8]),
+        entropy: EntropyHandle<M, S>,
     ) -> Self {
         Self {
             id,
             inbound,
             notify,
             outbound,
-            fill_entropy,
+            entropy,
         }
     }
 }
 
-impl<M: RawMutex, const NOTIFY: usize, const FRAME: usize> InterfaceSeam
-    for EmbassyInterfaceSeam<'_, M, NOTIFY, FRAME>
+impl<M, S, const NOTIFY: usize, const FRAME: usize> InterfaceSeam
+    for EmbassyInterfaceSeam<'_, M, S, NOTIFY, FRAME>
+where
+    M: RawMutex + Sync + 'static,
+    S: EntropySource + Send + 'static,
 {
-    fn fill_entropy(&mut self, bytes: &mut [u8]) {
-        (self.fill_entropy)(bytes);
+    fn fill_random(&mut self, bytes: &mut [u8]) {
+        self.entropy.fill_random(bytes);
     }
 
     async fn inbound_sink(&mut self) -> &mut dyn FrameSink {

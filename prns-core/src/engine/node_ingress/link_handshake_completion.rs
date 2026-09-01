@@ -44,7 +44,7 @@ impl<S: StorageLayout> EngineState<S> {
         source: InterfaceId,
         interfaces: AttachedInterfaces<'_>,
         _now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedule
     where
@@ -54,7 +54,7 @@ impl<S: StorageLayout> EngineState<S> {
             return WakeSchedule::Unchanged;
         }
         let mut iv = [0u8; ENCRYPTION_IV_LEN];
-        fill_entropy(&mut iv);
+        fill_random(&mut iv);
         let mut buf = [0u8; BROADCAST_MTU];
         if let Ok(written) = self.write_owed_link_rtt(
             &owed.link_id,
@@ -88,7 +88,7 @@ impl<S: StorageLayout> EngineState<S> {
         shared: X25519SharedSecret,
         interfaces: AttachedInterfaces<'_>,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedule
     where
@@ -99,7 +99,7 @@ impl<S: StorageLayout> EngineState<S> {
             return WakeSchedule::Unchanged;
         }
         let mut iv = [0u8; ENCRYPTION_IV_LEN];
-        fill_entropy(&mut iv);
+        fill_random(&mut iv);
         let mut buf = [0u8; BROADCAST_MTU];
         if let Ok(written) = self.write_owed_link_rtt_with_shared_observed(
             &owed.link_id,
@@ -136,7 +136,7 @@ impl<S: StorageLayout> EngineState<S> {
         shared: X25519SharedSecret,
         interfaces: AttachedInterfaces<'_>,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules
     where
@@ -148,7 +148,7 @@ impl<S: StorageLayout> EngineState<S> {
             shared,
             interfaces,
             now,
-            fill_entropy,
+            fill_random,
             sink,
         );
         wake

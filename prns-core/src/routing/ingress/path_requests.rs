@@ -409,7 +409,7 @@ mod tests {
                 IngestIo {
                     interfaces: AttachedInterfaces::new(&interfaces),
                     now,
-                    fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0x77),
+                    fill_random: &mut |bytes: &mut [u8]| bytes.fill(0x77),
                     should_prove: &mut |_| false,
                     should_accept_resource: &mut |_| false,
                     sink: &mut |reaction| match reaction {
@@ -752,7 +752,7 @@ mod tests {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&interfaces),
                 now: InstantMillis(1_000),
-                fill_entropy: &mut |_| {},
+                fill_random: &mut |_| {},
                 should_prove: &mut |_| false,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| {
@@ -798,7 +798,7 @@ mod tests {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&interfaces),
                 now: InstantMillis(1_000),
-                fill_entropy: &mut |_| {},
+                fill_random: &mut |_| {},
                 should_prove: &mut |_| false,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| {
@@ -1003,7 +1003,7 @@ mod tests {
                 IngestIo {
                     interfaces: AttachedInterfaces::new(&interfaces),
                     now: InstantMillis(1_000),
-                    fill_entropy: &mut |_| {},
+                    fill_random: &mut |_| {},
                     should_prove: &mut |_| false,
                     should_accept_resource: &mut |_| false,
                     sink: &mut |reaction| {
@@ -1061,7 +1061,7 @@ mod tests {
                 IngestIo {
                     interfaces: AttachedInterfaces::new(&interfaces),
                     now: InstantMillis(1_000 + u64::from(byte)),
-                    fill_entropy: &mut |_| {},
+                    fill_random: &mut |_| {},
                     should_prove: &mut |_| false,
                     should_accept_resource: &mut |_| false,
                     sink: &mut |reaction| {

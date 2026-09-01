@@ -1,5 +1,3 @@
-use core::convert::Infallible;
-
 use embassy_nrf::nvmc::{Error as NvmcError, Nvmc};
 use personal_rns::identity::vault::{FlashVault, FlashVaultError};
 use personal_rns::remote_control::{
@@ -30,7 +28,7 @@ pub(crate) enum DisplayIoError {
 mod tft;
 
 pub(crate) type RemoteControlIdentityBootstrapError =
-    RemoteControlNodeIdentityBootstrapError<FlashVaultError<NvmcError>, Infallible>;
+    RemoteControlNodeIdentityBootstrapError<FlashVaultError<NvmcError>>;
 
 pub(crate) struct RemoteControlIdentityFlash {
     offset: u32,

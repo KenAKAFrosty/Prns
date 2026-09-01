@@ -16,7 +16,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         now: InstantMillis,
         interfaces: AttachedInterfaces<'_>,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules
     where
@@ -69,7 +69,7 @@ impl<S: StorageLayout> EngineState<S> {
             let ingest = self.ingest_announce(
                 identity_hash,
                 &arrival,
-                &mut *fill_entropy,
+                &mut *fill_random,
                 interfaces,
                 &mut |removed| sink(EngineReaction::Journaled(journal_route_removal(removed))),
                 &mut effects,

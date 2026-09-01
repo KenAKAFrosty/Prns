@@ -4,7 +4,7 @@ use crate::engine::InstantMillis;
 pub trait Host {
     fn now(&self) -> InstantMillis;
     async fn sleep_until(&self, deadline: InstantMillis);
-    fn fill_entropy(&mut self, bytes: &mut [u8]);
+    fn fill_random(&mut self, bytes: &mut [u8]);
 }
 
 pub mod airtime;

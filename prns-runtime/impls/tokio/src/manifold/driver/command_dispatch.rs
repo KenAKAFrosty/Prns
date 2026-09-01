@@ -90,7 +90,7 @@ where
         macro_rules! defer_send_single_packet {
             ($pool:expr, $id:expr, $send:expr, $timing:expr) => {{
                 let mut entropy_bytes = [0u8; SendSinglePacketEntropy::LEN];
-                host.fill_entropy(&mut entropy_bytes);
+                host.fill_random(&mut entropy_bytes);
                 match engine.prepare_send_single_packet_deferred_with_timing(
                     $id,
                     $send,
@@ -159,7 +159,7 @@ where
                         IssuedCommand { id, command },
                         topology.interfaces.view(),
                         now,
-                        &mut |entropy| host.fill_entropy(entropy),
+                        &mut |entropy| host.fill_random(entropy),
                         &mut reaction_sink!(),
                     )),
                 }
@@ -180,7 +180,7 @@ where
                         IssuedCommand { id, command },
                         topology.interfaces.view(),
                         now,
-                        &mut |entropy| host.fill_entropy(entropy),
+                        &mut |entropy| host.fill_random(entropy),
                         &mut reaction_sink!(),
                     )),
                 }
@@ -196,7 +196,7 @@ where
                         topology.interfaces.view(),
                         now,
                         timing,
-                        &mut |entropy| host.fill_entropy(entropy),
+                        &mut |entropy| host.fill_random(entropy),
                         &mut reaction_sink!(),
                     )),
                 }
@@ -217,7 +217,7 @@ where
                         topology.interfaces.view(),
                         now,
                         timing,
-                        &mut |entropy| host.fill_entropy(entropy),
+                        &mut |entropy| host.fill_random(entropy),
                         &mut reaction_sink!(),
                     )),
                 }
@@ -241,7 +241,7 @@ where
                         ),
                     },
                     now,
-                    &mut |entropy| host.fill_entropy(entropy),
+                    &mut |entropy| host.fill_random(entropy),
                     &mut reaction_sink!(),
                 ),
             ),
@@ -271,7 +271,7 @@ where
                             total_data_bytes: send.total_data_bytes,
                         },
                         now,
-                        &mut |entropy| host.fill_entropy(entropy),
+                        &mut |entropy| host.fill_random(entropy),
                         &mut reaction_sink!(),
                     ),
                 )
@@ -297,7 +297,7 @@ where
                         },
                         topology.interfaces.view(),
                         now,
-                        &mut |entropy| host.fill_entropy(entropy),
+                        &mut |entropy| host.fill_random(entropy),
                         &mut reaction_sink!(),
                     ),
                     None => engine.ingest_send_resource_into(
@@ -315,7 +315,7 @@ where
                             correlation: ResourceCorrelation::Response(respond.request_id),
                         },
                         now,
-                        &mut |entropy| host.fill_entropy(entropy),
+                        &mut |entropy| host.fill_random(entropy),
                         &mut reaction_sink!(),
                     ),
                 };
@@ -348,7 +348,7 @@ where
                             },
                             topology.interfaces.view(),
                             now,
-                            &mut |entropy| host.fill_entropy(entropy),
+                            &mut |entropy| host.fill_random(entropy),
                             &mut reaction_sink!(),
                         ),
                         Err(_) => journal.fail_request(id),
@@ -375,7 +375,7 @@ where
                                     },
                                 },
                                 now,
-                                &mut |entropy| host.fill_entropy(entropy),
+                                &mut |entropy| host.fill_random(entropy),
                                 &mut reaction_sink!(),
                             )
                         }
@@ -540,7 +540,7 @@ where
             }
             HostCommand::SynthesizeTunnel { interface } => {
                 let mut random_hash = [0u8; crate::routing::tunnel::RANDOM_HASH_LEN];
-                host.fill_entropy(&mut random_hash);
+                host.fill_random(&mut random_hash);
                 let mut buf = [0u8; 256];
                 if let Ok(len) = engine.write_tunnel_synthesize(interface, &random_hash, &mut buf) {
                     route_reaction(

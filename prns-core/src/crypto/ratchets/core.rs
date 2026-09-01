@@ -152,7 +152,7 @@ impl<C: SelfRatchetTable> SelfRatchets<C> {
         &mut self,
         destination: &DestinationHash,
         now: InstantMillis,
-        fill_entropy: &mut impl FnMut(&mut [u8]),
+        fill_random: &mut impl FnMut(&mut [u8]),
     ) -> RatchetRotation {
         let Some(index) = self.index_of(destination) else {
             return RatchetRotation::KeptCurrent;
@@ -164,7 +164,7 @@ impl<C: SelfRatchetTable> SelfRatchets<C> {
             return RatchetRotation::KeptCurrent;
         }
         let mut entropy_bytes = [0u8; RatchetEntropy::LEN];
-        fill_entropy(&mut entropy_bytes);
+        fill_random(&mut entropy_bytes);
         self.table
             .insert_newest_secret(index, RatchetEntropy::new(entropy_bytes).into_secret());
         self.table.set_last_rotated(index, now);
