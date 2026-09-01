@@ -328,7 +328,7 @@ where
                     let segment = ResourceSegment::whole(send.data.len() as u64);
                     defer_whole_resource!(send, segment)
                 }
-                _ => CommandEffect::Delta(
+                None => CommandEffect::Delta(
                     engine.ingest_send_resource_into(
                         &ResourceSend {
                             id: send.id,

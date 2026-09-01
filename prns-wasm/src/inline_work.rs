@@ -76,7 +76,7 @@ pub(crate) fn fulfill_ready_work(
     engine: &mut EngineState<GrowableHeap>,
     interfaces: AttachedInterfaces<'_>,
     now: InstantMillis,
-    fill_entropy: &mut impl FnMut(&mut [u8]),
+    fill_random: &mut impl FnMut(&mut [u8]),
     should_prove: &mut impl FnMut(&ProofRequest) -> bool,
     sink: &mut impl FnMut(EngineReaction<'_, NoOwedWork>),
 ) {
@@ -136,7 +136,7 @@ pub(crate) fn fulfill_ready_work(
                             &owed.initiator_secret,
                             &owed.responder_encryption,
                         );
-                        engine.resume_link_proof(owed, shared, interfaces, now, fill_entropy, sink);
+                        engine.resume_link_proof(owed, shared, interfaces, now, fill_random, sink);
                     }
                 }
                 CryptoOwed::LinkProofSign(owed) => {
@@ -193,7 +193,7 @@ pub(crate) fn fulfill_ready_work(
                     if Announce::from_wire_unverified(&owed.header, &owed.payload)
                         .is_ok_and(|announce| announce.signature_is_valid())
                     {
-                        engine.resume_announce(owed, interfaces, fill_entropy, sink);
+                        engine.resume_announce(owed, interfaces, fill_random, sink);
                     }
                 }
                 CryptoOwed::RemoteControlPairingAvailabilityVerify(owed) => {
@@ -212,7 +212,7 @@ pub(crate) fn fulfill_ready_work(
                         outcome: Err(BuildOutgoingResourceError::BufferShapeMismatch),
                     },
                     now,
-                    fill_entropy,
+                    fill_random,
                     sink,
                 );
             }
