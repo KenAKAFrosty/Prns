@@ -35,6 +35,7 @@ pub async fn run(spawner: Spawner) {
             .with_rx_ba_win(3);
         let (controller, interfaces) =
             esp_radio::wifi::new(wifi, wifi_config).expect("wifi controller");
+        super::entropy::install(runtime_entropy);
         let esp_now_radio = interfaces.esp_now;
         let espnow_status: &'static EmbassyInterfaceStatus = mk_static!(
             EmbassyInterfaceStatus,
@@ -101,11 +102,11 @@ pub async fn run(spawner: Spawner) {
         handle,
     );
 
-    let usb_seam = usb_lane.into_seam(NOTIFY.sender(), hardware_entropy);
+    let usb_seam = usb_lane.into_seam(NOTIFY.sender(), fill_random);
     spawner.spawn(usb_device_task(usb_rx, usb_tx, usb_seam).expect("usb device task fits"));
 
     #[cfg(feature = "esp-now")]
-    let espnow_seam = espnow_lane.into_seam(NOTIFY.sender(), hardware_entropy);
+    let espnow_seam = espnow_lane.into_seam(NOTIFY.sender(), fill_random);
 
     #[cfg(feature = "bluetooth-auto")]
     let ble = ble_identity
@@ -114,7 +115,7 @@ pub async fn run(spawner: Spawner) {
             let fleet: C6BleFleet = lane.into_fleet(NOTIFY.sender(), LIFECYCLE.sender());
             (identity, fleet)
         });
-    let host = EmbassyHost::new_with_timebase(timebase, hardware_entropy as fn(&mut [u8]));
+    let host = EmbassyHost::new_with_timebase(timebase, fill_random as fn(&mut [u8]));
     let recipe = PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
         remote_control,
