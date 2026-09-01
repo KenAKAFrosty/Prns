@@ -1,4 +1,3 @@
-#[cfg(feature = "board-t1000e")]
 use core::convert::Infallible;
 
 use embassy_nrf::mode::Blocking;
@@ -12,23 +11,24 @@ use static_cell::StaticCell;
 #[cfg(any(feature = "softdevice-s140-v6", feature = "softdevice-s140-v7"))]
 use nrf_softdevice::{RandomError, Softdevice, SoftdeviceRandom};
 
-pub(super) enum NrfEntropySource {
-    Hal(Rng<'static, Blocking>),
-    #[cfg(any(feature = "softdevice-s140-v6", feature = "softdevice-s140-v7"))]
-    PendingSoftDevice,
-    #[cfg(any(feature = "softdevice-s140-v6", feature = "softdevice-s140-v7"))]
-    SoftDevice(SoftdeviceRandom),
-}
+pub(super) struct HalEntropySource(Rng<'static, Blocking>);
 
-#[cfg(feature = "board-t1000e")]
-impl EntropySource for NrfEntropySource {
+impl EntropySource for HalEntropySource {
     type Error = Infallible;
 
     fn try_fill_entropy(&mut self, output: &mut [u8]) -> Result<(), Self::Error> {
-        let Self::Hal(rng) = self;
-        rng.blocking_fill_bytes(output);
+        self.0.blocking_fill_bytes(output);
         Ok(())
     }
+}
+
+#[cfg(feature = "board-t1000e")]
+pub(super) type NrfEntropySource = HalEntropySource;
+
+#[cfg(any(feature = "softdevice-s140-v6", feature = "softdevice-s140-v7"))]
+pub(super) enum NrfEntropySource {
+    PendingSoftDevice,
+    SoftDevice(SoftdeviceRandom),
 }
 
 #[cfg(any(feature = "softdevice-s140-v6", feature = "softdevice-s140-v7"))]
@@ -37,10 +37,6 @@ impl EntropySource for NrfEntropySource {
 
     fn try_fill_entropy(&mut self, output: &mut [u8]) -> Result<(), Self::Error> {
         match self {
-            Self::Hal(rng) => {
-                rng.blocking_fill_bytes(output);
-                Ok(())
-            }
             Self::PendingSoftDevice => Err(RandomError::NotEnoughEntropy),
             Self::SoftDevice(random) => {
                 for chunk in output.chunks_mut(u8::MAX as usize) {
@@ -58,13 +54,10 @@ pub(super) type RuntimeEntropyHandle = EntropyHandle<CriticalSectionRawMutex, Nr
 static SHARED_ENTROPY: StaticCell<SharedEntropy> = StaticCell::new();
 static ENTROPY_HANDLE: OnceLock<RuntimeEntropyHandle> = OnceLock::new();
 
-pub(super) fn seed_from_hal(rng: Rng<'static, Blocking>) -> RuntimeEntropy<NrfEntropySource> {
-    match RuntimeEntropy::try_new(NrfEntropySource::Hal(rng)) {
+pub(super) fn seed_from_hal(rng: Rng<'static, Blocking>) -> RuntimeEntropy<HalEntropySource> {
+    match RuntimeEntropy::try_new(HalEntropySource(rng)) {
         Ok(entropy) => entropy,
-        #[cfg(feature = "board-t1000e")]
         Err(never) => match never {},
-        #[cfg(not(feature = "board-t1000e"))]
-        Err(_) => unreachable!("the HAL entropy source is infallible"),
     }
 }
 
@@ -83,7 +76,7 @@ pub(super) fn install_hal_runtime_entropy(entropy: RuntimeEntropy<NrfEntropySour
 
 #[cfg(any(feature = "softdevice-s140-v6", feature = "softdevice-s140-v7"))]
 pub(super) fn prepare_softdevice_runtime_entropy(
-    entropy: RuntimeEntropy<NrfEntropySource>,
+    entropy: RuntimeEntropy<HalEntropySource>,
 ) -> RuntimeEntropy<NrfEntropySource> {
     entropy.with_source(NrfEntropySource::PendingSoftDevice)
 }

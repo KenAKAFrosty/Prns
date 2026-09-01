@@ -358,12 +358,8 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     boot_stage(BootPhase::CoreOneStartBegin);
     esp_rtos::start_second_core(cpu_control, software_interrupt, core1_stack, move || {
         let node_slot = crate::storage::allocate_psram_uninit::<S3Node>();
-        let (node, persistence) = PrnsNode::init_in_place_with_persistence(
-            node_slot,
-            recipe,
-            manifold_wiring,
-            host,
-        );
+        let (node, persistence) =
+            PrnsNode::init_in_place_with_persistence(node_slot, recipe, manifold_wiring, host);
         node.set_protocol_policy(personal_hopspot_core::EMBEDDED_HOPSPOT_PROTOCOL_POLICY);
         static PERSISTENCE: StaticCell<crate::persistence::S3Persistence> = StaticCell::new();
         let persistence = PERSISTENCE.init(persistence);

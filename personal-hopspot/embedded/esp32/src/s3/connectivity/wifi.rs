@@ -287,14 +287,20 @@ fn start_udp_service_discovery(
 ) {
     let socket = udp_service_discovery_socket(stack);
     let storage = crate::storage::allocate_psram(UdpServiceDiscoveryStorage::<MEMBERS>::new());
-    let service_discovery =
-        match UdpServiceDiscovery::new(socket, stack, address, status, storage, runtime_entropy()) {
-            Ok(service_discovery) => service_discovery,
-            Err(error) => {
-                log::error!("wifi-auto: UDP DNS-SD construction failed: {error:?}");
-                return;
-            }
-        };
+    let service_discovery = match UdpServiceDiscovery::new(
+        socket,
+        stack,
+        address,
+        status,
+        storage,
+        runtime_entropy(),
+    ) {
+        Ok(service_discovery) => service_discovery,
+        Err(error) => {
+            log::error!("wifi-auto: UDP DNS-SD construction failed: {error:?}");
+            return;
+        }
+    };
     let task = match udp_service_discovery_task(service_discovery) {
         Ok(task) => task,
         Err(_) => {
