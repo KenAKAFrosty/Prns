@@ -12,7 +12,7 @@ use personal_rns::crypto::{
 use personal_rns::engine::{
     CryptoOwed, Directive, EncryptCompleted, EngineReaction, EngineState, InstantMillis,
     LinkReceiptSignCompleted, NoOwedWork, OwedWork, ProofSignCompleted, ReceiptProofVerification,
-    ResourceDecompressionCompleted,
+    ResourceDecompressionCompleted, ResourceOpenCompleted,
 };
 use personal_rns::identity::{decrypt_token_in_place_with_ratchets, OpenedToken};
 use personal_rns::interfaces::AttachedInterfaces;
@@ -36,6 +36,7 @@ enum InlineReadyWork {
     ResourceBuildUnsupported {
         reservation: ResourceBuildReservation,
     },
+    ResourceOpen(ResourceOpenCompleted<'static>),
     ResourceDecompression {
         link_id: LinkId,
         hash: ResourceHash,
@@ -62,6 +63,7 @@ impl InlineReadyWorkQueue {
             OwedWork::ResourceBuild(owed) => InlineReadyWork::ResourceBuildUnsupported {
                 reservation: owed.reservation(),
             },
+            OwedWork::ResourceOpen(owed) => InlineReadyWork::ResourceOpen(owed.fulfill_inline()),
             OwedWork::ResourceDecompression(owed) => InlineReadyWork::ResourceDecompression {
                 link_id: owed.link_id,
                 hash: owed.hash,
@@ -230,6 +232,11 @@ pub(crate) fn fulfill_ready_work(
                     fill_random,
                     sink,
                 );
+            }
+            InlineReadyWork::ResourceOpen(completed) => {
+                engine.resume_resource_open(completed, now, &mut |reaction| {
+                    route_or_capture(reaction, ready, sink)
+                });
             }
             InlineReadyWork::ResourceDecompression {
                 link_id,
