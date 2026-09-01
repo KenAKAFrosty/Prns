@@ -9,9 +9,7 @@ use crate::routing::links::resources::table::{
     ResourceBuffers, ResourceRowState, ResourceTable, ResourceTableAdmission,
     ResourceTablePushError,
 };
-use crate::routing::links::resources::{
-    max_part_count, ResourceBufferShape, ResourceHash, MAP_HASH_LEN,
-};
+use crate::routing::links::resources::{max_part_count, ResourceBufferShape, MAP_HASH_LEN};
 use crate::routing::links::LinkId;
 
 fn filled<T: Clone, A: Allocator>(value: T, len: usize, alloc: A) -> Box<[T], A> {
@@ -204,6 +202,7 @@ impl<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::routing::links::resources::ResourceHash;
 
     type Table = FixedHeapResourceTable<u8, 2, 1024, 3>;
 
