@@ -1333,6 +1333,7 @@ dependencies = [
  "criterion",
  "dhat",
  "getrandom 0.2.17",
+ "heapless 0.8.0",
  "iai-callgrind",
  "libc",
  "personal-rns",
@@ -1517,6 +1518,7 @@ dependencies = [
 name = "prns-runtime-embassy"
 version = "0.3.7"
 dependencies = [
+ "critical-section",
  "embassy-futures",
  "embassy-sync",
  "embassy-time",

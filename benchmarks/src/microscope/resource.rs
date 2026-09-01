@@ -1,4 +1,6 @@
+use super::inline_work::feed_packet_inline;
 use super::*;
+use personal_rns::engine::NoOwedWork;
 
 #[derive(Debug, Clone)]
 pub struct ResourceTransferProfile {
@@ -169,7 +171,7 @@ impl ResourceCycle {
             AttachedInterfaces::new(interfaces),
             now,
             &mut |bytes| responder_entropy.fill(bytes),
-            &mut |reaction| capture.absorb(reaction, scratch),
+            &mut |reaction: EngineReaction<'_, NoOwedWork>| capture.absorb(reaction, scratch),
         );
         capture.only_frame("announce")
     }
@@ -195,7 +197,7 @@ impl ResourceCycle {
             AttachedInterfaces::new(interfaces),
             now,
             &mut |bytes| initiator_entropy.fill(bytes),
-            &mut |reaction| capture.absorb(reaction, scratch),
+            &mut |reaction: EngineReaction<'_, NoOwedWork>| capture.absorb(reaction, scratch),
         );
         capture.only_frame("link request")
     }
@@ -210,20 +212,18 @@ impl ResourceCycle {
             ..
         } = self;
         let mut capture = FeedCapture::default();
-        initiator.ingest_packet_into(
+        feed_packet_inline(
+            initiator,
             InboundPacket {
                 arrived_at: now,
                 source_interface: WIRE,
                 bytes: &mut frame,
             },
-            IngestIo {
-                interfaces: AttachedInterfaces::new(interfaces),
-                now,
-                fill_random: &mut |bytes| initiator_entropy.fill(bytes),
-                should_prove: &mut |_| true,
-                should_accept_resource: &mut |_| false,
-                sink: &mut |reaction| capture.absorb(reaction, scratch),
-            },
+            AttachedInterfaces::new(interfaces),
+            now,
+            initiator_entropy,
+            &mut capture,
+            scratch,
         );
         capture
     }
@@ -238,20 +238,18 @@ impl ResourceCycle {
             ..
         } = self;
         let mut capture = FeedCapture::default();
-        responder.ingest_packet_into(
+        feed_packet_inline(
+            responder,
             InboundPacket {
                 arrived_at: now,
                 source_interface: WIRE,
                 bytes: &mut frame,
             },
-            IngestIo {
-                interfaces: AttachedInterfaces::new(interfaces),
-                now,
-                fill_random: &mut |bytes| responder_entropy.fill(bytes),
-                should_prove: &mut |_| true,
-                should_accept_resource: &mut |_| false,
-                sink: &mut |reaction| capture.absorb(reaction, scratch),
-            },
+            AttachedInterfaces::new(interfaces),
+            now,
+            responder_entropy,
+            &mut capture,
+            scratch,
         );
         capture
     }
@@ -397,7 +395,7 @@ impl ResourceCycle {
             },
             now,
             &mut |bytes| initiator_entropy.fill(bytes),
-            &mut |reaction| capture.absorb(reaction, scratch),
+            &mut |reaction: EngineReaction<'_, NoOwedWork>| capture.absorb(reaction, scratch),
         );
         capture.only_frame("resource advertisement")
     }

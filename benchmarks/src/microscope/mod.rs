@@ -1,5 +1,6 @@
 mod cycle;
 mod forward;
+mod inline_work;
 mod resource;
 
 use personal_rns::engine::{
@@ -60,7 +61,7 @@ struct FeedCapture {
 }
 
 impl FeedCapture {
-    fn absorb(&mut self, reaction: EngineReaction<'_>, scratch: &mut Vec<u8>) {
+    fn absorb<Work>(&mut self, reaction: EngineReaction<'_, Work>, scratch: &mut Vec<u8>) {
         match reaction {
             EngineReaction::Directive(Directive::Send { bytes, .. })
             | EngineReaction::Directive(Directive::SendAnnounce { bytes, .. }) => {
