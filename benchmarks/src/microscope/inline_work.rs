@@ -3,8 +3,9 @@ use personal_rns::crypto::{
     ed25519_sign, ed25519_verify, x25519_diffie_hellman, x25519_keys_for_seal,
 };
 use personal_rns::engine::{
-    CryptoOwed, Directive, EngineReaction, EngineState, IngestIo, InstantMillis, NoOwedWork,
-    OwedWork, ReceiptProofVerification, ResourceDecompressionCompleted,
+    CryptoOwed, Directive, EncryptCompleted, EngineReaction, EngineState, IngestIo, InstantMillis,
+    LinkReceiptSignCompleted, NoOwedWork, OwedWork, ProofSignCompleted, ReceiptProofVerification,
+    ResourceDecompressionCompleted,
 };
 use personal_rns::identity::{decrypt_token_in_place_with_ratchets, OpenedToken};
 use personal_rns::interfaces::{AttachedInterfaces, InboundPacket};
@@ -16,7 +17,6 @@ use personal_rns::routing::links::resources::send::ResourceBuildCompleted;
 use personal_rns::routing::links::resources::table::ResourceBuildReservation;
 use personal_rns::routing::links::resources::ResourceHash;
 use personal_rns::routing::links::LinkId;
-use personal_rns::routing::proof::{EXPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN};
 use personal_rns::storage::GrowableHeap;
 use personal_rns::wire::BROADCAST_MTU;
 
@@ -114,10 +114,12 @@ pub(super) fn feed_packet_inline(
                     let (ephemeral_public, shared) =
                         x25519_keys_for_seal(&owed.ephemeral_secret, &owed.dh_target);
                     let mut wire = [0u8; BROADCAST_MTU];
-                    engine.complete_send_single_packet_deferred(
-                        owed,
-                        ephemeral_public,
-                        shared,
+                    engine.resume_encrypt(
+                        EncryptCompleted {
+                            owed,
+                            ephemeral_public,
+                            shared,
+                        },
                         interfaces,
                         &mut wire,
                         &mut |reaction| capture.absorb(reaction, scratch),
@@ -200,37 +202,27 @@ pub(super) fn feed_packet_inline(
                 }
                 CryptoOwed::ProofSign(owed) => {
                     let signature = ed25519_sign(&owed.signing_secret, owed.packet_hash.as_bytes());
-                    let mut proof = [0u8; EXPLICIT_PROOF_WIRE_LEN];
-                    if let Ok(written) =
-                        engine.write_signed_proof(&owed.packet_hash, &signature, &mut proof)
-                    {
-                        capture.absorb(
-                            EngineReaction::<NoOwedWork>::Directive(Directive::Send {
-                                target: owed.target,
-                                bytes: &proof[..written],
-                            }),
-                            scratch,
-                        );
-                    }
+                    engine.resume_proof_sign(
+                        ProofSignCompleted {
+                            target: owed.target,
+                            packet_hash: owed.packet_hash,
+                            signature,
+                        },
+                        &mut |reaction| capture.absorb(reaction, scratch),
+                    );
                 }
                 CryptoOwed::LinkReceiptSign(owed) => {
                     let signature = ed25519_sign(&owed.signing_secret, owed.packet_hash.as_bytes());
-                    let mut proof = [0u8; LINK_PROOF_WIRE_LEN];
-                    if let Ok(written) = engine.complete_link_receipt_sign(
-                        &owed.link_id,
-                        &owed.packet_hash,
-                        &signature,
+                    engine.resume_link_receipt_sign(
+                        LinkReceiptSignCompleted {
+                            target: owed.target,
+                            link_id: owed.link_id,
+                            packet_hash: owed.packet_hash,
+                            signature,
+                        },
                         now,
-                        &mut proof,
-                    ) {
-                        capture.absorb(
-                            EngineReaction::<NoOwedWork>::Directive(Directive::Send {
-                                target: owed.target,
-                                bytes: &proof[..written],
-                            }),
-                            scratch,
-                        );
-                    }
+                        &mut |reaction| capture.absorb(reaction, scratch),
+                    );
                 }
                 CryptoOwed::AnnounceVerify(owed) => {
                     if Announce::from_wire_unverified(&owed.header, &owed.payload)

@@ -1,5 +1,4 @@
 use crate::crypto::ratchets::RatchetRotation;
-use crate::crypto::{X25519PublicKey, X25519SharedSecret};
 use crate::engine::node_egress::{fan_announce, fan_frame};
 use crate::engine::settlement::settle;
 #[cfg(feature = "runtime-metrics")]
@@ -7,10 +6,10 @@ use crate::engine::AnnounceCommandOutcome;
 use crate::engine::{
     AllowRequesterFailure, AnnounceNowFailure, AnnounceTarget, AnnounceWriteFailure,
     ApproveRemoteControlControllerPairingFailure, CloseLinkFailure, CommandOutcome,
-    CommandedAnnounceWriteOutcome, Directive, EgressTarget, EncryptOwed, EngineReaction,
-    EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome, FanTarget,
-    FinishSendSinglePacketOutcome, IdentifyFailure, IdentifyRejection, InstantMillis,
-    IssuedCommand, Journaled, PathRequestWriteOutcome, RejectRemoteControlControllerPairingFailure,
+    CommandedAnnounceWriteOutcome, Directive, EgressTarget, EncryptCompleted, EngineReaction,
+    EngineState, EstablishLinkFailure, EstablishLinkWriteOutcome, FanTarget, FinishEncryptOutcome,
+    IdentifyFailure, IdentifyRejection, InstantMillis, IssuedCommand, Journaled,
+    PathRequestWriteOutcome, RejectRemoteControlControllerPairingFailure,
     RemoteControlTargetPairingApproval, RemoteControlTargetPairingRejection, RequestPathFailure,
     RespondFailure, RespondRejection, SendGroupEntropy, SendGroupFailure, SendPlainPacketFailure,
     SendRequestFailure, SendRequestRejection, SendSinglePacketEntropy, SendSinglePacketFailure,
@@ -959,19 +958,22 @@ impl<S: StorageLayout> EngineState<S> {
         wake_schedule_changes
     }
 
-    pub fn complete_send_single_packet_deferred(
+    pub fn resume_encrypt(
         &mut self,
-        owed: EncryptOwed,
-        ephemeral_public: X25519PublicKey,
-        shared: X25519SharedSecret,
+        completed: EncryptCompleted,
         interfaces: AttachedInterfaces<'_>,
         buf: &mut [u8],
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
-        let id = owed.command_id;
+        let id = completed.owed.command_id;
         let mut culled_request = false;
-        match self.finish_send_single_packet_deferred(owed, ephemeral_public, shared, buf) {
-            FinishSendSinglePacketOutcome::Written(dispatch) => {
+        match self.finish_encrypt(
+            completed.owed,
+            completed.ephemeral_public,
+            completed.shared,
+            buf,
+        ) {
+            FinishEncryptOutcome::Written(dispatch) => {
                 fan_frame(
                     interfaces,
                     FanTarget::Only(dispatch.fire_on),
@@ -984,7 +986,7 @@ impl<S: StorageLayout> EngineState<S> {
                     settle(sink, culled.command_id, settlement);
                 }
             }
-            FinishSendSinglePacketOutcome::Failed(error) => {
+            FinishEncryptOutcome::Failed(error) => {
                 settle(
                     sink,
                     id,

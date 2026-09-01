@@ -12,16 +12,15 @@ use crate::crypto::{
     Ed25519Signature, Ed25519Verifier, X25519PublicKey, X25519SharedSecret,
 };
 use crate::engine::{
-    AnnounceVerifyOwed, CryptoOwed, DecryptOwed, DeferredLinkReceiptSign, DeferredProofSign,
-    EncryptOwed, RatchetDecryptOwed, ReceiptProofVerification, ReceiptProofVerifyOwed,
+    AnnounceVerifyOwed, CryptoOwed, DecryptOwed, EncryptCompleted, EncryptOwed,
+    LinkReceiptSignCompleted, LinkReceiptSignOwed, ProofSignCompleted, ProofSignOwed,
+    RatchetDecryptOwed, ReceiptProofVerification, ReceiptProofVerifyOwed,
 };
 use crate::identity::{decrypt_token_in_place_with_ratchets, OpenedBy};
-use crate::interfaces::InterfaceId;
 use crate::remote_control::{
     RemoteControlPairingAvailabilityVerification, RemoteControlPairingAvailabilityVerifyOwed,
 };
 use crate::routing::announce::Announce;
-use crate::routing::dedup::PacketHash;
 use crate::routing::ingress::MAX_RATCHET_DECRYPT_PAYLOAD_LEN;
 use crate::routing::links::handshake::{
     link_proof_signature_valid, link_proof_signed_data, LinkProofSignOwed, LinkProofVerifyOwed,
@@ -237,12 +236,12 @@ pub(super) enum CryptoJob {
     SealStaged(Box<StagedSealJob>),
     OpenSpan(Box<OpenSpanJob>),
     SealScalars(EncryptOwed),
-    Sign(DeferredProofSign),
+    SignProof(ProofSignOwed),
     Decrypt(DecryptOwed),
     DecryptWithRatchets(Box<RatchetDecryptOwed>),
     VerifyLinkProof(LinkProofVerifyOwed),
     SignLinkProof(LinkProofSignOwed),
-    SignLinkReceipt(DeferredLinkReceiptSign),
+    SignLinkReceipt(LinkReceiptSignOwed),
     VerifyAnnounce(AnnounceVerifyOwed),
     VerifyRemoteControlPairingAvailability(RemoteControlPairingAvailabilityVerifyOwed),
 }
@@ -265,7 +264,7 @@ impl CryptoJob {
             CryptoOwed::RatchetDecrypt(owed) => Self::DecryptWithRatchets(Box::new(owed)),
             CryptoOwed::LinkProofVerify(owed) => Self::VerifyLinkProof(owed),
             CryptoOwed::LinkProofSign(owed) => Self::SignLinkProof(owed),
-            CryptoOwed::ProofSign(owed) => Self::Sign(owed),
+            CryptoOwed::ProofSign(owed) => Self::SignProof(owed),
             CryptoOwed::LinkReceiptSign(owed) => Self::SignLinkReceipt(owed),
             CryptoOwed::AnnounceVerify(owed) => Self::VerifyAnnounce(owed),
             CryptoOwed::RemoteControlPairingAvailabilityVerify(owed) => {
@@ -286,7 +285,7 @@ impl CryptoJob {
             | Self::SealStaged(_)
             | Self::OpenSpan(_) => CryptoJobClass::Bulk,
             Self::SealScalars(_)
-            | Self::Sign(_)
+            | Self::SignProof(_)
             | Self::Decrypt(_)
             | Self::DecryptWithRatchets(_)
             | Self::VerifyLinkProof(_)
@@ -311,7 +310,7 @@ impl CryptoJob {
             Self::VerifyLinkProof(_) | Self::SignLinkProof(_) => 3,
             Self::SealScalars(_) | Self::Decrypt(_) | Self::DecryptWithRatchets(_) => 2,
             Self::VerifyReceiptProof(_)
-            | Self::Sign(_)
+            | Self::SignProof(_)
             | Self::SignLinkReceipt(_)
             | Self::VerifyAnnounce(_)
             | Self::VerifyRemoteControlPairingAvailability(_) => 1,
@@ -336,22 +335,9 @@ pub(super) enum CryptoResult {
         owed: ReceiptProofVerifyOwed,
         verification: ReceiptProofVerification,
     },
-    Sealed {
-        owed: EncryptOwed,
-        ephemeral_public: X25519PublicKey,
-        shared: X25519SharedSecret,
-    },
-    Signed {
-        target: InterfaceId,
-        packet_hash: PacketHash,
-        signature: Ed25519Signature,
-    },
-    LinkReceiptSigned {
-        target: InterfaceId,
-        link_id: LinkId,
-        packet_hash: PacketHash,
-        signature: Ed25519Signature,
-    },
+    Encrypted(EncryptCompleted),
+    ProofSigned(ProofSignCompleted),
+    LinkReceiptSigned(LinkReceiptSignCompleted),
     Decrypted {
         owed: DecryptOwed,
         shared: X25519SharedSecret,
@@ -580,7 +566,7 @@ impl CryptoPool {
     /// Publishing every ring entry before waking its selected worker lets real ingress backlog be
     /// claimed as one worker chunk instead of paying one park/unpark and one ring-head publication
     /// per packet.
-    pub(super) fn submit_link_receipts(&self, receipts: &mut Vec<DeferredLinkReceiptSign>) {
+    pub(super) fn submit_link_receipts(&self, receipts: &mut Vec<LinkReceiptSignOwed>) {
         let count = receipts.len();
         if count == 0 {
             return;
@@ -645,20 +631,17 @@ impl CryptoPool {
     }
 
     fn push_scheduled_job(&self, selected_worker: usize, scheduled: ScheduledCryptoJob) -> usize {
-        let mut pending = Some(scheduled);
+        let mut pending = scheduled;
         loop {
             let mut worker = selected_worker;
             for _ in 0..self.workers.len() {
-                let Some(job) = pending.take() else {
-                    unreachable!("a crypto job is either pending or was pushed");
-                };
                 let pushed = match self.workers[worker].job_producer.borrow_mut().as_mut() {
-                    Some(producer) => producer.push(job),
-                    None => Err(PushError::Full(job)),
+                    Some(producer) => producer.push(pending),
+                    None => Err(PushError::Full(pending)),
                 };
                 match pushed {
                     Ok(()) => return worker,
-                    Err(PushError::Full(job)) => pending = Some(job),
+                    Err(PushError::Full(returned)) => pending = returned,
                 }
                 worker += 1;
                 if worker == self.workers.len() {
@@ -1008,28 +991,28 @@ fn run_crypto_job(job: CryptoJob, verifier_cache: &mut WorkerVerifierCache) -> C
         CryptoJob::SealScalars(owed) => {
             let (ephemeral_public, shared) =
                 x25519_keys_for_seal(&owed.ephemeral_secret, &owed.dh_target);
-            CryptoResult::Sealed {
+            CryptoResult::Encrypted(EncryptCompleted {
                 owed,
                 ephemeral_public,
                 shared,
-            }
+            })
         }
-        CryptoJob::Sign(job) => {
+        CryptoJob::SignProof(job) => {
             let signature = ed25519_sign(&job.signing_secret, job.packet_hash.as_bytes());
-            CryptoResult::Signed {
+            CryptoResult::ProofSigned(ProofSignCompleted {
                 target: job.target,
                 packet_hash: job.packet_hash,
                 signature,
-            }
+            })
         }
         CryptoJob::SignLinkReceipt(job) => {
             let signature = ed25519_sign(&job.signing_secret, job.packet_hash.as_bytes());
-            CryptoResult::LinkReceiptSigned {
+            CryptoResult::LinkReceiptSigned(LinkReceiptSignCompleted {
                 target: job.target,
                 link_id: job.link_id,
                 packet_hash: job.packet_hash,
                 signature,
-            }
+            })
         }
         CryptoJob::Decrypt(owed) => {
             let shared = x25519_diffie_hellman(&owed.encryption_secret, &owed.ephemeral_public);
@@ -1241,29 +1224,25 @@ fn crypto_worker(
                         return;
                     }
                 }
-                CryptoJob::SignLinkReceipt(job) => {
+                CryptoJob::SignLinkReceipt(owed) => {
                     let mut receipt_jobs = HeaplessVec::new();
                     if receipt_jobs
-                        .push(ScheduledCryptoJob {
-                            job: CryptoJob::SignLinkReceipt(job),
-                            class,
-                            work,
-                        })
+                        .push(ScheduledLinkReceiptJob { owed, work })
                         .is_err()
                     {
                         return;
                     }
-                    while matches!(
-                        jobs.peek(),
-                        Some(ScheduledCryptoJob {
-                            job: CryptoJob::SignLinkReceipt(_),
-                            ..
-                        })
-                    ) {
-                        let Some(job) = jobs.next() else {
-                            unreachable!("a peeked LINK receipt job remains available");
-                        };
-                        if receipt_jobs.push(job).is_err() {
+                    while let Some(ScheduledCryptoJob {
+                        job: CryptoJob::SignLinkReceipt(owed),
+                        work,
+                        ..
+                    }) = jobs
+                        .next_if(|scheduled| matches!(scheduled.job, CryptoJob::SignLinkReceipt(_)))
+                    {
+                        if receipt_jobs
+                            .push(ScheduledLinkReceiptJob { owed, work })
+                            .is_err()
+                        {
                             return;
                         }
                     }
@@ -1292,26 +1271,28 @@ fn crypto_worker(
     }
 }
 
+struct ScheduledLinkReceiptJob {
+    owed: LinkReceiptSignOwed,
+    work: usize,
+}
+
 fn run_and_publish_link_receipt_jobs(
-    jobs: HeaplessVec<ScheduledCryptoJob, CRYPTO_WORKER_BATCH_DEPTH>,
+    jobs: HeaplessVec<ScheduledLinkReceiptJob, CRYPTO_WORKER_BATCH_DEPTH>,
     state: &CryptoPoolState,
     results: &mut Producer<ScheduledCryptoResult>,
     completion_wake: &Notify,
 ) -> bool {
     let mut completed = HeaplessVec::<ScheduledCryptoResult, CRYPTO_WORKER_BATCH_DEPTH>::new();
-    for ScheduledCryptoJob { job, work, .. } in jobs {
-        let CryptoJob::SignLinkReceipt(job) = job else {
-            unreachable!("the LINK receipt batch contains only LINK receipt jobs");
-        };
-        let signature = ed25519_sign(&job.signing_secret, job.packet_hash.as_bytes());
+    for ScheduledLinkReceiptJob { owed, work } in jobs {
+        let signature = ed25519_sign(&owed.signing_secret, owed.packet_hash.as_bytes());
         if completed
             .push(ScheduledCryptoResult {
-                result: CryptoResult::LinkReceiptSigned {
-                    target: job.target,
-                    link_id: job.link_id,
-                    packet_hash: job.packet_hash,
+                result: CryptoResult::LinkReceiptSigned(LinkReceiptSignCompleted {
+                    target: owed.target,
+                    link_id: owed.link_id,
+                    packet_hash: owed.packet_hash,
                     signature,
-                },
+                }),
                 work,
             })
             .is_err()
@@ -1430,7 +1411,7 @@ fn publish_crypto_result(
     results: &mut Producer<ScheduledCryptoResult>,
     completion_wake: &Notify,
 ) -> bool {
-    let mut pending = Some(ScheduledCryptoResult { result, work });
+    let mut pending = ScheduledCryptoResult { result, work };
     // Reserve readiness before publishing into the ring. The manifold may be draining a different
     // worker concurrently; counting first prevents it from observing an uncounted result between
     // the ring's publish and a later atomic increment.
@@ -1440,16 +1421,13 @@ fn publish_crypto_result(
             state.ready_results.fetch_sub(1, Ordering::Release);
             return false;
         }
-        let Some(result) = pending.take() else {
-            unreachable!("a crypto result is either pending or was pushed");
-        };
-        match results.push(result) {
+        match results.push(pending) {
             Ok(()) => {
                 notify_completion_if_armed(state, completion_wake);
                 return true;
             }
-            Err(PushError::Full(result)) => {
-                pending = Some(result);
+            Err(PushError::Full(returned)) => {
+                pending = returned;
                 notify_completion_if_armed(state, completion_wake);
                 std::thread::yield_now();
             }

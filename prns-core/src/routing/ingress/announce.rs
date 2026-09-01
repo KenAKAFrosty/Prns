@@ -53,7 +53,7 @@ pub enum RebroadcastDecision {
     RateBlocked,
 }
 
-/// Owns the payload because the arrival slot may be recycled before deferred verification completes.
+/// Owns the payload because the arrival slot may be recycled before verification completes.
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub struct AnnounceVerifyOwed {
     pub payload: HeaplessVec<u8, BROADCAST_MTU>,
@@ -908,7 +908,7 @@ mod tests {
     }
 
     #[test]
-    fn deferred_announce_verify_matches_inline_accept_and_gates_forgeries() {
+    fn owed_announce_verification_matches_inline_accept_and_gates_forgeries() {
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let mut state = transporting_node();
         let IngestPacketOutcome::OwesAnnounceVerify(owed) = state.ingest_packet_step_with(

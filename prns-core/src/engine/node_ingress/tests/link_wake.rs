@@ -1,6 +1,7 @@
 use crate::engine::test_support::{routable_descriptor, test_entropy_bytes, TestStorageLayout};
 use crate::engine::{
-    CommandId, CryptoOwed, Directive, EngineReaction, EngineState, IngestIo, OwedWork,
+    CommandId, CryptoOwed, Directive, EngineReaction, EngineState, IngestIo,
+    LinkReceiptSignCompleted, OwedWork,
 };
 use crate::interfaces::{AttachedInterfaces, InboundPacket, InterfaceId};
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_ECHO};
@@ -233,17 +234,27 @@ fn pooled_link_delivery_defers_receipt_signing_and_completion_preserves_the_wire
     assert_eq!(owed.link_id, link_id);
 
     let signature = ed25519_sign(&owed.signing_secret, owed.packet_hash.as_bytes());
-    let mut proof = [0u8; LINK_PROOF_WIRE_LEN];
-    let proof_len = engine
-        .complete_link_receipt_sign(
-            &owed.link_id,
-            &owed.packet_hash,
-            &signature,
-            InstantMillis(2_100),
-            &mut proof,
-        )
-        .unwrap();
-    assert_eq!(proof_len, LINK_PROOF_WIRE_LEN);
+    let mut proof = Vec::new();
+    engine.resume_link_receipt_sign(
+        LinkReceiptSignCompleted {
+            target: owed.target,
+            link_id: owed.link_id,
+            packet_hash: owed.packet_hash,
+            signature,
+        },
+        InstantMillis(2_100),
+        &mut |reaction| match reaction {
+            EngineReaction::Directive(Directive::Send { target, bytes }) => {
+                assert_eq!(target, lane);
+                proof.extend_from_slice(bytes);
+            }
+            EngineReaction::Directive(Directive::Fulfill(never)) => match never {},
+            EngineReaction::Journaled(_) | EngineReaction::Directive(_) => {
+                panic!("receipt completion must emit exactly one send")
+            }
+        },
+    );
+    assert_eq!(proof.len(), LINK_PROOF_WIRE_LEN);
     assert_eq!(
         &proof[HEADER_MIN_LEN..HEADER_MIN_LEN + PACKET_HASH_LEN],
         owed.packet_hash.as_bytes(),

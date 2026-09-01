@@ -15,7 +15,7 @@ use crate::routing::links::request::RequestId;
 use crate::routing::links::resources::send::ResourceBuildOwed;
 use crate::routing::links::resources::{ResourceFailureCause, ResourceHash};
 use crate::routing::links::LinkId;
-use crate::routing::proof::{DeferredLinkReceiptSign, DeferredProofSign, ReceiptProofVerifyOwed};
+use crate::routing::proof::{LinkReceiptSignOwed, ProofSignOwed, ReceiptProofVerifyOwed};
 use crate::routing::request_handlers::RequestPathHash;
 use crate::routing::RouteRemovalCause;
 use crate::units::RttMillis;
@@ -79,8 +79,8 @@ pub enum CryptoOwed {
     RatchetDecrypt(RatchetDecryptOwed),
     LinkProofVerify(LinkProofVerifyOwed),
     LinkProofSign(LinkProofSignOwed),
-    ProofSign(DeferredProofSign),
-    LinkReceiptSign(DeferredLinkReceiptSign),
+    ProofSign(ProofSignOwed),
+    LinkReceiptSign(LinkReceiptSignOwed),
     AnnounceVerify(AnnounceVerifyOwed),
     RemoteControlPairingAvailabilityVerify(
         crate::remote_control::RemoteControlPairingAvailabilityVerifyOwed,

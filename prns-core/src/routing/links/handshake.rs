@@ -201,7 +201,7 @@ pub fn link_request_from(
 }
 
 /// The exact bytes a LRPROOF signs: `link_id ++ responder_encryption ++ responder_signing ++ signalling`.
-/// The inline signer and the pool's deferred sign both frame identical material.
+/// Inline and worker signers both frame identical material.
 pub fn link_proof_signed_data(
     link_id: &LinkId,
     responder_encryption: &X25519PublicKey,
@@ -222,7 +222,7 @@ pub fn link_proof_signed_data(
     signed_data
 }
 
-/// The assembly half of [`write_link_proof`]; deferred and inline signs both share one wire path.
+/// The assembly half of [`write_link_proof`]; worker and inline signs both share one wire path.
 pub fn write_link_proof_from_parts(
     link_id: &LinkId,
     responder_encryption: &X25519PublicKey,

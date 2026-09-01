@@ -1,7 +1,7 @@
 use crate::engine::{
     Directive, EngineReaction, EngineState, InstantMillis, IssuedCommand, Journaled, OwedWork,
     PrnsCommand, Respond, RespondData, SendRequest, SendRequestData, SendSinglePacketEntropy,
-    SendSinglePacketFailure, SendSinglePacketPrepared, SendSinglePacketWriteError, Settlement,
+    SendSinglePacketFailure, SendSinglePacketPreparation, SendSinglePacketWriteError, Settlement,
     WakeSchedules,
 };
 use crate::interfaces::InterfaceIfac;
@@ -100,7 +100,7 @@ where
             ($pool:expr, $id:expr, $send:expr, $timing:expr) => {{
                 let mut entropy_bytes = [0u8; SendSinglePacketEntropy::LEN];
                 host.fill_random(&mut entropy_bytes);
-                match engine.prepare_send_single_packet_deferred_with_timing(
+                match engine.prepare_send_single_packet_with_timing(
                     $id,
                     $send,
                     now,
@@ -110,10 +110,10 @@ where
                         shared_instance_floor_ms: $timing.first_hop_timeout_floor_ms,
                     },
                 ) {
-                    SendSinglePacketPrepared::Owed(owed) => {
+                    SendSinglePacketPreparation::Owed(owed) => {
                         $pool.submit(CryptoJob::SealScalars(owed));
                     }
-                    SendSinglePacketPrepared::Rejected { id, rejection } => {
+                    SendSinglePacketPreparation::Rejected { id, rejection } => {
                         route_reaction(
                             EngineReaction::Journaled(Journaled::CommandSettled {
                                 id,
@@ -129,7 +129,7 @@ where
                             &mut |journaled| journal.route(journaled),
                         );
                     }
-                    SendSinglePacketPrepared::RouteVanished { id } => {
+                    SendSinglePacketPreparation::RouteVanished { id } => {
                         route_reaction(
                             EngineReaction::Journaled(Journaled::CommandSettled {
                                 id,

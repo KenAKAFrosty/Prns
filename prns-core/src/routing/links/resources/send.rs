@@ -318,7 +318,7 @@ impl<S: StorageLayout> EngineState<S> {
                 return;
             }
         };
-        let ticket = match self.outgoing_resources.reserve_deferred_build(
+        let ticket = match self.outgoing_resources.reserve_build(
             TrackedCommand {
                 link_id,
                 sdu: validated.sdu,
@@ -433,7 +433,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
         let outcome = match self
             .outgoing_resources
-            .deferred_build_regions_mut(reservation)
+            .reserved_build_regions_mut(reservation)
         {
             Some(regions) => {
                 let mut fresh_nonces = nonces.into_iter();
@@ -505,7 +505,7 @@ impl<S: StorageLayout> EngineState<S> {
         } = completed;
         let landing =
             self.outgoing_resources
-                .land_deferred_build(reservation, transfer, names, outcome);
+                .land_built_resource(reservation, transfer, names, outcome);
         self.resume_landed_resource_build(
             reservation,
             request_data,

@@ -2,8 +2,7 @@ use crate::engine::{CryptoOwed, Directive, EngineReaction, EngineState, InstantM
 use crate::interfaces::{AttachedInterfaces, Egress, InterfaceId};
 use crate::routing::delivery::Delivery;
 use crate::routing::proof::{
-    DeferredLinkReceiptSign, DeferredProofSign, LinkProofOwed, ProofObligation, ProofOwed,
-    ProofRequest,
+    LinkProofOwed, LinkReceiptSignOwed, ProofObligation, ProofOwed, ProofRequest, ProofSignOwed,
 };
 use crate::storage::StorageLayout;
 
@@ -81,7 +80,7 @@ impl<S: StorageLayout> EngineState<S> {
                         .map(|held| held.signing_secret_clone())
                     {
                         (io.sink)(EngineReaction::Directive(Directive::Fulfill(
-                            CryptoOwed::ProofSign(DeferredProofSign {
+                            CryptoOwed::ProofSign(ProofSignOwed {
                                 target: source,
                                 packet_hash: owed.packet_hash,
                                 signing_secret,
@@ -99,7 +98,7 @@ impl<S: StorageLayout> EngineState<S> {
                         .map(|held| held.signing_secret_clone())
                     {
                         (io.sink)(EngineReaction::Directive(Directive::Fulfill(
-                            CryptoOwed::LinkReceiptSign(DeferredLinkReceiptSign {
+                            CryptoOwed::LinkReceiptSign(LinkReceiptSignOwed {
                                 target: source,
                                 link_id: owed.link_id,
                                 packet_hash: owed.packet_hash,

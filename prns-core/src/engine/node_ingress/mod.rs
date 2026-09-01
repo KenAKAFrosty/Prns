@@ -1,5 +1,5 @@
 mod announce_completion;
-mod deferred_decryption;
+mod decrypt_resume;
 mod delivery;
 mod held_announce_release;
 mod link_handshake_completion;

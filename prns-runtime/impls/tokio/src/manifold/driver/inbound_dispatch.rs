@@ -2,8 +2,9 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::crypto::ed25519_sign;
 use crate::engine::{
-    ClassifiedInboundPacket, CryptoOwed, DeferredLinkReceiptSign, Directive, EngineReaction,
-    EngineState, IngestIo, InstantMillis, Journaled, OwedWork, ProofRequest, WakeSchedules,
+    ClassifiedInboundPacket, CryptoOwed, EngineReaction, EngineState, IngestIo, InstantMillis,
+    Journaled, LinkReceiptSignCompleted, LinkReceiptSignOwed, OwedWork, ProofRequest,
+    WakeSchedules,
 };
 use crate::interfaces::{
     FrameAccountingEvent, IfacUnmaskError, InboundPacket, InterfaceId, InterfaceIfac,
@@ -13,7 +14,6 @@ use crate::manifold::wake_schedule::merge_wake_schedules_delta;
 use crate::manifold::Host;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::resources::ResourceOffer;
-use crate::routing::proof::LINK_PROOF_WIRE_LEN;
 use crate::runtime::InterfaceStore;
 use crate::storage::StorageLayout;
 
@@ -34,7 +34,7 @@ fn route_ingress_reaction<J>(
     wire_scratch: &mut WireScratch,
     journal: &mut JournalDispatch<J>,
     owed_work: &mut PendingOwedWork,
-    link_receipt_signs: &mut std::vec::Vec<DeferredLinkReceiptSign>,
+    link_receipt_signs: &mut std::vec::Vec<LinkReceiptSignOwed>,
     now: InstantMillis,
 ) where
     J: for<'a> FnMut(Journaled<'a>),
@@ -63,8 +63,8 @@ fn route_ingress_reaction<J>(
 pub(super) struct InboundDispatch {
     ready_lanes: std::vec::Vec<InterfaceId>,
     unmask_scratch: std::boxed::Box<[u8]>,
-    link_receipt_signs: std::vec::Vec<DeferredLinkReceiptSign>,
-    inline_link_receipt_signs: std::vec::Vec<DeferredLinkReceiptSign>,
+    link_receipt_signs: std::vec::Vec<LinkReceiptSignOwed>,
+    inline_link_receipt_signs: std::vec::Vec<LinkReceiptSignOwed>,
 }
 
 // The minimum sixteen-job admission depth exposes at most fifteen receipt signs while retaining
@@ -255,27 +255,26 @@ impl InboundDispatch {
                 }
                 for owed in inline_link_receipt_signs.drain(..) {
                     let signature = ed25519_sign(&owed.signing_secret, owed.packet_hash.as_bytes());
-                    let mut proof = [0u8; LINK_PROOF_WIRE_LEN];
-                    if let Ok(written) = engine.complete_link_receipt_sign(
-                        &owed.link_id,
-                        &owed.packet_hash,
-                        &signature,
+                    engine.resume_link_receipt_sign(
+                        LinkReceiptSignCompleted {
+                            target: owed.target,
+                            link_id: owed.link_id,
+                            packet_hash: owed.packet_hash,
+                            signature,
+                        },
                         now,
-                        &mut proof,
-                    ) {
-                        route_reaction(
-                            EngineReaction::Directive(Directive::Send {
-                                target: owed.target,
-                                bytes: &proof[..written],
-                            }),
-                            &mut topology.egress,
-                            &topology.ifacs,
-                            &mut topology.pacers,
-                            wire_scratch,
-                            now,
-                            &mut |journaled| journal.route(journaled),
-                        );
-                    }
+                        &mut |reaction| {
+                            route_reaction(
+                                reaction,
+                                &mut topology.egress,
+                                &topology.ifacs,
+                                &mut topology.pacers,
+                                wire_scratch,
+                                now,
+                                &mut |journaled| journal.route(journaled),
+                            );
+                        },
+                    );
                 }
             }
         }

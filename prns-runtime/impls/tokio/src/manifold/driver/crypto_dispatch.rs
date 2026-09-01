@@ -1,5 +1,5 @@
 use crate::engine::{
-    Directive, EngineReaction, EngineState, InstantMillis, Journaled, OwedWork, ProofRequest,
+    EngineReaction, EngineState, InstantMillis, Journaled, OwedWork, ProofRequest,
     ResourceDecompressionCompleted, WakeSchedules,
 };
 use crate::identity::OpenedToken;
@@ -9,7 +9,6 @@ use crate::routing::links::resources::build_outgoing::SALT_REROLL_CAP;
 use crate::routing::links::resources::receive::offload::OffloadedOpenSpan;
 use crate::routing::links::resources::send::{OffloadedStagedSeal, ResourceBuildCompleted};
 use crate::routing::links::resources::{MAP_HASH_LEN, RESOURCE_NONCE_LEN};
-use crate::routing::proof::{EXPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN};
 use crate::storage::StorageLayout;
 
 use super::crypto_pool::{
@@ -200,15 +199,9 @@ where
                     },
                 ))
             }
-            CryptoResult::Sealed {
-                owed,
-                ephemeral_public,
-                shared,
-            } => {
-                CryptoCompletionEffect::WakeSchedules(engine.complete_send_single_packet_deferred(
-                    owed,
-                    ephemeral_public,
-                    shared,
+            CryptoResult::Encrypted(completed) => {
+                CryptoCompletionEffect::WakeSchedules(engine.resume_encrypt(
+                    completed,
                     topology.interfaces.view(),
                     seal_buf,
                     &mut |reaction| {
@@ -224,56 +217,32 @@ where
                     },
                 ))
             }
-            CryptoResult::Signed {
-                target,
-                packet_hash,
-                signature,
-            } => {
-                let mut proof = [0u8; EXPLICIT_PROOF_WIRE_LEN];
-                if let Ok(written) = engine.write_signed_proof(&packet_hash, &signature, &mut proof)
-                {
-                    route_reaction(
-                        EngineReaction::Directive(Directive::Send {
-                            target,
-                            bytes: &proof[..written],
-                        }),
+            CryptoResult::ProofSigned(completed) => {
+                engine.resume_proof_sign(completed, &mut |reaction| {
+                    route_completed_reaction_without_work(
+                        reaction,
                         &mut topology.egress,
                         &topology.ifacs,
                         &mut topology.pacers,
                         wire_scratch,
+                        journal,
                         now,
-                        &mut |journaled| journal.route(journaled),
-                    );
-                }
+                    )
+                });
                 CryptoCompletionEffect::NoWakeChange
             }
-            CryptoResult::LinkReceiptSigned {
-                target,
-                link_id,
-                packet_hash,
-                signature,
-            } => {
-                let mut proof = [0u8; LINK_PROOF_WIRE_LEN];
-                if let Ok(written) = engine.complete_link_receipt_sign(
-                    &link_id,
-                    &packet_hash,
-                    &signature,
-                    now,
-                    &mut proof,
-                ) {
-                    route_reaction(
-                        EngineReaction::Directive(Directive::Send {
-                            target,
-                            bytes: &proof[..written],
-                        }),
+            CryptoResult::LinkReceiptSigned(completed) => {
+                engine.resume_link_receipt_sign(completed, now, &mut |reaction| {
+                    route_completed_reaction_without_work(
+                        reaction,
                         &mut topology.egress,
                         &topology.ifacs,
                         &mut topology.pacers,
                         wire_scratch,
+                        journal,
                         now,
-                        &mut |journaled| journal.route(journaled),
-                    );
-                }
+                    )
+                });
                 CryptoCompletionEffect::NoWakeChange
             }
             CryptoResult::Decrypted { owed, shared } => {

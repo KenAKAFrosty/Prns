@@ -67,12 +67,26 @@ fn explicit_non_link_proofs_name_the_proven_packet_hash() {
     });
     let packet_hash = PacketHash::new([0xA5; PACKET_HASH_LEN]);
     let signature = Ed25519Signature([0x5A; 64]);
-    let mut buf = [0u8; EXPLICIT_PROOF_WIRE_LEN];
-    let written = state
-        .write_signed_proof(&packet_hash, &signature, &mut buf)
-        .unwrap();
-    assert_eq!(written, EXPLICIT_PROOF_WIRE_LEN);
-    let (_, payload) = WirePacketHeader::parse(&buf).unwrap();
+    let mut wire = Vec::new();
+    state.resume_proof_sign(
+        ProofSignCompleted {
+            target: InterfaceId::new([0xB4; 8]),
+            packet_hash,
+            signature,
+        },
+        &mut |reaction| match reaction {
+            EngineReaction::Directive(Directive::Send { target, bytes }) => {
+                assert_eq!(target, InterfaceId::new([0xB4; 8]));
+                wire.extend_from_slice(bytes);
+            }
+            EngineReaction::Directive(Directive::Fulfill(never)) => match never {},
+            EngineReaction::Journaled(_) | EngineReaction::Directive(_) => {
+                panic!("a completed proof signature emits exactly one send")
+            }
+        },
+    );
+    assert_eq!(wire.len(), EXPLICIT_PROOF_WIRE_LEN);
+    let (_, payload) = WirePacketHeader::parse(&wire).unwrap();
     assert_eq!(&payload[..PACKET_HASH_LEN], packet_hash.as_bytes());
     assert_eq!(&payload[PACKET_HASH_LEN..], &signature.0);
 }

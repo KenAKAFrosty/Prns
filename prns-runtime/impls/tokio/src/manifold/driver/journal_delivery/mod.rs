@@ -7,6 +7,7 @@ use crate::engine::{
     AnnounceRateState, CommandId, Journaled, SendRequestFailure, Settlement, WakeSchedules,
 };
 use crate::routing::links::channel::byte_stream::{self, StreamId, STREAM_DATA_TYPE};
+use crate::routing::links::resources::ResourceHash;
 use crate::routing::links::LinkId;
 use crate::runtime::node_introspection::{AnnounceRateHistory, AnnounceRateSnapshot};
 #[cfg(feature = "runtime-metrics")]
@@ -248,25 +249,89 @@ impl JournalDelivery {
     }
 
     fn route_resource_or_forward<'a>(&mut self, journaled: Journaled<'a>) -> Option<Journaled<'a>> {
+        enum ResourceJournal<'a> {
+            Received {
+                link_id: LinkId,
+                hash: ResourceHash,
+                metadata: Option<&'a [u8]>,
+                data: &'a [u8],
+            },
+            Segment {
+                link_id: LinkId,
+                metadata: Option<&'a [u8]>,
+                data: &'a [u8],
+            },
+            Assembled {
+                link_id: LinkId,
+                original_hash: ResourceHash,
+                total_size_bytes: u64,
+            },
+            Failed {
+                link_id: LinkId,
+            },
+        }
+
+        impl ResourceJournal<'_> {
+            fn link_id(&self) -> LinkId {
+                match self {
+                    Self::Received { link_id, .. }
+                    | Self::Segment { link_id, .. }
+                    | Self::Assembled { link_id, .. }
+                    | Self::Failed { link_id } => *link_id,
+                }
+            }
+        }
+
         if let Journaled::LinkClosed { link_id, .. } = &journaled {
             if let Some(sink) = self.resource_sinks.remove(link_id) {
                 let _ = sink.send(ResourceInbound::Failed);
             }
             return Some(journaled);
         }
-        let link = match &journaled {
-            Journaled::ResourceReceived { link_id, .. }
-            | Journaled::ResourceSegmentReceived { link_id, .. }
-            | Journaled::ResourceAssembled { link_id, .. }
-            | Journaled::ResourceFailed { link_id, .. } => *link_id,
+        let resource = match &journaled {
+            Journaled::ResourceReceived {
+                link_id,
+                hash,
+                metadata,
+                data,
+            } => ResourceJournal::Received {
+                link_id: *link_id,
+                hash: *hash,
+                metadata: *metadata,
+                data,
+            },
+            Journaled::ResourceSegmentReceived {
+                link_id,
+                metadata,
+                data,
+                ..
+            } => ResourceJournal::Segment {
+                link_id: *link_id,
+                metadata: *metadata,
+                data,
+            },
+            Journaled::ResourceAssembled {
+                link_id,
+                original_hash,
+                total_size_bytes,
+                ..
+            } => ResourceJournal::Assembled {
+                link_id: *link_id,
+                original_hash: *original_hash,
+                total_size_bytes: *total_size_bytes,
+            },
+            Journaled::ResourceFailed { link_id, .. } => {
+                ResourceJournal::Failed { link_id: *link_id }
+            }
             _ => return Some(journaled),
         };
+        let link = resource.link_id();
         let sink = match self.resource_sinks.get(&link) {
             Some(sink) => sink.clone(),
             None => return Some(journaled),
         };
-        let retire = match &journaled {
-            Journaled::ResourceReceived {
+        let retire = match resource {
+            ResourceJournal::Received {
                 hash,
                 metadata,
                 data,
@@ -277,33 +342,32 @@ impl JournalDelivery {
                 }
                 let _ = sink.send(ResourceInbound::Chunk(data.to_vec()));
                 let _ = sink.send(ResourceInbound::Complete {
-                    original_hash: *hash,
+                    original_hash: hash,
                     total_size_bytes: data.len() as u64,
                 });
                 true
             }
-            Journaled::ResourceSegmentReceived { metadata, data, .. } => {
+            ResourceJournal::Segment { metadata, data, .. } => {
                 if let Some(metadata) = metadata {
                     let _ = sink.send(ResourceInbound::Metadata(metadata.to_vec()));
                 }
                 sink.send(ResourceInbound::Chunk(data.to_vec())).is_err()
             }
-            Journaled::ResourceAssembled {
+            ResourceJournal::Assembled {
                 original_hash,
                 total_size_bytes,
                 ..
             } => {
                 let _ = sink.send(ResourceInbound::Complete {
-                    original_hash: *original_hash,
-                    total_size_bytes: *total_size_bytes,
+                    original_hash,
+                    total_size_bytes,
                 });
                 true
             }
-            Journaled::ResourceFailed { .. } => {
+            ResourceJournal::Failed { .. } => {
                 let _ = sink.send(ResourceInbound::Failed);
                 true
             }
-            _ => unreachable!("the link only matched a resource journal above"),
         };
         if retire {
             self.resource_sinks.remove(&link);

@@ -2,9 +2,9 @@ mod model;
 mod wire;
 
 pub use model::{
-    DeferredLinkReceiptSign, DeferredProofSign, LinkProofOwed, ProofObligation, ProofOwed,
-    ProofRequest, ReceiptProofClaim, ReceiptProofVerification, ReceiptProofVerifyOwed,
-    WriteChannelAckError, WriteProofError,
+    LinkProofOwed, LinkReceiptSignCompleted, LinkReceiptSignOwed, ProofObligation, ProofOwed,
+    ProofRequest, ProofSignCompleted, ProofSignOwed, ReceiptProofClaim, ReceiptProofVerification,
+    ReceiptProofVerifyOwed, WriteChannelAckError, WriteProofError,
 };
 pub use wire::{
     write_explicit_proof_wire_packet, write_implicit_proof_wire_packet,

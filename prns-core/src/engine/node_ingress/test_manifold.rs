@@ -4,15 +4,15 @@ use std::collections::VecDeque;
 
 use crate::crypto::{ed25519_sign, ed25519_verify, x25519_diffie_hellman, x25519_keys_for_seal};
 use crate::engine::{
-    CryptoOwed, Directive, EngineReaction, EngineState, IngestIo, OwedWork,
-    ReceiptProofVerification, WakeSchedules,
+    CryptoOwed, Directive, EncryptCompleted, EngineReaction, EngineState, IngestIo,
+    LinkReceiptSignCompleted, OwedWork, ProofSignCompleted, ReceiptProofVerification,
+    WakeSchedules,
 };
 use crate::identity::decrypt_token_in_place_with_ratchets;
 use crate::interfaces::InboundPacket;
 use crate::remote_control::RemoteControlPairingAvailabilityVerification;
 use crate::routing::announce::Announce;
 use crate::routing::links::handshake::{link_proof_signature_valid, link_proof_signed_data};
-use crate::routing::proof::{EXPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN};
 use crate::storage::StorageLayout;
 use crate::wire::BROADCAST_MTU;
 
@@ -79,10 +79,12 @@ impl<S: StorageLayout> EngineState<S> {
                     let (ephemeral_public, shared) =
                         x25519_keys_for_seal(&owed.ephemeral_secret, &owed.dh_target);
                     let mut wire = [0u8; BROADCAST_MTU];
-                    wake.compose(self.complete_send_single_packet_deferred(
-                        owed,
-                        ephemeral_public,
-                        shared,
+                    wake.compose(self.resume_encrypt(
+                        EncryptCompleted {
+                            owed,
+                            ephemeral_public,
+                            shared,
+                        },
                         interfaces,
                         &mut wire,
                         &mut |reaction| sink(reaction.map_work(|never| match never {})),
@@ -162,31 +164,31 @@ impl<S: StorageLayout> EngineState<S> {
                 }
                 CryptoOwed::ProofSign(owed) => {
                     let signature = ed25519_sign(&owed.signing_secret, owed.packet_hash.as_bytes());
-                    let mut proof = [0u8; EXPLICIT_PROOF_WIRE_LEN];
-                    if let Ok(written) =
-                        self.write_signed_proof(&owed.packet_hash, &signature, &mut proof)
-                    {
-                        sink(EngineReaction::Directive(Directive::Send {
+                    self.resume_proof_sign(
+                        ProofSignCompleted {
                             target: owed.target,
-                            bytes: &proof[..written],
-                        }));
-                    }
+                            packet_hash: owed.packet_hash,
+                            signature,
+                        },
+                        &mut |reaction| {
+                            sink(reaction.map_work(|never| match never {}));
+                        },
+                    );
                 }
                 CryptoOwed::LinkReceiptSign(owed) => {
                     let signature = ed25519_sign(&owed.signing_secret, owed.packet_hash.as_bytes());
-                    let mut proof = [0u8; LINK_PROOF_WIRE_LEN];
-                    if let Ok(written) = self.complete_link_receipt_sign(
-                        &owed.link_id,
-                        &owed.packet_hash,
-                        &signature,
-                        now,
-                        &mut proof,
-                    ) {
-                        sink(EngineReaction::Directive(Directive::Send {
+                    self.resume_link_receipt_sign(
+                        LinkReceiptSignCompleted {
                             target: owed.target,
-                            bytes: &proof[..written],
-                        }));
-                    }
+                            link_id: owed.link_id,
+                            packet_hash: owed.packet_hash,
+                            signature,
+                        },
+                        now,
+                        &mut |reaction| {
+                            sink(reaction.map_work(|never| match never {}));
+                        },
+                    );
                 }
                 CryptoOwed::AnnounceVerify(owed) => {
                     if Announce::from_wire_unverified(&owed.header, &owed.payload)

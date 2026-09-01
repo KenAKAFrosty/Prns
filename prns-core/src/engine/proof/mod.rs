@@ -11,9 +11,10 @@ use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::LinkId;
 use crate::routing::proof::{
     write_explicit_proof_wire_packet, write_implicit_proof_wire_packet,
-    write_link_proof_wire_packet, LinkProofOwed, ProofOwed, ReceiptProofClaim,
-    ReceiptProofVerification, ReceiptProofVerifyOwed, WriteChannelAckError, WriteProofError,
-    EXPLICIT_PROOF_PAYLOAD_LEN, IMPLICIT_PROOF_PAYLOAD_LEN,
+    write_link_proof_wire_packet, LinkProofOwed, LinkReceiptSignCompleted, ProofOwed,
+    ProofSignCompleted, ReceiptProofClaim, ReceiptProofVerification, ReceiptProofVerifyOwed,
+    WriteChannelAckError, WriteProofError, EXPLICIT_PROOF_PAYLOAD_LEN, EXPLICIT_PROOF_WIRE_LEN,
+    IMPLICIT_PROOF_PAYLOAD_LEN, LINK_PROOF_WIRE_LEN,
 };
 use crate::storage::StorageLayout;
 use crate::units::RttMillis;
@@ -31,7 +32,7 @@ impl<S: StorageLayout> EngineState<S> {
             .map_err(WriteProofError::Serialize)
     }
 
-    pub fn write_signed_proof(
+    fn write_signed_proof(
         &self,
         packet_hash: &PacketHash,
         signature: &Ed25519Signature,
@@ -58,18 +59,46 @@ impl<S: StorageLayout> EngineState<S> {
             .map_err(WriteProofError::Serialize)
     }
 
-    /// Commits a signature produced by deferred host crypto and records the resulting LINK egress.
-    pub fn complete_link_receipt_sign(
+    /// Resume delivery-proof emission after a runtime fulfills [`crate::engine::CryptoOwed::ProofSign`].
+    pub fn resume_proof_sign(
+        &self,
+        completed: ProofSignCompleted,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        let mut proof = [0u8; EXPLICIT_PROOF_WIRE_LEN];
+        let Ok(written) =
+            self.write_signed_proof(&completed.packet_hash, &completed.signature, &mut proof)
+        else {
+            return;
+        };
+        sink(EngineReaction::Directive(crate::engine::Directive::Send {
+            target: completed.target,
+            bytes: &proof[..written],
+        }));
+    }
+
+    /// Resume LINK receipt emission after a runtime fulfills
+    /// [`crate::engine::CryptoOwed::LinkReceiptSign`].
+    pub fn resume_link_receipt_sign(
         &mut self,
-        link_id: &LinkId,
-        packet_hash: &PacketHash,
-        signature: &Ed25519Signature,
+        completed: LinkReceiptSignCompleted,
         now: InstantMillis,
-        buf: &mut [u8],
-    ) -> Result<usize, WireError> {
-        let written = write_link_proof_wire_packet(link_id, packet_hash, signature, buf)?;
-        self.links.note_outbound(link_id, now);
-        Ok(written)
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        let mut proof = [0u8; LINK_PROOF_WIRE_LEN];
+        let Ok(written) = write_link_proof_wire_packet(
+            &completed.link_id,
+            &completed.packet_hash,
+            &completed.signature,
+            &mut proof,
+        ) else {
+            return;
+        };
+        self.links.note_outbound(&completed.link_id, now);
+        sink(EngineReaction::Directive(crate::engine::Directive::Send {
+            target: completed.target,
+            bytes: &proof[..written],
+        }));
     }
 
     /// RNS 1.4.2 `Link.receive`'s CHANNEL branch: `packet.prove()` whenever a channel is open, on either side.

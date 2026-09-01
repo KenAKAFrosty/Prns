@@ -533,7 +533,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
     /// Reserve the engine row before an owning worker starts a live resource build. The row's
     /// ordinary bulk buffers also reserve the exact configured memory budget; worker scratch is
     /// transient and lands here only if this ticket still owns the row.
-    pub fn reserve_deferred_build(
+    pub fn reserve_build(
         &mut self,
         command: TrackedCommand,
         shape: ResourceBufferShape,
@@ -576,14 +576,14 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
     }
 
     /// Land an owning worker's buffers without trusting a completion that outlived its row.
-    pub fn land_deferred_build(
+    pub fn land_built_resource(
         &mut self,
         ticket: ResourceBuildReservation,
         transfer: &[u8],
         names: &[u8],
         outcome: Result<BuiltResource, BuildOutgoingResourceError>,
     ) -> ResourceBuildLanding {
-        let Some(index) = self.deferred_build_index(ticket) else {
+        let Some(index) = self.reserved_build_index(ticket) else {
             return ResourceBuildLanding::Stale;
         };
         let built = match outcome {
@@ -611,16 +611,16 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         buffers.part_names[..expected_part_count]
             .as_flattened_mut()
             .copy_from_slice(names);
-        self.finish_deferred_build(index, built)
+        self.finish_build(index, built)
     }
 
     /// Lend the exact row regions reserved for an inline fulfillment. A stale reservation never
     /// exposes replacement-row storage.
-    pub fn deferred_build_regions_mut(
+    pub fn reserved_build_regions_mut(
         &mut self,
         reservation: ResourceBuildReservation,
     ) -> Option<BuildRegions<'_>> {
-        let index = self.deferred_build_index(reservation)?;
+        let index = self.reserved_build_index(reservation)?;
         let expected_transfer_bytes = self.table.states()[index].sealed_transfer_bytes;
         let expected_part_count = self.table.states()[index].part_count;
         let buffers = self.table.buffers_mut(index);
@@ -636,7 +636,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         reservation: ResourceBuildReservation,
         outcome: Result<BuiltResource, BuildOutgoingResourceError>,
     ) -> ResourceBuildLanding {
-        let Some(index) = self.deferred_build_index(reservation) else {
+        let Some(index) = self.reserved_build_index(reservation) else {
             return ResourceBuildLanding::Stale;
         };
         let built = match outcome {
@@ -655,10 +655,10 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
             self.refresh_earliest_timeout();
             return ResourceBuildLanding::Failed(BuildOutgoingResourceError::BufferShapeMismatch);
         }
-        self.finish_deferred_build(index, built)
+        self.finish_build(index, built)
     }
 
-    fn deferred_build_index(&self, reservation: ResourceBuildReservation) -> Option<usize> {
+    fn reserved_build_index(&self, reservation: ResourceBuildReservation) -> Option<usize> {
         (0..self.table.len()).find(|&index| {
             let state = &self.table.states()[index];
             self.table.link_ids()[index] == reservation.link_id
@@ -669,11 +669,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         })
     }
 
-    fn finish_deferred_build(
-        &mut self,
-        index: usize,
-        built: BuiltResource,
-    ) -> ResourceBuildLanding {
+    fn finish_build(&mut self, index: usize, built: BuiltResource) -> ResourceBuildLanding {
         let reserved = self.table.states()[index];
         self.table
             .set_identity(index, OutgoingResourceIdentity::Ready(built.hash));
@@ -1488,7 +1484,7 @@ mod tests {
 
     fn reserve_build(outgoing: &mut TestOutgoing, command_id: u64) -> ResourceBuildReservation {
         outgoing
-            .reserve_deferred_build(
+            .reserve_build(
                 TrackedCommand {
                     link_id: link_id(1),
                     sdu: 464,
@@ -1537,7 +1533,7 @@ mod tests {
     }
 
     #[test]
-    fn a_deferred_build_lands_only_its_reserved_shape_and_generation() {
+    fn a_completed_build_lands_only_its_reserved_shape_and_generation() {
         let mut outgoing = TestOutgoing::default();
         let first = reserve_build(&mut outgoing, 7);
         assert_eq!(outgoing.state(0).status, OutgoingResourceStatus::Building);
@@ -1555,13 +1551,13 @@ mod tests {
         let names = [0xCD; 2 * MAP_HASH_LEN];
 
         assert_eq!(
-            outgoing.land_deferred_build(first, &transfer, &names, Ok(fabricated(0xAB, 928, 2)),),
+            outgoing.land_built_resource(first, &transfer, &names, Ok(fabricated(0xAB, 928, 2)),),
             ResourceBuildLanding::Stale,
             "an old completion must not land in a replacement row with the same command ID",
         );
         assert_eq!(outgoing.state(0).status, OutgoingResourceStatus::Building);
         assert_eq!(
-            outgoing.land_deferred_build(
+            outgoing.land_built_resource(
                 replacement,
                 &transfer,
                 &names,
@@ -1578,7 +1574,7 @@ mod tests {
             OutgoingResourceStatus::Advertised
         );
         assert_eq!(
-            outgoing.land_deferred_build(
+            outgoing.land_built_resource(
                 replacement,
                 &transfer,
                 &names,
@@ -1596,7 +1592,7 @@ mod tests {
         assert!(outgoing.pop_for_link(&link_id(1)).is_some());
 
         assert_eq!(
-            outgoing.land_deferred_build(
+            outgoing.land_built_resource(
                 reservation,
                 &[0xAB; 928],
                 &[0xCD; 2 * MAP_HASH_LEN],
@@ -1608,11 +1604,11 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_or_misshapen_deferred_build_releases_its_reservation() {
+    fn a_failed_or_misshapen_build_releases_its_reservation() {
         let mut outgoing = TestOutgoing::default();
         let failed = reserve_build(&mut outgoing, 7);
         assert_eq!(
-            outgoing.land_deferred_build(
+            outgoing.land_built_resource(
                 failed,
                 &[],
                 &[],
@@ -1624,7 +1620,7 @@ mod tests {
 
         let misshapen = reserve_build(&mut outgoing, 8);
         assert_eq!(
-            outgoing.land_deferred_build(
+            outgoing.land_built_resource(
                 misshapen,
                 &[0; 927],
                 &[0; 2 * MAP_HASH_LEN],

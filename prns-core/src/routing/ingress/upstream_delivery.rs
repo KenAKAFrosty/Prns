@@ -15,7 +15,7 @@ use heapless::Vec as HeaplessVec;
 
 pub const MAX_SINGLE_TOKEN_LEN: usize = sealed_len(MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN);
 
-/// Owns the material needed to finish an identity-keyed decrypt after deferred Diffie-Hellman.
+/// Owns the material needed to resume an identity-keyed decrypt after external Diffie-Hellman.
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub struct DecryptOwed {
     pub destination: DestinationHash,
@@ -30,13 +30,13 @@ pub struct DecryptOwed {
     pub token: HeaplessVec<u8, MAX_SINGLE_TOKEN_LEN>,
 }
 
-/// Limits retained secrets copied into a deferred ratchet decrypt; larger sets decrypt inline.
+/// Limits retained secrets copied into a ratchet-decrypt request; larger sets decrypt inline.
 pub const MAX_POOLED_RATCHETS: usize = 32;
 
 pub const MAX_RATCHET_DECRYPT_PAYLOAD_LEN: usize =
     ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN + MAX_SINGLE_TOKEN_LEN;
 
-/// Owns the ciphertext and candidate secrets needed to finish a deferred ratchet decrypt.
+/// Owns the ciphertext and candidate secrets needed to resume a ratchet decrypt.
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub struct RatchetDecryptOwed {
     pub destination: DestinationHash,
@@ -273,7 +273,7 @@ mod tests {
     }
 
     #[test]
-    fn deferred_identity_decrypt_resumes_the_delivery() {
+    fn owed_identity_decrypt_resumes_the_delivery() {
         let mut state = personal_node_announcer();
         let destination = personal_node_destination();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
@@ -347,7 +347,7 @@ mod tests {
     }
 
     #[test]
-    fn deferred_ratchet_decrypt_opens_to_the_same_plaintext_as_inline() {
+    fn owed_ratchet_decrypt_opens_to_the_same_plaintext_as_inline() {
         let mut state = ratcheted_personal_node_announcer();
         let mut raw = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET);
         let IngestPacketOutcome::OwesRatchetDecrypt(mut owed) = state.ingest_packet_step_with(
@@ -528,7 +528,7 @@ mod tests {
     }
 
     #[test]
-    fn a_deferred_required_ratchet_decrypt_carries_the_refusal_to_the_pool() {
+    fn an_owed_required_ratchet_decrypt_carries_the_refusal_to_the_runtime() {
         let mut state = ratchets_required_personal_node_announcer();
         let destination = personal_node_destination();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());

@@ -54,17 +54,38 @@ pub enum ReceiptProofVerification {
     Invalid,
 }
 
-pub struct DeferredProofSign {
+/// An implicit or explicit delivery proof whose signature the engine asks its runtime to produce.
+#[repr(C)]
+pub struct ProofSignOwed {
     pub target: InterfaceId,
     pub packet_hash: PacketHash,
     pub signing_secret: Ed25519SecretKey,
 }
 
-pub struct DeferredLinkReceiptSign {
+/// A LINK receipt proof whose signature the engine asks its runtime to produce.
+#[repr(C)]
+pub struct LinkReceiptSignOwed {
     pub target: InterfaceId,
     pub link_id: LinkId,
     pub packet_hash: PacketHash,
     pub signing_secret: Ed25519SecretKey,
+}
+
+/// A runtime-produced delivery-proof signature submitted for engine serialization and routing.
+#[repr(C)]
+pub struct ProofSignCompleted {
+    pub target: InterfaceId,
+    pub packet_hash: PacketHash,
+    pub signature: Ed25519Signature,
+}
+
+/// A runtime-produced LINK receipt signature submitted for engine state transition and routing.
+#[repr(C)]
+pub struct LinkReceiptSignCompleted {
+    pub target: InterfaceId,
+    pub link_id: LinkId,
+    pub packet_hash: PacketHash,
+    pub signature: Ed25519Signature,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

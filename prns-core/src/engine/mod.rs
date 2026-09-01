@@ -112,9 +112,9 @@ pub use crate::routing::announce::AnnounceObservation;
 pub use crate::routing::delivery::send_group::{SendGroupEntropy, SendGroupWriteError};
 pub use crate::routing::delivery::send_plain::SendPlainPacketWriteError;
 pub use crate::routing::delivery::send_single::{
-    EncryptOwed, FinishSendSinglePacketOutcome, SendSinglePacketDispatch, SendSinglePacketEntropy,
-    SendSinglePacketPrepared, SendSinglePacketWriteError, SendSinglePacketWriteOutcome,
-    SendSinglePacketWriteRejection,
+    EncryptCompleted, EncryptOwed, FinishEncryptOutcome, SendSinglePacketDispatch,
+    SendSinglePacketEntropy, SendSinglePacketPreparation, SendSinglePacketWriteError,
+    SendSinglePacketWriteOutcome, SendSinglePacketWriteRejection,
 };
 pub use crate::routing::ingress::{
     AcceptedAnnounce, AnnounceIngest, AnnounceVerifyOwed, ClassifiedInboundPacket, DataPacket,
@@ -138,7 +138,8 @@ pub use crate::routing::path_requests::pending::{
 pub use crate::routing::path_requests::request_path::PathRequestWriteOutcome;
 pub use crate::routing::path_requests::seen::PathRequestIdBytes;
 pub use crate::routing::proof::{
-    DeferredLinkReceiptSign, DeferredProofSign, ProofObligation, ProofOwed, ProofRequest,
-    ReceiptProofClaim, ReceiptProofVerification, ReceiptProofVerifyOwed, WriteProofError,
+    LinkReceiptSignCompleted, LinkReceiptSignOwed, ProofObligation, ProofOwed, ProofRequest,
+    ProofSignCompleted, ProofSignOwed, ReceiptProofClaim, ReceiptProofVerification,
+    ReceiptProofVerifyOwed, WriteProofError,
 };
 pub use crate::units::InstantMillis;

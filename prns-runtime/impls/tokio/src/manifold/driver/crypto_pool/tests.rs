@@ -5,6 +5,8 @@ use crate::engine::{
     CommandId, DeliveryEvidence, DeliveryProof, PacketReceiptDelivered, ReceiptProofClaim,
 };
 use crate::identity::IdentitySigningPublicKey;
+use crate::interfaces::InterfaceId;
+use crate::routing::dedup::PacketHash;
 use crate::units::{InstantMillis, RttMillis};
 
 fn receipt_proof_verify_owed(
@@ -180,7 +182,7 @@ async fn completion_wake_carries_no_payload_and_result_moves_through_worker_ring
 #[tokio::test]
 async fn link_receipt_signing_moves_metadata_and_signature_through_the_worker_ring() {
     use crate::crypto::{ed25519_public_key, ed25519_verify, Ed25519SecretKey};
-    use crate::engine::DeferredLinkReceiptSign;
+    use crate::engine::LinkReceiptSignOwed;
 
     let secret = Ed25519SecretKey::new([0x61; 32]);
     let public = ed25519_public_key(&secret);
@@ -191,7 +193,7 @@ async fn link_receipt_signing_moves_metadata_and_signature_through_the_worker_ri
     let pool = CryptoPool::spawn(1, completion_wake.clone()).expect("worker spawns");
     assert!(!pool.prepare_completion_wait());
 
-    let mut receipts = vec![DeferredLinkReceiptSign {
+    let mut receipts = vec![LinkReceiptSignOwed {
         target,
         link_id,
         packet_hash,
@@ -206,19 +208,13 @@ async fn link_receipt_signing_moves_metadata_and_signature_through_the_worker_ri
     let completion = pool
         .pop_completion()
         .expect("LINK receipt result moves back");
-    let CryptoResult::LinkReceiptSigned {
-        target: completed_target,
-        link_id: completed_link,
-        packet_hash: completed_hash,
-        signature,
-    } = completion.result
-    else {
+    let CryptoResult::LinkReceiptSigned(completed) = completion.result else {
         panic!("the LINK receipt job must return its typed result");
     };
-    assert_eq!(completed_target, target);
-    assert_eq!(completed_link, link_id);
-    assert_eq!(completed_hash, packet_hash);
-    ed25519_verify(&public, packet_hash.as_bytes(), &signature)
+    assert_eq!(completed.target, target);
+    assert_eq!(completed.link_id, link_id);
+    assert_eq!(completed.packet_hash, packet_hash);
+    ed25519_verify(&public, packet_hash.as_bytes(), &completed.signature)
         .expect("worker returns the exact valid receipt signature");
     pool.record_completed(completion.worker, completion.work);
     pool.packet_verdict_settled();
@@ -227,14 +223,14 @@ async fn link_receipt_signing_moves_metadata_and_signature_through_the_worker_ri
 #[tokio::test]
 async fn already_ready_link_receipts_move_as_one_worker_batch() {
     use crate::crypto::{ed25519_public_key, ed25519_verify, Ed25519SecretKey};
-    use crate::engine::DeferredLinkReceiptSign;
+    use crate::engine::LinkReceiptSignOwed;
 
     let secret_bytes = [0xa5; 32];
     let public = ed25519_public_key(&Ed25519SecretKey::new(secret_bytes));
     let target = InterfaceId::new([0xb6; 8]);
     let link_id = LinkId::new([0xc7; 16]);
     let mut receipts = (0u8..4)
-        .map(|index| DeferredLinkReceiptSign {
+        .map(|index| LinkReceiptSignOwed {
             target,
             link_id,
             packet_hash: PacketHash::new([index; 32]),
@@ -256,20 +252,18 @@ async fn already_ready_link_receipts_move_as_one_worker_batch() {
         let completion = pool
             .pop_completion()
             .expect("the bulk-published result ring contains every receipt");
-        let CryptoResult::LinkReceiptSigned {
-            target: completed_target,
-            link_id: completed_link,
-            packet_hash,
-            signature,
-        } = completion.result
-        else {
+        let CryptoResult::LinkReceiptSigned(completed) = completion.result else {
             panic!("the LINK receipt batch must return typed results");
         };
-        assert_eq!(completed_target, target);
-        assert_eq!(completed_link, link_id);
-        assert_eq!(packet_hash, PacketHash::new([index; 32]));
-        ed25519_verify(&public, packet_hash.as_bytes(), &signature)
-            .expect("every batched receipt keeps its exact signature semantics");
+        assert_eq!(completed.target, target);
+        assert_eq!(completed.link_id, link_id);
+        assert_eq!(completed.packet_hash, PacketHash::new([index; 32]));
+        ed25519_verify(
+            &public,
+            completed.packet_hash.as_bytes(),
+            &completed.signature,
+        )
+        .expect("every batched receipt keeps its exact signature semantics");
         pool.record_completed(completion.worker, completion.work);
         pool.packet_verdict_settled();
     }
@@ -279,12 +273,12 @@ async fn already_ready_link_receipts_move_as_one_worker_batch() {
 #[test]
 fn same_link_receipt_backlog_routes_in_load_balanced_pairs() {
     use crate::crypto::Ed25519SecretKey;
-    use crate::engine::DeferredLinkReceiptSign;
+    use crate::engine::LinkReceiptSignOwed;
 
     let target = InterfaceId::new([0xd8; 8]);
     let link_id = LinkId::new([0xe9; 16]);
     let mut receipts = (0u8..5)
-        .map(|index| DeferredLinkReceiptSign {
+        .map(|index| LinkReceiptSignOwed {
             target,
             link_id,
             packet_hash: PacketHash::new([index; 32]),
@@ -328,7 +322,7 @@ fn completion_wait_arm_closes_ready_before_and_after_arm_races() {
 #[test]
 fn parked_worker_arm_is_cleared_by_submission_without_losing_the_job() {
     use crate::crypto::Ed25519SecretKey;
-    use crate::engine::DeferredProofSign;
+    use crate::engine::ProofSignOwed;
 
     let pool = CryptoPool::spawn(1, Arc::new(Notify::new())).expect("worker spawns");
     let deadline = std::time::Instant::now() + Duration::from_secs(1);
@@ -337,7 +331,7 @@ fn parked_worker_arm_is_cleared_by_submission_without_losing_the_job() {
         std::thread::yield_now();
     }
 
-    pool.submit(CryptoJob::Sign(DeferredProofSign {
+    pool.submit(CryptoJob::SignProof(ProofSignOwed {
         target: InterfaceId::new([0x21; 8]),
         packet_hash: PacketHash::new([0x32; 32]),
         signing_secret: Ed25519SecretKey::new([0x43; 32]),
