@@ -439,7 +439,7 @@ mod tests {
         response[HEADER_MIN_LEN - 1] = WireContext::PathResponse.to_byte();
 
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(500),
                     source_interface: iface(0xA1),
@@ -470,7 +470,7 @@ mod tests {
         let mut relay = transporting_node();
         let mut announce = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         assert!(matches!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(500),
                     source_interface: iface(0xA1),
@@ -495,7 +495,7 @@ mod tests {
         let interfaces = [routable_descriptor(app), routable_descriptor(network)];
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
 
-        let out = leaf.ingest_packet_with(
+        let out = leaf.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: app,
@@ -545,7 +545,8 @@ mod tests {
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let mut sent = std::vec::Vec::new();
 
-        leaf.ingest_packet_inline_for_test(
+        crate::engine::drive_packet_to_quiescence(
+            &mut leaf,
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: network,
@@ -628,7 +629,7 @@ mod tests {
 
         let mut relay = transporting_node();
         assert!(matches!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(10_000),
                     source_interface: source,
@@ -642,7 +643,7 @@ mod tests {
             })),
         ));
         assert!(matches!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(11_000),
                     source_interface: source,
@@ -707,7 +708,7 @@ mod tests {
         }];
 
         let mut relay = transporting_node();
-        let _ = relay.ingest_packet_with(
+        let _ = relay.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(10_000),
                 source_interface: source,
@@ -716,7 +717,7 @@ mod tests {
             AttachedInterfaces::new(&rate_limited),
         );
         assert!(matches!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(25_000),
                     source_interface: source,
@@ -756,7 +757,7 @@ mod tests {
         let mut relayed = announce_buf[..announce_len].to_vec();
         relayed[1] = 1;
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0xA1; 8]),
@@ -779,7 +780,7 @@ mod tests {
         let mut leaf = routable_descriptor(InterfaceId::new([0xEE; 8]));
         leaf.capabilities.egress = EgressCapability::Enabled(TransportCapability::NoTransport);
 
-        let out = state.ingest_packet_with(
+        let out = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
@@ -809,7 +810,7 @@ mod tests {
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let mut state = transporting_node();
 
-        let first = state.ingest_packet_with(
+        let first = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
@@ -820,7 +821,7 @@ mod tests {
         assert_eq!(first, rns_1_4_2_announce_accepted(1));
         assert_eq!(state.route_count(), 1);
 
-        let second = state.ingest_packet_with(
+        let second = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: InterfaceId::new([0u8; 8]),
@@ -856,7 +857,7 @@ mod tests {
         let mut state = transporting_node();
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: low,
@@ -867,7 +868,7 @@ mod tests {
             rns_1_4_2_announce_accepted(1),
         );
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(2_000),
                     source_interface: high,
@@ -887,7 +888,7 @@ mod tests {
         );
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(3_000),
                     source_interface: invalid,
@@ -961,7 +962,7 @@ mod tests {
         let mut at_limit = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         at_limit[1] = 127;
         let mut state = transporting_node();
-        let out = state.ingest_packet_with(
+        let out = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
@@ -974,7 +975,7 @@ mod tests {
         let mut beyond = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         beyond[1] = 128;
         let mut state = transporting_node();
-        let out = state.ingest_packet_with(
+        let out = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
@@ -995,7 +996,7 @@ mod tests {
             DestinationHash::from_slice(&pristine[2..18]).expect("16-byte destination hash");
 
         let mut state = transporting_node();
-        let out = state.ingest_packet_with(
+        let out = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
@@ -1020,7 +1021,7 @@ mod tests {
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
 
-        let out = state.ingest_packet_with(
+        let out = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
@@ -1066,7 +1067,7 @@ mod tests {
         relayed[header_len..header_len + payload.len()].copy_from_slice(payload);
 
         let mut state = transporting_node();
-        let out = state.ingest_packet_with(
+        let out = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
@@ -1087,7 +1088,7 @@ mod tests {
 
         let mut direct = raw.clone();
         let mut fresh = transporting_node();
-        let _ = fresh.ingest_packet_with(
+        let _ = fresh.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
@@ -1112,7 +1113,7 @@ mod tests {
         let mut state =
             EngineState::<TestFixedStorage<4, 64, 8, 8, 8, 128, 8, 8, 8, 8, 16, 16>>::default();
 
-        let out = state.ingest_packet_with(
+        let out = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
@@ -1145,7 +1146,7 @@ mod tests {
         );
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
 
-        let outcome = state.ingest_packet_with(
+        let outcome = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: source,
@@ -1243,7 +1244,8 @@ mod tests {
         ] {
             let mut wire = flood_announce(seed, 5);
             let arrived_at = InstantMillis(arrived_at_ms);
-            let delta = relay.ingest_packet_inline_for_test(
+            let delta = crate::engine::drive_packet_to_quiescence(
+                &mut relay,
                 InboundPacket {
                     arrived_at,
                     source_interface: source,
@@ -1281,7 +1283,8 @@ mod tests {
         let arrived_at = InstantMillis(LIMIT_TEST_RELATCH_ARRIVAL_MS);
         let mut wire = flood_announce(6, 5);
         let mut held_drop = None;
-        let delta = relay.ingest_packet_inline_for_test(
+        let delta = crate::engine::drive_packet_to_quiescence(
+            &mut relay,
             InboundPacket {
                 arrived_at,
                 source_interface: source,
@@ -1322,7 +1325,8 @@ mod tests {
         let arrived_at = InstantMillis(LIMIT_TEST_RELATCH_ARRIVAL_MS);
         let mut wire = flood_announce(6, 5);
         *wire.last_mut().unwrap() ^= 0xFF;
-        let delta = relay.ingest_packet_inline_for_test(
+        let delta = crate::engine::drive_packet_to_quiescence(
+            &mut relay,
             InboundPacket {
                 arrived_at,
                 source_interface: source,
@@ -1360,7 +1364,8 @@ mod tests {
         let mut state = EngineState::<TinyStorage>::default();
         pin_transport_id(&mut state, TEST_TRANSPORT_ID);
         let mut first_wire = flood_announce(0x11, 1);
-        state.ingest_packet_inline_for_test(
+        crate::engine::drive_packet_to_quiescence(
+            &mut state,
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: first_source,
@@ -1385,7 +1390,8 @@ mod tests {
         let mut removed = std::vec::Vec::new();
         let mut second_destination = None;
         let mut second_wire = flood_announce(0x22, 1);
-        state.ingest_packet_inline_for_test(
+        crate::engine::drive_packet_to_quiescence(
+            &mut state,
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: second_source,
@@ -1436,7 +1442,7 @@ mod tests {
         let mut held = 0usize;
         for i in 0..8u8 {
             let mut wire = flood_announce(i, 10 - i);
-            match relay.ingest_packet_with(
+            match relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000 + u64::from(i) * 5),
                     source_interface: source,
@@ -1532,7 +1538,7 @@ mod tests {
 
         for i in 0..16u8 {
             let mut wire = flood_announce(i, 200);
-            let out = relay.ingest_packet_with(
+            let out = relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000 + u64::from(i) * 5),
                     source_interface: source,
@@ -1561,7 +1567,7 @@ mod tests {
         for i in 0..32u8 {
             let mut wire = flood_announce(i, 5);
             *wire.last_mut().unwrap() ^= 0xFF;
-            let out = relay.ingest_packet_with(
+            let out = relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000 + u64::from(i) * 2),
                     source_interface: source,
@@ -1578,7 +1584,7 @@ mod tests {
         assert!(relay.held_announces.is_empty());
 
         let mut real = flood_announce(200, 5);
-        let out = relay.ingest_packet_with(
+        let out = relay.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: source,

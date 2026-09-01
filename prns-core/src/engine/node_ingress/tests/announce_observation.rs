@@ -27,7 +27,8 @@ fn an_accepted_announce_journals_the_identity_app_data_and_path_provenance() {
     let interfaces = transporting_interfaces();
     let mut wire = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
     let mut heard = None;
-    engine.ingest_packet_inline_for_test(
+    crate::engine::drive_packet_to_quiescence(
+        &mut engine,
         InboundPacket {
             arrived_at,
             source_interface,

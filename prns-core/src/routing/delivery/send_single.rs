@@ -564,7 +564,7 @@ mod tests {
             rebroadcast: crate::engine::RebroadcastDecision::Scheduled,
         };
         let mut raw = wire.to_vec();
-        let outcome = state.ingest_packet_with(
+        let outcome = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(500),
                 source_interface: arrival,
@@ -797,7 +797,7 @@ mod tests {
         proof: &mut [u8],
         arrived_at: InstantMillis,
     ) -> crate::engine::ReceiptProofVerifyOwed {
-        match state.ingest_packet_with(
+        match state.ingest_for_test(
             InboundPacket {
                 arrived_at,
                 source_interface: arrival(),
@@ -1140,7 +1140,7 @@ mod tests {
 
         let mut wire = buf[..dispatch.wire_bytes].to_vec();
         assert_eq!(
-            peer.ingest_packet_with(
+            peer.ingest_for_test(
                 plain_data_packet(&mut wire),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -1247,7 +1247,7 @@ mod tests {
 
         let mut replay = bytes_from_hex(RNS_1_4_2_IMPLICIT_PROOF);
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_300),
                     source_interface: arrival(),
@@ -1468,7 +1468,7 @@ mod tests {
         let mut state = hearer();
         let mut packet = proof_packet(&[0u8; 65], &PacketHash::new([0xAA; 32]));
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: arrival(),

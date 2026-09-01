@@ -285,7 +285,7 @@ mod tests {
         let interfaces = transporting_interfaces();
         let mut wire = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         assert!(matches!(
-            engine.ingest_packet_with(
+            engine.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0xA1; 8]),

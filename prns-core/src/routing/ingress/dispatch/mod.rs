@@ -51,10 +51,10 @@ impl<S: StorageLayout> EngineState<S> {
 
     #[cfg(test)]
     #[must_use]
-    #[deprecated(
-        note = "test-only inline compatibility manifold; use ingest_packet_step_with or drive Directive::Fulfill and resume_* explicitly"
-    )]
-    pub(crate) fn ingest_packet_with<'p>(
+    /// Low-level parser oracle for tests that assert the post-crypto [`IngestPacketOutcome`]
+    /// directly. Runtime-shaped tests use `ingest_packet_into*`; continuation tests use
+    /// [`Self::ingest_packet_step_with`] and the matching `resume_*` entry point.
+    pub(crate) fn ingest_for_test<'p>(
         &mut self,
         packet: crate::interfaces::InboundPacket<'p>,
         interfaces: AttachedInterfaces<'_>,

@@ -363,7 +363,7 @@ mod tests {
         let n = write_path_request_wire_packet(local, None, &[0x55; 16], &mut buf).unwrap();
         let mut wire = buf[..n].to_vec();
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
@@ -447,7 +447,7 @@ mod tests {
         .unwrap();
         let mut wire = buf[..n].to_vec();
         assert_eq!(
-            leaf.ingest_packet_with(
+            leaf.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
@@ -490,7 +490,7 @@ mod tests {
         let mut a: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let mut wire = buf[..wire_bytes].to_vec();
         assert!(matches!(
-            a.ingest_packet_with(
+            a.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_200),
                     source_interface: iface(0xA1),
@@ -528,7 +528,7 @@ mod tests {
         let mut relay = transporting_node();
         let mut announce = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         assert!(matches!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(500),
                     source_interface: iface(0xB2),
@@ -565,7 +565,7 @@ mod tests {
 
         let mut wire = stranger_path_request([0x55; 16]);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: source,
@@ -599,7 +599,7 @@ mod tests {
         let mut wire = stranger_path_request([0x55; 16]);
 
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: source,
@@ -632,7 +632,7 @@ mod tests {
         let mut second_wire = first_wire.clone();
 
         assert_eq!(
-            first.ingest_packet_with(
+            first.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: first_ingress,
@@ -649,7 +649,7 @@ mod tests {
             },
         );
         assert_eq!(
-            second.ingest_packet_with(
+            second.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_001),
                     source_interface: first_egress,
@@ -681,7 +681,7 @@ mod tests {
         let mut wire = stranger_path_request([0x55; 16]);
 
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: source,
@@ -808,7 +808,7 @@ mod tests {
             )
             .unwrap();
             let mut wire = buf[..n].to_vec();
-            match relay.ingest_packet_with(
+            match relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000 + u64::from(dest_byte)),
                     source_interface: source,
@@ -842,7 +842,7 @@ mod tests {
 
         let mut first = stranger_path_request([0x55; 16]);
         assert!(matches!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: source,
@@ -855,7 +855,7 @@ mod tests {
 
         let mut second = stranger_path_request([0x66; 16]);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_100),
                     source_interface: source,
@@ -875,7 +875,7 @@ mod tests {
 
         let mut wire = stranger_path_request([0x55; 16]);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: source,
@@ -911,7 +911,7 @@ mod tests {
 
         let mut wire = stranger_path_request([0x55; 16]);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: app,
@@ -1057,7 +1057,7 @@ mod tests {
         let (mut relay, cached) = relay_holding_a_cached_route();
         for _ in 0..2 {
             let mut wire = path_request_wire(cached);
-            let _ = relay.ingest_packet_with(
+            let _ = relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
@@ -1087,7 +1087,7 @@ mod tests {
 
         let mut wire = stranger_path_request([0x55; 16]);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: uplink,
@@ -1118,7 +1118,7 @@ mod tests {
 
         let mut wire = stranger_path_request([0x55; 16]);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: uplink,
@@ -1139,7 +1139,7 @@ mod tests {
 
         let mut wire = stranger_path_request([0x55; 16]);
         assert_eq!(
-            leaf.ingest_packet_with(
+            leaf.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: source,
@@ -1179,7 +1179,7 @@ mod tests {
 
         let mut wire = buf[..wire_bytes].to_vec();
         assert!(matches!(
-            a.ingest_packet_with(
+            a.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_200),
                     source_interface: iface(0xB2),
@@ -1251,7 +1251,7 @@ mod tests {
 
         let mut wire = path_request_wire(cached);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
@@ -1286,7 +1286,7 @@ mod tests {
 
         let mut wire = path_request_wire_with(&body);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
@@ -1306,7 +1306,7 @@ mod tests {
         same_id_other_transport.extend_from_slice(&id);
         let mut wire = path_request_wire_with(&same_id_other_transport);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_100),
                     source_interface: iface(0xA1),
@@ -1334,7 +1334,7 @@ mod tests {
         withheld.extend_from_slice(&[0x11; 16]);
         let mut wire = path_request_wire_with(&withheld);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
@@ -1356,7 +1356,7 @@ mod tests {
         recovered.extend_from_slice(&[0x22; 16]);
         let mut wire = path_request_wire_with(&recovered);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_100),
                     source_interface: iface(0xA1),
@@ -1380,7 +1380,7 @@ mod tests {
         );
         let mut relay = transporting_node();
         let mut announce = bytes_from_hex(RNS_1_4_2_RETRANSMITTED_ANNOUNCE);
-        let _ = relay.ingest_packet_with(
+        let _ = relay.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(500),
                 source_interface: iface(0xB2),
@@ -1399,7 +1399,7 @@ mod tests {
 
         let mut loops_back = request([0x7a; 16], 0x01);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
@@ -1413,7 +1413,7 @@ mod tests {
 
         let mut other_requester = request([0xCC; 16], 0x02);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_100),
                     source_interface: iface(0xA1),
@@ -1433,7 +1433,7 @@ mod tests {
         let (mut relay, cached) = relay_holding_a_cached_route();
         let mut wire = path_request_wire_with(cached.as_bytes());
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
@@ -1451,7 +1451,7 @@ mod tests {
         let (mut relay, cached) = relay_holding_a_cached_route();
         let mut wire = path_request_wire(cached);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
@@ -1483,7 +1483,7 @@ mod tests {
         let (mut relay, cached) = relay_holding_a_cached_route();
         let mut wire = path_request_wire(cached);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(u64::MAX),
                     source_interface: iface(0xA1),
@@ -1510,7 +1510,7 @@ mod tests {
             ..routable_descriptor(requester)
         }];
         let mut wire = path_request_wire(cached);
-        let _ = relay.ingest_packet_with(
+        let _ = relay.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: requester,
@@ -1531,7 +1531,7 @@ mod tests {
         let roaming_view = [discovering_descriptor(learned_on, InterfaceMode::Roaming)];
         let mut wire = path_request_wire(cached);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: learned_on,
@@ -1556,7 +1556,7 @@ mod tests {
         let full_view = [routable_descriptor(learned_on)];
         let mut wire = path_request_wire(cached);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: learned_on,
@@ -1575,7 +1575,7 @@ mod tests {
     fn a_flood_schedule_supersedes_a_directed_answer_for_the_same_destination() {
         let (mut relay, cached) = relay_holding_a_cached_route();
         let mut wire = path_request_wire(cached);
-        let _ = relay.ingest_packet_with(
+        let _ = relay.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: iface(0xA1),
@@ -1612,7 +1612,7 @@ mod tests {
         ];
 
         let mut wire = path_request_wire(cached);
-        let _ = relay.ingest_packet_with(
+        let _ = relay.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: requester,
@@ -1674,7 +1674,7 @@ mod tests {
         );
         let mut leaf: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let mut announce = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-        let _ = leaf.ingest_packet_with(
+        let _ = leaf.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(500),
                 source_interface: iface(0xB2),
@@ -1685,7 +1685,7 @@ mod tests {
 
         let mut wire = path_request_wire(cached);
         assert_eq!(
-            leaf.ingest_packet_with(
+            leaf.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
@@ -1710,7 +1710,7 @@ mod tests {
         let mut shared: EngineState<TestStorageLayout> =
             EngineState::<TestStorageLayout>::default();
         let mut announce = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-        let _ = shared.ingest_packet_with(
+        let _ = shared.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(500),
                 source_interface: uplink,
@@ -1721,7 +1721,7 @@ mod tests {
 
         let mut wire = path_request_wire(cached);
         assert_eq!(
-            shared.ingest_packet_with(
+            shared.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: app,
@@ -1745,7 +1745,7 @@ mod tests {
 
         let mut wire = stranger_path_request([0x55; 16]);
         assert_eq!(
-            shared.ingest_packet_with(
+            shared.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: app,
@@ -1772,7 +1772,7 @@ mod tests {
 
         let mut wire = stranger_path_request([0x55; 16]);
         assert_eq!(
-            shared.ingest_packet_with(
+            shared.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: uplink,
@@ -1793,7 +1793,7 @@ mod tests {
         let mut relay = transporting_node();
         let mut wire = path_request_wire(DestinationHash::new([0x44; 16]));
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
@@ -1811,7 +1811,7 @@ mod tests {
 
         let mut first = path_request_wire(cached);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
@@ -1826,7 +1826,7 @@ mod tests {
 
         let mut echo = path_request_wire(cached);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_100),
                     source_interface: iface(0xB2),

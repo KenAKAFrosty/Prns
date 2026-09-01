@@ -254,7 +254,7 @@ mod tests {
         let mut raw = sealed_single_packet(&identity, destination, b"hello-announced");
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -328,7 +328,7 @@ mod tests {
         let mut raw = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET);
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -426,7 +426,7 @@ mod tests {
         let destination = personal_node_destination();
         let mut raw = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET);
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -452,7 +452,7 @@ mod tests {
         let mut raw = sealed_single_packet(&identity, destination, b"identity-keyed");
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -494,7 +494,7 @@ mod tests {
         let mut raw = sealed_single_packet(&identity, destination, b"identity-keyed");
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -509,7 +509,7 @@ mod tests {
         let mut raw = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET);
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -559,7 +559,7 @@ mod tests {
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let mut raw = sealed_single_packet(&identity, destination, b"identity-keyed");
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -578,7 +578,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -605,7 +605,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -622,7 +622,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -662,7 +662,7 @@ mod tests {
         raw[header_len] = 0xFF;
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw[..header_len + 1]),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -689,7 +689,7 @@ mod tests {
         let IngestPacketOutcome::Delivery {
             delivery: Delivery::Plain(delivered),
             ..
-        } = state.ingest_packet_with(
+        } = state.ingest_for_test(
             plain_data_packet(&mut raw_for_us),
             AttachedInterfaces::new(&transporting_interfaces()),
         )
@@ -699,7 +699,7 @@ mod tests {
         assert_eq!(delivered.payload, &[0xEE]);
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw_for_other),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -720,7 +720,7 @@ mod tests {
         ));
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -746,7 +746,7 @@ mod tests {
         let mut raw = sealed_single_packet(&identity, destination, b"hello-single");
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -783,7 +783,7 @@ mod tests {
 
         let mut first_copy = raw.clone();
         assert!(matches!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut first_copy),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -795,7 +795,7 @@ mod tests {
 
         let mut replayed_copy = raw.clone();
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut replayed_copy),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -824,7 +824,7 @@ mod tests {
         let last = tampered.len() - 1;
         tampered[last] ^= 0x01;
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut tampered),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -833,7 +833,7 @@ mod tests {
 
         let mut genuine = raw.clone();
         assert!(matches!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut genuine),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -879,7 +879,7 @@ mod tests {
 
         let mut to_a = sealed_single_packet(&identity_a, dest_a, b"for-a");
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut to_a),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -898,7 +898,7 @@ mod tests {
 
         let mut to_b = sealed_single_packet(&identity_b, dest_b, b"for-b");
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut to_b),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -917,7 +917,7 @@ mod tests {
 
         let mut crossed = sealed_single_packet(&identity_b, dest_a, b"crossed");
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut crossed),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -951,7 +951,7 @@ mod tests {
 
         let mut as_app_only = raw.clone();
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut as_app_only),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -961,7 +961,7 @@ mod tests {
         state.set_transport_identity(&held).unwrap();
         let mut as_transport = raw.clone();
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut as_transport),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -1025,7 +1025,7 @@ mod tests {
         let IngestPacketOutcome::Delivery {
             delivery: Delivery::Group(group),
             proof: ProofObligation::None,
-        } = state.ingest_packet_with(
+        } = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: iface(0x07),
@@ -1059,7 +1059,7 @@ mod tests {
         wire[header_len..header_len + 64].fill(0xAB);
         let mut raw = wire[..header_len + 64].to_vec();
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0x07),
@@ -1112,7 +1112,7 @@ mod tests {
         let mut direct = group_wire(destination, 0);
         assert!(
             matches!(
-                state.ingest_packet_with(
+                state.ingest_for_test(
                     InboundPacket {
                         arrived_at: InstantMillis(1_000),
                         source_interface: iface(0x07),
@@ -1130,7 +1130,7 @@ mod tests {
 
         let mut relayed = group_wire(destination, 1);
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0x07),
@@ -1150,7 +1150,7 @@ mod tests {
         let mut second = group_wire(destination, 0);
         assert!(
             matches!(
-                state.ingest_packet_with(
+                state.ingest_for_test(
                     InboundPacket {
                         arrived_at: InstantMillis(1_000),
                         source_interface: iface(0x07),
@@ -1167,7 +1167,7 @@ mod tests {
         );
         assert!(
             matches!(
-                state.ingest_packet_with(
+                state.ingest_for_test(
                     InboundPacket {
                         arrived_at: InstantMillis(2_000),
                         source_interface: iface(0x07),
@@ -1204,7 +1204,7 @@ mod tests {
         let packet_hash = PacketHash::of_wire_packet(&raw).unwrap();
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),
@@ -1248,7 +1248,7 @@ mod tests {
         let mut raw = sealed_single_packet(&identity, unregistered, b"hello-single");
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
                 AttachedInterfaces::new(&transporting_interfaces()),
             ),

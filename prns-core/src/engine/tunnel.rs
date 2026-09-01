@@ -162,7 +162,7 @@ mod tests {
         let first_conn = InterfaceId::new([0xC1; 8]);
         let first_view = [routable_descriptor(first_conn)];
         let mut announce = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-        let _ = before_reboot.ingest_packet_with(
+        let _ = before_reboot.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: first_conn,
@@ -171,7 +171,7 @@ mod tests {
             AttachedInterfaces::new(&first_view),
         );
         let mut synth = synthesize_wire(0xAB);
-        let _ = before_reboot.ingest_packet_with(
+        let _ = before_reboot.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: first_conn,
@@ -202,7 +202,7 @@ mod tests {
         let second_conn = InterfaceId::new([0xC2; 8]);
         let second_view = [routable_descriptor(second_conn)];
         let mut synth_again = synthesize_wire(0xAB);
-        let _ = rebooted.ingest_packet_with(
+        let _ = rebooted.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(3_000),
                 source_interface: second_conn,

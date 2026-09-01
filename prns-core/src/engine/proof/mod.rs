@@ -11,27 +11,16 @@ use crate::routing::links::table::{LinkPhase, LinkRole};
 use crate::routing::links::LinkId;
 use crate::routing::proof::{
     write_explicit_proof_wire_packet, write_implicit_proof_wire_packet,
-    write_link_proof_wire_packet, LinkProofOwed, LinkReceiptSignCompleted, ProofOwed,
-    ProofSignCompleted, ReceiptProofClaim, ReceiptProofVerification, ReceiptProofVerifyOwed,
-    WriteChannelAckError, WriteProofError, EXPLICIT_PROOF_PAYLOAD_LEN, EXPLICIT_PROOF_WIRE_LEN,
-    IMPLICIT_PROOF_PAYLOAD_LEN, LINK_PROOF_WIRE_LEN,
+    write_link_proof_wire_packet, LinkReceiptSignCompleted, ProofSignCompleted, ReceiptProofClaim,
+    ReceiptProofVerification, ReceiptProofVerifyOwed, WriteChannelAckError,
+    EXPLICIT_PROOF_PAYLOAD_LEN, EXPLICIT_PROOF_WIRE_LEN, IMPLICIT_PROOF_PAYLOAD_LEN,
+    LINK_PROOF_WIRE_LEN,
 };
 use crate::storage::StorageLayout;
 use crate::units::RttMillis;
 use crate::wire::{DestinationHash, WireError};
 
 impl<S: StorageLayout> EngineState<S> {
-    /// Best-effort by RNS 1.4.2 parity: an unwritable proof is dropped; the sender's timeout-and-resend is the designed recovery, so nothing here is retried.
-    pub fn write_proof(&self, owed: &ProofOwed, buf: &mut [u8]) -> Result<usize, WriteProofError> {
-        let identity = self
-            .held_identities
-            .get(&owed.identity)
-            .ok_or(WriteProofError::IdentityNotHeld)?;
-        let signature = identity.sign(owed.packet_hash.as_bytes());
-        self.write_signed_proof(&owed.packet_hash, &signature, buf)
-            .map_err(WriteProofError::Serialize)
-    }
-
     fn write_signed_proof(
         &self,
         packet_hash: &PacketHash,
@@ -42,21 +31,6 @@ impl<S: StorageLayout> EngineState<S> {
             ProofForm::Implicit => write_implicit_proof_wire_packet(packet_hash, signature, buf),
             ProofForm::Explicit => write_explicit_proof_wire_packet(packet_hash, signature, buf),
         }
-    }
-
-    /// Best-effort by RNS 1.4.2 parity: an unwritable link proof is dropped; the initiator's timeout is the designed recovery.
-    pub fn write_link_proof(
-        &self,
-        owed: &LinkProofOwed,
-        buf: &mut [u8],
-    ) -> Result<usize, WriteProofError> {
-        let identity = self
-            .held_identities
-            .get(&owed.identity)
-            .ok_or(WriteProofError::IdentityNotHeld)?;
-        let signature = identity.sign(owed.packet_hash.as_bytes());
-        write_link_proof_wire_packet(&owed.link_id, &owed.packet_hash, &signature, buf)
-            .map_err(WriteProofError::Serialize)
     }
 
     /// Resume delivery-proof emission after a runtime fulfills [`crate::engine::CryptoOwed::ProofSign`].

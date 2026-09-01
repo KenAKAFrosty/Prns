@@ -203,7 +203,7 @@ mod tests {
         let mut engine = transporting_node();
 
         let IngestPacketOutcome::Announce(AnnounceIngest::Accepted(accepted)) = engine
-            .ingest_packet_with(
+            .ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface,
@@ -269,7 +269,7 @@ mod tests {
         };
         *signed_app_data_byte ^= 1;
         assert_eq!(
-            engine.ingest_packet_with(
+            engine.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(2_000),
                     source_interface,

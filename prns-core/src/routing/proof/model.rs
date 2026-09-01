@@ -127,12 +127,6 @@ impl ProofObligation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WriteProofError {
-    IdentityNotHeld,
-    Serialize(WireError),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteChannelAckError {
     LinkNotActive,
     IdentityNotHeld,

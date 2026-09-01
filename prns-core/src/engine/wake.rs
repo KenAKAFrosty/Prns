@@ -415,7 +415,7 @@ mod tests {
     fn next_wake_names_the_scheduled_announce_reason_future_then_due() {
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let mut state = transporting_node();
-        let _ = state.ingest_packet_with(
+        let _ = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0xEE; 8]),
@@ -457,7 +457,7 @@ mod tests {
         let interfaces = [routable_descriptor(source)];
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
-        let _ = state.ingest_packet_with(
+        let _ = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: source,
@@ -703,7 +703,8 @@ mod tests {
         let mut schedules = state.wake_schedules(interfaces);
 
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-        let delta = state.ingest_packet_inline_for_test(
+        let delta = crate::engine::drive_packet_to_quiescence(
+            &mut state,
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
@@ -792,7 +793,7 @@ mod tests {
         }];
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
-        let _ = state.ingest_packet_with(
+        let _ = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: source,
@@ -822,7 +823,8 @@ mod tests {
         let mut schedules = state.wake_schedules(interfaces);
 
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-        let delta = state.ingest_packet_inline_for_test(
+        let delta = crate::engine::drive_packet_to_quiescence(
+            &mut state,
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0xEE; 8]),
@@ -869,7 +871,8 @@ mod tests {
         let mut schedules = state.wake_schedules(interfaces);
 
         let mut first = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-        let delta = state.ingest_packet_inline_for_test(
+        let delta = crate::engine::drive_packet_to_quiescence(
+            &mut state,
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0xEE; 8]),
@@ -890,7 +893,8 @@ mod tests {
 
         let mut journal = std::vec::Vec::new();
         let mut second = bytes_from_hex(RNS_1_4_2_RATCHETED_ANNOUNCE);
-        let delta = state.ingest_packet_inline_for_test(
+        let delta = crate::engine::drive_packet_to_quiescence(
+            &mut state,
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: InterfaceId::new([0xEE; 8]),

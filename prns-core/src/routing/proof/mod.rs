@@ -4,7 +4,7 @@ mod wire;
 pub use model::{
     LinkProofOwed, LinkReceiptSignCompleted, LinkReceiptSignOwed, ProofObligation, ProofOwed,
     ProofRequest, ProofSignCompleted, ProofSignOwed, ReceiptProofClaim, ReceiptProofVerification,
-    ReceiptProofVerifyOwed, WriteChannelAckError, WriteProofError,
+    ReceiptProofVerifyOwed, WriteChannelAckError,
 };
 pub use wire::{
     write_explicit_proof_wire_packet, write_implicit_proof_wire_packet,

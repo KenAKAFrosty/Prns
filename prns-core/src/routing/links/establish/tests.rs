@@ -74,7 +74,7 @@ fn establish() -> EstablishLink {
 
 fn hear_announce(state: &mut EngineState<TestStorageLayout>, wire: &[u8]) {
     let mut raw = wire.to_vec();
-    let outcome = state.ingest_packet_with(
+    let outcome = state.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(500),
             source_interface: arrival(),
@@ -575,7 +575,7 @@ fn a_link_request_for_a_held_destination_owes_its_proof() {
     let mut responder = personal_node_announcer();
     let identity = responder.held_identity_hashes()[0];
     let mut raw = buf[..dispatch.wire_bytes].to_vec();
-    let outcome = responder.ingest_packet_with(
+    let outcome = responder.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(2_000),
             source_interface: arrival(),
@@ -595,7 +595,7 @@ fn a_link_request_for_a_held_destination_owes_its_proof() {
     );
 
     let mut replay = buf[..dispatch.wire_bytes].to_vec();
-    let replayed = responder.ingest_packet_with(
+    let replayed = responder.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(2_100),
             source_interface: arrival(),
@@ -647,69 +647,45 @@ fn a_full_responder_link_table_withholds_the_proof_and_preserves_its_row() {
         )
         .unwrap();
 
-    let accept = |responder: &mut EngineState<OneLinkStorage>, wire: &mut [u8], arrived_at| {
-        let outcome = responder.ingest_packet_with(
-            InboundPacket {
-                arrived_at: InstantMillis(arrived_at),
-                source_interface: arrival(),
-                bytes: wire,
-            },
-            AttachedInterfaces::new(&arrival_interfaces()),
-        );
-        let IngestPacketOutcome::OwesLinkProof(accepted) = outcome else {
-            panic!("the local destination must accept this link request");
+    let fulfill =
+        |responder: &mut EngineState<OneLinkStorage>, wire: &mut [u8], arrived_at, entropy_fill| {
+            let mut sent = std::vec::Vec::new();
+            crate::engine::drive_packet_to_quiescence(
+                responder,
+                InboundPacket {
+                    arrived_at: InstantMillis(arrived_at),
+                    source_interface: arrival(),
+                    bytes: wire,
+                },
+                IngestIo {
+                    interfaces: AttachedInterfaces::new(&arrival_interfaces()),
+                    now: InstantMillis(arrived_at),
+                    fill_random: &mut |bytes| bytes.fill(entropy_fill),
+                    should_prove: &mut |_| false,
+                    should_accept_resource: &mut |_| false,
+                    sink: &mut |reaction| {
+                        if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
+                            sent.push(bytes.to_vec());
+                        }
+                    },
+                },
+            );
+            sent
         };
-        accepted
-    };
 
     let (mut first_wire, first_link_id) = make_request(&mut initiator, 7, 0x71);
-    let first = accept(&mut responder, &mut first_wire, 2_000);
-    let mut proof = [0u8; BROADCAST_MTU];
-    responder
-        .write_owed_link_proof(
-            &first,
-            X25519SecretKey::new([0x81; X25519SecretKey::LEN]),
-            BROADCAST_MTU,
-            &mut proof,
-        )
-        .unwrap();
+    let first_sent = fulfill(&mut responder, &mut first_wire, 2_000, 0x81);
+    assert_eq!(first_sent.len(), 1);
     assert_eq!(responder.links.len(), 1);
 
     let (mut second_wire, second_link_id) = make_request(&mut initiator, 8, 0x72);
-    let second = accept(&mut responder, &mut second_wire, 3_000);
-    assert_eq!(
-        responder.write_owed_link_proof(
-            &second,
-            X25519SecretKey::new([0x82; X25519SecretKey::LEN]),
-            BROADCAST_MTU,
-            &mut proof,
-        ),
-        Err(WriteLinkProofError::LinkTableFull),
-    );
+    let second_sent = fulfill(&mut responder, &mut second_wire, 3_000, 0x82);
+    assert!(second_sent.is_empty());
     assert_eq!(responder.links.len(), 1);
     assert!(responder.links.phase_for(&first_link_id).is_some());
     assert!(responder.links.phase_for(&second_link_id).is_none());
     let (mut third_wire, third_link_id) = make_request(&mut initiator, 9, 0x73);
-    let mut sent = std::vec::Vec::new();
-    responder.ingest_packet_inline_for_test(
-        InboundPacket {
-            arrived_at: InstantMillis(4_000),
-            source_interface: arrival(),
-            bytes: &mut third_wire,
-        },
-        IngestIo {
-            interfaces: AttachedInterfaces::new(&arrival_interfaces()),
-            now: InstantMillis(4_000),
-            fill_random: &mut |bytes| bytes.fill(0x83),
-            should_prove: &mut |_| false,
-            should_accept_resource: &mut |_| false,
-            sink: &mut |reaction| {
-                if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
-                    sent.push(bytes.to_vec());
-                }
-            },
-        },
-    );
+    let sent = fulfill(&mut responder, &mut third_wire, 4_000, 0x83);
 
     assert!(sent.is_empty(), "a proof cannot escape without a link row");
     assert_eq!(responder.links.len(), 1);
@@ -745,7 +721,7 @@ fn a_foreign_stamped_link_request_is_not_delivered_to_a_local_destination() {
 
     let mut responder = personal_node_announcer();
     pin_transport_id(&mut responder, RESPONDER_TRANSPORT_ID);
-    let outcome = responder.ingest_packet_with(
+    let outcome = responder.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(2_000),
             source_interface: arrival(),
@@ -759,7 +735,7 @@ fn a_foreign_stamped_link_request_is_not_delivered_to_a_local_destination() {
     );
 
     let mut direct = direct.to_vec();
-    let outcome = responder.ingest_packet_with(
+    let outcome = responder.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(2_100),
             source_interface: arrival(),
@@ -803,7 +779,7 @@ fn an_accept_none_destination_announces_but_refuses_the_link_request() {
         .unwrap();
 
     let mut raw = buf[..dispatch.wire_bytes].to_vec();
-    let outcome = responder.ingest_packet_with(
+    let outcome = responder.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(2_000),
             source_interface: arrival(),
@@ -866,7 +842,7 @@ fn an_accept_direct_destination_admits_only_canonical_zero_hop_link_requests() {
         responder: &mut EngineState<TestStorageLayout>,
         wire: &'a mut [u8],
     ) -> IngestPacketOutcome<'a> {
-        responder.ingest_packet_with(
+        responder.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: arrival(),
@@ -966,7 +942,7 @@ fn an_interface_scoped_direct_destination_refuses_other_direct_interfaces() {
 
     let mut wrong_interface_wire = wire.to_vec();
     assert_eq!(
-        responder.ingest_packet_with(
+        responder.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: other_arrival(),
@@ -980,7 +956,7 @@ fn an_interface_scoped_direct_destination_refuses_other_direct_interfaces() {
 
     let mut selected_interface_wire = wire.to_vec();
     assert!(matches!(
-        responder.ingest_packet_with(
+        responder.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: arrival(),
@@ -1009,7 +985,7 @@ fn a_link_request_for_an_unknown_destination_stays_ignored() {
 
     let mut bystander = EngineState::<TestStorageLayout>::new(second_secret_key());
     let mut raw = buf[..dispatch.wire_bytes].to_vec();
-    let outcome = bystander.ingest_packet_with(
+    let outcome = bystander.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(2_000),
             source_interface: arrival(),
@@ -1042,7 +1018,8 @@ fn the_two_ends_agree_on_the_session_key_through_the_proof() {
     let mut responder = personal_node_announcer();
     let mut sent = std::vec::Vec::new();
     let mut raw = buf[..dispatch.wire_bytes].to_vec();
-    let delta = responder.ingest_packet_inline_for_test(
+    let delta = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(2_000),
             source_interface: arrival(),
@@ -1309,7 +1286,8 @@ fn reactions_of_on(
     let mut sent = std::vec::Vec::new();
     let mut journaled = std::vec::Vec::new();
     let mut raw = bytes.to_vec();
-    let delta = engine.ingest_packet_inline_for_test(
+    let delta = crate::engine::drive_packet_to_quiescence(
+        engine,
         InboundPacket {
             arrived_at: InstantMillis(arrived_at),
             source_interface: arrival(),
@@ -1524,7 +1502,7 @@ fn untrusted_initiated_hop_changes_leave_the_path_unchanged() {
     let mut wrong_mode = proof.clone();
     let signalling = wrong_mode.len() - 3;
     wrong_mode[signalling] = (wrong_mode[signalling] & 0x1F) | 0x40;
-    let outcome = initiator.ingest_packet_with(
+    let outcome = initiator.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_240),
             source_interface: arrival(),
@@ -1543,7 +1521,7 @@ fn untrusted_initiated_hop_changes_leave_the_path_unchanged() {
     };
     proof[payload_offset] ^= 0x01;
 
-    let outcome = initiator.ingest_packet_with(
+    let outcome = initiator.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_250),
             source_interface: arrival(),
@@ -1593,7 +1571,7 @@ fn a_proof_for_an_unknown_link_is_ignored() {
 
     let mut bystander = EngineState::<TestStorageLayout>::new(second_secret_key());
     let mut raw = proofs[0].clone();
-    let outcome = bystander.ingest_packet_with(
+    let outcome = bystander.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_250),
             source_interface: arrival(),
@@ -1743,7 +1721,8 @@ fn an_authenticated_but_malformed_lrrtt_tears_the_link_down() {
     let mut closes = std::vec::Vec::new();
     let mut journaled = std::vec::Vec::new();
     let mut raw = frame.clone();
-    let _ = responder.ingest_packet_inline_for_test(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(1_600),
             source_interface: arrival(),
@@ -1848,7 +1827,8 @@ fn link_data_crosses_the_active_link_and_journals_the_delivery() {
 
     let mut delivered = std::vec::Vec::new();
     let mut raw = sent[0].clone();
-    let _ = responder.ingest_packet_inline_for_test(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(2_100),
             source_interface: arrival(),
@@ -1879,7 +1859,8 @@ fn link_data_crosses_the_active_link_and_journals_the_delivery() {
 
     let mut replay = sent[0].clone();
     let mut replayed = std::vec::Vec::new();
-    let _ = responder.ingest_packet_inline_for_test(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(2_200),
             source_interface: arrival(),
@@ -2283,7 +2264,8 @@ fn the_app_decider_gates_the_prove_if_link_proof() {
         let mut requests = std::vec::Vec::new();
         let mut answers = std::vec::Vec::new();
         let mut raw = data.to_vec();
-        let _ = responder.ingest_packet_inline_for_test(
+        let _ = crate::engine::drive_packet_to_quiescence(
+            &mut responder,
             InboundPacket {
                 arrived_at: InstantMillis(arrived_at),
                 source_interface: arrival(),
@@ -2354,7 +2336,7 @@ fn relay_that_routes_to_the_responder(
         routable_descriptor(iface_to_b),
     ];
     let mut raw = announce_buf[..announce_len].to_vec();
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(500),
             source_interface: iface_to_b,
@@ -2400,7 +2382,7 @@ fn a_duplicate_transported_link_request_is_dropped_as_a_duplicate() {
     let request = transported_request_wire(&mut initiator);
 
     let mut first = request.clone();
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_100),
             source_interface: arrival(),
@@ -2414,7 +2396,7 @@ fn a_duplicate_transported_link_request_is_dropped_as_a_duplicate() {
     );
 
     let mut second = request.clone();
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_150),
             source_interface: arrival(),
@@ -2444,7 +2426,7 @@ fn a_transported_link_proof_allowance_uses_the_outbound_interface() {
 
     let mut wire = request;
     assert!(matches!(
-        relay.ingest_packet_with(
+        relay.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_100),
                 source_interface: arrival(),
@@ -2478,7 +2460,7 @@ fn a_transported_proof_needs_the_destinations_signing_key() {
     let request = transported_request_wire(&mut initiator);
 
     let mut inbound = request.clone();
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_100),
             source_interface: arrival(),
@@ -2511,7 +2493,7 @@ fn a_transported_proof_needs_the_destinations_signing_key() {
     );
 
     let mut proof = proofs[0].clone();
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_300),
             source_interface: iface_to_b,
@@ -2547,7 +2529,7 @@ fn a_trusted_transported_hop_change_rebalances_the_link_and_route_once() {
     let link_id = parse_link_request(&request).unwrap().link_id;
 
     let mut inbound = request.clone();
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_100),
             source_interface: arrival(),
@@ -2581,7 +2563,7 @@ fn a_trusted_transported_hop_change_rebalances_the_link_and_route_once() {
 
     let mut malformed = valid.clone();
     malformed.pop();
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_250),
             source_interface: iface_to_b,
@@ -2598,7 +2580,7 @@ fn a_trusted_transported_hop_change_rebalances_the_link_and_route_once() {
     let mut wrong_mode = valid.clone();
     let signalling = wrong_mode.len() - 3;
     wrong_mode[signalling] = (wrong_mode[signalling] & 0x1F) | 0x40;
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_260),
             source_interface: iface_to_b,
@@ -2618,7 +2600,7 @@ fn a_trusted_transported_hop_change_rebalances_the_link_and_route_once() {
         invalid_signature.len() - payload.len()
     };
     invalid_signature[payload_offset] ^= 0x01;
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_270),
             source_interface: iface_to_b,
@@ -2633,7 +2615,7 @@ fn a_trusted_transported_hop_change_rebalances_the_link_and_route_once() {
     assert_unchanged(&relay);
 
     let mut wrong_ingress = valid.clone();
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_280),
             source_interface: arrival(),
@@ -2647,7 +2629,7 @@ fn a_trusted_transported_hop_change_rebalances_the_link_and_route_once() {
     );
     assert_unchanged(&relay);
 
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_300),
             source_interface: iface_to_b,
@@ -2672,7 +2654,7 @@ fn a_trusted_transported_hop_change_rebalances_the_link_and_route_once() {
 
     let mut second = valid.clone();
     second[1] = 3;
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_350),
             source_interface: iface_to_b,
@@ -2732,7 +2714,8 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
         let mut settled = std::vec::Vec::new();
         let mut closed = std::vec::Vec::new();
         let mut raw = bytes.to_vec();
-        let _ = engine.ingest_packet_inline_for_test(
+        let _ = crate::engine::drive_packet_to_quiescence(
+            engine,
             InboundPacket {
                 arrived_at: InstantMillis(now),
                 source_interface: iface,
@@ -3205,7 +3188,8 @@ fn an_identified_request_policy_passes_packets_only_after_the_peer_identifies() 
     assert!(settled.is_empty(), "the request awaits its response");
     let mut heard = std::vec::Vec::new();
     let mut raw = sent[0].clone();
-    let _ = responder.ingest_packet_inline_for_test(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(2_100),
             source_interface: arrival(),
@@ -3242,7 +3226,8 @@ fn an_identified_request_policy_passes_packets_only_after_the_peer_identifies() 
     );
     assert!(size_hints.is_empty());
     let mut raw = identify_frames[0].clone();
-    let _ = responder.ingest_packet_inline_for_test(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(2_300),
             source_interface: arrival(),
@@ -3281,7 +3266,8 @@ fn an_identified_request_policy_passes_packets_only_after_the_peer_identifies() 
     assert_eq!(size_hints, std::vec![expected_request_hint]);
     let mut received: std::vec::Vec<(RequestId, std::vec::Vec<u8>)> = std::vec::Vec::new();
     let mut raw = sent[0].clone();
-    let _ = responder.ingest_packet_inline_for_test(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(2_500),
             source_interface: arrival(),
@@ -3347,7 +3333,8 @@ fn an_identified_request_policy_passes_packets_only_after_the_peer_identifies() 
     let mut answered = std::vec::Vec::new();
     let mut concluded = std::vec::Vec::new();
     let mut raw = responses[0].clone();
-    let _ = initiator.ingest_packet_inline_for_test(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut initiator,
         InboundPacket {
             arrived_at: InstantMillis(2_700),
             source_interface: arrival(),
@@ -3470,7 +3457,8 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
 
     let mut identified = std::vec::Vec::new();
     let mut raw = sent[0].clone();
-    let _ = responder.ingest_packet_inline_for_test(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(2_100),
             source_interface: arrival(),
@@ -3501,7 +3489,8 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
 
     let mut echoed = std::vec::Vec::new();
     let mut replay = sent[0].clone();
-    let _ = initiator.ingest_packet_inline_for_test(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut initiator,
         InboundPacket {
             arrived_at: InstantMillis(2_200),
             source_interface: arrival(),
@@ -3528,7 +3517,8 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
     let last = tampered.len() - 1;
     tampered[last] ^= 0x01;
     let mut forged = std::vec::Vec::new();
-    let _ = responder.ingest_packet_inline_for_test(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(2_300),
             source_interface: arrival(),
@@ -3729,7 +3719,8 @@ fn a_quiet_link_keepalives_then_goes_stale_and_closes() {
 
     let mut echoes = std::vec::Vec::new();
     let mut raw = sent[0].clone();
-    let _ = responder.ingest_packet_inline_for_test(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(52_690),
             source_interface: arrival(),
@@ -3763,7 +3754,8 @@ fn a_quiet_link_keepalives_then_goes_stale_and_closes() {
         "the unanswered first keepalive leaves the initiator's cadence armed",
     );
     let mut raw = sent[0].clone();
-    let _ = responder.ingest_packet_inline_for_test(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(104_118),
             source_interface: arrival(),
@@ -3794,7 +3786,8 @@ fn a_quiet_link_keepalives_then_goes_stale_and_closes() {
     assert_eq!(payload, &[KEEPALIVE_ECHO]);
 
     let mut raw = echoes[0].clone();
-    let _ = initiator.ingest_packet_inline_for_test(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut initiator,
         InboundPacket {
             arrived_at: InstantMillis(104_128),
             source_interface: arrival(),
@@ -3903,7 +3896,8 @@ fn a_close_link_command_settles_and_closes_the_peer() {
     tampered[last] ^= 0x01;
     let mut journaled = std::vec::Vec::new();
     let mut raw = tampered;
-    let _ = responder.ingest_packet_inline_for_test(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(2_100),
             source_interface: arrival(),
@@ -3933,7 +3927,8 @@ fn a_close_link_command_settles_and_closes_the_peer() {
     assert!(responder.links.phase_for(&link_id).is_some());
 
     let mut raw = sent[0].clone();
-    let _ = responder.ingest_packet_inline_for_test(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(2_200),
             source_interface: arrival(),
@@ -3992,7 +3987,8 @@ fn a_valid_peer_close_commits_final_route_evidence_before_removal() {
     assert_eq!(closes.len(), 1);
 
     let mut raw = closes.remove(0);
-    let _ = initiator.ingest_packet_inline_for_test(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut initiator,
         InboundPacket {
             arrived_at: InstantMillis(2_200),
             source_interface: arrival(),

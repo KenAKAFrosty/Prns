@@ -161,20 +161,6 @@ pub struct ResourceBuildCompleted<'a> {
     >,
 }
 
-/// The pure build verdict produced against a row's already-reserved inline regions. The runtime
-/// submits this as a later resume input; it never recursively re-enters the engine from the
-/// directive sink.
-pub struct InlineResourceBuildCompleted<'a> {
-    reservation: ResourceBuildReservation,
-    request_data: &'a [u8],
-    outcome: InlineResourceBuildOutcome,
-}
-
-enum InlineResourceBuildOutcome {
-    ReservationStale,
-    Built(Result<BuiltResource, BuildOutgoingResourceError>),
-}
-
 /// How a landed segment is addressed for its post-landing patch: a built row by its hash, but a raw row only by index because its hash column is still the placeholder.
 enum RowLanding {
     Built(ResourceHash),
@@ -410,78 +396,6 @@ impl<S: StorageLayout> EngineState<S> {
             sdu: resource_sdu(mtu),
             lane,
         })
-    }
-
-    /// Execute one resource directive in the row storage already reserved by core. Embassy uses
-    /// this after the step that emitted the directive has returned.
-    pub fn execute_resource_build_inline<'a, F>(
-        &mut self,
-        owed: ResourceBuildOwed<'a>,
-        fill_random: &mut F,
-    ) -> InlineResourceBuildCompleted<'a>
-    where
-        F: FnMut(&mut [u8]),
-    {
-        let ResourceBuildOwed { plan, body } = owed;
-        let reservation = plan.reservation();
-        let mut seal_iv = [0u8; 16];
-        fill_random(&mut seal_iv);
-        let mut nonces = [[0u8; RESOURCE_NONCE_LEN];
-            crate::routing::links::resources::build_outgoing::SALT_REROLL_CAP + 1];
-        for nonce in &mut nonces {
-            fill_random(nonce);
-        }
-        let outcome = match self
-            .outgoing_resources
-            .reserved_build_regions_mut(reservation)
-        {
-            Some(regions) => {
-                let mut fresh_nonces = nonces.into_iter();
-                InlineResourceBuildOutcome::Built(plan.execute(
-                    &body,
-                    &seal_iv,
-                    || fresh_nonces.next().unwrap_or_default(),
-                    regions,
-                ))
-            }
-            None => InlineResourceBuildOutcome::ReservationStale,
-        };
-        InlineResourceBuildCompleted {
-            reservation,
-            request_data: body.data,
-            outcome,
-        }
-    }
-
-    pub fn resume_inline_resource_build<F>(
-        &mut self,
-        completed: InlineResourceBuildCompleted<'_>,
-        now: InstantMillis,
-        fill_random: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
-    ) -> crate::engine::WakeSchedules
-    where
-        F: FnMut(&mut [u8]),
-    {
-        let InlineResourceBuildCompleted {
-            reservation,
-            request_data,
-            outcome,
-        } = completed;
-        let landing = match outcome {
-            InlineResourceBuildOutcome::ReservationStale => ResourceBuildLanding::Stale,
-            InlineResourceBuildOutcome::Built(outcome) => self
-                .outgoing_resources
-                .land_inline_build(reservation, outcome),
-        };
-        self.resume_landed_resource_build(
-            reservation,
-            request_data,
-            landing,
-            now,
-            fill_random,
-            sink,
-        )
     }
 
     /// Land and advertise a completed owning resource build. A stale completion is a no-op; a
@@ -2221,49 +2135,6 @@ mod tests {
         assert!(inline.settlements.is_empty());
         assert!(deferred.settlements.is_empty());
         assert_eq!(deferred.frames, inline.frames);
-
-        let mut embassy_engine = sender_with_active_link();
-        let mut emitted = None;
-        embassy_engine.request_resource_build(
-            &resource,
-            ResourceSegment::whole(plaintext.len() as u64),
-            &mut |reaction| {
-                if let EngineReaction::Directive(Directive::Fulfill(OwedWork::ResourceBuild(
-                    owed,
-                ))) = reaction
-                {
-                    emitted = Some(owed);
-                } else {
-                    panic!("a valid request emits only its typed build directive");
-                }
-            },
-        );
-        let completed = embassy_engine.execute_resource_build_inline(
-            emitted.expect("Embassy is owed the same pure build"),
-            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
-        );
-        let mut embassy = SendCapture {
-            frames: std::vec::Vec::new(),
-            settlements: std::vec::Vec::new(),
-        };
-        embassy_engine.resume_inline_resource_build(
-            completed,
-            InstantMillis(1_500),
-            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
-            &mut |reaction| match reaction {
-                EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
-                    if let Some(frame) = filled_frame(fill) {
-                        embassy.frames.push((target, frame));
-                    }
-                }
-                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
-                    embassy.settlements.push((id, settlement));
-                }
-                _ => {}
-            },
-        );
-        assert_eq!(embassy.settlements, inline.settlements);
-        assert_eq!(embassy.frames, inline.frames);
     }
 
     #[test]

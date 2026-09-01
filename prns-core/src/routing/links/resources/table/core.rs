@@ -614,50 +614,6 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
         self.finish_build(index, built)
     }
 
-    /// Lend the exact row regions reserved for an inline fulfillment. A stale reservation never
-    /// exposes replacement-row storage.
-    pub fn reserved_build_regions_mut(
-        &mut self,
-        reservation: ResourceBuildReservation,
-    ) -> Option<BuildRegions<'_>> {
-        let index = self.reserved_build_index(reservation)?;
-        let expected_transfer_bytes = self.table.states()[index].sealed_transfer_bytes;
-        let expected_part_count = self.table.states()[index].part_count;
-        let buffers = self.table.buffers_mut(index);
-        Some(BuildRegions {
-            transfer: &mut buffers.transfer[..expected_transfer_bytes],
-            hashmap: buffers.part_names[..expected_part_count].as_flattened_mut(),
-        })
-    }
-
-    /// Finalize a build that wrote directly into its reserved row regions.
-    pub fn land_inline_build(
-        &mut self,
-        reservation: ResourceBuildReservation,
-        outcome: Result<BuiltResource, BuildOutgoingResourceError>,
-    ) -> ResourceBuildLanding {
-        let Some(index) = self.reserved_build_index(reservation) else {
-            return ResourceBuildLanding::Stale;
-        };
-        let built = match outcome {
-            Ok(built) => built,
-            Err(error) => {
-                self.table.swap_remove(index);
-                self.refresh_earliest_timeout();
-                return ResourceBuildLanding::Failed(error);
-            }
-        };
-        let reserved = self.table.states()[index];
-        if built.sealed_transfer_bytes != reserved.sealed_transfer_bytes
-            || built.part_count != reserved.part_count
-        {
-            self.table.swap_remove(index);
-            self.refresh_earliest_timeout();
-            return ResourceBuildLanding::Failed(BuildOutgoingResourceError::BufferShapeMismatch);
-        }
-        self.finish_build(index, built)
-    }
-
     fn reserved_build_index(&self, reservation: ResourceBuildReservation) -> Option<usize> {
         (0..self.table.len()).find(|&index| {
             let state = &self.table.states()[index];

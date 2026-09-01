@@ -1,6 +1,8 @@
+#[cfg(test)]
+use crate::crypto::x25519_public_key;
 use crate::crypto::{
-    x25519_diffie_hellman, x25519_public_key, Ed25519SecretKey, Ed25519Signature, X25519PublicKey,
-    X25519SecretKey, X25519SharedSecret,
+    x25519_diffie_hellman, Ed25519SecretKey, Ed25519Signature, X25519PublicKey, X25519SecretKey,
+    X25519SharedSecret,
 };
 use crate::engine::{CommandId, CommandOutcome, EstablishLink, EstablishLinkRejection};
 use crate::engine::{EngineState, InstantMillis};
@@ -8,8 +10,8 @@ use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{AttachedInterfaces, InterfaceId};
 use crate::routing::links::handshake::{
-    negotiated_link_mtu, write_link_proof, write_link_proof_from_parts, write_link_request,
-    write_link_rtt, write_unsignalled_link_request, AcceptedLinkRequest, LinkProofSignOwed,
+    write_link_proof_from_parts, write_link_request, write_link_rtt,
+    write_unsignalled_link_request, AcceptedLinkRequest, LinkProofSignOwed,
 };
 use crate::routing::links::table::{
     InitiatedLink, LinkActivation, LinkPhase, OverdueLink, RespondingLink, TrackLinkError,
@@ -260,38 +262,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.4.2 `Link.validate_request`, echoing the negotiated MTU and mode.
-    pub fn write_owed_link_proof(
-        &mut self,
-        accepted: &AcceptedLinkRequest,
-        ephemeral_secret: X25519SecretKey,
-        mtu_ceiling: usize,
-        buf: &mut [u8],
-    ) -> Result<usize, WriteLinkProofError> {
-        let request = &accepted.request;
-        let held = self
-            .held_identities
-            .get(&accepted.identity)
-            .ok_or(WriteLinkProofError::IdentityNotHeld)?;
-        let responder_encryption = x25519_public_key(&ephemeral_secret);
-        let shared = x25519_diffie_hellman(&ephemeral_secret, &request.initiator_encryption);
-        let key = LinkKey::derive(&request.link_id, &shared);
-
-        let mtu = negotiated_link_mtu(request.mtu, mtu_ceiling);
-        let written = write_link_proof(
-            &request.link_id,
-            &responder_encryption,
-            &held,
-            mtu,
-            request.mode,
-            buf,
-        )
-        .map_err(|_| WriteLinkProofError::Serialize)?;
-        self.track_responding_link(accepted, key, mtu)?;
-        Ok(written)
-    }
-
-    /// The crypto-pool-friendly twin of [`Self::write_owed_link_proof`]; same bytes either way.
+    /// Assemble and land a runtime-completed link proof from its pure crypto results.
     pub fn write_owed_link_proof_with_parts(
         &mut self,
         owed: &LinkProofSignOwed,

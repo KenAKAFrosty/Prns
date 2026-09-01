@@ -47,7 +47,7 @@ fn accepted_announces_schedule_a_rebroadcast_and_tick_emits_them() {
     let interfaces = [routable_descriptor(InterfaceId::new([0xFE; 8]))];
 
     let arrival = InstantMillis(1_000);
-    let out = state.ingest_packet_with(
+    let out = state.ingest_for_test(
         InboundPacket {
             arrived_at: arrival,
             source_interface: InterfaceId::new([0u8; 8]),
@@ -88,7 +88,7 @@ fn a_rebroadcast_reproduces_the_rns_1_4_2_retransmitted_wire() {
     let mut heard = bytes_from_hex(RNS_1_4_2_RATCHETED_ANNOUNCE);
     let mut state = transporting_node();
     let arrival = InstantMillis(1_000);
-    let _ = state.ingest_packet_with(
+    let _ = state.ingest_for_test(
         InboundPacket {
             arrived_at: arrival,
             source_interface: InterfaceId::new([0u8; 8]),
@@ -116,16 +116,14 @@ fn a_directed_scheduled_announce_fires_only_to_its_target_interface() {
 
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
     let mut state = transporting_node();
-    let IngestPacketOutcome::Announce(AnnounceIngest::Accepted(accepted)) = state
-        .ingest_packet_with(
-            InboundPacket {
-                arrived_at: InstantMillis(1_000),
-                source_interface: InterfaceId::new([0u8; 8]),
-                bytes: &mut raw,
-            },
-            AttachedInterfaces::new(&transporting_interfaces()),
-        )
-    else {
+    let IngestPacketOutcome::Announce(AnnounceIngest::Accepted(accepted)) = state.ingest_for_test(
+        InboundPacket {
+            arrived_at: InstantMillis(1_000),
+            source_interface: InterfaceId::new([0u8; 8]),
+            bytes: &mut raw,
+        },
+        AttachedInterfaces::new(&transporting_interfaces()),
+    ) else {
         panic!("the announce is accepted");
     };
 
@@ -164,7 +162,7 @@ fn rebroadcast_fan_for(
 ) -> std::vec::Vec<InterfaceId> {
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
     let arrival = InstantMillis(1_000);
-    let _ = state.ingest_packet_with(
+    let _ = state.ingest_for_test(
         InboundPacket {
             arrived_at: arrival,
             source_interface: InterfaceId::new([0u8; 8]),
@@ -234,7 +232,7 @@ fn a_bluetooth_peer_announce_rebroadcasts_to_usb_device_transport() {
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
     let mut state = transporting_node();
     let arrival = InstantMillis(1_000);
-    let out = state.ingest_packet_with(
+    let out = state.ingest_for_test(
         InboundPacket {
             arrived_at: arrival,
             source_interface: source,
@@ -271,7 +269,7 @@ fn a_scheduled_announce_emits_once_for_a_supervised_interface_fleet() {
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
     let mut state = transporting_node();
     let arrival = InstantMillis(1_000);
-    let _ = state.ingest_packet_with(
+    let _ = state.ingest_for_test(
         InboundPacket {
             arrived_at: arrival,
             source_interface: InterfaceId::new([InterfaceKind::Loopback as u8; 8]),
@@ -309,7 +307,7 @@ fn our_own_repeat_echoed_back_is_deduplicated() {
 
     let mut echo = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
     echo[1] += 1;
-    let out = state.ingest_packet_with(
+    let out = state.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(5_000),
             source_interface: source,
@@ -345,7 +343,7 @@ fn an_onward_announce_echo_cancels_the_pending_retransmit() {
 
     let mut echo = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
     echo[1] += 2;
-    let _ = state.ingest_packet_with(
+    let _ = state.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(5_000),
             source_interface: source,
@@ -388,7 +386,7 @@ fn a_local_client_announce_can_leave_on_a_transmit_only_interface() {
     let mut state = transporting_node();
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
     let arrival = InstantMillis(1_000);
-    let _ = state.ingest_packet_with(
+    let _ = state.ingest_for_test(
         InboundPacket {
             arrived_at: arrival,
             source_interface: source,
@@ -443,7 +441,7 @@ fn a_local_clients_announce_is_also_withheld_from_access_point_egress() {
     let mut state = transporting_node();
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
     let arrival = InstantMillis(1_000);
-    let _ = state.ingest_packet_with(
+    let _ = state.ingest_for_test(
         InboundPacket {
             arrived_at: arrival,
             source_interface: app,
@@ -479,7 +477,7 @@ fn a_scheduled_local_client_announce_uses_the_hop_count_override_at_external_egr
         crate::engine::LocalHopCountOverride::override_with(5).unwrap();
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
     let arrival = InstantMillis(1_000);
-    let out = state.ingest_packet_with(
+    let out = state.ingest_for_test(
         InboundPacket {
             arrived_at: arrival,
             source_interface: local_client,
@@ -571,7 +569,7 @@ fn scheduled_announces_are_not_emitted_before_their_due_time() {
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
     let mut state = transporting_node();
     let arrival = InstantMillis(1_000);
-    let _ = state.ingest_packet_with(
+    let _ = state.ingest_for_test(
         InboundPacket {
             arrived_at: arrival,
             source_interface: InterfaceId::new([0u8; 8]),
@@ -602,7 +600,7 @@ fn same_inputs_produce_byte_identical_emissions_on_two_engines() {
 
     let interfaces = [routable_descriptor(InterfaceId::new([0xFE; 8]))];
     for state in [&mut left, &mut right] {
-        let _ = state.ingest_packet_with(
+        let _ = state.ingest_for_test(
             InboundPacket {
                 arrived_at: arrival,
                 source_interface: InterfaceId::new([0u8; 8]),
@@ -646,7 +644,7 @@ fn fire_due_scheduled_announces_emits_then_re_arms_until_the_cap() {
     let interfaces = [routable_descriptor(target)];
 
     let arrival = InstantMillis(1_000);
-    let _ = state.ingest_packet_with(
+    let _ = state.ingest_for_test(
         InboundPacket {
             arrived_at: arrival,
             source_interface: InterfaceId::new([0u8; 8]),
@@ -714,7 +712,7 @@ fn an_ignored_echo_that_cancels_a_rebroadcast_reports_the_emptied_lane() {
     let interfaces = [routable_descriptor(target)];
 
     let arrival = InstantMillis(1_000);
-    let _ = state.ingest_packet_with(
+    let _ = state.ingest_for_test(
         InboundPacket {
             arrived_at: arrival,
             source_interface: InterfaceId::new([0u8; 8]),
@@ -743,24 +741,24 @@ fn an_ignored_echo_that_cancels_a_rebroadcast_reports_the_emptied_lane() {
 
     let echo = |state: &mut EngineState<TestStorageLayout>, now: u64| -> WakeSchedule {
         let mut bytes = rebroadcast.clone();
-        state
-            .ingest_packet_inline_for_test(
-                InboundPacket {
-                    arrived_at: InstantMillis(now),
-                    source_interface: InterfaceId::new([0u8; 8]),
-                    bytes: &mut bytes,
-                },
-                IngestIo {
-                    interfaces: AttachedInterfaces::new(&transporting_interfaces()),
-                    now: InstantMillis(now),
-                    fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
-                    should_prove: &mut |_| false,
-                    should_accept_resource:
-                        &mut |_: &crate::routing::links::resources::ResourceOffer| false,
-                    sink: &mut |_| {},
-                },
-            )
-            .scheduled_announces
+        crate::engine::drive_packet_to_quiescence(
+            state,
+            InboundPacket {
+                arrived_at: InstantMillis(now),
+                source_interface: InterfaceId::new([0u8; 8]),
+                bytes: &mut bytes,
+            },
+            IngestIo {
+                interfaces: AttachedInterfaces::new(&transporting_interfaces()),
+                now: InstantMillis(now),
+                fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
+                should_prove: &mut |_| false,
+                should_accept_resource:
+                    &mut |_: &crate::routing::links::resources::ResourceOffer| false,
+                sink: &mut |_| {},
+            },
+        )
+        .scheduled_announces
     };
 
     let echo_at = first_due.0 + 1;
@@ -839,7 +837,7 @@ fn the_cull_journals_an_orphan_as_route_interface_gone() {
     let source = InterfaceId::new([0u8; 8]);
     let mut engine = EngineState::<TestStorageLayout>::default();
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-    let _ = engine.ingest_packet_with(
+    let _ = engine.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_000),
             source_interface: source,
@@ -897,7 +895,7 @@ fn expiring_a_route_cancels_its_scheduled_announce_and_wake() {
     let interfaces = [routable_descriptor(source)];
     let mut engine = EngineState::<TestStorageLayout>::default();
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-    let _ = engine.ingest_packet_with(
+    let _ = engine.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_000),
             source_interface: source,
@@ -936,7 +934,7 @@ fn a_dropped_route_marks_its_interface_so_the_destination_count_recomputes() {
     let source = InterfaceId::new([0u8; 8]);
     let mut engine = EngineState::<TestStorageLayout>::default();
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-    let _ = engine.ingest_packet_with(
+    let _ = engine.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_000),
             source_interface: source,
@@ -1042,7 +1040,7 @@ fn overdue_transport_recovery_emissions(
     let mut engine = EngineState::<TestStorageLayout>::default();
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
     raw[1] += additional_route_hops;
-    let _ = engine.ingest_packet_with(
+    let _ = engine.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_000),
             source_interface: received,
@@ -1109,7 +1107,7 @@ fn an_unproved_transported_link_to_a_neighbor_marks_the_route_unresponsive() {
     let interfaces = [routable_descriptor(source)];
     let mut engine = EngineState::<TestStorageLayout>::default();
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-    let _ = engine.ingest_packet_with(
+    let _ = engine.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_000),
             source_interface: source,
@@ -1180,7 +1178,7 @@ fn an_unproved_neighbor_link_fires_a_path_request_away_from_the_received_lane() 
 
     let mut engine = EngineState::<TestStorageLayout>::default();
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-    let _ = engine.ingest_packet_with(
+    let _ = engine.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_000),
             source_interface: received,
@@ -1265,7 +1263,7 @@ fn an_unproved_link_recovers_when_the_initiator_is_the_neighbor_too() {
 
     let mut engine = EngineState::<TestStorageLayout>::default();
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-    let _ = engine.ingest_packet_with(
+    let _ = engine.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_000),
             source_interface: received,
@@ -1332,7 +1330,7 @@ fn an_unproved_link_from_a_local_client_rediscovers_everywhere_without_a_mark() 
 
     let mut engine = EngineState::<TestStorageLayout>::default();
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-    let _ = engine.ingest_packet_with(
+    let _ = engine.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_000),
             source_interface: received,
@@ -1407,7 +1405,7 @@ fn a_boundary_arrival_interface_rediscovers_without_the_unresponsive_mark() {
 
     let mut engine = EngineState::<TestStorageLayout>::default();
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-    let _ = engine.ingest_packet_with(
+    let _ = engine.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_000),
             source_interface: received,
@@ -1475,7 +1473,7 @@ fn a_may_return_departure_holds_the_bounced_peers_routes_through_the_grace() {
     let other = InterfaceId::new([0xB2; 8]);
     let mut engine = EngineState::<TestStorageLayout>::default();
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-    let _ = engine.ingest_packet_with(
+    let _ = engine.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_000),
             source_interface: source,
@@ -1536,7 +1534,7 @@ fn a_growable_hosts_route_index_rebuilds_for_departure_warmth() {
     let attached = [routable_descriptor(source), routable_descriptor(other)];
     let mut engine = EngineState::<GrowableHeap>::default();
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-    let _ = engine.ingest_packet_with(
+    let _ = engine.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_000),
             source_interface: source,
@@ -1564,7 +1562,7 @@ fn a_forgotten_departure_culls_the_routes_at_once() {
     let source = InterfaceId::new([0xA1; 8]);
     let mut engine = EngineState::<TestStorageLayout>::default();
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-    let _ = engine.ingest_packet_with(
+    let _ = engine.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_000),
             source_interface: source,
@@ -1595,7 +1593,7 @@ fn a_returned_interface_resumes_normal_route_aging() {
     let source = InterfaceId::new([0xA1; 8]);
     let mut engine = EngineState::<TestStorageLayout>::default();
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-    let _ = engine.ingest_packet_with(
+    let _ = engine.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_000),
             source_interface: source,
@@ -1629,7 +1627,7 @@ fn a_recently_requested_destination_holds_off_the_overdue_links_path_request() {
 
     let mut engine = EngineState::<TestStorageLayout>::default();
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-    let _ = engine.ingest_packet_with(
+    let _ = engine.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_000),
             source_interface: received,

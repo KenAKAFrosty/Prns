@@ -71,6 +71,8 @@ pub use commands::*;
 pub use destination_retirement::RetireDestinationOutcome;
 pub use introspection::{ActiveLinkSnapshot, AnnounceRateState, RouteSnapshot};
 pub use node_egress::ReemitAnnounce;
+#[cfg(test)]
+pub(crate) use node_ingress::drive_packet_to_quiescence;
 pub use node_ingress::{IngestIo, IngestPacketReport};
 pub use reaction::{
     CryptoOwed, Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason, NoOwedWork,
@@ -140,6 +142,6 @@ pub use crate::routing::path_requests::seen::PathRequestIdBytes;
 pub use crate::routing::proof::{
     LinkReceiptSignCompleted, LinkReceiptSignOwed, ProofObligation, ProofOwed, ProofRequest,
     ProofSignCompleted, ProofSignOwed, ReceiptProofClaim, ReceiptProofVerification,
-    ReceiptProofVerifyOwed, WriteProofError,
+    ReceiptProofVerifyOwed,
 };
 pub use crate::units::InstantMillis;

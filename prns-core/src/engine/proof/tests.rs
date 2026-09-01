@@ -5,7 +5,6 @@ use crate::engine::{
     Directive, EngineReaction, EngineState, IngestPacketOutcome, Journaled, RatchetPolicy,
 };
 use crate::identity::in_memory::InMemoryNodeIdentity;
-use crate::identity::IdentityHash;
 use crate::interfaces::AttachedInterfaces;
 use crate::interfaces::{InboundPacket, InterfaceId};
 use crate::routing::dedup::PacketHash;
@@ -38,24 +37,28 @@ fn write_proof_is_byte_identical_to_the_rns_1_4_2_implicit_proof() {
     let mut raw = sealed_single_packet(&identity, destination, b"proof-parity");
     assert_eq!(raw, bytes_from_hex(RNS_1_4_2_SEALED_FOR_PROOF));
 
-    let outcome = state.ingest_packet_with(
-        plain_data_packet(&mut raw),
-        AttachedInterfaces::new(&transporting_interfaces()),
+    let mut proof = std::vec::Vec::new();
+    crate::engine::drive_packet_to_quiescence(
+        &mut state,
+        InboundPacket {
+            arrived_at: InstantMillis(1_000),
+            source_interface: InterfaceId::new([0xEE; 8]),
+            bytes: &mut raw,
+        },
+        IngestIo {
+            interfaces: AttachedInterfaces::new(&transporting_interfaces()),
+            now: InstantMillis(1_000),
+            fill_random: &mut |_| {},
+            should_prove: &mut |_| true,
+            should_accept_resource: &mut |_| false,
+            sink: &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
+                    proof.extend_from_slice(bytes);
+                }
+            },
+        },
     );
-    let IngestPacketOutcome::Delivery {
-        proof: ProofObligation::Owed(owed),
-        ..
-    } = outcome
-    else {
-        panic!("a ProveAll delivery owes a proof");
-    };
-
-    let mut buf = [0u8; BROADCAST_MTU];
-    let written = state.write_proof(&owed, &mut buf).unwrap();
-    assert_eq!(
-        &buf[..written],
-        bytes_from_hex(RNS_1_4_2_IMPLICIT_PROOF).as_slice()
-    );
+    assert_eq!(proof, bytes_from_hex(RNS_1_4_2_IMPLICIT_PROOF).as_slice());
 }
 
 #[test]
@@ -120,7 +123,7 @@ fn a_prove_if_delivery_defers_the_proof_to_the_app() {
     let IngestPacketOutcome::Delivery {
         delivery: Delivery::Single(single),
         proof: ProofObligation::OwedIfApp(_),
-    } = state.ingest_packet_with(
+    } = state.ingest_for_test(
         plain_data_packet(&mut raw),
         AttachedInterfaces::new(&transporting_interfaces()),
     )
@@ -141,7 +144,8 @@ fn prove_if_proof_directive(
     let mut decide = decide;
     let mut seen = std::vec::Vec::new();
     let mut proved = false;
-    state.ingest_packet_inline_for_test(
+    crate::engine::drive_packet_to_quiescence(
+        &mut state,
         InboundPacket {
             arrived_at: InstantMillis(1_000),
             source_interface: InterfaceId::new([0xEE; 8]),
@@ -193,7 +197,8 @@ fn delivery_is_journaled_before_the_prove_if_decision_and_proof_egress() {
     let (mut state, identity, destination) = prove_if_state();
     let mut raw = sealed_single_packet(&identity, destination, b"persist-before-proof");
     let steps = core::cell::RefCell::new(std::vec::Vec::new());
-    state.ingest_packet_inline_for_test(
+    crate::engine::drive_packet_to_quiescence(
+        &mut state,
         InboundPacket {
             arrived_at: InstantMillis(1_000),
             source_interface: InterfaceId::new([0xEE; 8]),
@@ -224,35 +229,6 @@ fn delivery_is_journaled_before_the_prove_if_decision_and_proof_egress() {
         *steps.borrow(),
         [Step::Delivered, Step::Decided, Step::ProofSent],
         "the host can persist delivery before policy or proof egress acknowledges it",
-    );
-}
-
-#[test]
-fn write_proof_for_an_unheld_identity_reports_it() {
-    let state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
-    let owed = ProofOwed {
-        packet_hash: PacketHash::new([0xAA; 32]),
-        identity: IdentityHash::new([0x4c; 16]),
-    };
-    let mut buf = [0u8; BROADCAST_MTU];
-    assert_eq!(
-        state.write_proof(&owed, &mut buf),
-        Err(WriteProofError::IdentityNotHeld),
-    );
-}
-
-#[test]
-fn write_proof_into_a_short_buffer_reports_it() {
-    let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
-    let held = state.hold_identity(fixed_secret_key()).unwrap();
-    let owed = ProofOwed {
-        packet_hash: PacketHash::new([0xAA; 32]),
-        identity: held,
-    };
-    let mut buf = [0u8; 8];
-    assert_eq!(
-        state.write_proof(&owed, &mut buf),
-        Err(WriteProofError::Serialize(WireError::BufferTooShort)),
     );
 }
 

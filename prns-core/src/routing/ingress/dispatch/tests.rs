@@ -7,7 +7,7 @@ fn ingest_counts_each_packet_without_a_clock() {
     let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
 
     let mut first_bytes = [1, 2, 3];
-    let first = state.ingest_packet_with(
+    let first = state.ingest_packet_step_with(
         InboundPacket {
             arrived_at: InstantMillis(10),
             source_interface: InterfaceId::new([0u8; 8]),
@@ -16,7 +16,7 @@ fn ingest_counts_each_packet_without_a_clock() {
         AttachedInterfaces::new(&transporting_interfaces()),
     );
     let mut second_bytes = [4];
-    let second = state.ingest_packet_with(
+    let second = state.ingest_packet_step_with(
         InboundPacket {
             arrived_at: InstantMillis(20),
             source_interface: InterfaceId::new([0u8; 8]),
@@ -41,7 +41,8 @@ fn ingest_processes_but_does_not_accept_non_announce_bytes() {
         source_interface: InterfaceId::new([0u8; 8]),
         bytes: &mut [0x00, 0x00, 0x01, 0x02, 0x03],
     };
-    let out = state.ingest_packet_with(junk, AttachedInterfaces::new(&transporting_interfaces()));
+    let out =
+        state.ingest_packet_step_with(junk, AttachedInterfaces::new(&transporting_interfaces()));
     assert_eq!(out, IngestPacketOutcome::Ignored(IgnoreReason::Malformed));
     assert_eq!(state.route_count(), 0);
 }
@@ -51,7 +52,7 @@ fn an_ifac_flagged_packet_is_dropped_on_an_open_interface() {
     let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
     raw[0] |= 0x80;
     let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
-    let out = state.ingest_packet_with(
+    let out = state.ingest_packet_step_with(
         InboundPacket {
             arrived_at: InstantMillis(1_000),
             source_interface: InterfaceId::new([0u8; 8]),

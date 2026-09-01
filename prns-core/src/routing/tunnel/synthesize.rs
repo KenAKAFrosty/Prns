@@ -276,7 +276,7 @@ mod tests {
         let interfaces = [routable_descriptor(first_conn)];
 
         let mut announce = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-        let _ = relay.ingest_packet_with(
+        let _ = relay.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: first_conn,
@@ -294,7 +294,7 @@ mod tests {
         );
 
         let mut synth = synthesize_wire(0xAB);
-        let _ = relay.ingest_packet_with(
+        let _ = relay.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: first_conn,
@@ -318,7 +318,7 @@ mod tests {
         let second_conn = InterfaceId::new([0xC2; 8]);
         let second_view = [routable_descriptor(second_conn)];
         let mut synth_again = synthesize_wire(0xAB);
-        let _ = relay.ingest_packet_with(
+        let _ = relay.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(4_000),
                 source_interface: second_conn,

@@ -89,7 +89,8 @@ fn a_verified_zero_hop_availability_installs_one_direct_route_and_one_typed_obse
     let mut ordinary_deliveries = 0;
     let mut directives = 0;
 
-    let wake = engine.ingest_packet_inline_for_test(
+    let wake = crate::engine::drive_packet_to_quiescence(
+        &mut engine,
         InboundPacket {
             arrived_at: OBSERVED_AT,
             source_interface: SOURCE,
@@ -296,7 +297,8 @@ fn direct_pairing_availability_does_not_settle_network_path_discovery() {
     ));
 
     let mut wire = availability_wire(canonical_outer_header());
-    let wake = engine.ingest_packet_inline_for_test(
+    let wake = crate::engine::drive_packet_to_quiescence(
+        &mut engine,
         InboundPacket {
             arrived_at: OBSERVED_AT,
             source_interface: SOURCE,
@@ -328,7 +330,8 @@ fn pairing_route_activity_cannot_extend_the_advertised_deadline_or_enter_persist
     let mut engine = configured_engine();
     let mut wire = availability_wire(canonical_outer_header());
     let mut endpoint = None;
-    engine.ingest_packet_inline_for_test(
+    crate::engine::drive_packet_to_quiescence(
+        &mut engine,
         InboundPacket {
             arrived_at: OBSERVED_AT,
             source_interface: SOURCE,
@@ -407,7 +410,7 @@ fn every_nonzero_hop_pairing_availability_is_ignored_before_verification() {
             &payload[..payload_len],
         );
         assert_eq!(
-            engine.ingest_packet_with(
+            engine.ingest_for_test(
                 InboundPacket {
                     arrived_at: OBSERVED_AT,
                     source_interface: SOURCE,
@@ -437,7 +440,7 @@ fn invalid_outer_shapes_are_rejected_before_pairing_crypto_is_deferred() {
     ] {
         let mut engine = configured_engine();
         let mut wire = availability_wire(header);
-        let outcome = engine.ingest_packet_with(
+        let outcome = engine.ingest_for_test(
             InboundPacket {
                 arrived_at: OBSERVED_AT,
                 source_interface: SOURCE,

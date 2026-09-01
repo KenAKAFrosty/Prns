@@ -108,7 +108,7 @@ pub const RNS_1_4_2_SEALED_FOR_PROOF: &str =
      a0ee19a4cb8a1b1444444444444444444444444444444444084624da14eb2a916d8a20cad6da4623aff598\
      25ec6b58715afe16269730584f5fe3a55a6429ded73c3d4b2458f67ef9";
 
-/// The reference's own implicit proof answering [`RNS_1_4_2_SEALED_FOR_PROOF`]; our `write_proof` reproduces it byte-identically.
+/// The reference's own implicit proof answering [`RNS_1_4_2_SEALED_FOR_PROOF`]; our typed proof-sign continuation reproduces it byte-identically.
 pub const RNS_1_4_2_IMPLICIT_PROOF: &str =
     "0300a34e24b00ebdda0179b642579b71266c00f52e874f44101203b553179c107604fc01ef99e210895f95\
      423f14aca8094a5a09938d9337aec5c6cb1bc38458d65da559450a9f8e0e78921ca690bed8430100";

@@ -8,6 +8,8 @@ mod relay;
 mod remote_control_pairing;
 #[cfg(test)]
 mod test_manifold;
+#[cfg(test)]
+pub(crate) use test_manifold::drive_packet_to_quiescence;
 
 pub use packet_dispatch::{IngestIo, IngestPacketReport};
 
