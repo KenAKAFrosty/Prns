@@ -1,4 +1,3 @@
-use crate::crypto::{Ed25519Signature, Ed25519Verifier};
 use crate::engine::{CommandId, InstantMillis, SendRequestIntent};
 use crate::identity::IdentitySigningPublicKey;
 use crate::routing::dedup::PacketHash;
@@ -100,13 +99,6 @@ pub struct OutstandingReceipt {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ProvenReceipt {
-    pub command_id: CommandId,
-    pub kind: ReceiptKind,
-    pub sent_at: InstantMillis,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProvenRequestReceipt {
     pub command_id: CommandId,
     pub intent: SendRequestIntent,
@@ -123,10 +115,12 @@ pub enum ReceiptDeadline {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReceiptProofCandidate {
-    pub proven: ProvenReceipt,
-    pub packet_hash: PacketHash,
-    pub signing_key: IdentitySigningPublicKey,
+pub(crate) struct ReceiptProofCandidate {
+    pub(crate) command_id: CommandId,
+    pub(crate) kind: ReceiptKind,
+    pub(crate) sent_at: InstantMillis,
+    pub(crate) packet_hash: PacketHash,
+    pub(crate) signing_key: IdentitySigningPublicKey,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,16 +169,14 @@ pub trait ReceiptTable {
     fn set_deadline(&mut self, index: usize, deadline: ReceiptDeadline);
 
     fn push(&mut self, receipt: OutstandingReceipt) -> Result<usize, TrackReceiptError>;
-    /// Removal must preserve insertion order (shift, not swap): index order IS the implicit-proof trial order, and proofs return in send order over a FIFO wire.
-    /// A swap-remove was measured paying ~5 Ed25519 verifies per proof where one suffices; the reference holds the same invariant free (an append-only list).
+    /// Removal preserves insertion order (shift, not swap), matching the reference's append-only
+    /// receipt list and keeping deterministic resolution if truncated proof destinations collide.
     fn remove(&mut self, index: usize);
 }
 
 #[derive(Debug, Default)]
 pub struct Receipts<C: ReceiptTable> {
     table: C,
-    /// One-slot cache of the last decompressed signing key; decompressing per trial verify was a measured ~8% of a firehose initiator's CPU.
-    verifier_memo: Option<Ed25519Verifier>,
     earliest_timeout: Option<InstantMillis>,
 }
 
@@ -279,53 +271,9 @@ impl<C: ReceiptTable> Receipts<C> {
         Some(receipt)
     }
 
-    /// RNS 1.4.2 explicit proof: match the row by full packet hash, then verify. A failed signature leaves the row outstanding (reference parity; the timeout still owns it).
-    pub fn settle_by_explicit_proof(
-        &mut self,
-        proof_hash: &PacketHash,
-        signature: &Ed25519Signature,
-    ) -> Option<ProvenReceipt> {
-        let index = (0..self.table.len()).find(|index| {
-            self.table
-                .kinds()
-                .get(*index)
-                .is_some_and(|kind| !kind.is_request())
-                && self.table.packet_hashes().get(*index) == Some(proof_hash)
-        })?;
-        self.settle_verified(index, signature)
-    }
-
-    /// RNS 1.4.2 implicit proof: a bare signature, trial-verified against every outstanding row in insertion order (Packet.py); the ordering invariant makes that send order, so a FIFO wire's proofs match on the first trial.
-    pub fn settle_by_implicit_proof(
-        &mut self,
-        signature: &Ed25519Signature,
-    ) -> Option<ProvenReceipt> {
-        let mut matched = None;
-        for index in 0..self.table.len() {
-            if self
-                .table
-                .kinds()
-                .get(index)
-                .is_some_and(|kind| !kind.is_request())
-                && self.row_signature_valid(index, signature)
-            {
-                matched = Some(index);
-                break;
-            }
-        }
-        let index = matched?;
-        let proven = ProvenReceipt {
-            command_id: *self.table.command_ids().get(index)?,
-            kind: *self.table.kinds().get(index)?,
-            sent_at: *self.table.sent_ats().get(index)?,
-        };
-        self.table.remove(index);
-        self.refresh_earliest_timeout();
-        Some(proven)
-    }
-
-    /// Read, not removed: the row stays outstanding until the pool's verdict settles it through [`Self::settle_resolved`].
-    pub fn resolve_explicit_for_verification(
+    /// Read, not removed: the row stays outstanding until the engine resumes a valid external
+    /// verdict and takes the exact matching row through [`Self::take_matching_proof_receipt`].
+    pub(crate) fn resolve_explicit_for_verification(
         &self,
         proof_hash: &PacketHash,
     ) -> Option<ReceiptProofCandidate> {
@@ -339,8 +287,8 @@ impl<C: ReceiptTable> Receipts<C> {
         self.read_proof_candidate(index)
     }
 
-    /// An implicit proof is addressed to its packet hash's [`PacketHash::proof_destination`], which names the exact receipt deterministically. The row is left outstanding until a valid verdict settles it: a forged signature can neither settle nor evict it, and the timeout still owns it.
-    pub fn resolve_proof_by_destination(
+    /// An implicit proof is addressed to its packet hash's [`PacketHash::proof_destination`], which names the exact receipt deterministically. The row stays outstanding until a valid verdict is resumed: a forged signature can neither remove nor evict it, and the timeout still owns it.
+    pub(crate) fn resolve_proof_by_destination(
         &self,
         proof_destination: &DestinationHash,
     ) -> Option<ReceiptProofCandidate> {
@@ -361,28 +309,24 @@ impl<C: ReceiptTable> Receipts<C> {
     }
 
     fn read_proof_candidate(&self, index: usize) -> Option<ReceiptProofCandidate> {
-        let proven = ProvenReceipt {
+        let candidate = ReceiptProofCandidate {
             command_id: *self.table.command_ids().get(index)?,
             kind: *self.table.kinds().get(index)?,
             sent_at: *self.table.sent_ats().get(index)?,
+            packet_hash: *self.table.packet_hashes().get(index)?,
+            signing_key: *self.table.signing_keys().get(index)?,
         };
-        let packet_hash = *self.table.packet_hashes().get(index)?;
-        let signing_key = *self.table.signing_keys().get(index)?;
-        Some(ReceiptProofCandidate {
-            proven,
-            packet_hash,
-            signing_key,
-        })
+        Some(candidate)
     }
 
     /// Keyed by command id and packet hash: a duplicate proof, a verdict that lost a race to the
-    /// timeout or cull, or a command id later reused for another send settles nothing.
+    /// timeout or cull, or a command id later reused for another send takes no row.
     /// A `SendRequest` row concludes by request id, never here.
-    pub fn settle_resolved(
+    pub(crate) fn take_matching_proof_receipt(
         &mut self,
         command_id: CommandId,
         packet_hash: &PacketHash,
-    ) -> Option<ProvenReceipt> {
+    ) -> Option<ReceiptKind> {
         let index = (0..self.table.len()).find(|index| {
             self.table.command_ids().get(*index) == Some(&command_id)
                 && self.table.packet_hashes().get(*index) == Some(packet_hash)
@@ -392,14 +336,10 @@ impl<C: ReceiptTable> Receipts<C> {
                     .get(*index)
                     .is_some_and(|kind| !kind.is_request())
         })?;
-        let proven = ProvenReceipt {
-            command_id,
-            kind: *self.table.kinds().get(index)?,
-            sent_at: *self.table.sent_ats().get(index)?,
-        };
+        let kind = *self.table.kinds().get(index)?;
         self.table.remove(index);
         self.refresh_earliest_timeout();
-        Some(proven)
+        Some(kind)
     }
 
     /// A response names its request by the truncated hash of the request packet; the session key authenticated it, so no signature gates this.
@@ -497,45 +437,6 @@ impl<C: ReceiptTable> Receipts<C> {
     pub fn is_empty(&self) -> bool {
         self.table.is_empty()
     }
-
-    fn settle_verified(
-        &mut self,
-        index: usize,
-        signature: &Ed25519Signature,
-    ) -> Option<ProvenReceipt> {
-        if !self.row_signature_valid(index, signature) {
-            return None;
-        }
-        let proven = ProvenReceipt {
-            command_id: *self.table.command_ids().get(index)?,
-            kind: *self.table.kinds().get(index)?,
-            sent_at: *self.table.sent_ats().get(index)?,
-        };
-        self.table.remove(index);
-        self.refresh_earliest_timeout();
-        Some(proven)
-    }
-
-    fn row_signature_valid(&mut self, index: usize, signature: &Ed25519Signature) -> bool {
-        let (Some(packet_hash), Some(signing_key)) = (
-            self.table.packet_hashes().get(index).copied(),
-            self.table.signing_keys().get(index).copied(),
-        ) else {
-            return false;
-        };
-        let key = *signing_key.as_ed25519();
-        let memo_holds_key = matches!(&self.verifier_memo, Some(memo) if memo.public_key() == &key);
-        if !memo_holds_key {
-            let Ok(fresh) = Ed25519Verifier::new(&key) else {
-                return false;
-            };
-            self.verifier_memo = Some(fresh);
-        }
-        let Some(verifier) = &self.verifier_memo else {
-            return false;
-        };
-        verifier.verify(packet_hash.as_bytes(), signature).is_ok()
-    }
 }
 
 fn due_minimum(deadlines: &[ReceiptDeadline]) -> Option<InstantMillis> {
@@ -552,7 +453,7 @@ fn due_minimum(deadlines: &[ReceiptDeadline]) -> Option<InstantMillis> {
 mod tests {
     use super::super::*;
     use super::*;
-    use crate::crypto::{ed25519_public_key, ed25519_sign, Ed25519SecretKey};
+    use crate::crypto::{ed25519_public_key, ed25519_sign, ed25519_verify, Ed25519SecretKey};
 
     type TestReceipts = Receipts<FixedReceiptTable<3>>;
 
@@ -620,48 +521,47 @@ mod tests {
     }
 
     #[test]
-    fn deferred_resolve_settles_the_same_receipt_the_inline_implicit_proof_would() {
+    fn proof_candidate_carries_exact_verification_material_and_settles_once() {
         let (secret, key) = signer(0x33);
-        let signature = ed25519_sign(&secret, &[0x44u8; 32]);
+        let packet_hash = PacketHash::new([0x44; 32]);
+        let signature = ed25519_sign(&secret, packet_hash.as_bytes());
+        let expected_kind = ReceiptKind::SendSinglePacket {
+            route_evidence: None,
+        };
 
-        let mut inline = TestReceipts::default();
-        inline.track(outstanding(0x44, 7, key, 100, 7_000));
-        let proven = inline
-            .settle_by_implicit_proof(&signature)
-            .expect("the inline path settles the valid implicit proof");
+        let mut receipts = TestReceipts::default();
+        receipts.track(outstanding(0x44, 7, key, 100, 7_000));
+        let candidate = receipts
+            .resolve_proof_by_destination(&packet_hash.proof_destination())
+            .expect("the proof destination resolves its candidate");
 
-        let mut deferred = TestReceipts::default();
-        deferred.track(outstanding(0x44, 7, key, 100, 7_000));
-        let resolved = deferred
-            .resolve_proof_by_destination(&PacketHash::new([0x44; 32]).proof_destination())
-            .expect("the deferred path resolves the same candidate");
-
-        assert_eq!(
-            resolved.proven, proven,
-            "deferred resolve yields the settlement the inline verify would have",
-        );
-        assert_eq!(resolved.packet_hash, PacketHash::new([0x44; 32]));
+        assert_eq!(candidate.command_id, CommandId(7));
+        assert_eq!(candidate.kind, expected_kind);
+        assert_eq!(candidate.sent_at, InstantMillis(100));
+        assert_eq!(candidate.packet_hash, packet_hash);
         assert!(
-            Ed25519Verifier::new(resolved.signing_key.as_ed25519())
-                .expect("the stored key decompresses")
-                .verify(resolved.packet_hash.as_bytes(), &signature)
-                .is_ok(),
-            "the returned materials are exactly what the pool needs to verify",
+            ed25519_verify(
+                candidate.signing_key.as_ed25519(),
+                candidate.packet_hash.as_bytes(),
+                &signature,
+            )
+            .is_ok(),
+            "the candidate carries exactly the material an external fulfiller verifies",
         );
         assert_eq!(
-            deferred.len(),
+            receipts.len(),
             1,
             "resolution identifies the receipt but leaves it outstanding until a valid verdict settles it",
         );
         assert_eq!(
-            deferred
-                .settle_resolved(resolved.proven.command_id, &resolved.packet_hash)
+            receipts
+                .take_matching_proof_receipt(candidate.command_id, &candidate.packet_hash)
                 .as_ref(),
-            Some(&proven),
+            Some(&expected_kind),
             "a valid verdict settles exactly the resolved receipt",
         );
         assert!(
-            deferred.is_empty(),
+            receipts.is_empty(),
             "the settled receipt is gone, freeing the window slot",
         );
     }
@@ -676,11 +576,11 @@ mod tests {
         let resolved = receipts
             .resolve_proof_by_destination(&destination)
             .expect("the destination identifies the outstanding receipt");
-        assert_eq!(resolved.proven.command_id, CommandId(9));
+        assert_eq!(resolved.command_id, CommandId(9));
         assert_eq!(
             receipts.len(),
             1,
-            "a deferred resolution the pool has not yet confirmed leaves the row in place",
+            "candidate resolution alone leaves the row in place",
         );
 
         assert_eq!(
@@ -688,12 +588,12 @@ mod tests {
                 .pop_expired(InstantMillis(8_000))
                 .map(|r| r.command_id),
             Some(CommandId(9)),
-            "a forged proof whose verify fails never calls settle_resolved, so its receipt is never evicted and still expires on schedule",
+            "a forged proof whose verify fails never takes the matching row, so its receipt still expires on schedule",
         );
     }
 
     #[test]
-    fn settle_resolved_removes_the_resolved_receipt_exactly_once() {
+    fn taking_a_matching_proof_receipt_removes_it_exactly_once() {
         let (_, key) = signer(0x66);
         let destination = PacketHash::new([0x66; 32]).proof_destination();
         let mut receipts = TestReceipts::default();
@@ -704,15 +604,20 @@ mod tests {
             .resolve_proof_by_destination(&destination)
             .expect("the destination identifies its receipt");
 
-        let proven = receipts
-            .settle_resolved(CommandId(4), &PacketHash::new([0x66; 32]))
+        let kind = receipts
+            .take_matching_proof_receipt(CommandId(4), &PacketHash::new([0x66; 32]))
             .expect("a valid verdict settles the resolved receipt");
-        assert_eq!(proven.command_id, CommandId(4));
+        assert_eq!(
+            kind,
+            ReceiptKind::SendSinglePacket {
+                route_evidence: None,
+            }
+        );
         assert_eq!(receipts.len(), 1, "only the settled receipt is removed");
 
         assert!(
             receipts
-                .settle_resolved(CommandId(4), &PacketHash::new([0x66; 32]))
+                .take_matching_proof_receipt(CommandId(4), &PacketHash::new([0x66; 32]))
                 .is_none(),
             "a second verdict for the same command settles nothing, exactly once",
         );
@@ -745,63 +650,55 @@ mod tests {
         receipts.track(outstanding(0x77, 4, key, 8_000, 15_000));
         assert!(
             receipts
-                .settle_resolved(CommandId(4), &stale_hash)
+                .take_matching_proof_receipt(CommandId(4), &stale_hash)
                 .is_none(),
             "the old verdict must match both command id and packet hash",
         );
         assert_eq!(receipts.len(), 1, "the reused command remains outstanding");
         assert!(
             receipts
-                .settle_resolved(CommandId(4), &replacement_hash)
+                .take_matching_proof_receipt(CommandId(4), &replacement_hash)
                 .is_some(),
             "the replacement's own proof can still settle it",
         );
     }
 
     #[test]
-    fn deferred_resolution_picks_the_receipt_the_proof_settles_not_the_oldest() {
+    fn proof_destination_resolves_its_receipt_not_the_oldest() {
         let (_, key_a) = signer(0x11);
-        let (secret_b, key_b) = signer(0x22);
-        let proof_for_b = ed25519_sign(&secret_b, &[0x22u8; 32]);
+        let (_, key_b) = signer(0x22);
         let b_destination = PacketHash::new([0x22; 32]).proof_destination();
 
-        let mut inline = TestReceipts::default();
-        inline.track(outstanding(0x11, 1, key_a, 100, 7_000));
-        inline.track(outstanding(0x22, 2, key_b, 200, 7_000));
-        let truth = inline
-            .settle_by_implicit_proof(&proof_for_b)
-            .expect("the inline trial-verify settles the receipt the proof is for");
-        assert_eq!(truth.command_id, CommandId(2));
-
-        let mut deferred = TestReceipts::default();
-        deferred.track(outstanding(0x11, 1, key_a, 100, 7_000));
-        deferred.track(outstanding(0x22, 2, key_b, 200, 7_000));
-        let resolved = deferred
+        let mut receipts = TestReceipts::default();
+        receipts.track(outstanding(0x11, 1, key_a, 100, 7_000));
+        receipts.track(outstanding(0x22, 2, key_b, 200, 7_000));
+        let candidate = receipts
             .resolve_proof_by_destination(&b_destination)
             .expect("the proof's destination identifies its receipt");
         assert_eq!(
-            resolved.proven, truth,
-            "deferred resolution must settle the receipt the proof is for, never just the oldest",
+            candidate.command_id,
+            CommandId(2),
+            "resolution selects the addressed receipt without trial-verifying older rows",
         );
     }
 
     #[test]
-    fn deferred_resolution_rejects_a_proof_that_matches_no_outstanding_receipt() {
+    fn proof_destination_rejects_a_proof_that_matches_no_outstanding_receipt() {
         let (_, key_a) = signer(0x11);
         let (_, key_b) = signer(0x22);
         let stray_destination = PacketHash::new([0x99; 32]).proof_destination();
 
-        let mut deferred = TestReceipts::default();
-        deferred.track(outstanding(0x11, 1, key_a, 100, 7_000));
-        deferred.track(outstanding(0x22, 2, key_b, 200, 7_000));
+        let mut receipts = TestReceipts::default();
+        receipts.track(outstanding(0x11, 1, key_a, 100, 7_000));
+        receipts.track(outstanding(0x22, 2, key_b, 200, 7_000));
 
         assert!(
-            deferred
+            receipts
                 .resolve_proof_by_destination(&stray_destination)
                 .is_none(),
             "a proof addressed to no tracked send must not settle anything",
         );
-        assert_eq!(deferred.len(), 2, "a non-matching proof removes no receipt");
+        assert_eq!(receipts.len(), 2, "a non-matching proof removes no receipt");
     }
 
     #[test]
@@ -927,19 +824,24 @@ mod tests {
 
         let named = PacketHash::new([2; 32]);
         let signature = ed25519_sign(&secret, named.as_bytes());
+        let candidate = receipts
+            .resolve_explicit_for_verification(&named)
+            .expect("the named packet hash resolves its candidate");
+        assert!(ed25519_verify(
+            candidate.signing_key.as_ed25519(),
+            candidate.packet_hash.as_bytes(),
+            &signature,
+        )
+        .is_ok());
         assert_eq!(
-            receipts.settle_by_explicit_proof(&named, &signature),
-            Some(ProvenReceipt {
-                command_id: CommandId(2),
-                kind: ReceiptKind::SendSinglePacket {
-                    route_evidence: None,
-                },
-                sent_at: InstantMillis(250),
+            receipts.take_matching_proof_receipt(candidate.command_id, &candidate.packet_hash),
+            Some(ReceiptKind::SendSinglePacket {
+                route_evidence: None,
             }),
         );
         assert_eq!(receipts.len(), 1);
         assert_eq!(
-            receipts.settle_by_explicit_proof(&named, &signature),
+            receipts.resolve_explicit_for_verification(&named),
             None,
             "a settled receipt is gone — the proof cannot settle twice",
         );
@@ -954,90 +856,22 @@ mod tests {
 
         let named = PacketHash::new([1; 32]);
         let forged = ed25519_sign(&stranger_secret, named.as_bytes());
-        assert_eq!(receipts.settle_by_explicit_proof(&named, &forged), None);
+        let candidate = receipts
+            .resolve_explicit_for_verification(&named)
+            .expect("the packet hash still resolves its outstanding receipt");
+        assert!(ed25519_verify(
+            candidate.signing_key.as_ed25519(),
+            candidate.packet_hash.as_bytes(),
+            &forged,
+        )
+        .is_err());
         assert_eq!(receipts.len(), 1);
-    }
-
-    #[test]
-    fn alternating_peers_settle_and_the_cached_key_never_cross_authenticates() {
-        let (first_secret, first_key) = signer(0x21);
-        let (second_secret, second_key) = signer(0x42);
-        let mut receipts = TestReceipts::default();
         assert_eq!(
-            receipts.track(outstanding(1, 1, first_key, 100, 9_000)),
-            None
+            receipts
+                .pop_expired(InstantMillis(9_000))
+                .map(|receipt| receipt.command_id),
+            Some(CommandId(1)),
+            "an invalid external verdict leaves timeout ownership intact",
         );
-        assert_eq!(
-            receipts.track(outstanding(2, 2, second_key, 200, 9_000)),
-            None
-        );
-        assert_eq!(
-            receipts.track(outstanding(3, 3, first_key, 300, 9_000)),
-            None
-        );
-
-        let first_named = PacketHash::new([1; 32]);
-        assert!(receipts
-            .settle_by_explicit_proof(
-                &first_named,
-                &ed25519_sign(&first_secret, first_named.as_bytes()),
-            )
-            .is_some());
-
-        let cross_named = PacketHash::new([2; 32]);
-        assert_eq!(
-            receipts.settle_by_explicit_proof(
-                &cross_named,
-                &ed25519_sign(&first_secret, cross_named.as_bytes()),
-            ),
-            None,
-            "the first peer's freshly cached key must not authenticate the second peer's row",
-        );
-        assert!(receipts
-            .settle_by_explicit_proof(
-                &cross_named,
-                &ed25519_sign(&second_secret, cross_named.as_bytes()),
-            )
-            .is_some());
-
-        let last_named = PacketHash::new([3; 32]);
-        assert!(receipts
-            .settle_by_explicit_proof(
-                &last_named,
-                &ed25519_sign(&first_secret, last_named.as_bytes()),
-            )
-            .is_some());
-        assert!(receipts.is_empty());
-    }
-
-    #[test]
-    fn an_implicit_proof_finds_its_receipt_by_trial_verification() {
-        let (first_secret, first_key) = signer(0x21);
-        let (second_secret, second_key) = signer(0x42);
-        let mut receipts = TestReceipts::default();
-        assert_eq!(
-            receipts.track(outstanding(1, 1, first_key, 100, 9_000)),
-            None
-        );
-        assert_eq!(
-            receipts.track(outstanding(2, 2, second_key, 300, 9_000)),
-            None
-        );
-
-        let signature = ed25519_sign(&second_secret, PacketHash::new([2; 32]).as_bytes());
-        assert_eq!(
-            receipts.settle_by_implicit_proof(&signature),
-            Some(ProvenReceipt {
-                command_id: CommandId(2),
-                kind: ReceiptKind::SendSinglePacket {
-                    route_evidence: None,
-                },
-                sent_at: InstantMillis(300),
-            }),
-        );
-        assert_eq!(receipts.len(), 1);
-
-        let stale = ed25519_sign(&first_secret, PacketHash::new([9; 32]).as_bytes());
-        assert_eq!(receipts.settle_by_implicit_proof(&stale), None);
     }
 }

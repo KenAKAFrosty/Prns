@@ -134,16 +134,16 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let resolved = resolved?;
         let delivered = PacketReceiptDelivered {
-            rtt: RttMillis::measured_between(resolved.proven.sent_at, arrived_at),
+            rtt: RttMillis::measured_between(resolved.sent_at, arrived_at),
             evidence: DeliveryEvidence::Proof(proof),
         };
-        let claim = match resolved.proven.kind {
+        let claim = match resolved.kind {
             ReceiptKind::SendSinglePacket { .. } => ReceiptProofClaim::SendSinglePacket {
-                id: resolved.proven.command_id,
+                id: resolved.command_id,
                 delivered,
             },
             ReceiptKind::SendToLink(_) => ReceiptProofClaim::SendToLink {
-                id: resolved.proven.command_id,
+                id: resolved.command_id,
                 delivered,
             },
             ReceiptKind::SendRequest { .. } => return None,
@@ -170,10 +170,13 @@ impl<S: StorageLayout> EngineState<S> {
             return WakeSchedules::UNCHANGED;
         }
         let id = owed.claim.command_id();
-        let Some(receipt) = self.receipts.settle_resolved(id, &owed.packet_hash) else {
+        let Some(kind) = self
+            .receipts
+            .take_matching_proof_receipt(id, &owed.packet_hash)
+        else {
             return WakeSchedules::UNCHANGED;
         };
-        self.apply_proven_receipt_evidence(receipt.kind, owed.arrived_at);
+        self.apply_proven_receipt_evidence(kind, owed.arrived_at);
         let settlement = match owed.claim {
             ReceiptProofClaim::SendSinglePacket { delivered, .. } => {
                 Settlement::SendSinglePacket(Ok(delivered))
