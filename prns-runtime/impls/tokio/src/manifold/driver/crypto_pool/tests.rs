@@ -46,6 +46,19 @@ fn packet_verdict_hotness_is_outstanding_or_a_bounded_activity_budget() {
 }
 
 #[test]
+fn worker_activity_grace_requires_work_and_expires_deterministically() {
+    let mut grace = WorkerActivityGrace::cold();
+    assert!(!grace.take_turn());
+
+    grace.refresh();
+    for _ in 0..CRYPTO_WORKER_ACTIVITY_GRACE_TURNS {
+        assert!(grace.take_turn());
+    }
+    assert!(!grace.take_turn());
+    assert!(!grace.take_turn());
+}
+
+#[test]
 fn automatic_workers_use_bounded_efficiency_spillover_and_keep_host_headroom() {
     assert_eq!(automatic_worker_count(10, Some(4)), 6);
     assert_eq!(automatic_worker_count(6, Some(4)), 4);

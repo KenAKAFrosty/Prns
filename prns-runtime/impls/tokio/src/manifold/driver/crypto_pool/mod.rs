@@ -1006,6 +1006,29 @@ const CRYPTO_WORKER_JOB_RING_DEPTH: usize = 16;
 // Claim only the jobs visible at the start of a worker pass, then execute the first immediately.
 // This amortizes the SPSC ring's head publication without coalescing or delaying a lone job.
 const CRYPTO_WORKER_BATCH_DEPTH: usize = 8;
+const CRYPTO_WORKER_ACTIVITY_GRACE_TURNS: usize = 16;
+
+struct WorkerActivityGrace {
+    remaining_turns: usize,
+}
+
+impl WorkerActivityGrace {
+    const fn cold() -> Self {
+        Self { remaining_turns: 0 }
+    }
+
+    fn refresh(&mut self) {
+        self.remaining_turns = CRYPTO_WORKER_ACTIVITY_GRACE_TURNS;
+    }
+
+    fn take_turn(&mut self) -> bool {
+        if self.remaining_turns == 0 {
+            return false;
+        }
+        self.remaining_turns -= 1;
+        true
+    }
+}
 // A bad signature makes batch verification do work that the exact per-job fallback must repeat.
 // Cool down locally so sustained hostile input pays at most one speculative batch per window.
 const CRYPTO_BATCH_FAILURE_COOLDOWN_JOBS: usize = 32;
@@ -1270,12 +1293,17 @@ fn crypto_worker(
 ) {
     let mut verifier_cache = core::array::from_fn(|_| None);
     let mut batch_failure_cooldown = 0usize;
+    let mut activity_grace = WorkerActivityGrace::cold();
     loop {
         if state.shutdown.load(Ordering::Acquire) {
             return;
         }
         let available = jobs.slots().min(CRYPTO_WORKER_BATCH_DEPTH);
         if available == 0 {
+            if activity_grace.take_turn() {
+                std::thread::yield_now();
+                continue;
+            }
             // Arm before the second ring observation so a concurrent producer either sees the
             // arm and wakes us or leaves a job that prevents the park. `Thread::unpark` permits
             // cover the final interval between that observation and entering the kernel.
@@ -1289,6 +1317,7 @@ fn crypto_worker(
         let Ok(chunk) = jobs.read_chunk(available) else {
             continue;
         };
+        activity_grace.refresh();
         state.queued_jobs.fetch_sub(available, Ordering::Release);
         let mut jobs = chunk.into_iter().peekable();
         while let Some(scheduled) = jobs.next() {
