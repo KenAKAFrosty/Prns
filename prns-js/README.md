@@ -2,7 +2,7 @@
 
 `personal-rns` provides one JavaScript/TypeScript API for native Node.js, Bun, and browsers.
 
-The root export selects the native backend in Node.js and Bun and the cooperative WebAssembly backend in browser bundlers. Explicit `personal-rns/native` and `personal-rns/browser` subpaths are available when runtime selection must be fixed.
+The root export selects the native backend in Node.js and Bun and the cooperative WebAssembly backend in browser bundlers. Explicit `personal-rns/native` and `personal-rns/browser` subpaths are available when runtime selection must be fixed. The provider-neutral `personal-rns/contract` subpath exposes the generated contract and validation helpers without loading a native addon, WebAssembly module, Worker, or host runtime.
 
 ## Install
 
@@ -13,6 +13,23 @@ npm install personal-rns
 ```
 
 Prns 0.3.7 is available as a public GitHub prerelease. Registry publication has an independent qualification gate, so use the [source-checkout instructions](../docs/sdks.md#typescript-and-javascript) when you need the exact candidate before that gate completes.
+
+## Use the contract without selecting a provider
+
+Applications and integration packages that only need the shared data contract can import it without selecting or starting a backend:
+
+```ts
+import {
+  HOST_CONTRACT_ABI,
+  destinationHash,
+  type DestinationHash,
+  type HostCommand,
+} from "personal-rns/contract";
+
+const destination: DestinationHash = destinationHash(new Uint8Array(16));
+```
+
+This subpath contains the generated types, semantic byte brands, exact-integer policy, contract constants and guards, and validation constructors. Host creation remains owned by the root, native, and browser entrypoints.
 
 ## Create a host
 

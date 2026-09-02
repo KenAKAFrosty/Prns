@@ -219,6 +219,11 @@ def check_hopspot_alias(version):
                 "import": "./browser.js",
             },
         },
+        "./contract": {
+            "types": "./contract.d.ts",
+            "import": "./contract.js",
+            "require": "./contract.cjs",
+        },
         "./native": {
             "types": "./native.d.ts",
             "import": "./native.js",
@@ -272,6 +277,9 @@ def check_hopspot_alias(version):
         "index.js": 'export * from "personal-rns";\n',
         "index.cjs": 'module.exports = require("personal-rns");\n',
         "index.d.ts": 'export * from "personal-rns";\n',
+        "contract.js": 'export * from "personal-rns/contract";\n',
+        "contract.cjs": 'module.exports = require("personal-rns/contract");\n',
+        "contract.d.ts": 'export * from "personal-rns/contract";\n',
         "native.js": 'export * from "personal-rns/native";\n',
         "native.cjs": 'module.exports = require("personal-rns/native");\n',
         "native.d.ts": 'export * from "personal-rns/native";\n',
