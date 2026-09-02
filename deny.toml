@@ -44,6 +44,9 @@ exceptions = [
     # tray-icon 0.24.1 reaches platform configuration through dirs 6.0.0 and this small
     # MPL-licensed option adapter. Keep the exception pinned instead of allowing MPL globally.
     { allow = ["MPL-2.0"], crate = "option-ext@0.2.0" },
+    # The non-shipping fuzz harness links LLVM's libFuzzer runtime. NCSA is permissive,
+    # but keep its acceptance pinned to the exact test-only package instead of widening products.
+    { allow = ["NCSA"], crate = "libfuzzer-sys@0.4.12" },
 ]
 
 # `unescaper` declares the malformed/deprecated SPDX expression "GPL-3.0/MIT". It is
