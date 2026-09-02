@@ -1197,6 +1197,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "prns-lxmf-wire"
+version = "0.1.0"
+dependencies = [
+ "curve25519-dalek",
+ "ed25519-dalek",
+ "hex",
+ "hkdf",
+ "serde",
+ "serde_json",
+ "sha2",
+ "subtle",
+]
+
+[[package]]
 name = "prns-macros"
 version = "0.3.7"
 

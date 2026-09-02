@@ -65,6 +65,7 @@ cargo_manifests = [
     "Cargo.toml",
     "applications/Cargo.toml",
     "applications/prns/native-composition/Cargo.toml",
+    "applications/services/lxmf-wire/Cargo.toml",
     "benchmarks/Cargo.toml",
     "docs/command/Cargo.toml",
     "docs/website/Cargo.toml",

@@ -1,5 +1,5 @@
 [workspace]
-members = ["prns/native-composition"]
+members = ["prns/native-composition", "services/lxmf-wire"]
 resolver = "3"
 
 [workspace.package]
