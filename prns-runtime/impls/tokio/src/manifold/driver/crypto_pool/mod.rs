@@ -568,6 +568,7 @@ pub(super) struct CryptoPool {
     state: Arc<CryptoPoolState>,
     workers: Vec<CryptoWorker>,
     verify_batch_target: usize,
+    next_equal_load: Cell<usize>,
     next_completion: Cell<usize>,
     #[cfg(feature = "runtime-metrics")]
     submitted_jobs: Cell<u64>,
@@ -647,6 +648,7 @@ impl CryptoPool {
             state,
             workers: worker_slots,
             verify_batch_target: verify_batch_target(worker_count, performance_cores()),
+            next_equal_load: Cell::new(0),
             next_completion: Cell::new(0),
             #[cfg(feature = "runtime-metrics")]
             submitted_jobs: Cell::new(0),
@@ -809,13 +811,29 @@ impl CryptoPool {
     }
 
     fn worker_for(&self, class: CryptoJobClass, work: usize) -> usize {
-        let least_loaded = self
-            .workers
-            .iter()
-            .enumerate()
-            .map(|(worker, slot)| (worker, slot.outstanding_work.get()))
-            .min_by_key(|&(worker, load)| (load, worker))
-            .unwrap_or_default();
+        let worker_count = self.workers.len();
+        let start = self
+            .next_equal_load
+            .get()
+            .min(worker_count.saturating_sub(1));
+        let mut least_loaded = (start, self.workers[start].outstanding_work.get());
+        let mut worker = start;
+        for _ in 1..worker_count {
+            worker += 1;
+            if worker == worker_count {
+                worker = 0;
+            }
+            let load = self.workers[worker].outstanding_work.get();
+            if load < least_loaded.1 {
+                least_loaded = (worker, load);
+            }
+        }
+        self.next_equal_load
+            .set(if least_loaded.0 + 1 == worker_count {
+                0
+            } else {
+                least_loaded.0 + 1
+            });
 
         if class != CryptoJobClass::Verify {
             return least_loaded.0;

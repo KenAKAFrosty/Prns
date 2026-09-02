@@ -106,21 +106,35 @@ fn batch_affinity_is_bounded_by_target_and_estimated_load() {
     first.outstanding_jobs.set(4);
     first.outstanding_work.set(4);
     first.tail_run.set(4);
+    let spill_worker = pool.worker_for(CryptoJobClass::Verify, 1);
+    assert_ne!(spill_worker, 0, "a full target batch must spill");
     assert_eq!(
-        pool.worker_for(CryptoJobClass::Verify, 1),
-        1,
-        "a full target batch spills to the idle worker"
+        pool.workers[spill_worker].outstanding_work.get(),
+        0,
+        "a full target batch spills to an idle worker"
     );
 
     first.outstanding_jobs.set(1);
     first.outstanding_work.set(33);
     first.tail_class.set(Some(CryptoJobClass::Bulk));
     first.tail_run.set(1);
-    assert_eq!(
-        pool.worker_for(CryptoJobClass::Verify, 1),
-        1,
+    let spill_worker = pool.worker_for(CryptoJobClass::Verify, 1);
+    assert_ne!(
+        spill_worker, 0,
         "a resource-sized job cannot masquerade as one cheap queue entry"
     );
+    assert_eq!(pool.workers[spill_worker].outstanding_work.get(), 0);
+}
+
+#[test]
+fn equal_load_rotation_visits_each_worker_without_division() {
+    let pool = CryptoPool::spawn(4, Arc::new(Notify::new())).expect("workers spawn");
+    for expected in [0, 1, 2, 3, 0] {
+        assert_eq!(pool.worker_for(CryptoJobClass::Latency, 1), expected);
+    }
+
+    pool.workers[2].outstanding_work.set(1);
+    assert_eq!(pool.worker_for(CryptoJobClass::Latency, 1), 1);
 }
 
 #[cfg(feature = "runtime-metrics")]
