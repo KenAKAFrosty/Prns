@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib
+import importlib.metadata
 import json
 import platform
 import struct
@@ -39,10 +40,21 @@ LXMF_MESSAGE_SHA256 = (
 LXMF_STAMPER_SHA256 = (
     "eeeba0158546d2e9878ca485ffa4b96dd13ce3e71880d784087c1fdae22538d0"
 )
+LXMF_CORE_SHA256 = (
+    "23b280e47f0690d27dfe469c3117f9928363716260dc85c9266f5d91146b8e90"
+)
 UMSGPACK_VERSION = "2.7.1"
 UMSGPACK_SHA256 = (
     "dd0ea6e77d55eb65193af824f004e0d4334fb11077de64b232556f9759967708"
 )
+RNS_SOURCE_SHA256 = {
+    "Destination.py": "7db80f04e8bac330d1c8a8e57f33c49b7df99798f54c74aae3e2d8e5b3bffbde",
+    "Identity.py": "447d6a8406ab0f824c9c6488de1f14434003d21bdfef65d33d79b20d8a2698e3",
+    "Link.py": "d1ffccda72963bfe910799b62e363fecdbd45bb5038c81ee857beccdcf3c2da1",
+    "Packet.py": "51ce9967598de7bdbf6dfe937c5a1577ae9ddf1b701aef4c54689805a046b7de",
+    "Reticulum.py": "e7c8908081132a6ca26593a833a5a41cb1bedaf45713958a1cac870b758f5fc7",
+    "Transport.py": "97224d31475741e2d943779ce497853140344f5c9898afcaa9b87ddc937b2340",
+}
 
 SOURCE_PRIVATE_KEY = bytes([0x05]) * 32 + bytes([0x06]) * 32
 DESTINATION_PRIVATE_KEY = bytes([0x07]) * 32 + bytes([0x08]) * 32
@@ -52,8 +64,14 @@ POW_COST = 8
 
 _LX_MESSAGE_MODULE = importlib.import_module("LXMF.LXMessage")
 _LX_STAMPER_MODULE = importlib.import_module("LXMF.LXStamper")
+_LXMF_CORE_MODULE = importlib.import_module("LXMF.LXMF")
 LXMessage = _LX_MESSAGE_MODULE.LXMessage
 LXStamper = _LX_STAMPER_MODULE
+
+_RNS_SOURCE_MODULES = {
+    filename: importlib.import_module(f"RNS.{filename.removesuffix('.py')}")
+    for filename in RNS_SOURCE_SHA256
+}
 
 _RNS_TEMP: tempfile.TemporaryDirectory[str] | None = None
 _RNS_INSTANCE: Any = None
@@ -67,6 +85,11 @@ def _sha256_file(path: str | Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def _direct_url(distribution: str) -> dict[str, object] | None:
+    raw = importlib.metadata.distribution(distribution).read_text("direct_url.json")
+    return None if raw is None else json.loads(raw)
+
+
 def authority_provenance() -> dict[str, object]:
     """Return and verify the exact Python compatibility authority."""
     observed = {
@@ -74,16 +97,41 @@ def authority_provenance() -> dict[str, object]:
         "rns_version": RNS.__version__,
         "lxmf_message_sha256": _sha256_file(_LX_MESSAGE_MODULE.__file__),
         "lxmf_stamper_sha256": _sha256_file(_LX_STAMPER_MODULE.__file__),
+        "lxmf_core_sha256": _sha256_file(_LXMF_CORE_MODULE.__file__),
+        "lxmf_direct_url": _direct_url("lxmf"),
         "umsgpack_version": umsgpack.__version__,
         "umsgpack_sha256": _sha256_file(umsgpack.__file__),
+        "rns_source_sha256": {
+            filename: _sha256_file(module.__file__)
+            for filename, module in _RNS_SOURCE_MODULES.items()
+        },
+        "rns_direct_url": _direct_url("rns"),
     }
     expected = {
         "lxmf_version": LXMF_VERSION,
         "rns_version": RNS_VERSION,
         "lxmf_message_sha256": LXMF_MESSAGE_SHA256,
         "lxmf_stamper_sha256": LXMF_STAMPER_SHA256,
+        "lxmf_core_sha256": LXMF_CORE_SHA256,
+        "lxmf_direct_url": {
+            "url": "https://github.com/markqvist/LXMF.git",
+            "vcs_info": {
+                "vcs": "git",
+                "commit_id": LXMF_REVISION,
+                "requested_revision": LXMF_REVISION,
+            },
+        },
         "umsgpack_version": UMSGPACK_VERSION,
         "umsgpack_sha256": UMSGPACK_SHA256,
+        "rns_source_sha256": RNS_SOURCE_SHA256,
+        "rns_direct_url": {
+            "url": "https://github.com/markqvist/Reticulum.git",
+            "vcs_info": {
+                "vcs": "git",
+                "commit_id": RNS_REVISION,
+                "requested_revision": RNS_REVISION,
+            },
+        },
     }
     if observed != expected:
         raise RuntimeError(
@@ -99,11 +147,15 @@ def authority_provenance() -> dict[str, object]:
         "license": "Reticulum License",
         "lxmf_message_sha256": LXMF_MESSAGE_SHA256,
         "lxmf_stamper_sha256": LXMF_STAMPER_SHA256,
+        "lxmf_core_sha256": LXMF_CORE_SHA256,
+        "vcs": expected["lxmf_direct_url"],
         "reticulum": {
             "implementation": "Python RNS",
             "version": RNS_VERSION,
             "repository": "https://github.com/markqvist/Reticulum.git",
             "revision": RNS_REVISION,
+            "source_sha256": RNS_SOURCE_SHA256,
+            "vcs": expected["rns_direct_url"],
         },
         "messagepack": {
             "implementation": "RNS.vendor.umsgpack",
@@ -111,6 +163,80 @@ def authority_provenance() -> dict[str, object]:
             "source_sha256": UMSGPACK_SHA256,
         },
     }
+
+
+def _announce_vectors() -> list[dict[str, object]]:
+    """Generate shared announce fixtures through the pinned Python helpers."""
+
+    class DeliveryDestination:
+        def __init__(self, display_name: str, stamp_cost: int | None):
+            self.display_name = display_name
+            self.stamp_cost = stamp_cost
+
+    class RouterView:
+        def __init__(self, destination_hash: bytes, destination: DeliveryDestination):
+            self.delivery_destinations = {destination_hash: destination}
+
+    def current_router_bytes(display_name: str, stamp_cost: int | None = None) -> bytes:
+        destination_hash = bytes(16)
+        view = RouterView(
+            destination_hash,
+            DeliveryDestination(display_name, stamp_cost),
+        )
+        return LXMF.LXMRouter.get_announce_app_data(view, destination_hash)
+
+    fixtures = [
+        (
+            "personal_hopspot_e290_legacy",
+            umsgpack.packb([b"Personal Hopspot E290", None]),
+            "legacy_two_item",
+            "Personal Hopspot E290 embedded descriptor",
+        ),
+        (
+            "browser_playground_legacy",
+            umsgpack.packb([b"Prns Browser Playground", None]),
+            "legacy_two_item",
+            "browser playground descriptor",
+        ),
+        (
+            "python_lxmf_current",
+            current_router_bytes("Pinned Python LXMF"),
+            "current_three_item",
+            "LXMRouter.get_announce_app_data",
+        ),
+        (
+            "prns_direct_current",
+            umsgpack.packb([b"Prns live peer", None, []]),
+            "current_three_item",
+            "current direct-only no-compression descriptor",
+        ),
+        (
+            "python_display_normalization",
+            current_router_bytes(" \x00 Python \x00 peer \t"),
+            "current_three_item",
+            "LXMRouter display bytes with LXMF helper projection",
+        ),
+    ]
+    records = []
+    for name, raw, announce_format, origin in fixtures:
+        decoded = umsgpack.unpackb(raw)
+        records.append(
+            {
+                "name": name,
+                "origin": origin,
+                "format": announce_format,
+                "raw_hex": raw.hex(),
+                "display_name_hex": (
+                    None if decoded[0] is None else decoded[0].hex()
+                ),
+                "python_display_name": LXMF.display_name_from_app_data(raw),
+                "python_stamp_cost": LXMF.stamp_cost_from_app_data(raw),
+                "python_compression_support": LXMF.compression_support_from_app_data(
+                    raw
+                ),
+            }
+        )
+    return records
 
 
 def _ensure_rns() -> tuple[Any, Any, Any, Any]:
@@ -725,6 +851,7 @@ def build_vectors() -> dict[str, object]:
             "ticket_length": LXMessage.TICKET_LENGTH,
             "pow_stamp_length": LXStamper.STAMP_SIZE,
         },
+        "announce_vectors": _announce_vectors(),
         "scope": {
             "included": [
                 "opportunistic destination-DATA envelope",
@@ -739,6 +866,7 @@ def build_vectors() -> dict[str, object]:
                 "signed negative and zero content-size boundaries",
                 "valid noncanonical exact-four inbound raw-byte hashing",
                 "negative signature, content, source, truncation, and stamp mutations",
+                "legacy/current delivery announces and Python display-name normalization",
             ],
             "deferred": [
                 "broader valid noncanonical Python-inbound canonicalization fixtures",

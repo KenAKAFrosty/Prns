@@ -1,7 +1,60 @@
 {
+  "announce_vectors": [
+    {
+      "display_name_hex": "506572736f6e616c20486f7073706f742045323930",
+      "format": "legacy_two_item",
+      "name": "personal_hopspot_e290_legacy",
+      "origin": "Personal Hopspot E290 embedded descriptor",
+      "python_compression_support": true,
+      "python_display_name": "Personal Hopspot E290",
+      "python_stamp_cost": null,
+      "raw_hex": "92c415506572736f6e616c20486f7073706f742045323930c0"
+    },
+    {
+      "display_name_hex": "50726e732042726f7773657220506c617967726f756e64",
+      "format": "legacy_two_item",
+      "name": "browser_playground_legacy",
+      "origin": "browser playground descriptor",
+      "python_compression_support": true,
+      "python_display_name": "Prns Browser Playground",
+      "python_stamp_cost": null,
+      "raw_hex": "92c41750726e732042726f7773657220506c617967726f756e64c0"
+    },
+    {
+      "display_name_hex": "50696e6e656420507974686f6e204c584d46",
+      "format": "current_three_item",
+      "name": "python_lxmf_current",
+      "origin": "LXMRouter.get_announce_app_data",
+      "python_compression_support": true,
+      "python_display_name": "Pinned Python LXMF",
+      "python_stamp_cost": null,
+      "raw_hex": "93c41250696e6e656420507974686f6e204c584d46c09100"
+    },
+    {
+      "display_name_hex": "50726e73206c6976652070656572",
+      "format": "current_three_item",
+      "name": "prns_direct_current",
+      "origin": "current direct-only no-compression descriptor",
+      "python_compression_support": false,
+      "python_display_name": "Prns live peer",
+      "python_stamp_cost": null,
+      "raw_hex": "93c40e50726e73206c6976652070656572c090"
+    },
+    {
+      "display_name_hex": "200020507974686f6e200020706565722009",
+      "format": "current_three_item",
+      "name": "python_display_normalization",
+      "origin": "LXMRouter display bytes with LXMF helper projection",
+      "python_compression_support": true,
+      "python_display_name": "Python  peer",
+      "python_stamp_cost": null,
+      "raw_hex": "93c412200020507974686f6e200020706565722009c09100"
+    }
+  ],
   "authority": {
     "implementation": "Python LXMF",
     "license": "Reticulum License",
+    "lxmf_core_sha256": "23b280e47f0690d27dfe469c3117f9928363716260dc85c9266f5d91146b8e90",
     "lxmf_message_sha256": "9a035d03d36e80b615edfb1dbdc44abbbccd672f4a05b0802ad4b98366278e96",
     "lxmf_stamper_sha256": "eeeba0158546d2e9878ca485ffa4b96dd13ce3e71880d784087c1fdae22538d0",
     "messagepack": {
@@ -14,9 +67,33 @@
       "implementation": "Python RNS",
       "repository": "https://github.com/markqvist/Reticulum.git",
       "revision": "ea98db4f53dcf0defc0e71a16e60d28b1229c4e6",
+      "source_sha256": {
+        "Destination.py": "7db80f04e8bac330d1c8a8e57f33c49b7df99798f54c74aae3e2d8e5b3bffbde",
+        "Identity.py": "447d6a8406ab0f824c9c6488de1f14434003d21bdfef65d33d79b20d8a2698e3",
+        "Link.py": "d1ffccda72963bfe910799b62e363fecdbd45bb5038c81ee857beccdcf3c2da1",
+        "Packet.py": "51ce9967598de7bdbf6dfe937c5a1577ae9ddf1b701aef4c54689805a046b7de",
+        "Reticulum.py": "e7c8908081132a6ca26593a833a5a41cb1bedaf45713958a1cac870b758f5fc7",
+        "Transport.py": "97224d31475741e2d943779ce497853140344f5c9898afcaa9b87ddc937b2340"
+      },
+      "vcs": {
+        "url": "https://github.com/markqvist/Reticulum.git",
+        "vcs_info": {
+          "commit_id": "ea98db4f53dcf0defc0e71a16e60d28b1229c4e6",
+          "requested_revision": "ea98db4f53dcf0defc0e71a16e60d28b1229c4e6",
+          "vcs": "git"
+        }
+      },
       "version": "1.5.2"
     },
     "revision": "795fdaa2b0777c13033787d933d1afc94a2377cb",
+    "vcs": {
+      "url": "https://github.com/markqvist/LXMF.git",
+      "vcs_info": {
+        "commit_id": "795fdaa2b0777c13033787d933d1afc94a2377cb",
+        "requested_revision": "795fdaa2b0777c13033787d933d1afc94a2377cb",
+        "vcs": "git"
+      }
+    },
     "version": "1.1.0"
   },
   "command": "PYTHONPATH=target/interop/lxmf-1.1.0 python3.13 interop/python/generate_lxmf_1_1_0_vectors.py",
@@ -37,7 +114,7 @@
     "source_public_key_hex": "50a61409b1ddd0325e9b16b700e719e9772c07000b1bd7786e907c653d20495d8a875fff1eb38451577acd5afee405456568dd7c89e090863a0557bc7af49f17"
   },
   "generator": "interop/python/generate_lxmf_1_1_0_vectors.py",
-  "generator_source_sha256": "943f542135d5bd8e3b2047568acd1d7894f95ea913c0c12f26d2de2d4620b98f",
+  "generator_source_sha256": "6c776fe88f67ed2a7ac32fa5132f1b0fa027739da177400021f94926f93acb1f",
   "inbound_oracles": [
     {
       "canonical_repack_hex": "94cb41d954fc40000000c4094772656574696e6773c41648656c6c6f2066726f6d20507974686f6e204c584d4680",
@@ -731,7 +808,8 @@
       "packet and Resource threshold boundaries",
       "signed negative and zero content-size boundaries",
       "valid noncanonical exact-four inbound raw-byte hashing",
-      "negative signature, content, source, truncation, and stamp mutations"
+      "negative signature, content, source, truncation, and stamp mutations",
+      "legacy/current delivery announces and Python display-name normalization"
     ]
   },
   "wire_contract": {

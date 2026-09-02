@@ -38,13 +38,61 @@ class LxmfVectorTests(unittest.TestCase):
         self.assertEqual(authority["version"], "1.1.0")
         self.assertEqual(authority["revision"], vectors.LXMF_REVISION)
         self.assertEqual(
+            authority["vcs"]["vcs_info"]["commit_id"],
+            vectors.LXMF_REVISION,
+        )
+        self.assertEqual(authority["lxmf_core_sha256"], vectors.LXMF_CORE_SHA256)
+        self.assertEqual(
             authority["lxmf_message_sha256"], vectors.LXMF_MESSAGE_SHA256
         )
         self.assertEqual(authority["reticulum"]["version"], "1.5.2")
         self.assertEqual(
+            authority["reticulum"]["vcs"]["vcs_info"]["commit_id"],
+            vectors.RNS_REVISION,
+        )
+        self.assertEqual(
+            authority["reticulum"]["source_sha256"],
+            vectors.RNS_SOURCE_SHA256,
+        )
+        self.assertEqual(
             authority["messagepack"]["source_sha256"],
             vectors.UMSGPACK_SHA256,
         )
+
+    def test_announce_vectors_are_generated_by_pinned_python_helpers(self) -> None:
+        announces = {
+            case["name"]: case for case in self.generated["announce_vectors"]
+        }
+        self.assertEqual(
+            set(announces),
+            {
+                "personal_hopspot_e290_legacy",
+                "browser_playground_legacy",
+                "python_lxmf_current",
+                "prns_direct_current",
+                "python_display_normalization",
+            },
+        )
+        self.assertEqual(
+            announces["python_display_normalization"]["python_display_name"],
+            "Python  peer",
+        )
+        self.assertFalse(
+            announces["prns_direct_current"]["python_compression_support"]
+        )
+        self.assertTrue(
+            announces["python_lxmf_current"]["python_compression_support"]
+        )
+        for case in announces.values():
+            raw = bytes.fromhex(case["raw_hex"])
+            self.assertEqual(
+                vectors.LXMF.display_name_from_app_data(raw),
+                case["python_display_name"],
+            )
+            self.assertEqual(
+                vectors.LXMF.stamp_cost_from_app_data(raw),
+                case["python_stamp_cost"],
+            )
 
     def test_basic_message_matches_precursor_python_known_answer(self) -> None:
         case = self.messages["basic_binary"]

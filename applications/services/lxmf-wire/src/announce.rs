@@ -54,6 +54,35 @@ pub enum AnnounceError {
     OutputTooSmall { required: usize, available: usize },
 }
 
+/// Apply Python LXMF's display-name projection without allocating.
+///
+/// Python decodes UTF-8, removes every NUL character, then strips leading and
+/// trailing Unicode whitespace. The returned string borrows caller storage.
+pub fn normalize_lxmf_display_name<'a>(
+    display_name: &[u8],
+    output: &'a mut [u8],
+) -> Result<&'a str, AnnounceError> {
+    let decoded = str::from_utf8(display_name).map_err(|_| AnnounceError::InvalidDisplayName)?;
+    let required = decoded
+        .chars()
+        .filter(|character| *character != '\0')
+        .map(char::len_utf8)
+        .sum::<usize>();
+    if output.len() < required {
+        return Err(AnnounceError::OutputTooSmall {
+            required,
+            available: output.len(),
+        });
+    }
+    let mut cursor = 0;
+    for character in decoded.chars().filter(|character| *character != '\0') {
+        cursor += character.encode_utf8(&mut output[cursor..]).len();
+    }
+    str::from_utf8(&output[..cursor])
+        .map(str::trim)
+        .map_err(|_| AnnounceError::InvalidDisplayName)
+}
+
 /// Parse only the legacy two-item and current three-item structured forms.
 pub fn parse_lxmf_announce(
     raw: &[u8],
@@ -175,7 +204,12 @@ pub fn encode_current_lxmf_announce(
 fn array_header(raw: &[u8]) -> Result<(usize, usize), AnnounceError> {
     match raw.first().copied() {
         Some(marker @ 0x90..=0x9f) => Ok((usize::from(marker & 0x0f), 1)),
-        Some(0xdc) if raw.len() >= 3 => Ok((usize::from(u16::from_be_bytes([raw[1], raw[2]])), 3)),
+        Some(0xdc) => {
+            let [_, first, second, ..] = raw else {
+                return Err(AnnounceError::Malformed);
+            };
+            Ok((usize::from(u16::from_be_bytes([*first, *second])), 3))
+        }
         _ => Err(AnnounceError::UnsupportedShape),
     }
 }
@@ -240,23 +274,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn accepts_personal_hopspot_and_browser_legacy_fixtures() {
-        for (raw, expected) in [
-            (
-                &b"\x92\xc4\x15Personal Hopspot E290\xc0"[..],
-                &b"Personal Hopspot E290"[..],
-            ),
-            (
-                &b"\x92\xc4\x17Prns Browser Playground\xc0"[..],
-                &b"Prns Browser Playground"[..],
-            ),
-        ] {
-            let parsed = parse_lxmf_announce(raw, 255).expect("legacy fixture");
-            assert_eq!(parsed.format, AnnounceFormat::LegacyTwoItem);
-            assert_eq!(parsed.display_name, Some(expected));
-            assert_eq!(parsed.required_stamp_cost, None);
-            assert_eq!(parsed.supported_functionality, None);
-        }
+    fn normalizes_display_name_like_python() {
+        let mut output = [0u8; 32];
+        let normalized = normalize_lxmf_display_name(b" \0 Python \0 peer \t", &mut output)
+            .expect("valid UTF-8 display name");
+        assert_eq!(normalized, "Python  peer");
     }
 
     #[test]
@@ -289,6 +311,14 @@ mod tests {
         assert_eq!(
             parse_lxmf_announce(b"\x94\xc4\x04peer\xc0\x90\xc0", 255),
             Err(AnnounceError::UnsupportedShape)
+        );
+        assert_eq!(
+            parse_lxmf_announce(b"\xdc", 255),
+            Err(AnnounceError::Malformed)
+        );
+        assert_eq!(
+            parse_lxmf_announce(b"\xdc\x00", 255),
+            Err(AnnounceError::Malformed)
         );
     }
 }
