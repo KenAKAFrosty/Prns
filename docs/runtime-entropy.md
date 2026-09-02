@@ -84,7 +84,7 @@ source. A new platform must prove its initialization order by implementing
 `EntropySource`, constructing `RuntimeEntropy` before identity/bootstrap work,
 and passing only the resulting stream or handle into runtime consumers.
 
-## Personal Hopspot 0.4.0 remediation
+## Personal Hopspot 0.3.7-hotfix.5 remediation
 
 Personal Hopspot ESP32-S3 firmware versions 0.3.7 through 0.3.7-hotfix.4 could
 create a node identity and Auto-BLE identity before the documented primary
@@ -93,15 +93,16 @@ erase on Heltec LoRa 32 V4 variants and LilyGO T-Beam Supreme. Devices upgraded
 while retaining valid stored identities did not regenerate them and were not
 affected by that initialization path.
 
-The remediation for a potentially affected installation is a **0.4.0 full-erase
-reflash**. An ordinary sparse update deliberately preserves stored identity,
-routes, ratchets, radio configuration, and provisioning state, so it cannot
-replace an identity created on the affected path. Firmware will not silently
-rotate retained identities: identity replacement changes the node's public
-destinations and must remain an explicit operator action.
+The remediation for a potentially affected installation is a
+**0.3.7-hotfix.5 or later full-erase reflash**. An ordinary sparse update
+deliberately preserves stored identity, routes, ratchets, radio configuration,
+and provisioning state, so it cannot replace an identity created on the
+affected path. Firmware will not silently rotate retained identities: identity
+replacement changes the node's public destinations and must remain an explicit
+operator action.
 
 A full erase destroys the device's stored identities and other persistent
-state. Record anything needed for recovery, verify the exact board, and use the
-flasher's full-erase option when installing 0.4.0. Devices whose identities
-predate 0.3.7 do not need rotation solely because they later ran an affected
-release.
+state. Record anything needed for recovery, verify the exact board, and perform
+a full-chip erase before installing 0.3.7-hotfix.5 or later.
+Devices whose identities predate 0.3.7 do not need rotation solely because they
+later ran an affected release.
