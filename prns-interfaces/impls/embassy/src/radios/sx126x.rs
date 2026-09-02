@@ -1239,6 +1239,16 @@ mod tests {
     }
 
     #[test]
+    fn montreal_frequency_uses_the_semtech_32mhz_pll_encoding() {
+        let steps = ((914_875_000u64) << SX126X_PLL_SHIFT) / SX126X_XTAL_HZ;
+        assert_eq!(steps, 0x392E_0000);
+        let off_grid_125khz_channel_96 = 914_062_500u64;
+        let off_grid_steps = (off_grid_125khz_channel_96 << SX126X_PLL_SHIFT) / SX126X_XTAL_HZ;
+        assert_ne!(steps, off_grid_steps);
+        assert_eq!(off_grid_steps, 0x3921_0000);
+    }
+
+    #[test]
     fn reticulum_profile_maps_to_the_existing_sx126x_configuration() {
         assert_eq!(
             radio_config(DEFAULT_915_PROFILE),

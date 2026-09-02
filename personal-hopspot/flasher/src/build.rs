@@ -39,6 +39,12 @@ fn embedded_cargo_command() -> Command {
     command
 }
 
+fn forward_lora_profile_env(cargo: &mut Command) {
+    if let Ok(profile) = std::env::var("PRNS_LORA_PROFILE") {
+        cargo.env("PRNS_LORA_PROFILE", profile);
+    }
+}
+
 pub(crate) struct BuildOutput {
     prepared: Option<PreparedTarget>,
     pub(crate) output_dir: PathBuf,
@@ -316,6 +322,7 @@ fn build_esp_parts(
         .arg("-Zbuild-std=core,alloc")
         .env("PRNS_BUILD_VERSION", version)
         .current_dir(crate_dir);
+    forward_lora_profile_env(&mut cargo);
     if let Some(source_digest) = developer_source_digest(version) {
         cargo.env("PRNS_BUILD_SOURCE_DIGEST", source_digest);
     }
@@ -462,6 +469,7 @@ fn build_uf2(
             .arg("--target-dir")
             .arg(&target_directory)
             .current_dir(&crate_dir);
+        forward_lora_profile_env(&mut cargo);
         run_status(&mut cargo, &format!("{} cargo build", board.display_name))?;
         let elf = target_directory
             .join(&build.rust_target)
@@ -588,6 +596,7 @@ fn build_nrf_serial_dfu(
         .arg(&target_directory)
         .env("PRNS_BUILD_VERSION", version)
         .current_dir(&crate_dir);
+    forward_lora_profile_env(&mut cargo);
     run_status(&mut cargo, "Nordic serial DFU cargo build")?;
 
     let output_dir = board_output(out_root, &board.slug, version);

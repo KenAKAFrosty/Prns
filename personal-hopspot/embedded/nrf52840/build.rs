@@ -63,6 +63,19 @@ fn main() {
     println!("cargo:rustc-link-arg=-Tlink.x");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=PRNS_LORA_PROFILE");
+    match env::var("PRNS_LORA_PROFILE") {
+        Ok(profile) if profile == "montreal" => {
+            println!("cargo:rustc-env=PRNS_LORA_PROFILE=montreal");
+            println!("cargo:rustc-env=HOPSPOT_LORA_PROFILE_MARKER=HOPSPOT_LORA_MONTREAL");
+        }
+        Ok(profile) => {
+            println!("cargo:rustc-env=PRNS_LORA_PROFILE={profile}");
+            println!("cargo:rustc-env=HOPSPOT_LORA_PROFILE_MARKER=HOPSPOT_LORA_OTHER");
+        }
+        Err(_) => {
+            println!("cargo:rustc-env=HOPSPOT_LORA_PROFILE_MARKER=HOPSPOT_LORA_UNSET");
+        }
+    }
 }
 
 fn write_nrf52840_memory(out: &Path, layout: Nrf52840FirmwareMemory) {

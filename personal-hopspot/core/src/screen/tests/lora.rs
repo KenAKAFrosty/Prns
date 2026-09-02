@@ -128,6 +128,21 @@ fn choosing_a_named_preset_applies_it_then_opens_the_frequency_step() {
 }
 
 #[test]
+fn choosing_montreal_fills_the_named_mesh_channel() {
+    let mut state = test_ui_state();
+    state.open_lora_editor(DEFAULT_915_PROFILE);
+    input(&mut state, InputEvent::LongPress);
+    tap_to_preset_choice(&mut state, PresetChoice::Preset(ModemPreset::Montreal));
+    let action = input(&mut state, InputEvent::LongPress);
+
+    assert_eq!(action, UiAction::None);
+    let profile = lora_working_profile(&state);
+    assert_eq!(profile.modulation, ModemPreset::Montreal.modulation());
+    assert_eq!(profile.frequency.hz(), 914_875_000);
+    assert_eq!(profile.tx_power.dbm(), 30);
+}
+
+#[test]
 fn the_channel_row_cycles_to_the_next_band_channel_center() {
     let mut state = test_ui_state();
     state.open_lora_editor(DEFAULT_915_PROFILE);

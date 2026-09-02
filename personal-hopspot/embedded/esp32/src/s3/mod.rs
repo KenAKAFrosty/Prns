@@ -64,7 +64,9 @@ use personal_rns::interfaces::esp_now::{
     self as espnow_core, Channel as EspNowChannel, ChannelPolicy, ESP_NOW_V2_AIR_MTU,
 };
 #[cfg(feature = "lora")]
-use personal_rns::interfaces::lora::{boot_lora_profile, AirtimePolicy, LORA_MAX_PAYLOAD};
+use personal_rns::interfaces::lora::{
+    AirtimePolicy, DEFAULT_915_PROFILE, LORA_MAX_PAYLOAD, MONTREAL_PROFILE,
+};
 use personal_rns::interfaces::usb_auto::device_descriptor;
 use personal_rns::interfaces::wifi_auto as wifi_auto_contract;
 use personal_rns::interfaces::BitrateBps;
@@ -627,6 +629,19 @@ fn request_radio_mode(mode: RadioMode) -> ! {
     // reset; no other task can observe or concurrently access the mutable static.
     unsafe { core::ptr::addr_of_mut!(RADIO_MODE_FLAG).write(flag) };
     esp_hal::system::software_reset();
+}
+
+/// Compile-time LoRa default for this crate so `PRNS_LORA_PROFILE` is not lost in a
+/// prebuilt `prns-core` rlib.
+#[cfg(feature = "lora")]
+fn compiled_boot_lora_profile(
+    max_tx_power_dbm: i8,
+) -> personal_rns::interfaces::lora::RadioProfile {
+    match option_env!("PRNS_LORA_PROFILE") {
+        Some(profile) if profile.as_bytes() == b"montreal" => MONTREAL_PROFILE,
+        _ => DEFAULT_915_PROFILE,
+    }
+    .with_tx_power_at_most(max_tx_power_dbm)
 }
 
 mod firmware;
