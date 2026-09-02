@@ -107,6 +107,22 @@ def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
                 ("bash", "validation/platforms/embedded.sh"),
             )
         )
+        gates.append(
+            Gate(
+                "Embassy runtime Clippy",
+                (
+                    "cargo",
+                    "clippy",
+                    "--all-targets",
+                    "--locked",
+                    "--",
+                    "-D",
+                    "warnings",
+                ),
+                ROOT / "prns-runtime/impls/embassy",
+                (("RUSTFLAGS", "-D warnings --cfg aes_armv8"),),
+            )
+        )
 
     shared_native = _has_prefix(
         paths,
@@ -208,6 +224,76 @@ def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
                     "warnings",
                 ),
                 ROOT / "validation/integration",
+                (("RUSTFLAGS", "-D warnings --cfg aes_armv8"),),
+            )
+        )
+
+    daemon_surface = (
+        "Cargo.toml" in paths
+        or "Cargo.lock" in paths
+        or _has_prefix(
+            paths,
+            (
+                "personal-rns/",
+                "prns-core/",
+                "prns-config/",
+                "prns-interfaces/impls/tokio/",
+                "prns-runtime/core/",
+                "prns-runtime/impls/tokio/",
+                "prnsd/",
+            ),
+        )
+    )
+    if daemon_surface:
+        gates.append(
+            Gate(
+                "prnsd all-features Clippy",
+                (
+                    "cargo",
+                    "clippy",
+                    "--workspace",
+                    "--all-features",
+                    "--all-targets",
+                    "--locked",
+                    "--",
+                    "-D",
+                    "warnings",
+                ),
+                ROOT / "prnsd",
+                (("RUSTFLAGS", "-D warnings --cfg aes_armv8"),),
+            )
+        )
+
+    wasm_surface = (
+        "Cargo.toml" in paths
+        or "Cargo.lock" in paths
+        or _has_prefix(
+            paths,
+            (
+                "personal-rns/",
+                "prns-core/",
+                "prns-host/core/",
+                "prns-host/impls/cooperative/",
+                "prns-wasm/",
+            ),
+        )
+    )
+    if wasm_surface:
+        gates.append(
+            Gate(
+                "prns-wasm wasm32 Clippy",
+                (
+                    "cargo",
+                    "clippy",
+                    "--target",
+                    "wasm32-unknown-unknown",
+                    "--all-targets",
+                    "--locked",
+                    "--",
+                    "-D",
+                    "warnings",
+                ),
+                ROOT / "prns-wasm",
                 (("RUSTFLAGS", "-D warnings --cfg aes_armv8"),),
             )
         )

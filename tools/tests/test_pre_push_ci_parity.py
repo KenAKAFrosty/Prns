@@ -28,7 +28,10 @@ class PrePushCiParityTests(unittest.TestCase):
         self.assertIn("Tokio runtime all-features Clippy", names)
         self.assertIn("Tokio umbrella feature-family Clippy", names)
         self.assertIn("validation integration capstones Clippy", names)
+        self.assertIn("prnsd all-features Clippy", names)
+        self.assertIn("prns-wasm wasm32 Clippy", names)
         self.assertIn("embedded build matrix", names)
+        self.assertIn("Embassy runtime Clippy", names)
         self.assertIn("unsafe dependency inventory", names)
 
     def test_generated_contract_change_checks_both_language_consumers(self) -> None:
@@ -75,11 +78,27 @@ class PrePushCiParityTests(unittest.TestCase):
         )
 
     def test_embassy_change_runs_the_exact_embedded_matrix(self) -> None:
-        names = self.gate_names(
+        gates = parity.plan_for_paths(
             {"prns-runtime/impls/embassy/src/runtime/request_runner.rs"}
         )
+        names = {gate.name for gate in gates}
 
         self.assertIn("embedded build matrix", names)
+        gate = next(gate for gate in gates if gate.name == "Embassy runtime Clippy")
+        self.assertEqual(gate.cwd, ROOT / "prns-runtime/impls/embassy")
+        self.assertEqual(gate.env, (("RUSTFLAGS", "-D warnings --cfg aes_armv8"),))
+        self.assertEqual(
+            gate.command,
+            (
+                "cargo",
+                "clippy",
+                "--all-targets",
+                "--locked",
+                "--",
+                "-D",
+                "warnings",
+            ),
+        )
 
     def test_tokio_runtime_change_runs_all_features_clippy(self) -> None:
         gates = parity.plan_for_paths(
@@ -151,6 +170,52 @@ class PrePushCiParityTests(unittest.TestCase):
             (
                 "cargo",
                 "clippy",
+                "--all-targets",
+                "--locked",
+                "--",
+                "-D",
+                "warnings",
+            ),
+        )
+
+    def test_runtime_change_runs_prnsd_all_features_clippy(self) -> None:
+        gates = parity.plan_for_paths(
+            {"prns-runtime/core/src/runtime/observability.rs"}
+        )
+        gate = next(
+            gate for gate in gates if gate.name == "prnsd all-features Clippy"
+        )
+
+        self.assertEqual(gate.cwd, ROOT / "prnsd")
+        self.assertEqual(gate.env, (("RUSTFLAGS", "-D warnings --cfg aes_armv8"),))
+        self.assertEqual(
+            gate.command,
+            (
+                "cargo",
+                "clippy",
+                "--workspace",
+                "--all-features",
+                "--all-targets",
+                "--locked",
+                "--",
+                "-D",
+                "warnings",
+            ),
+        )
+
+    def test_core_change_runs_prns_wasm_wasm32_clippy(self) -> None:
+        gates = parity.plan_for_paths({"prns-core/src/engine.rs"})
+        gate = next(gate for gate in gates if gate.name == "prns-wasm wasm32 Clippy")
+
+        self.assertEqual(gate.cwd, ROOT / "prns-wasm")
+        self.assertEqual(gate.env, (("RUSTFLAGS", "-D warnings --cfg aes_armv8"),))
+        self.assertEqual(
+            gate.command,
+            (
+                "cargo",
+                "clippy",
+                "--target",
+                "wasm32-unknown-unknown",
                 "--all-targets",
                 "--locked",
                 "--",
