@@ -15,26 +15,26 @@ use personal_rns::interfaces::usb_auto::{WEBUSB_PRODUCT_ID, WEBUSB_VENDOR_ID};
 use personal_rns::interfaces::{ConnectionState, InterfaceId};
 use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpectrumStatus};
 use personal_rns::manifold::embassy::{EmbassyHost, EmbassyInterfaceStatus, InterfaceLifecycle};
-use personal_rns::manifold::interface_seam::{EMBEDDED_MAX_WIRE_FRAME_LEN, Interface};
+use personal_rns::manifold::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use personal_rns::remote_control::{
     RemoteControlInitialAccess, RemoteControlSelfAnnouncement, RemoteControlService,
 };
 use personal_rns::runtime::{
-    CompletionPool, EmbassyInterfaceStore, ManifoldLaneSet, PrnsEvent, PrnsNode, PrnsNodeHandle,
-    PrnsNodeRecipe, StaticManifoldLane, minimum_interface_store_capacity,
-    minimum_manifold_notification_capacity,
+    minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
+    EmbassyInterfaceStore, ManifoldLaneSet, PrnsEvent, PrnsNode, PrnsNodeHandle, PrnsNodeRecipe,
+    StaticManifoldLane,
 };
 use personal_rns::storage::{StorageCapacity, StorageLayout};
 use personal_rns::usb_auto::{
-    UsbAutoDevice, UsbAutoDeviceInput, WEBUSB_AUTO_CONTROL_BUFFER_BYTES,
-    WEBUSB_AUTO_MSOS_DESCRIPTOR_BYTES, WEBUSB_AUTO_PACKET_SIZE, WebUsbAutoClass, WebUsbAutoState,
+    UsbAutoDevice, UsbAutoDeviceInput, WebUsbAutoClass, WebUsbAutoState,
+    WEBUSB_AUTO_CONTROL_BUFFER_BYTES, WEBUSB_AUTO_MSOS_DESCRIPTOR_BYTES, WEBUSB_AUTO_PACKET_SIZE,
 };
 
 use crate::boards::selected as board;
 #[cfg(not(any(feature = "board-t096", feature = "board-t114")))]
 use board::MAX_TX_POWER_DBM;
 use board::{
-    ANNOUNCE_APP_DATA, Board, Hardware, LoraInterface, NODE_ANNOUNCE_APP_DATA, Storage,
+    Board, Hardware, LoraInterface, Storage, ANNOUNCE_APP_DATA, NODE_ANNOUNCE_APP_DATA,
     USB_INTERFACE_ID, USB_MANUFACTURER, USB_PRODUCT, USB_SERIAL_NUMBER,
 };
 
