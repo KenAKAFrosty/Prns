@@ -180,7 +180,7 @@ async fn a_dynamic_interface_drains_a_frame_queued_before_attachment() {
     inbound.commit();
 
     command_tx
-        .send(HostCommand::AddInterface(AddInterfaceCommand {
+        .send(HostCommand::AddInterface(Box::new(AddInterfaceCommand {
             descriptor: descriptor(source),
             logical_interface: source,
             inbound: inbound_lane,
@@ -188,7 +188,7 @@ async fn a_dynamic_interface_drains_a_frame_queued_before_attachment() {
             connection: None,
             frame_accounting: None,
             ifac: None,
-        }))
+        })))
         .unwrap();
 
     let heard = tokio::time::timeout(Duration::from_secs(2), heard_rx.recv())
@@ -258,7 +258,7 @@ async fn protocol_violations_are_attributed_to_the_source_recorder() {
         ),
     ] {
         command_tx
-            .send(HostCommand::AddInterface(AddInterfaceCommand {
+            .send(HostCommand::AddInterface(Box::new(AddInterfaceCommand {
                 descriptor: descriptor(id),
                 logical_interface: id,
                 inbound,
@@ -266,7 +266,7 @@ async fn protocol_violations_are_attributed_to_the_source_recorder() {
                 connection: None,
                 frame_accounting: recorder,
                 ifac: None,
-            }))
+            })))
             .unwrap();
     }
     tokio::task::yield_now().await;
@@ -357,7 +357,7 @@ async fn dynamic_ifac_state_arrives_and_leaves_with_its_interface() {
     let (mut protected_in, protected_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
     let (protected_out, _protected_wire) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
     command_tx
-        .send(HostCommand::AddInterface(AddInterfaceCommand {
+        .send(HostCommand::AddInterface(Box::new(AddInterfaceCommand {
             descriptor: descriptor(source),
             logical_interface: source,
             inbound: protected_rx,
@@ -365,7 +365,7 @@ async fn dynamic_ifac_state_arrives_and_leaves_with_its_interface() {
             connection: None,
             frame_accounting: None,
             ifac: Some(network.clone()),
-        }))
+        })))
         .unwrap();
     tokio::task::yield_now().await;
 
@@ -392,7 +392,7 @@ async fn dynamic_ifac_state_arrives_and_leaves_with_its_interface() {
     let (mut open_in, open_rx) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
     let (open_out, _open_wire) = tokio_grant_lane(MAX_WIRE_FRAME_LEN, 8);
     command_tx
-        .send(HostCommand::AddInterface(AddInterfaceCommand {
+        .send(HostCommand::AddInterface(Box::new(AddInterfaceCommand {
             descriptor: descriptor(source),
             logical_interface: source,
             inbound: open_rx,
@@ -400,7 +400,7 @@ async fn dynamic_ifac_state_arrives_and_leaves_with_its_interface() {
             connection: None,
             frame_accounting: None,
             ifac: None,
-        }))
+        })))
         .unwrap();
     tokio::task::yield_now().await;
 

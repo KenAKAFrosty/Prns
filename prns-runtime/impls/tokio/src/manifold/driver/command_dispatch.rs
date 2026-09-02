@@ -529,7 +529,7 @@ where
                     },
                 ))
             }
-            HostCommand::AddInterface(add) => match topology.attach(engine, add, now) {
+            HostCommand::AddInterface(add) => match topology.attach(engine, *add, now) {
                 Some((id, frame_capacity)) => {
                     CommandEffect::InterfaceAttached { id, frame_capacity }
                 }

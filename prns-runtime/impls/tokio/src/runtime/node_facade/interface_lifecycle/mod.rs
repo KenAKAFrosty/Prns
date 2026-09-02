@@ -531,7 +531,7 @@ where
         .with_commands(commands.clone());
     let build: Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()>>> + Send> =
         Box::new(move || Box::pin(interface.run(seam)));
-    let _ = commands.send(HostCommand::AddInterface(AddInterfaceCommand {
+    let _ = commands.send(HostCommand::AddInterface(Box::new(AddInterfaceCommand {
         descriptor,
         logical_interface,
         inbound: in_consumer,
@@ -539,7 +539,7 @@ where
         connection,
         frame_accounting,
         ifac,
-    }));
+    })));
     let _ = iface_build.send(DriverMsg::Add {
         id,
         supervisor,
