@@ -23,6 +23,9 @@ use super::journal_delivery::JournalDispatch;
 use super::owed_work::PendingOwedWork;
 use crate::remote_control::RemoteControlPairingAvailabilityVerification;
 
+// Completion routing deliberately exposes every borrowed data-plane component;
+// no wrapper owns or extends the lifetime of engine output.
+#[allow(clippy::too_many_arguments)]
 fn route_completion_reaction<J>(
     reaction: EngineReaction<'_, OwedWork<'_>>,
     egress: &mut Egress,

@@ -24,6 +24,9 @@ use super::interface_topology::InterfaceTopology;
 use super::journal_delivery::JournalDispatch;
 use super::owed_work::PendingOwedWork;
 
+// Ingress adds ordering barriers to the common reaction route. Keeping those
+// borrowed queues explicit avoids a second, partially initialized router type.
+#[allow(clippy::too_many_arguments)]
 fn route_ingress_reaction<J>(
     reaction: EngineReaction<'_, OwedWork<'_>>,
     egress: &mut Egress,

@@ -25,6 +25,7 @@ class PrePushCiParityTests(unittest.TestCase):
         self.assertIn("root Clippy", names)
         self.assertIn("prns-core external-allocation lane", names)
         self.assertIn("Node native binding Clippy", names)
+        self.assertIn("Tokio runtime all-features Clippy", names)
         self.assertIn("embedded build matrix", names)
         self.assertIn("unsafe dependency inventory", names)
 
@@ -58,6 +59,30 @@ class PrePushCiParityTests(unittest.TestCase):
         )
 
         self.assertIn("embedded build matrix", names)
+
+    def test_tokio_runtime_change_runs_all_features_clippy(self) -> None:
+        gates = parity.plan_for_paths(
+            {"prns-runtime/impls/tokio/src/manifold/driver/mod.rs"}
+        )
+        gate = next(
+            gate for gate in gates if gate.name == "Tokio runtime all-features Clippy"
+        )
+
+        self.assertEqual(gate.cwd, ROOT / "prns-runtime/impls/tokio")
+        self.assertEqual(gate.env, (("RUSTFLAGS", "-D warnings --cfg aes_armv8"),))
+        self.assertEqual(
+            gate.command,
+            (
+                "cargo",
+                "clippy",
+                "--all-features",
+                "--all-targets",
+                "--locked",
+                "--",
+                "-D",
+                "warnings",
+            ),
+        )
 
     def test_documentation_change_has_no_additional_ci_lane(self) -> None:
         self.assertEqual(self.gate_names({"docs/architecture.md"}), set())

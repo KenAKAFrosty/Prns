@@ -28,6 +28,9 @@ use super::interface_topology::InterfaceTopology;
 use super::journal_delivery::JournalDispatch;
 use super::owed_work::PendingOwedWork;
 
+// Keep the hot routing dependencies explicit. Packing these borrowed data-plane
+// components into an opaque context would only hide the bow-tie boundary.
+#[allow(clippy::too_many_arguments)]
 fn route_command_reaction_with_owed_work<J>(
     reaction: EngineReaction<'_, OwedWork<'_>>,
     egress: &mut Egress,
@@ -310,8 +313,9 @@ where
             },
             HostCommand::SendResourceSegment(send) => {
                 journal.register_completion(send.id, send.completion);
-                if let Some(_) =
-                    crypto_pool.filter(|_| send.segment_index == 1 && send.total_segments == 1)
+                if crypto_pool
+                    .filter(|_| send.segment_index == 1 && send.total_segments == 1)
+                    .is_some()
                 {
                     let segment = ResourceSegment {
                         index: send.segment_index,

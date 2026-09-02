@@ -27,6 +27,7 @@ class Gate:
     name: str
     command: tuple[str, ...]
     cwd: Path = ROOT
+    env: tuple[tuple[str, str], ...] = ()
 
 
 def _has_prefix(paths: set[str], prefixes: Iterable[str]) -> bool:
@@ -123,6 +124,38 @@ def plan_for_paths(paths: set[str]) -> tuple[Gate, ...]:
                 "Node native binding Clippy",
                 ("cargo", "clippy", "--locked", "--", "-D", "warnings"),
                 ROOT / "prns-napi",
+            )
+        )
+
+    tokio_runtime_surface = (
+        "Cargo.toml" in paths
+        or "Cargo.lock" in paths
+        or _has_prefix(
+            paths,
+            (
+                "prns-core/",
+                "prns-interfaces/impls/tokio/",
+                "prns-runtime/core/",
+                "prns-runtime/impls/tokio/",
+            ),
+        )
+    )
+    if tokio_runtime_surface:
+        gates.append(
+            Gate(
+                "Tokio runtime all-features Clippy",
+                (
+                    "cargo",
+                    "clippy",
+                    "--all-features",
+                    "--all-targets",
+                    "--locked",
+                    "--",
+                    "-D",
+                    "warnings",
+                ),
+                ROOT / "prns-runtime/impls/tokio",
+                (("RUSTFLAGS", "-D warnings --cfg aes_armv8"),),
             )
         )
 
@@ -281,7 +314,12 @@ def main() -> int:
 
     for gate in gates:
         print(f"\n[pre-push-ci-parity] {gate.name}", flush=True)
-        result = subprocess.run(gate.command, cwd=gate.cwd, check=False)
+        result = subprocess.run(
+            gate.command,
+            cwd=gate.cwd,
+            env={**os.environ, **dict(gate.env)},
+            check=False,
+        )
         if result.returncode != 0:
             print(
                 f"\npre-push CI parity failed: {gate.name}",
