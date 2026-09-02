@@ -658,6 +658,71 @@
     },
     {
       "graphs": {
+        "android": [
+          "alloc"
+        ],
+        "daemon-linux": [
+          "alloc"
+        ],
+        "daemon-macos": [
+          "alloc"
+        ],
+        "daemon-windows": [
+          "alloc"
+        ],
+        "desktop-linux": [
+          "alloc"
+        ],
+        "desktop-macos": [
+          "alloc"
+        ],
+        "desktop-windows": [
+          "alloc"
+        ],
+        "esp32-c6": [
+          "alloc"
+        ],
+        "esp32-s3-heltec": [
+          "alloc"
+        ],
+        "esp32-s3-heltec-e290": [
+          "alloc"
+        ],
+        "esp32-s3-heltec-r8": [
+          "alloc"
+        ],
+        "esp32-s3-tbeam": [
+          "alloc"
+        ],
+        "host-c-linux": [
+          "alloc"
+        ],
+        "host-c-macos": [
+          "alloc"
+        ],
+        "host-c-windows": [
+          "alloc"
+        ],
+        "ios": [
+          "alloc"
+        ],
+        "nrf52840": [
+          "alloc"
+        ]
+      },
+      "name": "base64ct",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 4,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 4
+      },
+      "version": "1.8.3"
+    },
+    {
+      "graphs": {
         "engine": [
           "default",
           "std"
@@ -943,14 +1008,9 @@
     },
     {
       "graphs": {
-        "android": [],
         "daemon-linux": [],
         "daemon-macos": [],
         "daemon-windows": [],
-        "desktop-linux": [],
-        "desktop-macos": [],
-        "desktop-windows": [],
-        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
@@ -958,10 +1018,7 @@
         "esp32-s3-tbeam": [],
         "host-c-linux": [],
         "host-c-macos": [],
-        "host-c-windows": [],
-        "ios": [],
-        "nrf52840": [],
-        "wasm": []
+        "host-c-windows": []
       },
       "name": "block-buffer",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -976,25 +1033,63 @@
     },
     {
       "graphs": {
-        "android": [],
-        "daemon-linux": [],
-        "daemon-macos": [],
-        "daemon-windows": [],
-        "desktop-linux": [],
-        "desktop-macos": [],
-        "desktop-windows": [],
-        "engine": [],
-        "esp32-c6": [],
-        "esp32-s3-heltec": [],
-        "esp32-s3-heltec-e290": [],
-        "esp32-s3-heltec-r8": [],
-        "esp32-s3-tbeam": [],
-        "host-c-linux": [],
-        "host-c-macos": [],
-        "host-c-windows": [],
-        "ios": [],
-        "nrf52840": [],
-        "wasm": []
+        "android": [
+          "zeroize"
+        ],
+        "daemon-linux": [
+          "zeroize"
+        ],
+        "daemon-macos": [
+          "zeroize"
+        ],
+        "daemon-windows": [
+          "zeroize"
+        ],
+        "desktop-linux": [
+          "zeroize"
+        ],
+        "desktop-macos": [
+          "zeroize"
+        ],
+        "desktop-windows": [
+          "zeroize"
+        ],
+        "engine": [
+          "zeroize"
+        ],
+        "esp32-c6": [
+          "zeroize"
+        ],
+        "esp32-s3-heltec": [
+          "zeroize"
+        ],
+        "esp32-s3-heltec-e290": [
+          "zeroize"
+        ],
+        "esp32-s3-heltec-r8": [
+          "zeroize"
+        ],
+        "esp32-s3-tbeam": [
+          "zeroize"
+        ],
+        "host-c-linux": [
+          "zeroize"
+        ],
+        "host-c-macos": [
+          "zeroize"
+        ],
+        "host-c-windows": [
+          "zeroize"
+        ],
+        "ios": [
+          "zeroize"
+        ],
+        "nrf52840": [
+          "zeroize"
+        ],
+        "wasm": [
+          "zeroize"
+        ]
       },
       "name": "block-buffer",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -1854,6 +1949,96 @@
     {
       "graphs": {
         "android": [
+          "rng",
+          "zeroize"
+        ],
+        "daemon-linux": [
+          "rng",
+          "zeroize"
+        ],
+        "daemon-macos": [
+          "rng",
+          "zeroize"
+        ],
+        "daemon-windows": [
+          "rng",
+          "zeroize"
+        ],
+        "desktop-linux": [
+          "rng",
+          "zeroize"
+        ],
+        "desktop-macos": [
+          "rng",
+          "zeroize"
+        ],
+        "desktop-windows": [
+          "rng",
+          "zeroize"
+        ],
+        "engine": [
+          "rng",
+          "zeroize"
+        ],
+        "esp32-c6": [
+          "rng",
+          "zeroize"
+        ],
+        "esp32-s3-heltec": [
+          "rng",
+          "zeroize"
+        ],
+        "esp32-s3-heltec-e290": [
+          "rng",
+          "zeroize"
+        ],
+        "esp32-s3-heltec-r8": [
+          "rng",
+          "zeroize"
+        ],
+        "esp32-s3-tbeam": [
+          "rng",
+          "zeroize"
+        ],
+        "host-c-linux": [
+          "rng",
+          "zeroize"
+        ],
+        "host-c-macos": [
+          "rng",
+          "zeroize"
+        ],
+        "host-c-windows": [
+          "rng",
+          "zeroize"
+        ],
+        "ios": [
+          "rng",
+          "zeroize"
+        ],
+        "nrf52840": [
+          "rng",
+          "zeroize"
+        ],
+        "wasm": [
+          "rng",
+          "zeroize"
+        ]
+      },
+      "name": "chacha20",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 23,
+        "externs": 0,
+        "functions": 43,
+        "impls": 0,
+        "tokens": 66
+      },
+      "version": "0.10.2"
+    },
+    {
+      "graphs": {
+        "android": [
           "block-padding"
         ],
         "daemon-linux": [
@@ -2173,7 +2358,24 @@
     },
     {
       "graphs": {
-        "engine": []
+        "android": [],
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
+        "desktop-linux": [],
+        "desktop-macos": [],
+        "desktop-windows": [],
+        "engine": [],
+        "esp32-c6": [],
+        "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
+        "esp32-s3-heltec-r8": [],
+        "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
+        "ios": [],
+        "nrf52840": []
       },
       "name": "const-oid",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -2872,24 +3074,58 @@
     },
     {
       "graphs": {
-        "android": [],
-        "daemon-linux": [],
-        "daemon-macos": [],
-        "daemon-windows": [],
-        "desktop-linux": [],
-        "desktop-macos": [],
-        "desktop-windows": [],
+        "android": [
+          "rand_core"
+        ],
+        "daemon-linux": [
+          "rand_core"
+        ],
+        "daemon-macos": [
+          "rand_core"
+        ],
+        "daemon-windows": [
+          "rand_core"
+        ],
+        "desktop-linux": [
+          "rand_core"
+        ],
+        "desktop-macos": [
+          "rand_core"
+        ],
+        "desktop-windows": [
+          "rand_core"
+        ],
         "engine": [],
-        "esp32-c6": [],
-        "esp32-s3-heltec": [],
-        "esp32-s3-heltec-e290": [],
-        "esp32-s3-heltec-r8": [],
-        "esp32-s3-tbeam": [],
-        "host-c-linux": [],
-        "host-c-macos": [],
-        "host-c-windows": [],
-        "ios": [],
-        "nrf52840": [],
+        "esp32-c6": [
+          "rand_core"
+        ],
+        "esp32-s3-heltec": [
+          "rand_core"
+        ],
+        "esp32-s3-heltec-e290": [
+          "rand_core"
+        ],
+        "esp32-s3-heltec-r8": [
+          "rand_core"
+        ],
+        "esp32-s3-tbeam": [
+          "rand_core"
+        ],
+        "host-c-linux": [
+          "rand_core"
+        ],
+        "host-c-macos": [
+          "rand_core"
+        ],
+        "host-c-windows": [
+          "rand_core"
+        ],
+        "ios": [
+          "rand_core"
+        ],
+        "nrf52840": [
+          "rand_core"
+        ],
         "wasm": []
       },
       "name": "crypto-common",
@@ -2963,38 +3199,52 @@
     {
       "graphs": {
         "android": [
+          "alloc",
           "digest",
           "precomputed-tables",
+          "rand_core",
           "zeroize"
         ],
         "daemon-linux": [
+          "alloc",
           "digest",
           "precomputed-tables",
+          "rand_core",
           "zeroize"
         ],
         "daemon-macos": [
+          "alloc",
           "digest",
           "precomputed-tables",
+          "rand_core",
           "zeroize"
         ],
         "daemon-windows": [
+          "alloc",
           "digest",
           "precomputed-tables",
+          "rand_core",
           "zeroize"
         ],
         "desktop-linux": [
+          "alloc",
           "digest",
           "precomputed-tables",
+          "rand_core",
           "zeroize"
         ],
         "desktop-macos": [
+          "alloc",
           "digest",
           "precomputed-tables",
+          "rand_core",
           "zeroize"
         ],
         "desktop-windows": [
+          "alloc",
           "digest",
           "precomputed-tables",
+          "rand_core",
           "zeroize"
         ],
         "engine": [
@@ -3003,53 +3253,73 @@
           "zeroize"
         ],
         "esp32-c6": [
+          "alloc",
           "digest",
           "precomputed-tables",
+          "rand_core",
           "zeroize"
         ],
         "esp32-s3-heltec": [
+          "alloc",
           "digest",
           "precomputed-tables",
+          "rand_core",
           "zeroize"
         ],
         "esp32-s3-heltec-e290": [
+          "alloc",
           "digest",
           "precomputed-tables",
+          "rand_core",
           "zeroize"
         ],
         "esp32-s3-heltec-r8": [
+          "alloc",
           "digest",
           "precomputed-tables",
+          "rand_core",
           "zeroize"
         ],
         "esp32-s3-tbeam": [
+          "alloc",
           "digest",
           "precomputed-tables",
+          "rand_core",
           "zeroize"
         ],
         "host-c-linux": [
+          "alloc",
           "digest",
           "precomputed-tables",
+          "rand_core",
           "zeroize"
         ],
         "host-c-macos": [
+          "alloc",
           "digest",
           "precomputed-tables",
+          "rand_core",
           "zeroize"
         ],
         "host-c-windows": [
+          "alloc",
           "digest",
           "precomputed-tables",
+          "rand_core",
           "zeroize"
         ],
         "ios": [
+          "alloc",
           "digest",
           "precomputed-tables",
+          "rand_core",
           "zeroize"
         ],
         "nrf52840": [
+          "alloc",
           "digest",
           "precomputed-tables",
+          "rand_core",
           "zeroize"
         ],
         "wasm": [
@@ -3061,13 +3331,13 @@
       "name": "curve25519-dalek",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "unsafe": {
-        "blocks": 33,
+        "blocks": 31,
         "externs": 0,
         "functions": 2,
         "impls": 0,
-        "tokens": 35
+        "tokens": 33
       },
-      "version": "4.1.3"
+      "version": "5.0.0"
     },
     {
       "graphs": {
@@ -3651,6 +3921,105 @@
     },
     {
       "graphs": {
+        "android": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
+        "daemon-linux": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
+        "daemon-windows": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
+        "desktop-linux": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
+        "desktop-macos": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
+        "desktop-windows": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
+        "esp32-c6": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
+        "esp32-s3-heltec": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
+        "esp32-s3-heltec-e290": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
+        "esp32-s3-heltec-r8": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
+        "esp32-s3-tbeam": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
+        "host-c-linux": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
+        "host-c-windows": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
+        "ios": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ],
+        "nrf52840": [
+          "alloc",
+          "oid",
+          "zeroize"
+        ]
+      },
+      "name": "der",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 4,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 4
+      },
+      "version": "0.8.1"
+    },
+    {
+      "graphs": {
         "daemon-linux": [
           "default"
         ],
@@ -3680,13 +4049,6 @@
     },
     {
       "graphs": {
-        "android": [
-          "alloc",
-          "block-buffer",
-          "core-api",
-          "default",
-          "std"
-        ],
         "daemon-linux": [
           "alloc",
           "block-buffer",
@@ -3708,52 +4070,25 @@
           "default",
           "std"
         ],
-        "desktop-linux": [
-          "block-buffer",
-          "core-api",
-          "default"
-        ],
-        "desktop-macos": [
-          "block-buffer",
-          "core-api",
-          "default"
-        ],
-        "desktop-windows": [
-          "block-buffer",
-          "core-api",
-          "default"
-        ],
-        "engine": [
-          "alloc",
-          "block-buffer",
-          "core-api",
-          "default",
-          "std"
-        ],
         "esp32-c6": [
           "block-buffer",
-          "core-api",
-          "default"
+          "core-api"
         ],
         "esp32-s3-heltec": [
           "block-buffer",
-          "core-api",
-          "default"
+          "core-api"
         ],
         "esp32-s3-heltec-e290": [
           "block-buffer",
-          "core-api",
-          "default"
+          "core-api"
         ],
         "esp32-s3-heltec-r8": [
           "block-buffer",
-          "core-api",
-          "default"
+          "core-api"
         ],
         "esp32-s3-tbeam": [
           "block-buffer",
-          "core-api",
-          "default"
+          "core-api"
         ],
         "host-c-linux": [
           "alloc",
@@ -3775,21 +4110,6 @@
           "core-api",
           "default",
           "std"
-        ],
-        "ios": [
-          "block-buffer",
-          "core-api",
-          "default"
-        ],
-        "nrf52840": [
-          "block-buffer",
-          "core-api",
-          "default"
-        ],
-        "wasm": [
-          "block-buffer",
-          "core-api",
-          "default"
         ]
       },
       "name": "digest",
@@ -3808,99 +4128,135 @@
         "android": [
           "block-api",
           "default",
-          "mac"
+          "mac",
+          "rand_core",
+          "zeroize"
         ],
         "daemon-linux": [
           "block-api",
           "default",
-          "mac"
+          "mac",
+          "rand_core",
+          "zeroize"
         ],
         "daemon-macos": [
           "block-api",
           "default",
-          "mac"
+          "mac",
+          "rand_core",
+          "zeroize"
         ],
         "daemon-windows": [
           "block-api",
           "default",
-          "mac"
+          "mac",
+          "rand_core",
+          "zeroize"
         ],
         "desktop-linux": [
           "block-api",
           "default",
-          "mac"
+          "mac",
+          "rand_core",
+          "zeroize"
         ],
         "desktop-macos": [
           "block-api",
           "default",
-          "mac"
+          "mac",
+          "rand_core",
+          "zeroize"
         ],
         "desktop-windows": [
           "block-api",
           "default",
-          "mac"
+          "mac",
+          "rand_core",
+          "zeroize"
         ],
         "engine": [
           "alloc",
           "block-api",
           "default",
           "mac",
-          "oid"
+          "oid",
+          "zeroize"
         ],
         "esp32-c6": [
           "block-api",
           "default",
-          "mac"
+          "mac",
+          "rand_core",
+          "zeroize"
         ],
         "esp32-s3-heltec": [
           "block-api",
           "default",
-          "mac"
+          "mac",
+          "rand_core",
+          "zeroize"
         ],
         "esp32-s3-heltec-e290": [
           "block-api",
           "default",
-          "mac"
+          "mac",
+          "rand_core",
+          "zeroize"
         ],
         "esp32-s3-heltec-r8": [
           "block-api",
           "default",
-          "mac"
+          "mac",
+          "rand_core",
+          "zeroize"
         ],
         "esp32-s3-tbeam": [
           "block-api",
           "default",
-          "mac"
+          "mac",
+          "rand_core",
+          "zeroize"
         ],
         "host-c-linux": [
           "block-api",
           "default",
-          "mac"
+          "mac",
+          "rand_core",
+          "zeroize"
         ],
         "host-c-macos": [
           "block-api",
           "default",
-          "mac"
+          "mac",
+          "rand_core",
+          "zeroize"
         ],
         "host-c-windows": [
           "block-api",
           "default",
-          "mac"
+          "mac",
+          "rand_core",
+          "zeroize"
         ],
         "ios": [
           "block-api",
           "default",
-          "mac"
+          "mac",
+          "rand_core",
+          "zeroize"
         ],
         "nrf52840": [
           "block-api",
           "default",
-          "mac"
+          "mac",
+          "rand_core",
+          "zeroize"
         ],
         "wasm": [
           "block-api",
           "default",
-          "mac"
+          "mac",
+          "zeroize"
         ]
       },
       "name": "digest",
@@ -4054,21 +4410,7 @@
         "desktop-linux": [
           "default",
           "std"
-        ]
-      },
-      "name": "displaydoc",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "unsafe": {
-        "blocks": 0,
-        "externs": 0,
-        "functions": 0,
-        "impls": 0,
-        "tokens": 0
-      },
-      "version": "0.2.6"
-    },
-    {
-      "graphs": {
+        ],
         "host-c-linux": [
           "default",
           "std"
@@ -4083,7 +4425,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "0.2.7"
+      "version": "0.2.6"
     },
     {
       "graphs": {
@@ -4235,24 +4577,58 @@
     },
     {
       "graphs": {
-        "android": [],
-        "daemon-linux": [],
-        "daemon-macos": [],
-        "daemon-windows": [],
-        "desktop-linux": [],
-        "desktop-macos": [],
-        "desktop-windows": [],
+        "android": [
+          "alloc"
+        ],
+        "daemon-linux": [
+          "alloc"
+        ],
+        "daemon-macos": [
+          "alloc"
+        ],
+        "daemon-windows": [
+          "alloc"
+        ],
+        "desktop-linux": [
+          "alloc"
+        ],
+        "desktop-macos": [
+          "alloc"
+        ],
+        "desktop-windows": [
+          "alloc"
+        ],
         "engine": [],
-        "esp32-c6": [],
-        "esp32-s3-heltec": [],
-        "esp32-s3-heltec-e290": [],
-        "esp32-s3-heltec-r8": [],
-        "esp32-s3-tbeam": [],
-        "host-c-linux": [],
-        "host-c-macos": [],
-        "host-c-windows": [],
-        "ios": [],
-        "nrf52840": [],
+        "esp32-c6": [
+          "alloc"
+        ],
+        "esp32-s3-heltec": [
+          "alloc"
+        ],
+        "esp32-s3-heltec-e290": [
+          "alloc"
+        ],
+        "esp32-s3-heltec-r8": [
+          "alloc"
+        ],
+        "esp32-s3-tbeam": [
+          "alloc"
+        ],
+        "host-c-linux": [
+          "alloc"
+        ],
+        "host-c-macos": [
+          "alloc"
+        ],
+        "host-c-windows": [
+          "alloc"
+        ],
+        "ios": [
+          "alloc"
+        ],
+        "nrf52840": [
+          "alloc"
+        ],
         "wasm": []
       },
       "name": "ed25519",
@@ -4264,36 +4640,71 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "2.2.3"
+      "version": "3.0.0"
     },
     {
       "graphs": {
         "android": [
+          "alloc",
+          "batch",
           "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
           "zeroize"
         ],
         "daemon-linux": [
+          "alloc",
+          "batch",
           "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
           "zeroize"
         ],
         "daemon-macos": [
+          "alloc",
+          "batch",
           "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
           "zeroize"
         ],
         "daemon-windows": [
+          "alloc",
+          "batch",
           "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
           "zeroize"
         ],
         "desktop-linux": [
+          "alloc",
+          "batch",
           "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
           "zeroize"
         ],
         "desktop-macos": [
+          "alloc",
+          "batch",
           "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
           "zeroize"
         ],
         "desktop-windows": [
+          "alloc",
+          "batch",
           "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
           "zeroize"
         ],
         "engine": [
@@ -4301,43 +4712,93 @@
           "zeroize"
         ],
         "esp32-c6": [
+          "alloc",
+          "batch",
           "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
           "zeroize"
         ],
         "esp32-s3-heltec": [
+          "alloc",
+          "batch",
           "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
           "zeroize"
         ],
         "esp32-s3-heltec-e290": [
+          "alloc",
+          "batch",
           "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
           "zeroize"
         ],
         "esp32-s3-heltec-r8": [
+          "alloc",
+          "batch",
           "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
           "zeroize"
         ],
         "esp32-s3-tbeam": [
+          "alloc",
+          "batch",
           "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
           "zeroize"
         ],
         "host-c-linux": [
+          "alloc",
+          "batch",
           "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
           "zeroize"
         ],
         "host-c-macos": [
+          "alloc",
+          "batch",
           "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
           "zeroize"
         ],
         "host-c-windows": [
+          "alloc",
+          "batch",
           "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
           "zeroize"
         ],
         "ios": [
+          "alloc",
+          "batch",
           "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
           "zeroize"
         ],
         "nrf52840": [
+          "alloc",
+          "batch",
           "fast",
+          "rand_core",
+          "signature",
+          "strobe-rs",
           "zeroize"
         ],
         "wasm": [
@@ -4354,7 +4815,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "2.2.0"
+      "version": "3.0.0"
     },
     {
       "graphs": {
@@ -9116,25 +9577,63 @@
     },
     {
       "graphs": {
-        "android": [],
-        "daemon-linux": [],
-        "daemon-macos": [],
-        "daemon-windows": [],
-        "desktop-linux": [],
-        "desktop-macos": [],
-        "desktop-windows": [],
-        "engine": [],
-        "esp32-c6": [],
-        "esp32-s3-heltec": [],
-        "esp32-s3-heltec-e290": [],
-        "esp32-s3-heltec-r8": [],
-        "esp32-s3-tbeam": [],
-        "host-c-linux": [],
-        "host-c-macos": [],
-        "host-c-windows": [],
-        "ios": [],
-        "nrf52840": [],
-        "wasm": []
+        "android": [
+          "zeroize"
+        ],
+        "daemon-linux": [
+          "zeroize"
+        ],
+        "daemon-macos": [
+          "zeroize"
+        ],
+        "daemon-windows": [
+          "zeroize"
+        ],
+        "desktop-linux": [
+          "zeroize"
+        ],
+        "desktop-macos": [
+          "zeroize"
+        ],
+        "desktop-windows": [
+          "zeroize"
+        ],
+        "engine": [
+          "zeroize"
+        ],
+        "esp32-c6": [
+          "zeroize"
+        ],
+        "esp32-s3-heltec": [
+          "zeroize"
+        ],
+        "esp32-s3-heltec-e290": [
+          "zeroize"
+        ],
+        "esp32-s3-heltec-r8": [
+          "zeroize"
+        ],
+        "esp32-s3-tbeam": [
+          "zeroize"
+        ],
+        "host-c-linux": [
+          "zeroize"
+        ],
+        "host-c-macos": [
+          "zeroize"
+        ],
+        "host-c-windows": [
+          "zeroize"
+        ],
+        "ios": [
+          "zeroize"
+        ],
+        "nrf52840": [
+          "zeroize"
+        ],
+        "wasm": [
+          "zeroize"
+        ]
       },
       "name": "hmac",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -9342,18 +9841,42 @@
     },
     {
       "graphs": {
-        "android": [],
-        "daemon-linux": [],
-        "daemon-macos": [],
-        "daemon-windows": [],
-        "engine": [],
-        "esp32-c6": [],
-        "esp32-s3-heltec": [],
-        "esp32-s3-heltec-e290": [],
-        "esp32-s3-heltec-r8": [],
-        "esp32-s3-tbeam": [],
-        "ios": [],
-        "nrf52840": []
+        "android": [
+          "zeroize"
+        ],
+        "daemon-linux": [
+          "zeroize"
+        ],
+        "daemon-macos": [
+          "zeroize"
+        ],
+        "daemon-windows": [
+          "zeroize"
+        ],
+        "engine": [
+          "zeroize"
+        ],
+        "esp32-c6": [
+          "zeroize"
+        ],
+        "esp32-s3-heltec": [
+          "zeroize"
+        ],
+        "esp32-s3-heltec-e290": [
+          "zeroize"
+        ],
+        "esp32-s3-heltec-r8": [
+          "zeroize"
+        ],
+        "esp32-s3-tbeam": [
+          "zeroize"
+        ],
+        "ios": [
+          "zeroize"
+        ],
+        "nrf52840": [
+          "zeroize"
+        ]
       },
       "name": "hybrid-array",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -9368,13 +9891,27 @@
     },
     {
       "graphs": {
-        "desktop-linux": [],
-        "desktop-macos": [],
-        "desktop-windows": [],
-        "host-c-linux": [],
-        "host-c-macos": [],
-        "host-c-windows": [],
-        "wasm": []
+        "desktop-linux": [
+          "zeroize"
+        ],
+        "desktop-macos": [
+          "zeroize"
+        ],
+        "desktop-windows": [
+          "zeroize"
+        ],
+        "host-c-linux": [
+          "zeroize"
+        ],
+        "host-c-macos": [
+          "zeroize"
+        ],
+        "host-c-windows": [
+          "zeroize"
+        ],
+        "wasm": [
+          "zeroize"
+        ]
       },
       "name": "hybrid-array",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -10172,6 +10709,37 @@
         "tokens": 19
       },
       "version": "0.3.103"
+    },
+    {
+      "graphs": {
+        "android": [],
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
+        "desktop-linux": [],
+        "desktop-macos": [],
+        "desktop-windows": [],
+        "esp32-c6": [],
+        "esp32-s3-heltec": [],
+        "esp32-s3-heltec-e290": [],
+        "esp32-s3-heltec-r8": [],
+        "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
+        "ios": [],
+        "nrf52840": []
+      },
+      "name": "keccak",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 4,
+        "externs": 0,
+        "functions": 6,
+        "impls": 0,
+        "tokens": 10
+      },
+      "version": "0.2.2"
     },
     {
       "graphs": {
@@ -14508,11 +15076,11 @@
       "name": "personal-hopspot-esp32",
       "source": "personal-hopspot/embedded/esp32",
       "unsafe": {
-        "blocks": 1012,
+        "blocks": 1013,
         "externs": 779,
         "functions": 123,
         "impls": 39,
-        "tokens": 2086
+        "tokens": 2087
       },
       "version": "0.1.0"
     },
@@ -14946,6 +15514,71 @@
     },
     {
       "graphs": {
+        "android": [
+          "alloc"
+        ],
+        "daemon-linux": [
+          "alloc"
+        ],
+        "daemon-macos": [
+          "alloc"
+        ],
+        "daemon-windows": [
+          "alloc"
+        ],
+        "desktop-linux": [
+          "alloc"
+        ],
+        "desktop-macos": [
+          "alloc"
+        ],
+        "desktop-windows": [
+          "alloc"
+        ],
+        "esp32-c6": [
+          "alloc"
+        ],
+        "esp32-s3-heltec": [
+          "alloc"
+        ],
+        "esp32-s3-heltec-e290": [
+          "alloc"
+        ],
+        "esp32-s3-heltec-r8": [
+          "alloc"
+        ],
+        "esp32-s3-tbeam": [
+          "alloc"
+        ],
+        "host-c-linux": [
+          "alloc"
+        ],
+        "host-c-macos": [
+          "alloc"
+        ],
+        "host-c-windows": [
+          "alloc"
+        ],
+        "ios": [
+          "alloc"
+        ],
+        "nrf52840": [
+          "alloc"
+        ]
+      },
+      "name": "pkcs8",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.11.0"
+    },
+    {
+      "graphs": {
         "daemon-linux": [],
         "desktop-linux": [],
         "desktop-macos": [],
@@ -15249,9 +15882,6 @@
         "host-c-windows": [
           "simd",
           "std"
-        ],
-        "nrf52840": [
-          "simd"
         ]
       },
       "name": "ppv-lite86",
@@ -15289,6 +15919,7 @@
       "graphs": {
         "android": [
           "alloc",
+          "ed25519-batch",
           "embassy-host",
           "flash",
           "parallel-persistence",
@@ -15299,6 +15930,7 @@
         ],
         "daemon-linux": [
           "alloc",
+          "ed25519-batch",
           "embassy-host",
           "flash",
           "i2p",
@@ -15314,6 +15946,7 @@
         ],
         "daemon-macos": [
           "alloc",
+          "ed25519-batch",
           "embassy-host",
           "flash",
           "i2p",
@@ -15329,6 +15962,7 @@
         ],
         "daemon-windows": [
           "alloc",
+          "ed25519-batch",
           "embassy-host",
           "flash",
           "i2p",
@@ -15344,6 +15978,7 @@
         ],
         "desktop-linux": [
           "alloc",
+          "ed25519-batch",
           "embassy-host",
           "flash",
           "parallel-persistence",
@@ -15354,6 +15989,7 @@
         ],
         "desktop-macos": [
           "alloc",
+          "ed25519-batch",
           "embassy-host",
           "flash",
           "parallel-persistence",
@@ -15364,6 +16000,7 @@
         ],
         "desktop-windows": [
           "alloc",
+          "ed25519-batch",
           "embassy-host",
           "flash",
           "parallel-persistence",
@@ -15382,6 +16019,7 @@
         ],
         "esp32-c6": [
           "alloc",
+          "ed25519-batch",
           "embassy-host",
           "external-alloc",
           "flash",
@@ -15390,6 +16028,7 @@
         ],
         "esp32-s3-heltec": [
           "alloc",
+          "ed25519-batch",
           "embassy-host",
           "external-alloc",
           "flash",
@@ -15398,6 +16037,7 @@
         ],
         "esp32-s3-heltec-e290": [
           "alloc",
+          "ed25519-batch",
           "embassy-host",
           "external-alloc",
           "flash",
@@ -15406,6 +16046,7 @@
         ],
         "esp32-s3-heltec-r8": [
           "alloc",
+          "ed25519-batch",
           "embassy-host",
           "external-alloc",
           "flash",
@@ -15414,6 +16055,7 @@
         ],
         "esp32-s3-tbeam": [
           "alloc",
+          "ed25519-batch",
           "embassy-host",
           "external-alloc",
           "flash",
@@ -15422,6 +16064,7 @@
         ],
         "host-c-linux": [
           "alloc",
+          "ed25519-batch",
           "embassy-host",
           "flash",
           "i2p",
@@ -15433,6 +16076,7 @@
         ],
         "host-c-macos": [
           "alloc",
+          "ed25519-batch",
           "embassy-host",
           "flash",
           "i2p",
@@ -15444,6 +16088,7 @@
         ],
         "host-c-windows": [
           "alloc",
+          "ed25519-batch",
           "embassy-host",
           "flash",
           "i2p",
@@ -15455,6 +16100,7 @@
         ],
         "ios": [
           "alloc",
+          "ed25519-batch",
           "embassy-host",
           "flash",
           "parallel-persistence",
@@ -15464,6 +16110,7 @@
         ],
         "nrf52840": [
           "alloc",
+          "ed25519-batch",
           "embassy-host",
           "flash",
           "std",
@@ -16944,8 +17591,7 @@
         ],
         "host-c-windows": [
           "std"
-        ],
-        "nrf52840": []
+        ]
       },
       "name": "rand_chacha",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -16960,11 +17606,25 @@
     },
     {
       "graphs": {
+        "android": [],
+        "daemon-linux": [],
+        "daemon-macos": [],
+        "daemon-windows": [],
+        "desktop-linux": [],
+        "desktop-macos": [],
+        "desktop-windows": [],
+        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
-        "esp32-s3-tbeam": []
+        "esp32-s3-tbeam": [],
+        "host-c-linux": [],
+        "host-c-macos": [],
+        "host-c-windows": [],
+        "ios": [],
+        "nrf52840": [],
+        "wasm": []
       },
       "name": "rand_core",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -16990,18 +17650,12 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
-        "engine": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
-        "host-c-linux": [],
-        "host-c-macos": [],
-        "host-c-windows": [],
-        "ios": [],
-        "nrf52840": [],
-        "wasm": []
+        "nrf52840": []
       },
       "name": "rand_core",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -17149,25 +17803,10 @@
         "impls": 1,
         "tokens": 1
       },
-      "version": "1.12.3"
+      "version": "1.13.1"
     },
     {
       "graphs": {
-        "android": [
-          "alloc",
-          "dfa-onepass",
-          "hybrid",
-          "meta",
-          "nfa-backtrack",
-          "nfa-pikevm",
-          "nfa-thompson",
-          "perf-inline",
-          "perf-literal",
-          "perf-literal-multisubstring",
-          "perf-literal-substring",
-          "std",
-          "syntax"
-        ],
         "desktop-linux": [
           "alloc",
           "dfa-build",
@@ -17245,22 +17884,37 @@
     {
       "graphs": {
         "android": [
-          "std"
+          "alloc",
+          "dfa-onepass",
+          "hybrid",
+          "meta",
+          "nfa-backtrack",
+          "nfa-pikevm",
+          "nfa-thompson",
+          "perf-inline",
+          "perf-literal",
+          "perf-literal-multisubstring",
+          "perf-literal-substring",
+          "std",
+          "syntax"
         ]
       },
-      "name": "regex-syntax",
+      "name": "regex-automata",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "unsafe": {
-        "blocks": 0,
+        "blocks": 35,
         "externs": 0,
-        "functions": 0,
-        "impls": 0,
-        "tokens": 0
+        "functions": 12,
+        "impls": 7,
+        "tokens": 55
       },
-      "version": "0.8.10"
+      "version": "0.4.16"
     },
     {
       "graphs": {
+        "android": [
+          "std"
+        ],
         "daemon-linux": [
           "std"
         ],
@@ -17584,7 +18238,7 @@
         "impls": 6,
         "tokens": 61
       },
-      "version": "0.3.4"
+      "version": "0.3.5"
     },
     {
       "graphs": {
@@ -17895,12 +18549,14 @@
     },
     {
       "graphs": {
+        "daemon-linux": [],
         "desktop-linux": [],
         "esp32-c6": [],
         "esp32-s3-heltec": [],
         "esp32-s3-heltec-e290": [],
         "esp32-s3-heltec-r8": [],
         "esp32-s3-tbeam": [],
+        "host-c-linux": [],
         "nrf-dfu-browser": [],
         "nrf52840": [],
         "wasm": []
@@ -17915,22 +18571,6 @@
         "tokens": 2
       },
       "version": "1.0.22"
-    },
-    {
-      "graphs": {
-        "daemon-linux": [],
-        "host-c-linux": []
-      },
-      "name": "rustversion",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "unsafe": {
-        "blocks": 1,
-        "externs": 0,
-        "functions": 1,
-        "impls": 0,
-        "tokens": 2
-      },
-      "version": "1.0.23"
     },
     {
       "graphs": {
@@ -18295,78 +18935,105 @@
     {
       "graphs": {
         "android": [
+          "alloc",
           "default",
           "derive",
           "serde_derive",
           "std"
         ],
         "daemon-linux": [
+          "alloc",
           "default",
           "derive",
           "serde_derive",
           "std"
         ],
         "daemon-macos": [
+          "alloc",
           "default",
           "derive",
           "serde_derive",
           "std"
         ],
         "daemon-windows": [
+          "alloc",
           "default",
           "derive",
           "serde_derive",
           "std"
         ],
         "desktop-linux": [
+          "alloc",
           "default",
           "derive",
           "serde_derive",
           "std"
         ],
         "desktop-macos": [
+          "alloc",
           "default",
           "derive",
           "serde_derive",
           "std"
         ],
         "desktop-windows": [
+          "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "engine": [
+          "alloc",
           "default",
           "derive",
           "serde_derive",
           "std"
         ],
         "esp32-c6": [
+          "alloc",
           "default",
           "derive",
           "serde_derive",
           "std"
         ],
         "esp32-s3-heltec": [
+          "alloc",
           "default",
           "derive",
           "serde_derive",
           "std"
         ],
         "esp32-s3-heltec-e290": [
+          "alloc",
           "default",
           "derive",
           "serde_derive",
           "std"
         ],
         "esp32-s3-heltec-r8": [
+          "alloc",
           "default",
           "derive",
           "serde_derive",
           "std"
         ],
         "esp32-s3-tbeam": [
+          "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "ios": [
+          "alloc",
           "default",
           "derive",
           "serde_derive",
           "std"
         ],
         "nrf52840": [
+          "alloc",
           "default",
           "derive",
           "serde_derive",
@@ -18387,12 +19054,21 @@
     {
       "graphs": {
         "host-c-linux": [
+          "alloc",
           "default",
           "derive",
           "serde_derive",
           "std"
         ],
         "host-c-macos": [
+          "alloc",
+          "default",
+          "derive",
+          "serde_derive",
+          "std"
+        ],
+        "host-c-windows": [
+          "alloc",
           "default",
           "derive",
           "serde_derive",
@@ -18515,7 +19191,13 @@
           "result",
           "std"
         ],
+        "ios": [
+          "alloc",
+          "result",
+          "std"
+        ],
         "nrf52840": [
+          "alloc",
           "result",
           "std"
         ]
@@ -18539,6 +19221,11 @@
           "std"
         ],
         "host-c-macos": [
+          "alloc",
+          "result",
+          "std"
+        ],
+        "host-c-windows": [
           "alloc",
           "result",
           "std"
@@ -18578,6 +19265,9 @@
         "desktop-windows": [
           "default"
         ],
+        "engine": [
+          "default"
+        ],
         "esp32-c6": [
           "default"
         ],
@@ -18591,6 +19281,9 @@
           "default"
         ],
         "esp32-s3-tbeam": [
+          "default"
+        ],
+        "ios": [
           "default"
         ],
         "nrf52840": [
@@ -18614,6 +19307,9 @@
           "default"
         ],
         "host-c-macos": [
+          "default"
+        ],
+        "host-c-windows": [
           "default"
         ]
       },
@@ -18844,7 +19540,6 @@
     },
     {
       "graphs": {
-        "android": [],
         "daemon-linux": [
           "default",
           "std"
@@ -18856,25 +19551,7 @@
         "daemon-windows": [
           "default",
           "std"
-        ],
-        "desktop-linux": [],
-        "desktop-macos": [],
-        "desktop-windows": [],
-        "engine": [
-          "default",
-          "std"
-        ],
-        "esp32-c6": [],
-        "esp32-s3-heltec": [],
-        "esp32-s3-heltec-e290": [],
-        "esp32-s3-heltec-r8": [],
-        "esp32-s3-tbeam": [],
-        "host-c-linux": [],
-        "host-c-macos": [],
-        "host-c-windows": [],
-        "ios": [],
-        "nrf52840": [],
-        "wasm": []
+        ]
       },
       "name": "sha2",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -18889,29 +19566,66 @@
     },
     {
       "graphs": {
-        "android": [],
-        "daemon-linux": [],
-        "daemon-macos": [],
-        "daemon-windows": [],
-        "desktop-linux": [],
-        "desktop-macos": [],
-        "desktop-windows": [],
+        "android": [
+          "zeroize"
+        ],
+        "daemon-linux": [
+          "zeroize"
+        ],
+        "daemon-macos": [
+          "zeroize"
+        ],
+        "daemon-windows": [
+          "zeroize"
+        ],
+        "desktop-linux": [
+          "zeroize"
+        ],
+        "desktop-macos": [
+          "zeroize"
+        ],
+        "desktop-windows": [
+          "zeroize"
+        ],
         "engine": [
           "alloc",
           "default",
-          "oid"
+          "oid",
+          "zeroize"
         ],
-        "esp32-c6": [],
-        "esp32-s3-heltec": [],
-        "esp32-s3-heltec-e290": [],
-        "esp32-s3-heltec-r8": [],
-        "esp32-s3-tbeam": [],
-        "host-c-linux": [],
-        "host-c-macos": [],
-        "host-c-windows": [],
-        "ios": [],
-        "nrf52840": [],
-        "wasm": []
+        "esp32-c6": [
+          "zeroize"
+        ],
+        "esp32-s3-heltec": [
+          "zeroize"
+        ],
+        "esp32-s3-heltec-e290": [
+          "zeroize"
+        ],
+        "esp32-s3-heltec-r8": [
+          "zeroize"
+        ],
+        "esp32-s3-tbeam": [
+          "zeroize"
+        ],
+        "host-c-linux": [
+          "zeroize"
+        ],
+        "host-c-macos": [
+          "zeroize"
+        ],
+        "host-c-windows": [
+          "zeroize"
+        ],
+        "ios": [
+          "zeroize"
+        ],
+        "nrf52840": [
+          "zeroize"
+        ],
+        "wasm": [
+          "zeroize"
+        ]
       },
       "name": "sha2",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -19055,24 +19769,75 @@
     },
     {
       "graphs": {
-        "android": [],
-        "daemon-linux": [],
-        "daemon-macos": [],
-        "daemon-windows": [],
-        "desktop-linux": [],
-        "desktop-macos": [],
-        "desktop-windows": [],
+        "android": [
+          "alloc",
+          "rand_core"
+        ],
+        "daemon-linux": [
+          "alloc",
+          "rand_core"
+        ],
+        "daemon-macos": [
+          "alloc",
+          "rand_core"
+        ],
+        "daemon-windows": [
+          "alloc",
+          "rand_core"
+        ],
+        "desktop-linux": [
+          "alloc",
+          "rand_core"
+        ],
+        "desktop-macos": [
+          "alloc",
+          "rand_core"
+        ],
+        "desktop-windows": [
+          "alloc",
+          "rand_core"
+        ],
         "engine": [],
-        "esp32-c6": [],
-        "esp32-s3-heltec": [],
-        "esp32-s3-heltec-e290": [],
-        "esp32-s3-heltec-r8": [],
-        "esp32-s3-tbeam": [],
-        "host-c-linux": [],
-        "host-c-macos": [],
-        "host-c-windows": [],
-        "ios": [],
-        "nrf52840": [],
+        "esp32-c6": [
+          "alloc",
+          "rand_core"
+        ],
+        "esp32-s3-heltec": [
+          "alloc",
+          "rand_core"
+        ],
+        "esp32-s3-heltec-e290": [
+          "alloc",
+          "rand_core"
+        ],
+        "esp32-s3-heltec-r8": [
+          "alloc",
+          "rand_core"
+        ],
+        "esp32-s3-tbeam": [
+          "alloc",
+          "rand_core"
+        ],
+        "host-c-linux": [
+          "alloc",
+          "rand_core"
+        ],
+        "host-c-macos": [
+          "alloc",
+          "rand_core"
+        ],
+        "host-c-windows": [
+          "alloc",
+          "rand_core"
+        ],
+        "ios": [
+          "alloc",
+          "rand_core"
+        ],
+        "nrf52840": [
+          "alloc",
+          "rand_core"
+        ],
         "wasm": []
       },
       "name": "signature",
@@ -19084,7 +19849,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "2.2.0"
+      "version": "3.0.0"
     },
     {
       "graphs": {
@@ -19673,6 +20438,71 @@
     },
     {
       "graphs": {
+        "android": [
+          "alloc"
+        ],
+        "daemon-linux": [
+          "alloc"
+        ],
+        "daemon-macos": [
+          "alloc"
+        ],
+        "daemon-windows": [
+          "alloc"
+        ],
+        "desktop-linux": [
+          "alloc"
+        ],
+        "desktop-macos": [
+          "alloc"
+        ],
+        "desktop-windows": [
+          "alloc"
+        ],
+        "esp32-c6": [
+          "alloc"
+        ],
+        "esp32-s3-heltec": [
+          "alloc"
+        ],
+        "esp32-s3-heltec-e290": [
+          "alloc"
+        ],
+        "esp32-s3-heltec-r8": [
+          "alloc"
+        ],
+        "esp32-s3-tbeam": [
+          "alloc"
+        ],
+        "host-c-linux": [
+          "alloc"
+        ],
+        "host-c-macos": [
+          "alloc"
+        ],
+        "host-c-windows": [
+          "alloc"
+        ],
+        "ios": [
+          "alloc"
+        ],
+        "nrf52840": [
+          "alloc"
+        ]
+      },
+      "name": "spki",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.8.0"
+    },
+    {
+      "graphs": {
         "esp32-s3-heltec": [
           "default",
           "embedded-graphics-core",
@@ -19764,6 +20594,7 @@
         "desktop-linux": [],
         "desktop-macos": [],
         "desktop-windows": [],
+        "engine": [],
         "host-c-linux": [],
         "host-c-macos": [],
         "host-c-windows": []
@@ -19809,6 +20640,71 @@
         "tokens": 6
       },
       "version": "2.1.1"
+    },
+    {
+      "graphs": {
+        "android": [
+          "default"
+        ],
+        "daemon-linux": [
+          "default"
+        ],
+        "daemon-macos": [
+          "default"
+        ],
+        "daemon-windows": [
+          "default"
+        ],
+        "desktop-linux": [
+          "default"
+        ],
+        "desktop-macos": [
+          "default"
+        ],
+        "desktop-windows": [
+          "default"
+        ],
+        "esp32-c6": [
+          "default"
+        ],
+        "esp32-s3-heltec": [
+          "default"
+        ],
+        "esp32-s3-heltec-e290": [
+          "default"
+        ],
+        "esp32-s3-heltec-r8": [
+          "default"
+        ],
+        "esp32-s3-tbeam": [
+          "default"
+        ],
+        "host-c-linux": [
+          "default"
+        ],
+        "host-c-macos": [
+          "default"
+        ],
+        "host-c-windows": [
+          "default"
+        ],
+        "ios": [
+          "default"
+        ],
+        "nrf52840": [
+          "default"
+        ]
+      },
+      "name": "strobe-rs",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 0,
+        "externs": 0,
+        "functions": 0,
+        "impls": 0,
+        "tokens": 0
+      },
+      "version": "0.13.0"
     },
     {
       "graphs": {
@@ -19957,25 +20853,63 @@
     },
     {
       "graphs": {
-        "android": [],
-        "daemon-linux": [],
-        "daemon-macos": [],
-        "daemon-windows": [],
-        "desktop-linux": [],
-        "desktop-macos": [],
-        "desktop-windows": [],
-        "engine": [],
-        "esp32-c6": [],
-        "esp32-s3-heltec": [],
-        "esp32-s3-heltec-e290": [],
-        "esp32-s3-heltec-r8": [],
-        "esp32-s3-tbeam": [],
-        "host-c-linux": [],
-        "host-c-macos": [],
-        "host-c-windows": [],
-        "ios": [],
-        "nrf52840": [],
-        "wasm": []
+        "android": [
+          "const-generics"
+        ],
+        "daemon-linux": [
+          "const-generics"
+        ],
+        "daemon-macos": [
+          "const-generics"
+        ],
+        "daemon-windows": [
+          "const-generics"
+        ],
+        "desktop-linux": [
+          "const-generics"
+        ],
+        "desktop-macos": [
+          "const-generics"
+        ],
+        "desktop-windows": [
+          "const-generics"
+        ],
+        "engine": [
+          "const-generics"
+        ],
+        "esp32-c6": [
+          "const-generics"
+        ],
+        "esp32-s3-heltec": [
+          "const-generics"
+        ],
+        "esp32-s3-heltec-e290": [
+          "const-generics"
+        ],
+        "esp32-s3-heltec-r8": [
+          "const-generics"
+        ],
+        "esp32-s3-tbeam": [
+          "const-generics"
+        ],
+        "host-c-linux": [
+          "const-generics"
+        ],
+        "host-c-macos": [
+          "const-generics"
+        ],
+        "host-c-windows": [
+          "const-generics"
+        ],
+        "ios": [
+          "const-generics"
+        ],
+        "nrf52840": [
+          "const-generics"
+        ],
+        "wasm": [
+          "const-generics"
+        ]
       },
       "name": "subtle",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
@@ -20395,30 +21329,6 @@
     },
     {
       "graphs": {
-        "desktop-linux": [
-          "clone-impls",
-          "default",
-          "derive",
-          "full",
-          "parsing",
-          "printing",
-          "proc-macro",
-          "visit-mut"
-        ]
-      },
-      "name": "syn",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "unsafe": {
-        "blocks": 39,
-        "externs": 0,
-        "functions": 2,
-        "impls": 3,
-        "tokens": 78
-      },
-      "version": "3.0.2"
-    },
-    {
-      "graphs": {
         "daemon-linux": [
           "clone-impls",
           "default",
@@ -20478,6 +21388,30 @@
         "tokens": 78
       },
       "version": "3.0.3"
+    },
+    {
+      "graphs": {
+        "desktop-linux": [
+          "clone-impls",
+          "default",
+          "derive",
+          "full",
+          "parsing",
+          "printing",
+          "proc-macro",
+          "visit-mut"
+        ]
+      },
+      "name": "syn",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "unsafe": {
+        "blocks": 39,
+        "externs": 0,
+        "functions": 2,
+        "impls": 3,
+        "tokens": 78
+      },
+      "version": "3.0.4"
     },
     {
       "graphs": {
@@ -21658,6 +22592,12 @@
     },
     {
       "graphs": {
+        "daemon-linux": [
+          "parse"
+        ],
+        "desktop-linux": [
+          "parse"
+        ],
         "esp32-c6": [
           "parse"
         ],
@@ -21684,26 +22624,6 @@
         "tokens": 0
       },
       "version": "0.25.12+spec-1.1.0"
-    },
-    {
-      "graphs": {
-        "daemon-linux": [
-          "parse"
-        ],
-        "desktop-linux": [
-          "parse"
-        ]
-      },
-      "name": "toml_edit",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "unsafe": {
-        "blocks": 0,
-        "externs": 0,
-        "functions": 0,
-        "impls": 0,
-        "tokens": 0
-      },
-      "version": "0.25.13+spec-1.1.0"
     },
     {
       "graphs": {
@@ -23620,6 +24540,10 @@
           "Win32_Graphics_Dwm",
           "Win32_Graphics_Gdi",
           "Win32_Media",
+          "Win32_NetworkManagement",
+          "Win32_NetworkManagement_IpHelper",
+          "Win32_Networking",
+          "Win32_Networking_WinSock",
           "Win32_Security",
           "Win32_System",
           "Win32_System_Com",
@@ -24145,7 +25069,7 @@
         "impls": 0,
         "tokens": 0
       },
-      "version": "2.0.1"
+      "version": "3.0.0"
     },
     {
       "graphs": {
@@ -24510,6 +25434,7 @@
       "graphs": {
         "android": [
           "alloc",
+          "default",
           "derive",
           "zeroize_derive"
         ],
@@ -24539,36 +25464,43 @@
         ],
         "esp32-c6": [
           "alloc",
+          "default",
           "derive",
           "zeroize_derive"
         ],
         "esp32-s3-heltec": [
           "alloc",
+          "default",
           "derive",
           "zeroize_derive"
         ],
         "esp32-s3-heltec-e290": [
           "alloc",
+          "default",
           "derive",
           "zeroize_derive"
         ],
         "esp32-s3-heltec-r8": [
           "alloc",
+          "default",
           "derive",
           "zeroize_derive"
         ],
         "esp32-s3-tbeam": [
           "alloc",
+          "default",
           "derive",
           "zeroize_derive"
         ],
         "ios": [
           "alloc",
+          "default",
           "derive",
           "zeroize_derive"
         ],
         "nrf52840": [
           "alloc",
+          "default",
           "derive",
           "zeroize_derive"
         ]
@@ -24588,16 +25520,19 @@
       "graphs": {
         "desktop-linux": [
           "alloc",
+          "default",
           "derive",
           "zeroize_derive"
         ],
         "desktop-macos": [
           "alloc",
+          "default",
           "derive",
           "zeroize_derive"
         ],
         "desktop-windows": [
           "alloc",
+          "default",
           "derive",
           "zeroize_derive"
         ],
