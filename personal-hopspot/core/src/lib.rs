@@ -15,6 +15,7 @@ mod mobile;
 pub mod node_pages;
 mod persistence;
 mod radio_profile_store;
+mod remote_control;
 #[cfg(feature = "display")]
 mod screen;
 mod soft_ap;
@@ -72,6 +73,12 @@ pub use prns_core::capabilities::power::{
 };
 pub use radio_profile_store::{
     LoadedRadioProfile, RadioProfileLoadNotice, RadioProfileStore, RadioProfileStoreError,
+};
+pub use remote_control::{
+    RemoteControlEventHandoff, RemoteControlPairingAvailability, RemoteControlTargetPairingFailure,
+    RemoteControlTargetPairingPhase, RemoteControlTargetPairingState,
+    RemoteControlTargetPairingUpdate, StableTargetAnnouncementAction,
+    StableTargetAnnouncementStatus, StableTargetAnnouncer, STABLE_TARGET_ANNOUNCE_OFFSETS_MILLIS,
 };
 #[cfg(feature = "display")]
 pub use screen::{

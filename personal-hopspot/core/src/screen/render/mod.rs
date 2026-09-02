@@ -21,6 +21,8 @@ use cards::{draw_card_peek, draw_card_with_selection, draw_footer, draw_global_r
 use glyphs::draw_title_bar;
 use gnss::draw_gnss_panel;
 use layout::*;
+#[cfg(feature = "remote-control-pairing")]
+use menus::draw_remote_control_pairing;
 use menus::lora::draw_lora_editor;
 use menus::{
     draw_global_menu, draw_interface_menu, draw_limits_page, draw_notice, draw_radio_confirm,
@@ -66,6 +68,12 @@ pub(super) fn draw<D: DrawTarget<Color = BinaryColor>>(
 
     if let UiMode::ConfirmRadioSwap { confirm } = state.mode {
         draw_radio_confirm(display, confirm, state.access_point);
+        return;
+    }
+
+    #[cfg(feature = "remote-control-pairing")]
+    if let UiMode::RemoteControlPairing { .. } = state.mode {
+        draw_remote_control_pairing(display, state);
         return;
     }
 
