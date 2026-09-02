@@ -1245,6 +1245,35 @@ public sealed class PrnsHost : IAsyncDisposable
             CommandFailureKind.ConnectFailed => new CommandFailure.ConnectFailed(detail),
             CommandFailureKind.BackendFailed => new CommandFailure.BackendFailed(detail),
             CommandFailureKind.ResponseTooLarge => new CommandFailure.ResponseTooLarge(),
+            CommandFailureKind.LinkClosed => new CommandFailure.LinkClosed(),
+            CommandFailureKind.ResponseCancelledBySender =>
+                new CommandFailure.ResponseCancelledBySender(),
+            CommandFailureKind.ResponseHashmapBeyondPartCount =>
+                new CommandFailure.ResponseHashmapBeyondPartCount(),
+            CommandFailureKind.ResponseHashmapSkipsAhead =>
+                new CommandFailure.ResponseHashmapSkipsAhead(),
+            CommandFailureKind.ResponseHashmapTooLong =>
+                new CommandFailure.ResponseHashmapTooLong(),
+            CommandFailureKind.ResponseHashmapRagged =>
+                new CommandFailure.ResponseHashmapRagged(),
+            CommandFailureKind.ResponseRetriesExhausted =>
+                new CommandFailure.ResponseRetriesExhausted(),
+            CommandFailureKind.ResponseLinkVanished =>
+                new CommandFailure.ResponseLinkVanished(),
+            CommandFailureKind.ResponseTransferUnopenable =>
+                new CommandFailure.ResponseTransferUnopenable(),
+            CommandFailureKind.ResponseTransferCorrupt =>
+                new CommandFailure.ResponseTransferCorrupt(),
+            CommandFailureKind.ResponseProofUnsendable =>
+                new CommandFailure.ResponseProofUnsendable(),
+            CommandFailureKind.ResponseDecompressionFailed =>
+                new CommandFailure.ResponseDecompressionFailed(),
+            CommandFailureKind.ResponseDecompressionTimedOut =>
+                new CommandFailure.ResponseDecompressionTimedOut(),
+            CommandFailureKind.ResponseOpenTimedOut =>
+                new CommandFailure.ResponseOpenTimedOut(),
+            CommandFailureKind.ResponseMetadataOverrun =>
+                new CommandFailure.ResponseMetadataOverrun(),
             _ => throw new InvalidOperationException("Unknown native command failure."),
         };
     }

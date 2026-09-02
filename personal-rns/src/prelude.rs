@@ -1,36 +1,63 @@
 pub use crate::{
-    request_endpoints, AnnounceNowError, CommandId, DestinationHash, Diagnostic, InterfaceStatus,
-    ManuallyAttached, Message, NoPersistence, PacketReceiptDelivered, PreConfiguredDestination,
+    request_endpoints, AnnounceNowError, ApproveRemoteControlControllerPairingControlError,
+    ApproveRemoteControlControllerPairingControlFailure,
+    ApproveRemoteControlTargetPairingControlError, AuthorizedRemoteControlTarget,
+    BeginRemoteControlControllerPairingControlError,
+    BeginRemoteControlControllerPairingControlFailure, CloseRemoteControlPairingControlError,
+    CloseRemoteControlTargetOutcome, CommandId, ConnectRemoteControlTargetError, DestinationHash,
+    Diagnostic, ForgetRemoteControlTargetControlError, ForgetRemoteControlTargetServiceError,
+    InitiateRemoteControlControllerPairing, InitiateRemoteControlControllerPairingError,
+    InterfaceStatus, ManuallyAttached, Message, NoPersistence,
+    OpenRemoteControlPairingControlError, PacketReceiptDelivered, PreConfiguredDestination,
     PrnsCommand, PrnsEvent, PrnsNodeApi, PrnsNodeRecipe, ProofStrategy, RatchetPolicy,
-    RemoteControlAccessControl, RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure,
-    RemoteControlDescribe, RemoteControlError, ResourceMemoryLimits, ResourceStrategy,
-    RevokeRemoteControlControllerControlError, RuntimeHealth, SendError,
-    SetRegisteredAnnounceAppDataError, SetRemoteControlControllerGrantControlError, Zeroizing,
+    RejectRemoteControlControllerPairingControlError, RejectRemoteControlTargetPairingControlError,
+    RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure,
+    RemoteControlControllerGrantControl, RemoteControlControllerPairingConfirmation,
+    RemoteControlControllerPairingInitiationControl,
+    RemoteControlControllerPairingInitiationTransport, RemoteControlDescribe, RemoteControlError,
+    RemoteControlPairingConfirmation, RemoteControlPairingControl,
+    RemoteControlPairingControlError, RemoteControlPairingLinkCleanupOutcome,
+    RemoteControlTargetAccessControl, RemoteControlTargetConnection,
+    RemoteControlTargetConnectionControl, RemoteControlTargetConnectionTransport,
+    RemoteControlTargetInventory, RemoteControlTargetInventoryControlError,
+    RemoteControlTargetInventoryError, RemoteControlTargetInventoryServiceError,
+    RemoteControlTargetOperationError, RemoteControlTargetPairingConfirmation,
+    ResolveRemoteControlTargetControlError, ResolveRemoteControlTargetServiceError,
+    ResolvedRemoteControlTarget, ResourceMemoryLimits, ResourceStrategy,
+    RevokeRemoteControlControllerControlError, RevokeRemoteControlControllerServiceError,
+    RuntimeHealth, SendError, SetRegisteredAnnounceAppDataError,
+    SetRemoteControlControllerGrantControlError, SetRemoteControlControllerGrantServiceError,
+    SetRemoteControlTargetAccessControlError, SetRemoteControlTargetAccessServiceError, Zeroizing,
     IDENTITY_SECRET_KEY_LEN,
 };
 
 pub use crate::remote_control::{
-    RemoteControlAccessTable, RemoteControlAnnounceSelfOutcome, RemoteControlControllerGrant,
-    RemoteControlControllerGrantError, RemoteControlControllerGrants,
+    FixedRemoteControlControllerGrantTable, FixedRemoteControlTargetAccessTable,
+    ForgetRemoteControlTargetOutcome, RemoteControlAnnounceSelfOutcome,
+    RemoteControlControllerGrant, RemoteControlControllerGrantError,
+    RemoteControlControllerGrantTable, RemoteControlControllerGrants,
     RemoteControlControllerGrantsError, RemoteControlControllerIdentity,
     RemoteControlControllerIdentitySecret, RemoteControlDescription, RemoteControlDescriptionError,
-    RemoteControlEndpoint, RemoteControlInitialAccess, RemoteControlMessageWriteError,
+    RemoteControlEndpoint, RemoteControlInitialControllerGrants, RemoteControlMessageWriteError,
     RemoteControlNodeIdentities, RemoteControlNodeIdentityBootstrap,
-    RemoteControlNodeIdentityBootstrapError, RemoteControlNodeIdentityGenerationError,
-    RemoteControlNodeIdentityOrigins, RemoteControlNodeIdentitySecrets,
-    RemoteControlNodeIdentitySecretsError, RemoteControlProtocolError,
-    RemoteControlProtocolErrorKind, RemoteControlProtocolVersion, RemoteControlPublicAppData,
+    RemoteControlNodeIdentityBootstrapError, RemoteControlNodeIdentityOrigins,
+    RemoteControlNodeIdentitySecrets, RemoteControlNodeIdentitySecretsError,
+    RemoteControlProtocolError, RemoteControlProtocolErrorKind, RemoteControlProtocolVersion,
     RemoteControlRequest, RemoteControlRequestKind, RemoteControlRequestParseError,
     RemoteControlRequestSet, RemoteControlResponse, RemoteControlResponseKind,
     RemoteControlResponseParseError, RemoteControlSelfAnnouncement, RemoteControlService,
+    RemoteControlTargetAccess, RemoteControlTargetAccessError, RemoteControlTargetAccessTable,
     RemoteControlTargetIdentity, RemoteControlTargetIdentitySecret,
-    RevokeRemoteControlControllerError, RevokeRemoteControlControllerOutcome,
-    SetRemoteControlControllerGrantError, SetRemoteControlControllerGrantOutcome,
+    RevokeRemoteControlControllerOutcome, SetRemoteControlControllerGrantError,
+    SetRemoteControlControllerGrantOutcome, SetRemoteControlTargetAccessError,
+    SetRemoteControlTargetAccessOutcome, DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES,
     REMOTE_CONTROL_IDENTITY_VAULT_SLOTS, REMOTE_CONTROL_REQUEST_ENDPOINT_ID,
 };
 
 #[cfg(feature = "alloc")]
-pub use crate::remote_control::HeapRemoteControlAccessTable;
+pub use crate::remote_control::{
+    HeapRemoteControlControllerGrantTable, HeapRemoteControlTargetAccessTable,
+};
 
 pub use crate::engine::{
     AnnounceAppData, AnnounceNow, AnnounceTarget, PersistenceFlushCause, PersistenceFlushTarget,
@@ -53,9 +80,9 @@ pub use crate::Esp32S3;
 
 #[cfg(feature = "tokio-host")]
 pub use crate::{
-    fill_os_entropy, try_generate_identity_secret, AttachIntent, Attachable, AttachedInterface,
-    AttachedSupervisor, Fleet, PrnsNode, PrnsNodeHandle, RemoteControlFileIdentityBootstrapError,
-    RemoteControlHandle, RemoteControlIdentityDirectory,
+    try_generate_identity_secret, AttachIntent, Attachable, AttachedInterface, AttachedSupervisor,
+    Fleet, OsRuntimeEntropy, PrnsNode, PrnsNodeHandle, RemoteControlFileIdentityBootstrapError,
+    RemoteControlHandle, RemoteControlIdentityDirectory, RemoteControlTargetHandle,
 };
 
 #[cfg(feature = "tokio-host")]
@@ -66,10 +93,13 @@ pub use crate::runtime::{
 };
 
 #[cfg(all(feature = "embassy-host", not(feature = "tokio-host")))]
-pub use crate::{Fleet, PrnsNode, PrnsNodeHandle, RemoteControlHandle};
+pub use crate::{Fleet, PrnsNode, PrnsNodeHandle, RemoteControlHandle, RemoteControlTargetHandle};
 
 #[cfg(all(feature = "embassy-host", feature = "tokio-host"))]
-pub use crate::{EmbassyPrnsNode, EmbassyPrnsNodeHandle, EmbassyRemoteControlHandle};
+pub use crate::{
+    EmbassyPrnsNode, EmbassyPrnsNodeHandle, EmbassyRemoteControlHandle,
+    EmbassyRemoteControlTargetHandle,
+};
 
 #[cfg(all(feature = "ax25", feature = "tokio-host"))]
 pub use crate::ax25_kiss::Ax25KissInterface;

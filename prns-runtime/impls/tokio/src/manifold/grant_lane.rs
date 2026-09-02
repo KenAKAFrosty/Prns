@@ -14,6 +14,8 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
     }
     let filled_ready = Arc::new(Notify::new());
     let free_ready = Arc::new(Notify::new());
+    let producer_parked = Arc::new(AtomicBool::new(false));
+    let consumer_parked = Arc::new(AtomicBool::new(false));
     let announced = Arc::new(AtomicBool::new(false));
     (
         TokioGrantProducer {
@@ -23,6 +25,8 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
             granted: None,
             filled_ready: filled_ready.clone(),
             free_ready: free_ready.clone(),
+            producer_parked: producer_parked.clone(),
+            consumer_parked: consumer_parked.clone(),
             announced: announced.clone(),
         },
         TokioGrantConsumer {
@@ -31,6 +35,8 @@ pub fn tokio_grant_lane(slot_cap: usize, depth: usize) -> (TokioGrantProducer, T
             peeked: None,
             filled_ready,
             free_ready,
+            producer_parked,
+            consumer_parked,
             announced,
         },
     )
@@ -113,6 +119,8 @@ pub struct TokioGrantProducer {
     pub(super) granted: Option<HeapFrameSlot>,
     filled_ready: Arc<Notify>,
     free_ready: Arc<Notify>,
+    producer_parked: Arc<AtomicBool>,
+    consumer_parked: Arc<AtomicBool>,
     announced: Arc<AtomicBool>,
 }
 
@@ -139,7 +147,18 @@ impl TokioGrantProducer {
             }
             match self.free.pop() {
                 Ok(slot) => self.granted = Some(slot),
-                Err(PopError::Empty) => self.free_ready.notified().await,
+                Err(PopError::Empty) => {
+                    // The ring is authoritative. Advertise the cold waiter, then recheck it so a
+                    // release racing this arm either wakes us or is observed synchronously.
+                    self.producer_parked.store(true, Ordering::Release);
+                    match self.free.pop() {
+                        Ok(slot) => {
+                            self.producer_parked.store(false, Ordering::Release);
+                            self.granted = Some(slot);
+                        }
+                        Err(PopError::Empty) => self.free_ready.notified().await,
+                    }
+                }
             }
         }
     }
@@ -147,7 +166,13 @@ impl TokioGrantProducer {
     pub fn commit(&mut self) {
         if let Some(slot) = self.granted.take() {
             match self.filled.push(slot) {
-                Ok(()) => self.filled_ready.notify_one(),
+                Ok(()) => {
+                    if self.consumer_parked.load(Ordering::Acquire)
+                        && self.consumer_parked.swap(false, Ordering::AcqRel)
+                    {
+                        self.filled_ready.notify_one();
+                    }
+                }
                 Err(PushError::Full(_)) => {}
             }
         }
@@ -164,6 +189,8 @@ pub struct TokioGrantConsumer {
     peeked: Option<HeapFrameSlot>,
     filled_ready: Arc<Notify>,
     free_ready: Arc<Notify>,
+    producer_parked: Arc<AtomicBool>,
+    consumer_parked: Arc<AtomicBool>,
     announced: Arc<AtomicBool>,
 }
 
@@ -182,7 +209,18 @@ impl TokioGrantConsumer {
             }
             match self.filled.pop() {
                 Ok(slot) => self.peeked = Some(slot),
-                Err(PopError::Empty) => self.filled_ready.notified().await,
+                Err(PopError::Empty) => {
+                    // See `grant`: the post-arm recheck closes the empty-to-filled race without
+                    // paying Tokio's wake machinery while this consumer is actively draining.
+                    self.consumer_parked.store(true, Ordering::Release);
+                    match self.filled.pop() {
+                        Ok(slot) => {
+                            self.consumer_parked.store(false, Ordering::Release);
+                            self.peeked = Some(slot);
+                        }
+                        Err(PopError::Empty) => self.filled_ready.notified().await,
+                    }
+                }
             }
         }
     }
@@ -190,7 +228,13 @@ impl TokioGrantConsumer {
     pub fn release(&mut self) {
         if let Some(slot) = self.peeked.take() {
             match self.free.push(slot) {
-                Ok(()) => self.free_ready.notify_one(),
+                Ok(()) => {
+                    if self.producer_parked.load(Ordering::Acquire)
+                        && self.producer_parked.swap(false, Ordering::AcqRel)
+                    {
+                        self.free_ready.notify_one();
+                    }
+                }
                 Err(PushError::Full(_)) => {}
             }
         }
@@ -280,6 +324,31 @@ mod tests {
 
         producer.commit();
         assert_eq!(consumer.peek().await.frame(), b"next");
+    }
+
+    #[tokio::test]
+    async fn active_peers_do_not_publish_tokio_wake_permits() {
+        let (mut producer, mut consumer) = tokio_grant_lane(64, 1);
+        producer.try_grant().expect("slot available").fill(b"hot");
+        producer.commit();
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), consumer.filled_ready.notified())
+                .await
+                .is_err(),
+            "a synchronously visible frame does not need a stored wake permit",
+        );
+        assert_eq!(
+            consumer.try_peek().expect("frame available").frame(),
+            b"hot"
+        );
+        consumer.release();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), producer.free_ready.notified())
+                .await
+                .is_err(),
+            "a synchronously visible free slot does not need a stored wake permit",
+        );
     }
 
     #[tokio::test]

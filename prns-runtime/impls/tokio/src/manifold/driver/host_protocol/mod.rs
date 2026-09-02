@@ -57,7 +57,7 @@ pub enum HostCommand {
     RespondAny(RespondAnyHostCommand),
     RequestAny(RequestAnyHostCommand),
     ProvideDecompressed(ProvideDecompressedHostCommand),
-    AddInterface(AddInterfaceCommand),
+    AddInterface(Box<AddInterfaceCommand>),
     RemoveInterface {
         id: InterfaceId,
         departure: Departure,

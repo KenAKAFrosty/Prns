@@ -27,7 +27,8 @@ fn an_accepted_announce_journals_the_identity_app_data_and_path_provenance() {
     let interfaces = transporting_interfaces();
     let mut wire = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
     let mut heard = None;
-    engine.ingest_packet_into(
+    crate::engine::drive_packet_to_quiescence(
+        &mut engine,
         InboundPacket {
             arrived_at,
             source_interface,
@@ -36,7 +37,7 @@ fn an_accepted_announce_journals_the_identity_app_data_and_path_provenance() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&interfaces),
             now: arrived_at,
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_| false,
             should_accept_resource: &mut |_| false,
             sink: &mut |reaction| {

@@ -49,7 +49,7 @@ impl TokioInterfaceSeam {
 }
 
 impl InterfaceSeam for TokioInterfaceSeam {
-    fn fill_entropy(&mut self, bytes: &mut [u8]) {
+    fn fill_random(&mut self, bytes: &mut [u8]) {
         self.entropy.fill(bytes);
     }
 

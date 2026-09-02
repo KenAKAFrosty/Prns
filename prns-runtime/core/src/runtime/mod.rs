@@ -6,7 +6,13 @@ pub mod node;
 pub mod node_introspection;
 pub mod packet_phy_retention;
 mod remote_control;
-mod remote_control_access;
+mod remote_control_authorizations;
+mod remote_control_controller_grants;
+mod remote_control_pairing;
+mod remote_control_pairing_confirmation;
+mod remote_control_pairing_initiation;
+mod remote_control_target_accesses;
+mod remote_control_target_connection;
 pub mod request_endpoints;
 #[cfg(feature = "rns-management")]
 pub mod rns_management;
@@ -29,9 +35,11 @@ cfg_if::cfg_if! {
 
 pub use crate::engine::BlackholeSeedReport;
 pub use command::{
-    AnnounceNowError, ClearAnnounceQueuesOutcome, DestinationIdentityRetentionControl,
-    DestinationIdentityRetentionControlError, DropRouteOutcome, DropRoutesViaOutcome, PrnsNodeApi,
-    RoutingControl, RoutingControlError, SendError, SetRegisteredAnnounceAppDataError,
+    AnnounceNowError, ClearAnnounceQueuesOutcome, CloseRemoteControlPairingControlError,
+    DestinationIdentityRetentionControl, DestinationIdentityRetentionControlError,
+    DropRouteOutcome, DropRoutesViaOutcome, OpenRemoteControlPairingControlError, PrnsNodeApi,
+    RemoteControlPairingControlError, RoutingControl, RoutingControlError, SendError,
+    SetRegisteredAnnounceAppDataError,
 };
 pub use event::{Diagnostic, Message, PrnsEvent};
 pub use health::RuntimeHealth;
@@ -49,9 +57,44 @@ pub use remote_control::{
     RemoteControlAnnounceSelf, RemoteControlAnnounceSelfFailure, RemoteControlDescribe,
     RemoteControlError,
 };
-pub use remote_control_access::{
-    RemoteControlAccessControl, RevokeRemoteControlControllerControlError,
-    SetRemoteControlControllerGrantControlError,
+pub use remote_control_authorizations::{
+    RemoteControlAuthorizationRestoreError, RemoteControlAuthorizationRestoreOutcome,
+};
+pub use remote_control_controller_grants::{
+    RemoteControlControllerGrantControl, RevokeRemoteControlControllerControlError,
+    RevokeRemoteControlControllerServiceError, SetRemoteControlControllerGrantControlError,
+    SetRemoteControlControllerGrantServiceError,
+};
+pub use remote_control_pairing::{
+    ApproveRemoteControlControllerPairingControlError,
+    ApproveRemoteControlControllerPairingControlFailure,
+    ApproveRemoteControlTargetPairingControlError, BeginRemoteControlControllerPairingControlError,
+    BeginRemoteControlControllerPairingControlFailure,
+    RejectRemoteControlControllerPairingControlError, RejectRemoteControlTargetPairingControlError,
+    RemoteControlPairingControl, RemoteControlPairingLinkCleanupOutcome,
+};
+pub use remote_control_pairing_confirmation::{
+    RemoteControlControllerPairingConfirmation, RemoteControlPairingConfirmation,
+    RemoteControlTargetPairingConfirmation,
+};
+pub use remote_control_pairing_initiation::{
+    InitiateRemoteControlControllerPairing, InitiateRemoteControlControllerPairingError,
+    RemoteControlControllerPairingInitiationControl,
+    RemoteControlControllerPairingInitiationTransport,
+};
+pub use remote_control_target_accesses::{
+    AuthorizedRemoteControlTarget, ForgetRemoteControlTargetControlError,
+    ForgetRemoteControlTargetServiceError, RemoteControlTargetAccessControl,
+    RemoteControlTargetInventory, RemoteControlTargetInventoryControlError,
+    RemoteControlTargetInventoryError, RemoteControlTargetInventoryServiceError,
+    ResolveRemoteControlTargetControlError, ResolveRemoteControlTargetServiceError,
+    ResolvedRemoteControlTarget, SetRemoteControlTargetAccessControlError,
+    SetRemoteControlTargetAccessServiceError,
+};
+pub use remote_control_target_connection::{
+    CloseRemoteControlTargetOutcome, ConnectRemoteControlTargetError,
+    RemoteControlTargetConnection, RemoteControlTargetConnectionControl,
+    RemoteControlTargetConnectionTransport, RemoteControlTargetOperationError,
 };
 
 #[doc(hidden)]

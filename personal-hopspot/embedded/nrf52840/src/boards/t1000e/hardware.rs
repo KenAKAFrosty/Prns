@@ -45,7 +45,7 @@ pub(crate) struct T1000eBoard;
 
 impl T1000eBoard {
     pub(crate) async fn initialize<R>(
-        bootstrap: impl FnOnce(&mut Nvmc<'static>, &mut Rng<'static, Blocking>) -> R,
+        bootstrap: impl FnOnce(&mut Nvmc<'static>, Rng<'static, Blocking>) -> R,
     ) -> (R, T1000eHardware) {
         let mut nrf_config = config::Config::default();
         nrf_config.hfclk_source = HfclkSource::ExternalXtal;
@@ -55,8 +55,8 @@ impl T1000eBoard {
 
         let (identity, flash) = {
             let mut nvmc = Nvmc::new(peripherals.NVMC);
-            let mut rng = Rng::new_blocking(peripherals.RNG);
-            let identity = bootstrap(&mut nvmc, &mut rng);
+            let rng = Rng::new_blocking(peripherals.RNG);
+            let identity = bootstrap(&mut nvmc, rng);
             (identity, nvmc)
         };
 

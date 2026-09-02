@@ -70,7 +70,7 @@ impl<S: StorageLayout> EngineState<S> {
     fn fire_due_pending_resource_offers<F>(
         &mut self,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
         F: FnMut(&mut [u8]),
@@ -155,7 +155,7 @@ impl<S: StorageLayout> EngineState<S> {
                         &offer.link_id(),
                         &offer.hash(),
                         now,
-                        fill_entropy,
+                        fill_random,
                         sink,
                     );
                 }
@@ -167,7 +167,7 @@ impl<S: StorageLayout> EngineState<S> {
                         &offer.link_id(),
                         &offer.hash(),
                         now,
-                        fill_entropy,
+                        fill_random,
                         sink,
                     );
                     let Some(receipt) = self.receipts.settle_by_request_id(request_id) else {
@@ -197,14 +197,15 @@ impl<S: StorageLayout> EngineState<S> {
                 offer.accepted(),
                 offer.first_arrived_at(),
             );
-            if let crate::routing::ingress::IngestPacketOutcome::OwesResourcePull {
-                link_id,
-                hash,
-            } = outcome
-            {
-                #[cfg(feature = "runtime-metrics")]
-                self.record_resource_admission_event(ResourceAdmissionEvent::Promoted);
-                self.emit_resource_pull(&link_id, &hash, now, fill_entropy, sink);
+            match outcome {
+                super::gate::AcceptedResourceAdmission::Pull { link_id, hash } => {
+                    #[cfg(feature = "runtime-metrics")]
+                    self.record_resource_admission_event(ResourceAdmissionEvent::Promoted);
+                    self.emit_resource_pull(&link_id, &hash, now, fill_random, sink);
+                }
+                super::gate::AcceptedResourceAdmission::Pending
+                | super::gate::AcceptedResourceAdmission::CapacityRejected { .. }
+                | super::gate::AcceptedResourceAdmission::Ignored(_) => {}
             }
         }
     }
@@ -213,7 +214,7 @@ impl<S: StorageLayout> EngineState<S> {
     pub(crate) fn fire_due_incoming_resources<F>(
         &mut self,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
         F: FnMut(&mut [u8]),
@@ -244,7 +245,7 @@ impl<S: StorageLayout> EngineState<S> {
                 state.outstanding_part_count = 0;
                 state.retries_left -= 1;
             }
-            self.emit_resource_pull(&link_id, &hash, now, fill_entropy, sink);
+            self.emit_resource_pull(&link_id, &hash, now, fill_random, sink);
         }
     }
 
@@ -266,15 +267,15 @@ impl<S: StorageLayout> EngineState<S> {
     pub fn fire_due_resource_deadlines<F>(
         &mut self,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> crate::engine::WakeSchedules
     where
         F: FnMut(&mut [u8]),
     {
-        self.fire_due_outgoing_resources(now, fill_entropy, sink);
-        self.fire_due_incoming_resources(now, fill_entropy, sink);
-        self.fire_due_pending_resource_offers(now, fill_entropy, sink);
+        self.fire_due_outgoing_resources(now, fill_random, sink);
+        self.fire_due_incoming_resources(now, fill_random, sink);
+        self.fire_due_pending_resource_offers(now, fill_random, sink);
         let mut wake_schedule_changes = crate::engine::WakeSchedules::UNCHANGED;
         wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
         wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();

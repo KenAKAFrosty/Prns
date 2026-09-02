@@ -125,7 +125,7 @@ impl Forward {
                 IngestIo {
                     interfaces: AttachedInterfaces::new(relay_interfaces),
                     now: SETUP_NOW,
-                    fill_entropy: &mut |bytes| relay_entropy.fill(bytes),
+                    fill_random: &mut |bytes| relay_entropy.fill(bytes),
                     should_prove: &mut |_| true,
                     should_accept_resource: &mut |_| false,
                     sink: &mut |reaction| {
@@ -188,7 +188,7 @@ impl Forward {
                 IngestIo {
                     interfaces: AttachedInterfaces::new(down_interfaces),
                     now: REBROADCAST_NOW,
-                    fill_entropy: &mut |bytes| initiator_entropy.fill(bytes),
+                    fill_random: &mut |bytes| initiator_entropy.fill(bytes),
                     should_prove: &mut |_| true,
                     should_accept_resource: &mut |_| false,
                     sink: &mut |reaction| {
@@ -273,7 +273,7 @@ impl Forward {
             IngestIo {
                 interfaces: AttachedInterfaces::new(relay_interfaces),
                 now: FORWARD_NOW,
-                fill_entropy: &mut |bytes| relay_entropy.fill(bytes),
+                fill_random: &mut |bytes| relay_entropy.fill(bytes),
                 should_prove: &mut |_| true,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| {

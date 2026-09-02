@@ -13,11 +13,13 @@ use crate::routing::announce::schedule::{
     ScheduleOutcome, ScheduleRejection, ScheduledAnnounceQueue,
 };
 use crate::routing::announce::{
-    determine_acceptance, AnnounceAcceptanceDecision, AnnounceAcceptanceInput, AnnounceArrival,
-    AnnounceRateAccounting,
+    determine_acceptance, Announce, AnnounceAcceptanceDecision, AnnounceAcceptanceInput,
+    AnnounceArrival, AnnounceRateAccounting,
 };
 use crate::routing::warmth::WarmestOf;
-use crate::routing::{DropCause, NextHop, RemovedRoute, UpsertRouteOutcome};
+use crate::routing::{
+    DropCause, NextHop, RemovedRoute, RouteExpiresAfter, RouteRetention, UpsertRouteOutcome,
+};
 use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::wire::{DestinationHash, DestinationType, WirePacketHeader, BROADCAST_MTU};
 use heapless::Vec as HeaplessVec;
@@ -51,7 +53,8 @@ pub enum RebroadcastDecision {
     RateBlocked,
 }
 
-/// Owns the payload because the arrival slot may be recycled before deferred verification completes.
+/// Owns the payload because the arrival slot may be recycled before verification completes.
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub struct AnnounceVerifyOwed {
     pub payload: HeaplessVec<u8, BROADCAST_MTU>,
     pub header: WirePacketHeader,
@@ -60,6 +63,67 @@ pub struct AnnounceVerifyOwed {
     pub arrived_at: InstantMillis,
     pub next_hop: NextHop,
     pub is_path_response: bool,
+}
+
+pub struct VerifiedAnnounce {
+    owed: AnnounceVerifyOwed,
+}
+
+pub struct InvalidAnnounce {
+    owed: AnnounceVerifyOwed,
+}
+
+pub enum AnnounceVerification {
+    Verified(VerifiedAnnounce),
+    Invalid(InvalidAnnounce),
+}
+
+impl AnnounceVerifyOwed {
+    #[must_use]
+    pub fn verify(self) -> AnnounceVerification {
+        let signature_is_valid = Announce::from_wire_unverified(&self.header, &self.payload)
+            .is_ok_and(|announce| announce.signature_is_valid());
+        if signature_is_valid {
+            AnnounceVerification::Verified(VerifiedAnnounce { owed: self })
+        } else {
+            AnnounceVerification::Invalid(InvalidAnnounce { owed: self })
+        }
+    }
+
+    /// Accepts a successful signature verdict from a trusted external crypto backend.
+    ///
+    /// This does not repeat Ed25519 verification. Runtime adapters must call it only after the
+    /// exact public key, signed material, and signature derived from this owed value have been
+    /// verified by their external backend.
+    #[must_use]
+    pub fn verified_by_external_backend(self) -> VerifiedAnnounce {
+        VerifiedAnnounce { owed: self }
+    }
+}
+
+impl VerifiedAnnounce {
+    pub(crate) fn into_owed(self) -> AnnounceVerifyOwed {
+        self.owed
+    }
+}
+
+impl InvalidAnnounce {
+    pub const fn source_interface(&self) -> InterfaceId {
+        self.owed.source_interface
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DirectAnnounceIngest {
+    Accepted,
+    Ignored,
+    Blackholed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AnnounceRouteScope {
+    Network,
+    Direct { expires_after: RouteExpiresAfter },
 }
 
 impl<S: StorageLayout> EngineState<S> {
@@ -92,7 +156,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         arrival: &AnnounceArrival<'_>,
         interfaces: AttachedInterfaces<'_>,
-        fill_entropy: &mut impl FnMut(&mut [u8]),
+        fill_random: &mut impl FnMut(&mut [u8]),
     ) -> RebroadcastScheduleOutcome {
         let destination = arrival.announce.destination;
         let from_local_client =
@@ -175,7 +239,7 @@ impl<S: StorageLayout> EngineState<S> {
             Some((DestinationAnnounceVerdict::Allowed, rate_accounting)) => rate_accounting,
             None => AnnounceRateAccounting::NotApplied,
         };
-        let offset = jitter_offset(fill_entropy, DEFAULT_REBROADCAST_JITTER_WINDOW_MS);
+        let offset = jitter_offset(fill_random, DEFAULT_REBROADCAST_JITTER_WINDOW_MS);
         let schedule = self.scheduled_announces.schedule(
             destination,
             InstantMillis(arrival.arrived_at.0.saturating_add(offset)),
@@ -192,13 +256,69 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         identity_hash: IdentityHash,
         arrival: &AnnounceArrival<'a>,
-        fill_entropy: &mut impl FnMut(&mut [u8]),
+        fill_random: &mut impl FnMut(&mut [u8]),
         interfaces: AttachedInterfaces<'_>,
         on_removed: &mut impl FnMut(RemovedRoute),
         effects: &mut IngestEffects<'a>,
     ) -> AnnounceIngest {
+        match self.ingest_announce_route(
+            identity_hash,
+            arrival,
+            interfaces,
+            on_removed,
+            effects,
+            AnnounceRouteScope::Network,
+        ) {
+            DirectAnnounceIngest::Accepted => {
+                let rebroadcast = self.schedule_rebroadcast(arrival, interfaces, fill_random);
+                effects.accepted_announce = Some(AcceptedAnnounceEffect {
+                    observation: crate::routing::announce::AnnounceObservation::from_arrival(
+                        identity_hash,
+                        arrival,
+                    ),
+                    rate_accounting: rebroadcast.rate_accounting,
+                });
+                AnnounceIngest::Accepted(AcceptedAnnounce {
+                    destination: arrival.announce.destination,
+                    hops: arrival.hops,
+                    rebroadcast: rebroadcast.decision,
+                })
+            }
+            DirectAnnounceIngest::Ignored => AnnounceIngest::Ignored,
+            DirectAnnounceIngest::Blackholed => AnnounceIngest::Blackholed,
+        }
+    }
+
+    pub(crate) fn ingest_direct_announce<'a>(
+        &mut self,
+        identity_hash: IdentityHash,
+        arrival: &AnnounceArrival<'a>,
+        expires_after: RouteExpiresAfter,
+        interfaces: AttachedInterfaces<'_>,
+        on_removed: &mut impl FnMut(RemovedRoute),
+        effects: &mut IngestEffects<'a>,
+    ) -> DirectAnnounceIngest {
+        self.ingest_announce_route(
+            identity_hash,
+            arrival,
+            interfaces,
+            on_removed,
+            effects,
+            AnnounceRouteScope::Direct { expires_after },
+        )
+    }
+
+    fn ingest_announce_route<'a>(
+        &mut self,
+        identity_hash: IdentityHash,
+        arrival: &AnnounceArrival<'a>,
+        interfaces: AttachedInterfaces<'_>,
+        on_removed: &mut impl FnMut(RemovedRoute),
+        effects: &mut IngestEffects<'a>,
+        scope: AnnounceRouteScope,
+    ) -> DirectAnnounceIngest {
         if self.identity_blackholes.is_blackholed(&identity_hash) {
-            return AnnounceIngest::Blackholed;
+            return DirectAnnounceIngest::Blackholed;
         }
         let &AnnounceArrival {
             ref announce,
@@ -210,15 +330,18 @@ impl<S: StorageLayout> EngineState<S> {
         let mut remember_outcome =
             self.remember_announced_destination_identity(announce, arrival.arrived_at);
         if remember_outcome == RememberAnnouncedDestinationIdentityOutcome::PublicKeyChanged {
-            return AnnounceIngest::Ignored;
+            return DirectAnnounceIngest::Ignored;
         }
-        if self.network_transport_enabled() {
-            self.scheduled_announces.absorb_echo(
-                &announce.destination,
-                received_hops,
-                arrived_at,
-                MAX_PEER_EMISSIONS,
-            );
+        match scope {
+            AnnounceRouteScope::Network if self.network_transport_enabled() => {
+                self.scheduled_announces.absorb_echo(
+                    &announce.destination,
+                    received_hops,
+                    arrived_at,
+                    MAX_PEER_EMISSIONS,
+                );
+            }
+            AnnounceRouteScope::Network | AnnounceRouteScope::Direct { .. } => {}
         }
 
         self.reconcile_pending_link_route_evidence();
@@ -245,7 +368,7 @@ impl<S: StorageLayout> EngineState<S> {
                     self.unprotected_destination_identity_expiry(&announce.destination),
                 );
             }
-            return AnnounceIngest::Ignored;
+            return DirectAnnounceIngest::Ignored;
         }
 
         let previous_interface = self
@@ -261,9 +384,16 @@ impl<S: StorageLayout> EngineState<S> {
         let dirty = &mut self.dirty_interfaces;
         let destination_identities = &self.destination_identities;
         let scheduled_announces = &mut self.scheduled_announces;
-        let outcome = self.routing_table.upsert_route_with_warmth(
+        let retention = match scope {
+            AnnounceRouteScope::Network => RouteRetention::Network,
+            AnnounceRouteScope::Direct { expires_after } => {
+                RouteRetention::Ephemeral { expires_after }
+            }
+        };
+        let outcome = self.routing_table.upsert_route_with_retention_and_warmth(
             arrival,
             route_evidence_id,
+            retention,
             interfaces,
             &warmth,
             &mut |removed| {
@@ -291,23 +421,11 @@ impl<S: StorageLayout> EngineState<S> {
                     self.mark_interface_dirty(previous);
                 }
 
-                let rebroadcast = self.schedule_rebroadcast(arrival, interfaces, fill_entropy);
-                effects.accepted_announce = Some(AcceptedAnnounceEffect {
-                    observation: crate::routing::announce::AnnounceObservation::from_arrival(
-                        identity_hash,
-                        arrival,
-                    ),
-                    rate_accounting: rebroadcast.rate_accounting,
-                });
-                AnnounceIngest::Accepted(AcceptedAnnounce {
-                    destination: announce.destination,
-                    hops: received_hops,
-                    rebroadcast: rebroadcast.decision,
-                })
+                DirectAnnounceIngest::Accepted
             }
             UpsertRouteOutcome::Dropped(
                 DropCause::PayloadArenaFull | DropCause::RoutingTableFull,
-            ) => AnnounceIngest::Ignored,
+            ) => DirectAnnounceIngest::Ignored,
         }
     }
 }
@@ -358,7 +476,7 @@ mod tests {
     };
     use crate::routing::announce::Announce;
     use crate::routing::ingress::testkit::iface;
-    use crate::routing::ingress::{DeferredCrypto, IgnoreReason, IngestPacketOutcome};
+    use crate::routing::ingress::{IgnoreReason, IngestPacketOutcome};
     use crate::storage::TestFixedStorage;
     use crate::wire::{TransportId, WireContext, HEADER_MIN_LEN};
 
@@ -369,16 +487,13 @@ mod tests {
         response[HEADER_MIN_LEN - 1] = WireContext::PathResponse.to_byte();
 
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(500),
                     source_interface: iface(0xA1),
                     bytes: &mut response,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
                 destination: DestinationHash::new(
@@ -403,16 +518,13 @@ mod tests {
         let mut relay = transporting_node();
         let mut announce = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         assert!(matches!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(500),
                     source_interface: iface(0xA1),
                     bytes: &mut announce,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
                 rebroadcast: RebroadcastDecision::Scheduled,
@@ -431,16 +543,13 @@ mod tests {
         let interfaces = [routable_descriptor(app), routable_descriptor(network)];
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
 
-        let out = leaf.ingest_packet_with(
+        let out = leaf.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: app,
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&interfaces),
-            &mut |_| {},
-            None,
         );
 
         assert!(matches!(
@@ -484,7 +593,8 @@ mod tests {
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let mut sent = std::vec::Vec::new();
 
-        leaf.ingest_packet_into(
+        crate::engine::drive_packet_to_quiescence(
+            &mut leaf,
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: network,
@@ -493,7 +603,7 @@ mod tests {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&interfaces),
                 now: InstantMillis(1_000),
-                fill_entropy: &mut |_| {},
+                fill_random: &mut |_| {},
                 should_prove: &mut |_| false,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| {
@@ -567,16 +677,13 @@ mod tests {
 
         let mut relay = transporting_node();
         assert!(matches!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(10_000),
                     source_interface: source,
                     bytes: &mut first,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&rate_limited),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
                 rebroadcast: RebroadcastDecision::Scheduled,
@@ -584,16 +691,13 @@ mod tests {
             })),
         ));
         assert!(matches!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(11_000),
                     source_interface: source,
                     bytes: &mut second,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&rate_limited),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
                 rebroadcast: RebroadcastDecision::RateBlocked,
@@ -652,28 +756,22 @@ mod tests {
         }];
 
         let mut relay = transporting_node();
-        let _ = relay.ingest_packet_with(
+        let _ = relay.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(10_000),
                 source_interface: source,
                 bytes: &mut first,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&rate_limited),
-            &mut |_| {},
-            None,
         );
         assert!(matches!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(25_000),
                     source_interface: source,
                     bytes: &mut second,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&rate_limited),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(AcceptedAnnounce {
                 rebroadcast: RebroadcastDecision::Scheduled,
@@ -707,16 +805,13 @@ mod tests {
         let mut relayed = announce_buf[..announce_len].to_vec();
         relayed[1] = 1;
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: InterfaceId::new([0xA1; 8]),
                     bytes: &mut relayed,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Ignored),
             "a transport echoing our announce back must not become a route to ourselves",
@@ -733,16 +828,13 @@ mod tests {
         let mut leaf = routable_descriptor(InterfaceId::new([0xEE; 8]));
         leaf.capabilities.egress = EgressCapability::Enabled(TransportCapability::NoTransport);
 
-        let out = state.ingest_packet_with(
+        let out = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&[leaf]),
-            &mut |_| {},
-            None,
         );
 
         assert_eq!(
@@ -766,30 +858,24 @@ mod tests {
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let mut state = transporting_node();
 
-        let first = state.ingest_packet_with(
+        let first = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert_eq!(first, rns_1_4_2_announce_accepted(1));
         assert_eq!(state.route_count(), 1);
 
-        let second = state.ingest_packet_with(
+        let second = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert_eq!(
             second,
@@ -819,30 +905,24 @@ mod tests {
         let mut state = transporting_node();
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: low,
                     bytes: &mut first,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             rns_1_4_2_announce_accepted(1),
         );
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(2_000),
                     source_interface: high,
                     bytes: &mut replay,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             rns_1_4_2_announce_accepted(1),
         );
@@ -856,16 +936,13 @@ mod tests {
         );
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(3_000),
                     source_interface: invalid,
                     bytes: &mut forgery,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid),
         );
@@ -880,31 +957,24 @@ mod tests {
     }
 
     #[test]
-    fn deferred_announce_verify_matches_inline_accept_and_gates_forgeries() {
+    fn owed_announce_verification_matches_inline_accept_and_gates_forgeries() {
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let mut state = transporting_node();
-        let mut deferred = DeferredCrypto::default();
-        let outcome = state.ingest_packet_with(
+        let IngestPacketOutcome::OwesAnnounceVerify(owed) = state.ingest_packet_step_with(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            Some(&mut deferred),
-        );
-        assert_eq!(outcome, IngestPacketOutcome::OwesAnnounceVerify);
+        ) else {
+            panic!("the announce owes signature verification");
+        };
         assert_eq!(
             state.route_count(),
             0,
             "no route is learned before the verify resumes"
         );
-
-        let DeferredCrypto::AnnounceVerify(owed) = deferred else {
-            panic!("the obligation is captured for the pool");
-        };
         let announce = Announce::from_wire_unverified(&owed.header, &owed.payload)
             .expect("the captured bytes re-parse");
         assert!(announce.signature_is_valid(), "the real announce verifies");
@@ -921,9 +991,26 @@ mod tests {
             !forged_announce.signature_is_valid(),
             "the forgery is rejected by the verify"
         );
+        let forged_owed = AnnounceVerifyOwed {
+            payload: HeaplessVec::from_slice(&forged).expect("the forged payload keeps its bound"),
+            header: owed.header,
+            received_hops: owed.received_hops,
+            source_interface: owed.source_interface,
+            arrived_at: owed.arrived_at,
+            next_hop: owed.next_hop,
+            is_path_response: owed.is_path_response,
+        };
+        assert!(matches!(
+            forged_owed.verify(),
+            AnnounceVerification::Invalid(_)
+        ));
+        let verified = match owed.verify() {
+            AnnounceVerification::Verified(verified) => verified,
+            AnnounceVerification::Invalid(_) => panic!("the reference announce should verify"),
+        };
 
         state.resume_announce(
-            owed,
+            verified,
             AttachedInterfaces::new(&transporting_interfaces()),
             &mut |_| {},
             &mut |_| {},
@@ -940,32 +1027,26 @@ mod tests {
         let mut at_limit = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         at_limit[1] = 127;
         let mut state = transporting_node();
-        let out = state.ingest_packet_with(
+        let out = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut at_limit,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert_eq!(out, rns_1_4_2_announce_accepted(128));
 
         let mut beyond = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         beyond[1] = 128;
         let mut state = transporting_node();
-        let out = state.ingest_packet_with(
+        let out = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut beyond,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert_eq!(out, IngestPacketOutcome::Ignored(IgnoreReason::Malformed));
         assert_eq!(state.route_count(), 0);
@@ -980,16 +1061,13 @@ mod tests {
             DestinationHash::from_slice(&pristine[2..18]).expect("16-byte destination hash");
 
         let mut state = transporting_node();
-        let out = state.ingest_packet_with(
+        let out = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert_eq!(out, rns_1_4_2_announce_accepted(1));
 
@@ -1008,16 +1086,13 @@ mod tests {
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
 
-        let out = state.ingest_packet_with(
+        let out = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
 
         assert_eq!(
@@ -1057,16 +1132,13 @@ mod tests {
         relayed[header_len..header_len + payload.len()].copy_from_slice(payload);
 
         let mut state = transporting_node();
-        let out = state.ingest_packet_with(
+        let out = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut relayed[..header_len + payload.len()],
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert_eq!(out, rns_1_4_2_announce_accepted(2));
         assert_eq!(
@@ -1081,16 +1153,13 @@ mod tests {
 
         let mut direct = raw.clone();
         let mut fresh = transporting_node();
-        let _ = fresh.ingest_packet_with(
+        let _ = fresh.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut direct,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert_eq!(
             fresh
@@ -1109,16 +1178,13 @@ mod tests {
         let mut state =
             EngineState::<TestFixedStorage<4, 64, 8, 8, 8, 128, 8, 8, 8, 8, 16, 16>>::default();
 
-        let out = state.ingest_packet_with(
+        let out = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
 
         assert_eq!(
@@ -1145,16 +1211,13 @@ mod tests {
         );
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
 
-        let outcome = state.ingest_packet_with(
+        let outcome = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: source,
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&[routable_descriptor(source)]),
-            &mut |_| {},
-            None,
         );
 
         let IngestPacketOutcome::Announce(AnnounceIngest::Accepted(accepted)) = outcome else {
@@ -1246,7 +1309,8 @@ mod tests {
         ] {
             let mut wire = flood_announce(seed, 5);
             let arrived_at = InstantMillis(arrived_at_ms);
-            let delta = relay.ingest_packet_into(
+            let delta = crate::engine::drive_packet_to_quiescence(
+                &mut relay,
                 InboundPacket {
                     arrived_at,
                     source_interface: source,
@@ -1255,7 +1319,7 @@ mod tests {
                 IngestIo {
                     interfaces,
                     now: arrived_at,
-                    fill_entropy: &mut |_| {},
+                    fill_random: &mut |_| {},
                     should_prove: &mut |_| false,
                     should_accept_resource: &mut |_| false,
                     sink: &mut |_| {},
@@ -1284,7 +1348,8 @@ mod tests {
         let arrived_at = InstantMillis(LIMIT_TEST_RELATCH_ARRIVAL_MS);
         let mut wire = flood_announce(6, 5);
         let mut held_drop = None;
-        let delta = relay.ingest_packet_into(
+        let delta = crate::engine::drive_packet_to_quiescence(
+            &mut relay,
             InboundPacket {
                 arrived_at,
                 source_interface: source,
@@ -1293,7 +1358,7 @@ mod tests {
             IngestIo {
                 interfaces,
                 now: arrived_at,
-                fill_entropy: &mut |_| {},
+                fill_random: &mut |_| {},
                 should_prove: &mut |_| false,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| {
@@ -1325,7 +1390,8 @@ mod tests {
         let arrived_at = InstantMillis(LIMIT_TEST_RELATCH_ARRIVAL_MS);
         let mut wire = flood_announce(6, 5);
         *wire.last_mut().unwrap() ^= 0xFF;
-        let delta = relay.ingest_packet_into(
+        let delta = crate::engine::drive_packet_to_quiescence(
+            &mut relay,
             InboundPacket {
                 arrived_at,
                 source_interface: source,
@@ -1334,7 +1400,7 @@ mod tests {
             IngestIo {
                 interfaces,
                 now: arrived_at,
-                fill_entropy: &mut |_| {},
+                fill_random: &mut |_| {},
                 should_prove: &mut |_| false,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |_| {},
@@ -1363,53 +1429,69 @@ mod tests {
         let mut state = EngineState::<TinyStorage>::default();
         pin_transport_id(&mut state, TEST_TRANSPORT_ID);
         let mut first_wire = flood_announce(0x11, 1);
-        let IngestPacketOutcome::Announce(AnnounceIngest::Accepted(first)) = state
-            .ingest_packet_with(
-                InboundPacket {
-                    arrived_at: InstantMillis(1_000),
-                    source_interface: first_source,
-                    bytes: &mut first_wire,
-                },
-                &mut |_| {},
-                AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
-            )
-        else {
-            panic!("the first route should be accepted");
-        };
-        assert_eq!(first.rebroadcast, RebroadcastDecision::Scheduled);
+        crate::engine::drive_packet_to_quiescence(
+            &mut state,
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface: first_source,
+                bytes: &mut first_wire,
+            },
+            IngestIo {
+                interfaces: AttachedInterfaces::new(&interfaces),
+                now: InstantMillis(1_000),
+                fill_random: &mut |bytes| bytes.fill(0),
+                should_prove: &mut |_| false,
+                should_accept_resource: &mut |_| false,
+                sink: &mut |_| {},
+            },
+        );
+        let first_destination = state
+            .scheduled_announces
+            .iter()
+            .next()
+            .map(|entry| entry.destination)
+            .expect("the first accepted route schedules its rebroadcast");
 
         let mut removed = std::vec::Vec::new();
+        let mut second_destination = None;
         let mut second_wire = flood_announce(0x22, 1);
-        let IngestPacketOutcome::Announce(AnnounceIngest::Accepted(second)) = state
-            .ingest_packet_with(
-                InboundPacket {
-                    arrived_at: InstantMillis(2_000),
-                    source_interface: second_source,
-                    bytes: &mut second_wire,
+        crate::engine::drive_packet_to_quiescence(
+            &mut state,
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface: second_source,
+                bytes: &mut second_wire,
+            },
+            IngestIo {
+                interfaces: AttachedInterfaces::new(&interfaces),
+                now: InstantMillis(2_000),
+                fill_random: &mut |bytes| bytes.fill(0),
+                should_prove: &mut |_| false,
+                should_accept_resource: &mut |_| false,
+                sink: &mut |reaction| match reaction {
+                    EngineReaction::Journaled(Journaled::RouteRemoved { destination, cause }) => {
+                        removed.push((destination, cause))
+                    }
+                    EngineReaction::Journaled(Journaled::AnnounceHeard { observation, .. }) => {
+                        second_destination = Some(observation.destination);
+                    }
+                    _ => {}
                 },
-                &mut |_| {},
-                AttachedInterfaces::new(&interfaces),
-                &mut |route| removed.push(route),
-                None,
-            )
-        else {
-            panic!("the replacement route should be accepted");
-        };
+            },
+        );
 
-        assert_eq!(second.rebroadcast, RebroadcastDecision::Scheduled);
         assert_eq!(removed.len(), 1);
-        assert_eq!(removed[0].destination, first.destination);
-        assert_eq!(removed[0].cause, crate::routing::RouteRemovalCause::Evicted);
+        assert_eq!(removed[0].0, first_destination);
+        assert_eq!(removed[0].1, crate::routing::RouteRemovalCause::Evicted);
         assert_eq!(state.scheduled_announce_count(), 1);
+        let second_destination = second_destination.expect("the replacement route is installed");
         assert_eq!(
             state
                 .scheduled_announces
                 .iter()
                 .next()
                 .map(|entry| entry.destination),
-            Some(second.destination),
+            Some(second_destination),
         );
     }
 
@@ -1425,16 +1507,13 @@ mod tests {
         let mut held = 0usize;
         for i in 0..8u8 {
             let mut wire = flood_announce(i, 10 - i);
-            match relay.ingest_packet_with(
+            match relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000 + u64::from(i) * 5),
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ) {
                 IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)) => accepted += 1,
                 IngestPacketOutcome::Announce(AnnounceIngest::Held) => held += 1,
@@ -1524,16 +1603,13 @@ mod tests {
 
         for i in 0..16u8 {
             let mut wire = flood_announce(i, 200);
-            let out = relay.ingest_packet_with(
+            let out = relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000 + u64::from(i) * 5),
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             );
             assert!(
                 !matches!(out, IngestPacketOutcome::Announce(AnnounceIngest::Held)),
@@ -1556,16 +1632,13 @@ mod tests {
         for i in 0..32u8 {
             let mut wire = flood_announce(i, 5);
             *wire.last_mut().unwrap() ^= 0xFF;
-            let out = relay.ingest_packet_with(
+            let out = relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000 + u64::from(i) * 2),
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             );
             assert_eq!(
                 out,
@@ -1576,16 +1649,13 @@ mod tests {
         assert!(relay.held_announces.is_empty());
 
         let mut real = flood_announce(200, 5);
-        let out = relay.ingest_packet_with(
+        let out = relay.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: source,
                 bytes: &mut real,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&interfaces),
-            &mut |_| {},
-            None,
         );
         assert!(
             matches!(out, IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_))),

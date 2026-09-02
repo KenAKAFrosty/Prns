@@ -24,7 +24,8 @@ pub use destinations::{
     HOPSPOT_DESTINATION_COUNT, HOPSPOT_IDENTITY_COUNT,
 };
 pub use flash_identity::{
-    bootstrap_flash_ble_identity, bootstrap_flash_node_identity, FlashIdentityError,
+    bootstrap_flash_ble_identity_with_runtime_entropy,
+    bootstrap_flash_node_identity_with_runtime_entropy, FlashIdentityError,
 };
 pub use flash_layout::{
     FirmwareAddressRange, HopspotS3FlashLayout, Nrf52840FirmwareMemory, ESP32_4_MIB_FLASH_CAPACITY,

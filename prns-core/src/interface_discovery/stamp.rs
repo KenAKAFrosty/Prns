@@ -161,7 +161,7 @@ pub fn stamp_value(advertisement_hash: &AdvertisementHash, stamp: &[u8; STAMP_SI
 pub fn generate_stamp<E>(
     advertisement_hash: &AdvertisementHash,
     cost: StampCost,
-    mut fill_entropy: impl FnMut(&mut [u8; STAMP_SIZE]) -> Result<(), E>,
+    mut fill_random: impl FnMut(&mut [u8; STAMP_SIZE]) -> Result<(), E>,
     mut cancelled: impl FnMut() -> bool,
 ) -> StampGeneration<E> {
     let workblock = workblock(advertisement_hash);
@@ -171,7 +171,7 @@ pub fn generate_stamp<E>(
             return StampGeneration::Cancelled;
         }
         let mut candidate = [0u8; STAMP_SIZE];
-        if let Err(error) = fill_entropy(&mut candidate) {
+        if let Err(error) = fill_random(&mut candidate) {
             return StampGeneration::EntropyFailure(error);
         }
         attempts = attempts.saturating_add(1);

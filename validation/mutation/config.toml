@@ -17,7 +17,7 @@ examine_globs = [
     "prns-core/src/engine/node_egress/fanout.rs",
     "prns-core/src/engine/node_egress/mod.rs",
     "prns-core/src/engine/node_ingress/announce_completion.rs",
-    "prns-core/src/engine/node_ingress/deferred_decryption.rs",
+    "prns-core/src/engine/node_ingress/decrypt_resume.rs",
     "prns-core/src/engine/node_ingress/delivery.rs",
     "prns-core/src/engine/node_ingress/held_announce_release.rs",
     "prns-core/src/engine/node_ingress/link_handshake_completion.rs",

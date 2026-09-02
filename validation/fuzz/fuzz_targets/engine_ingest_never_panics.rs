@@ -13,7 +13,7 @@ use prns_core::interfaces::{
 use prns_core::routing::request_handlers::RequestPolicy;
 use prns_core::routing::{LinkRequestPolicy, ProofStrategy};
 use prns_core::storage::GrowableHeap;
-use prns_runtime::manifold::kernel::{fire_due_reason, merge_wake_schedules_delta};
+use prns_runtime::manifold::wake_schedule::{fire_due_reason, merge_wake_schedules_delta};
 
 const FRAME_CAP: usize = u16::MAX as usize;
 
@@ -54,7 +54,7 @@ fn ingest_frame(
         IngestIo {
             interfaces: AttachedInterfaces::new(descriptors),
             now: InstantMillis(now),
-            fill_entropy: &mut |buf: &mut [u8]| {
+            fill_random: &mut |buf: &mut [u8]| {
                 for byte in buf.iter_mut() {
                     *byte = *entropy_byte;
                     *entropy_byte = entropy_byte.wrapping_add(1);

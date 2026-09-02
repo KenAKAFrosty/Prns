@@ -1,8 +1,8 @@
 use super::journal_route_removal;
 use crate::engine::settlement::settle;
 use crate::engine::{
-    AnnounceIngest, AnnounceVerifyOwed, EngineReaction, EngineState, Journaled, PathFound,
-    Settlement, WakeSchedule, WakeSchedules,
+    AnnounceIngest, EngineReaction, EngineState, Journaled, PathFound, Settlement,
+    VerifiedAnnounce, WakeSchedule, WakeSchedules,
 };
 use crate::interfaces::{AttachedInterfaces, InterfaceId};
 use crate::routing::announce::{Announce, AnnounceArrival};
@@ -10,14 +10,14 @@ use crate::routing::ingress::{AcceptedAnnounceEffect, IngestEffects};
 use crate::storage::StorageLayout;
 
 impl<S: StorageLayout> EngineState<S> {
-    pub(super) fn apply_announce_ingest(
+    pub(super) fn apply_announce_ingest<Work>(
         &mut self,
         ingest: AnnounceIngest,
         accepted_observation: Option<AcceptedAnnounceEffect<'_>>,
         source: InterfaceId,
         interfaces: AttachedInterfaces<'_>,
         wake: &mut WakeSchedules,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) {
         #[cfg(feature = "runtime-metrics")]
         self.record_announce_ingress(source, ingest);
@@ -76,11 +76,12 @@ impl<S: StorageLayout> EngineState<S> {
 
     pub fn resume_announce(
         &mut self,
-        owed: AnnounceVerifyOwed,
+        verified: VerifiedAnnounce,
         interfaces: AttachedInterfaces<'_>,
-        fill_entropy: &mut impl FnMut(&mut [u8]),
+        fill_random: &mut impl FnMut(&mut [u8]),
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
+        let owed = verified.into_owed();
         let mut wake = WakeSchedules::UNCHANGED;
         let Ok((announce, identity_hash)) =
             Announce::from_wire_unverified_with_identity(&owed.header, &owed.payload)
@@ -102,7 +103,7 @@ impl<S: StorageLayout> EngineState<S> {
         let ingest = self.ingest_announce(
             identity_hash,
             &arrival,
-            fill_entropy,
+            fill_random,
             interfaces,
             &mut |removed| sink(EngineReaction::Journaled(journal_route_removal(removed))),
             &mut effects,

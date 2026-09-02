@@ -1,6 +1,9 @@
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 
 use crate::engine::test_support::{
     fixed_secret_key, personal_node_destination, sealed_single_packet,
@@ -15,9 +18,9 @@ use crate::interfaces::{
 };
 use crate::manifold::interface_seam::{Interface, InterfaceSeam};
 use crate::remote_control::{
-    RemoteControlControllerIdentitySecret, RemoteControlInitialAccess,
-    RemoteControlNodeIdentitySecrets, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
-    RemoteControlService, RemoteControlTargetIdentitySecret,
+    RemoteControlControllerIdentitySecret, RemoteControlInitialControllerGrants,
+    RemoteControlNodeIdentitySecrets, RemoteControlSelfAnnouncement, RemoteControlService,
+    RemoteControlTargetIdentitySecret,
 };
 use crate::routing::announce::AnnounceObservation;
 use crate::routing::links::resources::{ResourceMemoryLimits, ResourceStrategy};
@@ -33,11 +36,43 @@ use super::super::super::request_endpoints::{
 };
 use super::super::test_remote_control_service;
 use super::{
-    notify_accepted_announce, persistence_restored_diagnostic, run_node_tasks,
+    notify_accepted_announce, persistence_restored_diagnostic, run_executor_local_node_tasks,
     AcceptedAnnounceObserver, NodeRunError, PrnsNode,
 };
 
 static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+struct PollTrace {
+    label: u8,
+    polls: usize,
+    completes_on: Option<usize>,
+    wake_on_pending: bool,
+    trace: Arc<Mutex<Vec<u8>>>,
+}
+
+impl Future for PollTrace {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+        self.trace.lock().unwrap().push(self.label);
+        self.polls += 1;
+        if self.completes_on == Some(self.polls) {
+            Poll::Ready(())
+        } else {
+            if self.wake_on_pending {
+                context.waker().wake_by_ref();
+            }
+            Poll::Pending
+        }
+    }
+}
+
+async fn successful_request_task(
+    task: impl Future<Output = ()>,
+) -> Result<(), crate::runtime::RemoteControlAuthorizationPersistenceFailure> {
+    task.await;
+    Ok(())
+}
 
 struct ProofLoopback {
     id: InterfaceId,
@@ -153,7 +188,7 @@ fn record_persistence_event(
 #[tokio::test]
 async fn node_task_panics_report_their_boundary() {
     assert_eq!(
-        run_node_tasks(
+        run_executor_local_node_tasks(
             async { std::panic::panic_any("manifold") },
             std::future::pending(),
             std::future::pending(),
@@ -162,7 +197,7 @@ async fn node_task_panics_report_their_boundary() {
         Err(NodeRunError::ManifoldPanicked)
     );
     assert_eq!(
-        run_node_tasks(
+        run_executor_local_node_tasks(
             std::future::pending(),
             async { std::panic::panic_any("router") },
             std::future::pending(),
@@ -171,11 +206,64 @@ async fn node_task_panics_report_their_boundary() {
         Err(NodeRunError::RequestEndpointrPanicked)
     );
     assert_eq!(
-        run_node_tasks(std::future::pending(), std::future::pending(), async {
+        run_executor_local_node_tasks(std::future::pending(), std::future::pending(), async {
             std::panic::panic_any("driver")
         },)
         .await,
         Err(NodeRunError::InterfaceDriverPanicked)
+    );
+}
+
+#[tokio::test]
+async fn executor_local_tasks_rotate_their_first_poll_without_skipping_a_child() {
+    let trace = Arc::new(Mutex::new(Vec::new()));
+    let task = |label, completes_on| PollTrace {
+        label,
+        polls: 0,
+        completes_on,
+        wake_on_pending: true,
+        trace: trace.clone(),
+    };
+
+    assert_eq!(
+        run_executor_local_node_tasks(
+            task(b'M', None),
+            successful_request_task(task(b'R', None)),
+            task(b'I', Some(3)),
+        )
+        .await,
+        Ok(()),
+    );
+    assert_eq!(
+        *trace.lock().unwrap(),
+        [b'I', b'M', b'R', b'M', b'I', b'R', b'I'],
+    );
+}
+
+#[tokio::test]
+async fn executor_local_tasks_pair_the_hot_pipeline_without_repolling_dormant_requests() {
+    let trace = Arc::new(Mutex::new(Vec::new()));
+    let task = |label, completes_on, wake_on_pending| PollTrace {
+        label,
+        polls: 0,
+        completes_on,
+        wake_on_pending,
+        trace: trace.clone(),
+    };
+
+    assert_eq!(
+        run_executor_local_node_tasks(
+            task(b'M', Some(3), true),
+            successful_request_task(task(b'R', None, false)),
+            task(b'I', None, false),
+        )
+        .await,
+        Ok(()),
+    );
+    assert_eq!(
+        *trace.lock().unwrap(),
+        [b'I', b'M', b'R', b'M', b'I', b'I', b'M'],
+        "manifold and interface stay coupled while the dormant request runner is polled once",
     );
 }
 
@@ -202,6 +290,16 @@ fn restore_diagnostics_report_seeded_refused_and_dropped_totals() {
             refused_count: 11,
             dropped_count: 12,
         },
+        remote_control_controller_grants: crate::runtime::RemoteControlAuthorizationSeedReport {
+            restored_count: 13,
+            refused_count: 14,
+            dropped_count: 15,
+        },
+        remote_control_target_accesses: crate::runtime::RemoteControlAuthorizationSeedReport {
+            restored_count: 16,
+            refused_count: 17,
+            dropped_count: 18,
+        },
     };
 
     let crate::runtime::Diagnostic::PersistenceRestored {
@@ -225,7 +323,7 @@ fn restore_diagnostics_report_seeded_refused_and_dropped_totals() {
             refused,
             dropped,
         ),
-        (1, 4, 7, 10, 26, 30)
+        (1, 4, 7, 10, 57, 63)
     );
 }
 
@@ -260,8 +358,7 @@ fn controller_and_target_identities_coexist_without_a_transport_identity() {
     let controller_identity = expected_identities.controller().identity_hash();
     let remote_control = RemoteControlService::new(
         remote_control_secrets,
-        RemoteControlPublicAppData::try_from(b"".as_slice()).unwrap(),
-        RemoteControlInitialAccess::Nobody,
+        RemoteControlInitialControllerGrants::Nobody,
         RemoteControlSelfAnnouncement::Unavailable,
     );
     let node = PrnsNode::new(PrnsNodeRecipe {

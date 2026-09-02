@@ -1,4 +1,6 @@
-use crate::engine::Settlement;
+use crate::engine::{
+    RemoteControlControllerPairingFinalization, RemoteControlTargetPairingFinalization, Settlement,
+};
 use crate::routing::delivery::Delivery;
 
 use super::{Diagnostic, Message, PrnsEvent};
@@ -16,6 +18,20 @@ pub(crate) fn emit(event: &PrnsEvent<'_>) {
 
 fn emit_message(message: &Message<'_>) {
     match message {
+        Message::RemoteControlPairingAvailable(_)
+        | Message::RemoteControlTargetPairingConfirmationRequired(_)
+        | Message::RemoteControlTargetPairingControllerCommitted { .. }
+        | Message::RemoteControlTargetPairingAuthorizationRequired { .. }
+        | Message::RemoteControlTargetPairingAuthorizationPersisted { .. }
+        | Message::RemoteControlControllerPairingConfirmationRequired(_)
+        | Message::RemoteControlControllerPairingPersistenceRequired(_)
+        | Message::RemoteControlControllerPairingAuthorizationPersisted { .. }
+        | Message::RemoteControlControllerPairingExpired { .. }
+        | Message::RemoteControlControllerPairingLinkClosed { .. }
+        | Message::RemoteControlTargetPairingExpired { .. }
+        | Message::RemoteControlTargetPairingLinkClosed { .. }
+        | Message::RemoteControlTargetPairingCompletionRetentionExpired { .. }
+        | Message::RemoteControlTargetPairingCompletionLinkClosed { .. } => {}
         Message::Delivered(delivery) => {
             let (kind, bytes, interface_kind) = delivery_fields(delivery);
             tracing::debug!(
@@ -80,19 +96,6 @@ fn emit_message(message: &Message<'_>) {
             event = "resource_received",
             bytes = data.len(),
             metadata_bytes = metadata.map_or(0, <[u8]>::len),
-            link_id = ?link_id.as_bytes(),
-            resource_hash = ?hash.as_bytes(),
-        ),
-        Message::ResourceNeedsDecompression {
-            link_id,
-            hash,
-            stream,
-            uncompressed_data_bytes,
-        } => tracing::debug!(
-            target: "prns.runtime",
-            event = "resource_decompression_requested",
-            compressed_bytes = stream.len(),
-            uncompressed_bytes = uncompressed_data_bytes,
             link_id = ?link_id.as_bytes(),
             resource_hash = ?hash.as_bytes(),
         ),
@@ -204,6 +207,17 @@ fn emit_diagnostic(diagnostic: &Diagnostic<'_>) {
             command = settlement_kind(settlement),
             outcome = settlement_outcome(settlement),
             command_id = id.0,
+        ),
+        Diagnostic::RemoteControlPairingExpired { endpoint: _ } => tracing::debug!(
+            target: "prns.runtime",
+            event = "remote_control_pairing_expired",
+        ),
+        Diagnostic::RemoteControlPairingExpiryFailed {
+            endpoint: _,
+            failure: _,
+        } => tracing::warn!(
+            target: "prns.runtime",
+            event = "remote_control_pairing_expiry_failed",
         ),
         Diagnostic::LinkEstablished(established) => {
             tracing::info!(
@@ -352,6 +366,28 @@ fn settlement_kind(settlement: &Settlement) -> &'static str {
         Settlement::SetResourceStrategy(_) => "set_resource_strategy",
         Settlement::SendToChannel(_) => "send_to_channel",
         Settlement::AllowRequester(_) => "allow_requester",
+        Settlement::OpenRemoteControlPairing(_) => "open_remote_control_pairing",
+        Settlement::CloseRemoteControlPairing(_) => "close_remote_control_pairing",
+        Settlement::ApproveRemoteControlTargetPairing(_) => "approve_remote_control_target_pairing",
+        Settlement::RejectRemoteControlTargetPairing(_) => "reject_remote_control_target_pairing",
+        Settlement::SettleRemoteControlTargetPairingAuthorization(_) => {
+            "settle_remote_control_target_pairing_authorization"
+        }
+        Settlement::BeginRemoteControlControllerPairing(_) => {
+            "begin_remote_control_controller_pairing"
+        }
+        Settlement::RemoteControlControllerPairingRequest(_) => {
+            "remote_control_controller_pairing_request"
+        }
+        Settlement::ApproveRemoteControlControllerPairing(_) => {
+            "approve_remote_control_controller_pairing"
+        }
+        Settlement::RejectRemoteControlControllerPairing(_) => {
+            "reject_remote_control_controller_pairing"
+        }
+        Settlement::SettleRemoteControlControllerPairingPersistence(_) => {
+            "settle_remote_control_controller_pairing_persistence"
+        }
     }
 }
 
@@ -373,6 +409,26 @@ fn settlement_outcome(settlement: &Settlement) -> &'static str {
         Settlement::SetResourceStrategy(result) => result.is_ok(),
         Settlement::SendToChannel(result) => result.is_ok(),
         Settlement::AllowRequester(result) => result.is_ok(),
+        Settlement::OpenRemoteControlPairing(result) => result.is_ok(),
+        Settlement::CloseRemoteControlPairing(result) => result.is_ok(),
+        Settlement::ApproveRemoteControlTargetPairing(result) => result.is_ok(),
+        Settlement::RejectRemoteControlTargetPairing(result) => result.is_ok(),
+        Settlement::SettleRemoteControlTargetPairingAuthorization(Ok(
+            RemoteControlTargetPairingFinalization::AuthorizationRollbackRequired { .. }
+            | RemoteControlTargetPairingFinalization::AuthorizationFailureRecorded { .. },
+        )) => false,
+        Settlement::SettleRemoteControlTargetPairingAuthorization(result) => result.is_ok(),
+        Settlement::BeginRemoteControlControllerPairing(result) => result.is_ok(),
+        Settlement::RemoteControlControllerPairingRequest(result) => result.is_ok(),
+        Settlement::ApproveRemoteControlControllerPairing(result) => result.is_ok(),
+        Settlement::RejectRemoteControlControllerPairing(result) => result.is_ok(),
+        Settlement::SettleRemoteControlControllerPairingPersistence(Ok(
+            RemoteControlControllerPairingFinalization::Completed { .. },
+        )) => true,
+        Settlement::SettleRemoteControlControllerPairingPersistence(
+            Ok(RemoteControlControllerPairingFinalization::PersistenceFailureRecorded { .. })
+            | Err(_),
+        ) => false,
     };
     if succeeded {
         "succeeded"

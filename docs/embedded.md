@@ -49,6 +49,11 @@ When adapting the recipe to a new board, decide these explicitly:
 
 Start from the nearest shipped board instead of copying the native two-node example and guessing at these obligations.
 
+The [runtime entropy contract](runtime-entropy.md) defines the required
+initialization order, continuous CSPRNG, reseeding behavior, and platform
+transition rules. New boards must construct that branded service before any
+identity/bootstrap work; consumers cannot substitute an arbitrary callback.
+
 ## Flash only when you mean to
 
 Building does not require a board. Flashing does, and writes the selected device. Install the pinned flasher, connect a XIAO ESP32-C6, verify the target, then opt into the flash command:

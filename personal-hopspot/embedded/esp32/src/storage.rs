@@ -7,6 +7,8 @@ use allocator_api2::vec::Vec;
 #[cfg(target_arch = "xtensa")]
 use core::alloc::Layout;
 #[cfg(target_arch = "xtensa")]
+use core::mem::MaybeUninit;
+#[cfg(target_arch = "xtensa")]
 use core::ptr::NonNull;
 
 #[cfg(any(target_arch = "xtensa", target_arch = "riscv32"))]
@@ -85,6 +87,11 @@ pub struct PsramAlloc;
 #[cfg(target_arch = "xtensa")]
 pub fn allocate_psram<T>(value: T) -> &'static mut T {
     Box::leak(Box::new_in(value, PsramAlloc))
+}
+
+#[cfg(target_arch = "xtensa")]
+pub fn allocate_psram_uninit<T>() -> &'static mut MaybeUninit<T> {
+    Box::leak(Box::<T, PsramAlloc>::new_uninit_in(PsramAlloc))
 }
 
 /// Allocate and initialize a slice directly in PSRAM without first materializing the whole

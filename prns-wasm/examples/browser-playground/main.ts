@@ -1,4 +1,3 @@
-import init, * as wasm from "./pkg/prns_wasm.js";
 import {
   BrowserLocalStorageIdentityStore,
   Prns,
@@ -15,7 +14,6 @@ import type {
   PrnsDiagnosticEvent,
   PrnsEvent,
   PrnsSnapshot,
-  PrnsWasmModule,
   Tag as Tagged,
   UsbAutoConnectOutcome,
   UsbAutoSession,
@@ -62,7 +60,6 @@ import {
 
 const POLL_INTERVAL_MS = 250;
 const NODE_PAGE_DISPLAY_NAME = "Prns Browser Playground";
-const WASM_BINARY_PATH = "./pkg/prns_wasm_bg.wasm";
 
 type StartupOutcome = Tagged<"Running", BrowserPlayground> | StartupFailure;
 
@@ -77,6 +74,7 @@ class BrowserPlayground {
   readonly #bluetooth: PlaygroundBluetoothController;
   #snapshot: PrnsSnapshot | undefined;
   #pollTimer: number | undefined;
+  #runtimePollActive = false;
   #lastRuntimeFailure = "";
   #closed = false;
 
@@ -101,17 +99,13 @@ class BrowserPlayground {
     if (BROWSER_PLAYGROUND_LXMF_DELIVERY.tag !== "Prepared") {
       return BROWSER_PLAYGROUND_LXMF_DELIVERY;
     }
-    try {
-      await init({
-        module_or_path: new URL(WASM_BINARY_PATH, globalThis.location.href),
-      });
-    } catch (error: unknown) {
-      return Tag("WasmLoadFailed", { detail: describeHostError(error) });
-    }
     let created: PrnsCreateOutcome;
     try {
       created = await Prns.create({
-        wasm: wasmModule(),
+        wasmModuleUrl: new URL(
+          "./pkg/prns_wasm.js",
+          globalThis.location.href,
+        ),
         resourceCompressionModuleUrl: new URL(
           "./pkg/prns_wasm.js",
           globalThis.location.href,
@@ -124,13 +118,13 @@ class BrowserPlayground {
     if (created.tag !== "Ready") {
       return created;
     }
-    const registered = created.data.registerSingleDestination(
+    const registered = await created.data.registerSingleDestination(
       BROWSER_PLAYGROUND_LXMF_DELIVERY.data.registration,
     );
     if (registered.tag !== "Registered") {
       return registered;
     }
-    const pageRegistered = created.data.registerNodePage(
+    const pageRegistered = await created.data.registerNodePage(
       new TextEncoder().encode(NODE_PAGE_DISPLAY_NAME),
     );
     if (pageRegistered.tag !== "Registered") {
@@ -170,6 +164,7 @@ class BrowserPlayground {
       this.#bluetooth.shutdown(),
       autoWifi?.close(),
     ]);
+    await this.#prns.stop();
   }
 
   #run(): void {
@@ -653,7 +648,20 @@ class BrowserPlayground {
   }
 
   #pollRuntime(): void {
-    const captured = this.#prns.snapshot();
+    if (this.#runtimePollActive) {
+      return;
+    }
+    this.#runtimePollActive = true;
+    void this.#captureRuntime().finally(() => {
+      this.#runtimePollActive = false;
+    });
+  }
+
+  async #captureRuntime(): Promise<void> {
+    const captured = await this.#prns.snapshot();
+    if (this.#closed) {
+      return;
+    }
     match(captured, {
       Captured: (snapshot) => {
         this.#snapshot = snapshot;
@@ -1070,40 +1078,6 @@ function webSocketClosableSession(
     Closed: () => undefined,
     CloseFailed: ({ session }) => session,
   });
-}
-
-function wasmModule(): PrnsWasmModule {
-  // wasm-bindgen exposes byte newtypes as Uint8Array; this is the one boundary
-  // where the SDK's branded views are attached to those generated bindings.
-  return {
-    PrnsRuntime: wasm.PrnsRuntime,
-    UsbAutoDecoder: wasm.UsbAutoDecoder,
-    BluetoothReassembler: wasm.BluetoothReassembler,
-    hostContractAbi: wasm.hostContractAbi,
-    hostSchemaVersion: wasm.hostSchemaVersion,
-    browserPersistenceVersion: wasm.browserPersistenceVersion,
-    productVersion: wasm.productVersion,
-    identitySecretKeyLength: wasm.identitySecretKeyLength,
-    bluetoothServiceUuid: wasm.bluetoothServiceUuid,
-    bluetoothControlUuid: wasm.bluetoothControlUuid,
-    bluetoothDataUuid: wasm.bluetoothDataUuid,
-    bluetoothBitrateBps: wasm.bluetoothBitrateBps,
-    bluetoothHardwareMtu: wasm.bluetoothHardwareMtu,
-    bluetoothDialerHello: wasm.bluetoothDialerHello,
-    bluetoothDecodeControl: wasm.bluetoothDecodeControl,
-    bluetoothDataFragments: wasm.bluetoothDataFragments,
-    websocketBitrateBps: wasm.websocketBitrateBps,
-    websocketFrameCap: wasm.websocketFrameCap,
-    websocketHardwareMtu: wasm.websocketHardwareMtu,
-    usbAutoHostBitrateBps: wasm.usbAutoHostBitrateBps,
-    usbAutoHostHardwareMtu: wasm.usbAutoHostHardwareMtu,
-    usbAutoWebUsbVendorId: wasm.usbAutoWebUsbVendorId,
-    usbAutoWebUsbProductId: wasm.usbAutoWebUsbProductId,
-    usbAutoNodeTagFor: wasm.usbAutoNodeTagFor,
-    usbAutoHostHelloFrame: wasm.usbAutoHostHelloFrame,
-    usbAutoHostHelloAckFrame: wasm.usbAutoHostHelloAckFrame,
-    usbAutoDataFrame: wasm.usbAutoDataFrame,
-  } as unknown as PrnsWasmModule;
 }
 
 function webUsbAvailable(): boolean {

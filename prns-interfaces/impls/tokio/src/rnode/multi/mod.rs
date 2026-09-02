@@ -216,7 +216,7 @@ where
             if let Some(connected_at) = connected_at {
                 reconnect.record_connection_lifetime(connected_at.elapsed());
             }
-            let reconnect_delay = reconnect.next_delay(|bytes| self.handle.fill_entropy(bytes));
+            let reconnect_delay = reconnect.next_delay(|bytes| self.handle.fill_random(bytes));
             if let Err(error) = result {
                 report_connection_failure(
                     &self.interface.name,

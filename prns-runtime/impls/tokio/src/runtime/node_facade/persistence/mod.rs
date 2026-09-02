@@ -1,5 +1,6 @@
 mod host;
 
+pub(crate) use host::RemoteControlAuthorizationPersistence;
 pub use host::{
     DefaultLocationError, FlushFailurePolicy, NodePersistence, PersistenceEvent,
     PersistenceFlushStatus, PersistenceIntent, PersistenceRestoreReport, PersistenceTrigger,
@@ -14,13 +15,15 @@ use crate::identity::vault::IdentityVault;
 use crate::identity::Zeroizing;
 use crate::interfaces::AttachedInterfaces;
 use crate::manifold::driver::{
-    HostCommand, PersistedStateSnapshot, SelfRatchetSnapshot, SelfRatchetsSnapshot, TokioHost,
+    HostCommand, PersistedStateSnapshot, SelfRatchetSnapshot, SelfRatchetsSnapshot,
 };
 use crate::manifold::Host;
 use crate::persistence::{
-    read_destination_identities_snapshot, read_routing_table_snapshot, read_self_ratchets_snapshot,
-    read_timebase_snapshot, read_tunnels_snapshot, snapshot_fingerprint, write_timebase_snapshot,
-    PersistedStore, SnapshotFingerprint, SnapshotRegion, TIMEBASE_SNAPSHOT_LEN,
+    read_destination_identities_snapshot, read_remote_control_controller_grants_snapshot,
+    read_remote_control_target_accesses_snapshot, read_routing_table_snapshot,
+    read_self_ratchets_snapshot, read_timebase_snapshot, read_tunnels_snapshot,
+    snapshot_fingerprint, write_timebase_snapshot, PersistedStore, SnapshotFingerprint,
+    SnapshotRegion, TIMEBASE_SNAPSHOT_LEN,
 };
 use crate::routing::tunnel::SeedTunnelOutcome;
 use crate::routing::BlackholedIdentity;
@@ -65,16 +68,24 @@ impl PrnsNodeHandle {
     ) -> Result<InstantMillis, FlushError<P::Error>> {
         self.prepare_flush()
             .await
-            .map_err(|PrepareFlushError::NodeStopped| FlushError::NodeStopped)?
+            .map_err(FlushError::from_prepare)?
             .commit_to_store(store, &mut FlushMark::default())
             .map(|report| report.high_water)
     }
 
     pub async fn prepare_flush(&self) -> Result<PreparedFlush, PrepareFlushError> {
-        self.snapshot_persisted_state()
+        let snapshot = self
+            .snapshot_persisted_state()
             .await
-            .map(|snapshot| PreparedFlush { snapshot })
-            .ok_or(PrepareFlushError::NodeStopped)
+            .ok_or(PrepareFlushError::NodeStopped)?;
+        let remote_control_controller_grants =
+            self.snapshot_remote_control_controller_grants().await?;
+        let remote_control_target_accesses = self.snapshot_remote_control_target_accesses().await?;
+        Ok(PreparedFlush {
+            snapshot,
+            remote_control_controller_grants,
+            remote_control_target_accesses,
+        })
     }
 
     /// The interval-cadence flush: a region whose sealed image fingerprints the same as `mark`'s last landed flush is skipped, so a quiet node's tick writes 22 bytes of timebase and nothing else. The timebase always writes — it is the restored timeline's rollback floor and it advances with uptime even while the tables sit still — and it lands before the region images it stamps: a crash between them leaves a newer high-water over older rows, which only over-ages the restored timeline, where the reverse order could strand rows in a wall-less boot's future, never expiring.
@@ -90,7 +101,7 @@ impl PrnsNodeHandle {
     ) -> Result<FlushReport, FlushError<P::Error>> {
         self.prepare_flush()
             .await
-            .map_err(|PrepareFlushError::NodeStopped| FlushError::NodeStopped)?
+            .map_err(FlushError::from_prepare)?
             .commit_to_store(store, mark)
     }
 
@@ -142,7 +153,7 @@ impl PrnsNodeHandle {
         let snapshot = self
             .snapshot_self_ratchet(destination)
             .await
-            .map_err(|PrepareFlushError::NodeStopped| FlushError::NodeStopped)?;
+            .map_err(FlushError::from_prepare)?;
         match snapshot {
             Some(snapshot) => snapshot
                 .store_into(vault)
@@ -161,7 +172,7 @@ where
     /// Must precede [`seed_routes_from_store`](Self::seed_routes_from_store) so restored rows sit in this boot's past.
     #[must_use]
     pub fn with_timeline_origin(mut self, origin: InstantMillis) -> Self {
-        self.host = TokioHost::start_at(origin);
+        self.host.set_timeline_origin(origin);
         self
     }
 
@@ -251,6 +262,94 @@ where
                 | DestinationIdentitySeedOutcome::Expired
                 | DestinationIdentitySeedOutcome::CapacityExhausted => report.dropped_count += 1,
             }
+        }
+        report
+    }
+
+    pub fn seed_remote_control_controller_grants_from_store(
+        &mut self,
+        store: &impl PersistedStore,
+    ) -> RemoteControlAuthorizationSeedReport {
+        let mut report = RemoteControlAuthorizationSeedReport::default();
+        let stored_len = match store.stored_len(SnapshotRegion::RemoteControlControllerGrants) {
+            Ok(Some(stored_len)) => stored_len,
+            Ok(None) => return report,
+            Err(_) => {
+                report.refused_count = 1;
+                return report;
+            }
+        };
+        let Some(mut buf) = try_zeroed_buffer(stored_len) else {
+            report.refused_count = 1;
+            return report;
+        };
+        let bytes = match store.load(SnapshotRegion::RemoteControlControllerGrants, &mut buf) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) | Err(_) => {
+                report.refused_count = 1;
+                return report;
+            }
+        };
+        let persisted = match read_remote_control_controller_grants_snapshot(bytes) {
+            Ok(persisted) => persisted,
+            Err(_) => {
+                report.refused_count = 1;
+                return report;
+            }
+        };
+        let persisted_count = persisted.grant_count();
+        match self
+            .node
+            .remote_control
+            .restore_controller_grants(persisted)
+        {
+            Ok(outcome) => report.restored_count = outcome.restored_count as u32,
+            Err(
+                prns_runtime::runtime::RemoteControlAuthorizationRestoreError::Unavailable
+                | prns_runtime::runtime::RemoteControlAuthorizationRestoreError::CapacityExhausted,
+            ) => report.dropped_count = persisted_count as u32,
+        }
+        report
+    }
+
+    pub fn seed_remote_control_target_accesses_from_store(
+        &mut self,
+        store: &impl PersistedStore,
+    ) -> RemoteControlAuthorizationSeedReport {
+        let mut report = RemoteControlAuthorizationSeedReport::default();
+        let stored_len = match store.stored_len(SnapshotRegion::RemoteControlTargetAccesses) {
+            Ok(Some(stored_len)) => stored_len,
+            Ok(None) => return report,
+            Err(_) => {
+                report.refused_count = 1;
+                return report;
+            }
+        };
+        let Some(mut buf) = try_zeroed_buffer(stored_len) else {
+            report.refused_count = 1;
+            return report;
+        };
+        let bytes = match store.load(SnapshotRegion::RemoteControlTargetAccesses, &mut buf) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) | Err(_) => {
+                report.refused_count = 1;
+                return report;
+            }
+        };
+        let persisted = match read_remote_control_target_accesses_snapshot(bytes) {
+            Ok(persisted) => persisted,
+            Err(_) => {
+                report.refused_count = 1;
+                return report;
+            }
+        };
+        let persisted_count = persisted.access_count();
+        match self.node.remote_control.restore_target_accesses(persisted) {
+            Ok(outcome) => report.restored_count = outcome.restored_count as u32,
+            Err(
+                prns_runtime::runtime::RemoteControlAuthorizationRestoreError::Unavailable
+                | prns_runtime::runtime::RemoteControlAuthorizationRestoreError::CapacityExhausted,
+            ) => report.dropped_count = persisted_count as u32,
         }
         report
     }
@@ -385,8 +484,17 @@ pub struct RatchetSeedReport {
     pub dropped_count: u32,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct RemoteControlAuthorizationSeedReport {
+    pub restored_count: u32,
+    pub refused_count: u32,
+    pub dropped_count: u32,
+}
+
 pub struct PreparedFlush {
     snapshot: PersistedStateSnapshot,
+    remote_control_controller_grants: Option<Vec<u8>>,
+    remote_control_target_accesses: Option<Vec<u8>>,
 }
 
 impl PreparedFlush {
@@ -420,12 +528,38 @@ impl PreparedFlush {
             &self.snapshot.destination_identities,
             &mut mark.destination_identities,
         )?;
+        let remote_control_controller_grants = store_optional_changed_region(
+            store,
+            SnapshotRegion::RemoteControlControllerGrants,
+            self.remote_control_controller_grants.as_deref(),
+            &mut mark.remote_control_controller_grants,
+        )?;
+        let remote_control_target_accesses = store_optional_changed_region(
+            store,
+            SnapshotRegion::RemoteControlTargetAccesses,
+            self.remote_control_target_accesses.as_deref(),
+            &mut mark.remote_control_target_accesses,
+        )?;
         Ok(FlushReport {
             high_water: self.snapshot.taken_at,
             routing_table,
             tunnels,
             destination_identities,
+            remote_control_controller_grants,
+            remote_control_target_accesses,
         })
+    }
+}
+
+fn store_optional_changed_region<P: PersistedStore>(
+    store: &mut P,
+    region: SnapshotRegion,
+    sealed: Option<&[u8]>,
+    last_landed: &mut Option<SnapshotFingerprint>,
+) -> Result<RegionFlush, FlushError<P::Error>> {
+    match sealed {
+        Some(sealed) => store_changed_region(store, region, sealed, last_landed),
+        None => Ok(RegionFlush::UnavailableSkipped),
     }
 }
 
@@ -447,6 +581,7 @@ fn store_changed_region<P: PersistedStore>(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrepareFlushError {
     NodeStopped,
+    AuthorizationSnapshot(crate::persistence::SnapshotSealError),
 }
 
 /// The fingerprints of the last flush this mark's owner landed, one per skippable region. A fresh mark knows nothing, so its first flush writes everything once.
@@ -455,12 +590,15 @@ pub struct FlushMark {
     pub routing_table: Option<SnapshotFingerprint>,
     pub tunnels: Option<SnapshotFingerprint>,
     pub destination_identities: Option<SnapshotFingerprint>,
+    pub remote_control_controller_grants: Option<SnapshotFingerprint>,
+    pub remote_control_target_accesses: Option<SnapshotFingerprint>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegionFlush {
     Wrote,
     UnchangedSkipped,
+    UnavailableSkipped,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -469,12 +607,24 @@ pub struct FlushReport {
     pub routing_table: RegionFlush,
     pub tunnels: RegionFlush,
     pub destination_identities: RegionFlush,
+    pub remote_control_controller_grants: RegionFlush,
+    pub remote_control_target_accesses: RegionFlush,
 }
 
 #[derive(Debug)]
 pub enum FlushError<E> {
     NodeStopped,
+    AuthorizationSnapshot(crate::persistence::SnapshotSealError),
     Store(E),
+}
+
+impl<E> FlushError<E> {
+    fn from_prepare(error: PrepareFlushError) -> Self {
+        match error {
+            PrepareFlushError::NodeStopped => Self::NodeStopped,
+            PrepareFlushError::AuthorizationSnapshot(error) => Self::AuthorizationSnapshot(error),
+        }
+    }
 }
 
 #[cfg(test)]

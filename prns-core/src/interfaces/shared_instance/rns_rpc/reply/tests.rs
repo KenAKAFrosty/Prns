@@ -8,8 +8,8 @@ use crate::interfaces::shared_instance::rns_rpc::RpcVerb;
 use crate::interfaces::{
     InterfaceId, InterfaceKind, PacketPhyStats, RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb,
 };
-use crate::routing::NextHop;
 use crate::routing::{BlackholeIdentityOutcome, BlackholedIdentity, UnblackholeIdentityOutcome};
+use crate::routing::{NextHop, RouteRetention};
 use crate::units::InstantMillis;
 use crate::wire::DestinationHash;
 
@@ -22,6 +22,7 @@ fn route(hops: u8) -> RouteSnapshot {
         last_route_activity_at: InstantMillis(1_500),
         expires_at: InstantMillis(2_000),
         interface: InterfaceId::from_channel_tag(InterfaceKind::TcpClient, b"route"),
+        retention: RouteRetention::Network,
     }
 }
 

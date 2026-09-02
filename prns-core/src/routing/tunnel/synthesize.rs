@@ -1,4 +1,6 @@
 use crate::crypto::{ed25519_verify, sha256, Ed25519PublicKey, Ed25519Signature};
+use crate::engine::InstantMillis;
+use crate::interfaces::InterfaceId;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
     WireContext, WireError, WirePacketHeader, HEADER_MIN_LEN,
@@ -99,8 +101,33 @@ pub struct VerifiedSynthesize {
     pub interface_hash: [u8; INTERFACE_HASH_LEN],
 }
 
+/// A structurally valid tunnel synthesis whose signature must be verified before it may repoint
+/// routes or refresh tunnel state.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TunnelSynthesizeVerifyOwed {
+    pub tunnel_id: TunnelId,
+    pub interface_hash: [u8; INTERFACE_HASH_LEN],
+    pub signing_key: Ed25519PublicKey,
+    pub signed_region: [u8; SIGNED_REGION_LEN],
+    pub signature: Ed25519Signature,
+    pub source_interface: InterfaceId,
+    pub arrived_at: InstantMillis,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TunnelSynthesizeVerification {
+    Valid,
+    Invalid,
+}
+
 #[must_use]
-pub fn parse_synthesize_payload(payload: &[u8]) -> Option<VerifiedSynthesize> {
+pub fn prepare_synthesize_verify(
+    payload: &[u8],
+    source_interface: InterfaceId,
+    arrived_at: InstantMillis,
+) -> Option<TunnelSynthesizeVerifyOwed> {
     if payload.len() != SYNTHESIZE_PAYLOAD_LEN {
         return None;
     }
@@ -109,16 +136,32 @@ pub fn parse_synthesize_payload(payload: &[u8]) -> Option<VerifiedSynthesize> {
         [PUBLIC_KEY_LEN..PUBLIC_KEY_LEN + INTERFACE_HASH_LEN]
         .try_into()
         .ok()?;
-    let signed_region = &payload[..SIGNED_REGION_LEN];
+    let signed_region: [u8; SIGNED_REGION_LEN] = payload[..SIGNED_REGION_LEN].try_into().ok()?;
     let signature_bytes: [u8; SIGNATURE_BYTE_LEN] = payload[SIGNED_REGION_LEN..].try_into().ok()?;
     let signature = Ed25519Signature(signature_bytes);
 
     let signing_key: [u8; 32] = public_key[ED25519_PUBLIC_OFFSET..].try_into().ok()?;
-    ed25519_verify(&Ed25519PublicKey(signing_key), signed_region, &signature).ok()?;
-
-    Some(VerifiedSynthesize {
+    Some(TunnelSynthesizeVerifyOwed {
         tunnel_id: compute_tunnel_id(&public_key, &interface_hash),
         interface_hash,
+        signing_key: Ed25519PublicKey(signing_key),
+        signed_region,
+        signature,
+        source_interface,
+        arrived_at,
+    })
+}
+
+#[must_use]
+#[deprecated(
+    note = "runtime manifolds should fulfill TunnelSynthesizeVerifyOwed and resume the engine"
+)]
+pub fn parse_synthesize_payload(payload: &[u8]) -> Option<VerifiedSynthesize> {
+    let owed = prepare_synthesize_verify(payload, InterfaceId::new([0; 8]), InstantMillis(0))?;
+    ed25519_verify(&owed.signing_key, &owed.signed_region, &owed.signature).ok()?;
+    Some(VerifiedSynthesize {
+        tunnel_id: owed.tunnel_id,
+        interface_hash: owed.interface_hash,
     })
 }
 
@@ -258,6 +301,34 @@ mod tests {
         buf
     }
 
+    fn ingest_tunnel<S: crate::storage::StorageLayout>(
+        state: &mut crate::engine::EngineState<S>,
+        frame: &mut [u8],
+        source: InterfaceId,
+        now: InstantMillis,
+        interfaces: AttachedInterfaces<'_>,
+    ) {
+        let crate::engine::IngestPacketOutcome::OwesTunnelSynthesizeVerify(owed) = state
+            .ingest_for_test(
+                crate::interfaces::InboundPacket {
+                    arrived_at: now,
+                    source_interface: source,
+                    bytes: frame,
+                },
+                interfaces,
+            )
+        else {
+            panic!("tunnel synthesis should request signature verification");
+        };
+        let verification =
+            if ed25519_verify(&owed.signing_key, &owed.signed_region, &owed.signature).is_ok() {
+                TunnelSynthesizeVerification::Valid
+            } else {
+                TunnelSynthesizeVerification::Invalid
+            };
+        state.resume_tunnel_synthesize_verify(owed, verification);
+    }
+
     #[test]
     fn a_tunnel_keeps_routes_warm_through_a_disconnect_and_repoints_them_on_reconnect() {
         use crate::engine::test_support::{
@@ -276,16 +347,13 @@ mod tests {
         let interfaces = [routable_descriptor(first_conn)];
 
         let mut announce = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-        let _ = relay.ingest_packet_with(
+        let _ = relay.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: first_conn,
                 bytes: &mut announce,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&interfaces),
-            &mut |_| {},
-            None,
         );
         assert_eq!(
             relay
@@ -297,16 +365,12 @@ mod tests {
         );
 
         let mut synth = synthesize_wire(0xAB);
-        let _ = relay.ingest_packet_with(
-            InboundPacket {
-                arrived_at: InstantMillis(2_000),
-                source_interface: first_conn,
-                bytes: &mut synth,
-            },
-            &mut |_| {},
+        ingest_tunnel(
+            &mut relay,
+            &mut synth,
+            first_conn,
+            InstantMillis(2_000),
             AttachedInterfaces::new(&interfaces),
-            &mut |_| {},
-            None,
         );
         assert!(relay.tunnels.warm_until(first_conn).is_some());
 
@@ -324,16 +388,12 @@ mod tests {
         let second_conn = InterfaceId::new([0xC2; 8]);
         let second_view = [routable_descriptor(second_conn)];
         let mut synth_again = synthesize_wire(0xAB);
-        let _ = relay.ingest_packet_with(
-            InboundPacket {
-                arrived_at: InstantMillis(4_000),
-                source_interface: second_conn,
-                bytes: &mut synth_again,
-            },
-            &mut |_| {},
+        ingest_tunnel(
+            &mut relay,
+            &mut synth_again,
+            second_conn,
+            InstantMillis(4_000),
             AttachedInterfaces::new(&second_view),
-            &mut |_| {},
-            None,
         );
         assert_eq!(
             relay

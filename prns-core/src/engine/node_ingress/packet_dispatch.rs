@@ -1,15 +1,18 @@
 use super::delivery::DeliveryIo;
-use super::journal_route_removal;
 use super::relay::{RelayAudience, RelayPathRequest};
 
-use crate::crypto::ratchets::RatchetRotation;
-use crate::crypto::{ed25519_sign, X25519SecretKey};
+use crate::crypto::X25519SecretKey;
+use crate::engine::remote_control_pairing::{
+    RemoteControlPairingRequestIngress, RemoteControlPairingRequestIngressOutcome,
+};
 use crate::engine::settlement::settle;
 use crate::engine::LinkClosedReason;
 use crate::engine::{
-    DeferredCrypto, Directive, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis,
-    Journaled, LinkEstablished, PathResponseWriteOutcome, ProofIngest, ProtocolViolationKind,
-    SendRequestFailure, Settlement, WakeSchedule, WakeSchedules,
+    CryptoOwed, Directive, EngineReaction, EngineState, IngestPacketOutcome, InstantMillis,
+    Journaled, LinkEstablished, OwedWork, ProtocolViolationKind,
+    RemoteControlControllerPairingRequestFailureCause,
+    RemoteControlControllerPairingResponseArrival, RemoteControlControllerPairingResponseReceived,
+    SendRequestFailure, SendRequestIntent, Settlement, WakeSchedule, WakeSchedules,
 };
 use crate::identity::{IdentitySigner, ENCRYPTION_IV_LEN};
 use crate::interfaces::AttachedInterfaces;
@@ -19,10 +22,9 @@ use crate::routing::links::channel::receive::receive as channel_receive;
 use crate::routing::links::establish::link_mtu_ceiling;
 use crate::routing::links::handshake::{negotiated_link_mtu, LinkProofSignOwed};
 use crate::routing::links::maintenance::{write_keepalive, KEEPALIVE_ECHO};
+use crate::routing::links::resources::receive::gate::AcceptedResourceAdmission;
 use crate::routing::links::resources::ResourceOffer;
-use crate::routing::proof::{
-    DeferredProofSign, ProofRequest, EXPLICIT_PROOF_WIRE_LEN, LINK_PROOF_WIRE_LEN,
-};
+use crate::routing::proof::ProofRequest;
 use crate::storage::StorageLayout;
 use crate::wire::{BROADCAST_MTU, HEADER_MAX_LEN};
 
@@ -31,11 +33,11 @@ where
     FillEntropy: FnMut(&mut [u8]),
     OnProofRequest: FnMut(&ProofRequest) -> bool,
     OnResourceOffer: FnMut(&ResourceOffer) -> bool,
-    Sink: FnMut(EngineReaction<'_>),
+    Sink: FnMut(EngineReaction<'_, OwedWork<'_>>),
 {
     pub interfaces: AttachedInterfaces<'a>,
     pub now: InstantMillis,
-    pub fill_entropy: &'a mut FillEntropy,
+    pub fill_random: &'a mut FillEntropy,
     pub should_prove: &'a mut OnProofRequest,
     pub should_accept_resource: &'a mut OnResourceOffer,
     pub sink: &'a mut Sink,
@@ -57,7 +59,7 @@ impl<S: StorageLayout> EngineState<S> {
         F: FnMut(&mut [u8]),
         P: FnMut(&ProofRequest) -> bool,
         A: FnMut(&ResourceOffer) -> bool,
-        K: FnMut(EngineReaction<'_>),
+        K: FnMut(EngineReaction<'_, OwedWork<'_>>),
     {
         self.ingest_packet_into_report(packet, io).wake_schedules
     }
@@ -71,7 +73,7 @@ impl<S: StorageLayout> EngineState<S> {
         F: FnMut(&mut [u8]),
         P: FnMut(&ProofRequest) -> bool,
         A: FnMut(&ResourceOffer) -> bool,
-        K: FnMut(EngineReaction<'_>),
+        K: FnMut(EngineReaction<'_, OwedWork<'_>>),
     {
         self.ingest_classified_into_report(ClassifiedInboundPacket::classify(packet), io)
     }
@@ -85,7 +87,7 @@ impl<S: StorageLayout> EngineState<S> {
         F: FnMut(&mut [u8]),
         P: FnMut(&ProofRequest) -> bool,
         A: FnMut(&ResourceOffer) -> bool,
-        K: FnMut(EngineReaction<'_>),
+        K: FnMut(EngineReaction<'_, OwedWork<'_>>),
     {
         self.ingest_classified_into_report(packet, io)
             .wake_schedules
@@ -100,100 +102,12 @@ impl<S: StorageLayout> EngineState<S> {
         F: FnMut(&mut [u8]),
         P: FnMut(&ProofRequest) -> bool,
         A: FnMut(&ResourceOffer) -> bool,
-        K: FnMut(EngineReaction<'_>),
+        K: FnMut(EngineReaction<'_, OwedWork<'_>>),
     {
         let IngestIo {
             interfaces,
             now,
-            fill_entropy,
-            should_prove,
-            should_accept_resource,
-            sink,
-        } = io;
-        let mut deferred_sign: Option<DeferredProofSign> = None;
-        let report = self.ingest_classified_into_deferring_report(
-            packet,
-            IngestIo {
-                interfaces,
-                now,
-                fill_entropy: &mut *fill_entropy,
-                should_prove: &mut *should_prove,
-                should_accept_resource: &mut *should_accept_resource,
-                sink: &mut *sink,
-            },
-            &mut deferred_sign,
-            None,
-        );
-        if let Some(deferred) = deferred_sign {
-            let signature = ed25519_sign(&deferred.signing_secret, deferred.packet_hash.as_bytes());
-            let mut proof = [0u8; EXPLICIT_PROOF_WIRE_LEN];
-            if let Ok(written) =
-                self.write_signed_proof(&deferred.packet_hash, &signature, &mut proof)
-            {
-                sink(EngineReaction::Directive(Directive::Send {
-                    target: deferred.target,
-                    bytes: &proof[..written],
-                }));
-            }
-        }
-        report
-    }
-
-    pub fn ingest_packet_into_deferring<F, P, A, K>(
-        &mut self,
-        packet: InboundPacket<'_>,
-        io: IngestIo<'_, F, P, A, K>,
-        deferred_sign: &mut Option<DeferredProofSign>,
-        deferred: Option<&mut DeferredCrypto>,
-    ) -> WakeSchedules
-    where
-        F: FnMut(&mut [u8]),
-        P: FnMut(&ProofRequest) -> bool,
-        A: FnMut(&ResourceOffer) -> bool,
-        K: FnMut(EngineReaction<'_>),
-    {
-        self.ingest_classified_into_deferring(
-            ClassifiedInboundPacket::classify(packet),
-            io,
-            deferred_sign,
-            deferred,
-        )
-    }
-
-    pub fn ingest_classified_into_deferring<F, P, A, K>(
-        &mut self,
-        packet: ClassifiedInboundPacket<'_>,
-        io: IngestIo<'_, F, P, A, K>,
-        deferred_sign: &mut Option<DeferredProofSign>,
-        deferred: Option<&mut DeferredCrypto>,
-    ) -> WakeSchedules
-    where
-        F: FnMut(&mut [u8]),
-        P: FnMut(&ProofRequest) -> bool,
-        A: FnMut(&ResourceOffer) -> bool,
-        K: FnMut(EngineReaction<'_>),
-    {
-        self.ingest_classified_into_deferring_report(packet, io, deferred_sign, deferred)
-            .wake_schedules
-    }
-
-    pub fn ingest_classified_into_deferring_report<F, P, A, K>(
-        &mut self,
-        packet: ClassifiedInboundPacket<'_>,
-        io: IngestIo<'_, F, P, A, K>,
-        deferred_sign: &mut Option<DeferredProofSign>,
-        mut deferred: Option<&mut DeferredCrypto>,
-    ) -> IngestPacketReport
-    where
-        F: FnMut(&mut [u8]),
-        P: FnMut(&ProofRequest) -> bool,
-        A: FnMut(&ResourceOffer) -> bool,
-        K: FnMut(EngineReaction<'_>),
-    {
-        let IngestIo {
-            interfaces,
-            now,
-            fill_entropy,
+            fill_random,
             should_prove,
             should_accept_resource,
             sink,
@@ -201,19 +115,25 @@ impl<S: StorageLayout> EngineState<S> {
         let (source, ingress) = packet.into_parts();
         let mut wake_schedule_changes = WakeSchedules::UNCHANGED;
         let mut effects = IngestEffects::default();
-        let outcome = self.ingest_classified_with_effects(
-            ingress,
-            &mut *fill_entropy,
-            interfaces,
-            &mut |removed| sink(EngineReaction::Journaled(journal_route_removal(removed))),
-            deferred.as_deref_mut(),
-            &mut effects,
-        );
+        let outcome = self.ingest_classified_with_effects(ingress, interfaces, &mut effects);
+
+        //Consider cfg-gating this on metrics/observability?
         let protocol_violation = ProtocolViolationKind::of_outcome(&outcome);
+
         wake_schedule_changes.held_announce_release = effects.held_announce_release;
         let accepted_observation = effects.accepted_announce.take();
+        let remote_control_pairing_availability =
+            effects.remote_control_pairing_availability.take();
         if let Some(expiry) = effects.destination_identity_expiry {
             wake_schedule_changes.expired_destination_identities = WakeSchedule::AtMost(expiry);
+        }
+        if let Some(observation) = remote_control_pairing_availability {
+            self.apply_remote_control_pairing_availability(
+                observation,
+                interfaces,
+                &mut wake_schedule_changes,
+                sink,
+            );
         }
         match outcome {
             IngestPacketOutcome::Announce(ingest) => {
@@ -235,30 +155,51 @@ impl<S: StorageLayout> EngineState<S> {
                     &mut DeliveryIo {
                         interfaces,
                         should_prove: &mut *should_prove,
-                        deferred_sign: &mut *deferred_sign,
                         sink: &mut *sink,
                     },
                 );
             }
-            IngestPacketOutcome::OwesDecrypt => {}
-            IngestPacketOutcome::OwesRatchetDecrypt => {}
-            IngestPacketOutcome::OwesAnnounceVerify => {}
-            IngestPacketOutcome::Proof(ProofIngest::SendSinglePacketDelivered {
-                id,
-                delivered,
-            }) => {
-                settle(sink, id, Settlement::SendSinglePacket(Ok(delivered)));
-                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+            IngestPacketOutcome::OwesDecrypt(owed) => {
+                sink(EngineReaction::Directive(Directive::Fulfill(
+                    OwedWork::Crypto(CryptoOwed::Decrypt(owed)),
+                )));
             }
-            IngestPacketOutcome::Proof(ProofIngest::SendToLinkDelivered { id, delivered }) => {
-                settle(sink, id, Settlement::SendToLink(Ok(delivered)));
-                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+            IngestPacketOutcome::OwesRatchetDecrypt(owed) => {
+                sink(EngineReaction::Directive(Directive::Fulfill(
+                    OwedWork::Crypto(CryptoOwed::RatchetDecrypt(owed)),
+                )));
             }
-            IngestPacketOutcome::Proof(ProofIngest::SendToChannelDelivered { id, delivered }) => {
-                settle(sink, id, Settlement::SendToChannel(Ok(delivered)));
-                wake_schedule_changes.channel_timeouts = self.channel_timeouts_wake();
+            IngestPacketOutcome::OwesAnnounceVerify(owed) => {
+                sink(EngineReaction::Directive(Directive::Fulfill(
+                    OwedWork::Crypto(CryptoOwed::AnnounceVerify(owed)),
+                )));
             }
-            IngestPacketOutcome::Proof(ProofIngest::Ignored) => {}
+            IngestPacketOutcome::OwesRemoteControlPairingAvailabilityVerify(owed) => {
+                sink(EngineReaction::Directive(Directive::Fulfill(
+                    OwedWork::Crypto(CryptoOwed::RemoteControlPairingAvailabilityVerify(owed)),
+                )));
+            }
+            IngestPacketOutcome::OwesReceiptProofVerify(owed) => {
+                sink(EngineReaction::Directive(Directive::Fulfill(
+                    OwedWork::Crypto(CryptoOwed::ReceiptProofVerify(owed)),
+                )));
+            }
+            IngestPacketOutcome::OwesChannelAckVerify(owed) => {
+                sink(EngineReaction::Directive(Directive::Fulfill(
+                    OwedWork::Crypto(CryptoOwed::ChannelAckVerify(owed)),
+                )));
+            }
+            IngestPacketOutcome::OwesLinkIdentityVerify(owed) => {
+                sink(EngineReaction::Directive(Directive::Fulfill(
+                    OwedWork::Crypto(CryptoOwed::LinkIdentityVerify(owed)),
+                )));
+            }
+            IngestPacketOutcome::OwesTunnelSynthesizeVerify(owed) => {
+                sink(EngineReaction::Directive(Directive::Fulfill(
+                    OwedWork::Crypto(CryptoOwed::TunnelSynthesizeVerify(owed)),
+                )));
+            }
+            IngestPacketOutcome::ReceiptProofIgnored => {}
             IngestPacketOutcome::TransportedLinkRequest {
                 header,
                 body,
@@ -289,25 +230,15 @@ impl<S: StorageLayout> EngineState<S> {
             }
             IngestPacketOutcome::AnswerPathRequest { destination } => {
                 if interfaces.is_egress_eligible(source, Egress::Transmit) {
-                    let mut response = [0u8; BROADCAST_MTU];
-                    if let PathResponseWriteOutcome::Written {
-                        wire_bytes,
-                        ratchet_rotation,
-                    } = self.write_path_response_for_upstream(
+                    if let Ok(owed) = self.prepare_path_response_announce_sign(
                         &destination,
+                        source,
                         now,
-                        &mut *fill_entropy,
-                        &mut response,
+                        &mut *fill_random,
                     ) {
-                        sink(EngineReaction::Directive(Directive::Send {
-                            target: source,
-                            bytes: &response[..wire_bytes],
-                        }));
-                        if ratchet_rotation == RatchetRotation::Minted {
-                            sink(EngineReaction::Journaled(Journaled::SelfRatchetRotated {
-                                destination,
-                            }));
-                        }
+                        sink(EngineReaction::Directive(Directive::Fulfill(
+                            OwedWork::Crypto(CryptoOwed::AnnounceSign(owed)),
+                        )));
                     }
                 }
             }
@@ -383,9 +314,13 @@ impl<S: StorageLayout> EngineState<S> {
                 wake_schedule_changes.path_request_timeouts = self.path_request_timeouts_wake();
             }
             IngestPacketOutcome::OwesLinkRtt(owed) => {
-                self.process_owes_link_rtt(owed, source, interfaces, now, fill_entropy, sink);
+                self.process_owes_link_rtt(owed, source, interfaces, now, fill_random, sink);
             }
-            IngestPacketOutcome::OwesLinkProofVerify => {}
+            IngestPacketOutcome::OwesLinkProofVerify(owed) => {
+                sink(EngineReaction::Directive(Directive::Fulfill(
+                    OwedWork::Crypto(CryptoOwed::LinkProofVerify(owed)),
+                )));
+            }
             IngestPacketOutcome::RequestReceived {
                 destination,
                 link_id,
@@ -396,42 +331,112 @@ impl<S: StorageLayout> EngineState<S> {
                 rtt,
                 data,
             } => {
-                sink(EngineReaction::Journaled(Journaled::RequestReceived {
-                    destination,
-                    link_id,
-                    request_id,
-                    requester,
-                    path_hash,
-                    requested_at,
-                    rtt,
-                    data,
-                }));
+                match self.ingest_remote_control_pairing_request(
+                    RemoteControlPairingRequestIngress {
+                        destination,
+                        link_id,
+                        request_id,
+                        requester,
+                        path_hash,
+                        data,
+                    },
+                    interfaces,
+                    now,
+                    fill_random,
+                    sink,
+                ) {
+                    RemoteControlPairingRequestIngressOutcome::Pairing(_pairing_outcome) => {
+                        wake_schedule_changes.remote_control_pairing =
+                            self.remote_control_pairing_wake();
+                        wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+                        wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
+                        wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                        wake_schedule_changes.channel_timeouts = self.channel_timeouts_wake();
+                    }
+                    RemoteControlPairingRequestIngressOutcome::ForwardToApplication => {
+                        sink(EngineReaction::Journaled(Journaled::RequestReceived {
+                            destination,
+                            link_id,
+                            request_id,
+                            requester,
+                            path_hash,
+                            requested_at,
+                            rtt,
+                            data,
+                        }));
+                    }
+                }
             }
             IngestPacketOutcome::ResponseSettled {
                 id,
+                intent,
                 delivered,
                 link_id,
                 request_id,
                 data,
             } => {
-                sink(EngineReaction::Journaled(Journaled::ResponseReceived {
-                    command_id: id,
-                    link_id,
-                    request_id,
-                    data,
-                }));
-                settle(sink, id, Settlement::SendRequest(Ok(delivered)));
+                let settlement = match intent {
+                    SendRequestIntent::Application => {
+                        sink(EngineReaction::Journaled(Journaled::ResponseReceived {
+                            command_id: id,
+                            link_id,
+                            request_id,
+                            data,
+                        }));
+                        Settlement::SendRequest(Ok(delivered))
+                    }
+                    SendRequestIntent::RemoteControlControllerPairing => {
+                        let (admission, effect) = self
+                            .admit_remote_control_controller_pairing_response_into(
+                                RemoteControlControllerPairingResponseArrival::new(link_id, data),
+                                now,
+                                interfaces,
+                                fill_random,
+                                sink,
+                            );
+                        Settlement::RemoteControlControllerPairingRequest(Ok(
+                            RemoteControlControllerPairingResponseReceived {
+                                delivered,
+                                admission,
+                                effect,
+                            },
+                        ))
+                    }
+                };
+                settle(sink, id, settlement);
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                match intent {
+                    SendRequestIntent::Application => {}
+                    SendRequestIntent::RemoteControlControllerPairing => {
+                        wake_schedule_changes.link_deadlines = self.link_deadlines_wake();
+                        wake_schedule_changes.channel_timeouts = self.channel_timeouts_wake();
+                        wake_schedule_changes.remote_control_pairing =
+                            self.remote_control_pairing_wake();
+                    }
+                }
             }
-            IngestPacketOutcome::ResponseTooLarge { id, .. } => {
-                settle(
-                    sink,
-                    id,
-                    Settlement::SendRequest(Err(SendRequestFailure::ResponseTooLarge)),
+            IngestPacketOutcome::ResponseTooLarge {
+                id,
+                intent,
+                link_id,
+                ..
+            } => {
+                let settlement = self.failed_send_request_settlement(
+                    link_id,
+                    intent,
+                    SendRequestFailure::ResponseTooLarge,
                 );
+                settle(sink, id, settlement);
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                match intent {
+                    SendRequestIntent::Application => {}
+                    SendRequestIntent::RemoteControlControllerPairing => {
+                        wake_schedule_changes.remote_control_pairing =
+                            self.remote_control_pairing_wake();
+                    }
+                }
             }
             IngestPacketOutcome::ChannelDataReceived {
                 link_id,
@@ -457,23 +462,21 @@ impl<S: StorageLayout> EngineState<S> {
                     },
                 );
                 if outcome.owes_proof() && interfaces.is_egress_eligible(source, Egress::Transmit) {
-                    let mut proof = [0u8; LINK_PROOF_WIRE_LEN];
-                    if let Ok(written) = self.write_channel_ack(&link_id, &packet_hash, &mut proof)
+                    if let Ok(owed) = self.prepare_channel_ack_sign(source, &link_id, &packet_hash)
                     {
-                        self.links.note_outbound(&link_id, now);
-                        sink(EngineReaction::Directive(Directive::Send {
-                            target: source,
-                            bytes: &proof[..written],
-                        }));
+                        sink(EngineReaction::Directive(Directive::Fulfill(
+                            CryptoOwed::ChannelAckSign(owed).into(),
+                        )));
                     }
                 }
             }
             IngestPacketOutcome::OwesResourceParts(request) => {
-                self.serve_resource_request(&request, source, now, fill_entropy, sink);
+                self.serve_resource_request(&request, source, now, fill_random, sink);
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::OwesResourcePull { link_id, hash } => {
-                self.emit_resource_pull(&link_id, &hash, now, fill_entropy, sink);
+                self.emit_resource_pull(&link_id, &hash, now, fill_random, sink);
+                self.emit_resource_open(&link_id, &hash, sink);
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
@@ -510,16 +513,16 @@ impl<S: StorageLayout> EngineState<S> {
                         accepted,
                         now,
                     ) {
-                        IngestPacketOutcome::OwesResourcePull { link_id, hash } => {
-                            self.emit_resource_pull(&link_id, &hash, now, fill_entropy, sink);
+                        AcceptedResourceAdmission::Pull { link_id, hash } => {
+                            self.emit_resource_pull(&link_id, &hash, now, fill_random, sink);
                         }
-                        IngestPacketOutcome::ResourceAdmissionPending => {}
-                        IngestPacketOutcome::ResourceCapacityRejected {
+                        AcceptedResourceAdmission::Pending => {}
+                        AcceptedResourceAdmission::CapacityRejected {
                             link_id,
                             hash,
                             settled_request,
                         } => {
-                            self.reject_offered_resource(&link_id, &hash, now, fill_entropy, sink);
+                            self.reject_offered_resource(&link_id, &hash, now, fill_random, sink);
                             if let Some(id) = settled_request {
                                 settle(
                                     sink,
@@ -530,13 +533,12 @@ impl<S: StorageLayout> EngineState<S> {
                                 );
                             }
                         }
-                        IngestPacketOutcome::Ignored(_) => {}
-                        _ => unreachable!("Resource admission returned an unrelated outcome"),
+                        AcceptedResourceAdmission::Ignored(_) => {}
                     }
                     wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
                     wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
                 } else {
-                    self.reject_offered_resource(&link_id, &accepted.hash, now, fill_entropy, sink);
+                    self.reject_offered_resource(&link_id, &accepted.hash, now, fill_random, sink);
                 }
             }
             IngestPacketOutcome::ResourceTooLarge {
@@ -544,7 +546,7 @@ impl<S: StorageLayout> EngineState<S> {
                 hash,
                 settled_request,
             } => {
-                self.reject_offered_resource(&link_id, &hash, now, fill_entropy, sink);
+                self.reject_offered_resource(&link_id, &hash, now, fill_random, sink);
                 if let Some(id) = settled_request {
                     settle(
                         sink,
@@ -555,6 +557,21 @@ impl<S: StorageLayout> EngineState<S> {
                 }
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
+            IngestPacketOutcome::PairingResponseResourceUnsupported {
+                link_id,
+                hash,
+                settled_request,
+            } => {
+                self.reject_offered_resource(&link_id, &hash, now, fill_random, sink);
+                let settlement = self.failed_remote_control_controller_pairing_request_settlement(
+                    link_id,
+                    RemoteControlControllerPairingRequestFailureCause::ResourceResponseUnsupported,
+                );
+                settle(sink, settled_request, settlement);
+                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+                wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                wake_schedule_changes.remote_control_pairing = self.remote_control_pairing_wake();
+            }
             IngestPacketOutcome::ResourceAdmissionPending => {
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
@@ -563,7 +580,7 @@ impl<S: StorageLayout> EngineState<S> {
                 hash,
                 settled_request,
             } => {
-                self.reject_offered_resource(&link_id, &hash, now, fill_entropy, sink);
+                self.reject_offered_resource(&link_id, &hash, now, fill_random, sink);
                 if let Some(id) = settled_request {
                     settle(
                         sink,
@@ -575,11 +592,15 @@ impl<S: StorageLayout> EngineState<S> {
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::OwesResourceAssembly { link_id, hash } => {
+                // Mark the final ready span in flight before conclusion observes the row. That
+                // makes a complete transfer park as AwaitingOpen until its typed completion.
+                self.emit_resource_open(&link_id, &hash, sink);
                 self.conclude_resource(&link_id, &hash, now, sink);
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
                 wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
             }
-            IngestPacketOutcome::ResourceDeadlineAdvanced => {
+            IngestPacketOutcome::ResourceDeadlineAdvanced { link_id, hash } => {
+                self.emit_resource_open(&link_id, &hash, sink);
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::IncomingResourceFailed {
@@ -597,7 +618,7 @@ impl<S: StorageLayout> EngineState<S> {
                     settle(
                         sink,
                         id,
-                        Settlement::SendRequest(Err(SendRequestFailure::Timeout)),
+                        Settlement::SendRequest(Err(SendRequestFailure::from(cause))),
                     );
                     wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
                 }
@@ -634,7 +655,7 @@ impl<S: StorageLayout> EngineState<S> {
                     wake_schedule_changes.merge(self.continue_static_response_into(
                         &link_id,
                         now,
-                        fill_entropy,
+                        fill_random,
                         sink,
                     ));
                 } else {
@@ -646,15 +667,9 @@ impl<S: StorageLayout> EngineState<S> {
                             Ok(()),
                         ),
                     );
-                    self.promote_staged_resource(&link_id, now, fill_entropy, sink);
+                    self.promote_staged_resource(&link_id, now, fill_random, sink);
                 }
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
-            }
-            IngestPacketOutcome::PeerIdentified { link_id, identity } => {
-                sink(EngineReaction::Journaled(Journaled::PeerIdentified {
-                    link_id,
-                    identity,
-                }));
             }
             IngestPacketOutcome::LinkActivated {
                 link_id,
@@ -670,12 +685,12 @@ impl<S: StorageLayout> EngineState<S> {
             IngestPacketOutcome::OwesLinkProof(accepted) => {
                 if interfaces.is_egress_eligible(source, Egress::Transmit) {
                     let mut secret_bytes = [0u8; X25519SecretKey::LEN];
-                    fill_entropy(&mut secret_bytes);
-                    if let Some(deferred) = deferred {
-                        if let Some(held) = self.held_identities.get(&accepted.identity) {
-                            let signing_secret = held.signing_secret_clone();
-                            let responder_signing = held.signing_public_key();
-                            *deferred = DeferredCrypto::LinkProofSign(LinkProofSignOwed {
+                    fill_random(&mut secret_bytes);
+                    if let Some(held) = self.held_identities.get(&accepted.identity) {
+                        let signing_secret = held.signing_secret_clone();
+                        let responder_signing = held.signing_public_key();
+                        sink(EngineReaction::Directive(Directive::Fulfill(
+                            OwedWork::Crypto(CryptoOwed::LinkProofSign(LinkProofSignOwed {
                                 request: accepted.request,
                                 identity: accepted.identity,
                                 proof_strategy: accepted.proof_strategy,
@@ -689,21 +704,8 @@ impl<S: StorageLayout> EngineState<S> {
                                 signing_secret,
                                 responder_signing,
                                 ephemeral_secret: X25519SecretKey::new(secret_bytes),
-                            });
-                        }
-                    } else {
-                        let mut buf = [0u8; BROADCAST_MTU];
-                        if let Ok(written) = self.write_owed_link_proof(
-                            &accepted,
-                            X25519SecretKey::new(secret_bytes),
-                            link_mtu_ceiling(interfaces, source),
-                            &mut buf,
-                        ) {
-                            sink(EngineReaction::Directive(Directive::Send {
-                                target: source,
-                                bytes: &buf[..written],
-                            }));
-                        }
+                            })),
+                        )));
                     }
                 }
             }
@@ -720,17 +722,19 @@ impl<S: StorageLayout> EngineState<S> {
                 }
             }
             IngestPacketOutcome::LinkClosedByPeer { link_id } => {
-                sink(EngineReaction::Journaled(Journaled::LinkClosed {
-                    link_id,
-                    reason: LinkClosedReason::PeerClosed,
-                }));
+                self.retire_link(&link_id, LinkClosedReason::PeerClosed, sink);
+                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                wake_schedule_changes.channel_timeouts = self.channel_timeouts_wake();
+                wake_schedule_changes.remote_control_pairing = self.remote_control_pairing_wake();
             }
             IngestPacketOutcome::OwesLinkClose { link_id, reason } => {
                 let mut iv = [0u8; ENCRYPTION_IV_LEN];
-                fill_entropy(&mut iv);
+                fill_random(&mut iv);
                 let mut buf = [0u8; BROADCAST_MTU];
-                if let Ok(dispatch) = self.write_owed_link_close(&link_id, &iv, &mut buf) {
+                if let Ok(dispatch) =
+                    self.write_owed_link_close(&link_id, reason, &iv, &mut buf, sink)
+                {
                     let target = dispatch.fire_on.unwrap_or(source);
                     if interfaces.is_egress_eligible(target, Egress::Transmit) {
                         sink(EngineReaction::Directive(Directive::Send {
@@ -738,11 +742,11 @@ impl<S: StorageLayout> EngineState<S> {
                             bytes: &buf[..dispatch.wire_bytes],
                         }));
                     }
-                    sink(EngineReaction::Journaled(Journaled::LinkClosed {
-                        link_id,
-                        reason,
-                    }));
                 }
+                wake_schedule_changes.receipt_timeouts = self.receipt_timeouts_wake();
+                wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
+                wake_schedule_changes.channel_timeouts = self.channel_timeouts_wake();
+                wake_schedule_changes.remote_control_pairing = self.remote_control_pairing_wake();
             }
             IngestPacketOutcome::LinkInterfaceMismatch {
                 link_id,
@@ -756,9 +760,6 @@ impl<S: StorageLayout> EngineState<S> {
                         arrived_on,
                     },
                 ));
-            }
-            IngestPacketOutcome::TunnelObserved { expires } => {
-                wake_schedule_changes.expired_routes = WakeSchedule::AtMost(expires);
             }
             IngestPacketOutcome::Ignored(_reason) => {
                 #[cfg(feature = "runtime-metrics")]

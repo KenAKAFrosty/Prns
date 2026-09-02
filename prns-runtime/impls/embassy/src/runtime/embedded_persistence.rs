@@ -6,20 +6,50 @@ use crate::engine::{EngineState, InstantMillis, Journaled, RouteSeedOutcome};
 use crate::identity::Zeroizing;
 use crate::interfaces::AttachedInterfaces;
 use crate::persistence::{
-    maximum_route_upsert_payload_len, read_routing_table_snapshot, read_self_ratchets_snapshot,
-    routing_table_snapshot_len, self_ratchets_snapshot_len, write_routing_table_snapshot,
-    write_self_ratchets_snapshot, FlashJournal, FlashJournalError, FlashJournalLayout,
-    FlashJournalRecord, FlashJournalRecordKind, FlashJournalWarning,
+    maximum_route_upsert_payload_len, read_remote_control_controller_grants_snapshot,
+    read_remote_control_target_accesses_snapshot, read_routing_table_snapshot,
+    read_self_ratchets_snapshot, remote_control_controller_grants_snapshot_capacity,
+    remote_control_target_accesses_snapshot_capacity, routing_table_snapshot_len,
+    self_ratchets_snapshot_len, write_routing_table_snapshot, write_self_ratchets_snapshot,
+    FlashJournal, FlashJournalError, FlashJournalLayout, FlashJournalRecord,
+    FlashJournalRecordKind, FlashJournalWarning, SnapshotReadError,
     TIMEBASE_RECORD_INTERVAL_MILLIS,
+};
+use crate::remote_control::{
+    DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS, DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES,
 };
 use crate::routing::announce::emit::MAX_ANNOUNCE_APP_DATA_LEN;
 use crate::routing::AnnounceIdRing;
 use crate::storage::StorageLayout;
 use crate::wire::{DestinationHash, TRUNCATED_HASH_BYTE_LEN};
 
-const RECORD_SCRATCH_LEN: usize =
-    (maximum_route_upsert_payload_len(MAX_ANNOUNCE_APP_DATA_LEN, 0) + 3) & !3;
+use super::AssembledRemoteControl;
+
+const CONTROLLER_GRANTS_SNAPSHOT_CAPACITY: usize =
+    remote_control_controller_grants_snapshot_capacity(
+        DEFAULT_MAX_REMOTE_CONTROL_CONTROLLER_GRANTS,
+    );
+const TARGET_ACCESSES_SNAPSHOT_CAPACITY: usize =
+    remote_control_target_accesses_snapshot_capacity(DEFAULT_MAX_REMOTE_CONTROL_TARGET_ACCESSES);
+pub(crate) const REMOTE_CONTROL_AUTHORIZATION_SNAPSHOT_CAPACITY: usize =
+    if CONTROLLER_GRANTS_SNAPSHOT_CAPACITY > TARGET_ACCESSES_SNAPSHOT_CAPACITY {
+        CONTROLLER_GRANTS_SNAPSHOT_CAPACITY
+    } else {
+        TARGET_ACCESSES_SNAPSHOT_CAPACITY
+    };
+const MAXIMUM_RECORD_PAYLOAD_LEN: usize =
+    if maximum_route_upsert_payload_len(MAX_ANNOUNCE_APP_DATA_LEN, 0)
+        > REMOTE_CONTROL_AUTHORIZATION_SNAPSHOT_CAPACITY
+    {
+        maximum_route_upsert_payload_len(MAX_ANNOUNCE_APP_DATA_LEN, 0)
+    } else {
+        REMOTE_CONTROL_AUTHORIZATION_SNAPSHOT_CAPACITY
+    };
+const RECORD_SCRATCH_LEN: usize = (MAXIMUM_RECORD_PAYLOAD_LEN + 3) & !3;
 const HOPSPOT_MINIMUM_COMPACTION_INTERVAL_MILLIS: u64 = 24 * 60 * 60 * 1_000;
+
+pub(crate) type RemoteControlAuthorizationSnapshot =
+    HeaplessVec<u8, REMOTE_CONTROL_AUTHORIZATION_SNAPSHOT_CAPACITY>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EmbeddedCompactionPolicy {
@@ -155,6 +185,12 @@ pub struct EmbeddedPersistenceRestoreReport {
     pub route_dropped_count: u32,
     pub ratchet_seeded_count: u32,
     pub ratchet_refused_count: u32,
+    pub remote_control_controller_grants_restored_count: u32,
+    pub remote_control_controller_grants_refused_count: u32,
+    pub remote_control_controller_grants_dropped_count: u32,
+    pub remote_control_target_accesses_restored_count: u32,
+    pub remote_control_target_accesses_refused_count: u32,
+    pub remote_control_target_accesses_dropped_count: u32,
     pub warning: Option<FlashJournalWarning>,
 }
 
@@ -182,6 +218,9 @@ pub enum EmbeddedPersistenceDiagnostic {
     WriteFailed {
         failure: EmbeddedPersistenceFailure,
         retry_at: InstantMillis,
+    },
+    RemoteControlPairingFailed {
+        failure: super::EmbeddedRemoteControlPairingPersistenceFailure,
     },
 }
 
@@ -212,7 +251,22 @@ enum CompactionPhase {
     Erase { sector: usize },
     Routes { index: usize },
     Ratchets { index: usize },
+    RemoteControlControllerGrants,
+    RemoteControlTargetAccesses,
     Commit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RemoteControlAuthorizationSnapshotKind {
+    ControllerGrants,
+    TargetAccesses,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StoreRemoteControlAuthorizationSnapshotOutcome {
+    Stored,
+    CompactionInProgress,
+    Failed(EmbeddedPersistenceFailure),
 }
 
 struct EncodedDelta {
@@ -236,6 +290,8 @@ where
     pending_ratchets: HeaplessVec<DestinationHash, PENDING>,
     compaction_route_keys: Keys,
     compaction_ratchet_keys: HeaplessVec<DestinationHash, PENDING>,
+    remote_control_controller_grants_snapshot: Option<RemoteControlAuthorizationSnapshot>,
+    remote_control_target_accesses_snapshot: Option<RemoteControlAuthorizationSnapshot>,
     route_dirty_since: Option<InstantMillis>,
     ratchet_dirty_since: Option<InstantMillis>,
     last_route_success: Option<InstantMillis>,
@@ -277,6 +333,8 @@ where
             pending_ratchets: HeaplessVec::new(),
             compaction_route_keys,
             compaction_ratchet_keys: HeaplessVec::new(),
+            remote_control_controller_grants_snapshot: None,
+            remote_control_target_accesses_snapshot: None,
             route_dirty_since: None,
             ratchet_dirty_since: None,
             last_route_success: None,
@@ -303,6 +361,7 @@ where
     pub async fn restore<S: StorageLayout>(
         &mut self,
         engine: &mut EngineState<S>,
+        remote_control: &mut AssembledRemoteControl,
         raw_now: InstantMillis,
     ) -> EmbeddedPersistenceRestoreReport {
         let Some(mut flash) = self.flash.take() else {
@@ -322,10 +381,26 @@ where
             route_dropped_count: 0,
             ratchet_seeded_count: 0,
             ratchet_refused_count: 0,
+            remote_control_controller_grants_restored_count: 0,
+            remote_control_controller_grants_refused_count: 0,
+            remote_control_controller_grants_dropped_count: 0,
+            remote_control_target_accesses_restored_count: 0,
+            remote_control_target_accesses_refused_count: 0,
+            remote_control_target_accesses_dropped_count: 0,
             warning: None,
         };
+        let mut controller_grants_snapshot = None;
+        let mut target_accesses_snapshot = None;
         let opened = FlashJournal::open(flash, self.layout, &mut scratch[..], |record| {
-            apply_record(engine, logical_start, record, &mut report)
+            apply_record(
+                engine,
+                remote_control,
+                logical_start,
+                record,
+                &mut controller_grants_snapshot,
+                &mut target_accesses_snapshot,
+                &mut report,
+            )
         })
         .await;
         let Ok((mut journal, restored)) = opened else {
@@ -334,6 +409,8 @@ where
             return report;
         };
         report.warning = restored.warning;
+        self.remote_control_controller_grants_snapshot = controller_grants_snapshot;
+        self.remote_control_target_accesses_snapshot = target_accesses_snapshot;
         let initialization_failed =
             restored.active_epoch.is_none() && journal.initialize_empty().await.is_err();
         self.next_compaction_not_before = timebase_state
@@ -365,6 +442,12 @@ where
             route_dropped_count: 0,
             ratchet_seeded_count: 0,
             ratchet_refused_count: 0,
+            remote_control_controller_grants_restored_count: 0,
+            remote_control_controller_grants_refused_count: 0,
+            remote_control_controller_grants_dropped_count: 0,
+            remote_control_target_accesses_restored_count: 0,
+            remote_control_target_accesses_refused_count: 0,
+            remote_control_target_accesses_dropped_count: 0,
             warning,
         };
         (self.observe_diagnostic)(EmbeddedPersistenceDiagnostic::Restored(report));
@@ -406,9 +489,24 @@ where
             | Journaled::LinkInterfaceMismatch { .. }
             | Journaled::ResourceReceived { .. }
             | Journaled::ResourceFailed { .. }
-            | Journaled::ResourceNeedsDecompression { .. }
             | Journaled::ResourceSegmentReceived { .. }
-            | Journaled::ResourceAssembled { .. } => {}
+            | Journaled::ResourceAssembled { .. }
+            | Journaled::RemoteControlPairingAvailabilityObserved(_)
+            | Journaled::RemoteControlPairingExpired { .. }
+            | Journaled::RemoteControlTargetPairingConfirmationRequired(_)
+            | Journaled::RemoteControlTargetPairingControllerCommitted { .. }
+            | Journaled::RemoteControlTargetPairingAuthorizationRequired { .. }
+            | Journaled::RemoteControlTargetPairingAuthorizationPersisted { .. }
+            | Journaled::RemoteControlControllerPairingConfirmationRequired(_)
+            | Journaled::RemoteControlControllerPairingPersistenceRequired(_)
+            | Journaled::RemoteControlControllerPairingAuthorizationPersisted { .. }
+            | Journaled::RemoteControlControllerPairingExpired { .. }
+            | Journaled::RemoteControlControllerPairingLinkClosed { .. }
+            | Journaled::RemoteControlTargetPairingExpired { .. }
+            | Journaled::RemoteControlTargetPairingLinkClosed { .. }
+            | Journaled::RemoteControlTargetPairingCompletionRetentionExpired { .. }
+            | Journaled::RemoteControlTargetPairingCompletionLinkClosed { .. }
+            | Journaled::RemoteControlPairingExpiryFailed { .. } => {}
         }
     }
 
@@ -673,6 +771,72 @@ where
         }
     }
 
+    pub(crate) async fn store_remote_control_authorization_snapshot<S: StorageLayout>(
+        &mut self,
+        engine: &EngineState<S>,
+        kind: RemoteControlAuthorizationSnapshotKind,
+        snapshot: &RemoteControlAuthorizationSnapshot,
+        now: InstantMillis,
+    ) -> StoreRemoteControlAuthorizationSnapshotOutcome {
+        if self.retry_not_before.is_some_and(|retry| now.0 < retry.0) {
+            return StoreRemoteControlAuthorizationSnapshotOutcome::Failed(
+                EmbeddedPersistenceFailure::Flash,
+            );
+        }
+        if self.compaction.is_some() {
+            self.progress_compaction(engine, now).await;
+            return StoreRemoteControlAuthorizationSnapshotOutcome::CompactionInProgress;
+        }
+        let record_kind = match kind {
+            RemoteControlAuthorizationSnapshotKind::ControllerGrants => {
+                FlashJournalRecordKind::RemoteControlControllerGrants
+            }
+            RemoteControlAuthorizationSnapshotKind::TargetAccesses => {
+                FlashJournalRecordKind::RemoteControlTargetAccesses
+            }
+        };
+        let Some(journal) = self.journal.as_mut() else {
+            return StoreRemoteControlAuthorizationSnapshotOutcome::Failed(
+                EmbeddedPersistenceFailure::Flash,
+            );
+        };
+        match journal.append(record_kind, snapshot).await {
+            Ok(()) => {
+                match kind {
+                    RemoteControlAuthorizationSnapshotKind::ControllerGrants => {
+                        self.remote_control_controller_grants_snapshot = Some(snapshot.clone());
+                    }
+                    RemoteControlAuthorizationSnapshotKind::TargetAccesses => {
+                        self.remote_control_target_accesses_snapshot = Some(snapshot.clone());
+                    }
+                }
+                StoreRemoteControlAuthorizationSnapshotOutcome::Stored
+            }
+            Err(FlashJournalError::ArenaFull) => {
+                self.require_snapshot(EmbeddedPersistenceTarget::CriticalState, now);
+                let allowed = self.next_compaction_not_before.unwrap_or(now);
+                if now.0 < allowed.0 {
+                    return StoreRemoteControlAuthorizationSnapshotOutcome::Failed(
+                        EmbeddedPersistenceFailure::Capacity,
+                    );
+                }
+                self.try_start_compaction(engine, now);
+                if self.compaction.is_some() {
+                    StoreRemoteControlAuthorizationSnapshotOutcome::CompactionInProgress
+                } else {
+                    StoreRemoteControlAuthorizationSnapshotOutcome::Failed(
+                        EmbeddedPersistenceFailure::Capacity,
+                    )
+                }
+            }
+            Err(error) => {
+                let failure = failure_from_journal(error);
+                self.note_write_failure(now, failure);
+                StoreRemoteControlAuthorizationSnapshotOutcome::Failed(failure)
+            }
+        }
+    }
+
     fn try_start_compaction<S: StorageLayout>(
         &mut self,
         engine: &EngineState<S>,
@@ -722,7 +886,7 @@ where
 
     async fn progress_compaction<S: StorageLayout>(
         &mut self,
-        engine: &mut EngineState<S>,
+        engine: &EngineState<S>,
         now: InstantMillis,
     ) {
         let Some(phase) = self.compaction else {
@@ -818,7 +982,7 @@ where
             }
             CompactionPhase::Ratchets { index } => {
                 let Some(destination) = self.compaction_ratchet_keys.get(index).copied() else {
-                    self.compaction = Some(CompactionPhase::Commit);
+                    self.compaction = Some(CompactionPhase::RemoteControlControllerGrants);
                     return;
                 };
                 let Some((last_rotated, secrets)) = engine.persisted_self_ratchet_row(&destination)
@@ -852,6 +1016,48 @@ where
                     Ok(()) => {
                         self.landing_records = self.landing_records.saturating_add(1);
                         self.compaction = Some(CompactionPhase::Ratchets { index: index + 1 });
+                    }
+                    Err(error) => {
+                        self.note_write_failure(now, failure_from_journal(error));
+                    }
+                }
+            }
+            CompactionPhase::RemoteControlControllerGrants => {
+                let Some(snapshot) = self.remote_control_controller_grants_snapshot.as_ref() else {
+                    self.compaction = Some(CompactionPhase::RemoteControlTargetAccesses);
+                    return;
+                };
+                match journal
+                    .append_compacted(
+                        FlashJournalRecordKind::RemoteControlControllerGrants,
+                        snapshot,
+                    )
+                    .await
+                {
+                    Ok(()) => {
+                        self.landing_records = self.landing_records.saturating_add(1);
+                        self.compaction = Some(CompactionPhase::RemoteControlTargetAccesses);
+                    }
+                    Err(error) => {
+                        self.note_write_failure(now, failure_from_journal(error));
+                    }
+                }
+            }
+            CompactionPhase::RemoteControlTargetAccesses => {
+                let Some(snapshot) = self.remote_control_target_accesses_snapshot.as_ref() else {
+                    self.compaction = Some(CompactionPhase::Commit);
+                    return;
+                };
+                match journal
+                    .append_compacted(
+                        FlashJournalRecordKind::RemoteControlTargetAccesses,
+                        snapshot,
+                    )
+                    .await
+                {
+                    Ok(()) => {
+                        self.landing_records = self.landing_records.saturating_add(1);
+                        self.compaction = Some(CompactionPhase::Commit);
                     }
                     Err(error) => {
                         self.note_write_failure(now, failure_from_journal(error));
@@ -976,8 +1182,22 @@ where
 
 pub(crate) trait ManifoldPersistence<S: StorageLayout> {
     fn observe(&mut self, journaled: &Journaled<'_>, now: InstantMillis);
-    fn deadline(&self, now: InstantMillis) -> Option<InstantMillis>;
+    fn deadline(&mut self, now: InstantMillis) -> Option<InstantMillis>;
+    async fn wait_for_work(&self) {
+        core::future::pending().await
+    }
+    fn observe_remote_control_pairing_failure(
+        &mut self,
+        failure: super::EmbeddedRemoteControlPairingPersistenceFailure,
+    );
     async fn progress(&mut self, engine: &mut EngineState<S>, now: InstantMillis);
+    async fn store_remote_control_authorization_snapshot(
+        &mut self,
+        engine: &EngineState<S>,
+        kind: RemoteControlAuthorizationSnapshotKind,
+        snapshot: &RemoteControlAuthorizationSnapshot,
+        now: InstantMillis,
+    ) -> StoreRemoteControlAuthorizationSnapshotOutcome;
 }
 
 impl<S, F, Keys, Observe, const PENDING: usize> ManifoldPersistence<S>
@@ -992,12 +1212,32 @@ where
         self.observe_journaled(journaled, now);
     }
 
-    fn deadline(&self, now: InstantMillis) -> Option<InstantMillis> {
+    fn deadline(&mut self, now: InstantMillis) -> Option<InstantMillis> {
         self.next_deadline(now)
+    }
+
+    fn observe_remote_control_pairing_failure(
+        &mut self,
+        failure: super::EmbeddedRemoteControlPairingPersistenceFailure,
+    ) {
+        (self.observe_diagnostic)(EmbeddedPersistenceDiagnostic::RemoteControlPairingFailed {
+            failure,
+        });
     }
 
     async fn progress(&mut self, engine: &mut EngineState<S>, now: InstantMillis) {
         self.progress(engine, now).await;
+    }
+
+    async fn store_remote_control_authorization_snapshot(
+        &mut self,
+        engine: &EngineState<S>,
+        kind: RemoteControlAuthorizationSnapshotKind,
+        snapshot: &RemoteControlAuthorizationSnapshot,
+        now: InstantMillis,
+    ) -> StoreRemoteControlAuthorizationSnapshotOutcome {
+        self.store_remote_control_authorization_snapshot(engine, kind, snapshot, now)
+            .await
     }
 }
 
@@ -1006,11 +1246,27 @@ pub(crate) struct NoManifoldPersistence;
 impl<S: StorageLayout> ManifoldPersistence<S> for NoManifoldPersistence {
     fn observe(&mut self, _journaled: &Journaled<'_>, _now: InstantMillis) {}
 
-    fn deadline(&self, _now: InstantMillis) -> Option<InstantMillis> {
+    fn deadline(&mut self, _now: InstantMillis) -> Option<InstantMillis> {
         None
     }
 
+    fn observe_remote_control_pairing_failure(
+        &mut self,
+        _failure: super::EmbeddedRemoteControlPairingPersistenceFailure,
+    ) {
+    }
+
     async fn progress(&mut self, _engine: &mut EngineState<S>, _now: InstantMillis) {}
+
+    async fn store_remote_control_authorization_snapshot(
+        &mut self,
+        _engine: &EngineState<S>,
+        _kind: RemoteControlAuthorizationSnapshotKind,
+        _snapshot: &RemoteControlAuthorizationSnapshot,
+        _now: InstantMillis,
+    ) -> StoreRemoteControlAuthorizationSnapshotOutcome {
+        StoreRemoteControlAuthorizationSnapshotOutcome::Failed(EmbeddedPersistenceFailure::Flash)
+    }
 }
 
 fn encode_route_delta<S: StorageLayout>(
@@ -1080,8 +1336,11 @@ fn encode_tombstone(destination: DestinationHash) -> Result<EncodedDelta, ()> {
 
 fn apply_record<S: StorageLayout>(
     engine: &mut EngineState<S>,
+    remote_control: &mut AssembledRemoteControl,
     now: InstantMillis,
     record: FlashJournalRecord<'_>,
+    controller_grants_snapshot: &mut Option<RemoteControlAuthorizationSnapshot>,
+    target_accesses_snapshot: &mut Option<RemoteControlAuthorizationSnapshot>,
     report: &mut EmbeddedPersistenceRestoreReport,
 ) {
     match record.kind {
@@ -1158,6 +1417,76 @@ fn apply_record<S: StorageLayout>(
                 }
             }
         }
+        FlashJournalRecordKind::RemoteControlControllerGrants => {
+            let restored = read_remote_control_controller_grants_snapshot(record.payload);
+            let restored = match restored {
+                Ok(restored) => restored,
+                Err(SnapshotReadError::Envelope(_) | SnapshotReadError::MalformedPayload) => {
+                    report.remote_control_controller_grants_refused_count = report
+                        .remote_control_controller_grants_refused_count
+                        .saturating_add(1);
+                    return;
+                }
+            };
+            let restored_count = restored.grant_count();
+            let Ok(snapshot) = RemoteControlAuthorizationSnapshot::from_slice(record.payload)
+            else {
+                report.remote_control_controller_grants_dropped_count = report
+                    .remote_control_controller_grants_dropped_count
+                    .saturating_add(restored_count as u32);
+                return;
+            };
+            match remote_control.restore_controller_grants(restored) {
+                Ok(outcome) => {
+                    *controller_grants_snapshot = Some(snapshot);
+                    report.remote_control_controller_grants_restored_count =
+                        outcome.restored_count as u32;
+                }
+                Err(
+                    super::RemoteControlAuthorizationRestoreError::Unavailable
+                    | super::RemoteControlAuthorizationRestoreError::CapacityExhausted,
+                ) => {
+                    report.remote_control_controller_grants_dropped_count = report
+                        .remote_control_controller_grants_dropped_count
+                        .saturating_add(restored_count as u32);
+                }
+            }
+        }
+        FlashJournalRecordKind::RemoteControlTargetAccesses => {
+            let restored = read_remote_control_target_accesses_snapshot(record.payload);
+            let restored = match restored {
+                Ok(restored) => restored,
+                Err(SnapshotReadError::Envelope(_) | SnapshotReadError::MalformedPayload) => {
+                    report.remote_control_target_accesses_refused_count = report
+                        .remote_control_target_accesses_refused_count
+                        .saturating_add(1);
+                    return;
+                }
+            };
+            let restored_count = restored.access_count();
+            let Ok(snapshot) = RemoteControlAuthorizationSnapshot::from_slice(record.payload)
+            else {
+                report.remote_control_target_accesses_dropped_count = report
+                    .remote_control_target_accesses_dropped_count
+                    .saturating_add(restored_count as u32);
+                return;
+            };
+            match remote_control.restore_target_accesses(restored) {
+                Ok(outcome) => {
+                    *target_accesses_snapshot = Some(snapshot);
+                    report.remote_control_target_accesses_restored_count =
+                        outcome.restored_count as u32;
+                }
+                Err(
+                    super::RemoteControlAuthorizationRestoreError::Unavailable
+                    | super::RemoteControlAuthorizationRestoreError::CapacityExhausted,
+                ) => {
+                    report.remote_control_target_accesses_dropped_count = report
+                        .remote_control_target_accesses_dropped_count
+                        .saturating_add(restored_count as u32);
+                }
+            }
+        }
     }
 }
 
@@ -1195,6 +1524,7 @@ mod tests {
 
     const ERASE: usize = 512;
     const CAPACITY: usize = ERASE * 6;
+    const EMPTY_STATE_COMPACTION_PROGRESS_STEPS: usize = 9;
     const LAYOUT: FlashJournalLayout = FlashJournalLayout::new(
         [0, ERASE as u32],
         [
@@ -1320,12 +1650,65 @@ mod tests {
         ready_with_observer((|_| {}) as fn(EmbeddedPersistenceDiagnostic))
     }
 
+    async fn restore_without_remote_control<Observe>(
+        persistence: &mut EmbeddedFlashPersistence<
+            TestFlash,
+            FixedRouteSnapshotKeys<8>,
+            Observe,
+            4,
+        >,
+        engine: &mut EngineState<crate::storage::GrowableHeap>,
+        now: InstantMillis,
+    ) -> EmbeddedPersistenceRestoreReport
+    where
+        Observe: FnMut(EmbeddedPersistenceDiagnostic),
+    {
+        let mut remote_control = crate::runtime::configure_remote_control_service(
+            engine,
+            crate::remote_control::RemoteControlService::Unavailable,
+        )
+        .expect("unavailable RemoteControl requires no storage");
+        persistence.restore(engine, &mut remote_control, now).await
+    }
+
+    fn available_remote_control(
+        engine: &mut EngineState<crate::storage::GrowableHeap>,
+    ) -> AssembledRemoteControl {
+        crate::runtime::configure_remote_control_service(
+            engine,
+            crate::runtime::node_facade::test_remote_control_service(),
+        )
+        .expect("RemoteControl fits growable storage")
+    }
+
+    fn controller_grants_snapshot(
+        remote_control: &AssembledRemoteControl,
+    ) -> RemoteControlAuthorizationSnapshot {
+        let mut bytes = [0u8; REMOTE_CONTROL_AUTHORIZATION_SNAPSHOT_CAPACITY];
+        let written = remote_control
+            .write_controller_grants_snapshot(&mut bytes)
+            .unwrap()
+            .unwrap();
+        RemoteControlAuthorizationSnapshot::from_slice(&bytes[..written]).unwrap()
+    }
+
+    fn target_accesses_snapshot(
+        remote_control: &AssembledRemoteControl,
+    ) -> RemoteControlAuthorizationSnapshot {
+        let mut bytes = [0u8; REMOTE_CONTROL_AUTHORIZATION_SNAPSHOT_CAPACITY];
+        let written = remote_control
+            .write_target_accesses_snapshot(&mut bytes)
+            .unwrap()
+            .unwrap();
+        RemoteControlAuthorizationSnapshot::from_slice(&bytes[..written]).unwrap()
+    }
+
     fn signed_route(secret: u8, app_data: &[u8]) -> crate::routing::PersistedRouteRow<'_> {
         use crate::identity::in_memory::InMemoryNodeIdentity;
         use crate::interfaces::InterfaceId;
         use crate::routing::announce::{Announce, AnnounceId, DottedNameHash};
         use crate::routing::routes::RouteEntry;
-        use crate::routing::{AnnounceIdRing, NextHop, RouteResponsiveness};
+        use crate::routing::{AnnounceIdRing, NextHop, RouteResponsiveness, RouteRetention};
 
         let signer = InMemoryNodeIdentity::from_secret_key_bytes(&[secret; 64]);
         let announce = Announce::build_signed(
@@ -1345,6 +1728,7 @@ mod tests {
                 responsiveness: RouteResponsiveness::Responsive,
                 receiving_interface: InterfaceId::new([secret; 8]),
                 next_hop: NextHop::Direct,
+                retention: RouteRetention::Network,
             },
             public_keys: announce.public_keys,
             dotted_name_hash: announce.dotted_name_hash,
@@ -1518,7 +1902,9 @@ mod tests {
                     (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
                 );
             let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
-            let report = persistence.restore(&mut engine, InstantMillis(0)).await;
+            let report =
+                restore_without_remote_control(&mut persistence, &mut engine, InstantMillis(0))
+                    .await;
             assert_eq!(persistence.next_compaction_not_before, None);
             persistence.require_snapshot(EmbeddedPersistenceTarget::Routes, report.logical_start);
             persistence.route_dirty_since = Some(InstantMillis(report.logical_start.0 - 2_000));
@@ -1541,7 +1927,7 @@ mod tests {
                 FixedRouteSnapshotKeys::new(),
                 (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
             );
-            restored.restore(&mut engine, InstantMillis(0)).await;
+            restore_without_remote_control(&mut restored, &mut engine, InstantMillis(0)).await;
             assert!(restored.next_compaction_not_before.is_some());
         });
     }
@@ -1573,7 +1959,8 @@ mod tests {
                         (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
                     );
                 let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
-                let report = persistence.restore(&mut engine, raw_now).await;
+                let report =
+                    restore_without_remote_control(&mut persistence, &mut engine, raw_now).await;
 
                 assert_eq!(report.logical_start, raw_now.max(flash_high_water));
             }
@@ -1594,7 +1981,9 @@ mod tests {
                     (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
                 );
             let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
-            let start = persistence.restore(&mut engine, InstantMillis(1_000)).await;
+            let start =
+                restore_without_remote_control(&mut persistence, &mut engine, InstantMillis(1_000))
+                    .await;
 
             assert_eq!(
                 persistence.next_deadline(start.logical_start),
@@ -1704,7 +2093,8 @@ mod tests {
                 FixedRouteSnapshotKeys::new(),
                 (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
             );
-            let report = restored.restore(&mut engine, InstantMillis(0)).await;
+            let report =
+                restore_without_remote_control(&mut restored, &mut engine, InstantMillis(0)).await;
             assert!(report.logical_start.0 >= attempt.0);
             assert_eq!(
                 restored.next_compaction_not_before,
@@ -1756,7 +2146,7 @@ mod tests {
                 FixedRouteSnapshotKeys::new(),
                 (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
             );
-            restored.restore(&mut engine, InstantMillis(0)).await;
+            restore_without_remote_control(&mut restored, &mut engine, InstantMillis(0)).await;
             assert_eq!(restored.next_compaction_not_before, None);
         });
     }
@@ -1783,7 +2173,7 @@ mod tests {
                 FixedRouteSnapshotKeys::new(),
                 (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
             );
-            first.restore(&mut engine, InstantMillis(0)).await;
+            restore_without_remote_control(&mut first, &mut engine, InstantMillis(0)).await;
             assert_eq!(first.next_compaction_not_before, deadline);
 
             let flash = first.journal.take().unwrap().release();
@@ -1794,7 +2184,7 @@ mod tests {
                 FixedRouteSnapshotKeys::new(),
                 (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
             );
-            second.restore(&mut engine, InstantMillis(0)).await;
+            restore_without_remote_control(&mut second, &mut engine, InstantMillis(0)).await;
             assert_eq!(second.next_compaction_not_before, deadline);
         });
     }
@@ -1932,6 +2322,13 @@ mod tests {
             crate::storage::TestFixedStorage<8, 8, 256, 2, 2, 16, 4, 4, 4, 4, 4, 16>;
         let now = InstantMillis(1_000);
         let mut engine = EngineState::<EightRouteStorage>::default();
+        let mut remote_control = crate::runtime::configure_remote_control_service(
+            &mut engine,
+            crate::remote_control::RemoteControlService::Unavailable,
+        )
+        .expect("unavailable RemoteControl requires no storage");
+        let mut controller_grants_snapshot = None;
+        let mut target_accesses_snapshot = None;
         let mut report = EmbeddedPersistenceRestoreReport {
             logical_start: now,
             route_seeded_count: 0,
@@ -1939,6 +2336,12 @@ mod tests {
             route_dropped_count: 0,
             ratchet_seeded_count: 0,
             ratchet_refused_count: 0,
+            remote_control_controller_grants_restored_count: 0,
+            remote_control_controller_grants_refused_count: 0,
+            remote_control_controller_grants_dropped_count: 0,
+            remote_control_target_accesses_restored_count: 0,
+            remote_control_target_accesses_refused_count: 0,
+            remote_control_target_accesses_dropped_count: 0,
             warning: None,
         };
 
@@ -1951,12 +2354,15 @@ mod tests {
                     .unwrap();
             apply_record(
                 &mut engine,
+                &mut remote_control,
                 now,
                 FlashJournalRecord {
                     epoch: 1,
                     kind: FlashJournalRecordKind::RouteUpsert,
                     payload: &scratch[..written],
                 },
+                &mut controller_grants_snapshot,
+                &mut target_accesses_snapshot,
                 &mut report,
             );
         }
@@ -1970,9 +2376,245 @@ mod tests {
                 route_dropped_count: 8,
                 ratchet_seeded_count: 0,
                 ratchet_refused_count: 0,
+                remote_control_controller_grants_restored_count: 0,
+                remote_control_controller_grants_refused_count: 0,
+                remote_control_controller_grants_dropped_count: 0,
+                remote_control_target_accesses_restored_count: 0,
+                remote_control_target_accesses_refused_count: 0,
+                remote_control_target_accesses_dropped_count: 0,
                 warning: None,
             }
         );
+    }
+
+    #[test]
+    fn malformed_newest_authorization_records_preserve_the_last_valid_tables() {
+        use crate::identity::IdentityPublicKeys;
+        use crate::remote_control::{
+            RemoteControlControllerGrantTable, RemoteControlRequestKind, RemoteControlRequestSet,
+            RemoteControlTargetAccess, RemoteControlTargetAccessTable, RemoteControlTargetIdentity,
+        };
+
+        let now = InstantMillis(1_000);
+        let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
+        let mut remote_control = available_remote_control(&mut engine);
+        let grant = crate::runtime::node_facade::test_remote_control_grant(
+            RemoteControlRequestKind::Describe,
+        );
+        remote_control.set_controller_grant(grant).unwrap();
+        let valid_controller_grants = controller_grants_snapshot(&remote_control);
+        remote_control
+            .revoke_controller(grant.controller())
+            .unwrap();
+        let target_public_keys = IdentityPublicKeys {
+            encryption: grant.controller().public_keys().encryption,
+            signing: grant.controller().public_keys().signing,
+        };
+        let target = RemoteControlTargetIdentity::new(target_public_keys);
+        remote_control
+            .set_target_access(
+                RemoteControlTargetAccess::new(
+                    RemoteControlTargetIdentity::new(target_public_keys),
+                    RemoteControlRequestSet::only(RemoteControlRequestKind::AnnounceSelf),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let valid_target_accesses = target_accesses_snapshot(&remote_control);
+        remote_control.forget_target(&target).unwrap();
+        let mut controller_grants_snapshot = None;
+        let mut target_accesses_snapshot = None;
+        let mut report = EmbeddedPersistenceRestoreReport {
+            logical_start: now,
+            route_seeded_count: 0,
+            route_refused_count: 0,
+            route_dropped_count: 0,
+            ratchet_seeded_count: 0,
+            ratchet_refused_count: 0,
+            remote_control_controller_grants_restored_count: 0,
+            remote_control_controller_grants_refused_count: 0,
+            remote_control_controller_grants_dropped_count: 0,
+            remote_control_target_accesses_restored_count: 0,
+            remote_control_target_accesses_refused_count: 0,
+            remote_control_target_accesses_dropped_count: 0,
+            warning: None,
+        };
+
+        for record in [
+            FlashJournalRecord {
+                epoch: 1,
+                kind: FlashJournalRecordKind::RemoteControlControllerGrants,
+                payload: &valid_controller_grants,
+            },
+            FlashJournalRecord {
+                epoch: 1,
+                kind: FlashJournalRecordKind::RemoteControlTargetAccesses,
+                payload: &valid_target_accesses,
+            },
+            FlashJournalRecord {
+                epoch: 1,
+                kind: FlashJournalRecordKind::RemoteControlControllerGrants,
+                payload: &[0xFF],
+            },
+            FlashJournalRecord {
+                epoch: 1,
+                kind: FlashJournalRecordKind::RemoteControlTargetAccesses,
+                payload: &[0xFF],
+            },
+        ] {
+            apply_record(
+                &mut engine,
+                &mut remote_control,
+                now,
+                record,
+                &mut controller_grants_snapshot,
+                &mut target_accesses_snapshot,
+                &mut report,
+            );
+        }
+
+        assert_eq!(
+            remote_control
+                .controller_grants()
+                .unwrap()
+                .grants_in_identity_hash_order(),
+            &[grant],
+        );
+        assert_eq!(
+            remote_control
+                .target_accesses()
+                .unwrap()
+                .accesses_in_identity_hash_order()[0]
+                .target(),
+            &target,
+        );
+        assert_eq!(controller_grants_snapshot, Some(valid_controller_grants));
+        assert_eq!(target_accesses_snapshot, Some(valid_target_accesses));
+        assert_eq!(report.remote_control_controller_grants_restored_count, 1);
+        assert_eq!(report.remote_control_controller_grants_refused_count, 1);
+        assert_eq!(report.remote_control_controller_grants_dropped_count, 0);
+        assert_eq!(report.remote_control_target_accesses_restored_count, 1);
+        assert_eq!(report.remote_control_target_accesses_refused_count, 1);
+        assert_eq!(report.remote_control_target_accesses_dropped_count, 0);
+    }
+
+    #[test]
+    fn authorization_snapshots_survive_compaction_and_restore_complete_runtime_tables() {
+        use crate::identity::IdentityPublicKeys;
+        use crate::remote_control::{
+            RemoteControlControllerGrantTable, RemoteControlRequestKind, RemoteControlRequestSet,
+            RemoteControlTargetAccess, RemoteControlTargetAccessTable, RemoteControlTargetIdentity,
+        };
+
+        embassy_futures::block_on(async {
+            let mut persistence =
+                EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
+                    TestFlash::new(),
+                    LAYOUT,
+                    EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(
+                        0,
+                    )),
+                    FixedRouteSnapshotKeys::new(),
+                    (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
+                );
+            let mut engine = EngineState::<crate::storage::GrowableHeap>::default();
+            let mut remote_control = available_remote_control(&mut engine);
+            persistence
+                .restore(&mut engine, &mut remote_control, InstantMillis(0))
+                .await;
+            let grant = crate::runtime::node_facade::test_remote_control_grant(
+                RemoteControlRequestKind::Describe,
+            );
+            remote_control.set_controller_grant(grant).unwrap();
+            let target_public_keys = IdentityPublicKeys {
+                encryption: grant.controller().public_keys().encryption,
+                signing: grant.controller().public_keys().signing,
+            };
+            let access = RemoteControlTargetAccess::new(
+                RemoteControlTargetIdentity::new(target_public_keys),
+                RemoteControlRequestSet::only(RemoteControlRequestKind::AnnounceSelf),
+            )
+            .unwrap();
+            remote_control.set_target_access(access).unwrap();
+            assert_eq!(
+                persistence
+                    .store_remote_control_authorization_snapshot(
+                        &engine,
+                        RemoteControlAuthorizationSnapshotKind::ControllerGrants,
+                        &controller_grants_snapshot(&remote_control),
+                        InstantMillis(1),
+                    )
+                    .await,
+                StoreRemoteControlAuthorizationSnapshotOutcome::Stored,
+            );
+            assert_eq!(
+                persistence
+                    .store_remote_control_authorization_snapshot(
+                        &engine,
+                        RemoteControlAuthorizationSnapshotKind::TargetAccesses,
+                        &target_accesses_snapshot(&remote_control),
+                        InstantMillis(2),
+                    )
+                    .await,
+                StoreRemoteControlAuthorizationSnapshotOutcome::Stored,
+            );
+
+            persistence
+                .require_snapshot(EmbeddedPersistenceTarget::CriticalState, InstantMillis(3));
+            persistence.try_start_compaction(&engine, InstantMillis(3));
+            for now in 3..32 {
+                if persistence.compaction.is_none() {
+                    break;
+                }
+                persistence
+                    .progress_compaction(&engine, InstantMillis(now))
+                    .await;
+            }
+            assert!(persistence.compaction.is_none());
+
+            let flash = persistence.journal.take().unwrap().release();
+            let mut restored = EmbeddedFlashPersistence::<_, FixedRouteSnapshotKeys<8>, _, 4>::new(
+                flash,
+                LAYOUT,
+                EmbeddedPersistencePolicy::hopspot_default(EmbeddedCompactionPolicy::hopspot(0)),
+                FixedRouteSnapshotKeys::new(),
+                (|_| {}) as fn(EmbeddedPersistenceDiagnostic),
+            );
+            let mut restored_engine = EngineState::<crate::storage::GrowableHeap>::default();
+            let mut restored_remote_control = available_remote_control(&mut restored_engine);
+            let report = restored
+                .restore(
+                    &mut restored_engine,
+                    &mut restored_remote_control,
+                    InstantMillis(0),
+                )
+                .await;
+
+            assert_eq!(report.remote_control_controller_grants_restored_count, 1);
+            assert_eq!(report.remote_control_controller_grants_refused_count, 0);
+            assert_eq!(report.remote_control_controller_grants_dropped_count, 0);
+            assert_eq!(report.remote_control_target_accesses_restored_count, 1);
+            assert_eq!(report.remote_control_target_accesses_refused_count, 0);
+            assert_eq!(report.remote_control_target_accesses_dropped_count, 0);
+            assert_eq!(
+                restored_remote_control
+                    .controller_grants()
+                    .unwrap()
+                    .grants_in_identity_hash_order(),
+                &[grant],
+            );
+            let restored_access = restored_remote_control
+                .target_accesses()
+                .unwrap()
+                .accesses_in_identity_hash_order()
+                .first()
+                .unwrap();
+            assert_eq!(restored_access.target().public_keys(), &target_public_keys);
+            assert_eq!(
+                restored_access.permitted_requests(),
+                &RemoteControlRequestSet::only(RemoteControlRequestKind::AnnounceSelf),
+            );
+        });
     }
 
     #[test]
@@ -1988,8 +2630,11 @@ mod tests {
                 let now = InstantMillis(day * HOPSPOT_MINIMUM_COMPACTION_INTERVAL_MILLIS);
                 persistence.require_snapshot(EmbeddedPersistenceTarget::Routes, now);
                 persistence.route_dirty_since = Some(InstantMillis(now.0 - 2_000));
-                for _ in 0..8 {
+                for _ in 0..EMPTY_STATE_COMPACTION_PROGRESS_STEPS {
                     persistence.progress(&mut engine, now).await;
+                    if persistence.compaction.is_none() && !persistence.snapshot_required {
+                        break;
+                    }
                 }
                 assert_eq!(persistence.compaction, None);
             }

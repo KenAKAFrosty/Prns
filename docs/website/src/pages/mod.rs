@@ -4,6 +4,7 @@ mod landing;
 mod not_found;
 mod platforms;
 
+pub(crate) use benchmarks::HOST_PAGES;
 pub use benchmarks::{BenchmarksHostPage, BenchmarksPage};
 pub use flash::{FlashBoardPage, FlashPage};
 pub use landing::Landing;

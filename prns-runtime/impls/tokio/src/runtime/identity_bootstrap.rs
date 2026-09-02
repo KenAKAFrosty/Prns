@@ -15,11 +15,34 @@ use prns_core::remote_control::{
     RemoteControlNodeIdentityBootstrap, RemoteControlNodeIdentityBootstrapError,
 };
 
-pub type RemoteControlFileIdentityBootstrapError =
-    RemoteControlNodeIdentityBootstrapError<FileVaultError, OsEntropyError>;
+use super::{OsEntropyError, OsRuntimeEntropy};
+
+#[derive(Debug)]
+pub enum RemoteControlFileIdentityBootstrapError {
+    Entropy(OsEntropyError),
+    Bootstrap(RemoteControlNodeIdentityBootstrapError<FileVaultError>),
+}
 
 pub struct RemoteControlIdentityDirectory {
     vault: FileVault,
+}
+
+impl core::fmt::Display for RemoteControlFileIdentityBootstrapError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Entropy(error) => write!(formatter, "RemoteControl identity entropy: {error}"),
+            Self::Bootstrap(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for RemoteControlFileIdentityBootstrapError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Entropy(error) => Some(error),
+            Self::Bootstrap(error) => Some(error),
+        }
+    }
 }
 
 impl RemoteControlIdentityDirectory {
@@ -32,7 +55,13 @@ impl RemoteControlIdentityDirectory {
     pub fn load_or_generate(
         mut self,
     ) -> Result<RemoteControlNodeIdentityBootstrap, RemoteControlFileIdentityBootstrapError> {
-        RemoteControlNodeIdentityBootstrap::load_or_generate(&mut self.vault, fill_os_entropy)
+        let mut entropy = OsRuntimeEntropy::try_new()
+            .map_err(RemoteControlFileIdentityBootstrapError::Entropy)?;
+        RemoteControlNodeIdentityBootstrap::load_or_generate_with_runtime_entropy(
+            &mut self.vault,
+            entropy.inner_mut(),
+        )
+        .map_err(RemoteControlFileIdentityBootstrapError::Bootstrap)
     }
 }
 
@@ -48,12 +77,8 @@ pub fn generate_identity_secret() -> Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]> {
 pub fn try_generate_identity_secret(
 ) -> Result<Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>, OsEntropyError> {
     let mut key = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
-    fill_os_entropy(&mut *key)?;
+    OsRuntimeEntropy::try_new()?.fill_random(&mut *key);
     Ok(key)
-}
-
-pub fn fill_os_entropy(bytes: &mut [u8]) -> Result<(), OsEntropyError> {
-    getrandom::getrandom(bytes).map_err(OsEntropyError)
 }
 
 pub fn load_or_create_ble_identity(path: &Path) -> Result<BleIdentity, LocalIdentityFileError> {
@@ -119,7 +144,9 @@ fn read_local_identity(
 
 fn create_ble_identity(path: &Path) -> Result<BleIdentity, LocalIdentityFileError> {
     let mut bytes = [0u8; LOCAL_IDENTITY_LEN];
-    fill_os_entropy(&mut bytes).map_err(LocalIdentityFileError::Entropy)?;
+    OsRuntimeEntropy::try_new()
+        .map_err(LocalIdentityFileError::Entropy)?
+        .fill_random(&mut bytes);
     let identity = BleIdentity::new(bytes);
     let record = Zeroizing::new(encode_persisted_ble_identity(identity));
     if let Some(parent) = path.parent() {
@@ -154,7 +181,9 @@ fn create_ble_identity(path: &Path) -> Result<BleIdentity, LocalIdentityFileErro
 
 fn create_local_identity(path: &Path) -> Result<[u8; LOCAL_IDENTITY_LEN], LocalIdentityFileError> {
     let mut bytes = [0u8; LOCAL_IDENTITY_LEN];
-    fill_os_entropy(&mut bytes).map_err(LocalIdentityFileError::Entropy)?;
+    OsRuntimeEntropy::try_new()
+        .map_err(LocalIdentityFileError::Entropy)?
+        .fill_random(&mut bytes);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(LocalIdentityFileError::Io)?;
     }
@@ -248,17 +277,6 @@ pub enum LocalIdentityFileError {
     InvalidBleIdentity(PersistedBleIdentityError),
     Entropy(OsEntropyError),
 }
-
-#[derive(Debug)]
-pub struct OsEntropyError(getrandom::Error);
-
-impl core::fmt::Display for OsEntropyError {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(formatter, "OS CSPRNG failed: {}", self.0)
-    }
-}
-
-impl std::error::Error for OsEntropyError {}
 
 impl core::fmt::Display for IdentitySecretFileError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -458,8 +476,10 @@ mod tests {
 
         assert!(matches!(
             RemoteControlIdentityDirectory::new(&dir).load_or_generate(),
-            Err(RemoteControlNodeIdentityBootstrapError::TargetLoad(
-                FileVaultError::MalformedLength { found: 5 }
+            Err(RemoteControlFileIdentityBootstrapError::Bootstrap(
+                RemoteControlNodeIdentityBootstrapError::TargetLoad(
+                    FileVaultError::MalformedLength { found: 5 }
+                )
             ))
         ));
         assert_eq!(fs::read(&target).unwrap(), b"short");
@@ -478,8 +498,8 @@ mod tests {
 
         assert!(matches!(
             RemoteControlIdentityDirectory::new(&path).load_or_generate(),
-            Err(RemoteControlNodeIdentityBootstrapError::ControllerLoad(
-                FileVaultError::Io(_)
+            Err(RemoteControlFileIdentityBootstrapError::Bootstrap(
+                RemoteControlNodeIdentityBootstrapError::ControllerLoad(FileVaultError::Io(_))
             ))
         ));
 

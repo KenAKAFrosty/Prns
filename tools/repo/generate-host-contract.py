@@ -58,6 +58,12 @@ KOTLIN_COMMAND_PATH = (
 )
 JULIA_COMMAND_PATH = ROOT / "prns-host/bindings/julia/src/command.jl"
 JULIA_MODULE_PATH = ROOT / "prns-host/bindings/julia/src/PersonalRns.jl"
+DOTNET_HOST_PATH = ROOT / "prns-host/bindings/dotnet/src/PersonalRns/PrnsHost.cs"
+PYTHON_HOST_PATH = ROOT / "prns-host/bindings/python/src/personal_rns/host.py"
+GO_COMMAND_PATH = ROOT / "prns-host/bindings/go/command.go"
+SWIFT_COMMAND_PATH = (
+    ROOT / "prns-host/bindings/swift/Sources/PersonalRns/Command.swift"
+)
 
 
 def snake(name):
@@ -569,6 +575,21 @@ def ts_string_union(name, values):
     return lines
 
 
+def ts_numeric_inventory(name, values):
+    inventory = f"{screaming(name)}_CODES"
+    lines = [f"export const {inventory} = Object.freeze({{"]
+    for value in values:
+        lines.append(f'  {value["name"]}: {value["value"]},')
+    lines.extend(
+        [
+            "} as const);",
+            "",
+            f"export type {name}Code = (typeof {inventory})[keyof typeof {inventory}];",
+        ]
+    )
+    return lines
+
+
 def ts_output(schema):
     fixed = schema["fixedBytes"]
     lines = [
@@ -678,6 +699,16 @@ def ts_output(schema):
     )
     for enum in additional_ts_enums:
         lines.extend([*ts_string_union(enum["name"], enum["values"]), ""])
+    for name in (
+        "ApplicationEventKind",
+        "DiagnosticEventKind",
+        "EventField",
+        "CommandOutcomeKind",
+        "CommandFailureKind",
+        "DeliveryEvidenceKind",
+    ):
+        enum = next(item for item in schema["enums"] if item["name"] == name)
+        lines.extend([*ts_numeric_inventory(enum["name"], enum["values"]), ""])
     for record in schema.get("records", []):
         lines.extend(ts_record(record))
     lines.extend(
@@ -2165,6 +2196,38 @@ def require_functions(path, names, prefix=""):
         )
 
 
+def missing_command_failure_decoder_cases(schema):
+    failure_kind = next(
+        item for item in schema["enums"] if item["name"] == "CommandFailureKind"
+    )
+    names = [value["name"] for value in failure_kind["values"]]
+    projections = {
+        DOTNET_HOST_PATH: lambda name: f"CommandFailureKind.{name} =>",
+        GO_COMMAND_PATH: lambda name: f"case CommandFailureKind{name}:",
+        JULIA_COMMAND_PATH: lambda name: f"kind == CommandFailureKind{name}",
+        KOTLIN_COMMAND_PATH: lambda name: f"CommandFailureKind.{screaming(name)} ->",
+        PYTHON_HOST_PATH: lambda name: f"case g.CommandFailureKind.{screaming(name)}:",
+        SWIFT_COMMAND_PATH: lambda name: f"case .{lower_first(name)}:",
+    }
+    return {
+        path: [name for name in names if marker(name) not in path.read_text()]
+        for path, marker in projections.items()
+    }
+
+
+def verify_command_failure_decoders(schema):
+    missing_by_path = missing_command_failure_decoder_cases(schema)
+    errors = [
+        f"{path.relative_to(ROOT)}: {', '.join(missing)}"
+        for path, missing in missing_by_path.items()
+        if missing
+    ]
+    if errors:
+        raise ValueError(
+            "host SDK command-failure decoder is stale: " + "; ".join(errors)
+        )
+
+
 def verify_high_level_surfaces(schema):
     union_name = schema["commandProjection"]["union"]
     command = next(item for item in schema["unions"] if item["name"] == union_name)
@@ -2217,6 +2280,7 @@ def verify_high_level_surfaces(schema):
     for forbidden in ("awaitBlocking(", "nextBlocking("):
         if forbidden in blocking_sources:
             raise ValueError(f"JVM blocking bridge remains public: {forbidden}")
+    verify_command_failure_decoders(schema)
 
 
 def main():

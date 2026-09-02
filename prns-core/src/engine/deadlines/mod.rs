@@ -2,12 +2,12 @@ use crate::engine::node_egress::{
     allows_announce_rebroadcast, fan_frame, fleet_announce_fan_target,
     fleet_fan_target_reaches_any_member,
 };
-use crate::engine::settlement::{settle, timeout_settlement};
+use crate::engine::settlement::settle;
 #[cfg(feature = "runtime-metrics")]
 use crate::engine::AnnounceOrigin;
 use crate::engine::{
     Directive, EngineReaction, EngineState, EstablishLinkFailure, FanTarget, InstantMillis,
-    Journaled, LinkClosedReason, ReemitAnnounce, RequestPathFailure, Settlement, WakeSchedules,
+    LinkClosedReason, ReemitAnnounce, RequestPathFailure, Settlement, WakeSchedules,
 };
 use crate::identity::ENCRYPTION_IV_LEN;
 use crate::interfaces::{AttachedInterfaces, Egress};
@@ -28,11 +28,13 @@ impl<S: StorageLayout> EngineState<S> {
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules {
         while let Some(expired) = self.receipts.pop_expired(now) {
-            settle(sink, expired.command_id, timeout_settlement(expired.kind));
+            let settlement = self.timeout_settlement(expired.kind);
+            settle(sink, expired.command_id, settlement);
         }
         WakeSchedules {
             receipt_timeouts: self.receipt_timeouts_wake(),
             resource_deadlines: self.resource_deadlines_wake(),
+            remote_control_pairing: self.remote_control_pairing_wake(),
             ..WakeSchedules::UNCHANGED
         }
     }
@@ -227,7 +229,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         now: InstantMillis,
         interfaces: AttachedInterfaces<'_>,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules
     where
@@ -235,8 +237,8 @@ impl<S: StorageLayout> EngineState<S> {
     {
         self.reconcile_pending_link_route_evidence();
         self.expire_unestablished_links(now, sink);
-        self.cull_overdue_transported_links(now, interfaces, fill_entropy, sink);
-        self.close_stale_links(now, interfaces, fill_entropy, sink);
+        self.cull_overdue_transported_links(now, interfaces, fill_random, sink);
+        self.close_stale_links(now, interfaces, fill_random, sink);
         self.send_due_keepalives(now, interfaces, sink);
         WakeSchedules {
             link_deadlines: self.link_deadlines_wake(),
@@ -273,7 +275,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         now: InstantMillis,
         interfaces: AttachedInterfaces<'_>,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
         F: FnMut(&mut [u8]),
@@ -315,7 +317,7 @@ impl<S: StorageLayout> EngineState<S> {
                     Some(_) => continue,
                 };
             let mut id = [0u8; TRUNCATED_HASH_BYTE_LEN];
-            fill_entropy(&mut id);
+            fill_random(&mut id);
             let mut request = [0u8; BROADCAST_MTU];
             if let Ok(wire_bytes) =
                 write_path_request_wire_packet(overdue.destination, transport_id, &id, &mut request)
@@ -336,16 +338,18 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         now: InstantMillis,
         interfaces: AttachedInterfaces<'_>,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
         F: FnMut(&mut [u8]),
     {
         while let Some(link_id) = self.links.pop_stale(now) {
             let mut iv = [0u8; ENCRYPTION_IV_LEN];
-            fill_entropy(&mut iv);
+            fill_random(&mut iv);
             let mut buf = [0u8; BROADCAST_MTU];
-            if let Ok(dispatch) = self.write_owed_link_close(&link_id, &iv, &mut buf) {
+            if let Ok(dispatch) =
+                self.write_owed_link_close(&link_id, LinkClosedReason::Timeout, &iv, &mut buf, sink)
+            {
                 if let Some(target) = dispatch.fire_on {
                     if interfaces.is_egress_eligible(target, Egress::Transmit) {
                         sink(EngineReaction::Directive(Directive::Send {
@@ -354,10 +358,6 @@ impl<S: StorageLayout> EngineState<S> {
                         }));
                     }
                 }
-                sink(EngineReaction::Journaled(Journaled::LinkClosed {
-                    link_id,
-                    reason: LinkClosedReason::Timeout,
-                }));
             }
         }
     }

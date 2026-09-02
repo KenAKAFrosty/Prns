@@ -23,8 +23,7 @@ pub fn remote_control_service(
 ) -> RemoteControlService<'static> {
     RemoteControlService::new(
         remote_control_identity_secrets(controller_fill, target_fill),
-        RemoteControlPublicAppData::try_from(b"".as_slice()).expect("empty app data"),
-        RemoteControlInitialAccess::Nobody,
+        RemoteControlInitialControllerGrants::Nobody,
         RemoteControlSelfAnnouncement::Unavailable,
     )
 }

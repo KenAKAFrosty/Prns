@@ -24,9 +24,13 @@ import type {
   WebSocketRuntimeHost,
   WebSocketSession,
 } from "./index.js";
+import { parseWebSocketDecodeBatch } from "./decode_batch.js";
 
 type SessionWriteOutcome = Tag<"Written"> | InterfaceSessionFailure;
 type SessionHandleOutcome = Tag<"Handled"> | InterfaceSessionFailure;
+type WebSocketIngestOutcome = Awaited<
+  ReturnType<WebSocketRuntimeHost["webSocketIngest"]>
+>;
 type WebSocketDecodeOutcome =
   | Tag<"Decoded", Uint8Array>
   | Extract<
@@ -35,8 +39,8 @@ type WebSocketDecodeOutcome =
       | Tag<"FrameTooLarge", unknown>
       | Tag<"TransferFailed", unknown>
     >;
+type FramingWaitOutcome = Tag<"FramingReady"> | Tag<"FallbackDue">;
 
-const OUTBOUND_POLL_MS = 25;
 const BUFFER_POLL_MS = 4;
 const MIN_BUFFER_LIMIT = 1024 * 1024;
 const WEBSOCKET_CONNECTING = 0;
@@ -54,11 +58,15 @@ export class BrowserWebSocketSession implements WebSocketSession {
   readonly #codec: WebSocketFramingCodecBinding;
   readonly #bufferLimit: number;
   readonly #release: () => void;
+  readonly #framingWaiters = new Set<() => void>();
+  readonly #statusListeners = new Set<(status: InterfaceSessionStatus) => void>();
   #readQueue: Promise<void> = Promise.resolve();
+  #ingressQueue: Promise<void> = Promise.resolve();
   #writeQueue: Promise<SessionWriteOutcome> = Promise.resolve(Tag("Written"));
   #closed = false;
   #released = false;
   #status: InterfaceSessionStatus = Tag("Active");
+  #closePromise: Promise<InterfaceCloseOutcome> | undefined;
 
   constructor(
     host: WebSocketRuntimeHost,
@@ -85,6 +93,20 @@ export class BrowserWebSocketSession implements WebSocketSession {
     return this.#status;
   }
 
+  subscribeStatus(
+    changed: (status: InterfaceSessionStatus) => void,
+  ): () => void {
+    this.#statusListeners.add(changed);
+    let subscribed = true;
+    return () => {
+      if (!subscribed) {
+        return;
+      }
+      subscribed = false;
+      this.#statusListeners.delete(changed);
+    };
+  }
+
   start(): void {
     this.#socket.addEventListener("message", (event) => {
       this.#enqueueMessage(event);
@@ -102,13 +124,26 @@ export class BrowserWebSocketSession implements WebSocketSession {
     void this.#outboundLoop();
   }
 
-  async close(): Promise<InterfaceCloseOutcome> {
-    if (this.#closed) {
-      return closedSessionOutcome(this.#status);
+  close(): Promise<InterfaceCloseOutcome> {
+    if (this.#closePromise !== undefined) {
+      return this.#closePromise;
     }
+    if (this.#closed) {
+      return Promise.resolve(closedSessionOutcome(this.#status));
+    }
+    this.#closePromise = this.#performClose().finally(() => {
+      this.#closePromise = undefined;
+    });
+    return this.#closePromise;
+  }
+
+  async #performClose(): Promise<InterfaceCloseOutcome> {
     this.#closed = true;
+    this.#resolveFramingWaiters();
     const causes: InterfaceCleanupFailure[] = [];
-    const detached = this.#host.deactivateInterface(this.interfaceId);
+    await this.#readQueue;
+    await this.#ingressQueue;
+    const detached = await this.#host.deactivateInterface(this.interfaceId);
     if (detached.tag !== "Detached") {
       causes.push(Tag("RuntimeDetachFailed", { detail: detached.data.detail }));
     }
@@ -127,10 +162,10 @@ export class BrowserWebSocketSession implements WebSocketSession {
     }
     if (hasCleanupFailures(causes)) {
       const failed = closeFailed(causes);
-      this.#status = Tag("Failed", failed);
+      this.#replaceStatus(Tag("Failed", failed));
       return failed;
     }
-    this.#status = Tag("Closed");
+    this.#replaceStatus(Tag("Closed"));
     return Tag("Closed");
   }
 
@@ -157,18 +192,33 @@ export class BrowserWebSocketSession implements WebSocketSession {
     if (decoded.tag !== "Decoded") {
       return decoded;
     }
-    const batch = this.#codec.decode(decoded.data);
-    for (const packet of batch.packets) {
-      if (this.#closed) {
+    if (
+      this.framing === "RawPacket" ||
+      this.#codec.canPassRawInbound?.() === true
+    ) {
+      if (decoded.data.length === 0) {
         return Tag("Handled");
       }
-      const ingested = this.#host.webSocketIngest(this.interfaceId, packet);
-      if (ingested.tag !== "Accepted") {
+      void this.#submitIngress([decoded.data]);
+      return Tag("Handled");
+    }
+    const packed = this.#codec.decodePacked?.(decoded.data);
+    const batch = packed === undefined
+      ? this.#codec.decode(decoded.data)
+      : parseWebSocketDecodeBatch(packed);
+    if (this.#codec.canReadOutbound()) {
+      this.#resolveFramingWaiters();
+    }
+    if (this.#closed) {
+      return Tag("Handled");
+    }
+    const pending = batch.resolvedOutbound?.slice();
+    const ingress = this.#submitIngress(batch.packets);
+    if (pending !== undefined) {
+      const ingested = await ingress;
+      if (ingested.tag !== "Handled") {
         return ingested;
       }
-    }
-    const pending = batch.resolvedOutbound;
-    if (pending !== undefined) {
       const written = await this.#writeEncodedFrame(pending);
       if (written.tag !== "Written") {
         return written;
@@ -182,43 +232,92 @@ export class BrowserWebSocketSession implements WebSocketSession {
       return;
     }
     this.#closed = true;
-    const detached = this.#host.deactivateInterface(this.interfaceId);
-    this.#status =
-      detached.tag === "Detached" ? Tag("Closed") : Tag("Failed", detached);
+    this.#resolveFramingWaiters();
+    void this.#finishRemoteClose();
+  }
+
+  async #finishRemoteClose(): Promise<void> {
+    await this.#readQueue;
+    await this.#ingressQueue;
+    const detached = await this.#host.deactivateInterface(this.interfaceId);
+    this.#replaceStatus(
+      detached.tag === "Detached" ? Tag("Closed") : Tag("Failed", detached),
+    );
     this.#releaseOnce();
+  }
+
+  #submitIngress(
+    packets: readonly Uint8Array[],
+  ): Promise<SessionHandleOutcome> {
+    if (packets.length === 0) {
+      return Promise.resolve(Tag("Handled"));
+    }
+    const settlement = Promise.all(
+      packets.map((packet) =>
+        Promise.resolve(
+          this.#host.webSocketIngest(this.interfaceId, packet),
+        )
+      ),
+    ).then((outcomes): SessionHandleOutcome =>
+      firstIngressFailure(outcomes) ?? Tag("Handled")
+    );
+    const observed = settlement
+      .then(async (outcome) => {
+        if (outcome.tag !== "Handled" && !this.#closed) {
+          await this.#fail(outcome);
+        }
+      })
+      .catch(async (error: unknown) => {
+        if (!this.#closed) {
+          await this.#fail(unexpectedSessionFailure(error));
+        }
+      });
+    this.#ingressQueue = Promise.all([this.#ingressQueue, observed]).then(
+      () => undefined,
+    );
+    return settlement;
   }
 
   async #outboundLoop(): Promise<void> {
     try {
       while (!this.#closed) {
-        if (this.#codec.rawFallbackIsArmed()) {
-          await delay(this.#codec.rawFallbackDelayMillis());
-          if (this.#closed) {
-            return;
-          }
+        if (this.framing !== "RawPacket") {
           if (this.#codec.rawFallbackIsArmed()) {
-            const pending = this.#codec.releaseRawFallback();
-            if (pending !== undefined) {
-              const written = await this.#writeEncodedFrame(pending);
-              if (written.tag !== "Written") {
-                await this.#fail(written);
-                return;
+            const wait = await this.#waitForRawFallback();
+            if (this.#closed) {
+              return;
+            }
+            if (
+              wait.tag === "FallbackDue" &&
+              this.#codec.rawFallbackIsArmed()
+            ) {
+              const pending = this.#codec.releaseRawFallback();
+              if (pending !== undefined) {
+                const written = await this.#writeEncodedFrame(pending);
+                if (written.tag !== "Written") {
+                  await this.#fail(written);
+                  return;
+                }
               }
             }
+            continue;
           }
-          continue;
+          if (!this.#codec.canReadOutbound()) {
+            await this.#waitForFramingReadiness();
+            continue;
+          }
         }
-        if (!this.#codec.canReadOutbound()) {
-          await delay(OUTBOUND_POLL_MS);
-          continue;
-        }
-        const maximumFrames = this.#codec.canStageMultipleOutbound()
+        const maximumFrames = this.framing === "RawPacket" ||
+          this.#codec.canStageMultipleOutbound()
           ? Number.MAX_SAFE_INTEGER
           : 1;
-        const outbound = this.#host.takeOutboundFor(
+        const outbound = await this.#host.nextOutboundFor(
           this.interfaceId,
           maximumFrames,
         );
+        if (outbound.tag === "InterfaceDetached") {
+          return;
+        }
         if (outbound.tag !== "Outbound") {
           await this.#fail(outbound);
           return;
@@ -230,7 +329,6 @@ export class BrowserWebSocketSession implements WebSocketSession {
             return;
           }
         }
-        await delay(OUTBOUND_POLL_MS);
       }
     } catch (error) {
       if (!this.#closed) {
@@ -243,12 +341,69 @@ export class BrowserWebSocketSession implements WebSocketSession {
     if (this.#closed) {
       return;
     }
-    this.#status = Tag("Failed", sessionFailure);
+    this.#replaceStatus(Tag("Failed", sessionFailure));
     this.#closed = true;
-    this.#host.deactivateInterface(this.interfaceId);
+    this.#resolveFramingWaiters();
+    await this.#host.deactivateInterface(this.interfaceId);
     this.#releaseOnce();
     await this.#writeQueue;
     closeBrowserWebSocket(this.#socket);
+  }
+
+  #waitForFramingReadiness(): Promise<void> {
+    if (this.#closed || this.#codec.canReadOutbound()) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      this.#framingWaiters.add(resolve);
+      if (this.#closed || this.#codec.canReadOutbound()) {
+        this.#framingWaiters.delete(resolve);
+        resolve();
+      }
+    });
+  }
+
+  #waitForRawFallback(): Promise<FramingWaitOutcome> {
+    if (this.#closed || !this.#codec.rawFallbackIsArmed()) {
+      return Promise.resolve(Tag("FramingReady"));
+    }
+    return new Promise((resolve) => {
+      let settled = false;
+      const framingReady = (): void => {
+        settle(Tag("FramingReady"));
+      };
+      const timer = globalThis.setTimeout(() => {
+        settle(Tag("FallbackDue"));
+      }, this.#codec.rawFallbackDelayMillis());
+      const settle = (outcome: FramingWaitOutcome): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        globalThis.clearTimeout(timer);
+        this.#framingWaiters.delete(framingReady);
+        resolve(outcome);
+      };
+      this.#framingWaiters.add(framingReady);
+      if (this.#closed || !this.#codec.rawFallbackIsArmed()) {
+        framingReady();
+      }
+    });
+  }
+
+  #resolveFramingWaiters(): void {
+    const waiters = [...this.#framingWaiters];
+    this.#framingWaiters.clear();
+    for (const resolve of waiters) {
+      resolve();
+    }
+  }
+
+  #replaceStatus(status: InterfaceSessionStatus): void {
+    this.#status = status;
+    for (const changed of this.#statusListeners) {
+      changed(status);
+    }
   }
 
   async #writeFrame(frame: PacketFrame): Promise<SessionWriteOutcome> {
@@ -260,6 +415,12 @@ export class BrowserWebSocketSession implements WebSocketSession {
         length: frame.length,
         maximum: this.#frameCap,
       });
+    }
+    if (
+      this.framing === "RawPacket" ||
+      this.#codec.canPassRawOutbound?.() === true
+    ) {
+      return this.#writeEncodedFrame(frame);
     }
     let encoded: Uint8Array | undefined;
     try {
@@ -314,6 +475,15 @@ export class BrowserWebSocketSession implements WebSocketSession {
       this.#release();
     }
   }
+}
+
+function firstIngressFailure(
+  outcomes: readonly WebSocketIngestOutcome[],
+): Exclude<WebSocketIngestOutcome, Tag<"Accepted">> | undefined {
+  return outcomes.find(
+    (outcome): outcome is Exclude<WebSocketIngestOutcome, Tag<"Accepted">> =>
+      outcome.tag !== "Accepted",
+  );
 }
 
 

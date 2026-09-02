@@ -1,29 +1,184 @@
 #[cfg(feature = "runtime-metrics")]
 use super::metrics::AnnounceOrigin;
+use crate::engine::tunnel::TunnelSynthesizeSignOwed;
 use crate::engine::InstantMillis;
 use crate::engine::{CommandId, LinkEstablished, Settlement};
 use crate::identity::IdentityHash;
 use crate::interfaces::{InterfaceId, InterfaceKind};
+use crate::routing::announce::emit::AnnounceSignOwed;
 use crate::routing::announce::held::HeldDropCause;
 use crate::routing::announce::{AnnounceObservation, AnnounceRateAccounting};
+use crate::routing::delivery::send_single::EncryptOwed;
 use crate::routing::delivery::Delivery;
+use crate::routing::ingress::{AnnounceVerifyOwed, DecryptOwed, RatchetDecryptOwed};
+use crate::routing::links::channel::send::ChannelAckVerifyOwed;
 use crate::routing::links::channel::MessageType;
+use crate::routing::links::establish::EstablishLinkOwed;
+use crate::routing::links::handshake::{LinkProofSignOwed, LinkProofVerifyOwed};
+use crate::routing::links::identify::{IdentifySignOwed, LinkIdentityVerifyOwed};
 use crate::routing::links::request::RequestId;
+use crate::routing::links::resources::send::ResourceBuildOwed;
+use crate::routing::links::resources::streamed_open::StreamedOpen;
 use crate::routing::links::resources::{ResourceFailureCause, ResourceHash};
 use crate::routing::links::LinkId;
+use crate::routing::proof::ChannelAckSignOwed;
+use crate::routing::proof::{LinkReceiptSignOwed, ProofSignOwed, ReceiptProofVerifyOwed};
 use crate::routing::request_handlers::RequestPathHash;
+use crate::routing::tunnel::TunnelSynthesizeVerifyOwed;
 use crate::routing::RouteRemovalCause;
 use crate::units::RttMillis;
 use crate::wire::DestinationHash;
 
 // repr(C) on this enum, Journaled, and Directive: they cross the dual-core channel; see the layout note on [`PrnsCommand`].
 #[repr(C)]
-pub enum EngineReaction<'a> {
+// Reactions cross no-alloc runtimes by value. Boxing the journal would add an allocation to every
+// engine step and is unavailable on the embedded core this representation serves.
+#[allow(clippy::large_enum_variant)]
+pub enum EngineReaction<'a, Work = NoOwedWork> {
     /// A notice that something has just happened within the engine.
     Journaled(Journaled<'a>),
 
     /// An order for something that must now happen outside the engine.
-    Directive(Directive<'a>),
+    Directive(Directive<'a, Work>),
+}
+
+/// The work channel of an engine entry point that cannot request external fulfillment.
+/// Its uninhabited shape lets runtimes route those reactions without an impossible fallback.
+pub enum NoOwedWork {}
+
+impl<'a, Work> EngineReaction<'a, Work> {
+    /// Changes only the externally fulfilled-work channel while preserving the reaction itself.
+    ///
+    /// This is especially useful when a narrower engine entry point returns
+    /// [`NoOwedWork`]: the exhaustive `match never {}` widens that reaction for a manifold that
+    /// routes the complete [`OwedWork`] contract without inventing an impossible fallback.
+    pub fn map_work<Mapped>(self, map: impl FnOnce(Work) -> Mapped) -> EngineReaction<'a, Mapped> {
+        match self {
+            Self::Journaled(journaled) => EngineReaction::Journaled(journaled),
+            Self::Directive(directive) => EngineReaction::Directive(directive.map_work(map)),
+        }
+    }
+}
+
+/// Work the engine has fully authorized but asks its surrounding manifold to fulfill.
+///
+/// The enum names protocol work, never a scheduling decision. A runtime may fulfill a variant
+/// inline, move it into a worker job, or use a platform accelerator without changing the engine
+/// transition that requested it.
+#[repr(C)]
+// Owed work owns continuation material so runtimes can move it without copying packet payloads.
+// Indirection belongs in a runtime's job envelope, never in the no-alloc engine contract.
+#[allow(clippy::large_enum_variant)]
+pub enum OwedWork<'a> {
+    Crypto(CryptoOwed),
+    ResourceBuild(ResourceBuildOwed<'a>),
+    ResourceOpen(ResourceOpenOwed<'a>),
+    ResourceDecompression(ResourceDecompressionOwed<'a>),
+}
+
+/// Cryptographic work whose policy inputs are complete and whose pure operation may run outside
+/// the engine. Every variant owns its continuation material so a runtime can move it directly
+/// into a worker envelope without another packet-buffer copy.
+#[repr(C)]
+#[allow(clippy::large_enum_variant)]
+pub enum CryptoOwed {
+    ReceiptProofVerify(ReceiptProofVerifyOwed),
+    ChannelAckVerify(ChannelAckVerifyOwed),
+    LinkIdentityVerify(LinkIdentityVerifyOwed),
+    TunnelSynthesizeVerify(TunnelSynthesizeVerifyOwed),
+    IdentifySign(IdentifySignOwed),
+    TunnelSynthesizeSign(TunnelSynthesizeSignOwed),
+    EstablishLink(EstablishLinkOwed),
+    AnnounceSign(AnnounceSignOwed),
+    Encrypt(EncryptOwed),
+    Decrypt(DecryptOwed),
+    RatchetDecrypt(RatchetDecryptOwed),
+    LinkProofVerify(LinkProofVerifyOwed),
+    LinkProofSign(LinkProofSignOwed),
+    ProofSign(ProofSignOwed),
+    LinkReceiptSign(LinkReceiptSignOwed),
+    ChannelAckSign(ChannelAckSignOwed),
+    AnnounceVerify(AnnounceVerifyOwed),
+    RemoteControlPairingAvailabilityVerify(
+        crate::remote_control::RemoteControlPairingAvailabilityVerifyOwed,
+    ),
+}
+
+impl<'a> From<CryptoOwed> for OwedWork<'a> {
+    fn from(owed: CryptoOwed) -> Self {
+        Self::Crypto(owed)
+    }
+}
+
+/// One contiguous ciphertext span whose authenticated streamed open can run outside the engine.
+///
+/// The state is moved out of its incoming-resource row while the mutable span remains borrowed
+/// from that row. A worker runtime copies the span into its owning job envelope while this value
+/// is live; an inline runtime may chew the borrowed span directly and return an in-place
+/// completion. `other_transfers_in_flight` describes available overlap, not a scheduling order.
+#[repr(C)]
+pub struct ResourceOpenOwed<'a> {
+    pub link_id: LinkId,
+    pub hash: ResourceHash,
+    pub span_start: usize,
+    pub state: StreamedOpen,
+    pub bytes: &'a mut [u8],
+    pub other_transfers_in_flight: bool,
+}
+
+impl ResourceOpenOwed<'_> {
+    /// Fulfill this open against the engine-owned span without recursively re-entering the
+    /// engine. The returned completion owns everything needed for a later `resume_resource_open`.
+    pub fn fulfill_inline(mut self) -> ResourceOpenCompleted<'static> {
+        let byte_len = self.bytes.len();
+        self.state.chew_span(self.bytes);
+        ResourceOpenCompleted {
+            link_id: self.link_id,
+            hash: self.hash,
+            span_start: self.span_start,
+            state: self.state,
+            opened: OpenedResourceSpan::InPlace { byte_len },
+        }
+    }
+}
+
+/// Where a fulfilled resource-open span now lives.
+#[repr(C)]
+pub enum OpenedResourceSpan<'a> {
+    /// An inline runtime chewed the mutable span borrowed by [`ResourceOpenOwed`] in place.
+    InPlace { byte_len: usize },
+    /// A worker chewed an owning copy which must be landed over the row's ciphertext.
+    Returned(&'a [u8]),
+}
+
+/// A runtime's completed resource-open span, submitted as a later engine input.
+#[repr(C)]
+pub struct ResourceOpenCompleted<'a> {
+    pub link_id: LinkId,
+    pub hash: ResourceHash,
+    pub span_start: usize,
+    pub state: StreamedOpen,
+    pub opened: OpenedResourceSpan<'a>,
+}
+
+/// A compressed resource stream the engine has authenticated and asks its runtime to inflate.
+/// The stream remains in the incoming-resource row; a worker runtime explicitly materializes an
+/// owned job while this borrow is live, while an inline runtime may consume the view directly.
+#[repr(C)]
+pub struct ResourceDecompressionOwed<'a> {
+    pub link_id: LinkId,
+    pub hash: ResourceHash,
+    pub stream: &'a [u8],
+    pub uncompressed_data_bytes: u64,
+}
+
+/// A runtime's completed resource inflate, submitted as a later engine input.
+#[repr(C)]
+pub struct ResourceDecompressionCompleted<'a> {
+    pub link_id: LinkId,
+    pub hash: ResourceHash,
+    /// Empty means the runtime could not produce a valid bounded inflate.
+    pub plaintext: &'a [u8],
 }
 
 #[repr(C)]
@@ -67,6 +222,7 @@ impl PersistenceFlushTarget {
     }
 }
 
+#[repr(C)]
 pub enum Journaled<'a> {
     /// RNS 1.4.2's announce-handler `received_announce` callback as data.
     AnnounceHeard {
@@ -107,6 +263,72 @@ pub enum Journaled<'a> {
     CommandSettled {
         id: CommandId,
         settlement: Settlement,
+    },
+
+    RemoteControlPairingExpired {
+        endpoint: crate::remote_control::RemoteControlPairingEndpoint,
+    },
+
+    RemoteControlPairingExpiryFailed {
+        endpoint: crate::remote_control::RemoteControlPairingEndpoint,
+        failure: crate::engine::CloseRemoteControlPairingFailure,
+    },
+
+    RemoteControlPairingAvailabilityObserved(
+        crate::remote_control::RemoteControlPairingAvailabilityObservation<'a>,
+    ),
+
+    RemoteControlTargetPairingConfirmationRequired(
+        crate::remote_control::RemoteControlTargetPairingAttemptView<'a>,
+    ),
+
+    RemoteControlTargetPairingControllerCommitted {
+        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
+    },
+
+    RemoteControlTargetPairingAuthorizationRequired {
+        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
+        grant: crate::remote_control::RemoteControlControllerGrant,
+    },
+
+    RemoteControlTargetPairingAuthorizationPersisted {
+        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
+    },
+
+    RemoteControlControllerPairingConfirmationRequired(
+        crate::remote_control::RemoteControlControllerPairingAttemptView<'a>,
+    ),
+
+    RemoteControlControllerPairingPersistenceRequired(
+        crate::remote_control::RemoteControlControllerPairingPersistenceView<'a>,
+    ),
+
+    RemoteControlControllerPairingAuthorizationPersisted {
+        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
+    },
+
+    RemoteControlControllerPairingExpired {
+        aborted: crate::remote_control::RemoteControlControllerPairingAborted,
+    },
+
+    RemoteControlControllerPairingLinkClosed {
+        aborted: crate::remote_control::RemoteControlControllerPairingAborted,
+    },
+
+    RemoteControlTargetPairingExpired {
+        aborted: crate::remote_control::RemoteControlTargetPairingAborted,
+    },
+
+    RemoteControlTargetPairingLinkClosed {
+        aborted: crate::remote_control::RemoteControlTargetPairingAborted,
+    },
+
+    RemoteControlTargetPairingCompletionRetentionExpired {
+        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
+    },
+
+    RemoteControlTargetPairingCompletionLinkClosed {
+        attempt_id: crate::remote_control::RemoteControlPairingAttemptId,
     },
 
     /// RNS 1.4.2's `set_link_established_callback` as data.
@@ -185,13 +407,6 @@ pub enum Journaled<'a> {
         cause: ResourceFailureCause,
     },
 
-    ResourceNeedsDecompression {
-        link_id: LinkId,
-        hash: ResourceHash,
-        stream: &'a [u8],
-        uncompressed_data_bytes: u64,
-    },
-
     /// One segment of a split resource landed / progress toward [`Journaled::ResourceAssembled`].
     /// `metadata` rides segment one only, stripped from the stream head like the single-segment delivery.
     ResourceSegmentReceived {
@@ -220,6 +435,7 @@ pub enum LinkClosedReason {
     Timeout,
     PeerClosed,
     MalformedRtt,
+    LocallyClosed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -231,7 +447,9 @@ pub enum FanTarget {
 
 /// An order for something that must now happen outside the engine.
 #[repr(C)]
-pub enum Directive<'a> {
+pub enum Directive<'a, Work = NoOwedWork> {
+    Fulfill(Work),
+
     Send {
         target: InterfaceId,
         bytes: &'a [u8],
@@ -282,4 +500,115 @@ pub enum Directive<'a> {
         fan: FanTarget,
         bytes: &'a [u8],
     },
+}
+
+impl<'a, Work> Directive<'a, Work> {
+    /// Changes only [`Directive::Fulfill`]'s work type and leaves every routed directive intact.
+    pub fn map_work<Mapped>(self, map: impl FnOnce(Work) -> Mapped) -> Directive<'a, Mapped> {
+        match self {
+            Self::Fulfill(work) => Directive::Fulfill(map(work)),
+            Self::Send { target, bytes } => Directive::Send { target, bytes },
+            Self::SendIfOnline {
+                target,
+                bytes,
+                on_send,
+            } => Directive::SendIfOnline {
+                target,
+                bytes,
+                on_send,
+            },
+            Self::SendAnnounce {
+                target,
+                bytes,
+                hops,
+                #[cfg(feature = "runtime-metrics")]
+                origin,
+            } => Directive::SendAnnounce {
+                target,
+                bytes,
+                hops,
+                #[cfg(feature = "runtime-metrics")]
+                origin,
+            },
+            Self::SendToFleet {
+                supervisor,
+                fan,
+                bytes,
+            } => Directive::SendToFleet {
+                supervisor,
+                fan,
+                bytes,
+            },
+            Self::SendAnnounceToFleet {
+                supervisor,
+                fan,
+                bytes,
+                hops,
+                #[cfg(feature = "runtime-metrics")]
+                origin,
+            } => Directive::SendAnnounceToFleet {
+                supervisor,
+                fan,
+                bytes,
+                hops,
+                #[cfg(feature = "runtime-metrics")]
+                origin,
+            },
+            Self::EmitFrame {
+                target,
+                size_hint,
+                fill,
+            } => Directive::EmitFrame {
+                target,
+                size_hint,
+                fill,
+            },
+            #[cfg(feature = "runtime-metrics")]
+            Self::SendMeasuredLocalAnnounce { target, bytes } => {
+                Directive::SendMeasuredLocalAnnounce { target, bytes }
+            }
+            #[cfg(feature = "runtime-metrics")]
+            Self::SendMeasuredLocalAnnounceToFleet {
+                supervisor,
+                fan,
+                bytes,
+            } => Directive::SendMeasuredLocalAnnounceToFleet {
+                supervisor,
+                fan,
+                bytes,
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PersistenceFlushCause, PersistenceFlushTarget};
+
+    #[test]
+    fn persistence_names_cover_the_wire_stable_vocabulary() {
+        assert_eq!(
+            [
+                PersistenceFlushCause::Startup.name(),
+                PersistenceFlushCause::Interval.name(),
+                PersistenceFlushCause::RouteChange.name(),
+                PersistenceFlushCause::RatchetRotation.name(),
+                PersistenceFlushCause::Shutdown.name(),
+            ],
+            [
+                "startup",
+                "interval",
+                "route_change",
+                "ratchet_rotation",
+                "shutdown",
+            ],
+        );
+        assert_eq!(
+            [
+                PersistenceFlushTarget::RoutingState.name(),
+                PersistenceFlushTarget::Ratchets.name(),
+            ],
+            ["routing_state", "ratchets"],
+        );
+    }
 }

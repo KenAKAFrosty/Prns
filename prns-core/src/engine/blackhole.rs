@@ -152,7 +152,9 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     fn blackhole_mutation_wake(&self, interfaces: AttachedInterfaces<'_>) -> WakeSchedules {
-        let mut wake_schedules = self.route_removal_wake_schedules(interfaces);
+        let mut wake_schedules = self
+            .route_removal_wake_schedules(interfaces)
+            .into_wake_schedules();
         wake_schedules.expired_blackholes = self.blackhole_expiry_wake();
         wake_schedules
     }
@@ -165,7 +167,7 @@ mod tests {
         bytes_from_hex, test_fill_entropy, tick_capture, transporting_interfaces,
         transporting_node, TestStorageLayout, RNS_1_4_2_ANNOUNCE,
     };
-    use crate::engine::{AnnounceIngest, DeferredCrypto, IngestPacketOutcome, WakeSchedule};
+    use crate::engine::{AnnounceIngest, AnnounceVerification, IngestPacketOutcome, WakeSchedule};
     use crate::interfaces::{AttachedInterfaces, InboundPacket, InterfaceId};
     use crate::routing::ingress::Ingress;
     use crate::routing::{BlackholeExpiry, RouteRemovalCause};
@@ -201,16 +203,13 @@ mod tests {
         let mut engine = transporting_node();
 
         let IngestPacketOutcome::Announce(AnnounceIngest::Accepted(accepted)) = engine
-            .ingest_packet_with(
+            .ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface,
                     bytes: &mut raw,
                 },
-                &mut test_fill_entropy,
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             )
         else {
             panic!("the reference announce is accepted before its identity is blackholed");
@@ -269,22 +268,17 @@ mod tests {
             panic!("the reference announce carries signed app data");
         };
         *signed_app_data_byte ^= 1;
-        let mut deferred = DeferredCrypto::default();
         assert_eq!(
-            engine.ingest_packet_with(
+            engine.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(2_000),
                     source_interface,
                     bytes: &mut raw,
                 },
-                &mut test_fill_entropy,
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                Some(&mut deferred),
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Blackholed),
         );
-        assert!(matches!(deferred, DeferredCrypto::Empty));
         assert_eq!(engine.route_count(), 0);
         assert_eq!(
             engine.unblackhole_identity(&identity).outcome,
@@ -300,22 +294,16 @@ mod tests {
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let identity = identity_hash_from_announce(&mut raw, source_interface);
         let mut engine = transporting_node();
-        let mut deferred = DeferredCrypto::default();
-
-        assert_eq!(
-            engine.ingest_packet_with(
-                InboundPacket {
-                    arrived_at: InstantMillis(1_000),
-                    source_interface,
-                    bytes: &mut raw,
-                },
-                &mut test_fill_entropy,
-                AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                Some(&mut deferred),
-            ),
-            IngestPacketOutcome::OwesAnnounceVerify,
-        );
+        let IngestPacketOutcome::OwesAnnounceVerify(owed) = engine.ingest_packet_step_with(
+            InboundPacket {
+                arrived_at: InstantMillis(1_000),
+                source_interface,
+                bytes: &mut raw,
+            },
+            AttachedInterfaces::new(&interfaces),
+        ) else {
+            panic!("the announce owes signature verification");
+        };
         assert_eq!(
             engine
                 .blackhole_identity(
@@ -331,12 +319,12 @@ mod tests {
                 .outcome,
             Ok(BlackholeIdentityOutcome::Added),
         );
-        let DeferredCrypto::AnnounceVerify(owed) = deferred else {
-            panic!("the announce verification was deferred");
+        let verified = match owed.verify() {
+            AnnounceVerification::Verified(verified) => verified,
+            AnnounceVerification::Invalid(_) => panic!("the reference announce should verify"),
         };
-
         engine.resume_announce(
-            owed,
+            verified,
             AttachedInterfaces::new(&interfaces),
             &mut test_fill_entropy,
             &mut |_| {},

@@ -17,8 +17,7 @@ use prns_core::interface_discovery::{
 use prns_core::interfaces::InterfaceId;
 use prns_core::routing::announce::emit::MAX_ANNOUNCE_APP_DATA_LEN;
 use prns_core::wire::DestinationHash;
-use prns_runtime::manifold::driver::TokioHost;
-use prns_runtime::manifold::Host;
+use prns_runtime::manifold::driver::TokioClock;
 use prns_runtime::runtime::{AnnounceNowError, PrnsNodeHandle};
 use tokio::sync::Notify;
 use tokio::task::{JoinError, JoinHandle};
@@ -146,7 +145,7 @@ impl TokioInterfaceDiscoveryPublisher {
     pub fn spawn<E, Resolve, ResolveFuture, Report>(
         self,
         handle: PrnsNodeHandle,
-        clock: TokioHost,
+        clock: TokioClock,
         resolve: Resolve,
         report: Report,
     ) -> RunningTokioInterfaceDiscoveryPublisher
@@ -185,7 +184,7 @@ impl TokioInterfaceDiscoveryPublisher {
 
     async fn run_with<E, Resolve, ResolveFuture, Send, SendFuture, Report>(
         mut self,
-        clock: TokioHost,
+        clock: TokioClock,
         mut resolve: Resolve,
         mut send: Send,
         mut report: Report,

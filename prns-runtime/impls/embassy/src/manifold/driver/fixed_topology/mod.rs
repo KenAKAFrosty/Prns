@@ -10,8 +10,8 @@ use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{AttachedInterfaces, IfacUnmaskError, InboundPacket, InterfaceId};
 use crate::manifold::grant::{FrameTarget, ManifoldLaneReader};
 use crate::manifold::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
-use crate::manifold::kernel::{fire_due_reason, merge_wake_schedules_delta};
 use crate::manifold::timers::{wait_for_due_reason, wait_for_pacer};
+use crate::manifold::wake_schedule::{fire_due_reason, merge_wake_schedules_delta};
 use crate::manifold::{AppDeciders, Host};
 use crate::routing::links::resources::ResourceOffer;
 use crate::runtime::{EmbassyInterfaceStore, InterfaceInspectionStore, NoInterfaceInspectionStore};
@@ -20,6 +20,9 @@ use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use super::egress::{
     flush_due_pacers, ifac_for, route_reaction, soonest_pacer_release, EmbassyEgress,
     InterfacePacer, MAX_PACED_INTERFACES,
+};
+use super::inline_work::{
+    fulfill_owed_work_inline, route_and_capture_owed_work, InlineOwedWorkQueue,
 };
 use super::interface_status::account_protocol_violation;
 use super::packet_phy::retain_packet_phy;
@@ -205,25 +208,40 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
                             bytes,
                         });
                         retain_packet_phy(store, &packet, packet_phy);
+                        let mut owed_work = InlineOwedWorkQueue::new();
                         let report = engine.ingest_classified_into_report(
                             packet,
                             IngestIo {
                                 interfaces,
                                 now,
-                                fill_entropy: &mut |entropy| host.fill_entropy(entropy),
+                                fill_random: &mut |entropy| host.fill_random(entropy),
                                 should_prove: &mut should_prove,
                                 should_accept_resource: &mut should_accept_resource,
                                 sink: &mut |reaction| {
-                                    route_reaction(
+                                    route_and_capture_owed_work(
                                         reaction,
                                         &mut egress,
                                         ifacs,
                                         &mut pacers,
                                         now,
                                         &mut on_journaled,
+                                        &mut owed_work,
                                     )
                                 },
                             },
+                        );
+                        let completion_delta = fulfill_owed_work_inline(
+                            owed_work,
+                            &mut engine,
+                            &mut host,
+                            interfaces,
+                            &mut egress,
+                            ifacs,
+                            &mut pacers,
+                            frame_accounting_statuses,
+                            now,
+                            &mut should_prove,
+                            &mut on_journaled,
                         );
                         account_protocol_violation(
                             frame_accounting_statuses,
@@ -231,9 +249,11 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
                             report.protocol_violation,
                         );
                         lane.release();
+                        let mut step_delta = report.wake_schedules;
+                        step_delta.merge(completion_delta);
                         merge_wake_schedules_delta(
                             &mut wake_schedules,
-                            report.wake_schedules,
+                            step_delta,
                             &engine,
                             interfaces,
                         );
@@ -242,22 +262,37 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
             }
             Either4::Second(issued) => {
                 let now = host.now();
-                let delta = engine.ingest_command_into(
+                let mut owed_work = InlineOwedWorkQueue::new();
+                let mut delta = engine.ingest_command_into_with_work(
                     issued,
                     interfaces,
                     now,
-                    &mut |entropy| host.fill_entropy(entropy),
+                    &mut |entropy| host.fill_random(entropy),
                     &mut |reaction| {
-                        route_reaction(
+                        route_and_capture_owed_work(
                             reaction,
                             &mut egress,
                             ifacs,
                             &mut pacers,
                             now,
                             &mut on_journaled,
+                            &mut owed_work,
                         )
                     },
                 );
+                delta.merge(fulfill_owed_work_inline(
+                    owed_work,
+                    &mut engine,
+                    &mut host,
+                    interfaces,
+                    &mut egress,
+                    ifacs,
+                    &mut pacers,
+                    frame_accounting_statuses,
+                    now,
+                    &mut should_prove,
+                    &mut on_journaled,
+                ));
                 merge_wake_schedules_delta(&mut wake_schedules, delta, &engine, interfaces);
             }
             Either4::Third(reason) => {
@@ -267,7 +302,7 @@ async fn run_inner<S, H, M, P, A, Store, const NOTIFY: usize, const COMMANDS: us
                     reason,
                     now,
                     interfaces,
-                    &mut |bytes| host.fill_entropy(bytes),
+                    &mut |bytes| host.fill_random(bytes),
                     &mut |reaction| {
                         route_reaction(
                             reaction,

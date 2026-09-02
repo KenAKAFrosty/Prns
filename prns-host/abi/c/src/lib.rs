@@ -2710,6 +2710,49 @@ fn cache_command_result(result: Result<CommandOutcome, CommandFailure>) -> Cache
                     AbiCommandFailureKind::BackendFailed as u32
                 }
                 CommandFailure::ResponseTooLarge => AbiCommandFailureKind::ResponseTooLarge as u32,
+                CommandFailure::LinkClosed => AbiCommandFailureKind::LinkClosed as u32,
+                CommandFailure::ResponseCancelledBySender => {
+                    AbiCommandFailureKind::ResponseCancelledBySender as u32
+                }
+                CommandFailure::ResponseHashmapBeyondPartCount => {
+                    AbiCommandFailureKind::ResponseHashmapBeyondPartCount as u32
+                }
+                CommandFailure::ResponseHashmapSkipsAhead => {
+                    AbiCommandFailureKind::ResponseHashmapSkipsAhead as u32
+                }
+                CommandFailure::ResponseHashmapTooLong => {
+                    AbiCommandFailureKind::ResponseHashmapTooLong as u32
+                }
+                CommandFailure::ResponseHashmapRagged => {
+                    AbiCommandFailureKind::ResponseHashmapRagged as u32
+                }
+                CommandFailure::ResponseRetriesExhausted => {
+                    AbiCommandFailureKind::ResponseRetriesExhausted as u32
+                }
+                CommandFailure::ResponseLinkVanished => {
+                    AbiCommandFailureKind::ResponseLinkVanished as u32
+                }
+                CommandFailure::ResponseTransferUnopenable => {
+                    AbiCommandFailureKind::ResponseTransferUnopenable as u32
+                }
+                CommandFailure::ResponseTransferCorrupt => {
+                    AbiCommandFailureKind::ResponseTransferCorrupt as u32
+                }
+                CommandFailure::ResponseProofUnsendable => {
+                    AbiCommandFailureKind::ResponseProofUnsendable as u32
+                }
+                CommandFailure::ResponseDecompressionFailed => {
+                    AbiCommandFailureKind::ResponseDecompressionFailed as u32
+                }
+                CommandFailure::ResponseDecompressionTimedOut => {
+                    AbiCommandFailureKind::ResponseDecompressionTimedOut as u32
+                }
+                CommandFailure::ResponseOpenTimedOut => {
+                    AbiCommandFailureKind::ResponseOpenTimedOut as u32
+                }
+                CommandFailure::ResponseMetadataOverrun => {
+                    AbiCommandFailureKind::ResponseMetadataOverrun as u32
+                }
             };
         }
     }
@@ -3032,6 +3075,7 @@ pub unsafe extern "C" fn prns_event_release(event: *mut PrnsEvent) {
     }
 }
 
+#[allow(deprecated)]
 fn application_kind(event: &ApplicationEvent) -> u32 {
     match event {
         ApplicationEvent::SingleDelivery(_) => AbiApplicationEventKind::SingleDelivery as u32,
@@ -3107,6 +3151,7 @@ pub unsafe extern "C" fn prns_event_kind(event: *const PrnsEvent) -> u32 {
     }
 }
 
+#[allow(deprecated)]
 fn event_bytes(event: &PrnsEvent, field: AbiEventField) -> Option<&[u8]> {
     match (&event.value, field) {
         (
@@ -3406,6 +3451,7 @@ fn link_reason(reason: LinkClosedReason) -> u64 {
         LinkClosedReason::Timeout => AbiLinkClosedReason::Timeout as u64,
         LinkClosedReason::PeerClosed => AbiLinkClosedReason::PeerClosed as u64,
         LinkClosedReason::MalformedRtt => AbiLinkClosedReason::MalformedRtt as u64,
+        LinkClosedReason::LocallyClosed => AbiLinkClosedReason::LocallyClosed as u64,
     }
 }
 
@@ -3426,6 +3472,7 @@ fn persistence_target(target: PersistenceFlushTarget) -> u64 {
     }
 }
 
+#[allow(deprecated)]
 fn event_u64(event: &PrnsEvent, field: AbiEventField) -> Option<u64> {
     match (&event.value, field) {
         (
@@ -3723,6 +3770,72 @@ mod tests {
             cached.failure,
             AbiCommandFailureKind::ResponseTooLarge as u32
         );
+    }
+
+    #[test]
+    fn every_response_transfer_failure_preserves_its_failure_kind() {
+        let cases = [
+            (
+                CommandFailure::ResponseCancelledBySender,
+                AbiCommandFailureKind::ResponseCancelledBySender,
+            ),
+            (
+                CommandFailure::ResponseHashmapBeyondPartCount,
+                AbiCommandFailureKind::ResponseHashmapBeyondPartCount,
+            ),
+            (
+                CommandFailure::ResponseHashmapSkipsAhead,
+                AbiCommandFailureKind::ResponseHashmapSkipsAhead,
+            ),
+            (
+                CommandFailure::ResponseHashmapTooLong,
+                AbiCommandFailureKind::ResponseHashmapTooLong,
+            ),
+            (
+                CommandFailure::ResponseHashmapRagged,
+                AbiCommandFailureKind::ResponseHashmapRagged,
+            ),
+            (
+                CommandFailure::ResponseRetriesExhausted,
+                AbiCommandFailureKind::ResponseRetriesExhausted,
+            ),
+            (
+                CommandFailure::ResponseLinkVanished,
+                AbiCommandFailureKind::ResponseLinkVanished,
+            ),
+            (
+                CommandFailure::ResponseTransferUnopenable,
+                AbiCommandFailureKind::ResponseTransferUnopenable,
+            ),
+            (
+                CommandFailure::ResponseTransferCorrupt,
+                AbiCommandFailureKind::ResponseTransferCorrupt,
+            ),
+            (
+                CommandFailure::ResponseProofUnsendable,
+                AbiCommandFailureKind::ResponseProofUnsendable,
+            ),
+            (
+                CommandFailure::ResponseDecompressionFailed,
+                AbiCommandFailureKind::ResponseDecompressionFailed,
+            ),
+            (
+                CommandFailure::ResponseDecompressionTimedOut,
+                AbiCommandFailureKind::ResponseDecompressionTimedOut,
+            ),
+            (
+                CommandFailure::ResponseOpenTimedOut,
+                AbiCommandFailureKind::ResponseOpenTimedOut,
+            ),
+            (
+                CommandFailure::ResponseMetadataOverrun,
+                AbiCommandFailureKind::ResponseMetadataOverrun,
+            ),
+        ];
+
+        for (failure, expected) in cases {
+            assert_eq!(cache_command_result(Err(failure)).failure, expected as u32);
+        }
     }
 
     #[test]

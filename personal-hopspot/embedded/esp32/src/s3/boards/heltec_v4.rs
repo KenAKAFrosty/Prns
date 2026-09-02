@@ -253,9 +253,11 @@ impl Esp32S3Board for HeltecBoard {
     type Gnss = HeltecV4Gnss;
 
     async fn bringup(
-        p: esp_hal::peripherals::Peripherals,
+        mut p: esp_hal::peripherals::Peripherals,
     ) -> S3BoardHardware<Self::Display, Self::Battery, Self::Gnss> {
         let (sw_int1, timebase, rtc) = s3::boot_common!(p, Self::BOOT_BANNER);
+        let runtime_bootstrap =
+            s3::bootstrap_s3_runtime(&mut p.RNG, &mut p.ADC1, Self::FLASH_LAYOUT).await;
 
         // GPIO35 drives the V4's bright white user LED active-high. Claim it immediately so the
         // reset/default pin state cannot leave the LED lit while the Hopspot is running.
@@ -374,6 +376,7 @@ impl Esp32S3Board for HeltecBoard {
         };
 
         S3BoardHardware {
+            runtime_bootstrap,
             face: BoardFace {
                 display: if oled_ok {
                     ImmediateBoardDisplay::initialized(display)

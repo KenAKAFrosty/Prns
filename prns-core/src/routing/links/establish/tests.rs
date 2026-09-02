@@ -2,9 +2,9 @@ use super::*;
 use crate::engine::test_support::*;
 use crate::engine::IngestIo;
 use crate::engine::{
-    AnnounceAppData, AnnounceIngest, AnnounceNow, AnnounceTarget, DeferredCrypto, Directive,
+    AnnounceAppData, AnnounceIngest, AnnounceNow, AnnounceTarget, CryptoOwed, Directive,
     EngineReaction, EngineState, IgnoreReason, IngestPacketOutcome, IssuedCommand, Journaled,
-    LinkEstablished, PacketReceiptDelivered, PrnsCommand, SendToLinkFailure, Settlement,
+    LinkEstablished, OwedWork, PacketReceiptDelivered, PrnsCommand, SendToLinkFailure, Settlement,
     WakeSchedule,
 };
 use crate::engine::{EstablishLinkFailure, WakeSchedules};
@@ -20,7 +20,9 @@ use crate::routing::upstream_app_destinations::ProofStrategy;
 use crate::routing::RouteResponsiveness;
 use crate::storage::TestFixedStorage;
 use crate::units::RttMillis;
-use crate::wire::{DestinationHash, PropagationType, TransportId, WirePacketHeader};
+use crate::wire::{
+    wire_hop_count_is_valid, DestinationHash, PropagationType, TransportId, WirePacketHeader,
+};
 
 impl EstablishLinkWriteOutcome {
     #[track_caller]
@@ -43,8 +45,19 @@ fn arrival() -> InterfaceId {
     InterfaceId::new([0xA1; 8])
 }
 
+fn other_arrival() -> InterfaceId {
+    InterfaceId::new([0xA2; 8])
+}
+
 fn arrival_interfaces() -> [InterfaceDescriptor; 1] {
     [routable_descriptor(arrival())]
+}
+
+fn both_arrival_interfaces() -> [InterfaceDescriptor; 2] {
+    [
+        routable_descriptor(arrival()),
+        routable_descriptor(other_arrival()),
+    ]
 }
 
 fn vector_establish_entropy() -> EstablishLinkEntropy {
@@ -61,16 +74,13 @@ fn establish() -> EstablishLink {
 
 fn hear_announce(state: &mut EngineState<TestStorageLayout>, wire: &[u8]) {
     let mut raw = wire.to_vec();
-    let outcome = state.ingest_packet_with(
+    let outcome = state.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(500),
             source_interface: arrival(),
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&arrival_interfaces()),
-        &mut |_| {},
-        None,
     );
     assert!(
         matches!(
@@ -146,6 +156,51 @@ fn a_commanded_link_request_frames_tracks_and_arms_the_lane() {
         state.link_deadlines_wake(),
         WakeSchedule::At(InstantMillis(13_001)),
         "one direct hop arms first-hop + one per-hop increment",
+    );
+}
+
+#[test]
+fn continued_link_key_derivation_is_byte_identical_to_the_inline_writer() {
+    let mut inline = neighbor_with_a_route();
+    let mut continued = neighbor_with_a_route();
+    let interfaces = arrival_interfaces();
+    let mut inline_wire = [0u8; BROADCAST_MTU];
+    let mut continued_wire = [0u8; BROADCAST_MTU];
+    let inline_dispatch = inline
+        .write_commanded_link_request(
+            CommandId(31),
+            &establish(),
+            InstantMillis(2_000),
+            vector_establish_entropy(),
+            AttachedInterfaces::new(&interfaces),
+            &mut inline_wire,
+        )
+        .dispatched();
+    let completed = continued
+        .prepare_establish_link(
+            CommandId(31),
+            establish(),
+            InstantMillis(2_000),
+            None,
+            vector_establish_entropy(),
+        )
+        .unwrap()
+        .fulfill();
+    let continued_dispatch = continued
+        .write_commanded_link_request_from_parts(
+            completed,
+            FirstHopTiming {
+                interfaces: AttachedInterfaces::new(&interfaces),
+                shared_instance_floor_ms: None,
+            },
+            &mut continued_wire,
+        )
+        .dispatched();
+
+    assert_eq!(continued_dispatch, inline_dispatch);
+    assert_eq!(
+        continued_wire[..continued_dispatch.wire_bytes],
+        inline_wire[..inline_dispatch.wire_bytes],
     );
 }
 
@@ -565,16 +620,13 @@ fn a_link_request_for_a_held_destination_owes_its_proof() {
     let mut responder = personal_node_announcer();
     let identity = responder.held_identity_hashes()[0];
     let mut raw = buf[..dispatch.wire_bytes].to_vec();
-    let outcome = responder.ingest_packet_with(
+    let outcome = responder.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(2_000),
             source_interface: arrival(),
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&arrival_interfaces()),
-        &mut |_| {},
-        None,
     );
     assert_eq!(
         outcome,
@@ -588,16 +640,13 @@ fn a_link_request_for_a_held_destination_owes_its_proof() {
     );
 
     let mut replay = buf[..dispatch.wire_bytes].to_vec();
-    let replayed = responder.ingest_packet_with(
+    let replayed = responder.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(2_100),
             source_interface: arrival(),
             bytes: &mut replay,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&arrival_interfaces()),
-        &mut |_| {},
-        None,
     );
     assert_eq!(
         replayed,
@@ -643,72 +692,45 @@ fn a_full_responder_link_table_withholds_the_proof_and_preserves_its_row() {
         )
         .unwrap();
 
-    let accept = |responder: &mut EngineState<OneLinkStorage>, wire: &mut [u8], arrived_at| {
-        let outcome = responder.ingest_packet_with(
-            InboundPacket {
-                arrived_at: InstantMillis(arrived_at),
-                source_interface: arrival(),
-                bytes: wire,
-            },
-            &mut |_| {},
-            AttachedInterfaces::new(&arrival_interfaces()),
-            &mut |_| {},
-            None,
-        );
-        let IngestPacketOutcome::OwesLinkProof(accepted) = outcome else {
-            panic!("the local destination must accept this link request");
+    let fulfill =
+        |responder: &mut EngineState<OneLinkStorage>, wire: &mut [u8], arrived_at, entropy_fill| {
+            let mut sent = std::vec::Vec::new();
+            crate::engine::drive_packet_to_quiescence(
+                responder,
+                InboundPacket {
+                    arrived_at: InstantMillis(arrived_at),
+                    source_interface: arrival(),
+                    bytes: wire,
+                },
+                IngestIo {
+                    interfaces: AttachedInterfaces::new(&arrival_interfaces()),
+                    now: InstantMillis(arrived_at),
+                    fill_random: &mut |bytes| bytes.fill(entropy_fill),
+                    should_prove: &mut |_| false,
+                    should_accept_resource: &mut |_| false,
+                    sink: &mut |reaction| {
+                        if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
+                            sent.push(bytes.to_vec());
+                        }
+                    },
+                },
+            );
+            sent
         };
-        accepted
-    };
 
     let (mut first_wire, first_link_id) = make_request(&mut initiator, 7, 0x71);
-    let first = accept(&mut responder, &mut first_wire, 2_000);
-    let mut proof = [0u8; BROADCAST_MTU];
-    responder
-        .write_owed_link_proof(
-            &first,
-            X25519SecretKey::new([0x81; X25519SecretKey::LEN]),
-            BROADCAST_MTU,
-            &mut proof,
-        )
-        .unwrap();
+    let first_sent = fulfill(&mut responder, &mut first_wire, 2_000, 0x81);
+    assert_eq!(first_sent.len(), 1);
     assert_eq!(responder.links.len(), 1);
 
     let (mut second_wire, second_link_id) = make_request(&mut initiator, 8, 0x72);
-    let second = accept(&mut responder, &mut second_wire, 3_000);
-    assert_eq!(
-        responder.write_owed_link_proof(
-            &second,
-            X25519SecretKey::new([0x82; X25519SecretKey::LEN]),
-            BROADCAST_MTU,
-            &mut proof,
-        ),
-        Err(WriteLinkProofError::LinkTableFull),
-    );
+    let second_sent = fulfill(&mut responder, &mut second_wire, 3_000, 0x82);
+    assert!(second_sent.is_empty());
     assert_eq!(responder.links.len(), 1);
     assert!(responder.links.phase_for(&first_link_id).is_some());
     assert!(responder.links.phase_for(&second_link_id).is_none());
     let (mut third_wire, third_link_id) = make_request(&mut initiator, 9, 0x73);
-    let mut sent = std::vec::Vec::new();
-    responder.ingest_packet_into(
-        InboundPacket {
-            arrived_at: InstantMillis(4_000),
-            source_interface: arrival(),
-            bytes: &mut third_wire,
-        },
-        IngestIo {
-            interfaces: AttachedInterfaces::new(&arrival_interfaces()),
-            now: InstantMillis(4_000),
-            fill_entropy: &mut |bytes| bytes.fill(0x83),
-            should_prove: &mut |_| false,
-            should_accept_resource: &mut |_| false,
-            sink: &mut |reaction| {
-                if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
-                    sent.push(bytes.to_vec());
-                }
-            },
-        },
-    );
+    let sent = fulfill(&mut responder, &mut third_wire, 4_000, 0x83);
 
     assert!(sent.is_empty(), "a proof cannot escape without a link row");
     assert_eq!(responder.links.len(), 1);
@@ -744,16 +766,13 @@ fn a_foreign_stamped_link_request_is_not_delivered_to_a_local_destination() {
 
     let mut responder = personal_node_announcer();
     pin_transport_id(&mut responder, RESPONDER_TRANSPORT_ID);
-    let outcome = responder.ingest_packet_with(
+    let outcome = responder.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(2_000),
             source_interface: arrival(),
             bytes: &mut foreign[..foreign_len],
         },
-        &mut |_| {},
         AttachedInterfaces::new(&arrival_interfaces()),
-        &mut |_| {},
-        None,
     );
     assert_eq!(
         outcome,
@@ -761,16 +780,13 @@ fn a_foreign_stamped_link_request_is_not_delivered_to_a_local_destination() {
     );
 
     let mut direct = direct.to_vec();
-    let outcome = responder.ingest_packet_with(
+    let outcome = responder.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(2_100),
             source_interface: arrival(),
             bytes: &mut direct,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&arrival_interfaces()),
-        &mut |_| {},
-        None,
     );
     assert!(
         matches!(outcome, IngestPacketOutcome::OwesLinkProof(_)),
@@ -808,16 +824,13 @@ fn an_accept_none_destination_announces_but_refuses_the_link_request() {
         .unwrap();
 
     let mut raw = buf[..dispatch.wire_bytes].to_vec();
-    let outcome = responder.ingest_packet_with(
+    let outcome = responder.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(2_000),
             source_interface: arrival(),
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&arrival_interfaces()),
-        &mut |_| {},
-        None,
     );
     assert_eq!(
         outcome,
@@ -825,6 +838,179 @@ fn an_accept_none_destination_announces_but_refuses_the_link_request() {
         "the destination is registered and held, yet answers no link request",
     );
     assert!(responder.links.is_empty());
+}
+
+#[test]
+fn an_accept_direct_destination_admits_only_canonical_zero_hop_link_requests() {
+    let mut initiator = neighbor_with_a_route();
+    let mut direct = [0u8; BROADCAST_MTU];
+    let dispatch = initiator
+        .write_commanded_link_request(
+            CommandId(7),
+            &establish(),
+            InstantMillis(1_000),
+            vector_establish_entropy(),
+            AttachedInterfaces::new(&arrival_interfaces()),
+            &mut direct,
+        )
+        .dispatched();
+    let direct = direct[..dispatch.wire_bytes].to_vec();
+    let (canonical, payload) = WirePacketHeader::parse(&direct).unwrap();
+    assert_eq!(canonical.hops, 0);
+    assert_eq!(canonical.propagation, PropagationType::Broadcast);
+    assert_eq!(canonical.transport_id, None);
+
+    let direct_only_responder = || {
+        let mut responder = EngineState::<TestStorageLayout>::new(fixed_secret_key());
+        let identity = responder.held_identity_hashes()[0];
+        responder
+            .register_single_destination(
+                &identity,
+                "personal",
+                &["node"],
+                b"hello-personal",
+                ProofStrategy::ProveNone,
+                LinkRequestPolicy::AcceptDirect,
+                crate::engine::RatchetPolicy::NoRatchets,
+            )
+            .unwrap();
+        responder
+    };
+    let rewrite = |header: WirePacketHeader| {
+        let mut wire = std::vec![0u8; BROADCAST_MTU];
+        let header_len = header.write(&mut wire).unwrap();
+        wire[header_len..header_len + payload.len()].copy_from_slice(payload);
+        wire.truncate(header_len + payload.len());
+        wire
+    };
+    fn ingest<'a>(
+        responder: &mut EngineState<TestStorageLayout>,
+        wire: &'a mut [u8],
+    ) -> IngestPacketOutcome<'a> {
+        responder.ingest_for_test(
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface: arrival(),
+                bytes: wire,
+            },
+            AttachedInterfaces::new(&arrival_interfaces()),
+        )
+    }
+
+    let mut responder = direct_only_responder();
+    let mut canonical_wire = direct.clone();
+    assert!(matches!(
+        ingest(&mut responder, &mut canonical_wire),
+        IngestPacketOutcome::OwesLinkProof(_),
+    ));
+
+    for hops in 1..=u8::MAX {
+        let mut responder = direct_only_responder();
+        let mut routed = rewrite(WirePacketHeader { hops, ..canonical });
+        let expected = if wire_hop_count_is_valid(hops) {
+            IgnoreReason::LinkRequestsRefused
+        } else {
+            IgnoreReason::Malformed
+        };
+        assert_eq!(
+            ingest(&mut responder, &mut routed),
+            IngestPacketOutcome::Ignored(expected),
+        );
+        let mut canonical_wire = direct.clone();
+        assert!(matches!(
+            ingest(&mut responder, &mut canonical_wire),
+            IngestPacketOutcome::OwesLinkProof(_),
+        ));
+    }
+
+    for rejected_header in [
+        WirePacketHeader {
+            propagation: PropagationType::Transport,
+            ..canonical
+        },
+        WirePacketHeader {
+            propagation: PropagationType::Transport,
+            transport_id: Some(RESPONDER_TRANSPORT_ID),
+            ..canonical
+        },
+        WirePacketHeader {
+            transport_id: Some(RESPONDER_TRANSPORT_ID),
+            ..canonical
+        },
+    ] {
+        let mut responder = direct_only_responder();
+        pin_transport_id(&mut responder, RESPONDER_TRANSPORT_ID);
+        let mut rejected = rewrite(rejected_header);
+        assert_eq!(
+            ingest(&mut responder, &mut rejected),
+            IngestPacketOutcome::Ignored(IgnoreReason::LinkRequestsRefused),
+        );
+        let mut canonical_wire = direct.clone();
+        assert!(matches!(
+            ingest(&mut responder, &mut canonical_wire),
+            IngestPacketOutcome::OwesLinkProof(_),
+        ));
+    }
+}
+
+#[test]
+fn an_interface_scoped_direct_destination_refuses_other_direct_interfaces() {
+    let mut initiator = neighbor_with_a_route();
+    let mut wire = [0u8; BROADCAST_MTU];
+    let dispatch = initiator
+        .write_commanded_link_request(
+            CommandId(7),
+            &establish(),
+            InstantMillis(1_000),
+            vector_establish_entropy(),
+            AttachedInterfaces::new(&arrival_interfaces()),
+            &mut wire,
+        )
+        .dispatched();
+    let wire = &wire[..dispatch.wire_bytes];
+
+    let mut responder = EngineState::<TestStorageLayout>::new(fixed_secret_key());
+    let identity = responder.held_identity_hashes()[0];
+    responder
+        .register_single_destination(
+            &identity,
+            "personal",
+            &["node"],
+            b"hello-personal",
+            ProofStrategy::ProveNone,
+            LinkRequestPolicy::AcceptDirectFrom {
+                interface: arrival(),
+            },
+            crate::engine::RatchetPolicy::NoRatchets,
+        )
+        .unwrap();
+
+    let mut wrong_interface_wire = wire.to_vec();
+    assert_eq!(
+        responder.ingest_for_test(
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface: other_arrival(),
+                bytes: &mut wrong_interface_wire,
+            },
+            AttachedInterfaces::new(&both_arrival_interfaces()),
+        ),
+        IngestPacketOutcome::Ignored(IgnoreReason::LinkRequestsRefused),
+    );
+    assert!(responder.links.is_empty());
+
+    let mut selected_interface_wire = wire.to_vec();
+    assert!(matches!(
+        responder.ingest_for_test(
+            InboundPacket {
+                arrived_at: InstantMillis(2_000),
+                source_interface: arrival(),
+                bytes: &mut selected_interface_wire,
+            },
+            AttachedInterfaces::new(&both_arrival_interfaces()),
+        ),
+        IngestPacketOutcome::OwesLinkProof(_),
+    ));
 }
 
 #[test]
@@ -844,16 +1030,13 @@ fn a_link_request_for_an_unknown_destination_stays_ignored() {
 
     let mut bystander = EngineState::<TestStorageLayout>::new(second_secret_key());
     let mut raw = buf[..dispatch.wire_bytes].to_vec();
-    let outcome = bystander.ingest_packet_with(
+    let outcome = bystander.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(2_000),
             source_interface: arrival(),
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&arrival_interfaces()),
-        &mut |_| {},
-        None,
     );
     assert_eq!(
         outcome,
@@ -880,7 +1063,8 @@ fn the_two_ends_agree_on_the_session_key_through_the_proof() {
     let mut responder = personal_node_announcer();
     let mut sent = std::vec::Vec::new();
     let mut raw = buf[..dispatch.wire_bytes].to_vec();
-    let delta = responder.ingest_packet_into(
+    let delta = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(2_000),
             source_interface: arrival(),
@@ -889,7 +1073,7 @@ fn the_two_ends_agree_on_the_session_key_through_the_proof() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_000),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0x99),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0x99),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -981,9 +1165,8 @@ fn deferred_link_proof_sign_and_verify_resume_the_handshake() {
 
     let mut responder = personal_node_announcer();
     let mut raw_request = request[..dispatch.wire_bytes].to_vec();
-    let mut deferred_sign = None;
-    let mut deferred = DeferredCrypto::default();
-    responder.ingest_packet_into_deferring(
+    let mut owed_sign = None;
+    responder.ingest_packet_into(
         InboundPacket {
             arrived_at: InstantMillis(1_100),
             source_interface: arrival(),
@@ -992,17 +1175,20 @@ fn deferred_link_proof_sign_and_verify_resume_the_handshake() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(1_100),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0x99),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0x99),
             should_prove: &mut |_| false,
             should_accept_resource: &mut |_| false,
-            sink: &mut |_| {},
+            sink: &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Fulfill(OwedWork::Crypto(
+                    CryptoOwed::LinkProofSign(owed),
+                ))) = reaction
+                {
+                    owed_sign = Some(owed);
+                }
+            },
         },
-        &mut deferred_sign,
-        Some(&mut deferred),
     );
-    let DeferredCrypto::LinkProofSign(owed) = deferred else {
-        panic!("the responder captures the proof signature for the pool");
-    };
+    let owed = owed_sign.expect("the responder emits proof signing as owed work");
     let responder_encryption = x25519_public_key(&owed.ephemeral_secret);
     let shared = x25519_diffie_hellman(&owed.ephemeral_secret, &owed.request.initiator_encryption);
     let signed_data = crate::routing::links::handshake::link_proof_signed_data(
@@ -1032,9 +1218,8 @@ fn deferred_link_proof_sign_and_verify_resume_the_handshake() {
 
     let mut raw_proof = proofs[0].1.clone();
     raw_proof[1] = 2;
-    let mut deferred_sign = None;
-    let mut deferred = DeferredCrypto::default();
-    initiator.ingest_packet_into_deferring(
+    let mut owed_verify = None;
+    initiator.ingest_packet_into(
         InboundPacket {
             arrived_at: InstantMillis(1_250),
             source_interface: arrival(),
@@ -1043,17 +1228,20 @@ fn deferred_link_proof_sign_and_verify_resume_the_handshake() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(1_250),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             should_prove: &mut |_| false,
             should_accept_resource: &mut |_| false,
-            sink: &mut |_| {},
+            sink: &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Fulfill(OwedWork::Crypto(
+                    CryptoOwed::LinkProofVerify(owed),
+                ))) = reaction
+                {
+                    owed_verify = Some(owed);
+                }
+            },
         },
-        &mut deferred_sign,
-        Some(&mut deferred),
     );
-    let DeferredCrypto::LinkProofVerify(mut owed) = deferred else {
-        panic!("the initiator captures proof verification for the pool");
-    };
+    let mut owed = owed_verify.expect("the initiator emits proof verification as owed work");
     assert_eq!(owed.received_hops, 3);
     assert!(crate::routing::links::handshake::link_proof_signature_valid(&owed));
     owed.signed_data[0] ^= 0x01;
@@ -1143,7 +1331,8 @@ fn reactions_of_on(
     let mut sent = std::vec::Vec::new();
     let mut journaled = std::vec::Vec::new();
     let mut raw = bytes.to_vec();
-    let delta = engine.ingest_packet_into(
+    let delta = crate::engine::drive_packet_to_quiescence(
+        engine,
         InboundPacket {
             arrived_at: InstantMillis(arrived_at),
             source_interface: arrival(),
@@ -1152,7 +1341,7 @@ fn reactions_of_on(
         IngestIo {
             interfaces,
             now: InstantMillis(arrived_at),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -1358,16 +1547,13 @@ fn untrusted_initiated_hop_changes_leave_the_path_unchanged() {
     let mut wrong_mode = proof.clone();
     let signalling = wrong_mode.len() - 3;
     wrong_mode[signalling] = (wrong_mode[signalling] & 0x1F) | 0x40;
-    let outcome = initiator.ingest_packet_with(
+    let outcome = initiator.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_240),
             source_interface: arrival(),
             bytes: &mut wrong_mode,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&arrival_interfaces()),
-        &mut |_| {},
-        None,
     );
     assert_eq!(
         outcome,
@@ -1380,16 +1566,13 @@ fn untrusted_initiated_hop_changes_leave_the_path_unchanged() {
     };
     proof[payload_offset] ^= 0x01;
 
-    let outcome = initiator.ingest_packet_with(
+    let outcome = initiator.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_250),
             source_interface: arrival(),
             bytes: &mut proof,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&arrival_interfaces()),
-        &mut |_| {},
-        None,
     );
 
     assert_eq!(
@@ -1433,16 +1616,13 @@ fn a_proof_for_an_unknown_link_is_ignored() {
 
     let mut bystander = EngineState::<TestStorageLayout>::new(second_secret_key());
     let mut raw = proofs[0].clone();
-    let outcome = bystander.ingest_packet_with(
+    let outcome = bystander.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_250),
             source_interface: arrival(),
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&arrival_interfaces()),
-        &mut |_| {},
-        None,
     );
     assert_eq!(
         outcome,
@@ -1586,7 +1766,8 @@ fn an_authenticated_but_malformed_lrrtt_tears_the_link_down() {
     let mut closes = std::vec::Vec::new();
     let mut journaled = std::vec::Vec::new();
     let mut raw = frame.clone();
-    let _ = responder.ingest_packet_into(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(1_600),
             source_interface: arrival(),
@@ -1595,7 +1776,7 @@ fn an_authenticated_but_malformed_lrrtt_tears_the_link_down() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(1_600),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xB6),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xB6),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -1691,7 +1872,8 @@ fn link_data_crosses_the_active_link_and_journals_the_delivery() {
 
     let mut delivered = std::vec::Vec::new();
     let mut raw = sent[0].clone();
-    let _ = responder.ingest_packet_into(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(2_100),
             source_interface: arrival(),
@@ -1700,7 +1882,7 @@ fn link_data_crosses_the_active_link_and_journals_the_delivery() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_100),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xD2),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xD2),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -1722,7 +1904,8 @@ fn link_data_crosses_the_active_link_and_journals_the_delivery() {
 
     let mut replay = sent[0].clone();
     let mut replayed = std::vec::Vec::new();
-    let _ = responder.ingest_packet_into(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(2_200),
             source_interface: arrival(),
@@ -1731,7 +1914,7 @@ fn link_data_crosses_the_active_link_and_journals_the_delivery() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_200),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xD3),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xD3),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -1910,7 +2093,7 @@ fn a_prove_all_responder_proves_link_data_the_reference_way() {
 #[test]
 fn a_deferred_link_proof_updates_inbound_only_after_verification() {
     use crate::crypto::Ed25519Verifier;
-    use crate::routing::proof::ProofIngest;
+    use crate::engine::{ReceiptProofClaim, ReceiptProofVerification};
     use crate::wire::WirePacketHeader;
 
     let mut initiator = neighbor_with_a_route();
@@ -1938,7 +2121,7 @@ fn a_deferred_link_proof_updates_inbound_only_after_verification() {
     let proof = &answers[0];
     let (header, payload) = WirePacketHeader::parse(proof).unwrap();
     let deferred = initiator
-        .settle_receipt_proof_deferred(
+        .prepare_receipt_proof_verify(
             payload,
             &DestinationHash::from_address(header.address),
             PacketHash::of_wire_packet(proof).unwrap(),
@@ -1965,13 +2148,11 @@ fn a_deferred_link_proof_updates_inbound_only_after_verification() {
         .unwrap()
         .verify(deferred.packet_hash.as_bytes(), &deferred.signature)
         .is_ok(),);
-    let ProofIngest::SendToLinkDelivered { id, .. } = deferred.ingest else {
+    let ReceiptProofClaim::SendToLink { id, .. } = deferred.claim else {
         panic!("the deferred proof belongs to the Link send");
     };
-    assert_eq!(
-        initiator.settle_resolved_receipt_proof(id, &deferred.packet_hash, deferred.arrived_at,),
-        crate::engine::ResolvedReceiptSettlement::Settled,
-    );
+    assert_eq!(id, CommandId(9));
+    initiator.resume_receipt_proof(deferred, ReceiptProofVerification::Valid, &mut |_| {});
 
     let Some(LinkPhase::Active { last_inbound, .. }) = initiator.links.phase_for(&link_id) else {
         panic!("the proven link remains active");
@@ -2128,7 +2309,8 @@ fn the_app_decider_gates_the_prove_if_link_proof() {
         let mut requests = std::vec::Vec::new();
         let mut answers = std::vec::Vec::new();
         let mut raw = data.to_vec();
-        let _ = responder.ingest_packet_into(
+        let _ = crate::engine::drive_packet_to_quiescence(
+            &mut responder,
             InboundPacket {
                 arrived_at: InstantMillis(arrived_at),
                 source_interface: arrival(),
@@ -2137,7 +2319,7 @@ fn the_app_decider_gates_the_prove_if_link_proof() {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&arrival_interfaces()),
                 now: InstantMillis(arrived_at),
-                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xD2),
+                fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xD2),
                 should_prove: &mut |request: &ProofRequest| {
                     requests.push((request.destination, request.plaintext.to_vec()));
                     agree
@@ -2199,16 +2381,13 @@ fn relay_that_routes_to_the_responder(
         routable_descriptor(iface_to_b),
     ];
     let mut raw = announce_buf[..announce_len].to_vec();
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(500),
             source_interface: iface_to_b,
             bytes: &mut raw,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&relay_view),
-        &mut |_| {},
-        None,
     );
     assert!(
         matches!(
@@ -2248,16 +2427,13 @@ fn a_duplicate_transported_link_request_is_dropped_as_a_duplicate() {
     let request = transported_request_wire(&mut initiator);
 
     let mut first = request.clone();
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_100),
             source_interface: arrival(),
             bytes: &mut first,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&relay_view),
-        &mut |_| {},
-        None,
     );
     assert!(
         matches!(outcome, IngestPacketOutcome::TransportedLinkRequest { .. }),
@@ -2265,16 +2441,13 @@ fn a_duplicate_transported_link_request_is_dropped_as_a_duplicate() {
     );
 
     let mut second = request.clone();
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_150),
             source_interface: arrival(),
             bytes: &mut second,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&relay_view),
-        &mut |_| {},
-        None,
     );
     assert_eq!(
         outcome,
@@ -2298,16 +2471,13 @@ fn a_transported_link_proof_allowance_uses_the_outbound_interface() {
 
     let mut wire = request;
     assert!(matches!(
-        relay.ingest_packet_with(
+        relay.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_100),
                 source_interface: arrival(),
                 bytes: &mut wire,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&relay_view),
-            &mut |_| {},
-            None,
         ),
         IngestPacketOutcome::TransportedLinkRequest { .. }
     ));
@@ -2335,16 +2505,13 @@ fn a_transported_proof_needs_the_destinations_signing_key() {
     let request = transported_request_wire(&mut initiator);
 
     let mut inbound = request.clone();
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_100),
             source_interface: arrival(),
             bytes: &mut inbound,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&relay_view),
-        &mut |_| {},
-        None,
     );
     let IngestPacketOutcome::TransportedLinkRequest { header, body, .. } = outcome else {
         panic!("the request must ride transport");
@@ -2371,16 +2538,13 @@ fn a_transported_proof_needs_the_destinations_signing_key() {
     );
 
     let mut proof = proofs[0].clone();
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_300),
             source_interface: iface_to_b,
             bytes: &mut proof,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&relay_view),
-        &mut |_| {},
-        None,
     );
     assert_eq!(
         outcome,
@@ -2410,16 +2574,13 @@ fn a_trusted_transported_hop_change_rebalances_the_link_and_route_once() {
     let link_id = parse_link_request(&request).unwrap().link_id;
 
     let mut inbound = request.clone();
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_100),
             source_interface: arrival(),
             bytes: &mut inbound,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&relay_view),
-        &mut |_| {},
-        None,
     );
     let IngestPacketOutcome::TransportedLinkRequest { header, body, .. } = outcome else {
         panic!("the request must ride transport");
@@ -2447,16 +2608,13 @@ fn a_trusted_transported_hop_change_rebalances_the_link_and_route_once() {
 
     let mut malformed = valid.clone();
     malformed.pop();
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_250),
             source_interface: iface_to_b,
             bytes: &mut malformed,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&relay_view),
-        &mut |_| {},
-        None,
     );
     assert_eq!(
         outcome,
@@ -2467,16 +2625,13 @@ fn a_trusted_transported_hop_change_rebalances_the_link_and_route_once() {
     let mut wrong_mode = valid.clone();
     let signalling = wrong_mode.len() - 3;
     wrong_mode[signalling] = (wrong_mode[signalling] & 0x1F) | 0x40;
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_260),
             source_interface: iface_to_b,
             bytes: &mut wrong_mode,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&relay_view),
-        &mut |_| {},
-        None,
     );
     assert_eq!(
         outcome,
@@ -2490,16 +2645,13 @@ fn a_trusted_transported_hop_change_rebalances_the_link_and_route_once() {
         invalid_signature.len() - payload.len()
     };
     invalid_signature[payload_offset] ^= 0x01;
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_270),
             source_interface: iface_to_b,
             bytes: &mut invalid_signature,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&relay_view),
-        &mut |_| {},
-        None,
     );
     assert_eq!(
         outcome,
@@ -2508,16 +2660,13 @@ fn a_trusted_transported_hop_change_rebalances_the_link_and_route_once() {
     assert_unchanged(&relay);
 
     let mut wrong_ingress = valid.clone();
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_280),
             source_interface: arrival(),
             bytes: &mut wrong_ingress,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&relay_view),
-        &mut |_| {},
-        None,
     );
     assert_eq!(
         outcome,
@@ -2525,16 +2674,13 @@ fn a_trusted_transported_hop_change_rebalances_the_link_and_route_once() {
     );
     assert_unchanged(&relay);
 
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_300),
             source_interface: iface_to_b,
             bytes: &mut valid,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&relay_view),
-        &mut |_| {},
-        None,
     );
     let IngestPacketOutcome::Forward(forwarded) = outcome else {
         panic!("the trusted proof must return toward the initiator");
@@ -2553,16 +2699,13 @@ fn a_trusted_transported_hop_change_rebalances_the_link_and_route_once() {
 
     let mut second = valid.clone();
     second[1] = 3;
-    let outcome = relay.ingest_packet_with(
+    let outcome = relay.ingest_for_test(
         InboundPacket {
             arrived_at: InstantMillis(1_350),
             source_interface: iface_to_b,
             bytes: &mut second,
         },
-        &mut |_| {},
         AttachedInterfaces::new(&relay_view),
-        &mut |_| {},
-        None,
     );
     assert_eq!(
         outcome,
@@ -2616,7 +2759,8 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
         let mut settled = std::vec::Vec::new();
         let mut closed = std::vec::Vec::new();
         let mut raw = bytes.to_vec();
-        let _ = engine.ingest_packet_into(
+        let _ = crate::engine::drive_packet_to_quiescence(
+            engine,
             InboundPacket {
                 arrived_at: InstantMillis(now),
                 source_interface: iface,
@@ -2625,7 +2769,7 @@ fn a_link_establishes_and_carries_data_through_a_transport_node() {
             IngestIo {
                 interfaces,
                 now: InstantMillis(now),
-                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
+                fill_random: &mut |bytes: &mut [u8]| bytes.fill(iv_fill),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
                 should_accept_resource:
                     &mut |_: &crate::routing::links::resources::ResourceOffer| false,
@@ -3089,7 +3233,8 @@ fn an_identified_request_policy_passes_packets_only_after_the_peer_identifies() 
     assert!(settled.is_empty(), "the request awaits its response");
     let mut heard = std::vec::Vec::new();
     let mut raw = sent[0].clone();
-    let _ = responder.ingest_packet_into(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(2_100),
             source_interface: arrival(),
@@ -3098,7 +3243,7 @@ fn an_identified_request_policy_passes_packets_only_after_the_peer_identifies() 
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_100),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -3126,7 +3271,8 @@ fn an_identified_request_policy_passes_packets_only_after_the_peer_identifies() 
     );
     assert!(size_hints.is_empty());
     let mut raw = identify_frames[0].clone();
-    let _ = responder.ingest_packet_into(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(2_300),
             source_interface: arrival(),
@@ -3135,7 +3281,7 @@ fn an_identified_request_policy_passes_packets_only_after_the_peer_identifies() 
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_300),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -3165,7 +3311,8 @@ fn an_identified_request_policy_passes_packets_only_after_the_peer_identifies() 
     assert_eq!(size_hints, std::vec![expected_request_hint]);
     let mut received: std::vec::Vec<(RequestId, std::vec::Vec<u8>)> = std::vec::Vec::new();
     let mut raw = sent[0].clone();
-    let _ = responder.ingest_packet_into(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(2_500),
             source_interface: arrival(),
@@ -3174,7 +3321,7 @@ fn an_identified_request_policy_passes_packets_only_after_the_peer_identifies() 
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_500),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -3231,7 +3378,8 @@ fn an_identified_request_policy_passes_packets_only_after_the_peer_identifies() 
     let mut answered = std::vec::Vec::new();
     let mut concluded = std::vec::Vec::new();
     let mut raw = responses[0].clone();
-    let _ = initiator.ingest_packet_into(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut initiator,
         InboundPacket {
             arrived_at: InstantMillis(2_700),
             source_interface: arrival(),
@@ -3240,7 +3388,7 @@ fn an_identified_request_policy_passes_packets_only_after_the_peer_identifies() 
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_700),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -3354,7 +3502,8 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
 
     let mut identified = std::vec::Vec::new();
     let mut raw = sent[0].clone();
-    let _ = responder.ingest_packet_into(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(2_100),
             source_interface: arrival(),
@@ -3363,7 +3512,7 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_100),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -3385,7 +3534,8 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
 
     let mut echoed = std::vec::Vec::new();
     let mut replay = sent[0].clone();
-    let _ = initiator.ingest_packet_into(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut initiator,
         InboundPacket {
             arrived_at: InstantMillis(2_200),
             source_interface: arrival(),
@@ -3394,7 +3544,7 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_200),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -3412,7 +3562,8 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
     let last = tampered.len() - 1;
     tampered[last] ^= 0x01;
     let mut forged = std::vec::Vec::new();
-    let _ = responder.ingest_packet_into(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(2_300),
             source_interface: arrival(),
@@ -3421,7 +3572,7 @@ fn the_initiator_identifies_itself_and_the_responder_journals_it() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_300),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -3613,7 +3764,8 @@ fn a_quiet_link_keepalives_then_goes_stale_and_closes() {
 
     let mut echoes = std::vec::Vec::new();
     let mut raw = sent[0].clone();
-    let _ = responder.ingest_packet_into(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(52_690),
             source_interface: arrival(),
@@ -3622,7 +3774,7 @@ fn a_quiet_link_keepalives_then_goes_stale_and_closes() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(52_690),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xE8),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xE8),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -3647,7 +3799,8 @@ fn a_quiet_link_keepalives_then_goes_stale_and_closes() {
         "the unanswered first keepalive leaves the initiator's cadence armed",
     );
     let mut raw = sent[0].clone();
-    let _ = responder.ingest_packet_into(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(104_118),
             source_interface: arrival(),
@@ -3656,7 +3809,7 @@ fn a_quiet_link_keepalives_then_goes_stale_and_closes() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(104_118),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xE8),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xE8),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -3678,7 +3831,8 @@ fn a_quiet_link_keepalives_then_goes_stale_and_closes() {
     assert_eq!(payload, &[KEEPALIVE_ECHO]);
 
     let mut raw = echoes[0].clone();
-    let _ = initiator.ingest_packet_into(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut initiator,
         InboundPacket {
             arrived_at: InstantMillis(104_128),
             source_interface: arrival(),
@@ -3687,7 +3841,7 @@ fn a_quiet_link_keepalives_then_goes_stale_and_closes() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(104_128),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xE9),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xE9),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -3747,6 +3901,7 @@ fn a_close_link_command_settles_and_closes_the_peer() {
 
     let mut sent = std::vec::Vec::new();
     let mut settled = std::vec::Vec::new();
+    let mut closed = std::vec::Vec::new();
     let _ = initiator.ingest_command_into(
         IssuedCommand {
             id: CommandId(12),
@@ -3767,6 +3922,9 @@ fn a_close_link_command_settles_and_closes_the_peer() {
             EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
                 settled.push((id, settlement));
             }
+            EngineReaction::Journaled(Journaled::LinkClosed { link_id, reason }) => {
+                closed.push((link_id, reason));
+            }
             _ => {}
         },
     );
@@ -3775,6 +3933,7 @@ fn a_close_link_command_settles_and_closes_the_peer() {
         std::vec![(CommandId(12), Settlement::CloseLink(Ok(())))],
     );
     assert_eq!(sent.len(), 1);
+    assert_eq!(closed, [(link_id, LinkClosedReason::LocallyClosed)]);
     assert!(initiator.links.is_empty());
 
     let mut tampered = sent[0].clone();
@@ -3782,7 +3941,8 @@ fn a_close_link_command_settles_and_closes_the_peer() {
     tampered[last] ^= 0x01;
     let mut journaled = std::vec::Vec::new();
     let mut raw = tampered;
-    let _ = responder.ingest_packet_into(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(2_100),
             source_interface: arrival(),
@@ -3791,7 +3951,7 @@ fn a_close_link_command_settles_and_closes_the_peer() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_100),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xEB),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xEB),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -3812,7 +3972,8 @@ fn a_close_link_command_settles_and_closes_the_peer() {
     assert!(responder.links.phase_for(&link_id).is_some());
 
     let mut raw = sent[0].clone();
-    let _ = responder.ingest_packet_into(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut responder,
         InboundPacket {
             arrived_at: InstantMillis(2_200),
             source_interface: arrival(),
@@ -3821,7 +3982,7 @@ fn a_close_link_command_settles_and_closes_the_peer() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_200),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xEC),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xEC),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -3871,7 +4032,8 @@ fn a_valid_peer_close_commits_final_route_evidence_before_removal() {
     assert_eq!(closes.len(), 1);
 
     let mut raw = closes.remove(0);
-    let _ = initiator.ingest_packet_into(
+    let _ = crate::engine::drive_packet_to_quiescence(
+        &mut initiator,
         InboundPacket {
             arrived_at: InstantMillis(2_200),
             source_interface: arrival(),
@@ -3880,7 +4042,7 @@ fn a_valid_peer_close_commits_final_route_evidence_before_removal() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&arrival_interfaces()),
             now: InstantMillis(2_200),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_| false,
             should_accept_resource: &mut |_| false,
             sink: &mut |_| {},

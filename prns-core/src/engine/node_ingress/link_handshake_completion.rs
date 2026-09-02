@@ -16,13 +16,13 @@ use crate::units::RttMillis;
 use crate::wire::BROADCAST_MTU;
 
 impl<S: StorageLayout> EngineState<S> {
-    fn emit_link_established(
+    fn emit_link_established<Work>(
         command_id: CommandId,
         link_id: LinkId,
         rtt: RttMillis,
         target: InterfaceId,
         written: &[u8],
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) {
         sink(EngineReaction::Directive(Directive::Send {
             target,
@@ -38,14 +38,14 @@ impl<S: StorageLayout> EngineState<S> {
         );
     }
 
-    pub(super) fn process_owes_link_rtt<F>(
+    pub(super) fn process_owes_link_rtt<F, Work>(
         &mut self,
         owed: LinkRttOwed,
         source: InterfaceId,
         interfaces: AttachedInterfaces<'_>,
         _now: InstantMillis,
-        fill_entropy: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        fill_random: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) -> WakeSchedule
     where
         F: FnMut(&mut [u8]),
@@ -54,7 +54,7 @@ impl<S: StorageLayout> EngineState<S> {
             return WakeSchedule::Unchanged;
         }
         let mut iv = [0u8; ENCRYPTION_IV_LEN];
-        fill_entropy(&mut iv);
+        fill_random(&mut iv);
         let mut buf = [0u8; BROADCAST_MTU];
         if let Ok(written) = self.write_owed_link_rtt(
             &owed.link_id,
@@ -88,7 +88,7 @@ impl<S: StorageLayout> EngineState<S> {
         shared: X25519SharedSecret,
         interfaces: AttachedInterfaces<'_>,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedule
     where
@@ -99,7 +99,7 @@ impl<S: StorageLayout> EngineState<S> {
             return WakeSchedule::Unchanged;
         }
         let mut iv = [0u8; ENCRYPTION_IV_LEN];
-        fill_entropy(&mut iv);
+        fill_random(&mut iv);
         let mut buf = [0u8; BROADCAST_MTU];
         if let Ok(written) = self.write_owed_link_rtt_with_shared_observed(
             &owed.link_id,
@@ -136,7 +136,7 @@ impl<S: StorageLayout> EngineState<S> {
         shared: X25519SharedSecret,
         interfaces: AttachedInterfaces<'_>,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules
     where
@@ -148,7 +148,7 @@ impl<S: StorageLayout> EngineState<S> {
             shared,
             interfaces,
             now,
-            fill_entropy,
+            fill_random,
             sink,
         );
         wake
@@ -182,5 +182,48 @@ impl<S: StorageLayout> EngineState<S> {
         }
         wake.link_deadlines = self.link_deadlines_wake();
         wake
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::{Ed25519PublicKey, X25519PublicKey};
+    use crate::engine::test_support::{routable_descriptor, TestStorageLayout};
+    use crate::engine::NoOwedWork;
+    use crate::interfaces::EgressCapability;
+
+    #[test]
+    fn an_ineligible_link_proof_spends_no_entropy_or_egress_work() {
+        let source = InterfaceId::new([0x41; 8]);
+        let mut descriptor = routable_descriptor(source);
+        descriptor.capabilities.egress = EgressCapability::Disabled;
+        let interfaces = [descriptor];
+        let mut engine = EngineState::<TestStorageLayout>::default();
+        let mut entropy_fills = 0;
+
+        let wake = engine.process_owes_link_rtt(
+            LinkRttOwed {
+                link_id: LinkId::new([0x42; 16]),
+                received_hops: 0,
+                responder_encryption: X25519PublicKey([0x43; 32]),
+                responder_signing: Ed25519PublicKey([0x44; 32]),
+                command_id: CommandId(45),
+                arrived_at: InstantMillis(46),
+                rtt: RttMillis::new(47),
+                mtu: BROADCAST_MTU,
+            },
+            source,
+            AttachedInterfaces::new(&interfaces),
+            InstantMillis(48),
+            &mut |bytes| {
+                entropy_fills += 1;
+                bytes.fill(0x49);
+            },
+            &mut |_: EngineReaction<'_, NoOwedWork>| {},
+        );
+
+        assert_eq!(wake, WakeSchedule::Unchanged);
+        assert_eq!(entropy_fills, 0);
     }
 }

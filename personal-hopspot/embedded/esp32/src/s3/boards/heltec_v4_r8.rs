@@ -149,7 +149,7 @@ impl Esp32S3Board for HeltecV4R8Board {
     type Gnss = NoGnss;
 
     async fn bringup(
-        p: esp_hal::peripherals::Peripherals,
+        mut p: esp_hal::peripherals::Peripherals,
     ) -> S3BoardHardware<Self::Display, Self::Battery, Self::Gnss> {
         // Octal 8 MiB at 40 MHz, split between a private low engine window and a global high `esp_alloc` window.
         // Vext is GPIO40; GPIO36 is FSPICLK/SPIIO7 on the R8 SiP, and driving it as GPIO disrupts PSRAM access after early probes.
@@ -163,6 +163,8 @@ impl Esp32S3Board for HeltecV4R8Board {
                 ..::core::default::Default::default()
             }
         );
+        let runtime_bootstrap =
+            s3::bootstrap_s3_runtime(&mut p.RNG, &mut p.ADC1, Self::FLASH_LAYOUT).await;
 
         s3::boot_stage(s3::BootPhase::DisplayHardwareBegin);
         // OLED (V4-R8: Vext on GPIO40 active-low; pulse RST; I2C0 on 17/18).
@@ -252,6 +254,7 @@ impl Esp32S3Board for HeltecV4R8Board {
         };
 
         S3BoardHardware {
+            runtime_bootstrap,
             face: BoardFace {
                 display: if oled_ok {
                     ImmediateBoardDisplay::initialized(display)

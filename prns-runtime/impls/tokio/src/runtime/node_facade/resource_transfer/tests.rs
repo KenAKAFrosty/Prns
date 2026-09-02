@@ -8,8 +8,8 @@ use crate::routing::links::LinkId;
 
 use super::super::PrnsNodeHandle;
 use super::{
-    resource_segment_decompression_bound, ResourceReceipt, ResourceReceiveError, ResourceSendError,
-    SegmentCompression, ENGINE_SEGMENT_LANES,
+    ResourceReceipt, ResourceReceiveError, ResourceSendError, SegmentCompression,
+    ENGINE_SEGMENT_LANES,
 };
 
 fn handle() -> (PrnsNodeHandle, UnboundedReceiver<HostCommand>) {
@@ -116,10 +116,13 @@ async fn a_resource_length_that_overflows_with_metadata_is_rejected() {
 #[test]
 fn a_split_resource_claim_cannot_raise_the_per_segment_inflate_bound() {
     assert_eq!(
-        resource_segment_decompression_bound(u64::MAX),
+        prns_runtime::resource_compression::resource_decompression_bound(u64::MAX),
         MAX_EFFICIENT_SIZE as u64,
     );
-    assert_eq!(resource_segment_decompression_bound(4096), 4096);
+    assert_eq!(
+        prns_runtime::resource_compression::resource_decompression_bound(4096),
+        4096,
+    );
 }
 
 #[tokio::test]

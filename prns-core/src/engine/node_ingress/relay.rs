@@ -23,14 +23,14 @@ pub(super) struct RelayPathRequest<'a> {
 }
 
 impl<S: StorageLayout> EngineState<S> {
-    pub(super) fn relay_path_request(
+    pub(super) fn relay_path_request<Work>(
         &mut self,
         request: RelayPathRequest<'_>,
         source: InterfaceId,
         interfaces: AttachedInterfaces<'_>,
         audience: RelayAudience,
         now: InstantMillis,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) {
         let mut buf = [0u8; BROADCAST_MTU];
         let transport_id = self
@@ -103,13 +103,13 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    pub(super) fn relay_announce_to_local_clients(
+    pub(super) fn relay_announce_to_local_clients<Work>(
         &self,
         destination: DestinationHash,
         hops: u8,
         source: InterfaceId,
         interfaces: AttachedInterfaces<'_>,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) {
         let Some(via) = self.transport_id() else {
             return;

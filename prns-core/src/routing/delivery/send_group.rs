@@ -178,12 +178,9 @@ mod tests {
         let IngestPacketOutcome::Delivery {
             delivery: Delivery::Group(group),
             ..
-        } = state.ingest_packet_with(
+        } = state.ingest_for_test(
             plain_data_packet(&mut buf[..len]),
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         )
         else {
             panic!("our own GROUP send round-trips back through delivery");

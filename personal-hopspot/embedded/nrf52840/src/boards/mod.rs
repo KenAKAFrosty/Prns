@@ -1,11 +1,10 @@
-use core::convert::Infallible;
-
 use embassy_nrf::nvmc::{Error as NvmcError, Nvmc};
 use personal_rns::identity::vault::{FlashVault, FlashVaultError};
 use personal_rns::remote_control::{
     RemoteControlNodeIdentityBootstrap, RemoteControlNodeIdentityBootstrapError,
     REMOTE_CONTROL_IDENTITY_VAULT_SLOTS,
 };
+use prns_core::entropy::{EntropySource, RuntimeEntropy};
 
 #[cfg(any(
     feature = "board-t096",
@@ -29,7 +28,7 @@ pub(crate) enum DisplayIoError {
 mod tft;
 
 pub(crate) type RemoteControlIdentityBootstrapError =
-    RemoteControlNodeIdentityBootstrapError<FlashVaultError<NvmcError>, Infallible>;
+    RemoteControlNodeIdentityBootstrapError<FlashVaultError<NvmcError>>;
 
 pub(crate) struct RemoteControlIdentityFlash {
     offset: u32,
@@ -40,17 +39,16 @@ impl RemoteControlIdentityFlash {
         Self { offset }
     }
 
-    pub(crate) fn load_or_generate(
+    pub(crate) fn load_or_generate<S: EntropySource>(
         &self,
         nvmc: &mut Nvmc<'_>,
-        fill_entropy: &mut impl FnMut(&mut [u8]),
+        entropy: &mut RuntimeEntropy<S>,
     ) -> Result<RemoteControlNodeIdentityBootstrap, RemoteControlIdentityBootstrapError> {
         let mut vault =
             FlashVault::<_, REMOTE_CONTROL_IDENTITY_VAULT_SLOTS>::new(nvmc, self.offset);
-        RemoteControlNodeIdentityBootstrap::load_or_generate(&mut vault, |bytes| {
-            fill_entropy(bytes);
-            Ok(())
-        })
+        RemoteControlNodeIdentityBootstrap::load_or_generate_with_runtime_entropy(
+            &mut vault, entropy,
+        )
     }
 }
 

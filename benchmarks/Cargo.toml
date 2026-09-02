@@ -41,6 +41,7 @@ sha2 = "0.10"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util"] }
 # Fresh per-run identities for the participant nodes (the corpus bins keep fixed ones).
 getrandom = "0.2"
+heapless = "0.8"
 # Cross-platform host spec gathering for `describe_host` (CPU model, cores, RAM, OS) —
 # the per-host reproducibility descriptor that sits beside each host's result rows.
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }

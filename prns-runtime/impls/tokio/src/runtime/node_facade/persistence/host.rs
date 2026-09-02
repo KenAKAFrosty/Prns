@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
 use crate::identity::vault::FileVault;
-use crate::persistence::FileStore;
+use crate::persistence::{FileStore, FileStoreError, PersistedStore, SnapshotRegion};
 use crate::storage::StorageLayout;
 use crate::wire::DestinationHash;
 
@@ -18,8 +18,9 @@ use crate::engine::PersistenceFlushCause;
 
 use super::{
     boot_timeline_origin, DestinationIdentitySeedReport, FlushError, FlushMark, FlushReport,
-    PrepareFlushError, PrnsEvent, PrnsNode, PrnsNodeHandle, RatchetSeedReport, RequestEndpointSet,
-    RouteSeedProgress, RouteSeedReport, TunnelSeedReport,
+    PrepareFlushError, PrnsEvent, PrnsNode, PrnsNodeHandle, RatchetSeedReport,
+    RemoteControlAuthorizationSeedReport, RequestEndpointSet, RouteSeedProgress, RouteSeedReport,
+    TunnelSeedReport,
 };
 
 const WRITE_PROBE: &str = ".write-probe";
@@ -65,6 +66,8 @@ pub struct PersistenceRestoreReport {
     pub destination_identities: DestinationIdentitySeedReport,
     pub tunnels: TunnelSeedReport,
     pub ratchets: RatchetSeedReport,
+    pub remote_control_controller_grants: RemoteControlAuthorizationSeedReport,
+    pub remote_control_target_accesses: RemoteControlAuthorizationSeedReport,
 }
 
 impl PersistenceRestoreReport {
@@ -75,6 +78,8 @@ impl PersistenceRestoreReport {
             .saturating_add(self.destination_identities.refused_count)
             .saturating_add(self.tunnels.refused_count)
             .saturating_add(self.ratchets.refused_count)
+            .saturating_add(self.remote_control_controller_grants.refused_count)
+            .saturating_add(self.remote_control_target_accesses.refused_count)
     }
 
     #[must_use]
@@ -84,6 +89,8 @@ impl PersistenceRestoreReport {
             .saturating_add(self.destination_identities.dropped_count)
             .saturating_add(self.tunnels.dropped_count)
             .saturating_add(self.ratchets.dropped_count)
+            .saturating_add(self.remote_control_controller_grants.dropped_count)
+            .saturating_add(self.remote_control_target_accesses.dropped_count)
     }
 }
 
@@ -154,6 +161,10 @@ impl NodePersistence {
             destination_identities: node.seed_destination_identities_from_store(&self.store),
             tunnels: node.seed_tunnels_from_store(&self.store),
             ratchets: node.seed_self_ratchets_from_vault(&self.vault),
+            remote_control_controller_grants: node
+                .seed_remote_control_controller_grants_from_store(&self.store),
+            remote_control_target_accesses: node
+                .seed_remote_control_target_accesses_from_store(&self.store),
         }
     }
 
@@ -332,6 +343,48 @@ struct WorkerStorage {
     mark: FlushMark,
 }
 
+#[derive(Clone)]
+pub(crate) struct RemoteControlAuthorizationPersistence {
+    storage: Arc<Mutex<WorkerStorage>>,
+}
+
+#[derive(Debug)]
+pub(crate) enum RemoteControlAuthorizationPersistenceError {
+    Store(FileStoreError),
+    Task,
+}
+
+impl core::fmt::Display for RemoteControlAuthorizationPersistenceError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Store(error) => write!(formatter, "{error}"),
+            Self::Task => formatter.write_str("authorization persistence task stopped"),
+        }
+    }
+}
+
+impl RemoteControlAuthorizationPersistence {
+    pub(crate) async fn store(
+        &self,
+        region: SnapshotRegion,
+        snapshot: Vec<u8>,
+    ) -> Result<(), RemoteControlAuthorizationPersistenceError> {
+        let storage = Arc::clone(&self.storage);
+        tokio::task::spawn_blocking(move || {
+            let mut storage = match storage.lock() {
+                Ok(storage) => storage,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            storage
+                .store
+                .store(region, &snapshot)
+                .map_err(RemoteControlAuthorizationPersistenceError::Store)
+        })
+        .await
+        .map_err(|_| RemoteControlAuthorizationPersistenceError::Task)?
+    }
+}
+
 pub struct PersistenceWorker {
     handle: PrnsNodeHandle,
     storage: Arc<Mutex<WorkerStorage>>,
@@ -343,6 +396,14 @@ pub struct PersistenceWorker {
 }
 
 impl PersistenceWorker {
+    pub(crate) fn remote_control_authorization_persistence(
+        &self,
+    ) -> RemoteControlAuthorizationPersistence {
+        RemoteControlAuthorizationPersistence {
+            storage: Arc::clone(&self.storage),
+        }
+    }
+
     #[must_use]
     pub fn with_flush_interval(mut self, interval: Duration) -> Self {
         self.flush_interval = interval;
@@ -499,6 +560,13 @@ async fn flush_state(
     let prepared = match handle.prepare_flush().await {
         Ok(prepared) => prepared,
         Err(PrepareFlushError::NodeStopped) => return PersistenceFlushStatus::NodeStopped,
+        Err(PrepareFlushError::AuthorizationSnapshot(error)) => {
+            on_event(PersistenceEvent::FlushFailed {
+                trigger,
+                error: &AuthorizationSnapshotFlushError(error),
+            });
+            return PersistenceFlushStatus::Failed;
+        }
     };
     let storage = Arc::clone(storage);
     let committed = tokio::task::spawn_blocking(move || {
@@ -516,6 +584,13 @@ async fn flush_state(
             PersistenceFlushStatus::Landed
         }
         Ok(Err(FlushError::NodeStopped)) => PersistenceFlushStatus::NodeStopped,
+        Ok(Err(FlushError::AuthorizationSnapshot(error))) => {
+            on_event(PersistenceEvent::FlushFailed {
+                trigger,
+                error: &AuthorizationSnapshotFlushError(error),
+            });
+            PersistenceFlushStatus::Failed
+        }
         Ok(Err(FlushError::Store(error))) => {
             on_event(PersistenceEvent::FlushFailed {
                 trigger,
@@ -543,6 +618,13 @@ async fn flush_rotated_ratchet(
         Ok(Some(snapshot)) => snapshot,
         Ok(None) => return PersistenceFlushStatus::Landed,
         Err(PrepareFlushError::NodeStopped) => return PersistenceFlushStatus::NodeStopped,
+        Err(PrepareFlushError::AuthorizationSnapshot(error)) => {
+            on_event(PersistenceEvent::RatchetFlushFailed {
+                trigger: PersistenceTrigger::RatchetRotation,
+                error: &AuthorizationSnapshotFlushError(error),
+            });
+            return PersistenceFlushStatus::Failed;
+        }
     };
     store_single_ratchet(
         storage,
@@ -551,6 +633,18 @@ async fn flush_rotated_ratchet(
         on_event,
     )
     .await
+}
+
+struct AuthorizationSnapshotFlushError(crate::persistence::SnapshotSealError);
+
+impl core::fmt::Display for AuthorizationSnapshotFlushError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            formatter,
+            "remote-control authorization snapshot failed: {:?}",
+            self.0
+        )
+    }
 }
 
 async fn flush_all_ratchets(

@@ -79,9 +79,7 @@ pub(super) struct DiscoveryInstance {
 }
 
 impl DiscoveryInstance {
-    pub(super) fn fresh(fill_random: fn(&mut [u8])) -> Self {
-        let mut random = [0u8; contract::EPHEMERAL_DISCOVERY_INSTANCE_RANDOM_BYTES];
-        fill_random(&mut random);
+    pub(super) fn fresh(random: [u8; contract::EPHEMERAL_DISCOVERY_INSTANCE_RANDOM_BYTES]) -> Self {
         Self::from_random_bytes(random)
     }
 

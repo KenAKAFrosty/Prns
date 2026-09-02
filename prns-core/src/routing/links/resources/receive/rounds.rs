@@ -26,13 +26,13 @@ use crate::wire::{DestinationType, PacketType, WireContext};
 
 impl<S: StorageLayout> EngineState<S> {
     /// RNS 1.4.2 `Resource.request_next`; the request flags hashmap-exhausted, carrying the last known name, when the window runs past the names received.
-    pub(crate) fn emit_resource_pull<F>(
+    pub(crate) fn emit_resource_pull<F, Work>(
         &mut self,
         link_id: &LinkId,
         hash: &ResourceHash,
         now: InstantMillis,
-        fill_entropy: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        fill_random: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) -> EmitResourcePullOutcome
     where
         F: FnMut(&mut [u8]),
@@ -95,7 +95,7 @@ impl<S: StorageLayout> EngineState<S> {
         let fire_on = *attached_interface;
         let rtt_millis = rtt.millis();
         let mut iv = [0u8; 16];
-        fill_entropy(&mut iv);
+        fill_random(&mut iv);
         let mut request_wire_len = 0u64;
         {
             let mut fill = |slot: &mut [u8]| -> Option<usize> {
@@ -218,12 +218,17 @@ impl<S: StorageLayout> EngineState<S> {
             absorb_completed_round(self.incoming_resources.state_mut(index), arrived_at);
             return IngestPacketOutcome::OwesResourcePull { link_id, hash };
         }
-        IngestPacketOutcome::ResourceDeadlineAdvanced
+        IngestPacketOutcome::ResourceDeadlineAdvanced { link_id, hash }
     }
 
-    /// Walk the [`StreamedOpen`] up to the consecutive frontier the placement just extended — or, when the chew is the pool's, only make sure it has begun: the runtime walks the chews through [`owed_open_span`](EngineState::owed_open_span) and its pool's verdicts.
-    /// An intentional deviation in timing only: RNS 1.4.2 opens the joined transfer whole at assembly, we spread the same work under the part arrivals it was waiting on.
+    /// Begin the [`StreamedOpen`] once enough of the prefix has landed. The engine wrapper emits
+    /// its pending span as typed owed work after this parser transition returns.
+    /// An intentional deviation in timing only: RNS 1.4.2 opens the joined transfer whole at
+    /// assembly, while runtimes spread the same work under the part arrivals it was waiting on.
     fn advance_streamed_open(&mut self, index: usize) {
+        if self.resource_open_lane == ResourceOpenLane::ExternalWhole {
+            return;
+        }
         let state = *self.incoming_resources.state(index);
         let Some(height) = state.consecutive_completed else {
             return;
@@ -231,10 +236,6 @@ impl<S: StorageLayout> EngineState<S> {
         let link_id = *self.incoming_resources.link_at(index);
         let Some(LinkPhase::Active { key, .. }) = self.links.phase_for(&link_id) else {
             return;
-        };
-        let chews_here = match self.resource_open_lane {
-            ResourceOpenLane::Inline => true,
-            ResourceOpenLane::PoolWhenContended => !self.receiving_concurrently(),
         };
         let contiguous_byte_len = ((height + 1) * state.sdu).min(state.sealed_transfer_bytes);
         let (transfer, slot) = self
@@ -248,20 +249,6 @@ impl<S: StorageLayout> EngineState<S> {
                 *slot = OpenProgress::Parked(open);
             }
         }
-        if chews_here {
-            if let OpenProgress::Parked(open) = slot {
-                open.advance(transfer, contiguous_byte_len);
-            }
-        }
-    }
-
-    /// The contention signal for [`ResourceOpenLane::PoolWhenContended`]: a second incoming
-    /// transfer is in flight, so a worker's chew can overlap the manifold's ingest of the others.
-    /// Row existence is the signal, deliberately not slot state: a fast wire lands a whole
-    /// segment in one ingest burst, so concurrent transfers' begun-open phases serialize with
-    /// the sweeps and rarely coexist even while the transfers themselves do.
-    fn receiving_concurrently(&self) -> bool {
-        self.incoming_resources.len() > 1
     }
 
     /// RNS 1.4.2's `Resource.hashmap_update_packet` with an intentional deviation: A segment that misfits the register cancels the transfer, where the reference would crash its link thread.
@@ -774,7 +761,7 @@ mod loop_tests {
                 },
                 InstantMillis(1_000),
                 &mut |bytes: &mut [u8]| bytes.fill(0xA5),
-                &mut |reaction| {
+                &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| {
                     if let EngineReaction::Journaled(Journaled::CommandSettled {
                         settlement: settled,
                         ..
@@ -821,7 +808,7 @@ mod loop_tests {
             segment,
             InstantMillis(base_time),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
-            &mut |reaction| {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| {
                 if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
                     advertisement = filled_frame(fill);
                 }
@@ -984,7 +971,7 @@ mod loop_tests {
             segment,
             InstantMillis(at),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
-            &mut |reaction| {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| {
                 if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
                     frame = filled_frame(fill);
                 }
@@ -1004,7 +991,7 @@ mod loop_tests {
     fn a_single_shot_send_stays_one_unsplit_segment() {
         let mut sender = engine_with_active_link();
         let frame = advertise_from(&mut sender, &four_part_payload(), None);
-        let own = *sender.outgoing_resources.hash_at(0);
+        let own = *sender.outgoing_resources.hash_at(0).unwrap();
         let state = sender.outgoing_resources.state(0);
         assert_eq!(state.segment_index, 1);
         assert_eq!(state.total_segments, 1);
@@ -1040,7 +1027,7 @@ mod loop_tests {
             total,
             1_500,
         );
-        let own = *sender.outgoing_resources.hash_at(0);
+        let own = *sender.outgoing_resources.hash_at(0).unwrap();
         let state = sender.outgoing_resources.state(0);
         assert_eq!(state.segment_index, 1);
         assert_eq!(state.total_segments, 3);
@@ -1097,7 +1084,7 @@ mod loop_tests {
             total,
             4_000,
         );
-        let own = *sender.outgoing_resources.hash_at(0);
+        let own = *sender.outgoing_resources.hash_at(0).unwrap();
         let state = sender.outgoing_resources.state(0);
         assert_eq!(
             state.original_hash, original,
@@ -1138,7 +1125,13 @@ mod loop_tests {
         );
         let mut buf = [0u8; BROADCAST_MTU];
         sender
-            .write_owed_link_close(&link_id(), &[0u8; 16], &mut buf)
+            .write_owed_link_close(
+                &link_id(),
+                crate::engine::LinkClosedReason::LocallyClosed,
+                &[0u8; 16],
+                &mut buf,
+                &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| {},
+            )
             .unwrap();
         assert!(
             sender
@@ -1317,7 +1310,7 @@ mod loop_tests {
                     crate::engine::test_support::routable_descriptor(lane()),
                 ]),
                 now: InstantMillis(2_200),
-                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+                fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
                 should_accept_resource:
                     &mut |_: &crate::routing::links::resources::ResourceOffer| false,

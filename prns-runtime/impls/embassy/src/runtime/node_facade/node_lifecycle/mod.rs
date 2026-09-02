@@ -19,6 +19,10 @@ use crate::manifold::Host;
 use crate::remote_control::{RemoteControlEndpoint, RemoteControlNodeIdentities};
 use crate::storage::StorageLayout;
 
+use super::super::remote_control_pairing_persistence::{
+    RemoteControlAuthorizationStoreExchange, RemoteControlPairingManifoldPersistence,
+    RemoteControlPairingPersistenceEvents, RemoteControlPairingPersistenceRequired,
+};
 use super::super::request_endpoints::RequestEndpointSet;
 use super::super::request_runner::{run_router, RunnerRequest};
 use super::super::{
@@ -27,7 +31,6 @@ use super::super::{
     ManuallyAttached, NoInterfaceInspectionStore, NoManifoldPersistence, PreConfiguredDestination,
     PrnsEvent, PrnsNodeRecipe, RouteSnapshotKeys,
 };
-use super::command_handle::JournalRoute;
 use super::command_handle::PrnsNodeHandle;
 use prns_runtime::runtime::placement::assemble_node_in_place;
 use prns_runtime::runtime::{assemble_node, AssembledNode, NoPersistence};
@@ -232,18 +235,62 @@ where
     where
         D: IntoIterator<Item = PreConfiguredDestination<'d>>,
     {
-        let (node, NoPersistence) = Self::init_static_with_persistence(cell, recipe, wiring, host);
+        let (node, NoPersistence) =
+            Self::init_in_place_with_persistence(cell.uninit(), recipe, wiring, host);
         node
+    }
+
+    pub fn init_in_place<'d, D>(
+        slot: &'static mut MaybeUninit<Self>,
+        recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S>,
+        wiring: ManifoldWiring<
+            M,
+            LANE_COUNT,
+            NOTIFY,
+            COMMANDS,
+            LIFECYCLE,
+            COMPLETIONS,
+            REQUEST_COMPLETIONS,
+            RESPONSE_BYTES,
+        >,
+        host: H,
+    ) -> &'static mut Self
+    where
+        D: IntoIterator<Item = PreConfiguredDestination<'d>>,
+    {
+        let (node, NoPersistence) =
+            Self::init_in_place_with_persistence(slot, recipe, wiring, host);
+        node
+    }
+
+    pub fn init_static_with_persistence<'d, D, P>(
+        cell: &'static StaticCell<Self>,
+        recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S, P>,
+        wiring: ManifoldWiring<
+            M,
+            LANE_COUNT,
+            NOTIFY,
+            COMMANDS,
+            LIFECYCLE,
+            COMPLETIONS,
+            REQUEST_COMPLETIONS,
+            RESPONSE_BYTES,
+        >,
+        host: H,
+    ) -> (&'static mut Self, P)
+    where
+        D: IntoIterator<Item = PreConfiguredDestination<'d>>,
+    {
+        Self::init_in_place_with_persistence(cell.uninit(), recipe, wiring, host)
     }
 
     #[expect(
         unsafe_code,
         clippy::undocumented_unsafe_blocks,
-        clippy::mut_from_ref,
         reason = "every PrnsNode field is initialized before the slot is exposed"
     )]
-    pub fn init_static_with_persistence<'d, D, P>(
-        cell: &'static StaticCell<Self>,
+    pub fn init_in_place_with_persistence<'d, D, P>(
+        slot: &'static mut MaybeUninit<Self>,
         recipe: PrnsNodeRecipe<'d, D, St, R, F, ManuallyAttached, S, P>,
         wiring: ManifoldWiring<
             M,
@@ -266,7 +313,6 @@ where
                 "PrnsNode INTERFACE_CAPACITY must cover every manifold lane"
             );
         }
-        let slot = cell.uninit();
         let ManifoldWiring {
             inbound,
             frame_accounting_statuses,
@@ -502,6 +548,7 @@ where
         let request_channel =
             Channel::<M, RunnerRequest<ROUTED_REQUEST_BYTES>, ROUTED_REQUESTS>::new();
         let request_sender = request_channel.sender();
+        let pairing_persistence_events = RemoteControlPairingPersistenceEvents::<M>::new();
         let mut persistence = NoManifoldPersistence;
         let manifold = run_pooled(
             &mut engine,
@@ -517,13 +564,17 @@ where
                 lifecycle,
             },
             |journaled| {
-                if let JournalRoute::Awaiter = handle.route_journaled(&journaled) {
-                    return;
-                }
-                if let Some(request) = RunnerRequest::copy_from(&journaled) {
-                    let _ = request_sender.try_send(request);
-                }
-                on_event(PrnsEvent::from(journaled), &state);
+                handle.route_journaled(journaled, |journaled| {
+                    if let Some(required) =
+                        RemoteControlPairingPersistenceRequired::copy_from(&journaled)
+                    {
+                        pairing_persistence_events.signal(required);
+                    }
+                    if let Some(request) = RunnerRequest::copy_from(&journaled) {
+                        let _ = request_sender.try_send(request);
+                    }
+                    on_event(PrnsEvent::from(journaled), &state);
+                });
             },
             crate::manifold::AppDeciders {
                 should_prove,
@@ -546,6 +597,8 @@ where
             &state,
             &mut remote_control,
             request_channel.receiver(),
+            &pairing_persistence_events,
+            None,
             handle,
         );
         join(join(manifold, router), drive).await;
@@ -701,7 +754,11 @@ where
         H: ResumableHost,
     {
         let report = persistence
-            .restore(&mut self.node.engine, self.host.now())
+            .restore(
+                &mut self.node.engine,
+                &mut self.node.remote_control,
+                self.host.now(),
+            )
             .await;
         self.host.resume_at(report.logical_start);
         report
@@ -760,6 +817,10 @@ where
         let request_channel =
             Channel::<M, RunnerRequest<ROUTED_REQUEST_BYTES>, ROUTED_REQUESTS>::new();
         let request_sender = request_channel.sender();
+        let pairing_persistence_events = RemoteControlPairingPersistenceEvents::<M>::new();
+        let authorization_stores = RemoteControlAuthorizationStoreExchange::new();
+        let mut pairing_manifold_persistence =
+            RemoteControlPairingManifoldPersistence::new(persistence, &authorization_stores);
         let manifold = run_pooled(
             engine,
             host,
@@ -774,20 +835,24 @@ where
                 lifecycle: *lifecycle,
             },
             |journaled| {
-                if let JournalRoute::Awaiter = handle.route_journaled(&journaled) {
-                    return;
-                }
-                if let Some(request) = RunnerRequest::copy_from(&journaled) {
-                    let _ = request_sender.try_send(request);
-                }
-                on_event(PrnsEvent::from(journaled), state);
+                handle.route_journaled(journaled, |journaled| {
+                    if let Some(required) =
+                        RemoteControlPairingPersistenceRequired::copy_from(&journaled)
+                    {
+                        pairing_persistence_events.signal(required);
+                    }
+                    if let Some(request) = RunnerRequest::copy_from(&journaled) {
+                        let _ = request_sender.try_send(request);
+                    }
+                    on_event(PrnsEvent::from(journaled), state);
+                });
             },
             crate::manifold::AppDeciders {
                 should_prove,
                 should_accept_resource: |_| false,
             },
             store,
-            persistence,
+            &mut pairing_manifold_persistence,
         );
         let router = run_router::<
             St,
@@ -799,7 +864,14 @@ where
             RESPONSE_BYTES,
             ROUTED_REQUESTS,
             ROUTED_REQUEST_BYTES,
-        >(state, remote_control, request_channel.receiver(), *handle);
+        >(
+            state,
+            remote_control,
+            request_channel.receiver(),
+            &pairing_persistence_events,
+            Some(&authorization_stores),
+            *handle,
+        );
         join(manifold, router).await;
     }
 }

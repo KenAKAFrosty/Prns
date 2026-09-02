@@ -3,6 +3,7 @@ mod command_execution;
 mod commands;
 mod deadlines;
 mod destination_identity;
+mod destination_retirement;
 mod introspection;
 mod management;
 mod node_egress;
@@ -10,6 +11,8 @@ mod node_ingress;
 mod proof;
 mod reaction;
 mod registration;
+mod remote_control;
+mod remote_control_pairing;
 mod route_evidence;
 mod settlement;
 mod state;
@@ -65,52 +68,78 @@ pub use crate::routing::RouteRemovalCause;
 pub use crate::wire::WireError as EgressSerializeError;
 pub use command_execution::CommandTiming;
 pub use commands::*;
-pub use introspection::{AnnounceRateState, RouteSnapshot};
+pub use destination_retirement::RetireDestinationOutcome;
+pub use introspection::{ActiveLinkSnapshot, AnnounceRateState, RouteSnapshot};
 pub use node_egress::ReemitAnnounce;
+#[cfg(test)]
+pub(crate) use node_ingress::drive_packet_to_quiescence;
 pub use node_ingress::{IngestIo, IngestPacketReport};
-pub use proof::ResolvedReceiptSettlement;
 pub use reaction::{
-    Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason, PersistenceFlushCause,
-    PersistenceFlushTarget,
+    CryptoOwed, Directive, EngineReaction, FanTarget, Journaled, LinkClosedReason, NoOwedWork,
+    OpenedResourceSpan, OwedWork, PersistenceFlushCause, PersistenceFlushTarget,
+    ResourceDecompressionCompleted, ResourceDecompressionOwed, ResourceOpenCompleted,
+    ResourceOpenOwed,
 };
 pub use registration::{
     PersistedRoutePreflightError, PersistedRouteSignaturePending, PersistedRouteVerificationError,
-    RouteSeedOutcome, SetTransportIdentityError, VerifiedPersistedRoute,
+    RouteSeedOutcome, SetTransportIdentityError, UnregisterDestinationOutcome,
+    VerifiedPersistedRoute,
 };
+pub(crate) use remote_control::RemoteControlControllerIdentityConfiguration;
+pub use remote_control::{
+    AdmitRemoteControlControllerPairingResponseOutcome, ConfigureRemoteControlIdentitiesError,
+    ConfigureRemoteControlServiceError, ConfiguredRemoteControlService,
+    RemoteControlControllerPairingResponseArrival,
+    RemoteControlControllerPairingResponseBridgeInvariantViolation,
+    RemoteControlControllerPairingResponseEffect, RemoteControlServiceConfiguration,
+};
+pub use remote_control_pairing::{
+    ConfigureRemoteControlPairingError, RemoteControlPairingResponseDispatchFailure,
+};
+pub(crate) use settlement::settle;
 pub use state::{
     EngineProtocolPolicy, EngineState, LinkMtuDiscovery, LocalHopCountOverride,
     LocalOriginHopCount, ProofForm, RecursivePathRequestDefault,
 };
-pub use tunnel::WriteTunnelSynthesizeError;
+pub use tunnel::{
+    TunnelSynthesizeSignCompleted, TunnelSynthesizeSignOwed, WriteTunnelSynthesizeError,
+};
 pub use wake::{NextWake, WakeReason, WakeSchedule, WakeSchedules};
 
 pub use crate::routing::warmth::{Departure, DEPARTED_INTERFACE_GRACE_MS};
 
 pub use crate::crypto::ratchets::{RatchetEntropy, RatchetPolicy};
 pub use crate::routing::announce::emit::{
-    AnnounceAppDataBytes, AnnounceRejection, AnnounceWriteError, AnnounceWriteFailure,
-    CommandedAnnounceWriteOutcome, PathResponseWriteOutcome,
+    AnnounceAppDataBytes, AnnounceRejection, AnnounceSignCompleted, AnnounceSignOwed,
+    AnnounceSignPurpose, AnnounceWriteError, AnnounceWriteFailure, CommandedAnnounceWriteOutcome,
+    OriginatedAnnounceDispatch, PathResponseWriteOutcome,
 };
 pub use crate::routing::announce::held::HeldDropCause;
 pub use crate::routing::announce::AnnounceObservation;
 pub use crate::routing::delivery::send_group::{SendGroupEntropy, SendGroupWriteError};
 pub use crate::routing::delivery::send_plain::SendPlainPacketWriteError;
 pub use crate::routing::delivery::send_single::{
-    EncryptOwed, FinishSendSinglePacketOutcome, SendSinglePacketDispatch, SendSinglePacketEntropy,
-    SendSinglePacketPrepared, SendSinglePacketWriteError, SendSinglePacketWriteOutcome,
-    SendSinglePacketWriteRejection,
+    EncryptCompleted, EncryptOwed, FinishEncryptOutcome, SendSinglePacketDispatch,
+    SendSinglePacketEntropy, SendSinglePacketPreparation, SendSinglePacketWriteError,
+    SendSinglePacketWriteOutcome, SendSinglePacketWriteRejection,
 };
 pub use crate::routing::ingress::{
-    AcceptedAnnounce, AnnounceIngest, AnnounceVerifyOwed, ClassifiedInboundPacket, DataPacket,
-    DecryptOwed, DeferredCrypto, IgnoreReason, IngestPacketOutcome, Ingress, LinkRttOwed,
-    PacketToForward, ProtocolViolationKind, RatchetDecryptOwed, RebroadcastDecision,
+    AcceptedAnnounce, AnnounceIngest, AnnounceVerification, AnnounceVerifyOwed,
+    ClassifiedInboundPacket, DataPacket, DecryptOwed, IgnoreReason, IngestPacketOutcome, Ingress,
+    InvalidAnnounce, LinkRttOwed, PacketToForward, ProtocolViolationKind, RatchetDecryptOwed,
+    RebroadcastDecision, VerifiedAnnounce,
 };
+pub use crate::routing::links::channel::send::{ChannelAckVerification, ChannelAckVerifyOwed};
 pub use crate::routing::links::data::{
     link_mdu, LinkDataError, SendToLinkDispatch, SendToLinkWriteError, LINK_MDU,
 };
 pub use crate::routing::links::establish::{
-    EstablishLinkEntropy, EstablishLinkWriteOutcome, LinkRequestDispatch,
-    WriteEstablishLinkRejection, WriteLinkProofError, WriteLinkRttError, LINK_KEEPALIVE_MS,
+    EstablishLinkCompleted, EstablishLinkEntropy, EstablishLinkOwed, EstablishLinkWriteOutcome,
+    LinkRequestDispatch, WriteEstablishLinkRejection, WriteLinkProofError, WriteLinkRttError,
+    LINK_KEEPALIVE_MS,
+};
+pub use crate::routing::links::identify::{
+    IdentifySignCompleted, IdentifySignOwed, LinkIdentityVerification, LinkIdentityVerifyOwed,
 };
 pub use crate::routing::links::maintenance::{
     keepalive_ms_from, stale_ms_from, write_keepalive, write_link_close, LinkCloseDispatch,
@@ -122,6 +151,9 @@ pub use crate::routing::path_requests::pending::{
 pub use crate::routing::path_requests::request_path::PathRequestWriteOutcome;
 pub use crate::routing::path_requests::seen::PathRequestIdBytes;
 pub use crate::routing::proof::{
-    DeferredProofSign, ProofIngest, ProofObligation, ProofOwed, ProofRequest, WriteProofError,
+    ChannelAckSignCompleted, ChannelAckSignOwed, LinkReceiptSignCompleted, LinkReceiptSignOwed,
+    ProofObligation, ProofOwed, ProofRequest, ProofSignCompleted, ProofSignOwed, ReceiptProofClaim,
+    ReceiptProofVerification, ReceiptProofVerifyOwed, ResumeChannelAckSignOutcome,
 };
+pub use crate::routing::tunnel::{TunnelSynthesizeVerification, TunnelSynthesizeVerifyOwed};
 pub use crate::units::InstantMillis;

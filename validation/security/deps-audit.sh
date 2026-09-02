@@ -12,6 +12,8 @@ if [[ "$(cargo about --version 2>/dev/null || true)" != "cargo-about 0.9.1" ]]; 
     exit 2
 fi
 
+python3 "$root/validation/security/license-policy-parity.py"
+
 graphs=(
     "engine|Cargo.toml|x86_64-unknown-linux-gnu"
     "daemon-linux|prnsd/Cargo.toml|x86_64-unknown-linux-gnu"

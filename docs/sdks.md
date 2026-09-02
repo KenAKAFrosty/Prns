@@ -55,7 +55,8 @@ npm install personal-rns
 
 - `personal-rns` selects native Node.js/Bun or browser WebAssembly through package exports.
 - `personal-rns/native` fixes the native backend.
-- `personal-rns/browser` fixes the cooperative WebAssembly backend.
+- `personal-rns/browser` fixes the cooperative WebAssembly backend, using a
+  DedicatedWorker by default with an explicit main-thread diagnostic mode.
 
 The exact public prerelease can also be exercised from a source checkout:
 

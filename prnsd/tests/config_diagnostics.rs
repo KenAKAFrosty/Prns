@@ -3,32 +3,25 @@ use std::io::BufRead;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-struct TestDirectory(PathBuf);
+struct TestDirectory {
+    path: PathBuf,
+    _temp: tempfile::TempDir,
+}
 
 impl TestDirectory {
     fn new() -> Self {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |duration| duration.as_nanos());
-        let path = std::env::temp_dir().join(format!(
-            "prnsd-config-diagnostics-{}-{nanos}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&path).unwrap();
-        Self(path)
-    }
-}
-
-impl Drop for TestDirectory {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        let temp = tempfile::tempdir().unwrap();
+        Self {
+            path: temp.path().to_path_buf(),
+            _temp: temp,
+        }
     }
 }
 
 #[test]
 fn invalid_config_exits_before_startup_and_renders_every_actionable_error() {
     let directory = TestDirectory::new();
-    let path = directory.0.join("config");
+    let path = directory.path.join("config");
     fs::write(
         &path,
         "[reticulum]\ndiscover_interfaces = perhaps\n[interfaces]\n[[Hub]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = 127.0.0.1\ntarget_port = many\noutgoing = sideways\n",
@@ -41,7 +34,7 @@ fn invalid_config_exits_before_startup_and_renders_every_actionable_error() {
             "--log-format",
             "json",
             "--config",
-            directory.0.to_str().unwrap(),
+            directory.path.to_str().unwrap(),
         ])
         .env_remove("RUST_LOG")
         .output()
@@ -62,7 +55,7 @@ fn invalid_config_exits_before_startup_and_renders_every_actionable_error() {
     assert!(rendered.contains("fix:"));
     assert!(rendered.contains(&format!(
         "prnsd interfaces repair --config {}",
-        directory.0.display()
+        directory.path.display()
     )));
     assert!(!rendered.contains("\"event\":\"network_identity_failed\""));
     assert!(!rendered.contains("\"event\":\"config_invalid\""));
@@ -72,7 +65,7 @@ fn invalid_config_exits_before_startup_and_renders_every_actionable_error() {
 fn prns_resource_memory_limits_are_applied_before_daemon_readiness() {
     let directory = TestDirectory::new();
     fs::write(
-        directory.0.join("config"),
+        directory.path.join("config"),
         "[reticulum]\nshare_instance = No\n[prns]\nresource_mem_in = 2 KiB\nresource_mem_out = 0\n[logging]\nloglevel = 7\n",
     )
     .unwrap();
@@ -82,7 +75,7 @@ fn prns_resource_memory_limits_are_applied_before_daemon_readiness() {
             "--log-format",
             "json",
             "--config",
-            directory.0.to_str().unwrap(),
+            directory.path.to_str().unwrap(),
         ])
         .env_remove("RUST_LOG")
         .stdout(Stdio::null())
@@ -144,7 +137,7 @@ fn prns_resource_memory_limits_are_applied_before_daemon_readiness() {
 #[test]
 fn remaining_follow_ons_warn_while_blackhole_exchange_does_not() {
     let directory = TestDirectory::new();
-    let path = directory.0.join("config");
+    let path = directory.path.join("config");
     fs::write(
         &path,
         "[reticulum]\nshare_instance = No\nenable_remote_management = Yes\nremote_management_allowed = 00112233445566778899aabbccddeeff\nrespond_to_probes = No\npublish_blackhole = No\n[logging]\nloglevel = 7\n[interfaces]\n[[LAN]]\ntype = AutoInterface\nenabled = Yes\nignore_config_warnings = Yes\n",
@@ -156,7 +149,7 @@ fn remaining_follow_ons_warn_while_blackhole_exchange_does_not() {
             "--log-format",
             "json",
             "--config",
-            directory.0.to_str().unwrap(),
+            directory.path.to_str().unwrap(),
         ])
         .env_remove("RUST_LOG")
         .stdout(Stdio::null())
@@ -245,7 +238,7 @@ fn remaining_follow_ons_warn_while_blackhole_exchange_does_not() {
 fn probe_responder_activates_before_readiness_without_a_follow_on_warning() {
     let directory = TestDirectory::new();
     fs::write(
-        directory.0.join("config"),
+        directory.path.join("config"),
         "[reticulum]\nshare_instance = No\nrespond_to_probes = Yes\n[logging]\nloglevel = 7\n",
     )
     .unwrap();
@@ -255,7 +248,7 @@ fn probe_responder_activates_before_readiness_without_a_follow_on_warning() {
             "--log-format",
             "json",
             "--config",
-            directory.0.to_str().unwrap(),
+            directory.path.to_str().unwrap(),
         ])
         .env_remove("RUST_LOG")
         .stdout(Stdio::null())
@@ -314,7 +307,7 @@ fn panic_on_interface_error_stops_before_readiness_after_an_initial_bind_failure
     let port = listener.local_addr().unwrap().port();
     let directory = TestDirectory::new();
     fs::write(
-        directory.0.join("config"),
+        directory.path.join("config"),
         format!(
             "[reticulum]\nshare_instance = No\npanic_on_interface_error = Yes\n[logging]\nloglevel = 7\nlogtimestamps = No\n[interfaces]\n[[Occupied]]\ntype = TCPServerInterface\nenabled = Yes\nlisten_ip = 127.0.0.1\nlisten_port = {port}\n"
         ),
@@ -327,7 +320,7 @@ fn panic_on_interface_error_stops_before_readiness_after_an_initial_bind_failure
             "--log-format",
             "json",
             "--config",
-            directory.0.to_str().unwrap(),
+            directory.path.to_str().unwrap(),
         ])
         .env_remove("RUST_LOG")
         .output()
@@ -351,7 +344,7 @@ fn panic_on_interface_error_stops_before_readiness_after_an_initial_bind_failure
             "--log-format",
             "json",
             "--config",
-            directory.0.to_str().unwrap(),
+            directory.path.to_str().unwrap(),
         ])
         .env("RUST_LOG", "error")
         .output()
@@ -374,7 +367,7 @@ fn occupied_shared_instance_control_port_fails_before_readiness() {
     let control_port = occupied_control.local_addr().unwrap().port();
     let directory = TestDirectory::new();
     fs::write(
-        directory.0.join("config"),
+        directory.path.join("config"),
         format!(
             "[reticulum]\nshare_instance = Yes\nshared_instance_type = TCP\nshared_instance_port = {bus_port}\ninstance_control_port = {control_port}\n[logging]\nloglevel = 7\nlogtimestamps = No\n"
         ),
@@ -387,7 +380,7 @@ fn occupied_shared_instance_control_port_fails_before_readiness() {
             "--log-format",
             "json",
             "--config",
-            directory.0.to_str().unwrap(),
+            directory.path.to_str().unwrap(),
         ])
         .env_remove("RUST_LOG")
         .output()
@@ -418,7 +411,7 @@ fn a_retrying_interface_reports_degraded_readiness_without_panicking_by_default(
     drop(probe);
     let directory = TestDirectory::new();
     fs::write(
-        directory.0.join("config"),
+        directory.path.join("config"),
         format!(
             "[reticulum]\nshare_instance = No\n[logging]\nloglevel = 7\n[interfaces]\n[[Retrying]]\ntype = TCPClientInterface\nenabled = Yes\ntarget_host = 127.0.0.1\ntarget_port = {port}\n"
         ),
@@ -431,7 +424,7 @@ fn a_retrying_interface_reports_degraded_readiness_without_panicking_by_default(
             "--log-format",
             "json",
             "--config",
-            directory.0.to_str().unwrap(),
+            directory.path.to_str().unwrap(),
         ])
         .env_remove("RUST_LOG")
         .stdout(Stdio::null())
@@ -476,7 +469,7 @@ fn a_retrying_interface_reports_degraded_readiness_without_panicking_by_default(
 fn an_idle_i2p_interface_constructs_before_ready_without_a_sam_router() {
     let directory = TestDirectory::new();
     fs::write(
-        directory.0.join("config"),
+        directory.path.join("config"),
         "[reticulum]\nshare_instance = No\n[logging]\nloglevel = 7\n[interfaces]\n[[Private I2P]]\ntype = I2PInterface\nenabled = Yes\n",
     )
     .unwrap();
@@ -487,7 +480,7 @@ fn an_idle_i2p_interface_constructs_before_ready_without_a_sam_router() {
             "--log-format",
             "json",
             "--config",
-            directory.0.to_str().unwrap(),
+            directory.path.to_str().unwrap(),
         ])
         .env_remove("RUST_LOG")
         .stdout(Stdio::null())

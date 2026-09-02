@@ -39,8 +39,7 @@ async fn main() {
     .expect("the complete request set is not empty")];
     let target_remote_control = RemoteControlService::new(
         target_identity_secrets,
-        RemoteControlPublicAppData::try_from(b"target".as_slice()).expect("target app data fits"),
-        RemoteControlInitialAccess::Grants(
+        RemoteControlInitialControllerGrants::Grants(
             RemoteControlControllerGrants::try_from(controller_grants.as_slice())
                 .expect("one controller grant is configured"),
         ),
@@ -48,9 +47,7 @@ async fn main() {
     );
     let controller_remote_control = RemoteControlService::new(
         controller_identity_secrets,
-        RemoteControlPublicAppData::try_from(b"controller".as_slice())
-            .expect("controller app data fits"),
-        RemoteControlInitialAccess::Nobody,
+        RemoteControlInitialControllerGrants::Nobody,
         RemoteControlSelfAnnouncement::Unavailable,
     );
 

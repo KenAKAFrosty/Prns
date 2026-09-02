@@ -53,7 +53,9 @@ export type RuntimeOperation =
   | "ingest"
   | "drain-events"
   | "drain-outbound"
-  | "snapshot";
+  | "snapshot"
+  | "projection-snapshot"
+  | "worker-admission";
 
 export type RuntimeRejected = Tag<
   "RuntimeRejected",
@@ -142,10 +144,96 @@ export type PrnsRuntimeBinding = {
   requestPath(options: RuntimeDestinationCommandOptions): bigint;
   identify(options: RuntimeIdentifyOptions): bigint;
   sendLinkPacket(options: RuntimeLinkPayloadOptions): bigint;
+  sendLinkPacketDirect?(
+    linkId: LinkId,
+    payload: Uint8Array,
+    nowMs: InstantMillis,
+    entropy: EntropyBytes,
+  ): bigint;
   request(options: RuntimeRequestOptions): bigint;
   respond(options: RuntimeRespondOptions): bigint;
   resourceSegmentPlan(options: RuntimeResourcePlanInput): unknown;
   sendResourceSegment(options: RuntimeResourceSegmentInput): bigint;
+  sendResourceSegmentWebCrypto?(options: RuntimeResourceSegmentInput): unknown;
+  completeResourceSegmentSeal?(options: {
+    readonly commandId: bigint;
+    readonly linkId: LinkId;
+    readonly streamNonce: Uint8Array;
+    readonly noncePrefixedBytes: number;
+    readonly sealed: Uint8Array;
+    readonly salts: Uint8Array;
+    readonly promotionEntropy: Uint8Array;
+    readonly nowMs: InstantMillis;
+  }): void;
+  completeResourceSegmentSealDigests?(options: {
+    readonly commandId: bigint;
+    readonly linkId: LinkId;
+    readonly streamNonce: Uint8Array;
+    readonly noncePrefixedBytes: number;
+    readonly sealed: Uint8Array;
+    readonly salt: Uint8Array;
+    readonly hash: Uint8Array;
+    readonly proof: Uint8Array;
+    readonly promotionEntropy: Uint8Array;
+    readonly nowMs: InstantMillis;
+  }): unknown;
+  retryResourceSegmentSeal?(options: {
+    readonly commandId: bigint;
+    readonly linkId: LinkId;
+    readonly streamNonce: Uint8Array;
+    readonly noncePrefixedBytes: number;
+    readonly nowMs: InstantMillis;
+    readonly entropy: EntropyBytes;
+  }): void;
+  enableResourceWebCrypto?(): void;
+  enableProtocolWebCrypto?(): void;
+  enableProtocolCryptoOffload?(): void;
+  takeProtocolCryptoJob?(): unknown | undefined;
+  completeProtocolAnnounceValid?(
+    id: number,
+    nowMs: InstantMillis,
+    entropy: EntropyBytes,
+  ): void;
+  completeProtocolAnnounceInvalid?(id: number): void;
+  completeProtocolLinkProofValid?(
+    id: number,
+    sharedSecret: Uint8Array,
+    nowMs: InstantMillis,
+    entropy: EntropyBytes,
+  ): void;
+  completeProtocolLinkProofInvalid?(id: number): void;
+  completeProtocolCryptoInline?(
+    id: number,
+    nowMs: InstantMillis,
+    entropy: EntropyBytes,
+  ): void;
+  takeResourceOpenJob?(): unknown | undefined;
+  completeResourceOpen?(options: {
+    readonly linkId: LinkId;
+    readonly hash: Uint8Array;
+    readonly plaintext: Uint8Array;
+    readonly nowMs: InstantMillis;
+    readonly entropy: EntropyBytes;
+  }): void;
+  completeResourceOpenDigests?(options: {
+    readonly linkId: LinkId;
+    readonly hash: Uint8Array;
+    readonly calculatedHash: Uint8Array;
+    readonly proof: Uint8Array;
+    readonly plaintext: Uint8Array;
+    readonly nowMs: InstantMillis;
+    readonly entropy: EntropyBytes;
+  }): void;
+  rejectResourceOpen?(options: {
+    readonly linkId: LinkId;
+    readonly hash: Uint8Array;
+  }): void;
+  retryResourceOpen?(options: {
+    readonly linkId: LinkId;
+    readonly hash: Uint8Array;
+    readonly nowMs: InstantMillis;
+    readonly entropy: EntropyBytes;
+  }): void;
   setLinkResourceStrategy(
     options: RuntimeLinkResourceStrategyOptions,
   ): bigint;
@@ -156,13 +244,30 @@ export type PrnsRuntimeBinding = {
   allowRequester(options: RuntimeAllowRequesterOptions): bigint;
   closeLink(options: RuntimeCloseLinkOptions): bigint;
   ingest(options: RuntimeIngestOptions): void;
+  ingestDirect?(
+    interfaceId: InterfaceId,
+    bytes: PacketFrame,
+    nowMs: InstantMillis,
+    entropy: EntropyBytes,
+  ): void;
+  drainEventBatch(): Uint8Array;
+  drainCommandSettlementBatch?(): Uint8Array;
   drainEvents(): unknown[];
+  drainOutboundBatch?(): Uint8Array;
   drainOutbound(): unknown[];
   persistedState(options: { readonly nowMs: InstantMillis }): unknown;
   restorePersistedState(
     options: BrowserPersistedState & { readonly nowMs: InstantMillis },
   ): unknown;
   snapshot(): unknown;
+  snapshotPacked?(): Uint8Array;
+  projectionSnapshot(request: RuntimeProjectionSnapshotRequest): unknown;
+};
+
+export type RuntimeProjectionSnapshotRequest = {
+  readonly interfaces: boolean;
+  readonly routes: boolean;
+  readonly links: boolean;
 };
 
 export type UsbAutoDecoderBinding = {
@@ -177,10 +282,13 @@ export type WebSocketFramingCodecBinding = {
   messageCap(): number;
   canReadOutbound(): boolean;
   canStageMultipleOutbound(): boolean;
+  canPassRawOutbound?(): boolean;
+  canPassRawInbound?(): boolean;
   rawFallbackIsArmed(): boolean;
   isDetecting(): boolean;
   rawFallbackDelayMillis(): number;
   decode(message: Uint8Array): WebSocketDecodeBatchBinding;
+  decodePacked?(message: Uint8Array): Uint8Array;
   stageOutbound(packet: PacketFrame): Uint8Array | undefined;
   releaseRawFallback(): Uint8Array | undefined;
 };

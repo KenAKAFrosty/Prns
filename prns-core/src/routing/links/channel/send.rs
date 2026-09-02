@@ -1,6 +1,6 @@
 //! RNS 1.4.2 `Channel.send`'s sequencing and windowed reliability, ported to the engine's command/receipt grammar.
 
-use crate::crypto::{ed25519_verify, Ed25519Signature};
+use crate::crypto::Ed25519Signature;
 use crate::engine::LinkClosedReason;
 use crate::engine::{
     CommandId, CommandOutcome, DeliveryEvidence, DeliveryProof, PacketReceiptDelivered,
@@ -58,6 +58,26 @@ pub enum SendToChannelWriteError {
     Untrackable,
     WindowFull,
     Frame(LinkDataError),
+}
+
+/// A channel delivery proof whose signature must be verified before its outstanding send may
+/// advance the channel window or settle its command.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChannelAckVerifyOwed {
+    pub link_id: LinkId,
+    pub packet_hash: PacketHash,
+    pub signing_key: crate::crypto::Ed25519PublicKey,
+    pub signature: Ed25519Signature,
+    pub proof: DeliveryProof,
+    pub arrived_at: InstantMillis,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelAckVerification {
+    Valid,
+    Invalid,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,13 +205,13 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// RNS 1.4.2 `PacketReceipt.validate_proof`: the outstanding-hash match gates the `ed25519` verify. The reference uses the same order, so proofs naming nothing we sent cost no signature check.
-    pub fn settle_channel_ack(
-        &mut self,
+    pub fn prepare_channel_ack_verify(
+        &self,
         link_id: &LinkId,
         payload: &[u8],
         proof: DeliveryProof,
         arrived_at: InstantMillis,
-    ) -> Option<(CommandId, PacketReceiptDelivered)> {
+    ) -> Option<ChannelAckVerifyOwed> {
         if payload.len() != EXPLICIT_PROOF_PAYLOAD_LEN {
             return None;
         }
@@ -201,29 +221,56 @@ impl<S: StorageLayout> EngineState<S> {
             return None;
         };
         let named_hash = PacketHash::new(named_hash);
-        let outstanding_index = self
-            .channels
+        self.channels
             .outstanding_packet_hashes(index)
             .iter()
             .position(|hash| *hash == named_hash)?;
 
-        let Some(LinkPhase::Active {
-            peer_signing, rtt, ..
-        }) = self.links.phase_for(link_id)
-        else {
+        let Some(LinkPhase::Active { peer_signing, .. }) = self.links.phase_for(link_id) else {
             return None;
         };
-        let peer_signing = *peer_signing;
-        let rtt = *rtt;
-        if ed25519_verify(
-            &peer_signing,
-            named_hash.as_bytes(),
-            &Ed25519Signature(signature),
-        )
-        .is_err()
-        {
-            return None;
+        Some(ChannelAckVerifyOwed {
+            link_id: *link_id,
+            packet_hash: named_hash,
+            signing_key: *peer_signing,
+            signature: Ed25519Signature(signature),
+            proof,
+            arrived_at,
+        })
+    }
+
+    /// Applies a runtime's signature verdict only while the same link and outstanding packet are
+    /// still authoritative. Duplicate, stale, retired, and post-close completions are harmless.
+    pub fn resume_channel_ack_verify(
+        &mut self,
+        owed: ChannelAckVerifyOwed,
+        verification: ChannelAckVerification,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> WakeSchedules {
+        if verification == ChannelAckVerification::Invalid {
+            return WakeSchedules::UNCHANGED;
         }
+        let Some(index) = self.channels.index_of(&owed.link_id) else {
+            return WakeSchedules::UNCHANGED;
+        };
+        let Some(outstanding_index) = self
+            .channels
+            .outstanding_packet_hashes(index)
+            .iter()
+            .position(|hash| *hash == owed.packet_hash)
+        else {
+            return WakeSchedules::UNCHANGED;
+        };
+        let Some(LinkPhase::Active {
+            peer_signing, rtt, ..
+        }) = self.links.phase_for(&owed.link_id)
+        else {
+            return WakeSchedules::UNCHANGED;
+        };
+        if *peer_signing != owed.signing_key {
+            return WakeSchedules::UNCHANGED;
+        }
+        let rtt = *rtt;
 
         let command_id = self
             .channels
@@ -233,13 +280,18 @@ impl<S: StorageLayout> EngineState<S> {
         let mut window = self.channels.window(index);
         window.grow_on_ack(ChannelRtt(rtt));
         self.channels.set_window(index, window);
-        Some((
-            command_id,
-            PacketReceiptDelivered {
-                rtt: RttMillis::measured_between(sent_at, arrived_at),
-                evidence: DeliveryEvidence::Proof(proof),
-            },
-        ))
+        self.links.note_inbound(&owed.link_id, owed.arrived_at);
+        sink(EngineReaction::Journaled(Journaled::CommandSettled {
+            id: command_id,
+            settlement: Settlement::SendToChannel(Ok(PacketReceiptDelivered {
+                rtt: RttMillis::measured_between(sent_at, owed.arrived_at),
+                evidence: DeliveryEvidence::Proof(owed.proof),
+            })),
+        }));
+        WakeSchedules {
+            channel_timeouts: self.channel_timeouts_wake(),
+            ..WakeSchedules::UNCHANGED
+        }
     }
 
     /// RNS 1.4.2 `Channel._packet_timeout`. Retransmits are byte-identical (same sequence and IV, so the same packet hash, so the original outstanding entry still settles).
@@ -248,7 +300,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         now: InstantMillis,
         interfaces: AttachedInterfaces<'_>,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> WakeSchedules
     where
@@ -266,7 +318,7 @@ impl<S: StorageLayout> EngineState<S> {
                     settle_channel_timeout(id, sink);
                 }
                 DueSendVerdict::Exhausted => {
-                    self.teardown_channel_link(&link_id, interfaces, fill_entropy, sink);
+                    self.teardown_channel_link(&link_id, interfaces, fill_random, sink);
                 }
                 DueSendVerdict::Retry { rtt, fire_on } => {
                     self.retry_outstanding_send(
@@ -423,7 +475,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         link_id: &LinkId,
         interfaces: AttachedInterfaces<'_>,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
         F: FnMut(&mut [u8]),
@@ -436,9 +488,11 @@ impl<S: StorageLayout> EngineState<S> {
             }
         }
         let mut iv = [0u8; ENCRYPTION_IV_LEN];
-        fill_entropy(&mut iv);
+        fill_random(&mut iv);
         let mut buf = [0u8; BROADCAST_MTU];
-        if let Ok(dispatch) = self.write_owed_link_close(link_id, &iv, &mut buf) {
+        if let Ok(dispatch) =
+            self.write_owed_link_close(link_id, LinkClosedReason::Timeout, &iv, &mut buf, sink)
+        {
             if let Some(target) = dispatch.fire_on {
                 if interfaces.is_egress_eligible(target, Egress::Transmit) {
                     sink(EngineReaction::Directive(Directive::Send {
@@ -447,10 +501,6 @@ impl<S: StorageLayout> EngineState<S> {
                     }));
                 }
             }
-            sink(EngineReaction::Journaled(Journaled::LinkClosed {
-                link_id: *link_id,
-                reason: LinkClosedReason::Timeout,
-            }));
         }
     }
 }
@@ -473,7 +523,10 @@ mod tests {
         filled_frame, fixed_secret_key, transporting_interfaces, TestStorageLayout,
     };
     use crate::engine::IngestIo;
-    use crate::engine::{Directive, EngineReaction, Journaled, PacketReceiptDelivered};
+    use crate::engine::{
+        ChannelAckSignCompleted, ChannelAckVerification, CryptoOwed, Directive, EngineReaction,
+        Journaled, OwedWork, PacketReceiptDelivered,
+    };
     use crate::engine::{IssuedCommand, PrnsCommand, SendToChannel, Settlement};
     use crate::identity::{in_memory::InMemoryNodeIdentity, IdentitySigner};
     use crate::interfaces::{InboundPacket, InterfaceId};
@@ -484,6 +537,7 @@ mod tests {
     use crate::routing::links::{LinkId, LinkKey, LinkMode};
     use crate::routing::upstream_app_destinations::ProofStrategy;
     use crate::wire::BROADCAST_MTU;
+    use std::collections::VecDeque;
     use std::vec::Vec;
 
     const LANE: [u8; 8] = [0xEE; 8];
@@ -626,6 +680,7 @@ mod tests {
         on_settled: &mut dyn FnMut(CommandId, Settlement),
     ) {
         let mut raw = frame.to_vec();
+        let mut ready = VecDeque::new();
         engine.ingest_packet_into(
             InboundPacket {
                 arrived_at: InstantMillis(now),
@@ -635,7 +690,7 @@ mod tests {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&transporting_interfaces()),
                 now: InstantMillis(now),
-                fill_entropy: &mut |slot: &mut [u8]| slot.fill(0),
+                fill_random: &mut |slot: &mut [u8]| slot.fill(0),
                 should_prove: &mut |_| false,
                 should_accept_resource:
                     &mut |_: &crate::routing::links::resources::ResourceOffer| false,
@@ -646,6 +701,9 @@ mod tests {
                         ..
                     }) => on_message(message_type, data),
                     EngineReaction::Directive(Directive::Send { bytes, .. }) => on_send(bytes),
+                    EngineReaction::Directive(Directive::Fulfill(OwedWork::Crypto(work))) => {
+                        ready.push_back(work)
+                    }
                     EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
                         on_settled(id, settlement)
                     }
@@ -653,6 +711,57 @@ mod tests {
                 },
             },
         );
+        while let Some(work) = ready.pop_front() {
+            match work {
+                CryptoOwed::ChannelAckSign(owed) => {
+                    let signature = crate::crypto::ed25519_sign(
+                        &owed.signing_secret,
+                        owed.packet_hash.as_bytes(),
+                    );
+                    engine.resume_channel_ack_sign(
+                        ChannelAckSignCompleted {
+                            target: owed.target,
+                            link_id: owed.link_id,
+                            packet_hash: owed.packet_hash,
+                            signature,
+                        },
+                        InstantMillis(now),
+                        &mut |reaction| {
+                            if let EngineReaction::Directive(Directive::Send { bytes, .. }) =
+                                reaction
+                            {
+                                on_send(bytes);
+                            }
+                        },
+                    );
+                }
+                CryptoOwed::ChannelAckVerify(owed) => {
+                    let verification = if crate::crypto::ed25519_verify(
+                        &owed.signing_key,
+                        owed.packet_hash.as_bytes(),
+                        &owed.signature,
+                    )
+                    .is_ok()
+                    {
+                        ChannelAckVerification::Valid
+                    } else {
+                        ChannelAckVerification::Invalid
+                    };
+                    engine.resume_channel_ack_verify(owed, verification, &mut |reaction| {
+                        if let EngineReaction::Journaled(Journaled::CommandSettled {
+                            id,
+                            settlement,
+                        }) = reaction
+                        {
+                            on_settled(id, settlement);
+                        }
+                    });
+                }
+                _ => {
+                    panic!("channel test produced unrelated crypto work")
+                }
+            }
+        }
     }
 
     #[test]

@@ -203,7 +203,7 @@ impl Interface for BackboneClientInterface {
             {
                 return;
             }
-            let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
+            let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_random(bytes));
             reconnect_attempts = reconnect_attempts.saturating_add(1);
             tokio::time::sleep(reconnect_delay).await;
         }
@@ -246,7 +246,7 @@ mod tests {
     use prns_core::interfaces::FrameSink;
 
     impl InterfaceSeam for MockSeam {
-        fn fill_entropy(&mut self, bytes: &mut [u8]) {
+        fn fill_random(&mut self, bytes: &mut [u8]) {
             bytes.fill(0);
         }
 

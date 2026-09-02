@@ -12,6 +12,17 @@ use std::vec::Vec;
 use bzip2::{Compress, Compression, Decompress, Status};
 use prns_core::routing::links::resources::METADATA_PREFIX_LEN;
 
+/// A split resource's total advertised length must never raise one segment's inflate ceiling.
+#[must_use]
+pub const fn resource_decompression_bound(uncompressed_data_bytes: u64) -> u64 {
+    let maximum = prns_core::routing::links::resources::MAX_EFFICIENT_SIZE as u64;
+    if uncompressed_data_bytes < maximum {
+        uncompressed_data_bytes
+    } else {
+        maximum
+    }
+}
+
 #[must_use]
 pub fn compress_resource_candidate(data: &[u8], packed_metadata: Option<&[u8]>) -> Option<Vec<u8>> {
     let Some(packed) = packed_metadata else {

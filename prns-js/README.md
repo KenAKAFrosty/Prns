@@ -34,7 +34,7 @@ console.log(node.identityHash);
 await node.stop();
 ```
 
-Browsers use the cooperative WebAssembly backend:
+Browsers use the cooperative WebAssembly backend on a module DedicatedWorker by default:
 
 ```ts
 import { Prns } from "personal-rns/browser";
@@ -45,8 +45,49 @@ if (created.tag !== "Ready") {
 }
 
 const node = created.data;
+console.log(node.execution);
 console.log(node.backendInfo);
 await node.stop();
+```
+
+The Worker owns the Rust engine, command settlement, WebSocket and Auto Wi-Fi
+connections, and stateful Bluetooth/USB framing. Application-event batches
+cross to the page as one packed transferable buffer and are materialized there.
+Web Bluetooth and WebUSB device objects remain on the page because those APIs
+are permission-gated page capabilities; their packet traffic uses a separate
+bounded capability channel.
+
+Protocol cryptography remains in the engine's WebAssembly instance by default.
+Applications with sustained concurrent protocol and resource work can select
+the measured role-separated execution policy:
+
+```ts
+import { Prns, Tag } from "personal-rns/browser";
+
+const created = await Prns.create({
+  crypto: Tag("ParallelWorkers"),
+});
+```
+
+`ParallelWorkers` owns two Web Crypto workers for resource operations and four
+portable-WebAssembly workers for protocol verification. Same-turn protocol
+jobs coalesce at a microtask boundary into bounded batches. Worker failure,
+saturation, or unsupported browser cryptography returns the retained operation
+to the authoritative Rust engine rather than changing protocol behavior. This
+mode trades additional startup time and memory for role isolation and parallel
+capacity; `PortableWasm` remains the stewardship-oriented default.
+
+`execution: "MainThread"` is the explicit diagnostic and embedding mode. It is
+also the only mode that accepts an already imported `wasm` module, a custom
+entropy function, or a custom clock. Worker startup and protocol failures are
+typed `WorkerStartFailed` and `WorkerProtocolFailed` creation outcomes; Prns
+does not silently fall back to the main thread. A static deployment that keeps
+the generated WASM package outside the npm package can provide its module URL:
+
+```ts
+const created = await Prns.create({
+  wasmModuleUrl: new URL("./pkg/prns_wasm.js", import.meta.url),
+});
 ```
 
 Web Bluetooth connects the browser as a GATT central to a native or embedded
@@ -132,7 +173,29 @@ match(settlement.data, {
   RequesterAllowed: confirmRequester,
 });
 ```
-The compiler requires every declared case. Commands settle their returned promises, expected failures are typed tagged outcomes, and public binary values are semantically branded `Uint8Array` instances. Browser backends attach `WebSocketClient` and `BrowserRendezvous` through the bounded cooperative transport and return `UnsupportedByBackend` for native-only interface kinds. Each host reports its current support through `backendInfo` and `capabilities`. The browser `hostSnapshot()` projects the generated inspection contract with revisioned routes, destination identities, logical interfaces, transfer counters, runtime health, and exact persistence status. A `ResourceAvailable` event owns a `ResourceStream`; its `claim()` method uses the same `Claimed | AlreadyClaimed` contract.
+The compiler requires every declared case. Commands settle their returned promises, expected failures are typed tagged outcomes, and public binary values are semantically branded `Uint8Array` instances. Browser backends attach `WebSocketClient` and `BrowserRendezvous` through the bounded cooperative transport and return `UnsupportedByBackend` for native-only interface kinds. Each host reports its current support through `backendInfo` and `capabilities`. Browser destination registration, node-page registration, `snapshot()`, and `hostSnapshot()` are asynchronous so the public API is identical across Worker and main-thread execution. The browser `hostSnapshot()` projects the generated inspection contract with revisioned routes, destination identities, logical interfaces, transfer counters, runtime health, and exact persistence status. A `ResourceAvailable` event owns a `ResourceStream`; its `claim()` method uses the same `Claimed | AlreadyClaimed` contract.
+
+## Observe browser state
+
+Browser projections provide stable, revisioned snapshots for lifecycle, interfaces, routes, active links, and bounded diagnostics. Calling `latest()` is synchronous and does not capture new engine state. A subscription activates demand-driven capture until its release function runs; `synchronize()` explicitly requests a current snapshot and settles as `Synchronized`, `Busy`, or `Unavailable`.
+
+```ts
+import { prnsView } from "personal-rns/browser";
+
+const links = node.projection(prnsView("Links"));
+const release = links.subscribe(() => {
+  renderLinks(links.latest().value);
+});
+
+const synchronized = await links.synchronize();
+if (synchronized.tag === "Synchronized") {
+  renderLinks(synchronized.data.value);
+}
+
+release();
+```
+
+Framework adapters expose the same projections through `personal-rns/react`, `personal-rns/solid`, `personal-rns/vue`, `personal-rns/svelte`, and `personal-rns/qwik`. `personal-rns/web-component` provides the non-framework `prns-bridge` custom element. Each adapter owns subscription cleanup at its framework lifecycle boundary and requires an explicit client-rendered Prns provider or context.
 
 Browser hosts are ephemeral by default. `persistentBrowser()` selects a caller-named `localStorage` root for the host identity, Bluetooth identity, routing state, destination identities, tunnels, and ratchets. Interfaces remain caller-supplied after restart. `stop()` flushes the bounded state before settling, while restoration and flush results appear on the diagnostic stream and in `hostSnapshot()`:
 

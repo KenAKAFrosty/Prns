@@ -494,7 +494,7 @@ where
             let mut stream = match (self.open)().await {
                 Ok(stream) => stream,
                 Err(error) => {
-                    let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
+                    let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_random(bytes));
                     crate::diagnostic_log::warn!(
                         "RNode interface {:?} could not open: {error}; retrying in {} seconds",
                         self.id.as_bytes(),
@@ -516,7 +516,7 @@ where
             )
             .await
             {
-                let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
+                let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_random(bytes));
                 crate::diagnostic_log::warn!(
                     "RNode interface {:?} bring-up failed: {error}; retrying in {} seconds",
                     self.id.as_bytes(),
@@ -545,7 +545,7 @@ where
             .await;
             self.status.set_connection(ConnectionState::Reconnecting);
             reconnect.record_connection_lifetime(connected_at.elapsed());
-            let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
+            let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_random(bytes));
             crate::diagnostic_log::warn!(
                 "RNode interface {:?} connection closed; retrying in {} seconds",
                 self.id.as_bytes(),
@@ -589,7 +589,7 @@ mod tests {
     use prns_core::interfaces::FrameSink;
 
     impl InterfaceSeam for MockSeam {
-        fn fill_entropy(&mut self, bytes: &mut [u8]) {
+        fn fill_random(&mut self, bytes: &mut [u8]) {
             bytes.fill(0);
         }
 

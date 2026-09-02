@@ -3,8 +3,7 @@ use personal_hopspot_core::display::{
     DisplayBlankReason, DisplayDuration, DisplayVisibility, MonotonicMillis, PresentationUrgency,
 };
 use personal_rns::remote_control::{
-    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
-    RemoteControlService,
+    RemoteControlInitialControllerGrants, RemoteControlSelfAnnouncement, RemoteControlService,
 };
 
 fn display_now() -> MonotonicMillis {
@@ -63,6 +62,16 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         battery,
         button,
     } = hardware.face;
+    let S3RuntimeBootstrap {
+        identities:
+            crate::identity::S3IdentityBootstraps {
+                node: node_bootstrap,
+                remote_control: remote_control_bootstrap,
+                ble: ble_bootstrap,
+                destination_hashes,
+            },
+        entropy: boot_entropy,
+    } = hardware.runtime_bootstrap;
     let mut battery_source = battery;
     let gnss = hardware.gnss;
     let S3InterfaceHardware {
@@ -174,11 +183,6 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         Err(_) => panic!("the built-in LoRa profile and regional policy must be valid"),
     };
 
-    // Reconstruct identities before radio bring-up, on a temporary RTOS task stack. Curve25519's
-    // stack high-water mark is too large for the guarded core-0 main stack, and doing the work here
-    // also keeps it out of the live Wi-Fi/BLE scheduling window.
-    let (node_bootstrap, remote_control_bootstrap, ble_bootstrap, destination_hashes) =
-        crate::identity::bootstrap_s3_identities(B::FLASH_LAYOUT.into()).await;
     let remote_control_bootstrap =
         remote_control_bootstrap.expect("RemoteControl identity bootstrap failed");
     crate::identity::log_persistence("node", node_bootstrap.persistence());
@@ -190,6 +194,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     let (wifi, tcp_stack, esp_now) = build_wifi(
         &spawner,
         wifi_hardware,
+        boot_entropy,
         mac_octets,
         &wifi_config,
         radio_mode == RadioMode::AccessPoint,
@@ -209,8 +214,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         remote_control_bootstrap.into_parts();
     let remote_control = RemoteControlService::new(
         remote_control_identity_secrets,
-        RemoteControlPublicAppData::empty(),
-        RemoteControlInitialAccess::Nobody,
+        RemoteControlInitialControllerGrants::Nobody,
         RemoteControlSelfAnnouncement::Destination(destination_hashes.node_page),
     );
     let destinations = personal_hopspot_core::HopspotDestinationSet::new(
@@ -347,14 +351,15 @@ pub(super) async fn run_core<B: Esp32S3Board>(
         LIFECYCLE.receiver(),
         handle,
     );
-    let host = EmbassyHost::new_with_timebase(timebase, hardware_entropy as fn(&mut [u8]));
+    let entropy = runtime_entropy();
+    let host = EmbassyHost::new_with_timebase(timebase, entropy);
 
     let core1_stack = mk_static!(CpuStack<CORE1_STACK_BYTES>, CpuStack::new());
     boot_stage(BootPhase::CoreOneStartBegin);
     esp_rtos::start_second_core(cpu_control, software_interrupt, core1_stack, move || {
-        static NODE: StaticCell<S3Node> = StaticCell::new();
+        let node_slot = crate::storage::allocate_psram_uninit::<S3Node>();
         let (node, persistence) =
-            PrnsNode::init_static_with_persistence(&NODE, recipe, manifold_wiring, host);
+            PrnsNode::init_in_place_with_persistence(node_slot, recipe, manifold_wiring, host);
         node.set_protocol_policy(personal_hopspot_core::EMBEDDED_HOPSPOT_PROTOCOL_POLICY);
         static PERSISTENCE: StaticCell<crate::persistence::S3Persistence> = StaticCell::new();
         let persistence = PERSISTENCE.init(persistence);
@@ -375,19 +380,19 @@ pub(super) async fn run_core<B: Esp32S3Board>(
     boot_stage(BootPhase::CoreOneStartReady);
 
     let (usb_rx, usb_tx) = UsbSerialJtag::new(usb_device).into_async().split();
-    let usb_seam = usb_lane.into_seam(NOTIFY.sender(), hardware_entropy);
+    let usb_seam = usb_lane.into_seam(NOTIFY.sender(), entropy);
     spawner.spawn(usb_device_task(usb_rx, usb_tx, usb_seam, usb_status).expect("usb task fits"));
 
     #[cfg(feature = "lora")]
-    let lora_seam = lora_lane.into_seam(NOTIFY.sender(), hardware_entropy);
+    let lora_seam = lora_lane.into_seam(NOTIFY.sender(), entropy);
 
     let espnow = espnow.zip(espnow_lane).map(|(interface, lane)| {
-        let seam = lane.into_seam(NOTIFY.sender(), hardware_entropy);
+        let seam = lane.into_seam(NOTIFY.sender(), entropy);
         (interface, seam)
     });
 
     let tcp = tcp_built.zip(tcp_lane).map(|((tcp, _, _), lane)| {
-        let seam = lane.into_seam(NOTIFY.sender(), hardware_entropy);
+        let seam = lane.into_seam(NOTIFY.sender(), entropy);
         (tcp, seam)
     });
 
@@ -997,6 +1002,7 @@ pub(super) async fn run_core<B: Esp32S3Board>(
                     .with_max_activities(BLE_CONTROLLER_ACTIVITY_CAPACITY),
             )
             .expect("ble connector");
+            super::entropy::reseed_after_radio_start();
             boot_stage(BootPhase::BluetoothReady);
             if let Some((identity, fleet)) = ble {
                 let run = crate::storage::allocate_psram(crate::bluetooth_auto::run(

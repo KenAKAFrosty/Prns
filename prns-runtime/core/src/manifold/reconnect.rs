@@ -85,10 +85,10 @@ pub struct ReconnectSchedule {
 
 impl ReconnectSchedule {
     #[must_use]
-    pub fn next_delay(&mut self, mut fill_entropy: impl FnMut(&mut [u8])) -> Duration {
+    pub fn next_delay(&mut self, mut fill_random: impl FnMut(&mut [u8])) -> Duration {
         let nominal_millis = self.nominal_delay().as_millis() as u64;
         let mut entropy = [0u8; 8];
-        fill_entropy(&mut entropy);
+        fill_random(&mut entropy);
         let draw = u64::from_le_bytes(entropy);
         let offset = ((u128::from(draw) * (u128::from(nominal_millis) + 1)) >> 64) as u64;
         let jittered_millis = nominal_millis / 2 + offset;

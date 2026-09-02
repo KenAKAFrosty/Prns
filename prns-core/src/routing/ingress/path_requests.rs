@@ -363,16 +363,13 @@ mod tests {
         let n = write_path_request_wire_packet(local, None, &[0x55; 16], &mut buf).unwrap();
         let mut wire = buf[..n].to_vec();
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::AnswerPathRequest { destination: local },
         );
@@ -400,7 +397,8 @@ mod tests {
             let rotations_before = rotation_count;
             let mut buf = [0u8; BROADCAST_MTU];
             let n = write_path_request_wire_packet(local, None, &id, &mut buf).unwrap();
-            state.ingest_packet_into(
+            crate::engine::drive_packet_to_quiescence(
+                &mut state,
                 InboundPacket {
                     arrived_at: now,
                     source_interface: source,
@@ -409,7 +407,7 @@ mod tests {
                 IngestIo {
                     interfaces: AttachedInterfaces::new(&interfaces),
                     now,
-                    fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0x77),
+                    fill_random: &mut |bytes: &mut [u8]| bytes.fill(0x77),
                     should_prove: &mut |_| false,
                     should_accept_resource: &mut |_| false,
                     sink: &mut |reaction| match reaction {
@@ -450,16 +448,13 @@ mod tests {
         .unwrap();
         let mut wire = buf[..n].to_vec();
         assert_eq!(
-            leaf.ingest_packet_with(
+            leaf.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
@@ -496,16 +491,13 @@ mod tests {
         let mut a: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let mut wire = buf[..wire_bytes].to_vec();
         assert!(matches!(
-            a.ingest_packet_with(
+            a.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_200),
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)),
         ));
@@ -537,16 +529,13 @@ mod tests {
         let mut relay = transporting_node();
         let mut announce = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         assert!(matches!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(500),
                     source_interface: iface(0xB2),
                     bytes: &mut announce,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)),
         ));
@@ -577,16 +566,13 @@ mod tests {
 
         let mut wire = stranger_path_request([0x55; 16]);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ForwardRecursivePathRequest {
                 destination: stranger,
@@ -614,16 +600,13 @@ mod tests {
         let mut wire = stranger_path_request([0x55; 16]);
 
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ForwardRecursivePathRequest {
                 destination: stranger,
@@ -650,19 +633,16 @@ mod tests {
         let mut second_wire = first_wire.clone();
 
         assert_eq!(
-            first.ingest_packet_with(
+            first.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: first_ingress,
                     bytes: &mut first_wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&[
                     discovering_descriptor(first_ingress, InterfaceMode::Full),
                     discovering_descriptor(first_egress, InterfaceMode::Full),
                 ]),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ForwardRecursivePathRequest {
                 destination: stranger,
@@ -670,19 +650,16 @@ mod tests {
             },
         );
         assert_eq!(
-            second.ingest_packet_with(
+            second.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_001),
                     source_interface: first_egress,
                     bytes: &mut second_wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&[
                     discovering_descriptor(first_egress, InterfaceMode::Full),
                     discovering_descriptor(second_egress, InterfaceMode::Full),
                 ]),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ForwardRecursivePathRequest {
                 destination: stranger,
@@ -705,16 +682,13 @@ mod tests {
         let mut wire = stranger_path_request([0x55; 16]);
 
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
@@ -752,7 +726,7 @@ mod tests {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&interfaces),
                 now: InstantMillis(1_000),
-                fill_entropy: &mut |_| {},
+                fill_random: &mut |_| {},
                 should_prove: &mut |_| false,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| {
@@ -798,7 +772,7 @@ mod tests {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&interfaces),
                 now: InstantMillis(1_000),
-                fill_entropy: &mut |_| {},
+                fill_random: &mut |_| {},
                 should_prove: &mut |_| false,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| {
@@ -835,16 +809,13 @@ mod tests {
             )
             .unwrap();
             let mut wire = buf[..n].to_vec();
-            match relay.ingest_packet_with(
+            match relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000 + u64::from(dest_byte)),
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ) {
                 IngestPacketOutcome::ForwardRecursivePathRequest { .. } => forwarded += 1,
                 IngestPacketOutcome::Ignored(IgnoreReason::RateLimited) if forwarded > 0 => {
@@ -872,32 +843,26 @@ mod tests {
 
         let mut first = stranger_path_request([0x55; 16]);
         assert!(matches!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: source,
                     bytes: &mut first,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ForwardRecursivePathRequest { .. },
         ));
 
         let mut second = stranger_path_request([0x66; 16]);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_100),
                     source_interface: source,
                     bytes: &mut second,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::Superseded),
         );
@@ -911,16 +876,13 @@ mod tests {
 
         let mut wire = stranger_path_request([0x55; 16]);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
@@ -950,16 +912,13 @@ mod tests {
 
         let mut wire = stranger_path_request([0x55; 16]);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: app,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ForwardLocalClientPathRequest {
                 destination: stranger,
@@ -1003,7 +962,7 @@ mod tests {
                 IngestIo {
                     interfaces: AttachedInterfaces::new(&interfaces),
                     now: InstantMillis(1_000),
-                    fill_entropy: &mut |_| {},
+                    fill_random: &mut |_| {},
                     should_prove: &mut |_| false,
                     should_accept_resource: &mut |_| false,
                     sink: &mut |reaction| {
@@ -1061,7 +1020,7 @@ mod tests {
                 IngestIo {
                     interfaces: AttachedInterfaces::new(&interfaces),
                     now: InstantMillis(1_000 + u64::from(byte)),
-                    fill_entropy: &mut |_| {},
+                    fill_random: &mut |_| {},
                     should_prove: &mut |_| false,
                     should_accept_resource: &mut |_| false,
                     sink: &mut |reaction| {
@@ -1099,16 +1058,13 @@ mod tests {
         let (mut relay, cached) = relay_holding_a_cached_route();
         for _ in 0..2 {
             let mut wire = path_request_wire(cached);
-            let _ = relay.ingest_packet_with(
+            let _ = relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             );
         }
 
@@ -1132,16 +1088,13 @@ mod tests {
 
         let mut wire = stranger_path_request([0x55; 16]);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: uplink,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::RelayPathRequestToLocalClients {
                 destination: stranger,
@@ -1166,16 +1119,13 @@ mod tests {
 
         let mut wire = stranger_path_request([0x55; 16]);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: uplink,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
             "with no apps sharing the instance, an unanswerable full-mode request stays silent",
@@ -1190,16 +1140,13 @@ mod tests {
 
         let mut wire = stranger_path_request([0x55; 16]);
         assert_eq!(
-            leaf.ingest_packet_with(
+            leaf.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: source,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
@@ -1233,16 +1180,13 @@ mod tests {
 
         let mut wire = buf[..wire_bytes].to_vec();
         assert!(matches!(
-            a.ingest_packet_with(
+            a.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_200),
                     source_interface: iface(0xB2),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Announce(AnnounceIngest::Accepted(_)),
         ));
@@ -1308,16 +1252,13 @@ mod tests {
 
         let mut wire = path_request_wire(cached);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::PathResponseScheduleRejected {
                 destination: cached,
@@ -1346,16 +1287,13 @@ mod tests {
 
         let mut wire = path_request_wire_with(&body);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -1369,16 +1307,13 @@ mod tests {
         same_id_other_transport.extend_from_slice(&id);
         let mut wire = path_request_wire_with(&same_id_other_transport);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_100),
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
             "a different transport id but the same id is the same request, so it is deduplicated",
@@ -1400,16 +1335,13 @@ mod tests {
         withheld.extend_from_slice(&[0x11; 16]);
         let mut wire = path_request_wire_with(&withheld);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::RouteUnresponsive),
             "an unresponsive route is withheld so a node with a live path answers instead",
@@ -1425,16 +1357,13 @@ mod tests {
         recovered.extend_from_slice(&[0x22; 16]);
         let mut wire = path_request_wire_with(&recovered);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_100),
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -1452,16 +1381,13 @@ mod tests {
         );
         let mut relay = transporting_node();
         let mut announce = bytes_from_hex(RNS_1_4_2_RETRANSMITTED_ANNOUNCE);
-        let _ = relay.ingest_packet_with(
+        let _ = relay.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(500),
                 source_interface: iface(0xB2),
                 bytes: &mut announce,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
 
         let request = |requester: [u8; 16], id: u8| {
@@ -1474,16 +1400,13 @@ mod tests {
 
         let mut loops_back = request([0x7a; 16], 0x01);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
                     bytes: &mut loops_back,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::LoopPrevented),
             "the requester is the next hop we would route through; answering would loop",
@@ -1491,16 +1414,13 @@ mod tests {
 
         let mut other_requester = request([0xCC; 16], 0x02);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_100),
                     source_interface: iface(0xA1),
                     bytes: &mut other_requester,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -1514,16 +1434,13 @@ mod tests {
         let (mut relay, cached) = relay_holding_a_cached_route();
         let mut wire = path_request_wire_with(cached.as_bytes());
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::Malformed),
             "a bare destination carries no id, so the reference ignores it",
@@ -1535,16 +1452,13 @@ mod tests {
         let (mut relay, cached) = relay_holding_a_cached_route();
         let mut wire = path_request_wire(cached);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -1570,16 +1484,13 @@ mod tests {
         let (mut relay, cached) = relay_holding_a_cached_route();
         let mut wire = path_request_wire(cached);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(u64::MAX),
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -1600,16 +1511,13 @@ mod tests {
             ..routable_descriptor(requester)
         }];
         let mut wire = path_request_wire(cached);
-        let _ = relay.ingest_packet_with(
+        let _ = relay.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: requester,
                 bytes: &mut wire,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&roaming_view),
-            &mut |_| {},
-            None,
         );
         assert_eq!(
             relay.scheduled_announces.iter().next().unwrap().due_at,
@@ -1624,16 +1532,13 @@ mod tests {
         let roaming_view = [discovering_descriptor(learned_on, InterfaceMode::Roaming)];
         let mut wire = path_request_wire(cached);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: learned_on,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&roaming_view),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::LoopPrevented),
             "a roaming interface does not answer for a route that lives on it",
@@ -1652,16 +1557,13 @@ mod tests {
         let full_view = [routable_descriptor(learned_on)];
         let mut wire = path_request_wire(cached);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: learned_on,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&full_view),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -1674,16 +1576,13 @@ mod tests {
     fn a_flood_schedule_supersedes_a_directed_answer_for_the_same_destination() {
         let (mut relay, cached) = relay_holding_a_cached_route();
         let mut wire = path_request_wire(cached);
-        let _ = relay.ingest_packet_with(
+        let _ = relay.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: iface(0xA1),
                 bytes: &mut wire,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert_eq!(
             relay.scheduled_announces.iter().next().unwrap().directed_to,
@@ -1714,16 +1613,13 @@ mod tests {
         ];
 
         let mut wire = path_request_wire(cached);
-        let _ = relay.ingest_packet_with(
+        let _ = relay.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: requester,
                 bytes: &mut wire,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&interfaces),
-            &mut |_| {},
-            None,
         );
 
         let mut early = std::vec::Vec::new();
@@ -1779,30 +1675,24 @@ mod tests {
         );
         let mut leaf: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
         let mut announce = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-        let _ = leaf.ingest_packet_with(
+        let _ = leaf.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(500),
                 source_interface: iface(0xB2),
                 bytes: &mut announce,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
 
         let mut wire = path_request_wire(cached);
         assert_eq!(
-            leaf.ingest_packet_with(
+            leaf.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
             "without a transport role a node never answers from cache, even holding the route",
@@ -1821,30 +1711,24 @@ mod tests {
         let mut shared: EngineState<TestStorageLayout> =
             EngineState::<TestStorageLayout>::default();
         let mut announce = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-        let _ = shared.ingest_packet_with(
+        let _ = shared.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(500),
                 source_interface: uplink,
                 bytes: &mut announce,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
 
         let mut wire = path_request_wire(cached);
         assert_eq!(
-            shared.ingest_packet_with(
+            shared.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: app,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&[routable_descriptor(app), routable_descriptor(uplink)]),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ScheduledPathResponse { destination: cached },
             "a non-transport shared instance answers its local client from cache, like RNS is_from_local_client",
@@ -1862,16 +1746,13 @@ mod tests {
 
         let mut wire = stranger_path_request([0x55; 16]);
         assert_eq!(
-            shared.ingest_packet_with(
+            shared.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: app,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ForwardLocalClientPathRequest {
                 destination: stranger,
@@ -1892,16 +1773,13 @@ mod tests {
 
         let mut wire = stranger_path_request([0x55; 16]);
         assert_eq!(
-            shared.ingest_packet_with(
+            shared.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: uplink,
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&interfaces),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::RelayPathRequestToLocalClients {
                 destination: stranger,
@@ -1916,16 +1794,13 @@ mod tests {
         let mut relay = transporting_node();
         let mut wire = path_request_wire(DestinationHash::new([0x44; 16]));
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
                     bytes: &mut wire,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
@@ -1937,16 +1812,13 @@ mod tests {
 
         let mut first = path_request_wire(cached);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0xA1),
                     bytes: &mut first,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::ScheduledPathResponse {
                 destination: cached
@@ -1955,16 +1827,13 @@ mod tests {
 
         let mut echo = path_request_wire(cached);
         assert_eq!(
-            relay.ingest_packet_with(
+            relay.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_100),
                     source_interface: iface(0xB2),
                     bytes: &mut echo,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
             "the same (destination, id) is a duplicate, not answered again",

@@ -7,5 +7,6 @@ pub use prns_runtime::{
     storage, units, wire,
 };
 
+pub mod atomic;
 pub mod manifold;
 pub mod runtime;

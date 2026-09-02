@@ -58,7 +58,7 @@ pub(crate) struct MeshTowerV2Board;
 
 impl MeshTowerV2Board {
     pub(crate) async fn initialize<R>(
-        bootstrap: impl FnOnce(&mut Nvmc<'static>, &mut Rng<'static, Blocking>) -> R,
+        bootstrap: impl FnOnce(&mut Nvmc<'static>, Rng<'static, Blocking>) -> R,
     ) -> (R, MeshTowerV2Hardware) {
         let mut nrf_config = config::Config::default();
         nrf_config.hfclk_source = HfclkSource::ExternalXtal;
@@ -68,8 +68,8 @@ impl MeshTowerV2Board {
 
         let identity = {
             let mut nvmc = Nvmc::new(peripherals.NVMC);
-            let mut rng = Rng::new_blocking(peripherals.RNG);
-            bootstrap(&mut nvmc, &mut rng)
+            let rng = Rng::new_blocking(peripherals.RNG);
+            bootstrap(&mut nvmc, rng)
         };
 
         // SoftDevice reserves P0/P1; keep app interrupts off those. USB at P2, SPI at P3 so a BLE

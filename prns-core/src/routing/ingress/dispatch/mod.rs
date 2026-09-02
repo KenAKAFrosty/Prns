@@ -5,29 +5,33 @@ use super::classification::{DataPacket, Ingress};
 use super::forward::{ForwardingArrival, PacketToForward};
 use super::links::{LinkRequestArrival, RelayOutcome};
 use super::outcome::{
-    DeferredCrypto, IgnoreReason, IngestEffects, IngestPacketOutcome,
-    NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS,
+    IgnoreReason, IngestEffects, IngestPacketOutcome, NON_TRANSPORTED_DATA_MAX_RECEIVED_HOPS,
 };
 use super::upstream_delivery::UpstreamDeliveryOutcome;
 use crate::engine::{DeliveryProof, EngineState, InstantMillis};
 use crate::interfaces::{AttachedInterfaces, InterfaceCommonPolicy, InterfaceId, InterfaceKind};
+use crate::remote_control::RemoteControlPairingAvailabilityDestination;
 use crate::routing::announce::held::HoldOutcome;
+#[cfg(test)]
 use crate::routing::announce::AnnounceArrival;
 use crate::routing::dedup::{PacketHashHistory, RememberPacketOutcome};
 use crate::routing::links::resources::send::ResourceProofClassification;
 use crate::routing::links::LinkId;
 use crate::routing::path_requests::PATH_REQUEST_DESTINATION;
-use crate::routing::proof::ProofIngest;
-use crate::routing::tunnel::{
-    parse_synthesize_payload, TunnelTransition, TUNNEL_SYNTHESIZE_DESTINATION, TUNNEL_TIMEOUT_MS,
-};
-use crate::routing::RemovedRoute;
+use crate::routing::tunnel::{prepare_synthesize_verify, TUNNEL_SYNTHESIZE_DESTINATION};
 use crate::storage::StorageLayout;
 use crate::wire::{
     ContextFlag, DestinationHash, DestinationType, IfacFlag, PacketType, PropagationType,
     WireContext, WirePacketHeader, MAX_HOP_COUNT,
 };
 use heapless::Vec as HeaplessVec;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum IngressCryptoMode {
+    Owed,
+    #[cfg(test)]
+    Inline,
+}
 
 impl<S: StorageLayout> EngineState<S> {
     pub(super) fn hops_across_local_boundary(
@@ -45,16 +49,33 @@ impl<S: StorageLayout> EngineState<S> {
 
     #[cfg(test)]
     #[must_use]
-    pub(crate) fn ingest_packet_with<'p>(
+    /// Low-level parser oracle for tests that assert the post-crypto [`IngestPacketOutcome`]
+    /// directly. Runtime-shaped tests use `ingest_packet_into*`; continuation tests use
+    /// [`Self::ingest_packet_step_with`] and the matching `resume_*` entry point.
+    pub(crate) fn ingest_for_test<'p>(
         &mut self,
         packet: crate::interfaces::InboundPacket<'p>,
-        fill_entropy: &mut impl FnMut(&mut [u8]),
         interfaces: AttachedInterfaces<'_>,
-        on_removed: &mut impl FnMut(RemovedRoute),
-        deferred: Option<&mut DeferredCrypto>,
     ) -> IngestPacketOutcome<'p> {
         let (_, ingress) = ClassifiedInboundPacket::classify(packet).into_parts();
-        self.ingest_classified_with(ingress, fill_entropy, interfaces, on_removed, deferred)
+        self.ingest_classified_with_mode(
+            ingress,
+            interfaces,
+            IngressCryptoMode::Inline,
+            &mut IngestEffects::default(),
+        )
+    }
+
+    /// One raw ingress transition, stopping at an owed-work boundary.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn ingest_packet_step_with<'p>(
+        &mut self,
+        packet: crate::interfaces::InboundPacket<'p>,
+        interfaces: AttachedInterfaces<'_>,
+    ) -> IngestPacketOutcome<'p> {
+        let (_, ingress) = ClassifiedInboundPacket::classify(packet).into_parts();
+        self.ingest_classified_with(ingress, interfaces)
     }
 
     #[cfg(test)]
@@ -62,17 +83,12 @@ impl<S: StorageLayout> EngineState<S> {
     pub(crate) fn ingest_classified_with<'p>(
         &mut self,
         ingress: Ingress<'p>,
-        fill_entropy: &mut impl FnMut(&mut [u8]),
         interfaces: AttachedInterfaces<'_>,
-        on_removed: &mut impl FnMut(RemovedRoute),
-        deferred: Option<&mut DeferredCrypto>,
     ) -> IngestPacketOutcome<'p> {
-        self.ingest_classified_with_effects(
+        self.ingest_classified_with_mode(
             ingress,
-            fill_entropy,
             interfaces,
-            on_removed,
-            deferred,
+            IngressCryptoMode::Owed,
             &mut IngestEffects::default(),
         )
     }
@@ -80,10 +96,17 @@ impl<S: StorageLayout> EngineState<S> {
     pub(crate) fn ingest_classified_with_effects<'p>(
         &mut self,
         ingress: Ingress<'p>,
-        fill_entropy: &mut impl FnMut(&mut [u8]),
         interfaces: AttachedInterfaces<'_>,
-        on_removed: &mut impl FnMut(RemovedRoute),
-        deferred: Option<&mut DeferredCrypto>,
+        effects: &mut IngestEffects<'p>,
+    ) -> IngestPacketOutcome<'p> {
+        self.ingest_classified_with_mode(ingress, interfaces, IngressCryptoMode::Owed, effects)
+    }
+
+    fn ingest_classified_with_mode<'p>(
+        &mut self,
+        ingress: Ingress<'p>,
+        interfaces: AttachedInterfaces<'_>,
+        crypto: IngressCryptoMode,
         effects: &mut IngestEffects<'p>,
     ) -> IngestPacketOutcome<'p> {
         self.ingested_packet_count = self.ingested_packet_count.saturating_add(1);
@@ -153,44 +176,47 @@ impl<S: StorageLayout> EngineState<S> {
                     return IngestPacketOutcome::Announce(held);
                 }
 
-                if let Some(deferred) = deferred {
-                    let mut owned = HeaplessVec::new();
-                    if owned.extend_from_slice(payload).is_err() {
-                        return IngestPacketOutcome::Ignored(IgnoreReason::CapacityExhausted);
+                match crypto {
+                    IngressCryptoMode::Owed => {
+                        let mut owned = HeaplessVec::new();
+                        if owned.extend_from_slice(payload).is_err() {
+                            return IngestPacketOutcome::Ignored(IgnoreReason::CapacityExhausted);
+                        }
+                        IngestPacketOutcome::OwesAnnounceVerify(AnnounceVerifyOwed {
+                            payload: owned,
+                            header,
+                            received_hops,
+                            source_interface,
+                            arrived_at,
+                            next_hop,
+                            is_path_response,
+                        })
                     }
-                    *deferred = DeferredCrypto::AnnounceVerify(AnnounceVerifyOwed {
-                        payload: owned,
-                        header,
-                        received_hops,
-                        source_interface,
-                        arrived_at,
-                        next_hop,
-                        is_path_response,
-                    });
-                    return IngestPacketOutcome::OwesAnnounceVerify;
+                    #[cfg(test)]
+                    IngressCryptoMode::Inline => {
+                        if !announce.signature_is_valid() {
+                            return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
+                        }
+                        self.interface_announce_limits
+                            .record(source_interface, arrived_at);
+                        let arrival = AnnounceArrival {
+                            announce,
+                            hops: received_hops,
+                            arrived_at,
+                            receiving_interface: source_interface,
+                            next_hop,
+                            is_path_response,
+                        };
+                        IngestPacketOutcome::Announce(self.ingest_announce(
+                            identity_hash,
+                            &arrival,
+                            &mut |_| {},
+                            interfaces,
+                            &mut |_| {},
+                            effects,
+                        ))
+                    }
                 }
-
-                if !announce.signature_is_valid() {
-                    return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
-                }
-                self.interface_announce_limits
-                    .record(source_interface, arrived_at);
-                let arrival = AnnounceArrival {
-                    announce,
-                    hops: received_hops,
-                    arrived_at,
-                    receiving_interface: source_interface,
-                    next_hop,
-                    is_path_response,
-                };
-                IngestPacketOutcome::Announce(self.ingest_announce(
-                    identity_hash,
-                    &arrival,
-                    &mut *fill_entropy,
-                    interfaces,
-                    on_removed,
-                    effects,
-                ))
             }
 
             Ingress::Data {
@@ -221,6 +247,22 @@ impl<S: StorageLayout> EngineState<S> {
                     }
                     if address == TUNNEL_SYNTHESIZE_DESTINATION {
                         return self.ingest_tunnel_synthesize(&data, source_interface, arrived_at);
+                    }
+                    if address
+                        == RemoteControlPairingAvailabilityDestination::canonical()
+                            .destination_hash()
+                    {
+                        return self.ingest_remote_control_pairing_availability(
+                            data,
+                            super::RemoteControlPairingAvailabilityArrival {
+                                received_hops,
+                                source_interface,
+                                arrived_at,
+                            },
+                            crypto,
+                            interfaces,
+                            effects,
+                        );
                     }
                 }
 
@@ -286,14 +328,16 @@ impl<S: StorageLayout> EngineState<S> {
                     packet_hash,
                     source_interface,
                     arrived_at,
-                    deferred,
+                    crypto,
                 ) {
                     UpstreamDeliveryOutcome::Delivered(delivery, proof) => {
                         IngestPacketOutcome::Delivery { delivery, proof }
                     }
-                    UpstreamDeliveryOutcome::OwesDecrypt => IngestPacketOutcome::OwesDecrypt,
-                    UpstreamDeliveryOutcome::OwesRatchetDecrypt => {
-                        IngestPacketOutcome::OwesRatchetDecrypt
+                    UpstreamDeliveryOutcome::OwesDecrypt(owed) => {
+                        IngestPacketOutcome::OwesDecrypt(owed)
+                    }
+                    UpstreamDeliveryOutcome::OwesRatchetDecrypt(owed) => {
+                        IngestPacketOutcome::OwesRatchetDecrypt(owed)
                     }
                     UpstreamDeliveryOutcome::NotForUs => {
                         IngestPacketOutcome::Ignored(IgnoreReason::NotForUs)
@@ -318,7 +362,7 @@ impl<S: StorageLayout> EngineState<S> {
                         received_hops,
                         source_interface,
                         arrived_at,
-                        deferred,
+                        crypto,
                     );
                 }
                 if context == WireContext::ResourceProof {
@@ -373,23 +417,23 @@ impl<S: StorageLayout> EngineState<S> {
                         fire_on: reverse.received_interface,
                     });
                 }
-                if let Some((id, delivered)) = self.settle_channel_ack(
+                if let Some(owed) = self.prepare_channel_ack_verify(
                     &link_id,
                     payload,
                     DeliveryProof::Explicit(packet_hash),
                     arrived_at,
                 ) {
-                    self.links.note_inbound(&link_id, arrived_at);
-                    return IngestPacketOutcome::Proof(ProofIngest::SendToChannelDelivered {
-                        id,
-                        delivered,
-                    });
+                    return IngestPacketOutcome::OwesChannelAckVerify(owed);
                 }
-                IngestPacketOutcome::Proof(self.settle_receipt_proof(
+                match self.prepare_receipt_proof_verify(
                     payload,
+                    &DestinationHash::from_address(address),
                     packet_hash,
                     arrived_at,
-                ))
+                ) {
+                    Some(owed) => IngestPacketOutcome::OwesReceiptProofVerify(owed),
+                    None => IngestPacketOutcome::ReceiptProofIgnored,
+                }
             }
 
             Ingress::LinkRequest {
@@ -421,24 +465,10 @@ impl<S: StorageLayout> EngineState<S> {
         source_interface: InterfaceId,
         now: InstantMillis,
     ) -> IngestPacketOutcome<'p> {
-        let Some(verified) = parse_synthesize_payload(data.payload) else {
+        let Some(owed) = prepare_synthesize_verify(data.payload, source_interface, now) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Malformed);
         };
-        let expires = InstantMillis(now.0.saturating_add(TUNNEL_TIMEOUT_MS));
-        match self
-            .tunnels
-            .observe_synthesize(verified.tunnel_id, source_interface, expires)
-        {
-            TunnelTransition::Established | TunnelTransition::Refreshed => {}
-            TunnelTransition::Reappeared { previous_interface } => {
-                self.routing_table
-                    .repoint_routes(previous_interface, source_interface, now);
-                self.mark_interface_dirty(previous_interface);
-                self.mark_interface_dirty(source_interface);
-            }
-        }
-        self.routing_table.invalidate_route_expiries();
-        IngestPacketOutcome::TunnelObserved { expires }
+        IngestPacketOutcome::OwesTunnelSynthesizeVerify(owed)
     }
 }
 

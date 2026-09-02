@@ -232,7 +232,7 @@ impl InterfaceSupervisor for TcpServer {
                     let _ = fleet.add(connection);
                 }
                 Err(_) => {
-                    let delay = schedule.next_delay(|bytes| fleet.fill_entropy(bytes));
+                    let delay = schedule.next_delay(|bytes| fleet.fill_random(bytes));
                     tokio::time::sleep(delay).await;
                 }
             }
@@ -360,7 +360,7 @@ mod tests {
     use prns_core::interfaces::FrameSink;
 
     impl InterfaceSeam for MockSeam {
-        fn fill_entropy(&mut self, bytes: &mut [u8]) {
+        fn fill_random(&mut self, bytes: &mut [u8]) {
             bytes.fill(0);
         }
 

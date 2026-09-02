@@ -1,3 +1,7 @@
+mod connection;
+
+pub use connection::RemoteControlTargetHandle;
+
 use embassy_sync::blocking_mutex::raw::RawMutex;
 
 use crate::engine::RequestResponseTimeout;

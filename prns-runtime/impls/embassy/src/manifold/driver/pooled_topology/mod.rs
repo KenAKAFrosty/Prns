@@ -1,4 +1,4 @@
-use embassy_futures::select::{select6, Either6};
+use embassy_futures::select::{select, select6, Either6};
 use embassy_futures::yield_now;
 use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::channel::Receiver;
@@ -14,8 +14,8 @@ use crate::interfaces::{
 };
 use crate::manifold::grant::{FrameTarget, ManifoldLaneReader};
 use crate::manifold::interface_seam::{EMBEDDED_MAX_LINK_MTU, EMBEDDED_MAX_WIRE_FRAME_LEN};
-use crate::manifold::kernel::{fire_due_reason, merge_wake_schedules_delta};
 use crate::manifold::timers::{wait_for_due_reason, wait_for_pacer};
+use crate::manifold::wake_schedule::{fire_due_reason, merge_wake_schedules_delta};
 use crate::manifold::{AppDeciders, Host};
 use crate::routing::links::resources::ResourceOffer;
 use crate::runtime::{InterfaceInspectionStore, ManifoldPersistence};
@@ -24,6 +24,9 @@ use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use super::egress::{
     flush_due_pacers, ifac_for, route_reaction, soonest_pacer_release, InterfacePacer,
     ManifoldEgress, PooledEgress,
+};
+use super::inline_work::{
+    fulfill_owed_work_inline, route_and_capture_owed_work, InlineOwedWorkQueue,
 };
 use super::interface_status::account_protocol_violation;
 use super::packet_phy::retain_packet_phy;
@@ -152,7 +155,7 @@ pub(crate) async fn run_pooled<
             wait_for_due_reason(&*host, wake),
             wait_for_pacer(&*host, pacer_wake),
             lifecycle.receive(),
-            wait_for_persistence(&*host, persistence_deadline),
+            wait_for_persistence_or_work(&*host, persistence_deadline, &*persistence),
         )
         .await
         {
@@ -205,16 +208,17 @@ pub(crate) async fn run_pooled<
                             bytes,
                         });
                         retain_packet_phy(store, &packet, packet_phy);
+                        let mut owed_work = InlineOwedWorkQueue::new();
                         let report = engine.ingest_classified_into_report(
                             packet,
                             IngestIo {
                                 interfaces: AttachedInterfaces::new(&*descriptors),
                                 now,
-                                fill_entropy: &mut |entropy| host.fill_entropy(entropy),
+                                fill_random: &mut |entropy| host.fill_random(entropy),
                                 should_prove: &mut should_prove,
                                 should_accept_resource: &mut should_accept_resource,
                                 sink: &mut |reaction| {
-                                    route_reaction(
+                                    route_and_capture_owed_work(
                                         reaction,
                                         &mut *egress,
                                         ifacs,
@@ -224,8 +228,25 @@ pub(crate) async fn run_pooled<
                                             persistence.observe(&journaled, now);
                                             on_journaled(journaled);
                                         },
+                                        &mut owed_work,
                                     )
                                 },
+                            },
+                        );
+                        let completion_delta = fulfill_owed_work_inline(
+                            owed_work,
+                            &mut *engine,
+                            &mut *host,
+                            AttachedInterfaces::new(&*descriptors),
+                            &mut *egress,
+                            ifacs,
+                            &mut pacers,
+                            frame_accounting_statuses,
+                            now,
+                            &mut should_prove,
+                            &mut |journaled| {
+                                persistence.observe(&journaled, now);
+                                on_journaled(journaled);
                             },
                         );
                         account_protocol_violation(
@@ -234,9 +255,11 @@ pub(crate) async fn run_pooled<
                             report.protocol_violation,
                         );
                         lane.release();
+                        let mut step_delta = report.wake_schedules;
+                        step_delta.merge(completion_delta);
                         merge_wake_schedules_delta(
                             &mut wake_schedules,
-                            report.wake_schedules,
+                            step_delta,
                             &*engine,
                             AttachedInterfaces::new(&*descriptors),
                         );
@@ -245,13 +268,14 @@ pub(crate) async fn run_pooled<
             }
             Either6::Second(issued) => {
                 let now = host.now();
-                let delta = engine.ingest_command_into(
+                let mut owed_work = InlineOwedWorkQueue::new();
+                let mut delta = engine.ingest_command_into_with_work(
                     issued,
                     AttachedInterfaces::new(&*descriptors),
                     now,
-                    &mut |entropy| host.fill_entropy(entropy),
+                    &mut |entropy| host.fill_random(entropy),
                     &mut |reaction| {
-                        route_reaction(
+                        route_and_capture_owed_work(
                             reaction,
                             &mut *egress,
                             ifacs,
@@ -261,9 +285,26 @@ pub(crate) async fn run_pooled<
                                 persistence.observe(&journaled, now);
                                 on_journaled(journaled);
                             },
+                            &mut owed_work,
                         )
                     },
                 );
+                delta.merge(fulfill_owed_work_inline(
+                    owed_work,
+                    &mut *engine,
+                    &mut *host,
+                    AttachedInterfaces::new(&*descriptors),
+                    &mut *egress,
+                    ifacs,
+                    &mut pacers,
+                    frame_accounting_statuses,
+                    now,
+                    &mut should_prove,
+                    &mut |journaled| {
+                        persistence.observe(&journaled, now);
+                        on_journaled(journaled);
+                    },
+                ));
                 merge_wake_schedules_delta(
                     &mut wake_schedules,
                     delta,
@@ -278,7 +319,7 @@ pub(crate) async fn run_pooled<
                     reason,
                     now,
                     AttachedInterfaces::new(&*descriptors),
-                    &mut |bytes| host.fill_entropy(bytes),
+                    &mut |bytes| host.fill_random(bytes),
                     &mut |reaction| {
                         route_reaction(
                             reaction,
@@ -462,6 +503,18 @@ async fn wait_for_persistence(host: &impl Host, deadline: Option<crate::engine::
         Some(deadline) => host.sleep_until(deadline).await,
         None => core::future::pending().await,
     }
+}
+
+async fn wait_for_persistence_or_work<S: StorageLayout>(
+    host: &impl Host,
+    deadline: Option<crate::engine::InstantMillis>,
+    persistence: &impl ManifoldPersistence<S>,
+) {
+    let _completed = select(
+        wait_for_persistence(host, deadline),
+        persistence.wait_for_work(),
+    )
+    .await;
 }
 
 #[cfg(test)]

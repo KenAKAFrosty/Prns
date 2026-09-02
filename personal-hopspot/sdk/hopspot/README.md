@@ -26,7 +26,7 @@ use hopspot::{DestinationHash, PrnsNodeApi};
 ```
 
 JavaScript and TypeScript consumers receive the same root, `native`, `browser`,
-and `casework` exports as `personal-rns`.
+and browser-framework adapter exports as `personal-rns`.
 
 ```javascript
 import { Prns, Tag } from "hopspot";

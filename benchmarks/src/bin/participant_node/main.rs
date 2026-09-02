@@ -39,7 +39,8 @@ use personal_rns::runtime::request_endpoints::{
 };
 use personal_rns::runtime::{
     generate_identity_secret, Diagnostic, Message, PreConfiguredDestination, PrnsEvent, PrnsNode,
-    PrnsNodeHandle, PrnsNodeRecipe, SegmentCompression, ServeMyRequestEndpoints,
+    PrnsNodeHandle, PrnsNodeLocalHandle, PrnsNodeRecipe, SegmentCompression,
+    ServeMyRequestEndpoints,
 };
 #[cfg(feature = "fixed-storage")]
 type NodeStorage = personal_rns::storage::Esp32S3<allocator_api2::alloc::Global>;

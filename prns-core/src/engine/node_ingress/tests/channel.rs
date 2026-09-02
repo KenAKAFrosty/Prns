@@ -3,7 +3,10 @@ use crate::crypto::{
     Ed25519Signature, X25519PublicKey, X25519SecretKey,
 };
 use crate::engine::test_support::{transporting_interfaces, TestStorageLayout};
-use crate::engine::{CommandId, Directive, EngineReaction, EngineState, IngestIo, Journaled};
+use crate::engine::{
+    ChannelAckSignCompleted, CommandId, CryptoOwed, Directive, EngineReaction, EngineState,
+    IngestIo, Journaled, OwedWork,
+};
 use crate::interfaces::{AttachedInterfaces, EgressCapability, InboundPacket, InterfaceId};
 use crate::routing::dedup::{PacketHash, PACKET_HASH_LEN};
 use crate::routing::links::channel::{write_envelope, ChannelSequence, MessageType};
@@ -114,6 +117,7 @@ fn feed(state: &mut EngineState<TestStorageLayout>, frame: &[u8], now: u64) -> F
     let mut raw = frame.to_vec();
     let mut messages = Vec::new();
     let mut ack = None;
+    let mut ack_sign = None;
     state.ingest_packet_into(
         InboundPacket {
             arrived_at: InstantMillis(now),
@@ -123,7 +127,7 @@ fn feed(state: &mut EngineState<TestStorageLayout>, frame: &[u8], now: u64) -> F
         IngestIo {
             interfaces: AttachedInterfaces::new(&transporting_interfaces()),
             now: InstantMillis(now),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_| false,
             should_accept_resource: &mut |_: &crate::routing::links::resources::ResourceOffer| {
                 false
@@ -137,10 +141,31 @@ fn feed(state: &mut EngineState<TestStorageLayout>, frame: &[u8], now: u64) -> F
                 EngineReaction::Directive(Directive::Send { bytes, .. }) => {
                     ack = Some(bytes.to_vec())
                 }
+                EngineReaction::Directive(Directive::Fulfill(OwedWork::Crypto(
+                    CryptoOwed::ChannelAckSign(owed),
+                ))) => ack_sign = Some(owed),
                 _ => {}
             },
         },
     );
+    if let Some(owed) = ack_sign {
+        let signature =
+            crate::crypto::ed25519_sign(&owed.signing_secret, owed.packet_hash.as_bytes());
+        state.resume_channel_ack_sign(
+            ChannelAckSignCompleted {
+                target: owed.target,
+                link_id: owed.link_id,
+                packet_hash: owed.packet_hash,
+                signature,
+            },
+            InstantMillis(now),
+            &mut |reaction| {
+                if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
+                    ack = Some(bytes.to_vec());
+                }
+            },
+        );
+    }
     (messages, ack)
 }
 
@@ -254,7 +279,7 @@ fn a_channel_message_on_a_receive_only_interface_is_not_acked() {
         IngestIo {
             interfaces: AttachedInterfaces::new(&[descriptor]),
             now: InstantMillis(2_000),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0),
             should_prove: &mut |_| false,
             should_accept_resource: &mut |_| false,
             sink: &mut |reaction| match reaction {

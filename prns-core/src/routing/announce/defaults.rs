@@ -30,12 +30,12 @@ pub fn route_expiry_millis(mode: InterfaceMode) -> u64 {
 pub const PATH_REQUEST_GRACE_MS: u64 = 400;
 pub const PATH_REQUEST_ROAMING_GRACE_MS: u64 = 1_500;
 
-pub(crate) fn jitter_offset(fill_entropy: &mut impl FnMut(&mut [u8]), window_ms: u64) -> u64 {
+pub(crate) fn jitter_offset(fill_random: &mut impl FnMut(&mut [u8]), window_ms: u64) -> u64 {
     if window_ms == 0 {
         return 0;
     }
     let mut bytes = [0u8; core::mem::size_of::<u64>()];
-    fill_entropy(&mut bytes);
+    fill_random(&mut bytes);
     u64::from_le_bytes(bytes) % window_ms
 }
 

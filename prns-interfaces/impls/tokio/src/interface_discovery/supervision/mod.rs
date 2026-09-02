@@ -22,9 +22,8 @@ use prns_core::interfaces::{IfacContext, IfacSize};
 use prns_core::routing::announce::AnnounceObservation;
 use prns_core::units::{HopCount, InstantMillis};
 use prns_core::wire::DestinationHash;
-use prns_runtime::manifold::driver::{TokioHost, TokioInterfaceStatus};
+use prns_runtime::manifold::driver::{TokioClock, TokioInterfaceStatus};
 use prns_runtime::manifold::interface_seam::Interface;
-use prns_runtime::manifold::Host;
 use prns_runtime::runtime::{
     AttachedInterface, IdentityBlackholeSource, InterfaceAttachmentMetadata, PrnsNodeHandle,
 };
@@ -174,7 +173,7 @@ impl TokioInterfaceDiscovery {
     pub async fn run(
         mut self,
         handle: PrnsNodeHandle,
-        clock: TokioHost,
+        clock: TokioClock,
         mut report: impl for<'a> FnMut(TokioDiscoveryEvent<'a>) + Send,
     ) {
         let blackholed = blackholed_identities(&handle).await;

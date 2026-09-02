@@ -199,6 +199,7 @@ impl EventDelivery for OwnedEvent {
 }
 
 impl OwnedEvent {
+    #[allow(deprecated)]
     pub fn capture_host_application(event: prns_host::ApplicationEvent) -> Option<Self> {
         match event {
             prns_host::ApplicationEvent::SingleDelivery(event) => Some(Self::SingleDelivery {
@@ -291,6 +292,7 @@ impl OwnedEvent {
                     prns_host::LinkClosedReason::Timeout => "timeout",
                     prns_host::LinkClosedReason::PeerClosed => "peerClosed",
                     prns_host::LinkClosedReason::MalformedRtt => "malformedRtt",
+                    prns_host::LinkClosedReason::LocallyClosed => "locallyClosed",
                 },
             },
             prns_host::DiagnosticEvent::LinkInterfaceMismatch {

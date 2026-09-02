@@ -121,16 +121,13 @@ mod tests {
         let (header, _) = WirePacketHeader::parse(&announce).expect("the announce fixture parses");
         let destination = DestinationHash::from_address(header.address);
 
-        let outcome = state.ingest_packet_with(
+        let outcome = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(500),
                 source_interface: InterfaceId::new([0xA1; 8]),
                 bytes: &mut announce,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert!(
             matches!(

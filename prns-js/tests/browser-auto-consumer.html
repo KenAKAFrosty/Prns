@@ -12,7 +12,124 @@
         Tag,
         linkId,
         persistentBrowser,
+        prnsView,
       } from "/prns-js/dist/browser/index.js";
+      import {
+        BrowserCryptoExecutor,
+      } from "/prns-js/dist/browser/crypto_pool.js";
+
+      async function reportBrowserSmokeProgress(stage) {
+        await fetch("/browser-smoke-progress", {
+          method: "POST",
+          body: stage,
+        });
+      }
+
+      async function parallelCryptoOutcome() {
+        const executor = new BrowserCryptoExecutor(2, {
+          workers: 4,
+          moduleUrl: new URL("/prns-js/wasm/prns_wasm.js", location.href).href,
+        });
+        const publicKey = bytesFromHex(
+          "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        );
+        const message = new TextEncoder().encode("sign-this");
+        const signature = bytesFromHex(
+          "ee646fb3251af01efbe35f4b03905b3ec2b90ea4acd9a51a46cb795f76575b4a" +
+            "36e2893c356db8b2135417f6001a99ecd81de04dde2f2b3428fd4f8ea46e1107",
+        );
+        const peerPublicKey = bytesFromHex(
+          "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b14",
+        );
+        const expectedShared = bytesFromHex(
+          "1fdc192faa0212a9aae7bb4f41b580227fd5ad3e5d777faae230dfe973f3e805",
+        );
+        let primitiveOutcome = "Verified";
+        try {
+          const [valid, invalid, linked] = await Promise.all([
+            executor.verifyEd25519(publicKey, message, signature),
+            executor.verifyEd25519(
+              publicKey,
+              Uint8Array.of(...message, 0),
+              signature,
+            ),
+            executor.verifyLinkProof(
+              publicKey,
+              message,
+              signature,
+              new Uint8Array(32).fill(0x22),
+              peerPublicKey,
+            ),
+          ]);
+          const burst = await Promise.all(
+            Array.from(
+              { length: 64 },
+              () => executor.verifyEd25519(publicKey, message, signature),
+            ),
+          );
+          const resourceJob = {
+            linkId: new Uint8Array(16).fill(0x51),
+            plaintext: Uint8Array.from({ length: 1028 }, (_, index) => index),
+            signingKey: new Uint8Array(32).fill(0x52),
+            encryptionKey: new Uint8Array(32).fill(0x53),
+            sealIv: new Uint8Array(16).fill(0x54),
+          };
+          const salt = Uint8Array.of(5, 6, 7, 8);
+          const expectedPlaintext = resourceJob.plaintext.slice();
+          const receiverSigningKey = resourceJob.signingKey.slice();
+          const receiverEncryptionKey = resourceJob.encryptionKey.slice();
+          const sealedAndDigested = await executor.sealAndDigest(resourceJob, salt);
+          const openedAndDigested = sealedAndDigested.tag === "SealedAndDigested"
+            ? await executor.openAndDigest(
+                {
+                  linkId: resourceJob.linkId,
+                  signingKey: receiverSigningKey,
+                  encryptionKey: receiverEncryptionKey,
+                  sealed: sealedAndDigested.data.sealed,
+                },
+                salt,
+              )
+            : sealedAndDigested;
+          if (
+            valid.tag !== "Valid" ||
+            invalid.tag !== "Invalid" ||
+            linked.tag !== "Verified" ||
+            !equalBytes(linked.data.sharedSecret, expectedShared) ||
+            burst.some((outcome) => outcome.tag !== "Valid") ||
+            sealedAndDigested.tag !== "SealedAndDigested" ||
+            openedAndDigested.tag !== "OpenedAndDigested" ||
+            !equalBytes(openedAndDigested.data.plaintext, expectedPlaintext) ||
+            !equalBytes(openedAndDigested.data.hash, sealedAndDigested.data.hash) ||
+            !equalBytes(openedAndDigested.data.proof, sealedAndDigested.data.proof)
+          ) {
+            primitiveOutcome =
+              `Failed:${valid.tag}:${invalid.tag}:${linked.tag}:` +
+              `${sealedAndDigested.tag}:${openedAndDigested.tag}`;
+          }
+        } catch (error) {
+          primitiveOutcome = `Failed:${error instanceof Error ? error.message : error}`;
+        } finally {
+          executor.close();
+        }
+        if (primitiveOutcome !== "Verified") {
+          return primitiveOutcome;
+        }
+        try {
+          const created = await Prns.create({
+            crypto: Tag("ParallelWorkers"),
+            wasmModuleUrl: new URL("/prns-js/wasm/prns_wasm.js", location.href),
+          });
+          if (created.tag !== "Ready") {
+            return `Failed:Create:${created.tag}`;
+          }
+          const stopped = await created.data.stop();
+          return stopped.tag === "Stopped"
+            ? "Verified"
+            : `Failed:Stop:${stopped.tag}`;
+        } catch (error) {
+          return `Failed:${error instanceof Error ? error.message : error}`;
+        }
+      }
 
       async function compressionWorkerOutcome(workerUrl, moduleUrl) {
         const compressionWorker = new Worker(workerUrl, { type: "module" });
@@ -321,15 +438,16 @@
               inbound.push(new Uint8Array(bytes));
               return Tag("Accepted");
             },
-            takeOutboundFor: () => {
-              const frames = outbound;
-              outbound = [];
-              return Tag("Outbound", frames);
-            },
-            waitForOutboundActivity: () =>
-              new Promise((resolve) => {
+            nextOutboundFor: () => {
+              if (outbound.length > 0) {
+                const frames = outbound;
+                outbound = [];
+                return Promise.resolve(Tag("Outbound", frames));
+              }
+              return new Promise((resolve) => {
                 outboundWaiter = resolve;
-              }),
+              });
+            },
           };
           control.onWrite = (bytes) => {
             const hello = wasm.bluetoothDecodeControl(bytes);
@@ -341,13 +459,17 @@
           if (connected.tag !== "Connected") {
             return `Failed:Connect:${connected.tag}`;
           }
-          await waitForBluetoothSmoke(
+          await waitForBrowserSmoke(
             () => data.writes.length === expectedOutbound.length,
+            "Bluetooth outbound",
           );
           for (const fragment of wasm.bluetoothDataFragments(inboundPacket)) {
             data.notify(fragment);
           }
-          await waitForBluetoothSmoke(() => inbound.length === 1);
+          await waitForBrowserSmoke(
+            () => inbound.length === 1,
+            "Bluetooth inbound",
+          );
           const outboundMatches = expectedOutbound.every(
             (fragment, index) => equalBytes(fragment, data.writes[index]),
           );
@@ -359,6 +481,79 @@
         } catch (error) {
           return `Failed:${error instanceof Error ? error.message : error}`;
         } finally {
+          restoreBluetooth();
+        }
+      }
+
+      async function bluetoothWorkerOutcome() {
+        let restoreBluetooth = () => undefined;
+        let node;
+        try {
+          const wasm = await import("/prns-wasm/smoke/pkg/prns_wasm.js");
+          await wasm.default();
+          const control = new BluetoothSmokeCharacteristic();
+          const data = new BluetoothSmokeCharacteristic();
+          const service = new BluetoothSmokeService(wasm, control, data);
+          const device = new BluetoothSmokeDevice(service);
+          const previous = Object.getOwnPropertyDescriptor(
+            navigator,
+            "bluetooth",
+          );
+          Object.defineProperty(navigator, "bluetooth", {
+            configurable: true,
+            value: {
+              async requestDevice() {
+                return device;
+              },
+            },
+          });
+          restoreBluetooth = () => {
+            if (previous === undefined) {
+              delete navigator.bluetooth;
+            } else {
+              Object.defineProperty(navigator, "bluetooth", previous);
+            }
+          };
+          const peerIdentity = new Uint8Array(16).fill(31);
+          const welcome = new Uint8Array([
+            0x02,
+            ...peerIdentity,
+            0x03,
+            0x00,
+            0x00,
+            0x01,
+            0xf4,
+            0x80,
+          ]);
+          control.onWrite = (bytes) => {
+            if (wasm.bluetoothDecodeControl(bytes).type === "hello") {
+              queueMicrotask(() => control.notify(welcome));
+            }
+          };
+          const created = await Prns.create({});
+          if (created.tag !== "Ready") {
+            return `Failed:Create:${created.tag}`;
+          }
+          node = created.data;
+          const connected = await node.interfaces.bluetooth.connect();
+          if (connected.tag !== "Connected") {
+            return `Failed:Connect:${connected.tag}`;
+          }
+          const active = await node.hostSnapshot();
+          if (active.tag !== "Captured" || active.data.interfaces.length !== 1) {
+            return `Failed:Snapshot:${active.tag}`;
+          }
+          const stopped = await node.stop();
+          node = undefined;
+          return stopped.tag === "Stopped" &&
+            connected.data.status.tag === "Closed" &&
+            device.disconnects === 1
+            ? "Bridged"
+            : `Failed:${stopped.tag}:${connected.data.status.tag}:${device.disconnects}`;
+        } catch (error) {
+          return `Failed:${error instanceof Error ? error.message : error}`;
+        } finally {
+          await node?.stop();
           restoreBluetooth();
         }
       }
@@ -416,25 +611,70 @@
 
       class BluetoothSmokeDevice extends EventTarget {
         gatt;
+        disconnects = 0;
 
         constructor(service) {
           super();
           this.gatt = {
             connect: async () => this.gatt,
-            disconnect: () => undefined,
+            disconnect: () => {
+              this.disconnects += 1;
+            },
             getPrimaryService: async () => service,
           };
         }
       }
 
-      async function waitForBluetoothSmoke(ready) {
+      async function waitForBrowserSmoke(ready, subject) {
         const deadline = performance.now() + 2_000;
         while (!ready()) {
           if (performance.now() >= deadline) {
-            throw new Error("Bluetooth session smoke timed out");
+            throw new Error(`${subject} smoke timed out`);
           }
           await new Promise((resolve) => setTimeout(resolve, 5));
         }
+      }
+
+      async function workerWebSocketStatusOutcome(prns) {
+        const connected = await prns.interfaces.webSocket.connect(
+          `ws://${location.host}/worker-status-socket`,
+          { framing: "RawPacket" },
+        );
+        if (connected.tag !== "Connected") {
+          return `Failed:Connect:${connected.tag}`;
+        }
+        const statuses = [];
+        const release = connected.data.subscribeStatus((status) => {
+          statuses.push(status.tag);
+        });
+        await fetch("/close-worker-status-sockets", { method: "POST" });
+        await waitForBrowserSmoke(
+          () => connected.data.status.tag === "Closed",
+          "DedicatedWorker WebSocket status",
+        );
+        await Promise.resolve();
+        release();
+        const local = await prns.interfaces.webSocket.connect(
+          `ws://${location.host}/worker-status-socket`,
+          { framing: "RawPacket" },
+        );
+        if (local.tag !== "Connected") {
+          return `Failed:LocalConnect:${local.tag}`;
+        }
+        const localStatuses = [];
+        const releaseLocal = local.data.subscribeStatus((status) => {
+          localStatuses.push(status.tag);
+        });
+        const firstClose = local.data.close();
+        const secondClose = local.data.close();
+        const localClosed = await firstClose;
+        await Promise.resolve();
+        releaseLocal();
+        return statuses.length === 1 && statuses[0] === "Closed" &&
+            firstClose === secondClose && localClosed.tag === "Closed" &&
+            localStatuses.length === 1 && localStatuses[0] === "Closed"
+          ? "PushedOnce"
+          : `Failed:${statuses.join(",")}:${localStatuses.join(",")}`;
       }
 
       function equalBytes(left, right) {
@@ -444,6 +684,14 @@
           left.every((byte, index) => byte === right[index]);
       }
 
+      function bytesFromHex(value) {
+        return Uint8Array.from(
+          { length: value.length / 2 },
+          (_, index) => Number.parseInt(value.slice(index * 2, index * 2 + 2), 16),
+        );
+      }
+
+      await reportBrowserSmokeProgress("resource compression");
       const [packagedCompression, docsCompression] = await Promise.all([
         compressionWorkerOutcome(
           "/prns-js/dist/browser/resource_compression_worker.js",
@@ -458,14 +706,21 @@
         packagedCompression.compressed && docsCompression.compressed;
       const compressionDetail =
         `${packagedCompression.detail}:${docsCompression.detail}`;
+      await reportBrowserSmokeProgress("route persistence");
       const routePersistence = await routePersistenceOutcome();
+      await reportBrowserSmokeProgress("interface contracts");
       const webSocketFraming = await webSocketFramingOutcome();
       const bluetoothContract = await bluetoothContractOutcome();
       const bluetoothSession = await bluetoothSessionOutcome();
+      const bluetoothWorker = await bluetoothWorkerOutcome();
+      await reportBrowserSmokeProgress("parallel crypto");
+      const parallelCrypto = await parallelCryptoOutcome();
       document.body.dataset.routePersistence = routePersistence;
       document.body.dataset.webSocketFraming = webSocketFraming;
       document.body.dataset.bluetoothContract = bluetoothContract;
       document.body.dataset.bluetoothSession = bluetoothSession;
+      document.body.dataset.bluetoothWorker = bluetoothWorker;
+      document.body.dataset.parallelCrypto = parallelCrypto;
       document.body.dataset.compression =
         compression ? "Compressed" : "Failed";
       document.body.dataset.compressionDetail = compressionDetail;
@@ -473,11 +728,12 @@
       localStorage.removeItem(`${persistenceRoot}.identity.v1`);
       localStorage.removeItem(`${persistenceRoot}.ble-identity.v1`);
       localStorage.removeItem(`${persistenceRoot}.state.v1`);
+      await reportBrowserSmokeProgress("persistent runtime");
       const persistentOptions = persistentBrowser(persistenceRoot);
       const firstPersistent = await Prns.create(persistentOptions);
       let persistence = "Failed";
       if (firstPersistent.tag === "Ready") {
-        const firstDestination = firstPersistent.data.registerSingleDestination({
+        const firstDestination = await firstPersistent.data.registerSingleDestination({
           appName: "browser-smoke",
           aspects: ["persistence"],
           requestHandlers: [],
@@ -489,14 +745,14 @@
           const restoration = diagnostics.tag === "Claimed"
             ? await diagnostics.data[Symbol.asyncIterator]().next()
             : { done: true };
-          const secondDestination = restored.data.registerSingleDestination({
+          const secondDestination = await restored.data.registerSingleDestination({
             appName: "browser-smoke",
             aspects: ["persistence"],
             requestHandlers: [],
           });
-          const restoredSnapshot = restored.data.hostSnapshot();
+          const restoredSnapshot = await restored.data.hostSnapshot();
           const restoredStopped = await restored.data.stop();
-          const flushedSnapshot = restored.data.hostSnapshot();
+          const flushedSnapshot = await restored.data.hostSnapshot();
           const sameDestination =
             firstDestination.tag === "Registered" &&
             secondDestination.tag === "Registered" &&
@@ -521,6 +777,7 @@
         }
       }
       document.body.dataset.persistence = persistence;
+      await reportBrowserSmokeProgress("persistence failures");
       const corruptPersistence = await Prns.create({
         ...persistentOptions,
         persistenceStore: {
@@ -552,7 +809,7 @@
       let persistenceFailures = "Failed";
       if (saveFailure.tag === "Ready") {
         const stopped = await saveFailure.data.stop();
-        const snapshot = saveFailure.data.hostSnapshot();
+        const snapshot = await saveFailure.data.hostSnapshot();
         if (
           corruptPersistence.tag === "StoredPersistenceInvalid" &&
           stopped.tag === "OperationFailed" &&
@@ -565,11 +822,24 @@
         }
       }
       document.body.dataset.persistenceFailures = persistenceFailures;
+      await reportBrowserSmokeProgress("runtime commands");
       const outcome = await Prns.create({});
       document.body.dataset.outcome = outcome.tag;
       if (outcome.tag !== "Ready") {
         document.title = "FAIL";
       } else {
+        document.body.dataset.execution = outcome.data.execution;
+        const lifecycleProjection = outcome.data.projection(
+          prnsView("Lifecycle"),
+        );
+        const sameLifecycleProjection = outcome.data.projection(
+          prnsView("Lifecycle"),
+        );
+        const initialProjectionState = lifecycleProjection.latest().value;
+        let lifecycleNotifications = 0;
+        const releaseLifecycle = lifecycleProjection.subscribe(() => {
+          lifecycleNotifications += 1;
+        });
         const unknownLink = linkId(new Uint8Array(16));
         const closed = await outcome.data.closeLink(unknownLink);
         document.body.dataset.command = `${closed.tag}:${closed.data.tag}`;
@@ -584,7 +854,7 @@
           new Blob([new Uint8Array(1024).fill(9)]),
         );
         document.body.dataset.blob = `${blob.tag}:${blob.data.tag}`;
-        const snapshot = outcome.data.hostSnapshot();
+        const snapshot = await outcome.data.hostSnapshot();
         const snapshotConsistent =
           snapshot.tag === "Captured" &&
           snapshot.data.backend.backend === "Cooperative" &&
@@ -596,6 +866,62 @@
         document.body.dataset.snapshot = snapshotConsistent
           ? "Consistent"
           : "Inconsistent";
+        const controlCalls = Array.from(
+          { length: 33 },
+          () => outcome.data.snapshot(),
+        );
+        const admissionOutcome = await controlCalls[32];
+        await Promise.all(controlCalls.slice(0, 32));
+        const admission = admissionOutcome.tag === "RuntimeRejected"
+          ? `${admissionOutcome.tag}:${admissionOutcome.data.operation}`
+          : admissionOutcome.tag;
+        document.body.dataset.admission = admission;
+        const autoWifi = outcome.data.interfaces.autoWifi.start();
+        await waitForBrowserSmoke(
+          () => autoWifi.status.tag !== "Starting",
+          "DedicatedWorker Auto Wi-Fi startup",
+        );
+        const autoWifiSaturation = Array.from(
+          { length: 32 },
+          () => outcome.data.snapshot(),
+        );
+        const autoWifiCloseAdmission = await autoWifi.close();
+        await Promise.all(autoWifiSaturation);
+        const autoWifiAdmission =
+          autoWifiCloseAdmission.tag === "RuntimeRejected" &&
+          autoWifiCloseAdmission.data.operation === "worker-admission" &&
+          !autoWifi.closed
+            ? "Retained"
+            : `Failed:${autoWifiCloseAdmission.tag}:${autoWifi.closed}`;
+        document.body.dataset.autoWifiAdmission = autoWifiAdmission;
+        await reportBrowserSmokeProgress("worker status and shutdown");
+        const webSocketWorkerStatus = await workerWebSocketStatusOutcome(
+          outcome.data,
+        );
+        document.body.dataset.webSocketWorkerStatus = webSocketWorkerStatus;
+        const stopped = await outcome.data.stop();
+        const stoppedAgain = await outcome.data.stop();
+        const stoppedSnapshot = await outcome.data.hostSnapshot();
+        await Promise.resolve();
+        const finalProjectionState = lifecycleProjection.latest().value;
+        releaseLifecycle();
+        const projectionReactive =
+          lifecycleProjection === sameLifecycleProjection &&
+          initialProjectionState.tag === "Running" &&
+          finalProjectionState.tag === "Stopped" &&
+          lifecycleNotifications >= 1;
+        document.body.dataset.projection = projectionReactive
+          ? "Reactive"
+          : "Failed";
+        const stopIdempotent =
+          stopped.tag === "Stopped" &&
+          stoppedAgain.tag === "AlreadyStopped" &&
+          stoppedSnapshot.tag === "Captured" &&
+          !stoppedSnapshot.data.runtime.running &&
+          autoWifi.closed;
+        document.body.dataset.stop = stopIdempotent
+          ? "Idempotent"
+          : `${stopped.tag}:${stoppedAgain.tag}`;
         document.title =
           closed.tag === "Failed" &&
           closed.data.tag === "UnknownLink" &&
@@ -608,17 +934,26 @@
           persistenceFailures === "Typed" &&
           routePersistence === "Restored" &&
           webSocketFraming === "Resolved" &&
+          webSocketWorkerStatus === "PushedOnce" &&
           bluetoothContract === "Shared" &&
           bluetoothSession === "Bridged" &&
+          bluetoothWorker === "Bridged" &&
+          parallelCrypto === "Verified" &&
+          projectionReactive &&
+          admission === "RuntimeRejected:worker-admission" &&
+          autoWifiAdmission === "Retained" &&
+          stopIdempotent &&
           compression
             ? "PASS"
             : "FAIL";
       }
+      await reportBrowserSmokeProgress("final result");
       await fetch("/browser-smoke-result", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           title: document.title,
+          execution: document.body.dataset.execution,
           outcome: document.body.dataset.outcome,
           command: document.body.dataset.command,
           resource: document.body.dataset.resource,
@@ -628,8 +963,16 @@
           persistenceFailures: document.body.dataset.persistenceFailures,
           routePersistence: document.body.dataset.routePersistence,
           webSocketFraming: document.body.dataset.webSocketFraming,
+          webSocketWorkerStatus:
+            document.body.dataset.webSocketWorkerStatus,
           bluetoothContract: document.body.dataset.bluetoothContract,
           bluetoothSession: document.body.dataset.bluetoothSession,
+          bluetoothWorker: document.body.dataset.bluetoothWorker,
+          parallelCrypto: document.body.dataset.parallelCrypto,
+          projection: document.body.dataset.projection,
+          admission: document.body.dataset.admission,
+          autoWifiAdmission: document.body.dataset.autoWifiAdmission,
+          stop: document.body.dataset.stop,
           compression: document.body.dataset.compression,
           compressionDetail: document.body.dataset.compressionDetail,
         }),

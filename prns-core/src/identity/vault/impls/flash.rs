@@ -416,14 +416,31 @@ impl<E: core::fmt::Debug> core::fmt::Display for FlashVaultError<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::identity::vault::{load_or_generate, IdentityOrigin};
+    use crate::entropy::{EntropySource, RuntimeEntropy};
+    use crate::identity::vault::{load_or_generate_with_runtime_entropy, IdentityOrigin};
     use crate::remote_control::{
         RemoteControlNodeIdentityBootstrap, REMOTE_CONTROL_IDENTITY_VAULT_SLOTS,
     };
+    use core::convert::Infallible;
     use embedded_storage::nor_flash::{ErrorType, NorFlashError, NorFlashErrorKind, ReadNorFlash};
 
     const FAKE_WRITE: usize = 4;
     const FAKE_ERASE: usize = 4096;
+
+    struct TestEntropySource(u8);
+
+    impl EntropySource for TestEntropySource {
+        type Error = Infallible;
+
+        fn try_fill_entropy(&mut self, output: &mut [u8]) -> Result<(), Self::Error> {
+            output.fill(self.0);
+            Ok(())
+        }
+    }
+
+    fn runtime_entropy(seed: u8) -> RuntimeEntropy<TestEntropySource> {
+        RuntimeEntropy::try_new(TestEntropySource(seed)).unwrap()
+    }
 
     struct FakeFlash<const CAP: usize, const READ: usize = 1> {
         bytes: [u8; CAP],
@@ -643,37 +660,36 @@ mod tests {
 
     #[test]
     fn load_or_generate_mints_once_then_persists_across_a_reboot() {
-        let fill = |bytes: &mut [u8]| {
-            for (offset, byte) in bytes.iter_mut().enumerate() {
-                *byte = 0x40u8.wrapping_add(offset as u8);
-            }
-        };
+        let mut entropy = runtime_entropy(0x40);
         let (minted, flash) = {
             let mut vault = FlashVault::<_, 2>::new(FakeFlash::<8192>::new(), 0);
-            let (minted, origin) = load_or_generate(&mut vault, &label("primary"), fill).unwrap();
+            let (minted, origin) =
+                load_or_generate_with_runtime_entropy(&mut vault, &label("primary"), &mut entropy)
+                    .unwrap();
             assert_eq!(origin, IdentityOrigin::Generated);
             (minted, vault.release())
         };
         let mut rebooted = FlashVault::<_, 2>::new(flash, 0);
-        let (reloaded, origin) = load_or_generate(&mut rebooted, &label("primary"), fill).unwrap();
+        let (reloaded, origin) =
+            load_or_generate_with_runtime_entropy(&mut rebooted, &label("primary"), &mut entropy)
+                .unwrap();
         assert_eq!(origin, IdentityOrigin::Loaded);
         assert_eq!(*minted, *reloaded);
     }
 
     #[test]
     fn remote_control_identity_pair_fits_one_erase_page_and_survives_reboot() {
-        let mut fill = 0x31;
+        let mut entropy = runtime_entropy(0x31);
         let (flash, identities) = {
             let mut vault = FlashVault::<_, REMOTE_CONTROL_IDENTITY_VAULT_SLOTS>::new(
                 FakeFlash::<FAKE_ERASE>::new(),
                 0,
             );
             let bootstrap =
-                RemoteControlNodeIdentityBootstrap::load_or_generate(&mut vault, |bytes| {
-                    bytes.fill(fill);
-                    fill = fill.wrapping_add(0x11);
-                    Ok::<(), core::convert::Infallible>(())
-                })
+                RemoteControlNodeIdentityBootstrap::load_or_generate_with_runtime_entropy(
+                    &mut vault,
+                    &mut entropy,
+                )
                 .unwrap();
             assert_eq!(
                 (
@@ -686,15 +702,14 @@ mod tests {
         };
 
         let mut vault = FlashVault::<_, REMOTE_CONTROL_IDENTITY_VAULT_SLOTS>::new(flash, 0);
-        let mut entropy_calls = 0;
-        let bootstrap =
-            RemoteControlNodeIdentityBootstrap::load_or_generate(&mut vault, |_bytes| {
-                entropy_calls += 1;
-                Ok::<(), core::convert::Infallible>(())
-            })
-            .unwrap();
+        let mut load_entropy = runtime_entropy(0x92);
+        let mut untouched_entropy = runtime_entropy(0x92);
+        let bootstrap = RemoteControlNodeIdentityBootstrap::load_or_generate_with_runtime_entropy(
+            &mut vault,
+            &mut load_entropy,
+        )
+        .unwrap();
 
-        assert_eq!(entropy_calls, 0);
         assert_eq!(bootstrap.secrets().identities(), identities);
         assert_eq!(
             (
@@ -703,6 +718,11 @@ mod tests {
             ),
             (IdentityOrigin::Loaded, IdentityOrigin::Loaded),
         );
+        let mut after_load = [0_u8; 32];
+        let mut untouched = [0_u8; 32];
+        load_entropy.fill_random(&mut after_load);
+        untouched_entropy.fill_random(&mut untouched);
+        assert_eq!(after_load, untouched);
     }
 
     #[test]

@@ -102,7 +102,7 @@ fn a_recipe_node_hears_an_ifac_announce_a_supervisor_stands_a_peer_up_for() {
     let node: PrnsNode<_, _, _, _, _, _, 1, 1, 4, 4, 4, 4> = PrnsNode::new(
         recipe,
         manifold_wiring,
-        EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0)),
+        EmbassyHost::new(crate::manifold::driver::test_support::entropy_handle()),
     );
 
     let raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
@@ -180,7 +180,7 @@ fn run_with_proof_decider_reaches_a_prove_if_recipe_destination() {
     let node: PrnsNode<_, _, _, _, _, _, 1, 1, 4, 4, 4, 4> = PrnsNode::new(
         recipe,
         manifold_wiring,
-        EmbassyHost::new(|bytes: &mut [u8]| bytes.fill(0)),
+        EmbassyHost::new(crate::manifold::driver::test_support::entropy_handle()),
     );
 
     let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());

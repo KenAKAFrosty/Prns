@@ -20,6 +20,27 @@ class GenerateHostContractTests(unittest.TestCase):
     def test_canonical_schema_is_valid(self):
         GENERATOR.validate(canonical_schema())
 
+    def test_handwritten_command_failure_decoders_cover_the_contract(self):
+        missing = GENERATOR.missing_command_failure_decoder_cases(canonical_schema())
+        self.assertTrue(missing)
+        self.assertTrue(all(not names for names in missing.values()))
+
+    def test_decoder_parity_reports_a_new_contract_case(self):
+        schema = canonical_schema()
+        failure_kind = next(
+            item
+            for item in schema["enums"]
+            if item["name"] == "CommandFailureKind"
+        )
+        failure_kind["values"].append(
+            {"name": "FutureFailure", "value": 10_000}
+        )
+
+        missing = GENERATOR.missing_command_failure_decoder_cases(schema)
+        self.assertTrue(
+            all("FutureFailure" in names for names in missing.values())
+        )
+
     def test_unknown_schema_revision_is_rejected(self):
         schema = canonical_schema()
         schema["schemaVersion"] = 3

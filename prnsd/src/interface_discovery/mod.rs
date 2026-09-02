@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use personal_rns::config::{DaemonPlan, PlannedMedium};
 use personal_rns::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use personal_rns::interface_discovery::DISCOVERED_INTERFACES_FILE;
-use personal_rns::manifold::tokio::TokioHost;
+use personal_rns::manifold::tokio::TokioClock;
 use personal_rns::routing::announce::AnnounceObservation;
 use personal_rns::runtime::PrnsNodeHandle;
 use personal_rns::{TokioDiscoveryEvent, TokioDiscoveryIngress, TokioInterfaceDiscovery};
@@ -81,7 +81,7 @@ impl PreparedDiscovery {
     pub fn spawn(
         self,
         handle: PrnsNodeHandle,
-        clock: TokioHost,
+        clock: TokioClock,
         bootstrap: Option<BootstrapInterfaces>,
     ) -> RunningDiscovery {
         let (shutdown, shutdown_requested) = oneshot::channel();
@@ -99,7 +99,7 @@ impl PreparedDiscovery {
     async fn run(
         mut self,
         handle: PrnsNodeHandle,
-        clock: TokioHost,
+        clock: TokioClock,
         shutdown: oneshot::Receiver<()>,
         capacities: tokio::sync::watch::Sender<Option<bootstrap::AutoConnectCapacity>>,
     ) {

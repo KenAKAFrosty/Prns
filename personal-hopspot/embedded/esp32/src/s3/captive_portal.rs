@@ -45,7 +45,7 @@ pub(super) fn ap_ssid_suffix() -> u16 {
     let mut suffix = AP_SSID_SUFFIX.load(Ordering::Relaxed);
     if suffix == 0 {
         let mut r = [0u8; 2];
-        Rng::new().read(&mut r);
+        runtime_entropy().fill_random(&mut r);
         suffix = u64::from(u16::from_le_bytes(r)) | 1;
         AP_SSID_SUFFIX.store(suffix, Ordering::Relaxed);
     }
@@ -136,7 +136,7 @@ pub(super) fn build_ap_netif(
         crate::storage::allocate_psram(StackResources::<AP_STACK_SOCKET_CAPACITY>::new());
     let ap_seed = {
         let mut b = [0u8; 8];
-        Rng::new().read(&mut b);
+        runtime_entropy().fill_random(&mut b);
         u64::from_le_bytes(b)
     };
     let (ap_stack, ap_runner) = embassy_net::new(ap_iface, ap_net_config, ap_resources, ap_seed);

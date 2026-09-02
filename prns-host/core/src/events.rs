@@ -58,6 +58,9 @@ pub struct ResourceSegmentAvailable {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[deprecated(
+    note = "resource decompression is runtime-owned; retained only for host ABI compatibility"
+)]
 pub struct ResourceNeedsDecompression {
     pub link_id: LinkId,
     pub hash: ResourceHash,
@@ -73,6 +76,7 @@ pub struct ChannelMessage {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(deprecated)]
 pub enum ApplicationEvent {
     SingleDelivery(SingleDelivery),
     LinkDelivery(LinkDelivery),
@@ -81,12 +85,16 @@ pub enum ApplicationEvent {
     ResponseSegment(ResponseSegmentAvailable),
     ResourceAvailable(ResourceAvailable),
     ResourceSegment(ResourceSegmentAvailable),
+    #[deprecated(
+        note = "resource decompression is runtime-owned; retained only for host ABI compatibility"
+    )]
     ResourceNeedsDecompression(ResourceNeedsDecompression),
     ChannelMessage(ChannelMessage),
 }
 
 impl ApplicationEvent {
     #[must_use]
+    #[allow(deprecated)]
     pub fn retained_bytes(&self) -> usize {
         match self {
             Self::SingleDelivery(event) => event.plaintext.len(),

@@ -42,7 +42,7 @@ impl Esp32S3Board for HeltecE290Board {
     type Gnss = NoGnss;
 
     async fn bringup(
-        p: esp_hal::peripherals::Peripherals,
+        mut p: esp_hal::peripherals::Peripherals,
     ) -> S3BoardHardware<Self::Display, Self::Battery, Self::Gnss> {
         let display_power = Output::new(p.GPIO18, Level::Low, OutputConfig::default());
         let display_cs = Output::new(p.GPIO3, Level::High, OutputConfig::default());
@@ -62,6 +62,8 @@ impl Esp32S3Board for HeltecE290Board {
                 ..Default::default()
             }
         );
+        let runtime_bootstrap =
+            s3::bootstrap_s3_runtime(&mut p.RNG, &mut p.ADC1, Self::FLASH_LAYOUT).await;
 
         s3::boot_stage(s3::BootPhase::DisplayHardwareBegin);
         let display_busy = Input::new(p.GPIO6, InputConfig::default());
@@ -122,6 +124,7 @@ impl Esp32S3Board for HeltecE290Board {
         );
 
         S3BoardHardware {
+            runtime_bootstrap,
             face: BoardFace {
                 display,
                 battery: screen::NoBattery,

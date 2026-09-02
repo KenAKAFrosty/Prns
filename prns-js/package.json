@@ -54,10 +54,29 @@
       "types": "./dist/browser/index.d.ts",
       "import": "./dist/browser/index.js"
     },
-    "./casework": {
-      "types": "./dist/casework.d.ts",
-      "import": "./dist/casework.js",
-      "require": "./dist-cjs/casework.js"
+    "./react": {
+      "types": "./dist/browser/adapters/react.d.ts",
+      "import": "./dist/browser/adapters/react.js"
+    },
+    "./solid": {
+      "types": "./dist/browser/adapters/solid.d.ts",
+      "import": "./dist/browser/adapters/solid.js"
+    },
+    "./vue": {
+      "types": "./dist/browser/adapters/vue.d.ts",
+      "import": "./dist/browser/adapters/vue.js"
+    },
+    "./svelte": {
+      "types": "./dist/browser/adapters/svelte.d.ts",
+      "import": "./dist/browser/adapters/svelte.js"
+    },
+    "./qwik": {
+      "types": "./dist/browser/adapters/qwik.d.ts",
+      "import": "./dist/qwik/index.qwik.mjs"
+    },
+    "./web-component": {
+      "types": "./dist/browser/adapters/web_component.d.ts",
+      "import": "./dist/browser/adapters/web_component.js"
     },
     "./package.json": "./package.json"
   },
@@ -66,22 +85,35 @@
   },
   "scripts": {
     "clean": "node scripts/clean.mjs",
-    "build:code": "npm run clean && tsc -p tsconfig.json && tsc -p tsconfig.casework-cjs.json && node scripts/stage-code.mjs",
+    "build:code": "npm run clean && tsc -p tsconfig.json && tsc -p tsconfig.casework-cjs.json && tsc -p tsconfig.qwik.json && vite build --mode lib --config vite.qwik.config.ts && node scripts/stage-code.mjs",
     "build:native": "npm run build:code && node scripts/stage.mjs native",
     "build:browser": "npm run build:code && node scripts/stage.mjs browser",
     "build": "npm run build:code && node scripts/stage.mjs",
-    "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.casework-cjs.json --noEmit && tsc -p tsconfig.examples.json",
-    "test": "npm run build:code && node --test tests/async-lanes.test.mjs tests/browser-auto-wifi-reconnect.test.mjs tests/browser-bluetooth.test.mjs tests/browser-contract.test.mjs tests/browser-resource-send.test.mjs tests/casework.test.mjs",
-    "test:browser": "npm run build:browser && node tests/browser-smoke.mjs",
+    "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.casework-cjs.json --noEmit && tsc -p tsconfig.qwik.json --noEmit --emitDeclarationOnly false && tsc -p tsconfig.examples.json",
+    "test": "npm run build:code && node --test tests/async-lanes.test.mjs tests/browser-auto-wifi-reconnect.test.mjs tests/browser-bluetooth.test.mjs tests/browser-byte-transfer.test.mjs tests/browser-command-settlement-batch.test.mjs tests/browser-contract.test.mjs tests/browser-outbound-batch.test.mjs tests/browser-outbound-scheduling.test.mjs tests/browser-packed-snapshot.test.mjs tests/browser-projections.test.mjs tests/browser-protocol-crypto.test.mjs tests/browser-resource-crypto.test.mjs tests/browser-resource-send.test.mjs tests/browser-runtime-boundary.test.mjs tests/browser-websocket-bitrate.test.mjs tests/browser-websocket-decode-batch.test.mjs tests/casework.test.mjs tests/event-projection.test.mjs tests/framework-adapter-contract.test.mjs tests/worker-event-sender.test.mjs tests/worker-projection-sender.test.mjs tests/worker-projection-server.test.mjs tests/worker-wire.test.mjs",
+    "test:browser": "npm run build:browser && node tests/browser-smoke.mjs && node tests/framework-adapters.test.mjs",
     "test:browser:full": "npm --prefix ../prns-wasm run build:wasm && npm run test:browser",
     "test:native": "npm run build:native && node --test tests/native-consumer.test.mjs",
     "test:native:full": "npm --prefix ../prns-napi run build:debug && npm run test:native",
     "test:bun": "npm run build:native && bun tests/bun-consumer.ts",
+    "bench:browser-worker-wire": "npm run build:code && node benchmarks/browser-worker-wire/run.mjs",
+    "bench:browser-crypto-workers": "npm run build:code && node benchmarks/browser-crypto-workers/run.mjs",
+    "bench:browser-projections": "npm run build:code && node benchmarks/browser-projections/run.mjs",
+    "bench:browser-full-engine": "npm --prefix ../prns-wasm run build:package:wasm && npm run build && node benchmarks/browser-full-engine/run.mjs",
     "pack:check": "npm --prefix ../prns-wasm run build:package:wasm && npm run build && npm pack --dry-run"
   },
   "devDependencies": {
+    "@builder.io/qwik": "^1.20.0",
+    "@sveltejs/vite-plugin-svelte": "^6.2.4",
     "@types/node": "24.3.0",
-    "typescript": "5.9.2"
+    "@types/react": "^19.2.18",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "solid-js": "^1.9.15",
+    "svelte": "^5.57.0",
+    "typescript": "5.9.2",
+    "vite": "^7.3.6",
+    "vue": "^3.5.42"
   },
   "optionalDependencies": {
     "personal-rns-darwin-arm64": "0.3.7",
@@ -103,5 +135,32 @@
     "networking",
     "napi",
     "wasm"
-  ]
+  ],
+  "dependencies": {
+    "casework": "0.2.2"
+  },
+  "peerDependencies": {
+    "@builder.io/qwik": ">=1.20.0 <2",
+    "react": ">=18 <20",
+    "solid-js": ">=1 <2",
+    "svelte": ">=5.7 <6",
+    "vue": ">=3.3 <4"
+  },
+  "peerDependenciesMeta": {
+    "@builder.io/qwik": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "solid-js": {
+      "optional": true
+    },
+    "svelte": {
+      "optional": true
+    },
+    "vue": {
+      "optional": true
+    }
+  }
 }

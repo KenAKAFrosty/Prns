@@ -106,22 +106,26 @@ pub enum OpenProgress {
     Chewing {
         dispatched: core::ops::Range<usize>,
     },
+    ExternallyOpened {
+        plaintext_byte_len: usize,
+        verification: ExternalOpenVerification,
+    },
 }
 
-/// Who runs the chew — the runtime declares its capability once at construction.
-/// `Inline` chews on the engine thread under each part arrival (the only choice without a
-/// crypto pool); `PoolWhenContended` leaves spans parked for the runtime to walk through
-/// [`owed_open_span`](crate::engine::EngineState::owed_open_span) and a worker's verdict,
-/// but only while another open is live — a lone chew is one serial chain the pool cannot
-/// overlap with anything, so its round trips buy nothing and the engine keeps it inline.
-/// Either way the conclusion's catch-up keeps every row correct if no one chews.
+#[derive(Debug)]
+pub enum ExternalOpenVerification {
+    Rehash,
+    Verified(ResourceProof),
+}
+
+/// Whether core emits incremental typed open directives or leaves the complete sealed transfer
+/// for a runtime-owned external crypto implementation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ResourceOpenLane {
     #[default]
-    Inline,
-    PoolWhenContended,
+    EngineDirected,
+    ExternalWhole,
 }
-
 /// A concluded transfer's nonce-stripped stream, carrying the verify midstate when one streamed in.
 pub struct OpenedStream<'t> {
     pub stream: &'t [u8],

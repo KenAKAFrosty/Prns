@@ -1,6 +1,6 @@
 use heapless::Vec as HeaplessVec;
 
-use crate::engine::{EngineReaction, FanTarget, InstantMillis, Journaled};
+use crate::engine::{EngineReaction, FanTarget, InstantMillis, Journaled, NoOwedWork};
 use crate::interfaces::InterfaceIfac;
 use crate::interfaces::{InterfaceDescriptor, InterfaceId, InterfaceKind};
 use crate::manifold::announce_pacer::{
@@ -8,7 +8,7 @@ use crate::manifold::announce_pacer::{
 };
 use crate::manifold::grant::{FrameTarget, LaneWriteOutcome, ManifoldLaneWriter};
 use crate::manifold::interface_seam::EMBEDDED_MAX_WIRE_FRAME_LEN;
-use crate::manifold::kernel::{
+use crate::manifold::reaction_routing::{
     route_reaction as route_engine_reaction, AnnounceDirective, DirectiveEgress,
 };
 
@@ -150,13 +150,33 @@ pub(super) fn route_reaction(
     now: InstantMillis,
     app: &mut impl FnMut(Journaled<'_>),
 ) {
+    route_reaction_with_work(
+        reaction,
+        egress,
+        ifacs,
+        pacers,
+        now,
+        app,
+        &mut |work: NoOwedWork| match work {},
+    );
+}
+
+pub(super) fn route_reaction_with_work<Work>(
+    reaction: EngineReaction<'_, Work>,
+    egress: &mut impl ManifoldEgress,
+    ifacs: &[InterfaceIfac],
+    pacers: &mut [InterfacePacer],
+    now: InstantMillis,
+    app: &mut impl FnMut(Journaled<'_>),
+    fulfill: &mut impl FnMut(Work),
+) {
     let mut directive_egress = EmbassyDirectiveEgress {
         egress,
         ifacs,
         pacers,
         now,
     };
-    route_engine_reaction(reaction, &mut directive_egress, app);
+    route_engine_reaction(reaction, &mut directive_egress, app, fulfill);
 }
 
 struct EmbassyDirectiveEgress<'a, E> {

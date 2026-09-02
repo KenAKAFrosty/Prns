@@ -1,15 +1,16 @@
-use core::convert::Infallible;
 #[cfg(target_arch = "xtensa")]
 use core::{cell::UnsafeCell, ffi::c_void, mem::MaybeUninit};
 
-use esp_hal::rng::Rng;
 #[cfg(target_arch = "xtensa")]
 use personal_hopspot_core::HopspotS3FlashLayout;
 #[cfg(target_arch = "xtensa")]
 use personal_hopspot_core::UiNotice;
 use personal_hopspot_core::{
-    bootstrap_flash_ble_identity, bootstrap_flash_node_identity, FlashIdentityError,
-    HopspotNodeIdentity, IdentityBootstrap, IdentityPersistence,
+    bootstrap_flash_ble_identity_with_runtime_entropy,
+    bootstrap_flash_node_identity_with_runtime_entropy,
+};
+use personal_hopspot_core::{
+    FlashIdentityError, HopspotNodeIdentity, IdentityBootstrap, IdentityPersistence,
 };
 #[cfg(target_arch = "riscv32")]
 use personal_hopspot_core::{
@@ -23,8 +24,11 @@ use personal_rns::remote_control::{
 };
 #[cfg(target_arch = "xtensa")]
 use portable_atomic::{AtomicU8, Ordering};
+use prns_core::entropy::{EntropySource, RuntimeEntropy};
 
 use crate::flash::{EspRomFlash, EspRomFlashError};
+#[cfg(target_arch = "xtensa")]
+use crate::s3::S3RuntimeEntropy;
 
 const FLASH_SECTOR_LEN: u32 = 0x1000;
 const BLE_IDENTITY_FLASH_OFFSET: u32 = 0xC000;
@@ -39,7 +43,7 @@ const _: () = assert!(NODE_IDENTITY_FLASH_OFFSET + FLASH_SECTOR_LEN == IDENTITY_
 
 pub(crate) type Error = FlashIdentityError<EspRomFlashError>;
 pub(crate) type RemoteControlIdentityBootstrapError =
-    RemoteControlNodeIdentityBootstrapError<FlashVaultError<EspRomFlashError>, Infallible>;
+    RemoteControlNodeIdentityBootstrapError<FlashVaultError<EspRomFlashError>>;
 
 pub(crate) struct RemoteControlIdentityFlash {
     flash_capacity: usize,
@@ -54,17 +58,17 @@ impl RemoteControlIdentityFlash {
         }
     }
 
-    pub(crate) fn load_or_generate(
+    pub(crate) fn load_or_generate_with_runtime_entropy<S: EntropySource>(
         self,
+        entropy: &mut RuntimeEntropy<S>,
     ) -> Result<RemoteControlNodeIdentityBootstrap, RemoteControlIdentityBootstrapError> {
         let mut vault = FlashVault::<_, REMOTE_CONTROL_IDENTITY_VAULT_SLOTS>::new(
             EspRomFlash::new(self.flash_capacity),
             self.offset,
         );
-        RemoteControlNodeIdentityBootstrap::load_or_generate(&mut vault, |bytes| {
-            hardware_entropy(bytes);
-            Ok(())
-        })
+        RemoteControlNodeIdentityBootstrap::load_or_generate_with_runtime_entropy(
+            &mut vault, entropy,
+        )
     }
 }
 
@@ -95,18 +99,23 @@ const IDENTITY_TASK_READY: u8 = 2;
 const IDENTITY_TASK_STACK_BYTES: usize = 40 * 1024;
 
 #[cfg(target_arch = "xtensa")]
-type IdentityBootstraps = (
-    IdentityBootstrap<HopspotNodeIdentity, Error>,
-    Result<RemoteControlNodeIdentityBootstrap, RemoteControlIdentityBootstrapError>,
-    IdentityBootstrap<BleIdentity, Error>,
-    personal_hopspot_core::HopspotDestinationHashes,
-);
+pub(crate) struct S3IdentityBootstraps {
+    pub(crate) node: IdentityBootstrap<HopspotNodeIdentity, Error>,
+    pub(crate) remote_control:
+        Result<RemoteControlNodeIdentityBootstrap, RemoteControlIdentityBootstrapError>,
+    pub(crate) ble: IdentityBootstrap<BleIdentity, Error>,
+    pub(crate) destination_hashes: personal_hopspot_core::HopspotDestinationHashes,
+}
+
+#[cfg(target_arch = "xtensa")]
+type IdentityTaskOutput = (S3IdentityBootstraps, S3RuntimeEntropy);
 
 #[cfg(target_arch = "xtensa")]
 struct IdentityTaskContext {
     state: AtomicU8,
     remote_control_identity_flash: UnsafeCell<MaybeUninit<RemoteControlIdentityFlash>>,
-    output: UnsafeCell<MaybeUninit<IdentityBootstraps>>,
+    entropy: UnsafeCell<MaybeUninit<S3RuntimeEntropy>>,
+    output: UnsafeCell<MaybeUninit<IdentityTaskOutput>>,
 }
 
 #[cfg(target_arch = "xtensa")]
@@ -115,6 +124,7 @@ impl IdentityTaskContext {
         Self {
             state: AtomicU8::new(IDENTITY_TASK_IDLE),
             remote_control_identity_flash: UnsafeCell::new(MaybeUninit::uninit()),
+            entropy: UnsafeCell::new(MaybeUninit::uninit()),
             output: UnsafeCell::new(MaybeUninit::uninit()),
         }
     }
@@ -123,7 +133,11 @@ impl IdentityTaskContext {
         clippy::undocumented_unsafe_blocks,
         reason = "the one-shot transition grants the caller exclusive initialization access before the worker starts"
     )]
-    fn start(&self, remote_control_identity_flash: RemoteControlIdentityFlash) {
+    fn start(
+        &self,
+        remote_control_identity_flash: RemoteControlIdentityFlash,
+        entropy: S3RuntimeEntropy,
+    ) {
         self.state
             .compare_exchange(
                 IDENTITY_TASK_IDLE,
@@ -134,6 +148,7 @@ impl IdentityTaskContext {
             .expect("S3 identities may only be bootstrapped once");
         unsafe {
             (*self.remote_control_identity_flash.get()).write(remote_control_identity_flash);
+            (*self.entropy.get()).write(entropy);
         }
     }
 
@@ -143,6 +158,14 @@ impl IdentityTaskContext {
     )]
     fn take_remote_control_identity_flash(&self) -> RemoteControlIdentityFlash {
         unsafe { (*self.remote_control_identity_flash.get()).assume_init_read() }
+    }
+
+    #[expect(
+        clippy::undocumented_unsafe_blocks,
+        reason = "the worker runs only after start initializes the one-shot input"
+    )]
+    fn take_entropy(&self) -> S3RuntimeEntropy {
+        unsafe { (*self.entropy.get()).assume_init_read() }
     }
 }
 
@@ -159,16 +182,21 @@ static IDENTITY_TASK: IdentityTaskContext = IdentityTaskContext::new();
 #[cfg(target_arch = "xtensa")]
 extern "C" fn identity_task(_param: *mut c_void) {
     let remote_control_identity_flash = IDENTITY_TASK.take_remote_control_identity_flash();
-    let node = bootstrap_node_identity();
-    let remote_control = remote_control_identity_flash.load_or_generate();
+    let mut entropy = IDENTITY_TASK.take_entropy();
+    let node = bootstrap_node_identity(&mut entropy);
+    let remote_control =
+        remote_control_identity_flash.load_or_generate_with_runtime_entropy(&mut entropy);
     let destination_hashes =
         personal_hopspot_core::hopspot_destination_hashes(node.identity().secret())
             .expect("the built-in hopspot destination names are valid");
     let output = (
-        node,
-        remote_control,
-        bootstrap_ble_identity(),
-        destination_hashes,
+        S3IdentityBootstraps {
+            node,
+            remote_control,
+            ble: bootstrap_ble_identity(&mut entropy),
+            destination_hashes,
+        },
+        entropy,
     );
 
     // SAFETY: IDLE -> RUNNING is performed exactly once before this task is created, so no other
@@ -188,8 +216,9 @@ extern "C" fn identity_task(_param: *mut c_void) {
 #[cfg(target_arch = "xtensa")]
 pub(crate) async fn bootstrap_s3_identities(
     remote_control_identity_flash: RemoteControlIdentityFlash,
-) -> IdentityBootstraps {
-    IDENTITY_TASK.start(remote_control_identity_flash);
+    entropy: S3RuntimeEntropy,
+) -> IdentityTaskOutput {
+    IDENTITY_TASK.start(remote_control_identity_flash, entropy);
 
     // SAFETY: `IDENTITY_TASK` has static storage and is Send. The worker only uses the global
     // directly, but passing its address documents and satisfies the RTOS task parameter lifetime.
@@ -240,22 +269,22 @@ pub fn startup_notice(
     }
 }
 
-pub fn bootstrap_node_identity() -> IdentityBootstrap<HopspotNodeIdentity, Error> {
+pub(crate) fn bootstrap_node_identity<S: EntropySource>(
+    entropy: &mut RuntimeEntropy<S>,
+) -> IdentityBootstrap<HopspotNodeIdentity, Error> {
     let mut vault = FlashVault::<_, VAULT_SLOTS>::new(
         EspRomFlash::new(IDENTITY_FLASH_END),
         NODE_IDENTITY_FLASH_OFFSET,
     );
-    bootstrap_flash_node_identity(&mut vault, &mut hardware_entropy)
+    bootstrap_flash_node_identity_with_runtime_entropy(&mut vault, entropy)
 }
 
-pub fn bootstrap_ble_identity() -> IdentityBootstrap<BleIdentity, Error> {
+pub(crate) fn bootstrap_ble_identity<S: EntropySource>(
+    entropy: &mut RuntimeEntropy<S>,
+) -> IdentityBootstrap<BleIdentity, Error> {
     let mut vault = FlashVault::<_, VAULT_SLOTS>::new(
         EspRomFlash::new(IDENTITY_FLASH_END),
         BLE_IDENTITY_FLASH_OFFSET,
     );
-    bootstrap_flash_ble_identity(&mut vault, &mut hardware_entropy)
-}
-
-fn hardware_entropy(bytes: &mut [u8]) {
-    Rng::new().read(bytes);
+    bootstrap_flash_ble_identity_with_runtime_entropy(&mut vault, entropy)
 }

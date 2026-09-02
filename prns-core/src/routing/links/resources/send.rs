@@ -1,6 +1,9 @@
 //! RNS 1.4.2 `Resource(data, link)` plus `Resource.advertise`.
 
-use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis, Journaled};
+use crate::crypto::Sha256PrefixState;
+use crate::engine::{
+    CommandId, Directive, EngineReaction, EngineState, InstantMillis, Journaled, OwedWork,
+};
 use crate::engine::{RespondFailure, SendResourceFailure, SendResourceRejection, Settlement};
 use crate::interfaces::InterfaceId;
 use crate::rncp::write_file_metadata;
@@ -20,8 +23,10 @@ use crate::routing::links::resources::advertisement::{
 };
 use crate::routing::links::resources::assembly::StaticResponseContinuation;
 use crate::routing::links::resources::build_outgoing::{
-    build_outgoing_resource_enveloped, outgoing_resource_buffer_shape, seal_staged_resource,
-    winning_candidate, BuildOutgoingResourceError, SealedStagedResource, STAGED_STREAM_OFFSET,
+    build_outgoing_resource, build_outgoing_resource_enveloped, finish_staged_resource,
+    outgoing_resource_buffer_shape, seal_staged_resource, winning_candidate,
+    write_hashmap_without_collision, BuildOutgoingResourceError, BuildRegions, BuiltResource,
+    HashmapWriteOutcome, SealedStagedResource, SALT_REROLL_CAP, STAGED_STREAM_OFFSET,
 };
 use crate::routing::links::resources::control::{
     parse_cancel_plaintext, parse_part_request_plaintext, parse_proof_plaintext,
@@ -29,13 +34,15 @@ use crate::routing::links::resources::control::{
 };
 use crate::routing::links::resources::serve_outgoing::{plan_hashmap_update, serve_part_indices};
 use crate::routing::links::resources::table::{
-    OutgoingResourceStatus, PartSendOutcome, TrackLane, TrackOutgoingResourceError, TrackedCommand,
+    OutgoingResourceStatus, PartSendOutcome, ResourceBuildLanding, ResourceBuildReservation,
+    TrackLane, TrackOutgoingResourceError, TrackedCommand,
 };
 use crate::routing::links::resources::{
-    resource_sdu, ResourceBody, ResourceCorrelation, ResourceHash, ResourceMetadata,
-    ResourcePartRequest, ResourceSegment, ResourceSend, HASHMAP_MAX_LEN, MAP_HASH_LEN,
-    MAX_ADVERTISEMENT_RETRIES, PART_REQUEST_MAX_RETRIES, PER_RETRY_DELAY_MS, PROCESSING_GRACE_MS,
-    PROOF_TIMEOUT_FACTOR, RESOURCE_HASH_LEN, RESOURCE_NONCE_LEN, SENDER_GRACE_MS,
+    resource_sdu, ResourceBody, ResourceBufferShape, ResourceCorrelation, ResourceHash,
+    ResourceMetadata, ResourcePartRequest, ResourceSegment, ResourceSend, HASHMAP_MAX_LEN,
+    MAP_HASH_LEN, MAX_ADVERTISEMENT_RETRIES, METADATA_PREFIX_LEN, PART_REQUEST_MAX_RETRIES,
+    PER_RETRY_DELAY_MS, PROCESSING_GRACE_MS, PROOF_TIMEOUT_FACTOR, RESOURCE_HASH_LEN,
+    RESOURCE_NONCE_LEN, SENDER_GRACE_MS,
 };
 use crate::routing::links::table::{ActiveLinkLookup, LinkPhase};
 use crate::routing::links::LinkId;
@@ -50,6 +57,7 @@ const STATIC_FILE_METADATA_BYTES: usize = 6 + 2 + u8::MAX as usize;
 
 /// A pool worker's finished seal, exactly as it returns: the identity that finds the row, the bytes that land on it, and the outcome that gates them.
 pub struct OffloadedStagedSeal<'a> {
+    pub command_id: CommandId,
     pub link_id: LinkId,
     pub stream_nonce: [u8; RESOURCE_NONCE_LEN],
     pub nonce_prefixed_bytes: usize,
@@ -60,19 +68,151 @@ pub struct OffloadedStagedSeal<'a> {
 
 /// What a crypto-pool seal job copies before the row parks as `StagedSealing`.
 pub struct StagedSealJobView<'a> {
+    pub command_id: CommandId,
     pub key: &'a crate::routing::links::LinkKey,
     pub sdu: usize,
+    pub total_segments: u64,
     pub nonce_prefixed_bytes: usize,
     /// The worker's whole input: the reserved IV span, the stream nonce, and the parked raw stream.
     pub plaintext: &'a [u8],
 }
 
+/// The engine-owned plan a runtime moves into an asynchronous resource-build job.
+///
+/// Large payload storage is deliberately absent: [`ResourceBuildOwed`] lends that storage only
+/// while the engine reaction is being routed, and the runtime moves its own backing grant into the
+/// job after the engine call releases the borrow.
+pub struct ResourceBuildPlan {
+    reservation: ResourceBuildReservation,
+    key: crate::routing::links::LinkKey,
+    sdu: usize,
+    shape: ResourceBufferShape,
+}
+
+impl ResourceBuildPlan {
+    pub fn reservation(&self) -> ResourceBuildReservation {
+        self.reservation
+    }
+
+    pub fn shape(&self) -> ResourceBufferShape {
+        self.shape
+    }
+
+    /// Execute only the pure resource transform frozen by engine preparation. The host supplies
+    /// owned payload storage, entropy, and output regions, but cannot replace the chosen key, SDU,
+    /// reservation identity, or protocol algorithm.
+    pub fn execute(
+        &self,
+        body: &ResourceBody<'_>,
+        seal_iv: &[u8; 16],
+        fresh_nonce: impl FnMut() -> [u8; RESOURCE_NONCE_LEN],
+        regions: BuildRegions<'_>,
+    ) -> Result<BuiltResource, BuildOutgoingResourceError> {
+        build_outgoing_resource(body, &self.key, seal_iv, fresh_nonce, self.sdu, regions)
+    }
+}
+
+/// A core directive requesting the pure whole-resource transform.
+///
+/// The payload is a borrowed view of storage still owned by the manifold. An inline runtime can
+/// fulfill it directly; a threaded runtime consumes [`Self::into_plan`] and moves the manifold's
+/// backing payload grant into its own `ResourceBuildJob`.
+pub struct ResourceBuildOwed<'a> {
+    plan: ResourceBuildPlan,
+    body: ResourceBody<'a>,
+}
+
+impl ResourceBuildOwed<'_> {
+    #[must_use]
+    pub fn reservation(&self) -> ResourceBuildReservation {
+        self.plan.reservation()
+    }
+
+    #[must_use]
+    pub fn body(&self) -> ResourceBody<'_> {
+        self.body
+    }
+
+    #[must_use]
+    pub fn shape(&self) -> ResourceBufferShape {
+        self.plan.shape()
+    }
+
+    #[must_use]
+    pub fn into_plan(self) -> ResourceBuildPlan {
+        self.plan
+    }
+
+    pub fn execute(
+        &self,
+        seal_iv: &[u8; 16],
+        fresh_nonce: impl FnMut() -> [u8; RESOURCE_NONCE_LEN],
+        regions: BuildRegions<'_>,
+    ) -> Result<BuiltResource, BuildOutgoingResourceError> {
+        self.plan.execute(&self.body, seal_iv, fresh_nonce, regions)
+    }
+}
+
+/// A worker's finished whole-resource build. The output buffers are borrowed only for the landing
+/// call and are ignored if the reservation disappeared while crypto was running.
+pub struct ResourceBuildCompleted<'a> {
+    pub reservation: ResourceBuildReservation,
+    pub transfer: &'a [u8],
+    pub names: &'a [u8],
+    pub request_data: &'a [u8],
+    pub outcome: Result<
+        crate::routing::links::resources::build_outgoing::BuiltResource,
+        BuildOutgoingResourceError,
+    >,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExternalStagedDigestOutcome {
+    Applied,
+    Collision,
+    Stale,
+    Invalid,
+}
+
+impl StagedSealJobView<'_> {
+    pub fn signing_key_material(&self) -> &[u8; 32] {
+        self.key.token_material_halves().0
+    }
+
+    pub fn encryption_key_material(&self) -> &[u8; 32] {
+        self.key.token_material_halves().1
+    }
+}
 /// How a landed segment is addressed for its post-landing patch: a built row by its hash, but a raw row only by index because its hash column is still the placeholder.
 enum RowLanding {
     Built(ResourceHash),
     Raw(usize),
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ValidatedResourceSend {
+    uncompressed_data_bytes: u64,
+    sdu: usize,
+    lane: TrackLane,
+}
+
+fn tracked_resource_failure(error: TrackOutgoingResourceError) -> SendResourceFailure {
+    let rejection = match error {
+        TrackOutgoingResourceError::TableFull => SendResourceRejection::TableFull,
+        TrackOutgoingResourceError::LinkBusy => SendResourceRejection::LinkBusy,
+        TrackOutgoingResourceError::Build(build) => SendResourceRejection::Build(build),
+    };
+    SendResourceFailure::Rejected(rejection)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ResourceSealLane {
+    Inline,
+    External,
+}
+// `Resolved` can carry an owned crypto continuation. Keep that state inline so resource proof
+// classification remains available to no-alloc runtimes.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum ResourceProofClassification {
     Resolved(IngestPacketOutcome<'static>),
     NotALocalLink,
@@ -92,6 +232,27 @@ pub(crate) fn resource_settlement(
     }
 }
 
+fn settle_resource_failure<Work>(
+    sink: &mut impl FnMut(EngineReaction<'_, Work>),
+    id: CommandId,
+    correlation: ResourceCorrelation,
+    failure: SendResourceFailure,
+) {
+    sink(EngineReaction::Journaled(Journaled::CommandSettled {
+        id,
+        settlement: resource_settlement(correlation, Err(failure)),
+    }));
+}
+
+fn reject_tracked_resource<Work>(
+    sink: &mut impl FnMut(EngineReaction<'_, Work>),
+    id: CommandId,
+    correlation: ResourceCorrelation,
+    error: TrackOutgoingResourceError,
+) {
+    settle_resource_failure(sink, id, correlation, tracked_resource_failure(error));
+}
+
 fn static_response_stream_capacity(transfer_capacity: usize) -> usize {
     let mut stream_bytes = STATIC_RESPONSE_SEGMENT_BYTES
         .min(crate::routing::links::resources::MAX_EFFICIENT_SIZE)
@@ -109,7 +270,7 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         send: &ResourceSend<'_>,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> crate::engine::WakeSchedules
     where
@@ -119,9 +280,280 @@ impl<S: StorageLayout> EngineState<S> {
             send,
             ResourceSegment::whole(send.body.data.len() as u64),
             now,
-            fill_entropy,
+            fill_random,
             sink,
         )
+    }
+
+    /// Validate and reserve a single-segment resource without performing its bulk crypto. Pooled
+    /// hosts use this as the first half of an owning continuation; inline callers retain
+    /// [`ingest_send_resource_segment_into`](Self::ingest_send_resource_segment_into).
+    pub fn request_resource_build<'a>(
+        &mut self,
+        send: &ResourceSend<'a>,
+        segment: ResourceSegment,
+        sink: &mut impl FnMut(EngineReaction<'a, OwedWork<'a>>),
+    ) {
+        let &ResourceSend { id, link_id, .. } = send;
+        let correlation = send.correlation;
+        let settle = |sink: &mut dyn FnMut(EngineReaction<'a, OwedWork<'a>>), failure| {
+            sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                id,
+                settlement: resource_settlement(correlation, Err(failure)),
+            }));
+        };
+        if segment.index != 1 || segment.total_segments != 1 {
+            settle(sink, SendResourceFailure::Sequencing);
+            return;
+        }
+        let validated = match self.validate_outgoing_resource_send(send, segment) {
+            Ok(validated) => validated,
+            Err(failure) => {
+                settle(sink, failure);
+                return;
+            }
+        };
+        debug_assert_eq!(validated.lane, TrackLane::Live);
+        let key = match self.links.active_view(&link_id) {
+            ActiveLinkLookup::Active(link) => link.key.cloned(),
+            ActiveLinkLookup::Inactive | ActiveLinkLookup::Absent => {
+                settle(sink, SendResourceFailure::WriteFailed);
+                return;
+            }
+        };
+        let shape = match outgoing_resource_buffer_shape(0, &send.body, validated.sdu) {
+            Ok(shape) => shape,
+            Err(error) => {
+                settle(
+                    sink,
+                    SendResourceFailure::Rejected(SendResourceRejection::Build(error)),
+                );
+                return;
+            }
+        };
+        let ticket = match self.outgoing_resources.reserve_build(
+            TrackedCommand {
+                link_id,
+                sdu: validated.sdu,
+                command_id: id,
+                correlation,
+                segment,
+            },
+            shape,
+            validated.uncompressed_data_bytes,
+        ) {
+            Ok(ticket) => ticket,
+            Err(error) => {
+                settle(sink, tracked_resource_failure(error));
+                return;
+            }
+        };
+        let owed = ResourceBuildOwed {
+            plan: ResourceBuildPlan {
+                reservation: ticket,
+                key,
+                sdu: validated.sdu,
+                shape,
+            },
+            body: send.body,
+        };
+        sink(EngineReaction::Directive(Directive::Fulfill(
+            OwedWork::ResourceBuild(owed),
+        )));
+    }
+
+    /// Validate every engine-owned policy and protocol precondition shared by inline and owning
+    /// resource builds. Runtimes can choose where the pure build runs, but cannot bypass this gate.
+    fn validate_outgoing_resource_send(
+        &self,
+        send: &ResourceSend<'_>,
+        segment: ResourceSegment,
+    ) -> Result<ValidatedResourceSend, SendResourceFailure> {
+        let ResourceSegment {
+            index,
+            total_segments,
+            total_data_bytes,
+        } = segment;
+        if index == 0 || total_segments == 0 || index > total_segments {
+            return Err(SendResourceFailure::Sequencing);
+        }
+        let uncompressed_data_bytes = u64::try_from(send.body.metadata.block_len())
+            .ok()
+            .and_then(|metadata_len| total_data_bytes.checked_add(metadata_len))
+            .ok_or(SendResourceFailure::Rejected(SendResourceRejection::Build(
+                BuildOutgoingResourceError::DataTooLarge,
+            )))?;
+        let metadata_placement_valid = match send.body.metadata {
+            ResourceMetadata::None => true,
+            ResourceMetadata::Packed(_) => index == 1,
+            ResourceMetadata::SentInFirstSegment { .. } => index > 1,
+        };
+        if !metadata_placement_valid {
+            return Err(SendResourceFailure::Rejected(
+                SendResourceRejection::MetadataMisplaced,
+            ));
+        }
+        let mtu = match self.links.active_view(&send.link_id) {
+            ActiveLinkLookup::Active(link) => link.mtu,
+            ActiveLinkLookup::Inactive => {
+                return Err(SendResourceFailure::Rejected(
+                    SendResourceRejection::LinkNotActive,
+                ))
+            }
+            ActiveLinkLookup::Absent => {
+                return Err(SendResourceFailure::Rejected(
+                    SendResourceRejection::NoSuchLink,
+                ))
+            }
+        };
+        let lane = self
+            .outgoing_resources
+            .lane_for(&send.link_id, &segment)
+            .map_err(tracked_resource_failure)?;
+        if index > 1
+            && lane == TrackLane::Live
+            && self
+                .outgoing_assemblies
+                .original_hash(&send.link_id)
+                .is_none()
+        {
+            return Err(SendResourceFailure::PredecessorFailed);
+        }
+        Ok(ValidatedResourceSend {
+            uncompressed_data_bytes,
+            sdu: resource_sdu(mtu),
+            lane,
+        })
+    }
+
+    /// Land and advertise a completed owning resource build. A stale completion is a no-op; a
+    /// live failure settles exactly the command whose reservation the worker held.
+    pub fn resume_resource_build<F>(
+        &mut self,
+        completed: ResourceBuildCompleted<'_>,
+        now: InstantMillis,
+        fill_random: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> crate::engine::WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+    {
+        let ResourceBuildCompleted {
+            reservation,
+            transfer,
+            names,
+            request_data,
+            outcome,
+        } = completed;
+        let landing =
+            self.outgoing_resources
+                .land_built_resource(reservation, transfer, names, outcome);
+        self.resume_landed_resource_build(
+            reservation,
+            request_data,
+            landing,
+            now,
+            fill_random,
+            sink,
+        )
+    }
+
+    fn resume_landed_resource_build<F>(
+        &mut self,
+        reservation: ResourceBuildReservation,
+        request_data: &[u8],
+        landing: ResourceBuildLanding,
+        now: InstantMillis,
+        fill_random: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) -> crate::engine::WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+    {
+        let hash = match landing {
+            ResourceBuildLanding::Stale => {
+                return crate::engine::WakeSchedules::UNCHANGED;
+            }
+            ResourceBuildLanding::Failed(error) => {
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id: reservation.command_id,
+                    settlement: resource_settlement(
+                        reservation.correlation,
+                        Err(SendResourceFailure::Rejected(SendResourceRejection::Build(
+                            error,
+                        ))),
+                    ),
+                }));
+                return crate::engine::WakeSchedules::UNCHANGED;
+            }
+            ResourceBuildLanding::Built(hash) => hash,
+        };
+        let Some(index) = self.outgoing_resources.lookup(&reservation.link_id, &hash) else {
+            return crate::engine::WakeSchedules::UNCHANGED;
+        };
+        let state = *self.outgoing_resources.state(index);
+        let ActiveLinkLookup::Active(link) = self.links.active_view(&reservation.link_id) else {
+            self.outgoing_resources.remove(&reservation.link_id, &hash);
+            sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                id: reservation.command_id,
+                settlement: resource_settlement(
+                    reservation.correlation,
+                    Err(SendResourceFailure::WriteFailed),
+                ),
+            }));
+            return crate::engine::WakeSchedules::UNCHANGED;
+        };
+        let key = link.key;
+        let mtu = link.mtu;
+        let fire_on = link.attached_interface;
+        let rtt_millis = link.rtt.millis();
+        let mut adv_iv = [0u8; 16];
+        fill_random(&mut adv_iv);
+        let mut wake = crate::engine::WakeSchedules::UNCHANGED;
+        match emit_resource_advertisement(
+            &self.outgoing_resources,
+            &reservation.link_id,
+            &hash,
+            &AdvertisementLane { key, mtu, fire_on },
+            &adv_iv,
+            sink,
+        ) {
+            AdvertisementWriteOutcome::Wrote => {
+                self.links.note_outbound(&reservation.link_id, now);
+                wake.link_deadlines = self.link_deadlines_wake();
+                self.outgoing_resources.state_mut(index).retries_left = MAX_ADVERTISEMENT_RETRIES;
+                self.outgoing_resources
+                    .set_timeout_at(index, Some(advertised_deadline(now, rtt_millis)));
+                if let ResourceCorrelation::Request {
+                    response_timeout,
+                    maximum_response_bytes,
+                    ..
+                } = state.correlation
+                {
+                    self.book_request_resource_receipt(
+                        state.command_id,
+                        &reservation.link_id,
+                        request_data,
+                        response_timeout,
+                        maximum_response_bytes,
+                        now,
+                    );
+                    wake.receipt_timeouts = self.receipt_timeouts_wake();
+                }
+            }
+            AdvertisementWriteOutcome::DidNotWrite => {
+                self.outgoing_resources.remove(&reservation.link_id, &hash);
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id: reservation.command_id,
+                    settlement: resource_settlement(
+                        reservation.correlation,
+                        Err(SendResourceFailure::WriteFailed),
+                    ),
+                }));
+            }
+        }
+        wake.resource_deadlines = self.resource_deadlines_wake();
+        wake
     }
 
     pub fn ingest_send_static_response_into<F>(
@@ -129,7 +561,7 @@ impl<S: StorageLayout> EngineState<S> {
         id: crate::engine::CommandId,
         respond: &crate::engine::Respond,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> crate::engine::WakeSchedules
     where
@@ -245,8 +677,9 @@ impl<S: StorageLayout> EngineState<S> {
                 total_data_bytes,
             },
             &envelope[..envelope_len],
+            ResourceSealLane::Inline,
             now,
-            fill_entropy,
+            fill_random,
             sink,
         );
         if total_segments > 1 {
@@ -272,12 +705,12 @@ impl<S: StorageLayout> EngineState<S> {
         wake
     }
 
-    pub(crate) fn continue_static_response_into<F>(
+    pub(crate) fn continue_static_response_into<F, Work>(
         &mut self,
         link_id: &LinkId,
         now: InstantMillis,
-        fill_entropy: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        fill_random: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) -> crate::engine::WakeSchedules
     where
         F: FnMut(&mut [u8]),
@@ -325,7 +758,7 @@ impl<S: StorageLayout> EngineState<S> {
                 total_data_bytes: continuation.total_data_bytes,
             },
             now,
-            fill_entropy,
+            fill_random,
             sink,
         );
         continuation.next_offset = end;
@@ -345,28 +778,62 @@ impl<S: StorageLayout> EngineState<S> {
     /// `total_data_bytes` is the whole transfer's uncompressed DATA length. The engine adds the metadata block on top, and RNS 1.4.2 advertises the sum (the `d` field) on every segment, never the segment's own size.
     ///
     /// A continuation whose live segment failed on the wire before this command reached the engine settles `PredecessorFailed` without advertising. A pipelining host therefore cannot revive a dead transfer's tail.
-    pub fn ingest_send_resource_segment_into<F>(
+    pub fn ingest_send_resource_segment_into<F, Work>(
         &mut self,
         send: &ResourceSend<'_>,
         segment: ResourceSegment,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
+    ) -> crate::engine::WakeSchedules
+    where
+        F: FnMut(&mut [u8]),
+    {
+        self.ingest_send_resource_segment_enveloped(
+            send,
+            segment,
+            &[],
+            ResourceSealLane::Inline,
+            now,
+            fill_random,
+            sink,
+        )
+    }
+
+    pub fn ingest_send_resource_segment_external_into<F>(
+        &mut self,
+        send: &ResourceSend<'_>,
+        segment: ResourceSegment,
+        now: InstantMillis,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) -> crate::engine::WakeSchedules
     where
         F: FnMut(&mut [u8]),
     {
-        self.ingest_send_resource_segment_enveloped(send, segment, &[], now, fill_entropy, sink)
+        self.ingest_send_resource_segment_enveloped(
+            send,
+            segment,
+            &[],
+            ResourceSealLane::External,
+            now,
+            fill_random,
+            sink,
+        )
     }
 
-    fn ingest_send_resource_segment_enveloped<F>(
+    // The shared inner path names each borrowed command, segment, envelope, scheduling lane,
+    // clock, entropy source, and reaction route without materializing another aggregate.
+    #[allow(clippy::too_many_arguments)]
+    fn ingest_send_resource_segment_enveloped<F, Work>(
         &mut self,
         send: &ResourceSend<'_>,
         segment: ResourceSegment,
         envelope: &[u8],
+        seal_lane: ResourceSealLane,
         now: InstantMillis,
-        fill_entropy: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        fill_random: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) -> crate::engine::WakeSchedules
     where
         F: FnMut(&mut [u8]),
@@ -380,50 +847,17 @@ impl<S: StorageLayout> EngineState<S> {
         let ResourceSegment {
             index: segment_index,
             total_segments,
-            total_data_bytes,
+            ..
         } = segment;
         let data = body.data;
         let mut wake_schedule_changes = crate::engine::WakeSchedules::UNCHANGED;
-        let settle = |sink: &mut dyn FnMut(EngineReaction<'_>), failure| {
-            sink(EngineReaction::Journaled(Journaled::CommandSettled {
-                id,
-                settlement: resource_settlement(correlation, Err(failure)),
-            }));
+        let validated = match self.validate_outgoing_resource_send(send, segment) {
+            Ok(validated) => validated,
+            Err(failure) => {
+                settle_resource_failure(sink, id, correlation, failure);
+                return wake_schedule_changes;
+            }
         };
-        if segment_index == 0 || total_segments == 0 || segment_index > total_segments {
-            settle(sink, SendResourceFailure::Sequencing);
-            return wake_schedule_changes;
-        }
-        let Some(uncompressed_data_bytes) = u64::try_from(body.metadata.block_len())
-            .ok()
-            .and_then(|metadata_len| total_data_bytes.checked_add(metadata_len))
-        else {
-            settle(
-                sink,
-                SendResourceFailure::Rejected(SendResourceRejection::Build(
-                    BuildOutgoingResourceError::DataTooLarge,
-                )),
-            );
-            return wake_schedule_changes;
-        };
-        let metadata_placement_valid = match body.metadata {
-            ResourceMetadata::None => true,
-            ResourceMetadata::Packed(_) => segment_index == 1,
-            ResourceMetadata::SentInFirstSegment { .. } => segment_index > 1,
-        };
-        if !metadata_placement_valid {
-            settle(
-                sink,
-                SendResourceFailure::Rejected(SendResourceRejection::MetadataMisplaced),
-            );
-            return wake_schedule_changes;
-        }
-        let chain_is_dead =
-            segment_index > 1 && self.outgoing_assemblies.original_hash(&link_id).is_none();
-        if chain_is_dead {
-            settle(sink, SendResourceFailure::PredecessorFailed);
-            return wake_schedule_changes;
-        }
         let (key, mtu, fire_on, rtt_millis) = match self.links.active_view(&link_id) {
             ActiveLinkLookup::Active(link) => (
                 link.key,
@@ -431,39 +865,15 @@ impl<S: StorageLayout> EngineState<S> {
                 link.attached_interface,
                 link.rtt.millis(),
             ),
-            ActiveLinkLookup::Inactive => {
-                settle(
-                    sink,
-                    SendResourceFailure::Rejected(SendResourceRejection::LinkNotActive),
-                );
-                return wake_schedule_changes;
-            }
-            ActiveLinkLookup::Absent => {
-                settle(
-                    sink,
-                    SendResourceFailure::Rejected(SendResourceRejection::NoSuchLink),
-                );
+            ActiveLinkLookup::Inactive | ActiveLinkLookup::Absent => {
+                settle_resource_failure(sink, id, correlation, SendResourceFailure::LinkClosed);
                 return wake_schedule_changes;
             }
         };
 
-        let sdu = resource_sdu(mtu);
-        let reject = |sink: &mut dyn FnMut(EngineReaction<'_>),
-                      error: TrackOutgoingResourceError| {
-            let rejection = match error {
-                TrackOutgoingResourceError::TableFull => SendResourceRejection::TableFull,
-                TrackOutgoingResourceError::LinkBusy => SendResourceRejection::LinkBusy,
-                TrackOutgoingResourceError::Build(build) => SendResourceRejection::Build(build),
-            };
-            settle(sink, SendResourceFailure::Rejected(rejection));
-        };
-        let lane = match self.outgoing_resources.lane_for(&link_id, &segment) {
-            Ok(lane) => lane,
-            Err(error) => {
-                reject(sink, error);
-                return wake_schedule_changes;
-            }
-        };
+        let sdu = validated.sdu;
+        let uncompressed_data_bytes = validated.uncompressed_data_bytes;
+        let lane = validated.lane;
 
         let command = TrackedCommand {
             link_id,
@@ -472,20 +882,36 @@ impl<S: StorageLayout> EngineState<S> {
             correlation,
             segment,
         };
-        let raw_stages = lane == TrackLane::Staged
-            && winning_candidate(body.compressed_candidate, envelope.len() + data.len()).is_none();
+        let staged_metadata_bytes = match body.metadata {
+            ResourceMetadata::Packed(packed) => METADATA_PREFIX_LEN + packed.len(),
+            ResourceMetadata::None | ResourceMetadata::SentInFirstSegment { .. } => 0,
+        };
+        let staged_stream_bytes = staged_metadata_bytes + envelope.len() + data.len();
+        let raw_stages = (lane == TrackLane::Staged || seal_lane == ResourceSealLane::External)
+            && winning_candidate(body.compressed_candidate, staged_stream_bytes).is_none();
         let tracked = if raw_stages {
             let mut stream_nonce = [0u8; RESOURCE_NONCE_LEN];
-            fill_entropy(&mut stream_nonce);
+            fill_random(&mut stream_nonce);
             self.outgoing_resources
                 .stage_raw(
                     command,
                     body.metadata.travels(),
-                    envelope.len() + data.len(),
+                    staged_stream_bytes,
                     |transfer| {
                         transfer[16..STAGED_STREAM_OFFSET].copy_from_slice(&stream_nonce);
-                        let stream_start = STAGED_STREAM_OFFSET + envelope.len();
-                        transfer[STAGED_STREAM_OFFSET..stream_start].copy_from_slice(envelope);
+                        let mut stream_start = STAGED_STREAM_OFFSET;
+                        if let ResourceMetadata::Packed(packed) = body.metadata {
+                            let prefix = (packed.len() as u32).to_be_bytes();
+                            transfer[stream_start..stream_start + METADATA_PREFIX_LEN]
+                                .copy_from_slice(&prefix[1..]);
+                            stream_start += METADATA_PREFIX_LEN;
+                            transfer[stream_start..stream_start + packed.len()]
+                                .copy_from_slice(packed);
+                            stream_start += packed.len();
+                        }
+                        transfer[stream_start..stream_start + envelope.len()]
+                            .copy_from_slice(envelope);
+                        stream_start += envelope.len();
                         transfer[stream_start..stream_start + data.len()].copy_from_slice(data);
                     },
                 )
@@ -494,12 +920,17 @@ impl<S: StorageLayout> EngineState<S> {
             let shape = match outgoing_resource_buffer_shape(envelope.len(), &body, sdu) {
                 Ok(shape) => shape,
                 Err(error) => {
-                    reject(sink, TrackOutgoingResourceError::Build(error));
+                    reject_tracked_resource(
+                        sink,
+                        id,
+                        correlation,
+                        TrackOutgoingResourceError::Build(error),
+                    );
                     return wake_schedule_changes;
                 }
             };
             let mut seal_iv = [0u8; 16];
-            fill_entropy(&mut seal_iv);
+            fill_random(&mut seal_iv);
             self.outgoing_resources
                 .track_built(command, lane, shape, |regions| {
                     build_outgoing_resource_enveloped(
@@ -509,7 +940,7 @@ impl<S: StorageLayout> EngineState<S> {
                         &seal_iv,
                         || {
                             let mut nonce = [0u8; RESOURCE_NONCE_LEN];
-                            fill_entropy(&mut nonce);
+                            fill_random(&mut nonce);
                             nonce
                         },
                         sdu,
@@ -521,7 +952,7 @@ impl<S: StorageLayout> EngineState<S> {
         let landing = match tracked {
             Ok(landing) => landing,
             Err(error) => {
-                reject(sink, error);
+                reject_tracked_resource(sink, id, correlation, error);
                 return wake_schedule_changes;
             }
         };
@@ -551,7 +982,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
 
         let mut adv_iv = [0u8; 16];
-        fill_entropy(&mut adv_iv);
+        fill_random(&mut adv_iv);
         match emit_resource_advertisement(
             &self.outgoing_resources,
             &link_id,
@@ -590,7 +1021,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             AdvertisementWriteOutcome::DidNotWrite => {
                 self.outgoing_resources.remove(&link_id, &hash);
-                settle(sink, SendResourceFailure::WriteFailed);
+                settle_resource_failure(sink, id, correlation, SendResourceFailure::WriteFailed);
             }
         }
         wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
@@ -617,7 +1048,7 @@ impl<S: StorageLayout> EngineState<S> {
         let advertised = self
             .outgoing_resources
             .lookup(&link_id, &parsed.hash)
-            .is_some_and(|index| !self.outgoing_resources.state(index).status.is_staged());
+            .is_some_and(|index| !self.outgoing_resources.state(index).status.is_off_wire());
         if !advertised {
             return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         }
@@ -648,7 +1079,7 @@ impl<S: StorageLayout> EngineState<S> {
             return Resolved(IngestPacketOutcome::Ignored(IgnoreReason::Superseded));
         };
         let state = self.outgoing_resources.state(index);
-        if state.status.is_staged() {
+        if state.status.is_off_wire() {
             return Resolved(IngestPacketOutcome::Ignored(IgnoreReason::Superseded));
         }
         if proof != state.expected_proof {
@@ -702,7 +1133,7 @@ impl<S: StorageLayout> EngineState<S> {
         let Some(index) = self.outgoing_resources.lookup(&link_id, &hash) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         };
-        if self.outgoing_resources.state(index).status.is_staged() {
+        if self.outgoing_resources.state(index).status.is_off_wire() {
             return IngestPacketOutcome::Ignored(IgnoreReason::Superseded);
         }
         let state = self.outgoing_resources.state(index);
@@ -721,13 +1152,13 @@ impl<S: StorageLayout> EngineState<S> {
     /// RNS 1.4.2 `Resource.request`: parts go back raw (slices of the sealed stream,  no token around them).
     ///
     /// A request that breaks the segment sequencing cancels the transfer as the reference does, except we settle the command with the failure's name.
-    pub(crate) fn serve_resource_request<F>(
+    pub(crate) fn serve_resource_request<F, Work>(
         &mut self,
         request: &ResourcePartRequest<'_>,
         fire_on: InterfaceId,
         now: InstantMillis,
-        fill_entropy: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        fill_random: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) where
         F: FnMut(&mut [u8]),
     {
@@ -800,7 +1231,7 @@ impl<S: StorageLayout> EngineState<S> {
                 Ok(plan) => {
                     self.outgoing_resources.state_mut(index).scope_start = plan.scope_start;
                     let mut iv = [0u8; 16];
-                    fill_entropy(&mut iv);
+                    fill_random(&mut iv);
                     let outgoing = &self.outgoing_resources;
                     let mut wrote = false;
                     {
@@ -845,7 +1276,7 @@ impl<S: StorageLayout> EngineState<S> {
                         hash,
                         SendResourceFailure::Sequencing,
                         now,
-                        fill_entropy,
+                        fill_random,
                         sink,
                     );
                     return;
@@ -887,11 +1318,11 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// The deferred seal, run the moment the live segment's last part is served: the receiver spends the next stretch ingesting and verifying, so the continuation's seal rides that window instead of sitting on the advertise path.
-    pub fn seal_staged_continuation<F>(
+    pub fn seal_staged_continuation<F, Work>(
         &mut self,
         link_id: &LinkId,
-        fill_entropy: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        fill_random: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) where
         F: FnMut(&mut [u8]),
     {
@@ -902,6 +1333,19 @@ impl<S: StorageLayout> EngineState<S> {
         if state.status != OutgoingResourceStatus::Staged {
             return;
         }
+        self.seal_staged_index(index, link_id, fill_random, sink);
+    }
+
+    fn seal_staged_index<F, Work>(
+        &mut self,
+        index: usize,
+        link_id: &LinkId,
+        fill_random: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
+    ) where
+        F: FnMut(&mut [u8]),
+    {
+        let state = self.outgoing_resources.state(index);
         let nonce_prefixed_bytes = state.staged_plaintext_bytes;
         let sdu = state.sdu;
         let ActiveLinkLookup::Active(link) = self.links.active_view(link_id) else {
@@ -909,13 +1353,13 @@ impl<S: StorageLayout> EngineState<S> {
         };
         let key = link.key;
         let mut seal_iv = [0u8; 16];
-        fill_entropy(&mut seal_iv);
+        fill_random(&mut seal_iv);
         let sealed = seal_staged_resource(
             key,
             &seal_iv,
             || {
                 let mut salt = [0u8; RESOURCE_NONCE_LEN];
-                fill_entropy(&mut salt);
+                fill_random(&mut salt);
                 salt
             },
             sdu,
@@ -924,7 +1368,7 @@ impl<S: StorageLayout> EngineState<S> {
         );
         match sealed {
             Ok(sealed) => self.record_staged_seal(index, &sealed),
-            Err(error) => self.fail_staged_seal(index, link_id, error, sink),
+            Err(error) => self.fail_staged_seal(index, error, sink),
         }
     }
 
@@ -937,20 +1381,21 @@ impl<S: StorageLayout> EngineState<S> {
         state.expected_proof = sealed.expected_proof;
         state.staged_plaintext_bytes = 0;
         state.status = OutgoingResourceStatus::StagedSealed;
+        if state.segment_index == 1 {
+            state.original_hash = sealed.hash;
+        }
     }
 
-    fn fail_staged_seal(
+    fn fail_staged_seal<Work>(
         &mut self,
         index: usize,
-        link_id: &LinkId,
         error: BuildOutgoingResourceError,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) {
         let state = self.outgoing_resources.state(index);
         let id = state.command_id;
         let correlation = state.correlation;
-        let hash = *self.outgoing_resources.hash_at(index);
-        self.outgoing_resources.remove(link_id, &hash);
+        self.outgoing_resources.remove_at(index);
         sink(EngineReaction::Journaled(Journaled::CommandSettled {
             id,
             settlement: resource_settlement(
@@ -964,39 +1409,189 @@ impl<S: StorageLayout> EngineState<S> {
 
     /// The owed seal's worker inputs, borrowed for the manifold to copy into a crypto-pool job; [`mark_staged_sealing`](Self::mark_staged_sealing) then parks the row until the verdict.
     pub fn staged_seal_job_view(&self, link_id: &LinkId) -> Option<StagedSealJobView<'_>> {
-        let index = self.outgoing_resources.staged_index(link_id)?;
+        let index = self
+            .outgoing_resources
+            .next_unsealed_staged_index(link_id)?;
         let state = self.outgoing_resources.state(index);
-        if state.status != OutgoingResourceStatus::Staged {
-            return None;
-        }
         let ActiveLinkLookup::Active(link) = self.links.active_view(link_id) else {
             return None;
         };
         Some(StagedSealJobView {
+            command_id: state.command_id,
             key: link.key,
             sdu: state.sdu,
+            total_segments: state.total_segments,
             nonce_prefixed_bytes: state.staged_plaintext_bytes,
             plaintext: self.outgoing_resources.staged_plaintext(index),
         })
     }
 
     pub fn mark_staged_sealing(&mut self, link_id: &LinkId) {
-        let Some(index) = self.outgoing_resources.staged_index(link_id) else {
+        let Some(index) = self.outgoing_resources.next_unsealed_staged_index(link_id) else {
             return;
         };
-        let state = self.outgoing_resources.state_mut(index);
-        if state.status == OutgoingResourceStatus::Staged {
-            state.status = OutgoingResourceStatus::StagedSealing;
+        self.outgoing_resources.state_mut(index).status = OutgoingResourceStatus::StagedSealing;
+    }
+
+    pub fn retry_external_staged_seal<F>(
+        &mut self,
+        command_id: CommandId,
+        link_id: &LinkId,
+        stream_nonce: [u8; RESOURCE_NONCE_LEN],
+        nonce_prefixed_bytes: usize,
+        fill_entropy: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) where
+        F: FnMut(&mut [u8]),
+    {
+        let matching = (0..self.outgoing_resources.len()).find(|&index| {
+            let state = self.outgoing_resources.state(index);
+            self.outgoing_resources.link_at(index) == link_id
+                && state.command_id == command_id
+                && state.status == OutgoingResourceStatus::StagedSealing
+                && state.staged_plaintext_bytes == nonce_prefixed_bytes
+                && self.outgoing_resources.staged_plaintext(index)[16..16 + RESOURCE_NONCE_LEN]
+                    == stream_nonce
+        });
+        let Some(index) = matching else {
+            return;
+        };
+        self.outgoing_resources.state_mut(index).status = OutgoingResourceStatus::Staged;
+        self.seal_staged_index(index, link_id, fill_entropy, sink);
+    }
+
+    // A staged worker result is correlated by all four identity fields before its borrowed bytes
+    // and collision salts may land; keep that validation surface explicit at the boundary.
+    #[allow(clippy::too_many_arguments)]
+    pub fn apply_external_staged_seal(
+        &mut self,
+        command_id: CommandId,
+        link_id: LinkId,
+        stream_nonce: [u8; RESOURCE_NONCE_LEN],
+        nonce_prefixed_bytes: usize,
+        sealed_bytes: &[u8],
+        salts: [[u8; RESOURCE_NONCE_LEN]; SALT_REROLL_CAP],
+        sink: &mut impl FnMut(EngineReaction<'_>),
+    ) {
+        let matching = (0..self.outgoing_resources.len()).find(|&index| {
+            let state = self.outgoing_resources.state(index);
+            self.outgoing_resources.link_at(index) == &link_id
+                && state.command_id == command_id
+                && state.status == OutgoingResourceStatus::StagedSealing
+                && state.staged_plaintext_bytes == nonce_prefixed_bytes
+                && self.outgoing_resources.staged_plaintext(index)[16..16 + RESOURCE_NONCE_LEN]
+                    == stream_nonce
+        });
+        let Some(index) = matching else {
+            return;
+        };
+        let stream_end = 16 + nonce_prefixed_bytes;
+        let digest_prefix = Sha256PrefixState::absorb(&[&self
+            .outgoing_resources
+            .staged_plaintext(index)[STAGED_STREAM_OFFSET..stream_end]]);
+        let sdu = self.outgoing_resources.state(index).sdu;
+        let mut fresh_salts = salts.iter().copied();
+        let outcome = {
+            let regions = self.outgoing_resources.seal_regions_mut(index);
+            if regions.transfer.len() < sealed_bytes.len() {
+                Err(BuildOutgoingResourceError::Seal(
+                    crate::crypto::BufferTooShort,
+                ))
+            } else {
+                let outcome = finish_staged_resource(
+                    digest_prefix,
+                    sealed_bytes,
+                    || fresh_salts.next().unwrap_or_default(),
+                    sdu,
+                    regions.hashmap,
+                );
+                if outcome.is_ok() {
+                    regions.transfer[..sealed_bytes.len()].copy_from_slice(sealed_bytes);
+                }
+                outcome
+            }
+        };
+        match outcome {
+            Ok(sealed) => self.record_staged_seal(index, &sealed),
+            Err(error) => self.fail_staged_seal(index, error, sink),
         }
     }
 
+    // The digest continuation carries distinct correlation, returned-byte, and proof fields.
+    // Keeping them separate makes stale and malformed completions independently checkable.
+    #[allow(clippy::too_many_arguments)]
+    pub fn apply_external_staged_seal_digests(
+        &mut self,
+        command_id: CommandId,
+        link_id: LinkId,
+        stream_nonce: [u8; RESOURCE_NONCE_LEN],
+        nonce_prefixed_bytes: usize,
+        sealed_bytes: &[u8],
+        salt_nonce: crate::routing::links::resources::SaltNonce,
+        hash: ResourceHash,
+        expected_proof: crate::routing::links::resources::ResourceProof,
+    ) -> ExternalStagedDigestOutcome {
+        let matching = (0..self.outgoing_resources.len()).find(|&index| {
+            let state = self.outgoing_resources.state(index);
+            self.outgoing_resources.link_at(index) == &link_id
+                && state.command_id == command_id
+                && state.status == OutgoingResourceStatus::StagedSealing
+                && state.staged_plaintext_bytes == nonce_prefixed_bytes
+                && self.outgoing_resources.staged_plaintext(index)[16..16 + RESOURCE_NONCE_LEN]
+                    == stream_nonce
+        });
+        let Some(index) = matching else {
+            return ExternalStagedDigestOutcome::Stale;
+        };
+        let sdu = self.outgoing_resources.state(index).sdu;
+        let Some(stream_bytes) = nonce_prefixed_bytes.checked_sub(RESOURCE_NONCE_LEN) else {
+            return ExternalStagedDigestOutcome::Invalid;
+        };
+        if sdu == 0
+            || sealed_bytes.len()
+                != crate::routing::links::resources::sealed_transfer_bytes(stream_bytes)
+        {
+            return ExternalStagedDigestOutcome::Invalid;
+        }
+        let part_count = sealed_bytes.len().div_ceil(sdu);
+        let names_len = part_count.saturating_mul(MAP_HASH_LEN);
+        let regions = self.outgoing_resources.seal_regions_mut(index);
+        if regions.transfer.len() < sealed_bytes.len() || regions.hashmap.len() < names_len {
+            return ExternalStagedDigestOutcome::Invalid;
+        }
+        if matches!(
+            write_hashmap_without_collision(
+                sealed_bytes,
+                sdu,
+                &salt_nonce,
+                &mut regions.hashmap[..names_len],
+            ),
+            HashmapWriteOutcome::Collided,
+        ) {
+            return ExternalStagedDigestOutcome::Collision;
+        }
+        regions.transfer[..sealed_bytes.len()].copy_from_slice(sealed_bytes);
+        self.record_staged_seal(
+            index,
+            &SealedStagedResource {
+                sealed_transfer_bytes: sealed_bytes.len(),
+                part_count,
+                hash,
+                salt_nonce,
+                expected_proof,
+            },
+        );
+        ExternalStagedDigestOutcome::Applied
+    }
+
     /// A pool worker's seal verdict lands on the row only if it still matches the job's stream nonce and length; a row that died or was replaced meanwhile drops the verdict silently.
-    pub fn apply_offloaded_staged_seal(
+    pub fn apply_offloaded_staged_seal<Work>(
         &mut self,
         verdict: OffloadedStagedSeal<'_>,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) {
         let OffloadedStagedSeal {
+            command_id,
             link_id,
             stream_nonce,
             nonce_prefixed_bytes,
@@ -1007,6 +1602,7 @@ impl<S: StorageLayout> EngineState<S> {
         let matching = (0..self.outgoing_resources.len()).find(|&index| {
             let state = self.outgoing_resources.state(index);
             self.outgoing_resources.link_at(index) == &link_id
+                && state.command_id == command_id
                 && state.status == OutgoingResourceStatus::StagedSealing
                 && state.staged_plaintext_bytes == nonce_prefixed_bytes
                 && self.outgoing_resources.staged_plaintext(index)[16..16 + RESOURCE_NONCE_LEN]
@@ -1023,7 +1619,6 @@ impl<S: StorageLayout> EngineState<S> {
                 {
                     self.fail_staged_seal(
                         index,
-                        &link_id,
                         BuildOutgoingResourceError::HashmapBufferTooShort,
                         sink,
                     );
@@ -1033,18 +1628,18 @@ impl<S: StorageLayout> EngineState<S> {
                 regions.hashmap[..names.len()].copy_from_slice(names);
                 self.record_staged_seal(index, &sealed);
             }
-            Err(error) => self.fail_staged_seal(index, &link_id, error, sink),
+            Err(error) => self.fail_staged_seal(index, error, sink),
         }
     }
 
     /// The staged continuation's advertisement, owed since its build and released by the live segment's proof.
     /// Runs in the same inbound pass as the proof settle, so the receiver sees the next advertisement exactly where the reference's sender would first build it.
-    pub fn promote_staged_resource<F>(
+    pub fn promote_staged_resource<F, Work>(
         &mut self,
         link_id: &LinkId,
         now: InstantMillis,
-        fill_entropy: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        fill_random: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) where
         F: FnMut(&mut [u8]),
     {
@@ -1059,7 +1654,7 @@ impl<S: StorageLayout> EngineState<S> {
             return;
         };
         if self.outgoing_resources.state(index).status == OutgoingResourceStatus::Staged {
-            self.seal_staged_continuation(link_id, fill_entropy, sink);
+            self.seal_staged_continuation(link_id, fill_random, sink);
         }
         let Some(index) = self.outgoing_resources.staged_index(link_id) else {
             return;
@@ -1067,7 +1662,36 @@ impl<S: StorageLayout> EngineState<S> {
         if self.outgoing_resources.state(index).status != OutgoingResourceStatus::StagedSealed {
             return;
         }
-        let hash = *self.outgoing_resources.hash_at(index);
+        let Some(&hash) = self.outgoing_resources.hash_at(index) else {
+            while let Some(staged) = self.outgoing_resources.staged_index(link_id) {
+                let state = *self.outgoing_resources.state(staged);
+                self.outgoing_resources.remove_at(staged);
+                sink(EngineReaction::Journaled(Journaled::CommandSettled {
+                    id: state.command_id,
+                    settlement: resource_settlement(
+                        state.correlation,
+                        Err(SendResourceFailure::PredecessorFailed),
+                    ),
+                }));
+            }
+            return;
+        };
+        let state = self.outgoing_resources.state(index);
+        let segment_index = state.segment_index;
+        let total_segments = state.total_segments;
+        if segment_index == 1
+            && total_segments > 1
+            && self.outgoing_assemblies.original_hash(link_id).is_none()
+        {
+            self.outgoing_assemblies.begin(*link_id, hash);
+        }
+        if segment_index > 1 {
+            let Some(original_hash) = self.outgoing_assemblies.original_hash(link_id) else {
+                self.fail_staged_continuation(link_id, sink);
+                return;
+            };
+            self.outgoing_resources.state_mut(index).original_hash = original_hash;
+        }
         let ActiveLinkLookup::Active(link) = self.links.active_view(link_id) else {
             self.fail_staged_continuation(link_id, sink);
             return;
@@ -1078,7 +1702,7 @@ impl<S: StorageLayout> EngineState<S> {
         let rtt_millis = link.rtt.millis();
         self.outgoing_resources.state_mut(index).status = OutgoingResourceStatus::Advertised;
         let mut adv_iv = [0u8; 16];
-        fill_entropy(&mut adv_iv);
+        fill_random(&mut adv_iv);
         match emit_resource_advertisement(
             &self.outgoing_resources,
             link_id,
@@ -1111,17 +1735,16 @@ impl<S: StorageLayout> EngineState<S> {
 
     /// A staged continuation dies with whatever killed the segment ahead of it; nothing rides the wire because nothing was ever advertised.
     /// Drains every staged row because a follower can wait behind a still-sealing row, and both fall together.
-    pub(crate) fn fail_staged_continuation(
+    pub(crate) fn fail_staged_continuation<Work>(
         &mut self,
         link_id: &LinkId,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) {
         while let Some(index) = self.outgoing_resources.staged_index(link_id) {
             let state = self.outgoing_resources.state(index);
             let id = state.command_id;
             let correlation = state.correlation;
-            let hash = *self.outgoing_resources.hash_at(index);
-            self.outgoing_resources.remove(link_id, &hash);
+            self.outgoing_resources.remove_at(index);
             sink(EngineReaction::Journaled(Journaled::CommandSettled {
                 id,
                 settlement: resource_settlement(
@@ -1133,14 +1756,14 @@ impl<S: StorageLayout> EngineState<S> {
     }
 
     /// RNS 1.4.2 `Resource.cancel`
-    pub(crate) fn cancel_outgoing_resource<F>(
+    pub(crate) fn cancel_outgoing_resource<F, Work>(
         &mut self,
         link_id: &LinkId,
         hash: &ResourceHash,
         failure: SendResourceFailure,
         now: InstantMillis,
-        fill_entropy: &mut F,
-        sink: &mut impl FnMut(EngineReaction<'_>),
+        fill_random: &mut F,
+        sink: &mut impl FnMut(EngineReaction<'_, Work>),
     ) where
         F: FnMut(&mut [u8]),
     {
@@ -1157,7 +1780,7 @@ impl<S: StorageLayout> EngineState<S> {
             let mtu = link.mtu;
             let fire_on = link.attached_interface;
             let mut cancel_iv = [0u8; 16];
-            fill_entropy(&mut cancel_iv);
+            fill_random(&mut cancel_iv);
             let mut cancel_plaintext = [0u8; RESOURCE_HASH_LEN];
             if write_cancel_plaintext(hash, &mut cancel_plaintext).is_ok() {
                 let mut wrote = false;
@@ -1200,13 +1823,13 @@ impl<S: StorageLayout> EngineState<S> {
     pub(crate) fn fire_due_outgoing_resources<F>(
         &mut self,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
         F: FnMut(&mut [u8]),
     {
         while let Some(index) = self.outgoing_resources.due_index(now) {
-            self.retry_or_cancel_outgoing_resource(index, now, fill_entropy, sink);
+            self.retry_or_cancel_outgoing_resource(index, now, fill_random, sink);
         }
     }
 
@@ -1214,21 +1837,23 @@ impl<S: StorageLayout> EngineState<S> {
         &mut self,
         index: usize,
         now: InstantMillis,
-        fill_entropy: &mut F,
+        fill_random: &mut F,
         sink: &mut impl FnMut(EngineReaction<'_>),
     ) where
         F: FnMut(&mut [u8]),
     {
-        let link_id = *self.outgoing_resources.link_at(index);
-        let hash = *self.outgoing_resources.hash_at(index);
         let state = *self.outgoing_resources.state(index);
+        let link_id = *self.outgoing_resources.link_at(index);
+        let Some(&hash) = self.outgoing_resources.hash_at(index) else {
+            return;
+        };
         let ActiveLinkLookup::Active(link) = self.links.active_view(&link_id) else {
             self.cancel_outgoing_resource(
                 &link_id,
                 &hash,
                 SendResourceFailure::Timeout,
                 now,
-                fill_entropy,
+                fill_random,
                 sink,
             );
             return;
@@ -1238,6 +1863,7 @@ impl<S: StorageLayout> EngineState<S> {
         let fire_on = link.attached_interface;
         let rtt_millis = link.rtt.millis();
         match state.status {
+            OutgoingResourceStatus::Building => {}
             OutgoingResourceStatus::Staged
             | OutgoingResourceStatus::StagedSealing
             | OutgoingResourceStatus::StagedSealed => {
@@ -1250,13 +1876,13 @@ impl<S: StorageLayout> EngineState<S> {
                         &hash,
                         SendResourceFailure::Timeout,
                         now,
-                        fill_entropy,
+                        fill_random,
                         sink,
                     );
                     return;
                 }
                 let mut adv_iv = [0u8; 16];
-                fill_entropy(&mut adv_iv);
+                fill_random(&mut adv_iv);
                 if matches!(
                     emit_resource_advertisement(
                         &self.outgoing_resources,
@@ -1281,7 +1907,7 @@ impl<S: StorageLayout> EngineState<S> {
                     &hash,
                     SendResourceFailure::Timeout,
                     now,
-                    fill_entropy,
+                    fill_random,
                     sink,
                 );
             }
@@ -1292,7 +1918,7 @@ impl<S: StorageLayout> EngineState<S> {
                         &hash,
                         SendResourceFailure::Timeout,
                         now,
-                        fill_entropy,
+                        fill_random,
                         sink,
                     );
                     return;
@@ -1348,13 +1974,13 @@ enum AdvertisementWriteOutcome {
     DidNotWrite,
 }
 
-fn emit_resource_advertisement<C>(
+fn emit_resource_advertisement<C, Work>(
     outgoing: &crate::routing::links::resources::table::OutgoingResources<C>,
     link_id: &LinkId,
     hash: &ResourceHash,
     lane: &AdvertisementLane<'_>,
     adv_iv: &[u8; 16],
-    sink: &mut impl FnMut(EngineReaction<'_>),
+    sink: &mut impl FnMut(EngineReaction<'_, Work>),
 ) -> AdvertisementWriteOutcome
 where
     C: crate::routing::links::resources::table::ResourceTable<
@@ -1426,7 +2052,9 @@ mod tests {
     use crate::engine::InstantMillis;
     use crate::interfaces::AttachedInterfaces;
     use crate::interfaces::InterfaceId;
-    use crate::routing::links::resources::build_outgoing::BuildOutgoingResourceError;
+    use crate::routing::links::resources::build_outgoing::{
+        BuildOutgoingResourceError, BuildRegions,
+    };
     use crate::routing::links::resources::table::OutgoingResourceStatus;
     use crate::routing::links::resources::{ResourceBody, ResourceCorrelation, ResourceMetadata};
     use crate::routing::links::table::InitiatedLink;
@@ -1614,6 +2242,46 @@ mod tests {
             segment,
             InstantMillis(1_500),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
+                    if let Some(frame) = filled_frame(fill) {
+                        capture.frames.push((target, frame));
+                    }
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    capture.settlements.push((id, settlement));
+                }
+                _ => {}
+            },
+        );
+        capture
+    }
+
+    fn send_segment_external_with_metadata<S: StorageLayout>(
+        engine: &mut EngineState<S>,
+        id: u64,
+        data: &[u8],
+        segment: ResourceSegment,
+        metadata: ResourceMetadata<'_>,
+    ) -> SendCapture {
+        let mut capture = SendCapture {
+            frames: std::vec::Vec::new(),
+            settlements: std::vec::Vec::new(),
+        };
+        engine.ingest_send_resource_segment_external_into(
+            &ResourceSend {
+                id: CommandId(id),
+                link_id: link_id(),
+                body: ResourceBody {
+                    data,
+                    compressed_candidate: None,
+                    metadata,
+                },
+                correlation: ResourceCorrelation::Unsolicited,
+            },
+            segment,
+            InstantMillis(1_500),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
             &mut |reaction| match reaction {
                 EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
                     if let Some(frame) = filled_frame(fill) {
@@ -1694,6 +2362,84 @@ mod tests {
     }
 
     #[test]
+    fn an_owning_build_continuation_is_wire_identical_to_the_inline_path() {
+        let plaintext = case1_plaintext();
+        let candidate = bytes_from_hex(CASE1_BZ2);
+        let mut inline_engine = sender_with_active_link();
+        let inline = send(&mut inline_engine, 7, &plaintext, Some(&candidate));
+
+        let mut deferred_engine = sender_with_active_link();
+        let resource = ResourceSend {
+            id: CommandId(7),
+            link_id: link_id(),
+            body: ResourceBody {
+                data: &plaintext,
+                compressed_candidate: Some(&candidate),
+                metadata: ResourceMetadata::None,
+            },
+            correlation: ResourceCorrelation::Unsolicited,
+        };
+        let mut emitted = None;
+        deferred_engine.request_resource_build(
+            &resource,
+            ResourceSegment::whole(plaintext.len() as u64),
+            &mut |reaction: EngineReaction<'_, OwedWork<'_>>| {
+                if let EngineReaction::Directive(Directive::Fulfill(OwedWork::ResourceBuild(
+                    owed,
+                ))) = reaction
+                {
+                    emitted = Some(owed);
+                } else {
+                    panic!("a valid request emits only its typed build directive");
+                }
+            },
+        );
+        let owed = emitted.expect("the worker is owed a pure build");
+        let shape = owed.shape();
+        let reservation = owed.reservation();
+        let mut transfer = std::vec![0u8; shape.transfer_bytes()];
+        let mut names = std::vec![0u8; shape.part_count() * MAP_HASH_LEN];
+        let outcome = owed.execute(
+            &[0xA5; 16],
+            || [0xA5; RESOURCE_NONCE_LEN],
+            BuildRegions {
+                transfer: &mut transfer,
+                hashmap: &mut names,
+            },
+        );
+        let mut deferred = SendCapture {
+            frames: std::vec::Vec::new(),
+            settlements: std::vec::Vec::new(),
+        };
+        deferred_engine.resume_resource_build(
+            ResourceBuildCompleted {
+                reservation,
+                transfer: &transfer,
+                names: &names,
+                request_data: &plaintext,
+                outcome,
+            },
+            InstantMillis(1_500),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA5),
+            &mut |reaction| match reaction {
+                EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
+                    if let Some(frame) = filled_frame(fill) {
+                        deferred.frames.push((target, frame));
+                    }
+                }
+                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+                    deferred.settlements.push((id, settlement));
+                }
+                _ => {}
+            },
+        );
+
+        assert!(inline.settlements.is_empty());
+        assert!(deferred.settlements.is_empty());
+        assert_eq!(deferred.frames, inline.frames);
+    }
+
+    #[test]
     fn malformed_segment_coordinates_settle_without_tracking_state() {
         let mut engine = sender_with_active_link();
         let cases = [
@@ -1752,6 +2498,271 @@ mod tests {
             )]
         ));
         assert!(engine.outgoing_resources.is_empty());
+    }
+
+    #[test]
+    fn an_external_seal_preserves_metadata_and_ignores_a_stale_verdict() {
+        let mut engine = sender_with_active_link();
+        let data = b"the browser crypto lane preserves the resource stream";
+        let metadata = [0x82, 0xA1, b'n', 0x01];
+        let initial = send_segment_external_with_metadata(
+            &mut engine,
+            31,
+            data,
+            ResourceSegment {
+                index: 1,
+                total_segments: 1,
+                total_data_bytes: data.len() as u64,
+            },
+            ResourceMetadata::Packed(&metadata),
+        );
+        assert!(initial.frames.is_empty());
+        assert!(initial.settlements.is_empty());
+
+        let (nonce_prefixed_bytes, plaintext) = {
+            let view = engine.staged_seal_job_view(&link_id()).unwrap();
+            (
+                view.nonce_prefixed_bytes,
+                view.plaintext[16..16 + view.nonce_prefixed_bytes].to_vec(),
+            )
+        };
+        let stream_nonce: [u8; RESOURCE_NONCE_LEN] =
+            plaintext[..RESOURCE_NONCE_LEN].try_into().unwrap();
+        let mut sealed = std::vec![
+            0;
+            crate::routing::links::resources::sealed_transfer_bytes(
+                nonce_prefixed_bytes - RESOURCE_NONCE_LEN,
+            )
+        ];
+        let sealed_len = link_key()
+            .seal(&[0xD1; 16], &plaintext, &mut sealed)
+            .unwrap();
+        sealed.truncate(sealed_len);
+        let salts = [[0xD2; RESOURCE_NONCE_LEN]; SALT_REROLL_CAP];
+        engine.mark_staged_sealing(&link_id());
+        engine.apply_external_staged_seal(
+            CommandId(31),
+            link_id(),
+            [0xEE; RESOURCE_NONCE_LEN],
+            nonce_prefixed_bytes,
+            &sealed,
+            salts,
+            &mut |_| panic!("a stale seal verdict emits nothing"),
+        );
+        assert_eq!(
+            engine
+                .outgoing_resources
+                .state(engine.outgoing_resources.staged_index(&link_id()).unwrap())
+                .status,
+            OutgoingResourceStatus::StagedSealing,
+        );
+
+        engine.apply_external_staged_seal(
+            CommandId(31),
+            link_id(),
+            stream_nonce,
+            nonce_prefixed_bytes,
+            &sealed,
+            salts,
+            &mut |_| {},
+        );
+        let mut advertised = std::vec::Vec::new();
+        engine.promote_staged_resource(
+            &link_id(),
+            InstantMillis(1_600),
+            &mut |bytes: &mut [u8]| bytes.fill(0xA6),
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    if let Some(frame) = filled_frame(fill) {
+                        advertised.push(frame);
+                    }
+                }
+            },
+        );
+        assert_eq!(advertised.len(), 1);
+        let (_, payload) = WirePacketHeader::parse(&advertised[0]).unwrap();
+        let mut opened_advertisement = payload.to_vec();
+        let advertisement = ResourceAdvertisement::parse(
+            link_key().open_in_place(&mut opened_advertisement).unwrap(),
+        )
+        .unwrap();
+        let index = engine
+            .outgoing_resources
+            .lookup(&link_id(), &advertisement.hash)
+            .unwrap();
+        let mut opened_transfer = engine.outgoing_resources.sealed_transfer(index).to_vec();
+        let opened = link_key().open_in_place(&mut opened_transfer).unwrap();
+        let mut expected = std::vec::Vec::new();
+        expected.extend_from_slice(&(metadata.len() as u32).to_be_bytes()[1..]);
+        expected.extend_from_slice(&metadata);
+        expected.extend_from_slice(data);
+        assert_eq!(&opened[RESOURCE_NONCE_LEN..], expected);
+        assert_eq!(advertisement.original_hash, advertisement.hash);
+        assert!(advertisement.flags.has_metadata);
+    }
+
+    #[test]
+    fn external_continuation_seals_overlap_retry_exactly_and_promote_in_order() {
+        let mut engine = heap_sender_with_active_link();
+        let first_data = [0x31; 700];
+        let second_data = [0x32; 700];
+        let segment = |index| ResourceSegment {
+            index,
+            total_segments: 2,
+            total_data_bytes: (first_data.len() + second_data.len()) as u64,
+        };
+
+        let first = send_segment_external_with_metadata(
+            &mut engine,
+            41,
+            &first_data,
+            segment(1),
+            ResourceMetadata::None,
+        );
+        assert!(first.frames.is_empty());
+        assert!(first.settlements.is_empty());
+        let first_job = engine.staged_seal_job_view(&link_id()).unwrap();
+        let first_bytes = first_job.nonce_prefixed_bytes;
+        let first_nonce: [u8; RESOURCE_NONCE_LEN] = first_job.plaintext
+            [16..16 + RESOURCE_NONCE_LEN]
+            .try_into()
+            .unwrap();
+        engine.mark_staged_sealing(&link_id());
+
+        let second = send_segment_external_with_metadata(
+            &mut engine,
+            42,
+            &second_data,
+            segment(2),
+            ResourceMetadata::None,
+        );
+        assert!(second.frames.is_empty());
+        assert!(second.settlements.is_empty());
+        let second_job = engine.staged_seal_job_view(&link_id()).unwrap();
+        let second_bytes = second_job.nonce_prefixed_bytes;
+        let second_nonce: [u8; RESOURCE_NONCE_LEN] = second_job.plaintext
+            [16..16 + RESOURCE_NONCE_LEN]
+            .try_into()
+            .unwrap();
+        assert_eq!(first_bytes, second_bytes);
+        assert_eq!(first_nonce, second_nonce);
+        engine.mark_staged_sealing(&link_id());
+
+        let mut states = (0..engine.outgoing_resources.len())
+            .map(|index| *engine.outgoing_resources.state(index))
+            .collect::<std::vec::Vec<_>>();
+        states.sort_by_key(|state| state.segment_index);
+        assert_eq!(
+            states
+                .iter()
+                .map(|state| state.status)
+                .collect::<std::vec::Vec<_>>(),
+            std::vec![
+                OutgoingResourceStatus::StagedSealing,
+                OutgoingResourceStatus::StagedSealing,
+            ],
+        );
+
+        engine.retry_external_staged_seal(
+            CommandId(42),
+            &link_id(),
+            second_nonce,
+            second_bytes,
+            &mut |bytes: &mut [u8]| bytes.fill(0xB4),
+            &mut |_| {},
+        );
+        let mut states = (0..engine.outgoing_resources.len())
+            .map(|index| *engine.outgoing_resources.state(index))
+            .collect::<std::vec::Vec<_>>();
+        states.sort_by_key(|state| state.segment_index);
+        assert_eq!(
+            states
+                .iter()
+                .map(|state| state.status)
+                .collect::<std::vec::Vec<_>>(),
+            std::vec![
+                OutgoingResourceStatus::StagedSealing,
+                OutgoingResourceStatus::StagedSealed,
+            ],
+        );
+
+        let mut premature_frames = std::vec::Vec::new();
+        engine.promote_staged_resource(
+            &link_id(),
+            InstantMillis(1_600),
+            &mut |bytes: &mut [u8]| bytes.fill(0xB5),
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    if let Some(frame) = filled_frame(fill) {
+                        premature_frames.push(frame);
+                    }
+                }
+            },
+        );
+        assert!(premature_frames.is_empty());
+
+        engine.retry_external_staged_seal(
+            CommandId(41),
+            &link_id(),
+            first_nonce,
+            first_bytes,
+            &mut |bytes: &mut [u8]| bytes.fill(0xB6),
+            &mut |_| {},
+        );
+        let mut promoted_frames = std::vec::Vec::new();
+        engine.promote_staged_resource(
+            &link_id(),
+            InstantMillis(1_700),
+            &mut |bytes: &mut [u8]| bytes.fill(0xB7),
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| {
+                if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
+                    if let Some(frame) = filled_frame(fill) {
+                        promoted_frames.push(frame);
+                    }
+                }
+            },
+        );
+        assert_eq!(promoted_frames.len(), 1);
+        let mut states = (0..engine.outgoing_resources.len())
+            .map(|index| *engine.outgoing_resources.state(index))
+            .collect::<std::vec::Vec<_>>();
+        states.sort_by_key(|state| state.segment_index);
+        assert_eq!(
+            states
+                .iter()
+                .map(|state| state.status)
+                .collect::<std::vec::Vec<_>>(),
+            std::vec![
+                OutgoingResourceStatus::Advertised,
+                OutgoingResourceStatus::StagedSealed,
+            ],
+        );
+
+        let first_hash = advertised_hash(&promoted_frames[0]);
+        let first_index = engine
+            .outgoing_resources
+            .lookup(&link_id(), &first_hash)
+            .unwrap();
+        let names = engine.outgoing_resources.names_flat(first_index).to_vec();
+        feed(
+            &mut engine,
+            &request_frame(&first_hash, None, &names),
+            1_800,
+        );
+        let proof = engine.outgoing_resources.state(first_index).expected_proof;
+        let proven = feed(&mut engine, &proof_frame(&first_hash, &proof), 1_900);
+        assert!(matches!(
+            proven.settlements.as_slice(),
+            [(CommandId(41), Settlement::SendResource(Ok(())))]
+        ));
+        assert_eq!(proven.frames.len(), 1);
+        let (_, payload) = WirePacketHeader::parse(&proven.frames[0].1).unwrap();
+        let mut opened_advertisement = payload.to_vec();
+        let advertisement = ResourceAdvertisement::parse(
+            link_key().open_in_place(&mut opened_advertisement).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(advertisement.original_hash, first_hash);
     }
 
     #[test]
@@ -2249,7 +3260,7 @@ mod tests {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&[routable_descriptor(lane())]),
                 now: InstantMillis(at),
-                fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+                fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
                 should_prove: &mut |_: &crate::engine::ProofRequest| false,
                 should_accept_resource:
                     &mut |_: &crate::routing::links::resources::ResourceOffer| false,
@@ -2630,7 +3641,7 @@ mod tests {
             engine.seal_staged_continuation(
                 &owed,
                 &mut |bytes: &mut [u8]| bytes.fill(0xB2),
-                &mut |_| {},
+                &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| {},
             );
         }
         capture
@@ -2651,9 +3662,8 @@ mod tests {
             "the raw stream waits nonce-prefixed at its sealed offset",
         );
         assert_eq!(state.part_count, 0, "nothing is named before the seal");
-        assert_eq!(
-            engine.outgoing_resources.hash_at(staged),
-            &ResourceHash::new([0; 32]),
+        assert!(
+            engine.outgoing_resources.hash_at(staged).is_none(),
             "the hash cannot exist before the seal",
         );
     }
@@ -2709,9 +3719,8 @@ mod tests {
             crate::routing::links::resources::sealed_transfer_bytes(38 * 40),
         );
         assert_eq!(state.part_count, 4);
-        assert_ne!(
-            engine.outgoing_resources.hash_at(staged),
-            &ResourceHash::new([0; 32]),
+        assert!(
+            engine.outgoing_resources.hash_at(staged).is_some(),
             "the seal names the transfer",
         );
         assert_eq!(
@@ -2726,7 +3735,7 @@ mod tests {
         let live = staged_pair(&mut engine);
         serve_live_parts(&mut engine, &live);
         let staged = engine.outgoing_resources.staged_index(&link_id()).unwrap();
-        let staged_hash = *engine.outgoing_resources.hash_at(staged);
+        let staged_hash = *engine.outgoing_resources.hash_at(staged).unwrap();
         let index = engine.outgoing_resources.lookup(&link_id(), &live).unwrap();
         let proof = engine.outgoing_resources.state(index).expected_proof;
 
@@ -2771,7 +3780,7 @@ mod tests {
         let live = staged_pair(&mut engine);
         serve_live_parts(&mut engine, &live);
         let staged = engine.outgoing_resources.staged_index(&link_id()).unwrap();
-        let staged_hash = *engine.outgoing_resources.hash_at(staged);
+        let staged_hash = *engine.outgoing_resources.hash_at(staged).unwrap();
         let names = engine.outgoing_resources.names_flat(staged).to_vec();
         let proof = engine.outgoing_resources.state(staged).expected_proof;
 
@@ -2812,9 +3821,14 @@ mod tests {
         feed(&mut engine, &request_frame(&live, None, &names), 2_000);
         assert_eq!(engine.owed_staged_seal_link(), Some(link_id()));
 
-        let (job_sdu, job_len, job_plaintext) = {
+        let (job_id, job_sdu, job_len, job_plaintext) = {
             let view = engine.staged_seal_job_view(&link_id()).unwrap();
-            (view.sdu, view.nonce_prefixed_bytes, view.plaintext.to_vec())
+            (
+                view.command_id,
+                view.sdu,
+                view.nonce_prefixed_bytes,
+                view.plaintext.to_vec(),
+            )
         };
         engine.mark_staged_sealing(&link_id());
         assert_eq!(
@@ -2867,6 +3881,7 @@ mod tests {
         let stale_nonce = [0xEE; RESOURCE_NONCE_LEN];
         engine.apply_offloaded_staged_seal(
             OffloadedStagedSeal {
+                command_id: job_id,
                 link_id: link_id(),
                 stream_nonce: stale_nonce,
                 nonce_prefixed_bytes: job_len,
@@ -2874,7 +3889,7 @@ mod tests {
                 names: &worker_names[..sealed_meta.part_count * MAP_HASH_LEN],
                 outcome: Ok(sealed_meta),
             },
-            &mut |_| {},
+            &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| {},
         );
         assert!(
             engine
@@ -2886,6 +3901,7 @@ mod tests {
 
         engine.apply_offloaded_staged_seal(
             OffloadedStagedSeal {
+                command_id: job_id,
                 link_id: link_id(),
                 stream_nonce,
                 nonce_prefixed_bytes: job_len,
@@ -2893,7 +3909,7 @@ mod tests {
                 names: &worker_names[..sealed_meta.part_count * MAP_HASH_LEN],
                 outcome: Ok(sealed_meta),
             },
-            &mut |_| {},
+            &mut |_: EngineReaction<'_, crate::engine::NoOwedWork>| {},
         );
         let sealed_index = engine
             .outgoing_resources
@@ -2909,7 +3925,7 @@ mod tests {
             &link_id(),
             InstantMillis(3_000),
             &mut |bytes: &mut [u8]| bytes.fill(0xA5),
-            &mut |reaction| {
+            &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| {
                 if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
                     if let Some(frame) = filled_frame(fill) {
                         promoted_frames.push(frame);

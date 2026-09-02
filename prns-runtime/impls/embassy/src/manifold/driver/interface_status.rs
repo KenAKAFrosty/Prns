@@ -1,7 +1,8 @@
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
-use portable_atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
+use portable_atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 
+use crate::atomic::AtomicU64;
 use crate::engine::ProtocolViolationKind;
 use crate::interfaces::{
     AirtimeUtilization, ConnectionState, FrameAccounting, InterfaceId, InterfaceStatus,
@@ -84,8 +85,7 @@ impl EmbassyInterfaceStatus {
     }
 
     pub fn set_id(&self, id: InterfaceId) {
-        self.id
-            .store(u64::from_be_bytes(*id.as_bytes()), Ordering::Relaxed);
+        self.id.store_relaxed(u64::from_be_bytes(*id.as_bytes()));
     }
 
     pub fn enable(&self) {
@@ -132,11 +132,11 @@ impl EmbassyInterfaceStatus {
     }
 
     pub fn add_rx(&self, bytes: u64) {
-        self.rx.fetch_add(bytes, Ordering::Relaxed);
+        self.rx.fetch_add_relaxed(bytes);
     }
 
     pub fn add_tx(&self, bytes: u64) {
-        self.tx.fetch_add(bytes, Ordering::Relaxed);
+        self.tx.fetch_add_relaxed(bytes);
     }
 
     pub fn set_airtime(&self, utilization: AirtimeUtilization) {
@@ -147,35 +147,35 @@ impl EmbassyInterfaceStatus {
 
     pub fn set_transfer_rates(&self, rates: TransferRates) {
         let packed = (u64::from(rates.rx_bps) << 32) | u64::from(rates.tx_bps);
-        self.transfer_rates.store(packed, Ordering::Relaxed);
+        self.transfer_rates.store_relaxed(packed);
     }
 
     pub fn count_frame_in(&self) {
-        self.frames_in.fetch_add(1, Ordering::Relaxed);
+        self.frames_in.fetch_add_relaxed(1);
     }
 
     pub fn count_frame_malformed(&self) {
-        self.frames_malformed.fetch_add(1, Ordering::Relaxed);
+        self.frames_malformed.fetch_add_relaxed(1);
         self.count_protocol_violation();
     }
 
     pub fn count_protocol_violation(&self) {
-        self.protocol_violations.fetch_add(1, Ordering::Relaxed);
+        self.protocol_violations.fetch_add_relaxed(1);
     }
 
     pub fn count_frame_undecodable(&self) {
-        self.frames_undecodable.fetch_add(1, Ordering::Relaxed);
+        self.frames_undecodable.fetch_add_relaxed(1);
         self.count_protocol_violation();
     }
 
     pub fn count_frame_delivered(&self) {
-        self.frames_delivered.fetch_add(1, Ordering::Relaxed);
+        self.frames_delivered.fetch_add_relaxed(1);
     }
 }
 
 impl InterfaceStatus for EmbassyInterfaceStatus {
     fn id(&self) -> InterfaceId {
-        InterfaceId::new(self.id.load(Ordering::Relaxed).to_be_bytes())
+        InterfaceId::new(self.id.load_relaxed().to_be_bytes())
     }
 
     fn connection(&self) -> ConnectionState {
@@ -186,11 +186,11 @@ impl InterfaceStatus for EmbassyInterfaceStatus {
     }
 
     fn rx_bytes(&self) -> u64 {
-        self.rx.load(Ordering::Relaxed)
+        self.rx.load_relaxed()
     }
 
     fn tx_bytes(&self) -> u64 {
-        self.tx.load(Ordering::Relaxed)
+        self.tx.load_relaxed()
     }
 
     fn airtime(&self) -> Option<AirtimeUtilization> {
@@ -205,7 +205,7 @@ impl InterfaceStatus for EmbassyInterfaceStatus {
     }
 
     fn transfer_rates(&self) -> Option<TransferRates> {
-        let packed = self.transfer_rates.load(Ordering::Relaxed);
+        let packed = self.transfer_rates.load_relaxed();
         if packed == RATES_UNPUBLISHED {
             return None;
         }
@@ -220,11 +220,11 @@ impl InterfaceStatus for EmbassyInterfaceStatus {
             return None;
         }
         Some(FrameAccounting {
-            frames_in: self.frames_in.load(Ordering::Relaxed),
-            malformed: self.frames_malformed.load(Ordering::Relaxed),
-            protocol_violations: self.protocol_violations.load(Ordering::Relaxed),
-            undecodable: self.frames_undecodable.load(Ordering::Relaxed),
-            delivered: self.frames_delivered.load(Ordering::Relaxed),
+            frames_in: self.frames_in.load_relaxed(),
+            malformed: self.frames_malformed.load_relaxed(),
+            protocol_violations: self.protocol_violations.load_relaxed(),
+            undecodable: self.frames_undecodable.load_relaxed(),
+            delivered: self.frames_delivered.load_relaxed(),
         })
     }
 }

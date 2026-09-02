@@ -29,8 +29,8 @@ struct Ax25Seam<S> {
 }
 
 impl<S: InterfaceSeam> InterfaceSeam for Ax25Seam<S> {
-    fn fill_entropy(&mut self, bytes: &mut [u8]) {
-        self.inner.fill_entropy(bytes);
+    fn fill_random(&mut self, bytes: &mut [u8]) {
+        self.inner.fill_random(bytes);
     }
 
     async fn inbound_sink(&mut self) -> &mut dyn FrameSink {
@@ -226,7 +226,7 @@ where
                     reconnect.record_connection_lifetime(connected_at.elapsed());
                 }
             }
-            let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_entropy(bytes));
+            let reconnect_delay = reconnect.next_delay(|bytes| seam.fill_random(bytes));
             tokio::time::sleep(reconnect_delay).await;
         }
     }
@@ -265,7 +265,7 @@ mod tests {
     use prns_core::interfaces::FrameSink;
 
     impl InterfaceSeam for MockSeam {
-        fn fill_entropy(&mut self, bytes: &mut [u8]) {
+        fn fill_random(&mut self, bytes: &mut [u8]) {
             bytes.fill(0);
         }
 

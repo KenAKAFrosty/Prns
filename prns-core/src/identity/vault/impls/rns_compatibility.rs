@@ -141,7 +141,9 @@ impl<E: std::error::Error + 'static> std::error::Error for RnsCompatibilityVault
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::identity::vault::{load_or_generate, IdentityOrigin};
+    use crate::entropy::{EntropySource, RuntimeEntropy};
+    use crate::identity::vault::{load_or_generate_with_runtime_entropy, IdentityOrigin};
+    use core::convert::Infallible;
     use std::collections::HashMap;
     use std::fs;
     use std::path::Path;
@@ -155,6 +157,17 @@ mod tests {
 
     #[derive(Debug, PartialEq, Eq)]
     enum MemoryVaultError {}
+
+    struct TestEntropySource;
+
+    impl EntropySource for TestEntropySource {
+        type Error = Infallible;
+
+        fn try_fill_entropy(&mut self, output: &mut [u8]) -> Result<(), Self::Error> {
+            output.fill(0x33);
+            Ok(())
+        }
+    }
 
     impl IdentityVault for MemoryVault {
         type Error = MemoryVaultError;
@@ -315,9 +328,11 @@ mod tests {
         let reticulum = TempFile::new("identity");
         let mut vault = RnsCompatibilityVault::new(MemoryVault::default())
             .adopting(label("primary"), reticulum.path().to_path_buf());
-        let fill = |bytes: &mut [u8]| bytes.fill(0x33);
+        let mut entropy = RuntimeEntropy::try_new(TestEntropySource).unwrap();
 
-        let (_minted, origin) = load_or_generate(&mut vault, &label("primary"), fill).unwrap();
+        let (_minted, origin) =
+            load_or_generate_with_runtime_entropy(&mut vault, &label("primary"), &mut entropy)
+                .unwrap();
         assert_eq!(origin, IdentityOrigin::Generated);
         assert!(vault.primary().load(&label("primary")).unwrap().is_some());
         assert!(!reticulum.path().exists());

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile-check every host-compatible first-party Cargo workspace."""
+"""Strictly compile-check every host-compatible first-party Cargo workspace."""
 
 from __future__ import annotations
 
@@ -157,6 +157,7 @@ def run_workspace(
     environment = os.environ.copy()
     environment["CARGO_TARGET_DIR"] = str(target_directory)
     environment.setdefault("CARGO_TERM_COLOR", "never")
+    environment.setdefault("RUSTFLAGS", "-D warnings --cfg aes_armv8")
     started = time.monotonic()
     try:
         result = subprocess.run(

@@ -1,6 +1,6 @@
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![deny(unsafe_code)]
-#![doc = "Runtime-neutral Personal Reticulum node contracts and manifold kernel"]
+#![doc = "Runtime-neutral Personal Reticulum node and manifold contracts"]
 #![deny(rustdoc::broken_intra_doc_links)]
 
 #[cfg(feature = "alloc")]

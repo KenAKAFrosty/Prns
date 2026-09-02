@@ -1,10 +1,14 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::future::Future;
+use std::future::{poll_fn, Future};
+use std::marker::PhantomData;
 use std::panic::AssertUnwindSafe;
-use std::sync::atomic::AtomicU64;
+use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll, Wake, Waker};
 
+use futures_util::task::AtomicWaker;
 use futures_util::FutureExt;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
@@ -17,10 +21,8 @@ use crate::engine::{
 use crate::identity::held::HoldIdentityError;
 use crate::identity::{IdentityHash, Zeroizing, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::InterfaceId;
-use crate::manifold::compression;
 use crate::manifold::driver::{
-    self as manifold_driver, CryptoPoolConfig, Egress, HostCommand, ProvideDecompressedHostCommand,
-    TokioHost,
+    self as manifold_driver, CryptoPoolConfig, Egress, HostCommand, TokioClock, TokioHost,
 };
 use crate::remote_control::{RemoteControlEndpoint, RemoteControlNodeIdentities};
 use crate::routing::announce::AnnounceObservation;
@@ -36,27 +38,25 @@ use prns_runtime::runtime::{
     ConfigurePreconfiguredDestinationError, Diagnostic,
 };
 
-use super::super::remote_control_access::{
-    remote_control_access_lane, RemoteControlAccessReceiver,
+use super::super::remote_control_controller_grants::{
+    remote_control_controller_grant_lane, RemoteControlControllerGrantReceiver,
+};
+use super::super::remote_control_pairing_persistence::remote_control_pairing_persistence_lane;
+use super::super::remote_control_pairing_persistence::RemoteControlAuthorizationPersistenceFailure;
+use super::super::remote_control_target_accesses::{
+    remote_control_target_access_lane, RemoteControlTargetAccessReceiver,
 };
 use super::super::request_endpoints::{RequestEndpoint, RequestEndpointSet, RespondToken};
-use super::super::request_runner::{run_router, RunnerRequest, REQUEST_QUEUE_DEPTH};
+use super::super::request_runner::{
+    run_router, RemoteControlAuthorizationRuntime, RunnerRequest, REQUEST_QUEUE_DEPTH,
+};
 use super::super::{
     InterfaceStore, Message, PreConfiguredDestination, PrnsEvent, PrnsNodeRecipe, SendError,
 };
 use super::interface_lifecycle::{drive_interfaces, DriverMsg};
-use super::resource_transfer::resource_segment_decompression_bound;
-use super::{persistence, AttachIntent, PrnsNodeHandle};
+use super::{persistence, AttachIntent, PrnsNodeHandle, PrnsNodeLocalHandle};
 
-const INFLATE_QUEUE_PER_WORKER: usize = 4;
-const MAX_INFLATE_PARALLELISM: usize = 8;
-
-fn inflate_parallelism() -> usize {
-    std::thread::available_parallelism()
-        .map(std::num::NonZeroUsize::get)
-        .unwrap_or(1)
-        .clamp(1, MAX_INFLATE_PARALLELISM)
-}
+const LOCAL_COMMAND_DEPTH: usize = 128;
 
 type AcceptedAnnounceObserver = Box<dyn for<'a> FnMut(AnnounceObservation<'a>) + Send>;
 
@@ -77,11 +77,14 @@ fn notify_accepted_announce(
 /// clones to drive it from other tasks or threads while either method owns the loop.
 pub struct PrnsNode<St, R, F, S: StorageLayout> {
     handle: PrnsNodeHandle,
+    local_commands: Option<manifold_driver::LocalCommandProducer>,
     pub(super) host: TokioHost,
     pub(super) node: AssembledNode<St, R, F, S>,
     notify_rx: UnboundedReceiver<InterfaceId>,
     command_rx: UnboundedReceiver<HostCommand>,
-    remote_control_access_rx: RemoteControlAccessReceiver,
+    local_command_rx: manifold_driver::LocalCommandConsumer,
+    remote_control_controller_grants_rx: RemoteControlControllerGrantReceiver,
+    remote_control_target_accesses_rx: RemoteControlTargetAccessReceiver,
     iface_build_rx: UnboundedReceiver<DriverMsg>,
     accepted_announce_observer: Option<AcceptedAnnounceObserver>,
     pub(super) crypto_pool: CryptoPoolConfig,
@@ -123,6 +126,7 @@ pub enum NodeRunError {
     InterfaceDriverPanicked,
     PersistenceFailed,
     PersistenceWorkerStopped,
+    RemoteControlAuthorizationPersistenceFailed(RemoteControlAuthorizationPersistenceFailure),
 }
 
 impl fmt::Display for NodeRunError {
@@ -137,26 +141,140 @@ impl fmt::Display for NodeRunError {
             Self::PersistenceWorkerStopped => formatter.write_str(
                 "the recipe-managed persistence worker stopped before completing its contract",
             ),
+            Self::RemoteControlAuthorizationPersistenceFailed(failure) => write!(
+                formatter,
+                "remote-control authorization persistence could not be reconciled: {failure}"
+            ),
         }
     }
 }
 
 impl std::error::Error for NodeRunError {}
 
-async fn run_node_tasks(
+/// A zero-sized ownership marker that keeps the whole node execution unit on the executor thread
+/// which polls it. The engine lives inside `manifold`, while the interface and request futures are
+/// sibling children of the same outer future. Making that outer future deliberately `!Send` locks
+/// in their co-location without introducing a dedicated runtime, thread, queue, or wake boundary.
+struct ExecutorThreadAnchor(PhantomData<Rc<()>>);
+
+impl ExecutorThreadAnchor {
+    const fn new() -> Self {
+        Self(PhantomData)
+    }
+
+    fn finish<T>(self, result: T) -> T {
+        result
+    }
+}
+
+struct RequestTaskWake {
+    ready: AtomicBool,
+    polling: AtomicBool,
+    parent: AtomicWaker,
+}
+
+impl RequestTaskWake {
+    fn new() -> Self {
+        Self {
+            ready: AtomicBool::new(true),
+            polling: AtomicBool::new(false),
+            parent: AtomicWaker::new(),
+        }
+    }
+
+    fn take_ready(&self) -> bool {
+        self.ready.swap(false, Ordering::AcqRel)
+    }
+
+    fn finish_poll(&self) {
+        self.polling.store(false, Ordering::Release);
+        if self.ready.load(Ordering::Acquire) {
+            self.parent.wake();
+        }
+    }
+}
+
+impl Wake for RequestTaskWake {
+    fn wake(self: Arc<Self>) {
+        self.wake_by_ref();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        if !self.ready.swap(true, Ordering::AcqRel) && !self.polling.load(Ordering::Acquire) {
+            self.parent.wake();
+        }
+    }
+}
+
+async fn run_executor_local_node_tasks(
     manifold: impl Future<Output = ()>,
-    request_endpoints: impl Future<Output = ()>,
+    request_endpoints: impl Future<Output = Result<(), RemoteControlAuthorizationPersistenceFailure>>,
     interface_driver: impl Future<Output = ()>,
 ) -> Result<(), NodeRunError> {
+    // This marker is consumed after the await so the returned future remains `!Send` even if all
+    // of its child futures become `Send` in a future refactor.
+    let executor_thread = ExecutorThreadAnchor::new();
     let manifold = AssertUnwindSafe(manifold).catch_unwind();
     let request_endpoints = AssertUnwindSafe(request_endpoints).catch_unwind();
     let interface_driver = AssertUnwindSafe(interface_driver).catch_unwind();
     tokio::pin!(manifold, request_endpoints, interface_driver);
-    tokio::select! {
-        result = &mut manifold => result.map_err(|_| NodeRunError::ManifoldPanicked),
-        result = &mut request_endpoints => result.map_err(|_| NodeRunError::RequestEndpointrPanicked),
-        result = &mut interface_driver => result.map_err(|_| NodeRunError::InterfaceDriverPanicked),
-    }
+    let request_wake = Arc::new(RequestTaskWake::new());
+    let request_waker = Waker::from(request_wake.clone());
+    // Interface I/O and manifold work form one latency-sensitive pipeline, so every executor turn
+    // advances both directly with Tokio's waker. The request runner is independent and commonly
+    // dormant; its tagged waker keeps unrelated hot-pipeline wakes from polling it.
+    let mut interface_first = true;
+    let result = poll_fn(|parent_context| {
+        request_wake.parent.register(parent_context.waker());
+        request_wake.polling.store(true, Ordering::Release);
+        let mut request_ready = request_wake.take_ready();
+
+        macro_rules! poll_child {
+            ($child:ident, $context:expr, $panic:expr) => {
+                if let Poll::Ready(result) = $child.as_mut().poll($context) {
+                    request_wake.polling.store(false, Ordering::Release);
+                    return Poll::Ready(result.map_err(|_| $panic));
+                }
+            };
+        }
+
+        if interface_first {
+            poll_child!(
+                interface_driver,
+                parent_context,
+                NodeRunError::InterfaceDriverPanicked
+            );
+            request_ready |= request_wake.take_ready();
+            poll_child!(manifold, parent_context, NodeRunError::ManifoldPanicked);
+        } else {
+            poll_child!(manifold, parent_context, NodeRunError::ManifoldPanicked);
+            request_ready |= request_wake.take_ready();
+            poll_child!(
+                interface_driver,
+                parent_context,
+                NodeRunError::InterfaceDriverPanicked
+            );
+        }
+        interface_first = !interface_first;
+        request_ready |= request_wake.take_ready();
+        if request_ready {
+            let mut request_context = Context::from_waker(&request_waker);
+            if let Poll::Ready(result) = request_endpoints.as_mut().poll(&mut request_context) {
+                request_wake.polling.store(false, Ordering::Release);
+                return Poll::Ready(match result {
+                    Ok(Ok(())) => Ok(()),
+                    Ok(Err(failure)) => Err(
+                        NodeRunError::RemoteControlAuthorizationPersistenceFailed(failure),
+                    ),
+                    Err(_) => Err(NodeRunError::RequestEndpointrPanicked),
+                });
+            }
+        }
+        request_wake.finish_poll();
+        Poll::Pending
+    })
+    .await;
+    executor_thread.finish(result)
 }
 
 fn persistence_restored_diagnostic(
@@ -309,8 +427,13 @@ where
     {
         let (notify_tx, notify_rx) = mpsc::unbounded_channel();
         let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let (local_commands, local_command_rx) =
+            manifold_driver::local_command_lane(LOCAL_COMMAND_DEPTH);
         let (iface_build_tx, iface_build_rx) = mpsc::unbounded_channel();
-        let (remote_control_access, remote_control_access_rx) = remote_control_access_lane();
+        let (remote_control_controller_grants, remote_control_controller_grants_rx) =
+            remote_control_controller_grant_lane();
+        let (remote_control_target_accesses, remote_control_target_accesses_rx) =
+            remote_control_target_access_lane();
 
         let handle = PrnsNodeHandle {
             commands: command_tx,
@@ -323,7 +446,8 @@ where
             resource_admission: super::resource_admission::ResourceAdmissionRegistry::default(),
             entropy: crate::manifold::driver::TokioEntropy,
             timing_oracle: Arc::new(Mutex::new(None)),
-            remote_control_access,
+            remote_control_controller_grants,
+            remote_control_target_accesses,
         };
         let (node, interfaces, persistence_intent) = assemble_node(build_recipe(handle.clone()));
         let node_persistence =
@@ -331,6 +455,7 @@ where
         interfaces.attach(&handle);
 
         PrnsNode {
+            local_commands: Some(local_commands),
             handle,
             host: TokioHost::start_at(
                 node_persistence
@@ -341,7 +466,9 @@ where
             node,
             notify_rx,
             command_rx,
-            remote_control_access_rx,
+            local_command_rx,
+            remote_control_controller_grants_rx,
+            remote_control_target_accesses_rx,
             iface_build_rx,
             accepted_announce_observer: None,
             crypto_pool: CryptoPoolConfig::host_default(),
@@ -441,8 +568,8 @@ where
     }
 
     #[must_use]
-    pub fn clock(&self) -> TokioHost {
-        self.host.clone()
+    pub fn clock(&self) -> TokioClock {
+        self.host.clock()
     }
 
     /// Override how this node runs its asymmetric crypto. Defaults to `CryptoPoolConfig::host_default` (pooled on capable hosts, inline on mobile).
@@ -453,10 +580,28 @@ where
     }
 
     /// A `Send + Clone` handle for other tasks or threads to drive the node while
-    /// [`run`](Self::run) or [`run_until`](Self::run_until) owns the loop.
+    /// [`run`](Self::run) or [`run_until`](Self::run_until) owns the executor-local loop. The run
+    /// future deliberately keeps its engine, manifold, interface driver, and request runner on one
+    /// executor thread; only this handle and explicit worker jobs cross thread boundaries.
     #[must_use]
     pub fn handle(&self) -> PrnsNodeHandle {
         self.handle.clone()
+    }
+
+    /// Takes the node's one executor-local command producer.
+    ///
+    /// The returned handle must remain in the same task as [`run`](Self::run) or
+    /// [`run_until`](Self::run_until). A node exposes exactly one so the lane remains SPSC.
+    pub fn take_local_handle(&mut self) -> Option<PrnsNodeLocalHandle> {
+        self.local_commands
+            .take()
+            .map(|commands| PrnsNodeLocalHandle {
+                commands: std::cell::RefCell::new(commands),
+                ids: self.handle.ids.clone(),
+                next_id: std::cell::Cell::new(0),
+                end_id: std::cell::Cell::new(0),
+                local: std::marker::PhantomData,
+            })
     }
 
     #[must_use]
@@ -572,11 +717,14 @@ where
         };
         let PrnsNode {
             handle,
+            local_commands: _,
             host,
             node,
             notify_rx,
             command_rx,
-            mut remote_control_access_rx,
+            local_command_rx,
+            mut remote_control_controller_grants_rx,
+            mut remote_control_target_accesses_rx,
             iface_build_rx,
             mut accepted_announce_observer,
             crypto_pool,
@@ -589,30 +737,30 @@ where
             mut on_event,
             request_endpoints: _,
         } = node;
-        let (save_on_learn, persistence_worker, restore_diagnostic) = match restored {
-            Some((node_persistence, report)) => {
-                let (save_on_learn, wiring) = persistence::SaveOnLearn::channel();
-                let worker = node_persistence
-                    .worker(handle.clone())
-                    .with_save_on_learn(wiring)
-                    .with_flush_failure_policy(persistence::FlushFailurePolicy::Exit);
-                (
-                    Some(save_on_learn),
-                    Some(worker),
-                    Some(persistence_restored_diagnostic(&report)),
-                )
-            }
-            None => (None, None, None),
-        };
+        let (save_on_learn, persistence_worker, authorization_persistence, restore_diagnostic) =
+            match restored {
+                Some((node_persistence, report)) => {
+                    let (save_on_learn, wiring) = persistence::SaveOnLearn::channel();
+                    let worker = node_persistence
+                        .worker(handle.clone())
+                        .with_save_on_learn(wiring)
+                        .with_flush_failure_policy(persistence::FlushFailurePolicy::Exit);
+                    let authorization_persistence =
+                        worker.remote_control_authorization_persistence();
+                    (
+                        Some(save_on_learn),
+                        Some(worker),
+                        Some(authorization_persistence),
+                        Some(persistence_restored_diagnostic(&report)),
+                    )
+                }
+                None => (None, None, None, None),
+            };
+        let (remote_control_pairing_persistence, mut remote_control_pairing_persistence_rx) =
+            remote_control_pairing_persistence_lane();
         let egress = Egress::new(std::vec::Vec::new());
         let store = handle.store.clone();
         let (req_tx, req_rx) = mpsc::channel(REQUEST_QUEUE_DEPTH);
-        let inflate_commands = handle.commands.clone();
-        let inflate_workers = inflate_parallelism();
-        let inflate_admission = Arc::new(tokio::sync::Semaphore::new(
-            inflate_workers.saturating_mul(INFLATE_QUEUE_PER_WORKER),
-        ));
-        let inflate_execution = Arc::new(tokio::sync::Semaphore::new(inflate_workers));
         let admission_decider = handle.resource_admission.clone();
         let admission_cleanup = handle.resource_admission.clone();
         let manifold = async {
@@ -622,7 +770,7 @@ where
                 super::super::tracing_events::emit(&event);
                 on_event(event, &state);
             }
-            manifold_driver::run_with_store_and_deciders(
+            manifold_driver::run_executor_local_with_store_and_deciders(
                 engine,
                 host,
                 manifold_driver::ManifoldWiring {
@@ -633,57 +781,11 @@ where
                     commands: command_rx,
                     egress,
                 },
+                local_command_rx,
                 |journaled| {
+                    remote_control_pairing_persistence.observe(&journaled);
                     if let Journaled::LinkClosed { link_id, .. } = &journaled {
                         admission_cleanup.remove(*link_id);
-                    }
-                    if let Journaled::ResourceNeedsDecompression {
-                        link_id,
-                        hash,
-                        stream,
-                        uncompressed_data_bytes,
-                    } = &journaled
-                    {
-                        let (link_id, hash, uncompressed_data_bytes) =
-                            (*link_id, *hash, *uncompressed_data_bytes);
-                        let stream = stream.to_vec();
-                        let commands = inflate_commands.clone();
-                        let admission = inflate_admission.clone().try_acquire_owned();
-                        let execution = inflate_execution.clone();
-                        let Ok(admission) = admission else {
-                            let _ = commands.send(HostCommand::ProvideDecompressed(
-                                ProvideDecompressedHostCommand {
-                                    link_id,
-                                    hash,
-                                    plaintext: std::vec::Vec::new().into(),
-                                },
-                            ));
-                            return;
-                        };
-                        tokio::spawn(async move {
-                            let Ok(execution) = execution.acquire_owned().await else {
-                                return;
-                            };
-                            let plaintext = tokio::task::spawn_blocking(move || {
-                                compression::decompress_bounded(
-                                    &stream,
-                                    resource_segment_decompression_bound(uncompressed_data_bytes),
-                                )
-                                .unwrap_or_default()
-                            })
-                            .await
-                            .unwrap_or_default();
-                            drop(execution);
-                            drop(admission);
-                            let _ = commands.send(HostCommand::ProvideDecompressed(
-                                ProvideDecompressedHostCommand {
-                                    link_id,
-                                    hash,
-                                    plaintext: plaintext.into(),
-                                },
-                            ));
-                        });
-                        return;
                     }
                     notify_accepted_announce(&mut accepted_announce_observer, &journaled);
                     let event = PrnsEvent::from(journaled);
@@ -727,13 +829,18 @@ where
         };
         let driver_commands = handle.commands.clone();
         let driver_interfaces = handle.interfaces.clone();
-        let node_tasks = run_node_tasks(
+        let node_tasks = run_executor_local_node_tasks(
             manifold,
             run_router::<St, R>(
                 &state,
                 &mut remote_control,
                 req_rx,
-                &mut remote_control_access_rx,
+                RemoteControlAuthorizationRuntime {
+                    controller_grants: &mut remote_control_controller_grants_rx,
+                    target_accesses: &mut remote_control_target_accesses_rx,
+                    pairing_persistence: &mut remote_control_pairing_persistence_rx,
+                    persistence: authorization_persistence.as_ref(),
+                },
                 handle.clone(),
             ),
             drive_interfaces(

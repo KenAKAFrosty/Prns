@@ -1,5 +1,5 @@
 use super::classification::DataPacket;
-use super::outcome::DeferredCrypto;
+use super::dispatch::IngressCryptoMode;
 use crate::crypto::ratchets::RatchetPolicy;
 use crate::crypto::{sealed_len, token_open_in_place, X25519PublicKey, X25519SecretKey};
 use crate::engine::{EngineState, InstantMillis, MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN};
@@ -15,7 +15,8 @@ use heapless::Vec as HeaplessVec;
 
 pub const MAX_SINGLE_TOKEN_LEN: usize = sealed_len(MAX_SEND_SINGLE_PACKET_PLAINTEXT_LEN);
 
-/// Owns the material needed to finish an identity-keyed decrypt after deferred Diffie-Hellman.
+/// Owns the material needed to resume an identity-keyed decrypt after external Diffie-Hellman.
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub struct DecryptOwed {
     pub destination: DestinationHash,
     pub context: WireContext,
@@ -29,13 +30,14 @@ pub struct DecryptOwed {
     pub token: HeaplessVec<u8, MAX_SINGLE_TOKEN_LEN>,
 }
 
-/// Limits retained secrets copied into a deferred ratchet decrypt; larger sets decrypt inline.
+/// Limits retained secrets copied into a ratchet-decrypt request; larger sets decrypt inline.
 pub const MAX_POOLED_RATCHETS: usize = 32;
 
 pub const MAX_RATCHET_DECRYPT_PAYLOAD_LEN: usize =
     ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN + MAX_SINGLE_TOKEN_LEN;
 
-/// Owns the ciphertext and candidate secrets needed to finish a deferred ratchet decrypt.
+/// Owns the ciphertext and candidate secrets needed to resume a ratchet decrypt.
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub struct RatchetDecryptOwed {
     pub destination: DestinationHash,
     pub context: WireContext,
@@ -50,10 +52,13 @@ pub struct RatchetDecryptOwed {
     pub token: HeaplessVec<u8, MAX_RATCHET_DECRYPT_PAYLOAD_LEN>,
 }
 
+// The owned ratchet continuation is deliberately movable out of the no-alloc engine. Boxing it
+// here would make a pure protocol classification allocate.
+#[allow(clippy::large_enum_variant)]
 pub(super) enum UpstreamDeliveryOutcome<'p> {
     Delivered(Delivery<'p>, ProofObligation),
-    OwesDecrypt,
-    OwesRatchetDecrypt,
+    OwesDecrypt(DecryptOwed),
+    OwesRatchetDecrypt(RatchetDecryptOwed),
     NotForUs,
 }
 
@@ -64,7 +69,7 @@ impl<S: StorageLayout> EngineState<S> {
         packet_hash: PacketHash,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
-        deferred: Option<&mut DeferredCrypto>,
+        crypto: IngressCryptoMode,
     ) -> UpstreamDeliveryOutcome<'p> {
         let destination = DestinationHash::from_address(data.header.address);
         match data.header.destination_type {
@@ -104,46 +109,44 @@ impl<S: StorageLayout> EngineState<S> {
 
                 let ratchet_secrets = self.self_ratchets.secrets_newest_first(&destination);
 
-                if let Some(deferred) = deferred {
-                    if data.payload.len() > ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN {
-                        if ratchet_secrets.is_empty()
-                            && identity_key_fallback == IdentityKeyFallback::Permitted
+                if crypto == IngressCryptoMode::Owed
+                    && data.payload.len() > ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN
+                {
+                    if ratchet_secrets.is_empty()
+                        && identity_key_fallback == IdentityKeyFallback::Permitted
+                    {
+                        let (ephemeral, token_bytes) =
+                            data.payload.split_at(ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN);
+                        let mut ephemeral_public_bytes = [0u8; ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN];
+                        ephemeral_public_bytes.copy_from_slice(ephemeral);
+                        let mut token = HeaplessVec::new();
+                        if token.extend_from_slice(token_bytes).is_ok() {
+                            return UpstreamDeliveryOutcome::OwesDecrypt(DecryptOwed {
+                                destination,
+                                context: data.header.context,
+                                arrived_at,
+                                source_interface,
+                                identity: registered.identity,
+                                proof_strategy: registered.proof_strategy,
+                                packet_hash,
+                                encryption_secret: held.encryption_secret_clone(),
+                                ephemeral_public: X25519PublicKey(ephemeral_public_bytes),
+                                token,
+                            });
+                        }
+                    } else if !ratchet_secrets.is_empty()
+                        && ratchet_secrets.len() <= MAX_POOLED_RATCHETS
+                    {
+                        let mut secrets = HeaplessVec::new();
+                        let mut token = HeaplessVec::new();
+                        if ratchet_secrets
+                            .iter()
+                            .try_for_each(|secret| secrets.push(secret.cloned()).map_err(|_| ()))
+                            .is_ok()
+                            && token.extend_from_slice(data.payload).is_ok()
                         {
-                            let (ephemeral, token_bytes) =
-                                data.payload.split_at(ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN);
-                            let mut ephemeral_public_bytes =
-                                [0u8; ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN];
-                            ephemeral_public_bytes.copy_from_slice(ephemeral);
-                            let mut token = HeaplessVec::new();
-                            if token.extend_from_slice(token_bytes).is_ok() {
-                                *deferred = DeferredCrypto::Decrypt(DecryptOwed {
-                                    destination,
-                                    context: data.header.context,
-                                    arrived_at,
-                                    source_interface,
-                                    identity: registered.identity,
-                                    proof_strategy: registered.proof_strategy,
-                                    packet_hash,
-                                    encryption_secret: held.encryption_secret_clone(),
-                                    ephemeral_public: X25519PublicKey(ephemeral_public_bytes),
-                                    token,
-                                });
-                                return UpstreamDeliveryOutcome::OwesDecrypt;
-                            }
-                        } else if !ratchet_secrets.is_empty()
-                            && ratchet_secrets.len() <= MAX_POOLED_RATCHETS
-                        {
-                            let mut secrets = HeaplessVec::new();
-                            let mut token = HeaplessVec::new();
-                            if ratchet_secrets
-                                .iter()
-                                .try_for_each(|secret| {
-                                    secrets.push(secret.cloned()).map_err(|_| ())
-                                })
-                                .is_ok()
-                                && token.extend_from_slice(data.payload).is_ok()
-                            {
-                                *deferred = DeferredCrypto::RatchetDecrypt(RatchetDecryptOwed {
+                            return UpstreamDeliveryOutcome::OwesRatchetDecrypt(
+                                RatchetDecryptOwed {
                                     destination,
                                     context: data.header.context,
                                     arrived_at,
@@ -155,9 +158,8 @@ impl<S: StorageLayout> EngineState<S> {
                                     identity_key_fallback,
                                     ratchet_secrets: secrets,
                                     token,
-                                });
-                                return UpstreamDeliveryOutcome::OwesRatchetDecrypt;
-                            }
+                                },
+                            );
                         }
                     }
                 }
@@ -252,12 +254,9 @@ mod tests {
         let mut raw = sealed_single_packet(&identity, destination, b"hello-announced");
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -274,37 +273,25 @@ mod tests {
     }
 
     #[test]
-    fn deferred_identity_decrypt_resumes_the_delivery() {
+    fn owed_identity_decrypt_resumes_the_delivery() {
         let mut state = personal_node_announcer();
         let destination = personal_node_destination();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let mut raw = sealed_single_packet(&identity, destination, b"hello-deferred");
-        let mut deferred = DeferredCrypto::default();
-
-        assert_eq!(
-            state.ingest_packet_with(
-                plain_data_packet(&mut raw),
-                &mut |_| {},
-                AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                Some(&mut deferred),
-            ),
-            IngestPacketOutcome::OwesDecrypt,
-        );
-
-        let DeferredCrypto::Decrypt(owed) = deferred else {
-            panic!("the identity-keyed single is captured for the pool");
+        let IngestPacketOutcome::OwesDecrypt(owed) = state.ingest_packet_step_with(
+            plain_data_packet(&mut raw),
+            AttachedInterfaces::new(&transporting_interfaces()),
+        ) else {
+            panic!("the identity-keyed single owes a decrypt operation");
         };
         let shared = x25519_diffie_hellman(&owed.encryption_secret, &owed.ephemeral_public);
         let mut delivery = None;
-        let mut deferred_sign = None;
         let interfaces = transporting_interfaces();
         state.resume_decrypt(
             owed,
             shared,
             AttachedInterfaces::new(&interfaces),
             &mut |_| false,
-            &mut deferred_sign,
             &mut |reaction| {
                 if let EngineReaction::Journaled(Journaled::Delivered(Delivery::Single(single))) =
                     reaction
@@ -341,12 +328,9 @@ mod tests {
         let mut raw = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET);
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -363,21 +347,14 @@ mod tests {
     }
 
     #[test]
-    fn deferred_ratchet_decrypt_opens_to_the_same_plaintext_as_inline() {
+    fn owed_ratchet_decrypt_opens_to_the_same_plaintext_as_inline() {
         let mut state = ratcheted_personal_node_announcer();
         let mut raw = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET);
-        let mut deferred = DeferredCrypto::default();
-        let outcome = state.ingest_packet_with(
+        let IngestPacketOutcome::OwesRatchetDecrypt(mut owed) = state.ingest_packet_step_with(
             plain_data_packet(&mut raw),
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            Some(&mut deferred),
-        );
-        assert_eq!(outcome, IngestPacketOutcome::OwesRatchetDecrypt);
-
-        let DeferredCrypto::RatchetDecrypt(mut owed) = deferred else {
-            panic!("the ratcheted single is captured for the pool");
+        ) else {
+            panic!("the ratcheted single owes a ratchet decrypt operation");
         };
         assert!(
             !owed.ratchet_secrets.is_empty(),
@@ -397,7 +374,6 @@ mod tests {
             (opened.opened_by, opened.plaintext.to_vec())
         };
         let mut delivery = None;
-        let mut deferred_sign = None;
         let interfaces = transporting_interfaces();
         state.resume_ratchet_decrypt(
             owed,
@@ -407,7 +383,6 @@ mod tests {
             },
             AttachedInterfaces::new(&interfaces),
             &mut |_| false,
-            &mut deferred_sign,
             &mut |reaction| {
                 if let EngineReaction::Journaled(Journaled::Delivered(Delivery::Single(single))) =
                     reaction
@@ -451,12 +426,9 @@ mod tests {
         let destination = personal_node_destination();
         let mut raw = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET);
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -480,12 +452,9 @@ mod tests {
         let mut raw = sealed_single_packet(&identity, destination, b"identity-keyed");
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -525,12 +494,9 @@ mod tests {
         let mut raw = sealed_single_packet(&identity, destination, b"identity-keyed");
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
@@ -543,12 +509,9 @@ mod tests {
         let mut raw = bytes_from_hex(RNS_1_4_2_SEALED_TO_RATCHET);
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -565,23 +528,16 @@ mod tests {
     }
 
     #[test]
-    fn a_deferred_required_ratchet_decrypt_carries_the_refusal_to_the_pool() {
+    fn an_owed_required_ratchet_decrypt_carries_the_refusal_to_the_runtime() {
         let mut state = ratchets_required_personal_node_announcer();
         let destination = personal_node_destination();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let mut raw = sealed_single_packet(&identity, destination, b"identity-keyed");
-        let mut deferred = DeferredCrypto::default();
-
-        let outcome = state.ingest_packet_with(
+        let IngestPacketOutcome::OwesRatchetDecrypt(mut owed) = state.ingest_packet_step_with(
             plain_data_packet(&mut raw),
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            Some(&mut deferred),
-        );
-        assert_eq!(outcome, IngestPacketOutcome::OwesRatchetDecrypt);
-        let DeferredCrypto::RatchetDecrypt(mut owed) = deferred else {
-            panic!("the required-ratchet single is captured for the pool");
+        ) else {
+            panic!("the required-ratchet single owes a ratchet decrypt operation");
         };
         assert_eq!(owed.identity_key_fallback, IdentityKeyFallback::Refused);
         assert_eq!(
@@ -602,19 +558,13 @@ mod tests {
         let destination = personal_node_destination();
         let identity = InMemoryNodeIdentity::from_secret_key_bytes(&fixed_secret_key());
         let mut raw = sealed_single_packet(&identity, destination, b"identity-keyed");
-        let mut deferred = DeferredCrypto::default();
-
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                Some(&mut deferred),
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
-        assert!(matches!(deferred, DeferredCrypto::Empty));
     }
 
     const RAW_PLAIN_DATA: &str = "080012f815e3e65add6ceb2fda0e7be338680068656c6c6f2d706c61696e";
@@ -628,12 +578,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Plain(PlainDelivery {
@@ -658,12 +605,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::HopLimitReached),
         );
@@ -678,12 +622,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
@@ -721,12 +662,9 @@ mod tests {
         raw[header_len] = 0xFF;
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw[..header_len + 1]),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
@@ -751,12 +689,9 @@ mod tests {
         let IngestPacketOutcome::Delivery {
             delivery: Delivery::Plain(delivered),
             ..
-        } = state.ingest_packet_with(
+        } = state.ingest_for_test(
             plain_data_packet(&mut raw_for_us),
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         )
         else {
             panic!("in-transport data named to us must deliver plainly");
@@ -764,12 +699,9 @@ mod tests {
         assert_eq!(delivered.payload, &[0xEE]);
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw_for_other),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::OtherInstance),
         );
@@ -788,12 +720,9 @@ mod tests {
         ));
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::OtherInstance),
         );
@@ -817,12 +746,9 @@ mod tests {
         let mut raw = sealed_single_packet(&identity, destination, b"hello-single");
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -857,12 +783,9 @@ mod tests {
 
         let mut first_copy = raw.clone();
         assert!(matches!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut first_copy),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(_),
@@ -872,12 +795,9 @@ mod tests {
 
         let mut replayed_copy = raw.clone();
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut replayed_copy),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::Duplicate),
         );
@@ -904,24 +824,18 @@ mod tests {
         let last = tampered.len() - 1;
         tampered[last] ^= 0x01;
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut tampered),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
 
         let mut genuine = raw.clone();
         assert!(matches!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut genuine),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(_),
@@ -965,12 +879,9 @@ mod tests {
 
         let mut to_a = sealed_single_packet(&identity_a, dest_a, b"for-a");
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut to_a),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -987,12 +898,9 @@ mod tests {
 
         let mut to_b = sealed_single_packet(&identity_b, dest_b, b"for-b");
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut to_b),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -1009,12 +917,9 @@ mod tests {
 
         let mut crossed = sealed_single_packet(&identity_b, dest_a, b"crossed");
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut crossed),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
@@ -1046,12 +951,9 @@ mod tests {
 
         let mut as_app_only = raw.clone();
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut as_app_only),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::OtherInstance),
         );
@@ -1059,12 +961,9 @@ mod tests {
         state.set_transport_identity(&held).unwrap();
         let mut as_transport = raw.clone();
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut as_transport),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -1126,16 +1025,13 @@ mod tests {
         let IngestPacketOutcome::Delivery {
             delivery: Delivery::Group(group),
             proof: ProofObligation::None,
-        } = state.ingest_packet_with(
+        } = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: iface(0x07),
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         )
         else {
             panic!("a GROUP packet for our registered group delivers, owing no proof");
@@ -1163,16 +1059,13 @@ mod tests {
         wire[header_len..header_len + 64].fill(0xAB);
         let mut raw = wire[..header_len + 64].to_vec();
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0x07),
                     bytes: &mut raw,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );
@@ -1219,16 +1112,13 @@ mod tests {
         let mut direct = group_wire(destination, 0);
         assert!(
             matches!(
-                state.ingest_packet_with(
+                state.ingest_for_test(
                     InboundPacket {
                         arrived_at: InstantMillis(1_000),
                         source_interface: iface(0x07),
                         bytes: &mut direct,
                     },
-                    &mut |_| {},
                     AttachedInterfaces::new(&transporting_interfaces()),
-                    &mut |_| {},
-                    None,
                 ),
                 IngestPacketOutcome::Delivery {
                     delivery: Delivery::Group(_),
@@ -1240,16 +1130,13 @@ mod tests {
 
         let mut relayed = group_wire(destination, 1);
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 InboundPacket {
                     arrived_at: InstantMillis(1_000),
                     source_interface: iface(0x07),
                     bytes: &mut relayed,
                 },
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::HopLimitReached),
             "a GROUP packet relayed beyond one hop is dropped, matching RNS packet_filter",
@@ -1263,16 +1150,13 @@ mod tests {
         let mut second = group_wire(destination, 0);
         assert!(
             matches!(
-                state.ingest_packet_with(
+                state.ingest_for_test(
                     InboundPacket {
                         arrived_at: InstantMillis(1_000),
                         source_interface: iface(0x07),
                         bytes: &mut first,
                     },
-                    &mut |_| {},
                     AttachedInterfaces::new(&transporting_interfaces()),
-                    &mut |_| {},
-                    None,
                 ),
                 IngestPacketOutcome::Delivery {
                     delivery: Delivery::Group(_),
@@ -1283,16 +1167,13 @@ mod tests {
         );
         assert!(
             matches!(
-                state.ingest_packet_with(
+                state.ingest_for_test(
                     InboundPacket {
                         arrived_at: InstantMillis(2_000),
                         source_interface: iface(0x07),
                         bytes: &mut second,
                     },
-                    &mut |_| {},
                     AttachedInterfaces::new(&transporting_interfaces()),
-                    &mut |_| {},
-                    None,
                 ),
                 IngestPacketOutcome::Delivery {
                     delivery: Delivery::Group(_),
@@ -1323,12 +1204,9 @@ mod tests {
         let packet_hash = PacketHash::of_wire_packet(&raw).unwrap();
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Delivery {
                 delivery: Delivery::Single(SingleDelivery {
@@ -1370,12 +1248,9 @@ mod tests {
         let mut raw = sealed_single_packet(&identity, unregistered, b"hello-single");
 
         assert_eq!(
-            state.ingest_packet_with(
+            state.ingest_for_test(
                 plain_data_packet(&mut raw),
-                &mut |_| {},
                 AttachedInterfaces::new(&transporting_interfaces()),
-                &mut |_| {},
-                None,
             ),
             IngestPacketOutcome::Ignored(IgnoreReason::NotForUs),
         );

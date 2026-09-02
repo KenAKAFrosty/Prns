@@ -18,6 +18,7 @@ pub enum WakeReason {
     ResourceDeadlines,
     ChannelTimeouts,
     HeldAnnounceRelease,
+    RemoteControlPairing,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +58,25 @@ pub struct WakeSchedules {
     pub resource_deadlines: WakeSchedule,
     pub channel_timeouts: WakeSchedule,
     pub held_announce_release: WakeSchedule,
+    pub remote_control_pairing: WakeSchedule,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RouteRemovalWakeScheduleDelta {
+    scheduled_announces: WakeSchedule,
+    expired_routes: WakeSchedule,
+    expired_destination_identities: WakeSchedule,
+}
+
+impl RouteRemovalWakeScheduleDelta {
+    pub(crate) const fn into_wake_schedules(self) -> WakeSchedules {
+        WakeSchedules {
+            scheduled_announces: self.scheduled_announces,
+            expired_routes: self.expired_routes,
+            expired_destination_identities: self.expired_destination_identities,
+            ..WakeSchedules::UNCHANGED
+        }
+    }
 }
 
 impl WakeSchedules {
@@ -71,6 +91,7 @@ impl WakeSchedules {
         resource_deadlines: WakeSchedule::Unchanged,
         channel_timeouts: WakeSchedule::Unchanged,
         held_announce_release: WakeSchedule::Unchanged,
+        remote_control_pairing: WakeSchedule::Unchanged,
     };
 
     pub fn merge(&mut self, delta: WakeSchedules) {
@@ -88,6 +109,10 @@ impl WakeSchedules {
             (&mut self.resource_deadlines, delta.resource_deadlines),
             (&mut self.channel_timeouts, delta.channel_timeouts),
             (&mut self.held_announce_release, delta.held_announce_release),
+            (
+                &mut self.remote_control_pairing,
+                delta.remote_control_pairing,
+            ),
         ] {
             match change {
                 WakeSchedule::Unchanged => {}
@@ -99,6 +124,36 @@ impl WakeSchedules {
                 }
                 replacement => *slot = replacement,
             }
+        }
+    }
+
+    /// Composes a later delta after this delta without pretending either one is a live schedule.
+    ///
+    /// Use [`Self::merge`] when `self` is the manifold's currently armed schedule. Use this method
+    /// when several engine steps are completed before their ordered changes are returned to that
+    /// manifold. In particular, composition preserves [`WakeSchedule::AtMost`] as a conditional
+    /// update instead of turning it into an exact deadline.
+    pub fn compose(&mut self, later: WakeSchedules) {
+        for (slot, change) in [
+            (&mut self.scheduled_announces, later.scheduled_announces),
+            (&mut self.receipt_timeouts, later.receipt_timeouts),
+            (&mut self.path_request_timeouts, later.path_request_timeouts),
+            (&mut self.expired_routes, later.expired_routes),
+            (
+                &mut self.expired_destination_identities,
+                later.expired_destination_identities,
+            ),
+            (&mut self.expired_blackholes, later.expired_blackholes),
+            (&mut self.link_deadlines, later.link_deadlines),
+            (&mut self.resource_deadlines, later.resource_deadlines),
+            (&mut self.channel_timeouts, later.channel_timeouts),
+            (&mut self.held_announce_release, later.held_announce_release),
+            (
+                &mut self.remote_control_pairing,
+                later.remote_control_pairing,
+            ),
+        ] {
+            *slot = compose_wake_delta(*slot, change);
         }
     }
 
@@ -119,6 +174,10 @@ impl WakeSchedules {
             (self.resource_deadlines, WakeReason::ResourceDeadlines),
             (self.channel_timeouts, WakeReason::ChannelTimeouts),
             (self.held_announce_release, WakeReason::HeldAnnounceRelease),
+            (
+                self.remote_control_pairing,
+                WakeReason::RemoteControlPairing,
+            ),
         ] {
             match wake {
                 WakeSchedule::Unchanged | WakeSchedule::Idle => {}
@@ -195,6 +254,51 @@ impl<S: StorageLayout> EngineState<S> {
         WakeSchedule::from_deadline(earliest)
     }
 
+    pub fn remote_control_pairing_wake(&self) -> WakeSchedule {
+        let availability = match self.remote_control_pairing_view() {
+            crate::remote_control::RemoteControlPairingView::Open(session) => {
+                Some(session.window().expires_at())
+            }
+            crate::remote_control::RemoteControlPairingView::Unavailable
+            | crate::remote_control::RemoteControlPairingView::Closed => None,
+        };
+        let attempt = match self.remote_control_target_pairing.view() {
+            crate::remote_control::RemoteControlTargetPairingView::OfferPrepared(attempt)
+            | crate::remote_control::RemoteControlTargetPairingView::AwaitingBoth(attempt)
+            | crate::remote_control::RemoteControlTargetPairingView::AwaitingTargetApproval(
+                attempt,
+            )
+            | crate::remote_control::RemoteControlTargetPairingView::AwaitingControllerCommit(
+                attempt,
+            ) => Some(attempt.window().expires_at()),
+            crate::remote_control::RemoteControlTargetPairingView::Completing(attempt) => {
+                Some(attempt.window().expires_at())
+            }
+            crate::remote_control::RemoteControlTargetPairingView::Idle
+            | crate::remote_control::RemoteControlTargetPairingView::Authorizing(_) => None,
+        };
+        let controller = match self.remote_control_controller_pairing.view() {
+            crate::remote_control::RemoteControlControllerPairingView::AwaitingOffer(begin) => {
+                Some(begin.window().expires_at())
+            }
+            crate::remote_control::RemoteControlControllerPairingView::AwaitingApproval(
+                attempt,
+            )
+            | crate::remote_control::RemoteControlControllerPairingView::AwaitingCompletion(
+                attempt,
+            ) => Some(attempt.window().expires_at()),
+            crate::remote_control::RemoteControlControllerPairingView::Idle
+            | crate::remote_control::RemoteControlControllerPairingView::Persisting(_) => None,
+        };
+        WakeSchedule::from_deadline(
+            availability
+                .into_iter()
+                .chain(attempt)
+                .chain(controller)
+                .min(),
+        )
+    }
+
     pub fn route_expiry_wake(&self, interfaces: AttachedInterfaces<'_>) -> WakeSchedule {
         let warmth = WarmestOf(&self.tunnels, &self.departed_interfaces);
         let routes = self
@@ -222,12 +326,11 @@ impl<S: StorageLayout> EngineState<S> {
     pub(crate) fn route_removal_wake_schedules(
         &self,
         interfaces: AttachedInterfaces<'_>,
-    ) -> WakeSchedules {
-        WakeSchedules {
+    ) -> RouteRemovalWakeScheduleDelta {
+        RouteRemovalWakeScheduleDelta {
             scheduled_announces: self.scheduled_announces_wake(),
             expired_routes: self.route_expiry_wake(interfaces),
             expired_destination_identities: self.destination_identity_expiry_wake(),
-            ..WakeSchedules::UNCHANGED
         }
     }
 
@@ -246,6 +349,7 @@ impl<S: StorageLayout> EngineState<S> {
             resource_deadlines: self.resource_deadlines_wake(),
             channel_timeouts: self.channel_timeouts_wake(),
             held_announce_release: self.held_announce_release_wake(),
+            remote_control_pairing: self.remote_control_pairing_wake(),
         }
     }
 
@@ -263,6 +367,23 @@ fn merge_earliest(
     match current {
         Some((existing, _)) if existing <= candidate => current,
         _ => Some((candidate, reason)),
+    }
+}
+
+fn compose_wake_delta(earlier: WakeSchedule, later: WakeSchedule) -> WakeSchedule {
+    match later {
+        WakeSchedule::Unchanged => earlier,
+        WakeSchedule::AtMost(later_ceiling) => match earlier {
+            WakeSchedule::Unchanged => WakeSchedule::AtMost(later_ceiling),
+            WakeSchedule::AtMost(earlier_ceiling) => {
+                WakeSchedule::AtMost(earlier_ceiling.min(later_ceiling))
+            }
+            WakeSchedule::At(earlier_exact) if earlier_exact <= later_ceiling => {
+                WakeSchedule::At(earlier_exact)
+            }
+            WakeSchedule::Idle | WakeSchedule::At(_) => WakeSchedule::At(later_ceiling),
+        },
+        replacement => replacement,
     }
 }
 
@@ -294,16 +415,13 @@ mod tests {
     fn next_wake_names_the_scheduled_announce_reason_future_then_due() {
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let mut state = transporting_node();
-        let _ = state.ingest_packet_with(
+        let _ = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0xEE; 8]),
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert_eq!(state.scheduled_announce_count(), 1);
 
@@ -339,16 +457,13 @@ mod tests {
         let interfaces = [routable_descriptor(source)];
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
-        let _ = state.ingest_packet_with(
+        let _ = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: source,
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&interfaces),
-            &mut |_| {},
-            None,
         );
         assert_eq!(state.route_count(), 1);
         assert_eq!(
@@ -389,6 +504,7 @@ mod tests {
             resource_deadlines: WakeSchedule::Unchanged,
             channel_timeouts: WakeSchedule::Unchanged,
             held_announce_release: WakeSchedule::Unchanged,
+            remote_control_pairing: WakeSchedule::Unchanged,
         }
     }
 
@@ -526,6 +642,60 @@ mod tests {
     }
 
     #[test]
+    fn composing_an_at_most_delta_preserves_its_conditional_meaning() {
+        let mut combined = WakeSchedules::UNCHANGED;
+        combined.compose(WakeSchedules {
+            expired_routes: WakeSchedule::AtMost(InstantMillis(7_000)),
+            ..WakeSchedules::UNCHANGED
+        });
+        assert_eq!(
+            combined.expired_routes,
+            WakeSchedule::AtMost(InstantMillis(7_000)),
+        );
+
+        let mut live = schedules(
+            WakeSchedule::Idle,
+            WakeSchedule::Idle,
+            WakeSchedule::Idle,
+            WakeSchedule::At(InstantMillis(3_000)),
+        );
+        live.merge(combined);
+        assert_eq!(live.expired_routes, WakeSchedule::At(InstantMillis(3_000)));
+    }
+
+    #[test]
+    fn composing_at_most_deltas_keeps_the_earliest_ceiling() {
+        let mut combined = WakeSchedules {
+            expired_routes: WakeSchedule::AtMost(InstantMillis(7_000)),
+            ..WakeSchedules::UNCHANGED
+        };
+        combined.compose(WakeSchedules {
+            expired_routes: WakeSchedule::AtMost(InstantMillis(5_000)),
+            ..WakeSchedules::UNCHANGED
+        });
+        assert_eq!(
+            combined.expired_routes,
+            WakeSchedule::AtMost(InstantMillis(5_000)),
+        );
+    }
+
+    #[test]
+    fn composing_after_an_exact_delta_applies_the_later_ceiling() {
+        let mut combined = WakeSchedules {
+            expired_routes: WakeSchedule::At(InstantMillis(9_000)),
+            ..WakeSchedules::UNCHANGED
+        };
+        combined.compose(WakeSchedules {
+            expired_routes: WakeSchedule::AtMost(InstantMillis(5_000)),
+            ..WakeSchedules::UNCHANGED
+        });
+        assert_eq!(
+            combined.expired_routes,
+            WakeSchedule::At(InstantMillis(5_000)),
+        );
+    }
+
+    #[test]
     fn wake_schedules_delta_tracks_a_recompute_across_a_rebroadcast_lifecycle() {
         let mut state = transporting_node();
         let descriptors = transporting_interfaces();
@@ -533,7 +703,8 @@ mod tests {
         let mut schedules = state.wake_schedules(interfaces);
 
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-        let delta = state.ingest_packet_into(
+        let delta = crate::engine::drive_packet_to_quiescence(
+            &mut state,
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
@@ -542,7 +713,7 @@ mod tests {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&transporting_interfaces()),
                 now: InstantMillis(1_000),
-                fill_entropy: &mut |bytes| bytes.fill(0),
+                fill_random: &mut |bytes| bytes.fill(0),
                 should_prove: &mut |_: &ProofRequest| false,
                 should_accept_resource:
                     &mut |_: &crate::routing::links::resources::ResourceOffer| false,
@@ -622,16 +793,13 @@ mod tests {
         }];
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
         let mut state: EngineState<TestStorageLayout> = EngineState::<TestStorageLayout>::default();
-        let _ = state.ingest_packet_with(
+        let _ = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: source,
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&roaming_view),
-            &mut |_| {},
-            None,
         );
         assert_eq!(state.route_count(), 1);
 
@@ -655,7 +823,8 @@ mod tests {
         let mut schedules = state.wake_schedules(interfaces);
 
         let mut raw = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-        let delta = state.ingest_packet_into(
+        let delta = crate::engine::drive_packet_to_quiescence(
+            &mut state,
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0xEE; 8]),
@@ -664,7 +833,7 @@ mod tests {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&transporting_interfaces()),
                 now: InstantMillis(1_000),
-                fill_entropy: &mut |bytes| bytes.fill(0),
+                fill_random: &mut |bytes| bytes.fill(0),
                 should_prove: &mut |_: &ProofRequest| false,
                 should_accept_resource:
                     &mut |_: &crate::routing::links::resources::ResourceOffer| false,
@@ -702,7 +871,8 @@ mod tests {
         let mut schedules = state.wake_schedules(interfaces);
 
         let mut first = bytes_from_hex(RNS_1_4_2_ANNOUNCE);
-        let delta = state.ingest_packet_into(
+        let delta = crate::engine::drive_packet_to_quiescence(
+            &mut state,
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0xEE; 8]),
@@ -711,7 +881,7 @@ mod tests {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&transporting_interfaces()),
                 now: InstantMillis(1_000),
-                fill_entropy: &mut |bytes| bytes.fill(0),
+                fill_random: &mut |bytes| bytes.fill(0),
                 should_prove: &mut |_: &ProofRequest| false,
                 should_accept_resource:
                     &mut |_: &crate::routing::links::resources::ResourceOffer| false,
@@ -723,7 +893,8 @@ mod tests {
 
         let mut journal = std::vec::Vec::new();
         let mut second = bytes_from_hex(RNS_1_4_2_RATCHETED_ANNOUNCE);
-        let delta = state.ingest_packet_into(
+        let delta = crate::engine::drive_packet_to_quiescence(
+            &mut state,
             InboundPacket {
                 arrived_at: InstantMillis(2_000),
                 source_interface: InterfaceId::new([0xEE; 8]),
@@ -732,7 +903,7 @@ mod tests {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&transporting_interfaces()),
                 now: InstantMillis(2_000),
-                fill_entropy: &mut |bytes| bytes.fill(0),
+                fill_random: &mut |bytes| bytes.fill(0),
                 should_prove: &mut |_: &ProofRequest| false,
                 should_accept_resource:
                     &mut |_: &crate::routing::links::resources::ResourceOffer| false,

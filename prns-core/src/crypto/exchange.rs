@@ -11,6 +11,25 @@ impl X25519PublicKey {
 #[derive(Zeroize, ZeroizeOnDrop)]
 pub struct X25519SecretKey([u8; 32]);
 
+// Test assertions need to compare complete typed ingress outcomes, some of which own secret
+// material. Keep those conveniences out of production builds and never print the key bytes.
+#[cfg(test)]
+impl core::fmt::Debug for X25519SecretKey {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("X25519SecretKey([REDACTED])")
+    }
+}
+
+#[cfg(test)]
+impl PartialEq for X25519SecretKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+#[cfg(test)]
+impl Eq for X25519SecretKey {}
+
 #[derive(Zeroize, ZeroizeOnDrop)]
 pub struct X25519SharedSecret([u8; 32]);
 
@@ -28,9 +47,19 @@ impl X25519SecretKey {
     pub(crate) fn secret_bytes(&self) -> &[u8; 32] {
         &self.0
     }
+
+    pub fn with_scalar_bytes<R>(&self, use_bytes: impl FnOnce(&[u8; 32]) -> R) -> R {
+        use_bytes(&self.0)
+    }
 }
 
 impl X25519SharedSecret {
+    pub const LEN: usize = 32;
+
+    pub const fn from_external_diffie_hellman(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
     pub const fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }

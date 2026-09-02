@@ -1,26 +1,21 @@
 use crate::engine::{AnnounceWriteFailure, EngineState};
 use crate::interfaces::AttachedInterfaces;
-use crate::interfaces::InterfaceId;
 use crate::routing::announce::emit::{AnnounceAppDataBytes, MAX_RATCHETED_ANNOUNCE_APP_DATA_LEN};
 use crate::routing::upstream_app_destinations::UpstreamAppDestinationKind;
 use crate::storage::StorageLayout;
 use crate::wire::DestinationHash;
 
-use super::{CommandId, CommandOutcome, PrnsCommand, Settleable, Settlement};
+use super::{CommandId, CommandOutcome, EgressTarget, PrnsCommand, Settleable, Settlement};
 
 /// `Destination.announce(app_data=…, attached_interface=…)` as data (RNS 1.4.2 Destination.py).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnnounceNow {
     pub destination: DestinationHash,
-    pub target: AnnounceTarget,
+    pub target: EgressTarget,
     pub app_data: AnnounceAppData,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AnnounceTarget {
-    AllInterfaces,
-    Interface(InterfaceId),
-}
+pub type AnnounceTarget = EgressTarget;
 
 // Data rides the announce's full app-data capacity inline beside the zero-size registered.
 // The skew is the point of the pair, and the no-alloc core has no Box to shrink it.
@@ -71,7 +66,17 @@ impl Settleable for AnnounceNow {
             | Settlement::SendToChannel(_)
             | Settlement::AllowRequester(_)
             | Settlement::SetRegisteredAnnounceAppData(_)
-            | Settlement::SendPlainPacket(_) => None,
+            | Settlement::SendPlainPacket(_)
+            | Settlement::OpenRemoteControlPairing(_)
+            | Settlement::CloseRemoteControlPairing(_)
+            | Settlement::ApproveRemoteControlTargetPairing(_)
+            | Settlement::RejectRemoteControlTargetPairing(_)
+            | Settlement::SettleRemoteControlTargetPairingAuthorization(_)
+            | Settlement::BeginRemoteControlControllerPairing(_)
+            | Settlement::ApproveRemoteControlControllerPairing(_)
+            | Settlement::RejectRemoteControlControllerPairing(_)
+            | Settlement::RemoteControlControllerPairingRequest(_)
+            | Settlement::SettleRemoteControlControllerPairingPersistence(_) => None,
         }
     }
 }
@@ -138,6 +143,7 @@ mod tests {
     use super::*;
     use crate::engine::test_support::*;
     use crate::engine::{EngineReaction, InstantMillis, IssuedCommand, Journaled, RatchetPolicy};
+    use crate::interfaces::InterfaceId;
 
     const TEST_COMMAND_ID: CommandId = CommandId(7);
 

@@ -5,7 +5,7 @@
 mod destination_identities;
 pub mod envelope;
 mod impls;
-mod remote_control_access;
+mod remote_control;
 mod routing_table;
 mod self_ratchets;
 mod store;
@@ -54,10 +54,12 @@ pub use envelope::{
 };
 #[allow(unused_imports)]
 pub use impls::*;
-pub use remote_control_access::{
-    read_remote_control_access_snapshot, remote_control_access_snapshot_capacity,
-    write_remote_control_access_snapshot, PersistedRemoteControlControllerGrants,
-    REMOTE_CONTROL_CONTROLLER_IDENTITY_WIRE_LEN,
+pub use remote_control::{
+    read_remote_control_controller_grants_snapshot, read_remote_control_target_accesses_snapshot,
+    remote_control_controller_grants_snapshot_capacity,
+    remote_control_target_accesses_snapshot_capacity,
+    write_remote_control_controller_grants_snapshot, write_remote_control_target_accesses_snapshot,
+    PersistedRemoteControlControllerGrants, PersistedRemoteControlTargetAccesses,
 };
 pub use routing_table::{
     maximum_persisted_route_row_wire_len, maximum_route_upsert_payload_len,
@@ -84,7 +86,8 @@ pub enum SnapshotRegion {
     Tunnels,
     SelfRatchets,
     DestinationIdentities,
-    RemoteControlAccess,
+    RemoteControlControllerGrants,
+    RemoteControlTargetAccesses,
 }
 
 impl SnapshotRegion {
@@ -95,7 +98,8 @@ impl SnapshotRegion {
             SnapshotRegion::Tunnels => 0x03,
             SnapshotRegion::SelfRatchets => 0x04,
             SnapshotRegion::DestinationIdentities => 0x05,
-            SnapshotRegion::RemoteControlAccess => 0x06,
+            SnapshotRegion::RemoteControlControllerGrants => 0x06,
+            SnapshotRegion::RemoteControlTargetAccesses => 0x07,
         }
     }
 }
@@ -104,4 +108,15 @@ impl SnapshotRegion {
 pub enum SnapshotReadError {
     Envelope(SnapshotOpenError),
     MalformedPayload,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SnapshotRegion;
+
+    #[test]
+    fn remote_control_snapshot_regions_have_distinct_pinned_tags() {
+        assert_eq!(SnapshotRegion::RemoteControlControllerGrants.tag(), 0x06);
+        assert_eq!(SnapshotRegion::RemoteControlTargetAccesses.tag(), 0x07);
+    }
 }

@@ -70,7 +70,10 @@ impl Cycle {
             NOW,
             &mut |bytes| cycle.responder_entropy.fill(bytes),
             &mut |reaction| {
-                if let EngineReaction::Directive(Directive::Send { bytes, .. }) = reaction {
+                if let EngineReaction::Directive(
+                    Directive::Send { bytes, .. } | Directive::SendAnnounce { bytes, .. },
+                ) = reaction
+                {
                     announce.extend_from_slice(bytes);
                 }
             },
@@ -87,7 +90,7 @@ impl Cycle {
             IngestIo {
                 interfaces: AttachedInterfaces::new(&cycle.interfaces),
                 now: NOW,
-                fill_entropy: &mut |bytes| cycle.initiator_entropy.fill(bytes),
+                fill_random: &mut |bytes| cycle.initiator_entropy.fill(bytes),
                 should_prove: &mut |_| true,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| {
@@ -155,7 +158,7 @@ impl Cycle {
             IngestIo {
                 interfaces: AttachedInterfaces::new(interfaces),
                 now: NOW,
-                fill_entropy: &mut |bytes| responder_entropy.fill(bytes),
+                fill_random: &mut |bytes| responder_entropy.fill(bytes),
                 should_prove: &mut |_| true,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| match reaction {
@@ -196,7 +199,7 @@ impl Cycle {
             IngestIo {
                 interfaces: AttachedInterfaces::new(interfaces),
                 now: NOW,
-                fill_entropy: &mut |bytes| initiator_entropy.fill(bytes),
+                fill_random: &mut |bytes| initiator_entropy.fill(bytes),
                 should_prove: &mut |_| true,
                 should_accept_resource: &mut |_| false,
                 sink: &mut |reaction| {
@@ -211,5 +214,15 @@ impl Cycle {
             },
         );
         assert!(settled, "proof verified and the receipt settled");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Cycle;
+
+    #[test]
+    fn construction_learns_the_destination_from_the_announce_directive() {
+        let _ = Cycle::new();
     }
 }

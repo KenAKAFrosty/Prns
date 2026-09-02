@@ -17,8 +17,7 @@ use personal_rns::lora::{LoRaControl, LoRaInterface, LoRaInterfaceInput, LoRaSpe
 use personal_rns::manifold::embassy::{EmbassyHost, EmbassyInterfaceStatus, InterfaceLifecycle};
 use personal_rns::manifold::interface_seam::{Interface, EMBEDDED_MAX_WIRE_FRAME_LEN};
 use personal_rns::remote_control::{
-    RemoteControlInitialAccess, RemoteControlPublicAppData, RemoteControlSelfAnnouncement,
-    RemoteControlService,
+    RemoteControlInitialControllerGrants, RemoteControlSelfAnnouncement, RemoteControlService,
 };
 use personal_rns::runtime::{
     minimum_interface_store_capacity, minimum_manifold_notification_capacity, CompletionPool,
@@ -37,7 +36,21 @@ use board::{
     USB_INTERFACE_ID, USB_MANUFACTURER, USB_PRODUCT, USB_SERIAL_NUMBER,
 };
 
-use super::entropy::{initialize_runtime_entropy, runtime_entropy, RUNTIME_ENTROPY_SEED_LEN};
+#[cfg(feature = "board-t1000e")]
+use super::entropy::install_hal_runtime_entropy;
+#[cfg(any(
+    feature = "board-t096",
+    feature = "board-t114",
+    feature = "board-mesh-tower-v2"
+))]
+use super::entropy::install_softdevice_runtime_entropy;
+#[cfg(any(
+    feature = "board-t096",
+    feature = "board-t114",
+    feature = "board-mesh-tower-v2"
+))]
+use super::entropy::prepare_softdevice_runtime_entropy;
+use super::entropy::{runtime_entropy, seed_from_hal};
 
 #[cfg(any(
     feature = "board-t096",
@@ -101,7 +114,7 @@ type Node = PrnsNode<
     hopspot::node_pages::NodePageRoutes,
     for<'a> fn(PrnsEvent<'a>, &()),
     Storage,
-    EmbassyHost<fn(&mut [u8])>,
+    EmbassyHost<Mtx, super::entropy::NrfEntropySource>,
     Mtx,
     LANE_COUNT,
     INTERFACE_CAPACITY,
@@ -151,21 +164,14 @@ async fn manifold_task(
 #[allow(clippy::too_many_lines)]
 pub async fn run(spawner: Spawner) -> ! {
     #[cfg(feature = "board-t1000e")]
-    let ((node_bootstrap, remote_control_bootstrap, runtime_entropy_seed), hardware) =
+    let ((node_bootstrap, remote_control_bootstrap, entropy), hardware) =
         Board::initialize(|nvmc, rng| {
-            let mut fill_entropy = |bytes: &mut [u8]| rng.blocking_fill_bytes(bytes);
-            let node_bootstrap = board::bootstrap_node_identity(nvmc, &mut fill_entropy);
+            let mut entropy = seed_from_hal(rng);
+            let node_bootstrap = board::bootstrap_node_identity(nvmc, &mut entropy);
             let remote_control_bootstrap = board::REMOTE_CONTROL_IDENTITY_FLASH
-                .load_or_generate(nvmc, &mut fill_entropy)
+                .load_or_generate(nvmc, &mut entropy)
                 .expect("RemoteControl identity bootstrap failed");
-            let mut runtime_entropy_seed =
-                personal_rns::identity::Zeroizing::new([0u8; RUNTIME_ENTROPY_SEED_LEN]);
-            fill_entropy(&mut runtime_entropy_seed[..]);
-            (
-                node_bootstrap,
-                remote_control_bootstrap,
-                runtime_entropy_seed,
-            )
+            (node_bootstrap, remote_control_bootstrap, entropy)
         })
         .await;
     #[cfg(any(
@@ -173,27 +179,22 @@ pub async fn run(spawner: Spawner) -> ! {
         feature = "board-t114",
         feature = "board-mesh-tower-v2"
     ))]
-    let ((node_bootstrap, remote_control_bootstrap, ble_bootstrap, runtime_entropy_seed), hardware) =
+    let ((node_bootstrap, remote_control_bootstrap, ble_bootstrap, entropy), hardware) =
         Board::initialize(|nvmc, rng| {
-            let mut fill_entropy = |bytes: &mut [u8]| rng.blocking_fill_bytes(bytes);
-            let node_bootstrap = board::bootstrap_node_identity(nvmc, &mut fill_entropy);
+            let mut entropy = seed_from_hal(rng);
+            let node_bootstrap = board::bootstrap_node_identity(nvmc, &mut entropy);
             let remote_control_bootstrap = board::REMOTE_CONTROL_IDENTITY_FLASH
-                .load_or_generate(nvmc, &mut fill_entropy)
+                .load_or_generate(nvmc, &mut entropy)
                 .expect("RemoteControl identity bootstrap failed");
-            let ble_bootstrap = board::bootstrap_ble_identity(nvmc, &mut fill_entropy);
-            let mut runtime_entropy_seed =
-                personal_rns::identity::Zeroizing::new([0u8; RUNTIME_ENTROPY_SEED_LEN]);
-            fill_entropy(&mut runtime_entropy_seed[..]);
+            let ble_bootstrap = board::bootstrap_ble_identity(nvmc, &mut entropy);
             (
                 node_bootstrap,
                 remote_control_bootstrap,
                 ble_bootstrap,
-                runtime_entropy_seed,
+                entropy,
             )
         })
         .await;
-    initialize_runtime_entropy(&runtime_entropy_seed);
-    drop(runtime_entropy_seed);
     #[cfg(any(feature = "board-t096", feature = "board-t114"))]
     let identity_startup_notice =
         board::identity_startup_notice(node_bootstrap.persistence(), ble_bootstrap.persistence());
@@ -235,6 +236,8 @@ pub async fn run(spawner: Spawner) -> ! {
         mut status_led,
         gnss,
     } = hardware;
+    #[cfg(feature = "board-t1000e")]
+    install_hal_runtime_entropy(entropy);
     #[cfg(feature = "board-mesh-tower-v2")]
     let Hardware {
         usb: usb_driver,
@@ -278,7 +281,19 @@ pub async fn run(spawner: Spawner) -> ! {
         feature = "board-t114",
         feature = "board-mesh-tower-v2"
     ))]
+    let entropy = prepare_softdevice_runtime_entropy(entropy);
+    #[cfg(any(
+        feature = "board-t096",
+        feature = "board-t114",
+        feature = "board-mesh-tower-v2"
+    ))]
     let sd = bluetooth::enable(spawner, vbus, ble_identity);
+    #[cfg(any(
+        feature = "board-t096",
+        feature = "board-t114",
+        feature = "board-mesh-tower-v2"
+    ))]
+    install_softdevice_runtime_entropy(entropy, sd);
 
     #[cfg(any(
         feature = "board-t096",
@@ -303,8 +318,7 @@ pub async fn run(spawner: Spawner) -> ! {
     let self_announcement = RemoteControlSelfAnnouncement::Destination(node_page_destination);
     let remote_control = RemoteControlService::new(
         remote_control_identity_secrets,
-        RemoteControlPublicAppData::empty(),
-        RemoteControlInitialAccess::Nobody,
+        RemoteControlInitialControllerGrants::Nobody,
         self_announcement,
     );
     let mut manifold_lanes = ManifoldLanes::new();
@@ -376,7 +390,8 @@ pub async fn run(spawner: Spawner) -> ! {
         LIFECYCLE.receiver(),
         handle,
     );
-    let host = EmbassyHost::new(runtime_entropy as fn(&mut [u8]));
+    let entropy = runtime_entropy();
+    let host = EmbassyHost::new(entropy);
     static NODE: StaticCell<Node> = StaticCell::new();
     let recipe = PrnsNodeRecipe {
         transport_identity: Some(transport_secret),
@@ -401,8 +416,8 @@ pub async fn run(spawner: Spawner) -> ! {
     let persistence = PERSISTENCE.init(persistence);
     spawner.spawn(manifold_task(node, persistence).expect("manifold task fits"));
 
-    let lora_seam = lora_lane.into_seam(NOTIFY.sender(), runtime_entropy);
-    let usb_seam = usb_lane.into_seam(NOTIFY.sender(), runtime_entropy);
+    let lora_seam = lora_lane.into_seam(NOTIFY.sender(), entropy);
+    let usb_seam = usb_lane.into_seam(NOTIFY.sender(), entropy);
     #[cfg(any(
         feature = "board-t096",
         feature = "board-t114",

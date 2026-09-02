@@ -196,8 +196,23 @@ impl std::error::Error for FileVaultError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::identity::vault::{load_or_generate, IdentityOrigin};
+    use crate::entropy::{EntropySource, RuntimeEntropy};
+    use crate::identity::vault::{load_or_generate_with_runtime_entropy, IdentityOrigin};
+    use core::convert::Infallible;
     use std::sync::atomic::{AtomicU32, Ordering};
+
+    struct TestEntropySource;
+
+    impl EntropySource for TestEntropySource {
+        type Error = Infallible;
+
+        fn try_fill_entropy(&mut self, output: &mut [u8]) -> Result<(), Self::Error> {
+            for (offset, byte) in output.iter_mut().enumerate() {
+                *byte = 0x40_u8.wrapping_add(offset as u8);
+            }
+            Ok(())
+        }
+    }
 
     struct TempDir {
         path: PathBuf,
@@ -334,14 +349,12 @@ mod tests {
         let temp = TempDir::new();
         let mut vault = FileVault::new(&temp.path);
         let label = label("primary");
-        let fill = |bytes: &mut [u8]| {
-            for (offset, byte) in bytes.iter_mut().enumerate() {
-                *byte = 0x40u8.wrapping_add(offset as u8);
-            }
-        };
-        let (minted, origin) = load_or_generate(&mut vault, &label, fill).unwrap();
+        let mut entropy = RuntimeEntropy::try_new(TestEntropySource).unwrap();
+        let (minted, origin) =
+            load_or_generate_with_runtime_entropy(&mut vault, &label, &mut entropy).unwrap();
         assert_eq!(origin, IdentityOrigin::Generated);
-        let (reloaded, origin) = load_or_generate(&mut vault, &label, fill).unwrap();
+        let (reloaded, origin) =
+            load_or_generate_with_runtime_entropy(&mut vault, &label, &mut entropy).unwrap();
         assert_eq!(origin, IdentityOrigin::Loaded);
         assert_eq!(*minted, *reloaded);
     }

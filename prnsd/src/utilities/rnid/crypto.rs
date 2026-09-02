@@ -6,7 +6,7 @@ use personal_rns::crypto::{sealed_len, Ed25519Signature, X25519SecretKey, TOKEN_
 use personal_rns::identity::{
     DecryptError, EncryptError, ENCRYPTION_EPHEMERAL_PUBLIC_KEY_LEN, ENCRYPTION_IV_LEN,
 };
-use personal_rns::runtime::{fill_os_entropy, OsEntropyError};
+use personal_rns::runtime::{OsEntropyError, OsRuntimeEntropy};
 
 use super::args::{CryptoOperation, RnidArgs};
 use super::artifact::{self, ArtifactError};
@@ -295,6 +295,7 @@ fn encrypt_reader(
 ) -> Result<(), LocalCryptoError> {
     let mut plaintext = vec![0u8; ENCRYPTION_CHUNK_LEN];
     let mut encrypted = vec![0u8; ENCRYPTED_CHUNK_LEN];
+    let mut runtime_entropy = OsRuntimeEntropy::try_new().map_err(LocalCryptoError::Entropy)?;
     loop {
         let read = read_chunk(input, &mut plaintext).map_err(|source| {
             LocalCryptoError::Io(IdentityIoError::Read {
@@ -305,12 +306,12 @@ fn encrypt_reader(
         if read == 0 {
             break;
         }
-        let mut entropy = [0u8; X25519SecretKey::LEN + ENCRYPTION_IV_LEN];
-        fill_os_entropy(&mut entropy).map_err(LocalCryptoError::Entropy)?;
+        let mut random = [0u8; X25519SecretKey::LEN + ENCRYPTION_IV_LEN];
+        runtime_entropy.fill_random(&mut random);
         let mut secret = [0u8; X25519SecretKey::LEN];
-        secret.copy_from_slice(&entropy[..X25519SecretKey::LEN]);
+        secret.copy_from_slice(&random[..X25519SecretKey::LEN]);
         let mut iv = [0u8; ENCRYPTION_IV_LEN];
-        iv.copy_from_slice(&entropy[X25519SecretKey::LEN..]);
+        iv.copy_from_slice(&random[X25519SecretKey::LEN..]);
         let encrypted_len = identity
             .encrypt(
                 &X25519SecretKey::new(secret),

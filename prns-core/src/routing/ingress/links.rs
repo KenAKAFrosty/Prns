@@ -1,6 +1,9 @@
 use super::classification::DataPacket;
+use super::dispatch::IngressCryptoMode;
 use super::forward::PacketToForward;
-use super::outcome::{DeferredCrypto, IgnoreReason, IngestPacketOutcome, LinkRttOwed};
+#[cfg(test)]
+use super::outcome::LinkRttOwed;
+use super::outcome::{IgnoreReason, IngestPacketOutcome};
 use crate::crypto::X25519PublicKey;
 use crate::engine::{
     DeliveryEvidence, EngineState, InstantMillis, LinkClosedReason, PacketReceiptDelivered,
@@ -10,13 +13,12 @@ use crate::routing::dedup::{PacketHash, PacketHashHistory, RememberPacketOutcome
 use crate::routing::delivery::send_single::DEFAULT_PER_HOP_TIMEOUT_MS;
 use crate::routing::delivery::{Delivery, LinkDelivery};
 use crate::routing::links::channel::parse_envelope;
-use crate::routing::links::channel::table::ChannelTable;
 use crate::routing::links::handshake::{
     link_proof_from, link_proof_parse, link_request_from, link_rtt_from, signalling_bytes_from,
     AcceptedLinkRequest, LinkProofVerifyOwed, LinkRequest, LinkRttError, LINK_PROOF_BODY_LEN,
     LINK_REQUEST_KEYS_LEN, SIGNALLED_LINK_PROOF_LEN, SIGNALLED_LINK_REQUEST_LEN,
 };
-use crate::routing::links::identify::peer_identity_from;
+use crate::routing::links::identify::prepare_peer_identity_verify;
 use crate::routing::links::maintenance::{KEEPALIVE_ECHO, KEEPALIVE_REQUEST};
 use crate::routing::links::request::{
     parse_request_plaintext, parse_response_plaintext, RequestId,
@@ -470,7 +472,7 @@ impl<S: StorageLayout> EngineState<S> {
         received_hops: u8,
         source_interface: InterfaceId,
         arrived_at: InstantMillis,
-        deferred: Option<&mut DeferredCrypto>,
+        crypto: IngressCryptoMode,
     ) -> IngestPacketOutcome<'p> {
         let Some(LinkPhase::Pending {
             destination: link_destination,
@@ -496,54 +498,58 @@ impl<S: StorageLayout> EngineState<S> {
         let requested_at = *requested_at;
         let command_id = *command_id;
         let mode = *mode;
-        if let Some(deferred) = deferred {
-            let Ok(parsed) = link_proof_parse(&link_id, payload, &responder_signing) else {
-                return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
-            };
-            if parsed.proof.mode != mode {
-                return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
+        match crypto {
+            IngressCryptoMode::Owed => {
+                let Ok(parsed) = link_proof_parse(&link_id, payload, &responder_signing) else {
+                    return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
+                };
+                if parsed.proof.mode != mode {
+                    return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
+                }
+                IngestPacketOutcome::OwesLinkProofVerify(LinkProofVerifyOwed {
+                    link_id,
+                    source_interface,
+                    received_hops,
+                    responder_encryption: parsed.proof.responder_encryption,
+                    responder_signing,
+                    initiator_secret: initiator_secret.cloned(),
+                    command_id,
+                    arrived_at,
+                    rtt: RttMillis::measured_between(requested_at, arrived_at),
+                    mtu: if parsed.proof.mtu == 0 {
+                        BROADCAST_MTU
+                    } else {
+                        parsed.proof.mtu
+                    },
+                    signed_data: parsed.signed_data,
+                    signed_bytes: parsed.signed_bytes,
+                    signature: parsed.signature,
+                })
             }
-            *deferred = DeferredCrypto::LinkProofVerify(LinkProofVerifyOwed {
-                link_id,
-                source_interface,
-                received_hops,
-                responder_encryption: parsed.proof.responder_encryption,
-                responder_signing,
-                initiator_secret: initiator_secret.cloned(),
-                command_id,
-                arrived_at,
-                rtt: RttMillis::measured_between(requested_at, arrived_at),
-                mtu: if parsed.proof.mtu == 0 {
-                    BROADCAST_MTU
-                } else {
-                    parsed.proof.mtu
-                },
-                signed_data: parsed.signed_data,
-                signed_bytes: parsed.signed_bytes,
-                signature: parsed.signature,
-            });
-            return IngestPacketOutcome::OwesLinkProofVerify;
+            #[cfg(test)]
+            IngressCryptoMode::Inline => {
+                let Ok(proof) = link_proof_from(&link_id, payload, &responder_signing) else {
+                    return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
+                };
+                if proof.mode != mode {
+                    return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
+                }
+                IngestPacketOutcome::OwesLinkRtt(LinkRttOwed {
+                    link_id,
+                    received_hops,
+                    responder_encryption: proof.responder_encryption,
+                    responder_signing,
+                    command_id,
+                    arrived_at,
+                    rtt: RttMillis::measured_between(requested_at, arrived_at),
+                    mtu: if proof.mtu == 0 {
+                        BROADCAST_MTU
+                    } else {
+                        proof.mtu
+                    },
+                })
+            }
         }
-        let Ok(proof) = link_proof_from(&link_id, payload, &responder_signing) else {
-            return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
-        };
-        if proof.mode != mode {
-            return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
-        }
-        IngestPacketOutcome::OwesLinkRtt(LinkRttOwed {
-            link_id,
-            received_hops,
-            responder_encryption: proof.responder_encryption,
-            responder_signing,
-            command_id,
-            arrived_at,
-            rtt: RttMillis::measured_between(requested_at, arrived_at),
-            mtu: if proof.mtu == 0 {
-                BROADCAST_MTU
-            } else {
-                proof.mtu
-            },
-        })
     }
 
     pub(super) fn ingest_link_rtt(
@@ -698,12 +704,10 @@ impl<S: StorageLayout> EngineState<S> {
         let Ok(plaintext) = key.open_in_place(data.payload) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::DecryptFailed);
         };
-        let Some(identity) = peer_identity_from(&link_id, plaintext) else {
+        let Some(owed) = prepare_peer_identity_verify(&link_id, plaintext, arrived_at) else {
             return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
         };
-        self.links.note_identified(&link_id, identity);
-        self.links.note_inbound(&link_id, arrived_at);
-        IngestPacketOutcome::PeerIdentified { link_id, identity }
+        IngestPacketOutcome::OwesLinkIdentityVerify(owed)
     }
 
     pub(super) fn ingest_request_over_link<'p>(
@@ -795,6 +799,7 @@ impl<S: StorageLayout> EngineState<S> {
             self.links.note_inbound(&link_id, arrived_at);
             return IngestPacketOutcome::ResponseTooLarge {
                 id: proven.command_id,
+                intent: proven.intent,
                 link_id,
                 request_id,
             };
@@ -805,6 +810,7 @@ impl<S: StorageLayout> EngineState<S> {
         self.links.note_inbound(&link_id, arrived_at);
         IngestPacketOutcome::ResponseSettled {
             id: proven.command_id,
+            intent: proven.intent,
             delivered: PacketReceiptDelivered {
                 rtt: RttMillis::measured_between(proven.sent_at, arrived_at),
                 evidence: DeliveryEvidence::Response,
@@ -851,13 +857,8 @@ impl<S: StorageLayout> EngineState<S> {
         arrived_at: InstantMillis,
     ) -> IngestPacketOutcome<'static> {
         let link_id = LinkId::from_address(data.header.address);
-        let (key, attached_interface) = match self.links.phase_for(&link_id) {
-            Some(LinkPhase::Active {
-                key,
-                attached_interface,
-                ..
-            }) => (key, Some(*attached_interface)),
-            Some(LinkPhase::Handshake { key, .. }) => (key, None),
+        let key = match self.links.phase_for(&link_id) {
+            Some(LinkPhase::Active { key, .. } | LinkPhase::Handshake { key, .. }) => key,
             Some(LinkPhase::Pending { .. }) | None => {
                 return IngestPacketOutcome::Ignored(IgnoreReason::LinkPhaseMismatch)
             }
@@ -869,15 +870,6 @@ impl<S: StorageLayout> EngineState<S> {
             return IngestPacketOutcome::Ignored(IgnoreReason::ProofInvalid);
         }
         self.links.note_inbound(&link_id, arrived_at);
-        self.reconcile_pending_link_route_evidence();
-        self.links.remove(&link_id);
-        self.channels.close(&link_id);
-        self.pending_resource_offers.remove_link(&link_id);
-        self.incoming_assemblies.clear(&link_id);
-        self.outgoing_assemblies.clear(&link_id);
-        if let Some(interface) = attached_interface {
-            self.mark_interface_dirty(interface);
-        }
         IngestPacketOutcome::LinkClosedByPeer { link_id }
     }
 
@@ -899,16 +891,30 @@ impl<S: StorageLayout> EngineState<S> {
         else {
             return self.ingest_transported_link_request(header, &request, arrival);
         };
-        if let Some(transport_id) = header.transport_id {
-            if self.transport_id() != Some(transport_id) {
-                return IngestPacketOutcome::Ignored(IgnoreReason::OtherInstance);
-            }
-        }
         match registered.link_request_policy {
             LinkRequestPolicy::AcceptNone => {
                 return IngestPacketOutcome::Ignored(IgnoreReason::LinkRequestsRefused)
             }
-            LinkRequestPolicy::AcceptAll => {}
+            LinkRequestPolicy::AcceptDirect | LinkRequestPolicy::AcceptDirectFrom { .. }
+                if header.hops != 0
+                    || header.propagation != PropagationType::Broadcast
+                    || header.transport_id.is_some() =>
+            {
+                return IngestPacketOutcome::Ignored(IgnoreReason::LinkRequestsRefused)
+            }
+            LinkRequestPolicy::AcceptDirectFrom { interface }
+                if arrival.source_interface != interface =>
+            {
+                return IngestPacketOutcome::Ignored(IgnoreReason::LinkRequestsRefused)
+            }
+            LinkRequestPolicy::AcceptAll
+            | LinkRequestPolicy::AcceptDirect
+            | LinkRequestPolicy::AcceptDirectFrom { .. } => {}
+        }
+        if let Some(transport_id) = header.transport_id {
+            if self.transport_id() != Some(transport_id) {
+                return IngestPacketOutcome::Ignored(IgnoreReason::OtherInstance);
+            }
         }
         if self.held_identities.get(&registered.identity).is_none() {
             return IngestPacketOutcome::Ignored(IgnoreReason::UnknownIdentity);

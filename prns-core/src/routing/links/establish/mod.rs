@@ -1,6 +1,8 @@
+#[cfg(test)]
+use crate::crypto::x25519_public_key;
 use crate::crypto::{
-    x25519_diffie_hellman, x25519_public_key, Ed25519SecretKey, Ed25519Signature, X25519PublicKey,
-    X25519SecretKey, X25519SharedSecret,
+    x25519_diffie_hellman, Ed25519SecretKey, Ed25519Signature, X25519PublicKey, X25519SecretKey,
+    X25519SharedSecret,
 };
 use crate::engine::{CommandId, CommandOutcome, EstablishLink, EstablishLinkRejection};
 use crate::engine::{EngineState, InstantMillis};
@@ -8,8 +10,8 @@ use crate::identity::in_memory::InMemoryNodeIdentity;
 use crate::identity::{IdentitySigner, IDENTITY_SECRET_KEY_LEN};
 use crate::interfaces::{AttachedInterfaces, InterfaceId};
 use crate::routing::links::handshake::{
-    negotiated_link_mtu, write_link_proof, write_link_proof_from_parts, write_link_request,
-    write_link_rtt, write_unsignalled_link_request, AcceptedLinkRequest, LinkProofSignOwed,
+    write_link_proof_from_parts, write_link_request, write_link_rtt,
+    write_unsignalled_link_request, AcceptedLinkRequest, LinkProofSignOwed,
 };
 use crate::routing::links::table::{
     InitiatedLink, LinkActivation, LinkPhase, OverdueLink, RespondingLink, TrackLinkError,
@@ -57,6 +59,45 @@ impl EstablishLinkEntropy {
             Ed25519SecretKey::new(signing),
             ephemeral,
         )
+    }
+}
+
+/// A fresh link's pure key derivation, authorized by the engine but fulfillable by its runtime.
+#[repr(C)]
+pub struct EstablishLinkOwed {
+    pub command_id: CommandId,
+    pub establish: EstablishLink,
+    pub requested_at: InstantMillis,
+    pub first_hop_timeout_floor_ms: Option<u64>,
+    entropy: EstablishLinkEntropy,
+}
+
+#[repr(C)]
+pub struct EstablishLinkCompleted {
+    pub command_id: CommandId,
+    pub establish: EstablishLink,
+    pub requested_at: InstantMillis,
+    pub first_hop_timeout_floor_ms: Option<u64>,
+    pub initiator_secret: X25519SecretKey,
+    pub link_signing: Ed25519SecretKey,
+    pub encryption_public: X25519PublicKey,
+    pub signing_public: crate::crypto::Ed25519PublicKey,
+}
+
+impl EstablishLinkOwed {
+    #[must_use]
+    pub fn fulfill(self) -> EstablishLinkCompleted {
+        let (initiator_secret, link_signing, ephemeral) = self.entropy.into_parts();
+        EstablishLinkCompleted {
+            command_id: self.command_id,
+            establish: self.establish,
+            requested_at: self.requested_at,
+            first_hop_timeout_floor_ms: self.first_hop_timeout_floor_ms,
+            initiator_secret,
+            link_signing,
+            encryption_public: *ephemeral.encryption_public_key().as_x25519(),
+            signing_public: *ephemeral.signing_public_key().as_ed25519(),
+        }
     }
 }
 
@@ -136,6 +177,30 @@ impl<S: StorageLayout> EngineState<S> {
         CommandOutcome::OwesLinkRequest { id, establish }
     }
 
+    pub fn prepare_establish_link(
+        &self,
+        command_id: CommandId,
+        establish: EstablishLink,
+        requested_at: InstantMillis,
+        first_hop_timeout_floor_ms: Option<u64>,
+        entropy: EstablishLinkEntropy,
+    ) -> Result<EstablishLinkOwed, EstablishLinkRejection> {
+        if self
+            .routing_table
+            .stored_announce_for(&establish.destination)
+            .is_none()
+        {
+            return Err(EstablishLinkRejection::NoRouteToDestination);
+        }
+        Ok(EstablishLinkOwed {
+            command_id,
+            establish,
+            requested_at,
+            first_hop_timeout_floor_ms,
+            entropy,
+        })
+    }
+
     /// RNS 1.4.2 `Link.__init__`, which always signals the default MTU and mode.
     pub fn write_commanded_link_request(
         &mut self,
@@ -168,7 +233,35 @@ impl<S: StorageLayout> EngineState<S> {
         timing: FirstHopTiming<'_>,
         buf: &mut [u8],
     ) -> EstablishLinkWriteOutcome {
+        let completed = EstablishLinkOwed {
+            command_id: id,
+            establish: *establish,
+            requested_at: now,
+            first_hop_timeout_floor_ms: timing.shared_instance_floor_ms,
+            entropy,
+        }
+        .fulfill();
+        self.write_commanded_link_request_from_parts(completed, timing, buf)
+    }
+
+    pub fn write_commanded_link_request_from_parts(
+        &mut self,
+        completed: EstablishLinkCompleted,
+        timing: FirstHopTiming<'_>,
+        buf: &mut [u8],
+    ) -> EstablishLinkWriteOutcome {
         use EstablishLinkWriteOutcome::{Rejected, Written};
+
+        let EstablishLinkCompleted {
+            command_id: id,
+            establish,
+            requested_at: now,
+            first_hop_timeout_floor_ms: _,
+            initiator_secret,
+            link_signing,
+            encryption_public,
+            signing_public,
+        } = completed;
 
         let Some(stored) = self
             .routing_table
@@ -189,9 +282,6 @@ impl<S: StorageLayout> EngineState<S> {
             };
         };
 
-        let (initiator_secret, link_signing, ephemeral) = entropy.into_parts();
-        let encryption_public = *ephemeral.encryption_public_key().as_x25519();
-        let signing_public = *ephemeral.signing_public_key().as_ed25519();
         let link_id = LinkId::derive(&establish.destination, &encryption_public, &signing_public);
 
         let via = match stored.next_hop {
@@ -260,38 +350,7 @@ impl<S: StorageLayout> EngineState<S> {
         }
     }
 
-    /// RNS 1.4.2 `Link.validate_request`, echoing the negotiated MTU and mode.
-    pub fn write_owed_link_proof(
-        &mut self,
-        accepted: &AcceptedLinkRequest,
-        ephemeral_secret: X25519SecretKey,
-        mtu_ceiling: usize,
-        buf: &mut [u8],
-    ) -> Result<usize, WriteLinkProofError> {
-        let request = &accepted.request;
-        let held = self
-            .held_identities
-            .get(&accepted.identity)
-            .ok_or(WriteLinkProofError::IdentityNotHeld)?;
-        let responder_encryption = x25519_public_key(&ephemeral_secret);
-        let shared = x25519_diffie_hellman(&ephemeral_secret, &request.initiator_encryption);
-        let key = LinkKey::derive(&request.link_id, &shared);
-
-        let mtu = negotiated_link_mtu(request.mtu, mtu_ceiling);
-        let written = write_link_proof(
-            &request.link_id,
-            &responder_encryption,
-            &held,
-            mtu,
-            request.mode,
-            buf,
-        )
-        .map_err(|_| WriteLinkProofError::Serialize)?;
-        self.track_responding_link(accepted, key, mtu)?;
-        Ok(written)
-    }
-
-    /// The crypto-pool-friendly twin of [`Self::write_owed_link_proof`]; same bytes either way.
+    /// Assemble and land a runtime-completed link proof from its pure crypto results.
     pub fn write_owed_link_proof_with_parts(
         &mut self,
         owed: &LinkProofSignOwed,

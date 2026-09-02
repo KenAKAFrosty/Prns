@@ -178,7 +178,7 @@ async fn wait_for_retry(
     fleet: &Fleet,
     reconnect: &mut ReconnectSchedule,
 ) -> bool {
-    let delay = reconnect.next_delay(|bytes| fleet.fill_entropy(bytes));
+    let delay = reconnect.next_delay(|bytes| fleet.fill_random(bytes));
     tokio::select! {
         () = tokio::time::sleep(delay) => true,
         () = status.wait_until_disabled() => false,

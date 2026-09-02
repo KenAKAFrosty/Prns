@@ -9,7 +9,7 @@ use prns_core::interfaces::websocket::{
     WebSocketSessionFrameDecodeOutcome as SessionFrameDecodeOutcome,
     WebSocketSessionFraming as SessionFraming,
     WebSocketSessionOutboundAction as SessionOutboundAction, WebSocketWireFraming,
-    AUTO_DETECTION_GRACE_PERIOD_MILLIS,
+    AUTO_DETECTION_GRACE_PERIOD_MILLIS, FRAME_CAP,
 };
 use prns_core::interfaces::BitrateBps;
 use prns_runtime::manifold::airtime::{frame_airtime_us, AirtimeLedger};
@@ -270,15 +270,13 @@ where
 }
 
 fn wire_message(framing: WebSocketWireFraming, packet: &[u8]) -> Option<(Message, usize)> {
+    if packet.is_empty() || packet.len() > FRAME_CAP {
+        return None;
+    }
     match framing {
-        WebSocketWireFraming::RawPacket => {
-            if packet.is_empty() || packet.len() > framing.message_cap() {
-                return None;
-            }
-            Some((Message::binary(packet.to_vec()), packet.len()))
-        }
+        WebSocketWireFraming::RawPacket => Some((Message::binary(packet.to_vec()), packet.len())),
         WebSocketWireFraming::Hdlc | WebSocketWireFraming::Kiss => {
-            let mut encoded = std::vec![0; framing.message_cap()];
+            let mut encoded = std::vec![0; framing.maximum_encoded_len(packet.len())];
             let encoded_len = framing.encode(packet, &mut encoded).ok()?;
             encoded.truncate(encoded_len);
             Some((Message::binary(encoded), encoded_len))
@@ -306,7 +304,7 @@ mod tests {
     }
 
     impl InterfaceSeam for OutboundOnlySeam {
-        fn fill_entropy(&mut self, bytes: &mut [u8]) {
+        fn fill_random(&mut self, bytes: &mut [u8]) {
             bytes.fill(0);
         }
 
@@ -354,6 +352,15 @@ mod tests {
         let len = framing.encode(packet, &mut output).expect("packet encodes");
         output.truncate(len);
         output
+    }
+
+    #[test]
+    fn wire_messages_reject_invalid_packet_lengths() {
+        let oversized = vec![0; FRAME_CAP + 1];
+        for framing in WebSocketWireFraming::ALL {
+            assert!(wire_message(framing, &[]).is_none());
+            assert!(wire_message(framing, &oversized).is_none());
+        }
     }
 
     #[test]

@@ -1,41 +1,128 @@
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::engine::{
-    ClassifiedInboundPacket, DeferredCrypto, EngineState, IngestIo, Journaled, ProofIngest,
-    ProofRequest, Settlement, WakeSchedules,
+    ClassifiedInboundPacket, CryptoOwed, EngineReaction, EngineState, IngestIo, InstantMillis,
+    Journaled, OwedWork, ProofRequest, WakeSchedules,
 };
 use crate::interfaces::{
-    FrameAccountingEvent, IfacUnmaskError, InboundPacket, InterfaceId, PacketPhyStats,
+    FrameAccountingEvent, IfacUnmaskError, InboundPacket, InterfaceId, InterfaceIfac,
+    PacketPhyStats,
 };
-use crate::manifold::kernel::merge_wake_schedules_delta;
+use crate::manifold::wake_schedule::merge_wake_schedules_delta;
 use crate::manifold::Host;
 use crate::routing::dedup::PacketHash;
 use crate::routing::links::resources::ResourceOffer;
+use crate::routing::links::LinkId;
 use crate::runtime::InterfaceStore;
 use crate::storage::StorageLayout;
-use crate::wire::DestinationHash;
 
-use super::crypto_dispatch::dispatch_open_spans;
-use super::crypto_pool::{CryptoJob, CryptoPool, EngineVerifyJob};
-use super::egress::{ifac_for, route_reaction, WireScratch};
+use super::crypto_pool::{run_link_sign_job, CryptoPool, LinkSignCompleted, LinkSignJob};
+use super::egress::{
+    ifac_for, route_reaction, route_reaction_with_work, Egress, InterfacePacer, WireScratch,
+};
 use super::interface_topology::InterfaceTopology;
 use super::journal_delivery::JournalDispatch;
+use super::owed_work::PendingOwedWork;
+
+// Ingress adds ordering barriers to the common reaction route. Keeping those
+// borrowed queues explicit avoids a second, partially initialized router type.
+#[allow(clippy::too_many_arguments)]
+fn route_ingress_reaction<J>(
+    reaction: EngineReaction<'_, OwedWork<'_>>,
+    egress: &mut Egress,
+    ifacs: &[InterfaceIfac],
+    pacers: &mut [InterfacePacer],
+    wire_scratch: &mut WireScratch,
+    journal: &mut JournalDispatch<J>,
+    owed_work: &mut PendingOwedWork,
+    crypto_pool: Option<&CryptoPool>,
+    link_signs: &mut std::vec::Vec<LinkSignJob>,
+    link_identity_barriers: &mut std::vec::Vec<(InterfaceId, LinkId)>,
+    source: InterfaceId,
+    now: InstantMillis,
+) where
+    J: for<'a> FnMut(Journaled<'a>),
+{
+    route_reaction_with_work(
+        reaction,
+        egress,
+        ifacs,
+        pacers,
+        wire_scratch,
+        now,
+        &mut |journaled| journal.route(journaled),
+        &mut |work| match work {
+            OwedWork::Crypto(CryptoOwed::LinkReceiptSign(owed)) => {
+                link_signs.push(LinkSignJob::Receipt(owed));
+            }
+            OwedWork::Crypto(CryptoOwed::ChannelAckSign(owed)) => {
+                link_signs.push(LinkSignJob::ChannelAck(owed));
+            }
+            OwedWork::Crypto(owed) => {
+                if let CryptoOwed::LinkIdentityVerify(owed) = &owed {
+                    if !link_identity_barriers
+                        .iter()
+                        .any(|(_, link_id)| *link_id == owed.link_id)
+                    {
+                        link_identity_barriers.push((source, owed.link_id));
+                    }
+                }
+                owed_work.push_crypto(owed);
+            }
+            OwedWork::ResourceBuild(owed) => {
+                owed_work.push(OwedWork::ResourceBuild(owed), crypto_pool);
+            }
+            OwedWork::ResourceOpen(owed) => owed_work.push_resource_open(owed, crypto_pool),
+            OwedWork::ResourceDecompression(owed) => {
+                owed_work.push(OwedWork::ResourceDecompression(owed), crypto_pool);
+            }
+        },
+    );
+}
 
 pub(super) struct InboundDispatch {
     ready_lanes: std::vec::Vec<InterfaceId>,
     unmask_scratch: std::boxed::Box<[u8]>,
+    link_signs: std::vec::Vec<LinkSignJob>,
+    inline_link_signs: std::vec::Vec<LinkSignJob>,
+    /// LINKIDENTIFY changes the authority attached to a link. Later frames from its ingress lane
+    /// cannot overtake that verdict merely because signature verification ran on a worker.
+    link_identity_barriers: std::vec::Vec<(InterfaceId, LinkId)>,
 }
+
+// The minimum sixteen-job admission depth exposes at most fifteen link signs while retaining
+// room for the next packet's possible second crypto job. Split that common backlog across the
+// manifold (seven immediate proofs) and the pool (up to eight jobs). Seven remains a fixed latency
+// bound on larger hosts; their additional backlog goes to their larger pool instead of blocking
+// the manifold. Neither side waits for work, and a lone signature stays entirely inline.
+const INLINE_LINK_SIGN_TRANCHE: usize = 7;
 
 impl InboundDispatch {
     pub(super) fn new(frame_capacity: usize) -> Self {
         Self {
             ready_lanes: std::vec::Vec::new(),
             unmask_scratch: std::vec![0u8; frame_capacity].into_boxed_slice(),
+            link_signs: std::vec::Vec::new(),
+            inline_link_signs: std::vec::Vec::new(),
+            link_identity_barriers: std::vec::Vec::new(),
         }
     }
 
     pub(super) fn has_ready_lanes(&self) -> bool {
-        !self.ready_lanes.is_empty()
+        if self.link_identity_barriers.is_empty() {
+            return !self.ready_lanes.is_empty();
+        }
+        self.ready_lanes.iter().any(|source| {
+            !self
+                .link_identity_barriers
+                .iter()
+                .any(|(blocked, _)| blocked == source)
+        })
+    }
+
+    pub(super) fn release_link_identity_barrier(&mut self, link_id: LinkId) {
+        self.link_identity_barriers
+            .retain(|(_, blocked_link)| *blocked_link != link_id);
     }
 
     pub(super) fn mark_ready(&mut self, source: InterfaceId) {
@@ -76,34 +163,26 @@ impl InboundDispatch {
             should_prove,
             should_accept_resource,
             max_frames_per_lane,
+            owed_work,
+            now,
         } = context;
-        let now = host.now();
         let Self {
             ready_lanes,
             unmask_scratch,
+            link_signs,
+            inline_link_signs,
+            link_identity_barriers,
         } = self;
-        macro_rules! journaled_sink {
-            () => {
-                |journaled| journal.route(journaled)
-            };
-        }
-        macro_rules! reaction_sink {
-            () => {
-                |reaction| {
-                    route_reaction(
-                        reaction,
-                        &mut topology.egress,
-                        &topology.ifacs,
-                        &mut topology.pacers,
-                        wire_scratch,
-                        now,
-                        &mut journaled_sink!(),
-                    )
-                }
-            };
-        }
-
         for &source in ready_lanes.iter() {
+            if !link_identity_barriers.is_empty()
+                && link_identity_barriers
+                    .iter()
+                    .any(|(blocked, _)| *blocked == source)
+            {
+                continue;
+            }
+            debug_assert!(link_signs.is_empty());
+            debug_assert!(inline_link_signs.is_empty());
             let frame_accounting = topology.frame_accounting_recorder(source);
             let Some((_, lane)) = topology
                 .inbound_lanes
@@ -114,7 +193,14 @@ impl InboundDispatch {
             };
             lane.acknowledge();
             for _ in 0..max_frames_per_lane {
-                if crypto_pool.is_some_and(|pool| !pool.has_queue_capacity(2)) {
+                if crypto_pool.is_some_and(|pool| {
+                    !pool.has_queue_capacity(
+                        owed_work
+                            .len()
+                            .saturating_add(link_signs.len())
+                            .saturating_add(2),
+                    )
+                }) {
                     break;
                 }
                 let Some(slot) = lane.try_peek() else {
@@ -156,93 +242,32 @@ impl InboundDispatch {
                 if let Some(packet_hash) = packet_hash {
                     retain_packet_phy(packet_phy_store, packet_hash, packet_phy);
                 }
-                if let Some(pool) = crypto_pool {
-                    if let (Some(proof_packet_hash), Some((address, payload))) =
-                        (packet_hash, packet.proof())
-                    {
-                        if let Some(deferred) = engine.settle_receipt_proof_deferred(
-                            payload,
-                            &DestinationHash::from_address(address),
-                            proof_packet_hash,
-                            now,
-                        ) {
-                            let settlement = match deferred.ingest {
-                                ProofIngest::SendSinglePacketDelivered { id, delivered } => {
-                                    Some((id, Settlement::SendSinglePacket(Ok(delivered))))
-                                }
-                                ProofIngest::SendToLinkDelivered { id, delivered } => {
-                                    Some((id, Settlement::SendToLink(Ok(delivered))))
-                                }
-                                ProofIngest::SendToChannelDelivered { .. }
-                                | ProofIngest::Ignored => None,
-                            };
-                            if let Some((id, settlement)) = settlement {
-                                pool.submit(CryptoJob::Verify(EngineVerifyJob {
-                                    packet_hash: deferred.packet_hash,
-                                    signing_key: deferred.signing_key,
-                                    signature: deferred.signature,
-                                    id,
-                                    settlement,
-                                    arrived_at: deferred.arrived_at,
-                                }));
-                            }
-                            lane.release();
-                            continue;
-                        }
-                    }
-                }
-                let ingest_report = match crypto_pool {
-                    Some(pool) => {
-                        let mut deferred_sign = None;
-                        let mut deferred = DeferredCrypto::default();
-                        let report = engine.ingest_classified_into_deferring_report(
-                            packet,
-                            IngestIo {
-                                interfaces: topology.interfaces.view(),
+                let ingest_report = engine.ingest_classified_into_report(
+                    packet,
+                    IngestIo {
+                        interfaces: topology.interfaces.view(),
+                        now,
+                        fill_random: &mut |entropy| host.fill_random(entropy),
+                        should_prove,
+                        should_accept_resource,
+                        sink: &mut |reaction| {
+                            route_ingress_reaction(
+                                reaction,
+                                &mut topology.egress,
+                                &topology.ifacs,
+                                &mut topology.pacers,
+                                wire_scratch,
+                                journal,
+                                owed_work,
+                                crypto_pool,
+                                link_signs,
+                                link_identity_barriers,
+                                source,
                                 now,
-                                fill_entropy: &mut |entropy| host.fill_entropy(entropy),
-                                should_prove,
-                                should_accept_resource,
-                                sink: &mut reaction_sink!(),
-                            },
-                            &mut deferred_sign,
-                            Some(&mut deferred),
-                        );
-                        if let Some(owed) = deferred_sign {
-                            pool.submit(CryptoJob::Sign(owed));
-                        }
-                        match deferred {
-                            DeferredCrypto::Empty => {}
-                            DeferredCrypto::Decrypt(owed) => {
-                                pool.submit(CryptoJob::Decrypt(owed));
-                            }
-                            DeferredCrypto::RatchetDecrypt(owed) => {
-                                pool.submit(CryptoJob::DecryptWithRatchets(Box::new(owed)));
-                            }
-                            DeferredCrypto::LinkProofVerify(owed) => {
-                                pool.submit(CryptoJob::VerifyLinkProof(owed));
-                            }
-                            DeferredCrypto::LinkProofSign(owed) => {
-                                pool.submit(CryptoJob::SignLinkProof(owed));
-                            }
-                            DeferredCrypto::AnnounceVerify(owed) => {
-                                pool.submit(CryptoJob::VerifyAnnounce(owed));
-                            }
-                        }
-                        report
-                    }
-                    None => engine.ingest_classified_into_report(
-                        packet,
-                        IngestIo {
-                            interfaces: topology.interfaces.view(),
-                            now,
-                            fill_entropy: &mut |entropy| host.fill_entropy(entropy),
-                            should_prove,
-                            should_accept_resource,
-                            sink: &mut reaction_sink!(),
+                            );
                         },
-                    ),
-                };
+                    },
+                );
                 if let (Some(recorder), Some(violation)) =
                     (&frame_accounting, ingest_report.protocol_violation)
                 {
@@ -259,7 +284,79 @@ impl InboundDispatch {
                     engine,
                     topology.interfaces.view(),
                 );
-                dispatch_open_spans(engine, crypto_pool);
+                if !link_identity_barriers.is_empty()
+                    && link_identity_barriers
+                        .iter()
+                        .any(|(blocked, _)| *blocked == source)
+                {
+                    break;
+                }
+            }
+            {
+                let inline_signs = if crypto_pool.is_some() {
+                    INLINE_LINK_SIGN_TRANCHE
+                } else {
+                    usize::MAX
+                };
+                for _ in 0..inline_signs {
+                    let Some(sign) = link_signs.pop() else {
+                        break;
+                    };
+                    inline_link_signs.push(sign);
+                }
+                if let Some(pool) = crypto_pool {
+                    pool.submit_link_signs(link_signs);
+                }
+                for job in inline_link_signs.drain(..) {
+                    match run_link_sign_job(job) {
+                        LinkSignCompleted::ChannelAck(completed) => {
+                            engine.resume_channel_ack_sign(completed, now, &mut |reaction| {
+                                route_reaction(
+                                    reaction,
+                                    &mut topology.egress,
+                                    &topology.ifacs,
+                                    &mut topology.pacers,
+                                    wire_scratch,
+                                    now,
+                                    &mut |journaled| journal.route(journaled),
+                                );
+                            });
+                        }
+                        LinkSignCompleted::Receipt(completed) => {
+                            engine.resume_link_receipt_sign(completed, now, &mut |reaction| {
+                                route_reaction(
+                                    reaction,
+                                    &mut topology.egress,
+                                    &topology.ifacs,
+                                    &mut topology.pacers,
+                                    wire_scratch,
+                                    now,
+                                    &mut |journaled| journal.route(journaled),
+                                );
+                            });
+                        }
+                        LinkSignCompleted::Identify(completed) => {
+                            let changed =
+                                engine.resume_identify_sign(completed, now, &mut |reaction| {
+                                    route_reaction(
+                                        reaction,
+                                        &mut topology.egress,
+                                        &topology.ifacs,
+                                        &mut topology.pacers,
+                                        wire_scratch,
+                                        now,
+                                        &mut |journaled| journal.route(journaled),
+                                    );
+                                });
+                            merge_wake_schedules_delta(
+                                wake_schedules,
+                                changed,
+                                engine,
+                                topology.interfaces.view(),
+                            );
+                        }
+                    }
+                }
             }
         }
         ready_lanes.retain(|source| {
@@ -291,6 +388,8 @@ where
     pub(super) should_prove: &'a mut P,
     pub(super) should_accept_resource: &'a mut A,
     pub(super) max_frames_per_lane: usize,
+    pub(super) owed_work: &'a mut PendingOwedWork,
+    pub(super) now: InstantMillis,
 }
 
 fn retain_packet_phy(
@@ -312,6 +411,28 @@ mod tests {
     use super::*;
     use crate::engine::test_support::{bytes_from_hex, RNS_1_4_2_ANNOUNCE};
     use crate::interfaces::{RssiDbm, SignalQualityTenthsPercent, SnrQuarterDb};
+
+    #[test]
+    fn link_identity_verdict_blocks_only_its_ingress_lane_until_completion() {
+        let blocked = InterfaceId::new([0xB1; 8]);
+        let independent = InterfaceId::new([0xB2; 8]);
+        let link_id = LinkId::new([0x51; 16]);
+        let mut inbound = InboundDispatch::new(64);
+        inbound.mark_ready(blocked);
+        inbound.link_identity_barriers.push((blocked, link_id));
+
+        assert!(!inbound.has_ready_lanes());
+
+        inbound.mark_ready(independent);
+        assert!(inbound.has_ready_lanes());
+
+        inbound.ready_lanes.retain(|source| *source == blocked);
+        inbound.release_link_identity_barrier(LinkId::new([0x52; 16]));
+        assert!(!inbound.has_ready_lanes());
+
+        inbound.release_link_identity_barrier(link_id);
+        assert!(inbound.has_ready_lanes());
+    }
 
     #[test]
     fn packet_phy_reuses_the_classified_wire_stable_packet_hash() {

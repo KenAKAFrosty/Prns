@@ -5,7 +5,9 @@ use crate::engine::test_support::{filled_frame, routable_descriptor, TestStorage
 use crate::engine::IngestIo;
 use crate::engine::Journaled;
 use crate::engine::{CommandId, SetResourceStrategy, Settlement};
-use crate::engine::{Directive, EngineReaction, EngineState, InstantMillis};
+use crate::engine::{
+    Directive, EngineReaction, EngineState, InstantMillis, OwedWork, ResourceOpenCompleted,
+};
 use crate::engine::{IssuedCommand, PrnsCommand};
 use crate::identity::IdentityHash;
 use crate::interfaces::AttachedInterfaces;
@@ -235,6 +237,7 @@ fn feed_inner<S: StorageLayout>(
         requests: std::vec::Vec::new(),
     };
     let mut raw = frame.to_vec();
+    let mut ready_opens = std::collections::VecDeque::new();
     engine.ingest_packet_into(
         InboundPacket {
             arrived_at: InstantMillis(at),
@@ -244,88 +247,101 @@ fn feed_inner<S: StorageLayout>(
         IngestIo {
             interfaces: AttachedInterfaces::new(&[routable_descriptor(source_interface)]),
             now: InstantMillis(at),
-            fill_entropy: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
+            fill_random: &mut |bytes: &mut [u8]| bytes.fill(0xC7),
             should_prove: &mut |_: &crate::engine::ProofRequest| false,
             should_accept_resource,
-            sink: &mut |reaction| match reaction {
-                EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
-                    if let Some(frame) = filled_frame(fill) {
-                        capture.frames.push((target, frame));
-                    }
-                }
-                EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
-                    capture.settlements.push((id, settlement));
-                }
-                EngineReaction::Journaled(Journaled::ResourceReceived {
-                    hash,
-                    metadata,
-                    data,
-                    ..
-                }) => {
-                    capture.received.push((hash, data.to_vec()));
-                    if let Some(metadata) = metadata {
-                        capture.received_metadata.push((hash, metadata.to_vec()));
-                    }
-                }
-                EngineReaction::Journaled(Journaled::ResourceFailed { hash, cause, .. }) => {
-                    capture.failed.push((hash, cause));
-                }
-                EngineReaction::Journaled(Journaled::ResourceSegmentReceived {
-                    original_hash,
-                    segment_index,
-                    metadata,
-                    data,
-                    ..
-                }) => {
-                    capture
-                        .segments
-                        .push((original_hash, segment_index, data.to_vec()));
-                    if let Some(metadata) = metadata {
-                        capture.segment_metadata.push((
-                            original_hash,
-                            segment_index,
-                            metadata.to_vec(),
-                        ));
-                    }
-                }
-                EngineReaction::Journaled(Journaled::ResponseSegmentReceived {
-                    command_id,
-                    request_id,
-                    segment_index,
-                    data,
-                    ..
-                }) => {
-                    capture.response_segments.push((
-                        command_id,
-                        request_id,
-                        segment_index,
-                        data.to_vec(),
-                    ));
-                }
-                EngineReaction::Journaled(Journaled::ResourceAssembled {
-                    original_hash,
-                    total_size_bytes,
-                    ..
-                }) => {
-                    capture.assembled.push((original_hash, total_size_bytes));
-                }
-                EngineReaction::Journaled(Journaled::LinkInterfaceMismatch {
-                    attached_interface,
-                    arrived_on,
-                    ..
-                }) => {
-                    capture.mismatched.push((attached_interface, arrived_on));
-                }
-                EngineReaction::Journaled(Journaled::RequestReceived {
-                    request_id, data, ..
-                }) => {
-                    capture.requests.push((request_id, data.to_vec()));
-                }
-                _ => {}
+            sink: &mut |reaction| {
+                capture_inbound_reaction(reaction, &mut capture, &mut ready_opens)
             },
         },
     );
+    while let Some(completed) = ready_opens.pop_front() {
+        engine.resume_resource_open(completed, InstantMillis(at), &mut |reaction| {
+            capture_inbound_reaction(reaction, &mut capture, &mut ready_opens);
+        });
+    }
     capture
+}
+
+fn capture_inbound_reaction(
+    reaction: EngineReaction<'_, OwedWork<'_>>,
+    capture: &mut InboundCapture,
+    ready_opens: &mut std::collections::VecDeque<ResourceOpenCompleted<'static>>,
+) {
+    match reaction {
+        EngineReaction::Directive(Directive::EmitFrame { target, fill, .. }) => {
+            if let Some(frame) = filled_frame(fill) {
+                capture.frames.push((target, frame));
+            }
+        }
+        EngineReaction::Journaled(Journaled::CommandSettled { id, settlement }) => {
+            capture.settlements.push((id, settlement));
+        }
+        EngineReaction::Journaled(Journaled::ResourceReceived {
+            hash,
+            metadata,
+            data,
+            ..
+        }) => {
+            capture.received.push((hash, data.to_vec()));
+            if let Some(metadata) = metadata {
+                capture.received_metadata.push((hash, metadata.to_vec()));
+            }
+        }
+        EngineReaction::Journaled(Journaled::ResourceFailed { hash, cause, .. }) => {
+            capture.failed.push((hash, cause));
+        }
+        EngineReaction::Journaled(Journaled::ResourceSegmentReceived {
+            original_hash,
+            segment_index,
+            metadata,
+            data,
+            ..
+        }) => {
+            capture
+                .segments
+                .push((original_hash, segment_index, data.to_vec()));
+            if let Some(metadata) = metadata {
+                capture
+                    .segment_metadata
+                    .push((original_hash, segment_index, metadata.to_vec()));
+            }
+        }
+        EngineReaction::Journaled(Journaled::ResponseSegmentReceived {
+            command_id,
+            request_id,
+            segment_index,
+            data,
+            ..
+        }) => {
+            capture
+                .response_segments
+                .push((command_id, request_id, segment_index, data.to_vec()));
+        }
+        EngineReaction::Journaled(Journaled::ResourceAssembled {
+            original_hash,
+            total_size_bytes,
+            ..
+        }) => {
+            capture.assembled.push((original_hash, total_size_bytes));
+        }
+        EngineReaction::Journaled(Journaled::LinkInterfaceMismatch {
+            attached_interface,
+            arrived_on,
+            ..
+        }) => {
+            capture.mismatched.push((attached_interface, arrived_on));
+        }
+        EngineReaction::Journaled(Journaled::RequestReceived {
+            request_id, data, ..
+        }) => {
+            capture.requests.push((request_id, data.to_vec()));
+        }
+        EngineReaction::Directive(Directive::Fulfill(OwedWork::ResourceOpen(owed))) => {
+            ready_opens.push_back(owed.fulfill_inline());
+        }
+        _ => {}
+    }
 }
 
 /// Book the pending row a sent request would have left, returning the request id its response must name.
@@ -367,7 +383,11 @@ pub(crate) fn track_pending_request_with_limit<S: StorageLayout>(
         packet_hash,
         command_id,
         kind: ReceiptKind::SendRequest {
-            maximum_response_bytes,
+            link_id: link_id(),
+            response: crate::routing::delivery::receipts::RequestReceiptPolicy::new(
+                maximum_response_bytes,
+                crate::engine::SendRequestIntent::Application,
+            ),
         },
         peer_signing_key: IdentitySigningPublicKey::new(Ed25519PublicKey([0x99; 32])),
         sent_at: InstantMillis(sent_at),
@@ -402,7 +422,7 @@ pub(crate) fn advertise_response_segment_from<S: StorageLayout>(
         segment,
         InstantMillis(at),
         &mut |bytes: &mut [u8]| bytes.fill(0xA5),
-        &mut |reaction| {
+        &mut |reaction: EngineReaction<'_, crate::engine::NoOwedWork>| {
             if let EngineReaction::Directive(Directive::EmitFrame { fill, .. }) = reaction {
                 frame = filled_frame(fill);
             }

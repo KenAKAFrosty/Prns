@@ -85,7 +85,6 @@ embedded-io-async = "0.6"
 nrf-softdevice = { path = "vendor/nrf-softdevice/nrf-softdevice", optional = true, features = ["nrf52840", "ble-central", "ble-peripheral", "ble-gatt-server", "ble-gatt-client", "ble-l2cap", "ble-l2cap-credit-workaround", "evt-max-size-512", "critical-section-impl"] }
 # nrf-softdevice's GATT characteristics use heapless 0.9; the rest of the firmware is on 0.8.
 heapless09 = { package = "heapless", version = "0.9" }
-rand_chacha = { version = "0.9", default-features = false }
 
 [dev-dependencies]
 epd-waveshare = { version = "0.6", default-features = false, features = ["graphics", "epd2in13_v3"] }
@@ -96,7 +95,7 @@ debug = 2
 debug-assertions = false
 incremental = false
 lto = "fat"
-opt-level = "s"
+opt-level = "z"
 overflow-checks = false
 
 [lints.rust]

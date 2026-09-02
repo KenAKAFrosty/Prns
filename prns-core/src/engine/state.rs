@@ -3,6 +3,9 @@ use crate::identity::destination_identity::DestinationIdentities;
 use crate::identity::held::HeldIdentities;
 use crate::identity::IDENTITY_SECRET_KEY_LEN;
 use crate::interfaces::InterfaceId;
+use crate::remote_control::{
+    RemoteControlControllerPairingState, RemoteControlPairingState, RemoteControlTargetPairingState,
+};
 use crate::routing::announce::destination_announce_limit::DestinationAnnounceLimits;
 use crate::routing::announce::held::HeldAnnounces;
 use crate::routing::announce::interface_announce_limit::InterfaceAnnounceLimits;
@@ -37,6 +40,8 @@ use crate::storage::{DirtyInterfaceSet, StorageLayout};
 use crate::wire::{DestinationHash, TransportId};
 use core::mem::MaybeUninit;
 use zeroize::Zeroizing;
+
+use super::RemoteControlControllerIdentityConfiguration;
 
 #[cfg(feature = "runtime-metrics")]
 use alloc::vec::Vec;
@@ -199,6 +204,10 @@ pub struct EngineState<S: StorageLayout> {
     pub(crate) packet_hash_history: S::PacketHashes,
     pub(crate) identity_blackholes: IdentityBlackholes<S::Blackholes>,
     pub(crate) held_identities: HeldIdentities<S::HeldIdentities>,
+    pub(crate) remote_control_controller_identity: RemoteControlControllerIdentityConfiguration,
+    pub(crate) remote_control_pairing: RemoteControlPairingState,
+    pub(crate) remote_control_controller_pairing: RemoteControlControllerPairingState,
+    pub(crate) remote_control_target_pairing: RemoteControlTargetPairingState,
     pub(crate) transport: TransportState,
     pub(crate) protocol: EngineProtocolPolicy,
     pub(crate) self_ratchets: SelfRatchets<S::SelfRatchets>,
@@ -262,6 +271,11 @@ impl<S: StorageLayout> Default for EngineState<S> {
             packet_hash_history: Default::default(),
             identity_blackholes: IdentityBlackholes::default(),
             held_identities: HeldIdentities::default(),
+            remote_control_controller_identity:
+                RemoteControlControllerIdentityConfiguration::default(),
+            remote_control_pairing: RemoteControlPairingState::default(),
+            remote_control_controller_pairing: RemoteControlControllerPairingState::default(),
+            remote_control_target_pairing: RemoteControlTargetPairingState::default(),
             transport: TransportState::default(),
             protocol: EngineProtocolPolicy::default(),
             self_ratchets: SelfRatchets::default(),
@@ -340,6 +354,19 @@ impl<S: StorageLayout> EngineState<S> {
             write!(packet_hash_history, Default::default());
             write!(identity_blackholes, IdentityBlackholes::default());
             write!(held_identities, HeldIdentities::default());
+            write!(
+                remote_control_controller_identity,
+                RemoteControlControllerIdentityConfiguration::default()
+            );
+            write!(remote_control_pairing, RemoteControlPairingState::default());
+            write!(
+                remote_control_controller_pairing,
+                RemoteControlControllerPairingState::default()
+            );
+            write!(
+                remote_control_target_pairing,
+                RemoteControlTargetPairingState::default()
+            );
             write!(transport, TransportState::default());
             write!(protocol, EngineProtocolPolicy::default());
             write!(self_ratchets, SelfRatchets::default());
@@ -599,6 +626,17 @@ mod tests {
     }
 
     #[test]
+    fn in_place_engine_owns_an_idle_controller_pairing_machine() {
+        let mut slot = MaybeUninit::uninit();
+        let state = EngineState::<TestStorageLayout>::init_in_place(&mut slot);
+
+        assert_eq!(
+            state.remote_control_controller_pairing.view(),
+            crate::remote_control::RemoteControlControllerPairingView::Idle,
+        );
+    }
+
+    #[test]
     fn default_protocol_policy_keeps_host_recursive_discovery_disabled() {
         assert_eq!(
             EngineProtocolPolicy::default().recursive_path_request_default,
@@ -649,16 +687,13 @@ mod tests {
             EngineState::<TestFixedStorage<64, 128, 4096, 8, 8, 128, 8, 8, 8, 8, 16, 16>>::default(
             );
         pin_transport_id(&mut state, TEST_TRANSPORT_ID);
-        let out = state.ingest_packet_with(
+        let out = state.ingest_for_test(
             InboundPacket {
                 arrived_at: InstantMillis(1_000),
                 source_interface: InterfaceId::new([0u8; 8]),
                 bytes: &mut raw,
             },
-            &mut |_| {},
             AttachedInterfaces::new(&transporting_interfaces()),
-            &mut |_| {},
-            None,
         );
         assert_eq!(out, rns_1_4_2_announce_accepted(1));
         assert_eq!(state.route_count(), 1);

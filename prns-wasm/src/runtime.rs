@@ -2,13 +2,15 @@ use core::convert::TryFrom;
 
 use js_sys::{Array, Object};
 use personal_rns::crypto::ratchets::SeedSelfRatchetsOutcome;
+use personal_rns::crypto::{x25519_diffie_hellman, X25519SharedSecret};
 use personal_rns::engine::{
-    AllowRequester, AnnounceAppData, AnnounceNow, AnnounceTarget, CloseLink, CommandId,
+    AllowRequester, AnnounceAppData, AnnounceNow, AnnounceTarget, CloseLink, CommandId, CryptoOwed,
     DestinationIdentitySeedOutcome, Directive, EngineReaction, EngineState, EstablishLink,
-    FanTarget, Identify, InstantMillis, IssuedCommand, Journaled, PathRequestId, PrnsCommand,
-    RatchetPolicy, RequestPath, RequestResponseTimeout, Respond, RespondData, RespondPayload,
-    RouteSeedOutcome, SendRequest, SendRequestData, SendSinglePacket, SendSinglePacketPayload,
-    SendToChannel, SendToChannelBody, SendToLink, SendToLinkPayload, SetResourceStrategy,
+    FanTarget, Identify, InstantMillis, IssuedCommand, Journaled, NoOwedWork, OwedWork,
+    PathRequestId, PrnsCommand, RatchetPolicy, RequestPath, RequestResponseTimeout, Respond,
+    RespondData, RespondPayload, RouteSeedOutcome, SendRequest, SendRequestData, SendSinglePacket,
+    SendSinglePacketPayload, SendToChannel, SendToChannelBody, SendToLink, SendToLinkPayload,
+    SetResourceStrategy,
 };
 use personal_rns::interfaces::bluetooth_auto as bluetooth_contract;
 use personal_rns::interfaces::{
@@ -17,7 +19,9 @@ use personal_rns::interfaces::{
     InterfaceMode, RecursivePathRequestPolicy,
 };
 use personal_rns::routing::links::channel::MessageType;
+use personal_rns::routing::links::handshake::link_proof_signature_valid;
 use personal_rns::routing::links::request::RequestId;
+use personal_rns::routing::links::resources::streamed_open::ResourceOpenLane;
 use personal_rns::routing::links::resources::{
     ResourceBody, ResourceCorrelation, ResourceMetadata, ResourceSend, ResourceSendPlan,
     ResourceSendPlanError, ResourceStrategy, MAX_EFFICIENT_SIZE,
@@ -30,25 +34,35 @@ use personal_rns::routing::upstream_app_destinations::{LinkRequestPolicy, ProofS
 use personal_rns::routing::warmth::Departure;
 use personal_rns::storage::GrowableHeap;
 use personal_rns::units::{ByteLimit, DurationMillis};
-use prns_host::PrnsLimits;
+use prns_host::{EventBatchProjection, EventProjection, PrnsLimits};
 use prns_host_cooperative::{CooperativeHost, Entropy, MonotonicMillis};
 use prns_runtime::runtime::persistence_snapshots::{
     snapshot_persisted_state, snapshot_self_ratchets,
 };
 use wasm_bindgen::prelude::*;
 
+use crate::command_settlement::{
+    encode_batch as encode_command_settlement_batch, CapturedCommandSettlement,
+};
+use crate::event_projection::{capture_journaled as project_journaled, CapturedJournal};
+use crate::inline_work::{fulfill_ready_work, InlineReadyWorkQueue};
 use crate::input::{
     array_to_strings, destination_hash_from_vec, identity_hash_from_vec, interface_id_from_vec,
     link_id_from_vec, optional_array, optional_bool, optional_bytes, optional_i64, optional_string,
     optional_u32, optional_u64, parse_interface_kind, parse_interface_mode, request_id_from_vec,
-    request_path_hash_from_vec, required_array, required_bool, required_bytes, required_string,
-    required_u64, secret_key_from_vec,
+    request_path_hash_from_vec, required_array, required_bigint_u64, required_bool, required_bytes,
+    required_string, required_u64, secret_key_from_vec, u64_from_number,
 };
 use crate::js_translation::{
-    interface_kind_name, journaled_to_js, outbound_to_js, set_bigint, set_bytes, set_str, set_u32,
-    set_u64, set_usize, set_value,
+    command_settled_to_js, interface_kind_name, outbound_to_js, set_bigint, set_bytes, set_str,
+    set_u32, set_u64, set_usize, set_value,
 };
+use crate::outbound_batch::encode as encode_outbound_batch;
 use crate::parameters::{bitrate_bps_u32, BROWSER_PERSISTENCE_VERSION};
+use crate::protocol_crypto::{
+    ProtocolCryptoJob, ProtocolCryptoKind, ProtocolCryptoOperation, ProtocolCryptoQueue,
+    ProtocolCryptoSettlementError,
+};
 
 #[derive(Clone, Copy)]
 enum NodeResponse {
@@ -68,8 +82,13 @@ const MAX_PERSISTED_RATCHETS: usize = 4_096;
 pub(crate) struct OutboundFrame {
     pub(crate) target: OutboundTarget,
     pub(crate) bytes: Vec<u8>,
-    pub(crate) announce: bool,
-    pub(crate) hops: Option<u8>,
+    pub(crate) kind: OutboundFrameKind,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum OutboundFrameKind {
+    Frame,
+    Announce { hops: u8 },
 }
 
 #[derive(Clone)]
@@ -85,7 +104,8 @@ pub(crate) enum OutboundTarget {
 pub struct PrnsRuntime {
     engine: EngineState<GrowableHeap>,
     interfaces: Vec<InterfaceDescriptor>,
-    events: Vec<JsValue>,
+    events: Vec<EventProjection>,
+    control_events: Vec<CapturedCommandSettlement>,
     outbound: Vec<OutboundFrame>,
     next_command_id: u64,
     revision: u64,
@@ -94,6 +114,8 @@ pub struct PrnsRuntime {
     host: CooperativeHost<()>,
     pending_ratchets: Vec<(personal_rns::wire::DestinationHash, Vec<u8>)>,
     persistence_restored: bool,
+    protocol_crypto_enabled: bool,
+    protocol_crypto: ProtocolCryptoQueue,
 }
 
 #[wasm_bindgen]
@@ -116,6 +138,7 @@ impl PrnsRuntime {
             engine: EngineState::new(secret),
             interfaces: Vec::new(),
             events: Vec::new(),
+            control_events: Vec::new(),
             outbound: Vec::new(),
             next_command_id: 0,
             revision: 0,
@@ -124,6 +147,8 @@ impl PrnsRuntime {
             host: CooperativeHost::new(PrnsLimits::balanced()),
             pending_ratchets: Vec::new(),
             persistence_restored: false,
+            protocol_crypto_enabled: false,
+            protocol_crypto: ProtocolCryptoQueue::new(),
         })
     }
 
@@ -449,6 +474,32 @@ impl PrnsRuntime {
         let payload = SendToLinkPayload::from_slice(&required_bytes(&options, "payload")?)
             .map_err(|_| JsValue::from_str("payload exceeds the link packet limit"))?;
         let (now_ms, entropy) = self.command_context(&options)?;
+        Ok(self.issue_link_packet(link_id, payload, now_ms, entropy))
+    }
+
+    #[wasm_bindgen(js_name = sendLinkPacketDirect)]
+    pub fn send_link_packet_direct(
+        &mut self,
+        link_id: Vec<u8>,
+        payload: Vec<u8>,
+        now_ms: f64,
+        entropy: Vec<u8>,
+    ) -> Result<u64, JsValue> {
+        let link_id = link_id_from_vec(link_id)?;
+        let payload = SendToLinkPayload::from_slice(&payload)
+            .map_err(|_| JsValue::from_str("payload exceeds the link packet limit"))?;
+        let now_ms = u64_from_number(now_ms, "nowMs")?;
+        let entropy = self.command_context_values(now_ms, entropy)?;
+        Ok(self.issue_link_packet(link_id, payload, now_ms, entropy))
+    }
+
+    fn issue_link_packet(
+        &mut self,
+        link_id: LinkId,
+        payload: SendToLinkPayload,
+        now_ms: u64,
+        entropy: Vec<u8>,
+    ) -> u64 {
         let id = self.mint_command_id();
         self.ingest_command(
             id,
@@ -456,7 +507,7 @@ impl PrnsRuntime {
             now_ms,
             entropy,
         );
-        Ok(id.0)
+        id.0
     }
 
     #[wasm_bindgen(js_name = request)]
@@ -621,6 +672,512 @@ impl PrnsRuntime {
         Ok(id.0)
     }
 
+    #[wasm_bindgen(js_name = sendResourceSegmentWebCrypto)]
+    pub fn send_resource_segment_web_crypto(
+        &mut self,
+        options: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let data = required_bytes(&options, "payload")?;
+        let compressed_candidate = optional_bytes(&options, "compressedCandidate")?;
+        let metadata_kind = required_string(&options, "metadata")?;
+        let packed_metadata = optional_bytes(&options, "packedMetadata")?;
+        let packed_metadata_bytes = optional_u32(&options, "packedMetadataBytes")?;
+        let (metadata, metadata_len) = match (
+            metadata_kind.as_str(),
+            &packed_metadata,
+            packed_metadata_bytes,
+        ) {
+            ("none", None, None) => (ResourceMetadata::None, None),
+            ("packed", Some(packed), None) => {
+                (ResourceMetadata::Packed(packed), Some(packed.len() as u64))
+            }
+            ("sentInFirstSegment", None, Some(packed_len)) => (
+                ResourceMetadata::SentInFirstSegment { packed_len },
+                Some(u64::from(packed_len)),
+            ),
+            _ => {
+                return Err(JsValue::from_str(
+                    "resource segment metadata fields are inconsistent",
+                ));
+            }
+        };
+        let total_data_bytes = required_u64(&options, "totalDataBytes")?;
+        let segment_index = required_u64(&options, "segmentIndex")?;
+        let plan = ResourceSendPlan::new(total_data_bytes, metadata_len, MAX_EFFICIENT_SIZE as u64)
+            .map_err(|error| {
+                JsValue::from_str(&format!("resource send plan rejected: {error:?}"))
+            })?;
+        let segment = plan
+            .segment(segment_index)
+            .ok_or_else(|| JsValue::from_str("resource segment index is outside the send plan"))?;
+        let expected_data_bytes = segment.data_end.saturating_sub(segment.data_start);
+        if data.len() as u64 != expected_data_bytes {
+            return Err(JsValue::from_str(
+                "resource segment payload does not match the send plan",
+            ));
+        }
+        let (now_ms, entropy) = self.command_context(&options)?;
+        let id = self.mint_command_id();
+        let mut entropy = EntropyCursor::new(entropy);
+        let mut reactions = Vec::new();
+        self.engine.ingest_send_resource_segment_external_into(
+            &ResourceSend {
+                id,
+                link_id,
+                body: ResourceBody {
+                    data: &data,
+                    compressed_candidate: compressed_candidate.as_deref(),
+                    metadata,
+                },
+                correlation: ResourceCorrelation::Unsolicited,
+            },
+            segment.segment,
+            InstantMillis(now_ms),
+            &mut |out| entropy.fill(out),
+            &mut |reaction| reactions.push(capture_reaction(reaction)),
+        );
+        self.apply_captured(reactions);
+        let Some(view) = self.engine.staged_seal_job_view(&link_id) else {
+            let outcome = Object::new();
+            let data = Object::new();
+            set_str(&outcome, "tag", "Inline");
+            set_bigint(&data, "commandId", id.0);
+            set_value(&outcome, "data", data.into());
+            return Ok(outcome.into());
+        };
+        let nonce_prefixed_bytes = view.nonce_prefixed_bytes;
+        let plaintext = &view.plaintext[16..16 + nonce_prefixed_bytes];
+        let stream_nonce: [u8; 4] = plaintext[..4]
+            .try_into()
+            .map_err(|_| JsValue::from_str("staged resource nonce is unavailable"))?;
+        let signing_key = *view.signing_key_material();
+        let encryption_key = *view.encryption_key_material();
+        let mut seal_iv = [0u8; 16];
+        entropy.fill(&mut seal_iv);
+        let mut salts =
+            [[0u8; 4]; personal_rns::routing::links::resources::build_outgoing::SALT_REROLL_CAP];
+        for salt in &mut salts {
+            entropy.fill(salt);
+        }
+        let mut promotion_entropy = [0u8; 16];
+        entropy.fill(&mut promotion_entropy);
+        let flat_salts = salts.as_flattened();
+        let outcome = Object::new();
+        let job = Object::new();
+        set_str(&outcome, "tag", "Seal");
+        set_bigint(&job, "commandId", view.command_id.0);
+        set_bytes(&job, "linkId", link_id.as_bytes());
+        set_bytes(&job, "streamNonce", &stream_nonce);
+        set_usize(&job, "noncePrefixedBytes", nonce_prefixed_bytes);
+        set_u64(&job, "totalSegments", view.total_segments);
+        set_bytes(&job, "plaintext", plaintext);
+        set_bytes(&job, "signingKey", &signing_key);
+        set_bytes(&job, "encryptionKey", &encryption_key);
+        set_bytes(&job, "sealIv", &seal_iv);
+        set_bytes(&job, "salts", flat_salts);
+        set_bytes(&job, "promotionEntropy", &promotion_entropy);
+        set_value(&outcome, "data", job.into());
+        self.engine.mark_staged_sealing(&link_id);
+        Ok(outcome.into())
+    }
+
+    #[wasm_bindgen(js_name = completeResourceSegmentSeal)]
+    pub fn complete_resource_segment_seal(&mut self, options: JsValue) -> Result<(), JsValue> {
+        let command_id = CommandId(required_bigint_u64(&options, "commandId")?);
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let stream_nonce: [u8; 4] = required_bytes(&options, "streamNonce")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("streamNonce must be exactly 4 bytes"))?;
+        let nonce_prefixed_bytes =
+            usize::try_from(required_u64(&options, "noncePrefixedBytes")?)
+                .map_err(|_| JsValue::from_str("noncePrefixedBytes is too large"))?;
+        let sealed = required_bytes(&options, "sealed")?;
+        let flat_salts = required_bytes(&options, "salts")?;
+        let salts: [[u8; 4];
+            personal_rns::routing::links::resources::build_outgoing::SALT_REROLL_CAP] = flat_salts
+            .as_slice()
+            .as_chunks::<4>()
+            .0
+            .try_into()
+            .map_err(|_| JsValue::from_str("salts must contain exactly eight 4-byte values"))?;
+        let now_ms = required_u64(&options, "nowMs")?;
+        let promotion_entropy: [u8; 16] = required_bytes(&options, "promotionEntropy")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("promotionEntropy must be exactly 16 bytes"))?;
+        let mut entropy = EntropyCursor::new(promotion_entropy.to_vec());
+        let mut reactions = Vec::new();
+        self.engine.apply_external_staged_seal(
+            command_id,
+            link_id,
+            stream_nonce,
+            nonce_prefixed_bytes,
+            &sealed,
+            salts,
+            &mut |reaction| reactions.push(capture_reaction(reaction)),
+        );
+        self.engine.promote_staged_resource(
+            &link_id,
+            InstantMillis(now_ms),
+            &mut |out| entropy.fill(out),
+            &mut |reaction| reactions.push(capture_reaction(reaction)),
+        );
+        self.apply_captured(reactions);
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = completeResourceSegmentSealDigests)]
+    pub fn complete_resource_segment_seal_digests(
+        &mut self,
+        options: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        let command_id = CommandId(required_bigint_u64(&options, "commandId")?);
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let stream_nonce: [u8; 4] = required_bytes(&options, "streamNonce")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("streamNonce must be exactly 4 bytes"))?;
+        let nonce_prefixed_bytes =
+            usize::try_from(required_u64(&options, "noncePrefixedBytes")?)
+                .map_err(|_| JsValue::from_str("noncePrefixedBytes is too large"))?;
+        let sealed = required_bytes(&options, "sealed")?;
+        let salt: [u8; 4] = required_bytes(&options, "salt")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("salt must be exactly 4 bytes"))?;
+        let hash: [u8; 32] = required_bytes(&options, "hash")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("hash must be exactly 32 bytes"))?;
+        let proof: [u8; 32] = required_bytes(&options, "proof")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("proof must be exactly 32 bytes"))?;
+        let now_ms = required_u64(&options, "nowMs")?;
+        let promotion_entropy: [u8; 16] = required_bytes(&options, "promotionEntropy")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("promotionEntropy must be exactly 16 bytes"))?;
+        let outcome = self.engine.apply_external_staged_seal_digests(
+            command_id,
+            link_id,
+            stream_nonce,
+            nonce_prefixed_bytes,
+            &sealed,
+            personal_rns::routing::links::resources::SaltNonce::new(salt),
+            personal_rns::routing::links::resources::ResourceHash::new(hash),
+            personal_rns::routing::links::resources::ResourceProof::new(proof),
+        );
+        if outcome
+            == personal_rns::routing::links::resources::send::ExternalStagedDigestOutcome::Applied
+        {
+            let mut entropy = EntropyCursor::new(promotion_entropy.to_vec());
+            let mut reactions = Vec::new();
+            self.engine.promote_staged_resource(
+                &link_id,
+                InstantMillis(now_ms),
+                &mut |out| entropy.fill(out),
+                &mut |reaction| reactions.push(capture_reaction(reaction)),
+            );
+            self.apply_captured(reactions);
+        }
+        let result = Object::new();
+        set_str(
+            &result,
+            "tag",
+            match outcome {
+                personal_rns::routing::links::resources::send::ExternalStagedDigestOutcome::Applied => "Applied",
+                personal_rns::routing::links::resources::send::ExternalStagedDigestOutcome::Collision => "Collision",
+                personal_rns::routing::links::resources::send::ExternalStagedDigestOutcome::Stale => "Stale",
+                personal_rns::routing::links::resources::send::ExternalStagedDigestOutcome::Invalid => "Invalid",
+            },
+        );
+        Ok(result.into())
+    }
+
+    #[wasm_bindgen(js_name = retryResourceSegmentSeal)]
+    pub fn retry_resource_segment_seal(&mut self, options: JsValue) -> Result<(), JsValue> {
+        let command_id = CommandId(required_bigint_u64(&options, "commandId")?);
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let stream_nonce: [u8; 4] = required_bytes(&options, "streamNonce")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("streamNonce must be exactly 4 bytes"))?;
+        let nonce_prefixed_bytes =
+            usize::try_from(required_u64(&options, "noncePrefixedBytes")?)
+                .map_err(|_| JsValue::from_str("noncePrefixedBytes is too large"))?;
+        let (now_ms, entropy) = self.command_context(&options)?;
+        let mut entropy = EntropyCursor::new(entropy);
+        let mut reactions = Vec::new();
+        self.engine.retry_external_staged_seal(
+            command_id,
+            &link_id,
+            stream_nonce,
+            nonce_prefixed_bytes,
+            &mut |out| entropy.fill(out),
+            &mut |reaction| reactions.push(capture_reaction(reaction)),
+        );
+        self.engine.promote_staged_resource(
+            &link_id,
+            InstantMillis(now_ms),
+            &mut |out| entropy.fill(out),
+            &mut |reaction| reactions.push(capture_reaction(reaction)),
+        );
+        self.apply_captured(reactions);
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = enableResourceWebCrypto)]
+    pub fn enable_resource_web_crypto(&mut self) {
+        self.engine.resource_open_lane = ResourceOpenLane::ExternalWhole;
+    }
+
+    #[wasm_bindgen(js_name = enableProtocolWebCrypto)]
+    pub fn enable_protocol_web_crypto(&mut self) {
+        self.enable_protocol_crypto_offload();
+    }
+
+    #[wasm_bindgen(js_name = enableProtocolCryptoOffload)]
+    pub fn enable_protocol_crypto_offload(&mut self) {
+        self.protocol_crypto_enabled = true;
+    }
+
+    #[wasm_bindgen(js_name = takeProtocolCryptoJob)]
+    pub fn take_protocol_crypto_job(&mut self) -> JsValue {
+        let Some(job) = self.protocol_crypto.take() else {
+            return JsValue::UNDEFINED;
+        };
+        let tagged = Object::new();
+        let data = Object::new();
+        match job {
+            ProtocolCryptoJob::AnnounceVerify {
+                id,
+                public_key,
+                message,
+                signature,
+            } => {
+                set_str(&tagged, "tag", "AnnounceVerify");
+                set_u32(&data, "id", id);
+                set_bytes(&data, "publicKey", &public_key);
+                set_bytes(&data, "message", &message);
+                set_bytes(&data, "signature", &signature);
+            }
+            ProtocolCryptoJob::LinkProofVerify {
+                id,
+                public_key,
+                message,
+                signature,
+                secret_scalar,
+                peer_public_key,
+            } => {
+                set_str(&tagged, "tag", "LinkProofVerify");
+                set_u32(&data, "id", id);
+                set_bytes(&data, "publicKey", &public_key);
+                set_bytes(&data, "message", &message);
+                set_bytes(&data, "signature", &signature);
+                set_bytes(&data, "secretScalar", &secret_scalar[..]);
+                set_bytes(&data, "peerPublicKey", &peer_public_key);
+            }
+        }
+        set_value(&tagged, "data", data.into());
+        tagged.into()
+    }
+
+    #[wasm_bindgen(js_name = completeProtocolAnnounceValid)]
+    pub fn complete_protocol_announce_valid(
+        &mut self,
+        id: u32,
+        now_ms: f64,
+        entropy: Vec<u8>,
+    ) -> Result<(), JsValue> {
+        let now_ms = u64_from_number(now_ms, "nowMs")?;
+        let entropy = self.command_context_values(now_ms, entropy)?;
+        let operation = self
+            .protocol_crypto
+            .settle(id, ProtocolCryptoKind::AnnounceVerify)
+            .map_err(protocol_crypto_settlement_error)?;
+        let ProtocolCryptoOperation::AnnounceVerify(operation) = operation else {
+            return Err(JsValue::from_str("protocol crypto operation changed kind"));
+        };
+        self.resume_protocol_announce(operation.owed.verified_by_external_backend(), entropy);
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = completeProtocolAnnounceInvalid)]
+    pub fn complete_protocol_announce_invalid(&mut self, id: u32) -> Result<(), JsValue> {
+        self.protocol_crypto
+            .settle(id, ProtocolCryptoKind::AnnounceVerify)
+            .map_err(protocol_crypto_settlement_error)?;
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = completeProtocolLinkProofValid)]
+    pub fn complete_protocol_link_proof_valid(
+        &mut self,
+        id: u32,
+        shared_secret: Vec<u8>,
+        now_ms: f64,
+        entropy: Vec<u8>,
+    ) -> Result<(), JsValue> {
+        let shared_secret: [u8; X25519SharedSecret::LEN] = shared_secret
+            .try_into()
+            .map_err(|_| JsValue::from_str("sharedSecret must be exactly 32 bytes"))?;
+        let now_ms = u64_from_number(now_ms, "nowMs")?;
+        let entropy = self.command_context_values(now_ms, entropy)?;
+        let operation = self
+            .protocol_crypto
+            .settle(id, ProtocolCryptoKind::LinkProofVerify)
+            .map_err(protocol_crypto_settlement_error)?;
+        let ProtocolCryptoOperation::LinkProofVerify(owed) = operation else {
+            return Err(JsValue::from_str("protocol crypto operation changed kind"));
+        };
+        self.resume_protocol_link_proof(
+            *owed,
+            X25519SharedSecret::from_external_diffie_hellman(shared_secret),
+            now_ms,
+            entropy,
+        );
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = completeProtocolLinkProofInvalid)]
+    pub fn complete_protocol_link_proof_invalid(&mut self, id: u32) -> Result<(), JsValue> {
+        self.protocol_crypto
+            .settle(id, ProtocolCryptoKind::LinkProofVerify)
+            .map_err(protocol_crypto_settlement_error)?;
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = completeProtocolCryptoInline)]
+    pub fn complete_protocol_crypto_inline(
+        &mut self,
+        id: u32,
+        now_ms: f64,
+        entropy: Vec<u8>,
+    ) -> Result<(), JsValue> {
+        let now_ms = u64_from_number(now_ms, "nowMs")?;
+        let entropy = self.command_context_values(now_ms, entropy)?;
+        let operation = self
+            .protocol_crypto
+            .settle_any(id)
+            .map_err(protocol_crypto_settlement_error)?;
+        self.finish_protocol_crypto_inline(operation, now_ms, entropy);
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = takeResourceOpenJob)]
+    pub fn take_resource_open_job(&mut self) -> JsValue {
+        let Some(view) = self.engine.external_open_job_view() else {
+            return JsValue::UNDEFINED;
+        };
+        let link_id = view.link_id;
+        let hash = view.hash;
+        let signing_key = *view.signing_key_material();
+        let encryption_key = *view.encryption_key_material();
+        let sealed = view.sealed.to_vec();
+        let compression = view.compression;
+        let salt_nonce = view.salt_nonce;
+        let total_segments = view.total_segments;
+        self.engine.mark_external_opening(&link_id, &hash);
+        let job = Object::new();
+        set_bytes(&job, "linkId", link_id.as_bytes());
+        set_bytes(&job, "hash", hash.as_bytes());
+        set_bytes(&job, "signingKey", &signing_key);
+        set_bytes(&job, "encryptionKey", &encryption_key);
+        set_bytes(&job, "sealed", &sealed);
+        set_u64(&job, "totalSegments", total_segments);
+        let hash_plan = Object::new();
+        match compression {
+            personal_rns::routing::links::resources::ResourceCompression::Uncompressed => {
+                let data = Object::new();
+                set_str(&hash_plan, "tag", "OpenedStream");
+                set_bytes(&data, "salt", salt_nonce.as_bytes());
+                set_value(&hash_plan, "data", data.into());
+            }
+            personal_rns::routing::links::resources::ResourceCompression::Bz2 => {
+                set_str(&hash_plan, "tag", "AfterDecompression");
+            }
+        }
+        set_value(&job, "hashPlan", hash_plan.into());
+        job.into()
+    }
+
+    #[wasm_bindgen(js_name = completeResourceOpen)]
+    pub fn complete_resource_open(&mut self, options: JsValue) -> Result<(), JsValue> {
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let hash: [u8; 32] = required_bytes(&options, "hash")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("hash must be exactly 32 bytes"))?;
+        let plaintext = required_bytes(&options, "plaintext")?;
+        let (now_ms, entropy) = self.command_context(&options)?;
+        let mut capture = IngestReactionCapture::new(false);
+        self.engine.apply_external_open(
+            &link_id,
+            &personal_rns::routing::links::resources::ResourceHash::new(hash),
+            &plaintext,
+            InstantMillis(now_ms),
+            &mut |reaction| capture.route(reaction),
+        );
+        self.fulfill_captured_resource_work(capture, now_ms, entropy);
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = completeResourceOpenDigests)]
+    pub fn complete_resource_open_digests(&mut self, options: JsValue) -> Result<(), JsValue> {
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let hash: [u8; 32] = required_bytes(&options, "hash")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("hash must be exactly 32 bytes"))?;
+        let calculated_hash: [u8; 32] = required_bytes(&options, "calculatedHash")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("calculatedHash must be exactly 32 bytes"))?;
+        let proof: [u8; 32] = required_bytes(&options, "proof")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("proof must be exactly 32 bytes"))?;
+        let plaintext = required_bytes(&options, "plaintext")?;
+        let (now_ms, entropy) = self.command_context(&options)?;
+        let mut capture = IngestReactionCapture::new(false);
+        self.engine.apply_external_open_verified(
+            &link_id,
+            &personal_rns::routing::links::resources::ResourceHash::new(hash),
+            &plaintext,
+            personal_rns::routing::links::resources::ResourceHash::new(calculated_hash),
+            personal_rns::routing::links::resources::ResourceProof::new(proof),
+            InstantMillis(now_ms),
+            &mut |reaction| capture.route(reaction),
+        );
+        self.fulfill_captured_resource_work(capture, now_ms, entropy);
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = rejectResourceOpen)]
+    pub fn reject_resource_open(&mut self, options: JsValue) -> Result<(), JsValue> {
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let hash: [u8; 32] = required_bytes(&options, "hash")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("hash must be exactly 32 bytes"))?;
+        let mut reactions = Vec::new();
+        self.engine.reject_external_open(
+            &link_id,
+            &personal_rns::routing::links::resources::ResourceHash::new(hash),
+            &mut |reaction| reactions.push(capture_reaction(reaction)),
+        );
+        self.apply_captured(reactions);
+        Ok(())
+    }
+
+    #[wasm_bindgen(js_name = retryResourceOpen)]
+    pub fn retry_resource_open(&mut self, options: JsValue) -> Result<(), JsValue> {
+        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
+        let hash: [u8; 32] = required_bytes(&options, "hash")?
+            .try_into()
+            .map_err(|_| JsValue::from_str("hash must be exactly 32 bytes"))?;
+        let (now_ms, entropy) = self.command_context(&options)?;
+        let mut capture = IngestReactionCapture::new(false);
+        self.engine.retry_external_open_inline(
+            &link_id,
+            &personal_rns::routing::links::resources::ResourceHash::new(hash),
+            InstantMillis(now_ms),
+            &mut |reaction| capture.route(reaction),
+        );
+        self.fulfill_captured_resource_work(capture, now_ms, entropy);
+        Ok(())
+    }
+
     #[wasm_bindgen(js_name = setLinkResourceStrategy)]
     pub fn set_link_resource_strategy(&mut self, options: JsValue) -> Result<u64, JsValue> {
         let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
@@ -700,6 +1257,28 @@ impl PrnsRuntime {
         let bytes = required_bytes(&options, "bytes")?;
         let now_ms = required_u64(&options, "nowMs")?;
         let entropy = required_bytes(&options, "entropy")?;
+        self.ingest_fields(interface_id, bytes, now_ms, entropy)
+    }
+
+    #[wasm_bindgen(js_name = ingestDirect)]
+    pub fn ingest_direct(
+        &mut self,
+        interface_id: Vec<u8>,
+        bytes: Vec<u8>,
+        now_ms: f64,
+        entropy: Vec<u8>,
+    ) -> Result<(), JsValue> {
+        let now_ms = u64_from_number(now_ms, "nowMs")?;
+        self.ingest_fields(interface_id, bytes, now_ms, entropy)
+    }
+
+    fn ingest_fields(
+        &mut self,
+        interface_id: Vec<u8>,
+        bytes: Vec<u8>,
+        now_ms: u64,
+        entropy: Vec<u8>,
+    ) -> Result<(), JsValue> {
         let entropy = Entropy::try_new(entropy)
             .map_err(|error| JsValue::from_str(&format!("host entropy rejected: {error:?}")))?;
         let step = self
@@ -718,75 +1297,58 @@ impl PrnsRuntime {
         let mut should_accept_resource =
             |_offer: &personal_rns::routing::links::resources::ResourceOffer| false;
         let interfaces_snapshot = self.interfaces.clone();
-        let mut reactions = Vec::new();
-        let node_page = self.node_page;
-        let index_path = RequestPathHash::of(personal_hopspot_core::node_pages::INDEX_PATH);
-        let quickstart_path =
-            RequestPathHash::of(personal_hopspot_core::node_pages::QUICKSTART_PATH);
-        let coming_from_rns_path =
-            RequestPathHash::of(personal_hopspot_core::node_pages::COMING_FROM_RNS_PATH);
-        let source_page_path =
-            RequestPathHash::of(personal_hopspot_core::node_pages::SOURCE_PAGE_PATH);
-        #[cfg(feature = "source-archive")]
-        let source_path =
-            RequestPathHash::of(personal_hopspot_core::node_pages::SOURCE_ARCHIVE_PATH);
-        #[cfg(feature = "source-archive")]
-        let checksum_path =
-            RequestPathHash::of(personal_hopspot_core::node_pages::SOURCE_CHECKSUM_PATH);
-        let mut page_requests: Vec<(LinkId, RequestId, NodeResponse)> = Vec::new();
+        let interfaces = personal_rns::interfaces::AttachedInterfaces::new(&interfaces_snapshot);
+        let mut capture = IngestReactionCapture::new(self.node_page);
         self.engine.ingest_packet_into(
             packet,
             personal_rns::engine::IngestIo {
-                interfaces: personal_rns::interfaces::AttachedInterfaces::new(&interfaces_snapshot),
+                interfaces,
                 now: InstantMillis(now_ms),
-                fill_entropy: &mut |out| entropy.fill(out),
+                fill_random: &mut |out| entropy.fill(out),
                 should_prove: &mut should_prove,
                 should_accept_resource: &mut should_accept_resource,
-                sink: &mut |reaction| {
-                    if let EngineReaction::Journaled(Journaled::RequestReceived {
-                        link_id,
-                        request_id,
-                        path_hash,
-                        ..
-                    }) = &reaction
-                    {
-                        if node_page && *path_hash == index_path {
-                            page_requests.push((*link_id, *request_id, NodeResponse::Index));
-                        }
-                        if node_page && *path_hash == quickstart_path {
-                            page_requests.push((*link_id, *request_id, NodeResponse::Quickstart));
-                        }
-                        if node_page && *path_hash == coming_from_rns_path {
-                            page_requests.push((
-                                *link_id,
-                                *request_id,
-                                NodeResponse::ComingFromRns,
-                            ));
-                        }
-                        if node_page && *path_hash == source_page_path {
-                            page_requests.push((*link_id, *request_id, NodeResponse::SourcePage));
-                        }
-                        #[cfg(feature = "source-archive")]
-                        if node_page && *path_hash == source_path {
-                            page_requests.push((
-                                *link_id,
-                                *request_id,
-                                NodeResponse::SourceArchive,
-                            ));
-                        }
-                        #[cfg(feature = "source-archive")]
-                        if node_page && *path_hash == checksum_path {
-                            page_requests.push((
-                                *link_id,
-                                *request_id,
-                                NodeResponse::SourceChecksum,
-                            ));
-                        }
-                    }
-                    reactions.push(capture_reaction(reaction));
-                },
+                sink: &mut |reaction| capture.route(reaction),
             },
         );
+        if self.protocol_crypto_enabled && self.protocol_crypto.has_capacity() {
+            let candidates = capture.ready.take_selected_crypto(|crypto| {
+                matches!(
+                    crypto,
+                    CryptoOwed::AnnounceVerify(_) | CryptoOwed::LinkProofVerify(_)
+                )
+            });
+            for crypto in candidates {
+                let operation = match crypto {
+                    CryptoOwed::AnnounceVerify(owed) => {
+                        match ProtocolCryptoOperation::announce(owed) {
+                            Ok(operation) => operation,
+                            Err(owed) => {
+                                capture.ready.push_crypto(CryptoOwed::AnnounceVerify(*owed));
+                                continue;
+                            }
+                        }
+                    }
+                    CryptoOwed::LinkProofVerify(owed) => ProtocolCryptoOperation::link_proof(owed),
+                    _ => continue,
+                };
+                if let Err(operation) = self.protocol_crypto.admit(operation) {
+                    capture.ready.push_crypto(operation.into_crypto_owed());
+                }
+            }
+        }
+        {
+            let IngestReactionCapture { routed, ready } = &mut capture;
+            fulfill_ready_work(
+                ready,
+                &mut self.engine,
+                interfaces,
+                InstantMillis(now_ms),
+                &mut |out| entropy.fill(out),
+                &mut should_prove,
+                &mut |reaction| routed.route_completed(reaction),
+            );
+        }
+        let (reactions, page_requests) = capture.into_parts();
         self.bump_revision();
         self.apply_captured(reactions);
         for (link_id, request_id, response) in page_requests {
@@ -837,10 +1399,27 @@ impl PrnsRuntime {
     #[wasm_bindgen(js_name = drainEvents)]
     pub fn drain_events(&mut self) -> Array {
         let drained = Array::new();
-        for event in self.events.drain(..) {
-            drained.push(&event);
+        for event in self.control_events.drain(..) {
+            drained.push(&command_settled_to_js(event));
         }
         drained
+    }
+
+    #[wasm_bindgen(js_name = drainCommandSettlementBatch)]
+    pub fn drain_command_settlement_batch(&mut self) -> Result<Vec<u8>, JsValue> {
+        let batch = encode_command_settlement_batch(&self.control_events).map_err(|error| {
+            JsValue::from_str(&format!("command settlement batch failed: {error:?}"))
+        })?;
+        self.control_events.clear();
+        Ok(batch)
+    }
+
+    #[wasm_bindgen(js_name = drainEventBatch)]
+    pub fn drain_event_batch(&mut self) -> Result<Vec<u8>, JsValue> {
+        let batch = EventBatchProjection::from_records(core::mem::take(&mut self.events));
+        batch.encode().map_err(|error| {
+            JsValue::from_str(&format!("event batch projection failed: {error:?}"))
+        })
     }
 
     #[wasm_bindgen(js_name = drainOutbound)]
@@ -850,6 +1429,14 @@ impl PrnsRuntime {
             drained.push(&outbound_to_js(&frame));
         }
         drained
+    }
+
+    #[wasm_bindgen(js_name = drainOutboundBatch)]
+    pub fn drain_outbound_batch(&mut self) -> Result<Vec<u8>, JsValue> {
+        let batch = encode_outbound_batch(&self.outbound)
+            .map_err(|error| JsValue::from_str(&format!("outbound batch failed: {error:?}")))?;
+        self.outbound.clear();
+        Ok(batch)
     }
 
     #[wasm_bindgen(js_name = persistedState)]
@@ -1066,9 +1653,106 @@ impl PrnsRuntime {
         );
         object.into()
     }
+
+    #[wasm_bindgen(js_name = snapshotPacked)]
+    pub fn snapshot_packed(&self) -> Vec<u8> {
+        crate::packed_snapshot::encode(&self.engine, &self.interfaces, self.revision)
+    }
+
+    #[wasm_bindgen(js_name = projectionSnapshot)]
+    pub fn projection_snapshot(&self, request: JsValue) -> Result<JsValue, JsValue> {
+        let include_interfaces = required_bool(&request, "interfaces")?;
+        let include_routes = required_bool(&request, "routes")?;
+        let include_links = required_bool(&request, "links")?;
+        let object = Object::new();
+        set_bigint(&object, "revision", self.revision);
+        if include_interfaces {
+            let interfaces = Array::new();
+            for interface in &self.interfaces {
+                let row = Object::new();
+                set_bytes(&row, "id", interface.id.as_bytes());
+                set_str(&row, "kind", interface_kind_name(interface.id.kind()));
+                set_usize(&row, "routes", self.engine.route_count_via(interface.id));
+                set_usize(&row, "links", self.engine.link_count_via(interface.id));
+                set_usize(
+                    &row,
+                    "transportedLinks",
+                    self.engine.transported_link_count_via(interface.id),
+                );
+                interfaces.push(&row);
+            }
+            set_value(&object, "interfaces", interfaces.into());
+        }
+        if include_routes {
+            let routes = Array::new();
+            self.engine.visit_route_snapshots(
+                personal_rns::interfaces::AttachedInterfaces::new(&self.interfaces),
+                |route| {
+                    let row = Object::new();
+                    set_bytes(&row, "destination", route.destination.as_bytes());
+                    set_u32(&row, "hops", u32::from(route.hops));
+                    if let NextHop::Via(identity) = route.via {
+                        set_bytes(&row, "viaIdentity", identity.as_bytes());
+                    }
+                    set_bytes(&row, "interfaceId", route.interface.as_bytes());
+                    set_u64(&row, "learnedAtMillis", route.learned_at.0);
+                    set_u64(
+                        &row,
+                        "lastRouteActivityAtMillis",
+                        route.last_route_activity_at.0,
+                    );
+                    set_u64(&row, "expiresAtMillis", route.expires_at.0);
+                    routes.push(&row);
+                },
+            );
+            set_value(&object, "routes", routes.into());
+        }
+        if include_links {
+            let links = Array::new();
+            self.engine.visit_active_link_snapshots(|link| {
+                let row = Object::new();
+                set_bytes(&row, "linkId", link.link_id.as_bytes());
+                set_u64(&row, "rttMillis", link.rtt.millis());
+                if let Some(identity) = link.remote_identity {
+                    set_bytes(&row, "peerIdentity", identity.as_bytes());
+                }
+                links.push(&row);
+            });
+            set_value(&object, "links", links.into());
+        }
+        Ok(object.into())
+    }
 }
 
 impl PrnsRuntime {
+    fn fulfill_captured_resource_work(
+        &mut self,
+        mut capture: IngestReactionCapture,
+        now_ms: u64,
+        entropy: Vec<u8>,
+    ) {
+        let interfaces_snapshot = self.interfaces.clone();
+        let interfaces = personal_rns::interfaces::AttachedInterfaces::new(&interfaces_snapshot);
+        let mut entropy = EntropyCursor::new(entropy);
+        let mut should_prove = |_request: &personal_rns::engine::ProofRequest| true;
+        {
+            let IngestReactionCapture { routed, ready } = &mut capture;
+            fulfill_ready_work(
+                ready,
+                &mut self.engine,
+                interfaces,
+                InstantMillis(now_ms),
+                &mut |out| entropy.fill(out),
+                &mut should_prove,
+                &mut |reaction| routed.route_completed(reaction),
+            );
+        }
+        let (reactions, page_requests) = capture.into_parts();
+        debug_assert!(page_requests.is_empty());
+        self.bump_revision();
+        self.apply_captured(reactions);
+    }
+
     fn restore_pending_ratchet(
         &mut self,
         destination: personal_rns::wire::DestinationHash,
@@ -1096,15 +1780,116 @@ impl PrnsRuntime {
         }
     }
 
+    fn resume_protocol_announce(
+        &mut self,
+        verified: personal_rns::engine::VerifiedAnnounce,
+        entropy: Vec<u8>,
+    ) {
+        let mut entropy = EntropyCursor::new(entropy);
+        self.resume_protocol_announce_with_entropy(verified, &mut entropy);
+    }
+
+    fn resume_protocol_announce_with_entropy(
+        &mut self,
+        verified: personal_rns::engine::VerifiedAnnounce,
+        entropy: &mut EntropyCursor,
+    ) {
+        let interfaces = self.interfaces.clone();
+        let mut reactions = Vec::new();
+        self.engine.resume_announce(
+            verified,
+            personal_rns::interfaces::AttachedInterfaces::new(&interfaces),
+            &mut |out| entropy.fill(out),
+            &mut |reaction| reactions.push(capture_reaction(reaction)),
+        );
+        self.bump_revision();
+        self.apply_captured(reactions);
+    }
+
+    fn resume_protocol_link_proof(
+        &mut self,
+        owed: personal_rns::routing::links::handshake::LinkProofVerifyOwed,
+        shared: X25519SharedSecret,
+        now_ms: u64,
+        entropy: Vec<u8>,
+    ) {
+        let mut entropy = EntropyCursor::new(entropy);
+        self.resume_protocol_link_proof_with_entropy(owed, shared, now_ms, &mut entropy);
+    }
+
+    fn resume_protocol_link_proof_with_entropy(
+        &mut self,
+        owed: personal_rns::routing::links::handshake::LinkProofVerifyOwed,
+        shared: X25519SharedSecret,
+        now_ms: u64,
+        entropy: &mut EntropyCursor,
+    ) {
+        let interfaces = self.interfaces.clone();
+        let mut reactions = Vec::new();
+        self.engine.resume_link_proof(
+            owed,
+            shared,
+            personal_rns::interfaces::AttachedInterfaces::new(&interfaces),
+            InstantMillis(now_ms),
+            &mut |out| entropy.fill(out),
+            &mut |reaction| reactions.push(capture_reaction(reaction)),
+        );
+        self.bump_revision();
+        self.apply_captured(reactions);
+    }
+
+    fn finish_protocol_crypto_inline(
+        &mut self,
+        operation: ProtocolCryptoOperation,
+        now_ms: u64,
+        entropy: Vec<u8>,
+    ) {
+        let mut entropy = EntropyCursor::new(entropy);
+        self.finish_protocol_crypto_inline_with_entropy(operation, now_ms, &mut entropy);
+    }
+
+    fn finish_protocol_crypto_inline_with_entropy(
+        &mut self,
+        operation: ProtocolCryptoOperation,
+        now_ms: u64,
+        entropy: &mut EntropyCursor,
+    ) {
+        match operation {
+            ProtocolCryptoOperation::AnnounceVerify(operation) => {
+                if let personal_rns::engine::AnnounceVerification::Verified(verified) =
+                    operation.owed.verify()
+                {
+                    self.resume_protocol_announce_with_entropy(verified, entropy);
+                }
+            }
+            ProtocolCryptoOperation::LinkProofVerify(owed) => {
+                if link_proof_signature_valid(&owed) {
+                    let shared =
+                        x25519_diffie_hellman(&owed.initiator_secret, &owed.responder_encryption);
+                    self.resume_protocol_link_proof_with_entropy(*owed, shared, now_ms, entropy);
+                }
+            }
+        }
+    }
+
     fn command_context(&mut self, options: &JsValue) -> Result<(u64, Vec<u8>), JsValue> {
         let now_ms = required_u64(options, "nowMs")?;
-        let entropy = Entropy::try_new(required_bytes(options, "entropy")?)
+        self.command_context_values(now_ms, required_bytes(options, "entropy")?)
+            .map(|entropy| (now_ms, entropy))
+    }
+
+    fn command_context_values(
+        &mut self,
+        now_ms: u64,
+        entropy: Vec<u8>,
+    ) -> Result<Vec<u8>, JsValue> {
+        let entropy = Entropy::try_new(entropy)
             .map_err(|error| JsValue::from_str(&format!("host entropy rejected: {error:?}")))?;
         let step = self
             .host
             .begin_step(MonotonicMillis::new(now_ms), entropy)
             .map_err(|error| JsValue::from_str(&format!("host time moved backwards: {error:?}")))?;
-        Ok((now_ms, step.entropy.as_bytes().to_vec()))
+        Ok(step.entropy.as_bytes().to_vec())
     }
 
     fn mint_command_id(&mut self) -> CommandId {
@@ -1122,14 +1907,29 @@ impl PrnsRuntime {
     ) {
         let mut entropy = EntropyCursor::new(entropy);
         let interfaces_snapshot = self.interfaces.clone();
-        let mut reactions = Vec::new();
-        self.engine.ingest_command_into(
+        let interfaces = personal_rns::interfaces::AttachedInterfaces::new(&interfaces_snapshot);
+        let mut capture = IngestReactionCapture::new(self.node_page);
+        self.engine.ingest_command_into_with_work(
             IssuedCommand { id, command },
-            personal_rns::interfaces::AttachedInterfaces::new(&interfaces_snapshot),
+            interfaces,
             InstantMillis(now_ms),
             &mut |out| entropy.fill(out),
-            &mut |reaction| reactions.push(capture_reaction(reaction)),
+            &mut |reaction| capture.route(reaction),
         );
+        {
+            let IngestReactionCapture { routed, ready } = &mut capture;
+            fulfill_ready_work(
+                ready,
+                &mut self.engine,
+                interfaces,
+                InstantMillis(now_ms),
+                &mut |out| entropy.fill(out),
+                &mut |_| true,
+                &mut |reaction| routed.route_completed(reaction),
+            );
+        }
+        let (reactions, page_requests) = capture.into_parts();
+        debug_assert!(page_requests.is_empty());
         self.bump_revision();
         self.apply_captured(reactions);
     }
@@ -1142,6 +1942,7 @@ impl PrnsRuntime {
         for reaction in reactions {
             match reaction {
                 CapturedReaction::Event(event) => self.events.push(event),
+                CapturedReaction::Control(event) => self.control_events.push(event),
                 CapturedReaction::Outbound(frame) => self.outbound.push(frame),
             }
         }
@@ -1245,6 +2046,16 @@ fn account_persisted_bytes(total: &mut usize, additional: usize) -> Result<(), J
     Ok(())
 }
 
+fn protocol_crypto_settlement_error(error: ProtocolCryptoSettlementError) -> JsValue {
+    JsValue::from_str(match error {
+        ProtocolCryptoSettlementError::UnknownJob => "protocol crypto job is unknown",
+        ProtocolCryptoSettlementError::OperationMismatch => {
+            "protocol crypto completion does not match its operation"
+        }
+        ProtocolCryptoSettlementError::JobNotRunning => "protocol crypto job is not running",
+    })
+}
+
 fn validate_route_snapshot(bytes: &[u8]) -> Result<(), JsValue> {
     let rows = personal_rns::persistence::read_routing_table_snapshot(bytes)
         .map_err(|error| persisted_state_error("routing table", error))?;
@@ -1279,8 +2090,135 @@ fn resource_strategy(options: &JsValue) -> Result<ResourceStrategy, JsValue> {
 }
 
 enum CapturedReaction {
-    Event(JsValue),
+    Event(EventProjection),
+    Control(CapturedCommandSettlement),
     Outbound(OutboundFrame),
+}
+
+/// Browser-side bow-tie state for one packet step.
+///
+/// Work is captured while the engine owns its input borrows. The browser manifold fulfills the
+/// resulting owned envelope only after that call returns, then routes each resumed reaction back
+/// through this same object. This keeps request-page discovery correct even when decryption is the
+/// continuation that reveals the request.
+struct IngestReactionCapture {
+    routed: IngestRoutedReactions,
+    ready: InlineReadyWorkQueue,
+}
+
+struct IngestRoutedReactions {
+    reactions: Vec<CapturedReaction>,
+    page_requests: Vec<(LinkId, RequestId, NodeResponse)>,
+    node_page: bool,
+}
+
+impl IngestReactionCapture {
+    fn new(node_page: bool) -> Self {
+        Self {
+            routed: IngestRoutedReactions {
+                reactions: Vec::new(),
+                page_requests: Vec::new(),
+                node_page,
+            },
+            ready: InlineReadyWorkQueue::new(),
+        }
+    }
+
+    fn route(&mut self, reaction: EngineReaction<'_, OwedWork<'_>>) {
+        match reaction {
+            EngineReaction::Journaled(journaled) => self.routed.capture_journaled(journaled),
+            EngineReaction::Directive(directive) => match capture_directive(directive) {
+                Ok(frame) => self
+                    .routed
+                    .reactions
+                    .push(CapturedReaction::Outbound(frame)),
+                Err(work) => self.ready.capture(work),
+            },
+        }
+    }
+
+    fn into_parts(
+        self,
+    ) -> (
+        Vec<CapturedReaction>,
+        Vec<(LinkId, RequestId, NodeResponse)>,
+    ) {
+        (self.routed.reactions, self.routed.page_requests)
+    }
+}
+
+impl IngestRoutedReactions {
+    fn route_completed(&mut self, reaction: EngineReaction<'_, NoOwedWork>) {
+        match reaction {
+            EngineReaction::Journaled(journaled) => self.capture_journaled(journaled),
+            EngineReaction::Directive(directive) => match capture_directive(directive) {
+                Ok(frame) => self.reactions.push(CapturedReaction::Outbound(frame)),
+                Err(never) => match never {},
+            },
+        }
+    }
+
+    fn capture_journaled(&mut self, journaled: Journaled<'_>) {
+        if self.node_page {
+            if let Journaled::RequestReceived {
+                link_id,
+                request_id,
+                path_hash,
+                ..
+            } = &journaled
+            {
+                let response = if *path_hash
+                    == RequestPathHash::of(personal_hopspot_core::node_pages::INDEX_PATH)
+                {
+                    Some(NodeResponse::Index)
+                } else if *path_hash
+                    == RequestPathHash::of(personal_hopspot_core::node_pages::QUICKSTART_PATH)
+                {
+                    Some(NodeResponse::Quickstart)
+                } else if *path_hash
+                    == RequestPathHash::of(personal_hopspot_core::node_pages::COMING_FROM_RNS_PATH)
+                {
+                    Some(NodeResponse::ComingFromRns)
+                } else if *path_hash
+                    == RequestPathHash::of(personal_hopspot_core::node_pages::SOURCE_PAGE_PATH)
+                {
+                    Some(NodeResponse::SourcePage)
+                } else {
+                    #[cfg(feature = "source-archive")]
+                    {
+                        if *path_hash
+                            == RequestPathHash::of(
+                                personal_hopspot_core::node_pages::SOURCE_ARCHIVE_PATH,
+                            )
+                        {
+                            Some(NodeResponse::SourceArchive)
+                        } else if *path_hash
+                            == RequestPathHash::of(
+                                personal_hopspot_core::node_pages::SOURCE_CHECKSUM_PATH,
+                            )
+                        {
+                            Some(NodeResponse::SourceChecksum)
+                        } else {
+                            None
+                        }
+                    }
+                    #[cfg(not(feature = "source-archive"))]
+                    {
+                        None
+                    }
+                };
+                if let Some(response) = response {
+                    self.page_requests.push((*link_id, *request_id, response));
+                }
+            }
+        }
+
+        let captured = match project_journaled(journaled) {
+            CapturedJournal::Event(event) => CapturedReaction::Event(event),
+            CapturedJournal::Control(event) => CapturedReaction::Control(event),
+        };
+        self.reactions.push(captured);
+    }
 }
 
 struct EntropyCursor {
@@ -1308,65 +2246,65 @@ impl EntropyCursor {
 
 fn capture_reaction(reaction: EngineReaction<'_>) -> CapturedReaction {
     match reaction {
-        EngineReaction::Journaled(journaled) => CapturedReaction::Event(journaled_to_js(journaled)),
-        EngineReaction::Directive(directive) => {
-            CapturedReaction::Outbound(directive_to_frame(directive))
-        }
+        EngineReaction::Journaled(journaled) => match project_journaled(journaled) {
+            CapturedJournal::Event(event) => CapturedReaction::Event(event),
+            CapturedJournal::Control(event) => CapturedReaction::Control(event),
+        },
+        EngineReaction::Directive(directive) => match capture_directive(directive) {
+            Ok(frame) => CapturedReaction::Outbound(frame),
+            Err(never) => match never {},
+        },
     }
 }
 
-fn directive_to_frame(directive: Directive<'_>) -> OutboundFrame {
+fn capture_directive<Work>(directive: Directive<'_, Work>) -> Result<OutboundFrame, Work> {
     match directive {
-        Directive::Send { target, bytes } => OutboundFrame {
+        Directive::Fulfill(work) => Err(work),
+        Directive::Send { target, bytes } => Ok(OutboundFrame {
             target: OutboundTarget::Interface(target),
             bytes: bytes.to_vec(),
-            announce: false,
-            hops: None,
-        },
+            kind: OutboundFrameKind::Frame,
+        }),
         Directive::SendIfOnline {
             target,
             bytes,
             on_send,
         } => {
             on_send();
-            OutboundFrame {
+            Ok(OutboundFrame {
                 target: OutboundTarget::Interface(target),
                 bytes: bytes.to_vec(),
-                announce: false,
-                hops: None,
-            }
+                kind: OutboundFrameKind::Frame,
+            })
         }
         Directive::SendAnnounce {
             target,
             bytes,
             hops,
-        } => OutboundFrame {
+        } => Ok(OutboundFrame {
             target: OutboundTarget::Interface(target),
             bytes: bytes.to_vec(),
-            announce: true,
-            hops: Some(hops),
-        },
+            kind: OutboundFrameKind::Announce { hops },
+        }),
         Directive::SendToFleet {
             supervisor,
             fan,
             bytes,
-        } => OutboundFrame {
+        } => Ok(OutboundFrame {
             target: OutboundTarget::Broadcast { supervisor, fan },
             bytes: bytes.to_vec(),
-            announce: false,
-            hops: None,
-        },
+            kind: OutboundFrameKind::Frame,
+        }),
         Directive::SendAnnounceToFleet {
             supervisor,
             fan,
             bytes,
             hops,
-        } => OutboundFrame {
+        } => Ok(OutboundFrame {
             target: OutboundTarget::Broadcast { supervisor, fan },
             bytes: bytes.to_vec(),
-            announce: true,
-            hops: Some(hops),
-        },
+            kind: OutboundFrameKind::Announce { hops },
+        }),
         Directive::EmitFrame {
             target,
             size_hint,
@@ -1375,12 +2313,11 @@ fn directive_to_frame(directive: Directive<'_>) -> OutboundFrame {
             let mut bytes = vec![0u8; size_hint];
             let len = fill(&mut bytes).unwrap_or(0);
             bytes.truncate(len);
-            OutboundFrame {
+            Ok(OutboundFrame {
                 target: OutboundTarget::Interface(target),
                 bytes,
-                announce: false,
-                hops: None,
-            }
+                kind: OutboundFrameKind::Frame,
+            })
         }
     }
 }

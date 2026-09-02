@@ -1,4 +1,4 @@
-use js_sys::{Array, Reflect, Uint8Array};
+use js_sys::{Array, BigInt, Reflect, Uint8Array};
 use personal_rns::identity::IdentityHash;
 use personal_rns::identity::IDENTITY_SECRET_KEY_LEN;
 use personal_rns::interfaces::{InterfaceId, InterfaceKind, InterfaceMode, INTERFACE_ID_LEN};
@@ -99,13 +99,28 @@ fn bytes_from_value(value: JsValue, key: &str) -> Result<Vec<u8>, JsValue> {
 }
 
 pub(crate) fn required_u64(object: &JsValue, key: &str) -> Result<u64, JsValue> {
-    u64_from_value(required_value(object, key)?, key)
-}
-
-fn u64_from_value(value: JsValue, key: &str) -> Result<u64, JsValue> {
+    let value = required_value(object, key)?;
     let number = value
         .as_f64()
         .ok_or_else(|| JsValue::from_str(&format!("{key} must be a number")))?;
+    u64_from_number(number, key)
+}
+
+pub(crate) fn required_bigint_u64(object: &JsValue, key: &str) -> Result<u64, JsValue> {
+    let value = required_value(object, key)?;
+    let bigint = value
+        .dyn_ref::<BigInt>()
+        .ok_or_else(|| JsValue::from_str(&format!("{key} must be a bigint")))?;
+    let text = bigint
+        .to_string(10)
+        .map_err(|_| JsValue::from_str(&format!("{key} must be an unsigned 64-bit integer")))?
+        .as_string()
+        .ok_or_else(|| JsValue::from_str(&format!("{key} must be an unsigned 64-bit integer")))?;
+    text.parse()
+        .map_err(|_| JsValue::from_str(&format!("{key} must be an unsigned 64-bit integer")))
+}
+
+pub(crate) fn u64_from_number(number: f64, key: &str) -> Result<u64, JsValue> {
     if !number.is_finite() || number < 0.0 || number.fract() != 0.0 {
         return Err(JsValue::from_str(&format!(
             "{key} must be a non-negative integer"
@@ -137,7 +152,12 @@ pub(crate) fn optional_u32(object: &JsValue, key: &str) -> Result<Option<u32>, J
 
 pub(crate) fn optional_u64(object: &JsValue, key: &str) -> Result<Option<u64>, JsValue> {
     optional_value(object, key)?
-        .map(|value| u64_from_value(value, key))
+        .map(|value| {
+            let number = value
+                .as_f64()
+                .ok_or_else(|| JsValue::from_str(&format!("{key} must be a number")))?;
+            u64_from_number(number, key)
+        })
         .transpose()
 }
 

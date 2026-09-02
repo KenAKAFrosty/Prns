@@ -1,6 +1,6 @@
 pub use prns_runtime::manifold::{
-    airtime, announce_pacer, decline_all, duty_gate, grant, interface_seam, kernel, reconnect,
-    throughput, timers, AppDeciders, Host,
+    airtime, announce_pacer, decline_all, duty_gate, grant, interface_seam, reaction_routing,
+    reconnect, throughput, timers, wake_schedule, AppDeciders, Host,
 };
 
 #[cfg(feature = "tokio-host")]
@@ -14,8 +14,8 @@ pub mod tokio {
         HostResourceMetadata, HostResourcePayload, HostResourcePayloadError, ManifoldWiring,
         PoolWorkers, ProvideDecompressedHostCommand, RequestAnyHostCommand, ResourceInbound,
         RespondAnyHostCommand, SendResourceHostCommand, SendResourceSegmentHostCommand,
-        StreamInbound, TokioGrantConsumer, TokioGrantProducer, TokioHost, TokioInterfaceSeam,
-        TokioInterfaceStatus,
+        StreamInbound, TokioClock, TokioGrantConsumer, TokioGrantProducer, TokioHost,
+        TokioInterfaceSeam, TokioInterfaceStatus,
     };
 }
 

@@ -323,7 +323,7 @@ async function closeUsb(): Promise<void> {
   log("USB session closed");
 }
 
-function pollRuntime(): void {
+async function pollRuntime(): Promise<void> {
   if (!prns) {
     return;
   }
@@ -335,7 +335,7 @@ function pollRuntime(): void {
       announceButton.disabled = true;
     }
   }
-  const captured = prns.snapshot();
+  const captured = await prns.snapshot();
   if (captured.tag !== "Captured") {
     snapshotStatus.textContent = captured.tag;
     return;
@@ -481,12 +481,15 @@ try {
   await init(wasmUrl);
   await runRuntimeSmoke();
 
-  const created = await Prns.create({ wasm: wasmModule() });
+  const created = await Prns.create({
+    execution: "MainThread",
+    wasm: wasmModule(),
+  });
   assert(created.tag === "Ready", `Prns creation failed: ${created.tag}`);
   prns = created.data;
   void consumeEvents(prns);
   void consumeDiagnostics(prns);
-  const registered = prns.registerSingleDestination({
+  const registered = await prns.registerSingleDestination({
     appName: appName("prns"),
     aspects: [aspect("browser"), aspect("playground")],
     appData: appData(),

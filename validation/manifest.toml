@@ -411,7 +411,7 @@ platform = "any"
 toolchain = "python"
 timeout_seconds = 120
 command = ["__RUNNER_PYTHON__", "tools/prns", "verify"]
-inputs = ["tools/prns", "tools/tasks.toml", "tools/repo/cargo-check.py", "tools/README.md", ".githooks/pre-push"]
+inputs = ["tools/prns", "tools/tasks.toml", "tools/repo/cargo-check.py", "tools/README.md", ".githooks/pre-push", "validation/hygiene/pre-push-ci-parity.py"]
 artifacts = "validation-artifacts/results/tool-registry"
 
 [[suite]]
@@ -463,7 +463,12 @@ platform = "linux"
 toolchain = "stable"
 timeout_seconds = 3600
 command = ["bash", "validation/security/deps-audit.sh"]
-inputs = ["validation/security/deps-audit.sh", "deny.toml", "about.toml"]
+inputs = [
+  "validation/security/deps-audit.sh",
+  "validation/security/license-policy-parity.py",
+  "deny.toml",
+  "about.toml",
+]
 artifacts = "validation-artifacts/results/dependency-audit"
 
 [[suite]]
@@ -854,9 +859,18 @@ inputs = [
   "personal-hopspot/sdk/hopspot/native.d.ts",
   "personal-hopspot/sdk/hopspot/browser.js",
   "personal-hopspot/sdk/hopspot/browser.d.ts",
-  "personal-hopspot/sdk/hopspot/casework.js",
-  "personal-hopspot/sdk/hopspot/casework.cjs",
-  "personal-hopspot/sdk/hopspot/casework.d.ts",
+  "personal-hopspot/sdk/hopspot/react.js",
+  "personal-hopspot/sdk/hopspot/react.d.ts",
+  "personal-hopspot/sdk/hopspot/solid.js",
+  "personal-hopspot/sdk/hopspot/solid.d.ts",
+  "personal-hopspot/sdk/hopspot/vue.js",
+  "personal-hopspot/sdk/hopspot/vue.d.ts",
+  "personal-hopspot/sdk/hopspot/svelte.js",
+  "personal-hopspot/sdk/hopspot/svelte.d.ts",
+  "personal-hopspot/sdk/hopspot/qwik.js",
+  "personal-hopspot/sdk/hopspot/qwik.d.ts",
+  "personal-hopspot/sdk/hopspot/web-component.js",
+  "personal-hopspot/sdk/hopspot/web-component.d.ts",
   "personal-hopspot/sdk/hopspot/test",
 ]
 artifacts = "validation-artifacts/results/hopspot-javascript-package"
@@ -1576,8 +1590,14 @@ group = "remote-control"
 tiers = ["release", "scheduled"]
 
 [[fuzz_target]]
-name = "remote_control_access_snapshot"
-path = "fuzz_targets/remote_control_access_snapshot.rs"
+name = "remote_control_pairing_messages_parse"
+path = "fuzz_targets/remote_control_pairing_messages_parse.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[fuzz_target]]
+name = "remote_control_controller_grants_snapshot"
+path = "fuzz_targets/remote_control_controller_grants_snapshot.rs"
 group = "remote-control"
 tiers = ["release", "scheduled"]
 
@@ -1716,5 +1736,29 @@ tiers = ["release", "scheduled"]
 [[kani]]
 name = "request_set_intersection_preserves_exact_membership"
 source = "prns-core/src/remote_control/message.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "pairing_request_wire_structure_parse_terminates_for_every_bounded_shape"
+source = "prns-core/src/remote_control/pairing/exchange/wire.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "pairing_response_wire_structure_parse_terminates_for_every_bounded_shape"
+source = "prns-core/src/remote_control/pairing/exchange/wire.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "controller_attempt_deadlines_are_strictly_future_and_pairing_bounded"
+source = "prns-core/src/remote_control/pairing/controller_pairing/kani_proofs.rs"
+group = "remote-control"
+tiers = ["release", "scheduled"]
+
+[[kani]]
+name = "target_attempt_deadlines_are_strictly_future_and_pairing_bounded"
+source = "prns-core/src/remote_control/pairing/target_pairing/kani_proofs.rs"
 group = "remote-control"
 tiers = ["release", "scheduled"]

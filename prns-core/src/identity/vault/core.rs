@@ -1,3 +1,4 @@
+use crate::entropy::{EntropySource, RuntimeEntropy};
 use crate::identity::{Zeroizing, IDENTITY_SECRET_KEY_LEN};
 
 pub type IdentitySecretKey = Zeroizing<[u8; IDENTITY_SECRET_KEY_LEN]>;
@@ -108,22 +109,50 @@ pub enum IdentityOrigin {
     Generated,
 }
 
-pub fn load_or_generate<V: IdentityVault>(
+/// Loads an identity or generates it from an initialized runtime random stream.
+///
+/// Arbitrary callbacks cannot cross this bootstrap boundary.
+///
+/// ```compile_fail
+/// use prns_core::identity::vault::{
+///     load_or_generate_with_runtime_entropy, IdentityLabel, IdentityVault,
+/// };
+///
+/// fn bootstrap<V: IdentityVault>(vault: &mut V, label: &IdentityLabel) {
+///     let mut callback = |output: &mut [u8]| output.fill(0x42);
+///     let _ = load_or_generate_with_runtime_entropy(vault, label, &mut callback);
+/// }
+/// ```
+pub fn load_or_generate_with_runtime_entropy<V, S>(
     vault: &mut V,
     label: &IdentityLabel,
-    mut fill_entropy: impl FnMut(&mut [u8]),
+    entropy: &mut RuntimeEntropy<S>,
+) -> Result<(IdentitySecretKey, IdentityOrigin), V::Error>
+where
+    V: IdentityVault,
+    S: EntropySource,
+{
+    load_or_generate_inner(vault, label, |output| entropy.fill_random(output))
+}
+
+fn load_or_generate_inner<V: IdentityVault>(
+    vault: &mut V,
+    label: &IdentityLabel,
+    mut fill_random: impl FnMut(&mut [u8]),
 ) -> Result<(IdentitySecretKey, IdentityOrigin), V::Error> {
     if let Some(secret) = vault.load(label)? {
         return Ok((secret, IdentityOrigin::Loaded));
     }
     let mut secret = Zeroizing::new([0u8; IDENTITY_SECRET_KEY_LEN]);
-    fill_entropy(&mut secret[..]);
+    fill_random(&mut secret[..]);
     vault.store(label, &secret)?;
     Ok((secret, IdentityOrigin::Generated))
 }
 
 #[cfg(test)]
 mod tests {
+    use core::convert::Infallible;
+
     use super::*;
     use std::collections::HashMap;
 
@@ -202,12 +231,26 @@ mod tests {
         IdentityLabel::new(text).unwrap()
     }
 
-    fn counting_entropy(seed: u8) -> impl FnMut(&mut [u8]) {
-        move |bytes| {
-            for (offset, byte) in bytes.iter_mut().enumerate() {
-                *byte = seed.wrapping_add(offset as u8);
-            }
+    struct TestEntropySource(u8);
+
+    impl EntropySource for TestEntropySource {
+        type Error = Infallible;
+
+        fn try_fill_entropy(&mut self, output: &mut [u8]) -> Result<(), Self::Error> {
+            output.fill(self.0);
+            Ok(())
         }
+    }
+
+    fn runtime_entropy(seed: u8) -> RuntimeEntropy<TestEntropySource> {
+        RuntimeEntropy::try_new(TestEntropySource(seed)).unwrap()
+    }
+
+    fn generated_secret(seed: u8) -> [u8; IDENTITY_SECRET_KEY_LEN] {
+        let mut entropy = runtime_entropy(seed);
+        let mut secret = [0_u8; IDENTITY_SECRET_KEY_LEN];
+        entropy.fill_random(&mut secret);
+        secret
     }
 
     #[test]
@@ -264,32 +307,46 @@ mod tests {
     fn a_miss_generates_persists_and_reports_generated() {
         let mut vault = MemoryVault::default();
         let label = label("primary");
+        let mut entropy = runtime_entropy(0x10);
         let (secret, origin) =
-            load_or_generate(&mut vault, &label, counting_entropy(0x10)).unwrap();
+            load_or_generate_with_runtime_entropy(&mut vault, &label, &mut entropy).unwrap();
         assert_eq!(origin, IdentityOrigin::Generated);
-        assert_eq!(secret[0], 0x10);
-        assert_eq!(secret[63], 0x10u8.wrapping_add(63));
+        assert_eq!(*secret, generated_secret(0x10));
         assert!(vault.load(&label).unwrap().is_some());
     }
 
     #[test]
-    fn a_second_call_loads_the_same_bytes_and_reports_loaded() {
+    fn a_second_call_loads_without_advancing_runtime_entropy() {
         let mut vault = MemoryVault::default();
         let label = label("primary");
-        let (first, _) = load_or_generate(&mut vault, &label, counting_entropy(0x10)).unwrap();
+        let mut initial_entropy = runtime_entropy(0x10);
+        let (first, _) =
+            load_or_generate_with_runtime_entropy(&mut vault, &label, &mut initial_entropy)
+                .unwrap();
+        let mut load_entropy = runtime_entropy(0xFF);
+        let mut untouched_entropy = runtime_entropy(0xFF);
         let (second, origin) =
-            load_or_generate(&mut vault, &label, counting_entropy(0xFF)).unwrap();
+            load_or_generate_with_runtime_entropy(&mut vault, &label, &mut load_entropy).unwrap();
         assert_eq!(origin, IdentityOrigin::Loaded);
         assert_eq!(*first, *second);
+
+        let mut after_load = [0_u8; 32];
+        let mut untouched = [0_u8; 32];
+        load_entropy.fill_random(&mut after_load);
+        untouched_entropy.fill_random(&mut untouched);
+        assert_eq!(after_load, untouched);
     }
 
     #[test]
     fn distinct_labels_keep_distinct_identities() {
         let mut vault = MemoryVault::default();
+        let mut entropy = runtime_entropy(0x21);
         let (transport, _) =
-            load_or_generate(&mut vault, &label("transport"), counting_entropy(0x01)).unwrap();
+            load_or_generate_with_runtime_entropy(&mut vault, &label("transport"), &mut entropy)
+                .unwrap();
         let (lxmf, _) =
-            load_or_generate(&mut vault, &label("lxmf"), counting_entropy(0x80)).unwrap();
+            load_or_generate_with_runtime_entropy(&mut vault, &label("lxmf"), &mut entropy)
+                .unwrap();
         assert_ne!(*transport, *lxmf);
     }
 
@@ -299,7 +356,9 @@ mod tests {
             fail_store: true,
             ..MemoryVault::default()
         };
-        let outcome = load_or_generate(&mut vault, &label("primary"), counting_entropy(0x10));
+        let mut entropy = runtime_entropy(0x10);
+        let outcome =
+            load_or_generate_with_runtime_entropy(&mut vault, &label("primary"), &mut entropy);
         assert_eq!(outcome.unwrap_err(), MemoryVaultError::StoreRefused);
     }
 
@@ -307,7 +366,8 @@ mod tests {
     fn remove_reports_whether_anything_was_held() {
         let mut vault = MemoryVault::default();
         let label = label("primary");
-        load_or_generate(&mut vault, &label, counting_entropy(0x10)).unwrap();
+        load_or_generate_with_runtime_entropy(&mut vault, &label, &mut runtime_entropy(0x10))
+            .unwrap();
         assert_eq!(vault.remove(&label).unwrap(), Removal::Removed);
         assert_eq!(vault.remove(&label).unwrap(), Removal::NothingStored);
     }
