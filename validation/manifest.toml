@@ -441,6 +441,23 @@ inputs = ["validation/hygiene/no-personal-paths.py", ".githooks/pre-push"]
 artifacts = "validation-artifacts/results/personal-path-hygiene"
 
 [[suite]]
+id = "application-dependency-boundary"
+domain = "hygiene"
+tiers = ["pr", "release", "scheduled"]
+platform = "any"
+toolchain = "python"
+timeout_seconds = 120
+command = ["__RUNNER_PYTHON__", "validation/hygiene/application-boundary.py"]
+inputs = [
+  "Cargo.toml",
+  "applications/Cargo.toml",
+  "applications/package.json",
+  "validation/hygiene/application-boundary.py",
+  "validation/tests/test_application_boundary.py",
+]
+artifacts = "validation-artifacts/results/application-dependency-boundary"
+
+[[suite]]
 id = "runtime-ownership"
 domain = "hygiene"
 tiers = ["pr", "release", "scheduled"]
@@ -840,6 +857,10 @@ command = ["npm", "--prefix", "applications/prns/app", "run", "verify"]
 inputs = [
   "applications/package.json",
   "applications/package-lock.json",
+  "prns-js/package.json",
+  "prns-js/package-lock.json",
+  "prns-js/src/contract.generated.ts",
+  "prns-js/src/contract.ts",
   "applications/prns/app/.gitignore",
   "applications/prns/app/app.config.ts",
   "applications/prns/app/biome.json",
@@ -868,6 +889,10 @@ inputs = [
   "applications/Cargo.lock",
   "applications/package.json",
   "applications/package-lock.json",
+  "prns-js/package.json",
+  "prns-js/package-lock.json",
+  "prns-js/src/contract.generated.ts",
+  "prns-js/src/contract.ts",
   "applications/prns/native-composition",
   "applications/sdk/expo",
 ]

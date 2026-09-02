@@ -583,12 +583,16 @@ jobs:
         with:
           node-version: "24.18.0"
           cache: npm
-          cache-dependency-path: applications/package-lock.json
-      - name: Install exact application toolchain
+          cache-dependency-path: |
+            applications/package-lock.json
+            prns-js/package-lock.json
+      - name: Build the provider-neutral Prns contract and install the exact application toolchain
         run: |
           npm install --global npm@11.16.0
           test "$(node --version)" = "v24.18.0"
           test "$(npm --version)" = "11.16.0"
+          npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-js run build:code
           npm --prefix applications ci --ignore-scripts --no-audit --no-fund
       - name: Verify application scaffold
         run: python3 validation/run.py run --suite application-scaffold --expected-sha "$GITHUB_SHA"
@@ -608,12 +612,16 @@ jobs:
         with:
           node-version: "24.18.0"
           cache: npm
-          cache-dependency-path: applications/package-lock.json
-      - name: Install exact application toolchain
+          cache-dependency-path: |
+            applications/package-lock.json
+            prns-js/package-lock.json
+      - name: Build the provider-neutral Prns contract and install the exact application toolchain
         run: |
           npm install --global npm@11.16.0
           test "$(node --version)" = "v24.18.0"
           test "$(npm --version)" = "11.16.0"
+          npm --prefix prns-js ci --ignore-scripts --no-audit --no-fund
+          npm --prefix prns-js run build:code
           npm --prefix applications ci --ignore-scripts --no-audit --no-fund
       - name: Verify native application foundation
         run: python3 validation/run.py run --suite application-native-foundation --expected-sha "$GITHUB_SHA"
