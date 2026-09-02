@@ -23,9 +23,18 @@
     "native.d.ts",
     "browser.js",
     "browser.d.ts",
-    "casework.js",
-    "casework.cjs",
-    "casework.d.ts",
+    "react.js",
+    "react.d.ts",
+    "solid.js",
+    "solid.d.ts",
+    "vue.js",
+    "vue.d.ts",
+    "svelte.js",
+    "svelte.d.ts",
+    "qwik.js",
+    "qwik.d.ts",
+    "web-component.js",
+    "web-component.d.ts",
     "README.md",
     "LICENSE-MIT",
     "LICENSE-APACHE"
@@ -60,10 +69,29 @@
       "types": "./browser.d.ts",
       "import": "./browser.js"
     },
-    "./casework": {
-      "types": "./casework.d.ts",
-      "import": "./casework.js",
-      "require": "./casework.cjs"
+    "./react": {
+      "types": "./react.d.ts",
+      "import": "./react.js"
+    },
+    "./solid": {
+      "types": "./solid.d.ts",
+      "import": "./solid.js"
+    },
+    "./vue": {
+      "types": "./vue.d.ts",
+      "import": "./vue.js"
+    },
+    "./svelte": {
+      "types": "./svelte.d.ts",
+      "import": "./svelte.js"
+    },
+    "./qwik": {
+      "types": "./qwik.d.ts",
+      "import": "./qwik.js"
+    },
+    "./web-component": {
+      "types": "./web-component.d.ts",
+      "import": "./web-component.js"
     },
     "./package.json": "./package.json"
   },

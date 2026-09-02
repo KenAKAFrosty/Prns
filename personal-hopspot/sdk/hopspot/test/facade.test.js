@@ -27,9 +27,18 @@ test("contains only transparent module forwarding", async () => {
     "native.d.ts": "export * from \"personal-rns/native\";\n",
     "browser.js": "export * from \"personal-rns/browser\";\n",
     "browser.d.ts": "export * from \"personal-rns/browser\";\n",
-    "casework.js": "export * from \"personal-rns/casework\";\n",
-    "casework.cjs": "module.exports = require(\"personal-rns/casework\");\n",
-    "casework.d.ts": "export * from \"personal-rns/casework\";\n"
+    "react.js": "export * from \"personal-rns/react\";\n",
+    "react.d.ts": "export * from \"personal-rns/react\";\n",
+    "solid.js": "export * from \"personal-rns/solid\";\n",
+    "solid.d.ts": "export * from \"personal-rns/solid\";\n",
+    "vue.js": "export * from \"personal-rns/vue\";\n",
+    "vue.d.ts": "export * from \"personal-rns/vue\";\n",
+    "svelte.js": "export * from \"personal-rns/svelte\";\n",
+    "svelte.d.ts": "export * from \"personal-rns/svelte\";\n",
+    "qwik.js": "export * from \"personal-rns/qwik\";\n",
+    "qwik.d.ts": "export * from \"personal-rns/qwik\";\n",
+    "web-component.js": "export * from \"personal-rns/web-component\";\n",
+    "web-component.d.ts": "export * from \"personal-rns/web-component\";\n"
   };
   const contents = Object.fromEntries(
     await Promise.all(

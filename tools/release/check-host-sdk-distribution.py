@@ -228,10 +228,29 @@ def check_hopspot_alias(version):
             "types": "./browser.d.ts",
             "import": "./browser.js",
         },
-        "./casework": {
-            "types": "./casework.d.ts",
-            "import": "./casework.js",
-            "require": "./casework.cjs",
+        "./react": {
+            "types": "./react.d.ts",
+            "import": "./react.js",
+        },
+        "./solid": {
+            "types": "./solid.d.ts",
+            "import": "./solid.js",
+        },
+        "./vue": {
+            "types": "./vue.d.ts",
+            "import": "./vue.js",
+        },
+        "./svelte": {
+            "types": "./svelte.d.ts",
+            "import": "./svelte.js",
+        },
+        "./qwik": {
+            "types": "./qwik.d.ts",
+            "import": "./qwik.js",
+        },
+        "./web-component": {
+            "types": "./web-component.d.ts",
+            "import": "./web-component.js",
         },
         "./package.json": "./package.json",
     }
@@ -258,9 +277,18 @@ def check_hopspot_alias(version):
         "native.d.ts": 'export * from "personal-rns/native";\n',
         "browser.js": 'export * from "personal-rns/browser";\n',
         "browser.d.ts": 'export * from "personal-rns/browser";\n',
-        "casework.js": 'export * from "personal-rns/casework";\n',
-        "casework.cjs": 'module.exports = require("personal-rns/casework");\n',
-        "casework.d.ts": 'export * from "personal-rns/casework";\n',
+        "react.js": 'export * from "personal-rns/react";\n',
+        "react.d.ts": 'export * from "personal-rns/react";\n',
+        "solid.js": 'export * from "personal-rns/solid";\n',
+        "solid.d.ts": 'export * from "personal-rns/solid";\n',
+        "vue.js": 'export * from "personal-rns/vue";\n',
+        "vue.d.ts": 'export * from "personal-rns/vue";\n',
+        "svelte.js": 'export * from "personal-rns/svelte";\n',
+        "svelte.d.ts": 'export * from "personal-rns/svelte";\n',
+        "qwik.js": 'export * from "personal-rns/qwik";\n',
+        "qwik.d.ts": 'export * from "personal-rns/qwik";\n',
+        "web-component.js": 'export * from "personal-rns/web-component";\n',
+        "web-component.d.ts": 'export * from "personal-rns/web-component";\n',
     }
     expected_files = [*wrappers, "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
     if hopspot_npm.get("files") != expected_files:
