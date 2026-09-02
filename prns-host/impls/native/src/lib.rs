@@ -67,10 +67,9 @@ use prns_host::{
 use tokio::io::{AsyncRead, ReadBuf};
 use tokio::sync::{mpsc, oneshot, watch};
 
-mod snapshot;
 #[cfg(unix)]
 mod supplied_pipe;
-pub use snapshot::{assemble_host_snapshot, HostInterfaceAttachment};
+pub use prns_host_snapshot::{assemble_host_snapshot, HostInterfaceAttachment};
 #[cfg(unix)]
 pub use supplied_pipe::{
     NativeSuppliedPipe, SuppliedPipeConfig, SuppliedPipeOpenRequest, SuppliedPipeRequestWait,
