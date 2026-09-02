@@ -397,6 +397,35 @@ class FlasherReproducibilityTests(unittest.TestCase):
             candidate_build.index(playground_stage),
         )
 
+    def test_staged_playground_vendors_its_locked_casework_runtime(self) -> None:
+        playground_stage = (
+            ROOT / "tools" / "build" / "stage-wasm-docs-browser-playground.sh"
+        ).read_text(encoding="utf-8")
+        vendor_casework = 'node "$repo_root/prns-js/scripts/stage-code.mjs"'
+        stage_sdk_sources = (
+            'cp -R "$build_dir/prns-js/src/." "$public_dir/sdk/"'
+        )
+        stage_vendored_casework = (
+            'cp "$repo_root/prns-js/dist/casework.js" '
+            '"$public_dir/sdk/casework.js"'
+        )
+        smoke_staged_sdk = "sdk_entry_native="
+        self.assertIn(vendor_casework, playground_stage)
+        self.assertIn(stage_sdk_sources, playground_stage)
+        self.assertIn(stage_vendored_casework, playground_stage)
+        self.assertLess(
+            playground_stage.index(vendor_casework),
+            playground_stage.index(stage_vendored_casework),
+        )
+        self.assertLess(
+            playground_stage.index(stage_sdk_sources),
+            playground_stage.index(stage_vendored_casework),
+        )
+        self.assertLess(
+            playground_stage.index(stage_vendored_casework),
+            playground_stage.index(smoke_staged_sdk),
+        )
+
     def test_candidate_rustdoc_is_deterministically_ordered_and_normalized(
         self,
     ) -> None:
