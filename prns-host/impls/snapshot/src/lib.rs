@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -10,8 +12,6 @@ use prns_host::{
     BackendInfo, DestinationIdentitySnapshot, HostSnapshot, IdentityHash, InterfaceHealth,
     InterfaceKind, InterfaceSnapshot, PersistenceSnapshot, RouteSnapshot, RuntimeHealthSnapshot,
 };
-
-use crate::{host_destination, host_interface};
 
 /// Attachment metadata needed to project one runtime interface into a Host snapshot.
 ///
@@ -49,7 +49,7 @@ impl HostInterfaceAttachment {
 /// The raw inventory is folded exactly once. Fleet membership is retained first so both attachment
 /// metadata and engine routes can be remapped to the logical supervisor after the fold consumes
 /// the membership markers. `backend` is supplied by the actual owner, allowing a narrowly composed
-/// host to report narrower capabilities than [`crate::native_backend_info`].
+/// host to report narrower capabilities than the full native Host implementation.
 #[must_use]
 pub fn assemble_host_snapshot(
     raw_interfaces: Vec<InterfaceInventoryEntry>,
@@ -191,6 +191,14 @@ fn host_interface_health(health: ConnectionState) -> InterfaceHealth {
         ConnectionState::Disabled => InterfaceHealth::Disabled,
         ConnectionState::Unknown => InterfaceHealth::Unknown,
     }
+}
+
+fn host_destination(value: personal_rns::wire::DestinationHash) -> prns_host::DestinationHash {
+    prns_host::DestinationHash::new(*value.as_bytes())
+}
+
+fn host_interface(value: personal_rns::interfaces::InterfaceId) -> prns_host::InterfaceId {
+    prns_host::InterfaceId::new(*value.as_bytes())
 }
 
 #[cfg(test)]
