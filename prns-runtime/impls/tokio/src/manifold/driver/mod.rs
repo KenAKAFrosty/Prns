@@ -390,22 +390,6 @@ async fn run_inner<S, H, J, P, A, C>(
             progressed = true;
         }
 
-        if !inbound.has_ready_lanes() && engine.owed_staged_seal_link().is_some() {
-            let now = clock.observe_step(&host);
-            CryptoDispatch {
-                engine: &mut engine,
-                host: &mut host,
-                topology: &mut topology,
-                wire_scratch: &mut wire_scratch,
-                journal: &mut journal,
-                crypto_pool: crypto_pool.as_ref(),
-                owed_work: &mut owed_work,
-                inbound: &mut inbound,
-            }
-            .dispatch_staged_seal(now);
-            progressed = true;
-        }
-
         if let Some(mut issued) = pending_command.take() {
             let now = clock.observe_step(&host);
             let mut command_budget = MAX_COMMAND_BATCH;

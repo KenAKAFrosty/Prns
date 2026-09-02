@@ -10,7 +10,7 @@ use personal_rns::engine::{
     PathRequestId, PrnsCommand, RatchetPolicy, RequestPath, RequestResponseTimeout, Respond,
     RespondData, RespondPayload, RouteSeedOutcome, SendRequest, SendRequestData, SendSinglePacket,
     SendSinglePacketPayload, SendToChannel, SendToChannelBody, SendToLink, SendToLinkPayload,
-    SetResourceStrategy,
+    SetResourceStrategy, WholeResourceOpenCompleted, WholeResourceOpenOutcome,
 };
 use personal_rns::interfaces::bluetooth_auto as bluetooth_contract;
 use personal_rns::interfaces::{
@@ -23,8 +23,11 @@ use personal_rns::routing::links::handshake::link_proof_signature_valid;
 use personal_rns::routing::links::request::RequestId;
 use personal_rns::routing::links::resources::streamed_open::ResourceOpenLane;
 use personal_rns::routing::links::resources::{
-    ResourceBody, ResourceCorrelation, ResourceMetadata, ResourceSend, ResourceSendPlan,
-    ResourceSendPlanError, ResourceStrategy, MAX_EFFICIENT_SIZE,
+    ResourceBody, ResourceCompression, ResourceCorrelation, ResourceMetadata, ResourceSend,
+    ResourceSendPlan, ResourceSendPlanError, ResourceStrategy, MAX_EFFICIENT_SIZE,
+};
+use personal_rns::routing::links::resources::send::{
+    ResourceSealCompleted, ResourceSealLanding, ResourceSealOutcome,
 };
 use personal_rns::routing::links::LinkId;
 use personal_rns::routing::request_handlers::{RequestPathHash, RequestPolicy};
@@ -50,7 +53,7 @@ use crate::input::{
     array_to_strings, destination_hash_from_vec, identity_hash_from_vec, interface_id_from_vec,
     link_id_from_vec, optional_array, optional_bool, optional_bytes, optional_i64, optional_string,
     optional_u32, optional_u64, parse_interface_kind, parse_interface_mode, request_id_from_vec,
-    request_path_hash_from_vec, required_array, required_bigint_u64, required_bool, required_bytes,
+    request_path_hash_from_vec, required_array, required_bool, required_bytes,
     required_string, required_u64, secret_key_from_vec, u64_from_number,
 };
 use crate::js_translation::{
@@ -59,10 +62,35 @@ use crate::js_translation::{
 };
 use crate::outbound_batch::encode as encode_outbound_batch;
 use crate::parameters::{bitrate_bps_u32, BROWSER_PERSISTENCE_VERSION};
-use crate::protocol_crypto::{
-    ProtocolCryptoJob, ProtocolCryptoKind, ProtocolCryptoOperation, ProtocolCryptoQueue,
-    ProtocolCryptoSettlementError,
+use crate::browser_work::{
+    BrowserWorkJob, BrowserWorkKind, BrowserWorkOperation, BrowserWorkQueue,
+    BrowserWorkSettlementError,
 };
+
+enum BrowserWorkCompletion {
+    AnnounceValid,
+    AnnounceInvalid,
+    AnnounceUnavailable,
+    LinkProofVerified([u8; 32]),
+    LinkProofInvalid,
+    LinkProofUnavailable,
+    ResourceSealed(Vec<u8>),
+    ResourceSealedAndDigested {
+        sealed: Vec<u8>,
+        salt: [u8; 4],
+        hash: [u8; 32],
+        proof: [u8; 32],
+    },
+    ResourceSealUnavailable,
+    WholeResourceOpened(Vec<u8>),
+    WholeResourceOpenedAndDigested {
+        plaintext: Vec<u8>,
+        hash: [u8; 32],
+        proof: [u8; 32],
+    },
+    WholeResourceRefused,
+    WholeResourceUnavailable,
+}
 
 #[derive(Clone, Copy)]
 enum NodeResponse {
@@ -114,8 +142,8 @@ pub struct PrnsRuntime {
     host: CooperativeHost<()>,
     pending_ratchets: Vec<(personal_rns::wire::DestinationHash, Vec<u8>)>,
     persistence_restored: bool,
-    protocol_crypto_enabled: bool,
-    protocol_crypto: ProtocolCryptoQueue,
+    browser_workers_enabled: bool,
+    browser_work: BrowserWorkQueue,
 }
 
 #[wasm_bindgen]
@@ -147,8 +175,8 @@ impl PrnsRuntime {
             host: CooperativeHost::new(PrnsLimits::balanced()),
             pending_ratchets: Vec::new(),
             persistence_restored: false,
-            protocol_crypto_enabled: false,
-            protocol_crypto: ProtocolCryptoQueue::new(),
+            browser_workers_enabled: false,
+            browser_work: BrowserWorkQueue::new(),
         })
     }
 
@@ -651,300 +679,65 @@ impl PrnsRuntime {
         let (now_ms, entropy) = self.command_context(&options)?;
         let id = self.mint_command_id();
         let mut entropy = EntropyCursor::new(entropy);
-        let mut reactions = Vec::new();
-        self.engine.ingest_send_resource_segment_into(
-            &ResourceSend {
-                id,
-                link_id,
-                body: ResourceBody {
-                    data: &data,
-                    compressed_candidate: compressed_candidate.as_deref(),
-                    metadata,
-                },
-                correlation: ResourceCorrelation::Unsolicited,
+        let mut capture = IngestReactionCapture::new(false);
+        let send = ResourceSend {
+            id,
+            link_id,
+            body: ResourceBody {
+                data: &data,
+                compressed_candidate: compressed_candidate.as_deref(),
+                metadata,
             },
-            segment.segment,
-            InstantMillis(now_ms),
-            &mut |out| entropy.fill(out),
-            &mut |reaction| reactions.push(capture_reaction(reaction)),
-        );
-        self.apply_captured(reactions);
+            correlation: ResourceCorrelation::Unsolicited,
+        };
+        if self.browser_workers_enabled {
+            self.engine.ingest_send_resource_segment_external_into(
+                &send,
+                segment.segment,
+                InstantMillis(now_ms),
+                &mut |out| entropy.fill(out),
+                &mut |reaction| capture.route(reaction.map_work(|never| match never {})),
+            );
+            self.engine
+                .request_resource_seal(&link_id, &mut |reaction| capture.route(reaction));
+        } else {
+            self.engine.ingest_send_resource_segment_into(
+                &send,
+                segment.segment,
+                InstantMillis(now_ms),
+                &mut |out| entropy.fill(out),
+                &mut |reaction| capture.route(reaction),
+            );
+        }
+        self.fulfill_captured_work(capture, now_ms, &mut entropy);
         Ok(id.0)
     }
 
-    #[wasm_bindgen(js_name = sendResourceSegmentWebCrypto)]
-    pub fn send_resource_segment_web_crypto(
-        &mut self,
-        options: JsValue,
-    ) -> Result<JsValue, JsValue> {
-        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
-        let data = required_bytes(&options, "payload")?;
-        let compressed_candidate = optional_bytes(&options, "compressedCandidate")?;
-        let metadata_kind = required_string(&options, "metadata")?;
-        let packed_metadata = optional_bytes(&options, "packedMetadata")?;
-        let packed_metadata_bytes = optional_u32(&options, "packedMetadataBytes")?;
-        let (metadata, metadata_len) = match (
-            metadata_kind.as_str(),
-            &packed_metadata,
-            packed_metadata_bytes,
-        ) {
-            ("none", None, None) => (ResourceMetadata::None, None),
-            ("packed", Some(packed), None) => {
-                (ResourceMetadata::Packed(packed), Some(packed.len() as u64))
+    #[wasm_bindgen(js_name = configureBrowserWork)]
+    pub fn configure_browser_work(&mut self, execution: String) -> Result<(), JsValue> {
+        match execution.as_str() {
+            "Inline" => {
+                self.browser_workers_enabled = false;
+                self.engine.resource_open_lane = ResourceOpenLane::EngineDirected;
             }
-            ("sentInFirstSegment", None, Some(packed_len)) => (
-                ResourceMetadata::SentInFirstSegment { packed_len },
-                Some(u64::from(packed_len)),
-            ),
-            _ => {
-                return Err(JsValue::from_str(
-                    "resource segment metadata fields are inconsistent",
-                ));
+            "BrowserWorkers" => {
+                self.browser_workers_enabled = true;
+                self.engine.resource_open_lane = ResourceOpenLane::ExternalWhole;
             }
-        };
-        let total_data_bytes = required_u64(&options, "totalDataBytes")?;
-        let segment_index = required_u64(&options, "segmentIndex")?;
-        let plan = ResourceSendPlan::new(total_data_bytes, metadata_len, MAX_EFFICIENT_SIZE as u64)
-            .map_err(|error| {
-                JsValue::from_str(&format!("resource send plan rejected: {error:?}"))
-            })?;
-        let segment = plan
-            .segment(segment_index)
-            .ok_or_else(|| JsValue::from_str("resource segment index is outside the send plan"))?;
-        let expected_data_bytes = segment.data_end.saturating_sub(segment.data_start);
-        if data.len() as u64 != expected_data_bytes {
-            return Err(JsValue::from_str(
-                "resource segment payload does not match the send plan",
-            ));
+            _ => return Err(JsValue::from_str("unknown browser work execution")),
         }
-        let (now_ms, entropy) = self.command_context(&options)?;
-        let id = self.mint_command_id();
-        let mut entropy = EntropyCursor::new(entropy);
-        let mut reactions = Vec::new();
-        self.engine.ingest_send_resource_segment_external_into(
-            &ResourceSend {
-                id,
-                link_id,
-                body: ResourceBody {
-                    data: &data,
-                    compressed_candidate: compressed_candidate.as_deref(),
-                    metadata,
-                },
-                correlation: ResourceCorrelation::Unsolicited,
-            },
-            segment.segment,
-            InstantMillis(now_ms),
-            &mut |out| entropy.fill(out),
-            &mut |reaction| reactions.push(capture_reaction(reaction)),
-        );
-        self.apply_captured(reactions);
-        let Some(view) = self.engine.staged_seal_job_view(&link_id) else {
-            let outcome = Object::new();
-            let data = Object::new();
-            set_str(&outcome, "tag", "Inline");
-            set_bigint(&data, "commandId", id.0);
-            set_value(&outcome, "data", data.into());
-            return Ok(outcome.into());
-        };
-        let nonce_prefixed_bytes = view.nonce_prefixed_bytes;
-        let plaintext = &view.plaintext[16..16 + nonce_prefixed_bytes];
-        let stream_nonce: [u8; 4] = plaintext[..4]
-            .try_into()
-            .map_err(|_| JsValue::from_str("staged resource nonce is unavailable"))?;
-        let signing_key = *view.signing_key_material();
-        let encryption_key = *view.encryption_key_material();
-        let mut seal_iv = [0u8; 16];
-        entropy.fill(&mut seal_iv);
-        let mut salts =
-            [[0u8; 4]; personal_rns::routing::links::resources::build_outgoing::SALT_REROLL_CAP];
-        for salt in &mut salts {
-            entropy.fill(salt);
-        }
-        let mut promotion_entropy = [0u8; 16];
-        entropy.fill(&mut promotion_entropy);
-        let flat_salts = salts.as_flattened();
-        let outcome = Object::new();
-        let job = Object::new();
-        set_str(&outcome, "tag", "Seal");
-        set_bigint(&job, "commandId", view.command_id.0);
-        set_bytes(&job, "linkId", link_id.as_bytes());
-        set_bytes(&job, "streamNonce", &stream_nonce);
-        set_usize(&job, "noncePrefixedBytes", nonce_prefixed_bytes);
-        set_u64(&job, "totalSegments", view.total_segments);
-        set_bytes(&job, "plaintext", plaintext);
-        set_bytes(&job, "signingKey", &signing_key);
-        set_bytes(&job, "encryptionKey", &encryption_key);
-        set_bytes(&job, "sealIv", &seal_iv);
-        set_bytes(&job, "salts", flat_salts);
-        set_bytes(&job, "promotionEntropy", &promotion_entropy);
-        set_value(&outcome, "data", job.into());
-        self.engine.mark_staged_sealing(&link_id);
-        Ok(outcome.into())
-    }
-
-    #[wasm_bindgen(js_name = completeResourceSegmentSeal)]
-    pub fn complete_resource_segment_seal(&mut self, options: JsValue) -> Result<(), JsValue> {
-        let command_id = CommandId(required_bigint_u64(&options, "commandId")?);
-        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
-        let stream_nonce: [u8; 4] = required_bytes(&options, "streamNonce")?
-            .try_into()
-            .map_err(|_| JsValue::from_str("streamNonce must be exactly 4 bytes"))?;
-        let nonce_prefixed_bytes =
-            usize::try_from(required_u64(&options, "noncePrefixedBytes")?)
-                .map_err(|_| JsValue::from_str("noncePrefixedBytes is too large"))?;
-        let sealed = required_bytes(&options, "sealed")?;
-        let flat_salts = required_bytes(&options, "salts")?;
-        let salts: [[u8; 4];
-            personal_rns::routing::links::resources::build_outgoing::SALT_REROLL_CAP] = flat_salts
-            .as_slice()
-            .as_chunks::<4>()
-            .0
-            .try_into()
-            .map_err(|_| JsValue::from_str("salts must contain exactly eight 4-byte values"))?;
-        let now_ms = required_u64(&options, "nowMs")?;
-        let promotion_entropy: [u8; 16] = required_bytes(&options, "promotionEntropy")?
-            .try_into()
-            .map_err(|_| JsValue::from_str("promotionEntropy must be exactly 16 bytes"))?;
-        let mut entropy = EntropyCursor::new(promotion_entropy.to_vec());
-        let mut reactions = Vec::new();
-        self.engine.apply_external_staged_seal(
-            command_id,
-            link_id,
-            stream_nonce,
-            nonce_prefixed_bytes,
-            &sealed,
-            salts,
-            &mut |reaction| reactions.push(capture_reaction(reaction)),
-        );
-        self.engine.promote_staged_resource(
-            &link_id,
-            InstantMillis(now_ms),
-            &mut |out| entropy.fill(out),
-            &mut |reaction| reactions.push(capture_reaction(reaction)),
-        );
-        self.apply_captured(reactions);
         Ok(())
     }
 
-    #[wasm_bindgen(js_name = completeResourceSegmentSealDigests)]
-    pub fn complete_resource_segment_seal_digests(
-        &mut self,
-        options: JsValue,
-    ) -> Result<JsValue, JsValue> {
-        let command_id = CommandId(required_bigint_u64(&options, "commandId")?);
-        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
-        let stream_nonce: [u8; 4] = required_bytes(&options, "streamNonce")?
-            .try_into()
-            .map_err(|_| JsValue::from_str("streamNonce must be exactly 4 bytes"))?;
-        let nonce_prefixed_bytes =
-            usize::try_from(required_u64(&options, "noncePrefixedBytes")?)
-                .map_err(|_| JsValue::from_str("noncePrefixedBytes is too large"))?;
-        let sealed = required_bytes(&options, "sealed")?;
-        let salt: [u8; 4] = required_bytes(&options, "salt")?
-            .try_into()
-            .map_err(|_| JsValue::from_str("salt must be exactly 4 bytes"))?;
-        let hash: [u8; 32] = required_bytes(&options, "hash")?
-            .try_into()
-            .map_err(|_| JsValue::from_str("hash must be exactly 32 bytes"))?;
-        let proof: [u8; 32] = required_bytes(&options, "proof")?
-            .try_into()
-            .map_err(|_| JsValue::from_str("proof must be exactly 32 bytes"))?;
-        let now_ms = required_u64(&options, "nowMs")?;
-        let promotion_entropy: [u8; 16] = required_bytes(&options, "promotionEntropy")?
-            .try_into()
-            .map_err(|_| JsValue::from_str("promotionEntropy must be exactly 16 bytes"))?;
-        let outcome = self.engine.apply_external_staged_seal_digests(
-            command_id,
-            link_id,
-            stream_nonce,
-            nonce_prefixed_bytes,
-            &sealed,
-            personal_rns::routing::links::resources::SaltNonce::new(salt),
-            personal_rns::routing::links::resources::ResourceHash::new(hash),
-            personal_rns::routing::links::resources::ResourceProof::new(proof),
-        );
-        if outcome
-            == personal_rns::routing::links::resources::send::ExternalStagedDigestOutcome::Applied
-        {
-            let mut entropy = EntropyCursor::new(promotion_entropy.to_vec());
-            let mut reactions = Vec::new();
-            self.engine.promote_staged_resource(
-                &link_id,
-                InstantMillis(now_ms),
-                &mut |out| entropy.fill(out),
-                &mut |reaction| reactions.push(capture_reaction(reaction)),
-            );
-            self.apply_captured(reactions);
-        }
-        let result = Object::new();
-        set_str(
-            &result,
-            "tag",
-            match outcome {
-                personal_rns::routing::links::resources::send::ExternalStagedDigestOutcome::Applied => "Applied",
-                personal_rns::routing::links::resources::send::ExternalStagedDigestOutcome::Collision => "Collision",
-                personal_rns::routing::links::resources::send::ExternalStagedDigestOutcome::Stale => "Stale",
-                personal_rns::routing::links::resources::send::ExternalStagedDigestOutcome::Invalid => "Invalid",
-            },
-        );
-        Ok(result.into())
-    }
-
-    #[wasm_bindgen(js_name = retryResourceSegmentSeal)]
-    pub fn retry_resource_segment_seal(&mut self, options: JsValue) -> Result<(), JsValue> {
-        let command_id = CommandId(required_bigint_u64(&options, "commandId")?);
-        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
-        let stream_nonce: [u8; 4] = required_bytes(&options, "streamNonce")?
-            .try_into()
-            .map_err(|_| JsValue::from_str("streamNonce must be exactly 4 bytes"))?;
-        let nonce_prefixed_bytes =
-            usize::try_from(required_u64(&options, "noncePrefixedBytes")?)
-                .map_err(|_| JsValue::from_str("noncePrefixedBytes is too large"))?;
-        let (now_ms, entropy) = self.command_context(&options)?;
-        let mut entropy = EntropyCursor::new(entropy);
-        let mut reactions = Vec::new();
-        self.engine.retry_external_staged_seal(
-            command_id,
-            &link_id,
-            stream_nonce,
-            nonce_prefixed_bytes,
-            &mut |out| entropy.fill(out),
-            &mut |reaction| reactions.push(capture_reaction(reaction)),
-        );
-        self.engine.promote_staged_resource(
-            &link_id,
-            InstantMillis(now_ms),
-            &mut |out| entropy.fill(out),
-            &mut |reaction| reactions.push(capture_reaction(reaction)),
-        );
-        self.apply_captured(reactions);
-        Ok(())
-    }
-
-    #[wasm_bindgen(js_name = enableResourceWebCrypto)]
-    pub fn enable_resource_web_crypto(&mut self) {
-        self.engine.resource_open_lane = ResourceOpenLane::ExternalWhole;
-    }
-
-    #[wasm_bindgen(js_name = enableProtocolWebCrypto)]
-    pub fn enable_protocol_web_crypto(&mut self) {
-        self.enable_protocol_crypto_offload();
-    }
-
-    #[wasm_bindgen(js_name = enableProtocolCryptoOffload)]
-    pub fn enable_protocol_crypto_offload(&mut self) {
-        self.protocol_crypto_enabled = true;
-    }
-
-    #[wasm_bindgen(js_name = takeProtocolCryptoJob)]
-    pub fn take_protocol_crypto_job(&mut self) -> JsValue {
-        let Some(job) = self.protocol_crypto.take() else {
+    #[wasm_bindgen(js_name = takeBrowserWork)]
+    pub fn take_browser_work(&mut self) -> JsValue {
+        let Some(job) = self.browser_work.take() else {
             return JsValue::UNDEFINED;
         };
         let tagged = Object::new();
         let data = Object::new();
         match job {
-            ProtocolCryptoJob::AnnounceVerify {
+            BrowserWorkJob::AnnounceVerify {
                 id,
                 public_key,
                 message,
@@ -956,7 +749,7 @@ impl PrnsRuntime {
                 set_bytes(&data, "message", &message);
                 set_bytes(&data, "signature", &signature);
             }
-            ProtocolCryptoJob::LinkProofVerify {
+            BrowserWorkJob::LinkProofVerify {
                 id,
                 public_key,
                 message,
@@ -972,210 +765,290 @@ impl PrnsRuntime {
                 set_bytes(&data, "secretScalar", &secret_scalar[..]);
                 set_bytes(&data, "peerPublicKey", &peer_public_key);
             }
+            BrowserWorkJob::ResourceSeal {
+                id,
+                link_id,
+                nonce_prefixed_bytes,
+                total_segments,
+                workspace,
+                signing_key,
+                encryption_key,
+                seal_iv,
+                salts,
+            } => {
+                set_str(&tagged, "tag", "ResourceSeal");
+                set_u32(&data, "id", id);
+                set_bytes(&data, "linkId", link_id.as_bytes());
+                set_usize(&data, "noncePrefixedBytes", nonce_prefixed_bytes);
+                set_u64(&data, "totalSegments", total_segments);
+                set_bytes(
+                    &data,
+                    "plaintext",
+                    &workspace[16..16 + nonce_prefixed_bytes],
+                );
+                set_bytes(&data, "signingKey", &signing_key);
+                set_bytes(&data, "encryptionKey", &encryption_key);
+                set_bytes(&data, "sealIv", &seal_iv);
+                set_bytes(&data, "salts", salts.as_flattened());
+            }
+            BrowserWorkJob::WholeResourceOpen {
+                id,
+                link_id,
+                hash,
+                signing_key,
+                encryption_key,
+                sealed,
+                compression,
+                salt_nonce,
+                total_segments,
+            } => {
+                set_str(&tagged, "tag", "WholeResourceOpen");
+                set_u32(&data, "id", id);
+                set_bytes(&data, "linkId", link_id.as_bytes());
+                set_bytes(&data, "hash", hash.as_bytes());
+                set_bytes(&data, "signingKey", &signing_key);
+                set_bytes(&data, "encryptionKey", &encryption_key);
+                set_bytes(&data, "sealed", &sealed);
+                set_u64(&data, "totalSegments", total_segments);
+                let hash_plan = Object::new();
+                match compression {
+                    ResourceCompression::Uncompressed => {
+                        let hash_data = Object::new();
+                        set_str(&hash_plan, "tag", "OpenedStream");
+                        set_bytes(&hash_data, "salt", salt_nonce.as_bytes());
+                        set_value(&hash_plan, "data", hash_data.into());
+                    }
+                    ResourceCompression::Bz2 => {
+                        set_str(&hash_plan, "tag", "AfterDecompression");
+                    }
+                }
+                set_value(&data, "hashPlan", hash_plan.into());
+            }
         }
         set_value(&tagged, "data", data.into());
         tagged.into()
     }
 
-    #[wasm_bindgen(js_name = completeProtocolAnnounceValid)]
-    pub fn complete_protocol_announce_valid(
-        &mut self,
-        id: u32,
-        now_ms: f64,
-        entropy: Vec<u8>,
-    ) -> Result<(), JsValue> {
-        let now_ms = u64_from_number(now_ms, "nowMs")?;
-        let entropy = self.command_context_values(now_ms, entropy)?;
+    #[wasm_bindgen(js_name = completeBrowserWork)]
+    pub fn complete_browser_work(&mut self, options: JsValue) -> Result<JsValue, JsValue> {
+        let id = u32::try_from(required_u64(&options, "id")?)
+            .map_err(|_| JsValue::from_str("id must fit in 32 bits"))?;
+        let outcome = required_string(&options, "outcome")?;
+        let kind = self
+            .browser_work
+            .running_kind(id)
+            .map_err(browser_work_settlement_error)?;
+        let completion = parse_browser_work_completion(kind, &outcome, &options)?;
+        let (now_ms, entropy) = self.command_context(&options)?;
         let operation = self
-            .protocol_crypto
-            .settle(id, ProtocolCryptoKind::AnnounceVerify)
-            .map_err(protocol_crypto_settlement_error)?;
-        let ProtocolCryptoOperation::AnnounceVerify { owed, .. } = operation else {
-            return Err(JsValue::from_str("protocol crypto operation changed kind"));
-        };
-        self.resume_protocol_announce(owed.verified_by_external_backend(), entropy);
-        Ok(())
-    }
-
-    #[wasm_bindgen(js_name = completeProtocolAnnounceInvalid)]
-    pub fn complete_protocol_announce_invalid(&mut self, id: u32) -> Result<(), JsValue> {
-        self.protocol_crypto
-            .settle(id, ProtocolCryptoKind::AnnounceVerify)
-            .map_err(protocol_crypto_settlement_error)?;
-        Ok(())
-    }
-
-    #[wasm_bindgen(js_name = completeProtocolLinkProofValid)]
-    pub fn complete_protocol_link_proof_valid(
-        &mut self,
-        id: u32,
-        shared_secret: Vec<u8>,
-        now_ms: f64,
-        entropy: Vec<u8>,
-    ) -> Result<(), JsValue> {
-        let shared_secret: [u8; X25519SharedSecret::LEN] = shared_secret
-            .try_into()
-            .map_err(|_| JsValue::from_str("sharedSecret must be exactly 32 bytes"))?;
-        let now_ms = u64_from_number(now_ms, "nowMs")?;
-        let entropy = self.command_context_values(now_ms, entropy)?;
-        let operation = self
-            .protocol_crypto
-            .settle(id, ProtocolCryptoKind::LinkProofVerify)
-            .map_err(protocol_crypto_settlement_error)?;
-        let ProtocolCryptoOperation::LinkProofVerify(owed) = operation else {
-            return Err(JsValue::from_str("protocol crypto operation changed kind"));
-        };
-        self.resume_protocol_link_proof(
-            owed,
-            X25519SharedSecret::from_external_diffie_hellman(shared_secret),
-            now_ms,
-            entropy,
-        );
-        Ok(())
-    }
-
-    #[wasm_bindgen(js_name = completeProtocolLinkProofInvalid)]
-    pub fn complete_protocol_link_proof_invalid(&mut self, id: u32) -> Result<(), JsValue> {
-        self.protocol_crypto
-            .settle(id, ProtocolCryptoKind::LinkProofVerify)
-            .map_err(protocol_crypto_settlement_error)?;
-        Ok(())
-    }
-
-    #[wasm_bindgen(js_name = completeProtocolCryptoInline)]
-    pub fn complete_protocol_crypto_inline(
-        &mut self,
-        id: u32,
-        now_ms: f64,
-        entropy: Vec<u8>,
-    ) -> Result<(), JsValue> {
-        let now_ms = u64_from_number(now_ms, "nowMs")?;
-        let entropy = self.command_context_values(now_ms, entropy)?;
-        let operation = self
-            .protocol_crypto
+            .browser_work
             .settle_any(id)
-            .map_err(protocol_crypto_settlement_error)?;
-        self.finish_protocol_crypto_inline(operation, now_ms, entropy);
-        Ok(())
-    }
-
-    #[wasm_bindgen(js_name = takeResourceOpenJob)]
-    pub fn take_resource_open_job(&mut self) -> JsValue {
-        let Some(view) = self.engine.external_open_job_view() else {
-            return JsValue::UNDEFINED;
-        };
-        let link_id = view.link_id;
-        let hash = view.hash;
-        let signing_key = *view.signing_key_material();
-        let encryption_key = *view.encryption_key_material();
-        let sealed = view.sealed.to_vec();
-        let compression = view.compression;
-        let salt_nonce = view.salt_nonce;
-        let total_segments = view.total_segments;
-        self.engine.mark_external_opening(&link_id, &hash);
-        let job = Object::new();
-        set_bytes(&job, "linkId", link_id.as_bytes());
-        set_bytes(&job, "hash", hash.as_bytes());
-        set_bytes(&job, "signingKey", &signing_key);
-        set_bytes(&job, "encryptionKey", &encryption_key);
-        set_bytes(&job, "sealed", &sealed);
-        set_u64(&job, "totalSegments", total_segments);
-        let hash_plan = Object::new();
-        match compression {
-            personal_rns::routing::links::resources::ResourceCompression::Uncompressed => {
-                let data = Object::new();
-                set_str(&hash_plan, "tag", "OpenedStream");
-                set_bytes(&data, "salt", salt_nonce.as_bytes());
-                set_value(&hash_plan, "data", data.into());
+            .map_err(browser_work_settlement_error)?;
+        let mut entropy = EntropyCursor::new(entropy);
+        let mut capture = IngestReactionCapture::new(false);
+        let result = Object::new();
+        match (operation, completion) {
+            (
+                BrowserWorkOperation::AnnounceVerify { owed, .. },
+                BrowserWorkCompletion::AnnounceValid,
+            ) => {
+                    self.resume_protocol_announce_with_entropy(
+                        owed.verified_by_external_backend(),
+                        &mut entropy,
+                    );
+                    set_str(&result, "tag", "Applied");
+                    return Ok(result.into());
             }
-            personal_rns::routing::links::resources::ResourceCompression::Bz2 => {
-                set_str(&hash_plan, "tag", "AfterDecompression");
+            (
+                BrowserWorkOperation::AnnounceVerify { .. },
+                BrowserWorkCompletion::AnnounceInvalid,
+            ) => {}
+            (
+                BrowserWorkOperation::AnnounceVerify { owed, .. },
+                BrowserWorkCompletion::AnnounceUnavailable,
+            ) => {
+                    if let personal_rns::engine::AnnounceVerification::Verified(verified) =
+                        owed.verify()
+                    {
+                        self.resume_protocol_announce_with_entropy(verified, &mut entropy);
+                    }
+                    set_str(&result, "tag", "Applied");
+                    return Ok(result.into());
             }
+            (
+                BrowserWorkOperation::LinkProofVerify(owed),
+                BrowserWorkCompletion::LinkProofVerified(shared),
+            ) => {
+                    self.resume_protocol_link_proof_with_entropy(
+                        owed,
+                        X25519SharedSecret::from_external_diffie_hellman(shared),
+                        now_ms,
+                        &mut entropy,
+                    );
+                    set_str(&result, "tag", "Applied");
+                    return Ok(result.into());
+            }
+            (
+                BrowserWorkOperation::LinkProofVerify(_),
+                BrowserWorkCompletion::LinkProofInvalid,
+            ) => {}
+            (
+                BrowserWorkOperation::LinkProofVerify(owed),
+                BrowserWorkCompletion::LinkProofUnavailable,
+            ) => {
+                    if link_proof_signature_valid(&owed) {
+                        let shared = x25519_diffie_hellman(
+                            &owed.initiator_secret,
+                            &owed.responder_encryption,
+                        );
+                        self.resume_protocol_link_proof_with_entropy(
+                            owed,
+                            shared,
+                            now_ms,
+                            &mut entropy,
+                        );
+                    }
+                    set_str(&result, "tag", "Applied");
+                    return Ok(result.into());
+            }
+            (
+                BrowserWorkOperation::ResourceSeal {
+                    plan,
+                    workspace,
+                    seal_iv,
+                    salts,
+                },
+                completion @ (BrowserWorkCompletion::ResourceSealed(_)
+                | BrowserWorkCompletion::ResourceSealedAndDigested { .. }
+                | BrowserWorkCompletion::ResourceSealUnavailable),
+            ) => {
+                let reservation = plan.reservation();
+                let landing = match &completion {
+                    BrowserWorkCompletion::ResourceSealed(sealed) => {
+                        self.engine.resume_resource_seal(
+                            ResourceSealCompleted {
+                                reservation,
+                                outcome: ResourceSealOutcome::Sealed {
+                                    sealed,
+                                    salts,
+                                },
+                            },
+                            InstantMillis(now_ms),
+                            &mut |out| entropy.fill(out),
+                            &mut |reaction| capture.route(reaction),
+                        )
+                    }
+                    BrowserWorkCompletion::ResourceSealedAndDigested {
+                        sealed,
+                        salt,
+                        hash,
+                        proof,
+                    } => {
+                        self.engine.resume_resource_seal(
+                            ResourceSealCompleted {
+                                reservation,
+                                outcome: ResourceSealOutcome::SealedAndDigested {
+                                    sealed,
+                                    salt_nonce: personal_rns::routing::links::resources::SaltNonce::new(*salt),
+                                    hash: personal_rns::routing::links::resources::ResourceHash::new(*hash),
+                                    expected_proof: personal_rns::routing::links::resources::ResourceProof::new(*proof),
+                                },
+                            },
+                            InstantMillis(now_ms),
+                            &mut |out| entropy.fill(out),
+                            &mut |reaction| capture.route(reaction),
+                        )
+                    }
+                    BrowserWorkCompletion::ResourceSealUnavailable => self.engine.resume_resource_seal(
+                        ResourceSealCompleted {
+                            reservation,
+                            outcome: ResourceSealOutcome::Unavailable,
+                        },
+                        InstantMillis(now_ms),
+                        &mut |out| entropy.fill(out),
+                        &mut |reaction| capture.route(reaction),
+                    ),
+                    _ => return Err(JsValue::from_str("browser work completion does not match operation")),
+                };
+                if matches!(
+                    landing,
+                    ResourceSealLanding::Collision | ResourceSealLanding::Invalid
+                ) {
+                    self.browser_work.restore(
+                        id,
+                        BrowserWorkOperation::ResourceSeal {
+                            plan,
+                            workspace,
+                            seal_iv,
+                            salts,
+                        },
+                    );
+                }
+                set_str(&result, "tag", match landing {
+                    ResourceSealLanding::Applied => "Applied",
+                    ResourceSealLanding::Collision => "Collision",
+                    ResourceSealLanding::Stale => "Stale",
+                    ResourceSealLanding::Invalid => "Invalid",
+                });
+            }
+            (
+                BrowserWorkOperation::WholeResourceOpen { plan, sealed },
+                completion @ (BrowserWorkCompletion::WholeResourceOpened(_)
+                | BrowserWorkCompletion::WholeResourceOpenedAndDigested { .. }
+                | BrowserWorkCompletion::WholeResourceRefused
+                | BrowserWorkCompletion::WholeResourceUnavailable),
+            ) => {
+                let reservation = plan.reservation();
+                let completed_outcome = match &completion {
+                    BrowserWorkCompletion::WholeResourceOpened(plaintext) => {
+                        WholeResourceOpenOutcome::Opened(plaintext)
+                    }
+                    BrowserWorkCompletion::WholeResourceOpenedAndDigested {
+                        plaintext,
+                        hash,
+                        proof,
+                    } => {
+                        WholeResourceOpenOutcome::OpenedAndDigested {
+                            plaintext,
+                            calculated_hash: personal_rns::routing::links::resources::ResourceHash::new(*hash),
+                            proof: personal_rns::routing::links::resources::ResourceProof::new(*proof),
+                        }
+                    }
+                    BrowserWorkCompletion::WholeResourceRefused => {
+                        WholeResourceOpenOutcome::Refused
+                    }
+                    BrowserWorkCompletion::WholeResourceUnavailable => {
+                        WholeResourceOpenOutcome::Unavailable
+                    }
+                    _ => return Err(JsValue::from_str("browser work completion does not match operation")),
+                };
+                let landing = self.engine.resume_whole_resource_open(
+                    WholeResourceOpenCompleted {
+                        reservation,
+                        outcome: completed_outcome,
+                    },
+                    InstantMillis(now_ms),
+                    &mut |reaction| capture.route(reaction),
+                );
+                if matches!(
+                    landing,
+                    personal_rns::engine::WholeResourceOpenLanding::Invalid
+                ) {
+                    self.browser_work.restore(
+                        id,
+                        BrowserWorkOperation::WholeResourceOpen { plan, sealed },
+                    );
+                }
+                set_str(&result, "tag", match landing {
+                    personal_rns::engine::WholeResourceOpenLanding::Applied => "Applied",
+                    personal_rns::engine::WholeResourceOpenLanding::Stale => "Stale",
+                    personal_rns::engine::WholeResourceOpenLanding::Invalid => "Invalid",
+                });
+            }
+            _ => return Err(JsValue::from_str("browser work completion does not match operation")),
         }
-        set_value(&job, "hashPlan", hash_plan.into());
-        job.into()
-    }
-
-    #[wasm_bindgen(js_name = completeResourceOpen)]
-    pub fn complete_resource_open(&mut self, options: JsValue) -> Result<(), JsValue> {
-        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
-        let hash: [u8; 32] = required_bytes(&options, "hash")?
-            .try_into()
-            .map_err(|_| JsValue::from_str("hash must be exactly 32 bytes"))?;
-        let plaintext = required_bytes(&options, "plaintext")?;
-        let (now_ms, entropy) = self.command_context(&options)?;
-        let mut capture = IngestReactionCapture::new(false);
-        self.engine.apply_external_open(
-            &link_id,
-            &personal_rns::routing::links::resources::ResourceHash::new(hash),
-            &plaintext,
-            InstantMillis(now_ms),
-            &mut |reaction| capture.route(reaction),
-        );
-        self.fulfill_captured_resource_work(capture, now_ms, entropy);
-        Ok(())
-    }
-
-    #[wasm_bindgen(js_name = completeResourceOpenDigests)]
-    pub fn complete_resource_open_digests(&mut self, options: JsValue) -> Result<(), JsValue> {
-        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
-        let hash: [u8; 32] = required_bytes(&options, "hash")?
-            .try_into()
-            .map_err(|_| JsValue::from_str("hash must be exactly 32 bytes"))?;
-        let calculated_hash: [u8; 32] = required_bytes(&options, "calculatedHash")?
-            .try_into()
-            .map_err(|_| JsValue::from_str("calculatedHash must be exactly 32 bytes"))?;
-        let proof: [u8; 32] = required_bytes(&options, "proof")?
-            .try_into()
-            .map_err(|_| JsValue::from_str("proof must be exactly 32 bytes"))?;
-        let plaintext = required_bytes(&options, "plaintext")?;
-        let (now_ms, entropy) = self.command_context(&options)?;
-        let mut capture = IngestReactionCapture::new(false);
-        self.engine.apply_external_open_verified(
-            &link_id,
-            &personal_rns::routing::links::resources::ResourceHash::new(hash),
-            &plaintext,
-            personal_rns::routing::links::resources::ResourceHash::new(calculated_hash),
-            personal_rns::routing::links::resources::ResourceProof::new(proof),
-            InstantMillis(now_ms),
-            &mut |reaction| capture.route(reaction),
-        );
-        self.fulfill_captured_resource_work(capture, now_ms, entropy);
-        Ok(())
-    }
-
-    #[wasm_bindgen(js_name = rejectResourceOpen)]
-    pub fn reject_resource_open(&mut self, options: JsValue) -> Result<(), JsValue> {
-        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
-        let hash: [u8; 32] = required_bytes(&options, "hash")?
-            .try_into()
-            .map_err(|_| JsValue::from_str("hash must be exactly 32 bytes"))?;
-        let mut reactions = Vec::new();
-        self.engine.reject_external_open(
-            &link_id,
-            &personal_rns::routing::links::resources::ResourceHash::new(hash),
-            &mut |reaction| reactions.push(capture_reaction(reaction)),
-        );
-        self.apply_captured(reactions);
-        Ok(())
-    }
-
-    #[wasm_bindgen(js_name = retryResourceOpen)]
-    pub fn retry_resource_open(&mut self, options: JsValue) -> Result<(), JsValue> {
-        let link_id = link_id_from_vec(required_bytes(&options, "linkId")?)?;
-        let hash: [u8; 32] = required_bytes(&options, "hash")?
-            .try_into()
-            .map_err(|_| JsValue::from_str("hash must be exactly 32 bytes"))?;
-        let (now_ms, entropy) = self.command_context(&options)?;
-        let mut capture = IngestReactionCapture::new(false);
-        self.engine.retry_external_open_inline(
-            &link_id,
-            &personal_rns::routing::links::resources::ResourceHash::new(hash),
-            InstantMillis(now_ms),
-            &mut |reaction| capture.route(reaction),
-        );
-        self.fulfill_captured_resource_work(capture, now_ms, entropy);
-        Ok(())
+        self.fulfill_captured_work(capture, now_ms, &mut entropy);
+        Ok(result.into())
     }
 
     #[wasm_bindgen(js_name = setLinkResourceStrategy)]
@@ -1310,32 +1183,7 @@ impl PrnsRuntime {
                 sink: &mut |reaction| capture.route(reaction),
             },
         );
-        if self.protocol_crypto_enabled && self.protocol_crypto.has_capacity() {
-            let candidates = capture.ready.take_selected_crypto(|crypto| {
-                matches!(
-                    crypto,
-                    CryptoOwed::AnnounceVerify(_) | CryptoOwed::LinkProofVerify(_)
-                )
-            });
-            for crypto in candidates {
-                let operation = match crypto {
-                    CryptoOwed::AnnounceVerify(owed) => {
-                        match ProtocolCryptoOperation::announce(owed) {
-                            Ok(operation) => operation,
-                            Err(owed) => {
-                                capture.ready.push_crypto(CryptoOwed::AnnounceVerify(owed));
-                                continue;
-                            }
-                        }
-                    }
-                    CryptoOwed::LinkProofVerify(owed) => ProtocolCryptoOperation::link_proof(owed),
-                    _ => continue,
-                };
-                if let Err(operation) = self.protocol_crypto.admit(operation) {
-                    capture.ready.push_crypto(operation.into_crypto_owed());
-                }
-            }
-        }
+        self.admit_browser_work(&mut capture, now_ms, &mut entropy);
         {
             let IngestReactionCapture { routed, ready } = &mut capture;
             fulfill_ready_work(
@@ -1725,16 +1573,66 @@ impl PrnsRuntime {
 }
 
 impl PrnsRuntime {
-    fn fulfill_captured_resource_work(
+    fn admit_browser_work(
+        &mut self,
+        capture: &mut IngestReactionCapture,
+        now_ms: u64,
+        entropy: &mut EntropyCursor,
+    ) {
+        if !self.browser_workers_enabled {
+            return;
+        }
+        let candidates = capture
+            .ready
+            .take_browser_work(&mut |out| entropy.fill(out));
+        for operation in candidates {
+            let Err(operation) = self.browser_work.admit(operation) else {
+                continue;
+            };
+            match *operation {
+                BrowserWorkOperation::AnnounceVerify { owed, .. } => {
+                    capture
+                        .ready
+                        .push_crypto(CryptoOwed::AnnounceVerify(*owed));
+                }
+                BrowserWorkOperation::LinkProofVerify(owed) => {
+                    capture.ready.push_crypto(CryptoOwed::LinkProofVerify(owed));
+                }
+                BrowserWorkOperation::ResourceSeal { plan, .. } => {
+                    self.engine.resume_resource_seal(
+                        ResourceSealCompleted {
+                            reservation: plan.reservation(),
+                            outcome: ResourceSealOutcome::Unavailable,
+                        },
+                        InstantMillis(now_ms),
+                        &mut |out| entropy.fill(out),
+                        &mut |reaction| capture.route(reaction),
+                    );
+                }
+                BrowserWorkOperation::WholeResourceOpen { plan, .. } => {
+                    self.engine.resume_whole_resource_open(
+                        WholeResourceOpenCompleted {
+                            reservation: plan.reservation(),
+                            outcome: WholeResourceOpenOutcome::Unavailable,
+                        },
+                        InstantMillis(now_ms),
+                        &mut |reaction| capture.route(reaction),
+                    );
+                }
+            }
+        }
+    }
+
+    fn fulfill_captured_work(
         &mut self,
         mut capture: IngestReactionCapture,
         now_ms: u64,
-        entropy: Vec<u8>,
+        entropy: &mut EntropyCursor,
     ) {
         let interfaces_snapshot = self.interfaces.clone();
         let interfaces = personal_rns::interfaces::AttachedInterfaces::new(&interfaces_snapshot);
-        let mut entropy = EntropyCursor::new(entropy);
         let mut should_prove = |_request: &personal_rns::engine::ProofRequest| true;
+        self.admit_browser_work(&mut capture, now_ms, entropy);
         {
             let IngestReactionCapture { routed, ready } = &mut capture;
             fulfill_ready_work(
@@ -1780,15 +1678,6 @@ impl PrnsRuntime {
         }
     }
 
-    fn resume_protocol_announce(
-        &mut self,
-        verified: personal_rns::engine::VerifiedAnnounce,
-        entropy: Vec<u8>,
-    ) {
-        let mut entropy = EntropyCursor::new(entropy);
-        self.resume_protocol_announce_with_entropy(verified, &mut entropy);
-    }
-
     fn resume_protocol_announce_with_entropy(
         &mut self,
         verified: personal_rns::engine::VerifiedAnnounce,
@@ -1804,17 +1693,6 @@ impl PrnsRuntime {
         );
         self.bump_revision();
         self.apply_captured(reactions);
-    }
-
-    fn resume_protocol_link_proof(
-        &mut self,
-        owed: personal_rns::routing::links::handshake::LinkProofVerifyOwed,
-        shared: X25519SharedSecret,
-        now_ms: u64,
-        entropy: Vec<u8>,
-    ) {
-        let mut entropy = EntropyCursor::new(entropy);
-        self.resume_protocol_link_proof_with_entropy(owed, shared, now_ms, &mut entropy);
     }
 
     fn resume_protocol_link_proof_with_entropy(
@@ -1836,40 +1714,6 @@ impl PrnsRuntime {
         );
         self.bump_revision();
         self.apply_captured(reactions);
-    }
-
-    fn finish_protocol_crypto_inline(
-        &mut self,
-        operation: ProtocolCryptoOperation,
-        now_ms: u64,
-        entropy: Vec<u8>,
-    ) {
-        let mut entropy = EntropyCursor::new(entropy);
-        self.finish_protocol_crypto_inline_with_entropy(operation, now_ms, &mut entropy);
-    }
-
-    fn finish_protocol_crypto_inline_with_entropy(
-        &mut self,
-        operation: ProtocolCryptoOperation,
-        now_ms: u64,
-        entropy: &mut EntropyCursor,
-    ) {
-        match operation {
-            ProtocolCryptoOperation::AnnounceVerify { owed, .. } => {
-                if let personal_rns::engine::AnnounceVerification::Verified(verified) =
-                    owed.verify()
-                {
-                    self.resume_protocol_announce_with_entropy(verified, entropy);
-                }
-            }
-            ProtocolCryptoOperation::LinkProofVerify(owed) => {
-                if link_proof_signature_valid(&owed) {
-                    let shared =
-                        x25519_diffie_hellman(&owed.initiator_secret, &owed.responder_encryption);
-                    self.resume_protocol_link_proof_with_entropy(owed, shared, now_ms, entropy);
-                }
-            }
-        }
     }
 
     fn command_context(&mut self, options: &JsValue) -> Result<(u64, Vec<u8>), JsValue> {
@@ -1916,6 +1760,7 @@ impl PrnsRuntime {
             &mut |out| entropy.fill(out),
             &mut |reaction| capture.route(reaction),
         );
+        self.admit_browser_work(&mut capture, now_ms, &mut entropy);
         {
             let IngestReactionCapture { routed, ready } = &mut capture;
             fulfill_ready_work(
@@ -2046,14 +1891,82 @@ fn account_persisted_bytes(total: &mut usize, additional: usize) -> Result<(), J
     Ok(())
 }
 
-fn protocol_crypto_settlement_error(error: ProtocolCryptoSettlementError) -> JsValue {
+fn browser_work_settlement_error(error: BrowserWorkSettlementError) -> JsValue {
     JsValue::from_str(match error {
-        ProtocolCryptoSettlementError::UnknownJob => "protocol crypto job is unknown",
-        ProtocolCryptoSettlementError::OperationMismatch => {
-            "protocol crypto completion does not match its operation"
-        }
-        ProtocolCryptoSettlementError::JobNotRunning => "protocol crypto job is not running",
+        BrowserWorkSettlementError::UnknownJob => "browser work is unknown",
+        BrowserWorkSettlementError::JobNotRunning => "browser work is not running",
     })
+}
+
+fn parse_browser_work_completion(
+    kind: BrowserWorkKind,
+    outcome: &str,
+    options: &JsValue,
+) -> Result<BrowserWorkCompletion, JsValue> {
+    match (kind, outcome) {
+        (BrowserWorkKind::AnnounceVerify, "Valid") => Ok(BrowserWorkCompletion::AnnounceValid),
+        (BrowserWorkKind::AnnounceVerify, "Invalid") => {
+            Ok(BrowserWorkCompletion::AnnounceInvalid)
+        }
+        (BrowserWorkKind::AnnounceVerify, "Unavailable") => {
+            Ok(BrowserWorkCompletion::AnnounceUnavailable)
+        }
+        (BrowserWorkKind::LinkProofVerify, "Verified") => {
+            let shared_secret = required_bytes_array(options, "sharedSecret")?;
+            Ok(BrowserWorkCompletion::LinkProofVerified(shared_secret))
+        }
+        (BrowserWorkKind::LinkProofVerify, "Invalid") => {
+            Ok(BrowserWorkCompletion::LinkProofInvalid)
+        }
+        (BrowserWorkKind::LinkProofVerify, "Unavailable") => {
+            Ok(BrowserWorkCompletion::LinkProofUnavailable)
+        }
+        (BrowserWorkKind::ResourceSeal, "Sealed") => Ok(
+            BrowserWorkCompletion::ResourceSealed(required_bytes(options, "sealed")?),
+        ),
+        (BrowserWorkKind::ResourceSeal, "SealedAndDigested") => {
+            Ok(BrowserWorkCompletion::ResourceSealedAndDigested {
+                sealed: required_bytes(options, "sealed")?,
+                salt: required_bytes_array(options, "salt")?,
+                hash: required_bytes_array(options, "hash")?,
+                proof: required_bytes_array(options, "proof")?,
+            })
+        }
+        (BrowserWorkKind::ResourceSeal, "Unavailable") => {
+            Ok(BrowserWorkCompletion::ResourceSealUnavailable)
+        }
+        (BrowserWorkKind::WholeResourceOpen, "Opened") => Ok(
+            BrowserWorkCompletion::WholeResourceOpened(required_bytes(options, "plaintext")?),
+        ),
+        (BrowserWorkKind::WholeResourceOpen, "OpenedAndDigested") => {
+            Ok(BrowserWorkCompletion::WholeResourceOpenedAndDigested {
+                plaintext: required_bytes(options, "plaintext")?,
+                hash: required_bytes_array(options, "hash")?,
+                proof: required_bytes_array(options, "proof")?,
+            })
+        }
+        (BrowserWorkKind::WholeResourceOpen, "Refused") => {
+            Ok(BrowserWorkCompletion::WholeResourceRefused)
+        }
+        (BrowserWorkKind::WholeResourceOpen, "Unavailable") => {
+            Ok(BrowserWorkCompletion::WholeResourceUnavailable)
+        }
+        (BrowserWorkKind::AnnounceVerify, _)
+        | (BrowserWorkKind::LinkProofVerify, _)
+        | (BrowserWorkKind::ResourceSeal, _)
+        | (BrowserWorkKind::WholeResourceOpen, _) => {
+            Err(JsValue::from_str("browser work completion outcome is invalid"))
+        }
+    }
+}
+
+fn required_bytes_array<const N: usize>(
+    options: &JsValue,
+    field: &str,
+) -> Result<[u8; N], JsValue> {
+    required_bytes(options, field)?
+        .try_into()
+        .map_err(|_| JsValue::from_str(&format!("{field} must be exactly {N} bytes")))
 }
 
 fn validate_route_snapshot(bytes: &[u8]) -> Result<(), JsValue> {

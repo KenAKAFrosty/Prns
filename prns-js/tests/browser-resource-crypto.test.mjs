@@ -7,7 +7,7 @@ import {
   WebCryptoResourceOpener,
   WebCryptoResourceSealer,
   parseResourceOpenJob,
-  parseResourceSealBegin,
+  parseResourceSealJob,
   resourceDigestExecution,
   resourceOpenDigestExecution,
 } from "../dist/browser/resource_crypto.js";
@@ -18,9 +18,8 @@ import {
 
 function sealJob() {
   return {
-    commandId: 41n,
+    id: 41,
     linkId: Uint8Array.from({ length: 16 }, (_, index) => index),
-    streamNonce: Uint8Array.of(1, 2, 3, 4),
     noncePrefixedBytes: 21,
     totalSegments: 1,
     plaintext: Uint8Array.of(
@@ -30,29 +29,22 @@ function sealJob() {
     encryptionKey: Uint8Array.from({ length: 32 }, (_, index) => 255 - index),
     sealIv: Uint8Array.from({ length: 16 }, (_, index) => index + 31),
     salts: new Uint8Array(32),
-    promotionEntropy: new Uint8Array(16),
   };
 }
 
-test("resource seal parsing preserves the typed job and rejects inconsistent identity", () => {
+test("resource seal parsing preserves the typed job and rejects inconsistent shape", () => {
   const job = sealJob();
-  assert.deepEqual(
-    parseResourceSealBegin({ tag: "Seal", data: job }),
-    { tag: "Seal", data: job },
-  );
+  assert.deepEqual(parseResourceSealJob(job), job);
   assert.throws(
-    () => parseResourceSealBegin({
-      tag: "Seal",
-      data: { ...job, noncePrefixedBytes: job.noncePrefixedBytes + 1 },
+    () => parseResourceSealJob({
+      ...job,
+      noncePrefixedBytes: job.noncePrefixedBytes + 1,
     }),
     /plaintext length must equal noncePrefixedBytes/,
   );
   assert.throws(
-    () => parseResourceSealBegin({
-      tag: "Seal",
-      data: { ...job, streamNonce: Uint8Array.of(9, 2, 3, 4) },
-    }),
-    /streamNonce must prefix plaintext/,
+    () => parseResourceSealJob({ ...job, salts: new Uint8Array(28) }),
+    /salts must be a 32-byte Uint8Array/,
   );
 });
 
@@ -60,6 +52,7 @@ test("Web Crypto resource tokens open exactly and refuse authentication failures
   const job = sealJob();
   const sealed = await new WebCryptoResourceSealer().seal(job);
   const openJob = parseResourceOpenJob({
+    id: 42,
     linkId: job.linkId,
     hash: new Uint8Array(32),
     signingKey: job.signingKey,

@@ -1,6 +1,6 @@
 use crate::engine::{CryptoOwed, OpenedResourceSpan, OwedWork, ResourceOpenOwed};
 use crate::manifold::Host;
-use crate::routing::links::resources::send::ResourceBuildPlan;
+use crate::routing::links::resources::send::{ResourceBuildPlan, ResourceSealPlan};
 use crate::routing::links::resources::ResourceMetadata;
 
 use super::crypto_pool::{
@@ -16,12 +16,18 @@ struct PendingResourceBuild {
     metadata: HostResourceMetadata,
 }
 
+struct PendingResourceSeal {
+    plan: ResourceSealPlan,
+    plaintext: Vec<u8>,
+}
+
 // Keeping completed inline work by value avoids adding an allocation to the zero-copy open path.
 #[allow(clippy::large_enum_variant)]
 enum PendingJob {
     Ready(CryptoJob),
     Completed(CryptoResult),
     ResourceBuild(PendingResourceBuild),
+    ResourceSeal(PendingResourceSeal),
 }
 
 /// Runtime-owned work waiting for the current engine call to release its borrows.
@@ -66,7 +72,23 @@ impl PendingOwedWork {
                 let plan = owed.into_plan();
                 self.push_resource_build(plan, data, compressed_candidate, metadata);
             }
+            OwedWork::ResourceSeal(owed) => {
+                let plaintext = owed.workspace().to_vec();
+                let plan = owed.into_plan();
+                self.jobs
+                    .push(PendingJob::ResourceSeal(PendingResourceSeal {
+                        plan,
+                        plaintext,
+                    }));
+            }
             OwedWork::ResourceOpen(owed) => self.push_resource_open(owed, pool),
+            OwedWork::WholeResourceOpen(owed) => {
+                self.jobs.push(PendingJob::Completed(
+                    CryptoResult::WholeResourceOpenUnavailable {
+                        reservation: owed.plan().reservation(),
+                    },
+                ));
+            }
             OwedWork::ResourceDecompression(owed) => {
                 self.jobs
                     .push(PendingJob::Ready(CryptoJob::DecompressResource(Box::new(
@@ -176,6 +198,21 @@ impl PendingOwedWork {
                         metadata: pending.metadata,
                         seal_iv,
                         nonces,
+                    }))
+                }
+                PendingJob::ResourceSeal(pending) => {
+                    let mut seal_iv = [0u8; 16];
+                    host.fill_random(&mut seal_iv);
+                    let mut salts = [[0u8; crate::routing::links::resources::RESOURCE_NONCE_LEN];
+                        crate::routing::links::resources::build_outgoing::SALT_REROLL_CAP];
+                    for salt in &mut salts {
+                        host.fill_random(salt);
+                    }
+                    CryptoJob::SealStaged(Box::new(super::crypto_pool::StagedSealJob {
+                        plan: pending.plan,
+                        plaintext: pending.plaintext,
+                        seal_iv,
+                        salts,
                     }))
                 }
             };

@@ -14,12 +14,12 @@ use crate::crypto::{
 use crate::engine::{
     AnnounceSignCompleted, AnnounceSignOwed, AnnounceVerification, AnnounceVerifyOwed,
     ChannelAckSignCompleted, ChannelAckSignOwed, ChannelAckVerification, ChannelAckVerifyOwed,
-    CommandId, CryptoOwed, DecryptOwed, EncryptCompleted, EncryptOwed, EstablishLinkCompleted,
+    CryptoOwed, DecryptOwed, EncryptCompleted, EncryptOwed, EstablishLinkCompleted,
     EstablishLinkOwed, IdentifySignCompleted, IdentifySignOwed, LinkIdentityVerification,
     LinkIdentityVerifyOwed, LinkReceiptSignCompleted, LinkReceiptSignOwed, ProofSignCompleted,
     ProofSignOwed, RatchetDecryptOwed, ReceiptProofVerification, ReceiptProofVerifyOwed,
     TunnelSynthesizeSignCompleted, TunnelSynthesizeSignOwed, TunnelSynthesizeVerification,
-    TunnelSynthesizeVerifyOwed,
+    TunnelSynthesizeVerifyOwed, WholeResourceOpenReservation,
 };
 use crate::identity::{decrypt_token_in_place_with_ratchets, OpenedBy};
 use crate::remote_control::{
@@ -33,12 +33,12 @@ use crate::routing::links::resources::build_outgoing::{
     seal_staged_resource, BuildOutgoingResourceError, BuildRegions, BuiltResource,
     SealedStagedResource, SALT_REROLL_CAP,
 };
-use crate::routing::links::resources::send::ResourceBuildPlan;
+use crate::routing::links::resources::send::{ResourceBuildPlan, ResourceSealPlan};
 use crate::routing::links::resources::streamed_open::StreamedOpen;
 use crate::routing::links::resources::{
     sealed_transfer_bytes, ResourceBody, ResourceHash, MAP_HASH_LEN, RESOURCE_NONCE_LEN,
 };
-use crate::routing::links::{LinkId, LinkKey};
+use crate::routing::links::LinkId;
 #[cfg(feature = "runtime-metrics")]
 use crate::runtime::CryptoMetricsSnapshot;
 
@@ -199,11 +199,7 @@ fn macos_sysctl_usize(name: &str) -> Option<usize> {
 }
 
 pub(super) struct StagedSealJob {
-    pub(super) command_id: CommandId,
-    pub(super) link_id: LinkId,
-    pub(super) key: LinkKey,
-    pub(super) sdu: usize,
-    pub(super) nonce_prefixed_bytes: usize,
+    pub(super) plan: ResourceSealPlan,
     pub(super) plaintext: Vec<u8>,
     pub(super) seal_iv: [u8; 16],
     pub(super) salts: [[u8; RESOURCE_NONCE_LEN]; SALT_REROLL_CAP],
@@ -503,13 +499,13 @@ pub(super) enum CryptoResult {
         plaintext: Vec<u8>,
     },
     StagedSealed {
-        command_id: CommandId,
-        link_id: LinkId,
-        stream_nonce: [u8; RESOURCE_NONCE_LEN],
-        nonce_prefixed_bytes: usize,
+        reservation: crate::routing::links::resources::send::ResourceSealReservation,
         transfer: Vec<u8>,
         names: Vec<u8>,
         outcome: Result<SealedStagedResource, BuildOutgoingResourceError>,
+    },
+    WholeResourceOpenUnavailable {
+        reservation: WholeResourceOpenReservation,
     },
     SpanOpened {
         link_id: LinkId,
@@ -522,7 +518,12 @@ pub(super) enum CryptoResult {
 
 impl CryptoResult {
     pub(super) fn settles_packet_verdict(&self) -> bool {
-        !matches!(self, Self::ResourceBuilt { .. } | Self::StagedSealed { .. })
+        !matches!(
+            self,
+            Self::ResourceBuilt { .. }
+                | Self::StagedSealed { .. }
+                | Self::WholeResourceOpenUnavailable { .. }
+        )
     }
 }
 
@@ -1091,27 +1092,22 @@ fn run_crypto_job(job: CryptoJob, verifier_cache: &mut WorkerVerifierCache) -> C
         }
         CryptoJob::SealStaged(job) => {
             let StagedSealJob {
-                command_id,
-                link_id,
-                key,
-                sdu,
-                nonce_prefixed_bytes,
+                plan,
                 plaintext,
                 seal_iv,
                 salts,
             } = *job;
-            let mut stream_nonce = [0u8; RESOURCE_NONCE_LEN];
-            stream_nonce.copy_from_slice(&plaintext[16..16 + RESOURCE_NONCE_LEN]);
+            let nonce_prefixed_bytes = plan.nonce_prefixed_bytes();
             let stream_len = nonce_prefixed_bytes - RESOURCE_NONCE_LEN;
             let mut transfer = plaintext;
             transfer.resize(sealed_transfer_bytes(stream_len), 0);
-            let mut names = vec![0u8; transfer.len().div_ceil(sdu) * MAP_HASH_LEN];
+            let mut names = vec![0u8; transfer.len().div_ceil(plan.sdu()) * MAP_HASH_LEN];
             let mut fresh_salts = salts.into_iter();
             let outcome = seal_staged_resource(
-                &key,
+                plan.key(),
                 &seal_iv,
                 || fresh_salts.next().unwrap_or_default(),
-                sdu,
+                plan.sdu(),
                 nonce_prefixed_bytes,
                 BuildRegions {
                     transfer: &mut transfer,
@@ -1119,10 +1115,7 @@ fn run_crypto_job(job: CryptoJob, verifier_cache: &mut WorkerVerifierCache) -> C
                 },
             );
             CryptoResult::StagedSealed {
-                command_id,
-                link_id,
-                stream_nonce,
-                nonce_prefixed_bytes,
+                reservation: plan.reservation(),
                 transfer,
                 names,
                 outcome,

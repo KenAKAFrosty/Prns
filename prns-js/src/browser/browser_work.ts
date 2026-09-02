@@ -1,8 +1,16 @@
 import { Tag } from "../casework.js";
+import {
+  parseResourceOpenJob,
+  parseResourceSealJob,
+} from "./resource_crypto.js";
+import type {
+  ResourceOpenJob,
+  ResourceSealJob,
+} from "./resource_crypto.js";
 
 type OwnedBytes = Uint8Array<ArrayBuffer>;
 
-export type ProtocolCryptoJob =
+export type BrowserWork =
   | Tag<
       "AnnounceVerify",
       {
@@ -22,15 +30,29 @@ export type ProtocolCryptoJob =
         readonly secretScalar: OwnedBytes;
         readonly peerPublicKey: OwnedBytes;
       }
-    >;
+    >
+  | Tag<"ResourceSeal", ResourceSealJob>
+  | Tag<"WholeResourceOpen", ResourceOpenJob>;
 
-export function parseProtocolCryptoJob(raw: unknown): ProtocolCryptoJob | undefined {
+export type BrowserWorkLanding =
+  | Tag<"Applied">
+  | Tag<"Collision">
+  | Tag<"Stale">
+  | Tag<"Invalid">;
+
+export function parseBrowserWork(raw: unknown): BrowserWork | undefined {
   if (raw === undefined) {
     return undefined;
   }
-  const root = record(raw, "protocol crypto job");
+  const root = record(raw, "browser work");
   const tag = stringField(root, "tag");
-  const data = record(root.data, "protocol crypto job data");
+  const data = record(root.data, "browser work data");
+  if (tag === "ResourceSeal") {
+    return Tag("ResourceSeal", parseResourceSealJob(data));
+  }
+  if (tag === "WholeResourceOpen") {
+    return Tag("WholeResourceOpen", parseResourceOpenJob(data));
+  }
   const common = {
     id: positiveIntegerField(data, "id"),
     publicKey: bytesField(data, "publicKey", 32),
@@ -47,7 +69,15 @@ export function parseProtocolCryptoJob(raw: unknown): ProtocolCryptoJob | undefi
       peerPublicKey: bytesField(data, "peerPublicKey", 32),
     });
   }
-  throw new TypeError(`unknown protocol crypto job tag ${tag}`);
+  throw new TypeError(`unknown browser work tag ${tag}`);
+}
+
+export function parseBrowserWorkLanding(raw: unknown): BrowserWorkLanding {
+  const tag = stringField(record(raw, "browser work landing"), "tag");
+  if (tag === "Applied" || tag === "Collision" || tag === "Stale" || tag === "Invalid") {
+    return Tag(tag);
+  }
+  throw new TypeError(`unknown browser work landing tag ${tag}`);
 }
 
 function record(value: unknown, name: string): Record<string, unknown> {

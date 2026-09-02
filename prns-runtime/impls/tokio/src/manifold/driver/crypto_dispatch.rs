@@ -1,19 +1,18 @@
 use crate::engine::{
     AnnounceVerification, EngineReaction, EngineState, InstantMillis, Journaled,
     OpenedResourceSpan, OwedWork, ProofRequest, ResourceDecompressionCompleted,
-    ResourceOpenCompleted, WakeSchedules,
+    ResourceOpenCompleted, WakeSchedules, WholeResourceOpenCompleted, WholeResourceOpenOutcome,
 };
 use crate::identity::OpenedToken;
 use crate::interfaces::{FrameAccountingEvent, InterfaceIfac};
 use crate::manifold::Host;
-use crate::routing::links::resources::build_outgoing::SALT_REROLL_CAP;
-use crate::routing::links::resources::send::{OffloadedStagedSeal, ResourceBuildCompleted};
-use crate::routing::links::resources::{MAP_HASH_LEN, RESOURCE_NONCE_LEN};
+use crate::routing::links::resources::send::{
+    ResourceBuildCompleted, ResourceSealCompleted, ResourceSealOutcome,
+};
+use crate::routing::links::resources::MAP_HASH_LEN;
 use crate::storage::StorageLayout;
 
-use super::crypto_pool::{
-    CryptoCompletion, CryptoJob, CryptoPool, CryptoResult, OpenedSpanResult, StagedSealJob,
-};
+use super::crypto_pool::{CryptoCompletion, CryptoPool, CryptoResult, OpenedSpanResult};
 use super::egress::{
     route_reaction, route_reaction_with_work, Egress, InterfacePacer, WireScratch,
 };
@@ -98,64 +97,6 @@ where
     H: Host,
     J: for<'a> FnMut(Journaled<'a>),
 {
-    pub(super) fn dispatch_staged_seal(self, now: InstantMillis) {
-        let Self {
-            engine,
-            host,
-            topology,
-            wire_scratch,
-            journal,
-            crypto_pool,
-            owed_work: _,
-            inbound: _,
-        } = self;
-        let Some(link_id) = engine.owed_staged_seal_link() else {
-            return;
-        };
-        match crypto_pool {
-            Some(pool) => {
-                let Some(view) = engine.staged_seal_job_view(&link_id) else {
-                    return;
-                };
-                let mut seal_iv = [0u8; 16];
-                host.fill_random(&mut seal_iv);
-                let mut salts = [[0u8; RESOURCE_NONCE_LEN]; SALT_REROLL_CAP];
-                for salt in &mut salts {
-                    host.fill_random(salt);
-                }
-                let job = StagedSealJob {
-                    command_id: view.command_id,
-                    link_id,
-                    key: view.key.cloned(),
-                    sdu: view.sdu,
-                    nonce_prefixed_bytes: view.nonce_prefixed_bytes,
-                    plaintext: view.plaintext.to_vec(),
-                    seal_iv,
-                    salts,
-                };
-                engine.mark_staged_sealing(&link_id);
-                pool.submit(CryptoJob::SealStaged(Box::new(job)));
-            }
-            None => {
-                engine.seal_staged_continuation(
-                    &link_id,
-                    &mut |entropy| host.fill_random(entropy),
-                    &mut |reaction| {
-                        route_reaction(
-                            reaction,
-                            &mut topology.egress,
-                            &topology.ifacs,
-                            &mut topology.pacers,
-                            wire_scratch,
-                            now,
-                            &mut |journaled| journal.route(journaled),
-                        )
-                    },
-                );
-            }
-        }
-    }
-
     pub(super) fn complete<P>(
         self,
         completion: CryptoCompletion,
@@ -519,26 +460,24 @@ where
                 },
             )),
             CryptoResult::StagedSealed {
-                command_id,
-                link_id,
-                stream_nonce,
-                nonce_prefixed_bytes,
+                reservation,
                 transfer,
                 names,
                 outcome,
             } => {
                 let sealed_len = outcome.map_or(0, |sealed| sealed.sealed_transfer_bytes);
                 let names_len = outcome.map_or(0, |sealed| sealed.part_count * MAP_HASH_LEN);
-                engine.apply_offloaded_staged_seal(
-                    OffloadedStagedSeal {
-                        command_id,
-                        link_id,
-                        stream_nonce,
-                        nonce_prefixed_bytes,
-                        sealed_bytes: &transfer[..sealed_len],
-                        names: &names[..names_len],
-                        outcome,
+                engine.resume_resource_seal(
+                    ResourceSealCompleted {
+                        reservation,
+                        outcome: ResourceSealOutcome::Built {
+                            sealed: &transfer[..sealed_len],
+                            names: &names[..names_len],
+                            outcome,
+                        },
                     },
+                    now,
+                    &mut |entropy| host.fill_random(entropy),
                     &mut |reaction| {
                         route_completion_reaction(
                             reaction,
@@ -553,10 +492,18 @@ where
                         )
                     },
                 );
-                engine.promote_staged_resource(
-                    &link_id,
+                CryptoCompletionEffect::WakeSchedules(WakeSchedules {
+                    resource_deadlines: engine.resource_deadlines_wake(),
+                    ..WakeSchedules::UNCHANGED
+                })
+            }
+            CryptoResult::WholeResourceOpenUnavailable { reservation } => {
+                engine.resume_whole_resource_open(
+                    WholeResourceOpenCompleted {
+                        reservation,
+                        outcome: WholeResourceOpenOutcome::Unavailable,
+                    },
                     now,
-                    &mut |entropy| host.fill_random(entropy),
                     &mut |reaction| {
                         route_completion_reaction(
                             reaction,

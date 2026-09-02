@@ -17,10 +17,13 @@ use crate::routing::links::establish::EstablishLinkOwed;
 use crate::routing::links::handshake::{LinkProofSignOwed, LinkProofVerifyOwed};
 use crate::routing::links::identify::{IdentifySignOwed, LinkIdentityVerifyOwed};
 use crate::routing::links::request::RequestId;
-use crate::routing::links::resources::send::ResourceBuildOwed;
+use crate::routing::links::resources::send::{ResourceBuildOwed, ResourceSealOwed};
 use crate::routing::links::resources::streamed_open::StreamedOpen;
-use crate::routing::links::resources::{ResourceFailureCause, ResourceHash};
-use crate::routing::links::LinkId;
+use crate::routing::links::resources::table::ResourceOpenGeneration;
+use crate::routing::links::resources::{
+    ResourceCompression, ResourceFailureCause, ResourceHash, ResourceProof, SaltNonce,
+};
+use crate::routing::links::{LinkId, LinkKey};
 use crate::routing::proof::ChannelAckSignOwed;
 use crate::routing::proof::{LinkReceiptSignOwed, ProofSignOwed, ReceiptProofVerifyOwed};
 use crate::routing::request_handlers::RequestPathHash;
@@ -72,7 +75,9 @@ impl<'a, Work> EngineReaction<'a, Work> {
 pub enum OwedWork<'a> {
     Crypto(CryptoOwed),
     ResourceBuild(ResourceBuildOwed<'a>),
+    ResourceSeal(ResourceSealOwed<'a>),
     ResourceOpen(ResourceOpenOwed<'a>),
+    WholeResourceOpen(WholeResourceOpenOwed<'a>),
     ResourceDecompression(ResourceDecompressionOwed<'a>),
 }
 
@@ -159,6 +164,101 @@ pub struct ResourceOpenCompleted<'a> {
     pub span_start: usize,
     pub state: StreamedOpen,
     pub opened: OpenedResourceSpan<'a>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WholeResourceOpenReservation {
+    pub(crate) link_id: LinkId,
+    pub(crate) hash: ResourceHash,
+    pub(crate) generation: ResourceOpenGeneration,
+}
+
+pub struct WholeResourceOpenPlan {
+    pub(crate) reservation: WholeResourceOpenReservation,
+    pub(crate) key: LinkKey,
+    pub(crate) compression: ResourceCompression,
+    pub(crate) salt_nonce: SaltNonce,
+    pub(crate) total_segments: u64,
+}
+
+impl WholeResourceOpenPlan {
+    pub fn reservation(&self) -> WholeResourceOpenReservation {
+        self.reservation
+    }
+
+    pub fn link_id(&self) -> LinkId {
+        self.reservation.link_id
+    }
+
+    pub fn hash(&self) -> ResourceHash {
+        self.reservation.hash
+    }
+
+    pub fn key(&self) -> &LinkKey {
+        &self.key
+    }
+
+    pub fn signing_key_material(&self) -> &[u8; 32] {
+        self.key.token_material_halves().0
+    }
+
+    pub fn encryption_key_material(&self) -> &[u8; 32] {
+        self.key.token_material_halves().1
+    }
+
+    pub fn compression(&self) -> ResourceCompression {
+        self.compression
+    }
+
+    pub fn salt_nonce(&self) -> SaltNonce {
+        self.salt_nonce
+    }
+
+    pub fn total_segments(&self) -> u64 {
+        self.total_segments
+    }
+}
+
+pub struct WholeResourceOpenOwed<'a> {
+    pub(crate) plan: WholeResourceOpenPlan,
+    pub(crate) sealed: &'a [u8],
+}
+
+impl WholeResourceOpenOwed<'_> {
+    pub fn plan(&self) -> &WholeResourceOpenPlan {
+        &self.plan
+    }
+
+    pub fn sealed(&self) -> &[u8] {
+        self.sealed
+    }
+
+    pub fn into_plan(self) -> WholeResourceOpenPlan {
+        self.plan
+    }
+}
+
+pub enum WholeResourceOpenOutcome<'a> {
+    Opened(&'a [u8]),
+    OpenedAndDigested {
+        plaintext: &'a [u8],
+        calculated_hash: ResourceHash,
+        proof: ResourceProof,
+    },
+    Refused,
+    Unavailable,
+}
+
+pub struct WholeResourceOpenCompleted<'a> {
+    pub reservation: WholeResourceOpenReservation,
+    pub outcome: WholeResourceOpenOutcome<'a>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WholeResourceOpenLanding {
+    Applied,
+    Stale,
+    Invalid,
 }
 
 /// A compressed resource stream the engine has authenticated and asks its runtime to inflate.

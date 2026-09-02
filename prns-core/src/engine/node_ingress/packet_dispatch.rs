@@ -472,6 +472,7 @@ impl<S: StorageLayout> EngineState<S> {
             }
             IngestPacketOutcome::OwesResourceParts(request) => {
                 self.serve_resource_request(&request, source, now, fill_random, sink);
+                self.request_resource_seal(&request.link_id, sink);
                 wake_schedule_changes.resource_deadlines = self.resource_deadlines_wake();
             }
             IngestPacketOutcome::OwesResourcePull { link_id, hash } => {

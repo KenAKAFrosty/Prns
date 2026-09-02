@@ -14,16 +14,23 @@ use personal_rns::engine::{
     EncryptCompleted, EngineReaction, EngineState, IdentifySignCompleted, InstantMillis,
     LinkIdentityVerification, LinkReceiptSignCompleted, NoOwedWork, OwedWork, ProofSignCompleted,
     ReceiptProofVerification, ResourceDecompressionCompleted, ResourceOpenCompleted,
-    TunnelSynthesizeSignCompleted, TunnelSynthesizeVerification,
+    TunnelSynthesizeSignCompleted, TunnelSynthesizeVerification, WholeResourceOpenCompleted,
+    WholeResourceOpenOutcome, WholeResourceOpenPlan,
 };
 use personal_rns::identity::{decrypt_token_in_place_with_ratchets, OpenedToken};
 use personal_rns::interfaces::AttachedInterfaces;
 use personal_rns::remote_control::RemoteControlPairingAvailabilityVerification;
 use personal_rns::routing::links::handshake::{link_proof_signature_valid, link_proof_signed_data};
-use personal_rns::routing::links::resources::build_outgoing::BuildOutgoingResourceError;
-use personal_rns::routing::links::resources::send::ResourceBuildCompleted;
-use personal_rns::routing::links::resources::table::ResourceBuildReservation;
-use personal_rns::routing::links::resources::ResourceHash;
+use personal_rns::routing::links::resources::build_outgoing::{
+    BuildRegions, SALT_REROLL_CAP,
+};
+use personal_rns::routing::links::resources::send::{
+    ResourceBuildCompleted, ResourceBuildPlan, ResourceSealCompleted, ResourceSealOutcome,
+    ResourceSealPlan,
+};
+use personal_rns::routing::links::resources::{
+    ResourceBody, ResourceHash, ResourceMetadata, MAP_HASH_LEN, RESOURCE_NONCE_LEN,
+};
 use personal_rns::routing::links::LinkId;
 use personal_rns::routing::proof::ProofRequest;
 use personal_rns::storage::GrowableHeap;
@@ -34,16 +41,47 @@ use personal_rns::wire::BROADCAST_MTU;
 #[allow(clippy::large_enum_variant)]
 enum InlineReadyWork {
     Crypto(CryptoOwed),
-    ResourceBuildUnsupported {
-        reservation: ResourceBuildReservation,
+    ResourceBuild {
+        plan: ResourceBuildPlan,
+        data: Vec<u8>,
+        compressed_candidate: Option<Vec<u8>>,
+        metadata: InlineResourceMetadata,
+    },
+    ResourceSeal {
+        plan: ResourceSealPlan,
+        workspace: Vec<u8>,
     },
     ResourceOpen(ResourceOpenCompleted<'static>),
+    WholeResourceOpen {
+        plan: WholeResourceOpenPlan,
+        sealed: Vec<u8>,
+    },
     ResourceDecompression {
         link_id: LinkId,
         hash: ResourceHash,
         stream: Vec<u8>,
         uncompressed_data_bytes: u64,
     },
+}
+
+enum InlineResourceMetadata {
+    None,
+    Packed(Vec<u8>),
+    SentInFirstSegment { packed_len: u32 },
+}
+
+impl InlineResourceMetadata {
+    fn as_resource_metadata(&self) -> ResourceMetadata<'_> {
+        match self {
+            Self::None => ResourceMetadata::None,
+            Self::Packed(packed) => ResourceMetadata::Packed(packed),
+            Self::SentInFirstSegment { packed_len } => {
+                ResourceMetadata::SentInFirstSegment {
+                    packed_len: *packed_len,
+                }
+            }
+        }
+    }
 }
 
 pub(crate) struct InlineReadyWorkQueue {
@@ -61,10 +99,41 @@ impl InlineReadyWorkQueue {
     pub(crate) fn capture(&mut self, work: OwedWork<'_>) {
         let ready = match work {
             OwedWork::Crypto(owed) => InlineReadyWork::Crypto(owed),
-            OwedWork::ResourceBuild(owed) => InlineReadyWork::ResourceBuildUnsupported {
-                reservation: owed.reservation(),
-            },
+            OwedWork::ResourceBuild(owed) => {
+                let body = owed.body();
+                let metadata = match body.metadata {
+                    ResourceMetadata::None => InlineResourceMetadata::None,
+                    ResourceMetadata::Packed(packed) => {
+                        InlineResourceMetadata::Packed(packed.to_vec())
+                    }
+                    ResourceMetadata::SentInFirstSegment { packed_len } => {
+                        InlineResourceMetadata::SentInFirstSegment { packed_len }
+                    }
+                };
+                let data = body.data.to_vec();
+                let compressed_candidate = body.compressed_candidate.map(<[u8]>::to_vec);
+                InlineReadyWork::ResourceBuild {
+                    plan: owed.into_plan(),
+                    data,
+                    compressed_candidate,
+                    metadata,
+                }
+            }
+            OwedWork::ResourceSeal(owed) => {
+                let workspace = owed.workspace().to_vec();
+                InlineReadyWork::ResourceSeal {
+                    plan: owed.into_plan(),
+                    workspace,
+                }
+            }
             OwedWork::ResourceOpen(owed) => InlineReadyWork::ResourceOpen(owed.fulfill_inline()),
+            OwedWork::WholeResourceOpen(owed) => {
+                let sealed = owed.sealed().to_vec();
+                InlineReadyWork::WholeResourceOpen {
+                    plan: owed.into_plan(),
+                    sealed,
+                }
+            }
             OwedWork::ResourceDecompression(owed) => InlineReadyWork::ResourceDecompression {
                 link_id: owed.link_id,
                 hash: owed.hash,
@@ -75,26 +144,61 @@ impl InlineReadyWorkQueue {
         self.work.push_back(ready);
     }
 
-    pub(crate) fn take_selected_crypto(
+    pub(crate) fn push_crypto(&mut self, crypto: CryptoOwed) {
+        self.work.push_back(InlineReadyWork::Crypto(crypto));
+    }
+
+    pub(crate) fn take_browser_work(
         &mut self,
-        mut selected: impl FnMut(&CryptoOwed) -> bool,
-    ) -> Vec<CryptoOwed> {
+        fill_random: &mut impl FnMut(&mut [u8]),
+    ) -> Vec<crate::browser_work::BrowserWorkOperation> {
         let pending = self.work.len();
         let mut extracted = Vec::new();
         for _ in 0..pending {
             let Some(work) = self.work.pop_front() else {
                 break;
             };
-            match work {
-                InlineReadyWork::Crypto(crypto) if selected(&crypto) => extracted.push(crypto),
-                work => self.work.push_back(work),
-            }
+            let operation = match work {
+                InlineReadyWork::Crypto(CryptoOwed::AnnounceVerify(owed)) => {
+                    match crate::browser_work::BrowserWorkOperation::announce(owed) {
+                        Ok(operation) => operation,
+                        Err(owed) => {
+                            self.work
+                                .push_back(InlineReadyWork::Crypto(CryptoOwed::AnnounceVerify(
+                                    *owed,
+                                )));
+                            continue;
+                        }
+                    }
+                }
+                InlineReadyWork::Crypto(CryptoOwed::LinkProofVerify(owed)) => {
+                    crate::browser_work::BrowserWorkOperation::LinkProofVerify(owed)
+                }
+                InlineReadyWork::ResourceSeal { plan, workspace } => {
+                    let mut seal_iv = [0u8; 16];
+                    fill_random(&mut seal_iv);
+                    let mut salts = [[0u8; RESOURCE_NONCE_LEN]; SALT_REROLL_CAP];
+                    for salt in &mut salts {
+                        fill_random(salt);
+                    }
+                    crate::browser_work::BrowserWorkOperation::ResourceSeal {
+                        plan,
+                        workspace,
+                        seal_iv,
+                        salts,
+                    }
+                }
+                InlineReadyWork::WholeResourceOpen { plan, sealed } => {
+                    crate::browser_work::BrowserWorkOperation::WholeResourceOpen { plan, sealed }
+                }
+                work => {
+                    self.work.push_back(work);
+                    continue;
+                }
+            };
+            extracted.push(operation);
         }
         extracted
-    }
-
-    pub(crate) fn push_crypto(&mut self, crypto: CryptoOwed) {
-        self.work.push_back(InlineReadyWork::Crypto(crypto));
     }
 }
 
@@ -313,14 +417,53 @@ pub(crate) fn fulfill_ready_work(
                     }
                 }
             },
-            InlineReadyWork::ResourceBuildUnsupported { reservation } => {
+            InlineReadyWork::ResourceSeal { plan, workspace: _ } => {
+                engine.resume_resource_seal(
+                    ResourceSealCompleted {
+                        reservation: plan.reservation(),
+                        outcome: ResourceSealOutcome::Unavailable,
+                    },
+                    now,
+                    fill_random,
+                    &mut |reaction| route_or_capture(reaction, ready, sink),
+                );
+            }
+            InlineReadyWork::ResourceBuild {
+                plan,
+                data,
+                compressed_candidate,
+                metadata,
+            } => {
+                let shape = plan.shape();
+                let reservation = plan.reservation();
+                let mut transfer = vec![0; shape.transfer_bytes()];
+                let mut names = vec![0; shape.part_count() * MAP_HASH_LEN];
+                let mut seal_iv = [0; 16];
+                fill_random(&mut seal_iv);
+                let outcome = plan.execute(
+                    &ResourceBody {
+                        data: &data,
+                        compressed_candidate: compressed_candidate.as_deref(),
+                        metadata: metadata.as_resource_metadata(),
+                    },
+                    &seal_iv,
+                    || {
+                        let mut nonce = [0; RESOURCE_NONCE_LEN];
+                        fill_random(&mut nonce);
+                        nonce
+                    },
+                    BuildRegions {
+                        transfer: &mut transfer,
+                        hashmap: &mut names,
+                    },
+                );
                 engine.resume_resource_build(
                     ResourceBuildCompleted {
                         reservation,
-                        transfer: &[],
-                        names: &[],
-                        request_data: &[],
-                        outcome: Err(BuildOutgoingResourceError::BufferShapeMismatch),
+                        transfer: &transfer,
+                        names: &names,
+                        request_data: &data,
+                        outcome,
                     },
                     now,
                     fill_random,
@@ -331,6 +474,16 @@ pub(crate) fn fulfill_ready_work(
                 engine.resume_resource_open(completed, now, &mut |reaction| {
                     route_or_capture(reaction, ready, sink)
                 });
+            }
+            InlineReadyWork::WholeResourceOpen { plan, sealed: _ } => {
+                engine.resume_whole_resource_open(
+                    WholeResourceOpenCompleted {
+                        reservation: plan.reservation(),
+                        outcome: WholeResourceOpenOutcome::Unavailable,
+                    },
+                    now,
+                    &mut |reaction| route_or_capture(reaction, ready, sink),
+                );
             }
             InlineReadyWork::ResourceDecompression {
                 link_id,

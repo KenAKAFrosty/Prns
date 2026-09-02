@@ -25,36 +25,9 @@ export declare class PrnsRuntime implements PrnsRuntimeBinding {
   respond: PrnsRuntimeBinding["respond"];
   resourceSegmentPlan: PrnsRuntimeBinding["resourceSegmentPlan"];
   sendResourceSegment: PrnsRuntimeBinding["sendResourceSegment"];
-  sendResourceSegmentWebCrypto: NonNullable<
-    PrnsRuntimeBinding["sendResourceSegmentWebCrypto"]
-  >;
-  completeResourceSegmentSeal: NonNullable<
-    PrnsRuntimeBinding["completeResourceSegmentSeal"]
-  >;
-  completeResourceSegmentSealDigests: NonNullable<
-    PrnsRuntimeBinding["completeResourceSegmentSealDigests"]
-  >;
-  retryResourceSegmentSeal: NonNullable<
-    PrnsRuntimeBinding["retryResourceSegmentSeal"]
-  >;
-  enableResourceWebCrypto: NonNullable<
-    PrnsRuntimeBinding["enableResourceWebCrypto"]
-  >;
-  takeResourceOpenJob: NonNullable<
-    PrnsRuntimeBinding["takeResourceOpenJob"]
-  >;
-  completeResourceOpen: NonNullable<
-    PrnsRuntimeBinding["completeResourceOpen"]
-  >;
-  completeResourceOpenDigests: NonNullable<
-    PrnsRuntimeBinding["completeResourceOpenDigests"]
-  >;
-  rejectResourceOpen: NonNullable<
-    PrnsRuntimeBinding["rejectResourceOpen"]
-  >;
-  retryResourceOpen: NonNullable<
-    PrnsRuntimeBinding["retryResourceOpen"]
-  >;
+  configureBrowserWork: PrnsRuntimeBinding["configureBrowserWork"];
+  takeBrowserWork: PrnsRuntimeBinding["takeBrowserWork"];
+  completeBrowserWork: PrnsRuntimeBinding["completeBrowserWork"];
   setLinkResourceStrategy: PrnsRuntimeBinding["setLinkResourceStrategy"];
   setDestinationResourceStrategy: PrnsRuntimeBinding["setDestinationResourceStrategy"];
   sendChannelMessage: PrnsRuntimeBinding["sendChannelMessage"];

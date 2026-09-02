@@ -54,6 +54,12 @@ impl ResourceRowState for u8 {
 pub struct ResourceBuildGeneration(NonZeroU64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceSealGeneration(NonZeroU64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceOpenGeneration(NonZeroU64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutgoingResourceIdentity {
     Building(ResourceBuildGeneration),
     Staged,
@@ -152,6 +158,7 @@ pub struct OutgoingResourceState {
     pub scope_start: usize,
     pub sent_part_count: usize,
     pub status: OutgoingResourceStatus,
+    pub seal_generation: Option<ResourceSealGeneration>,
     pub retries_left: u8,
     pub command_id: CommandId,
     pub correlation: ResourceCorrelation,
@@ -176,6 +183,7 @@ impl Default for OutgoingResourceState {
             scope_start: 0,
             sent_part_count: 0,
             status: OutgoingResourceStatus::Advertised,
+            seal_generation: None,
             retries_left: 0,
             command_id: CommandId(0),
             correlation: ResourceCorrelation::Unsolicited,
@@ -203,6 +211,7 @@ pub struct IncomingResourceState {
     pub window_min: usize,
     pub window_max: usize,
     pub status: IncomingResourceStatus,
+    pub open_generation: Option<ResourceOpenGeneration>,
     pub retries_left: u8,
     pub correlation: ResourceCorrelation,
     pub measured_rtt_ms: Option<u64>,
@@ -251,6 +260,7 @@ impl Default for IncomingResourceState {
             window_min: WINDOW_MIN,
             window_max: WINDOW_MAX_SLOW,
             status: IncomingResourceStatus::Transferring,
+            open_generation: None,
             retries_left: 0,
             correlation: ResourceCorrelation::Unsolicited,
             measured_rtt_ms: None,
@@ -395,6 +405,7 @@ pub struct OutgoingResources<C: ResourceTable<OutgoingResourceState>> {
     table: C,
     earliest_timeout: Option<InstantMillis>,
     next_build_generation: u64,
+    next_seal_generation: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -409,6 +420,15 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
             self.next_build_generation = self.next_build_generation.wrapping_add(1);
             if let Some(generation) = NonZeroU64::new(self.next_build_generation) {
                 return ResourceBuildGeneration(generation);
+            }
+        }
+    }
+
+    pub(crate) fn take_seal_generation(&mut self) -> ResourceSealGeneration {
+        loop {
+            self.next_seal_generation = self.next_seal_generation.wrapping_add(1);
+            if let Some(generation) = NonZeroU64::new(self.next_seal_generation) {
+                return ResourceSealGeneration(generation);
             }
         }
     }
@@ -508,6 +528,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
                         TrackLane::Live => OutgoingResourceStatus::Advertised,
                         TrackLane::Staged => OutgoingResourceStatus::StagedSealed,
                     },
+                    seal_generation: None,
                     retries_left: 0,
                     command_id,
                     correlation,
@@ -645,6 +666,7 @@ impl<C: ResourceTable<OutgoingResourceState>> OutgoingResources<C> {
             scope_start: 0,
             sent_part_count: 0,
             status: OutgoingResourceStatus::Advertised,
+            seal_generation: None,
             retries_left: 0,
             command_id: reserved.command_id,
             correlation: reserved.correlation,
@@ -989,6 +1011,7 @@ pub enum PlacePartOutcome {
 pub struct IncomingResources<C: ResourceTable<IncomingResourceState>> {
     table: C,
     earliest_timeout: Option<InstantMillis>,
+    next_open_generation: u64,
 }
 
 fn accepted_resource_shape(
@@ -1016,6 +1039,14 @@ fn accepted_resource_shape(
 }
 
 impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
+    pub(crate) fn take_open_generation(&mut self) -> ResourceOpenGeneration {
+        loop {
+            self.next_open_generation = self.next_open_generation.wrapping_add(1);
+            if let Some(generation) = NonZeroU64::new(self.next_open_generation) {
+                return ResourceOpenGeneration(generation);
+            }
+        }
+    }
     pub(crate) fn storage_admission_for(
         &self,
         offer: AcceptedResource<'_>,
@@ -1114,6 +1145,7 @@ impl<C: ResourceTable<IncomingResourceState>> IncomingResources<C> {
                     window_min: WINDOW_MIN,
                     window_max: WINDOW_MAX_SLOW,
                     status: IncomingResourceStatus::Transferring,
+                    open_generation: None,
                     retries_left: 0,
                     correlation: offer.correlation,
                     measured_rtt_ms: None,

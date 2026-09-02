@@ -1,5 +1,5 @@
 import { Tag, match } from "../casework.js";
-import { interfaceId, linkId } from "../contract.js";
+import { interfaceId } from "../contract.js";
 import type {
   InterfaceId,
   InterfaceKind,
@@ -41,15 +41,19 @@ import type {
 } from "./values.js";
 import type { WebSocketRuntimeRegistration } from "./websocket/index.js";
 import {
-  parseResourceOpenJob,
+  resourceDigestExecution,
   resourceOpenDigestExecution,
 } from "./resource_crypto.js";
 import type {
   ResourceOpenJob,
+  ResourceSealJob,
 } from "./resource_crypto.js";
 import type { BrowserCryptoExecutor } from "./crypto_pool.js";
-import { parseProtocolCryptoJob } from "./protocol_crypto_runtime.js";
-import type { ProtocolCryptoJob } from "./protocol_crypto_runtime.js";
+import {
+  parseBrowserWork,
+  parseBrowserWorkLanding,
+} from "./browser_work.js";
+import type { BrowserWork } from "./browser_work.js";
 import type {
   BleIdentityAvailability,
   BluetoothReassemblerBinding,
@@ -58,6 +62,7 @@ import type {
   EntropySource,
   InterfaceName,
   PrnsRuntimeBinding,
+  RuntimeBrowserWorkCompletion,
   PrnsWasmModule,
   RuntimeInterfaceKind,
   RuntimeOperation,
@@ -106,6 +111,10 @@ type OutboundWaitOutcome =
   | Tag<"RuntimeAdvanced">
   | Tag<"InterfaceDetached">;
 type OutboundWaiter = (outcome: OutboundWaitOutcome) => void;
+type ProtocolBrowserWork = Extract<
+  BrowserWork,
+  { readonly tag: "AnnounceVerify" | "LinkProofVerify" }
+>;
 
 const INTERFACE_OUTBOUND_QUEUE_DEPTH = 64;
 
@@ -150,19 +159,9 @@ export class RuntimeHost {
     this.#bleIdentityAvailability = bleIdentityAvailability;
     this.#cryptoExecutor = cryptoExecutor;
     this.#onRuntimeActivity = onRuntimeActivity;
-    if (
-      cryptoExecutor !== undefined &&
-      this.#runtime.enableResourceWebCrypto !== undefined
-    ) {
-      this.#runtime.enableResourceWebCrypto();
-    }
-    if (cryptoExecutor !== undefined) {
-      if (this.#runtime.enableProtocolCryptoOffload !== undefined) {
-        this.#runtime.enableProtocolCryptoOffload();
-      } else if (this.#runtime.enableProtocolWebCrypto !== undefined) {
-        this.#runtime.enableProtocolWebCrypto();
-      }
-    }
+    this.#runtime.configureBrowserWork(
+      cryptoExecutor === undefined ? "Inline" : "BrowserWorkers",
+    );
   }
 
   runtimeReadiness(): RuntimeReadyOutcome {
@@ -296,8 +295,7 @@ export class RuntimeHost {
       if (active !== undefined) {
         active.rxBytes = saturatingAdd(active.rxBytes, bytes.length);
       }
-      this.#drainResourceOpenJobs();
-      this.#drainProtocolCryptoJobs();
+      this.drainBrowserWork();
       this.notifyRuntimeActivity();
       return Tag("Accepted");
     } catch (error) {
@@ -305,23 +303,127 @@ export class RuntimeHost {
     }
   }
 
-  #drainResourceOpenJobs(): void {
-    if (
-      this.#cryptoExecutor === undefined ||
-      this.#runtime.takeResourceOpenJob === undefined ||
-      this.#runtime.completeResourceOpen === undefined ||
-      this.#runtime.rejectResourceOpen === undefined ||
-      this.#runtime.retryResourceOpen === undefined
-    ) {
+  drainBrowserWork(): void {
+    if (this.#cryptoExecutor === undefined) {
       return;
     }
     while (true) {
-      const job = parseResourceOpenJob(this.#runtime.takeResourceOpenJob());
+      const job = parseBrowserWork(this.#runtime.takeBrowserWork());
       if (job === undefined) {
         return;
       }
-      void this.#settleResourceOpen(job);
+      void this.#settleBrowserWork(job);
     }
+  }
+
+  async #settleBrowserWork(job: BrowserWork): Promise<void> {
+    await match(job, {
+      AnnounceVerify: (data) => this.#settleProtocolCrypto(Tag("AnnounceVerify", data)),
+      LinkProofVerify: (data) => this.#settleProtocolCrypto(Tag("LinkProofVerify", data)),
+      ResourceSeal: (data) => this.#settleResourceSeal(data),
+      WholeResourceOpen: (data) => this.#settleResourceOpen(data),
+    });
+  }
+
+  async #settleResourceSeal(job: ResourceSealJob): Promise<void> {
+    const executor = this.#cryptoExecutor;
+    if (executor === undefined) {
+      return;
+    }
+    try {
+      const offloadDigests = resourceDigestExecution(
+        job.noncePrefixedBytes,
+        job.totalSegments,
+      ).tag === "WebCrypto";
+      const outcome = offloadDigests
+        ? await executor.sealAndDigest(job, job.salts.subarray(0, 4))
+        : await executor.seal(job);
+      if (this.#cryptoExecutor !== executor) {
+        return;
+      }
+      if (outcome.tag === "Busy") {
+        throw new TypeError("resource crypto pool is busy");
+      }
+      if (outcome.tag === "Failed") {
+        throw new TypeError(outcome.data.detail);
+      }
+      if (outcome.tag === "Sealed") {
+        const landing = parseBrowserWorkLanding(
+          this.#runtime.completeBrowserWork({
+            id: job.id,
+            outcome: "Sealed",
+            sealed: outcome.data.sealed,
+            nowMs: this.#now(),
+            entropy: this.#completionEntropy(),
+          }),
+        );
+        if (landing.tag === "Collision" || landing.tag === "Invalid") {
+          throw new TypeError(`resource seal landing was ${landing.tag}`);
+        }
+      } else {
+        let plaintext = outcome.data.plaintext;
+        let digests = {
+          hash: outcome.data.hash,
+          proof: outcome.data.proof,
+        };
+        let landed = false;
+        for (let offset = 0; offset < job.salts.length; offset += 4) {
+          const salt = job.salts.subarray(offset, offset + 4);
+          if (offset !== 0) {
+            const digestOutcome = await executor.digest(plaintext, salt);
+            if (this.#cryptoExecutor !== executor) {
+              return;
+            }
+            if (digestOutcome.tag !== "Digested") {
+              throw new TypeError(
+                digestOutcome.tag === "Busy"
+                  ? "resource crypto pool is busy"
+                  : digestOutcome.data.detail,
+              );
+            }
+            plaintext = digestOutcome.data.plaintext;
+            digests = {
+              hash: digestOutcome.data.hash,
+              proof: digestOutcome.data.proof,
+            };
+          }
+          const landing = parseBrowserWorkLanding(
+            this.#runtime.completeBrowserWork({
+              id: job.id,
+              outcome: "SealedAndDigested",
+              sealed: outcome.data.sealed,
+              salt,
+              hash: digests.hash,
+              proof: digests.proof,
+              nowMs: this.#now(),
+              entropy: this.#completionEntropy(),
+            }),
+          );
+          if (landing.tag === "Applied" || landing.tag === "Stale") {
+            landed = true;
+            break;
+          }
+          if (landing.tag === "Invalid") {
+            throw new TypeError("resource digest landing was invalid");
+          }
+        }
+        if (!landed) {
+          throw new TypeError("resource digest salts exhausted");
+        }
+      }
+    } catch {
+      if (this.#cryptoExecutor !== executor) {
+        return;
+      }
+      this.#runtime.completeBrowserWork({
+        id: job.id,
+        outcome: "Unavailable",
+        nowMs: this.#now(),
+        entropy: this.#completionEntropy(),
+      });
+    }
+    this.notifyRuntimeActivity();
+    this.drainBrowserWork();
   }
 
   async #settleResourceOpen(job: ResourceOpenJob): Promise<void> {
@@ -331,7 +433,6 @@ export class RuntimeHost {
     }
     try {
       if (
-        this.#runtime.completeResourceOpenDigests !== undefined &&
         job.hashPlan.tag === "OpenedStream" &&
         resourceOpenDigestExecution(
           job.sealed.length,
@@ -347,19 +448,21 @@ export class RuntimeHost {
         }
         await match(outcome, {
           OpenedAndDigested: ({ plaintext, hash, proof }) => {
-            this.#runtime.completeResourceOpenDigests!({
-              linkId: linkId(job.linkId),
-              hash: job.hash,
-              calculatedHash: hash,
+            this.#completeResourceOpen({
+              id: job.id,
+              outcome: "OpenedAndDigested",
+              hash,
               proof,
               plaintext,
               nowMs: this.#now(),
               entropy: this.#completionEntropy(),
             });
           },
-          Refused: () => this.#runtime.rejectResourceOpen!({
-            linkId: linkId(job.linkId),
-            hash: job.hash,
+          Refused: () => this.#completeResourceOpen({
+            id: job.id,
+            outcome: "Refused",
+            nowMs: this.#now(),
+            entropy: this.#completionEntropy(),
           }),
           Busy: () => {
             throw new TypeError("resource crypto pool is busy");
@@ -369,7 +472,7 @@ export class RuntimeHost {
           },
         });
         this.notifyRuntimeActivity();
-        this.#drainResourceOpenJobs();
+        this.drainBrowserWork();
         return;
       }
       const outcome = await executor.open(job);
@@ -378,17 +481,19 @@ export class RuntimeHost {
       }
       await match(outcome, {
         Opened: (plaintext) => {
-          this.#runtime.completeResourceOpen!({
-            linkId: linkId(job.linkId),
-            hash: job.hash,
+          this.#completeResourceOpen({
+            id: job.id,
+            outcome: "Opened",
             plaintext,
             nowMs: this.#now(),
             entropy: this.#completionEntropy(),
           });
         },
-        Refused: () => this.#runtime.rejectResourceOpen!({
-          linkId: linkId(job.linkId),
-          hash: job.hash,
+        Refused: () => this.#completeResourceOpen({
+          id: job.id,
+          outcome: "Refused",
+          nowMs: this.#now(),
+          entropy: this.#completionEntropy(),
         }),
         Busy: () => {
           throw new TypeError("resource crypto pool is busy");
@@ -401,39 +506,18 @@ export class RuntimeHost {
       if (this.#cryptoExecutor !== executor) {
         return;
       }
-      this.#runtime.retryResourceOpen!({
-        linkId: linkId(job.linkId),
-        hash: job.hash,
+      this.#runtime.completeBrowserWork({
+        id: job.id,
+        outcome: "Unavailable",
         nowMs: this.#now(),
         entropy: this.#completionEntropy(),
       });
     }
     this.notifyRuntimeActivity();
-    this.#drainResourceOpenJobs();
+    this.drainBrowserWork();
   }
 
-  #drainProtocolCryptoJobs(): void {
-    if (
-      this.#cryptoExecutor === undefined ||
-      this.#runtime.takeProtocolCryptoJob === undefined ||
-      this.#runtime.completeProtocolAnnounceValid === undefined ||
-      this.#runtime.completeProtocolAnnounceInvalid === undefined ||
-      this.#runtime.completeProtocolLinkProofValid === undefined ||
-      this.#runtime.completeProtocolLinkProofInvalid === undefined ||
-      this.#runtime.completeProtocolCryptoInline === undefined
-    ) {
-      return;
-    }
-    while (true) {
-      const job = parseProtocolCryptoJob(this.#runtime.takeProtocolCryptoJob());
-      if (job === undefined) {
-        return;
-      }
-      void this.#settleProtocolCrypto(job);
-    }
-  }
-
-  async #settleProtocolCrypto(job: ProtocolCryptoJob): Promise<void> {
+  async #settleProtocolCrypto(job: ProtocolBrowserWork): Promise<void> {
     const executor = this.#cryptoExecutor;
     if (executor === undefined) {
       return;
@@ -448,12 +532,17 @@ export class RuntimeHost {
           await match(outcome, {
             Valid: () => {
               const entropy = this.#completionEntropy();
-              this.#runtime.completeProtocolAnnounceValid!(id, this.#now(), entropy);
+              this.#runtime.completeBrowserWork({
+                id,
+                outcome: "Valid",
+                nowMs: this.#now(),
+                entropy,
+              });
             },
-            Invalid: () => this.#runtime.completeProtocolAnnounceInvalid!(id),
-            Busy: () => this.#completeProtocolCryptoInline(id),
-            Unavailable: () => this.#completeProtocolCryptoInline(id),
-            Failed: () => this.#completeProtocolCryptoInline(id),
+            Invalid: () => this.#completeBrowserWork(id, "Invalid"),
+            Busy: () => this.#completeBrowserWork(id, "Unavailable"),
+            Unavailable: () => this.#completeBrowserWork(id, "Unavailable"),
+            Failed: () => this.#completeBrowserWork(id, "Unavailable"),
           });
         },
         LinkProofVerify: async ({
@@ -477,35 +566,45 @@ export class RuntimeHost {
           await match(outcome, {
             Verified: ({ sharedSecret }) => {
               const entropy = this.#completionEntropy();
-              this.#runtime.completeProtocolLinkProofValid!(
+              this.#runtime.completeBrowserWork({
                 id,
+                outcome: "Verified",
                 sharedSecret,
-                this.#now(),
+                nowMs: this.#now(),
                 entropy,
-              );
+              });
             },
-            Invalid: () => this.#runtime.completeProtocolLinkProofInvalid!(id),
-            Busy: () => this.#completeProtocolCryptoInline(id),
-            Unavailable: () => this.#completeProtocolCryptoInline(id),
-            Failed: () => this.#completeProtocolCryptoInline(id),
+            Invalid: () => this.#completeBrowserWork(id, "Invalid"),
+            Busy: () => this.#completeBrowserWork(id, "Unavailable"),
+            Unavailable: () => this.#completeBrowserWork(id, "Unavailable"),
+            Failed: () => this.#completeBrowserWork(id, "Unavailable"),
           });
         },
       });
     } catch {
       if (this.#cryptoExecutor === executor) {
-        this.#rejectProtocolCrypto(job);
+        this.#completeBrowserWork(job.data.id, "Unavailable");
       }
     }
     if (this.#cryptoExecutor !== executor) {
       return;
     }
     this.notifyRuntimeActivity();
-    this.#drainProtocolCryptoJobs();
+    this.drainBrowserWork();
   }
 
-  #completeProtocolCryptoInline(id: number): void {
+  #completeBrowserWork(id: number, outcome: "Invalid" | "Unavailable"): void {
     const entropy = this.#completionEntropy();
-    this.#runtime.completeProtocolCryptoInline!(id, this.#now(), entropy);
+    this.#runtime.completeBrowserWork({ id, outcome, nowMs: this.#now(), entropy });
+  }
+
+  #completeResourceOpen(completion: RuntimeBrowserWorkCompletion): void {
+    const landing = parseBrowserWorkLanding(
+      this.#runtime.completeBrowserWork(completion),
+    );
+    if (landing.tag === "Collision" || landing.tag === "Invalid") {
+      throw new TypeError(`resource open landing was ${landing.tag}`);
+    }
   }
 
   #completionEntropy(): Extract<EntropyOutcome, { readonly tag: "Filled" }>["data"] {
@@ -514,13 +613,6 @@ export class RuntimeHost {
       throw new TypeError("protocol crypto completion entropy is unavailable");
     }
     return entropy.data;
-  }
-
-  #rejectProtocolCrypto(job: ProtocolCryptoJob): void {
-    match(job, {
-      AnnounceVerify: ({ id }) => this.#runtime.completeProtocolAnnounceInvalid!(id),
-      LinkProofVerify: ({ id }) => this.#runtime.completeProtocolLinkProofInvalid!(id),
-    });
   }
 
   stopCrypto(): void {

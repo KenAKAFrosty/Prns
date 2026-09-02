@@ -69,7 +69,13 @@ fn route_ingress_reaction<J>(
             OwedWork::ResourceBuild(owed) => {
                 owed_work.push(OwedWork::ResourceBuild(owed), crypto_pool);
             }
+            OwedWork::ResourceSeal(owed) => {
+                owed_work.push(OwedWork::ResourceSeal(owed), crypto_pool);
+            }
             OwedWork::ResourceOpen(owed) => owed_work.push_resource_open(owed, crypto_pool),
+            OwedWork::WholeResourceOpen(owed) => {
+                owed_work.push(OwedWork::WholeResourceOpen(owed), crypto_pool);
+            }
             OwedWork::ResourceDecompression(owed) => {
                 owed_work.push(OwedWork::ResourceDecompression(owed), crypto_pool);
             }
